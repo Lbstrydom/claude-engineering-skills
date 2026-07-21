@@ -34,7 +34,11 @@ export const ORACLE_IDS = Object.freeze([
 ]);
 
 /** Closed v1 cli-exit scenario registry (§F2.3 — right-sized to what's contracted). */
-export const CLI_EXIT_SCENARIOS = Object.freeze(['visual-static-gate-refusal']);
+export const CLI_EXIT_SCENARIOS = Object.freeze([
+  'visual-static-gate-refusal',
+  'ctx-drift-clean',
+  'ctx-drift-high',
+]);
 
 const ProofSchema = z.enum(['process', 'unit-seam']);
 
@@ -57,7 +61,19 @@ const ConvergenceThresholdParams = z.object({
 const TieredShadowRow = z.object({
   legacyOk: z.boolean(),
   shadowOk: z.boolean(),
-  comparison: z.object({ tieredRunStatus: z.enum(['complete', 'fallback_legacy']) }).strict().nullable(),
+  // The `.strict()` comparison previously permitted ONLY `tieredRunStatus`, but
+  // the tieredShadowWindow oracle (oracles.mjs) reads `tieredEligibleCount` /
+  // `legacyEligibleCount` to decide a decision-grade comparison. So a fixture
+  // row that carried those fields — the exact case the oracle exists to
+  // evaluate — was REJECTED by this schema, leaving the eligibility branch
+  // untestable (audit M2, flagged by GPT ×2 and Gemini). Optional because the
+  // existing fallback_legacy fixtures omit them; numbers to match the oracle's
+  // `typeof === 'number'` guard.
+  comparison: z.object({
+    tieredRunStatus: z.enum(['complete', 'fallback_legacy']),
+    tieredEligibleCount: z.number().optional(),
+    legacyEligibleCount: z.number().optional(),
+  }).strict().nullable(),
 }).strict();
 
 const ExecutableGateSchema = z.discriminatedUnion('oracle', [
@@ -80,11 +96,47 @@ const DocumentOnlyGateSchema = z.object({
 
 const GateSchema = z.discriminatedUnion('kind', [ExecutableGateSchema, DocumentOnlyGateSchema]);
 
+// The `not-a-gate` disposition store (gate-contract-authoring.md D6, Gemini G1).
+// A candidate line the coverage check greps but which is NOT an enforcement
+// claim is recorded HERE, in the contract — never in a plan document. Each
+// carries the exact line and why it is not a gate, so the coverage check reads
+// only Zod-validated contract data.
+const IgnoredCandidateSchema = z.object({
+  line: z.string().min(1),
+  reason: z.string().min(1),
+}).strict();
+
 export const GateContractSchema = z.object({
   version: z.literal(1),
-  skill: z.string().min(1),
-  gates: z.array(GateSchema).min(1),
-}).strict();
+  // A skill name is a directory-name IDENTIFIER, never a path fragment (audit
+  // M1). Without this grammar a `skill` of `../../evil` interpolates into the
+  // `skills/${skill}/SKILL.md` approved-source string and could make
+  // isApprovedStatedInSource accept a traversal target. realpath containment is
+  // a second layer, but the identifier grammar closes it at the root. Every
+  // real skill name (audit-code, ai-context-management, …) already matches.
+  skill: z.string().regex(/^[a-z0-9]+(-[a-z0-9]+)*$/, 'skill must be a kebab-case identifier, not a path'),
+  // `.min(1)` is GONE — an empty `gates` is legal as an explicit "this skill has
+  // no gates" declaration, but ONLY paired with a top-level `reason` (below).
+  gates: z.array(GateSchema),
+  // Present ONLY on an empty-gates declaration (D4). The superRefine enforces
+  // the biconditional so a real contract cannot carry a hand-wave and a no-gate
+  // skill cannot stay silent.
+  reason: z.string().min(1).optional(),
+  ignoredCandidates: z.array(IgnoredCandidateSchema).optional(),
+}).strict().superRefine((c, ctx) => {
+  if (c.gates.length === 0 && c.reason === undefined) {
+    ctx.addIssue({
+      code: 'custom', path: ['reason'],
+      message: 'a contract with no gates must carry a non-empty top-level "reason" — silence is what the ratchet exists to remove',
+    });
+  }
+  if (c.gates.length > 0 && c.reason !== undefined) {
+    ctx.addIssue({
+      code: 'custom', path: ['reason'],
+      message: 'top-level "reason" is only for an empty-gates declaration; a contract WITH gates must not carry one (a real gate cannot hide behind a hand-wave)',
+    });
+  }
+});
 
 /**
  * Closed source-authority policy (R3-H2 — the ONE shared check consumed by

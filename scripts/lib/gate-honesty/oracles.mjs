@@ -220,6 +220,34 @@ const CLI_EXIT_RECIPES = {
     expectStderrContains: '--gate requires --verify',
     envPrereq: null, // deterministic everywhere — no browser involved
   },
+  // ai-context-management exit-map gate (gate-contract-authoring.md, exemplar).
+  // ONE scenario per exit outcome (plan R3-H1) so each gate's `stated` quotes
+  // exactly the outcome it exercises, never the whole 0/1/2 table. Both run the
+  // REAL check-context-drift.mjs against a fixture repo written into the tmpdir;
+  // it resolves the repo from cwd (`args.repo || '.'`), so cwd=tmpDir isolates
+  // it from the real repo. Deterministic, no network/browser — feasibility
+  // proven 2026-07-20 before this was authored.
+  'ctx-drift-clean': {
+    args: [],
+    fixture(dir) {
+      atomicWriteFileSync(path.join(dir, 'CLAUDE.md'), '# CLAUDE\n\n@./AGENTS.md\n');
+      atomicWriteFileSync(path.join(dir, 'AGENTS.md'), '# AGENTS\n');
+    },
+    expectExit: 0, // "0 = no findings" — an aligned CLAUDE.md imports AGENTS.md
+    expectStderrContains: null,
+    envPrereq: null,
+  },
+  'ctx-drift-high': {
+    args: [],
+    fixture(dir) {
+      // No @import → ctx/missing-import, a HIGH finding.
+      atomicWriteFileSync(path.join(dir, 'CLAUDE.md'), '# CLAUDE\n\nno import here\n');
+      atomicWriteFileSync(path.join(dir, 'AGENTS.md'), '# AGENTS\n');
+    },
+    expectExit: 1, // "1 = HIGH (blocking)"
+    expectStderrContains: null,
+    envPrereq: null,
+  },
 };
 
 /** @returns {Promise<OracleResult>} */
@@ -231,14 +259,20 @@ async function cliExit(gate, { repoRoot }) {
     if (recipe.envPrereq && !recipe.envPrereq()) {
       return { state: 'env-skipped', skipReason: `scenario "${gate.scenario}" prerequisite unavailable` };
     }
-    // Fixture-owned state roots must exist before the child looks for them.
-    fs.mkdirSync(path.join(tmpDir, 'home'), { recursive: true });
-    fs.mkdirSync(path.join(tmpDir, 'tmp'), { recursive: true });
+    // Fixture-owned state roots must exist before the child looks for them —
+    // ALL of them, not just home/tmp (audit M3). A CLI that resolves
+    // XDG_CONFIG_HOME/XDG_CACHE_HOME and finds them absent can error for a
+    // reason unrelated to the gate under test. Derive the dirs from the same
+    // env buildHermeticEnv produced, so the two can't drift.
+    const provisionEnv = buildHermeticEnv(tmpDir);
+    for (const key of ['HOME', 'TMPDIR', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME']) {
+      fs.mkdirSync(provisionEnv[key], { recursive: true });
+    }
     recipe.fixture(tmpDir);
     const r = spawnSync(process.execPath, [cliAbs, ...recipe.args], {
       cwd: tmpDir,
       encoding: 'utf-8',
-      env: buildHermeticEnv(tmpDir),
+      env: provisionEnv,
       timeout: recipe.timeoutMs ?? 60_000,
     });
     // A killed child has a null status; treating that as "not the expected

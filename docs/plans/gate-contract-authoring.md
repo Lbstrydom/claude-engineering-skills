@@ -512,3 +512,32 @@ an immutable plan doc as a live CI data source — the disposition store belongs
 in the Zod-validated contract, which also vindicated the H1 concern I'd partly
 overridden). Both reshaped the design from the reviewer's side, not the
 author's.
+
+---
+
+## Implementation Log
+
+### 2026-07-20 — Phase A (schema) + Phase B (exemplar), via `/cycle --autonomous`
+
+**Landed:**
+- **Phase A schema** (`scripts/lib/gate-honesty/schema.mjs`): `gates` may be empty
+  iff a non-empty top-level `reason` is present; `reason` rejected when `gates`
+  non-empty; optional `ignoredCandidates[]` (the `not-a-gate` store, Gemini G1).
+  5 schema paths tested.
+- **Phase B exemplar** (`skills/ai-context-management/gate-contract.json`): two
+  executable `cli-exit` gates (one scenario per exit outcome, R3-H1) running the
+  real `check-context-drift.mjs` hermetically — feasibility proven before
+  authoring (exit 1 for missing-import, 0 aligned) — plus one document-only gate.
+  Census: contracted 2→3, executable 5→7, document-only 4→5, uncontracted 13→12.
+
+**Deliberately deferred to a follow-on cycle** (right-sizing, not omission):
+- **D6 coverage check + `verb-pattern.mjs`** — the diff-scoped candidate-coverage
+  enforcement is the largest, most independently-auditable infra piece; the
+  exemplar proves the per-skill loop end-to-end without it (the check gates
+  *future* authoring, it does not validate the exemplar). Building it in the
+  same pass would rush a component the whole initiative is about getting right.
+- **Phase C** (the remaining 12 skills) and **Phase D** (ratchet) — the plan
+  defines these as iterative, each its own audit + commit; Phase D's empty
+  baseline requires all skills contracted first.
+
+Status stays **Draft** — Phases A/B partial-land; C/D and the D6 check remain.

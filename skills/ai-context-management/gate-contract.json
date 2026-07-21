@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "skill": "ai-context-management",
+  "gates": [
+    {
+      "id": "ctx-exit-clean",
+      "kind": "executable",
+      "oracle": "cli-exit",
+      "scenario": "ctx-drift-clean",
+      "statedIn": "skills/ai-context-management/SKILL.md",
+      "stated": "`0` = no findings",
+      "implementation": "scripts/check-context-drift.mjs",
+      "tests": ["tests/gate-honesty.test.mjs"],
+      "proof": "process"
+    },
+    {
+      "id": "ctx-exit-high",
+      "kind": "executable",
+      "oracle": "cli-exit",
+      "scenario": "ctx-drift-high",
+      "statedIn": "skills/ai-context-management/SKILL.md",
+      "stated": "`1` = HIGH (blocking)",
+      "implementation": "scripts/check-context-drift.mjs",
+      "tests": ["tests/gate-honesty.test.mjs"],
+      "proof": "process"
+    },
+    {
+      "id": "never-write-without-confirmation",
+      "kind": "document-only",
+      "reason": "reconcile/migrate refusing to write without confirmation is agent behaviour enacted by the model following the skill, not a mechanical seam a CLI exit code can assert; no oracle in the closed registry fits"
+    }
+  ]
+}
