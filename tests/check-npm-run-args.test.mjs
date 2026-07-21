@@ -105,9 +105,12 @@ describe('findBrokenNpmRun — npm eats a flag before `--`', () => {
 });
 
 describe('scope — historical surfaces are excluded, instructions are not', () => {
-  it('excludes plans, research, status.md, and the gate itself', () => {
+  it('excludes plans, research, completed, status.md, and the gate itself', () => {
     assert.equal(isExcludedPath('docs/plans/foo.md'), true);
     assert.equal(isExcludedPath('docs/research/bar.md'), true);
+    // A consumer archive dir — records, not instructions. Wiring wine's
+    // pre-push.local surfaced a completed plan quoting the command it ran.
+    assert.equal(isExcludedPath('docs/completed/done.md'), true);
     assert.equal(isExcludedPath('status.md'), true);
     assert.equal(isExcludedPath('scripts/check-npm-run-args.mjs'), true);
     assert.equal(isExcludedPath('tests/check-npm-run-args.test.mjs'), true);

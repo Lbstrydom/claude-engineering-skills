@@ -27,10 +27,11 @@
  * `check-cli-flags.mjs`. Existing instances are baselined so the gate is a
  * ratchet, not a wall; only a NET-NEW broken command fails a push.
  *
- * **Scope excludes historical surfaces.** `docs/plans/**` and `docs/research/**`
- * are RECORDS of decisions, not instructions anyone runs, and `status.md` is an
- * append-only log whose entries legitimately QUOTE broken commands as the bug
- * being described (this file's own writeup does). Gating them would punish
+ * **Scope excludes historical surfaces.** `docs/plans/**`, `docs/research/**`,
+ * and `docs/completed/**` (a consumer archive dir) are RECORDS of decisions,
+ * not instructions anyone runs, and `status.md` is an append-only log whose
+ * entries legitimately QUOTE broken commands as the bug being described (this
+ * file's own writeup does). Gating them would punish
  * documenting the defect — the same "prose about the bug is not the bug" lesson
  * `check-cli-flags`'s comment-stripping fix records. A broken command added to a
  * plan doc is describing what was decided; a broken command added to AGENTS.md
@@ -83,6 +84,13 @@ export function isExcludedPath(rel) {
   return (
     p.startsWith('docs/plans/') ||
     p.startsWith('docs/research/') ||
+    // Archived finished plans — a records dir, same category as plans/research.
+    // Upstream has none (the docs/completed archiver was removed; completed
+    // plans stay in docs/plans with Status: Complete), but consumers keep one,
+    // and a completed plan legitimately QUOTES the command it ran. Excluding it
+    // is what lets a consumer's `--gating` be a ratchet rather than a wall on a
+    // historical record (found wiring wine-cellar-app's pre-push.local).
+    p.startsWith('docs/completed/') ||
     p === 'status.md' ||
     // The gate's own source + test quote broken commands as fixtures.
     p === 'scripts/check-npm-run-args.mjs' ||
