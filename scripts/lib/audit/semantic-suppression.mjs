@@ -168,3 +168,58 @@ export async function nearestOpenReRaise({ pool, repoId, embedding, threshold, e
   if (!r || Number(r.cosine) < threshold) return null;
   return { finding_id: r.finding_id, cosine: Number(r.cosine), primary_file: r.primary_file, detail_snapshot: r.detail_snapshot };
 }
+
+/**
+ * The PROSPECTIVE record-time hook: partition a batch of findings into those to
+ * record and those to suppress as semantic re-raises of an EXISTING open
+ * finding in another run of the same repo. The embedding of each kept finding is
+ * returned so the caller can persist it AFTER insert (finding_embeddings.finding_id
+ * is an FK to the row that does not exist yet), making it a future match target.
+ *
+ * SAFETY IS THE CONTRACT. This runs on the audit's store-write path, and a
+ * suppressed finding does not get a store row. So every failure mode defaults to
+ * KEEP: an embedding error, a query error, a missing embedding — the finding is
+ * recorded, never dropped. The only thing that suppresses is a POSITIVE,
+ * above-threshold, same-file match. A caller wrapping this in try/catch and
+ * recording everything on throw is the intended belt-and-braces.
+ *
+ * @param {object} args
+ * @param {import('pg').Pool|import('pg').PoolClient} args.pool
+ * @param {string} args.repoId
+ * @param {string} args.runId               excluded from matches (not a re-raise of self)
+ * @param {object[]} args.findings          each carrying detail_snapshot text + _primaryFile/section
+ * @param {(text:string)=>Promise<number[]>} args.embed   detail → vector (secret-redacted by the caller's embedText)
+ * @param {number} args.threshold
+ * @param {boolean} args.requireSameFile
+ * @param {(msg:string)=>void} [args.log]
+ * @returns {Promise<{kept:object[], suppressed:Array<{finding:object, matchedId:string, cosine:number}>,
+ *                    vectorByFinding: Map<object, number[]>}>}
+ */
+export async function partitionRecordTimeReRaises({ pool, repoId, runId, findings, embed, threshold, requireSameFile, log = () => {} }) {
+  const kept = [], suppressed = [];
+  const vectorByFinding = new Map();
+  for (const f of findings) {
+    const text = typeof f?.detail === 'string' ? f.detail : (typeof f?.detail_snapshot === 'string' ? f.detail_snapshot : '');
+    if (!text || text.trim().length < 30) { kept.push(f); continue; } // nothing to compare — keep
+    let vec = null, neighbour = null;
+    try {
+      vec = await embed(text.slice(0, 500));
+      neighbour = await nearestOpenReRaise({ pool, repoId, embedding: vec, threshold, excludeRunId: runId });
+    } catch (err) {
+      log(`  [semantic-suppress] keep-on-error: ${err.message?.slice(0, 80)}`);
+      kept.push(f); // fail-open — never drop a finding because of a suppression fault
+      continue;
+    }
+    const decision = decideReRaise(
+      { primaryFile: f._primaryFile || f.section, section: f.section },
+      neighbour, { threshold, requireSameFile },
+    );
+    if (decision.suppress) {
+      suppressed.push({ finding: f, matchedId: decision.matchedId, cosine: decision.cosine });
+    } else {
+      kept.push(f);
+      if (vec) vectorByFinding.set(f, vec);
+    }
+  }
+  return { kept, suppressed, vectorByFinding };
+}

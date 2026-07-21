@@ -590,15 +590,21 @@ export const tieredAuditConfig = Object.freeze({
 
 // ── Semantic Re-raise Suppression (pgvector prototype promotion, 2026-07-21) ──
 // Promotes docs/research/pgvector-clustering-prototype.md into a store-level
-// dedup: a new audit finding that is a cosine re-raise of an existing OPEN
-// finding (same repo+file) does not write a duplicate audit_findings row.
-// OFF by default and validated before any default-on flip — same convention as
-// the tiered pipeline above (a suppressor that hides data earns its default
-// only after a validation window, never on first ship).
+// dedup: a new `merged` audit finding that is a cosine re-raise of an existing
+// OPEN finding (same repo+file) does not write a duplicate audit_findings row.
+//
+// DEFAULT-ON (2026-07-21, operator flip after the retrospective reconciler was
+// validated on two repos). The kill switch is AUDIT_SEMANTIC_SUPPRESS_ENABLED=false.
+// COST NOTE: when on, recordFindings embeds each `merged` finding (one Gemini
+// call apiece, secret-redacted) to compare it — modest (~$0.01/round) but not
+// zero; a repo that does not want it (or has no embedding creds) sets the kill
+// switch. The whole path is FAIL-OPEN: cloud-off, no creds, or any error →
+// every finding is recorded, and only the redundant store row is ever dropped,
+// never the audit's user-facing report.
 export const semanticSuppressConfig = Object.freeze({
-  // Explicit opt-in. The store-dedup path is skipped entirely when false, so an
-  // un-opted-in audit is byte-identical to today (no embedding cost, no query).
-  enabled: process.env.AUDIT_SEMANTIC_SUPPRESS_ENABLED === 'true',
+  // Opt-OUT: on unless explicitly disabled. `=== 'false'` (not a truthy check)
+  // so only the exact kill-switch value turns it off; anything else stays on.
+  enabled: process.env.AUDIT_SEMANTIC_SUPPRESS_ENABLED !== 'false',
   // Deliberately HIGH — well above the 0.85 the prototype used for MEASURING.
   // Measuring tolerates recall over precision; suppression is the opposite (a
   // false suppression drops a store row that might be a genuinely-new finding).

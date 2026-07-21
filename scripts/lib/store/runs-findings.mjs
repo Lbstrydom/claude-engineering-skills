@@ -25,6 +25,74 @@
 import { many, one, query, insertReturning, updateWhere, deleteWhere, withTx, pgArray } from '../db/query.mjs';
 import { getPool } from '../db/client.mjs';
 import { isCloudEnabled, getRepoIdByName } from './repo.mjs';
+import crypto from 'node:crypto';
+import { semanticSuppressConfig, symbolIndexConfig } from '../config.mjs';
+import { partitionRecordTimeReRaises, toVectorLiteral } from '../audit/semantic-suppression.mjs';
+import { embedText } from '../embed-text.mjs';
+
+/**
+ * Prospective semantic re-raise suppression at the store-write boundary — the
+ * promoted record-time hook (docs/research/pgvector-clustering-prototype.md).
+ * Given the `merged` findings about to be recorded, drop the ones that are a
+ * cosine re-raise of an existing OPEN finding in ANOTHER run of the same repo,
+ * so the store never accumulates a reworded duplicate. Returns the findings to
+ * record + the vectors to persist for the kept ones (future match targets).
+ *
+ * FAIL-OPEN end to end: disabled, cloud-off, no repo, or ANY error → returns
+ * every finding unchanged. A suppressed finding loses only its learning-store
+ * row, never its place in the audit's user-facing report (that is produced
+ * elsewhere). So the worst a bug here can do is keep a duplicate row.
+ */
+async function applyRecordTimeSuppression(runId, findings, passName) {
+  if (!semanticSuppressConfig.enabled || passName !== 'merged' || !Array.isArray(findings) || findings.length === 0) {
+    return { kept: findings, vectorByFinding: null };
+  }
+  try {
+    const pool = await getPool();
+    if (!pool) return { kept: findings, vectorByFinding: null };
+    const runRow = await one('SELECT repo_id FROM audit_runs WHERE id = $1', [runId]);
+    const repoId = runRow?.repo_id;
+    if (!repoId) return { kept: findings, vectorByFinding: null };
+    const embed = async (text) => {
+      const { result } = await embedText(text, { dim: symbolIndexConfig.embedDim, model: symbolIndexConfig.embedModel });
+      return result;
+    };
+    const { kept, suppressed, vectorByFinding } = await partitionRecordTimeReRaises({
+      pool, repoId, runId, findings, embed,
+      threshold: semanticSuppressConfig.threshold,
+      requireSameFile: semanticSuppressConfig.requireSameFile,
+      log: (m) => process.stderr.write(m + '\n'),
+    });
+    if (suppressed.length) {
+      process.stderr.write(`  [semantic-suppress] recorded ${kept.length}, suppressed ${suppressed.length} re-raise(s) of existing open findings\n`);
+    }
+    return { kept, vectorByFinding };
+  } catch (err) {
+    process.stderr.write(`  [semantic-suppress] disabled for this batch (keep-all): ${err.message?.slice(0, 100)}\n`);
+    return { kept: findings, vectorByFinding: null };
+  }
+}
+
+/** Persist embeddings for just-recorded kept findings so they become future
+ *  match targets. Best-effort, keyed by fingerprint→id from the INSERT RETURNING. */
+async function persistKeptEmbeddings(exec, keptFindings, vectorByFinding, idByFingerprint) {
+  if (!vectorByFinding || vectorByFinding.size === 0) return;
+  for (const f of keptFindings) {
+    const vec = vectorByFinding.get(f);
+    if (!vec) continue;
+    const id = idByFingerprint.get(f._hash || 'unknown');
+    if (!id) continue;
+    try {
+      const text = (typeof f.detail === 'string' ? f.detail : '').slice(0, 500);
+      const hash = crypto.createHash('sha256').update(text).digest('hex').slice(0, 16);
+      await exec.query(
+        `INSERT INTO finding_embeddings (finding_id, embedding, embedding_model, dimension, snapshot_hash)
+         VALUES ($1::uuid,$2::vector,$3,$4,$5)
+         ON CONFLICT (finding_id) DO UPDATE SET embedding=EXCLUDED.embedding, snapshot_hash=EXCLUDED.snapshot_hash, created_at=now()`,
+        [id, toVectorLiteral(vec), symbolIndexConfig.embedModel, symbolIndexConfig.embedDim, hash]);
+    } catch { /* best-effort — a missing embedding only weakens future dedup, never breaks recording */ }
+  }
+}
 
 /**
  * True only for PostgreSQL `undefined_column` (SQLSTATE 42703) — the one error
@@ -348,7 +416,11 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
   // is byte-identical.
   const hasArm = await columnExists('audit_findings', 'arm', many, isCloudEnabled);
   const hasIsQuickFix = await columnExists('audit_findings', 'is_quick_fix', many, isCloudEnabled);
-  const rows = findings.map((f) => {
+  // Prospective semantic re-raise suppression (record-time hook). Fail-open:
+  // returns every finding when disabled or on any error. Only `merged` findings
+  // (the code-audit path that carries the measured churn) are considered.
+  const { kept: keptFindings, vectorByFinding } = await applyRecordTimeSuppression(runId, findings, passName);
+  const rows = keptFindings.map((f) => {
     const base = {
       run_id: runId,
       finding_fingerprint: f._hash || 'unknown',
@@ -398,8 +470,15 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
       return `(${placeholders.join(', ')})`;
     });
     const sql = `INSERT INTO audit_findings (${cols.map((c) => `"${c}"`).join(', ')})
-                 VALUES ${valueGroups.join(', ')}`;
-    await exec.query(sql, params);
+                 VALUES ${valueGroups.join(', ')}
+                 RETURNING id, finding_fingerprint`;
+    const inserted = await exec.query(sql, params);
+    // Persist embeddings for the kept findings so they become future dedup
+    // targets. Best-effort; keyed by fingerprint→id (unique within a batch).
+    if (vectorByFinding && vectorByFinding.size > 0) {
+      const idByFingerprint = new Map((inserted.rows || []).map((r) => [r.finding_fingerprint, r.id]));
+      await persistKeptEmbeddings(exec, keptFindings, vectorByFinding, idByFingerprint);
+    }
   } catch (err) {
     process.stderr.write(`  [learning] recordFindings failed: ${err.message}\n`);
   }

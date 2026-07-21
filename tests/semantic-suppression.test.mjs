@@ -9,7 +9,12 @@ import assert from 'node:assert/strict';
 
 import {
   decideReRaise, cosine, greedyReRaiseClusters, toVectorLiteral,
+  partitionRecordTimeReRaises,
 } from '../scripts/lib/audit/semantic-suppression.mjs';
+
+// A mock pg pool whose nearestOpenReRaise query returns a scripted neighbour.
+const mockPool = (neighbourRow) => ({ query: async () => ({ rows: neighbourRow ? [neighbourRow] : [] }) });
+const okEmbed = async () => [1, 0, 0];
 
 const OPTS = { threshold: 0.92, requireSameFile: true };
 
@@ -101,4 +106,51 @@ test('toVectorLiteral formats + rejects non-finite', () => {
   assert.equal(toVectorLiteral([0.1, 0.2, -0.3]), '[0.1,0.2,-0.3]');
   assert.throws(() => toVectorLiteral([]));
   assert.throws(() => toVectorLiteral([1, NaN]));
+});
+
+// ── record-time hook: partitionRecordTimeReRaises ──────────────────────────
+
+const RT = { threshold: 0.92, requireSameFile: true, runId: 'run-1' };
+
+test('record-time: suppresses a finding matching a same-file open neighbour', async () => {
+  const pool = mockPool({ finding_id: 'open-9', primary_file: 'a/b.mjs', detail_snapshot: 'x', cosine: 0.97 });
+  const findings = [{ detail: 'a'.repeat(40), section: 'a/b.mjs', _hash: 'fp1' }];
+  const r = await partitionRecordTimeReRaises({ pool, repoId: 'r', embed: okEmbed, findings, ...RT });
+  assert.equal(r.kept.length, 0);
+  assert.equal(r.suppressed.length, 1);
+  assert.equal(r.suppressed[0].matchedId, 'open-9');
+});
+
+test('record-time: keeps a finding with NO neighbour', async () => {
+  const pool = mockPool(null);
+  const findings = [{ detail: 'a'.repeat(40), section: 'a/b.mjs', _hash: 'fp1' }];
+  const r = await partitionRecordTimeReRaises({ pool, repoId: 'r', embed: okEmbed, findings, ...RT });
+  assert.equal(r.kept.length, 1);
+  assert.equal(r.suppressed.length, 0);
+  assert.ok(r.vectorByFinding.get(findings[0]), 'kept finding carries its vector for persistence');
+});
+
+test('record-time: FAIL-OPEN — an embed error records the finding, never drops it', async () => {
+  const pool = mockPool({ finding_id: 'open-9', primary_file: 'a/b.mjs', detail_snapshot: 'x', cosine: 0.99 });
+  const badEmbed = async () => { throw new Error('gemini down'); };
+  const findings = [{ detail: 'a'.repeat(40), section: 'a/b.mjs', _hash: 'fp1' }];
+  const r = await partitionRecordTimeReRaises({ pool, repoId: 'r', embed: badEmbed, findings, ...RT });
+  assert.equal(r.kept.length, 1, 'embed failure must keep the finding');
+  assert.equal(r.suppressed.length, 0);
+});
+
+test('record-time: FAIL-OPEN — a query error keeps the finding', async () => {
+  const pool = { query: async () => { throw new Error('db down'); } };
+  const findings = [{ detail: 'a'.repeat(40), section: 'a/b.mjs', _hash: 'fp1' }];
+  const r = await partitionRecordTimeReRaises({ pool, repoId: 'r', embed: okEmbed, findings, ...RT });
+  assert.equal(r.kept.length, 1);
+});
+
+test('record-time: a too-short detail is kept without embedding (nothing to compare)', async () => {
+  let embedCalls = 0;
+  const pool = mockPool(null);
+  const findings = [{ detail: 'short', section: 'a/b.mjs', _hash: 'fp1' }];
+  const r = await partitionRecordTimeReRaises({ pool, repoId: 'r', embed: async () => { embedCalls++; return [1, 0]; }, findings, ...RT });
+  assert.equal(r.kept.length, 1);
+  assert.equal(embedCalls, 0, 'no embed call for sub-threshold-length detail');
 });

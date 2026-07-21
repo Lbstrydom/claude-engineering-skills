@@ -1,5 +1,38 @@
 # Project Status Log
 
+## 2026-07-21 — flipped the record-time hook ON: churn stopped at the source
+
+The prospective hook I'd deferred for a validation window is now built, wired,
+and default-ON — the user made the call after the reconciler validated on two
+repos (cluster density returned GREEN).
+
+**Wiring.** `partitionRecordTimeReRaises` (semantic-suppression.mjs) + an
+`applyRecordTimeSuppression`/`persistKeptEmbeddings` pair inside `recordFindings`.
+For the `merged` pass: embed each finding, `nearestOpenReRaise` against existing
+OPEN findings in OTHER runs of the repo, drop the cosine re-raises before insert,
+and persist the kept findings' embeddings (via the INSERT `RETURNING`) so they
+become future match targets. So a new audit never *writes* the duplicate the
+reconciler would later have to clean.
+
+**Fail-open is the contract, stated and tested.** Disabled, cloud-off, no
+embedding creds, or ANY error → every finding is recorded. Five new record-time
+tests pin exactly this: embed-throws → keep, query-throws → keep, no-neighbour →
+keep, sub-threshold-length → keep-without-embedding, positive match → suppress.
+The worst a bug here can do is leave a duplicate store row; it can never drop a
+finding from the audit's user-facing report (that is produced elsewhere).
+
+**Default-ON, with the guards intact.** `AUDIT_SEMANTIC_SUPPRESS_ENABLED=false`
+is the kill switch; threshold 0.92 (vs 0.85 for measuring) + same-file required;
+cost is one Gemini embed per merged finding (~$0.01/round). Flagged the
+consumer-cost + kill switch in config + AGENTS.md.
+
+**Verified live, not just mocked** (the repo's own doctrine for runtime-asserting
+changes): a reworded copy of an open finding matched its canonical at cosine
+0.949 and was suppressed through the real embedText + real pgvector query. Full
+unit suite green (8,327); the DB integration suites pass — a fresh test container
+has an empty finding_embeddings, so nothing matches and there is zero test
+interference, which is why default-ON is safe.
+
 ## 2026-07-21 — promoted pgvector into a working semantic re-raise suppressor
 
 The prototype's recommended highest-value use, built and validated end-to-end.

@@ -123,9 +123,22 @@ Cluster-density median 13.5 → 5.5; the source repo fell to 4 pairs, **below th
 threshold of 5** — the AMBER cleared where suppression ran, honestly (canonicals
 kept, only reworded repeats removed).
 
-**Deferred (the validation-before-default convention).** The prospective
-record-time hook — wiring `nearestOpenReRaise` into the finding-record path so a
-new run never *writes* a duplicate — is left OFF (`semanticSuppressConfig.enabled`)
-until the reconciler's results are trusted across more repos, exactly as the
-tiered pipeline shipped off and shadow-validated before any flip. The core it
-needs (`nearestOpenReRaise` + `decideReRaise`) is built and tested here.
+**Prospective record-time hook — FLIPPED ON (2026-07-21).** After the
+retrospective reconciler was validated on two repos (source + wine-cellar, the
+cluster-density trigger returning GREEN), the record-time hook was wired into
+`recordFindings` (the `merged` pass) and defaulted ON. It embeds each merged
+finding, calls `nearestOpenReRaise`, and drops the ones that are a cosine
+re-raise of an existing OPEN finding in another run — so a new audit never
+*writes* the duplicate. Kept findings' embeddings are persisted (via the INSERT
+`RETURNING`) so they become future match targets.
+
+- **Fail-open end to end** — disabled, cloud-off, no embedding creds, or ANY
+  error → every finding is recorded. Only a positive above-threshold same-file
+  match suppresses, and only the redundant store row is dropped, never the
+  audit's user-facing report.
+- **Kill switch**: `AUDIT_SEMANTIC_SUPPRESS_ENABLED=false`.
+- **Cost**: one Gemini embed per merged finding when on (~$0.01/round).
+- **Live-verified**: a reworded copy of an open finding matched its canonical at
+  cosine 0.949 and was suppressed; the DB integration suites pass (a fresh
+  container has no embeddings → nothing matches → no interference).
+- Guards unchanged: threshold 0.92 (vs 0.85 for measuring), same-file required.

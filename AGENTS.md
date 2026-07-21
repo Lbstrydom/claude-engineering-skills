@@ -489,11 +489,11 @@ return to green. Run locally: `npm run memory:health` or `npm run memory:health:
 for 2 consecutive weeks → prototype pgvector similarity. 2+ triggers → build
 the full clustering pipeline.
 
-> **pgvector prototyped + promoted (2026-07-21):** trigram UNDER-counts churn; semantic
-> cosine catches reworded re-raises. `scripts/semantic-suppress.mjs` reconciler (dry-run
-> default; keeps oldest canonical, dismisses reworded repeats — dedups the store row, NEVER
-> the audit report); core `scripts/lib/audit/semantic-suppression.mjs` + `semanticSuppressConfig`
-> (record-time hook OFF, validate-before-flip). [`docs/research/pgvector-clustering-prototype.md`](docs/research/pgvector-clustering-prototype.md).
+> **pgvector prototyped + promoted (2026-07-21):** trigram UNDER-counts churn; semantic cosine
+> catches reworded re-raises. `scripts/semantic-suppress.mjs` reconciler (dry-run default) + a
+> record-time hook in `recordFindings` (merged pass) **default-ON**, fail-open, kill switch
+> `AUDIT_SEMANTIC_SUPPRESS_ENABLED=false`. Dedups the store row, NEVER the audit report; core
+> `semantic-suppression.mjs`/`semanticSuppressConfig`. [`docs/research/pgvector-clustering-prototype.md`](docs/research/pgvector-clustering-prototype.md).
 
 ## Learning System (Phase 1)
 
