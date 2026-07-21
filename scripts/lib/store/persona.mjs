@@ -29,11 +29,19 @@ const CLICK_PATH_CAP = 40;
  * @param {string} s
  * @returns {boolean}
  */
+/** Percent-decode once, tolerating a malformed `%` sequence (returns raw). The
+ *  single decode helper so EVERY secret/route heuristic sees the same decoded
+ *  form — an encoded token or auth keyword can't bypass one check by matching a
+ *  different one's encoding assumption (audit HIGH — encoded-auth-keyword bypass). */
+function safeDecode(s) {
+  try { return decodeURIComponent(s); } catch { return s; }
+}
+
 function looksSecret(s) {
   if (typeof s !== 'string' || s.length === 0) return false;
   // Percent-decode first so encoded secrets (`jane%40example.com`, `%2F`) can't
   // bypass the shape checks (audit HIGH — safe-decode).
-  try { s = decodeURIComponent(s); } catch { /* malformed % — check raw */ }
+  s = safeDecode(s);
   if (s.includes('@')) return true;                                  // email
   if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s)) return true; // uuid
   if (/^[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\./.test(s)) return true; // JWT-ish
@@ -79,8 +87,12 @@ function redactParams(paramStr) {
 /** Collapse path segments: a segment that LOOKS secret OR follows an auth-route
  *  keyword (`/reset/<token>` → `/reset/:param`) becomes `:param`. */
 function collapsePath(segments) {
+  // Decode the preceding segment before the auth-keyword test — matches
+  // looksSecret's decode, so `/%72eset/123456` (encoded "reset") collapses its
+  // token just like `/reset/123456` does (audit HIGH — encoded-auth-keyword
+  // bypass: `new URL().pathname` does NOT decode, so a raw-form test missed it).
   return segments.map((seg, i) => (
-    looksSecret(seg) || (i > 0 && AUTH_KEYWORD.test(segments[i - 1]) && seg.length > 0) ? ':param' : seg
+    looksSecret(seg) || (i > 0 && AUTH_KEYWORD.test(safeDecode(segments[i - 1])) && seg.length > 0) ? ':param' : seg
   )).join('/');
 }
 

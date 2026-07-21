@@ -45,6 +45,7 @@ test('sanitizeStepUrl strips origin, collapses tokens, redacts secret query, kee
   assert.equal(sanitizeStepUrl('https://staging.private.app/cellar?view=cellar'), '/cellar?view=cellar');
   assert.equal(sanitizeStepUrl('https://x/reset/SECRETtoken123'), '/reset/:param');                  // auth keyword
   assert.equal(sanitizeStepUrl('https://x/reset-password/abc'), '/reset-password/:param');            // compound slug
+  assert.equal(sanitizeStepUrl('https://x/%72eset/123456'), '/%72eset/:param');                        // encoded auth keyword ("reset") — following OTP still collapsed (audit HIGH bypass)
   assert.equal(sanitizeStepUrl('https://x/users/jane%40example.com'), '/users/:param');               // encoded email
   assert.match(sanitizeStepUrl('https://x/login?code=123456&otp=999&view=cellar'), /code=:param.*otp=:param.*view=cellar/); // short tokens redacted, routing kept
   assert.equal(sanitizeStepUrl('https://x/#/wines/42'), '/#/wines/42');                                // hash-route preserved; short id is not a secret
