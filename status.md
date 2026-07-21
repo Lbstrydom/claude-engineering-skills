@@ -1,5 +1,37 @@
 # Project Status Log
 
+## 2026-07-21 — wired the missing writer for refresh_runs.files_* (the column that lied by omission)
+
+A diagnostic question about `arch:refresh` — "why is `files_modified` empty on
+every incremental refresh despite real diffs?" — traced to a column with **no
+writer**. `files_added/modified/deleted/renamed/untracked` were declared on
+`refresh_runs` at the table's birth (migration `20260501120000`) with DEFAULT
+`'[]'::jsonb` but never wired, so every row — full and incremental alike —
+carried the empty default forever. Crucially, this was **decoupled** from
+behaviour: incremental scoping runs entirely through the in-memory
+`touchedSet`/`restrictFiles` (fed to extract via `--files-from` and to pragma
+resolution via `touchedSet`), never round-tripping the column. So the empty
+column was a telemetry gap, not the diff coming back empty — and could not be
+the cause of any pragma-resolution symptom.
+
+**The fix is the missing writer, nothing more.** New `recordRefreshDiffStats`
+([refresh-runs.mjs](scripts/lib/store/arch/refresh-runs.mjs)) does a best-effort,
+cloud-gated `UPDATE refresh_runs SET files_*` — jsonb arrays passed **raw** so
+`updateWhere`'s `serializeWriteParam` JSON-serializes them (the M3 jsonb-write
+invariant). Called from [refresh.mjs](scripts/symbol-index/refresh.mjs) as step
+14b, **after** publish, sourced from the structured post-filter `diff` (five
+categories broken out), **not** the flattened `touchedSet` (which collapses all
+five categories and folds in non-git summary-retry files — that would swap one
+lie for a subtler one). A full rebuild computes no diff → columns stay `[]`, the
+honest "not a differential run" value.
+
+**Deliberately NOT folded into `publish_refresh_run`.** That RPC is SECURITY
+DEFINER with a pinned search_path + revoked anon execute; widening its signature
+for annotation columns would force a migration + re-grant + search_path re-pin
+for zero behavioural gain. A plain UPDATE on the already-existing row is the
+right-sized surface — no migration needed. Observability only; nothing reads the
+columns. Export-contract pins bumped (42/175) + refresh-path suite green.
+
 ## 2026-07-21 — migrated cluster density from trigram to semantic; the AMBER got honest
 
 The gate was reading AMBER on a trigram metric (>0.5, any-file, any-run) that

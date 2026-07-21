@@ -48,6 +48,7 @@ import {
   recordSymbolEmbedding,
   recordLayeringViolations,
   recordDuplicateJustifications,
+  recordRefreshDiffStats,
   recordSymbolFileImports,
   copyForwardImports,
   markImportGraphPopulated,
@@ -340,6 +341,11 @@ async function main() {
       // 4. Enumerate files
       let restrictFiles = null;
       let touchedSet = null;
+      // Differential file lists for the refresh_runs.files_* annotation columns
+      // (written after publish, step 14b). Non-null ONLY on a differential run
+      // that computed a git diff; a full rebuild leaves it null → columns stay
+      // `[]` (honest "not a differential run", not a lie).
+      let diffStats = null;
       if (mode === 'incremental' && sinceCommit) {
         const diffResult = vcs.gitDiffWithWorkingTree(repoRoot, sinceCommit);
         if (!diffResult.ok) {
@@ -349,6 +355,19 @@ async function main() {
         // so the indexer tombstones prior rows; sensitive `deleted` is
         // preserved as tombstone. See sensitive-paths.mjs filterDiffFiles.
         const { diff, skipped } = filterDiffFiles(diffResult.files, ['sensitive', 'generatedNoise']);
+        // Capture the POST-filter diff (what the indexer actually acts on:
+        // sensitive paths already rewritten to `deleted`) for the annotation
+        // columns. Sourced from the structured `diff`, NOT the flattened
+        // `touchedSet` — touchedSet collapses all five categories into one set
+        // and folds in non-git summary-retry files, so it cannot honestly
+        // populate a per-category column.
+        diffStats = {
+          added: diff.added,
+          modified: diff.modified,
+          deleted: diff.deleted,
+          renamed: diff.renamed,
+          untracked: diff.untracked,
+        };
         for (const line of formatSkipLog(skipped, { logger: 'refresh' })) {
           process.stderr.write(`  ${line}\n`);
         }
@@ -775,6 +794,23 @@ async function main() {
         activeEmbeddingDim: embedDim,
       });
       logOk(`published refresh ${refreshId} as active`);
+
+      // 14b. Annotate the published run with its differential file lists so the
+      // refresh_runs.files_* columns stop carrying the schema DEFAULT `'[]'`
+      // forever (observability only — nothing reads them). AFTER publish so
+      // only a run that actually became active is annotated; best-effort — the
+      // writer swallows + logs its own failure and never disturbs a published
+      // snapshot. Skipped on a full rebuild (diffStats === null): no diff, so
+      // `[]` is the honest value.
+      if (diffStats) {
+        const wrote = await recordRefreshDiffStats({ refreshId, ...diffStats });
+        if (wrote) {
+          logOk(
+            `annotated files_* (added=${diffStats.added.length} modified=${diffStats.modified.length} `
+            + `deleted=${diffStats.deleted.length} renamed=${diffStats.renamed.length} untracked=${diffStats.untracked.length})`,
+          );
+        }
+      }
 
       // 13. Per-repo band calibration (plan §2.1 C4-REVISED).
       //
