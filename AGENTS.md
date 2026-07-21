@@ -459,7 +459,7 @@ recover. Three triggers:
 | Metric | What it measures | Default trigger |
 |---|---|---|
 | Fuzzy re-raise rate | New-fingerprint findings whose text matches a prior finding (trigram sim > 0.6) | `> 15%` |
-| Cluster density | Median per-repo count of open finding pairs with sim > 0.5 but different fingerprints. **Excludes machine-emitted control-state markers** (see below) | `>= 5` |
+| Cluster density | Median per-repo count of open finding pairs that are **semantic same-file cross-run re-raises** (cosine > 0.85 over `finding_embeddings`, migrated off trigram 2026-07-21). Reports embedding **coverage**; a low-coverage reading is `unknown`, not green. Excludes control-state markers. Trigram survives as a fallback when the semantic RPC is absent | `>= 5` |
 | Recurrence rate | Fixed findings that reappear in same repo within 30 days under a new fingerprint | `> 10%` |
 
 Runtime is the `memory_health_metrics(window_days)` Postgres RPC added by

@@ -45,7 +45,16 @@ const THRESHOLDS = {
   fuzzyReraiseRate: numEnv('MEMORY_HEALTH_FUZZY_RATE', 0.15),
   clusterMedianPairs: numEnv('MEMORY_HEALTH_CLUSTER_MEDIAN', 5),
   recurrenceRate: numEnv('MEMORY_HEALTH_RECURRENCE_RATE', 0.10),
-  minFindingsForSignal: numEnv('MEMORY_HEALTH_MIN_FINDINGS', 50)
+  minFindingsForSignal: numEnv('MEMORY_HEALTH_MIN_FINDINGS', 50),
+  // Semantic cluster density (2026-07-21 migration off trigram): cosine over
+  // finding_embeddings, same-file cross-run. 0.85 is the prototype's measuring
+  // threshold (superset of trigram 0.5); higher-cosine churn is what the 0.92
+  // suppression already removes.
+  clusterCosine: numEnv('MEMORY_HEALTH_CLUSTER_COSINE', 0.85),
+  // Coverage honesty: below this embedded-fraction the semantic reading is
+  // NOT authoritative (unscored findings could harbour unseen churn), so the
+  // trigger degrades to `unknown` rather than a false GREEN.
+  clusterMinCoverage: numEnv('MEMORY_HEALTH_CLUSTER_MIN_COVERAGE', 0.5),
 };
 
 function parseArgs(argv) {
@@ -75,9 +84,15 @@ async function callRpc() {
   if (!process.env.AUDIT_DB_URL) {
     throw new Error('AUDIT_DB_URL not set — cannot run health check (legacy SUPABASE_AUDIT_* keys were sunset in postgres-parity M4)');
   }
-  const { memoryHealthMetrics } = await import('./lib/db/rpc.mjs');
+  const { memoryHealthMetrics, memoryHealthSemanticCluster } = await import('./lib/db/rpc.mjs');
   const data = await memoryHealthMetrics({ windowDays: WINDOW_DAYS });
   if (!data) throw new Error('memory_health_metrics returned null');
+  // Semantic cluster density (migration 20260721140000) — the primary cluster
+  // signal, replacing the trigram one. Null on a pre-migration store, in which
+  // case the gate transparently falls back to the trigram metric below.
+  data.semantic_cluster = await memoryHealthSemanticCluster({
+    windowDays: WINDOW_DAYS, cosineThreshold: THRESHOLDS.clusterCosine,
+  });
   return data;
 }
 
@@ -167,6 +182,45 @@ function renderFrictionSection(friction) {
   return lines;
 }
 
+/**
+ * Cluster-density trigger — SEMANTIC (cosine, same-file, cross-run) as the
+ * primary signal, with two honesty rules:
+ *   - Pre-migration store (semantic RPC absent) → fall back to the trigram
+ *     metric, byte-identical to before.
+ *   - Coverage below the floor → the reading is `unknown`: NOT fired (a
+ *     low-coverage green would be a false-clean), but flagged so it can never
+ *     read as a clean pass. Mirrors arch-coverage-gate's "absent = unknown".
+ */
+function evaluateClusterDensity(metrics, insufficient) {
+  const trigram = metrics.cluster_density;
+  const sem = metrics.semantic_cluster;
+  if (!sem) {
+    // Transition/degraded: no semantic RPC → the legacy trigram metric.
+    return {
+      fired: !insufficient && Number(trigram.median_similar_pairs) >= THRESHOLDS.clusterMedianPairs,
+      actual: Number(trigram.median_similar_pairs),
+      threshold: THRESHOLDS.clusterMedianPairs,
+      similarity: 'trigram (semantic RPC unavailable)',
+      reading: 'median similar-pair count across repos (trigram fallback)',
+    };
+  }
+  const median = Number(sem.median_similar_pairs);
+  const coveragePct = Number(sem.coverage?.pct ?? 0);
+  const lowCoverage = coveragePct / 100 < THRESHOLDS.clusterMinCoverage;
+  return {
+    fired: !insufficient && !lowCoverage && median >= THRESHOLDS.clusterMedianPairs,
+    unknown: lowCoverage,
+    actual: median,
+    threshold: THRESHOLDS.clusterMedianPairs,
+    similarity: `semantic cosine>${THRESHOLDS.clusterCosine}, same-file cross-run`,
+    coveragePct,
+    trigramActual: Number(trigram.median_similar_pairs),
+    reading: lowCoverage
+      ? `median semantic same-file re-raise pairs — UNKNOWN (only ${coveragePct}% of open findings embedded; below the ${Math.round(THRESHOLDS.clusterMinCoverage * 100)}% floor)`
+      : `median semantic same-file re-raise pairs (${coveragePct}% coverage; trigram companion: ${Number(trigram.median_similar_pairs)})`,
+  };
+}
+
 function evaluateTriggers(metrics) {
   const { total_findings_in_window, fuzzy_reraise, cluster_density, recurrence } = metrics;
 
@@ -179,12 +233,7 @@ function evaluateTriggers(metrics) {
       threshold: THRESHOLDS.fuzzyReraiseRate,
       reading: `${fuzzy_reraise.fuzzy_matched}/${fuzzy_reraise.new_fingerprints} new-fingerprint findings matched a prior finding by text similarity`
     },
-    cluster_density: {
-      fired: !insufficient && Number(cluster_density.median_similar_pairs) >= THRESHOLDS.clusterMedianPairs,
-      actual: Number(cluster_density.median_similar_pairs),
-      threshold: THRESHOLDS.clusterMedianPairs,
-      reading: `median similar-pair count across repos`
-    },
+    cluster_density: evaluateClusterDensity(metrics, insufficient),
     recurrence: {
       fired: !insufficient && Number(recurrence.rate) > THRESHOLDS.recurrenceRate,
       actual: Number(recurrence.rate),
@@ -237,7 +286,8 @@ function renderMarkdown(metrics, evaluation, friction = { available: false, reas
   lines.push('| Metric | Value | Threshold | Trigger |');
   lines.push('|---|---|---|---|');
   lines.push(`| Fuzzy re-raise rate | ${pct(triggers.fuzzy_reraise.actual)} | \`> ${pct(triggers.fuzzy_reraise.threshold)}\` | ${triggers.fuzzy_reraise.fired ? 'FIRED' : 'green'} |`);
-  lines.push(`| Cluster density (median similar pairs/repo) | ${triggers.cluster_density.actual} | \`>= ${triggers.cluster_density.threshold}\` | ${triggers.cluster_density.fired ? 'FIRED' : 'green'} |`);
+  const cdState = triggers.cluster_density.unknown ? 'UNKNOWN (low coverage)' : (triggers.cluster_density.fired ? 'FIRED' : 'green');
+  lines.push(`| Cluster density — ${triggers.cluster_density.similarity} | ${triggers.cluster_density.actual} | \`>= ${triggers.cluster_density.threshold}\` | ${cdState} |`);
   lines.push(`| Fixed-finding recurrence rate | ${pct(triggers.recurrence.actual)} | \`> ${pct(triggers.recurrence.threshold)}\` | ${triggers.recurrence.fired ? 'FIRED' : 'green'} |`);
   lines.push('');
 
@@ -254,13 +304,16 @@ function renderMarkdown(metrics, evaluation, friction = { available: false, reas
 
   lines.push('### Cluster density');
   lines.push(`${triggers.cluster_density.reading}: **${triggers.cluster_density.actual}**.`);
-  if (metrics.cluster_density.per_repo?.length) {
+  // Prefer the semantic per-repo breakdown (with coverage) when present.
+  const cdPerRepo = metrics.semantic_cluster?.per_repo ?? metrics.cluster_density.per_repo;
+  const isSemantic = !!metrics.semantic_cluster;
+  if (cdPerRepo?.length) {
     lines.push('');
-    lines.push('Top repos by similar-pair count:');
-    const top = [...metrics.cluster_density.per_repo].slice(0, 10);
-    for (const r of top) {
+    lines.push('Top repos by same-file re-raise pairs:');
+    for (const r of [...cdPerRepo].slice(0, 10)) {
       const name = r.repo_name || r.repo_id || '(unknown)';
-      lines.push(`- ${name} — ${r.similar_pairs} pairs across ${r.open_findings} open findings`);
+      const cov = isSemantic ? ` — ${r.coverage_pct}% embedded (${r.embedded_findings}/${r.open_findings})` : '';
+      lines.push(`- ${name} — ${r.similar_pairs} pairs across ${r.open_findings} open findings${cov}`);
     }
   }
   lines.push('');
@@ -335,7 +388,7 @@ async function main() {
   process.exit((evaluation.firedCount > 0 || friction.hardFail || friction.errored) ? 1 : 0);
 }
 
-export const _internals = { atomicWrite };
+export const _internals = { atomicWrite, evaluateClusterDensity, THRESHOLDS };
 
 const isMain = (() => {
   try {

@@ -184,6 +184,32 @@ export async function memoryHealthMetrics({
   return row?.result ?? null;
 }
 
+/**
+ * Semantic cluster density (migration 20260721140000) — the trigram cluster
+ * metric's replacement. Counts SAME-FILE, CROSS-RUN, cross-fingerprint pairs
+ * with cosine > threshold over finding_embeddings, per repo, and reports
+ * embedding COVERAGE so a caller never treats a low-coverage reading as
+ * authoritative. Returns null if the RPC is absent (pre-migration store).
+ *
+ * @param {{windowDays?: number, cosineThreshold?: number, perRepoCap?: number}} [args]
+ * @returns {Promise<object|null>}
+ */
+export async function memoryHealthSemanticCluster({
+  windowDays, cosineThreshold, perRepoCap,
+} = {}) {
+  try {
+    const row = await one(
+      'SELECT memory_health_semantic_cluster($1::integer, $2::numeric, $3::integer) AS result',
+      [windowDays ?? 30, cosineThreshold ?? 0.85, perRepoCap ?? 200],
+    );
+    return row?.result ?? null;
+  } catch (err) {
+    // Undefined-function (42883) = pre-migration store → null (caller degrades).
+    if (err?.code === '42883') return null;
+    throw err;
+  }
+}
+
 // ── 5. top_duplicate_clusters (set) ───────────────────────────────────────
 
 /**

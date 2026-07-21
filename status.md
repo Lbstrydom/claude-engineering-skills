@@ -1,5 +1,36 @@
 # Project Status Log
 
+## 2026-07-21 — migrated cluster density from trigram to semantic; the AMBER got honest
+
+The gate was reading AMBER on a trigram metric (>0.5, any-file, any-run) that
+counts a much broader set than the semantic suppression acts on — topically
+similar but distinct findings it was never meant to touch. Migrated the metric
+to measure what suppression targets: the re-raise SHAPE.
+
+**What it now measures.** `memory_health_semantic_cluster` (migration
+`20260721140000`): median per-repo count of SAME-FILE, CROSS-RUN,
+cross-fingerprint pairs with cosine > 0.85 over `finding_embeddings`. Cross-file
+high-cosine pairs are usually different problems; same-run pairs are within-audit
+— neither is "the same finding re-raised across audits", which is exactly what
+this counts. Calibrated on real data: same-file cross-run pairs at the
+suppression's own 0.92 threshold are ~0 (suppression works), and the 0.85
+default catches the residual it misses (re-raises reworded past cos 0.92).
+
+**Coverage honesty is load-bearing.** Only embedded findings can be scored, and
+coverage is ~78% today (older findings predate `finding_embeddings`; new ones
+are embedded by the record-time hook). The RPC always reports the embedded
+fraction, and the gate degrades a below-50%-coverage reading to `unknown` — NOT
+a false green, mirroring arch-coverage-gate's "absent = unknown". Falls back to
+the trigram metric byte-identically when the semantic RPC is absent
+(pre-migration). Guarded by 5 new tests in memory-health.test.mjs.
+
+**The result: 17.5 (trigram) → 8 (semantic), still AMBER, now MEANINGFUL.** The
+8 is genuine: same-file cross-run reworded re-raises the conservative 0.92
+suppression missed (claude-engineering-skills 10 @ 94% coverage, wine-cellar 6 @
+63%). That is the honest, actionable churn — the follow-up is to reconcile it (or
+lower the suppression threshold), NOT to dismiss it. The migration didn't make
+the gate green; it made the AMBER TRUE. That was the point.
+
 ## 2026-07-21 — the post-flip check caught a violation I'd introduced by flipping
 
 Checking the record-time hook in production surfaced two things.

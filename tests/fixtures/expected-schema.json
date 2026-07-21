@@ -6890,6 +6890,13 @@
       "config": "statement_timeout=120s,search_path=public, pg_temp"
     },
     {
+      "function_name": "memory_health_semantic_cluster",
+      "args": "window_days integer, cosine_threshold numeric, per_repo_cap integer, control_marker_prefixes text[]",
+      "return_type": "jsonb",
+      "security_definer": true,
+      "config": "search_path=pg_catalog, public,statement_timeout=120s"
+    },
+    {
       "function_name": "model_ab_attribute_arms",
       "args": "p_stage text, p_arm text",
       "return_type": "text[]",
