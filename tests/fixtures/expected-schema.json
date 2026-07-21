@@ -2088,6 +2088,53 @@
       ]
     },
     {
+      "table_name": "finding_embeddings",
+      "columns": [
+        {
+          "column_name": "finding_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "embedding",
+          "data_type": "USER-DEFINED",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "embedding_model",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 3
+        },
+        {
+          "column_name": "dimension",
+          "data_type": "integer",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 4
+        },
+        {
+          "column_name": "snapshot_hash",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 5
+        },
+        {
+          "column_name": "created_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "NO",
+          "column_default": "now()",
+          "ordinal_position": 6
+        }
+      ]
+    },
+    {
       "table_name": "finding_equivalence",
       "columns": [
         {
@@ -8214,6 +8261,18 @@
       "definition": "CHECK ((ruling = ANY (ARRAY['sustain'::text, 'overrule'::text, 'compromise'::text])))"
     },
     {
+      "table_name": "finding_embeddings",
+      "constraint_name": "finding_embeddings_finding_id_fkey",
+      "constraint_type": "FOREIGN KEY",
+      "definition": "FOREIGN KEY (finding_id) REFERENCES audit_findings(id) ON DELETE CASCADE"
+    },
+    {
+      "table_name": "finding_embeddings",
+      "constraint_name": "finding_embeddings_pkey",
+      "constraint_type": "PRIMARY KEY",
+      "definition": "PRIMARY KEY (finding_id)"
+    },
+    {
       "table_name": "finding_equivalence",
       "constraint_name": "finding_equivalence_pkey",
       "constraint_type": "PRIMARY KEY",
@@ -9325,6 +9384,21 @@
       "indexdef": "CREATE INDEX idx_adjudication_events_finding ON public.finding_adjudication_events USING btree (finding_id)"
     },
     {
+      "tablename": "finding_embeddings",
+      "indexname": "finding_embeddings_pkey",
+      "indexdef": "CREATE UNIQUE INDEX finding_embeddings_pkey ON public.finding_embeddings USING btree (finding_id)"
+    },
+    {
+      "tablename": "finding_embeddings",
+      "indexname": "idx_finding_embeddings_model",
+      "indexdef": "CREATE INDEX idx_finding_embeddings_model ON public.finding_embeddings USING btree (embedding_model, dimension)"
+    },
+    {
+      "tablename": "finding_embeddings",
+      "indexname": "idx_finding_embeddings_vector",
+      "indexdef": "CREATE INDEX idx_finding_embeddings_vector ON public.finding_embeddings USING ivfflat (embedding vector_cosine_ops) WITH (lists='20') WHERE (embedding IS NOT NULL)"
+    },
+    {
       "tablename": "finding_equivalence",
       "indexname": "finding_equivalence_canonical_idx",
       "indexdef": "CREATE INDEX finding_equivalence_canonical_idx ON public.finding_equivalence USING btree (canonical_finding_id)"
@@ -10152,6 +10226,11 @@
     },
     {
       "grantee": "postgres",
+      "object": "public.finding_embeddings",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "postgres",
       "object": "public.finding_equivalence",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
@@ -10504,6 +10583,11 @@
     },
     {
       "object_name": "finding_adjudication_events",
+      "object_kind": "r",
+      "owner": "postgres"
+    },
+    {
+      "object_name": "finding_embeddings",
       "object_kind": "r",
       "owner": "postgres"
     },
