@@ -156,6 +156,15 @@ async function setupMaintenance(headless) {
   }
 
   content += `\nAUDIT_LOOP_WEEKLY_MAINTENANCE=1`;
+  // LEARNING_REPO_NAME must be the owner/repo slug (matches audit_repos.name)
+  // — derive it the same way the DB write path does, don't ask (found
+  // 2026-07-22: every consumer that set this by hand used the bare name and
+  // silently got {posted:false, reason:'unknown-repo'} forever).
+  if (!content.match(/^LEARNING_REPO_NAME=/m)) {
+    const { resolveRepoIdentity } = await import('./scripts/lib/repo-identity.mjs');
+    const { name: repoName } = resolveRepoIdentity(SELF_DIR);
+    content += `\nLEARNING_REPO_NAME=${repoName}`;
+  }
   fs.writeFileSync(envPath, content.trim() + '\n');
   ok('Weekly maintenance enabled — will run opportunistically via the pre-push hook');
 }

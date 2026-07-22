@@ -211,6 +211,37 @@ exit 0
     console.log(`  ${G}✓${X} .env updated`);
   }
 
+  // 6b. Weekly local maintenance (optional, default off)
+  // Opt-in replica of the 5 weekly GH Actions cron workflows (architectural
+  // drift, migration drift, model freshness, memory health, learning weekly
+  // review), run opportunistically from the pre-push hook — for consumers
+  // whose org blocks GitHub-hosted Actions runners, or who just want the
+  // signal without standing up separate CI. See docs/runbooks/local-maintenance-checks.md.
+  //
+  // LEARNING_REPO_NAME must be the owner/repo slug (matches audit_repos.name,
+  // itself derived from the git origin URL) — NOT the bare directory name.
+  // Found 2026-07-22: every consumer that ever set this by hand used the bare
+  // name (matching this file's own PERSONA_TEST_REPO_NAME hint two sections
+  // up, which uses a different, bare-name convention on a different table),
+  // so learning-weekly-review silently read {posted:false, reason:
+  // 'unknown-repo'} forever. Derive it automatically here instead of asking —
+  // it's the same value resolveRepoIdentity() already computes for the DB
+  // write path, so there's nothing for the operator to get wrong.
+  if (!env.match(/^AUDIT_LOOP_WEEKLY_MAINTENANCE=1/m)) {
+    console.log(`\n${B}Weekly maintenance checks${X}`);
+    console.log(`  Runs a local replica of 5 weekly GH Actions checks (architectural drift,`);
+    console.log(`  migration drift, model freshness, memory health, learning review)`);
+    console.log(`  opportunistically from your pre-push hook.\n`);
+    const wantMaintenance = await ask(`  Schedule weekly local maintenance checks? [y/N]: `);
+    if (/^y(es)?$/i.test(wantMaintenance?.trim() || '')) {
+      const { resolveRepoIdentity } = await import('./scripts/lib/repo-identity.mjs');
+      const { name: repoName } = resolveRepoIdentity(target);
+      env += `\nAUDIT_LOOP_WEEKLY_MAINTENANCE=1\nLEARNING_REPO_NAME=${repoName}`;
+      fs.writeFileSync(envPath, env.trim() + '\n');
+      console.log(`  ${G}✓${X} Weekly maintenance enabled (LEARNING_REPO_NAME=${repoName})`);
+    }
+  }
+
   // Ensure audit-loop artifacts are gitignored
   const { ensureAuditGitignore } = await import('./scripts/lib/install/gitignore.mjs');
   ensureAuditGitignore(target);
