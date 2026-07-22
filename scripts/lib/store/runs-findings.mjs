@@ -73,10 +73,36 @@ async function applyRecordTimeSuppression(runId, findings, passName) {
   }
 }
 
-/** Persist embeddings for just-recorded kept findings so they become future
- *  match targets. Best-effort, keyed by fingerprint→id from the INSERT RETURNING. */
-async function persistKeptEmbeddings(exec, keptFindings, vectorByFinding, idByFingerprint) {
-  if (!vectorByFinding || vectorByFinding.size === 0) return;
+/**
+ * Persist embeddings for just-recorded kept findings so they become future
+ * match targets. Best-effort, keyed by fingerprint→id from the INSERT
+ * RETURNING — a missing embedding only weakens future dedup, never breaks
+ * recording. "Best-effort" no longer means "silent": every write is verified
+ * via `rowCount` and every failure is logged + counted so the caller can
+ * report it, matching the 0-row-update precedent already established in this
+ * file (`markFindingsRemediation`) rather than trusting a resolved promise as
+ * proof a row landed.
+ *
+ * Tenant/run scoping: `finding_embeddings` carries no repo_id of its own (see
+ * supabase/migrations/20260721120000_finding_embeddings_prototype.sql) — the
+ * write is scoped through the same unit every other write in this file trusts,
+ * `run_id` (see `adjudicateFinalReviewFinding`, `markFindingsRemediation`), by
+ * requiring the target finding_id to belong to THIS runId before the row is
+ * written. A run belongs to exactly one repo (recordRunStart's repo-scoped
+ * reuse guard), so this also closes the cross-repo case: a finding_id that
+ * resolves to a different run — including one in a different repo — writes
+ * zero rows instead of silently attaching an embedding to another tenant's
+ * finding.
+ *
+ * Exported (undecorated, like `buildFindingAdjudicationPatch` /
+ * `normalizeRemediationUpdates` below) so the write-verification and
+ * run-scoping behaviour is directly unit-testable without a live DB.
+ *
+ * @returns {Promise<{persisted: number, failed: number}>}
+ */
+export async function persistKeptEmbeddings(exec, keptFindings, vectorByFinding, idByFingerprint, runId) {
+  const result = { persisted: 0, failed: 0 };
+  if (!vectorByFinding || vectorByFinding.size === 0) return result;
   for (const f of keptFindings) {
     const vec = vectorByFinding.get(f);
     if (!vec) continue;
@@ -85,13 +111,24 @@ async function persistKeptEmbeddings(exec, keptFindings, vectorByFinding, idByFi
     try {
       const text = (typeof f.detail === 'string' ? f.detail : '').slice(0, 500);
       const hash = crypto.createHash('sha256').update(text).digest('hex').slice(0, 16);
-      await exec.query(
+      const res = await exec.query(
         `INSERT INTO finding_embeddings (finding_id, embedding, embedding_model, dimension, snapshot_hash)
-         VALUES ($1::uuid,$2::vector,$3,$4,$5)
-         ON CONFLICT (finding_id) DO UPDATE SET embedding=EXCLUDED.embedding, snapshot_hash=EXCLUDED.snapshot_hash, created_at=now()`,
-        [id, toVectorLiteral(vec), symbolIndexConfig.embedModel, symbolIndexConfig.embedDim, hash]);
-    } catch { /* best-effort — a missing embedding only weakens future dedup, never breaks recording */ }
+         SELECT $1::uuid, $2::vector, $3, $4, $5
+          WHERE EXISTS (SELECT 1 FROM audit_findings af WHERE af.id = $1::uuid AND af.run_id = $6::uuid)
+         ON CONFLICT (finding_id) DO UPDATE SET embedding=EXCLUDED.embedding, embedding_model=EXCLUDED.embedding_model, dimension=EXCLUDED.dimension, snapshot_hash=EXCLUDED.snapshot_hash, created_at=now()`,
+        [id, toVectorLiteral(vec), symbolIndexConfig.embedModel, symbolIndexConfig.embedDim, hash, runId]);
+      if ((res?.rowCount ?? 0) === 0) {
+        result.failed++;
+        process.stderr.write(`  [semantic-suppress] embedding write affected 0 rows for finding ${id} (run ${runId}) — not persisted\n`);
+        continue;
+      }
+      result.persisted++;
+    } catch (err) {
+      result.failed++;
+      process.stderr.write(`  [semantic-suppress] embedding persistence failed for finding ${id}: ${err.message?.slice(0, 150)}\n`);
+    }
   }
+  return result;
 }
 
 /**
@@ -477,7 +514,10 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
     // targets. Best-effort; keyed by fingerprint→id (unique within a batch).
     if (vectorByFinding && vectorByFinding.size > 0) {
       const idByFingerprint = new Map((inserted.rows || []).map((r) => [r.finding_fingerprint, r.id]));
-      await persistKeptEmbeddings(exec, keptFindings, vectorByFinding, idByFingerprint);
+      const embedResult = await persistKeptEmbeddings(exec, keptFindings, vectorByFinding, idByFingerprint, runId);
+      if (embedResult.failed > 0) {
+        process.stderr.write(`  [semantic-suppress] embedding persistence: ${embedResult.persisted} ok, ${embedResult.failed} failed this batch\n`);
+      }
     }
   } catch (err) {
     process.stderr.write(`  [learning] recordFindings failed: ${err.message}\n`);

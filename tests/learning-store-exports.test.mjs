@@ -34,7 +34,7 @@ const EXPECTED_EXPORTS = [
   'upsertRepoByUuid',
   'resolveRepoForStore', // signal-recovery Cluster A §2.1 — stable repoRowId resolver
 
-  // runs-findings (14, incl. _resetClassificationColumnCache + _resetPassStatsRoundColumnCache test seams)
+  // runs-findings (15, incl. _resetClassificationColumnCache + _resetPassStatsRoundColumnCache test seams)
   '_resetClassificationColumnCache',
   '_resetPassStatsRoundColumnCache', // WS1 run-unification — audit_pass_stats.round probe cache reset
 
@@ -43,6 +43,7 @@ const EXPECTED_EXPORTS = [
   'recordFinalReviewFindings',      // shadow A/B — idempotent replace-persistence
   'adjudicateFinalReviewFinding',   // shadow A/B — human-adjudication writeback
   'getFinalReviewStats',            // shadow A/B — measurement read surface
+  'persistKeptEmbeddings',          // GH #59 — record-time embedding write, exported (undecorated) as a test seam
   'recordPassStats',
   'recordRunComplete',
   'recordRunStart',
@@ -301,6 +302,11 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // 174 the same day — the refresh_runs.files_* columns it wrote were never
     // read and duplicated `git diff`, so writer + columns were dropped
     // (migration 20260721150000). Per-run churn is now a log line, not storage.
-    assert.equal(EXPECTED_EXPORTS.length, 174);
+    // 174 → 175: persistKeptEmbeddings exported (undecorated) 2026-07-22 fixing
+    // two REOPENED HIGH findings (GH #59) — unverified write success (rowCount
+    // now checked) and missing run/tenant scoping (WHERE EXISTS join to
+    // audit_findings.run_id). The export is a test seam, same class as
+    // buildFindingAdjudicationPatch / normalizeRemediationUpdates above.
+    assert.equal(EXPECTED_EXPORTS.length, 175);
   });
 });

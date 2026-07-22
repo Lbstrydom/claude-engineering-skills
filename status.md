@@ -1,5 +1,52 @@
 # Project Status Log
 
+## 2026-07-22 — persistKeptEmbeddings: fixed two REOPENED HIGH findings (unverified write success + missing run/tenant scoping)
+
+GH issue #59's learning-weekly-review digest surfaced two REOPENED HIGH
+findings in `persistKeptEmbeddings()` (`scripts/lib/store/runs-findings.mjs`),
+the record-time writer that persists embeddings for just-recorded findings so
+they become future semantic-suppression match targets. Both trace back to a
+2026-07-21 fix (`unlocked_fixes` row "Silent persistence failure") that
+apparently didn't fully stick — this pass closes the same class again with a
+regression test this time.
+
+- **Unverified write success**: the INSERT...ON CONFLICT DO UPDATE's resolved
+  promise was treated as proof a row landed; `rowCount` is now checked, a
+  0-row result is counted as a failure and logged (`[semantic-suppress]`
+  prefix, matching the file's convention), and the function returns
+  `{persisted, failed}` so `recordFindings` can observe and report batch
+  failures instead of a bare `catch {}`.
+- **Missing tenant/run scoping**: the write authorized solely by a bare
+  `finding_id` UUID. `finding_embeddings` has no `repo_id` column (checked
+  the migration before designing the fix — no schema change needed), so the
+  INSERT's source `SELECT` now carries `WHERE EXISTS (SELECT 1 FROM
+  audit_findings af WHERE af.id = $1 AND af.run_id = $6)`, scoping every
+  write to the run — and therefore repo — the finding actually belongs to,
+  matching the `run_id`-scoping convention already used elsewhere in this
+  file (`adjudicateFinalReviewFinding`, `markFindingsRemediation`).
+
+`/audit-code` (3 rounds + Gemini final gate) caught two more genuine MEDIUM
+bugs in the same touched lines (both fixed): the `ON CONFLICT` `SET` clause
+left `embedding_model`/`dimension` stale after a model/dimension change, and
+the new regression tests only asserted return counts, not that the stderr
+log line actually fires. A round-2 HIGH finding claiming the caller still
+made a four-argument call was a false positive — disproven by direct
+source read and a diff quote, overruled by GPT deliberation after rebuttal.
+Two further MEDIUM findings (N+1 per-finding query pattern; module size)
+were dismissed as pre-existing, independently-tracked debt
+(`docs/plans/remediation-state-fix-lifecycle.md`) — this diff doesn't
+change the per-finding-loop shape or add a new module responsibility.
+Gemini final review: **APPROVE**, 0 new findings, 0 wrongly-dismissed.
+
+New `tests/persist-kept-embeddings.test.mjs` (8 no-DB contract tests +
+an `AUDIT_DB_TEST_URL`-gated integration block proving a cross-run write
+is rejected at the DB level while a same-run write persists).
+`persistKeptEmbeddings` is now exported (undecorated) as a test seam,
+matching the `buildFindingAdjudicationPatch`/`normalizeRemediationUpdates`
+convention already in the file; the pinned public export-surface list in
+`tests/learning-store-exports.test.mjs` was updated (174 → 175). Full
+suite green (8,449 tests, 0 failures).
+
 ## 2026-07-22 — Dead-code Phase 1 follow-up: two false-positive blind spots patched, Phase 2 explicitly deferred
 
 Issue #46's decision matrix required ≥3 audits with findings AND <30% FP rate to
