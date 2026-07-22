@@ -1,5 +1,38 @@
 # Project Status Log
 
+## 2026-07-22 — Tiered-shadow trust: real cost capture, location+severity overlap, Stage-1 crash fix
+
+Opened with a plans-index review + Supabase telemetry check. Two plans were
+done-but-mislabelled and closed (**sync-ownership-from-content**, **dismissed-fp-reopen-policy**
+— its Phase-2 is a superseded future plan, not open scope). The tiered-recall
+shadow window *looked* met (13 `complete` rows) but the rows were **decision-void** —
+`overlapCount:0` on all 13 and cost NULL/0 — a comparison-payload bug, now fixed:
+
+- **Overlap correlation** was keyed on `semanticId` (a hash of the finding's PROSE),
+  which two different auditors never phrase identically → structurally ~0 across
+  pipelines. Now correlates by **file + line-proximity + severity** (`findingsCorrelate`),
+  greedy one-to-one; `*UnlocalizedCount` surfaces coarse-localization. Severity added
+  after the Gemini gate flagged that pure location pairs a LOW nit with a HIGH vuln.
+- **Legacy cost** was never priced → `legacyCostUsd:NULL`. Now prices `totalUsage` via
+  `costFromUsage` (**confirmed live: 0.146** on a real row). Also fixed `runMapReducePass`
+  zeroing usage on REDUCE success (under-counted the now-priced cost) — found by /audit-code.
+- **Tiered cost** captured no per-stage usage (`computeCostReport({usageEvents:[]})` → a
+  fabricated $0). Wired an in-memory, fail-open `recordUsage`/`tryBuildUsageEvent`
+  accumulator across all five call closures (discovery GLM/Sonnet, Stage-1 GLM/GPT,
+  Stage-2 Gemini adapters now surface `_usage`/`_model`); prices via `buildUsageBlock`
+  (real sum, or honest null). Shadow-safe by construction (no store writes). Dropped
+  events counted + surfaced (`droppedUsageEventCount`/`tieredCostDroppedEvents`).
+- **Stage-1 robustness**: a live run surfaced a pre-existing crash — `buildStageOneTriageInput`
+  did a raw `.parse` that threw the whole tiered run on a `detail>600` finding. Now clamps
+  via the discovery generators' `clampToJsonSchemaLimits` before the authoritative parse.
+
+**Gates**: /audit-code (R1→R2, map-reduce HIGH resolved, remaining 3 HIGH pre-existing +
+independent, deferred) → **Gemini APPROVE** (0 findings) after two concern fixes.
+Full suite green (8404). Behavioural coverage `tiered-usage-capture.test.mjs` (folded in
+from a parallel session) drives the real pipeline to a real `costUsd`. Live `complete`
+tiered row still pending (3 runs blocked by skip / detail-crash[fixed] / transient GLM
+timeout — none a capture defect). Plan: `docs/plans/tiered-recall-audit-pipeline.md`.
+
 ## 2026-07-21 — VS Code Copilot compatibility audit: retired prompt shims, capped descriptions
 
 Audited the repo for seamless GitHub Copilot Agent Skills operation (GA +

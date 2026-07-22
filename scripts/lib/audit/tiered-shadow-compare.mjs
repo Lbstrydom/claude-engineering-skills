@@ -179,11 +179,104 @@ function findingFile(f) {
 }
 
 /**
+ * Resolve the line a finding cites, from `_primaryLine` or the `section`'s
+ * `file:line` prefix (the same `file:line (fn)` convention `findingFile`
+ * strips the file from). Returns `null` when no line is resolvable — never a
+ * fabricated 0 (a shape mismatch must not masquerade as line 0).
+ * @param {object} f
+ * @returns {number|null}
+ */
+function findingLine(f) {
+  if (Number.isInteger(f?._primaryLine)) return f._primaryLine;
+  const m = (f?.section || '').match(/:(\d+)\b/);
+  return m ? Number.parseInt(m[1], 10) : null;
+}
+
+/**
+ * Line window within which two auditors citing the same file are treated as
+ * flagging the same underlying issue. Different auditors routinely cite a
+ * bug a few lines apart (the anchor line of a block vs the offending
+ * statement inside it), so an exact-line match would systematically miss real
+ * agreement; 5 lines is tight enough that two genuinely-distinct bugs in the
+ * same file don't collide.
+ */
+const OVERLAP_LINE_WINDOW = 5;
+
+/**
+ * Do a legacy and a tiered finding refer to the SAME underlying issue?
+ *
+ * Correlated by LOCATION (file + line proximity), NOT by `semanticId` —
+ * `semanticId` hashes the finding's PROSE (`category|section|detail`), which
+ * is stable cross-ROUND (same model, same text) but which two DIFFERENT
+ * auditors (legacy GPT 5-pass vs the tiered discovery→Gemini pipeline)
+ * essentially never phrase identically. Keying overlap on it made the metric
+ * structurally ~0 across pipelines — all 13 `complete` shadow rows since the
+ * 2026-07-17 anchor fix read `overlapCount:0` (2026-07-22 defect), rendering
+ * the central "do the two pipelines agree?" signal decision-void.
+ *
+ * Conservative for a production-FLIP gate: a finding with no resolvable line
+ * does NOT match. Under-counting overlap is the safe direction (it never makes
+ * tiered look more similar to legacy than the evidence supports); the
+ * unlocalized findings are surfaced separately (`*UnlocalizedCount`) so a low
+ * overlap driven by missing line info is visible, never silently read as
+ * genuine disagreement.
+ *
+ * The match key is **file + line-proximity + severity** (see `findingsCorrelate`).
+ * Severity is included specifically to stop file+line proximity from pairing
+ * unrelated findings of different severity (a LOW nit vs a HIGH vuln).
+ *
+ * **Residual imprecision (accepted, not a defect):** the line window is still a
+ * heuristic, not an identity — two DISTINCT bugs of the SAME severity cited
+ * within the window in one file can over-match, and the same bug cited further
+ * apart than the window (or rated a severity notch apart by the two auditors)
+ * is missed. A precise cross-auditor identity is not achievable (the two
+ * pipelines share no fingerprint, category vocabulary, or line convention), and
+ * a semantic matcher would be over-engineering for a metric that only INFORMS a
+ * human flip decision (never auto-gates) and is always read next to the raw
+ * `legacy/tieredFindingCount`. `overlapCount` is therefore an APPROXIMATE
+ * agreement signal — treat a small delta as noise. `category` equality was
+ * considered as a further discriminator and rejected: the two pipelines don't
+ * share a category vocabulary, so it would trade the over-match for a worse
+ * under-match; severity (a common 3-value scale) does not have that problem.
+ * @param {object} a - a legacy finding
+ * @param {object} b - a tiered finding
+ * @returns {boolean}
+ */
+function findingsCorrelate(a, b) {
+  const fa = findingFile(a);
+  if (!fa || fa !== findingFile(b)) return false;
+  const la = findingLine(a);
+  const lb = findingLine(b);
+  if (la == null || lb == null) return false;
+  if (Math.abs(la - lb) > OVERLAP_LINE_WINDOW) return false;
+  // Severity discriminator (Gemini gate, 2026-07-22): file+line proximity ALONE
+  // blindly paired unrelated findings — a LOW style nit and a HIGH security
+  // finding a few lines apart — inflating overlap and the flip-gate's apparent
+  // recall. Two auditors flagging the SAME issue almost always agree on
+  // severity; a genuine mismatch (or the same bug rated a notch apart) fails to
+  // an under-count, which is the safe direction for a production-flip decision.
+  // (This does not need a shared category vocabulary — severity is a common,
+  // 3-value scale both pipelines emit — so it avoids the worse under-match that
+  // requiring `category` equality would cause.)
+  return normSeverityForOverlap(a) === normSeverityForOverlap(b);
+}
+
+/** Normalized severity for overlap matching; `null` when absent (an absent-vs-present pair then fails to a safe non-match). */
+function normSeverityForOverlap(f) {
+  const s = String(f?.severity ?? '').toUpperCase().trim();
+  return s || null;
+}
+
+/**
  * Structured, pure comparison between a real (legacy) and shadow (tiered)
- * `AuditRunResult` for the SAME commit. Finding overlap is computed via
- * `semanticId` — this repo's existing content-hash convention for cross-
- * model/cross-round finding identity (findings.mjs), reused rather than a
- * second bespoke fingerprint.
+ * `AuditRunResult` for the SAME commit. Finding overlap is correlated by
+ * LOCATION (file + line proximity, `findingsCorrelate`), NOT by `semanticId`:
+ * that content-hash is stable cross-ROUND (same model, same prose) but the two
+ * pipelines are different auditors that never phrase a finding identically, so
+ * a prose-hash overlap is structurally ~0 across them (2026-07-22 defect —
+ * every `complete` shadow row read `overlapCount:0`). `semanticId` is still
+ * used for the per-side scope buckets below, where both keys come from the
+ * same pipeline and prose identity is correct.
  *
  * Two tiers of output (docs/plans/stage0-evidence-relevance-split.md
  * decisions #6/#7/#10):
@@ -227,12 +320,35 @@ function findingFile(f) {
 export function compareAuditRunResults(legacyResult, tieredResult, opts = undefined) {
   const legacyFindings = legacyResult.findings || [];
   const tieredFindings = tieredResult.findings || [];
-  const legacyIds = new Set(legacyFindings.map(semanticId));
-  const tieredIds = new Set(tieredFindings.map(semanticId));
-  const rawOverlapCount = [...legacyIds].filter((id) => tieredIds.has(id)).length;
 
-  const overlapCount = rawOverlapCount;
-  const onlyTieredCount = tieredIds.size - rawOverlapCount;
+  // Cross-pipeline overlap is correlated by LOCATION (file + line proximity),
+  // not `semanticId` prose-hash — see `findingsCorrelate` for the full why
+  // (2026-07-22 defect: prose-hash overlap was structurally 0 across the two
+  // auditors). Greedy ONE-TO-ONE matching, deterministic in index order: each
+  // tiered finding covers at most one legacy finding and vice versa, so N
+  // legacy findings clustered at one spot can't be "covered" by a single
+  // tiered finding there.
+  const tieredMatched = new Set();
+  const legacyMatched = new Array(legacyFindings.length).fill(false);
+  for (let i = 0; i < legacyFindings.length; i++) {
+    for (let j = 0; j < tieredFindings.length; j++) {
+      if (tieredMatched.has(j)) continue;
+      if (findingsCorrelate(legacyFindings[i], tieredFindings[j])) {
+        legacyMatched[i] = true;
+        tieredMatched.add(j);
+        break;
+      }
+    }
+  }
+  const overlapCount = tieredMatched.size;
+  const onlyTieredCount = tieredFindings.length - tieredMatched.size;
+
+  // Surfaced so a low overlap driven by missing line info (findings the
+  // producer cited at file granularity only) is visible rather than silently
+  // read as genuine cross-pipeline disagreement (AGENTS.md "audit your success
+  // paths" — a clean-looking overlap must never hide un-checked data).
+  const legacyUnlocalizedCount = legacyFindings.filter((f) => findingLine(f) == null).length;
+  const tieredUnlocalizedCount = tieredFindings.filter((f) => findingLine(f) == null).length;
 
   // ── ALWAYS-EMITTED decision-grade fields (never gated on `opts`) ─────────
   // Load-bearing structural choice, found while checking a concurrent
@@ -247,19 +363,23 @@ export function compareAuditRunResults(legacyResult, tieredResult, opts = undefi
   // "forgot to pass opts → silently un-comparable forever" failure mode by
   // construction rather than guarding it with a static pin — a caller can no
   // longer get this wrong.
+  // Partition the UNMATCHED legacy findings (an overlap-matched one is handled
+  // by definition) into debt-routed-away vs genuine misses. Iterated by index
+  // against `legacyMatched` so the accounting invariant holds exactly:
+  // overlapCount + overlapDebtRouted + onlyLegacyCount === legacyFindings.length.
   const debtRoutedFiles = new Set((tieredResult.debtRoutedFiles || []).map(normalizePath));
   let overlapDebtRouted = 0;
-  for (const f of legacyFindings) {
-    if (tieredIds.has(semanticId(f))) continue; // a real two-sided overlap, not a miss
-    const file = findingFile(f);
+  let onlyLegacyCount = 0;
+  for (let i = 0; i < legacyFindings.length; i++) {
+    if (legacyMatched[i]) continue; // a real two-sided (location) overlap, not a miss
+    const file = findingFile(legacyFindings[i]);
+    // Decision #10: a legacy finding on a debt-routed file is HANDLED, not
+    // missed — the tiered pipeline routed it to the debt ledger by design, so
+    // counting it as a "miss" would penalize its most important new
+    // capability. An absent `debtRoutedFiles` (any pre-plan result) yields 0.
     if (file && debtRoutedFiles.has(file)) overlapDebtRouted++;
+    else onlyLegacyCount++;
   }
-  // Decision #10: a legacy finding on a debt-routed file is HANDLED, not
-  // missed — it only ever reclassifies findings that would otherwise land in
-  // `onlyLegacyCount`; a genuine two-sided overlap stays an overlap. An
-  // absent `debtRoutedFiles` (any pre-plan result) yields 0, leaving
-  // `onlyLegacyCount` byte-identical to the pre-plan value.
-  const onlyLegacyCount = (legacyIds.size - rawOverlapCount) - overlapDebtRouted;
 
   let bucketedFields = {};
   if (opts) {
@@ -284,6 +404,12 @@ export function compareAuditRunResults(legacyResult, tieredResult, opts = undefi
     onlyLegacyCount,
     onlyTieredCount,
     overlapDebtRouted,
+    // Findings the producer localized only to a file (no `:line`), so
+    // `findingsCorrelate` could not confirm or deny a location overlap for
+    // them. Surfaced so a low `overlapCount` driven by coarse localization is
+    // distinguishable from genuine cross-pipeline disagreement.
+    legacyUnlocalizedCount,
+    tieredUnlocalizedCount,
     // Symmetric + ALWAYS persisted (decision #7 / round-2 plan-audit H3).
     // Deliberately identical to the finding counts above: eligibility ===
     // "reached the comparison at all", so these ARE the vacuity check. Kept
@@ -295,6 +421,13 @@ export function compareAuditRunResults(legacyResult, tieredResult, opts = undefi
     ...bucketedFields,
     legacyCostUsd: legacyResult._usage?.costUsd ?? null,
     tieredCostUsd: tieredResult._usage?.costUsd ?? null,
+    // Under-count signals for the tiered cost (Gemini gate, 2026-07-22): a
+    // non-zero value means `tieredCostUsd` omits some real spend — events whose
+    // model was unpriced (`unavailable`) or that failed to build at all
+    // (`dropped`). Persisted so a cost comparison is never read as complete when
+    // it isn't. `?? null` = "field absent / pre-fix row", never a confident 0.
+    tieredCostUnavailableEvents: tieredResult._usage?.unavailableCostEventCount ?? null,
+    tieredCostDroppedEvents: tieredResult._usage?.droppedUsageEventCount ?? null,
     legacyLatencySec: parseTotalSeconds(legacyResult._pass_timings?.total),
     tieredLatencySec: parseTotalSeconds(tieredResult._pass_timings?.total),
     legacyRunStatus: legacyResult.runStatus ?? null,

@@ -538,6 +538,11 @@ export function createGeminiReviewSubprocessAdapters({
     const result = await invokeGeminiReviewSubprocess({
       transcript, repoRoot, geminiReviewScript: scriptPath, perCallTimeoutMs, execFileImpl, extraCliArgs, env,
     });
+    // The `--out` JSON already carries `_usage`/`_model` (gemini-review.mjs
+    // emits them). Propagate them on the verdict so the tiered pipeline can
+    // meter Stage 2's cost; callers that only read `.verdict` are unaffected
+    // (extra fields ignored). Absent → null, never fabricated.
+    const meter = { _usage: result?._usage ?? null, _model: result?._model ?? null };
 
     // Verdict mapping (plan Phase 12): reversed iff the reviewed finding
     // appears in wrongly_dismissed[]; otherwise 'confirmed' — interpretVerdict
@@ -549,9 +554,9 @@ export function createGeminiReviewSubprocessAdapters({
       ? result.wrongly_dismissed.find((w) => w.original_finding_id === findingId)
       : null;
     if (reversedEntry) {
-      return { verdict: 'reversed', rationale: reversedEntry.reason_claude_was_wrong };
+      return { verdict: 'reversed', rationale: reversedEntry.reason_claude_was_wrong, ...meter };
     }
-    return { verdict: 'confirmed', rationale: result?.overall_reasoning };
+    return { verdict: 'confirmed', rationale: result?.overall_reasoning, ...meter };
   }
 
   async function cleanRegionCall(file) {
@@ -572,13 +577,14 @@ export function createGeminiReviewSubprocessAdapters({
     const result = await invokeGeminiReviewSubprocess({
       transcript, repoRoot, geminiReviewScript: scriptPath, perCallTimeoutMs, execFileImpl, extraCliArgs, env,
     });
+    const meter = { _usage: result?._usage ?? null, _model: result?._model ?? null };
 
     // Verdict mapping: missed_candidate iff Gemini surfaced a new finding on
     // this clean region; otherwise clean.
     if (Array.isArray(result?.new_findings) && result.new_findings.length > 0) {
-      return { verdict: 'missed_candidate', finding: result.new_findings[0] };
+      return { verdict: 'missed_candidate', finding: result.new_findings[0], ...meter };
     }
-    return { verdict: 'clean' };
+    return { verdict: 'clean', ...meter };
   }
 
   return { reviewCall, cleanRegionCall };

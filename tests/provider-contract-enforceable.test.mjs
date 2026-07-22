@@ -236,6 +236,7 @@ describe('COVERAGE — no z.toJSONSchema call site escapes the registry', () => 
       ['zodSchema', 'oss-structured-output.mjs generic parameter — the caller owns the contract; the schema is whatever was passed in.'],
       ['schema', 'generic parameter name in a shared helper — the caller owns the contract.'],
       ['strictSchema', 'schemas.mjs-local alias inside zodToGeminiSchema — the caller owns the contract; the concrete schema is covered at ITS call site.'],
+      ['StageOneTriageInputSchema', 'stage1-triage.mjs NOT provider-facing — the JSON schema is used ONLY by clampToJsonSchemaLimits to read maxLength caps before the authoritative `StageOneTriageInputSchema.parse(clamped)` (full Zod, all refinements enforced). Nothing is sent to a provider, so a dropped refinement in the JSON form cannot weaken any contract.'],
     ]);
 
     const unregistered = [];

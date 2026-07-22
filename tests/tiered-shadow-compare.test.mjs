@@ -98,15 +98,20 @@ describe('runLegacyProductionAudit — noCloudRecording wiring (static regressio
 });
 
 describe('compareAuditRunResults', () => {
-  const finding = (detail, severity = 'HIGH') => ({ category: 'bug', section: 'x.js', detail, severity });
+  // A LOCATED finding: file:line in `section`. The two pipelines phrase
+  // `detail` differently for the same bug, so identity must be LOCATION, not
+  // prose (see the cross-pipeline-correlation suite below for the full why).
+  const at = (file, line, detail, severity = 'HIGH') => ({ category: 'bug', section: `${file}:${line}`, detail, severity, _primaryFile: file });
 
-  test('counts overlap/only-legacy/only-tiered via semanticId content-hash, not identity', () => {
-    const legacy = { findings: [finding('shared bug'), finding('legacy-only bug')], runStatus: 'complete', _usage: { costUsd: 1.5 }, _pass_timings: { total: '10.0s' } };
-    const tiered = { findings: [finding('shared bug'), finding('tiered-only bug')], runStatus: 'complete', _usage: { costUsd: 0.5 }, _pass_timings: { total: '4.0s' } };
+  test('counts overlap/only-legacy/only-tiered by LOCATION (file+line), not by prose identity', () => {
+    // Same bug at the same spot, phrased differently by the two auditors — a
+    // real overlap. Plus one located-only finding on each side.
+    const legacy = { findings: [at('x.js', 10, 'null deref when user is missing'), at('a.js', 5, 'legacy-only bug')], runStatus: 'complete', _usage: { costUsd: 1.5 }, _pass_timings: { total: '10.0s' } };
+    const tiered = { findings: [at('x.js', 12, 'possible NPE on absent user'), at('b.js', 7, 'tiered-only bug')], runStatus: 'complete', _usage: { costUsd: 0.5 }, _pass_timings: { total: '4.0s' } };
     const cmp = compareAuditRunResults(legacy, tiered);
     assert.equal(cmp.legacyFindingCount, 2);
     assert.equal(cmp.tieredFindingCount, 2);
-    assert.equal(cmp.overlapCount, 1);
+    assert.equal(cmp.overlapCount, 1, 'x.js:10 vs x.js:12 are within the line window — the SAME issue');
     assert.equal(cmp.onlyLegacyCount, 1);
     assert.equal(cmp.onlyTieredCount, 1);
   });
@@ -184,6 +189,131 @@ describe('compareAuditRunResults', () => {
     const cmp = compareAuditRunResults({ findings: [] }, { findings: [] });
     assert.equal(cmp.tieredGeneratorOutcomes, null);
     assert.equal(cmp.tieredStageBreakdown, null);
+  });
+});
+
+// ── Cross-pipeline finding correlation (2026-07-22 defect) ─────────────────
+// The overlap metric was keyed on `semanticId` — a hash of the finding's
+// PROSE (category|section|detail). Two DIFFERENT auditors (legacy GPT 5-pass
+// vs the tiered discovery→Gemini pipeline) essentially never phrase a finding
+// identically, so the prose-hash overlap was structurally ~0: all 13
+// `tieredRunStatus='complete'` shadow rows since the 2026-07-17 anchor fix
+// read overlapCount:0, making the central "do the two pipelines agree?"
+// metric decision-void. Overlap is now correlated by LOCATION (file + line
+// proximity). NOTE: the historical rows persist only counts, not findings, so
+// this suite (realistic synthetic findings) + the next real shadow runs are
+// the only validation available — the 13 void rows cannot be re-derived.
+describe('compareAuditRunResults — cross-pipeline correlation by location, not prose', () => {
+  const at = (file, line, detail) => ({ category: 'bug', section: `${file}:${line}`, detail, severity: 'HIGH', _primaryFile: file });
+
+  test('same file+line, DIFFERENT prose still overlaps — the exact case prose-hash missed', () => {
+    const legacy = { findings: [at('src/auth.mjs', 42, 'token compared with == allowing type coercion')] };
+    const tiered = { findings: [at('src/auth.mjs', 44, 'loose equality on auth token permits bypass')] };
+    const c = compareAuditRunResults(legacy, tiered);
+    assert.equal(c.overlapCount, 1, 'the two auditors flagged the same spot — a real overlap semanticId could never see');
+    assert.equal(c.onlyLegacyCount, 0);
+    assert.equal(c.onlyTieredCount, 0);
+  });
+
+  test('same file but lines beyond the window are distinct issues, not an overlap', () => {
+    const legacy = { findings: [at('src/big.mjs', 10, 'bug A')] };
+    const tiered = { findings: [at('src/big.mjs', 400, 'bug B far away')] };
+    const c = compareAuditRunResults(legacy, tiered);
+    assert.equal(c.overlapCount, 0, 'line 10 vs 400 in the same file are two different bugs');
+    assert.equal(c.onlyLegacyCount, 1);
+    assert.equal(c.onlyTieredCount, 1);
+  });
+
+  test('different files never overlap', () => {
+    const c = compareAuditRunResults(
+      { findings: [at('src/a.mjs', 5, 'x')] },
+      { findings: [at('src/b.mjs', 5, 'x')] },
+    );
+    assert.equal(c.overlapCount, 0);
+  });
+
+  test('same file+line but DIFFERENT severity does NOT overlap — a LOW nit is not the HIGH vuln beside it (Gemini gate)', () => {
+    const legacy = { findings: [{ category: 'style', section: 'src/a.mjs:20', detail: 'trailing whitespace', severity: 'LOW', _primaryFile: 'src/a.mjs' }] };
+    const tiered = { findings: [{ category: 'security', section: 'src/a.mjs:21', detail: 'auth bypass', severity: 'HIGH', _primaryFile: 'src/a.mjs' }] };
+    const c = compareAuditRunResults(legacy, tiered);
+    assert.equal(c.overlapCount, 0, 'different severity at nearby lines must not inflate overlap');
+    assert.equal(c.onlyLegacyCount, 1);
+    assert.equal(c.onlyTieredCount, 1);
+  });
+
+  test('same file+line AND same severity still overlaps (the discriminator does not block genuine agreement)', () => {
+    const c = compareAuditRunResults(
+      { findings: [{ category: 'bug', section: 'src/a.mjs:20', detail: 'npe', severity: 'HIGH', _primaryFile: 'src/a.mjs' }] },
+      { findings: [{ category: 'correctness', section: 'src/a.mjs:22', detail: 'null deref', severity: 'HIGH', _primaryFile: 'src/a.mjs' }] },
+    );
+    assert.equal(c.overlapCount, 1);
+  });
+
+  test('correlation is one-to-one — two legacy findings at one spot match at most the one tiered finding there', () => {
+    const legacy = { findings: [at('src/f.mjs', 20, 'first'), at('src/f.mjs', 21, 'second')] };
+    const tiered = { findings: [at('src/f.mjs', 20, 'the one tiered finding here')] };
+    const c = compareAuditRunResults(legacy, tiered);
+    assert.equal(c.overlapCount, 1, 'one tiered finding cannot cover two legacy findings');
+    assert.equal(c.onlyLegacyCount, 1, 'the second legacy finding is a genuine miss');
+    assert.equal(c.onlyTieredCount, 0);
+  });
+
+  test('a finding with no resolvable line is conservatively NON-overlapping and surfaced as unlocalized', () => {
+    // File-only (no `:line`) on both sides — could be the same bug or two
+    // different bugs in the file; for a production-FLIP gate the safe reading
+    // is "not confirmed to overlap", and the ambiguity is made visible rather
+    // than silently counted either way.
+    const legacy = { findings: [{ category: 'bug', section: 'src/auth.mjs', detail: 'x', severity: 'HIGH', _primaryFile: 'src/auth.mjs' }] };
+    const tiered = { findings: [{ category: 'bug', section: 'src/auth.mjs', detail: 'y', severity: 'HIGH', _primaryFile: 'src/auth.mjs' }] };
+    const c = compareAuditRunResults(legacy, tiered);
+    assert.equal(c.overlapCount, 0, 'no line → not confirmed to overlap (conservative)');
+    assert.equal(c.legacyUnlocalizedCount, 1, 'the limitation is surfaced, not hidden');
+    assert.equal(c.tieredUnlocalizedCount, 1);
+  });
+
+  test('unlocalized counts are 0 (never undefined) when every finding carries a line', () => {
+    const c = compareAuditRunResults(
+      { findings: [at('a.mjs', 1, 'x')] },
+      { findings: [at('a.mjs', 1, 'y')] },
+    );
+    assert.equal(c.legacyUnlocalizedCount, 0);
+    assert.equal(c.tieredUnlocalizedCount, 0);
+  });
+
+  test('accounting invariants hold: overlap+debtRouted+onlyLegacy == legacy total; overlap+onlyTiered == tiered total', () => {
+    const legacy = { findings: [at('a.mjs', 1, 'shared'), at('b.mjs', 9, 'legacy only'), at('c.mjs', 3, 'debt-routed away')] };
+    const tiered = { findings: [at('a.mjs', 2, 'shared reworded'), at('d.mjs', 4, 'tiered only')], debtRoutedFiles: ['c.mjs'] };
+    const c = compareAuditRunResults(legacy, tiered);
+    assert.equal(c.overlapCount + c.overlapDebtRouted + c.onlyLegacyCount, 3);
+    assert.equal(c.overlapCount + c.onlyTieredCount, 2);
+    assert.equal(c.overlapDebtRouted, 1);
+  });
+});
+
+// ── Cost capture (2026-07-22 defect) — static producer guards ─────────────
+// The comparison reads `_usage.costUsd` off each result. All 13 `complete`
+// shadow rows read legacyCostUsd:NULL (legacy never priced its tokens) and
+// tieredCostUsd:0 (the tiered pipeline hardcodes `usageEvents: []`, so
+// computeCostReport returns a MEANINGLESS confirmed $0). These are producer
+// bugs, not comparison bugs — the giant producers aren't hermetically unit-
+// testable (see the noCloudRecording guard above for the same reasoning), so
+// pin the fixes at the source with readFileSync guards.
+describe('cost producers — legacy + tiered both price real usage (static guards)', () => {
+  test('legacy-production-audit prices totalUsage into _usage.costUsd via costFromUsage', () => {
+    const src = fs.readFileSync(path.resolve('scripts/lib/audit/legacy-production-audit.mjs'), 'utf-8');
+    assert.match(src, /costFromUsage/, 'legacy must price its token totals');
+    assert.match(src, /totalUsage\.costUsd\s*=/, 'the priced cost must land on _usage.costUsd (what the comparison reads)');
+  });
+
+  // Superseded 2026-07-22 (item 2b): the tiered pipeline no longer emits a flat
+  // `costUsd: null` — it now captures per-stage usage and prices it. costUsd is
+  // the REAL sum when any captured event was priceable, else honest null
+  // (`buildUsageBlock`) — never a fabricated 0 from empty usageEvents.
+  test('the tiered pipeline prices captured usage — real sum when priced, honest null when not (no flat null, no fabricated 0)', () => {
+    const src = fs.readFileSync(path.resolve('scripts/lib/audit/tiered-pipeline.mjs'), 'utf-8');
+    assert.match(src, /costUsd:\s*hasPricedUsage\s*\?\s*report\.costUsd\s*:\s*null/, 'cost must derive from whether any captured event was priced');
+    assert.match(src, /computeCostReport\(\{\s*usageEvents\b/, 'the empty-events hardcode is gone; real usageEvents flow in');
+    assert.doesNotMatch(src, /computeCostReport\(\{\s*usageEvents:\s*\[\]/, 'no hardcoded empty-events call may remain');
   });
 });
 

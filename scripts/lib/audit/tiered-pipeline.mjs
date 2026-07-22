@@ -66,8 +66,9 @@ import { runFinalAdjudication, selectFinalAdjudicationWorkItems } from './final-
 import { runDiscoveryPortfolio } from './discovery-portfolio.mjs';
 import { resolveGptTrigger } from './gpt-sentinel-trigger.mjs';
 import { computeCostReport } from './cost-budget.mjs';
+import { tryBuildUsageEvent } from './usage-event.mjs';
 import { callGPT } from './llm-helpers.mjs';
-import { tieredAuditConfig } from '../config.mjs';
+import { tieredAuditConfig, openaiConfig } from '../config.mjs';
 import { resolveModel } from '../model-resolver.mjs';
 import { resolveStage1TriagerModel } from './stage1-triager-resolver.mjs';
 import { getOssOperationPolicy, getStage1TriageBudget, calculateWorstCaseAttemptDuration } from '../oss-call-policy.mjs';
@@ -264,7 +265,7 @@ function buildStage1TriagerPrompt(dto) {
 async function defaultTriagerCall(dto, providers) {
   if (!providers?.openai) throw new Error('defaultTriagerCall: providers.openai is required');
   const { system, userPrompt } = buildStage1TriagerPrompt(dto);
-  const { result } = await callGPT(providers.openai, {
+  const { result, usage } = await callGPT(providers.openai, {
     system,
     messages: [{ role: 'user', content: userPrompt }],
     schema: Stage1TriagerResponseSchema,
@@ -273,7 +274,9 @@ async function defaultTriagerCall(dto, providers) {
     passName: 'stage1-triager',
     maxRetries: 0,
   });
-  return result;
+  // Return usage alongside the verdict so the caller can meter cost. The bare
+  // verdict is still the load-bearing return; usage is advisory telemetry.
+  return { result, usage };
 }
 
 /**
@@ -291,7 +294,7 @@ async function defaultTriagerCall(dto, providers) {
 async function validatedTriagerCall(dto, providers, model) {
   if (!providers?.ossCall) throw new Error('validatedTriagerCall: providers.ossCall is required');
   const { system, userPrompt } = buildStage1TriagerPrompt(dto);
-  const { result, category, error } = await providers.ossCall({
+  const { result, category, error, usage } = await providers.ossCall({
     model, system, userPrompt,
     // Same stall-class guard as the discovery generator below (the
     // 2026-07-14 OpenRouter stall incident that motivated oss-call-policy
@@ -315,7 +318,7 @@ async function validatedTriagerCall(dto, providers, model) {
     err.category = category ?? null;
     throw err;
   }
-  return result;
+  return { result, usage };
 }
 
 // ── Stage 0 relevance-split wiring (docs/plans/stage0-evidence-relevance-split.md) ──
@@ -608,6 +611,28 @@ async function failRequiredGenerator(ctx, reason, discoveryGeneratorOutcomes) {
  * @param {number} startedAt
  * @returns {import('../schemas.mjs').AuditRunResult}
  */
+/**
+ * Build the `_usage` cost block from the run's captured usage events. `costUsd`
+ * is the REAL priced sum when any captured event was priceable, else `null`
+ * (honestly unmeasured) — never a fabricated `0` from empty or all-`unavailable`
+ * events (the 2026-07-22 defect this closes). The rest of the cost report
+ * (`unavailableCostEventCount`, per-accepted-HIGH rates, …) passes through so a
+ * partially-priced run stays diagnosable.
+ * `droppedUsageEventCount` (Gemini gate, 2026-07-22): events that failed to
+ * build at all (`tryBuildUsageEvent` returned null) never reach
+ * `computeCostReport`, so they wouldn't even land in `unavailableCostEventCount`
+ * — a silent under-count. Surfacing the drop count makes "cost may be higher
+ * than reported" visible, mirroring `unavailableCostEventCount`'s own semantics.
+ * @param {Array<object>} usageEvents - events from `tryBuildUsageEvent` (may be empty)
+ * @param {Array<{severity: string}>} [acceptedFindings]
+ * @param {number} [droppedCount] - events `tryBuildUsageEvent` could not build
+ */
+function buildUsageBlock(usageEvents, acceptedFindings = [], droppedCount = 0) {
+  const report = computeCostReport({ usageEvents, reviewEffortEvents: [], acceptedFindings });
+  const hasPricedUsage = usageEvents.some((e) => e && e.usageReliability !== 'unavailable');
+  return { ...report, costUsd: hasPricedUsage ? report.costUsd : null, droppedUsageEventCount: droppedCount };
+}
+
 function skippedNoGeneratorResult(ctx, map, startedAt) {
   const runStatus = map.kind === 'empty' ? 'skipped_no_eligible_files' : 'failed_invalid_diff_input';
   const reason = `${runStatus}: ${map.reason}${map.detail ? ` — ${map.detail}` : ''}`;
@@ -627,7 +652,9 @@ function skippedNoGeneratorResult(ctx, map, startedAt) {
     wiring_issues: [], quick_fix_warnings: [], dead_code: [],
     overall_reasoning: `**Discovery**: SKIPPED — ${reason}. No generator was called, so this run is not a zero-findings result; it is a run that did not happen.`,
     _pass_timings: { discovery: '0.0s', total: elapsed },
-    _usage: computeCostReport({ usageEvents: [], reviewEffortEvents: [], acceptedFindings: [] }),
+    // No generator was called, so there is genuinely nothing to meter →
+    // costUsd null (unmeasured), never a fabricated 0.
+    _usage: buildUsageBlock([]),
     _cacheMetrics: { totalInputTokens: 0, totalCachedTokens: 0, hitRate: 0, estimatedSavingsPct: 0, seedUsed: false, perPass: {} },
     _toolCapability: { toolsAvailable: [], toolsFailed: [], strictLint: false, disabled: true, timestamp: Date.now() },
     _sid: ctx.runId || `tiered-${Date.now()}`,
@@ -660,6 +687,29 @@ function skippedNoGeneratorResult(ctx, map, startedAt) {
 export async function runTieredAuditPipeline(ctx) {
   const stageStart = { discovery: Date.now() };
   const { providers = {} } = ctx;
+
+  // ── Per-run usage/cost capture (2026-07-22 item 2b) ─────────────────────
+  // Every stage's provider call already RETURNS token usage; it was just
+  // dropped. Each call closure below records into this array via `recordUsage`,
+  // and the result assembly prices it (`buildUsageBlock`). Purely in-memory —
+  // `tryBuildUsageEvent`/`computeCostReport` are pure, no store writes — so this
+  // is shadow-safe by construction (a shadow run must not touch persistent
+  // stores; see buildShadowCtx in tiered-shadow-compare.mjs). Fail-open:
+  // `tryBuildUsageEvent` returns null on any malformed input, so a usage-shape
+  // surprise can never abort the audit.
+  const usageEvents = [];
+  let usageEventsDropped = 0;
+  const recordUsage = (raw) => {
+    const ev = tryBuildUsageEvent(raw, new Date().toISOString());
+    if (ev) { usageEvents.push(ev); return; }
+    // Fail-open, but NOT silent: a dropped event means a malformed/unknown
+    // usage shape reached capture. Count it (surfaced on `_usage` as
+    // `droppedUsageEventCount` so the cost under-count is visible, not just
+    // absent) AND log it, so a SYSTEMATIC capture failure — which would make
+    // costUsd read as if less was spent — is diagnosable rather than invisible.
+    usageEventsDropped += 1;
+    process.stderr.write(`  [tiered-pipeline] usage capture dropped an event (provider=${raw?.provider ?? '?'}, model=${raw?.resolvedModel ?? '?'})\n`);
+  };
 
   // audit-code fix H12/M10 (Cluster E round 1): the original draft let the
   // tiered pipeline run to completion with the Stage 2 adapters absent —
@@ -847,7 +897,7 @@ export async function runTieredAuditPipeline(ctx) {
   );
   const glmCall = providers.ossCall
     ? async () => {
-        const { result, category, error } = await providers.ossCall({
+        const { result, category, error, usage } = await providers.ossCall({
           model: glmModel,
           // require_parameters (experiment-4 gate-1 screen, 2026-07-17,
           // n=60 through this exact seam): OpenRouter's GLM fleet contains
@@ -878,6 +928,14 @@ export async function runTieredAuditPipeline(ctx) {
           schemaName: 'discovery_glm_pass',
           passName: 'discovery-glm',
           operation: 'discovery_generation',
+        });
+        // Meter even a zero-finding response — it still spent tokens. OSS usage
+        // carries OpenRouter's own `provider_cost_usd` (exact), preferred over
+        // token-estimated pricing when present.
+        recordUsage({
+          provider: 'oss', modelSentinel: glmModel, resolvedModel: glmModel,
+          usage, wallClockMs: usage?.latency_ms,
+          ...(typeof usage?.provider_cost_usd === 'number' ? { selfReportedCostUsd: usage.provider_cost_usd } : {}),
         });
         // audit-code fix H2 (Cluster E round 3): `result?.findings ?? []`
         // silently converted a missing/malformed provider result into an
@@ -953,6 +1011,12 @@ export async function runTieredAuditPipeline(ctx) {
           messages: [{ role: 'user', content: `## Plan\n${discoveryPlan}\n\n## Changed Files (code)\n${discoveryCode}` }],
           tools: [sonnetFindingsTool],
           tool_choice: { type: 'tool', name: 'report_findings' },
+        });
+        // Anthropic SDK usage is `{input_tokens, output_tokens, ...}` — the
+        // shape costFromUsage already reads. Priced via the family table.
+        recordUsage({
+          provider: 'anthropic', modelSentinel: 'latest-sonnet', resolvedModel: resolveModel('latest-sonnet'),
+          usage: resp?.usage,
         });
         const toolUse = resp?.content?.find(block => block.type === 'tool_use' && block.name === 'report_findings');
         if (!toolUse || !Array.isArray(toolUse.input?.findings)) {
@@ -1117,14 +1181,28 @@ export async function runTieredAuditPipeline(ctx) {
   let triagerCall;
   if (stage1Resolution.model && providers.ossCall) {
     process.stderr.write(`  [tiered-pipeline] Stage 1 triager: ${stage1Resolution.model} (${stage1Resolution.source}${stage1Resolution.datasetHash ? `, datasetHash=${stage1Resolution.datasetHash.slice(0, 12)}…` : ''})\n`);
-    triagerCall = (envelope) => validatedTriagerCall(envelope, providers, stage1Resolution.model);
+    triagerCall = async (envelope) => {
+      const { result, usage } = await validatedTriagerCall(envelope, providers, stage1Resolution.model);
+      recordUsage({
+        provider: 'oss', modelSentinel: stage1Resolution.model, resolvedModel: stage1Resolution.model,
+        usage, wallClockMs: usage?.latency_ms,
+        ...(typeof usage?.provider_cost_usd === 'number' ? { selfReportedCostUsd: usage.provider_cost_usd } : {}),
+      });
+      return result;
+    };
   } else {
     // A resolved model with no ossCall to reach it (e.g. OPENROUTER_API_KEY
     // unset) is its own distinct, named fallback reason — never conflated
     // with "no manifest/override at all".
     const reason = stage1Resolution.model && !providers.ossCall ? 'oss_provider_unavailable' : (stage1Resolution.reason || 'no_override_or_manifest');
     process.stderr.write(`  [tiered-pipeline] WARNING: Stage 1 triager falling back to GPT-5.5 (${reason})\n`);
-    triagerCall = (envelope) => defaultTriagerCall(envelope, providers);
+    triagerCall = async (envelope) => {
+      const { result, usage } = await defaultTriagerCall(envelope, providers);
+      // The default triager uses callGPT's audit GPT model; attribute cost to
+      // it (family-keyed pricing makes a minor concrete-id difference moot).
+      recordUsage({ provider: 'openai', modelSentinel: openaiConfig.model, resolvedModel: openaiConfig.model, usage });
+      return result;
+    };
   }
   // Resolve BOTH the Stage-1 admission budget AND the per-candidate
   // worst-case duration HERE (docs/plans/oss-call-reliability-hardening.md
@@ -1166,9 +1244,34 @@ export async function runTieredAuditPipeline(ctx) {
   const stage2Start = Date.now();
   // Both validated as functions by the fail-fast at the top of this run —
   // distinct handles because the two adapter signatures differ
-  // (reviewCall(envelope) vs cleanRegionCall(file)).
-  const reviewCall = providers.geminiReviewCall;
-  const cleanRegionCall = providers.geminiCleanRegionCall;
+  // (reviewCall(envelope) vs cleanRegionCall(file)). Wrapped to meter the
+  // subprocess cost: the adapters now surface `_usage`/`_model` (from the
+  // gemini-review `--out` JSON) on their verdict; capture it here, pass the
+  // verdict through unchanged (runFinalAdjudication reads only `.verdict`).
+  const meterGeminiCall = (fn) => async (arg) => {
+    const r = await fn(arg);
+    const u = r?._usage;
+    if (u) {
+      const model = r._model ?? 'latest-pro';
+      // Provider is DERIVED from the model id, not hardcoded 'gemini': Stage 2
+      // is Gemini by default but falls back to Opus / Azure-Claude when
+      // GEMINI_API_KEY is absent (gemini-review.mjs precedence), and mislabeling
+      // that as 'gemini' is wrong metadata. It's advisory only — cost comes from
+      // `resolvedModel` pricing, so the label never changes costUsd — but keep it
+      // honest. Gemini bills thinking (thought) tokens at the OUTPUT rate and
+      // reports them SEPARATELY from output_tokens, so fold them in or the
+      // estimate silently under-counts a reasoning adjudicator (Claude paths set
+      // thinking_tokens:0, so this is a no-op there).
+      recordUsage({
+        provider: /gemini/i.test(model) ? 'gemini' : 'anthropic',
+        modelSentinel: model, resolvedModel: model,
+        usage: { input_tokens: u.input_tokens, output_tokens: (u.output_tokens ?? 0) + (u.thinking_tokens ?? 0) },
+      });
+    }
+    return r;
+  };
+  const reviewCall = meterGeminiCall(providers.geminiReviewCall);
+  const cleanRegionCall = meterGeminiCall(providers.geminiCleanRegionCall);
   const stage2Result = await runFinalAdjudication(
     { escalated: triageResult.escalated, mechanicalDismissed: workItems.tailSample, confirmedSurvivor: [] },
     workItems.cleanRegionSample,
@@ -1234,8 +1337,12 @@ export async function runTieredAuditPipeline(ctx) {
     stage2ConfirmedDismissal: stage2Result.confirmedDismissal.length,
   };
 
-  // ── _usage/_cacheMetrics — reuse Cluster-B-built cost-budget.mjs (existing, pure) ──
-  const costReport = computeCostReport({ usageEvents: [], reviewEffortEvents: [], acceptedFindings: findings });
+  // ── _usage/_cacheMetrics — real per-stage cost from captured usage events ──
+  // `usageEvents` was accumulated across discovery + Stage 1 + Stage 2 via the
+  // `recordUsage` sink below (2026-07-22 item 2b: this used to be a hardcoded
+  // `[]`, so `costUsd` was a meaningless confirmed $0). `buildUsageBlock`
+  // reports the real priced sum, or honest `null` if nothing could be priced.
+  const costReport = buildUsageBlock(usageEvents, findings, usageEventsDropped);
 
   const _pass_timings = {
     discovery: `${(discoveryLatencyMs / 1000).toFixed(1)}s`,

@@ -206,7 +206,11 @@ describe('final-adjudication subprocess adapter — success path (--provider fix
       perCallTimeoutMs: 60000,
     });
     const response = await adapters.cleanRegionCall(REAL_FILE);
-    assert.deepEqual(response, { verdict: 'clean' });
+    // Verdict contract unchanged; the adapter now also surfaces `_usage`/`_model`
+    // (2026-07-22 per-stage cost capture) — present on every post-subprocess
+    // return, null when the subprocess emitted none.
+    assert.equal(response.verdict, 'clean');
+    assert.ok('_usage' in response && '_model' in response, 'metering fields must be surfaced');
   });
 
   it('cleanRegionCall maps a fixture-driven new_findings hit to {verdict:"missed_candidate", finding}', async () => {

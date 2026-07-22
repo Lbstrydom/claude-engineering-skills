@@ -92,3 +92,24 @@ export function buildUsageEvent(raw, createdAt) {
     createdAt,
   });
 }
+
+/**
+ * Fail-open wrapper around `buildUsageEvent` for capture sites where usage/cost
+ * is ADVISORY telemetry, not a correctness input — the tiered pipeline's
+ * per-stage capture (`tiered-pipeline.mjs`). A malformed provider usage object,
+ * an unknown provider, or a missing field must degrade to a dropped event
+ * (`null`), NEVER throw up through a discovery/Stage-1/Stage-2 call and abort
+ * the audit. (An UNPRICED model is not a failure — `buildUsageEvent` returns a
+ * valid `usageReliability: 'unavailable'` event, kept so `computeCostReport`
+ * can count it in `unavailableCostEventCount`.)
+ * @param {object} raw - same shape as `buildUsageEvent`'s first argument
+ * @param {string} createdAt - ISO timestamp
+ * @returns {import('zod').infer<typeof UsageEventSchema>|null}
+ */
+export function tryBuildUsageEvent(raw, createdAt) {
+  try {
+    return buildUsageEvent(raw, createdAt);
+  } catch {
+    return null;
+  }
+}

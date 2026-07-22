@@ -55,6 +55,38 @@ describe('buildAuditRunContext — diffText wiring (2026-07-15, Stage-0-always-r
   });
 });
 
+// Per-stage usage capture (2026-07-22 item 2b): the pipeline accumulated no
+// usage, so `computeCostReport` got `usageEvents: []` and `_usage.costUsd` was
+// a meaningless 0/null. These guards pin that real capture is wired at the
+// source (the pipeline isn't hermetically runnable end-to-end — same reasoning
+// as the diffText/adapter guards above).
+describe('per-stage usage capture wiring (static guards)', () => {
+  const tieredSrc = () => fs.readFileSync(path.resolve('scripts/lib/audit/tiered-pipeline.mjs'), 'utf-8');
+  const adjSrc = () => fs.readFileSync(path.resolve('scripts/lib/audit/final-adjudication.mjs'), 'utf-8');
+
+  test('computeCostReport receives the accumulated usageEvents array, not a hardcoded []', () => {
+    const src = tieredSrc();
+    assert.match(src, /computeCostReport\(\{\s*usageEvents\b/, 'usageEvents must be a variable fed into computeCostReport');
+    assert.doesNotMatch(src, /computeCostReport\(\{\s*usageEvents:\s*\[\]/, 'the hardcoded empty-events call is the defect being fixed');
+  });
+
+  test('the pipeline captures via the fail-open tryBuildUsageEvent wrapper (never a raw buildUsageEvent that could throw mid-stage)', () => {
+    assert.match(tieredSrc(), /tryBuildUsageEvent/, 'usage capture must be fail-open so a malformed usage object cannot abort the audit');
+  });
+
+  test('the Stage-2 subprocess adapters surface _usage/_model instead of stripping them', () => {
+    const src = adjSrc();
+    assert.match(src, /_usage/, 'reviewCall/cleanRegionCall must propagate the subprocess _usage the --out JSON already carries');
+  });
+
+  test('tiered cost is real when priced, honest-null when nothing could be priced — never a fabricated flat null', () => {
+    const src = tieredSrc();
+    // The last-session flat `costUsd: null` override on the MAIN return is gone;
+    // cost now derives from whether any captured event was priced.
+    assert.match(src, /costUsd:\s*hasPricedUsage\s*\?/, 'expected honest cost: real sum when priced, null when not');
+  });
+});
+
 describe('defaultGeminiReviewScriptPath (consumer-layout safety)', () => {
   test('resolves module-relative to an existing gemini-review.mjs sibling', () => {
     const p = defaultGeminiReviewScriptPath();
@@ -300,11 +332,13 @@ describe('OSS-call reliability wiring (docs/plans/oss-call-reliability-hardening
 
   test('static pin: both adapters destructure category/error from ossCall and set err.category on throw', () => {
     const validatedMatch = src.match(/async function validatedTriagerCall[\s\S]*?\n}/)[0];
-    assert.match(validatedMatch, /const \{ result, category, error \} = await providers\.ossCall/);
+    // `usage` was added to the destructure for per-stage cost capture (2026-07-22);
+    // category/error must still be destructured and threaded into err.category.
+    assert.match(validatedMatch, /const \{ result, category, error, usage \} = await providers\.ossCall/);
     assert.match(validatedMatch, /err\.category = category \?\? null/);
 
     const glmMatch = src.match(/const glmCall = providers\.ossCall[\s\S]*?: async \(\) => \{ throw new Error\('discovery portfolio: providers\.ossCall unavailable'\); \};/)[0];
-    assert.match(glmMatch, /const \{ result, category, error \} = await providers\.ossCall/);
+    assert.match(glmMatch, /const \{ result, category, error, usage \} = await providers\.ossCall/);
     assert.match(glmMatch, /err\.category = category \?\? null/);
   });
 

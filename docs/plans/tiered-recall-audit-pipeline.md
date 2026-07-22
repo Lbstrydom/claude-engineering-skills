@@ -20,14 +20,16 @@
   see status.md 2026-07-12 for the full write-up and the omission-stratum
   small-sample caveat). Phase 7 can now select GLM as the Stage-1 triager.
   **Still open**: the Close-out shadow-validation window (10-15 real
-  `/audit-code` runs with `AUDIT_TIERED_SHADOW_ENABLED=true`) has not
-  actually started collecting — the flag was flipped `true` then reverted to
-  `false` as an emergency stop during the 2026-07-13 shadow-flip incident #2
-  fix (see status.md same date) and was never re-flipped afterward, despite
-  several "Next" notes since saying it should be. `~/.audit-loop.env`
-  currently has `AUDIT_TIERED_SHADOW_ENABLED=false` — confirmed live
-  2026-07-13, zero shadow runs recorded in Supabase. Phase 14 is blocked on
-  this, not on any remaining code.
+  `/audit-code` runs with `AUDIT_TIERED_SHADOW_ENABLED=true`) HAS since
+  started collecting — as of 2026-07-22, `tiered_shadow_observations` holds
+  13 `tieredRunStatus='complete'` rows since the 2026-07-17 anchor fix. Those
+  13 rows are **void** (overlap=0 on all 13, cost NULL/0) — a comparison-payload
+  bug, since **fixed 2026-07-22**: overlap now correlates by location (not prose),
+  and BOTH legacy and tiered cost are now really priced (per-stage usage capture
+  wired through all three tiered stages). See the "Addendum 2026-07-22" at the
+  bottom. Phase 14 now needs only the window to **re-accumulate** 10–15 real
+  `complete` runs post-fix (and one live-run confirmation the new fields
+  populate) — not flag state, window size, or any remaining code.
 - **Author**: Claude + Louis
 - **Scope**: backend
 
@@ -850,3 +852,104 @@ call now returns a real `tool_use` block)**:
 The existing 20 rows are now correctly excluded from `comparedRuns` by fix
 #2 (no data deletion needed) — the 10-15-run window restarts from zero,
 genuinely collecting this time.
+
+### Addendum 2026-07-22 — window IS collecting, but the comparison payload is defective (Phase 14 BLOCKER)
+
+Live inspection of `tiered_shadow_observations` (Supabase `uahjjdelnnpfmaqjrwoz`)
+this date contradicts the "flag off, zero collected" reading above: the shadow
+flag has been re-enabled and **13 rows with `tieredRunStatus='complete'`** have
+accumulated since the 2026-07-17 anchor fix (through 2026-07-21) — numerically
+inside the 10-15 window. **But the rows are void for a Phase-14 decision**, and
+this is a defect to fix, not a window to declare met:
+
+| Signal (all 13 `complete` runs since 2026-07-17) | Value |
+|---|---|
+| `overlapCount` | **0 on every run** — legacy & tiered never share a single finding |
+| `tieredFindingCount < legacyFindingCount` | 8 / 13 |
+| tiered found nothing while legacy found bugs | 2 / 13 (e.g. legacy 17 → tiered 0) |
+| `legacyCostUsd` | **NULL on all 13** |
+| `tieredCostUsd` | **0 on all 13** |
+| Stage-0 malformed tripwire fired | ≥1 run (so `excludedMalformedAnchors === 0` fails) |
+
+`overlapCount: 0` across the board is almost certainly a **finding-identity
+mismatch in the cross-path correlation** (`tiered-shadow-compare.mjs` overlap
+computation), not a genuine 100%-disjoint audit result on the same diff. With
+`legacyCostUsd` NULL and `tieredCostUsd` 0, the pre-registered stopping rule's
+"cost in tolerance" half is **unevaluable**. This is precisely the *"a window
+met is not self-evidencing"* trap this plan already warns about (§ line ~824).
+
+**Required before Phase 14 can run:**
+1. Fix the overlap correlation so a shared finding between legacy and tiered is
+   actually matched (verify with a diff that both paths demonstrably flag).
+2. Fix cost capture — `legacyCostUsd`/`tieredCostUsd` must be populated on the
+   comparison row.
+3. Only then does the 10-15-run count mean anything; the current 13 rows are
+   void and the window restarts from the first row emitted after the fix.
+
+Until (1) and (2) land, `comparedRuns ≥ 10-15` is a false-positive readiness
+signal even though it now reads met.
+
+#### Fix landed 2026-07-22 — overlap + legacy cost fixed; tiered cost made honest
+
+- **(1) Overlap — FIXED.** Root cause: `compareAuditRunResults` correlated
+  legacy-vs-tiered findings via `semanticId`, a hash of the finding's PROSE
+  (`category|section|detail`). That is stable cross-ROUND (same model) but two
+  DIFFERENT auditors never phrase a finding identically, so cross-pipeline
+  overlap was structurally ~0. Now correlated by **location** (file + line
+  proximity, window 5) via `findingsCorrelate` — greedy one-to-one, deterministic.
+  Conservative for a flip gate: a finding with no resolvable line does NOT match
+  (safe under-count direction), and new `legacyUnlocalizedCount`/`tieredUnlocalizedCount`
+  fields surface when a low overlap is driven by coarse localization rather than
+  genuine disagreement. `semanticId` is retained only for the per-side scope
+  buckets (correct there — both keys come from one pipeline). Test-first:
+  `tests/tiered-shadow-compare.test.mjs` gains a cross-pipeline suite (same
+  file+line, DIFFERENT prose → overlaps; far lines / different files → don't;
+  one-to-one; unlocalized handling; accounting invariants). Full suite green.
+- **(2a) Legacy cost — FIXED (real).** `legacy-production-audit.mjs` never
+  priced its token totals. It now prices the aggregate `totalUsage` with the
+  resolved audit model via `costFromUsage`, so `_usage.costUsd` is a real dollar
+  figure (or an honest `null` for an unpriced model, never a fabricated 0).
+- **(2b) Tiered cost — FIXED (real), landed same day.** Root cause: the tiered
+  pipeline captured **no** per-stage usage (`computeCostReport` fed `usageEvents:
+  []`), so cost was a meaningless confirmed `$0`. Investigation (agent-mapped)
+  found **every provider primitive already RETURNS usage** — it was dropped at
+  the adapter destructures; no primitive needed changing. Wired an in-memory
+  `usageEvents` accumulator + fail-open `recordUsage`/`tryBuildUsageEvent` sink,
+  capturing at all five call closures: discovery GLM + Stage-1 GLM (OSS —
+  `provider_cost_usd` used verbatim as exact cost when present), discovery Sonnet
+  (Anthropic SDK `resp.usage`), Stage-1 GPT default, and Stage-2 review/clean-
+  region (the two `final-adjudication.mjs` subprocess adapters now surface the
+  `_usage`/`_model` the `gemini-review --out` JSON already carried). Result
+  assembly prices via `buildUsageBlock`: **real sum when any event was priced,
+  honest `null` when none** — never a fabricated 0. Purely in-memory (pure
+  `buildUsageEvent`/`computeCostReport`, no store writes) → **shadow-safe by
+  construction**. Fail-open: a malformed usage object drops the event, never
+  aborts the audit. All four model families (GPT/Sonnet/Gemini/GLM) are priced;
+  a shape-contract test locks the three provider usage shapes so a future drift
+  fails loudly instead of silently pricing to 0. Full suite green (8393 pass).
+
+**Window status**: the 13 pre-fix rows stay **void**; the window restarts from
+the first `complete` row emitted after this commit. Both blockers (overlap +
+cost) are now cleared in code — Phase 14 needs the window to **re-accumulate**
+10–15 real `complete` runs and then verify the rows carry a correlating
+`overlapCount` and a non-null `tieredCostUsd`/`legacyCostUsd`.
+
+> **Empirical verification (pre-ship doctrine) — done 2026-07-22, with one caveat.**
+> - **Legacy cost: CONFIRMED live.** A real `tiered_shadow_observations` row
+>   this date carried `legacyCostUsd: 0.146` (NULL on all 13 prior rows) and
+>   `legacyUnlocalizedCount: 27` — the legacy pricing + new fields work end-to-end.
+> - **Tiered cost: verified behaviourally, not yet on a live `complete` row.**
+>   `tests/tiered-usage-capture.test.mjs` drives the REAL `runTieredAuditPipeline`
+>   with the actual provider usage shapes and asserts a real `_usage.costUsd`
+>   (the shapes were mapped from live adapter code). Three live `--diff` audits
+>   each failed to reach a `complete` tiered run for a DIFFERENT, non-capture
+>   reason: (1) no `--diff` → `skipped_no_eligible_files`; (2) a raw
+>   `.parse` in `buildStageOneTriageInput` crashed on a `detail>600` finding —
+>   **fixed this session** (clamp before parse); (3) a transient GLM/OpenRouter
+>   discovery timeout → the honest `TieredUnavailableError` path (`shadow_ok:false`,
+>   no comparison — correctly excluded from the window). None is a defect in the
+>   cost-capture code. The Gemini gate for this change is **APPROVE** (0 findings)
+>   after two concern fixes (severity discriminator on overlap; dropped-event
+>   counter). The next `complete` tiered run (whenever GLM cooperates) will carry
+>   the real `tieredCostUsd` — confirm it then.
+

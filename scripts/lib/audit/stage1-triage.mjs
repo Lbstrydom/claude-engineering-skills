@@ -30,7 +30,17 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { Stage1DecisionSchema, StageOneTriageInputSchema, normalizeFindingEvidence } from '../schemas.mjs';
+import { z } from 'zod';
+import { Stage1DecisionSchema, StageOneTriageInputSchema, normalizeFindingEvidence, clampToJsonSchemaLimits } from '../schemas.mjs';
+
+// JSON-schema form of the triage-input DTO, computed once. Used to CLAMP
+// over-limit string fields before the schema parse below — the same primitive
+// the discovery generators (tiered-pipeline.mjs glm/sonnet) already apply to
+// producer output. A finding's `detail` (etc.) can exceed the cap (Sonnet/GLM
+// write long details; redaction can also grow a field), and a raw `.parse`
+// would throw and abort the WHOLE Stage-1 run over one candidate (live shadow
+// failure, 2026-07-22). Clamp = the over-long finding degrades itself.
+const StageOneTriageInputJsonSchema = z.toJSONSchema(StageOneTriageInputSchema);
 import { generateTopicId, writeStage1MechanicalLedgerEntry } from '../ledger.mjs';
 import { resolveAndClassify, classifyPath } from '../sensitive-paths.mjs';
 import { redact } from '../redact.mjs';
@@ -312,7 +322,12 @@ export function buildStageOneTriageInput(finding, opts) {
 
   const severity = ['HIGH', 'MEDIUM', 'LOW'].includes(f.severity) ? f.severity : 'LOW';
 
-  return StageOneTriageInputSchema.parse({
+  // Clamp over-limit string fields to the schema caps BEFORE parsing — a
+  // single verbose finding must never `too_big`-throw and crash the whole
+  // Stage-1 run (2026-07-22 live shadow failure). Enums/booleans are untouched
+  // by the clamp (a clipped enum is corruption), so a genuinely malformed
+  // finding still fails loud here, exactly as before.
+  const clamped = clampToJsonSchemaLimits({
     category: categoryResult.text,
     detail: detailResult.text,
     section,
@@ -321,7 +336,8 @@ export function buildStageOneTriageInput(finding, opts) {
     anchorQuote,
     causalChain,
     redacted,
-  });
+  }, StageOneTriageInputJsonSchema);
+  return StageOneTriageInputSchema.parse(clamped);
 }
 
 /**

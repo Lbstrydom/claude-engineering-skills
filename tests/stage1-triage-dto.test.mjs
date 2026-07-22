@@ -91,6 +91,37 @@ describe('buildStageOneTriageInput — output always schema-valid', () => {
   });
 });
 
+describe('buildStageOneTriageInput — clamps over-limit fields, never crashes the run (detail>600 regression, 2026-07-22)', () => {
+  // A live tiered shadow run failed whole (shadow_ok:false) on a ZodError
+  // `too_big` for `detail` (<=600): discovery findings can exceed the cap and
+  // the builder did a RAW `.parse`. A single over-long finding must degrade
+  // ITSELF (truncated), never abort the batch — mirroring the discovery
+  // generators' existing clampToJsonSchemaLimits pattern.
+  it('a finding whose detail exceeds the 600-char cap is clamped, not thrown', () => {
+    const repoRoot = mkdtemp();
+    try {
+      const dto = buildStageOneTriageInput(
+        { severity: 'MEDIUM', category: 'bug', detail: 'x'.repeat(750), section: 'src/a.mjs:10' },
+        { repoRoot },
+      );
+      assert.equal(dto.detail.length, 600, 'detail truncated to the schema cap, not rejected');
+      assert.doesNotThrow(() => StageOneTriageInputSchema.parse(dto));
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+  });
+
+  it('also clamps an over-limit category(80) — the schema-length overflow class in general', () => {
+    const repoRoot = mkdtemp();
+    try {
+      const dto = buildStageOneTriageInput(
+        { severity: 'LOW', category: 'c'.repeat(200), detail: 'd', section: 's' },
+        { repoRoot },
+      );
+      assert.equal(dto.category.length, 80);
+      assert.doesNotThrow(() => StageOneTriageInputSchema.parse(dto));
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+  });
+});
+
 describe('buildStageOneTriageInput — a .env-path anchor never survives unredacted', () => {
   it('degrades anchorQuote to null when the commission anchor cites a .env file', () => {
     const repoRoot = mkdtemp();

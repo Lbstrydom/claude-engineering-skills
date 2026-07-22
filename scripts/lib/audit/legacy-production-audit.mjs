@@ -103,6 +103,7 @@ import { loadDomainRules as _loadDomainRules, computeTargetDomains as _computeTa
 import { PromptBandit, computeReward, buildContext } from '../../bandit.mjs';
 import { openaiConfig, PASS_NAMES, modelPricing, azureConfig, tieredAuditConfig, auditRuntimeConfig, adjacencyConfig } from '../config.mjs';
 import { supportsReasoningEffort, refreshModelCatalog, resolveModel, pricingKey } from '../model-resolver.mjs';
+import { costFromUsage } from '../model-pricing.mjs';
 import { createOpenAIClient } from '../openai-client.mjs';
 import { createAnthropicClient } from '../anthropic-client.mjs';
 import { ossStructuredCall } from '../oss-structured-output.mjs';
@@ -640,7 +641,20 @@ async function runMapReducePass(openai, files, passName, buildPromptForUnit, max
   const totalLatency = Date.now() - mapStart;
   return {
     result: reduceResult.result,
-    usage: { input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, latency_ms: totalLatency },
+    // Sum MAP + REDUCE token usage — the success path previously hard-coded
+    // zeros, dropping the entire pass's spend (the failed-REDUCE path above
+    // already preserves `mapUsage`). Harmless while usage was only a telemetry
+    // curiosity; load-bearing now that `_usage.costUsd` is priced from the
+    // aggregate `totalUsage` (2026-07-22) — zero here silently under-counts
+    // legacyCostUsd on every multi-file (map-reduce) pass. costFromUsage prices
+    // input/output tokens, so those must be complete.
+    usage: {
+      input_tokens: mapUsage.input_tokens + (reduceResult.usage?.input_tokens ?? 0),
+      output_tokens: mapUsage.output_tokens + (reduceResult.usage?.output_tokens ?? 0),
+      reasoning_tokens: mapUsage.reasoning_tokens + (reduceResult.usage?.reasoning_tokens ?? 0),
+      cached_tokens: reduceResult.usage?.cached_tokens ?? 0,
+      latency_ms: totalLatency,
+    },
     latencyMs: totalLatency,
     _mapCompletionRate: mapCompletionRate,
     mapUnitStatus, unitsAttempted, unitsFailed,
@@ -2867,6 +2881,15 @@ export async function runLegacyProductionAudit(ctx) {
     reasoning_tokens: allResults.reduce((s, r) => s + (r.usage?.reasoning_tokens ?? 0), 0),
     latency_ms: totalLatency
   };
+  // Price the aggregate token total so `_usage.costUsd` is a real dollar
+  // figure (2026-07-22 defect: legacy never priced its tokens, so the tiered-
+  // shadow comparison recorded `legacyCostUsd: null` on every run). All legacy
+  // passes use the one resolved audit model, so a single price over the
+  // aggregate is correct. `costFromUsage` returns `null` for an unpriced model
+  // (e.g. an Azure deployment id not in the pricing table) — an honest
+  // "unknown", never a fabricated 0. Cache discounts are ignored (a slight
+  // over-estimate, the conservative direction for a cost comparison).
+  totalUsage.costUsd = costFromUsage(totalUsage, openaiConfig.model).totalUsd;
 
   // ── Cache telemetry (PR-4) ───────────────────────────────────────────
   // Aggregate prompt-prefix-cache hit metrics across all audit-pass calls.

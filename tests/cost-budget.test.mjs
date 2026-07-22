@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { buildUsageEvent, UsageEventSchema } from '../scripts/lib/audit/usage-event.mjs';
+import { buildUsageEvent, tryBuildUsageEvent, UsageEventSchema } from '../scripts/lib/audit/usage-event.mjs';
 import { buildReviewEffortEvent } from '../scripts/lib/audit/review-effort-event.mjs';
 import { computeCostReport, recordUsageEvent, loadUsageEvents } from '../scripts/lib/audit/cost-budget.mjs';
 import { EUR_PER_USD, priceFor } from '../scripts/lib/model-pricing.mjs';
@@ -62,6 +62,89 @@ describe('buildUsageEvent', () => {
     }, '2026-01-01T00:00:00.000Z');
     assert.ok(UsageEventSchema.safeParse(event).success);
     assert.equal(typeof event.fxRateUsed, 'number');
+  });
+});
+
+// tryBuildUsageEvent — the fail-open wrapper the tiered pipeline captures with.
+// Usage/cost is ADVISORY telemetry; a malformed provider usage object (or a
+// missing required field) must NEVER throw up through an audit stage and abort
+// the run. It degrades to a dropped event (null), never a crash.
+describe('tryBuildUsageEvent (fail-open capture wrapper)', () => {
+  it('returns a valid event for well-formed input (same as buildUsageEvent)', () => {
+    const event = tryBuildUsageEvent({
+      provider: 'oss', modelSentinel: 'z-ai/glm-5.2', resolvedModel: 'z-ai/glm-5.2',
+      usage: { input_tokens: 1000, output_tokens: 500 },
+    }, '2026-01-01T00:00:00.000Z');
+    assert.ok(event);
+    assert.ok(UsageEventSchema.safeParse(event).success);
+  });
+
+  it('returns null (never throws) when the provider is not in the enum', () => {
+    assert.doesNotThrow(() => {
+      const ev = tryBuildUsageEvent({
+        provider: 'not-a-real-provider', modelSentinel: 'x', resolvedModel: 'x',
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }, '2026-01-01T00:00:00.000Z');
+      assert.equal(ev, null);
+    });
+  });
+
+  it('returns null (never throws) for a null/garbage raw payload', () => {
+    assert.equal(tryBuildUsageEvent(null, '2026-01-01T00:00:00.000Z'), null);
+    assert.equal(tryBuildUsageEvent(42, '2026-01-01T00:00:00.000Z'), null);
+  });
+
+  it('an unpriced model still yields an event (unavailable), not null — that is a KEPT signal, not a capture failure', () => {
+    const ev = tryBuildUsageEvent({
+      provider: 'gemini', modelSentinel: 'x', resolvedModel: 'unknown-model-xyz',
+      usage: { input_tokens: 10, output_tokens: 10 },
+    }, '2026-01-01T00:00:00.000Z');
+    assert.ok(ev, 'unpriced ≠ capture failure — the event is kept so unavailableCostEventCount can count it');
+    assert.equal(ev.usageReliability, 'unavailable');
+  });
+});
+
+// Shape-contract lock for the tiered pipeline's per-stage capture (2026-07-22).
+// The three stages hand recordUsage() three DIFFERENT provider usage shapes;
+// all must price via the same costFromUsage path (which reads input_tokens/
+// output_tokens). If a provider changes its usage shape, this fails loudly
+// rather than silently pricing to 0 and re-introducing the "tiered is free" bug.
+describe('tiered per-stage capture — the real provider usage shapes all price', () => {
+  const build = (provider, resolvedModel, usage, extra = {}) =>
+    tryBuildUsageEvent({ provider, modelSentinel: resolvedModel, resolvedModel, usage, ...extra }, '2026-01-01T00:00:00.000Z');
+
+  it('OSS-normalized (discovery GLM / Stage-1 GLM) prices, and provider_cost_usd is used verbatim when passed as selfReportedCostUsd', () => {
+    // ossStructuredCall's normaliseUsage shape.
+    const usage = { input_tokens: 12000, cached_tokens: 0, output_tokens: 3000, reasoning_tokens: 0, latency_ms: 900, usageMissing: false, provider_cost_usd: 0.0123 };
+    const estimated = build('oss', 'z-ai/glm-5.2', usage);
+    assert.ok(estimated.costAmountUsd > 0, 'token-priced OSS usage must be > 0');
+    const exact = build('oss', 'z-ai/glm-5.2', usage, { selfReportedCostUsd: usage.provider_cost_usd });
+    assert.equal(exact.costAmountUsd, 0.0123, "OpenRouter's own cost is used verbatim");
+    assert.equal(exact.usageReliability, 'exact');
+  });
+
+  it('Anthropic SDK shape (discovery Sonnet) prices', () => {
+    const usage = { input_tokens: 8000, output_tokens: 2000 }; // resp.usage
+    const ev = build('anthropic', 'claude-sonnet-5', usage);
+    assert.ok(ev.costAmountUsd > 0);
+    assert.equal(ev.usageReliability, 'estimated');
+  });
+
+  it('Gemini shape with thinking_tokens (Stage 2) prices off input/output', () => {
+    const usage = { input_tokens: 5000, output_tokens: 1500, thinking_tokens: 400 }; // --out _usage
+    const ev = build('gemini', 'gemini-3-pro-preview', usage);
+    assert.ok(ev.costAmountUsd > 0);
+  });
+
+  it('a whole run priced across all three shapes yields a real, non-zero costUsd (the metric the stopping rule reads)', () => {
+    const events = [
+      build('oss', 'z-ai/glm-5.2', { input_tokens: 12000, output_tokens: 3000 }),
+      build('anthropic', 'claude-sonnet-5', { input_tokens: 8000, output_tokens: 2000 }),
+      build('gemini', 'gemini-3-pro-preview', { input_tokens: 5000, output_tokens: 1500 }),
+    ];
+    const report = computeCostReport({ usageEvents: events, reviewEffortEvents: [], acceptedFindings: [] });
+    assert.ok(report.costUsd > 0, 'a real multi-stage run must produce a real cost, not 0');
+    assert.equal(report.unavailableCostEventCount, 0, 'all three families are priced');
   });
 });
 
