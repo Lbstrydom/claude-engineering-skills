@@ -1,7 +1,17 @@
 # Plan: Dismissed-FP Reopen Policy (split `dismissed` from `fixed`)
 
 - **Date**: 2026-07-16
-- **Status**: In Progress — Phase 1 implemented 2026-07-17 (`buildRulingsBlock`
+- **Status**: Complete (closed 2026-07-22) — this plan's committed scope was
+  **Phase 1 only**, which shipped and cleared the Gemini gate (see below).
+  Nothing actionable remains *under this plan*: Phase 2 is explicitly out of
+  scope, its design is SUPERSEDED, and it must not be built from this document
+  (see "Phase 2 … DO NOT IMPLEMENT from this document" + "Why Phase 2 is not in
+  this plan's scope"). The pending Phase-1 empirical protocol (a local 5-run
+  re-raise experiment) is a **trigger to author a fresh Phase-2 plan** on the
+  `evidence-triage.mjs` primitives if it fires ≥1/5 — it is not remaining work
+  on this plan. Status was previously "In Progress"; corrected because the
+  label implied live scope here.
+  <br>_Original Phase-1 record:_ Phase 1 implemented 2026-07-17 (`buildRulingsBlock`
   rewritten; `tests/rulings-block-guard.test.mjs` +
   `tests/sensitive-egress.test.mjs` extended (written test-first: confirmed RED
   against the old implementation, then GREEN). Full suite 6545 pass / 0 fail.

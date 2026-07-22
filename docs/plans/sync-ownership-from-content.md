@@ -1,7 +1,12 @@
 # Plan: Sync ownership from content, not a tracked artifact
 
 - **Date**: 2026-07-20
-- **Status**: Draft
+- **Status**: Complete — all sections (§0 rollback detection, §A content-derived
+  ownership, §B untrack consumer manifest) implemented + tested and shipped
+  2026-07-20/21. Closed 2026-07-22 (status was stale at `Draft` after the work
+  landed). The one remaining item — the `copyForwardUntouchedFiles`
+  justification-column defect at `scripts/lib/store/arch/symbols.mjs:320` — is
+  explicitly out of scope and separately tracked.
 - **Author**: Claude + Louis
 - **Scope**: backend (sync collision guard + consumer manifest tracking; no UI)
 

@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**6 active · 136 terminal · 22 audit summaries · 4 reference docs**
+**4 active · 138 terminal · 22 audit summaries · 4 reference docs**
 
 ---
 
@@ -21,11 +21,9 @@ This is the list to read when asking "what is in flight?".
 
 | Plan | Status | Notes |
 |---|---|---|
-| [Dismissed-FP Reopen Policy (split `dismissed` from `fixed`)](./dismissed-fp-reopen-policy.md) | `In Progress` | Phase 1 implemented 2026-07-17 (`buildRulingsBlock` |
 | [Gate inventory — the 13 uncontracted skills](./gate-contract-expansion-inventory.md) | `In Progress` |  |
 | [Gate-contract expansion — bind stated gates to enforcers](./gate-contract-expansion.md) | `Draft` |  |
 | [Observed-Graph Discovery Unification (evidence-layer architecture)](./observed-graph-discovery-unification.md) | `Draft` | measured 2026-07-18 across all three repos (§3.1), and the |
-| [Sync ownership from content, not a tracked artifact](./sync-ownership-from-content.md) | `Draft` |  |
 | [Tiered Recall-Weighted Audit Pipeline](./tiered-recall-audit-pipeline.md) | `In Progress` | implementation complete (Clusters A-F implemented |
 
 ## Superseded / abandoned
@@ -46,7 +44,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 133 completed plans</summary>
+<summary>Show all 135 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -98,6 +96,7 @@ source comments that no docs linter sees — stays valid.
 | [Deterministic `/audit-code` outcome capture for rounds 1..N-1 (orchestrator-only)](./deterministic-outcome-capture.md) | `Complete` | shipped 2026-06-29. Audit trail: v1 hook+queue design REJECTED by Gemini (coherence *Weak*, over-engineered… |
 | [Device-profile emulation for persona-driven + structural browser tests](./device-profile-emulation.md) | `Complete` | implemented in this repo; shareable brief for porting elsewhere |
 | [Discovery-Portfolio Secret-Redaction Gap](./discovery-portfolio-secret-redaction.md) | `Complete` | implemented, `/audit-code` converged over 5 rounds (18 dogfooding-artifact findings dismissed via GPT rebut… |
+| [Dismissed-FP Reopen Policy (split `dismissed` from `fixed`)](./dismissed-fp-reopen-policy.md) | `Complete` | closed 2026-07-22) — this plan's committed scope was |
 | [Dogfooding Ergonomics v1](./dogfooding-ergonomics-v1.md) | `Complete` | shipped 2026-05-09; archive auto-moves this file via `/ship` Step 5.5 |
 | [Domain-Map Reconciliation (architecture-intent backlog)](./domain-map-reconciliation.md) | `Complete` | Phases A/B (`f94371c`) + C (`144be83`, `500f3aa`), 2026-07-17. Gemini final gate: APPROVE. |
 | [Egress secret coverage — the two layers are not independent](./egress-secret-coverage-gap.md) | `Complete` | option B implemented 2026-07-19; §4e records a correction to §1 |
@@ -173,6 +172,7 @@ source comments that no docs linter sees — stays valid.
 | [Stage 0 Evidence-Relevance Split (Tiered-Recall Audit Pipeline)](./stage0-evidence-relevance-split.md) | `Complete` | implemented 2026-07-16; all 3 clusters landed via `/cycle --autonomous`. Plan-audit: 3 GPT rounds + 2 Gemin… |
 | [Sustainability cleanup batch — god-module split + monolithic renderer decomp + refresh.mjs hardening](./sustainability-cleanup-batch.md) | `Complete` | WS1 (efca5ea), WS2 (13a0af9), WS3 (this commit |
 | [symbol-index bugs — patches for arch:refresh --force + arch:duplicates thin-delegate](./symbol-index-bugs.md) | `Complete` | applied 2026-05-11 |
+| [Sync ownership from content, not a tracked artifact](./sync-ownership-from-content.md) | `Complete` | all sections (§0 rollback detection, §A content-derived |
 | [Tech Debt Wave 2 — Responsibility Splits & Safety Fixes](./tech-debt-wave-2.md) | `Complete` | shipped — `scripts/shared.mjs` god-module split into focused `scripts/lib/*.mjs` files: `code-analysis.mjs`… |
 | [Tech Debt Wave 3 — Lint Modernization + Cognitive-Complexity Sweep](./tech-debt-wave-3.md) | `Complete` | all 5 PRs shipped 2026-04-27 |
 | [Tiered Testing Doctrine + Egress/Relocation Behavioral-Gap Backfill](./testing-doctrine-and-egress-relocation-gaps.md) | `Complete` |  |
