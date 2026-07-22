@@ -6106,20 +6106,6 @@
   ],
   "functions": [
     {
-      "function_name": "armor",
-      "args": "bytea",
-      "return_type": "text",
-      "security_definer": false,
-      "config": null
-    },
-    {
-      "function_name": "armor",
-      "args": "bytea, text[], text[]",
-      "return_type": "text",
-      "security_definer": false,
-      "config": null
-    },
-    {
       "function_name": "array_to_halfvec",
       "args": "double precision[], integer, boolean",
       "return_type": "halfvec",
@@ -6253,34 +6239,6 @@
       "config": null
     },
     {
-      "function_name": "crypt",
-      "args": "text, text",
-      "return_type": "text",
-      "security_definer": false,
-      "config": null
-    },
-    {
-      "function_name": "dearmor",
-      "args": "text",
-      "return_type": "bytea",
-      "security_definer": false,
-      "config": null
-    },
-    {
-      "function_name": "decrypt",
-      "args": "bytea, bytea, text",
-      "return_type": "bytea",
-      "security_definer": false,
-      "config": null
-    },
-    {
-      "function_name": "decrypt_iv",
-      "args": "bytea, bytea, bytea, text",
-      "return_type": "bytea",
-      "security_definer": false,
-      "config": null
-    },
-    {
       "function_name": "defer_finding",
       "args": "p_finding_id uuid, p_dismiss_reason text, p_evidence jsonb, p_cluster_hash text, p_severity text, p_audit_run_id uuid, p_round integer, p_sequence integer",
       "return_type": "void",
@@ -6288,39 +6246,11 @@
       "config": "search_path=pg_catalog, public"
     },
     {
-      "function_name": "digest",
-      "args": "bytea, text",
-      "return_type": "bytea",
-      "security_definer": false,
-      "config": null
-    },
-    {
-      "function_name": "digest",
-      "args": "text, text",
-      "return_type": "bytea",
-      "security_definer": false,
-      "config": null
-    },
-    {
       "function_name": "drift_score",
       "args": "p_repo_id uuid, p_refresh_id uuid, p_sim_dup numeric, p_sim_name numeric",
       "return_type": "jsonb",
       "security_definer": true,
       "config": "search_path=pg_catalog, public"
-    },
-    {
-      "function_name": "encrypt",
-      "args": "bytea, bytea, text",
-      "return_type": "bytea",
-      "security_definer": false,
-      "config": null
-    },
-    {
-      "function_name": "encrypt_iv",
-      "args": "bytea, bytea, bytea, text",
-      "return_type": "bytea",
-      "security_definer": false,
-      "config": null
     },
     {
       "function_name": "friction_neighbourhood",
@@ -6335,34 +6265,6 @@
       "return_type": "jsonb",
       "security_definer": true,
       "config": "search_path=public"
-    },
-    {
-      "function_name": "gen_random_bytes",
-      "args": "integer",
-      "return_type": "bytea",
-      "security_definer": false,
-      "config": null
-    },
-    {
-      "function_name": "gen_random_uuid",
-      "args": "",
-      "return_type": "uuid",
-      "security_definer": false,
-      "config": null
-    },
-    {
-      "function_name": "gen_salt",
-      "args": "text",
-      "return_type": "text",
-      "security_definer": false,
-      "config": null
-    },
-    {
-      "function_name": "gen_salt",
-      "args": "text, integer",
-      "return_type": "text",
-      "security_definer": false,
-      "config": null
     },
     {
       "function_name": "gin_extract_query_trgm",
@@ -6659,20 +6561,6 @@
       "config": null
     },
     {
-      "function_name": "hmac",
-      "args": "bytea, bytea, text",
-      "return_type": "bytea",
-      "security_definer": false,
-      "config": null
-    },
-    {
-      "function_name": "hmac",
-      "args": "text, text, text",
-      "return_type": "bytea",
-      "security_definer": false,
-      "config": null
-    },
-    {
       "function_name": "hnsw_bit_support",
       "args": "internal",
       "return_type": "internal",
@@ -6860,146 +6748,6 @@
       "return_type": "text[]",
       "security_definer": false,
       "config": "search_path=public, pg_temp"
-    },
-    {
-      "function_name": "pgp_armor_headers",
-      "args": "text, OUT key text, OUT value text",
-      "return_type": "SETOF record",
-      "security_definer": false,
-      "config": null
-    },
-    {
-      "function_name": "pgp_key_id",
-      "args": "bytea",
-      "return_type": "text",
-      "security_definer": false,
-      "config": null
-    },
-    {
-      "function_name": "pgp_pub_decrypt",
-      "args": "bytea, bytea",
-      "return_type": "text",
-      "security_definer": false,
-      "config": null
-    },
-    {
-      "function_name": "pgp_pub_decrypt",
-      "args": "bytea, bytea, text",
-      "return_type": "text",
-      "security_definer": false,
-      "config": null
-    },
-    {
-      "function_name": "pgp_pub_decrypt",
-      "args": "bytea, bytea, text, text",
-      "return_type": "text",
-      "security_definer": false,
-      "config": null
-    },
-    {
-      "function_name": "pgp_pub_decrypt_bytea",
-      "args": "bytea, bytea",
-      "return_type": "bytea",
-      "security_definer": false,
-      "config": null
-    },
-    {
-      "function_name": "pgp_pub_decrypt_bytea",
-      "args": "bytea, bytea, text",
-      "return_type": "bytea",
-      "security_definer": false,
-      "config": null
-    },
-    {
-      "function_name": "pgp_pub_decrypt_bytea",
-      "args": "bytea, bytea, text, text",
-      "return_type": "bytea",
-      "security_definer": false,
-      "config": null
-    },
-    {
-      "function_name": "pgp_pub_encrypt",
-      "args": "text, bytea",
-      "return_type": "bytea",
-      "security_definer": false,
-      "config": null
-    },
-    {
-      "function_name": "pgp_pub_encrypt",
-      "args": "text, bytea, text",
-      "return_type": "bytea",
-      "security_definer": false,
-      "config": null
-    },
-    {
-      "function_name": "pgp_pub_encrypt_bytea",
-      "args": "bytea, bytea",
-      "return_type": "bytea",
-      "security_definer": false,
-      "config": null
-    },
-    {
-      "function_name": "pgp_pub_encrypt_bytea",
-      "args": "bytea, bytea, text",
-      "return_type": "bytea",
-      "security_definer": false,
-      "config": null
-    },
-    {
-      "function_name": "pgp_sym_decrypt",
-      "args": "bytea, text",
-      "return_type": "text",
-      "security_definer": false,
-      "config": null
-    },
-    {
-      "function_name": "pgp_sym_decrypt",
-      "args": "bytea, text, text",
-      "return_type": "text",
-      "security_definer": false,
-      "config": null
-    },
-    {
-      "function_name": "pgp_sym_decrypt_bytea",
-      "args": "bytea, text",
-      "return_type": "bytea",
-      "security_definer": false,
-      "config": null
-    },
-    {
-      "function_name": "pgp_sym_decrypt_bytea",
-      "args": "bytea, text, text",
-      "return_type": "bytea",
-      "security_definer": false,
-      "config": null
-    },
-    {
-      "function_name": "pgp_sym_encrypt",
-      "args": "text, text",
-      "return_type": "bytea",
-      "security_definer": false,
-      "config": null
-    },
-    {
-      "function_name": "pgp_sym_encrypt",
-      "args": "text, text, text",
-      "return_type": "bytea",
-      "security_definer": false,
-      "config": null
-    },
-    {
-      "function_name": "pgp_sym_encrypt_bytea",
-      "args": "bytea, text",
-      "return_type": "bytea",
-      "security_definer": false,
-      "config": null
-    },
-    {
-      "function_name": "pgp_sym_encrypt_bytea",
-      "args": "bytea, text, text",
-      "return_type": "bytea",
-      "security_definer": false,
-      "config": null
     },
     {
       "function_name": "publish_refresh_run",
@@ -10067,6 +9815,10 @@
   ],
   "extensions": [
     {
+      "extension_name": "pg_stat_statements",
+      "version": "1.11"
+    },
+    {
       "extension_name": "pg_trgm",
       "version": "1.6"
     },
@@ -10079,8 +9831,16 @@
       "version": "1.0"
     },
     {
+      "extension_name": "supabase_vault",
+      "version": "0.3.1"
+    },
+    {
+      "extension_name": "uuid-ossp",
+      "version": "1.1"
+    },
+    {
       "extension_name": "vector",
-      "version": "0.8.5"
+      "version": "0.8.0"
     }
   ],
   "grants": [
