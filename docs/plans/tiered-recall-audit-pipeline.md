@@ -953,3 +953,57 @@ cost) are now cleared in code — Phase 14 needs the window to **re-accumulate**
 >   counter). The next `complete` tiered run (whenever GLM cooperates) will carry
 >   the real `tieredCostUsd` — confirm it then.
 
+#### Stage-2 metering refinement + GLM reliability audit + window kickoff (2026-07-22, later)
+
+- **Stage-2 metering made honest (follow-up fix).** `meterGeminiCall` originally
+  hardcoded `provider: 'gemini'` and dropped Gemini `thinking_tokens`. Two small
+  corrections: (a) provider is now **derived from `_model`** (`/gemini/i` → `gemini`,
+  else `anthropic`) so the Opus/Azure-Claude adjudicator fallback isn't mislabeled —
+  advisory only, cost comes from `resolvedModel` pricing; (b) **thinking tokens are
+  folded into `output_tokens`** (Gemini bills thought tokens at the output rate and
+  reports them separately, so dropping them silently under-counted a reasoning
+  adjudicator; Claude paths report `thinking_tokens:0`, so it's a no-op there).
+
+- **GLM discovery reliability — real telemetry + OpenRouter best-practice audit.**
+  `audit:tiered-shadow-report` over **136 runs**: 29 `complete`, 34 `fallback_legacy`,
+  17 `skipped`. Fallback causes: **GLM egress-gate secret-pattern ~11–16 (already
+  FIXED — `redactSecrets(planContent)`, 2026-07-16)**; **GLM timeout 12 (the live
+  remaining issue)**; GLM invalid-JSON 3; `principle`>150 chars 1 (already FIXED —
+  lenient clamp); Sonnet 529 overloaded 1. We DO follow OpenRouter's core reliability
+  best-practices: `require_parameters:true` (routes only to structured-output hosts;
+  cut stalls 10/30→0/30 in experiment-4), `allow_fallbacks` default `true`, json_schema
+  **with tool-calling downgrade**, retry+backoff, and **automatic cost accounting**
+  (`usage:{include:true}` is deprecated/no-op — OpenRouter always returns `cost`, which
+  is why capture reads `provider_cost_usd` as `exact`). The latency levers we DON'T set
+  (`sort:"throughput"`/`:nitro`, `provider.order`, `preferred_max_latency`) are held
+  back **deliberately** — `sort:throughput` prefers fp4/fp8 hosts, reintroducing the
+  quantization confound experiment-4's model-vs-router control exists to isolate. The
+  120s×1-retry timeout is NOT recalibrated: `runOneGenerator` now records **success
+  durations** precisely so the next timeout change is evidence-based, not a guess — and
+  no distribution exists yet.
+
+- **Run-yield (answers "how many more runs?").** The cost *code* needs no more runs to
+  trust — the live OpenRouter usage→cost probe confirmed `exact` pricing end-to-end. The
+  Phase-14 *window* does: the 29 complete / 14 compared rows are **void** (`costDelta`
+  null, overlap 0 from the pre-fix semanticId matcher), so it restarts from the first
+  post-fix `complete` row. Because a GLM fallback yields no window row, more raw runs than
+  10–15 are needed: historical completion ≈ 29/(29+34) ≈ **46%**; with the egress+clamp
+  causes now fixed (~13–17 of 34 fallbacks removed), forward completion should rise to
+  **~60–65%**, i.e. **~16–25 real `/audit-code` runs** to bank 10–15 valid `complete`
+  rows (fewer if the timeout rate drops). **Window kicked off 2026-07-22** — normal
+  `/audit-code` usage now feeds it; watch `tieredRunStatusCounts.complete` climb with a
+  non-null `tieredCostUsd` and a correlating `overlapCount`.
+
+- **Tiered cost — CONFIRMED live 2026-07-22.** The kickoff audit (a small
+  1-file `--files` scope, chosen so the discovery prompt stayed small enough for
+  GLM to finish before the 120s timeout) produced the **first post-fix `complete`
+  shadow row**: `tieredRunStatusCounts.complete` 29 → 30, `totalRuns` 137 → 138,
+  and — the decisive signal — **`costDeltaUsd` went `null` → `-0.033`**. A non-null
+  delta means BOTH `tieredCostUsd` and `legacyCostUsd` are real on that row (tiered
+  ~3.3¢ cheaper here), closing the "tiered cost verified behaviourally, not yet on a
+  live `complete` row" caveat above. `findingOverlapRate` stays 0 on this row because
+  the legacy audit found nothing (PASS, 0/0/0) so there was nothing to correlate —
+  overlap correctness is covered by the item-(1) unit suite, not this cost-kickoff
+  row. Practical note recorded for future kickoffs: a small `--files`-scoped diff is
+  the reliable way to get a `complete` row past GLM's discovery timeout.
+

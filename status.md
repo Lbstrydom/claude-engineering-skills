@@ -1,5 +1,52 @@
 # Project Status Log
 
+## 2026-07-22 — Tiered cost capture: Stage-2 metering honesty fix + GLM/OpenRouter reliability audit + Phase-14 window kickoff
+
+Follow-up to the same-day `6b3fd62` tiered-cost-capture fix. Three pieces of work,
+docs-only for this commit (the code fixes below were folded into `6b3fd62` and
+`0275961` by a concurrent session sharing this working tree; this session verified
+them, fixed one remaining metering gap, ran the OpenRouter audit, and kicked off
+the Phase-14 shadow window):
+
+- **Stage-2 metering honesty fix** (`tiered-pipeline.mjs` `meterGeminiCall`):
+  provider label is now derived from `_model` (was hardcoded `'gemini'`, wrong when
+  Stage 2 falls back to Opus/Azure-Claude); Gemini `thinking_tokens` are now folded
+  into `output_tokens` (Gemini bills + reports them separately from output tokens,
+  so they were silently dropped from the cost estimate). Advisory-only for the
+  provider label (cost derives from `resolvedModel` pricing regardless); the
+  thinking-token fold is a real, if small, cost-accuracy fix.
+- **GLM discovery reliability + OpenRouter best-practice audit**: pulled real shadow
+  telemetry (`audit:tiered-shadow-report`, 136 runs: 29 complete / 34 fallback_legacy
+  / 17 skipped) and traced every `fallback_legacy` reason. Two of the three biggest
+  causes (egress-gate secret-pattern, `principle`>150-char clamp) were already fixed
+  earlier that day; the remaining live issue is GLM discovery timing out at 120s
+  (~12/34 fallbacks). Confirmed the pipeline already follows OpenRouter's core
+  reliability guidance (`require_parameters:true`, `allow_fallbacks` default-on,
+  json_schema-with-tool-calling-downgrade, and automatic cost accounting — verified
+  live that `usage:{include:true}` is deprecated/no-op and OpenRouter always returns
+  `cost` by default, which is why capture reads `provider_cost_usd` as `exact`).
+  Deliberately did NOT add `sort:"throughput"`/`:nitro` — that prefers fp4/fp8 hosts
+  and would reintroduce the quantization confound experiment-4's GLM-vs-router
+  control exists to isolate. Did not recalibrate the 120s timeout either —
+  `runOneGenerator` now records success durations precisely so that change can be
+  evidence-based later, and no distribution exists yet.
+- **Phase-14 window kicked off**: the 29 pre-fix complete rows are void
+  (`costDelta` null, overlap 0 from the old semanticId matcher). Ran one real
+  `/audit-code` (small `--files`-scoped diff — chosen specifically to keep the GLM
+  discovery prompt small enough to beat the 120s timeout) and got the **first
+  post-fix `complete` shadow row**: `complete` 29→30, and `costDeltaUsd` flipped
+  **`null` → `-0.033`** — the decisive live confirmation that both `tieredCostUsd`
+  and `legacyCostUsd` are now real. Practical note for future kickoffs: a small
+  `--files`-scoped diff is the reliable way to land a `complete` row past GLM's
+  discovery timeout; a full-repo/large-plan audit is much more likely to fall back.
+  Estimated ~16–25 more real runs (not 10–15) to bank the window, since a
+  `fallback_legacy` run yields no comparison row — historical completion ≈46%,
+  expected to rise to ≈60–65% now that the two biggest fallback causes are fixed.
+
+All findings recorded in `docs/plans/tiered-recall-audit-pipeline.md`. No production
+flags touched (`AUDIT_TIERED_PIPELINE_ENABLED` stays off; no Phase-14 flip decision
+made). Full suite green.
+
 ## 2026-07-22 — Discovery batch-abort hardening: one malformed finding can no longer crash the whole tiered run
 
 Systematic follow-up to the same-day Stage-1 `too_big` clamp fix (`6b3fd62`): swept
