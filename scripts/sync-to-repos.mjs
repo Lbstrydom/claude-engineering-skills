@@ -294,12 +294,18 @@ const CORE_ENTRY = [
   // Local weekly-maintenance replica of the 5 GH Actions cron workflows
   // (docs/runbooks/local-maintenance-checks.md) — opt-in, default-OFF, invoked
   // opportunistically from the pre-push hook. Spawns each replicated check
-  // as a subprocess, so memory-health.mjs + check-model-freshness.mjs must
-  // ship too — neither was previously an entry point here (a real gap this
-  // feature closes; they were unreachable in any consumer before now).
+  // as a subprocess, so memory-health.mjs + check-model-freshness.mjs +
+  // context-staleness.mjs must ship too — none were previously an entry
+  // point here (a real gap this feature closes; they were unreachable in
+  // any consumer before now). context-staleness.mjs specifically was added
+  // to the CHECKS list after this comment was written and never added here
+  // — exactly the "silent divergence" risk the module's own header warns
+  // about; caught 2026-07-22 when enabling the opt-in for the first time in
+  // wine-cellar-app produced a live MODULE_NOT_FOUND.
   'scripts/maintenance-checks.mjs',
   'scripts/memory-health.mjs',
   'scripts/check-model-freshness.mjs',
+  'scripts/context-staleness.mjs',
   // Reached only via `await import('./lib/redact.mjs')` in cross-skill.mjs
   // + learning-store.mjs (dynamic specifier — walker cannot follow).
   // Required at runtime for candidate-write redaction.
