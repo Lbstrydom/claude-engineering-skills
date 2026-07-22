@@ -1,7 +1,10 @@
 # Gate inventory — the 13 uncontracted skills
 
 - **Date**: 2026-07-20
-- **Status**: In Progress
+- **Status**: Complete — status corrected 2026-07-22 (was stale at `In Progress`).
+  Every candidate across all 13 skills has a disposition and, per the parent
+  plan, a contract now exists for all 15 skills (`check-gate-contracts.mjs`
+  reports zero uncontracted).
 - **Author**: Claude + Louis
 - **Scope**: backend (survey artefact; authors no contracts)
 

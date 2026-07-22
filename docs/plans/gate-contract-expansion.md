@@ -1,7 +1,11 @@
 # Plan: Gate-contract expansion — bind stated gates to enforcers
 
 - **Date**: 2026-07-20
-- **Status**: Draft
+- **Status**: Complete — status corrected 2026-07-22 (was stale at `Draft`). All
+  phases shipped across `0f0e2b2`→`5d04a35`: Phase 1 prose corrections, Phase 2
+  hermetic harness + inventory, Phase 3/4 contract authoring for all 15 skills,
+  and the Phase D net-new-skill ratchet capstone. `node scripts/check-gate-contracts.mjs`
+  confirms zero uncontracted skills.
 - **Author**: Claude + Louis
 - **Scope**: backend (defect closure + gate inventory + hermetic harness; no UI)
 

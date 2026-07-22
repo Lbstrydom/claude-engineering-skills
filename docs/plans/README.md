@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**3 active · 139 terminal · 22 audit summaries · 4 reference docs**
+**1 active · 141 terminal · 22 audit summaries · 4 reference docs**
 
 ---
 
@@ -21,8 +21,6 @@ This is the list to read when asking "what is in flight?".
 
 | Plan | Status | Notes |
 |---|---|---|
-| [Gate inventory — the 13 uncontracted skills](./gate-contract-expansion-inventory.md) | `In Progress` |  |
-| [Gate-contract expansion — bind stated gates to enforcers](./gate-contract-expansion.md) | `Draft` |  |
 | [Tiered Recall-Weighted Audit Pipeline](./tiered-recall-audit-pipeline.md) | `In Progress` | implementation complete (Clusters A-F implemented |
 
 ## Superseded / abandoned
@@ -43,7 +41,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 136 completed plans</summary>
+<summary>Show all 138 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -107,6 +105,8 @@ source comments that no docs linter sees — stays valid.
 | [Friction-Feedback Loop (recurrence-aware quality signal)](./friction-feedback-loop.md) | `Complete` | built Clusters A–C 2026-06-28; `/audit-code` R1 found 8 genuine in-scope bugs — all fixed; consolidated Gem… |
 | [Friction Log + Weekly Digest Surface (v1)](./friction-log-and-digest-v1.md) | `Complete` | shipped 2026-05-09; schema applied to live Supabase; auto-archived via `/ship` Step 5.5 |
 | [Gate-contract authoring — bind the surveyed gates, ratchet the rest](./gate-contract-authoring.md) | `Complete` |  |
+| [Gate inventory — the 13 uncontracted skills](./gate-contract-expansion-inventory.md) | `Complete` | status corrected 2026-07-22 (was stale at `In Progress`). |
+| [Gate-contract expansion — bind stated gates to enforcers](./gate-contract-expansion.md) | `Complete` | status corrected 2026-07-22 (was stale at `Draft`). All |
 | [Gemini 3.1 Pro Final Reviewer](./gemini-final-reviewer.md) | `Complete` |  |
 | [Gemini-gate scope-error fix](./gemini-gate-scope-fix.md) | `Complete` | applied 2026-05-11 |
 | [Closing the "GREEN ≠ REALIZED" gap](./green-not-realized.md) | `Complete` | all three clusters shipped (2026-06-28). A: efficacy-lints (AST, Gemini APPROVE). B: runtime-truth audit ru… |
