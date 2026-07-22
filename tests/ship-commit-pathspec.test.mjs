@@ -17,23 +17,21 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { makeGitRunner } from './helpers/fixtures.mjs';
+import { makeRunCli } from './helpers/run-cli.mjs';
 
 const CLI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../scripts/ship-commit.mjs');
 
 let repo;
 
-function git(args, cwd = repo) {
-  const r = spawnSync('git', args, { cwd, encoding: 'utf-8' });
-  assert.equal(r.status, 0, `git ${args.join(' ')} failed: ${r.stderr}`);
-  return r.stdout;
-}
+const git = makeGitRunner(() => repo);
 
-function runCli(args, cwd = repo) {
-  const env = { ...process.env, AUDIT_DB_URL: '', HOME: cwd, USERPROFILE: cwd };
-  return spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: 'utf-8', env });
-}
+const runCli = makeRunCli(CLI, {
+  cwd: () => repo,
+  command: process.execPath,
+  buildEnv: (cwd) => ({ ...process.env, AUDIT_DB_URL: '', HOME: cwd, USERPROFILE: cwd }),
+});
 
 function msgFile(text = 'feat: scoped subject\n\nbody\n') {
   fs.mkdirSync(path.join(repo, '.claude', 'tmp'), { recursive: true });

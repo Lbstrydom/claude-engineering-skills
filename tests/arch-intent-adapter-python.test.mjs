@@ -12,6 +12,7 @@ import path from 'node:path';
 import os from 'node:os';
 
 import analyseImports, { _internals } from '../scripts/lib/arch-intent/adapters/python.mjs';
+import { writeTree } from './helpers/fixtures.mjs';
 
 const {
   stripPythonCommentsAndStrings, extractImports, discoverPythonRoots,
@@ -21,16 +22,6 @@ const {
 let tmpDir;
 beforeEach(() => { tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'arch-py-')); });
 afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
-
-/** Write a {relPath: content} tree under tmpDir; return the root path. */
-function writeTree(files) {
-  for (const [rel, content] of Object.entries(files)) {
-    const abs = path.join(tmpDir, rel);
-    fs.mkdirSync(path.dirname(abs), { recursive: true });
-    fs.writeFileSync(abs, content);
-  }
-  return tmpDir;
-}
 
 // ── stripPythonCommentsAndStrings ───────────────────────────────────────────
 
@@ -150,19 +141,19 @@ describe('stripPythonCommentsAndStrings — line preservation (L1)', () => {
 
 describe('discoverPythonRoots', () => {
   it('flat layout — repo root is a root', () => {
-    const root = writeTree({ 'mod.py': '', 'other.py': '' });
+    const root = writeTree(tmpDir, { 'mod.py': '', 'other.py': '' });
     const mapped = new Map([['mod.py', 'core'], ['other.py', 'core']]);
     const roots = discoverPythonRoots(root, mapped);
     assert.ok(roots.includes(''));
   });
   it('src/ layout — src is discovered', () => {
-    const root = writeTree({ 'src/pkg/mod.py': '', 'src/pkg/__init__.py': '' });
+    const root = writeTree(tmpDir, { 'src/pkg/mod.py': '', 'src/pkg/__init__.py': '' });
     const mapped = new Map([['src/pkg/mod.py', 'core'], ['src/pkg/__init__.py', 'core']]);
     const roots = discoverPythonRoots(root, mapped);
     assert.ok(roots.includes('src'), `roots=${JSON.stringify(roots)}`);
   });
   it('monorepo — nested src/ under apps/ is discovered (G2)', () => {
-    const root = writeTree({
+    const root = writeTree(tmpDir, {
       'apps/svc/pyproject.toml': '[tool.setuptools]\n',
       'apps/svc/src/pkg/mod.py': '',
     });
@@ -238,7 +229,7 @@ describe('resolvePythonImport', () => {
 
 describe('python analyseImports (integration)', () => {
   function buildFixture() {
-    return writeTree({
+    return writeTree(tmpDir, {
       'core/__init__.py': '',
       'core/models.py': 'import os\n',
       'app/__init__.py': '',
@@ -293,7 +284,7 @@ describe('python analyseImports (integration)', () => {
     assert.equal(analyzerVersion, 'python-1.0.0');
   });
   it('returns empty for a repo with no python files', async () => {
-    const repoPath = writeTree({ 'readme.md': 'hi' });
+    const repoPath = writeTree(tmpDir, { 'readme.md': 'hi' });
     const { violations } = await analyseImports({ mapped: new Map(), domainMap, repoPath });
     assert.deepEqual(violations, []);
   });

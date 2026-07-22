@@ -49,6 +49,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { log } from './lib/cli-io.mjs';
 
 const IS_WIN = process.platform === 'win32';
 const NPM = IS_WIN ? 'npm.cmd' : 'npm';
@@ -94,8 +95,6 @@ const OPTIONAL_ARTIFACTS = [
   // `--strict` only covers a malformed config, never an absent one.
   '.claude-context-allowlist.json',
 ];
-
-function log(msg) { process.stderr.write(`${msg}\n`); }
 
 function git(args, opts = {}) {
   return execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...opts }).trim();

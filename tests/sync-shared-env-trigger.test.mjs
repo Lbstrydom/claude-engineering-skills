@@ -13,30 +13,20 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Writable } from 'node:stream';
 import {
   assessSharedCloudConfig, runSetupCloud, OUTCOMES, sharedEnvPath, parseEnvFile,
 } from '../scripts/lib/shared-cloud-config.mjs';
 // R1-audit M16: import the trigger helper via the exported `_internals`
 // for real behavioural testing instead of regex-asserting source text.
 import { _internals as syncInternals } from '../scripts/sync-to-repos.mjs';
+import { mkdtemp as mkdtempAt, collectStream } from './helpers/fixtures.mjs';
 
 const REPO_ROOT = path.resolve(fileURLToPath(import.meta.url), '..', '..');
 const SYNC_SRC  = path.join(REPO_ROOT, 'scripts', 'sync-to-repos.mjs');
 
-function mkdtemp() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'sst-'));
-}
-
-function collectStream() {
-  const chunks = [];
-  const s = new Writable({ write(chunk, _enc, cb) { chunks.push(chunk.toString('utf-8')); cb(); } });
-  s.text = () => chunks.join('');
-  return s;
-}
+const mkdtemp = () => mkdtempAt('sst-');
 
 function makeSourceRepo(envContent) {
   const dir = mkdtemp();

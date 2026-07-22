@@ -124,9 +124,18 @@ export function parsePlanStatus(content) {
   return { ok: false, reason: 'unrecognized', raw };
 }
 
+// `*-audit-summary.md` is exempt from the vocabulary lint — docs/README.md
+// mandates its free-text convergence sentence ("Audit-complete. 17 fixes
+// applied."). `[\w-]+` (not `\w+`) so a hyphenated suffix
+// (`…-audit-summary-phase-1.md`) is still exempted. Consolidated here (single
+// source of truth) from two byte-identical copies in check-plan-status.mjs
+// and generate-plans-index.mjs, flagged by `arch:duplicates` — this module is
+// the natural home since both callers already import from it.
+export const isAuditSummary = (name) => /-audit-summary(?:-[\w-]+)?\.md$/.test(name);
+
 /** A plan is selectable iff it is a docs/plans/*.md that is not an audit-summary. */
 function isSelectableName(name) {
-  return name.endsWith('.md') && !/-audit-summary(?:-[\w-]+)?\.md$/.test(name);
+  return name.endsWith('.md') && !isAuditSummary(name);
 }
 
 /**

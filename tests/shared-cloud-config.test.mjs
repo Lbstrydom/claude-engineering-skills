@@ -7,9 +7,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
-import { Writable } from 'node:stream';
 import {
   SHARED_VARS, REQUIRED_VARS, OUTCOMES, EXIT_CODE_FOR,
   sharedEnvPath, discoverLocalEnvPath,
@@ -18,17 +16,9 @@ import {
   resolveSourceRepo, assessSharedCloudConfig, runSetupCloud,
   formatDeltaPreview, _internals,
 } from '../scripts/lib/shared-cloud-config.mjs';
+import { mkdtemp as mkdtempAt, collectStream } from './helpers/fixtures.mjs';
 
-function mkdtemp() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'scc-'));
-}
-
-function collectStream() {
-  const chunks = [];
-  const s = new Writable({ write(chunk, _enc, cb) { chunks.push(chunk.toString('utf-8')); cb(); } });
-  s.text = () => chunks.join('');
-  return s;
-}
+const mkdtemp = () => mkdtempAt('scc-');
 
 // Build a fake "source repo" — a dir containing scripts/sync-to-repos.mjs
 // (the deterministic source-repo sentinel) + optionally a .env file.

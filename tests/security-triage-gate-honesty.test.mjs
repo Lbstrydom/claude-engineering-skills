@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { runTriage, resolveRunStatus, EXIT_CODES, classifyLocationPath } from '../scripts/security-triage.mjs';
 import { ingestSarif, BUCKETS, BOUND_DEFAULTS } from '../scripts/lib/security/sarif.mjs';
 import { routeFindings } from '../scripts/lib/security/triage-router.mjs';
+import { writeFile } from './helpers/fixtures.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CORPUS = path.join(HERE, 'fixtures', 'security-triage', 'corpus.sarif');
@@ -33,13 +34,6 @@ const CONFIG = {
 
 async function makeRepo() {
   return fs.realpathSync(await fsp.mkdtemp(path.join(os.tmpdir(), 'sec-gate-')));
-}
-
-function writeFile(root, rel, content) {
-  const abs = path.join(root, rel);
-  fs.mkdirSync(path.dirname(abs), { recursive: true });
-  fs.writeFileSync(abs, content);
-  return abs;
 }
 
 function sarifDoc(results) {

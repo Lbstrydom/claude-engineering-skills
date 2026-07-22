@@ -76,6 +76,7 @@ import { resolveModel } from './lib/model-resolver.mjs';
 import { auditShadowConfig, tieredAuditConfig } from './lib/config.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { findRepoRootFromScript } from './lib/assert-repo-root.mjs';
+import { argOption } from './lib/cli-io.mjs';
 
 /**
  * The pinned known-good fixture revision (§9a: "a pinned known-good sha
@@ -142,13 +143,6 @@ const ACCEPTANCE_CRITERIA_DESC = Object.freeze([
 /** §9a: the rate criterion needs "n ≥ 3 runs" to distinguish a systematic break
  *  from single-field variance. 3 is the default sample size. */
 const DEFAULT_RUNS = 3;
-
-/** @param {string} name @param {string|null} dflt */
-function argOption(name, dflt = null) {
-  const i = process.argv.indexOf(`--${name}`);
-  const next = i >= 0 ? process.argv[i + 1] : undefined;
-  return next !== undefined && !next.startsWith('--') ? next : dflt;
-}
 
 // ── Acceptance grading (pure — the seam the hermetic tests drive) ──────────
 

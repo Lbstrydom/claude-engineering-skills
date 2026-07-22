@@ -37,7 +37,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { parsePlanStatus } from './lib/plan-status.mjs';
+import { parsePlanStatus, isAuditSummary } from './lib/plan-status.mjs';
 import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 
 /**
@@ -53,8 +53,6 @@ const KNOWN_FLAGS = ['--check', '--selfcheck-relocation'];
 const PLANS_DIR = 'docs/plans';
 const INDEX_NAME = 'README.md';
 const G = '\x1b[32m', R = '\x1b[31m', D = '\x1b[2m', X = '\x1b[0m', B = '\x1b[1m';
-
-const isAuditSummary = name => /-audit-summary(?:-[\w-]+)?\.md$/.test(name);
 
 /** First `# ` heading, minus a leading `Plan: ` prefix. Falls back to the filename. */
 function extractTitle(content, name) {

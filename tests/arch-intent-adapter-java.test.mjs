@@ -9,6 +9,7 @@ import path from 'node:path';
 import os from 'node:os';
 
 import analyseImports, { _internals } from '../scripts/lib/arch-intent/adapters/java.mjs';
+import { writeTree } from './helpers/fixtures.mjs';
 
 const {
   stripJavaCommentsAndLiterals, extractImports, extractPackage,
@@ -18,15 +19,6 @@ const {
 let tmpDir;
 beforeEach(() => { tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'arch-java-')); });
 afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
-
-function writeTree(files) {
-  for (const [rel, content] of Object.entries(files)) {
-    const abs = path.join(tmpDir, rel);
-    fs.mkdirSync(path.dirname(abs), { recursive: true });
-    fs.writeFileSync(abs, content);
-  }
-  return tmpDir;
-}
 
 // ── stripJavaCommentsAndLiterals ────────────────────────────────────────────
 
@@ -129,7 +121,7 @@ describe('extractImports', () => {
 
 describe('buildJavaResolutionIndex', () => {
   it('indexes FQN -> file and derives source root', () => {
-    const root = writeTree({
+    const root = writeTree(tmpDir, {
       'src/main/java/com/foo/Bar.java': 'package com.foo;\nclass Bar {}',
     });
     const mapped = new Map([['src/main/java/com/foo/Bar.java', 'app']]);
@@ -138,7 +130,7 @@ describe('buildJavaResolutionIndex', () => {
     assert.equal(idx.fileToSourceRoot.get('src/main/java/com/foo/Bar.java'), 'src/main/java');
   });
   it('does not index package-info.java / module-info.java as classes (M3)', () => {
-    const root = writeTree({
+    const root = writeTree(tmpDir, {
       'src/com/foo/package-info.java': 'package com.foo;',
       'src/com/foo/module-info.java': 'module com.foo {}',
       'src/com/foo/Real.java': 'package com.foo;\nclass Real {}',
@@ -155,7 +147,7 @@ describe('buildJavaResolutionIndex', () => {
     assert.deepEqual(idx.packageToFiles.get('com.foo'), ['src/com/foo/Real.java']);
   });
   it('distinguishes same FQN across src/main and src/test source sets', () => {
-    const root = writeTree({
+    const root = writeTree(tmpDir, {
       'src/main/java/com/foo/Bar.java': 'package com.foo;\nclass Bar {}',
       'src/test/java/com/foo/Bar.java': 'package com.foo;\nclass Bar {}',
     });
@@ -172,7 +164,7 @@ describe('buildJavaResolutionIndex', () => {
 
 describe('resolveJavaImport', () => {
   function idxOf(files) {
-    const root = writeTree(files);
+    const root = writeTree(tmpDir, files);
     const mapped = new Map(Object.keys(files).map(f => [f, 'x']));
     return buildJavaResolutionIndex(mapped, root);
   }
@@ -237,7 +229,7 @@ describe('resolveJavaImport', () => {
 
 describe('java analyseImports (integration)', () => {
   function buildFixture() {
-    return writeTree({
+    return writeTree(tmpDir, {
       'src/main/java/com/example/core/Model.java':
         'package com.example.core;\npublic class Model {}\n',
       'src/main/java/com/example/app/Service.java':
@@ -306,7 +298,7 @@ describe('java analyseImports (integration)', () => {
     assert.equal(analyzerVersion, 'java-1.0.0');
   });
   it('returns empty for a repo with no java files', async () => {
-    const repoPath = writeTree({ 'readme.md': 'hi' });
+    const repoPath = writeTree(tmpDir, { 'readme.md': 'hi' });
     const { violations } = await analyseImports({ mapped: new Map(), domainMap, repoPath });
     assert.deepEqual(violations, []);
   });

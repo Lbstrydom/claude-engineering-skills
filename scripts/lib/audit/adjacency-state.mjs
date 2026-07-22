@@ -45,6 +45,19 @@ export const ADJACENCY_STATES = Object.freeze({
   FAILED: 'failed',
 });
 
+/**
+ * Build one incompleteness record — `{kind, scope, detail}`. A tiny factory,
+ * but it was independently defined byte-identically in both
+ * adjacency-detector.mjs and adjacency-report.mjs (flagged by
+ * `arch:duplicates`); consolidated here since both already import
+ * `INCOMPLETENESS_KINDS` from this module.
+ * @param {string} kind - one of INCOMPLETENESS_KINDS
+ * @param {string} scope
+ * @param {string} detail
+ * @returns {{kind: string, scope: string, detail: string}}
+ */
+export const incompleteness = (kind, scope, detail) => ({ kind, scope, detail });
+
 /** Every incompleteness kind. Each one emits its own convergence-blocking
  *  control finding — adding a kind without a finding to carry it is not
  *  possible, because `adjacency-report.mjs` maps this set exhaustively. */

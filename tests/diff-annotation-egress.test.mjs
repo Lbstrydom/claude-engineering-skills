@@ -12,17 +12,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import { readFilesAsAnnotatedContext } from '../scripts/lib/diff-annotation.mjs';
 import { assertEgressSafe } from '../scripts/lib/sensitive-egress-gate.mjs';
+import { mkdtemp } from './helpers/fixtures.mjs';
 
 const DSN = 'postgresql://user:hunter2@host.example.com/db';
-
-function mkdtemp(prefix) {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-}
 
 test('readFilesAsAnnotatedContext default (redact:true) redacts a secret-shaped string', (t) => {
   const dir = mkdtemp('diff-annot-redact-default-');

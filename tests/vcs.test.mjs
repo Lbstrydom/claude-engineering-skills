@@ -25,17 +25,10 @@ import {
   isRetryableVcsError,
   _internals,
 } from '../scripts/lib/vcs.mjs';
+import { gitInitWithEmptyCommit as gitInit } from './helpers/fixtures.mjs';
 
 function mkdtemp() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'vcs-test-'));
-}
-
-function gitInit(dir) {
-  spawnSync('git', ['init', '-q'], { cwd: dir, stdio: 'ignore' });
-  spawnSync('git', ['config', 'user.email', 'test@example.com'], { cwd: dir, stdio: 'ignore' });
-  spawnSync('git', ['config', 'user.name', 'Test'], { cwd: dir, stdio: 'ignore' });
-  spawnSync('git', ['config', 'commit.gpgsign', 'false'], { cwd: dir, stdio: 'ignore' });
-  spawnSync('git', ['commit', '--allow-empty', '-m', 'init'], { cwd: dir, stdio: 'ignore' });
 }
 
 describe('exitCodeFor', () => {

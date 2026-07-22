@@ -31,13 +31,10 @@ import {
   buildRedactedAuditContext,
 } from '../scripts/lib/audit-scope.mjs';
 import { assertEgressSafe } from '../scripts/lib/sensitive-egress-gate.mjs';
+import { mkdtemp } from './helpers/fixtures.mjs';
 
 const BENIGN_MARKER = 'BENIGN_MARKER_aaa';
 const SECRET_MARKER = 'SECRET_TOKEN_zzz';
-
-function mkdtemp(prefix) {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-}
 
 test('readFilesAsContext includes benign content and excludes a sensitive file (two-sided)', (t) => {
   const dir = mkdtemp('audit-scope-egress-');

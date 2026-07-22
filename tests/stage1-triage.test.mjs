@@ -12,8 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { runStage1CheapTriage } from '../scripts/lib/audit/stage1-triage.mjs';
 import { Stage1DecisionSchema } from '../scripts/lib/schemas.mjs';
-
-const CLOCK = () => '2026-01-01T00:00:00.000Z';
+import { CLOCK } from './helpers/fixtures.mjs';
 
 // audit-orchestrator-hardening Phase 8: runStage1CheapTriage now REQUIRES
 // ledgerOpts.repoRoot (threaded to buildStageOneTriageInput, which throws

@@ -17,6 +17,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { makeStubClient } from './helpers/fixtures.mjs';
 
 process.env.AUDIT_EXPORTS_FOR_TESTS = '1';
 const _priorEnv = {
@@ -42,27 +43,6 @@ const { runMultiPassCodeAudit } = audit.__testExports;
 const FIXTURE_DIR = 'tests/fixtures/harness-plan';
 const BACKEND_FILE = `${FIXTURE_DIR}/src/service.mjs`;
 const PLAN_CONTENT = `# Adjacency Pipeline Fixture Plan\n\nImplement \`${BACKEND_FILE}\`.\n`;
-
-/** Throws loudly on any schemaName not explicitly stubbed — this is how
- *  "the bouncer must NOT be called" is asserted. */
-function makeStubClient(responses = {}) {
-  return {
-    responses: {
-      parse: async (params) => {
-        const schemaName = params?.text?.format?.name;
-        const handler = responses[schemaName];
-        if (handler === undefined) {
-          throw new Error(`makeStubClient: unrecognized schemaName "${schemaName}" — unstubbed LLM call`);
-        }
-        const result = typeof handler === 'function' ? handler(params) : handler;
-        return {
-          status: 'completed', output: [], output_parsed: result,
-          usage: { input_tokens: 10, output_tokens: 5, prompt_tokens_details: { cached_tokens: 0 }, output_tokens_details: { reasoning_tokens: 0 } },
-        };
-      },
-    },
-  };
-}
 
 const BASE_OPTS = {
   passFilter: ['adjacency'],

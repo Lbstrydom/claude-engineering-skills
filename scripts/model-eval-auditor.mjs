@@ -40,15 +40,13 @@ import { parseThresholdConfig } from './lib/model-eval/config/schema.mjs';
 import { createEvalRun, updateEvalRunTerminal, EvalRunAlreadyActiveError } from './lib/store/model-eval.mjs';
 import { resolveRepoIdentity } from './lib/repo-identity.mjs';
 import { writeOutput } from './lib/file-io.mjs';
+import { argOption } from './lib/cli-io.mjs';
+import { RunPreflightError, parseJsonArg } from './lib/model-eval/cli-shared.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_CORPUS_PATH = path.join('docs', 'experiments', 'audit-effectiveness', 'known-defects.json');
 const DEFAULT_THRESHOLDS_PATH = path.join(__dirname, 'lib', 'model-eval', 'config', 'auditor-thresholds.json');
 const BASELINE_ARM = CANONICAL_ARMS.find((a) => a.id === 'A'); // production GPT audit — the real baseline
-
-export class RunPreflightError extends Error {
-  constructor(reason, message) { super(message); this.name = 'RunPreflightError'; this.reason = reason; }
-}
 
 // ── Deterministic stratified KD selection ──────────────────────────────────
 // Round-2 audit M2: the same corpusVersion+role+tier always yields the same
@@ -96,19 +94,6 @@ export function stratifiedSelectKDs(defects, { seed, n }) {
     round++;
   }
   return selected;
-}
-
-// ── CLI arg parsing ──────────────────────────────────────────────────────
-
-function argOption(args, name, dflt = null) {
-  const i = args.indexOf(`--${name}`);
-  return i >= 0 && i + 1 < args.length ? args[i + 1] : dflt;
-}
-function hasFlag(args, name) { return args.includes(`--${name}`); }
-
-function parseJsonArg(raw, label) {
-  try { return JSON.parse(raw); }
-  catch (err) { throw new RunPreflightError('bad_arg', `${label}: invalid JSON — ${err.message}`); }
 }
 
 // ── Tier-C scoring (shared by screen-tier's single-arm oracle path AND
@@ -285,15 +270,14 @@ async function main() {
   // helper (which builds the flag name dynamically and would defeat the
   // static string-presence check).
   if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
-  const args = process.argv.slice(2);
 
-  const candidateRaw = argOption(args, 'candidate');
-  const tier = argOption(args, 'tier');
-  const judgeRaw = argOption(args, 'judge');
-  const corpusPath = argOption(args, 'corpus', DEFAULT_CORPUS_PATH);
-  const thresholdsPath = argOption(args, 'thresholds', DEFAULT_THRESHOLDS_PATH);
-  const outFile = argOption(args, 'out');
-  const extraRepoRoots = (argOption(args, 'repo-roots', '') || '').split(',').map((s) => s.trim()).filter(Boolean);
+  const candidateRaw = argOption('candidate');
+  const tier = argOption('tier');
+  const judgeRaw = argOption('judge');
+  const corpusPath = argOption('corpus', DEFAULT_CORPUS_PATH);
+  const thresholdsPath = argOption('thresholds', DEFAULT_THRESHOLDS_PATH);
+  const outFile = argOption('out');
+  const extraRepoRoots = (argOption('repo-roots', '') || '').split(',').map((s) => s.trim()).filter(Boolean);
   const repoRoots = [process.cwd(), ...extraRepoRoots];
 
   if (!candidateRaw) { console.error('Usage: model-eval-auditor.mjs --candidate <CandidateSpec-json> --tier screen|promotion [--judge <CandidateSpec-json>] [--out <file>]'); process.exit(1); }

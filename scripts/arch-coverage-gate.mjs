@@ -29,8 +29,7 @@ import { pathToFileURL } from 'node:url';
 import { OBSERVED_FILE, ObservedDepsSchema } from './lib/observed-deps.mjs';
 import { loadCoverageConfig } from './lib/symbol-index/domain-tagger.mjs';
 import { coverageGateExitCode, GRAPH_STATUS } from './lib/symbol-index/graph-verdict.mjs';
-
-function log(msg) { process.stderr.write(`${msg}\n`); }
+import { log } from './lib/cli-io.mjs';
 
 function main() {
   // AGENTS.md CLI smoke contract — proves imports survive relocation into a

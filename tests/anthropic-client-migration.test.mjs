@@ -17,6 +17,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { isClaudeAvailable } from '../scripts/lib/anthropic-client.mjs';
+import { collectMjs } from './helpers/fixtures.mjs';
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '..');
 const SCRIPTS_DIR = path.join(REPO_ROOT, 'scripts');
@@ -24,20 +25,6 @@ const SCRIPTS_DIR = path.join(REPO_ROOT, 'scripts');
 // The factory itself legitimately constructs the raw SDK client.
 const FACTORY_REL = path.join('lib', 'anthropic-client.mjs');
 const NEW_ANTHROPIC_RE = /new\s+Anthropic\s*\(/;
-
-/** Recursively collect *.mjs under a dir. */
-function collectMjs(dir, acc = []) {
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      if (entry.name === 'node_modules') continue;
-      collectMjs(full, acc);
-    } else if (entry.name.endsWith('.mjs')) {
-      acc.push(full);
-    }
-  }
-  return acc;
-}
 
 describe('anthropic-client migration guard', () => {
   it('has no bare `new Anthropic()` outside the factory', () => {

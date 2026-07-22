@@ -23,7 +23,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync, execSync } from 'node:child_process';
+import { gitInit, commit } from './helpers/fixtures.mjs';
 
 process.env.AUDIT_EXPORTS_FOR_TESTS = '1';
 const { __testExports } = await import('../scripts/lib/audit/tiered-pipeline.mjs');
@@ -127,21 +127,13 @@ function mkdtemp() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'tiered-stage0-wiring-'));
 }
 
-// @duplicate-justification: target=tests/vcs.test.mjs:gitInit reason=a 4-line disposable-git-repo-init helper duplicated across test files matching this repo's established per-file local-helper convention (AGENTS.md: "three similar lines is better than a premature abstraction") — a shared fixture module for one trivial helper is the over-engineered extreme, not the right-sized one.
-function gitInit(dir) {
-  spawnSync('git', ['init', '-q'], { cwd: dir, stdio: 'ignore' });
-  spawnSync('git', ['config', 'user.email', 'test@example.com'], { cwd: dir, stdio: 'ignore' });
-  spawnSync('git', ['config', 'user.name', 'Test'], { cwd: dir, stdio: 'ignore' });
-  spawnSync('git', ['config', 'commit.gpgsign', 'false'], { cwd: dir, stdio: 'ignore' });
-}
-
-// @duplicate-justification: target=tests/vcs-blame.test.mjs:commit reason=a 5-line temp-repo-commit helper duplicated across test files matching this repo's established per-file local-helper convention (AGENTS.md: "three similar lines is better than a premature abstraction") — a shared fixture module for one trivial helper is the over-engineered extreme, not the right-sized one.
-function commit(dir, filePath, content, message) {
-  fs.writeFileSync(path.join(dir, filePath), content);
-  spawnSync('git', ['add', filePath], { cwd: dir, stdio: 'ignore' });
-  spawnSync('git', ['commit', '-m', message], { cwd: dir, stdio: 'ignore' });
-  return execSync('git rev-parse HEAD', { cwd: dir }).toString().trim();
-}
+// gitInit + commit now imported from tests/helpers/fixtures.mjs — both were
+// byte-identical to vcs-blame.test.mjs's copies (flagged by
+// `arch:duplicates`). The two prior local `@duplicate-justification` pragmas
+// on this pair are removed: they were written when building a shared
+// fixtures module meant standing one up for these helpers alone (the
+// over-engineered extreme the pragmas correctly rejected); that module now
+// exists for many other helpers, so the calculus has changed.
 
 function withCwd(dir, fn) {
   const saved = process.cwd();

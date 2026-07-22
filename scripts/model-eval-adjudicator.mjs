@@ -42,6 +42,8 @@ import { parseThresholdConfig } from './lib/model-eval/config/schema.mjs';
 import { createEvalRun, updateEvalRunTerminal, getActiveEvalRunId, EvalRunAlreadyActiveError } from './lib/store/model-eval.mjs';
 import { resolveRepoIdentity } from './lib/repo-identity.mjs';
 import { writeOutput } from './lib/file-io.mjs';
+import { argOption } from './lib/cli-io.mjs';
+import { RunPreflightError, parseJsonArg } from './lib/model-eval/cli-shared.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_THRESHOLDS_PATH = path.join(__dirname, 'lib', 'model-eval', 'config', 'adjudicator-thresholds.json');
@@ -51,20 +53,6 @@ const DEFAULT_THRESHOLDS_PATH = path.join(__dirname, 'lib', 'model-eval', 'confi
 // override via --baseline; this CLI has no way to introspect the OPERATOR's
 // live selectProvider() precedence without invoking gemini-review.mjs itself.
 const DEFAULT_BASELINE_CANDIDATE_SPEC = { kind: 'sentinel', value: 'latest-pro' };
-
-export class RunPreflightError extends Error {
-  constructor(reason, message) { super(message); this.name = 'RunPreflightError'; this.reason = reason; }
-}
-
-function argOption(args, name, dflt = null) {
-  const i = args.indexOf(`--${name}`);
-  return i >= 0 && i + 1 < args.length ? args[i + 1] : dflt;
-}
-
-function parseJsonArg(raw, label) {
-  try { return JSON.parse(raw); }
-  catch (err) { throw new RunPreflightError('bad_arg', `${label}: invalid JSON — ${err.message}`); }
-}
 
 /** Ground-truth row -> a rawContext {findingText, severity} extractStructured accepts. */
 function toRawContext(row) {
@@ -88,13 +76,12 @@ async function main() {
   // Literal `--selfcheck-relocation` string — see model-eval-auditor.mjs's
   // own comment for why this must not be routed through a flag-name helper.
   if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
-  const args = process.argv.slice(2);
 
-  const candidateRaw = argOption(args, 'candidate');
-  const tier = argOption(args, 'tier');
-  const baselineRaw = argOption(args, 'baseline');
-  const thresholdsPath = argOption(args, 'thresholds', DEFAULT_THRESHOLDS_PATH);
-  const outFile = argOption(args, 'out');
+  const candidateRaw = argOption('candidate');
+  const tier = argOption('tier');
+  const baselineRaw = argOption('baseline');
+  const thresholdsPath = argOption('thresholds', DEFAULT_THRESHOLDS_PATH);
+  const outFile = argOption('out');
 
   if (!candidateRaw) { console.error('Usage: model-eval-adjudicator.mjs --candidate <CandidateSpec-json> --tier screen|promotion [--baseline <CandidateSpec-json>] [--out <file>]'); process.exit(1); }
   if (tier !== 'screen' && tier !== 'promotion') { console.error(`--tier must be "screen" or "promotion", got "${tier}"`); process.exit(1); }

@@ -25,6 +25,7 @@ import {
   EXIT_CODES,
 } from '../scripts/security-triage.mjs';
 import { ConfigSchema, TriageReportSchema } from '../scripts/lib/security/sarif.mjs';
+import { writeFile } from './helpers/fixtures.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..');
@@ -41,13 +42,6 @@ const CONFIG = {
 async function makeRepo() {
   const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'sec-triage-'));
   return fs.realpathSync(dir);
-}
-
-function writeFile(root, rel, content) {
-  const abs = path.join(root, rel);
-  fs.mkdirSync(path.dirname(abs), { recursive: true });
-  fs.writeFileSync(abs, content);
-  return abs;
 }
 
 function sarifDoc(results) {

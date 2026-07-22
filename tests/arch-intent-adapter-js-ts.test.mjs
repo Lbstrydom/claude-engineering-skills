@@ -20,6 +20,7 @@ import path from 'node:path';
 import os from 'node:os';
 
 import analyseImports from '../scripts/lib/arch-intent/adapters/js-ts.mjs';
+import { writeTree } from './helpers/fixtures.mjs';
 
 let tmpDir;
 let originalCwd;
@@ -39,16 +40,6 @@ afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
-/** Write a {relPath: content} tree under tmpDir; return the root path. */
-function writeTree(files) {
-  for (const [rel, content] of Object.entries(files)) {
-    const abs = path.join(tmpDir, rel);
-    fs.mkdirSync(path.dirname(abs), { recursive: true });
-    fs.writeFileSync(abs, content);
-  }
-  return tmpDir;
-}
-
 const domainMap = {
   rules: [
     { pattern: 'src/**', domain: 'app' },
@@ -59,7 +50,7 @@ const domainMap = {
 
 describe('js-ts analyseImports — dynamic imports (dead-code-phase-1-followup)', () => {
   it('a literal dynamic import counts as a caller in the orphan-graph track', async () => {
-    const repoPath = writeTree({
+    const repoPath = writeTree(tmpDir, {
       'src/entry.mjs': `export async function load() {\n  return await import('./lib/target.mjs');\n}\n`,
       'src/lib/target.mjs': 'export const x = 1;\n',
     });
@@ -80,7 +71,7 @@ describe('js-ts analyseImports — dynamic imports (dead-code-phase-1-followup)'
   });
 
   it('still records the resolvable dynamic edge in _meta.dynamicEdges (telemetry unchanged)', async () => {
-    const repoPath = writeTree({
+    const repoPath = writeTree(tmpDir, {
       'src/entry.mjs': `export async function load() {\n  return await import('./lib/target.mjs');\n}\n`,
       'src/lib/target.mjs': 'export const x = 1;\n',
     });
@@ -96,7 +87,7 @@ describe('js-ts analyseImports — dynamic imports (dead-code-phase-1-followup)'
   });
 
   it('a dynamic import across a forbidden domain boundary is NOT flagged as a violation', async () => {
-    const repoPath = writeTree({
+    const repoPath = writeTree(tmpDir, {
       'src/entry.mjs': `export async function load() {\n  return await import('../restricted/secret.mjs');\n}\n`,
       'restricted/secret.mjs': 'export const s = 1;\n',
     });
@@ -114,7 +105,7 @@ describe('js-ts analyseImports — dynamic imports (dead-code-phase-1-followup)'
   });
 
   it('an unresolvable dynamic import (variable specifier) is NOT counted as a caller', async () => {
-    const repoPath = writeTree({
+    const repoPath = writeTree(tmpDir, {
       'src/entry.mjs': `export async function load(name) {\n  return await import(\`./lib/\${name}.mjs\`);\n}\n`,
       'src/lib/target.mjs': 'export const x = 1;\n',
     });

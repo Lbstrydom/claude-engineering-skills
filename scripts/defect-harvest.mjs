@@ -22,13 +22,7 @@ import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { classifyPath } from './lib/sensitive-paths.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
-
-function log(m) { process.stderr.write(m + '\n'); }
-function argOption(name, dflt = null) {
-  const i = process.argv.indexOf(`--${name}`);
-  return i >= 0 && i + 1 < process.argv.length ? process.argv[i + 1] : dflt;
-}
-function hasFlag(n) { return process.argv.includes(`--${n}`); }
+import { log, argOption, hasFlag } from './lib/cli-io.mjs';
 
 // Delimiters: git's `%x00` placeholder emits a real NUL byte in the output; we
 // split the output on that NUL. Fields per commit: hash, subject, body.

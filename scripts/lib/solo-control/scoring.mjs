@@ -19,7 +19,12 @@ import { mulberry32 } from '../rng.mjs';
 // pure DRY consolidation, not a behavior change).
 export const SEV_WEIGHTS = DECISION_CONSTANTS.SEV_WEIGHTS;
 export const LABEL_FACTORS = Object.freeze({ proven: 1.0, actionable: 0.6, plausible: 0, false: 0 });
-const sevWeight = (s) => SEV_WEIGHTS[String(s || '').toUpperCase()] ?? 0;
+// Exported (not just module-local) so ledger-decompose.mjs's byte-identical
+// copy (SEV_WEIGHTS + sevWeight, flagged by `arch:duplicates`) can import the
+// canonical implementation instead of re-declaring it — this module is the
+// natural home since it already re-exports SEV_WEIGHTS from the single
+// upstream source (model-ab-decision.mjs).
+export const sevWeight = (s) => SEV_WEIGHTS[String(s || '').toUpperCase()] ?? 0;
 
 // A cluster's label = the BEST label among its member rows (proven > actionable >
 // plausible > false). The scoring unit is the (commit, arm, human_cluster) — so an

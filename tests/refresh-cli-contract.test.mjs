@@ -26,20 +26,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as vcs from '../scripts/lib/vcs.mjs';
 import { filterDiffFiles, formatSkipLog } from '../scripts/lib/sensitive-paths.mjs';
+import { gitInitWithEmptyCommit as gitInit } from './helpers/fixtures.mjs';
 
 const REPO_ROOT = path.resolve(fileURLToPath(import.meta.url), '..', '..');
 const REFRESH_SRC = path.join(REPO_ROOT, 'scripts/symbol-index/refresh.mjs');
 
 function mkdtemp() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'refresh-cli-'));
-}
-
-function gitInit(dir) {
-  spawnSync('git', ['init', '-q'], { cwd: dir, stdio: 'ignore' });
-  spawnSync('git', ['config', 'user.email', 'test@example.com'], { cwd: dir, stdio: 'ignore' });
-  spawnSync('git', ['config', 'user.name', 'Test'], { cwd: dir, stdio: 'ignore' });
-  spawnSync('git', ['config', 'commit.gpgsign', 'false'], { cwd: dir, stdio: 'ignore' });
-  spawnSync('git', ['commit', '--allow-empty', '-m', 'init'], { cwd: dir, stdio: 'ignore' });
 }
 
 function gitAddAll(dir) {

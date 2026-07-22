@@ -16,7 +16,6 @@
  */
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import crypto from 'node:crypto';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -27,8 +26,12 @@ import {
   hashRawBytes,
   legacyCrlfBytes,
 } from '../scripts/setup-postgres.mjs';
-
-const sha = (b) => crypto.createHash('sha256').update(b).digest('hex');
+// cli-io.mjs's `sha(buf, len=12)` defaults to a 12-char truncation for
+// content-identity display use; this file needs the FULL digest for
+// hash-equality assertions, so every call site below passes `64`
+// (SHA-256's full hex length) explicitly rather than duplicating the
+// hashing logic in a local wrapper.
+import { sha } from '../scripts/lib/cli-io.mjs';
 
 describe('canonicalizeMigrationBytes — folds CRLF and nothing else', () => {
   it('CRLF and LF forms of the same content hash identically', () => {
@@ -40,7 +43,7 @@ describe('canonicalizeMigrationBytes — folds CRLF and nothing else', () => {
   it('is a no-op for an already-LF file (existing ledger rows stay valid)', () => {
     const lf = Buffer.from('SELECT 1;\n', 'utf-8');
     assert.deepEqual(canonicalizeMigrationBytes(lf), lf);
-    assert.equal(hashCanonicalMigrationBytes(lf), sha(lf));
+    assert.equal(hashCanonicalMigrationBytes(lf), sha(lf, 64));
   });
 
   it('preserves a LONE CR (not part of CRLF) byte-exactly', () => {
@@ -121,7 +124,7 @@ describe('legacyCrlfBytes + hashRawBytes — eol-legacy classification', () => {
     // now checked out as LF. Classification must recognise it.
     const lfOnDisk = Buffer.from('CREATE TABLE t (id int);\nSELECT 1;\n', 'utf-8');
     const historicalCrlf = Buffer.from('CREATE TABLE t (id int);\r\nSELECT 1;\r\n', 'utf-8');
-    const ledgerSha = sha(historicalCrlf);          // what was recorded in 2026-07
+    const ledgerSha = sha(historicalCrlf, 64);          // what was recorded in 2026-07
     assert.equal(hashRawBytes(legacyCrlfBytes(lfOnDisk)), ledgerSha);
   });
 
@@ -152,14 +155,14 @@ describe('legacyCrlfBytes + hashRawBytes — eol-legacy classification', () => {
     // never auto-repair.
     const onDisk = Buffer.from('a\nb\nc\n', 'utf-8');
     const historicalMixed = Buffer.from('a\r\nb\nc\r\n', 'utf-8');
-    assert.notEqual(hashRawBytes(legacyCrlfBytes(onDisk)), sha(historicalMixed));
+    assert.notEqual(hashRawBytes(legacyCrlfBytes(onDisk)), sha(historicalMixed, 64));
   });
 
   it('a legacy-CRLF hash of DIFFERENT content is not classified eol-legacy', () => {
     // Tampering that happens to arrive via a CRLF tree is still tampering.
     const onDisk = Buffer.from('SELECT 1;\n', 'utf-8');
     const otherCrlf = Buffer.from('DROP TABLE users;\r\n', 'utf-8');
-    assert.notEqual(hashRawBytes(legacyCrlfBytes(onDisk)), sha(otherCrlf));
+    assert.notEqual(hashRawBytes(legacyCrlfBytes(onDisk)), sha(otherCrlf, 64));
   });
 
   it('preserves a lone CR through the round trip', () => {

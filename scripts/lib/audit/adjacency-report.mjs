@@ -18,14 +18,16 @@
  * @module scripts/lib/audit/adjacency-report
  */
 
-import { INCOMPLETENESS_KINDS } from './adjacency-state.mjs';
+import { INCOMPLETENESS_KINDS, incompleteness } from './adjacency-state.mjs';
 
 let _idCounter = 0;
 /** Reset the A-id counter — test-only, mirroring the duplication wave's D-id pattern. */
 export function _resetAdjacencyIdCounter() { _idCounter = 0; }
 function nextId() { return `A${++_idCounter}`; }
 
-const incompleteness = (kind, scope, detail) => ({ kind, scope, detail });
+// incompleteness(kind, scope, detail) now imported from adjacency-state.mjs —
+// this file's copy was byte-identical to adjacency-detector.mjs's (flagged
+// by `arch:duplicates`).
 
 /**
  * Build the egress-safe bouncer prompt from evidence ALONE.

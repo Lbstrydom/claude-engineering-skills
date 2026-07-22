@@ -9,21 +9,13 @@ import path from 'node:path';
 import os from 'node:os';
 
 import analyseImports, { _internals } from '../scripts/lib/arch-intent/adapters/postgres.mjs';
+import { writeTree } from './helpers/fixtures.mjs';
 
 const { stripSqlCommentsAndStrings, parseFile, buildSqlCatalog, resolveSqlRef } = _internals;
 
 let tmpDir;
 beforeEach(() => { tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'arch-pg-')); });
 afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
-
-function writeTree(files) {
-  for (const [rel, content] of Object.entries(files)) {
-    const abs = path.join(tmpDir, rel);
-    fs.mkdirSync(path.dirname(abs), { recursive: true });
-    fs.writeFileSync(abs, content);
-  }
-  return tmpDir;
-}
 
 /** Convenience — parse a single SQL string into a FileParse. */
 function parse(sql, file = 'm.sql') {
@@ -259,7 +251,7 @@ describe('resolveSqlRef', () => {
 
 describe('postgres analyseImports (integration)', () => {
   function buildFixture() {
-    return writeTree({
+    return writeTree(tmpDir, {
       'db/core/0001.sql':
         'create table core.users (id uuid);\n' +
         'create function core.touch() returns trigger as $$ begin new.updated = now(); return new; end $$ language plpgsql;\n',
@@ -315,7 +307,7 @@ describe('postgres analyseImports (integration)', () => {
     assert.equal(analyzerVersion, 'postgres-1.0.0');
   });
   it('returns empty for a repo with no .sql files', async () => {
-    const repoPath = writeTree({ 'readme.md': 'hi' });
+    const repoPath = writeTree(tmpDir, { 'readme.md': 'hi' });
     const { violations } = await analyseImports({ mapped: new Map(), domainMap, repoPath });
     assert.deepEqual(violations, []);
   });

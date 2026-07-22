@@ -46,6 +46,51 @@ export function sha(buf, len = 12) {
 }
 
 /**
+ * Value of a `--flag` from `process.argv`, or `dflt` when absent.
+ *
+ * Guards against swallowing a FOLLOWING flag as this option's value (e.g.
+ * `--out --json` — a missing value immediately followed by a real flag):
+ * without the `startsWith('--')` check, `--json` would silently become
+ * `--out`'s value and the actual `--json` flag would vanish (found live in
+ * tiered-shadow-report.mjs, Gemini final-review fix 2026-07-13).
+ *
+ * Consolidated from THREE independently-written copies across scripts/*.mjs
+ * (flagged by `arch:duplicates`) that differed only in whether they had this
+ * guard. Verified safe to unify to the guarded behaviour everywhere: none of
+ * the merged call sites ever expects a flag value that itself starts with
+ * `--`, so the guard is a strict safety improvement with no observable
+ * change for any existing caller (arch-drift-duplication-cleanup plan).
+ *
+ * @param {string} name
+ * @param {string|null} [dflt=null]
+ * @returns {string|null}
+ */
+export function argOption(name, dflt = null) {
+  const i = process.argv.indexOf(`--${name}`);
+  const next = i >= 0 ? process.argv[i + 1] : undefined;
+  return next !== undefined && !next.startsWith('--') ? next : dflt;
+}
+
+/**
+ * Whether a bare `--flag` is present anywhere in `process.argv`.
+ * @param {string} name
+ * @returns {boolean}
+ */
+export function hasFlag(name) {
+  return process.argv.includes(`--${name}`);
+}
+
+/**
+ * Write a message to stderr with a trailing newline — the standard
+ * human-progress logging line for the repo's CLIs (stdout stays free for
+ * machine-readable JSON via `emit`).
+ * @param {string} msg
+ */
+export function log(msg) {
+  process.stderr.write(`${msg}\n`);
+}
+
+/**
  * Error thrown by CLI argv parsers. Carries `code: 'ARGV_ERROR'` so the
  * entry point can distinguish a usage mistake from a runtime failure.
  */

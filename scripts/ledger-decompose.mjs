@@ -25,18 +25,13 @@
 import 'dotenv/config';
 import path from 'node:path';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
-
+import { log, argOption, hasFlag } from './lib/cli-io.mjs';
 // Severity weights — mirror model_ab SEV_WEIGHTS so accepted-VALUE here is directly
-// comparable to the Phase 4 decision metric (plan §12.2).
-const SEV_WEIGHTS = Object.freeze({ LOW: 1, MEDIUM: 3, HIGH: 8, CRITICAL: 15 });
-const sevWeight = (s) => SEV_WEIGHTS[String(s || '').toUpperCase()] ?? 0;
-
-function log(m) { process.stderr.write(m + '\n'); }
-function argOption(name, dflt = null) {
-  const i = process.argv.indexOf(`--${name}`);
-  return i >= 0 && i + 1 < process.argv.length ? process.argv[i + 1] : dflt;
-}
-function hasFlag(n) { return process.argv.includes(`--${n}`); }
+// comparable to the Phase 4 decision metric (plan §12.2). Imported from
+// solo-control/scoring.mjs (the canonical re-export of DECISION_CONSTANTS'
+// values) rather than re-declared — this file's local copy was byte-identical
+// (flagged by `arch:duplicates`).
+import { SEV_WEIGHTS, sevWeight } from './lib/solo-control/scoring.mjs';
 
 /** Bucket a raw `round_raised` into `1` vs `2+` (the P1-gate lever). A null/absent
  * round is bucketed `unknown` — NOT silently folded into round 1 (which would

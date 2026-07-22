@@ -22,6 +22,7 @@
  * Plan: docs/plans/tiered-recall-audit-pipeline.md Close-out (shadow validation).
  */
 import { pathToFileURL } from 'node:url';
+import { argOption } from './lib/cli-io.mjs';
 import { SHADOW_LOG_PATH } from './lib/audit/tiered-shadow-compare.mjs';
 import { resolveRepoIdentity } from './lib/repo-identity.mjs';
 import { isCloudEnabled } from './lib/store/repo.mjs';
@@ -35,16 +36,14 @@ import {
 // working unchanged. The lib module is the canonical source (2026-07-13).
 export { normalizeDbRow, median, mean, summarize };
 
-// Guards against swallowing a following flag as this option's value (e.g.
-// `--repos --json` — a missing value followed by a real flag) — without the
-// `startsWith('--')` check, `--json` would silently become the repos value
-// and the actual --json flag would vanish (Gemini final-review fix, 2026-07-13).
-// Exported for direct (I/O-free) unit testing.
-export function argOption(name, dflt = null) {
-  const i = process.argv.indexOf(`--${name}`);
-  const next = i >= 0 ? process.argv[i + 1] : undefined;
-  return next !== undefined && !next.startsWith('--') ? next : dflt;
-}
+// argOption re-exported for backward compatibility (tests import it directly
+// from this file). The guarded implementation (guards against swallowing a
+// FOLLOWING flag as this option's value — e.g. `--repos --json`, a missing
+// value immediately followed by a real flag) now lives in lib/cli-io.mjs,
+// the single canonical source shared across the repo's CLIs (this file's
+// copy was byte-identical to verify-anchor-contract.mjs's, flagged by
+// `arch:duplicates`).
+export { argOption };
 
 async function main() {
   if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }

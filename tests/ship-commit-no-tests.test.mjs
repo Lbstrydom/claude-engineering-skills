@@ -29,16 +29,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { makeGitRunner } from './helpers/fixtures.mjs';
 
 const CLI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../scripts/ship-commit.mjs');
 
 let repo;
 
-function git(args, cwd = repo) {
-  const r = spawnSync('git', args, { cwd, encoding: 'utf-8' });
-  assert.equal(r.status, 0, `git ${args.join(' ')} failed: ${r.stderr}`);
-  return r.stdout;
-}
+const git = makeGitRunner(() => repo);
 
 function runCli(args) {
   const env = { ...process.env, AUDIT_DB_URL: '', HOME: repo, USERPROFILE: repo };

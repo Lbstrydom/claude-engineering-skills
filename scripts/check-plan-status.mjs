@@ -22,17 +22,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { parsePlanStatus, selectAuditPlan } from './lib/plan-status.mjs';
+import { parsePlanStatus, selectAuditPlan, isAuditSummary } from './lib/plan-status.mjs';
 import { resolvePushRange } from './lib/push-range.mjs';
 
 const PLANS_DIR = 'docs/plans';
 const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0m', B = '\x1b[1m';
-
-// `*-audit-summary.md` is exempt from the vocabulary lint — docs/README.md
-// mandates its free-text convergence sentence ("Audit-complete. 17 fixes applied.").
-// `[\w-]+` (not `\w+`) so a hyphenated suffix (`…-audit-summary-phase-1.md`) is
-// still exempted (consolidated Gemini gate round-2 G2).
-const isAuditSummary = name => /-audit-summary(?:-[\w-]+)?\.md$/.test(name);
 
 /**
  * Files changed in the range about to be pushed, or `null` when git can't tell

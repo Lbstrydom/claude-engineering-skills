@@ -45,7 +45,7 @@ import { gitNumstatWithWorkingTree, gitUnifiedDiffWithWorkingTree, isSafeGitRevi
 import { parseAllDiffSections, parseHunkHeader } from './evidence-triage.mjs';
 import { resolveAndClassify } from '../sensitive-paths.mjs';
 import { scanEgressPayload } from '../sensitive-egress-gate.mjs';
-import { INCOMPLETENESS_KINDS } from './adjacency-state.mjs';
+import { INCOMPLETENESS_KINDS, incompleteness } from './adjacency-state.mjs';
 
 // @babel/traverse ships CJS; under ESM the callable lands on .default (and on
 // .default.default via some interop paths). Normalise once, loudly.
@@ -55,6 +55,10 @@ const traverse = _traverse?.default?.default ?? _traverse?.default ?? _traverse;
 const SOURCE_EXT_RE = /\.(m?[jt]sx?|c[jt]s)$/;
 
 function log(msg) { process.stderr.write(`  [adjacency] ${msg}\n`); }
+
+// incompleteness(kind, scope, detail) now imported from adjacency-state.mjs —
+// this file's copy was byte-identical to adjacency-report.mjs's (flagged by
+// `arch:duplicates`).
 
 /** Build the real (non-injected) adapter bundle. Separated so tests can override
  *  one piece without re-wiring the whole set — the duplication wave's shape. */
@@ -68,8 +72,6 @@ function defaultAdapters() {
     scanPayload: (text) => scanEgressPayload(text),
   };
 }
-
-const incompleteness = (kind, scope, detail) => ({ kind, scope, detail });
 
 /**
  * Map each diff hunk to the set of new-side lines it touches.

@@ -74,7 +74,6 @@ import 'dotenv/config'; // load repo-local .env (CLAUDE_BACKEND, AUDIT_DB_URL, k
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
 
@@ -87,6 +86,8 @@ import { resolveShadowArmsWithToggle } from './lib/arm-eval/toggle.mjs';
 import { classifyPath } from './lib/sensitive-paths.mjs';
 import { redactSecrets } from './lib/secret-patterns.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
+import { log, argOption, hasFlag } from './lib/cli-io.mjs';
+import { dupHash } from './lib/solo-control/cluster-propose.mjs';
 
 // The 5 generation passes an arm runs (audit-shadow.mjs::SHADOW_PASSES == the
 // PASS_PROMPTS keys minus quickfix). Re-derived here so the control can't drift
@@ -128,12 +129,6 @@ const EXTERNAL_ARMS = Object.freeze(['A', 'B', 'C']);
 
 // ── small utils ──────────────────────────────────────────────────────────────
 
-function log(msg) { process.stderr.write(msg + '\n'); }
-function argOption(name, dflt = null) {
-  const i = process.argv.indexOf(`--${name}`);
-  return i >= 0 && i + 1 < process.argv.length ? process.argv[i + 1] : dflt;
-}
-function hasFlag(name) { return process.argv.includes(`--${name}`); }
 function git(root, args) {
   // Capture (not inherit) stderr so a benign `cat-file -e` miss doesn't leak
   // git's "fatal: not a valid object" to our stderr; the throw still carries it.
@@ -142,14 +137,10 @@ function git(root, args) {
 function tryGit(root, args) {
   try { return git(root, args); } catch { return null; }
 }
-/** Stable dedup/cluster HINT hash — category|file|detail, consistent across S and
- * DB findings so `merge` can pre-group VERBATIM duplicates. NOT semantic dedup;
- * the human does that in the `cluster` column (semanticId can't cluster reworded
- * findings — brainstorm point 1). */
-function dupHash(category, file, detail) {
-  const s = `${category || ''}|${file || ''}|${detail || ''}`.toLowerCase().trim();
-  return crypto.createHash('sha256').update(s).digest('hex').slice(0, 10);
-}
+// dupHash (stable dedup/cluster hint — category|file|detail, consistent
+// across S and DB findings so `merge` can pre-group VERBATIM duplicates; NOT
+// semantic dedup) now imported from lib/solo-control/cluster-propose.mjs —
+// this file's copy was byte-identical (flagged by `arch:duplicates`).
 function csvField(v) {
   const s = v == null ? '' : String(v);
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;

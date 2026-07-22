@@ -20,7 +20,6 @@
  * Plan: docs/plans/debt-burndown-workstreams.md §3 WS-A.
  */
 import assert from 'node:assert/strict';
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -36,6 +35,12 @@ import {
   runRepairEol,
   seedUnledgeredMigrations,
 } from '../scripts/setup-postgres.mjs';
+// cli-io.mjs's `sha(buf, len=12)` defaults to a 12-char truncation for
+// content-identity display use; this file needs the FULL digest for
+// hash-equality assertions, so every call site below passes `64`
+// (SHA-256's full hex length) explicitly rather than duplicating the
+// hashing logic in a local wrapper.
+import { sha } from '../scripts/lib/cli-io.mjs';
 
 const TEST_URL = process.env.AUDIT_DB_TEST_URL;
 
@@ -50,7 +55,6 @@ if (TEST_URL) {
 }
 
 const LF = Buffer.from('CREATE TABLE canary (id int);\nSELECT 1;\n', 'utf-8');
-const sha = (b) => crypto.createHash('sha256').update(b).digest('hex');
 
 describe('--repair-eol against a disposable Postgres', { skip: skipReason }, () => {
   let pool;
@@ -97,7 +101,7 @@ describe('--repair-eol against a disposable Postgres', { skip: skipReason }, () 
     await seed({
       '001_canonical.sql': hashCanonicalMigrationBytes(LF),          // already correct
       '002_legacy.sql': hashRawBytes(legacyCrlfBytes(LF)),           // eol-legacy
-      '003_tampered.sql': sha(Buffer.from('DROP TABLE users;\n')),   // real mismatch
+      '003_tampered.sql': sha(Buffer.from('DROP TABLE users;\n'), 64),   // real mismatch
     });
   });
 
@@ -267,7 +271,7 @@ describe('seedUnledgeredMigrations — adopt must not rubber-stamp existing rows
     // 002 is already ledgered with a TAMPERED hash. Seeding every file would
     // upsert over it, erasing the shaMismatch evidence — the exact bypass the
     // consolidated Gemini gate caught (round-3 G1).
-    const tampered = sha(Buffer.from('DROP TABLE users;\n'));
+    const tampered = sha(Buffer.from('DROP TABLE users;\n'), 64);
     await pool.query('TRUNCATE audit_loop_migrations');
     await pool.query('INSERT INTO audit_loop_migrations (filename, sha256) VALUES ($1,$2)', ['002_b.sql', tampered]);
 

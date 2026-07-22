@@ -43,6 +43,7 @@ import {
   runCandidateTriage,
 } from './lib/solo-control/cheap-triager-validate.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
+import { argOption } from './lib/cli-io.mjs';
 
 const DATA_DIR = path.join('.audit-loop', 'solo-control');
 const CLAUDE_CSV = path.join(DATA_DIR, 'blind-adjudication-claude.csv');
@@ -54,11 +55,6 @@ const STATE_JSON = path.join(DATA_DIR, 'cheap-triager-state.json');
 const MANIFEST_JSON = path.join('docs', 'experiments', 'audit-effectiveness', 'cheap-triager-validation.json');
 const MANIFEST_MD = path.join('docs', 'experiments', 'audit-effectiveness', 'cheap-triager-validation.md');
 const EVIDENCE_JSON = path.join('docs', 'experiments', 'audit-effectiveness', 'cheap-triager-validation-evidence.json');
-
-function argOption(name, dflt = null) {
-  const i = process.argv.indexOf(`--${name}`);
-  return i >= 0 && i + 1 < process.argv.length ? process.argv[i + 1] : dflt;
-}
 
 // ── Candidate triage adapter (the only live-LLM seam) ──────────────────────
 

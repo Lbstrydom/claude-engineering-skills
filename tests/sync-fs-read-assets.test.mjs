@@ -29,6 +29,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { collectMjs } from './helpers/fixtures.mjs';
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '..');
 const LIB_DIR = path.join(REPO_ROOT, 'scripts', 'lib');
@@ -39,20 +40,6 @@ const LIB_DIR = path.join(REPO_ROOT, 'scripts', 'lib');
  * still reachable as a module and is handled by the walker.
  */
 const ASSET_URL_RE = /new URL\(\s*['"`](\.\/[^'"`]+\.(?!mjs)[a-z0-9]+)['"`]\s*,\s*import\.meta\.url\s*\)/g;
-
-/** Recursively collect *.mjs under a dir. */
-function collectMjs(dir, acc = []) {
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      if (entry.name === 'node_modules') continue;
-      collectMjs(full, acc);
-    } else if (entry.name.endsWith('.mjs')) {
-      acc.push(full);
-    }
-  }
-  return acc;
-}
 
 describe('sync: module-relative fs-read assets are declared', () => {
   it('every `new URL(./asset, import.meta.url)` target under scripts/lib is in a sync array', () => {

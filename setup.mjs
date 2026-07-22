@@ -19,11 +19,10 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { execSync, execFileSync } from 'node:child_process';
-import readline from 'readline';
+import { createPrompter } from './scripts/lib/install/prompt.mjs';
 
 const SELF_DIR = path.dirname(fileURLToPath(import.meta.url));
-const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-const ask = (q) => new Promise(resolve => rl.question(q, resolve));
+const { rl, ask } = createPrompter();
 
 const B = '\x1b[1m', G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', D = '\x1b[2m', X = '\x1b[0m';
 function ok(msg) { console.log(`  ${G}✓${X} ${msg}`); }
