@@ -188,6 +188,41 @@ describe('computeEntryPoints', () => {
       assert.equal(ep.size, 0);
     } finally { fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
+
+  it('recognises a nested CLI script via its own `node <path>` usage docblock (dead-code-phase-1-followup)', () => {
+    // Regression for the confirmed FP: scripts/spikes/observed-graph-discovery-spike.mjs
+    // sits one level deeper than the depth-1 scripts/* walk covers, but documents
+    // itself as a CLI entry point — that self-referential docblock must exempt it.
+    const repo = newRepo();
+    try {
+      writeFile(repo, 'scripts/spikes/my-spike.mjs',
+        '#!/usr/bin/env node\n/**\n * Usage:\n *   node scripts/spikes/my-spike.mjs [--repo <path>]\n */\nconsole.log("spike");\n');
+      const ep = computeEntryPoints(repo);
+      assert.ok(ep.has('scripts/spikes/my-spike.mjs'),
+        `expected scripts/spikes/my-spike.mjs to be recognised via its usage docblock, got ${JSON.stringify([...ep])}`);
+    } finally { fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+  });
+
+  it('does NOT exempt a nested library file with no self-usage docblock', () => {
+    const repo = newRepo();
+    try {
+      writeFile(repo, 'scripts/lib/helper.mjs', 'export function helper() {}\n');
+      const ep = computeEntryPoints(repo);
+      assert.ok(!ep.has('scripts/lib/helper.mjs'),
+        'a nested library file without a self-usage docblock must not become an entry point');
+    } finally { fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+  });
+
+  it('does NOT exempt a nested file whose docblock references a DIFFERENT script', () => {
+    const repo = newRepo();
+    try {
+      writeFile(repo, 'scripts/spikes/other.mjs',
+        '/**\n * Usage:\n *   node scripts/spikes/my-spike.mjs\n */\nexport const x = 1;\n');
+      const ep = computeEntryPoints(repo);
+      assert.ok(!ep.has('scripts/spikes/other.mjs'),
+        'a docblock naming a DIFFERENT file must not self-exempt this one');
+    } finally { fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+  });
 });
 
 describe('resolveDiffScope — rename status', () => {

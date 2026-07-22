@@ -1,5 +1,65 @@
 # Project Status Log
 
+## 2026-07-22 — Dead-code Phase 1 follow-up: two false-positive blind spots patched, Phase 2 explicitly deferred
+
+Issue #46's decision matrix required ≥3 audits with findings AND <30% FP rate to
+ship Phase 2 (the knip/vulture wrap layer + `/repo-scan` skill). Telemetry analysis
+(1,516 runs / 112 findings / 30 distinct-file-occasions over 10 weeks) cleared the
+bar easily — ~6.7% FP rate by distinct-file-occasion — but that same analysis
+diagnosed exactly two root-caused blind spots in the existing Phase 1 detector, so
+the call was: patch those, not build Phase 2 yet.
+
+- **Dynamic-import blind spot** (`scripts/lib/arch-intent/adapters/js-ts.mjs`): a
+  literal `await import('./x.mjs')` is dep-cruiser-resolvable exactly like a static
+  import (confirmed empirically — `dep.resolved` is populated even though
+  `dep.dynamic` is true), but was excluded from the orphan-graph `callersByTarget`/
+  `targetsByCaller` track entirely, so a file reachable ONLY via a resolvable dynamic
+  import got flagged as a false born-orphan. Fixed by folding `dynamic` into the same
+  graph-recording branch that `type-only` edges already use — it still never
+  participates in `allowedDeps` violation checks (dynamic targets can't be statically
+  verified against domain rules), only in "does this file have a caller". Confirmed
+  case: `scripts/lib/solo-control/stratified-sample.mjs` (flagged 41× over 2 days,
+  imported dynamically from `scripts/solo-control-audit.mjs:1299`).
+- **Doc-embedded example files** (`scripts/lib/audit/orphan-introduced.mjs`): every
+  source-shaped file tracked under `docs/**` in this repo (census-confirmed) lives in
+  a plan-doc snapshot bundle (`docs/plans/security/files/**`), never live source, but
+  the detector scanned them as if they were. Added `isDocExampleFile()` (mirrors the
+  existing `isTestFile()`/`TEST_PATH_PATTERNS` precedent) and excluded `docs/**` from
+  both the candidate side AND — per a GPT audit finding that caught an asymmetry I'd
+  missed — the caller-liveness side, so a file whose only caller is a doc-embedded
+  snapshot is still correctly flagged as dead. Confirmed case:
+  `docs/plans/security/files/scripts/security-incidents.mjs`.
+- **Self-usage-docblock entry points** (`scripts/lib/audit/diff-scope-resolver.mjs`,
+  lower priority): `computeEntryPoints`'s depth-1 `scripts/*`/`bin/*` walk (deliberately
+  non-recursive per an earlier Gemini fix, to avoid blanket-exempting `scripts/lib/**`)
+  missed nested CLI scripts like `scripts/spikes/*.mjs`. Added a precise,
+  self-referential signal instead of relaxing the depth-1 scope: a file whose own
+  header documents itself as `node <its-own-path>` is recognised as an entry point,
+  which can't over-exempt library files the way widening the walk would. Confirmed
+  case: `scripts/spikes/observed-graph-discovery-spike.mjs`.
+
+`/audit-code` (2 rounds) caught two more genuine gaps in the new code — the doc-caller
+asymmetry above, and a silently-swallowed `readdirSync` error in the new recursive walk
+(fixed to match its sibling `walkEntryPointDir`'s existing stderr-logging precedent — a
+mechanical fix mirroring an already-established pattern in the same file). A HIGH
+finding claiming the orphan-introduced pass's orchestration wiring is missing was
+overruled via GPT rebuttal both rounds (stale relative to the `legacy-production-audit.mjs`
+extraction the plan doc predates — the audit's own run log proved the pass executed in
+the same invocation that raised the finding) and 3 architectural suggestions (unifying
+the two independent `dependency-cruiser` call sites, making the `docs/**` exclusion
+config/manifest-driven rather than convention-based, tsconfig-triggered rescoping) were
+deferred as pre-existing/independent or an already-accepted Phase-1 trade-off matching
+the sibling `TEST_PATH_PATTERNS` convention. Gemini final review: **APPROVE**, 0 new
+findings, 0 wrongly-dismissed.
+
+Verified against the real production code path (not just synthetic fixtures): ran
+`runArchIntentAnalysis` + `detectOrphansIntroduced` against this repo's actual current
+state and confirmed both originally-reported false positives no longer fire, and the
+self-usage-docblock signal correctly recognises the real spike script. 3 new/extended
+test files (47 targeted tests), full suite green (8,449 tests, 0 failures). Phase 2
+remains explicitly not-built — this was a scoped patch to the existing Phase 1
+detector, per `docs/plans/dead-code-phase-1-orphan-introduced.md`.
+
 ## 2026-07-22 — Tiered cost capture: Stage-2 metering honesty fix + GLM/OpenRouter reliability audit + Phase-14 window kickoff
 
 Follow-up to the same-day `6b3fd62` tiered-cost-capture fix. Three pieces of work,

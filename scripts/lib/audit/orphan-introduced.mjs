@@ -27,6 +27,22 @@ const TEST_PATH_PATTERNS = Object.freeze({
 });
 
 /**
+ * Doc-embedded example/snapshot files — source-shaped files that live under
+ * `docs/**` as reference material (plan-doc code bundles, historical
+ * snapshots) rather than live source that's ever actually imported. Confirmed
+ * false-positive: docs/plans/security/files/scripts/security-incidents.mjs
+ * (a plan-doc snapshot; the real shipped file is
+ * scripts/security-memory/refresh-incidents.mjs, which is never flagged).
+ * Census (2026-07-22): every source-extension file tracked under docs/**
+ * in this repo lives in one such bundle — no legitimate orphan-check target
+ * has ever lived under docs/**, so the exclusion is repo-wide, not just
+ * the one `files/` subdirectory that triggered it.
+ */
+const DOC_EXAMPLE_PATH_PATTERNS = Object.freeze({
+  prefixes: ['docs/'],
+});
+
+/**
  * Detect orphans introduced by the current diff.
  *
  * @param {object} args
@@ -93,14 +109,22 @@ export function detectOrphansIntroduced({ scope, head, ctx: _ctx } = {}) {
     if (!allFiles.has(path)) continue;          // file deleted at HEAD — out of scope
     if (entryPoints.has(path)) continue;        // public API / CLI entry
     if (isTestFile(path)) continue;             // tests/** + *.test.* + *.spec.*
+    if (isDocExampleFile(path)) continue;       // docs/** — doc-embedded example/snapshot, never live source
 
     // Gemini-R2/wrongly-dismissed-R3/M2: filter test callers from the zero-caller check.
     // Public-contract files are already exempted via entryPoints. A non-entry-point file
     // whose only remaining callers are test files IS dead in prod.
+    // dead-code-phase-1-followup R1 fix: apply the SAME liveness rule to callers that
+    // Step 3's own candidate filter already applies to candidates — a doc-embedded
+    // example file is not live source when it's the CANDIDATE, so it can't be live
+    // source when it's the only CALLER either (an audit-code round-1 finding caught
+    // this asymmetry; the case is currently dormant in this repo — no doc-bundle
+    // file's relative import resolves outside its own docs/ subtree today — but the
+    // fix is one line and closes the gap regardless).
     const allCallers = callersByTarget[path] || [];
-    const nonTestCallers = allCallers.filter(c => !isTestFile(c));
+    const liveCallers = allCallers.filter(c => !isTestFile(c) && !isDocExampleFile(c));
     const testCallers = allCallers.filter(c => isTestFile(c));
-    if (nonTestCallers.length > 0) continue;
+    if (liveCallers.length > 0) continue;
 
     // R2/H3 fix — subKind from target's base existence (not from changedFiles membership).
     const subKind = targetExistedAtBase.has(path) ? 'left-orphan' : 'born-orphan';
@@ -181,4 +205,15 @@ export function isTestFile(p) {
     if (n.includes(segment)) return true;
   }
   return TEST_PATH_PATTERNS.suffixRegex.test(n);
+}
+
+/**
+ * Doc-embedded example/snapshot classifier. Backed by DOC_EXAMPLE_PATH_PATTERNS
+ * so the prefix list can grow without touching detector logic (mirrors the
+ * isTestFile / TEST_PATH_PATTERNS precedent above).
+ */
+export function isDocExampleFile(p) {
+  if (!p || typeof p !== 'string') return false;
+  const n = p.replaceAll('\\', '/');
+  return DOC_EXAMPLE_PATH_PATTERNS.prefixes.some(prefix => n.startsWith(prefix));
 }

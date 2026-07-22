@@ -12,8 +12,12 @@
  *   - vendor-node-builtin     → node:fs etc.; mapped to `vendor`
  *   - vendor-typescript-alias → resolves through tsconfig paths → treat as local-file
  *   - unresolved              → dep-cruiser couldn't resolve; recorded in _meta, NOT flagged
- *   - dynamic                 → await import(variable); recorded in _meta, NOT flagged
- *   - type-only               → TS `import type`; EXCLUDED from the graph
+ *   - dynamic                 → await import(...); recorded in _meta, NOT flagged for
+ *                               allowedDeps violations. When dep-cruiser DOES resolve it
+ *                               (a literal specifier, e.g. await import('./x.mjs')) it also
+ *                               counts as a caller in the orphan-graph track, same as
+ *                               type-only — a variable specifier stays unresolvable either way.
+ *   - type-only               → TS `import type`; EXCLUDED from the violations graph
  *
  * @module scripts/lib/arch-intent/adapters/js-ts
  */
@@ -157,9 +161,15 @@ export default async function analyseImports({ mapped, domainMap, repoPath }) {
       const kind = classifyEdge(dep);
 
       // Record into orphan-graph for ALL edges that resolve to a local file
-      // (type-only INCLUDED — Gemini-R3/H1). Skip unresolved/dynamic/vendor —
-      // those aren't local-file structural dependencies.
-      if (kind === 'local-file' || kind === 'vendor-typescript-alias' || kind === 'type-only') {
+      // (type-only INCLUDED — Gemini-R3/H1). A literal `await import('./x.mjs')`
+      // is dep-cruiser-resolvable exactly like a static import (dep.resolved is
+      // populated even though dep.dynamic is true) — dead-code-phase-1-followup
+      // fix: count it as "has a caller" too, or the orphan detector flags the
+      // dynamically-imported file as a false-positive born-orphan. Skip
+      // unresolved/vendor — those aren't local-file structural dependencies.
+      // A dynamic import whose specifier is a variable (dep.resolved absent)
+      // still can't be counted — that's the genuinely unresolvable case.
+      if (kind === 'local-file' || kind === 'vendor-typescript-alias' || kind === 'type-only' || kind === 'dynamic') {
         if (dep.resolved && !dep.couldNotResolve) {
           const toFileForGraph = normalisePath(dep.resolved, repoPath);
           if (toFileForGraph && !toFileForGraph.startsWith('..')) {

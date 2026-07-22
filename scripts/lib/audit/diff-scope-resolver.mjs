@@ -63,6 +63,71 @@ function walkEntryPointDir(repoPath, rel, out) {
 }
 
 /**
+ * Recursively collect every source-extension file under `rel` into `out`
+ * (repo-relative, forward-slash paths). Unlike walkEntryPointDir this DOES
+ * recurse — it feeds hasSelfUsageDocblock below, which is precise enough
+ * (self-referential match only) that recursing into scripts/lib/** can't
+ * over-exempt library files the way relaxing walkEntryPointDir's depth-1
+ * scope would (the thing the Gemini-R3/H1 fix documented above guards
+ * against).
+ *
+ * @param {string} repoPath
+ * @param {string} rel
+ * @param {Set<string>} out
+ */
+function walkSourceFilesRecursive(repoPath, rel, out) {
+  const abs = path.join(repoPath, rel);
+  let entries;
+  try {
+    entries = fs.readdirSync(abs, { withFileTypes: true });
+  } catch (err) {
+    // Mirrors walkEntryPointDir's precedent above: best-effort discovery for an
+    // ADDITIONAL exemption signal on top of the depth-1 walk, so a read failure
+    // degrades the result rather than the whole entry-point set — but silently,
+    // as this used to, made an unreadable subtree indistinguishable from an
+    // empty one (audit-code round-1 finding). Log so it's diagnosable.
+    process.stderr.write(`  [orphan] nested entry-point scan failed for ${rel}: ${err.message}\n`);
+    return;
+  }
+  for (const e of entries) {
+    const childRel = `${rel}/${e.name}`;
+    if (e.isDirectory()) { walkSourceFilesRecursive(repoPath, childRel, out); continue; }
+    if (!e.isFile()) continue;
+    if (!SOURCE_EXTENSIONS.has(path.extname(e.name).toLowerCase())) continue;
+    out.add(childRel);
+  }
+}
+
+/**
+ * Detect a self-referential CLI usage docblock — a file whose own header
+ * documents itself as `node <its-own-repo-relative-path>` (the convention
+ * used across scripts/*.mjs, e.g. "Usage:\n *   node scripts/foo.mjs").
+ * Precise by construction: a library helper is never invoked as `node
+ * scripts/lib/helper.mjs`, so this can't accidentally exempt scripts/lib/**
+ * the way widening walkEntryPointDir's depth-1 scope would.
+ *
+ * Bounded to the first 4KB (docblocks live at the top of the file) so this
+ * stays cheap even scanned across the whole scripts/ tree.
+ *
+ * @param {string} repoPath
+ * @param {string} relPath - repo-relative, forward-slash path
+ * @returns {boolean}
+ */
+function hasSelfUsageDocblock(repoPath, relPath) {
+  let head;
+  try {
+    const fd = fs.openSync(path.join(repoPath, relPath), 'r');
+    try {
+      const buf = Buffer.alloc(4096);
+      const bytesRead = fs.readSync(fd, buf, 0, buf.length, 0);
+      head = buf.toString('utf-8', 0, bytesRead);
+    } finally { fs.closeSync(fd); }
+  } catch { return false; }
+  const escaped = relPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`\\bnode\\s+${escaped}(\\s|$)`, 'm').test(head);
+}
+
+/**
  * Run `git args...` synchronously, returning stdout as a Buffer
  * (caller decides how to parse — null-separated output needs Buffer, not string).
  *
@@ -442,6 +507,21 @@ export function computeEntryPoints(repoPath) {
     const full = path.join(repoPath, dir);
     if (!fs.existsSync(full)) continue;
     walkEntryPointDir(repoPath, dir, out);
+  }
+
+  // Nested CLI scripts (e.g. scripts/spikes/foo.mjs) that document themselves
+  // with a `node <own-path>` usage docblock — the depth-1 walk above
+  // deliberately doesn't recurse (Gemini-R3/H1), so a script one directory
+  // deeper than scripts/*.mjs is invisible to it even when it's a genuine
+  // CLI entry point, not a library file.
+  const nestedCandidates = new Set();
+  for (const dir of ['scripts', 'bin']) {
+    if (!fs.existsSync(path.join(repoPath, dir))) continue;
+    walkSourceFilesRecursive(repoPath, dir, nestedCandidates);
+  }
+  for (const rel of nestedCandidates) {
+    if (out.has(rel)) continue; // already an entry point via the depth-1 walk
+    if (hasSelfUsageDocblock(repoPath, rel)) out.add(rel);
   }
 
   return out;

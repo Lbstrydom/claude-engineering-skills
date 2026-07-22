@@ -19,7 +19,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { detectOrphansIntroduced, isTestFile } from '../scripts/lib/audit/orphan-introduced.mjs';
+import { detectOrphansIntroduced, isTestFile, isDocExampleFile } from '../scripts/lib/audit/orphan-introduced.mjs';
 
 function makeScope(overrides = {}) {
   return {
@@ -51,6 +51,15 @@ describe('isTestFile', () => {
   it('matches windows-style backslash paths', () => assert.equal(isTestFile('tests\\foo.test.mjs'), true));
   it('does NOT match production file', () => assert.equal(isTestFile('src/foo.mjs'), false));
   it('handles null/undefined gracefully', () => assert.equal(isTestFile(null), false));
+});
+
+describe('isDocExampleFile', () => {
+  it('matches docs/ prefix', () => assert.equal(isDocExampleFile('docs/plans/security/files/scripts/security-incidents.mjs'), true));
+  it('matches a top-level docs/ file', () => assert.equal(isDocExampleFile('docs/foo.mjs'), true));
+  it('matches windows-style backslash paths', () => assert.equal(isDocExampleFile('docs\\plans\\security\\files\\scripts\\x.mjs'), true));
+  it('does NOT match a production file outside docs/', () => assert.equal(isDocExampleFile('scripts/lib/audit/orphan-introduced.mjs'), false));
+  it('does NOT match a file that merely contains "docs" mid-path', () => assert.equal(isDocExampleFile('src/docs-generator.mjs'), false));
+  it('handles null/undefined gracefully', () => assert.equal(isDocExampleFile(null), false));
 });
 
 describe('detectOrphansIntroduced', () => {
@@ -119,6 +128,45 @@ describe('detectOrphansIntroduced', () => {
     });
     const r = detectOrphansIntroduced({ scope, head });
     assert.equal(r.rawFindings.length, 0);
+  });
+
+  it('(d2) doc-embedded example file added with no callers → not flagged (dead-code-phase-1-followup)', () => {
+    // Regression for the confirmed FP: docs/plans/security/files/scripts/security-incidents.mjs
+    // (a plan-doc snapshot bundle, never live source) was flagged as a born-orphan.
+    const scope = makeScope({
+      changedFiles: [{ status: 'A', baseCallerPath: null, headCallerPath: 'docs/plans/security/files/scripts/security-incidents.mjs' }],
+      targetExistedAtBase: [],
+    });
+    const head = makeHead({
+      callersByTarget: {},
+      targetsByCaller: { 'docs/plans/security/files/scripts/security-incidents.mjs': [] },
+      allFiles: ['docs/plans/security/files/scripts/security-incidents.mjs'],
+    });
+    const r = detectOrphansIntroduced({ scope, head });
+    assert.equal(r.rawFindings.length, 0);
+    assert.equal(r.state, 'ANALYZED_CLEAN');
+  });
+
+  it('(d3) file with ONLY a doc-example caller → still flagged as orphan (audit-code round-1 finding: caller-side symmetry)', () => {
+    const scope = makeScope({
+      changedFiles: [{ status: 'M', baseCallerPath: 'src/main.mjs', headCallerPath: 'src/main.mjs' }],
+      preEdgesByBaseCaller: { 'src/main.mjs': ['src/lib.mjs'] },
+      targetExistedAtBase: ['src/lib.mjs', 'src/main.mjs', 'docs/plans/example/scripts/x.mjs'],
+    });
+    const head = makeHead({
+      callersByTarget: {
+        // Only a doc-embedded snapshot file imports src/lib.mjs at HEAD — not live.
+        'src/lib.mjs': ['docs/plans/example/scripts/x.mjs'],
+      },
+      targetsByCaller: {
+        'src/main.mjs': [],
+        'docs/plans/example/scripts/x.mjs': ['src/lib.mjs'],
+      },
+      allFiles: ['src/main.mjs', 'src/lib.mjs', 'docs/plans/example/scripts/x.mjs'],
+    });
+    const r = detectOrphansIntroduced({ scope, head });
+    assert.equal(r.rawFindings.length, 1);
+    assert.equal(r.rawFindings[0].file, 'src/lib.mjs');
   });
 
   it('(e) file with ONLY test callers → still flagged as orphan (test callers filtered out)', () => {
