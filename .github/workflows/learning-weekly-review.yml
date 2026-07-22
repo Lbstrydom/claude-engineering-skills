@@ -13,7 +13,7 @@ on:
   workflow_dispatch:
     inputs:
       repo-name:
-        description: 'Repo name (defaults to github.event.repository.name)'
+        description: 'Repo name in owner/repo form (defaults to github.repository)'
         required: false
 
 permissions:
@@ -76,8 +76,11 @@ jobs:
           AUDIT_DB_URL: ${{ secrets.AUDIT_DB_URL }}
           AUDIT_DB_SSL_MODE: no-verify
           # Per-repo scoping: weekly-review.mjs aborts if LEARNING_REPO_NAME
-          # is missing.  Defaults to the GH repo name; override via dispatch input.
-          LEARNING_REPO_NAME: ${{ inputs.repo-name || github.event.repository.name }}
+          # is missing. audit_repos.name is the owner/repo slug derived from
+          # the git origin URL (resolveRepoIdentity/deriveName) — the bare
+          # github.event.repository.name never matches it (found 2026-07-22:
+          # every run silently read {posted:false, reason:'unknown-repo'}).
+          LEARNING_REPO_NAME: ${{ inputs.repo-name || github.repository }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
