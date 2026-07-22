@@ -140,7 +140,22 @@ function describeProviderError(err) {
  * @param {string}  opts.model         - resolved concrete OpenRouter model id
  * @param {string}  opts.system        - system prompt
  * @param {string}  opts.userPrompt    - user prompt (already redacted context)
- * @param {import('zod').ZodType} opts.schema
+ * @param {import('zod').ZodType} opts.schema - drives BOTH the JSON Schema sent
+ *   to the provider for generation guidance AND (when `opts.responseSchema` is
+ *   omitted) the validation of the parsed reply.
+ * @param {import('zod').ZodType} [opts.responseSchema] - when given, VALIDATES
+ *   the parsed reply instead of `opts.schema` (the provider-facing JSON Schema
+ *   still derives from `opts.schema` — this only decouples validation).
+ *   Exists for batch/array responses where `opts.schema` requires every array
+ *   element to conform (zod array validation is all-or-nothing): one
+ *   genuinely malformed element then fails the WHOLE response, discarding
+ *   every OTHER — valid — element too. A caller with its own authoritative
+ *   per-element validator downstream (e.g. `prepareCandidates`) passes a
+ *   lenient `responseSchema` (envelope shape only, e.g.
+ *   `z.object({findings: z.array(z.unknown()).max(N)})`) so ONE malformed
+ *   element degrades itself there instead of destroying the batch here.
+ *   Omitted → identical to `opts.schema` (byte-identical for every existing
+ *   caller).
  * @param {string}  opts.schemaName
  * @param {number} [opts.maxTokens=16000]
  * @param {number} [opts.timeoutMs]  - explicit override; wins over the resolved policy
@@ -181,8 +196,13 @@ export async function ossStructuredCall(client, opts) {
     model, system, userPrompt, schema, schemaName,
     maxTokens = 16000, operation, passName = 'oss',
     reasoningEffort = null, scheduler = DEFAULT_SCHEDULER,
-    providerPreferences = null,
+    providerPreferences = null, responseSchema = null,
   } = opts;
+  // Validation schema is separate from the provider-guidance schema (see
+  // opts.responseSchema doc above) — defaults to `schema` so every existing
+  // caller (single-object responses, where all-or-nothing validation is
+  // correct) is unaffected.
+  const validationSchema = responseSchema ?? schema;
 
   const resolvedPolicy = getOssOperationPolicy(operation);
   const timeoutMs = opts.timeoutMs ?? resolvedPolicy.timeoutMs;
@@ -283,7 +303,7 @@ export async function ossStructuredCall(client, opts) {
         return { result: null, usage, latencyMs, conformant: false, failed: false, error: 'reply was not valid JSON', mode, requestedReasoningEffort: reasoningEffort };
       }
 
-      const validated = schema.safeParse(parsedJson);
+      const validated = validationSchema.safeParse(parsedJson);
       if (!validated.success) {
         return {
           result: null, usage, latencyMs, conformant: false, failed: false,

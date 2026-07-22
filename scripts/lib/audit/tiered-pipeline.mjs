@@ -895,10 +895,33 @@ export async function runTieredAuditPipeline(ctx) {
     (v) => clampToJsonSchemaLimits(v, producerResponseJsonSchema),
     glmStrictSchema,
   );
+  // Batch-abort hardening (2026-07-22, systematic follow-up to the Stage-1
+  // clamp fix): `glmLenientSchema` above is still what derives the
+  // PROVIDER-facing JSON Schema (guidance) via `zodToOpenAiJsonSchema` inside
+  // `ossStructuredCall` — unaffected. But it was ALSO the schema
+  // `ossStructuredCall` used to VALIDATE the parsed reply, and
+  // `z.array(producerFindingSchema)` validation is all-or-nothing: ONE
+  // genuinely malformed finding among up to 15 (an invalid enum, a missing
+  // required field — not fixable by the length-only clamp above) failed the
+  // WHOLE array, so `providers.ossCall` returned `result: null` and `glmCall`
+  // below threw — a required-generator failure that fell the ENTIRE tiered
+  // run back to legacy (production) or aborted it outright (shadow), all
+  // because of ONE bad candidate in a batch that may contain 14 good ones.
+  // `prepareCandidates` downstream is ALREADY the authoritative per-finding
+  // boundary (its own docstring: "one malformed candidate degrades ITSELF,
+  // never the batch") — this response schema stops re-litigating that at the
+  // envelope level: it validates only that `findings` is an array of at most
+  // 15 items (still clamped for length first), leaving per-item shape
+  // entirely to `prepareCandidates`'s existing `producerSchema.safeParse`.
+  const glmResponseValidationSchema = z.preprocess(
+    (v) => clampToJsonSchemaLimits(v, producerResponseJsonSchema),
+    z.object({ findings: z.array(z.unknown()).max(15) }),
+  );
   const glmCall = providers.ossCall
     ? async () => {
         const { result, category, error, usage } = await providers.ossCall({
           model: glmModel,
+          responseSchema: glmResponseValidationSchema,
           // require_parameters (experiment-4 gate-1 screen, 2026-07-17,
           // n=60 through this exact seam): OpenRouter's GLM fleet contains
           // hosts that ACCEPT our response_format json_schema request but

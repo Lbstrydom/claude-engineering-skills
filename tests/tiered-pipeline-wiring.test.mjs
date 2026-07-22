@@ -367,6 +367,141 @@ describe('OSS-call reliability wiring (docs/plans/oss-call-reliability-hardening
     assert.match(src, /count:\s*triageResult\.skippedBudgetExhaustedCount/);
     assert.match(src, /_stage1FailureCategories:\s*triageResult\.failureCategories/);
   });
+
+  test('static pin: glmCall passes a lenient responseSchema, decoupled from the provider-guidance schema', () => {
+    const glmMatch = src.match(/const glmCall = providers\.ossCall[\s\S]*?: async \(\) => \{ throw new Error\('discovery portfolio: providers\.ossCall unavailable'\); \};/);
+    assert.ok(glmMatch, 'expected to find the glmCall assignment');
+    assert.match(glmMatch[0], /responseSchema:\s*glmResponseValidationSchema/, 'glmCall must validate the reply leniently, never via the strict per-item schema');
+    assert.match(glmMatch[0], /schema:\s*glmLenientSchema/, 'the provider-facing JSON Schema must still derive from the strict-shaped schema (unaffected)');
+    assert.match(src, /const glmResponseValidationSchema = z\.preprocess\(/);
+    assert.match(src, /z\.object\(\{ findings: z\.array\(z\.unknown\(\)\)\.max\(15\) \}\)/, 'per-item shape must be left entirely to prepareCandidates downstream');
+  });
+});
+
+// ── Discovery batch-abort hardening (2026-07-22, systematic follow-up to the
+// Stage-1 clamp fix) ─────────────────────────────────────────────────────────
+// `glmStrictSchema = z.object({findings: z.array(producerFindingSchema).max(15)})`
+// used to ALSO validate the OSS response inside ossStructuredCall — and zod
+// array validation is all-or-nothing, so ONE malformed finding among several
+// good ones failed the WHOLE response, `glmCall` threw, GLM (a required
+// generator) reported `failed`, and `requiredGeneratorFailed` fell the ENTIRE
+// tiered run back to legacy (or aborted the shadow) over a single bad
+// candidate. This end-to-end test drives `runTieredAuditPipeline` with a
+// `providers.ossCall` stub that reproduces ossStructuredCall's own validation
+// contract (`(opts.responseSchema ?? opts.schema).safeParse(...)`) — so this
+// test regresses to red if the fix's `responseSchema` wiring is ever dropped
+// from `glmCall`, without needing the real network-calling ossStructuredCall.
+describe('discovery batch-abort hardening — one malformed GLM finding must not abort the run', () => {
+  const REAL_DIFF = 'diff --git a/src/x.js b/src/x.js\nindex 111..222 100644\n--- a/src/x.js\n+++ b/src/x.js\n@@ -1 +1 @@\n-old\n+new\n';
+
+  const classification = { sonarType: 'BUG', effort: 'EASY', sourceKind: 'MODEL', sourceName: 'glm-test' };
+  const baseFinding = {
+    id: 'H1', category: 'Test Category', section: 'src/x.js', detail: 'a real defect',
+    risk: 'something breaks', recommendation: 'fix it', is_quick_fix: false, is_mechanical: false,
+    principle: 'correctness', classification,
+  };
+  // A genuinely well-formed V3 commission finding citing the diff-path map's
+  // first (only) entry, 'f0001'.
+  const goodFinding = {
+    ...baseFinding, severity: 'MEDIUM', evidenceType: 'commission',
+    anchor: { diffPathId: 'f0001', side: 'head', startLine: 1, endLine: 1, quote: 'new', symbolName: null },
+  };
+  // Malformed in a way length-clamping cannot fix: an invalid severity enum
+  // value — must be rejected by prepareCandidates's per-item safeParse
+  // (bucketed as malformed), never by the OSS response's own envelope check.
+  const malformedFinding = { ...goodFinding, id: 'H2', severity: 'CRITICAL_NOT_A_REAL_ENUM_VALUE' };
+
+  // Reproduces ossStructuredCall's real validation contract for both GLM and
+  // (if ever exercised) any other array-batch caller: JSON round-trips the
+  // payload, then validates with `responseSchema ?? schema` exactly as the
+  // real implementation does — so this test is a faithful proxy for the real
+  // provider boundary, not a hand-waved stub.
+  function makeOssCallStub(payload) {
+    return async (opts) => {
+      const parsed = JSON.parse(JSON.stringify(payload));
+      const validationSchema = opts.responseSchema ?? opts.schema;
+      const validated = validationSchema.safeParse(parsed);
+      if (!validated.success) {
+        return { result: null, category: null, error: 'schema validation failed', usage: { input_tokens: 1, output_tokens: 1 } };
+      }
+      return { result: validated.data, category: null, error: null, usage: { input_tokens: 1, output_tokens: 1 } };
+    };
+  }
+
+  const emptySonnetToolUse = {
+    content: [{ type: 'tool_use', name: 'report_findings', input: { findings: [] } }],
+  };
+
+  function makeCtx(ossCall, over = {}) {
+    return {
+      planContent: 'p', changedFiles: ['src/x.js'], diffText: REAL_DIFF, generatorOutcomes: [],
+      providers: {
+        openai: null, // Stage 1's default GPT triager degrades to `escalated` per-candidate without one — never fatal.
+        ossCall,
+        anthropicClient: { messages: { create: async () => emptySonnetToolUse } },
+        geminiReviewCall: async () => ({ verdict: 'confirmed' }),
+        geminiCleanRegionCall: async () => ({ verdict: 'clean' }),
+      },
+      noLedger: true, noDebtLedger: true,
+      ...over,
+    };
+  }
+
+  test('regression baseline: a strict-schema-only ossCall stub reproduces the bug (requiredGeneratorFailed -> TieredUnavailableError)', async () => {
+    // Bypasses the fix entirely by ignoring opts.responseSchema — proves the
+    // TEST HARNESS itself would have caught the original defect. shadowMode
+    // is used here (rather than asserting on the real legacy fallback) so
+    // this test doesn't need a plan referencing real on-disk implementation
+    // files — matching the existing "shadow vs production fallback" suite's
+    // own pattern one describe block up; production's fallback_legacy
+    // behavior for this same failure is already covered there.
+    const strictOnlyOssCall = async (opts) => {
+      const parsed = JSON.parse(JSON.stringify({ findings: [goodFinding, malformedFinding] }));
+      const validated = opts.schema.safeParse(parsed);
+      return validated.success
+        ? { result: validated.data, category: null, error: null, usage: { input_tokens: 1, output_tokens: 1 } }
+        : { result: null, category: null, error: 'schema validation failed', usage: { input_tokens: 1, output_tokens: 1 } };
+    };
+    await assert.rejects(
+      () => runTieredAuditPipeline(makeCtx(strictOnlyOssCall, { shadowMode: true })),
+      (err) => {
+        assert.equal(err.name, 'TieredUnavailableError', 'without the fix, one malformed finding must (still) abort the whole tiered run — this is the bug, reproduced');
+        return true;
+      },
+    );
+  });
+
+  test('the fix: one malformed finding among several good ones does NOT abort the run', async () => {
+    const result = await runTieredAuditPipeline(makeCtx(makeOssCallStub({ findings: [goodFinding, malformedFinding] })));
+    assert.notEqual(result.runStatus, 'fallback_legacy', 'a single malformed candidate must never fall the whole tiered run back to legacy');
+    assert.equal(result.generatorOutcomes.find((o) => o.model === 'glm')?.status, 'succeeded', 'GLM must be recorded as succeeded — it produced findings, one of which degrades itself downstream');
+  });
+
+  test('the malformed finding is still caught — just at prepareCandidates, scoped to itself, not the batch', async () => {
+    const result = await runTieredAuditPipeline(makeCtx(makeOssCallStub({ findings: [goodFinding, malformedFinding] })));
+    assert.equal(result._stageBreakdown.discoveryRawFindings, 2, 'both raw findings must have reached the producer boundary');
+    assert.equal(result._stageBreakdown.discoveryMalformedRaw, 1, 'exactly the ONE malformed finding must be caught — scoped to itself');
+  });
+
+  test('the good finding survives end-to-end (proves this is not silently dropping BOTH findings)', async () => {
+    const result = await runTieredAuditPipeline(makeCtx(makeOssCallStub({ findings: [goodFinding, malformedFinding] })));
+    assert.ok(result.findings.length >= 1, 'the well-formed finding must survive the pipeline');
+  });
+
+  test('a genuinely broken envelope (GLM returns something that is not {findings: [...]} at all) still correctly fails the whole call', async () => {
+    // The responseSchema loosens PER-ITEM shape only — the envelope contract
+    // (findings must be an array) is still enforced, so a truly broken
+    // response is still a real required-generator failure, not silently
+    // accepted as zero findings. shadowMode, same reasoning as the baseline
+    // test above.
+    await assert.rejects(
+      () => runTieredAuditPipeline(makeCtx(makeOssCallStub({ findings: 'not an array at all' }), { shadowMode: true })),
+      (err) => {
+        assert.equal(err.name, 'TieredUnavailableError', 'a broken envelope (not per-item malformed) is a genuine required-generator failure');
+        return true;
+      },
+    );
+  });
 });
 
 describe('buildAuditRunContext — commitSha/workingTreeDirty threading (docs/plans/stage0-evidence-relevance-split.md decision #5)', () => {

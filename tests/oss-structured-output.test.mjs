@@ -373,3 +373,85 @@ describe('ossStructuredCall — providerPreferences passthrough (experiment-4 ga
     assert.equal('provider' in seen[0], false);
   });
 });
+
+// ── responseSchema — decoupling provider-guidance from response validation ──
+// (2026-07-22, tiered-recall batch-abort hardening, systematic follow-up to
+// the Stage-1 clamp fix). A batch/array response validated against a schema
+// requiring every element to conform (e.g. `z.array(itemSchema)`) fails
+// ALL-OR-NOTHING: one malformed element destroys every other valid element in
+// the same response. `responseSchema` lets a caller decouple "what shape do
+// we ask the provider to produce" (still `schema`) from "how strictly do we
+// validate what came back" — so a caller with its own authoritative
+// per-element validator downstream can opt into lenient envelope-only
+// validation here.
+describe('ossStructuredCall — responseSchema (decoupled validation, batch-abort hardening)', () => {
+  const itemSchema = z.object({ id: z.string(), severity: z.enum(['HIGH', 'MEDIUM', 'LOW']) });
+  const strictSchema = z.object({ findings: z.array(itemSchema).max(15) });
+  const lenientResponseSchema = z.object({ findings: z.array(z.unknown()).max(15) });
+
+  it('a response with one malformed element among several good ones is REJECTED under the strict schema alone (regression baseline — proves the bug exists without the fix)', async () => {
+    const payload = { findings: [
+      { id: 'a', severity: 'HIGH' },
+      { id: 'b', severity: 'NOT_A_REAL_SEVERITY' }, // malformed: invalid enum
+      { id: 'c', severity: 'LOW' },
+    ] };
+    const client = successClient(payload);
+    const res = await ossStructuredCall(client, {
+      model: 'm', system: 's', userPrompt: 'u', schema: strictSchema, schemaName: 'x',
+    });
+    assert.equal(res.conformant, false, 'array validation is all-or-nothing — this is the bug this feature exists to route around');
+    assert.equal(res.result, null);
+  });
+
+  it('the SAME response with a lenient responseSchema survives — all elements returned raw, none silently dropped', async () => {
+    const payload = { findings: [
+      { id: 'a', severity: 'HIGH' },
+      { id: 'b', severity: 'NOT_A_REAL_SEVERITY' },
+      { id: 'c', severity: 'LOW' },
+    ] };
+    const client = successClient(payload);
+    const res = await ossStructuredCall(client, {
+      model: 'm', system: 's', userPrompt: 'u', schema: strictSchema, schemaName: 'x',
+      responseSchema: lenientResponseSchema,
+    });
+    assert.equal(res.conformant, true, 'one malformed element must not fail the whole batch when a lenient responseSchema is supplied');
+    assert.equal(res.result.findings.length, 3, 'every element — good AND malformed — passes through raw; per-item validation is the CALLER\'s job downstream');
+    assert.deepEqual(res.result.findings[1], { id: 'b', severity: 'NOT_A_REAL_SEVERITY' }, 'the malformed element is untouched, not silently fixed or dropped here');
+  });
+
+  it('omitting responseSchema is byte-identical to today — falls back to opts.schema for validation', async () => {
+    const client = successClient({ findings: [{ id: 'a', severity: 'HIGH' }] });
+    const res = await ossStructuredCall(client, {
+      model: 'm', system: 's', userPrompt: 'u', schema: strictSchema, schemaName: 'x',
+    });
+    assert.equal(res.conformant, true);
+    assert.deepEqual(res.result, { findings: [{ id: 'a', severity: 'HIGH' }] });
+  });
+
+  it('the provider-facing JSON Schema still derives from opts.schema, never from responseSchema', async () => {
+    const seen = [];
+    const client = { chat: { completions: { create: async (params) => {
+      seen.push(params);
+      return { choices: [{ message: { content: '{"findings":[]}' }, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1 } };
+    } } } };
+    await ossStructuredCall(client, {
+      model: 'm', system: 's', userPrompt: 'u', schema: strictSchema, schemaName: 'x',
+      responseSchema: lenientResponseSchema,
+    });
+    const sentSchema = seen[0].response_format.json_schema.schema;
+    // The strict item schema's `severity` enum must be present in what the
+    // provider was asked to produce — proving guidance is untouched even
+    // though validation was decoupled onto a much looser schema.
+    assert.deepEqual(sentSchema.properties.findings.items.properties.severity.enum, ['HIGH', 'MEDIUM', 'LOW']);
+  });
+
+  it('a genuinely broken envelope (not an array at all) still fails even with a lenient responseSchema — this only loosens PER-ITEM shape, not the envelope contract', async () => {
+    const client = successClient({ findings: 'not an array' });
+    const res = await ossStructuredCall(client, {
+      model: 'm', system: 's', userPrompt: 'u', schema: strictSchema, schemaName: 'x',
+      responseSchema: lenientResponseSchema,
+    });
+    assert.equal(res.conformant, false);
+    assert.equal(res.result, null);
+  });
+});

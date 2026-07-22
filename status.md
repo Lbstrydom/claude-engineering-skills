@@ -1,5 +1,48 @@
 # Project Status Log
 
+## 2026-07-22 — Discovery batch-abort hardening: one malformed finding can no longer crash the whole tiered run
+
+Systematic follow-up to the same-day Stage-1 `too_big` clamp fix (`6b3fd62`): swept
+the tiered pipeline's per-finding stages (`tiered-pipeline.mjs`, `evidence-triage.mjs`,
+`candidate-envelope.mjs`, `final-adjudication.mjs`, `diff-path-map.mjs`'s
+`prepareCandidates`) for the general class — a validation/parse site scoped to ONE
+candidate that instead throws and aborts the whole batch/run. Everything except
+`glmCall` was already correctly per-candidate/non-throwing.
+
+- **Root cause**: `glmStrictSchema = z.object({findings: z.array(producerFindingSchema).max(15)})`
+  in `tiered-pipeline.mjs` was used BOTH to build the provider-facing JSON Schema AND
+  (inside `ossStructuredCall`, via `schema.safeParse`) to validate GLM's raw reply.
+  Zod array validation is all-or-nothing — ONE genuinely malformed finding (bad enum,
+  missing field; not a length issue the existing clamp fixes) among up to 15 failed
+  the WHOLE array, so `ossCall` returned `result:null`, `glmCall` threw, GLM (a
+  required generator) reported `failed`, and `requiredGeneratorFailed` fell the
+  ENTIRE tiered run back to legacy (production) or aborted it outright (shadow) —
+  discarding up to 14 good findings over one bad one. `sonnetCall` never had this
+  problem (no zod validation of its own batch; relies entirely on `prepareCandidates`
+  downstream), which is what surfaced the asymmetry.
+- **Fix**: added an optional `opts.responseSchema` to `ossStructuredCall`
+  (`oss-structured-output.mjs`) that decouples provider-facing JSON-Schema guidance
+  from response validation. `glmCall` now passes a lenient `glmResponseValidationSchema`
+  (`{findings: z.array(z.unknown()).max(15)}`, same length-clamp preprocessing),
+  leaving per-item shape entirely to `prepareCandidates`'s existing authoritative
+  `safeParse` (which already buckets a malformed item without touching its siblings).
+  Backward compatible — every other `ossCall` caller (Stage-1 triager, etc.) is
+  single-object, not array-batch, so omitting `responseSchema` is byte-identical.
+- **Tests**: 5 new unit tests (`oss-structured-output.test.mjs`) proving the decoupling,
+  plus a static pin + 5 end-to-end tests (`tiered-pipeline-wiring.test.mjs`) including a
+  "regression baseline" that reproduces the original bug with the fix bypassed —
+  proving the harness itself would have caught the defect.
+
+Full suite green (8415, 22 pre-existing skips, 0 failures). Not yet live-verified against
+a real GLM run (per `docs/runbooks/pre-ship-empirical-verify.md` — flagged as still-owed).
+No production flags touched. Plan: `docs/plans/tiered-recall-audit-pipeline.md`.
+
+**Heads-up**: found 5 unrelated pre-existing unstaged changes (`docs/plans/README.md`,
+`docs/plans/observed-graph-coverage-honesty.md`, `docs/plans/observed-graph-discovery-unification.md`,
+`docs/plans/tiered-recall-audit-pipeline.md`, `scripts/spikes/observed-graph-discovery-spike.mjs`)
+plus one untracked test file — another session's in-progress "observed-graph-discovery-unification"
+work. Left untouched and unstaged per scope discipline.
+
 ## 2026-07-22 — Tiered-shadow trust: real cost capture, location+severity overlap, Stage-1 crash fix
 
 Opened with a plans-index review + Supabase telemetry check. Two plans were
