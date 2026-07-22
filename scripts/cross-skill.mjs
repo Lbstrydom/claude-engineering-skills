@@ -103,6 +103,7 @@ import { evaluateDecision, DECISION_CONSTANTS } from './lib/model-ab-decision.mj
 import { auditShadowConfig } from './lib/config.mjs';
 import { finalizeRoundOutcomes } from './lib/finalize-outcomes.mjs';
 import { semanticId } from './lib/findings.mjs';
+import { isControlMarkerDetail } from './lib/audit/control-markers.mjs';
 import { getLearningStats } from './lib/learning/stats.mjs';
 import { emit, assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 import { resolveRepoIdentity, persistRepoIdentity } from './lib/repo-identity.mjs';
@@ -1124,7 +1125,7 @@ async function cmdFinalizeOutcomes() {
     const status = await finalizeRoundOutcomes({ result, ledger, round, store: null, sid: null });
     return emit({
       ok: true, cloud: false, runId: null, round,
-      labelled: status.labelled, total: status.total, needsTriage: 0,
+      labelled: status.labelled, total: status.total, needsTriage: 0, autoDismissed: 0,
       hint: 'AUDIT_DB_URL unset — local-only capture; run npm run setup:cloud to enable cloud finalize',
     });
   }
@@ -1141,17 +1142,21 @@ async function cmdFinalizeOutcomes() {
   const status = await finalizeRoundOutcomes(
     { result: { ...result, _cloudRunId: runId }, ledger, round, store, sid: runId },
   );
-  const { enriched, cloudOk, needsTriage } = status;
-  const pending = enriched.filter(f => f.adjudicationOutcome === 'pending');
+  const { enriched, cloudOk, needsTriage, autoDismissed } = status;
+  // Control-marker findings (e.g. ADJACENCY_INCOMPLETE) are routed to
+  // auto_dismissed, not needs_triage — exclude them from the echoed list so
+  // it doesn't claim a human needs to look at machine-generated coverage
+  // noise. Mirrors the split the DB write is driven by (splitPendingFindings).
+  const pending = enriched.filter(f => f.adjudicationOutcome === 'pending' && !isControlMarkerDetail(f.detail));
 
   const labelled = status.labelled;
   process.stderr.write(
     `  [finalize-outcomes] run ${runId}: ${labelled}/${result.findings.length} labelled · `
-    + `${needsTriage} needs_triage · cloud=${cloudOk ? 'ok' : 'failed'}\n`,
+    + `${needsTriage} needs_triage · ${autoDismissed} auto_dismissed · cloud=${cloudOk ? 'ok' : 'failed'}\n`,
   );
   emit({
     ok: true, cloud: true, runId, round,
-    labelled, total: result.findings.length, needsTriage, cloudOk,
+    labelled, total: result.findings.length, needsTriage, autoDismissed, cloudOk,
     needsTriageFindings: pending.map(f => ({
       id: f.id, fingerprint: f._hash || semanticId(f),
       severity: f.severity, section: f.section,

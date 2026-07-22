@@ -27,7 +27,7 @@ import { fileURLToPath } from 'node:url';
 
 import { recordTriageOutcomes } from '../scripts/lib/outcome-sync.mjs';
 import { generateTopicId } from '../scripts/lib/ledger.mjs';
-import { markRunFindingsNeedsTriage, auditRunExists } from '../scripts/learning-store.mjs';
+import { markRunFindingsNeedsTriage, markRunFindingsAutoDismissed, auditRunExists } from '../scripts/learning-store.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -61,6 +61,27 @@ describe('markRunFindingsNeedsTriage — guards short-circuit before any query',
 
   it('returns {updated:0} when fingerprints is not an array', async () => {
     const r = await markRunFindingsNeedsTriage('00000000-0000-0000-0000-000000000000', null);
+    assert.deepEqual(r, { updated: 0 });
+  });
+});
+
+// ── markRunFindingsAutoDismissed — input-validation contract (no DB) ────────
+// Sibling writer for control-marker findings (docs: scripts/lib/audit/
+// control-markers.mjs) — same guard shape as markRunFindingsNeedsTriage.
+
+describe('markRunFindingsAutoDismissed — guards short-circuit before any query', () => {
+  it('returns {updated:0} when runId is absent', async () => {
+    const r = await markRunFindingsAutoDismissed(null, ['hash-1'], 'control-marker');
+    assert.deepEqual(r, { updated: 0 });
+  });
+
+  it('returns {updated:0} for an empty fingerprint list (no query attempted)', async () => {
+    const r = await markRunFindingsAutoDismissed('00000000-0000-0000-0000-000000000000', [], 'control-marker');
+    assert.deepEqual(r, { updated: 0 });
+  });
+
+  it('returns {updated:0} when fingerprints is not an array', async () => {
+    const r = await markRunFindingsAutoDismissed('00000000-0000-0000-0000-000000000000', null, 'control-marker');
     assert.deepEqual(r, { updated: 0 });
   });
 });

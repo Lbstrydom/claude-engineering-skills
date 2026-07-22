@@ -15,6 +15,7 @@ import {
   parseResultPath,
   loadAuditInputs,
   finalizeRoundOutcomes,
+  splitPendingFindings,
 } from '../scripts/lib/finalize-outcomes.mjs';
 import { generateTopicId } from '../scripts/lib/ledger.mjs';
 
@@ -100,6 +101,54 @@ describe('loadAuditInputs (permissive, passthrough)', () => {
   });
 });
 
+describe('splitPendingFindings (control-marker routing)', () => {
+  it('routes a genuinely un-ruled finding to needsTriageFps', () => {
+    const enriched = [
+      { id: 'A', _hash: 'hash-A', detail: 'a.js:12 sits inside the `if` at a.js:10.', adjudicationOutcome: 'pending' },
+    ];
+    const { needsTriageFps, autoDismissFps } = splitPendingFindings(enriched);
+    assert.deepEqual(needsTriageFps, ['hash-A']);
+    assert.deepEqual(autoDismissFps, []);
+  });
+
+  it('routes an ADJACENCY_INCOMPLETE control marker to autoDismissFps, not needsTriageFps', () => {
+    const enriched = [{
+      id: 'B', _hash: 'hash-B',
+      detail: 'ADJACENCY_INCOMPLETE (enumeration-bound): maxContainers=20 reached — remaining files not enumerated',
+      adjudicationOutcome: 'pending',
+    }];
+    const { needsTriageFps, autoDismissFps } = splitPendingFindings(enriched);
+    assert.deepEqual(needsTriageFps, []);
+    assert.deepEqual(autoDismissFps, ['hash-B']);
+  });
+
+  it('splits a mixed batch correctly and ignores already-ruled findings', () => {
+    const enriched = [
+      { id: 'A', _hash: 'hash-A', detail: 'a genuine finding', adjudicationOutcome: 'pending' },
+      { id: 'B', _hash: 'hash-B', detail: 'ADJACENCY_INCOMPLETE (diff-bound): scope=diff', adjudicationOutcome: 'pending' },
+      { id: 'C', _hash: 'hash-C', detail: 'ADJACENCY_INCOMPLETE (already ruled)', adjudicationOutcome: 'accepted' },
+    ];
+    const { needsTriageFps, autoDismissFps } = splitPendingFindings(enriched);
+    assert.deepEqual(needsTriageFps, ['hash-A']);
+    assert.deepEqual(autoDismissFps, ['hash-B']);
+  });
+
+  it('a real [Adjacency] finding (not the control marker) still routes to needsTriageFps', () => {
+    // Regression guard for the "excluding by category would drop real signal"
+    // invariant — the adjacency wave emits genuine findings under a related
+    // category, so the split must key off the detail-text PREFIX only.
+    const enriched = [{
+      id: 'D', _hash: 'hash-D',
+      detail: 'a.js:5 sits inside the `if` at a.js:3, but reads nothing declared in that branch.',
+      category: 'Statement may be trapped inside a conditional',
+      adjudicationOutcome: 'pending',
+    }];
+    const { needsTriageFps, autoDismissFps } = splitPendingFindings(enriched);
+    assert.deepEqual(needsTriageFps, ['hash-D']);
+    assert.deepEqual(autoDismissFps, []);
+  });
+});
+
 describe('finalizeRoundOutcomes', () => {
   it('cloud-off: writes local once + returns the documented shape', async () => {
     const { finding, entry } = ruledPair('A');
@@ -108,7 +157,7 @@ describe('finalizeRoundOutcomes', () => {
     const status = await finalizeRoundOutcomes({ result, ledger, round: 2, store: null, sid: 'sid-x' });
     assert.deepEqual(
       Object.keys(status).sort(),
-      ['cloudOk', 'enriched', 'labelled', 'needsTriage', 'round', 'skippedLocal', 'total'].sort(),
+      ['autoDismissed', 'cloudOk', 'enriched', 'labelled', 'needsTriage', 'round', 'skippedLocal', 'total'].sort(),
     );
     assert.equal(status.labelled, 1);
     assert.equal(status.total, 1);

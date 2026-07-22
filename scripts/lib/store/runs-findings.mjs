@@ -744,6 +744,46 @@ export async function markRunFindingsNeedsTriage(runId, fingerprints) {
 }
 
 /**
+ * Sibling of `markRunFindingsNeedsTriage` for CONTROL-STATE marker findings
+ * (e.g. `ADJACENCY_INCOMPLETE` — see `scripts/lib/audit/control-markers.mjs`):
+ * a ledger never adjudicates them because they are not real findings, so
+ * without this they'd fall through to the same `needs_triage` reconciliation
+ * as a genuinely un-ruled finding and clutter the human triage queue with
+ * byte-identical machine noise. Routes them to their own terminal
+ * `auto_dismissed` bucket instead — `pending_triage_findings` only selects
+ * `needs_triage`, so this alone keeps them off the weekly digest. Same
+ * guard shape as `markRunFindingsNeedsTriage`: idempotent, and never
+ * clobbers a real adjudication or a differing prior user_action.
+ * @param {string} runId
+ * @param {string[]} fingerprints  finding_fingerprint values identified as control markers
+ * @param {string} reason  human-readable dismiss_reason (which control-marker class matched)
+ * @returns {Promise<{updated: number}>}
+ */
+export async function markRunFindingsAutoDismissed(runId, fingerprints, reason) {
+  if (!runId || !await isCloudEnabled()
+      || !Array.isArray(fingerprints) || fingerprints.length === 0) {
+    return { updated: 0 };
+  }
+  try {
+    const rows = await many(
+      `UPDATE audit_findings
+          SET user_action = 'auto_dismissed',
+              dismiss_reason = $3
+        WHERE run_id = $1
+          AND finding_fingerprint = ANY($2::text[])
+          AND adjudication_outcome IS NULL
+          AND (user_action IS NULL OR user_action IN ('needs_triage', 'auto_dismissed'))
+        RETURNING id`,
+      [runId, fingerprints, reason || 'control-marker: auto-dismissed (not a real finding)'],
+    );
+    return { updated: Array.isArray(rows) ? rows.length : 0 };
+  } catch (err) {
+    process.stderr.write(`  [learning] markRunFindingsAutoDismissed failed: ${err.message}\n`);
+    return { updated: 0 };
+  }
+}
+
+/**
  * Read the shadow-A/B measurement surface for a repo by name (plan §6). Queries
  * BASE TABLES directly (no view — avoids the view/RLS-bypass question, R1 H5).
  * Returns {ok, cloud, repoId, buckets, shadowOnlyQueue, runs} where:

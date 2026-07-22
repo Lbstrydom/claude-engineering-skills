@@ -7701,7 +7701,7 @@
       "table_name": "audit_findings",
       "constraint_name": "audit_findings_user_action_check",
       "constraint_type": "CHECK",
-      "definition": "CHECK ((user_action = ANY (ARRAY['fix-now'::text, 'deferred'::text, 'dismissed'::text, 'needs_triage'::text, 'accepted-permanent'::text])))"
+      "definition": "CHECK ((user_action = ANY (ARRAY['fix-now'::text, 'deferred'::text, 'dismissed'::text, 'needs_triage'::text, 'accepted-permanent'::text, 'auto_dismissed'::text])))"
     },
     {
       "table_name": "audit_findings",

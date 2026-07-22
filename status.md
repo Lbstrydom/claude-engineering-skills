@@ -1,5 +1,41 @@
 # Project Status Log
 
+## 2026-07-22 — Control-marker findings no longer leak into the human triage queue
+
+A live-DB check found 10 `ADJACENCY_INCOMPLETE` control-state markers (the
+adjacency wave's own machine-generated "coverage incomplete" notice, not a
+real finding) sitting in `user_action='needs_triage'` — the same class of
+byte-identical-noise bug the memory-health cluster-density metric was fixed
+for on 2026-07-20 (`control_marker_prefixes`), but on the WRITE side this
+time: `finalizeRoundOutcomes` (`scripts/lib/finalize-outcomes.mjs`) had no
+awareness that a ledger can never adjudicate a control marker, so it fell
+through to the same `needs_triage` reconciliation as a genuinely un-ruled
+finding and leaked into `pending_triage_findings` / the weekly digest.
+
+- New `scripts/lib/audit/control-markers.mjs` — single JS-side source of
+  truth for control-marker prefixes (`isControlMarkerDetail`), the sibling
+  of the SQL `control_marker_prefixes` list.
+- New pure `splitPendingFindings()` in `finalize-outcomes.mjs` classifies
+  pending findings by detail-text PREFIX only (never category — the
+  adjacency wave emits genuine findings under a related category, so
+  category-based exclusion would drop real signal).
+- New `markRunFindingsAutoDismissed()` (`scripts/lib/store/runs-findings.mjs`)
+  routes control markers to a new terminal `user_action='auto_dismissed'`
+  state instead of `needs_triage`.
+- Migration `20260722120000_control_marker_auto_dismissed.sql` widens the
+  `audit_findings.user_action` CHECK constraint to allow `auto_dismissed`
+  and relabels the 10 stale rows. Applied to the live shared audit-loop
+  store and verified: 0 stale rows remain, `pending_triage_findings`
+  290 rows (was 300), migration ledger shows no drift (85/85).
+- `cross-skill.mjs`'s `finalize-outcomes` CLI echo updated so it no longer
+  reports control markers as `needsTriageFindings`.
+
+New `tests/control-markers.test.mjs` + `splitPendingFindings`/
+`markRunFindingsAutoDismissed` cases added to `tests/finalize-outcomes.test.mjs`
+/ `tests/run-unification.test.mjs`; pinned export count in
+`tests/learning-store-exports.test.mjs` bumped 175 → 176. Full suite green
+(8,463 tests; 1 pre-existing unrelated failure confirmed via `git stash`).
+
 ## 2026-07-22 — persistKeptEmbeddings: fixed two REOPENED HIGH findings (unverified write success + missing run/tenant scoping)
 
 GH issue #59's learning-weekly-review digest surfaced two REOPENED HIGH

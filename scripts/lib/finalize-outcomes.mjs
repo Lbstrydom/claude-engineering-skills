@@ -21,11 +21,15 @@ import { z } from 'zod';
 import { recordTriageOutcomes } from './outcome-sync.mjs';
 import { semanticId } from './findings.mjs';
 import {
-  markRunFindingsNeedsTriage, recordAdjudicationEvent,
+  markRunFindingsNeedsTriage, markRunFindingsAutoDismissed, recordAdjudicationEvent,
   updatePassStatsPostDeliberation, updateRunMeta,
 } from './store/runs-findings.mjs';
 import { isCloudEnabled } from './store/repo.mjs';
 import { atomicWriteFileSync } from './file-io.mjs';
+import { isControlMarkerDetail } from './audit/control-markers.mjs';
+
+const CONTROL_MARKER_DISMISS_REASON =
+  'control-marker: auto-dismissed — machine-generated coverage notice, not a real finding';
 
 // Permissive schemas: assert only the shape finalize needs, `.passthrough()` so
 // underscore annotations (`_cloudRunId`, `_outcomeCapture`, …) never break load.
@@ -91,12 +95,43 @@ export function loadAuditInputs({ resultPath, ledgerPath }) {
 }
 
 /**
+ * Split the never-ruled ("pending") findings into the two reconciliation
+ * buckets: genuine un-triaged findings vs CONTROL-STATE markers (e.g.
+ * `ADJACENCY_INCOMPLETE` — a wave's own machine-generated coverage notice,
+ * never a real finding a ledger would rule on). A ledger can't adjudicate a
+ * control marker, so without this split it falls through to the same
+ * `needs_triage` reconciliation as a genuinely un-ruled finding and clutters
+ * the human triage queue (and the weekly digest) with byte-identical noise —
+ * mirrors the exclusion already applied to the cluster-density memory-health
+ * metric (`control_marker_prefixes` in
+ * supabase/migrations/20260720210000_memory_health_control_markers.sql).
+ *
+ * Pure — no I/O — so this is unit-testable independent of the DB dispatch.
+ *
+ * @param {object[]} enriched - findings already enriched with adjudicationOutcome
+ * @returns {{ needsTriageFps: string[], autoDismissFps: string[] }}
+ */
+export function splitPendingFindings(enriched) {
+  const fingerprint = f => f._hash || semanticId(f);
+  const pending = enriched.filter(f => f.adjudicationOutcome === 'pending');
+  const needsTriageFps = pending
+    .filter(f => !isControlMarkerDetail(f.detail))
+    .map(fingerprint)
+    .filter(Boolean);
+  const autoDismissFps = pending
+    .filter(f => isControlMarkerDetail(f.detail))
+    .map(fingerprint)
+    .filter(Boolean);
+  return { needsTriageFps, autoDismissFps };
+}
+
+/**
  * Finalize one round's triage outcomes. Cloud is the transactionally-idempotent
  * SSoT (recordAdjudicationEvent = scoped delete+insert in withTx); the local
  * `.audit/outcomes.jsonl` append is marker-guarded by `key = _cloudRunId ?? sid`.
  *
  * @param {{ result: object, ledger: object, round: number, store: object|null, sid?: string|null }} args
- * @returns {Promise<{ round: number, labelled: number, total: number, cloudOk: boolean, skippedLocal: boolean, needsTriage: number }>}
+ * @returns {Promise<{ round: number, labelled: number, total: number, cloudOk: boolean, skippedLocal: boolean, needsTriage: number, autoDismissed: number }>}
  */
 export async function finalizeRoundOutcomes({ result, ledger, round, store, sid = null }) {
   const findings = Array.isArray(result?.findings) ? result.findings : [];
@@ -107,21 +142,29 @@ export async function finalizeRoundOutcomes({ result, ledger, round, store, sid 
     store, cloudRunId, findings, ledger, { round, idempotencyKey },
   );
 
-  // Reconciliation: findings the ledger never ruled on stay `pending` — flag
-  // them needs_triage (cloud only, non-destructive) so a truncated ledger can't
-  // silently dark-drop a finding. Mirrors cross-skill finalize-outcomes.
+  // Reconciliation: findings the ledger never ruled on stay `pending`. Genuine
+  // ones get flagged needs_triage (cloud only, non-destructive) so a truncated
+  // ledger can't silently dark-drop a finding; control-state markers are routed
+  // to auto_dismissed instead so they never reach the human triage queue.
+  // Mirrors cross-skill finalize-outcomes.
   let needsTriage = 0;
+  let autoDismissed = 0;
   if (store && cloudRunId) {
-    const pendingFps = enriched
-      .filter(f => f.adjudicationOutcome === 'pending')
-      .map(f => f._hash || semanticId(f))
-      .filter(Boolean);
-    if (pendingFps.length > 0) {
+    const { needsTriageFps, autoDismissFps } = splitPendingFindings(enriched);
+    if (needsTriageFps.length > 0) {
       try {
-        const res = await markRunFindingsNeedsTriage(cloudRunId, pendingFps);
+        const res = await markRunFindingsNeedsTriage(cloudRunId, needsTriageFps);
         needsTriage = res?.updated ?? 0;
       } catch (err) {
         process.stderr.write(`  [finalize] needs-triage reconcile failed: ${err.message}\n`);
+      }
+    }
+    if (autoDismissFps.length > 0) {
+      try {
+        const res = await markRunFindingsAutoDismissed(cloudRunId, autoDismissFps, CONTROL_MARKER_DISMISS_REASON);
+        autoDismissed = res?.updated ?? 0;
+      } catch (err) {
+        process.stderr.write(`  [finalize] auto-dismiss reconcile failed: ${err.message}\n`);
       }
     }
   }
@@ -134,6 +177,7 @@ export async function finalizeRoundOutcomes({ result, ledger, round, store, sid 
     cloudOk,
     skippedLocal: Boolean(localSkipped),
     needsTriage,
+    autoDismissed,
     enriched,
   };
 }
@@ -177,6 +221,7 @@ export async function finalizePriorRoundOutcomes({ outFile, round, ledgerFile })
         status: 'captured', round: status.round, labelled: status.labelled,
         total: status.total, cloudOk: status.cloudOk,
         skippedLocal: status.skippedLocal, needsTriage: status.needsTriage,
+        autoDismissed: status.autoDismissed,
       };
       process.stderr.write(`  [finalize] round ${priorRound}: ${status.labelled}/${status.total} labelled `
         + `(cloud: ${status.cloudOk ? 'yes' : 'no'}${status.skippedLocal ? ', local skipped' : ''})\n`);

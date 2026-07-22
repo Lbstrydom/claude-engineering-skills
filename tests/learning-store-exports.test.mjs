@@ -199,6 +199,7 @@ const EXPECTED_EXPORTS = [
   'getRunFindingOutcomeCounts', // Cluster B / Phase 4 — pass_selection resolver input
   'auditRunExists',             // determinism WS1 Phase 2 — finalize run-existence probe
   'markRunFindingsNeedsTriage', // determinism WS1 Phase 2 — finalize reconciliation writeback
+  'markRunFindingsAutoDismissed', // 2026-07-22 — control-marker findings sibling writer (scripts/lib/audit/control-markers.mjs)
   // fix-lifecycle projection (docs/plans/remediation-state-fix-lifecycle.md)
   'buildFindingAdjudicationPatch', // gap #2 — remediation_state → audit_findings (pure seam)
   'markFindingsRemediation',       // repo-scoped fingerprint writer for fixed/regressed
@@ -307,6 +308,10 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // now checked) and missing run/tenant scoping (WHERE EXISTS join to
     // audit_findings.run_id). The export is a test seam, same class as
     // buildFindingAdjudicationPatch / normalizeRemediationUpdates above.
-    assert.equal(EXPECTED_EXPORTS.length, 175);
+    // 175 → 176: markRunFindingsAutoDismissed added 2026-07-22 — sibling of
+    // markRunFindingsNeedsTriage that routes CONTROL-STATE marker findings
+    // (ADJACENCY_INCOMPLETE) to a distinct `auto_dismissed` user_action so
+    // they stop leaking into pending_triage_findings / the weekly digest.
+    assert.equal(EXPECTED_EXPORTS.length, 176);
   });
 });
