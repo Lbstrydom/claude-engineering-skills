@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**4 active · 138 terminal · 22 audit summaries · 4 reference docs**
+**3 active · 139 terminal · 22 audit summaries · 4 reference docs**
 
 ---
 
@@ -23,7 +23,6 @@ This is the list to read when asking "what is in flight?".
 |---|---|---|
 | [Gate inventory — the 13 uncontracted skills](./gate-contract-expansion-inventory.md) | `In Progress` |  |
 | [Gate-contract expansion — bind stated gates to enforcers](./gate-contract-expansion.md) | `Draft` |  |
-| [Observed-Graph Discovery Unification (evidence-layer architecture)](./observed-graph-discovery-unification.md) | `Draft` | measured 2026-07-18 across all three repos (§3.1), and the |
 | [Tiered Recall-Weighted Audit Pipeline](./tiered-recall-audit-pipeline.md) | `In Progress` | implementation complete (Clusters A-F implemented |
 
 ## Superseded / abandoned
@@ -44,7 +43,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 135 completed plans</summary>
+<summary>Show all 136 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -134,6 +133,7 @@ source comments that no docs linter sees — stays valid.
 | [nav-audit v1.4 — Capture Honesty + Activation Back-off](./nav-audit-v1.4-capture-honesty.md) | `Complete` | GPT+Gemini audited; implemented 2026-06-26 |
 | [Observed-import-graph domain deps for the Architecture tab](./observed-domain-deps.md) | `Complete` |  |
 | [Observed-Graph Coverage Honesty](./observed-graph-coverage-honesty.md) | `Complete` | Phases 1-6 shipped and audited (Clusters A, B, C). |
+| [Observed-Graph Discovery Unification (evidence-layer architecture)](./observed-graph-discovery-unification.md) | `Complete` | #1 RESOLVED 2026-07-22, and it inverts the premise: |
 | [OpenAI prompt prefix-caching for the audit pipeline](./openai-prefix-cache.md) | `Complete` | implemented + verified 2026-05-11 (PR-1..5 shipped; Gemini final review APPROVE |
 | [OSS/OpenRouter Call Reliability Hardening](./oss-call-reliability-hardening.md) | `Complete` | implemented (all 12 File-Level Plan items), GPT code-audit ran the full 6-round cap (H:2→2→0→2→2→0 — 4 genu… |
 | [Persona Click-Path Capture → nav-audit Reachability Seeding](./persona-clickpath-nav-seeding.md) | `Complete` | 2026-06-27 — built via `/cycle` autonomous, both clusters; consolidated Gemini gate APPROVE round 2). See I… |

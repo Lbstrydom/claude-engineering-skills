@@ -1,27 +1,51 @@
 # Plan: Observed-Graph Discovery Unification (evidence-layer architecture)
 
 - **Date**: 2026-07-17
-- **Status**: Draft — measured 2026-07-18 across all three repos (§3.1), and the
-  results **moved the plan's premise**, not just its unknowns. #1 is **NOT**
-  answered: an n=2 "yes" was refuted by ai-organiser (10 semantic diffs). The
-  cause is bigger than (e) — **extensionless TypeScript imports resolve in
-  NEITHER mode**, a second silent-blindness generator upstream of the
-  `COMMON_SOURCE_DIRS` one this plan was written to fix. Design (e) cannot fix a
-  resolution defect; fixing TS resolution is now a **prerequisite**, not a
-  follow-on. #2 is unanswerable as written (cost does not track repo size, the
-  measurement carries ~60% run-to-run spread, and the adversarial repo does not
-  exist) — it needs a stated threshold, not a bigger repo.
-  **Updated 2026-07-18 (evening)**: the two recommendations below were both
-  acted on by [observed-graph-coverage-honesty.md](observed-graph-coverage-honesty.md),
-  which shipped Phases 1-5 (Gemini APPROVE).
-  - **§4 null-domain accounting — DONE.** The silent skip is now a counted,
-    bucketed, surfaced drop. It was indeed higher value per unit of risk than
-    (e), and it shipped while (e) remains blocked.
-  - **#2 — SUPERSEDED by a runtime budget (§3.2)**, exactly the "stated
-    threshold, not a bigger repo" this status called for. No longer a blocker.
-  - **#1 — still the blocker, and now the ONLY one.** Extensionless TS
-    resolution failure is unfixed; diagnosing it is that plan's §7c,
-    deliberately off its critical path. (e) stays blocked on it.
+- **Status**: Complete — **#1 RESOLVED 2026-07-22, and it inverts the premise**:
+  the "68% invisible" figure was never a production defect. It was a
+  **measurement artifact of the spike tool itself**, and production coverage
+  on ai-organiser has been ~99% the whole time. Full diagnosis in §3.1a below;
+  short version: `observed-graph-discovery-spike.mjs` imported
+  `dependency-cruiser` at its own top level, which — because Node resolves a
+  bare specifier relative to the IMPORTING FILE, not `--repo` — always bound
+  to claude-engineering-skills' own install (18.0.0), regardless of which repo
+  was being measured. This repo has no `typescript` dependency, and
+  dependency-cruiser's TypeScript-awareness is gated on `typescript` being
+  resolvable as a *sibling* of wherever dependency-cruiser itself lives
+  (`tryImportAvailable`, checked via `createRequire(import.meta.url)` from
+  inside dependency-cruiser's own source). So every spike run silently lost
+  TS-aware parsing and mis-resolved extensionless relative imports — for
+  every repo it was pointed at, not just ai-organiser. Production was never
+  exposed to this: the synced `extract.mjs` lives *inside* the consumer, so
+  its own bare `dependency-cruiser` import resolves the consumer's own
+  install (ai-organiser's is 17.3.10, with `typescript` as a real sibling) —
+  confirmed by running that exact synced script directly against ai-organiser
+  and measuring **99.2%** coverage, not 32%. The spike is now fixed to load
+  the TARGET repo's own dependency-cruiser install (mirroring what the synced
+  script actually experiences); re-measuring with the fix shows **0 semantic
+  diffs and 99.4% coverage** on ai-organiser (up from 10 diffs / 32.8%), with
+  0 diffs unchanged on the other two repos. See §3.1a for the full evidence
+  trail, §3.1b for what this changes about (e)'s justification, and the
+  fixed spike + `tests/observed-graph-discovery-spike.test.mjs` for the
+  regression guard.
+  - **§4 null-domain accounting — DONE** (unaffected by this finding; shipped
+    2026-07-18 via [observed-graph-coverage-honesty.md](observed-graph-coverage-honesty.md)
+    Phases 1-5, Gemini APPROVE).
+  - **#2 — SUPERSEDED by a runtime budget (§3.2)**, also unaffected. No longer
+    a blocker.
+  - **(e) unified discovery is now UNMOTIVATED by the evidence that justified
+    it.** §3.1b: the existing, un-unified allowlist path already measures
+    ~99% coverage on the one repo whose number drove this whole plan. Do not
+    build (e) on the strength of the old 68% figure — it no longer exists.
+  - **Why `Complete` and not `Draft`/`Blocked`, given (e)+(d) were never
+    built**: this plan's own §3 was explicit that (e) must be *measured
+    before building*, not built on spec. That measurement is done, and its
+    answer is "not currently justified" — a real, actionable conclusion, not
+    an unresolved blocker. Leaving this open indefinitely would misrepresent
+    an answered question as a pending one. If a future consumer's coverage
+    reading genuinely goes `degraded` (§4's shipped instrumentation is what
+    would show that), re-open a fresh plan grounded in that measurement
+    rather than resurrecting this one on the old 68% figure.
 - **Author**: Claude + Louis
 - **Scope**: backend (`scripts/symbol-index/extract.mjs` discovery seam; syncs to consumer repos)
 
@@ -101,14 +125,19 @@ having. The observed graph exists to CONTRADICT declared intent.
 
 ## 3. Blocking unknowns — measure BEFORE building
 
-**#1 is NOT answered — it was refuted at n=3 (see §3.1). #2 is SUPERSEDED by a
-runtime budget (§3.2), and is no longer a blocker.** (e) is unimplementable if
-#1 fails and unaffordable if #2 is bad.
+**#1 is RESOLVED (2026-07-22, see §3.1a) — but not the way §3.1 concluded.**
+The n=3 refutation recorded in §3.1 was itself measured with a broken tool:
+the spike bound to the WRONG repo's `dependency-cruiser` install regardless of
+`--repo`, so it never actually exercised TS-aware resolution on any target.
+Production was unaffected the whole time. **#2 is SUPERSEDED by a runtime
+budget (§3.2)**, unaffected by this and still not a blocker.
 
-> The "#1 is ANSWERED: yes" that stood at the top of this section was written
-> when two repos agreed. The third refuted it. The header is corrected here
-> rather than quietly, because a stale green summary above an accurate body is
-> how a refuted conclusion gets re-adopted by whoever reads only the heading.
+> Two stale "answered" headers have now stood at the top of this section in
+> sequence — first "#1 answered: yes" (n=2, overturned by ai-organiser), then
+> "#1 refuted" (n=3, itself an artifact). Both are corrected in place rather
+> than quietly, for the same reason each time: a stale green (or red) summary
+> above an accurate body is how a wrong conclusion gets re-adopted by whoever
+> reads only the heading. Read §3.1a before trusting either.
 
 1. **Does dep-cruiser cleanly accept an explicit file list of ~3,000 paths?**
    Make-or-break for (e); a ~10-minute spike answers it. If it doesn't, the
@@ -120,7 +149,18 @@ runtime budget (§3.2), and is no longer a blocker.** (e) is unimplementable if
    never be satisfied. It is now a decidable gate, because the coverage
    contract that makes it decidable has shipped.
 
-### 3.1 Spike results (2026-07-18)
+### 3.1 Spike results (2026-07-18) — SUPERSEDED, kept for the audit trail
+
+> **Superseded 2026-07-22 by §3.1a.** Everything below this notice was
+> measured with the pre-fix spike, which (unknown at the time) always bound
+> `dependency-cruiser` to claude-engineering-skills' own install regardless of
+> `--repo`. The **numbers in this section are artifacts**, not evidence about
+> ai-organiser or any other consumer. Kept verbatim rather than deleted or
+> silently corrected, because the methodology dead-ends this section records
+> (the `..`-prefix scare, the semantic-vs-input partition) are real lessons
+> that a future re-measurement should not have to re-learn — but do not cite
+> the 68%/945/1389 figures below as a live fact. Jump to §3.1a for what
+> actually holds.
 
 Measured by [`scripts/spikes/observed-graph-discovery-spike.mjs`](../../scripts/spikes/observed-graph-discovery-spike.mjs)
 (read-only; builds nothing). Re-run with `--repo <path>` for a new target.
@@ -213,6 +253,134 @@ throw?" cannot answer.
   consumer's entire `extension/` tree (a browser-extension subsystem invisible
   to the import layer, because `extension` is not in `COMMON_SOURCE_DIRS`).
 
+### 3.1a The real diagnosis (2026-07-22) — #1 RESOLVED
+
+**Reproduced first**, against the un-fixed spike, to confirm §3.1 was still
+live before touching anything: identical to 2026-07-18 — 10 semantic diffs,
+32.8% coverage (461/1407) on ai-organiser, byte-identical across `tsConfig`,
+`enhancedResolveOptions.extensions`, and no-options runs (matching
+[observed-graph-coverage-honesty.md](observed-graph-coverage-honesty.md) §8's
+"byte-identical" finding — that finding was correct; it just hadn't identified
+the actual variable).
+
+**The variable no one had controlled for: which `dependency-cruiser` package
+tree `cruise()` came from.** `extract.mjs` calls the JS API via a bare
+`import { cruise } from 'dependency-cruiser'`. Node resolves a bare specifier
+relative to the **importing file's own location**, walking up its
+`node_modules` ancestry — never relative to `--repo`, never relative to
+`process.cwd()`. For the synced production script, the importing file lives
+*inside the consumer repo* (`<consumer>/scripts/.claude-skills/symbol-index/
+extract.mjs`), so this is invisible: it always resolves the consumer's own
+install. The **spike**, however, lives in `claude-engineering-skills/scripts/
+spikes/`, so its top-level import always resolved `claude-engineering-skills/
+node_modules/dependency-cruiser` (**18.0.0**) — no matter what `--repo` was
+passed. wine-cellar-app happens to *also* pin `^18.0.0`, so this coincidence
+never showed up as a version mismatch there; ai-organiser pins `^17.3.10`
+(never bumped to match, since our `requiredDeps` sync only adds missing
+deps — it doesn't force-update ones a consumer already has).
+
+**Why the version boundary matters**: dependency-cruiser's TypeScript-
+awareness is a `TRANSPILER2AVAILABLE.typescript` flag computed by
+`tryImportAvailable('typescript', …)`
+(`src/extract/transpile/meta.mjs`), which does
+`createRequire(import.meta.url).resolve('typescript')` — resolved relative to
+**dependency-cruiser's own installed location**, not the repo it is cruising.
+Confirmed directly:
+
+```
+$ node -e "const {createRequire}=require('module'); const {pathToFileURL}=require('url');
+  const req = createRequire(pathToFileURL('…/claude-engineering-skills/node_modules/
+    dependency-cruiser/src/extract/transpile/try-import-available.mjs').href);
+  req.resolve('typescript')"
+FAILS: Cannot find module 'typescript'
+```
+
+claude-engineering-skills has **no `typescript` dependency at all** (it's a
+plain ESM/JS repo). So dependency-cruiser resolved from here always falls
+back to non-TS-aware parsing — for `.ts`/`.tsx` files it silently loses
+extensionless relative-import resolution — **regardless of tsConfig or
+enhancedResolveOptions**, which is exactly the "byte-identical across options"
+result §8 measured and correctly could not explain further at the time.
+
+**Direct A/B, same target list, same `cruiseOpts`, only the package tree
+changed** (`src/services/presentationIr/irToHtml.ts`, ai-organiser):
+
+| dependency-cruiser install | `typescript` resolvable? | irToHtml deps | couldNotResolve |
+|---|---|---|---|
+| ai-organiser's own (17.3.10) | yes (sibling) | 9 | **0** |
+| claude-engineering-skills' (18.0.0) | no | 10 | **10 (all)** |
+
+**Production was never exposed to this.** Ran the real, unmodified,
+synced `extract.mjs` directly against ai-organiser (read-only — it only
+prints JSON lines to stdout, no DB writes):
+
+```
+[extract] scanning 2503 files (mode=full)
+[extract] coverage: 1398/1409 eligible source files cruised (99.2%) in 5895ms
+```
+
+**99.2%, not 32.8%.** Of the 11 "uncruised" files, 5 were my own throwaway
+diagnostic scripts (inflating the denominator); the real gap is **6 files**,
+all repo-root-level config/tooling (`esbuild.config.mjs`, `eslint.config.mjs`,
+`playwright.config.ts`, `vitest.config.ts`, `version-bump.mjs`,
+`test-nested-tags-implementation.js`) — files outside every
+`COMMON_SOURCE_DIRS` entry, which is exactly the §4 null-domain gap already
+measured and reported, not a new defect.
+
+**Fix**: `scripts/spikes/observed-graph-discovery-spike.mjs` no longer
+imports `dependency-cruiser` at its own top level. `findPackageDir` walks up
+`node_modules` from an arbitrary starting directory (mirroring Node's own
+resolution algorithm), and `loadCruiseFn(repoRoot)` dynamically imports the
+**target repo's own** `dependency-cruiser` entry point — the same tree the
+synced `extract.mjs` would actually use in that repo. Both are exported and
+covered by `tests/observed-graph-discovery-spike.test.mjs` (fixture
+`node_modules` trees, no real dependency-cruiser/typescript install needed —
+Tier 1, deterministic).
+
+**Re-measured with the fixed spike, all three repos:**
+
+| Target | dependency-cruiser used | M1 semantic diffs | Coverage |
+|---|---|---|---|
+| claude-engineering-skills | 18.0.0 (own) | 0 | 971/993 (97.8%) |
+| wine-cellar-app (consumer) | 18.0.0 (own) | 0 | 2452/2475 (99.1%) |
+| ai-organiser (consumer) | **17.3.10 (own — was silently 18.0.0)** | **0** (was 10) | **1398/1406 (99.4%)** (was 32.8%) |
+
+Every remaining "missed" file across all three is the same, already-
+understood §4 class: root-level config/tooling outside `COMMON_SOURCE_DIRS`.
+No repo shows a genuine TS-resolution defect once the spike measures the
+right package tree.
+
+**Exit criterion met**: this is exit-criterion (a) from §7c of
+observed-graph-coverage-honesty.md ("a fix with a regression test") — except
+the fix landed in the measurement tool, not in a resolver configuration,
+because that is where the actual defect lived. §7c's investigation is closed
+by this section; there is no remaining ai-organiser resolution defect to
+diagnose.
+
+### 3.1b What this changes about (e)
+
+**(e) unified discovery was motivated entirely by the 68%-invisible figure.**
+That figure no longer exists. The **existing, un-unified, allowlist-driven**
+baseline (`COMMON_SOURCE_DIRS`, unchanged) already measures ~98-99% coverage
+on all three repos measured — including ai-organiser, the repo whose number
+drove this plan's urgency. The remaining gap on every repo is root-level
+files outside the allowlist's directory conventions — a real but much
+smaller and differently-shaped problem than "two layers of the pipeline
+catastrophically disagree about the repo's contents."
+
+This does not retroactively make (e) wrong to build — a repo with a genuinely
+unconventional layout (no `src`/`scripts`/`tests`, e.g. a bare `packages/*`
+monorepo with idiosyncratic subpackage names) could still hit the original
+`COMMON_SOURCE_DIRS` blindness this plan's §1 diagnoses, and §4's null-domain
+accounting (already shipped) will now SURFACE that as a `degraded` coverage
+number rather than hiding it. But **do not build (e) on the strength of the
+old 68% number** — that evidence is gone. If (e) is still wanted, it needs a
+fresh justification grounded in a real observed `degraded` coverage reading
+on an actual consumer, which §4's shipped instrumentation will produce the
+moment a repo needs it. Until then, this plan's core work is **not blocked**
+(that was #1's role) but also **not currently justified by measured need** —
+a different state than either "blocked" or "ready to build."
+
 ### 3.2 #2 restated as a runtime budget (2026-07-18 — the replacement)
 
 Owned and delivered by [`observed-graph-coverage-honesty.md`](observed-graph-coverage-honesty.md)
@@ -246,14 +414,15 @@ The runtime budget answers the question that actually matters on that repo:
 smaller graph?* It now says so, on that repo, at run time, with a named reason.
 A budget overrun degrades the verdict; it does not silently shrink the graph.
 
-**What this does NOT unblock.** (e) remains blocked on **#1**, which §3.1
-refuted at n=3: TS resolution fails upstream of discovery, so feeding more
-files to the resolver would raise the module count while leaving the edges
-wrong. Diagnosing that is
-[`observed-graph-coverage-honesty.md`](observed-graph-coverage-honesty.md) §7c,
-deliberately off that plan's critical path. **Removing #2 as a blocker does not
-make (e) ready — it removes an unsatisfiable gate so the real blocker is the
-only one left.**
+**Update 2026-07-22 — superseded by §3.1a.** At the time this was written, (e)
+was understood to remain blocked on #1 (TS resolution failing upstream of
+discovery). §3.1a found that "failure" was the spike measuring the wrong
+`dependency-cruiser` install; production's actual resolution was never
+broken, and the coverage-honesty §7c investigation is now closed by §3.1a
+rather than left open. **Removing #2 as a blocker did not make (e) ready on
+its own** — that reasoning holds — but the reason (e) isn't currently being
+built is no longer "#1 blocks it." See §3.1b: (e) is unblocked, but also
+no longer justified by the evidence that originally motivated it.
 
 ## 4. Independent first step — null-domain accounting
 

@@ -2,10 +2,20 @@
 
 - **Date**: 2026-07-18
 - **Status**: Complete — Phases 1-6 shipped and audited (Clusters A, B, C).
-  §7c's follow-on investigation (the ai-organiser TS-resolution defect) is
-  deliberately outside the phase set and remains open; it is safe to leave open
-  precisely because that repo now reports its own blindness rather than hiding
-  it, which was the point.
+  **§7c CLOSED 2026-07-22** (exit criterion (a): a fix with a regression
+  test — see [observed-graph-discovery-unification.md](observed-graph-discovery-unification.md)
+  §3.1a). The "ai-organiser TS-resolution defect" turned out not to be a
+  defect in ai-organiser, or in `extract.mjs`, or in dependency-cruiser's
+  resolution options: it was the **measurement spike** binding
+  `dependency-cruiser` to claude-engineering-skills' own install (which has no
+  `typescript` dependency, silently disabling TS-aware parsing) regardless of
+  which repo `--repo` pointed at. Production's own `extract.mjs`, run for
+  real against ai-organiser, measured 99.2% coverage the whole time — this
+  repo's §8 "byte-identical across tsConfig/enhancedResolveOptions/
+  tsPreCompilationDeps" finding was itself correct evidence, it just hadn't
+  yet identified which variable *did* explain the difference. The spike is
+  fixed (loads the TARGET repo's own dependency-cruiser, not its own) and
+  covered by `tests/observed-graph-discovery-spike.test.mjs`.
 - **Audit trail**: GPT plan-audit R1 (H:3 M:3 L:1) → R2 (H:2 M:3) → R3 (H:4 M:2);
   **all 18 findings folded in**. GPT loop stopped at the max-3 cap: HIGH went
   3→2→4, and the R3 rise was concrete defects *introduced by the R2 fixes*, not
@@ -681,7 +691,7 @@ coverage matches measured reality.
 
 ---
 
-### 7c. Follow-on investigation (NOT in the execution path — R2 M3)
+### 7c. Follow-on investigation (NOT in the execution path — R2 M3) — CLOSED 2026-07-22
 
 **Deliberately outside §7b and §11.** Phases 1-6 are the shippable honesty fix
 and must not be gated on a third-party diagnosis that may not converge. The
@@ -710,29 +720,54 @@ is prioritised on evidence rather than on this plan's schedule.
 - Files: `docs/plans/observed-graph-coverage-honesty.md` (modify, findings
   appendix). Code files unknown until diagnosed — that is the point.
 
+**CLOSED via exit criterion (a) — a fix with a regression test.** There was no
+ai-organiser resolution defect: the minimal reproducer (`irToHtml.ts`'s 9
+extensionless relative imports, same target list, same `cruiseOpts`) resolved
+cleanly (`couldNotResolve: false` on all 9) the moment `cruise()` came from
+ai-organiser's OWN `dependency-cruiser` install (17.3.10) instead of
+claude-engineering-skills' (18.0.0, resolved by the spike's hardcoded
+top-level import regardless of `--repo`). The version-18 install's own
+`typescript` sibling-availability check fails in THIS repo specifically
+(claude-engineering-skills has no `typescript` dependency at all), which
+silently disables TS-aware parsing for every `.ts` file — including for
+targets the caller never even sees, e.g. wine-cellar-app, which happens to
+also pin `^18.0.0` and so never surfaced the mismatch. Fix landed in
+`scripts/spikes/observed-graph-discovery-spike.mjs`
+(`findPackageDir`/`loadCruiseFn`) plus
+`tests/observed-graph-discovery-spike.test.mjs`. Full evidence trail:
+[observed-graph-discovery-unification.md](observed-graph-discovery-unification.md) §3.1a.
+
 ---
 
 ## 8. Risk & Trade-off Register
 
-- **Phase 5 may not yield a fix, and that is an acceptable outcome.** The obvious
-  hypothesis is already refuted by measurement: `enhancedResolveOptions.extensions`,
-  `tsConfig`, and `tsPreCompilationDeps` each produce **byte-identical** output
-  (485 modules, 28 unresolved, `irToHtml deps=0`). So the cause is upstream of
-  resolver configuration. If diagnosis shows an upstream dep-cruiser limitation,
-  the honest deliverable is an accurate `unverified` on that repo plus an upstream
-  report — Phases 1-4 make that outcome *safe* rather than *silent*, which is why
-  they are sequenced first.
+- **Phase 5 may not yield a fix, and that is an acceptable outcome — and, as it
+  turned out, there was no resolver-configuration fix to find.** The obvious
+  hypothesis was refuted by measurement: `enhancedResolveOptions.extensions`,
+  `tsConfig`, and `tsPreCompilationDeps` each produced **byte-identical** output
+  (485 modules, 28 unresolved, `irToHtml deps=0`). That refutation was correct
+  and held up — the cause genuinely was upstream of resolver configuration. It
+  just wasn't an upstream dependency-cruiser limitation either: §7c (closed
+  2026-07-22) found the actual variable was which `dependency-cruiser`
+  **install** `cruise()` came from, not any option passed to it. Phases 1-4
+  made the (mis-)diagnosed-as-upstream outcome safe rather than silent while
+  it was still open, which was the right call regardless of which diagnosis
+  turned out to be true.
 - **A floor that is too high turns healthy repos yellow.** Mitigation is now
   normative rather than prose: `floor` defaults to `0.90` against measured
   behaviour (this repo 98%, wine-cellar 99%), and `enforce: false` ships first —
   §2.1.6 defines exactly which exit code each stage produces, resolving the
   first draft's contradiction between "report-only for one cycle" here and
   "exit 2" in §2 (R1 H3).
-- **Deliberately deferred: design (e) unified discovery.** [§3.1](observed-graph-discovery-unification.md)
-  records that (e) cannot fix a resolution defect and would feed more files to a
-  resolver that still cannot resolve them. Re-evaluate only after Phases 1-5. This
-  is a scope boundary, not a band-aid: (e)'s value is *unmeasurable* until coverage
-  is reportable, which is exactly what this plan builds.
+- **Deliberately deferred: design (e) unified discovery — update 2026-07-22.**
+  [§3.1](observed-graph-discovery-unification.md) originally recorded that (e)
+  cannot fix a resolution defect and would feed more files to a resolver that
+  still cannot resolve them. §3.1a found there was no resolution defect to
+  feed more files at — it was a spike measurement artifact — and re-measured
+  ai-organiser's real coverage at 99.4%, not 32.8%. §3.1b: this doesn't make
+  (e) wrong to build, but the evidence that originally motivated it no longer
+  exists, so it needs a fresh justification (a real observed `degraded`
+  coverage reading on an actual consumer) before being picked up again.
 - **The `..`-prefixed path artifact — RESOLVED 2026-07-18, figures confirmed.**
   The spike originally ran with cwd ≠ repo root, producing `..`-prefixed module
   paths; since `extract.mjs:336` drops `..`-prefixed edges, this raised a real

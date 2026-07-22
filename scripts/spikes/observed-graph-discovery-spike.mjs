@@ -47,8 +47,80 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { cruise } from 'dependency-cruiser';
 import { enumerateFiles } from '../symbol-index/extract.mjs';
+
+/**
+ * Resolve a package's directory the way Node's own module resolution would,
+ * starting from an arbitrary directory rather than from this file's location.
+ *
+ * Exported for testing (tests/observed-graph-discovery-spike.test.mjs) — this
+ * is the pure, deterministic seam the 2026-07-22 fix landed at; the fixture
+ * node_modules trees the test builds don't need a real dependency-cruiser
+ * install to exercise the walk-up/isolation behaviour.
+ *
+ * @param {string} startDir
+ * @param {string} pkgName
+ * @returns {string|null} absolute path to the resolved package dir, or null
+ */
+export function findPackageDir(startDir, pkgName) {
+  let dir = path.resolve(startDir);
+  for (;;) {
+    const candidate = path.join(dir, 'node_modules', pkgName);
+    if (fs.existsSync(path.join(candidate, 'package.json'))) return candidate;
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
+/**
+ * Load the TARGET repo's own `dependency-cruiser` install (its `cruise()`
+ * function), not this repo's.
+ *
+ * Load-bearing (found 2026-07-22, resolves blocking-unknown #1): a bare
+ * `import { cruise } from 'dependency-cruiser'` at this file's top level
+ * always resolved relative to THIS file — i.e. to claude-engineering-skills/
+ * node_modules/dependency-cruiser — no matter what `--repo` was passed. In
+ * production the synced `extract.mjs` lives INSIDE the consumer repo, so its
+ * bare `dependency-cruiser` import resolves to the consumer's OWN install; a
+ * spike that hardcodes the import at its own top level was silently
+ * measuring a different package tree than the one production actually uses.
+ * That mismatch is not cosmetic: dependency-cruiser's TypeScript-awareness is
+ * gated on whether the `typescript` package is resolvable as a SIBLING of
+ * wherever dependency-cruiser itself is installed
+ * (`tryImportAvailable('typescript', …)`, checked via
+ * `createRequire(import.meta.url)` from inside dependency-cruiser's own
+ * files). This repo has no `typescript` dependency at all (it's a plain
+ * ESM/JS repo), so dependency-cruiser resolved from HERE always fell back to
+ * non-TS-aware parsing — silently breaking extensionless relative TS import
+ * resolution — regardless of tsConfig / enhancedResolveOptions (confirmed
+ * byte-identical across those in observed-graph-coverage-honesty.md §8; the
+ * real variable no one had controlled for was which package tree `cruise()`
+ * came from). ai-organiser's own install (17.3.10, with `typescript` as a
+ * sibling) resolves the very same imports cleanly — and so does production,
+ * confirmed by running the real synced `extract.mjs` directly (99.2%
+ * coverage, not the 32% this spike used to report).
+ *
+ * @param {string} repoRoot
+ * @returns {Promise<Function>} the target repo's own `cruise()` function
+ */
+export async function loadCruiseFn(repoRoot) {
+  const pkgDir = findPackageDir(repoRoot, 'dependency-cruiser');
+  if (!pkgDir) {
+    throw new Error(
+      `dependency-cruiser is not resolvable from ${repoRoot} (no node_modules/`
+      + `dependency-cruiser found walking up from there). The spike measures the `
+      + `TARGET repo's own install — matching what the synced extract.mjs `
+      + `experiences in production — so it needs that repo's deps installed `
+      + `(npm install) rather than borrowing this repo's copy.`);
+  }
+  const pkg = JSON.parse(fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf8'));
+  const entry = pkg.exports?.['.']?.import || pkg.main || './index.js';
+  const entryFile = path.join(pkgDir, entry);
+  const mod = await import(pathToFileURL(entryFile).href);
+  process.stderr.write(`using dependency-cruiser ${pkg.version} from ${pkgDir}\n`);
+  return mod.cruise;
+}
 
 // Extensions dependency-cruiser can actually resolve. The symbol-layer walker
 // returns every file it doesn't skip (including .md, .json, .sql); handing
@@ -97,7 +169,7 @@ function edgeSet(result) {
   return edges;
 }
 
-async function timedCruise(label, targets, opts) {
+async function timedCruise(cruiseFn, label, targets, opts) {
   // peak RSS is sampled, not exact — enough to answer "does this blow up?",
   // which is the only memory question the plan asks.
   const before = process.memoryUsage().rss;
@@ -109,7 +181,7 @@ async function timedCruise(label, targets, opts) {
   let result = null;
   let error = null;
   try {
-    result = await cruise(targets, opts);
+    result = await cruiseFn(targets, opts);
   } catch (err) {
     error = err;
   }
@@ -157,6 +229,10 @@ async function main() {
   process.stderr.write(`\n═══ observed-graph discovery spike ═══\nrepo: ${repoRoot}\n`);
   if (localConfig) process.stderr.write(`using local .dependency-cruiser.cjs\n`);
 
+  // The target repo's OWN dependency-cruiser install, not this repo's — see
+  // findPackageDir/loadCruiseFn above for why that distinction is load-bearing.
+  const cruise = await loadCruiseFn(repoRoot);
+
   // ── Inventory: what the SYMBOL layer thinks this repo is made of ──────────
   const tInv0 = process.hrtime.bigint();
   const allFiles = enumerateFiles(repoRoot, null);
@@ -170,15 +246,15 @@ async function main() {
   const targets = currentTargets(repoRoot);
   process.stderr.write(`\n[baseline] allowlist targets (${targets.length}): `
     + `${targets.map((t) => path.relative(repoRoot, t) || '.').join(', ')}\n`);
-  const baseline = await timedCruise('baseline (allowlist dirs)', targets, opts);
+  const baseline = await timedCruise(cruise, 'baseline (allowlist dirs)', targets, opts);
 
   // ── M1: explicit file list (design (e)) ──────────────────────────────────
   process.stderr.write(`\n[M1] explicit file list (${sourceFiles.length} paths)…\n`);
-  const explicit = await timedCruise('M1 (explicit file list)', sourceFiles, opts);
+  const explicit = await timedCruise(cruise, 'M1 (explicit file list)', sourceFiles, opts);
 
   // ── M2: root cruise (the fallback if M1 fails) ───────────────────────────
   process.stderr.write(`\n[M2] root cruise…\n`);
-  const root = await timedCruise('M2 (root cruise)', [repoRoot], opts);
+  const root = await timedCruise(cruise, 'M2 (root cruise)', [repoRoot], opts);
 
   // ── Analysis ─────────────────────────────────────────────────────────────
   const runs = [baseline, explicit, root];
@@ -327,7 +403,17 @@ async function main() {
   process.stderr.write('\n');
 }
 
-main().catch((err) => {
-  process.stderr.write(`spike failed: ${err.stack || err.message}\n`);
-  process.exit(1);
-});
+// CLI-only entry guard (2026-07-22), mirroring extract.mjs's own guard
+// (added there for the identical reason: `main()` running unconditionally at
+// module scope means ANY import kicks off a full cruise against `--repo`/cwd
+// and calls `process.exit`, which is exactly what
+// tests/observed-graph-discovery-spike.test.mjs needs to import
+// `findPackageDir`/`loadCruiseFn` WITHOUT — this file was un-importable
+// before this guard existed, for the same reason extract.mjs's own
+// enumerateFiles was.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((err) => {
+    process.stderr.write(`spike failed: ${err.stack || err.message}\n`);
+    process.exit(1);
+  });
+}
