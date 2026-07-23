@@ -495,9 +495,12 @@ markdown (only ever publishes pushed state — R3-H3 design constraint).
 Surface the result line briefly.
 
 After refresh, regex-match the HEAD commit subject against
-`/fix.*security|cve|vuln|leak|injection|auth|xss|csrf|rce/i`. If matched,
-emit a single passive log line (NOT an interactive prompt — `/ship` is
-`disable-model-invocation: true`):
+`/fix.*\bsecurity\b|\bcve\b|\bvuln\b|\bleak\b|\binjection\b|\bauth\b|\bxss\b|\bcsrf\b|\brce\b/i`
+(word-boundary-anchored — the unanchored form matched "leak" inside
+"leaking", "auth" inside "author/authoring", and "rce" inside
+"source/force/interface", false-flagging ~6% of commits in a 200-commit
+sample; confirmed 2026-07-22). If matched, emit a single passive log line
+(NOT an interactive prompt — `/ship` is `disable-model-invocation: true`):
 
 ```
 ⚠ Security-relevant commit detected: "<subject>".

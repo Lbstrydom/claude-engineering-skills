@@ -83,6 +83,23 @@ export function assertSafeDsn(url) {
 const HOSTED_SUPABASE_SUFFIXES = /(\.supabase\.co|\.supabase\.com)$/i;
 
 /**
+ * Is `hostname` the shared Supabase-hosted project (this repo's one and only
+ * production database)? Shared predicate — reused by `assertDisposableDbUrl`
+ * below (destructive-test-DB safety) and
+ * `scripts/postgres-parity/generate-expected-schema.mjs` (fixture-ground-truth
+ * safety: the committed schema fixture must reflect a vanilla self-hosted
+ * Postgres — what postgres-parity CI actually verifies against — never the
+ * Supabase platform layer's extra extensions/grants). Two independent
+ * incidents needed the exact same "is this the shared prod host" check; this
+ * is the single place it's defined.
+ * @param {string} hostname
+ * @returns {boolean}
+ */
+export function isHostedSupabaseHost(hostname) {
+  return HOSTED_SUPABASE_SUFFIXES.test(hostname);
+}
+
+/**
  * Fail-closed guard for `AUDIT_DB_TEST_URL` before ANY destructive
  * integration-test operation (schema drop/recreate) runs against it.
  *
@@ -112,7 +129,7 @@ export function assertDisposableDbUrl(testUrl, { productionUrl = null } = {}) {
   } catch {
     throw new Error('AUDIT_DB_TEST_URL is not a valid URL — expected a postgresql:// connection string.');
   }
-  if (HOSTED_SUPABASE_SUFFIXES.test(parsed.hostname)) {
+  if (isHostedSupabaseHost(parsed.hostname)) {
     throw new Error(
       `AUDIT_DB_TEST_URL points at a Supabase-hosted database (host "${parsed.hostname}") — ` +
       'refusing to run destructive integration tests against it. AUDIT_DB_TEST_URL must be a ' +

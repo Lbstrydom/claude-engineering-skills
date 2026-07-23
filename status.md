@@ -1,5 +1,48 @@
 # Project Status Log
 
+## 2026-07-23 — postgres-parity CI drift root-caused + fixed; security-commit regex false-positive fixed
+
+Follow-up investigation after the previous ship: postgres-parity CI has been
+red for 3 consecutive pushes. Root cause: commit `154fb57` (2026-07-22)
+regenerated `tests/fixtures/expected-schema.json` against the shared live
+Supabase store instead of a disposable/CI Postgres — the identical mistake
+made once before (`808beb8`, 2026-07-14) and fixed once before (`35a737e`,
+same day). Supabase's hosted platform layer carries extensions
+(`pg_stat_statements`, `supabase_vault`, `uuid-ossp`) and a newer `vector`
+build a vanilla self-hosted container never has, so the fixture always
+disagreed with what CI actually verifies against.
+
+- Regenerated the fixture from the CI run's own uploaded `live-schema`
+  artifact (same recipe `35a737e` used) — verified the diff touches only
+  pgcrypto functions, the three Supabase-only extensions, and the vector
+  version (0.8.0 → 0.8.5); nothing else.
+- Added a guardrail so this can't regress a third time:
+  `generate-expected-schema.mjs` now refuses to run when `AUDIT_DB_URL`
+  resolves to a Supabase-hosted host. Extracted the hostname check as
+  `isHostedSupabaseHost` in `scripts/lib/db/client.mjs` (shared with
+  `assertDisposableDbUrl`, which used an inline copy of the same regex) so
+  the two guards can't drift apart. Manually confirmed the guard fires
+  against this environment's real (Supabase) `AUDIT_DB_URL` before wiring
+  it up for real.
+- Separately: `/ship` Step 6.5's security-relevant-commit regex
+  (`/fix.*security|cve|vuln|leak|injection|auth|xss|csrf|rce/i`) matched
+  any bare occurrence of "leak"/"auth"/"rce" as a substring — false-flagged
+  the previous session's own commit ("findings **leak**ing") and 12/200
+  recent commits (6%) in a sample, mostly via "auth" inside "author(ed/ing)"
+  and "rce" inside "source/force/interface". Fixed with word-boundary
+  anchors in `skills/ship/SKILL.md`; the corrected regex hits only the 5
+  genuinely security-relevant commits in the same 200-commit sample.
+
+Also found + resolved along the way (not a code change, transient state):
+the shared main checkout's `.git/config` briefly had `core.bare=true` set
+by a concurrent session's activity, breaking `git status` in both that
+checkout and this worktree; self-corrected before any repair was needed.
+
+Both fixes are direct, mechanical corrections with clear historical
+precedent (the schema-fixture fix literally repeats `35a737e`'s recipe) —
+no `/plan` or `/cycle` needed. Full suite green modulo the pre-existing
+`ratchet integration` flake (confirmed unrelated via `git stash`).
+
 ## 2026-07-22 — Control-marker findings no longer leak into the human triage queue
 
 A live-DB check found 10 `ADJACENCY_INCOMPLETE` control-state markers (the

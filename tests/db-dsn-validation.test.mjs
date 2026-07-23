@@ -4,7 +4,7 @@
 
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { assertSafeDsn, assertDisposableDbUrl, buildPoolConfig } from '../scripts/lib/db/client.mjs';
+import { assertSafeDsn, assertDisposableDbUrl, buildPoolConfig, isHostedSupabaseHost } from '../scripts/lib/db/client.mjs';
 
 const fakePgTypes = { getTypeParser: () => (v) => v };
 
@@ -72,6 +72,19 @@ describe('assertDisposableDbUrl — 2026-07-14 incident guard', () => {
 
   it('rejects a non-URL string', () => {
     assert.throws(() => assertDisposableDbUrl('not a url'), /not a valid URL/);
+  });
+});
+
+describe('isHostedSupabaseHost — shared predicate (client.mjs + generate-expected-schema.mjs)', () => {
+  it('matches *.supabase.co and *.supabase.com', () => {
+    assert.equal(isHostedSupabaseHost('db.uahjjdelnnpfmaqjrwoz.supabase.co'), true);
+    assert.equal(isHostedSupabaseHost('aws-1-eu-west-2.pooler.supabase.com'), true);
+  });
+
+  it('does NOT match a local/self-hosted host', () => {
+    assert.equal(isHostedSupabaseHost('127.0.0.1'), false);
+    assert.equal(isHostedSupabaseHost('localhost'), false);
+    assert.equal(isHostedSupabaseHost('db.internal'), false);
   });
 });
 

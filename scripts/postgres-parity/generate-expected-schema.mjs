@@ -200,7 +200,36 @@ async function main() {
     process.exit(2);
   }
 
-  const { getPool, closePool } = await import('../lib/db/client.mjs');
+  const { getPool, closePool, isHostedSupabaseHost } = await import('../lib/db/client.mjs');
+
+  // Ground-truth guard: this fixture must reflect a vanilla self-hosted
+  // Postgres — what postgres-parity CI's bare pgvector/pgvector container
+  // actually verifies against — never the Supabase platform layer's extra
+  // extensions (pg_stat_statements, supabase_vault, uuid-ossp) and role
+  // grants. Regenerating from the shared Supabase project has happened
+  // twice (808beb8 2026-07-14, reverted same day by 35a737e; 154fb57
+  // 2026-07-22 undid that fix), both times silently drifting CI red. Refuse
+  // outright rather than relying on commit-message discipline a third time.
+  let parsedDbUrl;
+  try {
+    parsedDbUrl = new URL(process.env.AUDIT_DB_URL);
+  } catch {
+    process.stderr.write('AUDIT_DB_URL is not a valid URL — expected a postgresql:// connection string.\n');
+    process.exit(2);
+  }
+  if (isHostedSupabaseHost(parsedDbUrl.hostname)) {
+    process.stderr.write(
+      `AUDIT_DB_URL points at a Supabase-hosted database (host "${parsedDbUrl.hostname}") — refusing to ` +
+      'generate the schema fixture from it.\n' +
+      'Supabase\'s hosted platform layer carries extensions and grants a vanilla self-hosted Postgres ' +
+      'never has, so a fixture regenerated from here always drifts postgres-parity CI red.\n' +
+      'Run against a disposable database instead: `npm run db:local:regen` (spins up a local ' +
+      'pgvector/pgvector container, migrates it, and writes the fixture from that) — or, if CI already ' +
+      'ran, download its uploaded `live-schema` artifact and use it directly (the pattern 35a737e used).\n'
+    );
+    process.exit(2);
+  }
+
   const pool = await getPool();
   if (!pool) {
     process.stderr.write('getPool() returned null — check AUDIT_DB_URL resolution.\n');
