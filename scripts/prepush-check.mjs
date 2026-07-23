@@ -50,9 +50,33 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { log } from './lib/cli-io.mjs';
+import { GIT_LOCK_RETRY_DELAYS_MS, withGitLockRetry } from './lib/git-lock-retry.mjs';
 
 const IS_WIN = process.platform === 'win32';
 const NPM = IS_WIN ? 'npm.cmd' : 'npm';
+
+/**
+ * `git worktree add/remove/prune` write to the SHARED repo's common
+ * .git/config and .git/worktrees/ metadata — the exact resource a concurrent
+ * process's own git activity can transiently lock (anthropics/claude-code
+ * #34645/#55724 — see the core.bare incident note below). Wrap them in
+ * lib/git-lock-retry's exponential backoff so a lock held for a few hundred
+ * ms by a peer that's about to release it doesn't hard-fail the sandbox.
+ * (Distinct from a stale/corrupted VALUE written mid-run, which the
+ * worktree-scoped core.bare pin further down already closes — retrying
+ * doesn't undo a bad value that's already durably on disk.)
+ */
+function gitWithLockRetry(repoRoot, args, opts = {}) {
+  return withGitLockRetry(
+    () => execFileSync('git', args, { cwd: repoRoot, stdio: ['ignore', 'ignore', 'pipe'], ...opts }),
+    {
+      onRetry: (attempt, delayMs) => log(
+        `  ⚠ git ${args.join(' ')} hit lock contention (concurrent session?) — ` +
+        `retry ${attempt + 1}/${GIT_LOCK_RETRY_DELAYS_MS.length} in ${delayMs}ms`,
+      ),
+    },
+  );
+}
 
 /** Gitignored/untracked files that must be copied into the sandbox for a check
  *  to be meaningful.
@@ -171,12 +195,13 @@ function provisionArtifacts(sandbox, repoRoot) {
 
 function removeWorktree(sandbox, repoRoot) {
   try {
-    execFileSync('git', ['worktree', 'remove', '--force', sandbox], { cwd: repoRoot, stdio: 'ignore' });
+    gitWithLockRetry(repoRoot, ['worktree', 'remove', '--force', sandbox]);
   } catch {
-    // The worktree metadata may already be gone, or a file may be locked on
-    // Windows. Prune so `git worktree list` doesn't accumulate corpses, and
-    // best-effort rm the directory.
-    try { execFileSync('git', ['worktree', 'prune'], { cwd: repoRoot, stdio: 'ignore' }); } catch { /* noop */ }
+    // The worktree metadata may already be gone, a file may be locked on
+    // Windows, or lock contention outlasted the retry budget. Prune so
+    // `git worktree list` doesn't accumulate corpses, and best-effort rm the
+    // directory.
+    try { gitWithLockRetry(repoRoot, ['worktree', 'prune']); } catch { /* noop */ }
     // Windows holds handles briefly after a process exits — retry rather than
     // leak the directory (repo-wide rmSync hardening contract).
     try { fs.rmSync(sandbox, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* noop */ }
@@ -209,9 +234,7 @@ function main() {
 
   try {
     try {
-      execFileSync('git', ['worktree', 'add', '--detach', '--quiet', sandbox, headSha], {
-        cwd: repoRoot, stdio: ['ignore', 'ignore', 'pipe'],
-      });
+      gitWithLockRetry(repoRoot, ['worktree', 'add', '--detach', '--quiet', sandbox, headSha]);
     } catch (err) {
       throw new Error(`could not create sandbox worktree: ${err.stderr?.toString().trim() || err.message}`);
     }

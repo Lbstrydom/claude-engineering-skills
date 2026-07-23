@@ -85,6 +85,21 @@ describe('the sandbox forbids the silent-skip paths', () => {
     assert.ok(addIdx !== -1 && pinIdx !== -1 && addIdx < pinIdx,
       'the worktree-scoped pin must be applied AFTER the sandbox is created, not before');
   });
+
+  it('wraps every shared-metadata git worktree call in lock-contention retry (2026-07-23)', () => {
+    // Sibling fix to the core.bare pin above: a transient lock (peer holds
+    // .git/config.lock for a few hundred ms) is a different failure shape
+    // from a corrupted value, and needs retry rather than an override. A raw
+    // execFileSync('git', ['worktree', ...]) here would silently regress to
+    // hard-failing on the very contention this session's incident reproduced.
+    assert.match(runnerSrc, /from '\.\/lib\/git-lock-retry\.mjs'/);
+    for (const call of ["'worktree', 'add'", "'worktree', 'remove'", "'worktree', 'prune'"]) {
+      const idx = runnerSrc.indexOf(call);
+      assert.ok(idx !== -1, `expected to find a ${call} call`);
+      const line = runnerSrc.slice(runnerSrc.lastIndexOf('\n', idx), runnerSrc.indexOf('\n', idx));
+      assert.match(line, /gitWithLockRetry\(/, `${call} must go through the lock-retry wrapper, not a raw execFileSync`);
+    }
+  });
 });
 
 describe('the pre-push hook feeds the sandbox a real range', () => {

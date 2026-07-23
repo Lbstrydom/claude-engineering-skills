@@ -11,7 +11,14 @@ const DEFAULT_RETRYABLE_CODES = ['EPERM', 'EBUSY'];
 const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_RETRY_DELAY_MS = 50;
 
-function blockingSleep(delayMs) {
+/**
+ * Synchronous blocking sleep (Atomics.wait on a throwaway SharedArrayBuffer).
+ * Exported (not just via _internals) because scripts/prepush-check.mjs reuses
+ * it for git-lock-contention backoff — a second legitimate production
+ * consumer, not just test access. Keep this the single sleep primitive
+ * rather than a second SharedArrayBuffer trick living elsewhere.
+ */
+export function blockingSleep(delayMs) {
   const sab = new SharedArrayBuffer(4);
   const arr = new Int32Array(sab);
   Atomics.wait(arr, 0, 0, delayMs);
