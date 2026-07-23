@@ -29,9 +29,32 @@ import { GateContractBaselineSchema } from '../scripts/lib/gate-honesty/schema.m
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
 const IS_WIN = process.platform === 'win32';
+const NPM = IS_WIN ? 'npm.cmd' : 'npm';
 
 /** Retry-hardened rm — a concurrent AV/indexer can hold a handle briefly on Windows. */
 const rmrf = (p) => fs.rmSync(p, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+
+/**
+ * Find the nearest ancestor (starting at `startDir` itself) that has a
+ * node_modules directory — the same directory Node's own module resolver
+ * would land on for code running IN that tree. A linked git worktree
+ * commonly has no node_modules of its own and relies on exactly this
+ * upward walk finding the main checkout's; that walk works for ordinary
+ * in-place test runs but NOT for a sandbox relocated under the OS temp
+ * directory (an unrelated tree with no such ancestor), which is why the
+ * worktree-integration test below can't just junction `repoRoot/node_modules`
+ * unconditionally. Returns null if no ancestor has one.
+ */
+function findNodeModulesUpwards(startDir) {
+  let dir = startDir;
+  for (;;) {
+    const candidate = path.join(dir, 'node_modules');
+    if (fs.existsSync(candidate)) return candidate;
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
 
 // ── 1. Pure set rules ──────────────────────────────────────────────────────
 describe('computeRatchetDivergences (§7b set rules)', () => {
@@ -338,10 +361,27 @@ describe('ratchet integration (real checker binary, isolated worktree)', () => {
         }
       }
 
-      // node_modules junction (mirrors prepush-check.mjs) so `zod` resolves.
-      try {
-        fs.symlinkSync(path.join(repoRoot, 'node_modules'), path.join(sandbox, 'node_modules'), 'junction');
-      } catch { /* fall through — may already resolve via parent walk */ }
+      // node_modules junction (mirrors prepush-check.mjs's provisionNodeModules)
+      // so `zod` resolves. repoRoot itself may have no node_modules of its own
+      // (a linked worktree that was never `npm install`'d directly) — walk up
+      // for a real ancestor first, same as Node's own resolver would; if none
+      // exists anywhere, fall back to a real install rather than silently
+      // junctioning to a nonexistent target (confirmed 2026-07-23: that
+      // silent-fallthrough is exactly how this failed — junction creation to a
+      // missing target doesn't throw on Windows, so the catch never fired, and
+      // module resolution failed later with an unhelpful ERR_MODULE_NOT_FOUND).
+      const sourceModules = findNodeModulesUpwards(repoRoot);
+      if (sourceModules) {
+        try {
+          fs.symlinkSync(sourceModules, path.join(sandbox, 'node_modules'), 'junction');
+        } catch { /* fall through to the real-install fallback below */ }
+      }
+      if (!fs.existsSync(path.join(sandbox, 'node_modules'))) {
+        const install = spawnSync(NPM, ['ci', '--ignore-scripts', '--no-audit', '--no-fund'],
+          { cwd: sandbox, stdio: 'ignore', shell: IS_WIN });
+        assert.equal(install.status, 0,
+          'sandbox node_modules provisioning failed: no ancestor node_modules found and npm ci failed');
+      }
 
       // Otherwise-valid synthetic skill: has a SKILL.md, but no gate-contract.json
       // and no baseline exemption. The ONLY reason the checker should fail.
