@@ -108,7 +108,7 @@ DOM-facing fix and a pure backend/CLI one. `/ux-lock` can only ever cover
 the former (it drives a live URL via Playwright); recommending it
 unconditionally is wrong advice for a backend-only `primary_file` — verified
 2026-07-23: 22/22 accumulated rows in this repo were backend/CLI findings
-that can never get a `/ux-lock` spec, because this repo has no frontend.
+with no live URL for `/ux-lock` to drive, since this repo has no frontend.
 If > 0, judge each row by `primary_file` before suggesting a fix:
 
 ```
