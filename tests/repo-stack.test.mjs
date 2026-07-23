@@ -8,6 +8,7 @@ import {
   detectRepoStack, detectPythonFramework, detectPythonEnvironmentManager,
   hasJavaSources, hasPostgresSources,
 } from '../scripts/lib/repo-stack.mjs';
+import { gitFixtureEnv } from './helpers/fixtures.mjs';
 
 let tmp;
 beforeEach(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'repo-stack-')); });
@@ -96,9 +97,9 @@ describe('detectRepoStack — Java detection (PR-B)', () => {
     // so the `git ls-files` enumeration path fires.
     write('apps/svc/src/com/example/App.java', 'package com.example;\nclass App {}');
     write('package.json', JSON.stringify({ dependencies: { x: '1' } }));
-    execSync('git init -q', { cwd: tmp });
+    execSync('git init -q', { cwd: tmp, env: gitFixtureEnv() });
     // Stage by name — never `git add -A` (AGENTS.md scope-discipline rule).
-    execSync('git add apps package.json', { cwd: tmp });
+    execSync('git add apps package.json', { cwd: tmp, env: gitFixtureEnv() });
     const r = detectRepoStack(tmp);
     assert.ok(r.stackKinds.includes('java'),
       `monorepo .java should be detected, stackKinds=${JSON.stringify(r.stackKinds)}`);
@@ -126,8 +127,8 @@ describe('detectRepoStack — Postgres detection (PR-C)', () => {
   it('stackKinds includes postgres for .sql with a Postgres-distinctive marker', () => {
     write('db/0001.sql', 'create policy p on t using (true);');
     write('package.json', JSON.stringify({ dependencies: { x: '1' } }));
-    execSync('git init -q', { cwd: tmp });
-    execSync('git add db package.json', { cwd: tmp });
+    execSync('git init -q', { cwd: tmp, env: gitFixtureEnv() });
+    execSync('git add db package.json', { cwd: tmp, env: gitFixtureEnv() });
     const r = detectRepoStack(tmp);
     assert.ok(r.stackKinds.includes('postgres'), `stackKinds=${JSON.stringify(r.stackKinds)}`);
   });
@@ -135,8 +136,8 @@ describe('detectRepoStack — Postgres detection (PR-C)', () => {
   it('stackKinds EXCLUDES postgres for generic ANSI .sql with no distinctive marker', () => {
     write('seed.sql', 'INSERT INTO t (id) VALUES (1), (2), (3);');
     write('package.json', JSON.stringify({ dependencies: { x: '1' } }));
-    execSync('git init -q', { cwd: tmp });
-    execSync('git add seed.sql package.json', { cwd: tmp });
+    execSync('git init -q', { cwd: tmp, env: gitFixtureEnv() });
+    execSync('git add seed.sql package.json', { cwd: tmp, env: gitFixtureEnv() });
     const r = detectRepoStack(tmp);
     assert.ok(!r.stackKinds.includes('postgres'),
       `generic seed SQL must not trigger postgres, stackKinds=${JSON.stringify(r.stackKinds)}`);

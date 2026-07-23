@@ -15,18 +15,25 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { findStalePragmas, renderStalePragmaSection } from '../scripts/lib/symbol-index/stale-pragma-sweep.mjs';
+import { gitFixtureEnv } from './helpers/fixtures.mjs';
 
+// 2026-07-23: this was the other fixture named in the original
+// GIT_WORK_TREE-rejection incident note — a leaked GIT_DIR/GIT_WORK_TREE
+// makes git ignore `cwd` entirely, so every commit below would land on the
+// real repo without env:.
 function mkGitRepo() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'drift-stale-pragma-'));
-  execFileSync('git', ['init', '-q'], { cwd: dir });
-  execFileSync('git', ['config', 'user.email', 'test@test.com'], { cwd: dir });
-  execFileSync('git', ['config', 'user.name', 'test'], { cwd: dir });
+  const env = gitFixtureEnv();
+  execFileSync('git', ['init', '-q'], { cwd: dir, env });
+  execFileSync('git', ['config', 'user.email', 'test@test.com'], { cwd: dir, env });
+  execFileSync('git', ['config', 'user.name', 'test'], { cwd: dir, env });
   return dir;
 }
 
 function commitAll(dir) {
-  execFileSync('git', ['add', '-A'], { cwd: dir });
-  execFileSync('git', ['commit', '-q', '-m', 'x'], { cwd: dir });
+  const env = gitFixtureEnv();
+  execFileSync('git', ['add', '-A'], { cwd: dir, env });
+  execFileSync('git', ['commit', '-q', '-m', 'x'], { cwd: dir, env });
 }
 
 describe('findStalePragmas — real git grep against a throwaway repo', () => {
@@ -34,7 +41,7 @@ describe('findStalePragmas — real git grep against a throwaway repo', () => {
     const repo = mkGitRepo();
     fs.writeFileSync(path.join(repo, 'a.mjs'), '// @duplicate-justification: target=nowhere.mjs:foo reason=x\nfunction foo() {}\n');
     commitAll(repo);
-    const stale = findStalePragmas(repo);
+    const stale = findStalePragmas(repo, { env: gitFixtureEnv() });
     assert.equal(stale.length, 1);
     assert.equal(stale[0].targetFile, 'nowhere.mjs');
     fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
@@ -45,7 +52,7 @@ describe('findStalePragmas — real git grep against a throwaway repo', () => {
     fs.writeFileSync(path.join(repo, 'canonical.mjs'), 'function foo() {}\n');
     fs.writeFileSync(path.join(repo, 'a.mjs'), '// @duplicate-justification: target=canonical.mjs:foo reason=x\nfunction foo() {}\n');
     commitAll(repo);
-    const stale = findStalePragmas(repo);
+    const stale = findStalePragmas(repo, { env: gitFixtureEnv() });
     assert.equal(stale.length, 0);
     fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
@@ -54,7 +61,7 @@ describe('findStalePragmas — real git grep against a throwaway repo', () => {
     const repo = mkGitRepo();
     fs.writeFileSync(path.join(repo, 'AGENTS.md'), 'Suppress with `// @duplicate-justification: target=<file>:<symbol> reason=<why>`\n');
     commitAll(repo);
-    const stale = findStalePragmas(repo);
+    const stale = findStalePragmas(repo, { env: gitFixtureEnv() });
     assert.equal(stale.length, 0);
     fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
@@ -67,7 +74,7 @@ describe('findStalePragmas — real git grep against a throwaway repo', () => {
       "fs.writeFileSync('a.mjs', '// @duplicate-justification: target=nowhere.mjs:foo reason=x\\n');\n",
     );
     commitAll(repo);
-    const stale = findStalePragmas(repo);
+    const stale = findStalePragmas(repo, { env: gitFixtureEnv() });
     assert.equal(stale.length, 0);
     fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
@@ -79,7 +86,7 @@ describe('findStalePragmas — real git grep against a throwaway repo', () => {
       'const msg = `add // @duplicate-justification: target=${topMatch.filePath}:${topMatch.symbolName} reason=<why>`;\n',
     );
     commitAll(repo);
-    const stale = findStalePragmas(repo);
+    const stale = findStalePragmas(repo, { env: gitFixtureEnv() });
     assert.equal(stale.length, 0);
     fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
@@ -88,7 +95,7 @@ describe('findStalePragmas — real git grep against a throwaway repo', () => {
     const repo = mkGitRepo();
     fs.writeFileSync(path.join(repo, 'a.mjs'), 'function foo() {}\n');
     commitAll(repo);
-    assert.deepEqual(findStalePragmas(repo), []);
+    assert.deepEqual(findStalePragmas(repo, { env: gitFixtureEnv() }), []);
     fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 });

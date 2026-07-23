@@ -51,6 +51,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { log } from './lib/cli-io.mjs';
 import { GIT_LOCK_RETRY_DELAYS_MS, withGitLockRetry } from './lib/git-lock-retry.mjs';
+import { sanitizeGitEnv } from './lib/git-env-sanitize.mjs';
 
 const IS_WIN = process.platform === 'win32';
 const NPM = IS_WIN ? 'npm.cmd' : 'npm';
@@ -135,9 +136,16 @@ function argValue(flag) {
  * which is almost always. When package-lock.json differs we must install, or
  * we'd be testing the new code against the old dependency tree.
  *
+ * @param {string} sandbox
+ * @param {string} repoRoot
+ * @param {NodeJS.ProcessEnv} gitEnv - sanitized env for the `npm ci` spawn
+ *   (2026-07-24 audit fix M1) — `npm ci` can shell out to git for
+ *   git-hosted dependency resolution; a raw `process.env` here would carry
+ *   a leaked `GIT_DIR` into that path just as it would into `npm run check`
+ *   itself, the exact hole the surrounding sandbox exists to close.
  * @returns {'linked'|'installed'|'skipped'}
  */
-function provisionNodeModules(sandbox, repoRoot) {
+function provisionNodeModules(sandbox, repoRoot, gitEnv) {
   const mainModules = path.join(repoRoot, 'node_modules');
   const lockMain = path.join(repoRoot, 'package-lock.json');
   const lockSandbox = path.join(sandbox, 'package-lock.json');
@@ -165,7 +173,7 @@ function provisionNodeModules(sandbox, repoRoot) {
   // writes core.hooksPath. That config is shared with the main checkout, so
   // letting it run from a throwaway worktree could repoint the real repo's hooks.
   const r = spawnSync(NPM, ['ci', '--ignore-scripts', '--no-audit', '--no-fund'], {
-    cwd: sandbox, stdio: 'inherit', shell: IS_WIN,
+    cwd: sandbox, stdio: 'inherit', shell: IS_WIN, ...(gitEnv ? { env: gitEnv } : {}),
   });
   if (r.status !== 0) throw new Error(`npm ci failed in sandbox (exit ${r.status})`);
   return 'installed';
@@ -263,7 +271,12 @@ function main() {
       execFileSync('git', ['config', '--worktree', 'core.bare', 'false'], { cwd: sandbox, stdio: 'ignore' });
     } catch { /* best-effort hardening — see comment above */ }
 
-    const modules = provisionNodeModules(sandbox, repoRoot);
+    // Computed once, reused both for `npm ci` below (audit fix M1) and for
+    // the `npm run check` env built further down — one sanitized-env call
+    // per push, not two.
+    const gitEnv = sanitizeGitEnv(repoRoot);
+
+    const modules = provisionNodeModules(sandbox, repoRoot, gitEnv);
     const { missing, carried } = provisionArtifacts(sandbox, repoRoot);
     if (missing.length) {
       // Do not proceed into a run whose gates we have just told to be strict —
@@ -281,7 +294,21 @@ function main() {
     if (carried.length) log(`  operator config carried in: ${carried.join(', ')}`);
 
     const env = {
-      ...process.env,
+      // Sanitized, NOT raw process.env (2026-07-23 — the actual root cause of
+      // six live HEAD-corruption incidents this session, confirmed empirically
+      // and by git's own githooks(5) docs: git's hook-invocation machinery
+      // exports GIT_DIR/GIT_WORK_TREE/etc into THIS hook's process, and a raw
+      // `...process.env` here would hand that straight to `npm run check`
+      // below. Any test that then builds an "isolated" fixture repo via
+      // `git init`/`git commit` with an explicit `cwd` gets no isolation at
+      // all — git gives GIT_DIR precedence over cwd, so the fixture's commits
+      // land on THIS repo's real HEAD instead (verified live: synthetic
+      // commits reading "seed", "init", "add data + readme" — the literal
+      // strings from tests/diff-scope-resolver.test.mjs's fixture helper —
+      // repeatedly overwrote HEAD mid-push). sanitizeGitEnv() is the Node
+      // equivalent of git's own documented fix, `unset $(git rev-parse
+      // --local-env-vars)` — git's own versioned var list, not a guessed one.
+      ...gitEnv,
       // Drift gates get the REAL range instead of inferring one. Without this a
       // detached checkout resolves every drift base to HEAD~1.
       ...(base ? { AUDIT_PUSH_RANGE_BASE: base } : {}),

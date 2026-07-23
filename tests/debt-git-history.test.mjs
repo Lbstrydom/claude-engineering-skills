@@ -19,6 +19,7 @@ import {
   buildCommitUrl,
   deriveOccurrencesFromGit,
 } from '../scripts/lib/debt-git-history.mjs';
+import { gitFixtureEnv } from './helpers/fixtures.mjs';
 
 let tmpDir;
 
@@ -28,6 +29,7 @@ function git(args, { allowFail = false } = {}) {
       cwd: tmpDir,
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
+      env: gitFixtureEnv(),
     });
   } catch (err) {
     if (allowFail) return null;
@@ -68,14 +70,14 @@ afterEach(() => {
 
 describe('countCommitsTouchingTopic', () => {
   test('returns 0 for empty topicId', () => {
-    assert.equal(countCommitsTouchingTopic('', { cwd: tmpDir }), 0);
-    assert.equal(countCommitsTouchingTopic(null, { cwd: tmpDir }), 0);
+    assert.equal(countCommitsTouchingTopic('', { cwd: tmpDir, env: gitFixtureEnv() }), 0);
+    assert.equal(countCommitsTouchingTopic(null, { cwd: tmpDir, env: gitFixtureEnv() }), 0);
   });
 
   test('returns 0 when not a git repo', () => {
     const nonRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'not-a-repo-'));
     try {
-      assert.equal(countCommitsTouchingTopic('anything', { cwd: nonRepo }), 0);
+      assert.equal(countCommitsTouchingTopic('anything', { cwd: nonRepo, env: gitFixtureEnv() }), 0);
     } finally {
       fs.rmSync(nonRepo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
@@ -85,14 +87,14 @@ describe('countCommitsTouchingTopic', () => {
     writeLedger([makeEntry('aa11bb22')]);
     git(['add', '.audit/tech-debt.json']);
     git(['commit', '-q', '-m', 'initial']);
-    assert.equal(countCommitsTouchingTopic('nonexistent', { cwd: tmpDir }), 0);
+    assert.equal(countCommitsTouchingTopic('nonexistent', { cwd: tmpDir, env: gitFixtureEnv() }), 0);
   });
 
   test('counts 1 commit when topicId added once', () => {
     writeLedger([makeEntry('aa11bb22')]);
     git(['add', '.audit/tech-debt.json']);
     git(['commit', '-q', '-m', 'add aa11bb22']);
-    assert.equal(countCommitsTouchingTopic('aa11bb22', { cwd: tmpDir }), 1);
+    assert.equal(countCommitsTouchingTopic('aa11bb22', { cwd: tmpDir, env: gitFixtureEnv() }), 1);
   });
 
   test('git log -S reports only commits where net occurrence count changes', () => {
@@ -116,7 +118,7 @@ describe('countCommitsTouchingTopic', () => {
     // commits that added/removed the topicId, not commits that merely
     // re-saved with it present. That's OK for our purpose: we're signalling
     // "this topic has a persisted history" not "exact run count".
-    assert.equal(countCommitsTouchingTopic('aa11bb22', { cwd: tmpDir }), 1);
+    assert.equal(countCommitsTouchingTopic('aa11bb22', { cwd: tmpDir, env: gitFixtureEnv() }), 1);
   });
 
   test('counts 2 when topicId added, removed, re-added', () => {
@@ -138,7 +140,7 @@ describe('countCommitsTouchingTopic', () => {
     // Expected: 2 commits modified the net count (add=+1, readd=+1).
     // The remove commit subtracts, but git log -S still reports it.
     // Actual behavior may be 2 or 3 depending on git version — we assert >= 2
-    const count = countCommitsTouchingTopic('aa11bb22', { cwd: tmpDir });
+    const count = countCommitsTouchingTopic('aa11bb22', { cwd: tmpDir, env: gitFixtureEnv() });
     assert.ok(count >= 2, `expected >= 2 commits, got ${count}`);
   });
 
@@ -153,8 +155,8 @@ describe('countCommitsTouchingTopic', () => {
 
     // aa11bb22 present in both commits → 1 (added once) — git log -S counts
     // commits where the *net occurrences* of the string changed
-    assert.equal(countCommitsTouchingTopic('aa11bb22', { cwd: tmpDir }), 1);
-    assert.equal(countCommitsTouchingTopic('cc33dd44', { cwd: tmpDir }), 1);
+    assert.equal(countCommitsTouchingTopic('aa11bb22', { cwd: tmpDir, env: gitFixtureEnv() }), 1);
+    assert.equal(countCommitsTouchingTopic('cc33dd44', { cwd: tmpDir, env: gitFixtureEnv() }), 1);
   });
 });
 
@@ -162,14 +164,14 @@ describe('countCommitsTouchingTopic', () => {
 
 describe('findFirstDeferCommit', () => {
   test('returns null for missing topicId', () => {
-    assert.equal(findFirstDeferCommit('', { cwd: tmpDir }), null);
-    assert.equal(findFirstDeferCommit(null, { cwd: tmpDir }), null);
+    assert.equal(findFirstDeferCommit('', { cwd: tmpDir, env: gitFixtureEnv() }), null);
+    assert.equal(findFirstDeferCommit(null, { cwd: tmpDir, env: gitFixtureEnv() }), null);
   });
 
   test('returns null when not a git repo', () => {
     const nonRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'not-a-repo-'));
     try {
-      assert.equal(findFirstDeferCommit('aa11bb22', { cwd: nonRepo }), null);
+      assert.equal(findFirstDeferCommit('aa11bb22', { cwd: nonRepo, env: gitFixtureEnv() }), null);
     } finally {
       fs.rmSync(nonRepo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
@@ -180,7 +182,7 @@ describe('findFirstDeferCommit', () => {
     git(['add', '.audit/tech-debt.json']);
     git(['commit', '-q', '-m', 'feat: introduce aa11bb22']);
 
-    const result = findFirstDeferCommit('aa11bb22', { cwd: tmpDir });
+    const result = findFirstDeferCommit('aa11bb22', { cwd: tmpDir, env: gitFixtureEnv() });
     assert.ok(result);
     assert.match(result.sha, /^[a-f0-9]{40}$/);
     assert.equal(result.subject, 'feat: introduce aa11bb22');
@@ -199,7 +201,7 @@ describe('findFirstDeferCommit', () => {
     git(['add', '.audit/tech-debt.json']);
     git(['commit', '-q', '-m', 'update']);
 
-    const result = findFirstDeferCommit('aa11bb22', { cwd: tmpDir });
+    const result = findFirstDeferCommit('aa11bb22', { cwd: tmpDir, env: gitFixtureEnv() });
     assert.equal(result.sha, firstSha);
     assert.equal(result.subject, 'first add');
   });
@@ -209,7 +211,7 @@ describe('findFirstDeferCommit', () => {
     git(['add', '.audit/tech-debt.json']);
     git(['commit', '-q', '-m', 'something']);
 
-    assert.equal(findFirstDeferCommit('zzzzzzzzzzzz', { cwd: tmpDir }), null);
+    assert.equal(findFirstDeferCommit('zzzzzzzzzzzz', { cwd: tmpDir, env: gitFixtureEnv() }), null);
   });
 
   test('attaches URL when remoteUrl provided', () => {
@@ -220,6 +222,7 @@ describe('findFirstDeferCommit', () => {
     const result = findFirstDeferCommit('aa11bb22', {
       cwd: tmpDir,
       remoteUrl: 'https://github.com/owner/repo',
+      env: gitFixtureEnv(),
     });
     assert.ok(result.url);
     assert.match(result.url, /^https:\/\/github\.com\/owner\/repo\/commit\/[a-f0-9]{40}$/);
@@ -230,27 +233,27 @@ describe('findFirstDeferCommit', () => {
 
 describe('detectGitHubRepoUrl', () => {
   test('returns null when no origin configured', () => {
-    assert.equal(detectGitHubRepoUrl({ cwd: tmpDir }), null);
+    assert.equal(detectGitHubRepoUrl({ cwd: tmpDir, env: gitFixtureEnv() }), null);
   });
 
   test('normalizes SSH origin to HTTPS GitHub URL', () => {
     git(['remote', 'add', 'origin', 'git@github.com:owner/my-repo.git']);
-    assert.equal(detectGitHubRepoUrl({ cwd: tmpDir }), 'https://github.com/owner/my-repo');
+    assert.equal(detectGitHubRepoUrl({ cwd: tmpDir, env: gitFixtureEnv() }), 'https://github.com/owner/my-repo');
   });
 
   test('handles HTTPS origin with .git suffix', () => {
     git(['remote', 'add', 'origin', 'https://github.com/owner/my-repo.git']);
-    assert.equal(detectGitHubRepoUrl({ cwd: tmpDir }), 'https://github.com/owner/my-repo');
+    assert.equal(detectGitHubRepoUrl({ cwd: tmpDir, env: gitFixtureEnv() }), 'https://github.com/owner/my-repo');
   });
 
   test('handles HTTPS origin without .git suffix', () => {
     git(['remote', 'add', 'origin', 'https://github.com/owner/my-repo']);
-    assert.equal(detectGitHubRepoUrl({ cwd: tmpDir }), 'https://github.com/owner/my-repo');
+    assert.equal(detectGitHubRepoUrl({ cwd: tmpDir, env: gitFixtureEnv() }), 'https://github.com/owner/my-repo');
   });
 
   test('returns null for non-GitHub remote', () => {
     git(['remote', 'add', 'origin', 'https://gitlab.com/owner/repo.git']);
-    assert.equal(detectGitHubRepoUrl({ cwd: tmpDir }), null);
+    assert.equal(detectGitHubRepoUrl({ cwd: tmpDir, env: gitFixtureEnv() }), null);
   });
 });
 
@@ -283,12 +286,12 @@ describe('buildCommitUrl', () => {
 
 describe('deriveOccurrencesFromGit', () => {
   test('empty input returns empty map', () => {
-    assert.equal(deriveOccurrencesFromGit([], { cwd: tmpDir }).size, 0);
-    assert.equal(deriveOccurrencesFromGit(null, { cwd: tmpDir }).size, 0);
+    assert.equal(deriveOccurrencesFromGit([], { cwd: tmpDir, env: gitFixtureEnv() }).size, 0);
+    assert.equal(deriveOccurrencesFromGit(null, { cwd: tmpDir, env: gitFixtureEnv() }).size, 0);
   });
 
   test('skips entries without topicId', () => {
-    const result = deriveOccurrencesFromGit([{}, { topicId: null }], { cwd: tmpDir });
+    const result = deriveOccurrencesFromGit([{}, { topicId: null }], { cwd: tmpDir, env: gitFixtureEnv() });
     assert.equal(result.size, 0);
   });
 
@@ -299,7 +302,7 @@ describe('deriveOccurrencesFromGit', () => {
 
     const result = deriveOccurrencesFromGit(
       [{ topicId: 'aa11bb22' }, { topicId: 'cc33dd44' }, { topicId: 'zzzzzzzz' }],
-      { cwd: tmpDir }
+      { cwd: tmpDir, env: gitFixtureEnv() }
     );
     assert.equal(result.get('aa11bb22'), 1);
     assert.equal(result.get('cc33dd44'), 1);

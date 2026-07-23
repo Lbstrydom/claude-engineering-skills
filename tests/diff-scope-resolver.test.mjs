@@ -20,9 +20,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { resolveDiffScope, computeEntryPoints } from '../scripts/lib/audit/diff-scope-resolver.mjs';
+import { gitFixtureEnv } from './helpers/fixtures.mjs';
 
+// 2026-07-23: this was the exact helper that fired live — six real HEAD
+// corruptions in one session traced to a leaked GIT_DIR making git ignore
+// `cwd` entirely and redirect these fixture commits onto the real repo. See
+// tests/helpers/fixtures.mjs's GIT_LOCAL_ENV_VARS docblock for the full story.
 function sh(cwd, ...args) {
-  execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'ignore'] });
+  execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'ignore'], env: gitFixtureEnv() });
 }
 
 function writeFile(repo, rel, content) {
@@ -55,7 +60,7 @@ describe('resolveDiffScope — failure modes', () => {
   it('returns SKIPPED_PATCH_ONLY_MODE when diffPatch passed without refs', async () => {
     const repo = newRepo();
     try {
-      const scope = await resolveDiffScope({ repoPath: repo, diffPatch: 'fake-patch' });
+      const scope = await resolveDiffScope({ repoPath: repo, env: gitFixtureEnv(), diffPatch: 'fake-patch' });
       assert.equal(scope.state, 'SKIPPED_PATCH_ONLY_MODE');
       assert.deepEqual(scope.changedFiles, []);
     } finally { fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
@@ -64,7 +69,7 @@ describe('resolveDiffScope — failure modes', () => {
   it('returns SKIPPED_NO_BASELINE when baseRef cannot be resolved', async () => {
     const repo = newRepo();
     try {
-      const scope = await resolveDiffScope({ repoPath: repo, baseRef: 'does-not-exist', headRef: 'HEAD' });
+      const scope = await resolveDiffScope({ repoPath: repo, env: gitFixtureEnv(), baseRef: 'does-not-exist', headRef: 'HEAD' });
       assert.equal(scope.state, 'SKIPPED_NO_BASELINE');
     } finally { fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
@@ -72,7 +77,7 @@ describe('resolveDiffScope — failure modes', () => {
   it('returns SKIPPED_NO_BASELINE on shallow clone (HEAD~1 missing on initial commit)', async () => {
     const repo = newRepo(); // single initial commit, HEAD~1 doesn't exist
     try {
-      const scope = await resolveDiffScope({ repoPath: repo, baseRef: 'HEAD~1', headRef: 'HEAD' });
+      const scope = await resolveDiffScope({ repoPath: repo, env: gitFixtureEnv(), baseRef: 'HEAD~1', headRef: 'HEAD' });
       assert.equal(scope.state, 'SKIPPED_NO_BASELINE');
     } finally { fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
@@ -89,7 +94,7 @@ describe('resolveDiffScope — AST pre-edge extraction', () => {
       writeFile(repo, 'src/main.mjs', `console.log('main no longer imports lib');\n`);
       commit(repo, 'remove import');
 
-      const scope = await resolveDiffScope({ repoPath: repo, baseRef: 'HEAD~1', headRef: 'HEAD' });
+      const scope = await resolveDiffScope({ repoPath: repo, env: gitFixtureEnv(), baseRef: 'HEAD~1', headRef: 'HEAD' });
       // Pre-edges should include src/main.mjs → src/lib.mjs
       const preTargets = scope.preEdgesByBaseCaller['src/main.mjs'] || [];
       assert.ok(preTargets.includes('src/lib.mjs'),
@@ -107,7 +112,7 @@ describe('resolveDiffScope — AST pre-edge extraction', () => {
       writeFile(repo, 'README.md', 'hello world');
       commit(repo, 'modify data + readme');
 
-      const scope = await resolveDiffScope({ repoPath: repo, baseRef: 'HEAD~1', headRef: 'HEAD' });
+      const scope = await resolveDiffScope({ repoPath: repo, env: gitFixtureEnv(), baseRef: 'HEAD~1', headRef: 'HEAD' });
       // Non-source files should NOT appear in changedFiles
       assert.equal(scope.changedFiles.length, 0,
         `expected 0 changedFiles after non-source filter, got: ${JSON.stringify(scope.changedFiles)}`);
@@ -123,7 +128,7 @@ describe('resolveDiffScope — AST pre-edge extraction', () => {
       fs.unlinkSync(path.join(repo, 'src/main.mjs'));
       commit(repo, 'delete main');
 
-      const scope = await resolveDiffScope({ repoPath: repo, baseRef: 'HEAD~1', headRef: 'HEAD' });
+      const scope = await resolveDiffScope({ repoPath: repo, env: gitFixtureEnv(), baseRef: 'HEAD~1', headRef: 'HEAD' });
       const dEntry = scope.changedFiles.find(f => f.status === 'D');
       assert.ok(dEntry, 'expected a D-status entry');
       assert.equal(dEntry.baseCallerPath, 'src/main.mjs');
@@ -144,7 +149,7 @@ describe('resolveDiffScope — targetExistedAtBase via single ls-tree', () => {
       writeFile(repo, 'src/y.mjs', '// new\n');
       commit(repo, 'modify x + add y');
 
-      const scope = await resolveDiffScope({ repoPath: repo, baseRef: 'HEAD~1', headRef: 'HEAD' });
+      const scope = await resolveDiffScope({ repoPath: repo, env: gitFixtureEnv(), baseRef: 'HEAD~1', headRef: 'HEAD' });
       assert.ok(scope.targetExistedAtBase.includes('src/x.mjs'),
         'expected src/x.mjs in base manifest');
       assert.ok(!scope.targetExistedAtBase.includes('src/y.mjs'),
@@ -234,7 +239,7 @@ describe('resolveDiffScope — rename status', () => {
       fs.renameSync(path.join(repo, 'src/old-name.mjs'), path.join(repo, 'src/new-name.mjs'));
       commit(repo, 'rename');
 
-      const scope = await resolveDiffScope({ repoPath: repo, baseRef: 'HEAD~1', headRef: 'HEAD' });
+      const scope = await resolveDiffScope({ repoPath: repo, env: gitFixtureEnv(), baseRef: 'HEAD~1', headRef: 'HEAD' });
       // git diff --name-status may report R or "M + D + A" depending on similarity score.
       // Either is acceptable; we just check we got SOMETHING.
       assert.ok(scope.changedFiles.length > 0, 'expected changes detected');

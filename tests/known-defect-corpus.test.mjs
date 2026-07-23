@@ -7,6 +7,7 @@ import { execFileSync } from 'node:child_process';
 
 import { loadCorpusCase, CorpusCaseUnavailable, CORPUS_LOADER_VERSION } from '../scripts/lib/model-eval/known-defect-corpus.mjs';
 import { EgressGateError } from '../scripts/lib/model-eval/egress-path-scan.mjs';
+import { gitFixtureEnv } from './helpers/fixtures.mjs';
 
 const REPO_ROOT = process.cwd();
 const REPO_NAME = path.basename(REPO_ROOT);
@@ -88,12 +89,36 @@ describe('known-defect-corpus.mjs — loadCorpusCase', () => {
       (err) => err instanceof CorpusCaseUnavailable && err.reason === 'declared_files_not_in_diff',
     );
   });
+
+  // Gemini final-review catch (2026-07-24): SAFE_KD_ID_RE.test() coerces its
+  // argument to a string, so a malformed corpus entry with id === null or
+  // undefined used to test() as "null"/"undefined" — both match
+  // [A-Za-z0-9_-]+ — and slip past the guard instead of failing loudly.
+  for (const badId of [null, undefined, 42, {}]) {
+    test(`throws CorpusCaseUnavailable(invalid_kd_id) for a non-string id (${String(badId)})`, () => {
+      assert.throws(
+        () => loadCorpusCase({ kdEntry: { ...baseKd, id: badId }, repoRoots: [REPO_ROOT] }),
+        (err) => err instanceof CorpusCaseUnavailable && err.reason === 'invalid_kd_id',
+      );
+    });
+  }
+
+  test('throws CorpusCaseUnavailable(invalid_kd_id) for an id containing unsafe characters', () => {
+    assert.throws(
+      () => loadCorpusCase({ kdEntry: { ...baseKd, id: '../../etc/passwd' }, repoRoots: [REPO_ROOT] }),
+      (err) => err instanceof CorpusCaseUnavailable && err.reason === 'invalid_kd_id',
+    );
+  });
 });
 
 describe('known-defect-corpus.mjs — hardening (throwaway git repo)', () => {
   function makeRepo() {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kd-corpus-'));
-    const g = (args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' });
+    // 2026-07-23: this is one of the two fixtures named in the original
+    // GIT_WORK_TREE-rejection incident note — a leaked GIT_DIR/GIT_WORK_TREE
+    // makes git ignore `cwd` entirely, so every commit below (including the
+    // literal "initial" message) would land on the real repo without env:.
+    const g = (args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8', env: gitFixtureEnv() });
     g(['init', '-q']);
     g(['config', 'user.email', 'test@test.com']);
     g(['config', 'user.name', 'test']);
@@ -110,7 +135,7 @@ describe('known-defect-corpus.mjs — hardening (throwaway git repo)', () => {
     g(['commit', '-q', '-m', 'add env']);
     const sha = g(['rev-parse', 'HEAD']).trim();
     const kd = { id: 'KD-SENSITIVE-001', repo: path.basename(dir), buggyCommit: sha, files: ['.env'], defectDesc: 'x', expectedFindingRubric: 'y', severity: 'HIGH' };
-    assert.throws(() => loadCorpusCase({ kdEntry: kd, repoRoots: [dir] }), EgressGateError);
+    assert.throws(() => loadCorpusCase({ kdEntry: kd, repoRoots: [dir], env: gitFixtureEnv() }), EgressGateError);
     fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
@@ -123,7 +148,7 @@ describe('known-defect-corpus.mjs — hardening (throwaway git repo)', () => {
     g(['commit', '-q', '-m', 'add uppercase-named file']);
     const sha = g(['rev-parse', 'HEAD']).trim();
     const kd = { id: 'KD-UPPER-001', repo: path.basename(dir), buggyCommit: sha, files: [upperFile], defectDesc: 'x', expectedFindingRubric: 'y', severity: 'LOW' };
-    const { visibleInput } = loadCorpusCase({ kdEntry: kd, repoRoots: [dir] });
+    const { visibleInput } = loadCorpusCase({ kdEntry: kd, repoRoots: [dir], env: gitFixtureEnv() });
     assert.ok(visibleInput.files.length > 0);
     fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });

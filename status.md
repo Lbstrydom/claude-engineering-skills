@@ -1,5 +1,81 @@
 # Project Status Log
 
+## 2026-07-24 — git-env-leak-sustainability: `opts.env` threaded across 8 production modules + full `/cycle`
+
+Full `/plan` → `/audit-plan` (3 GPT rounds + 2 Gemini rounds) → implementation
+→ `/audit-code` (4 GPT rounds + 2 Gemini rounds) → `/ship` cycle closing out
+the sustainability work for the `GIT_DIR`/`GIT_WORK_TREE` env-leak class this
+session's earlier `core.bare` incident traced back to (see the two entries
+below). Plan: `docs/plans/git-env-leak-sustainability.md`; audit summary:
+`docs/plans/git-env-leak-sustainability-audit-summary.md`.
+
+### Changes
+- New `scripts/lib/git-env-sanitize.mjs` — dynamic sanitizer
+  (`getGitLocalEnvVarNames`/`sanitizeGitEnv`, unions a static 15-var baseline
+  with live `git rev-parse --local-env-vars`, fails open to the baseline
+  never `[]`) used once per push at the hook→sandbox boundary
+  (`prepush-check.mjs`).
+- Additive `opts.env` parameter threaded through every production
+  git-spawning function across 8 modules (`vcs.mjs`, `diff-scope-resolver.mjs`,
+  `debt-git-history.mjs`, `known-defect-corpus.mjs`,
+  `duplicate-justification-pragma.mjs`, `stale-pragma-sweep.mjs`,
+  `sync-untrack.mjs`, `prepush-check.mjs`) — omitted (the default) is
+  byte-identical to prior ambient-inherit behaviour; supplied, it replaces
+  `process.env` for that subprocess. `tests/helpers/fixtures.mjs::gitFixtureEnv()`
+  wired into ~24 test files that exercise these functions against isolated
+  fixture repos, closing the class of test that could corrupt a sibling
+  session's real repo via a leaked `GIT_DIR`/`GIT_WORK_TREE`.
+- `sync-untrack.mjs::untrackNewlyIgnored` rewritten in the same pass: fixed a
+  command-injection vector (shell-string `execSync` → `execFileSync` with an
+  args array), added stderr breadcrumbs on previously-silent failure paths,
+  then (Gemini round-1 catch) batched the per-file `git rm --cached` loop
+  into chunked calls (200/chunk) to stop spawning one subprocess per file.
+- Gemini final review (2 rounds) caught 3 more genuine bugs beyond the GPT
+  loop: `vcs.mjs::gitWorktreeTree()`'s `read-tree HEAD` catch was swallowing
+  every failure (not just "no HEAD yet"), masking exactly the failure mode
+  this plan exists to prevent regressions of — narrowed to the specific git
+  message; `known-defect-corpus.mjs`'s `SAFE_KD_ID_RE.test(kdEntry.id)`
+  string-coerced non-string ids past the identifier-safety guard — added a
+  `typeof` check; two bulk `execFileSync` call sites (`gitBuf`,
+  `sync-untrack.mjs`'s `ls-files -z`) had no `maxBuffer` override, risking a
+  silent `ENOBUFS`-to-empty-fallback on large repos — added the 64MB bound
+  already used elsewhere. One Gemini claim (a `classifyChildError` err.code
+  nesting concern) was independently verified against all 6 call sites and
+  **rebutted** as factually incorrect, not fixed.
+- Every fix — GPT-driven and Gemini-driven alike — landed with a new
+  regression test that was **false-positive-verified**: temporarily broken,
+  confirmed to fail, restored, confirmed to pass again.
+
+### Files Affected
+- 8 production `scripts/lib/**` modules + `scripts/prepush-check.mjs`
+  (the `opts.env` pattern)
+- 1 new module: `scripts/lib/git-env-sanitize.mjs`
+- ~24 test files (fixture env wiring) + 3 new test files
+  (`git-env-sanitize.test.mjs`, `git-env-fixture-isolation.test.mjs`,
+  `vcs-env-override.test.mjs`)
+
+### Decisions Made
+- Additive `opts.env` per-function over a universal git-spawn wrapper —
+  deliberated and rejected as over-engineering across all 3 `/audit-plan`
+  rounds (see the plan's "Out of Scope (Future)" section for the deferred
+  mechanical AST-prevention gate and its concrete follow-up commitment).
+- Static-baseline fallback design (`GIT_LOCAL_ENV_VARS` union, never `[]`)
+  after round-3 `/audit-plan` caught the original fail-open-to-`[]` design
+  as unsafe.
+- ~7 GPT/Gemini findings correctly deferred as independent pre-existing debt
+  (captured in `.audit/tech-debt.json`) after verifying — not asserting —
+  that the cited code paths are genuinely untouched by this diff and
+  orthogonal to git-env isolation (full disposition table in the audit
+  summary doc).
+
+### Next Steps
+- None outstanding for this plan — converged, shipped. Pre-existing
+  `list-unlocked-fixes` backlog (24 HIGH findings across `on-conflict.mjs`,
+  `security-triage.mjs`, `session-id.mjs`, etc.) is unrelated to this ship
+  and untouched.
+
+---
+
 ## 2026-07-23 — core.bare mid-run flip: FIXED (correction to the entry below) + root cause confirmed via research
 
 Follow-up research pass (user asked to compare against best practice and

@@ -25,7 +25,7 @@ import {
   isRetryableVcsError,
   _internals,
 } from '../scripts/lib/vcs.mjs';
-import { gitInitWithEmptyCommit as gitInit } from './helpers/fixtures.mjs';
+import { gitInitWithEmptyCommit as gitInit, gitFixtureEnv } from './helpers/fixtures.mjs';
 
 function mkdtemp() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'vcs-test-'));
@@ -135,7 +135,7 @@ describe('gitCommitSha', () => {
     const dir = mkdtemp();
     try {
       gitInit(dir);
-      const r = gitCommitSha(dir);
+      const r = gitCommitSha(dir, { env: gitFixtureEnv() });
       assert.equal(r.ok, true);
       assert.match(r.sha, /^[0-9a-f]{40}$/);
     } finally {
@@ -145,7 +145,7 @@ describe('gitCommitSha', () => {
   it('returns {ok:false, NOT_A_GIT_REPOSITORY} outside a repo', () => {
     const dir = mkdtemp();
     try {
-      const r = gitCommitSha(dir);
+      const r = gitCommitSha(dir, { env: gitFixtureEnv() });
       assert.equal(r.ok, false);
       assert.equal(r.error.code, 'NOT_A_GIT_REPOSITORY');
     } finally {
@@ -160,7 +160,7 @@ describe('gitDiffWithWorkingTree', () => {
     try {
       gitInit(dir);
       fs.writeFileSync(path.join(dir, 'untracked.txt'), 'hello');
-      const r = gitDiffWithWorkingTree(dir, null);
+      const r = gitDiffWithWorkingTree(dir, null, { env: gitFixtureEnv() });
       assert.equal(r.ok, true);
       assert.ok(Array.isArray(r.files.added));
       assert.ok(Array.isArray(r.files.modified));
@@ -177,13 +177,14 @@ describe('gitDiffWithWorkingTree', () => {
     const dir = mkdtemp();
     try {
       gitInit(dir);
+      const fixtureEnv = gitFixtureEnv();
       fs.writeFileSync(path.join(dir, 'a.txt'), 'content\n');
-      spawnSync('git', ['add', 'a.txt'], { cwd: dir, stdio: 'ignore' });
-      spawnSync('git', ['commit', '-m', 'add a'], { cwd: dir, stdio: 'ignore' });
-      const sha = execSync('git rev-parse HEAD', { cwd: dir }).toString().trim();
-      spawnSync('git', ['mv', 'a.txt', 'b.txt'], { cwd: dir, stdio: 'ignore' });
-      spawnSync('git', ['commit', '-m', 'rename'], { cwd: dir, stdio: 'ignore' });
-      const r = gitDiffWithWorkingTree(dir, sha);
+      spawnSync('git', ['add', 'a.txt'], { cwd: dir, stdio: 'ignore', env: fixtureEnv });
+      spawnSync('git', ['commit', '-m', 'add a'], { cwd: dir, stdio: 'ignore', env: fixtureEnv });
+      const sha = execSync('git rev-parse HEAD', { cwd: dir, env: fixtureEnv }).toString().trim();
+      spawnSync('git', ['mv', 'a.txt', 'b.txt'], { cwd: dir, stdio: 'ignore', env: fixtureEnv });
+      spawnSync('git', ['commit', '-m', 'rename'], { cwd: dir, stdio: 'ignore', env: fixtureEnv });
+      const r = gitDiffWithWorkingTree(dir, sha, { env: fixtureEnv });
       assert.equal(r.ok, true);
       // git may emit either a Rename or Delete+Add depending on heuristics.
       // Both shapes are well-formed; we only care the contract is consistent.
@@ -202,7 +203,7 @@ describe('gitDiffWithWorkingTree', () => {
     const dir = mkdtemp();
     try {
       gitInit(dir);
-      const r = gitDiffWithWorkingTree(dir, '--output=/tmp/evil');
+      const r = gitDiffWithWorkingTree(dir, '--output=/tmp/evil', { env: gitFixtureEnv() });
       assert.equal(r.ok, false);
       assert.equal(r.error.code, 'BAD_REVISION');
     } finally {
@@ -214,7 +215,7 @@ describe('gitDiffWithWorkingTree', () => {
     const dir = mkdtemp();
     try {
       gitInit(dir);
-      const r = gitDiffWithWorkingTree(dir, 'deadbeef99');
+      const r = gitDiffWithWorkingTree(dir, 'deadbeef99', { env: gitFixtureEnv() });
       assert.equal(r.ok, false);
       assert.equal(r.error.code, 'BAD_REVISION');
     } finally {
@@ -225,7 +226,7 @@ describe('gitDiffWithWorkingTree', () => {
   it('returns NOT_A_GIT_REPOSITORY outside a repo', () => {
     const dir = mkdtemp();
     try {
-      const r = gitDiffWithWorkingTree(dir, null);
+      const r = gitDiffWithWorkingTree(dir, null, { env: gitFixtureEnv() });
       assert.equal(r.ok, false);
       assert.equal(r.error.code, 'NOT_A_GIT_REPOSITORY');
     } finally {

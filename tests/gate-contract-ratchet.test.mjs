@@ -25,6 +25,7 @@ import { fileURLToPath } from 'node:url';
 import { computeRatchetDivergences } from '../scripts/lib/gate-honesty/ratchet.mjs';
 import { checkRatchet, BASELINE_FILENAME } from '../scripts/check-gate-contracts.mjs';
 import { GateContractBaselineSchema } from '../scripts/lib/gate-honesty/schema.mjs';
+import { sanitizeGitEnv } from '../scripts/lib/git-env-sanitize.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
@@ -335,14 +336,20 @@ describe('ratchet wiring (non-opt-in)', () => {
 // ── 5. Worktree INTEGRATION: the real binary fails on an uncontracted skill ─
 describe('ratchet integration (real checker binary, isolated worktree)', () => {
   it('an otherwise-valid synthetic skill with no contract and no exemption FAILS the checker', () => {
-    const headSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf-8' }).trim();
+    // Defense-in-depth env strip (2026-07-23 audit): this test intentionally
+    // targets the REAL repo (repoRoot), not a fixture, so it uses the
+    // dynamic hook-boundary sanitizer (sanitizeGitEnv), not the test-fixture
+    // static list — a DIFFERENT leaked GIT_DIR pointing somewhere else
+    // entirely would otherwise still break these calls.
+    const gitEnv = sanitizeGitEnv(repoRoot);
+    const headSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf-8', env: gitEnv }).trim();
     const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'ratchet-wt-'));
     // git worktree add needs an empty/nonexistent path; remove the mkdtemp dir first.
     rmrf(sandbox);
     let added = false;
     try {
       execFileSync('git', ['worktree', 'add', '--detach', '--quiet', sandbox, headSha],
-        { cwd: repoRoot, stdio: 'ignore' });
+        { cwd: repoRoot, stdio: 'ignore', env: gitEnv });
       added = true;
 
       // Overlay the LIVE (possibly-uncommitted) SUT files so the test exercises
@@ -407,9 +414,9 @@ describe('ratchet integration (real checker binary, isolated worktree)', () => {
       assert.equal(run2.status, 0, `baseline exemption must clear it.\n${run2.stdout || ''}${run2.stderr || ''}`);
     } finally {
       if (added) {
-        try { execFileSync('git', ['worktree', 'remove', '--force', sandbox], { cwd: repoRoot, stdio: 'ignore' }); }
+        try { execFileSync('git', ['worktree', 'remove', '--force', sandbox], { cwd: repoRoot, stdio: 'ignore', env: gitEnv }); }
         catch { /* fall through to manual rm + prune */ }
-        try { execFileSync('git', ['worktree', 'prune'], { cwd: repoRoot, stdio: 'ignore' }); } catch { /* noop */ }
+        try { execFileSync('git', ['worktree', 'prune'], { cwd: repoRoot, stdio: 'ignore', env: gitEnv }); } catch { /* noop */ }
       }
       if (fs.existsSync(sandbox)) { try { rmrf(sandbox); } catch { /* locked on win — prune handled it */ } }
     }

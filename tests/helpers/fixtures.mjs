@@ -13,6 +13,44 @@ import os from 'node:os';
 import path from 'node:path';
 import { execSync, spawnSync } from 'node:child_process';
 import { Writable } from 'node:stream';
+import { GIT_LOCAL_ENV_VARS } from '../../scripts/lib/git-env-sanitize.mjs';
+
+export { GIT_LOCAL_ENV_VARS };
+
+/**
+ * A `process.env`-derived environment with every {@link GIT_LOCAL_ENV_VARS}
+ * key stripped — pass as the `env` option to any `git` subprocess spawned
+ * against a fixture repo the caller wants isolated from the ambient process.
+ *
+ * A git command run against a fixture repo with an explicit `cwd` must NOT
+ * inherit these from the ambient process, or git gives them precedence over
+ * `cwd` and silently redirects to whatever repo they point at instead. Root
+ * cause of six live HEAD-corruption incidents (2026-07-23): git's own
+ * hook-invocation machinery exports GIT_DIR/GIT_WORK_TREE into the pre-push
+ * hook's process (documented, githooks(5)); `npm run check` inherited that
+ * env into the sandboxed test run, and every fixture helper below built its
+ * "isolated" repo with a raw `cwd` and no `env` override — so `git
+ * init`/`git commit` ignored `cwd` entirely and landed synthetic commits
+ * ("seed", "init", "add data + readme") on the real repo's real HEAD.
+ *
+ * Uses the STATIC `GIT_LOCAL_ENV_VARS` baseline (imported from
+ * `scripts/lib/git-env-sanitize.mjs`, the one canonical source — a plan
+ * audit round caught the earlier design keeping two independently-maintained
+ * copies as a drift risk), not `git rev-parse --local-env-vars` computed per
+ * call — these fixture helpers run per-test, potentially hundreds of times
+ * in one suite, and spawning a git subprocess just to ask for the var names
+ * before every actual fixture git call is real, avoidable overhead. The
+ * dynamic, version-authoritative form lives at `git-env-sanitize.mjs`'s
+ * `getGitLocalEnvVarNames()`/`sanitizeGitEnv()`, used at the pre-push
+ * hook->sandbox boundary, where it's called once per push, not once per
+ * fixture spawn.
+ * @returns {NodeJS.ProcessEnv}
+ */
+export function gitFixtureEnv() {
+  const env = { ...process.env };
+  for (const name of GIT_LOCAL_ENV_VARS) delete env[name];
+  return env;
+}
 
 /**
  * Write a `{relPath: content}` tree under `baseDir`. Parameterized (not
@@ -48,7 +86,7 @@ export function writeTree(baseDir, files) {
 export function makeGitRunner(getCwd) {
   return (args, cwd) => {
     const resolvedCwd = cwd ?? getCwd();
-    const r = spawnSync('git', args, { cwd: resolvedCwd, encoding: 'utf-8' });
+    const r = spawnSync('git', args, { cwd: resolvedCwd, encoding: 'utf-8', env: gitFixtureEnv() });
     assert.equal(r.status, 0, `git ${args.join(' ')} failed: ${r.stderr}`);
     return r.stdout;
   };
@@ -61,10 +99,11 @@ export function makeGitRunner(getCwd) {
  * @param {string} dir
  */
 export function gitInit(dir) {
-  spawnSync('git', ['init', '-q'], { cwd: dir, stdio: 'ignore' });
-  spawnSync('git', ['config', 'user.email', 'test@example.com'], { cwd: dir, stdio: 'ignore' });
-  spawnSync('git', ['config', 'user.name', 'Test'], { cwd: dir, stdio: 'ignore' });
-  spawnSync('git', ['config', 'commit.gpgsign', 'false'], { cwd: dir, stdio: 'ignore' });
+  const env = gitFixtureEnv();
+  spawnSync('git', ['init', '-q'], { cwd: dir, stdio: 'ignore', env });
+  spawnSync('git', ['config', 'user.email', 'test@example.com'], { cwd: dir, stdio: 'ignore', env });
+  spawnSync('git', ['config', 'user.name', 'Test'], { cwd: dir, stdio: 'ignore', env });
+  spawnSync('git', ['config', 'commit.gpgsign', 'false'], { cwd: dir, stdio: 'ignore', env });
 }
 
 /**
@@ -78,7 +117,7 @@ export function gitInit(dir) {
  */
 export function gitInitWithEmptyCommit(dir) {
   gitInit(dir);
-  spawnSync('git', ['commit', '--allow-empty', '-m', 'init'], { cwd: dir, stdio: 'ignore' });
+  spawnSync('git', ['commit', '--allow-empty', '-m', 'init'], { cwd: dir, stdio: 'ignore', env: gitFixtureEnv() });
 }
 
 /**
@@ -90,10 +129,11 @@ export function gitInitWithEmptyCommit(dir) {
  * @returns {string} the new commit's full SHA
  */
 export function commit(dir, filePath, content, message) {
+  const env = gitFixtureEnv();
   fs.writeFileSync(path.join(dir, filePath), content);
-  spawnSync('git', ['add', filePath], { cwd: dir, stdio: 'ignore' });
-  spawnSync('git', ['commit', '-m', message], { cwd: dir, stdio: 'ignore' });
-  return execSync('git rev-parse HEAD', { cwd: dir }).toString().trim();
+  spawnSync('git', ['add', filePath], { cwd: dir, stdio: 'ignore', env });
+  spawnSync('git', ['commit', '-m', message], { cwd: dir, stdio: 'ignore', env });
+  return execSync('git rev-parse HEAD', { cwd: dir, env }).toString().trim();
 }
 
 /**
