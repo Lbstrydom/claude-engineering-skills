@@ -48,6 +48,20 @@ describe('the hooks are tracked and auto-wired', () => {
     const body = fs.readFileSync(path.join(REPO, '.githooks', 'pre-push'), 'utf-8');
     assert.match(body, /npm run check/, 'the pre-push hook must invoke the check chain');
   });
+
+  it('pre-push self-heals a corrupted core.bare BEFORE resolving REPO_ROOT (2026-07-23 incident)', () => {
+    // A concurrent session sharing .git/config was observed flipping
+    // core.bare to true mid-session, which makes `git rev-parse
+    // --show-toplevel` fail and silently empties REPO_ROOT — skipping every
+    // downstream check without printing an error. The self-heal must run
+    // strictly before that line, or it can't prevent the silent-skip.
+    const body = fs.readFileSync(path.join(REPO, '.githooks', 'pre-push'), 'utf-8');
+    const healIdx = body.indexOf('git config core.bare false');
+    const rootIdx = body.indexOf('REPO_ROOT="$(git rev-parse --show-toplevel');
+    assert.ok(healIdx !== -1, 'pre-push must contain the core.bare self-heal');
+    assert.ok(rootIdx !== -1, 'pre-push must still resolve REPO_ROOT via git rev-parse');
+    assert.ok(healIdx < rootIdx, 'the self-heal must run BEFORE REPO_ROOT resolution, not after');
+  });
 });
 
 describe('a tracked hook must be able to RUN on a POSIX clone', () => {

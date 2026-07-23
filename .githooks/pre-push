@@ -1,6 +1,8 @@
 #!/bin/bash
 # Pre-push hook for claude-engineering-skills.
 #
+# -1. SELF-HEAL — corrects core.bare if a concurrent session left it wrongly
+#     true (see §-1 below for the incident this traces to).
 # 0. RANGE  — reads git's stdin ONCE and derives the commit range being pushed.
 # 1. CHECKS — runs `npm run check` against a CLEAN CHECKOUT of the pushed
 #    commit (a throwaway git worktree), NOT the working tree. BLOCKS on
@@ -25,6 +27,38 @@
 # `npm run check` is this repo's only gate — no workflow runs it on push or PR
 # (npm test runs solely in release.yml, on a version tag) — so an uninstallable
 # hook meant an unenforced repo. Edit here, never in .git/hooks/.
+
+# ── -1. Self-heal a corrupted core.bare (2026-07-23 incident) ────────────
+# Traced live: `core.bare` was repeatedly found flipped to `true` on this
+# checkout with no corresponding commit — root-caused to ACTIVITY IN A
+# CONCURRENT SESSION sharing the same .git/config (15+ claude.exe processes
+# were confirmed running simultaneously at the time; nothing in this repo's
+# own tooling ever sets core.bare — grepped clean, scripts/**/*.mjs has zero
+# hits). When bare, every git operation that needs a working tree fails with
+# "fatal: this operation must be run in a work tree" — including the
+# `git rev-parse --show-toplevel` two lines below, which would otherwise
+# silently resolve REPO_ROOT to empty and skip every check in this hook
+# WITHOUT printing an error (a worse failure than the loud one this causes
+# downstream). Detect + correct it here, first, before anything depends on a
+# working tree existing.
+#
+# Safety: only correct bare=true when a real checked-out tree is actually
+# here (package.json at cwd — hooks run with cwd at the worktree root, and a
+# plain `[ -f ]` filesystem check doesn't care about git's bare/non-bare
+# interpretation, so this reads correctly even while core.bare is wrong). A
+# genuinely bare repo has no checked-out files at all, so this can never
+# misfire on one.
+#
+# Known limit: this only catches the flag being wrong AT HOOK START. It was
+# also observed flipping again mid-run, partway through the ~30s sandboxed
+# `npm run check` (a different, harder problem — guarding every downstream
+# git call individually against a concurrent external writer is out of scope
+# here; retry after a `git push --no-verify` / manual `git config core.bare
+# false` if that happens).
+if [ -f "package.json" ] && [ "$(git config --get core.bare 2>/dev/null)" = "true" ]; then
+  echo "⚠ core.bare was incorrectly true (see .githooks/pre-push §-1) — corrected to false." >&2
+  git config core.bare false
+fi
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
 ZERO_SHA="0000000000000000000000000000000000000000"

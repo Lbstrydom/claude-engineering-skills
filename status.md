@@ -1,5 +1,39 @@
 # Project Status Log
 
+## 2026-07-23 — core.bare self-heal in .githooks/pre-push (root-cause investigation)
+
+Shipping item 2's fix (above) kept getting blocked: `core.bare` on the shared
+main checkout (`C:/GIT/claude-engineering-skills`) was repeatedly found
+flipped to `true` — 4 occurrences in one session, tightly correlated with
+push timing, breaking every git operation ("fatal: this operation must be
+run in a work tree") in both that checkout and this worktree (they share
+`.git/config`). One occurrence also spawned a local-only "init" commit that
+briefly replaced `package.json` with a garbage 1-line stub and added a
+`seed.sql` — caught by the sandbox's `npm ci` before it could reach
+`origin/main`; cleaned up with a plain, non-hard `git reset`.
+
+Root-caused as far as is possible from this session: confirmed nothing in
+this repo's own scripts ever touches `core.bare` (grepped clean), and
+`tasklist` showed 15+ concurrent `claude.exe` processes on the machine (one
+running ~2 hours) — i.e. genuine concurrent-session activity sharing the
+checkout, not a bug in claude-engineering-skills. The true cause (what
+another session's process is specifically doing) is outside this session's
+visibility and control.
+
+Since the actual root cause can't be fixed from here, hardened what's
+actually within reach: `.githooks/pre-push` now self-heals `core.bare` back
+to `false` at hook start (before `REPO_ROOT` resolution — a bare-flag left
+uncorrected there would silently empty `REPO_ROOT` and skip every check
+with no error, a worse failure than the loud one it currently causes).
+Guarded by `package.json` existing at cwd, so it can never misfire on a
+genuinely bare repo. Verified live: deliberately flipped `core.bare=true`,
+ran the exact snippet, confirmed `git status` recovers immediately.
+Explicitly scoped: this only catches the flag being wrong at hook START, not
+a flip mid-run during the ~30s sandboxed `npm run check` (also observed) —
+guarding every downstream git call against a concurrent external writer is
+out of scope. New structural test in `tests/git-hooks-wiring.test.mjs` pins
+that the heal runs before `REPO_ROOT` resolution, not after.
+
 ## 2026-07-23 — Closed the three follow-up items from the previous session
 
 - **Historical postgres-parity 20-run streak (2026-07-18→07-20)**: confirmed
