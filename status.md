@@ -1,5 +1,48 @@
 # Project Status Log
 
+## 2026-07-23 — core.bare mid-run flip: two env-var fixes tried, both rejected after live testing
+
+Follow-up to the self-heal below, via `/brainstorm` (GPT-5.6 + Gemini 3 Pro,
+independently converged on the same suggestion) to close the gap the
+hook-start self-heal admits it doesn't cover: the flag flipping again
+*during* the ~30s sandboxed `npm run check`, not just at hook start.
+
+Both suggested/attempted fixes were **live-tested end-to-end before
+shipping, and both failed**:
+
+1. **`GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_0`/`GIT_CONFIG_VALUE_0`** (both
+   models' suggestion): confirmed the mechanism works for ordinary config
+   keys (`user.name`), but does NOT work for `core.bare` specifically — it's
+   resolved during git's repository-discovery phase, before the
+   config-layering that env overrides participate in even applies.
+2. **`GIT_WORK_TREE`** (found empirically to actually bypass a corrupted
+   `core.bare`): tried two ways —
+   - Exported globally for the whole hook: verified live that an inherited
+     `GIT_WORK_TREE` overrides `cd`, not the other way round — `cd`ing into
+     a *different* worktree while it's set still operates on the ORIGINAL
+     directory. Would have silently made the sandbox's clean-checkout
+     guarantee fake (tests would run against the dirty working tree, not
+     the pushed commit) — caught before shipping by testing the `git
+     worktree add` + `cd` sequence directly.
+   - Scoped to only the sandboxed `npm run check` spawnSync's own env (so it
+     matches that call's `cwd` exactly): still broke things — several of
+     our OWN tests create their own throwaway git repos as fixtures
+     (`known-defect-corpus.test.mjs`, `drift-stale-pragma.test.mjs`, …) and
+     inherited the same env var, so git refused every one of THEIR calls:
+     `GIT_WORK_TREE … not allowed without specifying GIT_DIR`. Confirmed via
+     a genuine end-to-end test: healthy core.bare at start, corrupted it
+     *while* the sandboxed run was actually in flight (in the background),
+     confirmed the failure, reverted, re-ran clean to confirm 8466/8466
+     tests pass with the revert (0 fail, matching the pre-investigation
+     baseline).
+
+**Conclusion, stated plainly**: no env-var fix survives contact with this
+specific codebase's test suite. The mid-run flip remains a known,
+unmitigated gap — `git push --no-verify` (with a manual `git config
+core.bare false` retry) if it recurs. Documented in both `.githooks/pre-push`
+and `scripts/prepush-check.mjs` so a future session doesn't re-attempt either
+rejected approach without re-deriving why they don't work.
+
 ## 2026-07-23 — core.bare self-heal in .githooks/pre-push (root-cause investigation)
 
 Shipping item 2's fix (above) kept getting blocked: `core.bare` on the shared

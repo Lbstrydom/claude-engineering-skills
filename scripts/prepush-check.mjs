@@ -245,6 +245,21 @@ function main() {
       ARCH_COVERAGE_REQUIRE_ENVELOPE: '1',
       // Marks the run for any check that wants to report its context.
       AUDIT_PREPUSH_SANDBOX_ACTIVE: '1',
+      // NOTE (2026-07-23): a GIT_WORK_TREE=sandbox override was tried here to
+      // immunize this run against a mid-run core.bare flip on the shared
+      // repo's .git/config. Live-tested end-to-end (corrupted core.bare while
+      // this spawnSync was in flight) and REJECTED — it broke tests that
+      // create their OWN throwaway git repos as fixtures (e.g.
+      // known-defect-corpus.test.mjs, drift-stale-pragma.test.mjs):
+      // `fatal: GIT_WORK_TREE (or --work-tree=<directory>) not allowed
+      // without specifying GIT_DIR`. GIT_WORK_TREE is a process-tree-wide env
+      // override, not a per-command one — it applies to every nested `git`
+      // call this process's descendants make, REGARDLESS of their own cwd, so
+      // it can't be scoped narrowly enough for a suite that spawns its own
+      // independent repos. See .githooks/pre-push for the full incident note
+      // and the (also-rejected) GIT_CONFIG_KEY_0 alternative. No env-var fix
+      // was found; the mid-run flip remains a known, unmitigated gap — retry
+      // or `git push --no-verify` if it recurs.
     };
     if (!base) {
       log('  ⚠ no push base supplied — drift gates will infer their range (may under-scope)');
