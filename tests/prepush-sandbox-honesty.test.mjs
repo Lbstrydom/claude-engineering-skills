@@ -67,6 +67,24 @@ describe('the sandbox forbids the silent-skip paths', () => {
     assert.match(runnerSrc, /SIGINT/, 'a killed hook must not leak worktrees');
     assert.match(runnerSrc, /finally\s*\{\s*cleanup\(\);/);
   });
+
+  it('pins a worktree-scoped core.bare=false on the sandbox, right after creating it (2026-07-23)', () => {
+    // Live-tested fix for a concurrent process (another Claude Code session's
+    // own git activity — anthropics/claude-code #34645/#55724 describe the
+    // same .git/config.lock race) flipping core.bare=true on the shared
+    // common config WHILE this sandbox's `npm run check` is running. Must be
+    // `--worktree` scoped (a per-worktree FILE), never a bare env var — an
+    // env var was tried and rejected: it leaks into tests that spawn their
+    // own throwaway git repos (see the incident note in .githooks/pre-push).
+    assert.match(
+      runnerSrc, /config', '--worktree', 'core\.bare', 'false'/,
+      'the sandbox must get its own worktree-scoped core.bare override, not a process-wide env var',
+    );
+    const addIdx = runnerSrc.indexOf("'worktree', 'add'");
+    const pinIdx = runnerSrc.indexOf("'--worktree', 'core.bare'");
+    assert.ok(addIdx !== -1 && pinIdx !== -1 && addIdx < pinIdx,
+      'the worktree-scoped pin must be applied AFTER the sandbox is created, not before');
+  });
 });
 
 describe('the pre-push hook feeds the sandbox a real range', () => {

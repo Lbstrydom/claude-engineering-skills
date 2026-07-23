@@ -60,13 +60,22 @@ if [ -f "package.json" ] && [ "$(git config --get core.bare 2>/dev/null)" = "tru
   git config core.bare false
 fi
 
-# ── Note on the mid-run flip (2026-07-23) — deliberately NOT fixed here ────
+# ── The mid-run flip (2026-07-23) — FIXED, but not by an env var ──────────
 # The self-heal above only catches the flag being wrong AT HOOK START — it
 # was ALSO observed flipping again mid-run, partway through the ~30s
 # sandboxed `npm run check`, which is where the actual damage happens (100+
-# spurious git-related test failures per occurrence). Two env-based overrides
-# were investigated and REJECTED before shipping, both by live testing, not
-# reasoning about git internals:
+# spurious git-related test failures per occurrence). Root cause: a
+# concurrent process sharing this checkout's .git/config — most likely
+# another Claude Code session's own worktree/git activity racing on the same
+# .git/config.lock. This is a NAMED, documented bug class, not a mystery:
+# anthropics/claude-code issues #34645 and #55724 describe the identical
+# mechanism (parallel `Agent(isolation:"worktree")` calls racing on
+# .git/config.lock and .git/index.lock), both closed unfixed. Two concurrent
+# SESSIONS each running their own sandboxed pre-push (this exact mechanism)
+# reproduces the same race without needing the Agent tool at all.
+#
+# Two env-based overrides were investigated and REJECTED, both by live
+# testing, not reasoning about git internals:
 #
 #   - GIT_CONFIG_COUNT/GIT_CONFIG_KEY_0/GIT_CONFIG_VALUE_0 (independently
 #     suggested by GPT-5.6 + Gemini 3 Pro via /brainstorm): does NOT work for
@@ -74,29 +83,28 @@ fi
 #     before config-layering (which env overrides participate in) even
 #     applies. Confirmed the mechanism itself is fine for ordinary keys
 #     (user.name); core.bare is the exception.
-#   - GIT_WORK_TREE, exported globally in THIS hook: works for git's own early
-#     calls here, but is CATASTROPHICALLY WRONG if it leaks into the sandbox —
-#     verified live that an inherited GIT_WORK_TREE overrides `cd`, not the
-#     other way round. `git worktree add` creates a fresh sandbox, `cd`s in,
-#     and NOTHING in that subprocess tree can see the sandbox as anything but
-#     the ORIGINAL directory GIT_WORK_TREE still points at — silently making
-#     the sandbox's whole clean-checkout guarantee fake (`npm run check` would
-#     test the dirty working tree, not the pushed commit).
-#   - GIT_WORK_TREE set ONLY on the sandboxed `npm run check` spawnSync (so it
-#     matches that call's own cwd, avoiding the leak above): still rejected,
-#     live-tested end-to-end (corrupted core.bare while the run was actually
-#     in flight). GIT_WORK_TREE is a process-tree-wide env var, not a
-#     per-command override — several of our OWN tests create their own
-#     throwaway git repos as fixtures (known-defect-corpus.test.mjs,
-#     drift-stale-pragma.test.mjs, …), and they inherit the SAME env var, so
-#     git refused every one of THEIR git calls: "GIT_WORK_TREE … not allowed
-#     without specifying GIT_DIR". There is no cwd-scoped way to set an env
-#     var for only part of one process tree.
+#   - GIT_WORK_TREE (global export, then scoped to just the sandbox's
+#     spawnSync env): DOES bypass a corrupted core.bare, but is a
+#     process-tree-wide override with no per-command scoping — exported
+#     globally it overrides `cd` for every descendant (would have made the
+#     sandbox's clean-checkout guarantee fake); scoped to just the sandbox it
+#     still broke our OWN tests that spawn independent throwaway git repos as
+#     fixtures (they inherit the same env var; git refuses their calls
+#     without a matching GIT_DIR).
 #
-# No env-var fix survived live testing. The mid-run flip remains a known,
-# UNMITIGATED gap — `git push --no-verify` (with a manual `git config
-# core.bare false` retry) if it recurs. Full detail in
-# scripts/prepush-check.mjs, at the spawnSync call this was tried on.
+# What actually works, live-tested end-to-end (corrupted the shared common
+# config WHILE the sandboxed run was in flight; 8466/8466 pass, matching the
+# clean baseline): `git config --worktree core.bare false`, git's PER-WORKTREE
+# config file (requires extensions.worktreeConfig, already enabled on this
+# repo — apparently by the harness itself when provisioning worktrees; see
+# git-worktree(1) "CONFIGURATION FILE"). Unlike an env var, config.worktree is
+# a file scoped to ONE worktree's .git/worktrees/<name>/ — it cannot leak
+# into a nested `git init`'s own unrelated .git directory the way an
+# inherited environment variable can (verified live: a throwaway repo created
+# INSIDE a protected sandbox is completely unaffected by the sandbox's own
+# override). Applied to the sandbox in scripts/prepush-check.mjs right after
+# `git worktree add`, and standing on both this checkout and the linked
+# worktree as a persistent hardening measure.
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
 ZERO_SHA="0000000000000000000000000000000000000000"

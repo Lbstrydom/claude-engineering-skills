@@ -1,5 +1,61 @@
 # Project Status Log
 
+## 2026-07-23 — core.bare mid-run flip: FIXED (correction to the entry below) + root cause confirmed via research
+
+Follow-up research pass (user asked to compare against best practice and
+verify the earlier handling). Two findings that change the record below:
+
+**1. The mid-run flip now has a real fix.** `git config --worktree
+core.bare false` — git's native PER-WORKTREE config file (requires
+`extensions.worktreeConfig`, which turned out to already be enabled on this
+repo — nothing in our own tooling sets it; almost certainly the harness
+itself, when provisioning worktrees for sessions). Unlike the two env-var
+attempts below, this is a FILE scoped to one worktree's
+`.git/worktrees/<name>/`, not a process-tree-wide environment variable, so
+it can't leak into a test's own independent `git init`. Live-tested
+end-to-end exactly like the rejected attempts: corrupted the shared common
+config while the sandboxed `npm run check` was actually in flight —
+**8466/8466 pass**, matching the clean baseline. Verified the isolation
+specifically: a throwaway git repo created *inside* a protected sandbox is
+completely unaffected by the sandbox's own override (no leak, unlike
+`GIT_WORK_TREE`). Applied in `scripts/prepush-check.mjs` (pinned on the
+sandbox right after `git worktree add`) and standing on both this checkout
+and the linked worktree as persistent hardening. New structural test in
+`tests/prepush-sandbox-honesty.test.mjs` pins the fix is present and
+correctly ordered (after worktree creation, before the check run).
+
+**2. Root cause is a named, documented bug — not a mystery.** Researched
+git worktree config-sharing best practices and found `anthropics/claude-code`
+issues **#34645** ("Parallel subagents with worktree isolation fail due to
+git config lock contention") and **#55724** ("parallel agents lose work due
+to git lock contention + auto-cleanup") — both describe the *exact*
+mechanism observed this session: concurrent `git worktree add`/`git commit`
+racing on `.git/config.lock`/`.git/index.lock` when multiple processes share
+one `.git` directory. Both closed **unfixed** ("closed as not planned" /
+"closed as duplicate", no Anthropic root-cause comment). Issue #55724
+measured the failure rate directly: 13 concurrent agents → 8 failed (~62%).
+Two concurrent SESSIONS each running their own sandboxed pre-push (this
+repo's exact mechanism — `git worktree add` for the clean-checkout sandbox)
+reproduces the identical race without needing the `Agent(isolation:
+"worktree")` tool at all. This reframes the whole incident: not an
+unrelated rogue tool, but Claude Code's own infrastructure hitting a known,
+still-open concurrency bug.
+
+**Honest self-assessment, what we got right vs missed** (full comparison in
+the conversation record): got right — never used a destructive git
+operation, live-tested every proposed fix before trusting it (caught two
+genuinely dangerous ones: a global `GIT_WORK_TREE` export that would have
+made the sandbox's clean-checkout guarantee fake, and a scoped one that
+still broke our own throwaway-repo tests), correctly ruled out this repo's
+own code as the source. Missed, until this follow-up — didn't check for the
+NAMED bug's own signature (`.git/config.lock` presence, orphaned
+`worktree-agent-*` branches) early on, which would have pointed at the
+actual mechanism sooner; didn't test git's own native per-worktree config
+isolation (`extensions.worktreeConfig` / `git config --worktree`) even
+though it was raised in the original `/brainstorm` — only reached for the
+process-tree env-var route, which is inherently the wrong tool for isolating
+ONE worktree from a shared filesystem-level config file.
+
 ## 2026-07-23 — core.bare mid-run flip: two env-var fixes tried, both rejected after live testing
 
 Follow-up to the self-heal below, via `/brainstorm` (GPT-5.6 + Gemini 3 Pro,

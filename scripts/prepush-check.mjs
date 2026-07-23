@@ -216,6 +216,30 @@ function main() {
       throw new Error(`could not create sandbox worktree: ${err.stderr?.toString().trim() || err.message}`);
     }
 
+    // Pin a worktree-SCOPED core.bare=false so this sandbox survives a
+    // concurrent external write to the shared repo's common .git/config
+    // (2026-07-23 incident: a concurrent process — most likely another
+    // Claude Code session's own worktree/git activity racing on the same
+    // .git/config.lock, a documented class of bug in anthropics/claude-code
+    // issues #34645 and #55724 — was observed repeatedly flipping
+    // core.bare=true on the shared common config mid-run).
+    //
+    // This works, and is SAFE, in a way the two env-var approaches tried and
+    // rejected earlier were not: `git config --worktree` writes to a file
+    // scoped to THIS worktree (.git/worktrees/<name>/config.worktree), not a
+    // process-tree-wide environment variable — so it cannot leak into tests
+    // that spawn their OWN independent throwaway git repos (verified live:
+    // a nested `git init` inside this sandbox is completely unaffected).
+    // Requires extensions.worktreeConfig (already enabled on this repo,
+    // apparently by the harness itself when provisioning worktrees — without
+    // it, core.bare in the common config already applies to the main
+    // worktree only, per git-worktree(1), so this is a no-op-but-harmless
+    // defensive write either way). Best-effort: a failure here still leaves
+    // the run exactly as unprotected as it always was, never worse.
+    try {
+      execFileSync('git', ['config', '--worktree', 'core.bare', 'false'], { cwd: sandbox, stdio: 'ignore' });
+    } catch { /* best-effort hardening — see comment above */ }
+
     const modules = provisionNodeModules(sandbox, repoRoot);
     const { missing, carried } = provisionArtifacts(sandbox, repoRoot);
     if (missing.length) {
