@@ -1,7 +1,7 @@
 # Plan: Close the GIT_DIR/GIT_WORK_TREE Env-Leak Class (full blast radius)
 
 - **Date**: 2026-07-23
-- **Status**: Implemented
+- **Status**: Complete
 - **Author**: Claude + Louis
 - **Scope**: backend
 
