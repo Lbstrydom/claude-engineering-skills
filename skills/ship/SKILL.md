@@ -102,14 +102,24 @@ node scripts/cross-skill.mjs list-unlocked-fixes
 ```
 
 Returns `{ok, cloud, rows: [...]}`. Count the rows as `missing_spec_count`.
-If > 0:
+`unlocked_fixes` is a generic "HIGH fix, zero `regression_specs` rows in 14
+days" check — it has no UI-relevance filter, so it fires identically for a
+DOM-facing fix and a pure backend/CLI one. `/ux-lock` can only ever cover
+the former (it drives a live URL via Playwright); recommending it
+unconditionally is wrong advice for a backend-only `primary_file` — verified
+2026-07-23: 22/22 accumulated rows in this repo were backend/CLI findings
+that can never get a `/ux-lock` spec, because this repo has no frontend.
+If > 0, judge each row by `primary_file` before suggesting a fix:
 
 ```
 ⚠ REGRESSION LOCK GATE (non-blocking)
-  <n> recent HIGH-severity fix(es) have no /ux-lock spec:
+  <n> recent HIGH-severity fix(es) have no locked regression coverage:
     • <primary_file>: <one-line detail>
   These will silently regress under future refactors.
-  Consider: /ux-lock <commit-hash> for each.
+  UI/DOM-facing fix → /ux-lock <commit-hash>.
+  Backend/CLI/library fix (no live URL to drive) → a regular unit or
+  integration test in tests/ covers the same intent; /ux-lock cannot
+  lock non-UI behavior.
 ```
 
 **Re-running existing regression specs before a push** (optional gate): drive

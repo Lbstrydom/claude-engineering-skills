@@ -1,5 +1,32 @@
 # Project Status Log
 
+## 2026-07-23 — Closed the three follow-up items from the previous session
+
+- **Historical postgres-parity 20-run streak (2026-07-18→07-20)**: confirmed
+  already resolved — `3b143bf` fixed it same window (a migration added
+  `symbol_refresh_coverage`/`bandit_arms` columns without regenerating
+  `expected-schema.json`, breaking the schema-verify step that ran before
+  every other check). 15 consecutive green runs followed, until the
+  unrelated `154fb57` regression already fixed this session. No action
+  needed.
+- **`/ship`'s REGRESSION LOCK GATE unconditionally suggested `/ux-lock`**:
+  this repo has no frontend at all (no `tests/e2e/`, no `.tsx`/`.jsx`, no
+  live URL) — confirmed all 22 accumulated `unlocked_fixes` rows are
+  backend/CLI findings that can never get a `/ux-lock` spec (`/ux-lock`
+  drives a live URL via Playwright; several of these findings, e.g.
+  `persistKeptEmbeddings`, already have real regression tests, just
+  correctly not `/ux-lock` ones). Same class of bug as the security-commit
+  regex fixed last session: a gate recommending action without checking
+  applicability. Fixed the advisory wording in `skills/ship/SKILL.md` to
+  branch on UI-facing vs backend/CLI before prescribing `/ux-lock` vs a
+  regular test — `unlocked_fixes`'s underlying data/counting logic is
+  unchanged (still accurate), only the prescriptive text changed.
+- **The empty "init" commit on `main`**: left alone — removing it needs an
+  interactive rebase + force-push on shared history while another session
+  is actively working on the same branch; the commit itself is inert (zero
+  file changes). Deferred to the user's judgment rather than acted on
+  unilaterally.
+
 ## 2026-07-23 — postgres-parity CI drift root-caused + fixed; security-commit regex false-positive fixed
 
 Follow-up investigation after the previous ship: postgres-parity CI has been
