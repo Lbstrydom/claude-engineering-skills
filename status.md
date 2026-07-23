@@ -36,6 +36,108 @@ New `tests/control-markers.test.mjs` + `splitPendingFindings`/
 `tests/learning-store-exports.test.mjs` bumped 175 → 176. Full suite green
 (8,463 tests; 1 pre-existing unrelated failure confirmed via `git stash`).
 
+## 2026-07-22 — Weekly-routine revival, arch-drift consolidation (38→0), Supabase password rotation, wine-cellar-app stale-projection root-cause fix
+
+Started from "how do our memory/architecture/learning routines look?" and ended
+up touching CI secrets, a live incident, and a cross-repo product bug. Summary
+by thread:
+
+### Weekly maintenance routines were silently dark for ~5 weeks
+`memory-health.yml`, `learning-weekly-review.yml`, `architectural-drift.yml`,
+`migration-drift.yml` were all soft-skipping in CI — `AUDIT_DB_URL` was never
+added as a GH Actions secret after the M4 postgres-parity migration sunset the
+legacy `SUPABASE_AUDIT_*` triplet. Fixed: added the secret, re-verified all
+four workflows produce real signal (memory-health AMBER 1/3 triggers as
+expected — pgvector already prototyped in response; architectural-drift found
+genuine drift; migration-drift clean). Two real bugs found + fixed along the
+way: `context-staleness.mjs` was never added to the consumer sync manifest
+(`scripts/sync-to-repos.mjs`) so it crashed with `MODULE_NOT_FOUND` in
+wine-cellar-app/ai-organiser the first time weekly-maintenance was enabled
+there; `learning-weekly-review.yml` compared the bare repo name against
+`audit_repos.name`'s `owner/repo` slug and silently never matched
+(`{posted:false, reason:'unknown-repo'}`) — fixed the workflow's env
+derivation and `install.mjs`/`setup.mjs` to auto-derive `LEARNING_REPO_NAME`
+via `resolveRepoIdentity()` instead of ever asking/guessing.
+
+### architectural-drift: 26 duplicate-symbol clusters → 0
+Score went 35→38 within hours of the routine coming back online (a genuinely
+new duplicate — `writeTree` copy-pasted into a new test file — proving the
+detector works). Delegated the full consolidation to an agent with the
+complete cluster list pre-derived; extended `scripts/lib/cli-io.mjs`
+(`argOption`/`hasFlag`/`log`, unifying 3 near-identical `argOption`
+implementations after confirming no call site passes a `--`-prefixed value),
+added `scripts/lib/model-eval/cli-shared.mjs` and
+`scripts/lib/install/prompt.mjs`, and a new `tests/helpers/fixtures.mjs` for
+~10 test helpers (kept `gitInit`/`gitInitWithEmptyCommit` as distinct exports
+— genuinely different behavior). Verified independently (not just trusted the
+agent's report): `npm test` 8452/8452, `arch:drift` GREEN 0/20.
+
+### Supabase DB password rotated externally mid-session
+Every `pg`-driver connection started failing with `password authentication
+failed for user "postgres"` — confirmed via the Supabase CLI's
+`db query --linked` (Management API path, bypasses the broken credential)
+that the project/role were otherwise healthy, ruling out a platform incident
+or a credential leak (searched all 3 repos' full git history + every PR/issue
+body for the actual password string — zero hits). Root cause never fully
+identified (neither of us reset it); fixed by resetting via the Supabase
+dashboard and propagating the new password to `~/.audit-loop.env` (via the
+proper `npm run setup:cloud -- --yes` mechanism, not hand-edited) and both
+affected GH secrets (claude-engineering-skills, wine-cellar-app). Verified
+live in a real GH Actions run, not just locally.
+
+### wine-cellar-app: consistency-canary's stale-projection root cause
+Traced GH #59's flagged P1 (`cellar-status-chip.stateV2` stale-projection,
+baseline TTL expired 2026-06-20) to its actual cause: the "Test Cellar 3"
+persona-test fixture's `organise_plan_snapshots` row had sat 29 days old with
+nothing ever triggering a recompute (old `isDivergentStale` only fired when
+live/misplaced counts disagreed; an already-organised, rarely-visited cellar
+never qualified). A parallel session shipped the code fix (`stale-aged`
+24h catch-up branch, PR #168) while I was mid-investigation; found the gap it
+left — the existing `trigger_reason` CHECK constraint only allowed
+`('stale', 'content_divergence')`, so the new branch would have failed at
+runtime — and shipped the migration (161) it needed, applying it to prod
+directly and confirming via the constraint's live definition. Also fixed two
+CI infra bugs hit along the way (unrelated to the actual bug, fixed because
+they blocked verifying it): `refresh-schema-baseline.yml`'s `pg_dump` resolved
+to a stale v16 despite installing v17 via PGDG apt (fixed by pointing `PG_DUMP`
+at the exact versioned binary rather than trusting PATH/update-alternatives).
+Confirmed the fix live: re-ran the canary, the rig now reports the old
+baseline entries as "stale — no finding matched" rather than an active
+finding; removed the two obsolete `.persona-test/baseline.json` entries.
+
+### Incidental: this repo's own `.git/config` got corrupted
+Mid-session, `core.bare` flipped to `true` plus a bogus `test@example.com`
+identity landed in the local (non-global) config — traced to timing
+immediately after a linked worktree (`claude/competent-bohr-e9e98c`) was
+created, almost certainly by one of the other sessions active in this repo
+today. Reflog confirmed no data loss (just a blocked-operations state, not
+destructive); searched this repo's own scripts/tests for anything that sets
+`core.bare` (zero hits, ruling out today's consolidation work as the cause)
+before fixing via targeted `git config --local --unset`/`core.bare false`.
+
+### Housekeeping
+Closed two plans whose `Status:` lines had gone stale despite being fully
+shipped (`gate-contract-expansion.md`, `-inventory.md` — both Draft/In
+Progress on paper, actually Complete per `check-gate-contracts.mjs`).
+
+### Open threads (not done this session)
+- The 267-item learning-weekly-review backlog (2 HIGH already fixed; rest
+  untriaged) — a prompt for a dedicated investigation session exists but
+  hasn't been run yet.
+- `/ship`'s own Step 0.5c/0.5d instructions are stale — both
+  `docs/architecture-map.md` and `dashboard/index.html` were reclassified to
+  gitignored Category-A artifacts on 2026-07-20, but the skill still says to
+  stage them. Caught it live this run (both are correctly `.gitignore`d) and
+  skipped staging rather than force-adding — the skill file itself needs a
+  follow-up edit.
+- wine-cellar-app's `consistency-canary` still has one unrelated, in-progress
+  failure (`recent-drinks-widget.loadState` value-mismatch) — a different
+  parallel session's active work, not touched here.
+- `list-unlocked-fixes` returned 20 HIGH fixes with no `/ux-lock` spec in this
+  repo (mostly pre-existing `scripts/security-triage.mjs`/`triage-router.mjs`
+  findings, none from today) — this repo's CLI-only surface makes `/ux-lock`
+  a poor fit for most of them; flagging rather than actioning.
+
 ## 2026-07-22 — persistKeptEmbeddings: fixed two REOPENED HIGH findings (unverified write success + missing run/tenant scoping)
 
 GH issue #59's learning-weekly-review digest surfaced two REOPENED HIGH
