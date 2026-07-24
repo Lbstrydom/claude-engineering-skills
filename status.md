@@ -1,5 +1,54 @@
 # Project Status Log
 
+## 2026-07-24 — RLS enabled on finding_embeddings + symbol_refresh_coverage (/brainstorm → synthesis → implement)
+
+Follow-up to the same day's Disk IO investigation, which had surfaced but
+not fixed a CRITICAL Supabase advisor finding: RLS disabled on
+`finding_embeddings` and `symbol_refresh_coverage`. Ran `/brainstorm`
+(openai gpt-5.6-terra + gemini-pro-latest, session `1784917778249`, both
+providers given the repo's existing RLS precedent migrations as
+`--with-artifact` context) to get a second opinion before touching a live
+security posture. Unanimous convergence with my own take: enable RLS, zero
+policies, matching the repo's existing pattern on 20+ other tables.
+
+### Changes
+- `supabase/migrations/20260724160000_finding_embeddings_coverage_rls.sql` —
+  `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` on both tables, no policies.
+  Confirmed live via `information_schema.role_table_grants` before writing
+  it that neither table carries an anon/authenticated grant — pure enable,
+  nothing to revoke first.
+- Verified post-apply: both `rls_disabled_in_public` CRITICAL advisor
+  findings gone (now benign `rls_enabled_no_policy` INFO, same class as the
+  20+ precedent tables); `node scripts/check-rls.mjs` reports 54/54 public
+  tables with RLS enabled, 0 without.
+- `tests/fixtures/expected-schema.json` unaffected — regenerated and
+  confirmed byte-identical; the schema-diff generator doesn't track the
+  `rowsecurity` flag, only tables/functions/views/policies/constraints/
+  indexes/triggers/sequences/extensions/grants/owners.
+
+### Decisions Made
+- No `FORCE ROW LEVEL SECURITY` — the owner role already bypasses RLS;
+  forcing it buys no security benefit and adds operational risk.
+- Framed as insurance against a *future* mistake, not just closing today's
+  advisory: RLS-enabled-no-policy converts "nobody's granted anon access
+  yet" into "can't be granted by accident" for any later migration.
+
+### Next Steps (not this session — surfaced, not fixed)
+- The same advisor scan (run to verify this fix) turned up something much
+  bigger: ~20 other tables (`audit_findings`, `audit_runs`, `plans`,
+  `ship_events`, `debt_entries`, etc.) carry a `USING (true) WITH CHECK
+  (true)` "allow all for anon" policy — RLS is nominally on but grants
+  unrestricted anon read/write, functionally equivalent to RLS being off.
+  One `SECURITY DEFINER` function (`memory_health_semantic_cluster`) is
+  also anon/authenticated-executable, looks like it was added after the
+  2026-07-21 hardening migration and missed that sweep. Deliberately not
+  touched this session — need to confirm whether any of those "allow all"
+  policies are load-bearing (something still legitimately uses the anon
+  key) before proposing a fix; asked the user whether to pick this up as a
+  separate thread.
+
+---
+
 ## 2026-07-24 — Supabase Disk IO Budget incident: root cause + fix (symbol_embeddings batching, advisor hardening)
 
 Investigated a Supabase "Disk IO Budget depleting" warning email for the
