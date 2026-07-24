@@ -26,7 +26,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as vcs from '../scripts/lib/vcs.mjs';
 import { filterDiffFiles, formatSkipLog } from '../scripts/lib/sensitive-paths.mjs';
-import { gitInitWithEmptyCommit as gitInit } from './helpers/fixtures.mjs';
+import { gitInitWithEmptyCommit as gitInit, gitFixtureEnv } from './helpers/fixtures.mjs';
 
 const REPO_ROOT = path.resolve(fileURLToPath(import.meta.url), '..', '..');
 const REFRESH_SRC = path.join(REPO_ROOT, 'scripts/symbol-index/refresh.mjs');
@@ -36,15 +36,15 @@ function mkdtemp() {
 }
 
 function gitAddAll(dir) {
-  spawnSync('git', ['add', '-A'], { cwd: dir, stdio: 'ignore' });
+  spawnSync('git', ['add', '-A'], { cwd: dir, stdio: 'ignore', env: gitFixtureEnv() });
 }
 
 function gitCommit(dir, msg) {
-  spawnSync('git', ['commit', '-m', msg], { cwd: dir, stdio: 'ignore' });
+  spawnSync('git', ['commit', '-m', msg], { cwd: dir, stdio: 'ignore', env: gitFixtureEnv() });
 }
 
 function headSha(dir) {
-  return execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir }).toString().trim();
+  return execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, env: gitFixtureEnv() }).toString().trim();
 }
 
 // ── Integration: vcs.gitDiffWithWorkingTree + filterDiffFiles pipeline ───
@@ -60,7 +60,7 @@ describe('refresh pipeline integration — diff filtering on real git tree', () 
       fs.mkdirSync(path.join(dir, 'src'));
       fs.writeFileSync(path.join(dir, 'src', 'foo.ts'), 'export const x = 1;\n');
 
-      const r = vcs.gitDiffWithWorkingTree(dir, baseline);
+      const r = vcs.gitDiffWithWorkingTree(dir, baseline, { env: gitFixtureEnv() });
       assert.equal(r.ok, true);
       const { diff, skipped } = filterDiffFiles(r.files, ['sensitive', 'generatedNoise']);
       const survivors = new Set([...diff.added, ...diff.modified, ...diff.untracked]);
@@ -88,10 +88,10 @@ describe('refresh pipeline integration — diff filtering on real git tree', () 
       gitAddAll(dir);
       gitCommit(dir, 'add foo');
       const baseline = headSha(dir);
-      spawnSync('git', ['mv', 'src/foo.ts', '.env.local'], { cwd: dir, stdio: 'ignore' });
+      spawnSync('git', ['mv', 'src/foo.ts', '.env.local'], { cwd: dir, stdio: 'ignore', env: gitFixtureEnv() });
       gitCommit(dir, 'rename to sensitive');
 
-      const r = vcs.gitDiffWithWorkingTree(dir, baseline);
+      const r = vcs.gitDiffWithWorkingTree(dir, baseline, { env: gitFixtureEnv() });
       assert.equal(r.ok, true);
       const { diff, skipped } = filterDiffFiles(r.files, ['sensitive', 'generatedNoise']);
 
@@ -122,7 +122,7 @@ describe('full-vs-incremental skip parity', () => {
       fs.writeFileSync(path.join(dir, 'src', 'foo.ts'), 'export const x = 1;\n');
 
       // Incremental: refresh.mjs filterDiffFiles route.
-      const incDiff = vcs.gitDiffWithWorkingTree(dir, baseline);
+      const incDiff = vcs.gitDiffWithWorkingTree(dir, baseline, { env: gitFixtureEnv() });
       assert.equal(incDiff.ok, true);
       const inc = filterDiffFiles(incDiff.files, ['sensitive', 'generatedNoise']);
 

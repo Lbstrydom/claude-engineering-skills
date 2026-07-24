@@ -133,11 +133,20 @@ function hasSelfUsageDocblock(repoPath, relPath) {
  *
  * @param {string} repoPath
  * @param {string[]} args
+ * @param {NodeJS.ProcessEnv} [env] - when supplied, REPLACES the inherited
+ *   `process.env` for this subprocess. Omitted (the default) → identical to
+ *   today's full-ambient-inherit behaviour.
  * @returns {Buffer|null} null on non-zero exit
  */
-function gitBuf(repoPath, args) {
+function gitBuf(repoPath, args, env) {
   try {
-    return execFileSync('git', args, { cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'] });
+    // Gemini final-review catch (2026-07-24): no maxBuffer override meant
+    // Node's 1MB default, which a bulk listing (e.g. `ls-tree -r --name-only`)
+    // can exceed on a repo with tens of thousands of files — execFileSync
+    // would throw ENOBUFS, and the catch below silently degrades to null.
+    // Matches the 64MB bound already used at the other bulk git call sites
+    // (known-defect-corpus.mjs, vcs.mjs gitShowFileAtRevision).
+    return execFileSync('git', args, { cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024, ...(env ? { env } : {}) });
   } catch (err) {
     // audit-code R2/H3 — never silent. The caller decides what to do with null
     // (some failures are expected, like missing HEAD~1 on shallow clones), but
@@ -247,10 +256,21 @@ function parseLsTreeZ(buf) {
  * `git worktree prune` to drop dangling metadata. Also called by
  * `npm run audit:clean`.
  *
- * @param {{repoPath: string, tmpDir?: string, maxAgeMs?: number}} args
+ * @param {{repoPath: string, tmpDir?: string, maxAgeMs?: number, env?: NodeJS.ProcessEnv}} args
+ *   `env`, when supplied, REPLACES the inherited `process.env` for every
+ *   `git worktree` subprocess this sweep spawns — the highest-severity call
+ *   site in the 2026-07-23 GIT_DIR-leak audit: without it, a leaked
+ *   `GIT_DIR` during a test exercising this function against a throwaway
+ *   fixture `repoPath` makes `git worktree remove --force`/`prune`/`unlock`
+ *   operate on whatever `GIT_DIR` actually points to — potentially a REAL
+ *   repo's worktree registry, not just the fixture. Omitted (the default)
+ *   → identical to today's production behaviour (this function's real
+ *   production callers, e.g. `npm run audit:clean`, always operate on the
+ *   genuine `repoPath` and want ambient inherit).
  * @returns {{swept: string[], kept: number}}
  */
-export function sweepStaleOrphanPreimages({ repoPath, tmpDir = os.tmpdir(), maxAgeMs = 60 * 60 * 1000 }) {
+export function sweepStaleOrphanPreimages({ repoPath, tmpDir = os.tmpdir(), maxAgeMs = 60 * 60 * 1000, env }) {
+  const gitOpts = env ? { env } : {};
   const swept = [];
   let kept = 0;
   let entries = [];
@@ -263,7 +283,7 @@ export function sweepStaleOrphanPreimages({ repoPath, tmpDir = os.tmpdir(), maxA
     if (!st.isDirectory()) continue;
     if (Date.now() - st.mtimeMs < maxAgeMs) { kept++; continue; } // possibly live — leave it
     try {
-      execFileSync('git', ['worktree', 'remove', '--force', p], { cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'] });
+      execFileSync('git', ['worktree', 'remove', '--force', p], { cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'], ...gitOpts });
     } catch {
       try { fs.rmSync(p, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { continue; } // still held → skip, next sweep retries
     }
@@ -282,7 +302,7 @@ export function sweepStaleOrphanPreimages({ repoPath, tmpDir = os.tmpdir(), maxA
   let porcelain = '';
   try {
     porcelain = execFileSync('git', ['worktree', 'list', '--porcelain'],
-      { cwd: repoPath, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] });
+      { cwd: repoPath, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], ...gitOpts });
   } catch { /* not a git repo / git missing — nothing to reconcile */ }
   for (const block of porcelain.replace(/\r\n/g, '\n').split(/\n{2,}/)) {
     const m = block.match(/^worktree (.+)$/m);
@@ -290,18 +310,19 @@ export function sweepStaleOrphanPreimages({ repoPath, tmpDir = os.tmpdir(), maxA
     const wtPath = m[1].trim();
     if (!path.basename(wtPath).startsWith('orphan-preimage-')) continue;
     if (fs.existsSync(wtPath)) continue; // dir present → handled by the age-gated scan above
-    try { execFileSync('git', ['worktree', 'unlock', wtPath], { cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'] }); } catch { /* not locked / already gone */ }
+    try { execFileSync('git', ['worktree', 'unlock', wtPath], { cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'], ...gitOpts }); } catch { /* not locked / already gone */ }
     swept.push(wtPath);
   }
 
   if (swept.length > 0) {
-    try { execFileSync('git', ['worktree', 'prune'], { cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'] }); } catch { /* best-effort */ }
+    try { execFileSync('git', ['worktree', 'prune'], { cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'], ...gitOpts }); } catch { /* best-effort */ }
     process.stderr.write(`  [orphan] swept ${swept.length} stale preimage worktree(s) from a previously killed run\n`);
   }
   return { swept, kept };
 }
 
-function materialisePreimages(repoPath, baseRef, changedFiles) {
+function materialisePreimages(repoPath, baseRef, changedFiles, env) {
+  const gitOpts = env ? { env } : {};
   const eligible = changedFiles.filter(f =>
     ['M', 'D', 'R'].includes(f.status)
     && f.baseCallerPath
@@ -311,7 +332,7 @@ function materialisePreimages(repoPath, baseRef, changedFiles) {
 
   // Heal any casualties of a previously hard-killed run before creating a new
   // worktree (the `finally` below can't run through SIGKILL).
-  try { sweepStaleOrphanPreimages({ repoPath }); } catch { /* never block the audit */ }
+  try { sweepStaleOrphanPreimages({ repoPath, env }); } catch { /* never block the audit */ }
 
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'orphan-preimage-'));
   // Worktree expects the target directory NOT to exist or to be empty.
@@ -320,11 +341,11 @@ function materialisePreimages(repoPath, baseRef, changedFiles) {
 
   try {
     execFileSync('git', ['worktree', 'add', '--detach', '--quiet', tempRoot, baseRef], {
-      cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'],
+      cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'], ...gitOpts,
     });
   } catch (err) {
     process.stderr.write(`  [orphan] worktree add failed: ${err.message}\n`);
-    cleanupTempRoot(repoPath, tempRoot);
+    cleanupTempRoot(repoPath, tempRoot, env);
     return null;
   }
 
@@ -335,18 +356,18 @@ function materialisePreimages(repoPath, baseRef, changedFiles) {
     .map(f => f.baseCallerPath);
 
   if (materialisedPaths.length === 0) {
-    cleanupTempRoot(repoPath, tempRoot);
+    cleanupTempRoot(repoPath, tempRoot, env);
     return null;
   }
 
   return { tempRoot, materialisedPaths };
 }
 
-function cleanupTempRoot(repoPath, tempRoot) {
+function cleanupTempRoot(repoPath, tempRoot, env) {
   // Remove via git so it cleans up worktree metadata too.
   try {
     execFileSync('git', ['worktree', 'remove', '--force', tempRoot], {
-      cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'],
+      cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'], ...(env ? { env } : {}),
     });
   } catch {
     // Fallback: best-effort fs rm in case the worktree never registered.
@@ -540,9 +561,14 @@ export function computeEntryPoints(repoPath) {
  * @param {string} [args.baseRef]
  * @param {string} [args.headRef]
  * @param {string} [args.diffPatch] - when provided without refs → SKIPPED_PATCH_ONLY_MODE
+ * @param {NodeJS.ProcessEnv} [args.env] - when supplied, REPLACES the
+ *   inherited `process.env` for every git subprocess this resolver spawns
+ *   (including the preimage worktree materialisation, the highest-severity
+ *   call chain in the 2026-07-23 GIT_DIR-leak audit). Omitted (the default)
+ *   → identical to today's full-ambient-inherit production behaviour.
  * @returns {Promise<import('../schemas.mjs').DiffScopeSchema>}
  */
-export async function resolveDiffScope({ repoPath, baseRef, headRef, diffPatch }) {
+export async function resolveDiffScope({ repoPath, baseRef, headRef, diffPatch, env }) {
   // Patch-only mode (R2/M1): phase 1 does not support pre-edge extraction from a patch alone.
   if (diffPatch && (!baseRef || !headRef)) {
     return {
@@ -555,7 +581,7 @@ export async function resolveDiffScope({ repoPath, baseRef, headRef, diffPatch }
   // Resolve base/head refs to commit SHAs (or working-tree sentinels).
   const resolvedBase = baseRef || 'HEAD';
   const resolvedHead = headRef || null; // null = working tree
-  const refOk = gitBuf(repoPath, ['rev-parse', '--verify', resolvedBase]);
+  const refOk = gitBuf(repoPath, ['rev-parse', '--verify', resolvedBase], env);
   if (!refOk) {
     process.stderr.write(`  [orphan] SKIPPED_NO_BASELINE — cannot resolve ${resolvedBase} (shallow clone? initial commit? run \`git fetch --deepen=1\`)\n`);
     return {
@@ -571,16 +597,16 @@ export async function resolveDiffScope({ repoPath, baseRef, headRef, diffPatch }
   let changedFiles;
   let parsePartial = false;
   if (resolvedHead) {
-    const buf = gitBuf(repoPath, ['diff', '--name-status', '-z', `${resolvedBase}..${resolvedHead}`]);
+    const buf = gitBuf(repoPath, ['diff', '--name-status', '-z', `${resolvedBase}..${resolvedHead}`], env);
     const parsed = parseNameStatusZ(buf);
     changedFiles = parsed.records;
     parsePartial = parsed.partial;
   } else {
     // Working-tree mode (Gemini-R3/H3): union tracked-modifications + untracked.
-    const trackedBuf = gitBuf(repoPath, ['diff', '--name-status', '-z', 'HEAD']);
+    const trackedBuf = gitBuf(repoPath, ['diff', '--name-status', '-z', 'HEAD'], env);
     const trackedParsed = parseNameStatusZ(trackedBuf);
     parsePartial = trackedParsed.partial;
-    const untrackedBuf = gitBuf(repoPath, ['ls-files', '--others', '--exclude-standard', '-z']);
+    const untrackedBuf = gitBuf(repoPath, ['ls-files', '--others', '--exclude-standard', '-z'], env);
     const untracked = untrackedBuf
       ? untrackedBuf.toString('utf-8').split('\0').filter(Boolean).map(p => ({
           status: 'A', baseCallerPath: null, headCallerPath: p,
@@ -599,7 +625,7 @@ export async function resolveDiffScope({ repoPath, baseRef, headRef, diffPatch }
 
   // Build targetExistedAtBase from a single `git ls-tree` (Gemini-R2/M1 — avoid N+1 spawns).
   const cmp = (a, b) => a.localeCompare(b);
-  const baseManifestBuf = gitBuf(repoPath, ['ls-tree', '-r', '-z', '--name-only', resolvedBase]);
+  const baseManifestBuf = gitBuf(repoPath, ['ls-tree', '-r', '-z', '--name-only', resolvedBase], env);
   const targetExistedAtBase = Array.from(parseLsTreeZ(baseManifestBuf)).sort(cmp);
 
   // Pre-edge extraction (AST via dep-cruiser on a temp materialisation).
@@ -609,7 +635,7 @@ export async function resolveDiffScope({ repoPath, baseRef, headRef, diffPatch }
   // Safe here because the orphan pass runs serially in Wave 1.5b (no parallel
   // cruise calls). Tested across in-repo and out-of-repo cwds.
   let preEdgesByBaseCaller = {};
-  const materialised = materialisePreimages(repoPath, resolvedBase, changedFiles);
+  const materialised = materialisePreimages(repoPath, resolvedBase, changedFiles, env);
   if (materialised) {
     const savedCwd = process.cwd();
     let cwdChanged = false;
@@ -623,7 +649,7 @@ export async function resolveDiffScope({ repoPath, baseRef, headRef, diffPatch }
       if (cwdChanged) {
         try { process.chdir(savedCwd); } catch { /* best-effort restore */ }
       }
-      cleanupTempRoot(repoPath, materialised.tempRoot);
+      cleanupTempRoot(repoPath, materialised.tempRoot, env);
     }
   }
 

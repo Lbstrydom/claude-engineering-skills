@@ -46,11 +46,18 @@ import { findRepoPragmas } from '../duplicate-justification-pragma.mjs';
  * never throws.
  *
  * @param {string} repoRoot
+ * @param {{strict?: boolean, env?: NodeJS.ProcessEnv}} [opts] - forwarded
+ *   verbatim to `findRepoPragmas` (2026-07-23 Gemini final-gate fix — this
+ *   function spawns no git subprocess directly, but as a transparent
+ *   wrapper around one that does, it needs to forward an `env` override or
+ *   a caller exercising it against an isolated test fixture has no path to
+ *   supply one; the isolation would be silently lost at this wrapper
+ *   boundary even after `findRepoPragmas` itself accepted `opts.env`).
  * @returns {{file: string, line: number, targetFile: string}[]}
  */
-export function findStalePragmas(repoRoot) {
+export function findStalePragmas(repoRoot, opts = {}) {
   const stale = [];
-  for (const { pragmaFile, pragmaLine, targetFile } of findRepoPragmas(repoRoot)) {
+  for (const { pragmaFile, pragmaLine, targetFile } of findRepoPragmas(repoRoot, opts)) {
     if (!fs.existsSync(path.join(repoRoot, targetFile))) {
       stale.push({ file: pragmaFile, line: pragmaLine, targetFile });
     }

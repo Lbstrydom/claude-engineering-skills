@@ -22,6 +22,7 @@ import { execSync } from 'node:child_process';
 import { buildGateEvidence, writeGateEvidence } from '../scripts/lib/audit/gate-evidence.mjs';
 import { resolveEvidence, evaluateGateVerification, TREE_ID_RE } from '../scripts/lib/commit-trailers.mjs';
 import { gitWorktreeTree, gitIndexTree } from '../scripts/lib/vcs.mjs';
+import { gitFixtureEnv } from './helpers/fixtures.mjs';
 
 const TREE_A = 'a'.repeat(40);
 const TREE_B = 'b'.repeat(40);
@@ -147,7 +148,7 @@ describe('E1 — writeGateEvidence is evidence-less without an identity', () => 
 describe('E1 — gitWorktreeTree hashes the worktree, not the index', () => {
   const mkRepo = () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'e1-repo-'));
-    const g = (cmd) => execSync(`git ${cmd}`, { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] });
+    const g = (cmd) => execSync(`git ${cmd}`, { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'], env: gitFixtureEnv() });
     g('init -q');
     g('config user.email t@t.test');
     g('config user.name Test');
@@ -161,15 +162,15 @@ describe('E1 — gitWorktreeTree hashes the worktree, not the index', () => {
   it('an unstaged edit changes the worktree tree but NOT the index tree', () => {
     const { dir } = mkRepo();
     try {
-      const before = gitWorktreeTree(dir);
+      const before = gitWorktreeTree(dir, { env: gitFixtureEnv() });
       assert.equal(before.ok, true);
 
       // Edit on disk only — do not stage. This is the divergence that makes
       // hashing the index wrong: the audit reads THIS content.
       fs.writeFileSync(path.join(dir, 'a.txt'), 'edited by the author\n');
 
-      const after = gitWorktreeTree(dir);
-      const index = gitIndexTree(dir);
+      const after = gitWorktreeTree(dir, { env: gitFixtureEnv() });
+      const index = gitIndexTree(dir, { env: gitFixtureEnv() });
       assert.equal(after.ok, true);
       assert.notEqual(after.tree, before.tree, 'worktree hash must track on-disk content');
       assert.equal(index.tree, before.tree, 'index hash must NOT see the unstaged edit');
@@ -183,9 +184,9 @@ describe('E1 — gitWorktreeTree hashes the worktree, not the index', () => {
     try {
       fs.writeFileSync(path.join(dir, 'b.txt'), 'staged\n');
       g('add b.txt');
-      const stagedBefore = execSync('git diff --cached --name-only', { cwd: dir }).toString().trim();
-      gitWorktreeTree(dir);
-      const stagedAfter = execSync('git diff --cached --name-only', { cwd: dir }).toString().trim();
+      const stagedBefore = execSync('git diff --cached --name-only', { cwd: dir, env: gitFixtureEnv() }).toString().trim();
+      gitWorktreeTree(dir, { env: gitFixtureEnv() });
+      const stagedAfter = execSync('git diff --cached --name-only', { cwd: dir, env: gitFixtureEnv() }).toString().trim();
       assert.equal(stagedAfter, stagedBefore, 'the throwaway index must not leak into the repo');
       assert.equal(stagedAfter, 'b.txt');
     } finally {
@@ -196,16 +197,16 @@ describe('E1 — gitWorktreeTree hashes the worktree, not the index', () => {
   it('untracked files count, ignored files do not', () => {
     const { dir } = mkRepo();
     try {
-      const base = gitWorktreeTree(dir).tree;
+      const base = gitWorktreeTree(dir, { env: gitFixtureEnv() }).tree;
       fs.writeFileSync(path.join(dir, '.gitignore'), 'ignored.txt\n');
-      const withIgnoreFile = gitWorktreeTree(dir).tree;
+      const withIgnoreFile = gitWorktreeTree(dir, { env: gitFixtureEnv() }).tree;
       assert.notEqual(withIgnoreFile, base, '.gitignore is itself tracked content');
 
       fs.writeFileSync(path.join(dir, 'ignored.txt'), 'noise\n');
-      assert.equal(gitWorktreeTree(dir).tree, withIgnoreFile, 'ignored paths must not move the hash');
+      assert.equal(gitWorktreeTree(dir, { env: gitFixtureEnv() }).tree, withIgnoreFile, 'ignored paths must not move the hash');
 
       fs.writeFileSync(path.join(dir, 'new.txt'), 'untracked but real\n');
-      assert.notEqual(gitWorktreeTree(dir).tree, withIgnoreFile, 'untracked source IS audited content');
+      assert.notEqual(gitWorktreeTree(dir, { env: gitFixtureEnv() }).tree, withIgnoreFile, 'untracked source IS audited content');
     } finally {
       fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
@@ -214,9 +215,56 @@ describe('E1 — gitWorktreeTree hashes the worktree, not the index', () => {
   it('returns a structured error rather than throwing outside a repo', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'e1-norepo-'));
     try {
-      const res = gitWorktreeTree(dir);
+      const res = gitWorktreeTree(dir, { env: gitFixtureEnv() });
       assert.equal(res.ok, false);
       assert.ok(res.error?.code, 'must carry a VcsErrorCode so the caller can go evidence-less deliberately');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+
+  // Gemini final-review catch (2026-07-24): `read-tree HEAD`'s internal catch
+  // used to swallow EVERY failure as "no HEAD yet". A genuinely unborn repo
+  // must still succeed (no regression)...
+  it('still succeeds on a genuinely unborn repo (no commits yet)', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'e1-unborn-'));
+    try {
+      const g = (cmd) => execSync(`git ${cmd}`, { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'], env: gitFixtureEnv() });
+      g('init -q');
+      fs.writeFileSync(path.join(dir, 'a.txt'), 'untracked, pre-first-commit\n');
+      const res = gitWorktreeTree(dir, { env: gitFixtureEnv() });
+      assert.equal(res.ok, true, 'an unborn HEAD is the one case this catch must still absorb');
+      assert.match(res.tree, /^[0-9a-f]{40}$/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+
+  // ...but a `read-tree HEAD` failure for any OTHER reason (a corrupted commit
+  // object here standing in for a misdirected/broken GIT_DIR — this fn feeds
+  // the `AI-Gate: passed` identity hash, so masking it would be a false-pass
+  // hole, not a cosmetic one) must now surface as a structured error instead
+  // of silently returning `ok:true` with a hash that dropped the corruption.
+  it('surfaces (does not swallow) a read-tree failure that is NOT "no HEAD yet"', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'e1-corrupt-head-'));
+    try {
+      const g = (cmd) => execSync(`git ${cmd}`, { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'], env: gitFixtureEnv() });
+      g('init -q');
+      g('config user.email t@t.test');
+      g('config user.name Test');
+      g('config commit.gpgsign false');
+      fs.writeFileSync(path.join(dir, 'a.txt'), 'hello\n');
+      g('add -A');
+      g('commit -q -m initial');
+      const sha = execSync('git rev-parse HEAD', { cwd: dir, env: gitFixtureEnv() }).toString().trim();
+      // Delete the commit object HEAD points to — HEAD still resolves to a
+      // name, but the object it names is gone, which is a categorically
+      // different failure from "HEAD doesn't resolve to anything yet".
+      fs.rmSync(path.join(dir, '.git', 'objects', sha.slice(0, 2), sha.slice(2)), { recursive: true, maxRetries: 3, retryDelay: 50 });
+
+      const res = gitWorktreeTree(dir, { env: gitFixtureEnv() });
+      assert.equal(res.ok, false, 'a corrupted HEAD object must not be treated as "unborn repo, empty index is fine"');
+      assert.ok(res.error?.code, 'must carry a VcsErrorCode');
     } finally {
       fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }

@@ -13,7 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { makeGitRunner } from './helpers/fixtures.mjs';
+import { makeGitRunner, gitFixtureEnv } from './helpers/fixtures.mjs';
 import { makeRunCli } from './helpers/run-cli.mjs';
 
 const CLI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../scripts/ship-commit.mjs');
@@ -25,14 +25,20 @@ const git = makeGitRunner(() => repo);
 // ~/.audit-loop.env (shared cloud config) can't inject a real AUDIT_DB_URL,
 // and blank the var itself — gate-verdict verification must never hit a
 // live store from tests (it degrades to "verification unavailable").
+//
+// Base is gitFixtureEnv() (2026-07-23 audit fix), NOT raw process.env: this
+// spawns scripts/ship-commit.mjs as a REAL subprocess that internally makes
+// git commits against `repo` — the exact scenario the rest of this plan
+// closes for in-process calls, which a raw process.env spread here would
+// have silently reopened for this one out-of-process call.
 const runCli = makeRunCli(CLI, {
   cwd: () => repo,
   command: process.execPath,
-  buildEnv: (cwd) => ({ ...process.env, AUDIT_DB_URL: '', HOME: cwd, USERPROFILE: cwd }),
+  buildEnv: (cwd) => ({ ...gitFixtureEnv(), AUDIT_DB_URL: '', HOME: cwd, USERPROFILE: cwd }),
 });
 
 function commitCount() {
-  const r = spawnSync('git', ['rev-list', '--count', 'HEAD'], { cwd: repo, encoding: 'utf-8' });
+  const r = spawnSync('git', ['rev-list', '--count', 'HEAD'], { cwd: repo, encoding: 'utf-8', env: gitFixtureEnv() });
   return r.status === 0 ? Number(r.stdout.trim()) : 0;
 }
 
@@ -77,7 +83,7 @@ describe('ship-commit CLI — §F1.4 taxonomy', () => {
     assert.match(body, /AI-Gate: not-run/);
     assert.match(body, /# markdown header must survive/, '--cleanup=whitespace preserves #-lines (Gemini R2-G2)');
     // parse-back through git's own trailer parser
-    const parsed = spawnSync('git', ['interpret-trailers', '--parse'], { cwd: repo, input: body, encoding: 'utf-8' });
+    const parsed = spawnSync('git', ['interpret-trailers', '--parse'], { cwd: repo, input: body, encoding: 'utf-8', env: gitFixtureEnv() });
     assert.match(parsed.stdout, /AI-Skill: ship/);
     assert.match(parsed.stdout, /AI-Gate: not-run/);
   });
@@ -262,7 +268,7 @@ describe('ship-commit CLI — §F1.4 taxonomy', () => {
 
   it('skill-enum layout (R3 M2): a git repo with neither skills/ nor .claude/skills/ → exit 1, named error', () => {
     const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'ship-noskills-'));
-    const g = (args) => spawnSync('git', args, { cwd: bare, encoding: 'utf-8' });
+    const g = (args) => spawnSync('git', args, { cwd: bare, encoding: 'utf-8', env: gitFixtureEnv() });
     g(['init', '-q', '-b', 'main']);
     g(['config', 'user.email', 't@e.c']);
     g(['config', 'user.name', 'T']);
@@ -289,7 +295,7 @@ describe('ship-commit CLI — §F1.4 taxonomy', () => {
 
   it('unborn HEAD (Gemini R2-G1): first commit of a fresh repo works; evidence reads fresh', () => {
     const fresh = fs.mkdtempSync(path.join(os.tmpdir(), 'ship-fresh-'));
-    const g = (args) => spawnSync('git', args, { cwd: fresh, encoding: 'utf-8' });
+    const g = (args) => spawnSync('git', args, { cwd: fresh, encoding: 'utf-8', env: gitFixtureEnv() });
     g(['init', '-q', '-b', 'main']);
     g(['config', 'user.email', 't@e.c']);
     g(['config', 'user.name', 'T']);

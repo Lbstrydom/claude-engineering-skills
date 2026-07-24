@@ -105,6 +105,21 @@ fi
 # override). Applied to the sandbox in scripts/prepush-check.mjs right after
 # `git worktree add`, and standing on both this checkout and the linked
 # worktree as a persistent hardening measure.
+#
+# A SIBLING symptom of the same root cause (2026-07-23, same investigation):
+# not every collision is a corrupted VALUE — some are a transient LOCK held
+# by the peer session for a few hundred ms (git aborts immediately with
+# "could not lock config file: File exists" / "Unable to create
+# '.../index.lock'"). Retrying doesn't help a corrupted value (the bad value
+# is durably on disk until something resets it — the worktree-scoped pin
+# above is the fix for that), but it's the standard, correct mitigation for a
+# lock that's about to be released. scripts/prepush-check.mjs now wraps
+# `git worktree add/remove/prune` — the calls in this hook's own sandbox that
+# touch the shared .git/config and .git/worktrees/ metadata — in
+# exponential-backoff retry (200/400/800ms, `withGitLockRetry`), matching
+# git's own documented advice for its advisory locks. This does not need
+# duplicating here: the hook only ever calls into prepush-check.mjs for the
+# worktree lifecycle, never `git worktree` directly.
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
 ZERO_SHA="0000000000000000000000000000000000000000"

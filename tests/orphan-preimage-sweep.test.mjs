@@ -17,8 +17,9 @@ import { execFileSync } from 'node:child_process';
 
 import { sweepStaleOrphanPreimages } from '../scripts/lib/audit/diff-scope-resolver.mjs';
 import { retrySync } from '../scripts/lib/retry-transient-fs.mjs';
+import { gitFixtureEnv } from './helpers/fixtures.mjs';
 
-const git = (cwd, ...args) => execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+const git = (cwd, ...args) => execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: gitFixtureEnv() });
 
 let repo;      // a real throwaway git repo (worktree source)
 let tmpHome;   // stand-in for os.tmpdir() so the sweep never touches the real one
@@ -53,7 +54,7 @@ describe('sweepStaleOrphanPreimages', () => {
     git(repo, 'worktree', 'add', '--detach', '--quiet', fresh, 'HEAD');
     backdate(stale, 2); // > 1h default gate
 
-    const r = sweepStaleOrphanPreimages({ repoPath: repo, tmpDir: tmpHome });
+    const r = sweepStaleOrphanPreimages({ repoPath: repo, env: gitFixtureEnv(), tmpDir: tmpHome });
 
     assert.deepEqual(r.swept, [stale]);
     assert.equal(r.kept, 1, 'the fresh (possibly live) worktree is left alone');
@@ -72,7 +73,7 @@ describe('sweepStaleOrphanPreimages', () => {
     fs.writeFileSync(path.join(rogue, 'AGENTS.md'), '# sentinel bait'); // the poisoning shape
     backdate(rogue, 2);
 
-    const r = sweepStaleOrphanPreimages({ repoPath: repo, tmpDir: tmpHome });
+    const r = sweepStaleOrphanPreimages({ repoPath: repo, env: gitFixtureEnv(), tmpDir: tmpHome });
 
     assert.ok(r.swept.includes(rogue));
     assert.equal(fs.existsSync(rogue), false);
@@ -86,12 +87,12 @@ describe('sweepStaleOrphanPreimages', () => {
     fs.writeFileSync(asFile, 'x');
     backdate(asFile, 5);
 
-    const r = sweepStaleOrphanPreimages({ repoPath: repo, tmpDir: tmpHome });
+    const r = sweepStaleOrphanPreimages({ repoPath: repo, env: gitFixtureEnv(), tmpDir: tmpHome });
     assert.deepEqual(r.swept, []);
     assert.equal(fs.existsSync(other), true);
     assert.equal(fs.existsSync(asFile), true);
 
-    assert.doesNotThrow(() => sweepStaleOrphanPreimages({ repoPath: repo, tmpDir: path.join(tmpHome, 'nope') }));
+    assert.doesNotThrow(() => sweepStaleOrphanPreimages({ repoPath: repo, env: gitFixtureEnv(), tmpDir: path.join(tmpHome, 'nope') }));
     retrySync(() => fs.rmSync(asFile, { force: true }));
     fs.rmSync(other, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
@@ -112,7 +113,7 @@ describe('sweepStaleOrphanPreimages', () => {
     assert.match(git(repo, 'worktree', 'list').toString(), /orphan-preimage-dangling1/,
       'plain prune leaves the locked dangling registration — the bug');
 
-    const r = sweepStaleOrphanPreimages({ repoPath: repo, tmpDir: tmpHome });
+    const r = sweepStaleOrphanPreimages({ repoPath: repo, env: gitFixtureEnv(), tmpDir: tmpHome });
 
     // path format from `git worktree list --porcelain` is git-normalised
     // (forward slashes), so assert on outcome + a nonzero count rather than an
@@ -129,7 +130,7 @@ describe('sweepStaleOrphanPreimages', () => {
     git(repo, 'worktree', 'lock', '--reason', 'busy', other);
     fs.rmSync(other, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 
-    const r = sweepStaleOrphanPreimages({ repoPath: repo, tmpDir: tmpHome });
+    const r = sweepStaleOrphanPreimages({ repoPath: repo, env: gitFixtureEnv(), tmpDir: tmpHome });
 
     assert.equal(r.swept.includes(other), false, 'a non orphan-preimage worktree is untouched');
     assert.match(git(repo, 'worktree', 'list').toString(), /some-worktree-notours/,
@@ -143,9 +144,9 @@ describe('sweepStaleOrphanPreimages', () => {
     const d = path.join(tmpHome, 'orphan-preimage-now');
     fs.mkdirSync(d, { recursive: true });
     backdate(d, 0.01); // ~36s old — beyond a 1s gate, well inside the 1h default
-    const kept = sweepStaleOrphanPreimages({ repoPath: repo, tmpDir: tmpHome });
+    const kept = sweepStaleOrphanPreimages({ repoPath: repo, env: gitFixtureEnv(), tmpDir: tmpHome });
     assert.equal(kept.swept.includes(d), false, 'default 1h gate keeps it');
-    const r = sweepStaleOrphanPreimages({ repoPath: repo, tmpDir: tmpHome, maxAgeMs: 1000 });
+    const r = sweepStaleOrphanPreimages({ repoPath: repo, env: gitFixtureEnv(), tmpDir: tmpHome, maxAgeMs: 1000 });
     assert.ok(r.swept.includes(d));
     assert.equal(fs.existsSync(d), false);
   });

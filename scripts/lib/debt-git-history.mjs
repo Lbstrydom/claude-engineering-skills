@@ -37,11 +37,15 @@ import { execFileSync } from 'node:child_process';
  * @param {object} [opts]
  * @param {string} [opts.ledgerPath='.audit/tech-debt.json']
  * @param {string} [opts.cwd=process.cwd()]
+ * @param {NodeJS.ProcessEnv} [opts.env] - when supplied, REPLACES the
+ *   inherited `process.env` for this subprocess. Omitted (the default) →
+ *   identical to today's full-ambient-inherit behaviour.
  * @returns {number}
  */
 export function countCommitsTouchingTopic(topicId, {
   ledgerPath = '.audit/tech-debt.json',
   cwd = process.cwd(),
+  env,
 } = {}) {
   if (!topicId) return 0;
   try {
@@ -53,7 +57,7 @@ export function countCommitsTouchingTopic(topicId, {
       '--oneline',
       '--',
       ledgerPath,
-    ], { cwd, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });
+    ], { cwd, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], ...(env ? { env } : {}) });
     if (!out) return 0;
     return out.trim().split('\n').filter(Boolean).length;
   } catch {
@@ -71,12 +75,15 @@ export function countCommitsTouchingTopic(topicId, {
  * @param {string} [opts.ledgerPath='.audit/tech-debt.json']
  * @param {string} [opts.remoteUrl] - if provided, constructs a commit URL
  * @param {string} [opts.cwd=process.cwd()]
+ * @param {NodeJS.ProcessEnv} [opts.env] - when supplied, REPLACES the
+ *   inherited `process.env` for this subprocess.
  * @returns {{sha: string, subject: string, url?: string}|null}
  */
 export function findFirstDeferCommit(topicId, {
   ledgerPath = '.audit/tech-debt.json',
   remoteUrl,
   cwd = process.cwd(),
+  env,
 } = {}) {
   if (!topicId) return null;
   try {
@@ -91,7 +98,7 @@ export function findFirstDeferCommit(topicId, {
       '--format=%H%x09%s',
       '--',
       ledgerPath,
-    ], { cwd, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });
+    ], { cwd, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], ...(env ? { env } : {}) });
     if (!out) return null;
     const firstLine = out.trim().split('\n')[0];
     if (!firstLine) return null;
@@ -114,12 +121,14 @@ export function findFirstDeferCommit(topicId, {
  *
  * @param {object} [opts]
  * @param {string} [opts.cwd=process.cwd()]
+ * @param {NodeJS.ProcessEnv} [opts.env] - when supplied, REPLACES the
+ *   inherited `process.env` for this subprocess.
  * @returns {string|null} e.g. "https://github.com/owner/repo"
  */
-export function detectGitHubRepoUrl({ cwd = process.cwd() } = {}) {
+export function detectGitHubRepoUrl({ cwd = process.cwd(), env } = {}) {
   try {
     const out = execFileSync('git', ['remote', 'get-url', 'origin'], {
-      cwd, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'],
+      cwd, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], ...(env ? { env } : {}),
     }).trim();
     // Normalize: git@github.com:owner/repo.git → https://github.com/owner/repo
     //            https://github.com/owner/repo.git → https://github.com/owner/repo

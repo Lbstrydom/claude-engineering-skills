@@ -17,6 +17,7 @@ import {
   resolvePragmasToDefinitions,
   PRAGMA_RESOLUTION_MAX_GAP_LINES,
 } from '../scripts/lib/duplicate-justification-pragma.mjs';
+import { gitFixtureEnv } from './helpers/fixtures.mjs';
 
 describe('PRAGMA_RE', () => {
   it('matches a // comment pragma', () => {
@@ -154,9 +155,10 @@ describe('findRepoPragmas — untracked files + strict mode (round-2 M7 / H8)', 
   let tmp;
   beforeEach(() => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pragma-sweep-'));
-    execSync('git init -q', { cwd: tmp });
-    execSync('git config user.email test@test.com', { cwd: tmp });
-    execSync('git config user.name test', { cwd: tmp });
+    const env = gitFixtureEnv();
+    execSync('git init -q', { cwd: tmp, env });
+    execSync('git config user.email test@test.com', { cwd: tmp, env });
+    execSync('git config user.name test', { cwd: tmp, env });
   });
   afterEach(() => {
     fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
@@ -168,7 +170,7 @@ describe('findRepoPragmas — untracked files + strict mode (round-2 M7 / H8)', 
       '// @duplicate-justification: target=a.mjs:foo reason=untracked test\nfunction foo() {}\n',
     );
     // Deliberately NOT `git add`-ed.
-    const pragmas = findRepoPragmas(tmp);
+    const pragmas = findRepoPragmas(tmp, { env: gitFixtureEnv() });
     assert.equal(pragmas.length, 1);
     assert.equal(pragmas[0].pragmaFile, 'untracked.mjs');
   });
@@ -178,9 +180,9 @@ describe('findRepoPragmas — untracked files + strict mode (round-2 M7 / H8)', 
       path.join(tmp, 'tracked.mjs'),
       '// @duplicate-justification: target=a.mjs:bar reason=tracked test\nfunction bar() {}\n',
     );
-    execSync('git add tracked.mjs', { cwd: tmp });
-    execSync('git commit -q -m init', { cwd: tmp });
-    const pragmas = findRepoPragmas(tmp);
+    execSync('git add tracked.mjs', { cwd: tmp, env: gitFixtureEnv() });
+    execSync('git commit -q -m init', { cwd: tmp, env: gitFixtureEnv() });
+    const pragmas = findRepoPragmas(tmp, { env: gitFixtureEnv() });
     assert.equal(pragmas.length, 1);
     assert.equal(pragmas[0].pragmaFile, 'tracked.mjs');
   });
@@ -191,7 +193,7 @@ describe('findRepoPragmas — untracked files + strict mode (round-2 M7 / H8)', 
       path.join(tmp, 'ignored.log'),
       '// @duplicate-justification: target=a.mjs:baz reason=should not be found\n',
     );
-    const pragmas = findRepoPragmas(tmp);
+    const pragmas = findRepoPragmas(tmp, { env: gitFixtureEnv() });
     assert.equal(pragmas.length, 0);
   });
 
@@ -208,7 +210,7 @@ describe('findRepoPragmas — untracked files + strict mode (round-2 M7 / H8)', 
       path.join(tmp, 'crlf.mjs'),
       '// @duplicate-justification: target=a.mjs:foo reason=crlf test\r\nfunction foo() {}\r\n',
     );
-    const pragmas = findRepoPragmas(tmp);
+    const pragmas = findRepoPragmas(tmp, { env: gitFixtureEnv() });
     assert.equal(pragmas.length, 1, 'a CRLF file must not silently yield zero pragmas');
     assert.equal(pragmas[0].pragmaFile, 'crlf.mjs');
     assert.equal(pragmas[0].pragmaLine, 1);
@@ -222,7 +224,7 @@ describe('findRepoPragmas — untracked files + strict mode (round-2 M7 / H8)', 
       '// @duplicate-justification: target=x.mjs:one reason=r1\r\nfunction one() {}\r\n');
     fs.writeFileSync(path.join(tmp, 'b-lf.mjs'),
       '// @duplicate-justification: target=x.mjs:two reason=r2\nfunction two() {}\n');
-    const pragmas = findRepoPragmas(tmp);
+    const pragmas = findRepoPragmas(tmp, { env: gitFixtureEnv() });
     assert.equal(pragmas.length, 2);
     assert.deepEqual(pragmas.map((p) => p.reason).sort(), ['r1', 'r2']);
   });
@@ -230,7 +232,7 @@ describe('findRepoPragmas — untracked files + strict mode (round-2 M7 / H8)', 
   it('default (non-strict) mode: a genuinely non-git directory degrades to []', () => {
     const notARepo = fs.mkdtempSync(path.join(os.tmpdir(), 'not-a-repo-'));
     try {
-      const pragmas = findRepoPragmas(notARepo);
+      const pragmas = findRepoPragmas(notARepo, { env: gitFixtureEnv() });
       assert.deepEqual(pragmas, []);
     } finally {
       fs.rmSync(notARepo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
@@ -240,14 +242,14 @@ describe('findRepoPragmas — untracked files + strict mode (round-2 M7 / H8)', 
   it('strict mode: a genuinely non-git directory THROWS instead of degrading to [] — round-2 H8 regression guard', () => {
     const notARepo = fs.mkdtempSync(path.join(os.tmpdir(), 'not-a-repo-'));
     try {
-      assert.throws(() => findRepoPragmas(notARepo, { strict: true }), /PRAGMA_SWEEP_FAILED|findRepoPragmas failed/);
+      assert.throws(() => findRepoPragmas(notARepo, { strict: true, env: gitFixtureEnv() }), /PRAGMA_SWEEP_FAILED|findRepoPragmas failed/);
     } finally {
       fs.rmSync(notARepo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
   it('strict mode: a genuinely EMPTY (zero-match) git repo still returns [] — zero-match is not a failure', () => {
-    const pragmas = findRepoPragmas(tmp, { strict: true });
+    const pragmas = findRepoPragmas(tmp, { strict: true, env: gitFixtureEnv() });
     assert.deepEqual(pragmas, []);
   });
 });

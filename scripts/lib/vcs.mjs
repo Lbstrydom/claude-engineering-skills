@@ -132,13 +132,19 @@ function classifyChildError(err, ctx = {}) {
  * (BAD_REVISION) from "not a git repo" (NOT_A_GIT_REPOSITORY).
  *
  * @param {string} cwd
+ * @param {{env?: NodeJS.ProcessEnv}} [opts] - `env`, when supplied, REPLACES
+ *   the inherited `process.env` for this subprocess (e.g. `gitFixtureEnv()`
+ *   for a caller exercising this function against an isolated test fixture).
+ *   Omitted (the default) → identical to today's behaviour, full ambient
+ *   inherit — every existing production call site is unaffected.
  * @returns {{ok: true, sha: string} | {ok: false, error: VcsError}}
  */
-export function gitCommitSha(cwd) {
+export function gitCommitSha(cwd, opts = {}) {
   try {
     const sha = execSync('git rev-parse HEAD', {
       cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
+      ...(opts.env ? { env: opts.env } : {}),
     }).toString().trim();
     if (!sha) {
       return { ok: false, error: { code: 'WORKING_TREE_UNREADABLE', message: 'git rev-parse HEAD returned empty' } };
@@ -172,9 +178,13 @@ export function gitCommitSha(cwd) {
  * are excluded — matching what an audit reads and keeping the hash stable.
  *
  * @param {string} cwd
+ * @param {{env?: NodeJS.ProcessEnv}} [opts] - `env`, when supplied, is the
+ *   base environment instead of `process.env` (still overridden with
+ *   `GIT_INDEX_FILE` either way). Omitted (the default) → identical to
+ *   today's intentional-inherit behaviour — see the comment below.
  * @returns {{ok: true, tree: string} | {ok: false, error: VcsError}}
  */
-export function gitWorktreeTree(cwd) {
+export function gitWorktreeTree(cwd, opts = {}) {
   let tmpIndex;
   try {
     tmpIndex = fs.mkdtempSync(path.join(os.tmpdir(), 'wt-tree-'));
@@ -182,16 +192,29 @@ export function gitWorktreeTree(cwd) {
     return { ok: false, error: { code: 'EXEC_FAILED', message: `cannot create temp index dir: ${err?.code || 'unknown'}`, cause: err } };
   }
   const indexFile = path.join(tmpIndex, 'index');
-  // Inherit the caller's env so git still sees GIT_DIR/credentials/etc; only
+  // Inherit the caller's env (or opts.env, when a caller explicitly wants
+  // isolation — e.g. a test exercising this against a throwaway fixture)
+  // so git still sees GIT_DIR/credentials/etc by default; only
   // GIT_INDEX_FILE is overridden, which is what keeps the real index pristine.
-  const env = { ...process.env, GIT_INDEX_FILE: indexFile };
+  const env = { ...(opts.env ?? process.env), GIT_INDEX_FILE: indexFile };
   try {
     // `read-tree HEAD` seeds the temp index so `add -A` records deletions
     // relative to HEAD rather than starting from an empty tree. A repo with no
     // commits yet has no HEAD — that is fine, the empty-index start is correct.
+    // Gemini final-review catch (2026-07-24): a blanket `catch {}` here would
+    // ALSO swallow a misdirected/corrupt GIT_DIR (exactly the failure mode this
+    // plan's `opts.env` isolation exists to prevent regressions of) and silently
+    // hash an empty-tree lie instead of surfacing it — this fn feeds the
+    // `AI-Gate: passed` identity hash (see the docstring above), so a masked
+    // failure here is load-bearing, not cosmetic. Only swallow the one message
+    // git actually emits for "no HEAD yet"; anything else propagates.
     try {
       execSync('git read-tree HEAD', { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
-    } catch { /* no HEAD yet (fresh repo) — empty index is the right base */ }
+    } catch (err) {
+      const stderr = String(err?.stderr || '');
+      if (!/not a valid object name ['"]?head['"]?/i.test(stderr)) throw err;
+      // else: no HEAD yet (fresh repo) — empty index is the right base
+    }
     execSync('git add -A', { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
     const tree = execSync('git write-tree', { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] })
       .toString().trim();
@@ -217,11 +240,14 @@ export function gitWorktreeTree(cwd) {
  * whole-worktree audit does not cover a partial commit.
  *
  * @param {string} cwd
+ * @param {{env?: NodeJS.ProcessEnv}} [opts]
  * @returns {{ok: true, tree: string} | {ok: false, error: VcsError}}
  */
-export function gitIndexTree(cwd) {
+export function gitIndexTree(cwd, opts = {}) {
   try {
-    const tree = execSync('git write-tree', { cwd, stdio: ['ignore', 'pipe', 'pipe'] })
+    const tree = execSync('git write-tree', {
+      cwd, stdio: ['ignore', 'pipe', 'pipe'], ...(opts.env ? { env: opts.env } : {}),
+    })
       .toString().trim();
     if (!/^[0-9a-f]{40}$/.test(tree)) {
       return { ok: false, error: { code: 'WORKING_TREE_UNREADABLE', message: `git write-tree returned an unexpected object id: ${tree.slice(0, 60)}` } };
@@ -241,9 +267,10 @@ export function gitIndexTree(cwd) {
  *
  * @param {string} cwd
  * @param {string | null | undefined} sinceCommit
+ * @param {{env?: NodeJS.ProcessEnv}} [opts]
  * @returns {{ok: true, files: DiffShape} | {ok: false, error: VcsError}}
  */
-export function gitDiffWithWorkingTree(cwd, sinceCommit) {
+export function gitDiffWithWorkingTree(cwd, sinceCommit, opts = {}) {
   const files = { added: [], modified: [], deleted: [], untracked: [], renamed: [] };
 
   if (sinceCommit) {
@@ -256,7 +283,7 @@ export function gitDiffWithWorkingTree(cwd, sinceCommit) {
     let diffRes;
     try {
       diffRes = spawnSync('git', ['diff', '--name-status', sinceCommit], {
-        cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'],
+        cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], ...(opts.env ? { env: opts.env } : {}),
       });
     } catch (err) {
       return { ok: false, error: classifyChildError(err, { wantedRev: sinceCommit }) };
@@ -282,7 +309,7 @@ export function gitDiffWithWorkingTree(cwd, sinceCommit) {
   let lsRes;
   try {
     lsRes = spawnSync('git', ['ls-files', '--others', '--exclude-standard'], {
-      cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'],
+      cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], ...(opts.env ? { env: opts.env } : {}),
     });
   } catch (err) {
     return { ok: false, error: classifyChildError(err) };
@@ -336,10 +363,11 @@ export function gitDiffWithWorkingTree(cwd, sinceCommit) {
  *
  * @param {string} cwd
  * @param {string} sinceCommit - MUST pass isSafeGitRevision
+ * @param {{env?: NodeJS.ProcessEnv}} [opts]
  * @returns {{ok:true, files:{path:string, added:number, deleted:number, binary:boolean}[],
  *            totalChangedLines:number} | {ok:false, error:VcsError}}
  */
-export function gitNumstatWithWorkingTree(cwd, sinceCommit) {
+export function gitNumstatWithWorkingTree(cwd, sinceCommit, opts = {}) {
   if (!isSafeGitRevision(sinceCommit)) {
     return {
       ok: false,
@@ -349,7 +377,7 @@ export function gitNumstatWithWorkingTree(cwd, sinceCommit) {
   let res;
   try {
     res = spawnSync('git', ['diff', '--numstat', sinceCommit], {
-      cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'],
+      cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], ...(opts.env ? { env: opts.env } : {}),
     });
   } catch (err) {
     return { ok: false, error: classifyChildError(err, { wantedRev: sinceCommit }) };
@@ -388,10 +416,12 @@ export function gitNumstatWithWorkingTree(cwd, sinceCommit) {
  *
  * @param {string} cwd
  * @param {string} sinceCommit - MUST pass isSafeGitRevision
- * @param {{maxBytes?: number}} [opts] - belt-and-braces cap; the real bound is the numstat preflight
+ * @param {{maxBytes?: number, env?: NodeJS.ProcessEnv}} [opts] - `maxBytes` is a
+ *   belt-and-braces cap (the real bound is the numstat preflight); `env`
+ *   replaces the inherited `process.env` when supplied.
  * @returns {{ok:true, diffText:string, truncated:false} | {ok:false, error:VcsError}}
  */
-export function gitUnifiedDiffWithWorkingTree(cwd, sinceCommit, { maxBytes = null } = {}) {
+export function gitUnifiedDiffWithWorkingTree(cwd, sinceCommit, { maxBytes = null, env = null } = {}) {
   if (!isSafeGitRevision(sinceCommit)) {
     return {
       ok: false,
@@ -405,6 +435,7 @@ export function gitUnifiedDiffWithWorkingTree(cwd, sinceCommit, { maxBytes = nul
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'pipe'],
       ...(Number.isFinite(maxBytes) && maxBytes > 0 ? { maxBuffer: maxBytes } : {}),
+      ...(env ? { env } : {}),
     });
   } catch (err) {
     return { ok: false, error: classifyChildError(err, { wantedRev: sinceCommit }) };
@@ -417,7 +448,14 @@ export function gitUnifiedDiffWithWorkingTree(cwd, sinceCommit, { maxBytes = nul
   return { ok: true, diffText: res.stdout || '', truncated: false };
 }
 
-export function gitShowFileAtRevision(cwd, revision, filePath) {
+/**
+ * @param {string} cwd
+ * @param {string} revision - MUST pass isSafeGitRevision
+ * @param {string} filePath - repo-relative path, forward-slash form
+ * @param {{env?: NodeJS.ProcessEnv}} [opts]
+ * @returns {{ok: true, content: string} | {ok: false, error: VcsError}}
+ */
+export function gitShowFileAtRevision(cwd, revision, filePath, opts = {}) {
   if (!isSafeGitRevision(revision)) {
     return {
       ok: false,
@@ -428,6 +466,7 @@ export function gitShowFileAtRevision(cwd, revision, filePath) {
   try {
     res = spawnSync('git', ['show', `${revision}:${filePath}`], {
       cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 20 * 1024 * 1024,
+      ...(opts.env ? { env: opts.env } : {}),
     });
   } catch (err) {
     return { ok: false, error: classifyChildError(err, { wantedRev: revision }) };
@@ -470,12 +509,15 @@ export function gitShowFileAtRevision(cwd, revision, filePath) {
  *   mapped range's content (round-3 plan-audit H1 — the comparison operand
  *   the earlier draft's signature omitted)
  * @param {string} baseSha - MUST already pass `isSafeGitRevision`
- * @param {{preloadedContent?: string}} [opts] - decision #5/M4's run-scoped
- *   caching: when the caller already fetched this file's base-revision
- *   content (e.g. a prior candidate cited the same file), pass it here to
- *   skip the `gitShowFileAtRevision` call entirely — one fetch per unique
+ * @param {{preloadedContent?: string, env?: NodeJS.ProcessEnv}} [opts] -
+ *   `preloadedContent` (decision #5/M4's run-scoped caching): when the
+ *   caller already fetched this file's base-revision content (e.g. a prior
+ *   candidate cited the same file), pass it here to skip the
+ *   `gitShowFileAtRevision` call entirely — one fetch per unique
  *   `(filePath, baseSha)` per run, not per candidate. Omitted (the default)
  *   → fetches internally, identical to this function's original behavior.
+ *   `env`, when supplied and `preloadedContent` is absent, is forwarded to
+ *   that internal `gitShowFileAtRevision` call.
  * @returns {boolean | null} `true` if `quote` (source-preservingly
  *   canonicalized — see below) is found within the mapped range's content
  *   at `baseSha`; `false` if the range exists but the content differs
@@ -489,7 +531,7 @@ export function contentExistsAtMappedRange(cwd, filePath, mappedBaseRange, quote
   if (typeof opts.preloadedContent === 'string') {
     content = opts.preloadedContent;
   } else {
-    const result = gitShowFileAtRevision(cwd, baseSha, filePath);
+    const result = gitShowFileAtRevision(cwd, baseSha, filePath, opts.env ? { env: opts.env } : {});
     if (!result.ok) return null;
     content = result.content;
   }

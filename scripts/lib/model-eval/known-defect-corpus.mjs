@@ -55,10 +55,18 @@ export class CorpusCaseUnavailable extends Error {
 // core.pager is harmless on every subcommand; the diff-only flags are
 // appended at the one `diff` call site below, not applied globally (they
 // don't apply to cat-file).
-function git(root, args) {
+//
+// 2026-07-23 audit fix: `opts.env`, when supplied, REPLACES the base
+// `process.env` spread (previously this always spread the full ambient
+// env, so an `env` KEY existed here without ever being able to strip
+// GIT_DIR-family vars — a caller exercising this against an isolated test
+// fixture with a leaked GIT_DIR got no isolation despite the env option
+// looking handled). GIT_PAGER is still layered on top either way. Omitted
+// `opts.env` (the default) → identical to today's production behaviour.
+function git(root, args, opts = {}) {
   return execFileSync('git', ['-c', 'core.pager=cat', '-C', root, ...args], {
     encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, GIT_PAGER: 'cat' },
+    env: { ...(opts.env ?? process.env), GIT_PAGER: 'cat' },
   });
 }
 
@@ -69,8 +77,8 @@ function git(root, args) {
 // real stderr in the caller's thrown message; the CLASSIFICATION
 // (commit_not_found) stays the same — the harness fails the run identically
 // either way — but the diagnostic text is no longer thrown away.
-function tryGit(root, args) {
-  try { return { ok: true, output: git(root, args) }; }
+function tryGit(root, args, opts = {}) {
+  try { return { ok: true, output: git(root, args, opts) }; }
   catch (err) { return { ok: false, error: err.message }; }
 }
 
@@ -109,8 +117,19 @@ function resolveRepoRoot(repoName, repoRoots) {
 // typo, not just a hypothetical attack.
 const SAFE_KD_ID_RE = /^[A-Za-z0-9_-]+$/;
 
-export function loadCorpusCase({ kdEntry, repoRoots }) {
-  if (!SAFE_KD_ID_RE.test(kdEntry.id)) {
+/**
+ * @param {{kdEntry: object, repoRoots: string[], env?: NodeJS.ProcessEnv}} args
+ *   `env`, when supplied, REPLACES the inherited `process.env` for every
+ *   git subprocess this loader spawns. Omitted (the default) → identical
+ *   to today's full-ambient-inherit production behaviour.
+ */
+export function loadCorpusCase({ kdEntry, repoRoots, env }) {
+  // Gemini final-review catch (2026-07-24): RegExp#test coerces its argument
+  // to a string, so a missing/malformed corpus entry with id === null or
+  // undefined would test as "null"/"undefined" — both match [A-Za-z0-9_-]+ —
+  // and slip past the guard this line exists to enforce. Reject non-strings
+  // explicitly before the pattern check.
+  if (typeof kdEntry.id !== 'string' || !SAFE_KD_ID_RE.test(kdEntry.id)) {
     throw new CorpusCaseUnavailable('invalid_kd_id', `loadCorpusCase: kdEntry.id "${kdEntry.id}" is not a safe identifier (expected [A-Za-z0-9_-]+) — refusing to use it in a scratch filename`);
   }
   const root = resolveRepoRoot(kdEntry.repo, repoRoots);
@@ -118,8 +137,9 @@ export function loadCorpusCase({ kdEntry, repoRoots }) {
     throw new CorpusCaseUnavailable('repo_not_found', `loadCorpusCase: no repo root named "${kdEntry.repo}" found among [${repoRoots.join(', ')}] for ${kdEntry.id}`);
   }
 
+  const gitOpts = env ? { env } : {};
   const sha = kdEntry.buggyCommit;
-  const commitCheck = tryGit(root, ['cat-file', '-e', `${sha}^{commit}`]);
+  const commitCheck = tryGit(root, ['cat-file', '-e', `${sha}^{commit}`], gitOpts);
   if (!commitCheck.ok) {
     throw new CorpusCaseUnavailable('commit_not_found', `loadCorpusCase: commit ${sha} not found in repo "${kdEntry.repo}" (${root}) for ${kdEntry.id} — git: ${commitCheck.error}`);
   }
@@ -133,7 +153,7 @@ export function loadCorpusCase({ kdEntry, repoRoots }) {
     // --no-textconv suppress any .gitattributes-configured diff driver/
     // textconv filter (round-1 audit M8) — the diff-only hardening flags,
     // not applied to the cat-file call above.
-    diff = git(root, ['diff', '--no-ext-diff', '--no-textconv', '-U8', `${sha}^`, sha]);
+    diff = git(root, ['diff', '--no-ext-diff', '--no-textconv', '-U8', `${sha}^`, sha], gitOpts);
   } catch (err) {
     throw new CorpusCaseUnavailable('diff_extraction_failed', `loadCorpusCase: git diff failed for ${sha} in "${kdEntry.repo}": ${err.message}`);
   }

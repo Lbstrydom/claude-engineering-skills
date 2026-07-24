@@ -85,6 +85,46 @@ describe('the sandbox forbids the silent-skip paths', () => {
     assert.ok(addIdx !== -1 && pinIdx !== -1 && addIdx < pinIdx,
       'the worktree-scoped pin must be applied AFTER the sandbox is created, not before');
   });
+
+  it('sanitizes git-local env vars before spawning the sandboxed check (2026-07-23)', () => {
+    // The confirmed root cause of six live HEAD-corruption incidents this
+    // session: raw `...process.env` here hands the hook's own leaked
+    // GIT_DIR/GIT_WORK_TREE straight to `npm run check`, and any test that
+    // builds a fixture git repo via `cwd` alone gets no isolation from it —
+    // git gives GIT_DIR precedence over cwd. A regression here silently
+    // reopens exactly that hole.
+    assert.match(runnerSrc, /from '\.\/lib\/git-env-sanitize\.mjs'/);
+    assert.match(runnerSrc, /const gitEnv = sanitizeGitEnv\(repoRoot\)/);
+    assert.match(runnerSrc, /\.\.\.gitEnv,/);
+    assert.doesNotMatch(
+      runnerSrc, /const env = \{\s*\.\.\.process\.env/,
+      'the sandboxed check env must start from sanitizeGitEnv(), never raw process.env',
+    );
+  });
+
+  it('threads the sanitized env into npm ci too, not just npm run check (2026-07-24 audit M1)', () => {
+    // npm ci can shell out to git for git-hosted dependency resolution — a
+    // raw process.env there would carry a leaked GIT_DIR into that path just
+    // as surely as into the check run itself.
+    assert.match(runnerSrc, /provisionNodeModules\(sandbox, repoRoot, gitEnv\)/);
+    assert.match(runnerSrc, /function provisionNodeModules\(sandbox, repoRoot, gitEnv\)/);
+    assert.match(runnerSrc, /NPM, \['ci', '--ignore-scripts', '--no-audit', '--no-fund'\], \{\s*cwd: sandbox, stdio: 'inherit', shell: IS_WIN, \.\.\.\(gitEnv \? \{ env: gitEnv \} : \{\}\)/);
+  });
+
+  it('wraps every shared-metadata git worktree call in lock-contention retry (2026-07-23)', () => {
+    // Sibling fix to the core.bare pin above: a transient lock (peer holds
+    // .git/config.lock for a few hundred ms) is a different failure shape
+    // from a corrupted value, and needs retry rather than an override. A raw
+    // execFileSync('git', ['worktree', ...]) here would silently regress to
+    // hard-failing on the very contention this session's incident reproduced.
+    assert.match(runnerSrc, /from '\.\/lib\/git-lock-retry\.mjs'/);
+    for (const call of ["'worktree', 'add'", "'worktree', 'remove'", "'worktree', 'prune'"]) {
+      const idx = runnerSrc.indexOf(call);
+      assert.ok(idx !== -1, `expected to find a ${call} call`);
+      const line = runnerSrc.slice(runnerSrc.lastIndexOf('\n', idx), runnerSrc.indexOf('\n', idx));
+      assert.match(line, /gitWithLockRetry\(/, `${call} must go through the lock-retry wrapper, not a raw execFileSync`);
+    }
+  });
 });
 
 describe('the pre-push hook feeds the sandbox a real range', () => {

@@ -41,20 +41,23 @@ export const PRAGMA_RE = /(?:\/\/|#|\/\*|<!--)\s*@duplicate-justification:\s*tar
  * best-effort degrade-to-empty-array on `git grep` failure.
  *
  * @param {string} repoRoot
- * @param {{strict?: boolean}} [opts] - `strict: true` (round-2 H8 fix)
- *   THROWS on a real `git` failure (unavailable binary, corrupted
- *   repo/worktree, etc.) instead of degrading to `[]`. Default `false`
- *   preserves the original best-effort-report behavior (`findStalePragmas`'
- *   use case: a missed sweep just means an incomplete LOW-severity report
- *   table, never a safety gap). `refresh.mjs`'s WRITE path passes
- *   `strict: true` — there, "sweep failed" and "genuinely zero pragmas"
- *   are NOT interchangeable: `recordDuplicateJustifications` always does a
- *   full reset-then-reapply (round-1 H1), so silently treating a failed
- *   sweep as "zero pragmas" would un-flag every already-justified row on
- *   a transient `git` hiccup, wiping real data for no reason.
+ * @param {{strict?: boolean, env?: NodeJS.ProcessEnv}} [opts] - `strict: true`
+ *   (round-2 H8 fix) THROWS on a real `git` failure (unavailable binary,
+ *   corrupted repo/worktree, etc.) instead of degrading to `[]`. Default
+ *   `false` preserves the original best-effort-report behavior
+ *   (`findStalePragmas`' use case: a missed sweep just means an incomplete
+ *   LOW-severity report table, never a safety gap). `refresh.mjs`'s WRITE
+ *   path passes `strict: true` — there, "sweep failed" and "genuinely zero
+ *   pragmas" are NOT interchangeable: `recordDuplicateJustifications` always
+ *   does a full reset-then-reapply (round-1 H1), so silently treating a
+ *   failed sweep as "zero pragmas" would un-flag every already-justified
+ *   row on a transient `git` hiccup, wiping real data for no reason.
+ *   `env`, when supplied, REPLACES the inherited `process.env` for this
+ *   subprocess (2026-07-23 audit — a genuine call site the original
+ *   sweep-focused audit missed, since it lives outside `tests/`).
  * @returns {{pragmaFile: string, pragmaLine: number, targetFile: string, targetSymbol: string, reason: string}[]}
  */
-export function findRepoPragmas(repoRoot, { strict = false } = {}) {
+export function findRepoPragmas(repoRoot, { strict = false, env } = {}) {
   let output;
   try {
     // --untracked (round-2 M7 fix, empirically verified): plain `git grep`
@@ -66,7 +69,7 @@ export function findRepoPragmas(repoRoot, { strict = false } = {}) {
     // symbol it justifies IS indexed. `--exclude-standard` semantics
     // (respecting .gitignore) are inherited automatically.
     output = execFileSync('git', ['grep', '--untracked', '-n', '-F', '@duplicate-justification:', '--', '.', ':(exclude)*.md', ':(exclude)tests/*'], {
-      cwd: repoRoot, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'],
+      cwd: repoRoot, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], ...(env ? { env } : {}),
     });
   } catch (err) {
     if (err.status === 1 && !err.stdout) return []; // genuine zero-match — safe either way

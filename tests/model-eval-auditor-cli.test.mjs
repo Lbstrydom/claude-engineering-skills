@@ -6,6 +6,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 import { stratifiedSelectKDs } from '../scripts/model-eval-auditor.mjs';
+import { gitFixtureEnv } from './helpers/fixtures.mjs';
 
 const FIXTURE_DEFECTS = [
   { id: 'KD-001', severity: 'HIGH', repo: 'r1' },
@@ -85,7 +86,7 @@ describe('model-eval-auditor.mjs — CLI preflight', () => {
 
     test('exits 2 (preflight) naming the KD id, not 1 (fatal)', () => {
       dir = fs.mkdtempSync(path.join(os.tmpdir(), 'model-eval-egress-'));
-      const g = (args) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+      const g = (args) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: gitFixtureEnv() });
       g(['init', '-q']);
       g(['config', 'user.email', 'test@test.com']);
       g(['config', 'user.name', 'test']);
