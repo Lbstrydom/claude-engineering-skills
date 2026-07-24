@@ -182,13 +182,56 @@ function throwVcsError(err) {
 // `.filter(Boolean)` data loss was a documented invariant violation —
 // see docs/plans/liveness-and-canonical-paths.md cluster A).
 
+/**
+ * Persist the full-run extraction coverage measurement (§2.1.7). Extracted
+ * out of `main()`'s inline block so the coverage-persistence concern this
+ * plan already touches (item 7's timeout clamp, the DB-integration test in
+ * item 6) has one named, independently readable home instead of living
+ * inline in an already-large orchestration function.
+ *
+ * @param {{mode: string, extractionTimedOut: boolean, coverageConfig: object, coverageLine: object|null, refreshId: string}} args
+ */
+async function persistExtractionCoverage({ mode, extractionTimedOut, coverageConfig, coverageLine, refreshId }) {
+  if (mode !== 'full') return;
+  const extraction = extractionTimedOut
+    ? assessExtractionCoverage({
+        outcome: 'timedOut', elapsedMs: coverageConfig.hardTimeoutMs,
+      })
+    : (coverageLine?.extraction ?? null);
+
+  if (!extraction) {
+    // A full run that produced no coverage line is itself a signal —
+    // silence here is what the whole feature exists to stop.
+    logOk('WARNING: full refresh produced no coverage line; the graph will read `unknown`');
+    return;
+  }
+
+  const record = {
+    schemaVersion: 1,
+    verdict: graphVerdict({ extraction, attribution: null, config: coverageConfig }),
+    measuredAt: new Date().toISOString(),
+    refreshId,
+    stale: false,
+    extraction,
+    attribution: null,
+  };
+  const res = await recordGraphCoverage(refreshId, record);
+  logOk(`coverage: ${record.verdict.status}`
+    + `${record.verdict.reason ? ` (${record.verdict.reason})` : ''}`
+    + `${res.recorded ? '' : ` — NOT persisted: ${res.reason}`}`);
+}
+
 async function runWithHeartbeat(refreshId, intervalMs, fn) {
-  let alive = true;
+  let heartbeatFailureLogged = false;
   const beat = setInterval(() => {
-    heartbeatRefreshRun({ refreshId }).catch(() => { /* ignore */ });
+    heartbeatRefreshRun({ refreshId }).catch((err) => {
+      if (heartbeatFailureLogged) return;
+      heartbeatFailureLogged = true;
+      logErr(`heartbeat failed for refresh ${refreshId}: ${err.message} (further failures this run are not logged individually)`);
+    });
   }, intervalMs);
   try { return await fn(); }
-  finally { alive = false; clearInterval(beat); }
+  finally { clearInterval(beat); }
 }
 
 async function main() {
@@ -683,33 +726,7 @@ async function main() {
       // attributed to the wrong snapshot. The attribution layer is NOT filled
       // here: those buckets need domain rules applied to persisted edges, which
       // is render's job — this records extraction only, and render merges.
-      if (mode === 'full') {
-        const extraction = extractionTimedOut
-          ? assessExtractionCoverage({
-              outcome: 'timedOut', elapsedMs: coverageConfig.hardTimeoutMs,
-            })
-          : (coverageLine?.extraction ?? null);
-
-        if (extraction) {
-          const record = {
-            schemaVersion: 1,
-            verdict: graphVerdict({ extraction, attribution: null, config: coverageConfig }),
-            measuredAt: new Date().toISOString(),
-            refreshId,
-            stale: false,
-            extraction,
-            attribution: null,
-          };
-          const res = await recordGraphCoverage(refreshId, record);
-          logOk(`coverage: ${record.verdict.status}`
-            + `${record.verdict.reason ? ` (${record.verdict.reason})` : ''}`
-            + `${res.recorded ? '' : ` — NOT persisted: ${res.reason}`}`);
-        } else {
-          // A full run that produced no coverage line is itself a signal —
-          // silence here is what the whole feature exists to stop.
-          logOk('WARNING: full refresh produced no coverage line; the graph will read `unknown`');
-        }
-      }
+      await persistExtractionCoverage({ mode, extractionTimedOut, coverageConfig, coverageLine, refreshId });
 
       // 13. Incremental: copy-forward untouched-file symbols + imports
       // from prior snapshot. Symbol copy-forward already proven; imports

@@ -68,6 +68,29 @@ describe('buildShadowCtx', () => {
     assert.equal(shadow.runId, 'abc123');
     assert.equal(shadow.noCloudRecording, true);
   });
+
+  test('ctx.bandit is isolated via nonPersistingView, not shared with the parent (item 9 — closes the concurrent-mutation hazard the shallow spread otherwise reproduces for generatorOutcomes)', async () => {
+    const { PromptBandit } = await import('../scripts/bandit.mjs');
+    const arms = {};
+    const bandit = new PromptBandit('test-shadow-bandit', {
+      store: { load: () => arms, save: () => {} },
+      rng: () => 0.5,
+    });
+
+    const shadow = buildShadowCtx({ runId: 'r1', bandit });
+    assert.notEqual(shadow.bandit, bandit, 'the shadow gets a distinct instance, not the live one');
+
+    // Mutate the shadow's view the way resolveGptTrigger's shouldFireSentinel
+    // path does (addArm), and confirm the PARENT's arm map is untouched.
+    shadow.bandit.addArm('somePass', 'variantA', null, {});
+    assert.deepEqual(Object.keys(bandit.arms), [], 'parent bandit must see zero arms after a concurrent shadow mutation');
+    assert.notDeepEqual(Object.keys(shadow.bandit.arms), [], 'the shadow view itself did record the mutation locally');
+  });
+
+  test('a null/absent ctx.bandit passes through unchanged (no crash on missing bandit)', () => {
+    const shadow = buildShadowCtx({ runId: 'r1' });
+    assert.equal(shadow.bandit, undefined);
+  });
 });
 
 // `runLegacyProductionAudit` is not exposed for dependency injection (a giant

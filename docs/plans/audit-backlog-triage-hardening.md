@@ -10,6 +10,14 @@
 - **Author**: Claude + Louis Strydom
 - **Scope**: backend
 
+- **Successor plans** (2026-07-24): the broader backlog reconciliation this
+  plan's 7 items came from continued after shipping and produced two more
+  punch-list plans covering the remaining confirmed-open findings —
+  [`docs/plans/arch-audit-pipeline-observability-hardening.md`](arch-audit-pipeline-observability-hardening.md)
+  (13 items) and
+  [`docs/plans/sast-sandbox-backlog-hardening.md`](sast-sandbox-backlog-hardening.md)
+  (7 items).
+
 - **Target domain(s)**: `audit-orchestration`, `arch-memory`, `shared-lib`
 - ⚠ **Cross-domain work** — touches 3 independent domains across 3 unrelated
   files. This is NOT new cross-domain wiring — each item is a self-contained

@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**1 active · 143 terminal · 23 audit summaries · 4 reference docs**
+**2 active · 144 terminal · 23 audit summaries · 4 reference docs**
 
 ---
 
@@ -21,6 +21,7 @@ This is the list to read when asking "what is in flight?".
 
 | Plan | Status | Notes |
 |---|---|---|
+| [Sast-Routing, Sandbox Integrity & Migration-Adoption Hardening (7-item punch list)](./sast-sandbox-backlog-hardening.md) | `Draft` |  |
 | [Tiered Recall-Weighted Audit Pipeline](./tiered-recall-audit-pipeline.md) | `In Progress` | implementation complete (Clusters A-F implemented |
 
 ## Superseded / abandoned
@@ -41,7 +42,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 140 completed plans</summary>
+<summary>Show all 141 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -54,6 +55,7 @@ source comments that no docs linter sees — stays valid.
 | [AI Context Sync — Reconcile Drift, Detect Drift, Copilot Slash-Command Parity](./ai-context-sync.md) | `Complete` | all 6 phases shipped 2026-04-26 / 2026-04-27 |
 | [allowTiered — per-call execution gate for tiered pipeline / shadow](./allow-tiered-callsite-gate.md) | `Complete` | audited (`/audit-code`, 1 GPT round + Gemini APPROVE, 0 new findings), shipped, verified via direct repro +… |
 | [Anthropic Backend Routing (Agent SDK credit prep)](./anthropic-backend-routing.md) | `Complete` | implemented + audited (R1→R3 + Gemini |
+| [Arch-Memory & Audit-Pipeline Observability Hardening (13-item punch list)](./arch-audit-pipeline-observability-hardening.md) | `Complete` | all 13 items implemented + tested (74 new/updated |
 | [Architectural-Drift Duplication Cleanup — Consolidate Real Dupes + Exclusion Mechanism](./arch-drift-duplication-cleanup.md) | `Complete` | implemented (Cluster A: 8 planned + 2 mid-audit-discovered duplicate consolidations + 4 pragmas; Cluster B:… |
 | [Architecture-Intent PR-B — Python & Java Adapters](./arch-intent-pr-b-python-java-adapters.md) | `Complete` | implemented + audited via /cycle; /audit-code → Gemini APPROVE 2026-05-15; see audit summary at docs/plans/… |
 | [Architecture-Intent PR-C — Postgres Adapter](./arch-intent-pr-c-postgres-adapter.md) | `Complete` | implemented + audited via /cycle; /audit-code 2 GPT + 2 Gemini rounds 2026-05-15, all findings fixed, Gemin… |

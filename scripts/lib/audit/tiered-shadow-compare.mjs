@@ -115,11 +115,7 @@ export function buildShadowCtx(ctx) {
     // guarantee is actually complete: the orchestrator's
     // `learningWritesAllowed = !noCloudRecording` gates the two tail syncs
     // the `cloudRunId` key never covered (syncBanditArms — no repoId, wrote
-    // whenever cloud was on — and syncFalsePositivePatterns), and the shared
-    // `ctx.bandit` is swapped for a `nonPersistingView()` at entry so the
-    // shadow's addArm/flush can't touch the real run's local state either
-    // (the shallow ...ctx spread above shares the live instance — the same
-    // shared-nested-value hazard as generatorOutcomes below). `ctx.runId` is kept
+    // whenever cloud was on — and syncFalsePositivePatterns). `ctx.runId` is kept
     // UNCHANGED (not mangled) — it's still used as a local telemetry label
     // (tiered-pipeline.mjs's `_sid`), just never reaches a DB write here.
     // Previously mangled to `${runId}-shadow` to dodge colliding with the
@@ -127,6 +123,18 @@ export function buildShadowCtx(ctx) {
     // loudly (`invalid input syntax for type uuid`) instead of writing
     // nothing — this flag is the actual fix, not a differently-shaped id.
     noCloudRecording: true,
+    // `ctx.bandit` swapped for a `nonPersistingView()` HERE (item 9 —
+    // arch-audit-pipeline-observability-hardening.md), not left to the
+    // shallow spread above, which shares the live instance the same way
+    // `generatorOutcomes` used to. This comment previously CLAIMED the swap
+    // already happened at this construction site; it did not — the only
+    // `nonPersistingView()` call in the codebase lived inside
+    // `runLegacyProductionAudit`'s internal fallback path (gated on
+    // `!learningWritesAllowed && bandit`), which neither runs before nor
+    // covers `resolveGptTrigger`'s earlier `bandit.addArm(...)` call in the
+    // tiered pipeline's discovery stage — a real, live gap the swap below
+    // closes at its actual origin.
+    bandit: ctx.bandit ? ctx.bandit.nonPersistingView() : ctx.bandit,
     // The shadow has NO obligation to return findings, so it must never fall
     // back to a second legacy audit when a required discovery generator fails
     // (plan: docs/plans/shadow-no-legacy-fallback.md). Without this, 41 of 57

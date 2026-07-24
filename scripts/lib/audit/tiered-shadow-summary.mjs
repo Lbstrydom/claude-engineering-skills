@@ -44,13 +44,40 @@ export function mean(nums) {
   return nums.length === 0 ? null : nums.reduce((s, n) => s + n, 0) / nums.length;
 }
 
+/** A record must be a plain, non-array, non-null object whose `legacyOk`
+ * field is a real boolean — the ONE field every real record is guaranteed
+ * to carry (recordObservation in tiered-shadow-compare.mjs sets it in BOTH
+ * branches; the DB persistence schema, AppendObservationSchema in
+ * store/tiered-shadow.mjs, requires it non-optional). A scalar, array, or
+ * `null` parses successfully via JSON.parse but is NOT a record: property
+ * access on it doesn't throw (JS auto-boxes/returns `undefined`), so it
+ * silently reads as "no legacyOk" and gets counted as a legacyFailure.
+ * `{}` has the same failure mode without even needing a type-coercion bug —
+ * round-2 audit H2 caught this: rejecting only scalars/arrays/null still let
+ * `{}`, `{legacyOk:"yes"}`, and `{comparison:null}` through, each silently
+ * miscounted rather than flagged. This is item 10 (arch-audit-pipeline-
+ * observability-hardening.md). Not validating the FULL shape (shadowOk,
+ * comparison, etc.) on purpose — legacyOk is the only field summarize()
+ * cannot degrade gracefully without; the rest already have `?? `/`||`
+ * defaults precisely because a partial record IS a legitimate shape
+ * (e.g. a legacy-only failure has no `comparison`). */
+function isRecordShaped(v) {
+  return v !== null && typeof v === 'object' && !Array.isArray(v) && typeof v.legacyOk === 'boolean';
+}
+
 /** Read + parse the local JSONL log. A malformed line is skipped (logged),
  * never fatal — a single corrupt record must not blank the whole summary. */
 export function readRecords(logPath) {
   if (!fs.existsSync(logPath)) return [];
   return fs.readFileSync(logPath, 'utf8').trim().split('\n').filter(Boolean).map((line, i) => {
-    try { return JSON.parse(line); }
+    let parsed;
+    try { parsed = JSON.parse(line); }
     catch { process.stderr.write(`  [tiered-shadow-summary] skipping malformed line ${i + 1}\n`); return null; }
+    if (!isRecordShaped(parsed)) {
+      process.stderr.write(`  [tiered-shadow-summary] skipping non-record line ${i + 1} (parsed to ${Array.isArray(parsed) ? 'an array' : typeof parsed}, not an object)\n`);
+      return null;
+    }
+    return parsed;
   }).filter(Boolean);
 }
 

@@ -20,6 +20,7 @@
 
 import { one, upsert } from '../../db/query.mjs';
 import { isCloudEnabled } from '../repo.mjs';
+import { CoverageSchema } from '../../observed-deps.mjs';
 
 /**
  * Persist the coverage record for a refresh.
@@ -40,9 +41,22 @@ export async function recordGraphCoverage(refreshId, coverage) {
   }
   if (!await isCloudEnabled()) return { recorded: false, reason: 'cloud-disabled' };
 
-  const status = coverage.verdict?.status;
-  const reason = coverage.verdict?.reason ?? null;
-  if (!status) return { recorded: false, reason: 'missing-verdict' };
+  // The write boundary must actually ENFORCE CoverageSchema, not just declare
+  // it (round-2 audit M2/M4): before this fix, only `coverage.verdict?.status`
+  // truthiness was checked, so any object with a status string — including one
+  // that contradicts its own extraction/stale fields per the schema's
+  // cross-field precedence check — was written verbatim.
+  const validation = CoverageSchema.safeParse(coverage);
+  if (!validation.success) {
+    process.stderr.write(`  [coverage] schema validation failed — NOT persisted: ${validation.error.issues.map((i) => i.message).join('; ')}\n`);
+    return { recorded: false, reason: 'schema-invalid' };
+  }
+
+  // `status` is guaranteed present by CoverageSchema's required, enum-typed
+  // `verdict.status` field — a separate missing-verdict check here would be
+  // unreachable dead code now that validation runs first.
+  const status = coverage.verdict.status;
+  const reason = coverage.verdict.reason ?? null;
 
   try {
     const res = await upsert('symbol_refresh_coverage', [{
@@ -105,7 +119,15 @@ export async function getGraphCoverage(refreshId) {
  *
  * Mirrors `copyForwardImports`. Coverage is a FULL-RUN measurement, so an
  * incremental refresh inherits the numbers for DISPLAY but never the verdict:
- * `stale: true` forces `unknown`/`stale_measurement` at precedence row 4.
+ * `stale: true` forces `unknown`/`stale_measurement` at precedence row 4 —
+ * UNLESS the prior extraction never actually succeeded (`failed`/`timedOut`),
+ * in which case graph-verdict.mjs's own precedence (rows 1-2, checked BEFORE
+ * staleness at row 4) means the verdict was already `unverified` and staying
+ * that way is correct: there is nothing that "went stale" about a measurement
+ * that never completed. Unconditionally overwriting it to unknown/
+ * stale_measurement would launder a genuine extraction failure into a merely
+ * "not fresh" reading (round-1 audit H2 — this asymmetry is exactly what
+ * observed-deps.mjs's `CoverageSchema` cross-field check now rejects).
  *
  * This is categorical rather than heuristic on purpose. An earlier design
  * compared a digest of the eligible-file LIST, which is false comfort —
@@ -116,17 +138,26 @@ export async function getGraphCoverage(refreshId) {
  * @param {{fromRefreshId: string, toRefreshId: string}} params
  * @returns {Promise<{copied: boolean, reason?: string}>}
  */
-export async function copyForwardCoverage({ fromRefreshId, toRefreshId }) {
+export async function copyForwardCoverage({ fromRefreshId, toRefreshId } = {}) {
   if (!fromRefreshId || !toRefreshId) return { copied: false, reason: 'invalid-input' };
+  // Copying a refresh's coverage onto ITSELF (round-4 audit H2/M3) would
+  // read its own just-persisted row and immediately overwrite it stale —
+  // corrupting a genuinely fresh measurement under the guise of "forwarding"
+  // it. The function's whole contract is EARLIER run -> NEW refresh; the
+  // same id on both sides is never a valid call.
+  if (fromRefreshId === toRefreshId) return { copied: false, reason: 'invalid-input' };
   const prior = await getGraphCoverage(fromRefreshId);
   if (!prior) return { copied: false, reason: 'no-prior-coverage' };
+
+  const priorOutcome = prior.extraction?.outcome;
+  const neverSucceeded = priorOutcome === 'failed' || priorOutcome === 'timedOut';
 
   const stale = {
     ...prior,
     stale: true,
     // measuredAt + refreshId are preserved from the ORIGINAL measurement —
     // that is the whole point of copying forward rather than re-stamping.
-    verdict: { status: 'unknown', reason: 'stale_measurement' },
+    verdict: neverSucceeded ? prior.verdict : { status: 'unknown', reason: 'stale_measurement' },
   };
   const res = await recordGraphCoverage(toRefreshId, stale);
   return { copied: res.recorded, reason: res.reason };

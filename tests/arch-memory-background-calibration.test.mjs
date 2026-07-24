@@ -12,6 +12,7 @@ import {
   cosineSimilarity,
   DEFAULT_K,
   CLIFF_REPORTING_THRESHOLD,
+  NEAR_FLOOR_MARGIN,
 } from '../scripts/lib/arch-memory/background-calibration.mjs';
 
 /** Deterministic pseudo-random vectors — no Math.random, so runs are stable. */
@@ -93,6 +94,23 @@ describe('background-calibration / banding is two-state', () => {
     const out = bandTopResult([r(0.70), r(0.60)], cal);
     assert.equal(out.band, 'review');
     assert.match(out.reason, /below-noise-floor/);
+  });
+
+  it('a NEAR-miss (within NEAR_FLOOR_MARGIN of the floor) is distinguished from a clear miss (arch-audit-pipeline-observability-hardening item 8)', () => {
+    // floor is 0.7146; 0.70 is 0.0146 below it — within the 0.05 margin.
+    const near = bandTopResult([r(0.70), r(0.60)], cal);
+    assert.equal(near.band, 'review', 'band stays review — no consumer switching on band alone is affected');
+    assert.equal(near.reason, 'below-noise-floor-near');
+
+    // 0.50 is 0.2146 below the floor — well outside the margin.
+    const far = bandTopResult([r(0.50), r(0.40)], cal);
+    assert.equal(far.band, 'review');
+    assert.equal(far.reason, 'below-noise-floor');
+  });
+
+  it('a score exactly NEAR_FLOOR_MARGIN below the floor is still near (boundary is inclusive, tolerant of float subtraction noise)', () => {
+    const out = bandTopResult([r(cal.floor - NEAR_FLOOR_MARGIN), r(0.1)], cal);
+    assert.equal(out.reason, 'below-noise-floor-near');
   });
 
   it('above the floor and a standout → precedent', () => {

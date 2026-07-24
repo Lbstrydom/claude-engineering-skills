@@ -51,9 +51,10 @@ export const ScoredSymbolRecordSchema = SymbolRecordSchema.extend({
   // having to probe for null.
   scored:          z.boolean().optional(),
   // Why the band came out as it did — `uncalibrated-repo`, `below-noise-floor`,
-  // `not-distinctive`, `above-floor-and-distinctive`, `no-embedding`. Without
-  // this a `review` is unattributable, and "the repo has no calibration" looks
-  // identical to "we compared and it was weak".
+  // `below-noise-floor-near` (a near-miss within NEAR_FLOOR_MARGIN of the
+  // floor), `not-distinctive`, `above-floor-and-distinctive`, `no-embedding`.
+  // Without this a `review` is unattributable, and "the repo has no
+  // calibration" looks identical to "we compared and it was weak".
   bandReason:      z.string().optional(),
   // Gap to the runner-up. The floor alone is fragile under hubness; this is
   // what says the top hit is DISTINCTIVE rather than merely above a number.

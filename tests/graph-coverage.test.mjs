@@ -267,6 +267,43 @@ describe('parseCoverageConfig', () => {
     assert.deepEqual(cfg, COVERAGE_DEFAULTS);
     assert.ok(warnings.some((w) => w.includes('futureKey')));
   });
+
+  it('rejects a hardTimeoutMs/maxCruiseMs above Node\'s max timer delay instead of silently clamping (arch-audit-pipeline-observability-hardening item 7)', () => {
+    const warnings = [];
+    const cfg = parseCoverageConfig(
+      { hardTimeoutMs: 3_000_000_000, maxCruiseMs: 3_000_000_000 },
+      (m) => warnings.push(m));
+    assert.equal(cfg.hardTimeoutMs, COVERAGE_DEFAULTS.hardTimeoutMs, 'falls back to default, not the unhonourable value');
+    assert.equal(cfg.maxCruiseMs, COVERAGE_DEFAULTS.maxCruiseMs);
+    assert.ok(warnings.some((w) => w.includes('hardTimeoutMs') && w.includes('max timer delay')));
+    assert.ok(warnings.some((w) => w.includes('maxCruiseMs') && w.includes('max timer delay')));
+  });
+
+  it('a maxCruiseMs comfortably under the ceiling still gets a valid, larger hardTimeoutMs from the repair', () => {
+    const cfg = parseCoverageConfig({ maxCruiseMs: 1_000_000_000, hardTimeoutMs: 1_000_000_000 });
+    assert.equal(cfg.maxCruiseMs, 1_000_000_000);
+    assert.ok(cfg.hardTimeoutMs > cfg.maxCruiseMs);
+    assert.ok(cfg.hardTimeoutMs <= 2_147_483_647, 'the repaired value must itself never exceed the timer ceiling');
+  });
+
+  it('a maxCruiseMs whose doubled repair would exceed the ceiling is clamped to it, not left unhonourable (round-1 audit H1/M6)', () => {
+    // 1.5B * 2 = 3B, which exceeds MAX_TIMER_DELAY_MS (2_147_483_647) — the
+    // repair step's own arithmetic can overflow the ceiling positiveInt()
+    // already enforced on the raw input; it must clamp, not reintroduce it.
+    const warnings = [];
+    const cfg = parseCoverageConfig({ maxCruiseMs: 1_500_000_000, hardTimeoutMs: 1_000_000_000 }, (m) => warnings.push(m));
+    assert.equal(cfg.maxCruiseMs, 1_500_000_000);
+    assert.equal(cfg.hardTimeoutMs, 2_147_483_647, 'clamped to the ceiling, not 3,000,000,000');
+    assert.ok(warnings.some((w) => w.includes('hardTimeoutMs')));
+  });
+
+  it('a maxCruiseMs already AT the ceiling leaves no valid hardTimeoutMs — falls back to defaults for both rather than publish a contradictory config', () => {
+    const warnings = [];
+    const cfg = parseCoverageConfig({ maxCruiseMs: 2_147_483_647, hardTimeoutMs: 2_147_483_647 }, (m) => warnings.push(m));
+    assert.equal(cfg.maxCruiseMs, COVERAGE_DEFAULTS.maxCruiseMs);
+    assert.equal(cfg.hardTimeoutMs, COVERAGE_DEFAULTS.hardTimeoutMs);
+    assert.ok(warnings.some((w) => w.includes('leaves no valid hardTimeoutMs')));
+  });
 });
 
 describe('assertExtractionExhaustive (Phase 2 — the drop-site guard)', () => {

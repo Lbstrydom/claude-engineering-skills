@@ -34,6 +34,15 @@ export const GRAPH_REASON = Object.freeze({
   BELOW_ATTRIBUTION_FLOOR: 'below_attribution_floor',
 });
 
+/**
+ * Node's setTimeout/setInterval delay ceiling (2^31 - 1 ms, ~24.8 days). A
+ * delay above this is silently CLAMPED to it (not honored) rather than
+ * rejected — see the Node docs for setTimeout. `maxCruiseMs`/`hardTimeoutMs`
+ * are both consumed as timer delays downstream, so config validation must
+ * enforce this ceiling itself; Node will not tell the caller it happened.
+ */
+export const MAX_TIMER_DELAY_MS = 2_147_483_647;
+
 export const COVERAGE_DEFAULTS = Object.freeze({
   floor: 0.90,
   attributionFloor: 0.50,
@@ -98,6 +107,16 @@ export function parseCoverageConfig(raw, warn = () => {}) {
       warn(`[coverage] \`${k}\` must be a positive integer — using default ${out[k]}`, 'invalid');
       return;
     }
+    // `maxCruiseMs`/`hardTimeoutMs` are both consumed as setTimeout/setInterval
+    // delays in scripts/lib/subprocess.mjs. Node clamps (does not honor) a
+    // delay above this ceiling — accepting a larger value here would silently
+    // configure a timeout that never behaves as configured. Reject rather than
+    // clamp, matching this function's existing fail-closed-with-default posture.
+    if (v > MAX_TIMER_DELAY_MS) {
+      warn(`[coverage] \`${k}\` (${v}) exceeds Node's max timer delay `
+        + `(${MAX_TIMER_DELAY_MS}) — a larger value is clamped, not honored — using default ${out[k]}`, 'invalid');
+      return;
+    }
     out[k] = v;
   };
   ratio('floor');
@@ -129,9 +148,24 @@ export function parseCoverageConfig(raw, warn = () => {}) {
   // budget can never fire"; the arithmetic is identical, the reason is now
   // liveness — see COVERAGE_DEFAULTS.hardTimeoutMs.)
   if (out.hardTimeoutMs <= out.maxCruiseMs) {
+    // `maxCruiseMs * 2` can itself exceed MAX_TIMER_DELAY_MS when maxCruiseMs
+    // is already large (audit round-1 H1/M6) — the positiveInt() ceiling check
+    // above only bounds RAW input, it can't see this repair's own arithmetic.
+    // Clamp rather than reintroduce an unhonourable timer value.
+    const repaired = Math.min(out.maxCruiseMs * 2, MAX_TIMER_DELAY_MS);
     warn(`[coverage] hardTimeoutMs (${out.hardTimeoutMs}) must exceed maxCruiseMs `
-      + `(${out.maxCruiseMs}) — the idle threshold must clear the cruise's silent window — using ${out.maxCruiseMs * 2}`, 'invalid');
-    out.hardTimeoutMs = out.maxCruiseMs * 2;
+      + `(${out.maxCruiseMs}) — the idle threshold must clear the cruise's silent window — using ${repaired}`, 'invalid');
+    out.hardTimeoutMs = repaired;
+    if (out.hardTimeoutMs <= out.maxCruiseMs) {
+      // maxCruiseMs itself is already at/near Node's timer ceiling — no valid
+      // hardTimeoutMs can both clear the cruise window and stay under
+      // MAX_TIMER_DELAY_MS. Fall back to defaults for both rather than publish
+      // an internally-contradictory config.
+      warn(`[coverage] maxCruiseMs (${out.maxCruiseMs}) leaves no valid hardTimeoutMs under Node's max timer delay `
+        + `(${MAX_TIMER_DELAY_MS}) — falling back to defaults for both`, 'invalid');
+      out.maxCruiseMs = COVERAGE_DEFAULTS.maxCruiseMs;
+      out.hardTimeoutMs = COVERAGE_DEFAULTS.hardTimeoutMs;
+    }
   }
   return out;
 }

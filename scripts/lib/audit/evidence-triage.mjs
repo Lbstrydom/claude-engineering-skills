@@ -225,18 +225,31 @@ function quoteAppearsOnSide(section, quote, side) {
  * @param {string} quote
  * @returns {{startLine:number, endLine:number} | null} 1-indexed, inclusive
  */
-function findLineRangeInContent(content, quote) {
+/**
+ * Find every line-window in `content` whose normalized text matches `quote`
+ * (item 11 — arch-audit-pipeline-observability-hardening.md). Previously
+ * returned the FIRST match only, with no occurrence identity: an identical
+ * snippet appearing more than once in the file (a common pattern — repeated
+ * boilerplate, near-duplicate branches) meant the caller could silently
+ * assert a location the model never actually referenced. Returning every
+ * match lets the caller distinguish "exactly one place this could be" from
+ * "genuinely ambiguous" instead of guessing.
+ *
+ * @returns {Array<{startLine:number, endLine:number}>}
+ */
+function findAllLineRangesInContent(content, quote) {
   const normQuote = normalizeWhitespace(quote);
-  if (!normQuote) return null;
+  if (!normQuote) return [];
   const lines = String(content || '').split('\n');
   const quoteLineCount = String(quote).split('\n').length;
+  const matches = [];
   for (let start = 0; start + quoteLineCount <= lines.length; start++) {
     const windowLines = lines.slice(start, start + quoteLineCount).map(normalizeWhitespace);
     if (normalizeWhitespace(windowLines.join(' ')).includes(normQuote)) {
-      return { startLine: start + 1, endLine: start + quoteLineCount };
+      matches.push({ startLine: start + 1, endLine: start + quoteLineCount });
     }
   }
-  return null;
+  return matches;
 }
 
 /**
@@ -370,9 +383,16 @@ export function resolveAnchorLocation(anchor, diffText, headContent) {
   // ever reads current (head) file content, so a base-side quote missing
   // from the hunk has no head-content equivalent to search.
   if (anchor.side === 'head' && headContent) {
-    const range = findLineRangeInContent(headContent, anchor.quote);
-    if (range) {
-      return { status: 'outside_hunk_in_head', headLineRange: range, hunks: splitIntoHunks(section.section) };
+    const ranges = findAllLineRangesInContent(headContent, anchor.quote);
+    if (ranges.length === 1) {
+      return { status: 'outside_hunk_in_head', headLineRange: ranges[0], hunks: splitIntoHunks(section.section) };
+    }
+    if (ranges.length > 1) {
+      // Genuinely ambiguous — an identical snippet appears at more than one
+      // location outside the hunk, and there is no occurrence identity on
+      // the anchor to disambiguate. Asserting the first match would silently
+      // pick a location the model may never have meant (item 11).
+      return { status: 'unsupported', reasonDetail: `quote matches ${ranges.length} distinct locations in HEAD content outside the diff hunk — ambiguous, no single location can be asserted` };
     }
   }
 

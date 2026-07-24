@@ -74,6 +74,20 @@ export const DEFAULT_SAMPLE_SIZE = 120;
  */
 export const CLIFF_REPORTING_THRESHOLD = 0.03;
 
+/**
+ * How close a below-floor score must be to the floor to count as a
+ * near-miss rather than a clear miss (arch-audit-pipeline-observability-
+ * hardening.md item 8 / this plan's own C5, "review is split, not
+ * flattened"). C5's original design pre-dated C7-REVISED's retirement of
+ * `reuse`/`extend`/`justify-divergence` and was never carried forward onto
+ * the single-floor model that replaced it (Implementation Log, 2026-07-20:
+ * "the floor-relative equivalent is unbuilt") — every below-floor score
+ * collapsed to one identical `below-noise-floor` reason regardless of
+ * distance, discarding exactly the near-miss evidence that motivated C5.
+ * The 0.05 margin is the value C5's own table used for `review-near`.
+ */
+export const NEAR_FLOOR_MARGIN = 0.05;
+
 export function cosineSimilarity(a, b) {
   if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length || a.length === 0) return null;
   let dot = 0, na = 0, nb = 0;
@@ -185,7 +199,20 @@ export function bandTopResult(ranked, calibration) {
   const cliff = second ? top.similarityScore - second.similarityScore : null;
 
   if (top.similarityScore < floor) {
-    return { band: 'review', reason: 'below-noise-floor', cliff, cluster: false };
+    // Floor-relative split (C5 / item 8): a score within NEAR_FLOOR_MARGIN of
+    // the floor is a near-miss worth flagging distinctly from a clear miss —
+    // both remain band:'review' (no consumer that switches on `band` alone
+    // is affected), but `reason` now preserves the distinction a future
+    // recalibration could use instead of discarding it into one bucket.
+    const distanceBelowFloor = floor - top.similarityScore;
+    // Epsilon guards the inclusive boundary against float subtraction noise
+    // (e.g. 0.7146 - (0.7146 - 0.05) computes to 0.050000000000000044, not
+    // exactly 0.05) — a score genuinely AT the margin must not flip to the
+    // far bucket over a rounding artifact.
+    const reason = distanceBelowFloor <= NEAR_FLOOR_MARGIN + 1e-9
+      ? 'below-noise-floor-near'
+      : 'below-noise-floor';
+    return { band: 'review', reason, cliff, cluster: false };
   }
 
   // The floor is the ONLY gate. The cliff is reported, never gating — see
