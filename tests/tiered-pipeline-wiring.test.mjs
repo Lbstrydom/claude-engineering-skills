@@ -17,7 +17,8 @@ import { execFileSync } from 'node:child_process';
 
 import os from 'node:os';
 import { defaultGeminiReviewScriptPath } from '../scripts/lib/audit/final-adjudication.mjs';
-import { runTieredAuditPipeline, TieredUnavailableError } from '../scripts/lib/audit/tiered-pipeline.mjs';
+import { runTieredAuditPipeline } from '../scripts/lib/audit/tiered-pipeline.mjs';
+import { TieredUnavailableError } from '../scripts/lib/audit/discovery-fallback.mjs';
 import { buildAuditRunContext } from '../scripts/lib/audit/legacy-production-audit.mjs';
 
 // 2026-07-15: root cause behind the first 4 real `complete` shadow runs all
@@ -60,14 +61,22 @@ describe('buildAuditRunContext — diffText wiring (2026-07-15, Stage-0-always-r
 // a meaningless 0/null. These guards pin that real capture is wired at the
 // source (the pipeline isn't hermetically runnable end-to-end — same reasoning
 // as the diffText/adapter guards above).
+//
+// docs/plans/tiered-pipeline-refresh-god-module-decomposition.md: `buildUsageBlock`
+// (the `computeCostReport`/`hasPricedUsage` wrapper) relocated into
+// cost-budget.mjs, colocated with `computeCostReport` itself. The pipeline-side
+// guard now pins that the orchestrator feeds its real accumulated `usageEvents`
+// into `buildUsageBlock` (never a hardcoded `[]`); the pricing-honesty guard
+// moved to where `hasPricedUsage`/`costUsd` are actually computed.
 describe('per-stage usage capture wiring (static guards)', () => {
   const tieredSrc = () => fs.readFileSync(path.resolve('scripts/lib/audit/tiered-pipeline.mjs'), 'utf-8');
+  const costBudgetSrc = () => fs.readFileSync(path.resolve('scripts/lib/audit/cost-budget.mjs'), 'utf-8');
   const adjSrc = () => fs.readFileSync(path.resolve('scripts/lib/audit/final-adjudication.mjs'), 'utf-8');
 
-  test('computeCostReport receives the accumulated usageEvents array, not a hardcoded []', () => {
+  test('buildUsageBlock receives the accumulated usageEvents array, not a hardcoded []', () => {
     const src = tieredSrc();
-    assert.match(src, /computeCostReport\(\{\s*usageEvents\b/, 'usageEvents must be a variable fed into computeCostReport');
-    assert.doesNotMatch(src, /computeCostReport\(\{\s*usageEvents:\s*\[\]/, 'the hardcoded empty-events call is the defect being fixed');
+    assert.match(src, /buildUsageBlock\(usageEvents\b/, 'usageEvents must be a variable fed into buildUsageBlock');
+    assert.doesNotMatch(src, /buildUsageBlock\(\[\]/, 'the hardcoded empty-events call is the defect being fixed');
   });
 
   test('the pipeline captures via the fail-open tryBuildUsageEvent wrapper (never a raw buildUsageEvent that could throw mid-stage)', () => {
@@ -80,7 +89,7 @@ describe('per-stage usage capture wiring (static guards)', () => {
   });
 
   test('tiered cost is real when priced, honest-null when nothing could be priced — never a fabricated flat null', () => {
-    const src = tieredSrc();
+    const src = costBudgetSrc();
     // The last-session flat `costUsd: null` override on the MAIN return is gone;
     // cost now derives from whether any captured event was priced.
     assert.match(src, /costUsd:\s*hasPricedUsage\s*\?/, 'expected honest cost: real sum when priced, null when not');
@@ -316,65 +325,73 @@ describe('discoveryCode assembly — secret-redaction default (discovery-portfol
 });
 
 describe('OSS-call reliability wiring (docs/plans/oss-call-reliability-hardening.md)', () => {
-  const src = fs.readFileSync(path.resolve('scripts/lib/audit/tiered-pipeline.mjs'), 'utf8');
+  // docs/plans/tiered-pipeline-refresh-god-module-decomposition.md: provider
+  // invocation (validatedTriagerCall/createGlmDiscoveryCall) relocated to
+  // tiered-provider-calls.mjs; the glmResponseValidationSchema construction
+  // relocated to discovery-prompts.mjs. Stage sequencing (failedNames, the
+  // Stage1->Stage2 handoff, the admission-budget resolution, the returned
+  // telemetry) stays inline in the orchestrator.
+  const tieredSrc = fs.readFileSync(path.resolve('scripts/lib/audit/tiered-pipeline.mjs'), 'utf8');
+  const providerCallsSrc = fs.readFileSync(path.resolve('scripts/lib/audit/tiered-provider-calls.mjs'), 'utf8');
+  const discoveryPromptsSrc = fs.readFileSync(path.resolve('scripts/lib/audit/discovery-prompts.mjs'), 'utf8');
 
   test('static pin: validatedTriagerCall passes operation: stage1_triage to providers.ossCall', () => {
-    const fnMatch = src.match(/async function validatedTriagerCall[\s\S]*?\n}/);
+    const fnMatch = providerCallsSrc.match(/export async function validatedTriagerCall[\s\S]*?\n}/);
     assert.ok(fnMatch, 'expected to find validatedTriagerCall');
     assert.match(fnMatch[0], /operation:\s*'stage1_triage'/);
   });
 
-  test('static pin: glmCall passes operation: discovery_generation to providers.ossCall', () => {
-    const glmMatch = src.match(/const glmCall = providers\.ossCall[\s\S]*?: async \(\) => \{ throw new Error\('discovery portfolio: providers\.ossCall unavailable'\); \};/);
-    assert.ok(glmMatch, 'expected to find the glmCall assignment');
+  test('static pin: createGlmDiscoveryCall passes operation: discovery_generation to providers.ossCall', () => {
+    const glmMatch = providerCallsSrc.match(/export function createGlmDiscoveryCall\([\s\S]*?\n}\n/);
+    assert.ok(glmMatch, 'expected to find the createGlmDiscoveryCall factory');
     assert.match(glmMatch[0], /operation:\s*'discovery_generation'/);
   });
 
   test('static pin: both adapters destructure category/error from ossCall and set err.category on throw', () => {
-    const validatedMatch = src.match(/async function validatedTriagerCall[\s\S]*?\n}/)[0];
+    const validatedMatch = providerCallsSrc.match(/export async function validatedTriagerCall[\s\S]*?\n}/)[0];
     // `usage` was added to the destructure for per-stage cost capture (2026-07-22);
     // category/error must still be destructured and threaded into err.category.
     assert.match(validatedMatch, /const \{ result, category, error, usage \} = await providers\.ossCall/);
     assert.match(validatedMatch, /err\.category = category \?\? null/);
 
-    const glmMatch = src.match(/const glmCall = providers\.ossCall[\s\S]*?: async \(\) => \{ throw new Error\('discovery portfolio: providers\.ossCall unavailable'\); \};/)[0];
+    const glmMatch = providerCallsSrc.match(/export function createGlmDiscoveryCall\([\s\S]*?\n}\n/)[0];
     assert.match(glmMatch, /const \{ result, category, error, usage \} = await providers\.ossCall/);
     assert.match(glmMatch, /err\.category = category \?\? null/);
   });
 
   test('static pin: failedNames embeds category into the fallback-reason string', () => {
-    assert.match(src, /o\.category \? `\[\$\{o\.category\}\] ` : ''/);
+    assert.match(tieredSrc, /o\.category \? `\[\$\{o\.category\}\] ` : ''/);
   });
 
   test('static pin: the Stage-1 -> Stage-2 handoff (runFinalAdjudication input) never references budgetExhausted (round-2 H1 regression guard)', () => {
-    const handoffMatch = src.match(/const stage2Result = await runFinalAdjudication\(\s*\{[^}]*\}/s);
+    const handoffMatch = tieredSrc.match(/const stage2Result = await runFinalAdjudication\(\s*\{[^}]*\}/s);
     assert.ok(handoffMatch, 'expected to find the runFinalAdjudication call');
     assert.match(handoffMatch[0], /escalated:\s*triageResult\.escalated/);
     assert.equal(/budgetExhausted/.test(handoffMatch[0]), false, 'budgetExhausted must never be routed into Stage 2\'s workload');
   });
 
   test('static pin: runTieredAuditPipeline resolves BOTH the admission budget and the per-candidate worst-case duration before calling runStage1CheapTriage', () => {
-    assert.match(src, /const stage1AdmissionBudgetMs = getStage1TriageBudget\(\)/);
-    assert.match(src, /const stage1CandidateWorstCaseMs = calculateWorstCaseAttemptDuration\(getOssOperationPolicy\('stage1_triage'\)\)/);
-    const callMatch = src.match(/const triageResult = await runStage1CheapTriage\([\s\S]*?\}\);/);
+    assert.match(tieredSrc, /const stage1AdmissionBudgetMs = getStage1TriageBudget\(\)/);
+    assert.match(tieredSrc, /const stage1CandidateWorstCaseMs = calculateWorstCaseAttemptDuration\(getOssOperationPolicy\('stage1_triage'\)\)/);
+    const callMatch = tieredSrc.match(/const triageResult = await runStage1CheapTriage\([\s\S]*?\}\);/);
     assert.ok(callMatch, 'expected to find the runStage1CheapTriage call');
     assert.match(callMatch[0], /admissionBudgetMs:\s*stage1AdmissionBudgetMs/);
     assert.match(callMatch[0], /candidateWorstCaseMs:\s*stage1CandidateWorstCaseMs/);
   });
 
   test('static pin: the returned AuditRunResult carries typed _stage1BudgetExhausted/_stage1FailureCategories telemetry', () => {
-    assert.match(src, /_stage1BudgetExhausted:\s*\{/);
-    assert.match(src, /count:\s*triageResult\.skippedBudgetExhaustedCount/);
-    assert.match(src, /_stage1FailureCategories:\s*triageResult\.failureCategories/);
+    assert.match(tieredSrc, /_stage1BudgetExhausted:\s*\{/);
+    assert.match(tieredSrc, /count:\s*triageResult\.skippedBudgetExhaustedCount/);
+    assert.match(tieredSrc, /_stage1FailureCategories:\s*triageResult\.failureCategories/);
   });
 
-  test('static pin: glmCall passes a lenient responseSchema, decoupled from the provider-guidance schema', () => {
-    const glmMatch = src.match(/const glmCall = providers\.ossCall[\s\S]*?: async \(\) => \{ throw new Error\('discovery portfolio: providers\.ossCall unavailable'\); \};/);
-    assert.ok(glmMatch, 'expected to find the glmCall assignment');
-    assert.match(glmMatch[0], /responseSchema:\s*glmResponseValidationSchema/, 'glmCall must validate the reply leniently, never via the strict per-item schema');
-    assert.match(glmMatch[0], /schema:\s*glmLenientSchema/, 'the provider-facing JSON Schema must still derive from the strict-shaped schema (unaffected)');
-    assert.match(src, /const glmResponseValidationSchema = z\.preprocess\(/);
-    assert.match(src, /z\.object\(\{ findings: z\.array\(z\.unknown\(\)\)\.max\(15\) \}\)/, 'per-item shape must be left entirely to prepareCandidates downstream');
+  test('static pin: createGlmDiscoveryCall passes a lenient responseSchema, decoupled from the provider-guidance schema', () => {
+    const glmMatch = providerCallsSrc.match(/export function createGlmDiscoveryCall\([\s\S]*?\n}\n/);
+    assert.ok(glmMatch, 'expected to find the createGlmDiscoveryCall factory');
+    assert.match(glmMatch[0], /responseSchema:\s*contract\.glmResponseValidationSchema/, 'createGlmDiscoveryCall must validate the reply leniently, never via the strict per-item schema');
+    assert.match(glmMatch[0], /schema:\s*contract\.glmLenientSchema/, 'the provider-facing JSON Schema must still derive from the strict-shaped schema (unaffected)');
+    assert.match(discoveryPromptsSrc, /const glmResponseValidationSchema = z\.preprocess\(/);
+    assert.match(discoveryPromptsSrc, /z\.object\(\{ findings: z\.array\(z\.unknown\(\)\)\.max\(15\) \}\)/, 'per-item shape must be left entirely to prepareCandidates downstream');
   });
 });
 
@@ -523,6 +540,9 @@ describe('buildAuditRunContext — commitSha/workingTreeDirty threading (docs/pl
 
 describe('static pins — Stage 0 relevance-split wiring (docs/plans/stage0-evidence-relevance-split.md)', () => {
   const src = fs.readFileSync(path.resolve('scripts/lib/audit/tiered-pipeline.mjs'), 'utf8');
+  // The producer schema/contract construction relocated to discovery-prompts.mjs
+  // (docs/plans/tiered-pipeline-refresh-god-module-decomposition.md).
+  const discoveryPromptsSrc = fs.readFileSync(path.resolve('scripts/lib/audit/discovery-prompts.mjs'), 'utf8');
 
   // RETARGETED V2 → V3 (evidence-anchor-path-contract Phase 6). The original
   // pin's SUBJECT survives unchanged: the discovery schema must be
@@ -533,10 +553,10 @@ describe('static pins — Stage 0 relevance-split wiring (docs/plans/stage0-evid
   // "the provider validates it" was always false). Pinning V2 now would pin the
   // defect.
   test('the discovery generator schema is V3 (evidence-bearing AND provider-enforceable), never V1/V2', () => {
-    assert.match(src, /import \{ makeProducerFindingV3Schema, clampToJsonSchemaLimits \} from '\.\.\/schemas\.mjs'/);
-    assert.match(src, /const glmStrictSchema = z\.object\(\{ findings: z\.array\(producerFindingSchema\)\.max\(15\) \}\)/);
-    assert.match(src, /items:\s*z\.toJSONSchema\(producerFindingSchema\)/);
-    assert.equal(/ProducerFindingV2Schema/.test(src.replace(/^\s*\/\/.*$/gm, '')), false,
+    assert.match(discoveryPromptsSrc, /import \{ makeProducerFindingV3Schema, clampToJsonSchemaLimits \} from '\.\.\/schemas\.mjs'/);
+    assert.match(discoveryPromptsSrc, /const glmStrictSchema = z\.object\(\{ findings: z\.array\(producerFindingSchema\)\.max\(15\) \}\)/);
+    assert.match(discoveryPromptsSrc, /items:\s*z\.toJSONSchema\(producerFindingSchema\)/);
+    assert.equal(/ProducerFindingV2Schema/.test(discoveryPromptsSrc.replace(/^\s*\/\/.*$/gm, '')), false,
       'V2 must no longer reach a provider from this module — its superRefine is the bug class');
   });
 
@@ -654,7 +674,9 @@ describe('shadow vs production fallback (docs/plans/shadow-no-legacy-fallback.md
   // is the other half, and it is what survives a refactor that hoists the
   // import above the branch.
   test('static pin: the legacy dynamic import lives INSIDE the non-shadow branch', () => {
-    const src = fs.readFileSync(path.resolve('scripts/lib/audit/tiered-pipeline.mjs'), 'utf8');
+    // failRequiredGenerator relocated to discovery-fallback.mjs
+    // (docs/plans/tiered-pipeline-refresh-god-module-decomposition.md).
+    const src = fs.readFileSync(path.resolve('scripts/lib/audit/discovery-fallback.mjs'), 'utf8');
     const throwIdx = src.indexOf('if (ctx.shadowMode) throw new TieredUnavailableError(reason);');
     const importIdx = src.indexOf("await import('./legacy-production-audit.mjs')");
     assert.ok(throwIdx > 0, 'expected the shadowMode throw');

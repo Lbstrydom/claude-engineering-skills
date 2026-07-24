@@ -66,7 +66,8 @@
 
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
-import { runTieredAuditPipeline, TieredUnavailableError } from './lib/audit/tiered-pipeline.mjs';
+import { runTieredAuditPipeline } from './lib/audit/tiered-pipeline.mjs';
+import { TieredUnavailableError } from './lib/audit/discovery-fallback.mjs';
 import { filterDiffFiles, formatSkipLog } from './lib/sensitive-paths.mjs';
 import { isSafeGitRevision, exitCodeFor } from './lib/vcs.mjs';
 import { createAnthropicClient } from './lib/anthropic-client.mjs';

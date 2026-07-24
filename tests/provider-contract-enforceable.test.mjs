@@ -214,7 +214,7 @@ describe('COVERAGE — no z.toJSONSchema call site escapes the registry', () => 
     // Phase 6 (evidence-anchor-path-contract) RETIRED three entries whose
     // justification was literally "retired by Phase 6": `ProducerFindingV2Schema`
     // and its two local aliases (`strict` in model-eval-discovery.mjs,
-    // `glmStrictSchema` in tiered-pipeline.mjs) no longer wrap V2 — both now
+    // `glmStrictSchema` in discovery-prompts.mjs) no longer wrap V2 — both now
     // wrap the refinement-free V3 factory, so they are covered by the PROPERTY
     // test rather than excused here. A stale allowlist entry is a standing
     // licence for the exact bug the guard exists to catch, so they are deleted
@@ -223,15 +223,19 @@ describe('COVERAGE — no z.toJSONSchema call site escapes the registry', () => 
     // `glmStrictSchema` stays, with a NEW and different justification: it is a
     // local `z.object({findings: z.array(producerFindingSchema)})` wrapper whose
     // element IS registered, and whose own tree the property test covers via
-    // `makeProducerFindingV3Schema`.
+    // `makeProducerFindingV3Schema`. (docs/plans/tiered-pipeline-refresh-god-module-decomposition.md:
+    // both names now live in `discovery-prompts.mjs::buildDiscoveryContract`,
+    // not `tiered-pipeline.mjs` — this scan is file-location-agnostic (it
+    // walks the whole `scripts/` tree and keys the allowlist by variable name
+    // only), so the relocation needed no scan changes, just this comment.)
     const ALLOW = new Map([
       // §7d: "Dynamic per-run schemas (the id enum) are registered by their
       // FACTORY, which the scan treats as the call site; the factory's static
       // base is what carries (or must not carry) refinements." This is that
       // instance — `makeProducerFindingV3Schema` IS registered, and the property
       // test instantiates it with a probe id and walks the whole tree.
-      ['producerFindingSchema', 'tiered-pipeline.mjs per-run instance of the REGISTERED makeProducerFindingV3Schema factory (the id enum is per-run, the shape is not) — refinement-freeness is a property of the factory and is asserted directly above.'],
-      ['glmStrictSchema', 'tiered-pipeline.mjs local `{findings: [...]}` array wrapper around makeProducerFindingV3Schema — the element schema is registered and property-tested; the wrapper adds only .max(15).'],
+      ['producerFindingSchema', 'discovery-prompts.mjs per-run instance of the REGISTERED makeProducerFindingV3Schema factory (the id enum is per-run, the shape is not) — refinement-freeness is a property of the factory and is asserted directly above.'],
+      ['glmStrictSchema', 'discovery-prompts.mjs local `{findings: [...]}` array wrapper around makeProducerFindingV3Schema — the element schema is registered and property-tested; the wrapper adds only .max(15).'],
       ['strict', 'model-eval-discovery.mjs local `{findings: [...]}` array wrapper around makeProducerFindingV3Schema — same shape, same coverage.'],
       ['zodSchema', 'oss-structured-output.mjs generic parameter — the caller owns the contract; the schema is whatever was passed in.'],
       ['schema', 'generic parameter name in a shared helper — the caller owns the contract.'],

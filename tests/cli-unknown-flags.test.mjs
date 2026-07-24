@@ -23,7 +23,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { assertKnownFlags, ArgvError } from '../scripts/lib/cli-io.mjs';
-import { KNOWN_FLAGS } from '../scripts/symbol-index/refresh.mjs';
+import { KNOWN_FLAGS } from '../scripts/symbol-index/refresh-args.mjs';
 import { KNOWN_FLAGS as PRUNE_FLAGS } from '../scripts/symbol-index/prune.mjs';
 import { KNOWN_FLAGS as RENDER_FLAGS } from '../scripts/symbol-index/render-mermaid.mjs';
 import { KNOWN_FLAGS as RLS_FLAGS, _internals as RLS } from '../scripts/lib/remove-legacy-synced.mjs';
@@ -80,9 +80,13 @@ describe('refresh.mjs — the CLI that motivated this', () => {
     // proceeded to a real live refresh — the accepted-then-ignored bug
     // reintroduced one layer up. An allowlist entry is a claim the parser does
     // something with it, so assert that claim against the source.
+    //
+    // docs/plans/tiered-pipeline-refresh-god-module-decomposition.md:
+    // KNOWN_FLAGS + parseArgs relocated to refresh-args.mjs — that file's
+    // whole body IS the parser, so no end boundary is needed.
     const src = fs.readFileSync(
-      path.join(REPO_ROOT, 'scripts', 'symbol-index', 'refresh.mjs'), 'utf-8');
-    const body = src.slice(src.indexOf('function parseArgs'), src.indexOf('function logErr'));
+      path.join(REPO_ROOT, 'scripts', 'symbol-index', 'refresh-args.mjs'), 'utf-8');
+    const body = src.slice(src.indexOf('export function parseArgs'));
     for (const flag of KNOWN_FLAGS) {
       assert.ok(body.includes(`'${flag}'`),
         `${flag} is allow-listed but parseArgs never handles it — it would be accepted and ignored`);

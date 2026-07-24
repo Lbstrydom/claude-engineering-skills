@@ -1,5 +1,78 @@
 # Project Status Log
 
+## 2026-07-24 — tiered-pipeline.mjs + refresh.mjs god-module decomposition shipped (autonomous /cycle --autonomous)
+
+Implemented [`docs/plans/tiered-pipeline-refresh-god-module-decomposition.md`](docs/plans/tiered-pipeline-refresh-god-module-decomposition.md)
+end to end via `/cycle --autonomous` — both declared §11 clusters, audited,
+and passed the mandatory consolidated Gemini gate (round 1 `APPROVE`).
+
+### Changes
+- **Cluster A** (`scripts/lib/audit/tiered-pipeline.mjs`, 1517 → ~450 lines):
+  extracted 7 new sibling modules (`discovery-prompts.mjs`,
+  `tiered-provider-calls.mjs`, `tiered-model-selection.mjs`,
+  `discovery-fallback.mjs`, `discovery-diff-scope.mjs`,
+  `stage0-relevance-context.mjs`, `stage0-debt-routing.mjs`) plus
+  `buildUsageBlock` added to `cost-budget.mjs`. Removed the `__testExports`/
+  `AUDIT_EXPORTS_FOR_TESTS` gate entirely (every helper now has its own file).
+- **Cluster B** (`scripts/symbol-index/refresh.mjs`, 960 → ~380 lines):
+  extracted 7 new sibling modules (`refresh-args.mjs`, `refresh-errors.mjs`,
+  `refresh-repo-setup.mjs`, `refresh-lock.mjs`, `refresh-mode.mjs`,
+  `refresh-file-scope.mjs`, `refresh-subprocess.mjs`) — including converting
+  3 inline `process.exit()` calls in library code to typed thrown errors
+  (`RepoRegistrationError`, `RefreshInFlightError`, `LockAbortError`) caught
+  by `main()`'s own catch block.
+- Real bug found + fixed during Cluster A's audit: `glmLenientSchema`/
+  `glmResponseValidationSchema` clamped against the quote-bearing
+  `producerResponseJsonSchema` instead of `unclampedQuoteSchema`, silently
+  truncating GLM-path `quote` evidence — only the Sonnet path had actually
+  been exempted. Also fixed: an async/finally-ordering bug in a shared
+  `withCwd` test helper (2 files), 2 duplicate-justification pragmas, and a
+  stale hardcoded `"GPT-5.5"` fallback-log string.
+- 5 pre-existing security/correctness findings captured to
+  `.audit/tech-debt.json` for a dedicated future fix rather than silently
+  dropped: `resolveEligibleDiffPathMap`'s lexical-vs-symlink tradeoff,
+  `buildStage0RelevanceContext`'s sequential I/O + error-swallowing,
+  cross-repo UUID-only scoping in `getRefreshRun`/`abortRefreshRun`, the
+  predictable-temp-file-path + non-exclusive-write in
+  `refresh-subprocess.mjs`, the `restrictFiles: []` vs `null` empty-scope
+  conflation, and the `--flag=value` CLI parsing gap between
+  `assertKnownFlags` and `parseArgs`.
+- Close-out's two-pass export-migration scan found + fixed 3 real gaps:
+  a dynamic `import()` of `TieredUnavailableError` in
+  `tests/tiered-shadow-compare.test.mjs`, and two families of static
+  source-inspection tests (`tests/tiered-pipeline-wiring.test.mjs` +
+  `tests/tiered-pipeline-stage0-wiring.test.mjs`; `tests/refresh-cli-contract.test.mjs`)
+  that read production source text directly and needed retargeting to the
+  relocated symbols' new file homes.
+
+### Files Affected
+- 14 new source files across `scripts/lib/audit/` and `scripts/symbol-index/`
+  (listed above).
+- 9 modified source files: `cost-budget.mjs`, `tiered-pipeline.mjs`,
+  `tiered-shadow-compare.mjs`, `refresh.mjs`, `verify-anchor-contract.mjs`,
+  plus the call-site import-path updates.
+- 13 test files: 5 new (`tiered-provider-calls`, `tiered-model-selection`,
+  `refresh-repo-setup`, `refresh-lock`, `refresh-subprocess-recovery`), 8
+  modified (import-path retargets + the static-source-inspection fixes above).
+
+### Decisions Made
+- Both clusters' audits confirmed every pre-existing finding via
+  `git diff HEAD` before dismissing — "verbatim-moved, unrelated to this
+  refactor's correctness" is a checked claim, not an assumption, per this
+  repo's own "scope decided by impact, not authorship" test.
+- `npm run arch:refresh` + `npm run arch:render` were run for real against
+  the live cloud DB as a live-runtime proof of the `refresh.mjs`
+  decomposition (331 symbols extracted/summarised/embedded, published) —
+  not just unit tests.
+- Consolidated Gemini gate: `APPROVE` round 1, 0 new findings, 0 wrongly
+  dismissed, architectural coherence "Strong".
+
+### Next Steps
+- The 5 debt-ledger entries above are real, tracked pre-existing issues —
+  worth a dedicated follow-up plan, not urgent.
+
+---
+
 ## 2026-07-24 — audit-backlog-triage-hardening: 7-item punch list shipped (autonomous /cycle)
 
 Implemented [`docs/plans/audit-backlog-triage-hardening.md`](docs/plans/audit-backlog-triage-hardening.md)

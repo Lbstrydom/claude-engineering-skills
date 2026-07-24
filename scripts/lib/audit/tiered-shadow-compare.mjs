@@ -61,7 +61,7 @@ import { normalizePath } from '../file-io.mjs';
 import { resolveRepoIdentity } from '../repo-identity.mjs';
 import { appendTieredShadowObservation } from '../store/tiered-shadow.mjs';
 import { isFileInChangedScope } from './deferral-classifier.mjs';
-import { TieredUnavailableError } from './tiered-pipeline.mjs';
+import { TieredUnavailableError } from './discovery-fallback.mjs';
 
 export const SHADOW_LOG_PATH = path.join('.audit', 'tiered-shadow-log.jsonl');
 

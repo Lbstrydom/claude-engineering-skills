@@ -27,7 +27,7 @@ const {
   appendShadowLog, runTieredShadowComparison,
   buildLegacyBuckets, buildTieredBuckets,
 } = await import('../scripts/lib/audit/tiered-shadow-compare.mjs');
-const { TieredUnavailableError } = await import('../scripts/lib/audit/tiered-pipeline.mjs');
+const { TieredUnavailableError } = await import('../scripts/lib/audit/discovery-fallback.mjs');
 
 // Shared fixture helper for the bucketing suites below — `semanticId` keys
 // on `category|section|detail`, so distinct values here guarantee distinct ids.
@@ -332,11 +332,18 @@ describe('cost producers — legacy + tiered both price real usage (static guard
   // `costUsd: null` — it now captures per-stage usage and prices it. costUsd is
   // the REAL sum when any captured event was priceable, else honest null
   // (`buildUsageBlock`) — never a fabricated 0 from empty usageEvents.
+  //
+  // docs/plans/tiered-pipeline-refresh-god-module-decomposition.md: `buildUsageBlock`
+  // (the `hasPricedUsage ? report.costUsd : null` logic) relocated to
+  // cost-budget.mjs, colocated with `computeCostReport`. The orchestrator-side
+  // guard now pins that it feeds `buildUsageBlock` its real accumulated
+  // `usageEvents`, never a hardcoded `[]`.
   test('the tiered pipeline prices captured usage — real sum when priced, honest null when not (no flat null, no fabricated 0)', () => {
-    const src = fs.readFileSync(path.resolve('scripts/lib/audit/tiered-pipeline.mjs'), 'utf-8');
-    assert.match(src, /costUsd:\s*hasPricedUsage\s*\?\s*report\.costUsd\s*:\s*null/, 'cost must derive from whether any captured event was priced');
-    assert.match(src, /computeCostReport\(\{\s*usageEvents\b/, 'the empty-events hardcode is gone; real usageEvents flow in');
-    assert.doesNotMatch(src, /computeCostReport\(\{\s*usageEvents:\s*\[\]/, 'no hardcoded empty-events call may remain');
+    const tieredSrc = fs.readFileSync(path.resolve('scripts/lib/audit/tiered-pipeline.mjs'), 'utf-8');
+    const costBudgetSrc = fs.readFileSync(path.resolve('scripts/lib/audit/cost-budget.mjs'), 'utf-8');
+    assert.match(costBudgetSrc, /costUsd:\s*hasPricedUsage\s*\?\s*report\.costUsd\s*:\s*null/, 'cost must derive from whether any captured event was priced');
+    assert.match(tieredSrc, /buildUsageBlock\(usageEvents\b/, 'the empty-events hardcode is gone; real usageEvents flow in');
+    assert.doesNotMatch(tieredSrc, /buildUsageBlock\(\[\]/, 'no hardcoded empty-events call may remain');
   });
 });
 

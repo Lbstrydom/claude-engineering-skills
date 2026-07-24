@@ -6,17 +6,15 @@
  * `routePreExistingIndependent`'s batch-reconciled debt routing (decision
  * #9).
  *
- * SEPARATE FILE, not folded into tests/tiered-pipeline-wiring.test.mjs — a
- * hard constraint, not a style choice: that file already carries a static
- * top-level `import { runTieredAuditPipeline } from
- * '../scripts/lib/audit/tiered-pipeline.mjs'`, which evaluates the module
- * (freezing `__testExports` at `undefined`, since `AUDIT_EXPORTS_FOR_TESTS`
- * is unset at that point) before any test-body code could set the env var.
- * A later `await import()` of the SAME resolved path returns the cached,
- * already-frozen module — never a fresh evaluation. This file sets
- * `AUDIT_EXPORTS_FOR_TESTS=1` BEFORE its own first (dynamic) import of
- * tiered-pipeline.mjs, exactly mirroring the established
- * tests/legacy-production-audit-hardening.test.mjs pattern.
+ * SEPARATE FILE, not folded into tests/tiered-pipeline-wiring.test.mjs — kept
+ * that way for historical continuity even though the reason no longer
+ * applies: these symbols used to be reachable only through
+ * `tiered-pipeline.mjs`'s `AUDIT_EXPORTS_FOR_TESTS`/`__testExports` gate,
+ * whose freezing hazard forced a dynamic import ordered before any static
+ * import of that module. `docs/plans/tiered-pipeline-refresh-god-module-decomposition.md`
+ * gave every one of these functions its own dedicated file and REMOVED the
+ * gate entirely (a 20-40 line file's whole surface IS its API) — they are now
+ * plain top-level imports below, same as any other module.
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -24,15 +22,15 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { gitInit, commit } from './helpers/fixtures.mjs';
-
-process.env.AUDIT_EXPORTS_FOR_TESTS = '1';
-const { __testExports } = await import('../scripts/lib/audit/tiered-pipeline.mjs');
-const {
+import {
   collectCandidateAnchorFiles, buildStage0RelevanceContext,
   makeHeadContentAdapter, makeImpactAdapter, makeBlameAdapter,
+} from '../scripts/lib/audit/stage0-relevance-context.mjs';
+import {
   extractCanonicalAnchorFile, buildPreExistingDebtEntry, routePreExistingIndependent,
-  resolveEligibleDiffPathMap, stripMaxLengthFor,
-} = __testExports;
+} from '../scripts/lib/audit/stage0-debt-routing.mjs';
+import { resolveEligibleDiffPathMap } from '../scripts/lib/audit/discovery-diff-scope.mjs';
+import { stripMaxLengthFor } from '../scripts/lib/audit/discovery-prompts.mjs';
 
 /**
  * The discovery generators clamp over-long producer strings rather than
@@ -135,11 +133,16 @@ function mkdtemp() {
 // over-engineered extreme the pragmas correctly rejected); that module now
 // exists for many other helpers, so the calculus has changed.
 
-function withCwd(dir, fn) {
+async function withCwd(dir, fn) {
   const saved = process.cwd();
   process.chdir(dir);
   try {
-    return fn();
+    // MUST await here — `return fn()` alone returns fn's pending promise
+    // before entering `finally`, so any code in `fn` AFTER its first `await`
+    // would see cwd already restored to `saved` (audit-code fix M6, drive-by
+    // fix of this pre-existing helper for consistency with its sibling copy
+    // in tests/tiered-model-selection.test.mjs).
+    return await fn();
   } finally {
     process.chdir(saved);
   }
@@ -578,7 +581,15 @@ describe('hydrated anchors satisfy Gate A\'s oracle — stage0Malformed must rea
 // guards a step that, if silently dropped, restores the exact bug: findings the
 // model got RIGHT being destroyed as `fabricated`.
 describe('static pins — producer-contract wiring (evidence-anchor-path-contract Phase 6)', () => {
+  // docs/plans/tiered-pipeline-refresh-god-module-decomposition.md: the
+  // producer-schema/anchor-contract construction relocated to
+  // discovery-prompts.mjs::buildDiscoveryContract, and the discovery-provider
+  // factories relocated to tiered-provider-calls.mjs. Stage sequencing (the
+  // diff-path map resolution, the short-circuits, prepareCandidates,
+  // discoveryMalformedRaw telemetry) stays inline in the orchestrator.
   const src = fs.readFileSync(path.resolve('scripts/lib/audit/tiered-pipeline.mjs'), 'utf8');
+  const discoveryPromptsSrc = fs.readFileSync(path.resolve('scripts/lib/audit/discovery-prompts.mjs'), 'utf8');
+  const providerCallsSrc = fs.readFileSync(path.resolve('scripts/lib/audit/tiered-provider-calls.mjs'), 'utf8');
 
   it('the map is built from ctx.diffText — never re-read from git, never from discoveryCode', () => {
     assert.match(src, /resolveEligibleDiffPathMap\(ctx\.diffText\)/);
@@ -591,7 +602,11 @@ describe('static pins — producer-contract wiring (evidence-anchor-path-contrac
   it('empty/invalid short-circuit BEFORE any generator call or schema construction', () => {
     const mapIdx = src.indexOf('resolveEligibleDiffPathMap(ctx.diffText)');
     const skipIdx = src.indexOf('return skippedNoGeneratorResult(ctx, diffPathMap');
-    const schemaIdx = src.indexOf('makeProducerFindingV3Schema(diffPathMap.entries');
+    // The schema/contract construction is now ONE call (buildDiscoveryContract,
+    // relocated to discovery-prompts.mjs) rather than an inline
+    // makeProducerFindingV3Schema(...) — the ordering property being pinned
+    // (short-circuit precedes contract construction) is unchanged.
+    const schemaIdx = src.indexOf('const contract = buildDiscoveryContract(diffPathMap)');
     const portfolioIdx = src.indexOf('await runDiscoveryPortfolio(');
     for (const [name, i] of [['map', mapIdx], ['skip', skipIdx], ['schema', schemaIdx], ['portfolio', portfolioIdx]]) {
       assert.ok(i > 0, `expected to find the ${name} site`);
@@ -602,9 +617,11 @@ describe('static pins — producer-contract wiring (evidence-anchor-path-contrac
   });
 
   it('neither skipped status can read as a clean 0-finding `complete` run (the anti-green rule)', () => {
-    assert.match(src, /runStatus = map\.kind === 'empty' \? 'skipped_no_eligible_files' : 'failed_invalid_diff_input'/);
+    // skippedNoGeneratorResult relocated to discovery-fallback.mjs.
+    const fallbackSrc = fs.readFileSync(path.resolve('scripts/lib/audit/discovery-fallback.mjs'), 'utf8');
+    assert.match(fallbackSrc, /runStatus = map\.kind === 'empty' \? 'skipped_no_eligible_files' : 'failed_invalid_diff_input'/);
     // computed, then returned as `runStatus` — never the literal 'complete'.
-    const fn = src.match(/function skippedNoGeneratorResult[\s\S]*?\n\}/);
+    const fn = fallbackSrc.match(/function skippedNoGeneratorResult[\s\S]*?\n\}/);
     assert.ok(fn, 'expected skippedNoGeneratorResult');
     assert.equal(/runStatus:\s*'complete'/.test(fn[0]), false);
     assert.match(fn[0], /findings: \[\]/);
@@ -619,18 +636,20 @@ describe('static pins — producer-contract wiring (evidence-anchor-path-contrac
   });
 
   it('BOTH generators emit the V3 producer shape and are handed the SAME table', () => {
-    assert.match(src, /const producerFindingSchema = makeProducerFindingV3Schema\(/);
-    assert.match(src, /const glmStrictSchema = z\.object\(\{ findings: z\.array\(producerFindingSchema\)\.max\(15\) \}\)/, 'GLM');
-    assert.match(src, /items:\s*z\.toJSONSchema\(producerFindingSchema\)/, 'Sonnet tool input_schema');
-    // ONE anchorContract string, referenced by both — so they cannot drift into
-    // citing different id sets.
-    assert.equal((src.match(/^\s+anchorContract,$/gm) || []).length, 2, 'both generators must interpolate the same anchorContract');
-    assert.match(src, /const diffPathTable = renderDiffPathTable\(diffPathMap\.entries\)/);
-    assert.match(src, /DIFF-PATH TABLE/);
+    assert.match(discoveryPromptsSrc, /const producerFindingSchema = makeProducerFindingV3Schema\(/);
+    assert.match(discoveryPromptsSrc, /const glmStrictSchema = z\.object\(\{ findings: z\.array\(producerFindingSchema\)\.max\(15\) \}\)/, 'GLM');
+    assert.match(discoveryPromptsSrc, /items:\s*z\.toJSONSchema\(producerFindingSchema\)/, 'Sonnet tool input_schema');
+    // ONE anchorContract string, referenced by both generator factories — so
+    // they cannot drift into citing different id sets. Each factory now reads
+    // it off the shared `contract` parameter (`contract.anchorContract`)
+    // rather than a bare closed-over identifier.
+    assert.equal((providerCallsSrc.match(/^\s+contract\.anchorContract,$/gm) || []).length, 2, 'both generator factories must interpolate the same contract.anchorContract');
+    assert.match(discoveryPromptsSrc, /const diffPathTable = renderDiffPathTable\(diffPathMap\.entries\)/);
+    assert.match(discoveryPromptsSrc, /DIFF-PATH TABLE/);
   });
 
   it('the prompt tells the model to copy an id from the table and NOT to report paths (D1)', () => {
-    const contract = src.match(/const anchorContract = \[[\s\S]*?\]\.join\('\\n'\);/);
+    const contract = discoveryPromptsSrc.match(/const anchorContract = \[[\s\S]*?\]\.join\('\\n'\);/);
     assert.ok(contract, 'expected the anchorContract block');
     assert.match(contract[0], /copied EXACTLY from the DIFF-PATH TABLE/);
     assert.match(contract[0], /Do NOT report paths or file status/);
@@ -664,8 +683,22 @@ describe('static pins — producer-contract wiring (evidence-anchor-path-contrac
   });
 
   it('the retired anchor-mirror is gone but the maxLength/maxItems clamp is RETAINED', () => {
-    assert.equal(/normalizeModifiedAnchorPaths/.test(src.replace(/RETIRED[\s\S]*?\*\//, '')), false, 'the normalizer must be fully retired');
-    assert.match(src, /\(v\) => clampToJsonSchemaLimits\(v, producerResponseJsonSchema\)/, 'OSS routers still ignore maxLength/maxItems — the clamp stays');
+    assert.equal(/normalizeModifiedAnchorPaths/.test(discoveryPromptsSrc.replace(/RETIRED[\s\S]*?\*\//, '')), false, 'the normalizer must be fully retired');
+    // audit-code fix H3 (round 2): both GLM preprocess clamps must target
+    // unclampedQuoteSchema, NOT producerResponseJsonSchema — the latter still
+    // carries quote's maxLength, so clamping against it silently truncated
+    // `quote` on the GLM path even though the very next invariant says quote
+    // must NEVER be clamped (the Sonnet path already got this right).
+    assert.equal(
+      (discoveryPromptsSrc.match(/\(v\) => clampToJsonSchemaLimits\(v, unclampedQuoteSchema\)/g) || []).length,
+      2,
+      'both glmLenientSchema and glmResponseValidationSchema must clamp against unclampedQuoteSchema (OSS routers still ignore maxLength/maxItems for every OTHER field, but quote must survive intact)',
+    );
+    assert.equal(
+      /clampToJsonSchemaLimits\(v, producerResponseJsonSchema\)/.test(discoveryPromptsSrc),
+      false,
+      'no GLM clamp may target the quote-bearing producerResponseJsonSchema directly',
+    );
   });
 
   // 2026-07-18: the Sonnet path had NO clamp, so Sonnet-5's verbose `detail`
@@ -674,14 +707,14 @@ describe('static pins — producer-contract wiring (evidence-anchor-path-contrac
   // destroying real findings. Measured by the §9a acceptance probe.
   it('BOTH generators clamp — the Sonnet path is not exempt', () => {
     assert.match(
-      src,
-      /clampToJsonSchemaLimits\(\{ findings: toolUse\.input\.findings \}, unclampedQuoteSchema\)/,
+      providerCallsSrc,
+      /clampToJsonSchemaLimits\(\{ findings: toolUse\.input\.findings \}, contract\.unclampedQuoteSchema\)/,
       'Anthropic tool-use validates shape but not maxLength — the Sonnet response needs the same clamp as GLM',
     );
   });
 
   it('the Sonnet clamp exempts `quote` — clamping it would fake a model evidence failure', () => {
-    assert.match(src, /stripMaxLengthFor\(producerResponseJsonSchema, 'quote'\)/,
+    assert.match(discoveryPromptsSrc, /stripMaxLengthFor\(producerResponseJsonSchema, 'quote'\)/,
       'Gate A matches `quote` VERBATIM: a truncated quote is destroyed as `unsupported`, blaming the model for OUR truncation');
   });
 });
@@ -699,18 +732,26 @@ describe('static pins — producer-contract wiring (evidence-anchor-path-contrac
 // shapes it redacts) contains.
 describe('discovery payload — planContent redaction (egress-gate root cause, 2026-07-16)', () => {
   const src = fs.readFileSync(path.resolve('scripts/lib/audit/tiered-pipeline.mjs'), 'utf8');
+  // docs/plans/tiered-pipeline-refresh-god-module-decomposition.md: the two
+  // generator prompt-interpolation call sites relocated to
+  // tiered-provider-calls.mjs (createGlmDiscoveryCall/createSonnetDiscoveryCall).
+  const providerCallsSrc = fs.readFileSync(path.resolve('scripts/lib/audit/tiered-provider-calls.mjs'), 'utf8');
 
   it('static pin: NEITHER generator interpolates raw ctx.planContent into its prompt', () => {
     assert.equal(
       /\$\{ctx\.planContent/.test(src), false,
       'raw ctx.planContent must never reach a provider prompt — use the redacted discoveryPlan',
     );
+    assert.equal(
+      /\$\{ctx\.planContent/.test(providerCallsSrc), false,
+      'the relocated generator factories must not have grown a raw ctx.planContent reference either',
+    );
   });
 
   it('static pin: both generators use the single redacted discoveryPlan', () => {
     assert.match(src, /const discoveryPlan = redactSecrets\(ctx\.planContent \?\? ''\)/);
     // GLM (userPrompt) + Sonnet (messages) — both halves of the portfolio.
-    assert.equal((src.match(/## Plan\\n\$\{discoveryPlan\}/g) || []).length, 2,
+    assert.equal((providerCallsSrc.match(/## Plan\\n\$\{discoveryPlan\}/g) || []).length, 2,
       'both the GLM and Sonnet call sites must use the redacted plan');
   });
 
@@ -776,14 +817,16 @@ describe('discovery payload — planContent redaction (egress-gate root cause, 2
 // require_parameters:true → stalls 10/30 → 0/30, availability 40% → 57%,
 // p50 2.6s → 0.9s. Static pins so a refactor can't silently drop the field.
 describe('OSS call sites send require_parameters (experiment-4 stall fix)', () => {
-  const src = fs.readFileSync(path.resolve('scripts/lib/audit/tiered-pipeline.mjs'), 'utf8');
+  // docs/plans/tiered-pipeline-refresh-god-module-decomposition.md: both call
+  // sites relocated to tiered-provider-calls.mjs.
+  const src = fs.readFileSync(path.resolve('scripts/lib/audit/tiered-provider-calls.mjs'), 'utf8');
   it('the GLM discovery generator requires honoured parameters', () => {
-    const glm = src.match(/const glmCall = providers\.ossCall[\s\S]*?discovery portfolio: providers\.ossCall unavailable/);
-    assert.ok(glm, 'glmCall block not found');
+    const glm = src.match(/export function createGlmDiscoveryCall\([\s\S]*?\n}\n/);
+    assert.ok(glm, 'createGlmDiscoveryCall factory not found');
     assert.match(glm[0], /providerPreferences:\s*\{\s*require_parameters:\s*true\s*\}/);
   });
   it('the Stage-1 validated triager requires honoured parameters', () => {
-    const triager = src.match(/async function validatedTriagerCall[\s\S]*?\n\}/);
+    const triager = src.match(/export async function validatedTriagerCall[\s\S]*?\n\}/);
     assert.ok(triager, 'validatedTriagerCall not found');
     assert.match(triager[0], /providerPreferences:\s*\{\s*require_parameters:\s*true\s*\}/);
   });

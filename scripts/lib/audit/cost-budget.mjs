@@ -87,6 +87,30 @@ export function computeCostReport({ usageEvents = [], reviewEffortEvents = [], a
   };
 }
 
+/**
+ * Build the `_usage` cost block from a run's captured usage events. `costUsd`
+ * is the REAL priced sum when any captured event was priceable, else `null`
+ * (honestly unmeasured) — never a fabricated `0` from empty or all-
+ * `unavailable` events (the 2026-07-22 defect this closes). The rest of the
+ * cost report (`unavailableCostEventCount`, per-accepted-HIGH rates, …)
+ * passes through so a partially-priced run stays diagnosable.
+ *
+ * `droppedUsageEventCount`: events that failed to build at all
+ * (`tryBuildUsageEvent` returned null) never reach `computeCostReport`, so
+ * they wouldn't even land in `unavailableCostEventCount` — a silent
+ * under-count. Surfacing the drop count makes "cost may be higher than
+ * reported" visible, mirroring `unavailableCostEventCount`'s own semantics.
+ *
+ * @param {Array<object>} usageEvents - events from `tryBuildUsageEvent` (may be empty)
+ * @param {Array<{severity: string}>} [acceptedFindings]
+ * @param {number} [droppedCount] - events `tryBuildUsageEvent` could not build
+ */
+export function buildUsageBlock(usageEvents, acceptedFindings = [], droppedCount = 0) {
+  const report = computeCostReport({ usageEvents, reviewEffortEvents: [], acceptedFindings });
+  const hasPricedUsage = usageEvents.some((e) => e && e.usageReliability !== 'unavailable');
+  return { ...report, costUsd: hasPricedUsage ? report.costUsd : null, droppedUsageEventCount: droppedCount };
+}
+
 /** @returns {AppendOnlyStore} a schema-validating, lock-guarded store for UsageEvents at `filePath`. */
 export function openUsageEventStore(filePath) {
   return new AppendOnlyStore(filePath, { schema: UsageEventSchema });

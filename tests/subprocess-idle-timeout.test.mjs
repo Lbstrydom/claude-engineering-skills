@@ -20,7 +20,7 @@ import {
   runJsonLinesAsyncStrict,
   SUBPROC_ERROR_CODES,
 } from '../scripts/lib/subprocess.mjs';
-import { buildExtractSpawnOpts } from '../scripts/symbol-index/refresh.mjs';
+import { buildExtractSpawnOpts } from '../scripts/symbol-index/refresh-subprocess.mjs';
 
 const EXTRACT = path.join(process.cwd(), 'scripts', 'symbol-index', 'extract.mjs');
 // The record types refresh.mjs consumes; a `progress` heartbeat is deliberately

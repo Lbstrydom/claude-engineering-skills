@@ -147,14 +147,23 @@ describe('full-vs-incremental skip parity', () => {
   });
 });
 
-// ── Source-inspection: refresh.mjs wires the new helpers correctly ────────
+// ── Source-inspection: refresh.mjs (+ its siblings) wire the helpers correctly ──
+// docs/plans/tiered-pipeline-refresh-god-module-decomposition.md: VCS-scope +
+// sensitive-path filtering relocated to refresh-file-scope.mjs, walk-start-commit
+// resolution to refresh-lock.mjs, and the extract/summarise/embed subprocess
+// pipeline (including the sibling-script resolution + --files-from manifest) to
+// refresh-subprocess.mjs. `vcs.exitCodeFor` and the top-level `vcs` import stay
+// in refresh.mjs itself (used by its own catch block).
 
 describe('refresh.mjs wiring (source inspection)', () => {
   const src = fs.readFileSync(REFRESH_SRC, 'utf-8');
+  const fileScopeSrc = fs.readFileSync(path.join(REPO_ROOT, 'scripts/symbol-index/refresh-file-scope.mjs'), 'utf-8');
+  const lockSrc = fs.readFileSync(path.join(REPO_ROOT, 'scripts/symbol-index/refresh-lock.mjs'), 'utf-8');
+  const subprocessSrc = fs.readFileSync(path.join(REPO_ROOT, 'scripts/symbol-index/refresh-subprocess.mjs'), 'utf-8');
 
-  it('imports vcs.mjs and sensitive-paths.mjs', () => {
+  it('imports vcs.mjs (refresh.mjs) and sensitive-paths.mjs (refresh-file-scope.mjs)', () => {
     assert.match(src, /import \* as vcs from '\.\.\/lib\/vcs\.mjs';/);
-    assert.match(src, /from '\.\.\/lib\/sensitive-paths\.mjs'/);
+    assert.match(fileScopeSrc, /from '\.\.\/lib\/sensitive-paths\.mjs'/);
   });
 
   it('removes the inline gitDiffWithWorkingTree definition', () => {
@@ -166,33 +175,37 @@ describe('refresh.mjs wiring (source inspection)', () => {
 
   it('exits via vcs.exitCodeFor on structured failures', () => {
     assert.match(src, /vcs\.exitCodeFor\(/);
-    assert.match(src, /vcs failure:/);
+    // The "vcs failure:" message is built by throwVcsError, relocated to
+    // refresh-file-scope.mjs (its only call site).
+    assert.match(fileScopeSrc, /vcs failure:/);
   });
 
   it('applies filterDiffFiles with BOTH categories on incremental diff', () => {
-    assert.match(src, /filterDiffFiles\([^)]*\['sensitive',\s*'generatedNoise'\]\)/);
+    assert.match(fileScopeSrc, /filterDiffFiles\([^)]*\['sensitive',\s*'generatedNoise'\]\)/);
   });
 
   it('emits skip log via formatSkipLog', () => {
-    assert.match(src, /formatSkipLog\(/);
+    assert.match(fileScopeSrc, /formatSkipLog\(/);
   });
 
   it('routes gitCommitSha result through {ok, sha} destructure', () => {
-    // Look for either `shaResult.ok` or `sha.ok` style branching.
-    assert.match(src, /vcs\.gitCommitSha\(/);
-    assert.match(src, /\.ok\s*\?/, 'expected `.ok ? … : null`-style structured handling');
+    // Look for either `shaResult.ok` or `sha.ok` style branching. Relocated to
+    // refresh-lock.mjs's resolveWalkStartCommit.
+    assert.match(lockSrc, /vcs\.gitCommitSha\(/);
+    assert.match(lockSrc, /\.ok\s*\?/, 'expected `.ok ? … : null`-style structured handling');
   });
 
   it('resolves sibling pipeline scripts via import.meta.dirname, not a cwd-relative path', () => {
     // Regression: spawning `node scripts/symbol-index/extract.mjs` (cwd-relative)
     // is MODULE_NOT_FOUND in a consumer, where the tooling lives under
-    // scripts/.claude-skills/symbol-index/. Siblings must resolve off this file.
-    // (relocation-guard.test.mjs misses this — it's a runJsonLines wrapper, not
-    // a bare spawn().)
-    assert.match(src, /import\.meta\.dirname/, 'must resolve siblings off import.meta.dirname');
+    // scripts/.claude-skills/symbol-index/. Siblings must resolve off THIS file
+    // (refresh-subprocess.mjs, where the sibling() helper + the spawns now live —
+    // it is itself a sibling of extract/summarise/embed.mjs, same directory as
+    // refresh.mjs, so import.meta.dirname resolves identically).
+    assert.match(subprocessSrc, /import\.meta\.dirname/, 'must resolve siblings off import.meta.dirname');
     // Match the array-spawn form `['scripts/symbol-index/extract.mjs'` (the bug),
     // not prose mentioning the path — so the explanatory comment doesn't trip it.
-    assert.doesNotMatch(src, /\[\s*['"]scripts\/symbol-index\/(extract|summarise|embed)\.mjs['"]/,
+    assert.doesNotMatch(subprocessSrc, /\[\s*['"]scripts\/symbol-index\/(extract|summarise|embed)\.mjs['"]/,
       'no cwd-relative sibling spawn path (breaks silently in consumers)');
   });
 
@@ -200,10 +213,11 @@ describe('refresh.mjs wiring (source inspection)', () => {
     // Regression: a large incremental changeset (1600+ files on Windows) used
     // to overflow the OS command line via `--files <comma-joined>` → spawn
     // ENAMETOOLONG. The list must now go through a temp manifest file.
-    assert.match(src, /--files-from/, 'extract must be invoked with --files-from');
-    assert.doesNotMatch(src, /extractArgs\.push\('--files',/,
-      'refresh.mjs must not pass the file list as a --files argv (ENAMETOOLONG risk)');
-    assert.match(src, /unlinkSync\(filesManifest\)/, 'manifest must be cleaned up');
+    // Relocated to refresh-subprocess.mjs's runExtractSummariseEmbed.
+    assert.match(subprocessSrc, /--files-from/, 'extract must be invoked with --files-from');
+    assert.doesNotMatch(subprocessSrc, /extractArgs\.push\('--files',/,
+      'refresh-subprocess.mjs must not pass the file list as a --files argv (ENAMETOOLONG risk)');
+    assert.match(subprocessSrc, /unlinkSync\(filesManifest\)/, 'manifest must be cleaned up');
   });
 });
 

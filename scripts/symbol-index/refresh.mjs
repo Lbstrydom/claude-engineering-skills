@@ -21,29 +21,35 @@
  *
  * On any failure: refresh_run is aborted, active_refresh_id unchanged.
  *
+ * **File layout (docs/plans/tiered-pipeline-refresh-god-module-decomposition.md,
+ * god-module decomposition)**: this file is now a shrunk orchestrator —
+ * sequencing plus the deliberately-retained inline persistence/finalization
+ * block (steps 8-14: DB upserts, pragma resolution, import-edge persistence,
+ * coverage persistence, copy-forward, publish, band calibration — see the
+ * plan's Risk Register for why these stay inline, not a pure sequencing
+ * shell). The concerns it used to carry inline now live in dedicated
+ * siblings: `refresh-args.mjs` (CLI parsing), `refresh-repo-setup.mjs`
+ * (identity + registration), `refresh-lock.mjs` (per-repo lock acquisition),
+ * `refresh-mode.mjs` (incremental→full mode promotion), `refresh-file-scope.mjs`
+ * (VCS scope + sensitive-path filtering), `refresh-subprocess.mjs` (the
+ * extract→summarise→embed pipeline + timeout recovery), and `refresh-errors.mjs`
+ * (the typed errors the siblings throw and this file's `main()` catches).
+ * `logErr`/`logOk` stay here (the injected logging port every sibling takes
+ * as an explicit parameter). `runWithHeartbeat` and `persistExtractionCoverage`
+ * are untouched by this plan.
+ *
  * @module scripts/symbol-index/refresh
  */
 
 import path from 'node:path';
 import fs from 'node:fs';
-import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import * as vcs from '../lib/vcs.mjs';
-import { runJsonLinesAsyncStrict, SUBPROC_ERROR_CODES } from '../lib/subprocess.mjs';
-import { filterDiffFiles, formatSkipLog } from '../lib/sensitive-paths.mjs';
-import { assertKnownFlags } from '../lib/cli-io.mjs';
 import {
   initLearningStore,
   isCloudEnabled,
-  upsertRepoByUuid,
-  getRepoIdByUuid,
-  openRefreshRun,
-  publishRefreshRun,
-  abortRefreshRun,
-  heartbeatRefreshRun,
   recordSymbolDefinitions,
   recordSymbolIndex,
-  listFilesNeedingSummaryRetry,
   recordSummaryOutcomes,
   recordSymbolEmbedding,
   recordLayeringViolations,
@@ -54,15 +60,14 @@ import {
   getImportGraphPopulated,
   recordGraphCoverage,
   copyForwardCoverage,
-  setActiveEmbeddingModel,
   copyForwardUntouchedFiles,
   getActiveSnapshot,
   recordBandCalibration,
   sampleSnapshotEmbeddings,
-  getRefreshRun,
-  findStaleRunningRefresh,
+  heartbeatRefreshRun,
+  abortRefreshRun,
+  publishRefreshRun,
 } from '../learning-store.mjs';
-import { resolveRepoIdentity, persistRepoIdentity } from '../lib/repo-identity.mjs';
 import { resolveModel } from '../lib/model-resolver.mjs';
 import { resolveEmbedProfile } from '../lib/embed-text.mjs';
 import { symbolIndexConfig } from '../lib/config.mjs';
@@ -72,115 +77,17 @@ import { graphVerdict } from '../lib/symbol-index/graph-verdict.mjs';
 import { assessExtractionCoverage } from '../lib/symbol-index/graph-coverage.mjs';
 import { assertRepoRoot } from '../lib/assert-repo-root.mjs';
 import { findRepoPragmas, resolvePragmasToDefinitions, PRAGMA_RESOLUTION_MAX_GAP_LINES } from '../lib/duplicate-justification-pragma.mjs';
-
-// Resolve sibling pipeline scripts (extract/summarise/embed) relative to THIS
-// file, not the cwd. The cwd-relative form ('scripts/symbol-index/extract.mjs')
-// only exists in the source repo; in a consumer the tooling lives under
-// scripts/.claude-skills/symbol-index/, so a cwd-relative spawn was a silent
-// MODULE_NOT_FOUND there. refresh.mjs and its pipeline scripts are always
-// siblings, so import.meta.dirname is correct in both layouts.
-const sibling = (name) => path.join(import.meta.dirname, name);
-
-/**
- * D3/H4 promotion predicate — pure + exported for tests. An incremental refresh
- * re-embeds only touched files but publishes new provenance unconditionally, so
- * when the vector-space identity we're about to publish differs from the prior
- * active snapshot's, an incremental run would leave a MIXED index. Promote to a
- * full re-embed in that case. Only a REAL prior identity triggers it (a first-ever
- * refresh with no prior is handled by the existing anchor-less promotion).
- *
- * @param {{activeEmbeddingModel?: string|null}|null|undefined} prior
- * @param {string} nextProvenanceId
- * @returns {boolean}
- */
-export function provenanceRequiresFullReembed(prior, nextProvenanceId) {
-  return Boolean(prior?.activeEmbeddingModel) && prior.activeEmbeddingModel !== nextProvenanceId;
-}
-
-/**
- * Spawn options for the extract subprocess (docs/plans/extract-idle-timeout.md).
- *
- * The extract child streams a `progress` record per file, so a healthy run is
- * never silent for long; the coverage-sized threshold is used as an **idle**
- * (inactivity) bound, NOT a total-duration one, so a slow-but-progressing
- * extraction is never truncated. Pulled out as a pure builder so a test can pin
- * `coverageConfig.hardTimeoutMs → idleTimeoutMs` and fail loudly if a future
- * edit reverts to a total `timeoutMs` (which silently re-opens the truncation
- * defect). Deliberately emits `idleTimeoutMs` and NO `timeoutMs`: an absolute
- * ceiling is a deferred, non-required guard (plan §6) — the child's output is
- * finite, so a "streams forever" runaway cannot occur.
- *
- * @param {{hardTimeoutMs: number}} coverageConfig
- * @returns {{stage: 'extract', idleTimeoutMs: number}}
- */
-export function buildExtractSpawnOpts(coverageConfig) {
-  return { stage: 'extract', idleTimeoutMs: coverageConfig.hardTimeoutMs };
-}
-
-/**
- * Every flag this CLI accepts. `assertKnownFlags` rejects anything else.
- *
- * **The allowlist must list only flags this file actually HANDLES.** A first
- * draft added `--selfcheck-relocation` on the assumption refresh.mjs carried the
- * smoke-test handler like its siblings. It does not — it is not in
- * `CLI_SMOKE_SET` (AGENTS.md) — so the guard accepted the flag, the parser
- * ignored it, and the run proceeded to a real live refresh that published as
- * active. That is precisely the accepted-then-ignored bug this guard exists to
- * prevent, reintroduced one layer up. An allowlist entry is a claim that the
- * parser below does something with it.
- */
-export const KNOWN_FLAGS = Object.freeze([
-  '--full', '--since-commit', '--force', '--include-delegates',
-]);
-
-function parseArgs(argv) {
-  // Reject unknown flags BEFORE any work. This chain used to have no `else`, so
-  // an unrecognised flag was silently dropped: `--full --dry-run`, intended as a
-  // costing dry run, discarded `--dry-run` and ran a REAL full refresh against
-  // the live store (2026-07-20). Note this CLI has no `--dry-run` while its
-  // sibling `prune.mjs` does — a family that honours the flag in one destructive
-  // command and ignores it in another fails in the dangerous direction.
-  assertKnownFlags(argv, KNOWN_FLAGS, { cli: 'refresh' });
-
-  const args = { full: false, sinceCommit: null, force: false, includeDelegates: false };
-  for (let i = 2; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === '--full') args.full = true;
-    else if (a === '--since-commit') args.sinceCommit = argv[++i];
-    else if (a === '--force') args.force = true;
-    else if (a === '--include-delegates') args.includeDelegates = true;
-  }
-  return args;
-}
+import { SUBPROC_ERROR_CODES } from '../lib/subprocess.mjs';
+import { parseArgs } from './refresh-args.mjs';
+import { RepoRegistrationError, RefreshInFlightError, LockAbortError } from './refresh-errors.mjs';
+import { resolveAndRegisterRepo } from './refresh-repo-setup.mjs';
+import { resolveWalkStartCommit, acquireRefreshLock } from './refresh-lock.mjs';
+import { finalizeRefreshMode } from './refresh-mode.mjs';
+import { resolveIncrementalFileScope } from './refresh-file-scope.mjs';
+import { runExtractSummariseEmbed } from './refresh-subprocess.mjs';
 
 function logErr(s) { process.stderr.write(`  [refresh] ${s}\n`); }
 function logOk(s) { process.stderr.write(`  [refresh] ${s}\n`); }
-
-/**
- * Throw a tagged Error so the outer `main()` try/catch can abort the
- * in-flight refresh_run BEFORE exiting. The catch block in `main()`
- * inspects `err.vcsCode` to look up the exit code via `vcs.exitCodeFor`
- * — direct `process.exit()` here would skip `abortRefreshRun`, leaving
- * the row stuck in `running` and the per-repo lock held (R1-audit H10).
- *
- * @param {{code: string, message: string, cause?: Error}} err
- */
-function throwVcsError(err) {
-  const e = new Error(`vcs failure: ${err.code} — ${err.message}`);
-  e.code = 'VCS_FAILURE';
-  e.vcsCode = err.code;
-  e.vcsMessage = err.message;
-  if (err.cause) e.cause = err.cause;
-  throw e;
-}
-
-// Subprocess driver moved to scripts/lib/subprocess.mjs (WS-LIVE).
-// The async streaming runner restores `runWithHeartbeat` liveness during
-// the multi-minute extract → summarise → embed pipeline; `spawnSync` here
-// previously blocked the event loop, silencing heartbeats for the entire
-// duration. The strict wrapper hard-fails on malformed JSON (silent
-// `.filter(Boolean)` data loss was a documented invariant violation —
-// see docs/plans/liveness-and-canonical-paths.md cluster A).
 
 /**
  * Persist the full-run extraction coverage measurement (§2.1.7). Extracted
@@ -261,206 +168,50 @@ async function main() {
     process.exit(0);
   }
 
-  // 1. Resolve identity
-  const identity = resolveRepoIdentity(repoRoot);
-  persistRepoIdentity(identity.repoUuid, repoRoot);
-
-  // 2. Resolve embedding model NOW (per Gemini G2: persist concrete id).
-  //    The ONE shared profile (embed-text.mjs) — the same resolver embed.mjs uses,
-  //    so what we PUBLISH as provenance can never disagree with what made the
-  //    vectors (D2/H3). `provenanceId` is endpoint-qualified under Azure (H8).
-  const concreteEmbedModel = resolveModel(symbolIndexConfig.embedModel);
-  const embedProfile = resolveEmbedProfile({ concreteModel: concreteEmbedModel });
-  const embedDim = symbolIndexConfig.embedDim;
-
-  // 3. Upsert repo + open refresh_run
-  const repo = await upsertRepoByUuid({ repoUuid: identity.repoUuid, name: identity.name });
-  if (!repo) {
-    logErr('upsertRepoByUuid returned null — aborting');
-    process.exit(1);
-  }
-  const repoId = repo.id;
-
   let mode = args.full ? 'full' : 'incremental';
-  // `walkStartCommit` is informational — the snapshot can publish without it.
-  // A `!sha.ok` result is NOT fatal here (terminal failures like missing-git
-  // or not-a-repo surface later when we try to read the diff). Empty repos
-  // (no commits yet → BAD_REVISION) are also tolerated so a brand-new repo
-  // can publish its first snapshot.
-  const shaResult = vcs.gitCommitSha(repoRoot);
-  let walkStartCommit = shaResult.ok ? shaResult.sha : null;
   let sinceCommit = args.sinceCommit;
-
-  // NOTE: the incremental-vs-full decision (anchor derivation + the D3/H4
-  // provenance-change safety gate) is deliberately made AFTER openRefreshRun
-  // below — see the "Finalize scope under the running lock (H4)" block. Reading
-  // the prior snapshot here, BEFORE the lock, would let a concurrent refresh
-  // publish between the read and the lock and leave the decision acting on a
-  // stale snapshot. `walkStartCommit` is lock-independent, so it stays here.
-
-  let refreshId, cancellationToken;
-  try {
-    const opened = await openRefreshRun({ repoId, mode, walkStartCommit });
-    refreshId = opened.refreshId;
-    cancellationToken = opened.cancellationToken;
-  } catch (err) {
-    if (err.code === 'REFRESH_IN_FLIGHT' && !args.force) {
-      logErr(err.message);
-      process.exit(2);
-    }
-    if (err.code === 'REFRESH_IN_FLIGHT' && args.force) {
-      // Abort the prior in-flight run, then retry openRefreshRun.
-      // Partial-unique index on (repo_id, status='running') guarantees at
-      // most one row to clear. The aborted worker's heartbeat loop exits
-      // cleanly when it observes status!='running'.
-      logOk(`--force: aborting prior in-flight refresh for repo ${repoId}`);
-      try {
-        const stale = await findStaleRunningRefresh(repoId);
-        if (stale) {
-          await abortRefreshRun({ refreshId: stale.id, reason: 'aborted by --force' });
-          logOk(`--force: aborted refresh_run ${stale.id}`);
-        } else {
-          logOk(`--force: no in-flight row found, retrying openRefreshRun`);
-        }
-      } catch (abortErr) {
-        logErr(`--force: failed to abort prior run: ${abortErr.message}`);
-        process.exit(2);
-      }
-      const opened = await openRefreshRun({ repoId, mode, walkStartCommit });
-      refreshId = opened.refreshId;
-      cancellationToken = opened.cancellationToken;
-    } else {
-      throw err;
-    }
-  }
-  logOk(`opened refresh_run ${refreshId} (requested mode=${mode})`);
-
-  // Finalize scope UNDER the running lock (H4). openRefreshRun holds the
-  // per-repo running lock (partial-unique on status='running'), so from here
-  // getActiveSnapshot reflects the last COMPLETED publish and cannot be
-  // superseded by a concurrent refresh mid-decision — closing the stale-read
-  // race. The decision can only ESCALATE incremental→full (the safe direction);
-  // the row's recorded mode stays the user's request, the log records escalation.
-  // Hoisted: the null-summary re-queue (plan §2.1 C9) needs the prior snapshot
-  // id from inside the runWithHeartbeat closure below, which is a different
-  // scope from this block.
-  let prior = null;
-  if (mode === 'incremental') {
-    prior = await getActiveSnapshot(repoId);
-    // Provenance-change guard (D3/H4): an incremental run re-embeds only touched
-    // files but publishes new provenance unconditionally. If the identity we're
-    // about to publish differs from the prior snapshot's, an incremental run
-    // would leave a MIXED index — touched symbols in the new space, untouched in
-    // the old — that the read-side guard can't catch (the published id would
-    // "match"). Force a full re-embed whenever provenance changes.
-    if (provenanceRequiresFullReembed(prior, embedProfile.provenanceId)) {
-      logOk(
-        `embedding provenance changed (${prior.activeEmbeddingModel} → ${embedProfile.provenanceId}) ` +
-        `— promoting to --full to avoid a mixed vector space`,
-      );
-      mode = 'full';
-    } else if (!sinceCommit) {
-      // R1 audit M7: derive the incremental anchor from the prior snapshot; no
-      // usable anchor ⇒ promote to full rather than walk the whole repo as a
-      // "no diff" incremental.
-      if (prior?.refreshId) {
-        try {
-          const priorRun = await getRefreshRun(prior.refreshId, {
-            select: ['walk_start_commit'],
-          });
-          // Anchor on the prior run's START commit (its HEAD-at-open), NOT a
-          // HEAD-at-completion. This is deliberate: start-anchoring re-walks any
-          // commits that landed DURING the prior run's execution, so no commit
-          // can slip through the gap between two runs. End-anchoring would
-          // silently miss exactly those mid-run commits — a data-loss bug. A
-          // `walk_end_commit` column once existed for the end-anchor idea; it
-          // was never written (there is no correct use) and was dropped
-          // (migration 20260721150000). Do not reintroduce it.
-          sinceCommit = priorRun?.walk_start_commit || null;
-        } catch { /* fall through */ }
-      }
-      if (!sinceCommit) {
-        logOk(`no prior snapshot anchor — promoting to --full for this run`);
-        mode = 'full';
-      }
-    }
-  }
+  let refreshId;
 
   try {
+    // 1. Resolve identity + register repo.
+    const { repoId } = await resolveAndRegisterRepo(repoRoot);
+
+    // 2. Resolve embedding model NOW (per Gemini G2: persist concrete id).
+    //    The ONE shared profile (embed-text.mjs) — the same resolver embed.mjs uses,
+    //    so what we PUBLISH as provenance can never disagree with what made the
+    //    vectors (D2/H3). `provenanceId` is endpoint-qualified under Azure (H8).
+    const concreteEmbedModel = resolveModel(symbolIndexConfig.embedModel);
+    const embedProfile = resolveEmbedProfile({ concreteModel: concreteEmbedModel });
+    const embedDim = symbolIndexConfig.embedDim;
+
+    // 3. `walkStartCommit` is informational — the snapshot can publish without
+    //    it. A `null` result is NOT fatal here (terminal failures like
+    //    missing-git or not-a-repo surface later when we try to read the
+    //    diff). Empty repos (no commits yet) are also tolerated so a
+    //    brand-new repo can publish its first snapshot.
+    const walkStartCommit = resolveWalkStartCommit(repoRoot);
+
+    // 4. Acquire the per-repo running lock.
+    ({ refreshId } = await acquireRefreshLock({ repoId, mode, walkStartCommit, force: args.force, logOk }));
+    logOk(`opened refresh_run ${refreshId} (requested mode=${mode})`);
+
+    // 5. Finalize scope UNDER the running lock (H4). openRefreshRun holds the
+    // per-repo running lock (partial-unique on status='running'), so from here
+    // getActiveSnapshot reflects the last COMPLETED publish and cannot be
+    // superseded by a concurrent refresh mid-decision — closing the stale-read
+    // race. Runs BEFORE runWithHeartbeat opens (mode finalization is not
+    // itself heartbeat-monitored, only the long-running work after it is).
+    const finalized = await finalizeRefreshMode({ mode, sinceCommit, repoId, embedProfile, logOk });
+    mode = finalized.mode;
+    sinceCommit = finalized.sinceCommit;
+    const prior = finalized.prior;
+
     await runWithHeartbeat(refreshId, 15_000, async () => {
-      // 4. Enumerate files
-      let restrictFiles = null;
-      let touchedSet = null;
-      // Differential file lists for the refresh_runs.files_* annotation columns
-      // (written after publish, step 14b). Non-null ONLY on a differential run
-      // that computed a git diff; a full rebuild leaves it null → columns stay
-      // `[]` (honest "not a differential run", not a lie).
-      let diffStats = null;
-      if (mode === 'incremental' && sinceCommit) {
-        const diffResult = vcs.gitDiffWithWorkingTree(repoRoot, sinceCommit);
-        if (!diffResult.ok) {
-          throwVcsError(diffResult.error);
-        }
-        // State-aware filter: sensitive `modified` → rewritten as `deleted`
-        // so the indexer tombstones prior rows; sensitive `deleted` is
-        // preserved as tombstone. See sensitive-paths.mjs filterDiffFiles.
-        const { diff, skipped } = filterDiffFiles(diffResult.files, ['sensitive', 'generatedNoise']);
-        // Capture the POST-filter diff (what the indexer actually acts on:
-        // sensitive paths already rewritten to `deleted`) for the annotation
-        // columns. Sourced from the structured `diff`, NOT the flattened
-        // `touchedSet` — touchedSet collapses all five categories into one set
-        // and folds in non-git summary-retry files, so it cannot honestly
-        // populate a per-category column.
-        diffStats = {
-          added: diff.added,
-          modified: diff.modified,
-          deleted: diff.deleted,
-          renamed: diff.renamed,
-          untracked: diff.untracked,
-        };
-        for (const line of formatSkipLog(skipped, { logger: 'refresh' })) {
-          process.stderr.write(`  ${line}\n`);
-        }
-        const fileList = [
-          ...diff.added,
-          ...diff.modified,
-          ...diff.untracked,
-          ...diff.renamed.map(r => r.to),
-        ];
-        // NULL-SUMMARY RE-QUEUE (plan §2.1 C9).
-        //
-        // Incremental extraction is scoped to git-touched files, so a symbol
-        // whose summarisation failed is revisited ONLY if its file happens to
-        // be edited again. One transient provider outage would otherwise leave
-        // a permanent, silent blind spot: those symbols hold no embedding and
-        // surface as `unscored` forever, with nothing ever retrying them.
-        //
-        // Union their files into the extraction set so they flow back through
-        // the normal extract → summarise → embed path. Bounded by
-        // SUMMARY_RETRY_CAP on symbol_definitions, so permanently-
-        // unsummarisable symbols (oversized body, safety-filter trip) stop
-        // being retried rather than burning provider calls every refresh.
-        let retryFiles = [];
-        if (prior?.refreshId) {
-          try {
-            retryFiles = await listFilesNeedingSummaryRetry(repoId, prior.refreshId);
-          } catch (err) {
-            // Never block a refresh on the re-queue lookup.
-            logOk(`WARNING: summary re-queue lookup failed (${err.message}) — continuing without it`);
-          }
-        }
-        const retryOnly = retryFiles.filter(f => !fileList.includes(f));
-        restrictFiles = [...fileList, ...retryOnly];
-        touchedSet = new Set([
-          ...restrictFiles,
-          ...diff.deleted,
-          ...diff.renamed.map(r => r.from),
-        ]);
-        logOk(
-          `incremental: ${fileList.length} touched files (since ${sinceCommit})`
-          + (retryOnly.length ? ` + ${retryOnly.length} re-queued for failed summarisation` : ''),
-        );
-      }
+      // 6. Enumerate files.
+      const { restrictFiles, touchedSet: scopeTouchedSet, diffStats } = await resolveIncrementalFileScope({
+        mode, repoRoot, sinceCommit, repoId, prior, logOk,
+      });
+      let touchedSet = scopeTouchedSet;
 
       // 5. (R1 H4 fix) — active_embedding_model + dim are now passed to the
       //     publish RPC and set atomically with active_refresh_id. We no
@@ -468,107 +219,18 @@ async function main() {
       //     would leave repo metadata pointing at a model whose embeddings
       //     never landed.
 
-      // 6. Run extract → summarise → embed pipeline
-      const extractArgs = [sibling('extract.mjs'), '--root', repoRoot, '--mode', mode];
-      // Hand the touched-file list to extract via a temp manifest (--files-from)
-      // rather than a `--files <comma-joined>` argv. A large incremental
-      // changeset (1600+ files on Windows) overflows the OS command-line limit
-      // → `spawn ENAMETOOLONG`. The manifest is newline-delimited (safe for any
-      // filename) and removed in the finally below.
-      let filesManifest = null;
-      if (restrictFiles && restrictFiles.length > 0) {
-        filesManifest = path.join(os.tmpdir(), `arch-refresh-files-${process.pid}-${Date.now()}.txt`);
-        fs.writeFileSync(filesManifest, restrictFiles.join('\n') + '\n', 'utf-8');
-        extractArgs.push('--files-from', filesManifest);
-      }
-      if (args.includeDelegates) {
-        extractArgs.push('--include-delegates');
-        logOk('WARNING: --include-delegates is a debug/visibility flag. Index will include thin-facade duplicates; do NOT publish this snapshot as a normal baseline. Re-run without the flag for standard operations.');
-      }
-      logOk(`extracting symbols...`);
-      let extracted;
-      // The bound is an IDLE (inactivity) timeout, not a total-duration one
-      // (docs/plans/extract-idle-timeout.md): the child streams a `progress`
-      // record per file, so a healthy-but-slow extraction keeps the timer reset
-      // and is never truncated — only genuine silence (a wedged parse) trips it.
-      // A trip here is a DEGRADED MEASUREMENT, not a failed refresh: the symbol
-      // index is independently valuable (#16), so we synthesise the coverage
-      // record and recover the un-reached tail via copy-forward. Any OTHER
-      // abnormal death keeps today's failure behaviour. The parent owns the
-      // timer (§2.1.8) precisely because it is immune to the child's synchronous
-      // blocking — a parent-side idle timer observes silence correctly even
-      // while the child is wedged in synchronous work.
-      let extractionTimedOut = false;
-      try {
-        extracted = await runJsonLinesAsyncStrict('node', extractArgs, buildExtractSpawnOpts(coverageConfig));
-      } catch (err) {
-        if (err.code === SUBPROC_ERROR_CODES.KILLED_BY_SIGNAL && err.cause?.timedOut) {
-          extractionTimedOut = true;
-          extracted = err.cause.records || [];
-          logOk(`WARNING: extract went idle for ${coverageConfig.hardTimeoutMs}ms `
-            + `(no output — a wedged parse, not a slow one${err.cause?.records?.length ? `; last file: ${err.cause.records[err.cause.records.length - 1]?.file ?? '?'}` : ''}) — `
-            + `coverage will report extraction_timeout; reached symbols publish and the un-reached tail recovers via copy-forward`);
-        } else {
-          throw err;
-        }
-      } finally {
-        if (filesManifest) {
-          try { fs.unlinkSync(filesManifest); } catch { /* best-effort cleanup */ }
-        }
-      }
-      const symbolsRaw = extracted.filter(r => r.type === 'symbol');
-      const violations = extracted.filter(r => r.type === 'violation');
-      const importEdges = extracted.filter(r => r.type === 'import');
-      const coverageLine = extracted.find(r => r.type === 'coverage') || null;
-      logOk(`extracted ${symbolsRaw.length} symbols, ${violations.length} violations, ${importEdges.length} internal import edges`);
-
-      // 7. Summarise (only non-redacted)
-      logOk(`summarising...`);
-      const summarised = await runJsonLinesAsyncStrict('node', [sibling('summarise.mjs')], {
-        input: symbolsRaw.map(r => JSON.stringify(r)).join('\n') + '\n',
-        stage: 'summarise',
+      // 7. Run extract → summarise → embed pipeline (+ 8b timeout recovery).
+      const {
+        finalSymbols, violations, importEdges, coverageLine,
+        extractionTimedOut, timeoutRecovery, recoveredTouchedSet,
+      } = await runExtractSummariseEmbed({
+        repoRoot, repoId, mode, restrictFiles,
+        includeDelegates: args.includeDelegates, coverageConfig, concreteEmbedModel, logOk,
       });
-      const summarisedSymbols = summarised.filter(r => r.type === 'symbol');
-
-      // 8. Embed
-      logOk(`embedding (model=${concreteEmbedModel})...`);
-      const embedded = await runJsonLinesAsyncStrict('node', [sibling('embed.mjs')], {
-        input: summarisedSymbols.map(r => JSON.stringify(r)).join('\n') + '\n',
-        env: { ARCH_INDEX_EMBED_CONCRETE: concreteEmbedModel },
-        stage: 'embed',
-      });
-      const finalSymbols = embedded.filter(r => r.type === 'symbol');
-
-      // 8b. Timed-out-full recovery. A full extraction is a synchronous ts-morph
-      // loop; the hard timeout is a parent-owned SIGKILL, so a slow run under
-      // load is killed MID-LOOP and the tail of files is never reached — their
-      // symbols (and their duplicate_justification flags) vanish from a snapshot
-      // that still publishes as `full`. Field-observed on a consumer: a full
-      // refresh dropped 146 symbols including a file whose 3 pragmas then
-      // mis-reported as `unresolved`. There is no jsx-extraction gap — the file
-      // parses fine; it was simply never reached.
-      //
-      // A truncated full run is really a partial run, so recover it exactly as
-      // an incremental does: treat the files we DID reach as the "touched" set
-      // (pragma resolution scopes to it below; step 13 copies the rest forward).
-      // The one difference from incremental: a full run has no git-diff of
-      // deletions, so step 13 gates copy-forward on on-disk existence to avoid
-      // resurrecting a file deleted since the prior snapshot. Coverage still
-      // records `unverified (extraction_timeout)` — recovery restores
-      // completeness, it does not launder the degraded verdict.
-      let timeoutRecovery = null;
-      if (mode === 'full' && extractionTimedOut) {
-        const priorForRecovery = await getActiveSnapshot(repoId);
-        if (priorForRecovery?.refreshId) {
-          touchedSet = new Set(finalSymbols.map(s => s.filePath));
-          timeoutRecovery = { prior: priorForRecovery };
-          logOk(`WARNING: full extraction was truncated by timeout — reached ${touchedSet.size} file(s); `
-            + `recovering the rest via copy-forward from ${priorForRecovery.refreshId} `
-            + `(snapshot stays coverage-unverified). Re-run \`npm run arch:refresh:full\` unloaded for a clean baseline.`);
-        } else {
-          logOk('WARNING: full extraction truncated by timeout and no prior snapshot to recover from — publishing a partial full snapshot.');
-        }
-      }
+      // CONDITIONAL rebind, never an unconditional destructure: on every
+      // path other than timed-out-full recovery, the step-6 `touchedSet`
+      // value passes through completely untouched.
+      if (recoveredTouchedSet) touchedSet = recoveredTouchedSet;
 
       // 9. Upsert definitions, get id map
       const defs = finalSymbols.map(s => ({
@@ -906,6 +568,9 @@ async function main() {
       }) + '\n');
     });
   } catch (err) {
+    if (err instanceof RepoRegistrationError) { logErr(err.message); process.exit(1); }
+    if (err instanceof RefreshInFlightError) { logErr(err.message); process.exit(2); }
+    if (err instanceof LockAbortError) { logErr(err.message); process.exit(2); }
     // WS-LIVE: stage-tagged subprocess errors get a precise log line
     // (`stage=summarise exit=2`) so the operator knows which pipeline
     // stage failed without grepping. Other errors fall through to the
