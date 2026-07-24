@@ -220,3 +220,55 @@ export function collectMjs(dir, acc = []) {
 
 /** A fixed, deterministic clock for tests that need a stable `createdAt`. */
 export const CLOCK = () => '2026-01-01T00:00:00.000Z';
+
+/**
+ * A disposable repo root under the OS tmpdir, realpath'd (macOS /tmp is a
+ * symlink). Consolidated from near-byte-identical copies in
+ * tests/security-triage-cli.test.mjs and tests/security-triage-gate-honesty.
+ * test.mjs (sast-sandbox-backlog-hardening.md item 4).
+ * @param {string} [prefix]
+ * @returns {Promise<string>}
+ */
+export async function makeSecurityTriageRepo(prefix = 'sec-triage-') {
+  const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), prefix));
+  return fs.realpathSync(dir);
+}
+
+/**
+ * A minimal SARIF 2.1.0 document wrapping the given `results` array — the
+ * shape `security-triage.mjs`'s ingestion expects.
+ * @param {object[]} results
+ * @returns {object}
+ */
+export function sarifDoc(results) {
+  return {
+    version: '2.1.0',
+    runs: [{ tool: { driver: { name: 'TestTool' } }, results }],
+  };
+}
+
+/**
+ * A single SARIF result at `uri`/`line`, with the codeFlow/location shape
+ * `classifyLocationPath`/`routeFindings` read. `over` shallow-merges
+ * additional/overriding fields onto the base result.
+ * @param {string} uri
+ * @param {number} [line]
+ * @param {object} [over]
+ * @returns {object}
+ */
+export function sarifResultAt(uri, line = 1, over = {}) {
+  const loc = {
+    physicalLocation: {
+      artifactLocation: { uri, uriBaseId: '%SRCROOT%' },
+      region: { startLine: line, endLine: line, startColumn: 1, endColumn: 40 },
+    },
+  };
+  return {
+    ruleId: 'javascript/DOMXSS',
+    level: 'warning',
+    message: { text: 'flows into innerHTML' },
+    locations: [loc],
+    codeFlows: [{ threadFlows: [{ locations: [{ location: loc }] }] }],
+    ...over,
+  };
+}

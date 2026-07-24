@@ -1,7 +1,17 @@
 # Plan: Sast-Routing, Sandbox Integrity & Migration-Adoption Hardening (7-item punch list)
 
 - **Date**: 2026-07-24
-- **Status**: Draft
+- **Status**: Complete — all 7 items implemented + tested (19 new/updated
+  tests across 5 test files), audit-code stopped at round 5 of the 6-round
+  cap (HIGH count plateaued unchanged for 3 consecutive rounds — the
+  project's own audit-loop-convergence stopping doctrine), Gemini-gate-clear
+  after 2 rounds (`APPROVE`, 0 new findings, 0 wrongly dismissed). The
+  mandatory Gemini final review itself surfaced one genuine, load-bearing
+  bug beyond the original 7 items — `runAdopt`'s independent
+  private/legacy resolution of the migrations dir vs the expected-schema
+  manifest, fixed round 1 of the final-review loop — while two of its other
+  three claims were empirically false and disputed with direct evidence
+  rather than fixed. See Implementation Log for the full trail.
 - **Author**: Claude + Louis Strydom
 - **Scope**: backend
 
@@ -314,3 +324,84 @@ No sensitive-path or credential-handling code is touched by any of the 7
 items (confirmed by the `get-incident-neighbourhood` check above returning
 no matches). Item 7's new preflight only changes what `--adopt` is willing
 to ledger, not what SQL it executes or what credentials it uses.
+
+## Implementation Log
+
+### 2026-07-24 — Complete
+
+All 7 items implemented as specified. `npm test` (8624 pass, 0 fail, 22
+skipped — DB-gated) and full re-runs before every ship-relevant checkpoint.
+
+**Deviations from the plan as written:**
+- **Item 6** (colon-safe pragma-sweep parser): the plan's originally-sketched
+  approach was "parse from the right instead of the left." Implementation
+  instead root-caused via `git grep -z` (NUL-delimited fields), which
+  structurally eliminates the colon/quoting ambiguity rather than working
+  around it with a smarter regex — and was empirically found to also disable
+  git's `core.quotePath` non-ASCII escaping as a side effect (verified via
+  direct byte inspection). Strengthened across 2 further audit rounds after
+  real gaps were found in the fix itself (see round trail below).
+- **Item 7** (`--adopt` exact-unledgered-set preflight): implemented exactly
+  as specified (`checkAdoptScope` + `--adopt-only`). The mandatory Gemini
+  final review then surfaced a related but separate gap in the SAME function
+  (`runAdopt`) — see "Gemini final review" below.
+
+**Audit-code round trail** (5 of 6 rounds — stopped when the HIGH count
+plateaued unchanged for 3 consecutive rounds, per this repo's own
+audit-loop-convergence doctrine; SID `audit-code-1784885489`):
+
+| Round | Notable |
+|---|---|
+| 1 | First pass over all 7 items. 2 genuine gaps found in the item-6 fix itself: git `core.quotePath` non-ASCII mishandling, and a `reason=` text collision corrupting the parse — both root-caused via the `git grep -z` switch rather than patched around textually. |
+| 2 | A follow-up round questioned whether `-z` reliably NUL-delimits both fields across git versions; re-verified empirically (2 NULs confirmed on this platform's git 2.54) but made the parser defensive to both possible shapes anyway, since this repo syncs to consumer repos on unknown git versions. Also found and fixed a real `--adopt-only` argument-parsing bug (silently swallowing a following flag as its value). |
+| 3–5 | One HIGH finding (an embedded-newline-in-filename edge case in the `git grep -z` record-splitting, safe-failing and exceptionally rare) re-raised identically, unchanged, for 3 consecutive rounds — the textbook plateau-stop signal. Two other findings (a stale doc-duplication claim, an "unused os import" claim) were re-raised 4-5 times each despite being re-verified false every round. |
+
+**Gemini final review** (2 of 2 rounds — the cap): round 1 returned
+`CONCERNS_REMAINING` — 1 new finding (G1) + 3 claims of wrongly-dismissed
+findings (M1, H3, L1). Each was independently re-verified against the code
+before acting, rather than taken at face value:
+- **G1** ("`--adopt-only` lacks a mode guard") and **L1** ("`os` import is
+  unused in two test files") were both **empirically false** — re-checked
+  directly against the live source (the mode guard already exists and is
+  tested; `os.tmpdir()` is called at exactly the line numbers previously
+  cited in both files) — disputed with evidence, not fixed.
+- **H3** ("`MIGRATIONS_DIR`/`EXPECTED_SCHEMA_PATH` resolve independently")
+  was **genuinely valid and load-bearing** — round 1's own self-triage
+  (deferred as "pre-existing, independent") was wrong on inspection:
+  `runAdopt`, the exact function item 7 modified, uses both paths together,
+  and item 7's new `--adopt-only` preflight operates on the file set
+  `MIGRATIONS_DIR` enumerates. Fixed with a new pure
+  `checkMigrationsSchemaPairing` predicate (mirrors `checkAdoptScope`'s
+  existing pattern) called at the top of `runAdopt`, failing closed with a
+  clear diagnostic on a private/legacy generation mismatch. 4 new unit
+  tests added.
+- **M1** ("`PRAGMA_RE`'s target-file capture forbids colons") — the
+  underlying technical point was correct but had already been identified
+  and deferred in every round 1-5 ledger entry (Gemini's "Claude ignored
+  this" framing was inaccurate — addressed-and-disagreed-on-scope is not
+  ignored). Confirmed the plan's own item 6 text scopes explicitly to the
+  git-grep *output* parser, a different regex; nothing in this diff touches
+  or depends on `PRAGMA_RE`'s target-file grammar. Left deferred (closing it
+  needs a pragma syntax change, not a parser change — materially larger),
+  but added a TODO at the regex definition naming the root cause per
+  AGENTS.md's legitimate-defer convention.
+
+Round 2 (final): `APPROVE`, 0 new findings, 0 wrongly dismissed.
+`deliberation_quality.claude_bias_detected: false` — "the pushbacks on G1
+and L1 were completely justified with factual evidence... accommodating the
+valid finding (H3)."
+
+**Deferred, not silently dropped** (accepted debt, tracked here):
+- `duplicate-justification-pragma.mjs`'s `findRepoPragmas` record-splitting
+  on `\r?\n` cannot handle a filename containing a literal embedded newline
+  (POSIX-legal, effectively unheard of in real repos; fails safe — the
+  mis-split fragment is dropped, not misattributed). Re-raised identically
+  across rounds 3-5.
+- `PRAGMA_RE`'s target-file capture (`[^\s:]+`) cannot represent a colon in
+  a `target=<file>:<symbol>` reference — see "Gemini final review" (M1)
+  above; TODO left at the definition site.
+- Architecture findings against `install.mjs`, `setup.mjs`, and
+  `coverage.mjs → observed-deps.mjs` — none of these files are touched by
+  this diff; the `coverage.mjs → observed-deps.mjs` edge was independently
+  verified domain-map-legal across all 6 rounds of the sibling
+  `arch-audit-pipeline-observability-hardening.md` plan's audit.

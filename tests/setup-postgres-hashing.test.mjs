@@ -25,6 +25,8 @@ import {
   hashCanonicalMigrationBytes,
   hashRawBytes,
   legacyCrlfBytes,
+  checkAdoptScope,
+  checkMigrationsSchemaPairing,
 } from '../scripts/setup-postgres.mjs';
 // cli-io.mjs's `sha(buf, len=12)` defaults to a 12-char truncation for
 // content-identity display use; this file needs the FULL digest for
@@ -216,5 +218,103 @@ describe('setup-postgres CLI — mode flags are mutually exclusive', () => {
   it('a repeated SAME flag is not a conflict', () => {
     const r = run('--check-drift', '--check-drift');
     assert.doesNotMatch(r.stderr, /mutually exclusive/);
+  });
+
+  it('rejects --adopt-only without --adopt (item 7 — sast-sandbox-backlog-hardening.md)', () => {
+    const r = run('--adopt-only', 'foo.sql', '--migrate');
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /--adopt-only only makes sense with --adopt/);
+  });
+
+  it('accepts --adopt-only paired with --adopt (the pairing guard itself never fires)', () => {
+    // --preflight-only stops right after parseArgs + preflight(), before
+    // runAdopt ever touches the ledger/schema — avoids depending on real DB
+    // connectivity, which the ambient ~/.audit-loop.env config can silently
+    // reintroduce even when this process's own env vars are blanked. This
+    // test only proves the flag combination itself isn't rejected by the
+    // --adopt-only/--adopt pairing guard, not that a full adopt succeeds.
+    const r = run('--adopt', '--adopt-only', 'foo.sql', '--preflight-only');
+    assert.doesNotMatch(r.stderr, /--adopt-only only makes sense with --adopt/);
+  });
+
+  it('rejects --adopt-only immediately followed by another flag, instead of silently swallowing it as the value (round-2 audit M1)', () => {
+    // Before the fix, `--adopt --adopt-only --dry-run` recorded ['--dry-run']
+    // as the intended migration set AND silently dropped --dry-run itself —
+    // one bug, two silent-corruption symptoms.
+    const r = run('--adopt', '--adopt-only', '--dry-run');
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /--adopt-only requires a value/);
+    assert.match(r.stderr, /--dry-run/, 'the offending flag should be named in the error');
+  });
+
+  it('rejects --adopt-only with no following argument at all', () => {
+    const r = run('--adopt', '--adopt-only');
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /--adopt-only requires a value/);
+  });
+
+  it('still accepts a genuine comma-separated migration list', () => {
+    const r = run('--adopt', '--adopt-only', 'a.sql,b.sql', '--preflight-only');
+    assert.doesNotMatch(r.stderr, /--adopt-only requires a value/);
+  });
+});
+
+describe('checkAdoptScope — item 7 exact-unledgered-set preflight (sast-sandbox-backlog-hardening.md)', () => {
+  it('adoptOnly===null preserves today\'s whole-DB-seed behaviour (no scoping requested)', () => {
+    assert.deepEqual(checkAdoptScope(['a.sql', 'b.sql'], null), { ok: true });
+  });
+
+  it('an empty unledgered set is always ok, regardless of adoptOnly', () => {
+    assert.deepEqual(checkAdoptScope([], ['a.sql']), { ok: true });
+  });
+
+  it('the unledgered set exactly matching adoptOnly passes', () => {
+    assert.deepEqual(checkAdoptScope(['a.sql', 'b.sql'], ['a.sql', 'b.sql']), { ok: true });
+  });
+
+  it('an unledgered set that is a SUBSET of adoptOnly passes (not every named file has to actually be unledgered)', () => {
+    assert.deepEqual(checkAdoptScope(['a.sql'], ['a.sql', 'b.sql']), { ok: true });
+  });
+
+  it('an unledgered file OUTSIDE adoptOnly fails, naming exactly the offending file(s)', () => {
+    const result = checkAdoptScope(['a.sql', 'unexpected.sql'], ['a.sql']);
+    assert.equal(result.ok, false);
+    assert.deepEqual(result.outside, ['unexpected.sql']);
+  });
+
+  it('a completely disjoint unledgered set fails, naming all of it', () => {
+    const result = checkAdoptScope(['x.sql', 'y.sql'], ['a.sql']);
+    assert.equal(result.ok, false);
+    assert.deepEqual(result.outside, ['x.sql', 'y.sql']);
+  });
+
+  it('adoptOnly as an empty array behaves like a real (empty) allowlist — any unledgered file fails', () => {
+    const result = checkAdoptScope(['a.sql'], []);
+    assert.equal(result.ok, false);
+    assert.deepEqual(result.outside, ['a.sql']);
+  });
+});
+
+describe('checkMigrationsSchemaPairing — Gemini final-review H3 (sast-sandbox-backlog-hardening.md)', () => {
+  it('both private → ok (normal fully-synced consumer)', () => {
+    assert.deepEqual(checkMigrationsSchemaPairing(true, true), { ok: true });
+  });
+
+  it('both legacy → ok (source repo, or pre-sync consumer)', () => {
+    assert.deepEqual(checkMigrationsSchemaPairing(false, false), { ok: true });
+  });
+
+  it('migrations private but schema legacy → fails (partial sync: schema manifest not yet synced)', () => {
+    const result = checkMigrationsSchemaPairing(true, false);
+    assert.equal(result.ok, false);
+    assert.equal(result.migrationsIsPrivate, true);
+    assert.equal(result.schemaIsPrivate, false);
+  });
+
+  it('migrations legacy but schema private → fails (partial sync: migrations not yet synced)', () => {
+    const result = checkMigrationsSchemaPairing(false, true);
+    assert.equal(result.ok, false);
+    assert.equal(result.migrationsIsPrivate, false);
+    assert.equal(result.schemaIsPrivate, true);
   });
 });

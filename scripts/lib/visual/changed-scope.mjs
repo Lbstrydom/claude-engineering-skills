@@ -21,8 +21,16 @@ import { globMatch } from '../glob-match.mjs';
 
 /** Map an audited property/family to its token family for rule (c). */
 function familyOfFinding(finding) {
-  const p = String(finding?.property || '').toLowerCase();
-  if (TOKEN_FAMILIES.includes(p)) return p; // inferred outliers carry the family directly
+  const raw = String(finding?.property || '');
+  // Checked against the RAW value first (item 2 — sast-sandbox-backlog-
+  // hardening.md): TOKEN_FAMILIES is camelCase ('borderWidth', 'fontSize',
+  // 'lineHeight', 'fontWeight'), so an inferred-outlier finding that passes
+  // the family name directly as `property` (this branch's whole purpose)
+  // would silently fail to match once lowercased ('borderWidth' !==
+  // 'borderwidth'). The lowercased/hyphen-tolerant fallback below still
+  // handles real kebab-case CSS property names ('font-size', etc.).
+  if (TOKEN_FAMILIES.includes(raw)) return raw;
+  const p = raw.toLowerCase();
   if (/color|background/.test(p)) return 'colors';
   if (/radius/.test(p)) return 'radius';
   if (/border.*width|^border-width/.test(p)) return 'borderWidth';
@@ -37,7 +45,11 @@ function familyOfFinding(finding) {
 /**
  * @param {object} args
  * @param {Set<string>|string[]|null} args.changedPaths - merge-base diff; null → no scope
- * @param {boolean} [args.contractChanged]
+ * @param {boolean|string[]|Set<string>} [args.contractChanged] - `true` means the
+ *   whole contract changed (every surface, back-compat); a Set/array names
+ *   exactly which surface ids' contract changed (item 3 — sast-sandbox-
+ *   backlog-hardening.md: a single boolean couldn't represent "only surface
+ *   X's contract changed", so it gated every attributed finding uniformly).
  * @param {string[]} [args.changedTokenFamilies] - families whose token source changed
  * @param {object[]} args.surfaces - contract surfaces ({id, sourceGlobs})
  * @param {string[]} [args.globalStyleGlobs]
@@ -65,13 +77,23 @@ export function resolveChangedScope({
 
   const changedFamilies = new Set(changedTokenFamilies);
 
+  const contractChangedEverywhere = contractChanged === true;
+  const contractChangedSurfaceIds = contractChanged instanceof Set
+    ? contractChanged
+    : new Set(Array.isArray(contractChanged) ? contractChanged : []);
+
   return findings.filter((f) => {
-    if (globalHit) return true;                                   // (d)
+    // (d) — item 1: a global-style edit only cascades to findings actually
+    // attributed to a declared surface, matching the allSurfaces branch's
+    // own attribution check above — not every finding regardless of
+    // surfaceId (an unattributed finding has no surface for the edit to
+    // have cascaded INTO).
+    if (globalHit && f.surfaceId != null && surfaceById.has(f.surfaceId)) return true;
     const surface = f.surfaceId ? surfaceById.get(f.surfaceId) : null;
     if (surface) {
       const globs = surface.sourceGlobs || [];
       if (globs.some((g) => changedArr.some((p) => globMatch(g, p)))) return true; // (a)
-      if (contractChanged) return true;                            // (b)
+      if (contractChangedEverywhere || contractChangedSurfaceIds.has(f.surfaceId)) return true; // (b)
     }
     const fam = familyOfFinding(f);                                // (c)
     if (fam && changedFamilies.has(fam)) return true;

@@ -84,6 +84,7 @@ function parseArgs(argv) {
     bootstrapOnly: false,
     dryRun: false,
     format: 'human',  // 'human' | 'json' — used by --check-drift
+    adoptOnly: null,  // string[] | null — scopes --adopt (item 7, sast-sandbox-backlog-hardening.md)
   };
   // Indexed loop so flags-with-value (`--format json`) can advance the
   // iterator via `++i` (plan migration-drift-detector R3-audit + Gemini-R2-H1).
@@ -110,6 +111,22 @@ function parseArgs(argv) {
       case '--bootstrap-only':  args.bootstrapOnly = true; break;
       case '--dry-run':         args.dryRun = true; break;
       case '--format':          args.format = argv[++i]; break;
+      case '--adopt-only': {
+        // round-2 audit M1: blindly consuming argv[++i] let a following flag
+        // (e.g. `--adopt --adopt-only --dry-run`) be silently swallowed as
+        // the migration-name value AND dropped as the --dry-run flag itself
+        // — a single bug with two silent-corruption symptoms. A value
+        // starting with '--' is never a valid migration filename, so reject
+        // it explicitly instead of consuming it.
+        const next = argv[i + 1];
+        if (next === undefined || next.startsWith('--')) {
+          process.stderr.write(`${R}error${X}: --adopt-only requires a value (comma-separated migration filename(s)), got ${next === undefined ? '(nothing)' : `the flag ${next}`}\n`);
+          process.exit(2);
+        }
+        i++;
+        args.adoptOnly = next.split(',').map((s) => s.trim()).filter(Boolean);
+        break;
+      }
       default:
         if (a.startsWith('--')) {
           process.stderr.write(`${R}error${X}: unknown flag ${a}\n`);
@@ -126,12 +143,16 @@ function parseArgs(argv) {
   }
   if (!args.mode && !args.preflightOnly && !args.bootstrapOnly) {
     process.stderr.write(
-      `usage: setup-postgres.mjs --migrate | --adopt | --ensure-local | --check-drift | --repair-eol [--format human|json] [--dry-run | --preflight-only | --bootstrap-only]\n`
+      `usage: setup-postgres.mjs --migrate | --adopt [--adopt-only <file[,file...]>] | --ensure-local | --check-drift | --repair-eol [--format human|json] [--dry-run | --preflight-only | --bootstrap-only]\n`
     );
     process.exit(2);
   }
   if (args.format !== 'human' && args.format !== 'json') {
     process.stderr.write(`${R}error${X}: --format must be 'human' or 'json' (got: ${args.format})\n`);
+    process.exit(2);
+  }
+  if (args.adoptOnly && args.mode !== 'adopt') {
+    process.stderr.write(`${R}error${X}: --adopt-only only makes sense with --adopt (got mode: ${args.mode || '(none)'})\n`);
     process.exit(2);
   }
   return args;
@@ -905,13 +926,79 @@ export async function seedUnledgeredMigrations(pool, { files, existing, migratio
   return newly;
 }
 
-async function runAdopt(pool) {
+/**
+ * Item 7 (sast-sandbox-backlog-hardening.md) — the exact-unledgered-set
+ * preflight already designed in docs/plans/debt-burndown-workstreams.md
+ * (lines 225-229: "Enumerate the unledgered set... and assert it is EXACTLY
+ * the intended file. Any other member -> abort with the set printed").
+ * `--adopt` is a whole-DB ledger seed: with no scoping, it silently records
+ * EVERY currently-unledgered migration as applied — if an unrelated file
+ * happens to be unledgered at the same time, a narrow intended repair turns
+ * into silent schema drift for that file. When the operator names an
+ * explicit `adoptOnly` allowlist, this rejects any unledgered file outside
+ * it rather than seeding it.
+ *
+ * `adoptOnly` is `null`/omitted → today's behaviour is preserved exactly
+ * (whole-DB seed, no scoping) — the new safety only activates when
+ * explicitly requested, since the common case (a fresh adopt with an empty
+ * ledger, or a checked `--check-drift` confirming the set is already
+ * exactly right) has no unrelated file to accidentally sweep in.
+ *
+ * @param {string[]} unledgered - files not yet in the ledger
+ * @param {string[]|null} adoptOnly - the operator's intended allowlist, or null
+ * @returns {{ok: true}|{ok: false, outside: string[]}}
+ */
+export function checkAdoptScope(unledgered, adoptOnly) {
+  if (!adoptOnly) return { ok: true };
+  const intended = new Set(adoptOnly);
+  const outside = unledgered.filter((f) => !intended.has(f));
+  return outside.length === 0 ? { ok: true } : { ok: false, outside };
+}
+
+/**
+ * Gemini final-review H3 (sast-sandbox-backlog-hardening.md, wrongly
+ * dismissed as pre-existing/independent in round 1 — re-verified: `runAdopt`
+ * is the one function that uses both MIGRATIONS_DIR and EXPECTED_SCHEMA_PATH
+ * together, and item 7's `--adopt-only` preflight operates on the file set
+ * MIGRATIONS_DIR enumerates. They resolve private-vs-legacy via INDEPENDENT
+ * `existsSync` checks, so a partially-synced repo (private migrations synced,
+ * private schema manifest not yet synced, or vice versa) would silently pair
+ * a file set from one generation with a schema contract from the other.
+ *
+ * @param {boolean} migrationsIsPrivate
+ * @param {boolean} schemaIsPrivate
+ * @returns {{ok: true}|{ok: false, migrationsIsPrivate: boolean, schemaIsPrivate: boolean}}
+ */
+export function checkMigrationsSchemaPairing(migrationsIsPrivate, schemaIsPrivate) {
+  return migrationsIsPrivate === schemaIsPrivate
+    ? { ok: true }
+    : { ok: false, migrationsIsPrivate, schemaIsPrivate };
+}
+
+async function runAdopt(pool, { adoptOnly = null } = {}) {
   process.stderr.write(`\n${G}── Adopt mode ──${X}\n`);
   // Adopt seeds the ledger WITHOUT replaying, so a missing surface here is worse
   // than in --migrate, not better: the ledger would claim 74 files applied
   // against a database that cannot support them, and the discrepancy only
   // surfaces later, on the first query that touches `auth.*`.
   await assertSurfacePresent(pool);
+  // Fail closed rather than seed the ledger from a mismatched generation pair
+  // — see checkMigrationsSchemaPairing's doc comment for why this matters.
+  const pairing = checkMigrationsSchemaPairing(
+    fs.existsSync(MIGRATIONS_DIR_PRIVATE),
+    fs.existsSync(EXPECTED_SCHEMA_PRIVATE)
+  );
+  if (!pairing.ok) {
+    process.stderr.write(
+      `${R}error${X}: migrations dir and expected-schema manifest resolved to different generations:\n` +
+      `     migrations: ${pairing.migrationsIsPrivate ? 'private' : 'legacy'} (${path.relative(REPO_ROOT, MIGRATIONS_DIR)})\n` +
+      `     schema:     ${pairing.schemaIsPrivate ? 'private' : 'legacy'} (${path.relative(REPO_ROOT, EXPECTED_SCHEMA_PATH)})\n` +
+      `   This is a partially-synced repo — seeding the ledger from one generation while\n` +
+      `   validating against the other risks silent schema drift. Sync both together (npm run sync)\n` +
+      `   before retrying.\n`
+    );
+    throw new Error('adopt preflight failed: migrations dir and expected-schema manifest generation mismatch');
+  }
   if (!fs.existsSync(EXPECTED_SCHEMA_PATH)) {
     process.stderr.write(
       `${R}error${X}: ${path.relative(REPO_ROOT, EXPECTED_SCHEMA_PATH)} does not exist.\n` +
@@ -940,6 +1027,21 @@ async function runAdopt(pool) {
     // adopted one known-live migration or silently marked a genuinely
     // unapplied one as done. Plan: WS-A leg 4.
     const existing = await readLedger(pool);
+    // Preflight against the operator's intended scope BEFORE seeding anything
+    // — never partially seed, then discover the set was wrong.
+    const unledgered = files.filter((f) => !existing.has(f));
+    const scopeCheck = checkAdoptScope(unledgered, adoptOnly);
+    if (!scopeCheck.ok) {
+      process.stderr.write(
+        `\n${R}error${X}: --adopt-only named ${adoptOnly.length} file(s), but the unledgered set also contains ${scopeCheck.outside.length} other file(s):\n`
+      );
+      for (const f of scopeCheck.outside) process.stderr.write(`    - ${f}\n`);
+      process.stderr.write(
+        `   Aborting without recording anything. A genuinely-unapplied migration must be --migrate'd, ` +
+        `never adopted — re-run with --adopt-only naming all of the above too if they are ALSO known-live.\n`
+      );
+      throw new Error('adopt-only preflight failed: unledgered set exceeds the intended scope');
+    }
     // The "which rows are new" filter lives in seedUnledgeredMigrations (one
     // definition, and a testable one) — log from its return, never recompute.
     const seeded = await seedUnledgeredMigrations(pool, { files, existing, migrationsDir: MIGRATIONS_DIR });
@@ -1224,7 +1326,7 @@ async function main() {
       // Serialize against a concurrent --repair-eol (shared advisory lock).
       await withMigrationLock(pool, () => runMigrate(pool, { dryRun: args.dryRun }));
     } else if (args.mode === 'adopt') {
-      await runAdopt(pool);
+      await runAdopt(pool, { adoptOnly: args.adoptOnly });
     }
   } catch (err) {
     process.stderr.write(`\n${R}setup failed${X}: ${err.message}\n`);

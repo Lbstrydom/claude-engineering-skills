@@ -111,6 +111,16 @@ describe('the sandbox forbids the silent-skip paths', () => {
     assert.match(runnerSrc, /NPM, \['ci', '--ignore-scripts', '--no-audit', '--no-fund'\], \{\s*cwd: sandbox, stdio: 'inherit', shell: IS_WIN, \.\.\.\(gitEnv \? \{ env: gitEnv \} : \{\}\)/);
   });
 
+  it('compares package.json, not just package-lock.json, before trusting the linked node_modules (item 5 — sast-sandbox-backlog-hardening.md)', () => {
+    // A pushed commit can hand-edit package.json dependency declarations
+    // without regenerating the lockfile — the lockfile-only comparison this
+    // regression guards against would then silently symlink the main
+    // checkout's stale node_modules instead of installing.
+    assert.match(runnerSrc, /pkgMain = path\.join\(repoRoot, 'package\.json'\)/);
+    assert.match(runnerSrc, /pkgSandbox = path\.join\(sandbox, 'package\.json'\)/);
+    assert.match(runnerSrc, /lockChanged = filePairChanged\(lockMain, lockSandbox\) \|\| filePairChanged\(pkgMain, pkgSandbox\)/);
+  });
+
   it('wraps every shared-metadata git worktree call in lock-contention retry (2026-07-23)', () => {
     // Sibling fix to the core.bare pin above: a transient lock (peer holds
     // .git/config.lock for a few hundred ms) is a different failure shape

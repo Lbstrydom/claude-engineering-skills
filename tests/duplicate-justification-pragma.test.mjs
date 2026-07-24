@@ -15,9 +15,97 @@ import {
   PRAGMA_RE,
   findRepoPragmas,
   resolvePragmasToDefinitions,
+  parseGitGrepPragmaRecord,
   PRAGMA_RESOLUTION_MAX_GAP_LINES,
 } from '../scripts/lib/duplicate-justification-pragma.mjs';
 import { gitFixtureEnv } from './helpers/fixtures.mjs';
+
+describe('parseGitGrepPragmaRecord — NUL-delimited git grep -z parsing (round-1 audit H2/H4, sast-sandbox-backlog-hardening.md item 6)', () => {
+  // POSIX filenames may legally contain colons and non-ASCII characters.
+  // This repo's own development platform (Windows/NTFS) rejects ':' in
+  // filenames outright, so an end-to-end fixture file with a literal colon
+  // in its name can't be constructed here — this is exactly why the parsing
+  // grammar was factored into its own pure, git-free, filesystem-free
+  // function operating on synthetic NUL-delimited records (see the module's
+  // own doc comment on parseGitGrepPragmaRecord).
+  const rec = (file, line, content) => `${file}\0${line}\0${content}`;
+
+  it('a normal path parses correctly (regression guard)', () => {
+    const pragma = parseGitGrepPragmaRecord(rec('src/foo.mjs', 12, '// @duplicate-justification: target=a.mjs:bar reason=x'));
+    assert.equal(pragma.pragmaFile, 'src/foo.mjs');
+    assert.equal(pragma.pragmaLine, 12);
+    assert.equal(pragma.targetFile, 'a.mjs');
+    assert.equal(pragma.targetSymbol, 'bar');
+  });
+
+  it('a filename containing a colon is parsed correctly — NUL-delimited, so the embedded colon is never ambiguous', () => {
+    const pragma = parseGitGrepPragmaRecord(rec('notes:draft.mjs', 12, '// @duplicate-justification: target=a.mjs:bar reason=x'));
+    assert.equal(pragma.pragmaFile, 'notes:draft.mjs', 'the embedded colon must stay part of the filename');
+    assert.equal(pragma.pragmaLine, 12);
+    assert.equal(pragma.targetFile, 'a.mjs');
+    assert.equal(pragma.targetSymbol, 'bar');
+  });
+
+  it('a filename with MULTIPLE embedded colons still parses correctly', () => {
+    const pragma = parseGitGrepPragmaRecord(rec('v2:report:legacy.mjs', 42, '// @duplicate-justification: target=a.mjs:bar reason=x'));
+    assert.equal(pragma.pragmaFile, 'v2:report:legacy.mjs');
+    assert.equal(pragma.pragmaLine, 42);
+  });
+
+  it('a REASON containing a colon-digit-colon pattern no longer corrupts the parse — the exact regression a text-only regex fix (H4) could not close', () => {
+    // This is the case a purely greedy-backtracking colon regex gets wrong:
+    // "reason=see line:99:for details" contains its OWN :digit: pattern,
+    // which a text heuristic could mistake for the real filename/line
+    // delimiter. NUL-delimiting makes this structurally impossible.
+    const pragma = parseGitGrepPragmaRecord(rec('src/bar.mjs', 12, '// @duplicate-justification: target=foo.mjs:baz reason=see line:99:for details'));
+    assert.equal(pragma.pragmaFile, 'src/bar.mjs');
+    assert.equal(pragma.pragmaLine, 12);
+    assert.equal(pragma.targetFile, 'foo.mjs');
+    assert.equal(pragma.targetSymbol, 'baz');
+    assert.equal(pragma.reason, 'see line:99:for details');
+  });
+
+  it('a non-ASCII filename (git core.quotePath territory) round-trips correctly as raw text', () => {
+    const pragma = parseGitGrepPragmaRecord(rec('café.mjs', 3, '// @duplicate-justification: target=a.mjs:bar reason=unicode'));
+    assert.equal(pragma.pragmaFile, 'café.mjs');
+  });
+
+  it('also parses the one-NUL fallback shape (filename NUL line COLON content) — round-2 audit H1/H2 raised this as a possible cross-version git behavior', () => {
+    // filename\0line:content, instead of filename\0line\0content — the
+    // parser must handle both without knowing in advance which git this
+    // repo (or a consumer repo it syncs to) is running.
+    const oneNulRecord = 'src/foo.mjs\x0012:// @duplicate-justification: target=a.mjs:bar reason=x';
+    const pragma = parseGitGrepPragmaRecord(oneNulRecord);
+    assert.equal(pragma.pragmaFile, 'src/foo.mjs');
+    assert.equal(pragma.pragmaLine, 12);
+    assert.equal(pragma.targetFile, 'a.mjs');
+    assert.equal(pragma.targetSymbol, 'bar');
+  });
+
+  it('the one-NUL fallback shape also survives a reason containing a colon-digit-colon pattern', () => {
+    const oneNulRecord = 'src/bar.mjs\x0012:// @duplicate-justification: target=foo.mjs:baz reason=see line:99:for details';
+    const pragma = parseGitGrepPragmaRecord(oneNulRecord);
+    assert.equal(pragma.pragmaFile, 'src/bar.mjs');
+    assert.equal(pragma.pragmaLine, 12);
+    assert.equal(pragma.reason, 'see line:99:for details');
+  });
+
+  it('an empty record returns null', () => {
+    assert.equal(parseGitGrepPragmaRecord(''), null);
+  });
+
+  it('a record with no pragma content returns null', () => {
+    assert.equal(parseGitGrepPragmaRecord(rec('src/foo.mjs', 12, 'just a normal comment')), null);
+  });
+
+  it('a record missing the NUL delimiters entirely returns null', () => {
+    assert.equal(parseGitGrepPragmaRecord('not a git grep -z record at all'), null);
+  });
+
+  it('a record whose "line" field is not pure digits returns null (defensive)', () => {
+    assert.equal(parseGitGrepPragmaRecord('src/foo.mjs\0notaline\0// @duplicate-justification: target=a.mjs:bar reason=x'), null);
+  });
+});
 
 describe('PRAGMA_RE', () => {
   it('matches a // comment pragma', () => {

@@ -149,14 +149,23 @@ function provisionNodeModules(sandbox, repoRoot, gitEnv) {
   const mainModules = path.join(repoRoot, 'node_modules');
   const lockMain = path.join(repoRoot, 'package-lock.json');
   const lockSandbox = path.join(sandbox, 'package-lock.json');
+  // Also compare package.json (item 5 — sast-sandbox-backlog-hardening.md):
+  // a pushed commit can edit dependency declarations without touching the
+  // lockfile (e.g. a manually hand-edited package.json whose npm install
+  // hasn't been re-run to regenerate the lock), which the lockfile-only
+  // comparison would miss, reusing dependencies that don't represent the
+  // commit being checked.
+  const pkgMain = path.join(repoRoot, 'package.json');
+  const pkgSandbox = path.join(sandbox, 'package.json');
 
-  const lockChanged = (() => {
+  const filePairChanged = (a, b) => {
     try {
-      return fs.readFileSync(lockMain, 'utf8') !== fs.readFileSync(lockSandbox, 'utf8');
+      return fs.readFileSync(a, 'utf8') !== fs.readFileSync(b, 'utf8');
     } catch {
       return true; // can't prove they match → install rather than assume
     }
-  })();
+  };
+  const lockChanged = filePairChanged(lockMain, lockSandbox) || filePairChanged(pkgMain, pkgSandbox);
 
   if (!lockChanged && fs.existsSync(mainModules)) {
     try {

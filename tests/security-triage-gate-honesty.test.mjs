@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { runTriage, resolveRunStatus, EXIT_CODES, classifyLocationPath } from '../scripts/security-triage.mjs';
 import { ingestSarif, BUCKETS, BOUND_DEFAULTS } from '../scripts/lib/security/sarif.mjs';
 import { routeFindings } from '../scripts/lib/security/triage-router.mjs';
-import { writeFile } from './helpers/fixtures.mjs';
+import { writeFile, makeSecurityTriageRepo, sarifDoc, sarifResultAt as resultAt } from './helpers/fixtures.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CORPUS = path.join(HERE, 'fixtures', 'security-triage', 'corpus.sarif');
@@ -32,30 +32,9 @@ const CONFIG = {
   sanitizerWrapped: { sanitizers: ['esc', 'escapeHtml'] },
 };
 
-async function makeRepo() {
-  return fs.realpathSync(await fsp.mkdtemp(path.join(os.tmpdir(), 'sec-gate-')));
-}
-
-function sarifDoc(results) {
-  return { version: '2.1.0', runs: [{ tool: { driver: { name: 'T' } }, results }] };
-}
-
-function resultAt(uri, line = 1, over = {}) {
-  const loc = {
-    physicalLocation: {
-      artifactLocation: { uri, uriBaseId: '%SRCROOT%' },
-      region: { startLine: line, endLine: line, startColumn: 1, endColumn: 20 },
-    },
-  };
-  return {
-    ruleId: 'javascript/DOMXSS',
-    level: 'warning',
-    message: { text: 'flows into innerHTML' },
-    locations: [loc],
-    codeFlows: [{ threadFlows: [{ locations: [{ location: loc }] }] }],
-    ...over,
-  };
-}
+/** A disposable repo root (item 4 — sast-sandbox-backlog-hardening.md: moved
+ * to tests/helpers/fixtures.mjs, shared with security-triage-cli.test.mjs). */
+const makeRepo = () => makeSecurityTriageRepo('sec-gate-');
 
 async function run(root, results, config = CONFIG, deps = {}) {
   const p = path.join(root, 'scan.sarif');

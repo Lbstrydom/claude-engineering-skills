@@ -31,6 +31,16 @@ import { execFileSync } from 'node:child_process';
  * is explicitly multi-language (tests/arch-intent-adapter-{java,postgres,
  * python}.test.mjs), so a hardcoded `//` match would force a syntax error
  * in non-JS files.
+ *
+ * TODO(sast-sandbox-backlog-hardening.md item 6, Gemini final-review M1):
+ * the target-file capture `([^\s:]+)` still cannot represent a colon in the
+ * TARGET path (`target=<file>:<symbol>` uses `:` as its own delimiter) — a
+ * separate, harder gap than the git-grep OUTPUT-line colon-safety item 6
+ * fixed (that one had a NUL delimiter available via `git grep -z`; this
+ * one's delimiter is the pragma's own human-authored `:`, so closing it
+ * needs a syntax change — e.g. requiring the target be quoted — not just a
+ * parser change). No known real target path contains a colon today; revisit
+ * if one ever does.
  */
 export const PRAGMA_RE = /(?:\/\/|#|\/\*|<!--)\s*@duplicate-justification:\s*target=([^\s:]+):([^\s]+)\s+reason=(.+?)(?:\*\/|-->)?\s*$/;
 
@@ -68,7 +78,20 @@ export function findRepoPragmas(repoRoot, { strict = false, env } = {}) {
     // file would be silently invisible to this sweep even though the
     // symbol it justifies IS indexed. `--exclude-standard` semantics
     // (respecting .gitignore) are inherited automatically.
-    output = execFileSync('git', ['grep', '--untracked', '-n', '-F', '@duplicate-justification:', '--', '.', ':(exclude)*.md', ':(exclude)tests/*'], {
+    //
+    // -z (round-1 audit H2/H4, sast-sandbox-backlog-hardening.md item 6):
+    // NUL-delimits the filename/line/content fields instead of `:`, which is
+    // BOTH a real character in POSIX filenames AND — as item 6's own first
+    // colon-safety attempt missed, caught by a later audit round — can
+    // reappear inside the pragma's own free-text `reason=` content (e.g.
+    // "reason=see line:99:for details"), which a greedy-backtracking text
+    // regex can mistake for the real filename/line delimiter. `-z` also
+    // empirically disables git's default `core.quotePath` C-style escaping
+    // of non-ASCII filenames (verified directly: raw UTF-8 bytes, not
+    // `"caf\303\251.mjs"`). NUL cannot appear in a POSIX filename or in
+    // ordinary source-line content, so splitting on it is unambiguous by
+    // construction — no heuristic needed at all.
+    output = execFileSync('git', ['grep', '--untracked', '-z', '-n', '-F', '@duplicate-justification:', '--', '.', ':(exclude)*.md', ':(exclude)tests/*'], {
       cwd: repoRoot, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], ...(env ? { env } : {}),
     });
   } catch (err) {
@@ -82,29 +105,67 @@ export function findRepoPragmas(repoRoot, { strict = false, env } = {}) {
     return [];
   }
   const pragmas = [];
-  // Split on /\r?\n/, NOT '\n' (field regression, 2026-07-20). A consumer
-  // repo without an `eol=lf` .gitattributes checks files out CRLF, so every
-  // `git grep` line arrives with a trailing \r. JS `.` does not match \r, so
-  // the `(.*)$` below could never reach its anchor and EVERY line was
-  // silently discarded — the sweep returned [], and because an empty sweep is
-  // indistinguishable from "this repo has no pragmas", the whole
-  // @duplicate-justification feature was inert in those repos with no
-  // warning. This repo pins eol=lf, which is why its own suite never saw it.
-  for (const line of output.split(/\r?\n/)) {
-    if (!line.trim()) continue;
-    const m = line.match(/^([^:]+):(\d+):(.*)$/);
-    if (!m) continue;
-    const [, pragmaFile, lineNo, text] = m;
-    const match = PRAGMA_RE.exec(text);
-    if (!match) continue;
-    const [, targetFile, targetSymbol, reason] = match;
-    // Same placeholder/template guard as findStalePragmas — a docs-prose or
-    // instructional-string interpolation, not a real pragma on a real
-    // declaration. No real file path contains these characters.
-    if (/[<>${}]/.test(targetFile)) continue;
-    pragmas.push({ pragmaFile, pragmaLine: Number(lineNo), targetFile, targetSymbol, reason: reason.trim() });
+  // Records stay `\n`-terminated even under `-z` (only the FIELD separators
+  // become NUL) — split on /\r?\n/, NOT '\n', for the same CRLF-checkout
+  // reason as before (a consumer repo without eol=lf checks files out CRLF,
+  // so a record's trailing byte before the newline can be \r).
+  for (const record of output.split(/\r?\n/)) {
+    const pragma = parseGitGrepPragmaRecord(record);
+    if (pragma) pragmas.push(pragma);
   }
   return pragmas;
+}
+
+/**
+ * Parse one `git grep -z -n` output record into a pragma, or `null` if it
+ * doesn't contain a `@duplicate-justification` pragma. Factored out of
+ * `findRepoPragmas` (item 6 — sast-sandbox-backlog-hardening.md) so the
+ * pure parsing grammar is unit-testable without spawning git or touching a
+ * real filesystem — notably including POSIX filenames containing colons or
+ * non-ASCII characters, which this repo's own development platform
+ * (Windows/NTFS) cannot construct as an actual fixture file.
+ *
+ * Handles BOTH observed "-z -n" record shapes (round-2 audit H1/H2 raised
+ * this as a cross-version git behavior question): filename, NUL, line
+ * number, NUL, content (two NUL separators total -- empirically confirmed
+ * via direct byte inspection against git 2.54 on this platform, reading the
+ * raw child-process output as a JSON string and observing two literal NUL
+ * escapes), and the more conservative filename, NUL, line number, colon,
+ * content (one NUL total, matching git's own general --null documentation:
+ * "output NUL instead of the character that normally follows a file name")
+ * in case another git version/platform this repo syncs to behaves the
+ * documented-conservative way. Either shape parses unambiguously: the line
+ * field is always a pure run of digits immediately after the first NUL, so
+ * the boundary right after those digits -- NUL in the two-separator shape,
+ * or a colon in the one-separator shape -- is found by anchoring on where
+ * the digit run ends, not by scanning for a colon anywhere in the record.
+ *
+ * @param {string} record
+ * @returns {{pragmaFile: string, pragmaLine: number, targetFile: string, targetSymbol: string, reason: string}|null}
+ */
+export function parseGitGrepPragmaRecord(record) {
+  if (!record) return null;
+  const firstNul = record.indexOf('\0');
+  if (firstNul === -1) return null;
+  const pragmaFile = record.slice(0, firstNul);
+  const afterFile = record.slice(firstNul + 1);
+  // The line field is always pure digits (git's own -n output). Whichever
+  // separator immediately follows those digits — NUL (two-NUL shape) or ':'
+  // (one-NUL shape) — is the real field boundary; a colon appearing LATER,
+  // inside the content, is never mistaken for it because this match is
+  // anchored at the digit run's own end via \d+, not found by scanning.
+  const lineMatch = afterFile.match(/^(\d+)[\0:]/);
+  if (!lineMatch) return null;
+  const lineField = lineMatch[1];
+  const text = afterFile.slice(lineMatch[0].length);
+  const match = PRAGMA_RE.exec(text);
+  if (!match) return null;
+  const [, targetFile, targetSymbol, reason] = match;
+  // Same placeholder/template guard as findStalePragmas — a docs-prose or
+  // instructional-string interpolation, not a real pragma on a real
+  // declaration. No real file path contains these characters.
+  if (/[<>${}]/.test(targetFile)) return null;
+  return { pragmaFile, pragmaLine: Number(lineField), targetFile, targetSymbol, reason: reason.trim() };
 }
 
 /** How many lines a pragma may sit above the declaration it justifies before

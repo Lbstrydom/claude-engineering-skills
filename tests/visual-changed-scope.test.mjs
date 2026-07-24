@@ -69,3 +69,97 @@ test('globMatch handles ** and *', () => {
   assert.ok(!globMatch('src/*.css', 'src/a/x.css'));
   assert.ok(globMatch('src/**/*.css', 'src/a/x.css'));
 });
+
+test('item 1: rule (d) does NOT gate an unattributed finding (no surfaceId) — matches the allSurfaces branch\'s own attribution check', () => {
+  const out = resolveChangedScope({
+    changedPaths: ['src/styles/global.css'],
+    globalStyleGlobs: ['src/styles/**'],
+    surfaces,
+    findings: [{ surfaceId: null, property: 'color', class: 'token_violation' }],
+  });
+  assert.deepEqual(out, [], 'a finding with no surface attribution has no surface for the global edit to have cascaded into');
+});
+
+test('item 1: rule (d) does NOT gate a finding whose surfaceId is unknown to the contract', () => {
+  const out = resolveChangedScope({
+    changedPaths: ['src/styles/global.css'],
+    globalStyleGlobs: ['src/styles/**'],
+    surfaces,
+    findings: [finding('ghost-surface')],
+  });
+  assert.deepEqual(out, []);
+});
+
+test('item 1: rule (d) still gates a genuinely-attributed finding (regression guard for the fix above)', () => {
+  const out = resolveChangedScope({
+    changedPaths: ['src/styles/global.css'],
+    globalStyleGlobs: ['src/styles/**'],
+    surfaces,
+    findings: [finding('pricing')],
+  });
+  assert.equal(out.length, 1);
+});
+
+test('item 2: familyOfFinding matches camelCase family names passed directly (inferred-outlier findings), not just kebab-case CSS properties', () => {
+  const out = resolveChangedScope({
+    changedPaths: ['tailwind.config.js'],
+    changedTokenFamilies: ['fontSize'],
+    surfaces,
+    findings: [finding('pricing', 'fontSize'), finding('home', 'lineHeight')],
+  });
+  assert.equal(out.length, 1);
+  assert.equal(out[0].property, 'fontSize');
+});
+
+test('item 2: lineHeight/fontWeight/borderWidth all match correctly (the exact camelCase family set that broke under lowercasing)', () => {
+  for (const family of ['borderWidth', 'fontSize', 'lineHeight', 'fontWeight']) {
+    const out = resolveChangedScope({
+      changedPaths: ['tailwind.config.js'],
+      changedTokenFamilies: [family],
+      surfaces,
+      findings: [finding('pricing', family)],
+    });
+    assert.equal(out.length, 1, `expected ${family} to match its own family`);
+  }
+});
+
+test('item 3: contractChanged as a surface-id array gates only the named surfaces, not every attributed finding', () => {
+  const out = resolveChangedScope({
+    changedPaths: ['unrelated.md'],
+    contractChanged: ['pricing'],
+    surfaces,
+    findings: [finding('pricing'), finding('home')],
+  });
+  assert.equal(out.length, 1);
+  assert.equal(out[0].surfaceId, 'pricing');
+});
+
+test('item 3: contractChanged as a Set works identically to an array', () => {
+  const out = resolveChangedScope({
+    changedPaths: ['unrelated.md'],
+    contractChanged: new Set(['home']),
+    surfaces,
+    findings: [finding('pricing'), finding('home')],
+  });
+  assert.equal(out.length, 1);
+  assert.equal(out[0].surfaceId, 'home');
+});
+
+test('item 3: contractChanged===true still gates every attributed surface (back-compat, regression guard)', () => {
+  const out = resolveChangedScope({
+    changedPaths: ['unrelated.md'],
+    contractChanged: true,
+    surfaces,
+    findings: [finding('pricing'), finding('home')],
+  });
+  assert.equal(out.length, 2);
+});
+
+test('item 3: contractChanged===false (default) gates nothing via rule (b)', () => {
+  const out = resolveChangedScope({
+    changedPaths: ['unrelated.md'],
+    surfaces,
+    findings: [finding('pricing'), finding('home')],
+  });
+  assert.deepEqual(out, []);
+});
