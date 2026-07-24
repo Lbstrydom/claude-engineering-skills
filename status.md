@@ -1,5 +1,80 @@
 # Project Status Log
 
+## 2026-07-24 — Supabase Disk IO Budget incident: root cause + fix (symbol_embeddings batching, advisor hardening)
+
+Investigated a Supabase "Disk IO Budget depleting" warning email for the
+Audit-loop store (project `uahjjdelnnpfmaqjrwoz`) using the Supabase MCP
+(`get_advisors`, `execute_sql` against `pg_stat_statements`/`pg_stat_user_tables`)
+plus a code trace. Root cause found and fixed; two secondary advisor findings
+also hardened.
+
+### Changes
+- **Root cause fix**: `scripts/symbol-index/refresh.mjs` step 11 looped over
+  every symbol with an embedding and called `recordSymbolEmbedding()` once
+  per row — an individually-awaited, WAL-committing `pool.query()` per
+  symbol. `pg_stat_statements` showed ~107k lifetime calls to that statement
+  against a 14k-row table (~7-8x churn/row), the dominant IO contributor by
+  far. Added `recordSymbolEmbeddings(rows)` (batched sibling, same
+  `ON CONFLICT` contract, chunked multi-row `INSERT ... VALUES` at 500
+  rows/statement) in `scripts/lib/store/arch/symbols.mjs`, matching the
+  pattern already used by `recordSymbolIndex`/`recordSymbolDefinitions`/
+  `recordSymbolFileImports`. Verified end-to-end via a live incremental
+  `arch:refresh` (17 symbols → 1 batch, was 17 individual round trips).
+- **Migration `20260724150000_advisor_fk_indexes.sql`**: added covering
+  indexes for the 9 unindexed-FK advisor findings (`friction_log`,
+  `learning_decisions` ×2, `persona_finding_outcomes`,
+  `plan_verification_runs`, `prompt_variants`, `recurring_finding_clusters`,
+  `symbol_index`, `symbol_layering_violations`), and promoted
+  `symbol_file_imports`' unique constraint to a real PRIMARY KEY (had to
+  drop+re-add rather than `USING INDEX` — the existing index was already
+  constraint-backed, confirmed live). Regenerated
+  `tests/fixtures/expected-schema.json` via `npm run db:local:regen`;
+  `db:suites:gate` passes clean.
+- **Investigated and ruled out as live bugs**: a `false_positive_patterns`
+  upsert averaging ~1.2s/call and some `symbol_embeddings`/
+  `false_positive_patterns` writes routed through PostgREST rather than the
+  direct `pg` driver. Both trace to the already-fixed 2026-07-17
+  `false_positive_patterns` blowup incident (403k garbage rows in 3 days,
+  see `bandit-fp.mjs` comments + migration `20260717120000_fp_sync_idempotency.sql`)
+  sitting in a `pg_stat_statements` window that had never been reset since
+  project creation (2026-03-29) — not current activity. Confirmed no
+  `@supabase/supabase-js` dependency exists in this repo. Reset
+  `pg_stat_statements` to give future investigations a clean baseline.
+- **Own-edit bug caught before commit**: my first `recordSymbolEmbeddings`
+  edit used literal NUL bytes (`\x00`) instead of spaces as a key-join
+  separator in the de-dup `Map` key — copied the delimiter idea from
+  `recordSymbolFileImports`' NUL-delimited dedup but typo'd real NUL bytes
+  into the source file. `git diff` flagged the file as binary, which is what
+  surfaced it; fixed with a targeted byte-level replace and reverified with
+  `node --check` + the full test suite.
+- **Surfaced, not fixed**: `public.finding_embeddings` and
+  `public.symbol_refresh_coverage` have RLS disabled (Supabase advisor,
+  CRITICAL). Confirmed via `information_schema.role_table_grants` that
+  neither carries an anon/authenticated grant, so `db:check-rls:gate`
+  (exploitability-ranked) does not block on it — but it's a real advisory
+  finding. Left for an explicit policy decision rather than blindly enabling
+  RLS with no policies (which would just break access).
+
+### Files Affected
+- `scripts/lib/store/arch/symbols.mjs` — new `recordSymbolEmbeddings` export.
+- `scripts/symbol-index/refresh.mjs` — step 11 batched instead of looped.
+- `tests/arch-memory-split.test.mjs`, `tests/learning-store-exports.test.mjs`
+  — updated exact-export-set contracts (41→42, 176→177 functions).
+- `supabase/migrations/20260724150000_advisor_fk_indexes.sql` — new.
+- `tests/fixtures/expected-schema.json` — regenerated.
+- `docs/architecture-map.md` — refreshed (incremental, 6 touched files).
+
+### Decisions Made
+- Fixed the write-pattern bug rather than recommending a compute-tier
+  upgrade — `pg_stat_statements` showed a genuine inefficiency, not real
+  load.
+- Did not bundle the RLS-disabled finding into this ship — enabling RLS
+  with no policies breaks access; needs an explicit policy design decision.
+- Did not touch `auth_db_connections_absolute` (Auth server connection
+  strategy) — a Dashboard/infra setting unrelated to Disk IO, out of scope.
+
+---
+
 ## 2026-07-24 — tiered-pipeline.mjs + refresh.mjs god-module decomposition shipped (autonomous /cycle --autonomous)
 
 Implemented [`docs/plans/tiered-pipeline-refresh-god-module-decomposition.md`](docs/plans/tiered-pipeline-refresh-god-module-decomposition.md)

@@ -42,10 +42,11 @@ const EXPECTED_EXPORTS = [
   'recordBandCalibration',
   'getBandCalibration',
   'sampleSnapshotEmbeddings',
-  // arch/symbols.mjs — 8 fns
+  // arch/symbols.mjs — 9 fns
   'recordSymbolDefinitions',
   'recordSymbolIndex',
   'recordSymbolEmbedding',
+  'recordSymbolEmbeddings',
   'recordLayeringViolations',
   'recordDuplicateJustifications',
   'listSymbolsForSnapshot',
@@ -76,8 +77,8 @@ const EXPECTED_EXPORTS = [
 ];
 
 describe('arch-memory.mjs barrel — public export contract', () => {
-  test(`exactly 41 public functions in EXPECTED_EXPORTS`, () => {
-    assert.equal(EXPECTED_EXPORTS.length, 41);
+  test(`exactly 42 public functions in EXPECTED_EXPORTS`, () => {
+    assert.equal(EXPECTED_EXPORTS.length, 42);
   });
 
   // Every public member is a FUNCTION. `SUMMARY_RETRY_CAP` was briefly exported

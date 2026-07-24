@@ -187,6 +187,7 @@ const EXPECTED_EXPORTS = [
   'recordLayeringViolations',
   'recordSymbolDefinitions',
   'recordSymbolEmbedding',
+  'recordSymbolEmbeddings',
   'recordGraphCoverage',
   'recordSymbolFileImports',
   'recordSymbolIndex',
@@ -312,6 +313,10 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // markRunFindingsNeedsTriage that routes CONTROL-STATE marker findings
     // (ADJACENCY_INCOMPLETE) to a distinct `auto_dismissed` user_action so
     // they stop leaking into pending_triage_findings / the weekly digest.
-    assert.equal(EXPECTED_EXPORTS.length, 176);
+    // 176 → 177: recordSymbolEmbeddings added 2026-07-24 — batched sibling
+    // of recordSymbolEmbedding (chunked multi-row upsert instead of one
+    // round trip per symbol; the per-row loop was the dominant driver of
+    // the project's Supabase Disk IO budget warning).
+    assert.equal(EXPECTED_EXPORTS.length, 177);
   });
 });

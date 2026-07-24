@@ -51,7 +51,7 @@ import {
   recordSymbolDefinitions,
   recordSymbolIndex,
   recordSummaryOutcomes,
-  recordSymbolEmbedding,
+  recordSymbolEmbeddings,
   recordLayeringViolations,
   recordDuplicateJustifications,
   recordSymbolFileImports,
@@ -282,23 +282,24 @@ async function main() {
       })).filter(r => r.definitionId);
       await recordSymbolIndex(refreshId, repoId, indexRows);
 
-      // 11. Upsert embeddings (keyed on definition_id per R3 H8)
-      let embeddedCount = 0;
-      for (const s of finalSymbols) {
-        if (!s.embedding) continue;
-        const definitionId = defMap[`${s.filePath}|${s.symbolName}|${s.kind}`];
-        if (!definitionId) continue;
-        await recordSymbolEmbedding({
-          definitionId,
+      // 11. Upsert embeddings (keyed on definition_id per R3 H8). Batched in
+      // one call (chunked internally) rather than one round trip per symbol —
+      // the per-row loop this replaced was ~95k individual INSERT..ON
+      // CONFLICT statements on a single full refresh, the dominant driver of
+      // the project's Disk IO budget (pg_stat_statements, 2026-07-24).
+      const embeddingRows = finalSymbols
+        .filter((s) => s.embedding)
+        .map((s) => ({
+          definitionId: defMap[`${s.filePath}|${s.symbolName}|${s.kind}`],
           // Same endpoint-qualified provenance published as the snapshot's active
           // model, so per-symbol rows and the snapshot never disagree (D2/H8).
           embeddingModel: embedProfile.provenanceId,
           dimension: s.embeddingDim,
           vector: s.embedding,
           signatureHash: s.signatureHash,
-        });
-        embeddedCount++;
-      }
+        }))
+        .filter((r) => r.definitionId);
+      const embeddedCount = await recordSymbolEmbeddings(embeddingRows);
 
       // 12. Upsert layering violations (always full repo per R2 H8)
       await recordLayeringViolations(refreshId, repoId, violations);

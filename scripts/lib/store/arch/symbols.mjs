@@ -3,11 +3,11 @@
  * symbol_layering_violations + the listSymbolsForSnapshot JOIN reader +
  * copyForwardUntouchedFiles incremental-refresh helper.
  *
- * Owns 8 exports:
+ * Owns 9 exports:
  *   recordSymbolDefinitions, recordSymbolIndex, recordSymbolEmbedding,
- *   recordLayeringViolations, recordDuplicateJustifications,
- *   listSymbolsForSnapshot, listLayeringViolationsForSnapshot,
- *   copyForwardUntouchedFiles
+ *   recordSymbolEmbeddings, recordLayeringViolations,
+ *   recordDuplicateJustifications, listSymbolsForSnapshot,
+ *   listLayeringViolationsForSnapshot, copyForwardUntouchedFiles
  *
  * Plan: docs/plans/sustainability-cleanup-batch.md (WS1);
  * recordDuplicateJustifications added by
@@ -122,6 +122,67 @@ export async function recordSymbolEmbedding({ definitionId, embeddingModel, dime
   } catch (err) {
     throw new Error(`recordSymbolEmbedding failed: ${err.message}`, { cause: err });
   }
+}
+
+/**
+ * Batched sibling of recordSymbolEmbedding — same ON CONFLICT contract, one
+ * multi-row statement per chunk instead of one round trip per symbol.
+ *
+ * A full refresh calls this once per touched symbol with an embedding
+ * (tens of thousands per run on this repo's own symbol_index). Looping
+ * recordSymbolEmbedding() per row turned into ~95k individual single-row
+ * INSERT..ON CONFLICT statements per refresh — each its own round trip and
+ * WAL-committing transaction — and was the dominant contributor to the
+ * project's Disk IO budget (found via pg_stat_statements, 2026-07-24).
+ * recordSymbolIndex/recordSymbolDefinitions/recordSymbolFileImports already
+ * batch via chunk(); this brings embeddings in line with those siblings.
+ *
+ * Global (not per-chunk) de-dup on the conflict key mirrors
+ * recordSymbolFileImports: a same-statement VALUES list can't legally repeat
+ * a conflict key ("cannot affect row a second time"), and a repeat carries
+ * no extra information since a re-embed of the same signature_hash writes
+ * back the same vector — last-occurrence-wins is lossless here.
+ *
+ * @param {{definitionId: string, embeddingModel: string, dimension: number, vector: number[], signatureHash: string}[]} rows
+ * @returns {Promise<number>} count of DISTINCT rows written
+ */
+export async function recordSymbolEmbeddings(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return 0;
+  const pool = await getPool();
+  if (!pool) return 0;
+
+  const byKey = new Map();
+  for (const r of rows) {
+    const key = `${r.definitionId} ${r.embeddingModel} ${r.dimension} ${r.signatureHash}`;
+    byKey.set(key, r);
+  }
+  const distinct = [...byKey.values()];
+
+  let total = 0;
+  for (const batch of chunk(distinct, UPSERT_CHUNK_SIZE)) {
+    const placeholders = [];
+    const params = [];
+    batch.forEach((r, i) => {
+      const literal = vectorLiteral(r.vector, r.dimension);
+      const base = i * 5;
+      placeholders.push(`($${base + 1}::uuid, $${base + 2}, $${base + 3}, $${base + 4}::vector, $${base + 5})`);
+      params.push(r.definitionId, r.embeddingModel, r.dimension, literal, r.signatureHash);
+    });
+    try {
+      await pool.query(
+        `INSERT INTO symbol_embeddings
+           (definition_id, embedding_model, dimension, embedding, signature_hash)
+         VALUES ${placeholders.join(', ')}
+         ON CONFLICT (definition_id, embedding_model, dimension, signature_hash)
+         DO UPDATE SET embedding = EXCLUDED.embedding`,
+        params
+      );
+      total += batch.length;
+    } catch (err) {
+      throw new Error(`recordSymbolEmbeddings failed: ${err.message}`, { cause: err });
+    }
+  }
+  return total;
 }
 
 export async function recordLayeringViolations(refreshId, repoId, violations) {
