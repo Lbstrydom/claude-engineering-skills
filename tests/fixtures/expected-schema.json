@@ -7585,69 +7585,6 @@
   ],
   "policies": [
     {
-      "table_ref": "public.audit_findings",
-      "policyname": "Allow all for anon",
-      "permissive": "PERMISSIVE",
-      "roles": "{public}",
-      "cmd": "ALL",
-      "qual": "true",
-      "with_check": "true"
-    },
-    {
-      "table_ref": "public.audit_pass_stats",
-      "policyname": "Allow all for anon",
-      "permissive": "PERMISSIVE",
-      "roles": "{public}",
-      "cmd": "ALL",
-      "qual": "true",
-      "with_check": "true"
-    },
-    {
-      "table_ref": "public.audit_repos",
-      "policyname": "Allow all for anon",
-      "permissive": "PERMISSIVE",
-      "roles": "{public}",
-      "cmd": "ALL",
-      "qual": "true",
-      "with_check": "true"
-    },
-    {
-      "table_ref": "public.audit_runs",
-      "policyname": "Allow all for anon",
-      "permissive": "PERMISSIVE",
-      "roles": "{public}",
-      "cmd": "ALL",
-      "qual": "true",
-      "with_check": "true"
-    },
-    {
-      "table_ref": "public.bandit_arms",
-      "policyname": "Allow all for anon",
-      "permissive": "PERMISSIVE",
-      "roles": "{public}",
-      "cmd": "ALL",
-      "qual": "true",
-      "with_check": "true"
-    },
-    {
-      "table_ref": "public.debt_entries",
-      "policyname": "Allow all for anon",
-      "permissive": "PERMISSIVE",
-      "roles": "{public}",
-      "cmd": "ALL",
-      "qual": "true",
-      "with_check": "true"
-    },
-    {
-      "table_ref": "public.debt_events",
-      "policyname": "Allow all for anon",
-      "permissive": "PERMISSIVE",
-      "roles": "{public}",
-      "cmd": "ALL",
-      "qual": "true",
-      "with_check": "true"
-    },
-    {
       "table_ref": "public.domain_summaries",
       "policyname": "anon_read_domain_summaries",
       "permissive": "PERMISSIVE",
@@ -7657,87 +7594,6 @@
       "with_check": null
     },
     {
-      "table_ref": "public.false_positive_patterns",
-      "policyname": "Allow all for anon",
-      "permissive": "PERMISSIVE",
-      "roles": "{public}",
-      "cmd": "ALL",
-      "qual": "true",
-      "with_check": "true"
-    },
-    {
-      "table_ref": "public.finding_adjudication_events",
-      "policyname": "Allow all for anon",
-      "permissive": "PERMISSIVE",
-      "roles": "{public}",
-      "cmd": "ALL",
-      "qual": "true",
-      "with_check": "true"
-    },
-    {
-      "table_ref": "public.persona_audit_correlations",
-      "policyname": "anon_all_persona_audit_correlations",
-      "permissive": "PERMISSIVE",
-      "roles": "{public}",
-      "cmd": "ALL",
-      "qual": "true",
-      "with_check": "true"
-    },
-    {
-      "table_ref": "public.plan_verification_items",
-      "policyname": "anon_all_plan_verification_items",
-      "permissive": "PERMISSIVE",
-      "roles": "{public}",
-      "cmd": "ALL",
-      "qual": "true",
-      "with_check": "true"
-    },
-    {
-      "table_ref": "public.plan_verification_runs",
-      "policyname": "anon_all_plan_verification_runs",
-      "permissive": "PERMISSIVE",
-      "roles": "{public}",
-      "cmd": "ALL",
-      "qual": "true",
-      "with_check": "true"
-    },
-    {
-      "table_ref": "public.plans",
-      "policyname": "anon_all_plans",
-      "permissive": "PERMISSIVE",
-      "roles": "{public}",
-      "cmd": "ALL",
-      "qual": "true",
-      "with_check": "true"
-    },
-    {
-      "table_ref": "public.prompt_experiments",
-      "policyname": "anon_all_prompt_experiments",
-      "permissive": "PERMISSIVE",
-      "roles": "{anon}",
-      "cmd": "ALL",
-      "qual": "true",
-      "with_check": "true"
-    },
-    {
-      "table_ref": "public.prompt_revisions",
-      "policyname": "anon_all_prompt_revisions",
-      "permissive": "PERMISSIVE",
-      "roles": "{anon}",
-      "cmd": "ALL",
-      "qual": "true",
-      "with_check": "true"
-    },
-    {
-      "table_ref": "public.prompt_variants",
-      "policyname": "Allow all for anon",
-      "permissive": "PERMISSIVE",
-      "roles": "{public}",
-      "cmd": "ALL",
-      "qual": "true",
-      "with_check": "true"
-    },
-    {
       "table_ref": "public.refresh_runs",
       "policyname": "anon_read_refresh_runs",
       "permissive": "PERMISSIVE",
@@ -7745,42 +7601,6 @@
       "cmd": "SELECT",
       "qual": "true",
       "with_check": null
-    },
-    {
-      "table_ref": "public.regression_spec_runs",
-      "policyname": "anon_all_regression_spec_runs",
-      "permissive": "PERMISSIVE",
-      "roles": "{public}",
-      "cmd": "ALL",
-      "qual": "true",
-      "with_check": "true"
-    },
-    {
-      "table_ref": "public.regression_specs",
-      "policyname": "anon_all_regression_specs",
-      "permissive": "PERMISSIVE",
-      "roles": "{public}",
-      "cmd": "ALL",
-      "qual": "true",
-      "with_check": "true"
-    },
-    {
-      "table_ref": "public.ship_events",
-      "policyname": "anon_all_ship_events",
-      "permissive": "PERMISSIVE",
-      "roles": "{public}",
-      "cmd": "ALL",
-      "qual": "true",
-      "with_check": "true"
-    },
-    {
-      "table_ref": "public.suppression_events",
-      "policyname": "Allow all for anon",
-      "permissive": "PERMISSIVE",
-      "roles": "{public}",
-      "cmd": "ALL",
-      "qual": "true",
-      "with_check": "true"
     },
     {
       "table_ref": "public.symbol_definitions",

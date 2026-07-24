@@ -1,5 +1,75 @@
 # Project Status Log
 
+## 2026-07-24 — Dropped 20 legacy "allow all for anon" RLS policies + closed a missed SECURITY DEFINER grant
+
+Follow-up to the same session's RLS fix: verifying `finding_embeddings`/
+`symbol_refresh_coverage` surfaced a much bigger finding — 20 tables where
+RLS was nominally enabled but a `USING (true) WITH CHECK (true)` "allow
+all for anon" policy granted unrestricted anon/authenticated CRUD, plus
+one `SECURITY DEFINER` function (`memory_health_semantic_cluster`)
+callable by anon/authenticated. User asked to address it directly.
+
+### Investigation before touching it
+- Traced the policies to their origin:
+  `20260330065641_fix_rls_for_cli.sql` created them deliberately — at that
+  time the CLI genuinely used `@supabase/supabase-js` + the anon key
+  ("personal CLI tool, single-user"). That access path was removed
+  entirely in the postgres-parity M4 migration (all runtime access now
+  goes through the direct `pg` driver as the owner role via
+  `AUDIT_DB_URL`, which bypasses RLS regardless of policy).
+- Confirmed the anon-key path is genuinely dead before dropping anything:
+  grepped `SUPABASE_AUDIT_ANON_KEY`/`createClient(`/`@supabase/supabase-js`
+  across this repo AND both consumers' synced tooling
+  (`wine-cellar-app`, `ai-organiser` `scripts/.claude-skills/`) — the one
+  hit (`scripts/lib/db/client.mjs`) is an error-guard telling the caller
+  to migrate to `AUDIT_DB_URL`, never a credential put on the wire.
+  Checked all three repos' `.github/workflows/` for any direct
+  `/rest/v1/` REST calls — none. `@supabase/supabase-js` isn't even in
+  `package.json` anymore.
+- `memory_health_semantic_cluster` (`20260721140000`) was created ONE HOUR
+  after the `20260721130000` hardening migration that locked down 8 other
+  RPCs — too new to have been included, not a deliberate exception.
+
+### Changes
+- `supabase/migrations/20260724170000_drop_legacy_anon_policies.sql` —
+  `DROP POLICY` on all 20 tables (`audit_findings`, `audit_runs`,
+  `audit_repos`, `plans`, `ship_events`, `debt_entries`, `debt_events`,
+  `bandit_arms`, `false_positive_patterns`, `finding_adjudication_events`,
+  `prompt_variants`, `suppression_events`, `audit_pass_stats`,
+  `persona_audit_correlations`, `plan_verification_items`,
+  `plan_verification_runs`, `prompt_experiments`, `prompt_revisions`,
+  `regression_spec_runs`, `regression_specs`), letting RLS's deny-by-
+  default take over — same end state as the repo's existing pattern on
+  30+ other tables. Plus `REVOKE EXECUTE ... FROM PUBLIC, anon,
+  authenticated` on `memory_health_semantic_cluster`.
+- Verified: all 20 `rls_policy_always_true` WARN advisor findings gone;
+  both `*_security_definer_function_executable` findings for the function
+  gone. `check-rls.mjs` still reports 54/54 tables with RLS enabled.
+- Functional smoke test: re-ran `cross-skill.mjs list-unlocked-fixes`
+  (reads `audit_findings` + `regression_specs` via the real
+  `AUDIT_DB_URL` owner-role connection, not just the diagnostic MCP
+  queries) — identical output before and after, confirming the app's own
+  connection is genuinely unaffected, not just theoretically exempt.
+- `tests/fixtures/expected-schema.json` regenerated — 180 lines removed,
+  0 added (exactly the 20 dropped policy records + 1 revoked grant, no
+  incidental changes).
+
+### Decisions Made
+- Left 7 SELECT-only `USING (true)` anon-read policies alone
+  (`domain_summaries`, `refresh_runs`, `symbol_definitions`,
+  `symbol_embeddings`, `symbol_file_imports`, `symbol_index`,
+  `symbol_layering_violations`) — Supabase's own linter deliberately
+  excludes SELECT-true from `rls_policy_always_true` ("often used
+  deliberately for public read access"), and these expose read-only
+  architecture-map data, not CRUD on operational tables. Different risk
+  profile, wasn't part of what was flagged; left as a separate question
+  if it needs one.
+- Left the two `extension_in_public` WARN findings (`pg_trgm`, `vector`)
+  alone — unrelated to what was flagged, moving extensions schemas is a
+  separate, more invasive tradeoff.
+
+---
+
 ## 2026-07-24 — RLS enabled on finding_embeddings + symbol_refresh_coverage (/brainstorm → synthesis → implement)
 
 Follow-up to the same day's Disk IO investigation, which had surfaced but
