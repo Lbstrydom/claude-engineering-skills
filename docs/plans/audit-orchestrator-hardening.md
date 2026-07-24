@@ -6,6 +6,9 @@
   Gemini gate over the union diff with
   `docs/plans/tiered-recall-audit-pipeline.md`'s Cluster E+F. Shipped
   2026-07-10.
+  **Round 2**: a later audit round (2026-07-17, after this plan shipped)
+  found 5 more genuine issues in this same file — see
+  [`docs/plans/audit-backlog-triage-hardening.md`](audit-backlog-triage-hardening.md).
 - **Author**: Claude + Louis Strydom
 - **Scope**: backend
 

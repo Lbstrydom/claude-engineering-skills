@@ -368,3 +368,44 @@ test('no store file ALIASES upsert (import { upsert as x }) — an alias bypasse
   }
   assert.deepEqual(offenders, [], `store files alias upsert (bypassing the callee-name gate): ${JSON.stringify(offenders)} — call it as \`upsert\` or extend UPSERT_CALLEES`);
 });
+
+// ── 8. Unrecognized-upsert-like-callee self-check (audit 89fe6988/4bfc55b0) ──
+//
+// R1-M2/R2-M2 above check the db/query.mjs export surface and import
+// aliasing of the recognized `upsert` identifier — neither sees a NEW local
+// wrapper (`upsertBatch(...)`) or a raw client method call
+// (`x.upsert(...)`, `x.from(t).upsert(...)`) that bypasses the recognized
+// `upsert` identifier entirely. This closes that gap: fail closed (flag it),
+// rather than silently reporting the store clean.
+
+test('flags an unregistered local wrapper whose name looks upsert-shaped', () => {
+  const src = `function upsertBatch(rows) { return doWrite('t', rows); }\nupsertBatch([{ id: 1 }]);`;
+  const { diagnostics } = extractUpsertSites(src);
+  const hits = diagnostics.filter((d) => d.kind === 'unrecognized-upsert-like-callee');
+  assert.equal(hits.length, 1, 'a call to upsertBatch(...) must be flagged as an unrecognized upsert-like callee');
+});
+
+test('flags a raw client member-call (x.upsert(...)) bypassing the query.mjs facade', () => {
+  const src = `client.from('t').upsert([{ id: 1 }], { onConflict: 'id' });`;
+  const { diagnostics } = extractUpsertSites(src);
+  const hits = diagnostics.filter((d) => d.kind === 'unrecognized-upsert-like-callee');
+  assert.equal(hits.length, 1, 'a raw .upsert(...) member call must be flagged');
+});
+
+test('does NOT flag a recognized upsert(...) identifier call (no double-reporting)', () => {
+  const src = `upsert('t', [{ id: 1, repo_id: 'r' }], { onConflict: ['id', 'repo_id'] });`;
+  const { diagnostics } = extractUpsertSites(src);
+  assert.equal(diagnostics.filter((d) => d.kind === 'unrecognized-upsert-like-callee').length, 0);
+});
+
+test('does NOT flag an unrelated call whose name has nothing to do with upsert', () => {
+  const src = `insertRows('t', [{ id: 1 }]);`;
+  const { diagnostics } = extractUpsertSites(src);
+  assert.equal(diagnostics.filter((d) => d.kind === 'unrecognized-upsert-like-callee').length, 0);
+});
+
+test('the live store tree has zero unrecognized-upsert-like-callee diagnostics (no known offenders today)', () => {
+  const { diagnostics } = lintStoreTree();
+  const hits = diagnostics.filter((d) => d.kind === 'unrecognized-upsert-like-callee');
+  assert.deepEqual(hits, [], `unrecognized upsert-like callee(s) in the live store tree: ${JSON.stringify(hits)}`);
+});

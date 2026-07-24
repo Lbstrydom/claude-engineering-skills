@@ -4,6 +4,11 @@
  * 3, 4, 5, 6, 7 against `scripts/lib/audit/legacy-production-audit.mjs`
  * (+ `scripts/lib/config.mjs`'s `clampConfigNumber`).
  *
+ * Round 2 (bottom of file): docs/plans/audit-backlog-triage-hardening.md
+ * items 1-4 — the `writeLearningState` capability wrapper, `cleanupCache()`
+ * failure logging, the guarded shadow-recovery import, and the fuzzy-dedup
+ * `_hash` fix.
+ *
  * Follows the EXISTING stubbing conventions in this repo exactly:
  * `AUDIT_EXPORTS_FOR_TESTS=1` + `__testExports` + a stub OpenAI client
  * whose `responses.parse(params)` dispatches on `params.text.format.name`
@@ -12,7 +17,7 @@
  * integration test reuses that harness's fixture plan/files/stub-client
  * helpers rather than re-inventing them).
  *
- * Plan: docs/plans/audit-orchestrator-hardening.md.
+ * Plan: docs/plans/audit-orchestrator-hardening.md, docs/plans/audit-backlog-triage-hardening.md.
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -46,7 +51,10 @@ const audit = await import('../scripts/openai-audit.mjs');
 const { runMultiPassCodeAudit } = audit.__testExports;
 
 const lpa = await import('../scripts/lib/audit/legacy-production-audit.mjs');
-const { validateLedgerForR2, deriveFindingsFromReport, runMapReducePass, initResultCache, cachePassResult } = lpa.__testExports;
+const {
+  validateLedgerForR2, deriveFindingsFromReport, runMapReducePass, initResultCache, cachePassResult,
+  writeLearningState, cleanupCache, classifyShadowFailureSafe, runOrphanIntroducedPass, dedupReplacementId,
+} = lpa.__testExports;
 
 const { clampConfigNumber } = await import('../scripts/lib/config.mjs');
 const { FindingSchema, LedgerEntrySchema } = await import('../scripts/lib/schemas.mjs');
@@ -539,5 +547,141 @@ describe('Phase 3 — pass-result registry (integration)', () => {
     assert.equal(typeof result._pass_timings.quickfix, 'string');
     assert.match(result.overall_reasoning, /Quickfix/);
     assert.match(result.overall_reasoning, /quickfix summary text/);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Round 2 (docs/plans/audit-backlog-triage-hardening.md) — items 1-4
+// ═══════════════════════════════════════════════════════════════════════
+
+describe('Item 1 — writeLearningState capability wrapper', () => {
+  it('does not call fn when allowed is false', () => {
+    let called = false;
+    const result = writeLearningState(false, () => { called = true; return 'x'; });
+    assert.equal(called, false);
+    assert.equal(result, undefined);
+  });
+
+  it('calls fn and returns its value when allowed is true', () => {
+    const result = writeLearningState(true, () => 'called');
+    assert.equal(result, 'called');
+  });
+
+  it('propagates fn\'s return value through async functions unchanged', async () => {
+    const result = await writeLearningState(true, async () => 'async-value');
+    assert.equal(result, 'async-value');
+  });
+
+  it('runOrphanIntroducedPass never emits orphan-run metrics when learningWritesAllowed is false (observation-only shadow)', async () => {
+    // No archReport → SKIPPED_NO_GRAPH short-circuit; the point is just that
+    // this must not throw and must not attempt any write when gated off.
+    const result = await runOrphanIntroducedPass({
+      archReport: null, repoRoot: process.cwd(), baseRef: 'HEAD~1', headRef: 'HEAD',
+      runId: 'test-run', planContent: null, ledger: null, learningWritesAllowed: false,
+    });
+    assert.equal(result.state, 'SKIPPED_NO_GRAPH');
+  });
+});
+
+describe('Item 2 — cleanupCache() logs removal failures instead of swallowing them', () => {
+  it('logs to stderr and does not throw when fs.rmSync fails', (t) => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lpa-cleanup-'));
+    try {
+      const outFile = path.join(tmpDir, 'result.json');
+      initResultCache(outFile);
+      cachePassResult('probe', { ok: true }); // establishes _cacheDir for real
+      const cacheDirEntries = fs.readdirSync(tmpDir).filter(f => f.startsWith('.audit-cache-'));
+      const cacheDir = path.join(tmpDir, cacheDirEntries[0]);
+
+      // Scoped to the cache dir ONLY — an unscoped mock would also intercept
+      // this test's own `finally` cleanup of `tmpDir` below, throwing
+      // uncaught after the mock outlives this callback (found live: the
+      // first version of this test did exactly that).
+      const realRmSync = fs.rmSync.bind(fs);
+      t.mock.method(fs, 'rmSync', (p, ...rest) => {
+        if (path.resolve(String(p)) === path.resolve(cacheDir)) {
+          throw Object.assign(new Error('simulated rm failure'), { code: 'EBUSY' });
+        }
+        return realRmSync(p, ...rest);
+      });
+
+      let stderrOutput = '';
+      const originalWrite = process.stderr.write.bind(process.stderr);
+      process.stderr.write = (chunk) => { stderrOutput += chunk; return true; };
+      try {
+        assert.doesNotThrow(() => cleanupCache());
+      } finally {
+        process.stderr.write = originalWrite;
+      }
+      assert.match(stderrOutput, /cleanup failed/);
+      assert.match(stderrOutput, /EBUSY|simulated rm failure/);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+});
+
+describe('Item 3 — classifyShadowFailureSafe guards its own recovery import', () => {
+  it('falls back to a safe classification when the recovery import itself fails, instead of throwing', async () => {
+    const originalErr = new Error('original shadow failure');
+    const failingImporter = () => { throw new Error('module load failed'); };
+    const { log, marker } = await classifyShadowFailureSafe(originalErr, failingImporter);
+    assert.equal(marker, null);
+    assert.match(log, /shadow failure classification unavailable/);
+    assert.match(log, /module load failed/);
+    assert.match(log, /original shadow failure/);
+  });
+
+  it('delegates to the real classifyShadowFailure when the import succeeds', async () => {
+    const { classifyShadowFailure } = await import('../scripts/lib/audit-shadow.mjs');
+    const originalErr = new Error('some shadow error');
+    const direct = classifyShadowFailure(originalErr);
+    const viaSafe = await classifyShadowFailureSafe(originalErr);
+    assert.deepEqual(viaSafe, direct);
+  });
+});
+
+describe('Item 4 — fuzzy-dedup replacement carries the NEW finding\'s _hash (static regression guard)', () => {
+  it('the fuzzy-dedup branch no longer keeps the replaced finding\'s stale _hash', () => {
+    const src = fs.readFileSync(path.resolve('scripts/lib/audit/legacy-production-audit.mjs'), 'utf-8');
+    assert.doesNotMatch(
+      src, /_hash: allFindings\[dupeIdx\]\._hash/,
+      'fuzzy-dedup replacement must not retain the REPLACED finding\'s _hash — it must use the new finding\'s hash, matching the exact-dedup branch'
+    );
+    // Both dedup branches (exact at ~2456, fuzzy nearby) must now agree:
+    // `_hash: hash` appears at least twice in the addFindings dedup region.
+    const hashAssignments = src.match(/_hash: hash,/g) || [];
+    assert.ok(hashAssignments.length >= 2, `expected both dedup branches to assign _hash: hash — found ${hashAssignments.length}`);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Round 2 audit finding M10 (2026-07-24) — dedupReplacementId
+// ═══════════════════════════════════════════════════════════════════════
+
+describe('dedupReplacementId — a dedup replacement\'s id must match its severity', () => {
+  it('keeps the existing id when severity is unchanged', () => {
+    const counter = { HIGH: 3, MEDIUM: 2, LOW: 1 };
+    const id = dedupReplacementId('M2', 'MEDIUM', 'MEDIUM', counter);
+    assert.equal(id, 'M2');
+    assert.deepEqual(counter, { HIGH: 3, MEDIUM: 2, LOW: 1 }, 'counter must not be mutated when severity is unchanged');
+  });
+
+  it('mints a fresh id from the NEW severity\'s counter when severity changes (the M10 bug)', () => {
+    const counter = { HIGH: 0, MEDIUM: 0, LOW: 5 };
+    // A LOW finding ("L5") is being replaced by a HIGH-severity duplicate —
+    // keeping "L5" would label a HIGH finding with a LOW-prefixed id.
+    const id = dedupReplacementId('L5', 'LOW', 'HIGH', counter);
+    assert.equal(id, 'H1');
+    assert.equal(counter.HIGH, 1, 'the new severity\'s counter must be incremented');
+    assert.equal(counter.LOW, 5, 'the old severity\'s counter must be untouched');
+  });
+
+  it('never produces an id whose letter prefix disagrees with the passed-in new severity', () => {
+    const counter = { HIGH: 0, MEDIUM: 0, LOW: 0 };
+    for (const [from, to, expectedLetter] of [['LOW', 'HIGH', 'H'], ['HIGH', 'MEDIUM', 'M'], ['MEDIUM', 'LOW', 'L']]) {
+      const id = dedupReplacementId('X0', from, to, counter);
+      assert.equal(id[0], expectedLetter, `${from}->${to} must produce a ${expectedLetter}-prefixed id, got ${id}`);
+    }
   });
 });

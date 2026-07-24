@@ -278,7 +278,15 @@ function cacheWaveResults(passNames, results) {
 
 function cleanupCache() {
   if (!_cacheDir) return;
-  try { fs.rmSync(_cacheDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* ignore */ }
+  try {
+    fs.rmSync(_cacheDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  } catch (err) {
+    // Cache cleanup failing must never fail the audit run (fail-open) — but
+    // silent used to mean INVISIBLE: audit-result cache artifacts (which can
+    // carry sensitive diff/finding content) could be left behind with no
+    // operator signal at all.
+    process.stderr.write(`  [cache] cleanup failed for ${_cacheDir}: ${err.code || err.message}\n`);
+  }
 }
 
 // buildReducePayload and normalizeFindingsForOutput imported from lib/robustness.mjs
@@ -855,6 +863,80 @@ function orphanToStandardFinding(raw, idx) {
 }
 
 /**
+ * A dedup-replacement's `id` must match the WINNING finding's severity — the
+ * id's letter prefix (H/M/L) is severity-derived, so keeping a stale id
+ * across a severity change corrupts the display: a LOW-severity id ("L5")
+ * could label a finding whose actual severity is now HIGH (audit M10,
+ * 2026-07-24, round-1 finding on the docs/plans/audit-backlog-triage-hardening.md
+ * item-4 fix). Same severity → keep the existing id (stable within-run
+ * label, unchanged behaviour). Different severity → mint a fresh id from
+ * that severity's own counter, exactly like a brand-new finding would get.
+ * @param {string} existingId
+ * @param {string} existingSeverity
+ * @param {string} newSeverity
+ * @param {{HIGH:number, MEDIUM:number, LOW:number}} findingCounter - mutated in place
+ * @returns {string}
+ */
+function dedupReplacementId(existingId, existingSeverity, newSeverity, findingCounter) {
+  if (existingSeverity === newSeverity) return existingId;
+  findingCounter[newSeverity]++;
+  const letter = newSeverity === 'HIGH' ? 'H' : newSeverity === 'MEDIUM' ? 'M' : 'L';
+  return `${letter}${findingCounter[newSeverity]}`;
+}
+
+/**
+ * Guards the shadow-execution catch handler's OWN recovery import. The
+ * shadow path is opt-in/observation-only and must never abort a successful
+ * primary audit (see `classifyShadowFailure` in `lib/audit-shadow.mjs`) —
+ * but the catch handler's own `await import('../audit-shadow.mjs')` had no
+ * guard of its own, so a failure recovering from a failure (e.g. the module
+ * fails to load) could still propagate past the "no shadow failure aborts
+ * the primary audit" boundary (audit 6d718216, 2026-07-17).
+ * @param {Error} err - the original shadow-path error being classified
+ * @param {() => Promise<object>} [importShadowModule] - test seam; defaults
+ *   to the real dynamic import. Production call sites never pass this.
+ * @returns {Promise<{log: string, marker: object|null}>}
+ */
+async function classifyShadowFailureSafe(err, importShadowModule = () => import('../audit-shadow.mjs')) {
+  try {
+    const { classifyShadowFailure } = await importShadowModule();
+    return classifyShadowFailure(err);
+  } catch (recoveryErr) {
+    return {
+      log: `shadow failure classification unavailable (${recoveryErr.message}); original: ${err.message}`,
+      marker: null,
+    };
+  }
+}
+
+/**
+ * The choke point for the 5 write sites this file's `if (learningWritesAllowed)`
+ * / `if (X && learningWritesAllowed)` convention used to gate ad hoc (bandit
+ * flush + sync, FP-pattern sync, the outcomes.jsonl append loop, and the two
+ * orphan-metrics emits) — nothing stopped a future write from skipping the
+ * check entirely (audit fb7cec72, 2026-07-17). `grep "writeLearningState("`
+ * enumerates those 5 in one shot instead of requiring a full-file read.
+ *
+ * **NOT exhaustive over every persistence-capable call in this file** — a
+ * later audit (H1-H4, 2026-07-24) correctly found OTHER cloud-write/telemetry
+ * sites this wrapper does not cover: `recordDiffComplexity(...)`,
+ * `backfillLearningOutcome(...)`, debt-memory writes, ledger writes, and
+ * session writes, several of which also silently discard failures
+ * (`.catch(() => {})`). Those are real, pre-existing gaps, deliberately
+ * deferred — see docs/plans/audit-backlog-triage-hardening.md item 1's
+ * "Explicitly NOT in scope" framing (item 5's God-orchestrator decomposition
+ * covers the eventual real fix). Full lint-level enforcement of even the 5
+ * sites this wrapper DOES cover (forbidding a raw store call outside it) is
+ * also out of scope here.
+ * @param {boolean} allowed
+ * @param {() => any} fn
+ */
+function writeLearningState(allowed, fn) {
+  if (!allowed) return;
+  return fn();
+}
+
+/**
  * Wave 1.5b — Orphan-Introduced check. Runs after the architecture pass; reuses
  * the HEAD import graph from `archReport._meta['js-ts']`. Pure deterministic
  * algorithm (no LLM call); emits MEDIUM findings for files orphaned by the diff.
@@ -909,11 +991,9 @@ async function runOrphanIntroducedPass({ archReport, repoRoot, baseRef, headRef,
     // Gated (audit R1-H1): the metrics file is durable local learning
     // telemetry (.audit/orphan-metrics.jsonl) shared with the real run — an
     // observation-only shadow appending to it double-counts the same commit.
-    if (learningWritesAllowed) {
-      await emitOrphanRunMetrics({
-        runId, passState: scope.state, rawFindings: [], survivors: [], suppressed: [], _meta: {}, repoPath: repoRoot,
-      });
-    }
+    await writeLearningState(learningWritesAllowed, () => emitOrphanRunMetrics({
+      runId, passState: scope.state, rawFindings: [], survivors: [], suppressed: [], _meta: {}, repoPath: repoRoot,
+    }));
     return { state: scope.state, result: emptyResult };
   }
 
@@ -933,17 +1013,15 @@ async function runOrphanIntroducedPass({ archReport, repoRoot, baseRef, headRef,
   // Emit telemetry (per-pass orchestration responsibility — Gemini-R4/H1).
   // Gated on learningWritesAllowed (audit R1-H1) — see the short-circuit
   // emit above for why an observation-only run must not append here.
-  if (learningWritesAllowed) {
-    await emitOrphanRunMetrics({
-      runId,
-      passState: detector.state,
-      rawFindings: detector.rawFindings,
-      survivors,
-      suppressed,
-      _meta: detector._meta,
-      repoPath: repoRoot,
-    });
-  }
+  await writeLearningState(learningWritesAllowed, () => emitOrphanRunMetrics({
+    runId,
+    passState: detector.state,
+    rawFindings: detector.rawFindings,
+    survivors,
+    suppressed,
+    _meta: detector._meta,
+    repoPath: repoRoot,
+  }));
 
   const findings = survivors.map((f, i) => orphanToStandardFinding(f, i));
   const summary = findings.length === 0
@@ -2453,7 +2531,9 @@ export async function runLegacyProductionAudit(ctx) {
         dedupCount++;
         if ((sevOrder[f.severity] ?? 2) < (sevOrder[allFindings[existingExactIdx].severity] ?? 2)) {
           allFindings[existingExactIdx] = {
-            ...f, id: allFindings[existingExactIdx].id, _hash: hash, _pass: prefix,
+            ...f,
+            id: dedupReplacementId(allFindings[existingExactIdx].id, allFindings[existingExactIdx].severity, f.severity, findingCounter),
+            _hash: hash, _pass: prefix,
             category: `[${prefix}] ${f.category}`,
           };
         }
@@ -2469,8 +2549,19 @@ export async function runLegacyProductionAudit(ctx) {
       if (dupeIdx !== -1) {
         dedupCount++;
         if ((sevOrder[f.severity] ?? 2) < (sevOrder[allFindings[dupeIdx].severity] ?? 2)) {
+          // `id` is preserved when severity is unchanged (stable within-run
+          // label); it's regenerated via dedupReplacementId when severity
+          // changes, since the letter prefix is severity-derived (audit
+          // M10, 2026-07-24 — a kept-stale id could label a HIGH finding
+          // "L5"). `_hash` must come from the NEW finding (matching the
+          // exact-dedup branch above, audit bc31c61a/880195e4, 2026-07-17)
+          // — the old line kept the REPLACED finding's _hash even though
+          // content/severity came from the new one, corrupting downstream
+          // dedup identity.
           allFindings[dupeIdx] = {
-            ...f, id: allFindings[dupeIdx].id, _hash: allFindings[dupeIdx]._hash, _pass: prefix,
+            ...f,
+            id: dedupReplacementId(allFindings[dupeIdx].id, allFindings[dupeIdx].severity, f.severity, findingCounter),
+            _hash: hash, _pass: prefix,
             category: `[${prefix}] ${f.category}`,
           };
         }
@@ -2987,7 +3078,7 @@ export async function runLegacyProductionAudit(ctx) {
   // observation-only shadow appending its findings here trains the real
   // bandit on data from a run that must be invisible. Same class as the tail
   // syncs, one write site over.
-  if (learningWritesAllowed) for (const f of allFindings) {
+  writeLearningState(learningWritesAllowed, () => { for (const f of allFindings) {
     const revId = getActiveRevisionId(f._pass) || 'default';
     appendOutcome('.audit/outcomes.jsonl', {
       findingId: f.id,
@@ -3003,7 +3094,7 @@ export async function runLegacyProductionAudit(ctx) {
       promptRevisionId: revId,
       semanticHash: f._hash,
     });
-  }
+  } });
 
   // Phase 3: Cloud store — record findings + pass stats (fire-and-forget)
   if (cloudRunId) {
@@ -3075,9 +3166,9 @@ export async function runLegacyProductionAudit(ctx) {
     // egress-gate refusal, may propagate past this point. Doing so would abort
     // the primary audit before its --out write, discarding an already-
     // successful result over an unrelated side experiment (see
-    // classifyShadowFailure doc in lib/audit-shadow.mjs).
-    const { classifyShadowFailure } = await import('../audit-shadow.mjs');
-    const { log, marker } = classifyShadowFailure(err);
+    // classifyShadowFailure doc in lib/audit-shadow.mjs). The recovery
+    // import itself is guarded too — see classifyShadowFailureSafe.
+    const { log, marker } = await classifyShadowFailureSafe(err);
     process.stderr.write(`  [shadow] ${log}\n`);
     if (marker) mergedResult._modelAbShadow = marker;
   }
@@ -3100,11 +3191,13 @@ export async function runLegacyProductionAudit(ctx) {
   // on, contaminating the very data the tiered-recall window measures. The
   // local flush() is gated too: an observation run persisting the shared
   // bandit file is the same contamination class, one channel over.
-  if (bandit && learningWritesAllowed) {
-    bandit.flush();
-    syncBanditArms(bandit.arms).catch(e => process.stderr.write(`  [learning] ${e.message}\n`));
+  if (bandit) {
+    writeLearningState(learningWritesAllowed, () => {
+      bandit.flush();
+      syncBanditArms(bandit.arms).catch(e => process.stderr.write(`  [learning] ${e.message}\n`));
+    });
   }
-  if (fpTracker && learningWritesAllowed) {
+  if (fpTracker) {
     // cloudRepoId is the audit_repos row UUID (null → GLOBAL sentinel inside
     // the sync). Dirty subset only — syncing the whole map rewrote thousands
     // of unchanged rows per run (2026-07-17 Disk IO incident). The
@@ -3112,7 +3205,9 @@ export async function runLegacyProductionAudit(ctx) {
     // a DIFFERENT failure (unresolved repo identity on a real run) — before
     // this gate, that coincidence was the only thing keeping shadow runs
     // from writing FP patterns.
-    syncFalsePositivePatterns(cloudRepoId, fpTracker.dirtyPatterns()).catch(e => process.stderr.write(`  [learning] ${e.message}\n`));
+    writeLearningState(learningWritesAllowed, () => {
+      syncFalsePositivePatterns(cloudRepoId, fpTracker.dirtyPatterns()).catch(e => process.stderr.write(`  [learning] ${e.message}\n`));
+    });
   }
 
   // Phase 3 — adaptive-learning convergence_predict telemetry.  Emit ONE
@@ -3597,5 +3692,8 @@ export async function buildAuditRunContext(cliArgs) {
 // deterministic unit tests. Production runs never set the env var, so this
 // export is `undefined` and the test scaffolding is dead code at runtime.
 export const __testExports = process.env.AUDIT_EXPORTS_FOR_TESTS === '1'
-  ? { validateLedgerForR2, deriveFindingsFromReport, runMapReducePass, initResultCache, cachePassResult }
+  ? {
+      validateLedgerForR2, deriveFindingsFromReport, runMapReducePass, initResultCache, cachePassResult,
+      writeLearningState, cleanupCache, classifyShadowFailureSafe, runOrphanIntroducedPass, dedupReplacementId,
+    }
   : undefined;

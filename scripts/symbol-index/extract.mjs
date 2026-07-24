@@ -81,10 +81,15 @@ function emitProgress(msg) {
  * @param {string[]} filePaths - absolute paths
  * @param {string} repoRoot - absolute path
  * @param {{includeDelegates?: boolean}} [opts] - opts.includeDelegates skips the thin-delegate filter (debug/visibility)
- * @returns {{symbolCount: number, skippedPath: number, skippedExt: number, skippedSize: number, skippedDelegate: number, redacted: number}}
+ * @returns {{symbolCount: number, skippedPath: number, skippedExt: number, skippedSize: number, skippedDelegate: number, redacted: number, statFailures: number, parseFailures: number}}
  */
-function extractSymbols(filePaths, repoRoot, opts = {}) {
-  const stats = { symbolCount: 0, skippedPath: 0, skippedExt: 0, skippedSize: 0, skippedDelegate: 0, redacted: 0 };
+export function extractSymbols(filePaths, repoRoot, opts = {}) {
+  // statFailures/parseFailures (audit 9cc6f93b, 2026-07-17): both catches
+  // below used to swallow the failure with no counter and no result-shape
+  // signal — a run could report a clean summary while silently omitting
+  // files. Additive only: does NOT change what's read, skipped, or how a
+  // sensitive/symlink path is classified (INC-001) — counting only.
+  const stats = { symbolCount: 0, skippedPath: 0, skippedExt: 0, skippedSize: 0, skippedDelegate: 0, redacted: 0, statFailures: 0, parseFailures: 0 };
   // Aggregate sensitive-path skips and emit ONE redacted log block at end
   // (plan: docs/plans/sustainability-cleanup-batch.md WS3, Gemini-r2-G3).
   const skippedSensitive = [];
@@ -164,15 +169,29 @@ function extractSymbols(filePaths, repoRoot, opts = {}) {
         emitProgress(`skip-size: ${rel} (${Math.round(size/1024)}KB > ${MAX_FILE_BYTES/1024}KB)`);
         continue;
       }
-    } catch { /* stat fail → skip */ continue; }
+    } catch (err) {
+      stats.statFailures++;
+      emitProgress(`stat-error: ${rel} — ${err.message}`);
+      continue;
+    }
     let sf;
     try {
       sf = project.addSourceFileAtPathIfExists(readPath);
     } catch (err) {
+      stats.parseFailures++;
       emitProgress(`parse-error: ${rel} — ${err.message}`);
       continue;
     }
-    if (!sf) continue;
+    if (!sf) {
+      // ts-morph's `*IfExists` APIs return undefined instead of throwing on
+      // failure — a non-exception failure the try/catch above can't see
+      // (audit M5, 2026-07-24: the exception path was counted, this one
+      // wasn't, so a file could fail to load without appearing anywhere in
+      // failure accounting).
+      stats.parseFailures++;
+      emitProgress(`parse-error: ${rel} — addSourceFileAtPathIfExists returned no source file`);
+      continue;
+    }
 
     const candidates = [];
 
@@ -602,7 +621,7 @@ async function main() {
   // `counts` — that field is a flat scalar bag and consumers treat it as one.
   const { coverage: _coverage, ...graphCounts } = graphStats;
   emit({ type: 'summary', counts: { ...stats, ...graphCounts } });
-  emitProgress(`done — symbols=${stats.symbolCount} violations=${graphStats.violationCount} skipped-path=${stats.skippedPath} skipped-ext=${stats.skippedExt} skipped-size=${stats.skippedSize} skipped-delegate=${stats.skippedDelegate} redacted=${stats.redacted}`);
+  emitProgress(`done — symbols=${stats.symbolCount} violations=${graphStats.violationCount} skipped-path=${stats.skippedPath} skipped-ext=${stats.skippedExt} skipped-size=${stats.skippedSize} skipped-delegate=${stats.skippedDelegate} redacted=${stats.redacted} stat-failures=${stats.statFailures} parse-failures=${stats.parseFailures}`);
 }
 
 // CLI-only entry guard (2026-07-18). `main()` used to run unconditionally at

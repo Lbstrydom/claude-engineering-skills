@@ -389,6 +389,31 @@ export function extractUpsertSites(source) {
 
     if (node.type === 'CallExpression' && node.callee?.type === 'Identifier' && UPSERT_CALLEES.has(node.callee.name)) {
       processUpsertCall(node, makeResolver(childChain), sites, diagnostics, sourceLines);
+    } else if (node.type === 'CallExpression') {
+      // Fail-closed coverage self-check (audit 89fe6988/4bfc55b0, 2026-07-17):
+      // a call whose name LOOKS upsert-shaped but isn't a recognized
+      // `upsert` identifier call is invisible to the check above — either a
+      // new local wrapper (`upsertBatch(...)`) the maintainer forgot to
+      // register, or a raw client method call (`x.upsert(...)`,
+      // `x.from(t).upsert(...)`) that bypasses the db/query.mjs facade
+      // entirely. Neither is caught by the query.mjs-export guard or the
+      // import-alias guard (tests/on-conflict-lint.test.mjs R1-M2/R2-M2),
+      // which only see the RECOGNIZED `upsert` identifier's surface.
+      // Matched against the START of an identifier (`upsertBatch`, not
+      // `buildFrictionUpsertPayload` — a payload BUILDER, not a write) and
+      // the WHOLE property name for a member call (the real client method
+      // is always exactly `.upsert(...)`, never `.upsertFoo(...)`).
+      const calleeName = node.callee?.type === 'Identifier' ? node.callee.name
+        : node.callee?.type === 'MemberExpression' && !node.callee.computed ? node.callee.property?.name
+        : null;
+      const looksUpsertLike = node.callee?.type === 'Identifier' ? /^upsert/i.test(calleeName || '')
+        : /^upsert$/i.test(calleeName || '');
+      if (calleeName && looksUpsertLike) {
+        diagnostics.push({
+          kind: 'unrecognized-upsert-like-callee', table: '<unknown>', line: node.loc?.start?.line ?? 0,
+          message: `call to "${calleeName}(...)" looks upsert-shaped but is not in UPSERT_CALLEES and is not a plain \`upsert(...)\` call — this write path's row/conflict-target shape is NOT analyzed (this flags EXISTENCE only, not nullable-key/scope-identity correctness — full analysis of an arbitrary unrecognized wrapper is out of scope, see docs/plans/audit-backlog-triage-hardening.md item 6). Register it in UPSERT_CALLEES if it is a real db-layer write wrapper so \`analyzeUpsert\` can actually check it, or route it through the recognized \`upsert\` helper.`,
+        });
+      }
     }
 
     for (const key of Object.keys(node)) {

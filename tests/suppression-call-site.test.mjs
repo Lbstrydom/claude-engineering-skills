@@ -178,25 +178,36 @@ test('learningWritesAllowed is declared once and derives from noCloudRecording',
   assert.equal(decls.length, 1, 'exactly one declaration, derived from the flag');
 });
 
-test('every learning-state sink sits under the learningWritesAllowed gate', () => {
-  // syncBanditArms + bandit.flush share one gated block; syncFalsePositivePatterns has its own.
-  assert.match(src, /if\s*\(bandit\s*&&\s*learningWritesAllowed\)\s*\{[^}]*bandit\.flush\(\);[^}]*syncBanditArms\(/s,
-    'bandit.flush + syncBanditArms must both live inside the gated block');
-  assert.match(src, /if\s*\(fpTracker\s*&&\s*learningWritesAllowed\)\s*\{[\s\S]{0,900}?syncFalsePositivePatterns\(/,
-    'syncFalsePositivePatterns must be gated');
-  // No UNGATED call site of either sync remains (the original leak shape).
-  const ungatedBandit = src.match(/if\s*\(bandit\)\s*\{[^}]*syncBanditArms/g) || [];
-  const ungatedFp = src.match(/if\s*\(fpTracker\)\s*\{?[^}]*syncFalsePositivePatterns/g) || [];
-  assert.equal(ungatedBandit.length, 0, 'no presence-only-gated bandit sync');
-  assert.equal(ungatedFp.length, 0, 'no presence-only-gated FP sync');
+test('every learning-state sink sits under the writeLearningState gate', () => {
+  // docs/plans/audit-backlog-triage-hardening.md item 1 (2026-07-23):
+  // collapsed the 5 independent `if (learningWritesAllowed)` / `if (X &&
+  // learningWritesAllowed)` call sites this test used to pin into ONE choke
+  // point, `writeLearningState(allowed, fn)` — grep it to enumerate every
+  // writer instead of re-deriving the list from 5 differently-shaped
+  // conditionals. Assertions below pin the NEW shape, same invariant: every
+  // sink is unreachable when learningWritesAllowed is false.
+  assert.match(src, /^function writeLearningState\(allowed, fn\) \{\s*\n\s*if \(!allowed\) return;\s*\n\s*return fn\(\);\s*\n\}/m,
+    'the single choke point every learning-state write must go through');
+
+  // syncBanditArms + bandit.flush share one writeLearningState call.
+  assert.match(src, /if\s*\(bandit\)\s*\{\s*\n\s*writeLearningState\(learningWritesAllowed,\s*\(\)\s*=>\s*\{[^}]*bandit\.flush\(\);[^}]*syncBanditArms\(/s,
+    'bandit.flush + syncBanditArms must both live inside one writeLearningState(...) call');
+  // syncFalsePositivePatterns has its own.
+  assert.match(src, /if\s*\(fpTracker\)\s*\{[\s\S]{0,900}?writeLearningState\(learningWritesAllowed,\s*\(\)\s*=>\s*\{[\s\S]{0,300}?syncFalsePositivePatterns\(/,
+    'syncFalsePositivePatterns must be routed through writeLearningState');
+  // No sink calls writeLearningState with a literal `true` (that would
+  // silently re-open the ungated leak this whole mechanism exists to close).
+  const hardcodedAllowed = src.match(/writeLearningState\(\s*true\s*,/g) || [];
+  assert.equal(hardcodedAllowed.length, 0, 'no writeLearningState call site may hardcode allowed=true');
+
   // The LOCAL bandit reward stream (audit R2-H1): the per-finding
   // appendOutcome loop must be gated too — a shadow's findings would
-  // otherwise train the real bandit. `if (learningWritesAllowed) for ...`.
-  assert.match(src, /if\s*\(learningWritesAllowed\)\s*for\s*\(const f of allFindings\)\s*\{[\s\S]{0,200}?appendOutcome\(/,
-    'the outcomes.jsonl append loop must be gated');
+  // otherwise train the real bandit.
+  assert.match(src, /writeLearningState\(learningWritesAllowed,\s*\(\)\s*=>\s*\{\s*for\s*\(const f of allFindings\)\s*\{[\s\S]{0,200}?appendOutcome\(/,
+    'the outcomes.jsonl append loop must be gated via writeLearningState');
   // And the orphan-metrics emits (audit R1-H1): both sites inside
-  // runOrphanIntroducedPass gate on the threaded flag.
-  const emitGates = src.match(/if\s*\(learningWritesAllowed\)\s*\{\s*\n\s*await emitOrphanRunMetrics\(/g) || [];
+  // runOrphanIntroducedPass gate on the threaded flag via writeLearningState.
+  const emitGates = src.match(/writeLearningState\(learningWritesAllowed,\s*\(\)\s*=>\s*emitOrphanRunMetrics\(/g) || [];
   assert.equal(emitGates.length, 2, `both emitOrphanRunMetrics sites gated (found ${emitGates.length})`);
 });
 

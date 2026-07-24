@@ -1,5 +1,67 @@
 # Project Status Log
 
+## 2026-07-24 — audit-backlog-triage-hardening: 7-item punch list shipped (autonomous /cycle)
+
+Implemented [`docs/plans/audit-backlog-triage-hardening.md`](docs/plans/audit-backlog-triage-hardening.md)
+end to end via `/cycle code <plan> --autonomous` — the 7 real bugs the
+2026-07-22/23 learning-weekly-review backlog triage confirmed still open
+after 269 findings were reconciled down to 175 (see
+`project_learning_backlog_triage_2026-07-22` memory).
+
+**Fixes** (5 in `scripts/lib/audit/legacy-production-audit.mjs`, 1 in
+`scripts/lib/lint/on-conflict.mjs`, 1 in `scripts/symbol-index/extract.mjs`):
+1. `writeLearningState(allowed, fn)` — collapsed 5 scattered
+   `if (learningWritesAllowed)` gates into one choke point.
+2. `cleanupCache()` now logs removal failures instead of swallowing them.
+3. `classifyShadowFailureSafe()` — guards the shadow catch handler's own
+   recovery import so a failure recovering from a failure can no longer
+   abort a successful primary audit.
+4. Fixed a fuzzy-dedup replacement bug that kept the OLD finding's `_hash`
+   when a higher-severity duplicate replaced it (corrupting dedup identity)
+   — plus a latent `id`/severity-prefix mismatch GPT's own audit caught
+   (`dedupReplacementId`), applied to both the exact-hash and fuzzy branches.
+5. God-orchestrator decomposition explicitly scoped down (band-aid /
+   over-engineered / chosen framing in the plan) — only the
+   `writeLearningState` extraction counts as progress; the rest is tracked
+   debt, not silently dropped.
+6. `on-conflict.mjs`'s `UPSERT_CALLEES` coverage hole now has a fail-closed
+   self-check flagging unrecognized upsert-like callees (local wrapper AND
+   raw client `.upsert(...)` bypass vectors) — verified it doesn't
+   false-positive on comments/declarations/payload-builder helper names.
+7. `extractSymbols()` now counts BOTH the exception and non-exception
+   (`addSourceFileAtPathIfExists` returning `undefined`) failure paths —
+   GPT's own round-1 audit caught the non-exception gap live.
+
+**Process**: 3 GPT audit rounds (`/audit-code`, R2+ ledger mode). Every
+HIGH/MEDIUM finding that actually touched this diff's changed code got
+fixed (the 2 items above GPT caught — M5/M10 — plus a `quickfix` M2 whose
+"triggered by a comment" claim was verified false but whose legitimate
+kernel was addressed). Everything else across all 3 rounds — 23+
+findings, several the same 2-3 architectural themes reworded round to
+round (write-site coverage beyond item 1's 5 sites, `cached_tokens`
+accounting) plus a couple of genuinely new but still pre-existing bugs
+(`costFromUsage(...).totalUsd` null-deref) — was independently confirmed
+via `git diff` (not assumed) as untouched by this diff and captured in
+`.audit/tech-debt.json` with full root-cause / rejected-minimal-fix /
+independence rationale per finding. Two round-1 findings (a "Files
+Referenced in Plan" section and a "no `removeSourceFile` call" claim) were
+dismissed as hallucinated/factually-stale after direct verification. Gemini
+final review: **APPROVE**, 0 new findings, 0 wrongly-dismissed, "Strong"
+architectural coherence, explicit praise for scope discipline
+("correctly cataloged [out-of-scope issues] rather than allowing scope
+creep").
+
+50+ new/updated tests (`node:test` mocks for `fs.statSync`/`fs.rmSync`/
+`Project.prototype.addSourceFileAtPathIfExists`, a DI seam added to
+`classifyShadowFailureSafe` specifically to make the guarded-import path
+testable without module-mocking). Full suite: 8491/8513 pass, 0 fail.
+`npm run check` (17 gates): clean.
+
+Also cross-linked this plan with its predecessor,
+[`docs/plans/audit-orchestrator-hardening.md`](docs/plans/audit-orchestrator-hardening.md)
+(2026-07-10) — 5 of the 7 items are round-2 hardening on the same
+orchestrator file, not fresh territory.
+
 ## 2026-07-23 — core.bare mid-run flip: FIXED (correction to the entry below) + root cause confirmed via research
 
 Follow-up research pass (user asked to compare against best practice and

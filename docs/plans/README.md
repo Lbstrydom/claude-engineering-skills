@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**1 active · 141 terminal · 22 audit summaries · 4 reference docs**
+**1 active · 142 terminal · 22 audit summaries · 4 reference docs**
 
 ---
 
@@ -41,7 +41,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 138 completed plans</summary>
+<summary>Show all 139 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -65,6 +65,7 @@ source comments that no docs linter sees — stays valid.
 | [Architecture-Intent Framework + JS Adapter (PR-A of 3)](./architecture-intent-framework.md) | `Complete` | all 3 PRs shipped (PR-A framework + JS/TS adapter, commit `6c6be92`; PR-B Python + Java adapters, commit `1… |
 | [Unified arm-evaluation framework (blinded Claude-judge, human-anchored)](./arm-eval-framework.md) | `Complete` | built 2026-07-02 via `/cycle code --autonomous` (2 clusters). Audit-plan converged (GPT R1–R3 plateau; Gemi… |
 | [Adopt `atomicWriteFileSync`/`retrySync` at the 9 Remaining Raw-`renameSync` Sites](./atomic-write-adoption-remaining-sites.md) | `Complete` | audit-plan gate: Gemini APPROVE round 4; audit-code gate: Gemini APPROVE round 2, 2 GPT rounds |
+| [Audit-Backlog-Triage Hardening (7-item punch list)](./audit-backlog-triage-hardening.md) | `Complete` | all 7 items implemented + tested (50+ new/updated |
 | [Plan — audit-clean.mjs traversal safety](./audit-cleanup-traversal-safety.md) | `Complete` |  |
 | [Duplication Audit Wave for /audit-code](./audit-code-duplication-wave.md) | `Complete` | shipped as commit `138dec8` (2026-07-14). Implemented via `/cycle --autonomous` (2 execution clusters, each… |
 | [Audit-Effectiveness Experiment — cheap credible traction on "what's the cost-effective, high-quality code-audit setup"](./audit-effectiveness-experiment.md) | `Complete` | every §12.6 CLI this plan specifies was built (`scripts/ledger-decompose.mjs`, `scripts/defect-harvest.mjs`… |
