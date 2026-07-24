@@ -1,7 +1,7 @@
 # Plan: Decompose `tiered-pipeline.mjs` and `refresh.mjs::main()` God-Modules
 
 - **Date**: 2026-07-24
-- **Status**: Shipped — implemented autonomously via `/cycle --autonomous`
+- **Status**: Complete — implemented autonomously via `/cycle --autonomous`
   (both clusters), audited (Cluster A: 3 GPT rounds to effective
   convergence; Cluster B: 1 GPT round, fix-gate final), and APPROVED by the
   mandatory consolidated Gemini gate over the union diff (round 1, 0 new

@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**1 active · 145 terminal · 23 audit summaries · 4 reference docs**
+**1 active · 146 terminal · 23 audit summaries · 4 reference docs**
 
 ---
 
@@ -41,7 +41,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 142 completed plans</summary>
+<summary>Show all 143 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -181,6 +181,7 @@ source comments that no docs linter sees — stays valid.
 | [Tech Debt Wave 3 — Lint Modernization + Cognitive-Complexity Sweep](./tech-debt-wave-3.md) | `Complete` | all 5 PRs shipped 2026-04-27 |
 | [Tiered Testing Doctrine + Egress/Relocation Behavioral-Gap Backfill](./testing-doctrine-and-egress-relocation-gaps.md) | `Complete` |  |
 | [Tier-1 tooling fixes (from the wine-cellar-app session feedback)](./tier1-tooling-fixes.md) | `Complete` | 2026-06-28 — /audit-code GPT R3 PASS; Gemini R2 APPROVE |
+| [Decompose `tiered-pipeline.mjs` and `refresh.mjs::main()` God-Modules](./tiered-pipeline-refresh-god-module-decomposition.md) | `Complete` | implemented autonomously via `/cycle --autonomous` |
 | [Tiered-shadow cloud persistence + report CLI cross-repo aggregation](./tiered-shadow-cloud-persistence.md) | `Complete` |  |
 | [/ux-lock selector policy — locate semantically, lint the drift](./ux-lock-selector-policy.md) | `Complete` | implemented + code-audited 2026-07-04; consolidated |
 | [`visual-audit` — the visual/paint inspection skill (4th UX lens)](./visual-audit-skill.md) | `Complete` | built autonomously via /cycle across 3 clusters; see Implementation Log |
