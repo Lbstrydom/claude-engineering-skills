@@ -8,7 +8,7 @@ one-paragraph pointer; this doc is the operational depth.
 
 ## What it replicates
 
-6 checks, run as independent subprocesses (never crashes the whole run when
+7 checks, run as independent subprocesses (never crashes the whole run when
 one is skipped or fails):
 
 | Check | Source workflow | What it does | Required env |
@@ -19,6 +19,17 @@ one is skipped or fails):
 | `memory-health` | `memory-health.yml` | Findings-memory trigger metrics | `AUDIT_DB_URL` |
 | `learning-weekly-review` | `learning-weekly-review.yml` | Recurring-issue digest | `AUDIT_DB_URL`, `LEARNING_REPO_NAME` |
 | `cache-hitrate` | *(ad hoc weekly routine)* | `AUDIT_CACHE_SEED` payoff check | `AUDIT_DB_URL` |
+| `debt-health` | *(ad hoc weekly routine)* | `.audit/tech-debt.json` ledger health: stale entries (>`DEBT_HEALTH_TTL_DAYS`, default 180d), recurring entries (>=`DEBT_HEALTH_RECURRENCE_THRESHOLD` distinct audit runs, default 3), and any configured per-path budget violations (see `debt-review.mjs`/`debt-budget-check.mjs`) | none (local file only) |
+
+`debt-health` is the periodic counterpart to `/audit-code`'s per-audit debt
+capture (Step 3.6, `skills/audit-code/references/debt-capture.md`): capture
+happens automatically on every audit round, but nothing previously surfaced
+the accumulating backlog back to an operator — `debt-review.mjs` (LLM or
+`--local-only` clustering into refactor candidates) and
+`debt-budget-check.mjs` (opt-in per-path policy gate) existed as standalone
+CLIs with no scheduled caller. This check closes that gap without an LLM
+call or any required env, so it runs the same in a fresh clone as it does
+here.
 
 `arch-maintenance` runs **incremental** refresh (`symbol-index/refresh.mjs`),
 not `arch:refresh:full` — the workflow uses `:full` because CI is stateless;

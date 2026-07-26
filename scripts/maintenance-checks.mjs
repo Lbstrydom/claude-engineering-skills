@@ -2,9 +2,10 @@
 /**
  * @fileoverview Local replica of the 5 weekly GitHub Actions maintenance
  * workflows (architectural-drift, migration-drift, model-freshness,
- * memory-health, learning-weekly-review) plus cache-hitrate-check, for
- * operators whose org blocks GitHub-hosted Actions runners (or who just
- * prefer local-only). Opt-in, default-OFF — see docs/runbooks/local-maintenance-checks.md.
+ * memory-health, learning-weekly-review) plus cache-hitrate-check and
+ * debt-health (both ad hoc — no dedicated workflow file), for operators
+ * whose org blocks GitHub-hosted Actions runners (or who just prefer
+ * local-only). Opt-in, default-OFF — see docs/runbooks/local-maintenance-checks.md.
  *
  * Deliberately NOT an OS-scheduled job (schtasks/launchd/cron). This repo's
  * standing local-first-CI convention treats calendar workflows as
@@ -15,8 +16,8 @@
  * by twice (the dead cache-hitrate weekly routine; the tiered-recall
  * "met" window that was 20/20 silent fallbacks).
  *
- * IMPORTANT: this script itself runs synchronously and can take minutes (6
- * checks, one of which bundles 3 subprocess steps). The pre-push hook
+ * IMPORTANT: this script itself runs synchronously and can take minutes
+ * (CHECKS.length checks, one of which bundles 3 subprocess steps). The pre-push hook
  * backgrounds + detaches it (round-1 audit H1: an earlier version appended
  * `|| true`, which only suppresses the exit code — it does NOT make a
  * command asynchronous, so `git push` was blocking for up to ~40 minutes).
@@ -101,8 +102,8 @@ const DEFAULT_INTERVAL_DAYS = 7;
  * reimplementation. `arch-maintenance` bundles refresh+drift+prune into one
  * check (matching architectural-drift.yml, which runs all three as one job,
  * each step independent of the previous step's exit) — kept as ONE entry,
- * not three, so "6 checks" is accurate everywhere it's documented (round-1
- * audit L2/L3 caught a 6-vs-8 miscount from the earlier 3-way split).
+ * not three, so CHECKS.length stays an honest count (round-1 audit L2/L3
+ * caught a 6-vs-8 miscount from the earlier 3-way split).
  *
  * NOTE (round-1 audit M7, accepted as documented debt, not fixed here): this
  * list is a hand-maintained parallel of the workflow YAML + npm scripts,
@@ -115,6 +116,10 @@ const DEFAULT_INTERVAL_DAYS = 7;
  * renamed CLI flag or added required env in the corresponding workflow (see
  * the file pointer per entry below) can silently diverge until a manual run
  * fails. Revisit if that actually happens in practice.
+ *
+ * 7 entries as of debt-health's addition — docs/runbooks/local-maintenance-
+ * checks.md quotes a "6 checks" count that predates it; CHECKS.length is
+ * the source of truth here, not a hand-copied number.
  */
 export const CHECKS = [
   {
@@ -175,6 +180,21 @@ export const CHECKS = [
     label: 'AGENTS.md staleness (cited code moved after the line did)',
     requiredEnv: [],
     steps: [{ script: 'context-staleness.mjs', args: [] }],
+  },
+  {
+    // Local-only, no requiredEnv, no dedicated GH workflow (same "ad hoc"
+    // shape as cache-hitrate above). /audit-code Step 3.6 captures
+    // out-of-scope findings into .audit/tech-debt.json on every audit run,
+    // but nothing periodically surfaced the backlog back to an operator —
+    // debt-review.mjs (clustering) and debt-budget-check.mjs (policy gate)
+    // existed, were tested and synced to consumers, but were referenced by
+    // no skill step, no CI gate, and no maintenance check. This closes that
+    // discoverability gap. `attention` = stale (>TTL) and/or recurring
+    // (>=3 distinct runs) and/or over-budget entries present; never blocks.
+    key: 'debt-health',
+    label: 'Tech-debt ledger health (staleness, recurrence, budgets)',
+    requiredEnv: [],
+    steps: [{ script: 'debt-health-check.mjs', args: [] }],
   },
 ];
 

@@ -1,5 +1,85 @@
 # Project Status Log
 
+## 2026-07-26 (continued) — tech-debt tracking: close the capture→resolution loop, fix consumer-sync gap
+
+User asked whether tech-debt tracking exists and whether it actually works.
+It existed (Phase D — `.audit/tech-debt.json`, `debt-review.mjs`,
+`debt-budget-check.mjs`, `debt-resolve.mjs`) but had two structural gaps: the
+follow-up tooling was never wired to anything (no skill step, no CI gate, no
+maintenance check — capture ran automatically every `/audit-code`, resolution
+required already knowing the CLIs existed by reading source), and the whole
+debt CLI suite synced to `wine-cellar-app` only — `ai-organiser` silently
+accumulated a ledger with zero way to inspect or resolve it.
+
+### Changes
+- New `scripts/debt-health-check.mjs`: local-only, no-LLM, no-required-env
+  health report over `.audit/tech-debt.json` — stale (>`DEBT_HEALTH_TTL_DAYS`,
+  default 180d), recurring (>=`DEBT_HEALTH_RECURRENCE_THRESHOLD` distinct
+  audit runs, default 3), and budget-violating entries. 10 new CLI tests
+  (`tests/debt-health-check.test.mjs`).
+- `scripts/maintenance-checks.mjs`: added `debt-health` as a 7th local
+  maintenance check (opt-in, `AUDIT_LOOP_WEEKLY_MAINTENANCE=1`, never blocks
+  a push) — same shape as `memory-health`/`cache-hitrate`. Updated the
+  "6 checks" comments to point at `CHECKS.length` instead of a hand-copied
+  number. Test: `tests/maintenance-checks.test.mjs`'s explicit inventory
+  updated to include the new key.
+- `scripts/sync-to-repos.mjs` + `scripts/lib/sync-inventory.mjs`: removed the
+  undocumented `repoName === 'wine-cellar-app'` gate on `DEBT_ENTRY` — Phase D
+  is a generic `/audit-code` feature, not wine-specific, so every consumer now
+  gets the full debt suite (`debt-resolve.mjs`, `debt-review.mjs`,
+  `debt-budget-check.mjs`, `debt-auto-capture.mjs`, `debt-backfill.mjs`,
+  `debt-pr-comment.mjs`, `write-ledger-r1.mjs`, `write-plan-outcomes.mjs`,
+  `setup-permissions.mjs`) plus `debt-health-check.mjs`.
+- `skills/audit-code/references/debt-capture.md`: new "Periodic Debt Health"
+  section documenting `debt-review.mjs`/`debt-resolve.mjs`/`debt-budget-check.mjs`
+  and the new maintenance check, since Step 3.6/5.1 only ever capture/resolve
+  within a single audit's scope. `skills/audit-code/SKILL.md`'s reference-table
+  row extended to point there.
+- `docs/runbooks/local-maintenance-checks.md`: documented the 7th check.
+- `package.json`: `debt:health`, `debt:health:json`, `debt:review`,
+  `debt:budget` convenience scripts; `scripts/.cli-catalog.json` entries for
+  all four (dashboard CLI-catalog gate caught the omission).
+
+### Verification
+- New + full test suite green (8792 tests; the one transient failure —
+  manifest-vs-HEAD hash mismatch on `skills/audit-code/*` — is expected on
+  any uncommitted skill edit and resolves on commit).
+- `cli:flags:gate`, `docs:refs:gate`, `npm-args:gate`, `context:check`,
+  `skills:check` all clean, 0 net-new.
+- `debt-health-check.mjs` run against the real local ledger: 384 open
+  entries, 0 stale, 0 recurring today — honest given current thresholds,
+  not a claim the backlog is fine.
+- Dry-run then real `npm run sync`: confirmed the predicted delta (12 new
+  files, 9 updated, 0 errors), applied to both `ai-organiser` and
+  `wine-cellar-app`, and verified `debt-health-check.mjs` runs standalone in
+  both. `git status` in each consumer is unchanged from before the sync
+  (everything landed in gitignored `scripts/.claude-skills/` /
+  `.claude/skills/` paths) — no tracked-history impact on either consumer.
+
+### Decisions Made
+- `debt-health` joins the *opt-in local* maintenance-checks system (same as
+  `cache-hitrate`), not a new GitHub Actions workflow — it needs no DB/LLM,
+  and a new billed workflow isn't warranted for a check this cheap.
+- The 384-entry local backlog was deliberately left untouched — nothing is
+  stale/recurring by the ledger's own definitions yet, and a real triage is
+  its own dedicated effort (see Next Steps).
+
+### Out-of-scope finding (flagged, not fixed here)
+- `scripts/lib/sync-inventory.mjs`'s `CORE_ENTRY` has independently drifted
+  from `sync-to-repos.mjs`'s (the real, authoritative list) by 4 files
+  (`maintenance-checks.mjs`, `memory-health.mjs`, `check-model-freshness.mjs`,
+  `context-staleness.mjs`) predating this session — a blind spot in the
+  sync-verification tooling itself. Spun off as a background task
+  (`task_d9803ab5`), now running.
+
+### Next Steps
+- A dedicated backlog-triage pass over the 384 open debt entries (deferred
+  by user request — see the continuation prompt handed off for a clean
+  session).
+- Watch `task_d9803ab5`'s reconciliation of the sync-inventory drift.
+
+---
+
 ## 2026-07-26 (continued) — persona-test auth-gated exploratory testing + env-var/URL-resolution conflation fixes
 
 Follow-up to user feedback on `/persona-test`: exploratory mode had no sanctioned

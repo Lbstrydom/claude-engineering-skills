@@ -116,3 +116,31 @@ Exit codes: 0 = resolved, 1 = op error, 2 = entry not found / lock contention.
 Removes the entry from `.audit/tech-debt.json` (and cloud mirror when
 configured); logs a `resolved` event to the event source. Audit trail
 stays in the event log.
+
+## Periodic Debt Health (beyond per-audit capture)
+
+Step 3.6 captures and Step 5.1 resolves debt **within a single audit run**,
+scoped to whatever files that run happened to touch. Neither ever looks at
+the ledger as a whole — a backlog entry whose file simply never comes back
+into an audit's scope sits open forever with no prompt to revisit it. Two
+standalone CLIs close that gap; run them periodically, not per-audit:
+
+```bash
+node scripts/debt-review.mjs --local-only   # free heuristic clustering — no API key needed
+node scripts/debt-review.mjs                # richer LLM clustering (GPT) into ranked refactor candidates
+node scripts/debt-review.mjs --write-plan-doc   # also writes docs/plans/refactor-<cluster>.md for the top candidate
+node scripts/debt-budget-check.mjs          # opt-in per-path policy gate — reads the ledger's `budgets` field
+```
+
+`node scripts/debt-resolve.mjs <topicId> --rationale "..."` closes an entry
+once you've independently confirmed it's fixed (not just "no longer
+reopened this round" — see the resolution requirement above).
+
+**This now runs automatically, opportunistically.** The `debt-health` local
+maintenance check (`scripts/debt-health-check.mjs`, wired into
+`scripts/maintenance-checks.mjs`) reports stale (>180d by default),
+recurring (>=3 distinct audit runs), and over-budget entries with no LLM
+call and no required env — see
+[`docs/runbooks/local-maintenance-checks.md`](../../../docs/runbooks/local-maintenance-checks.md).
+It's opt-in (`AUDIT_LOOP_WEEKLY_MAINTENANCE=1`) and never blocks a push;
+`npm run debt:health` runs it on demand.

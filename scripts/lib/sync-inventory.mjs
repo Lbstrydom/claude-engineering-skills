@@ -116,6 +116,7 @@ const DEBT_ENTRY = [
   'scripts/debt-auto-capture.mjs',
   'scripts/debt-backfill.mjs',
   'scripts/debt-budget-check.mjs',
+  'scripts/debt-health-check.mjs',
   'scripts/debt-pr-comment.mjs',
   'scripts/debt-resolve.mjs',
   'scripts/debt-review.mjs',
@@ -216,11 +217,10 @@ function resolveBundle(entryPoints, assets = []) {
   return { files: [...new Set([...files, ...assets])], unresolved, external };
 }
 
-function bundleForRepo(repoName, { keepGithubSkills = false } = {}) {
+function bundleForRepo({ keepGithubSkills = false } = {}) {
   const entries = [
     ...CORE_ENTRY, ...CORE_NON_IMPORTABLE, ...LEARNING_ENTRY, ...ARCH_ENTRY,
-    ...SYNC_ISOLATION_ENTRY,
-    ...(repoName === 'wine-cellar-app' ? DEBT_ENTRY : []),
+    ...SYNC_ISOLATION_ENTRY, ...DEBT_ENTRY,
   ];
   const assets = [...CORE_ASSETS, ...syncMigrations()];
   const { files, unresolved, external } = resolveBundle(entries, assets);
@@ -239,7 +239,7 @@ function bundleForRepo(repoName, { keepGithubSkills = false } = {}) {
 export function getSyncInventoryForRepo(aliasOrName, opts = {}) {
   const repo = CONSUMER_REPOS.find((r) => r.alias === aliasOrName || r.name === aliasOrName);
   if (!repo) throw new Error(`getSyncInventoryForRepo: unknown consumer "${aliasOrName}". Known: ${CONSUMER_REPOS.map((r) => r.alias).join(', ')}`);
-  const { files, unresolved, external } = bundleForRepo(repo.name, opts);
+  const { files, unresolved, external } = bundleForRepo(opts);
   return { files, unresolved, external, name: repo.name, alias: repo.alias };
 }
 

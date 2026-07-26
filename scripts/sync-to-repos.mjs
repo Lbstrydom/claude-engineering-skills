@@ -306,6 +306,7 @@ const CORE_ENTRY = [
   'scripts/memory-health.mjs',
   'scripts/check-model-freshness.mjs',
   'scripts/context-staleness.mjs',
+  'scripts/debt-health-check.mjs',
   // Reached only via `await import('./lib/redact.mjs')` in cross-skill.mjs
   // + learning-store.mjs (dynamic specifier — walker cannot follow).
   // Required at runtime for candidate-write redaction.
@@ -467,7 +468,15 @@ const SYNC_ISOLATION_ENTRY = [
 ];
 
 /**
- * Debt-tracking entry points (full suite only).
+ * Debt-tracking entry points. Universal as of 2026-07-26 — previously
+ * gated to `repoName === 'wine-cellar-app'` with no rationale on record,
+ * which meant ai-organiser got debt CAPTURE (openai-audit.mjs statically
+ * imports lib/debt-memory.mjs, so that path is in CORE_ENTRY's closure for
+ * every consumer) but none of the follow-up tooling: no debt-resolve.mjs,
+ * no debt-review.mjs, no debt-budget-check.mjs. `.audit/tech-debt.json`
+ * would grow there with literally no way to inspect or close an entry.
+ * Phase D is a generic /audit-code feature, not wine-specific — every
+ * consumer that runs /audit-code accumulates a ledger and needs this suite.
  */
 const DEBT_ENTRY = [
   'scripts/setup-permissions.mjs',
@@ -601,25 +610,24 @@ const NON_CODE_FILES = [
 /**
  * Compute the synced file list for one consumer repo: the import-graph
  * closure of its entry-point bundles + core assets + non-code surfaces.
- * wine-cellar-app gets the debt suite; ai-organiser does not.
+ * Every consumer gets every bundle — see the DEBT_ENTRY comment above for
+ * why the previous per-repo carve-out was removed.
  *
  * Repo identity (name/alias/path) lives in lib/consumer-repos.mjs as the
  * single source of truth — only the file-set composition is sync-specific.
  *
- * @param {string} repoName
  * @returns {{files: string[], unresolved: Array<{from:string,specifier:string}>}}
  */
-function bundleForRepo(repoName) {
+function bundleForRepo() {
   const entries = [
-    ...CORE_ENTRY, ...LEARNING_ENTRY, ...ARCH_ENTRY, ...SYNC_ISOLATION_ENTRY,
-    ...(repoName === 'wine-cellar-app' ? DEBT_ENTRY : []),
+    ...CORE_ENTRY, ...LEARNING_ENTRY, ...ARCH_ENTRY, ...SYNC_ISOLATION_ENTRY, ...DEBT_ENTRY,
   ];
   const { files, unresolved } = resolveBundle(entries, CORE_ASSETS);
   return { files: [...files, ...NON_CODE_FILES], unresolved };
 }
 
 export const REPOS = CONSUMER_REPOS.map(r => {
-  const { files, unresolved } = bundleForRepo(r.name);
+  const { files, unresolved } = bundleForRepo();
   return { ...r, files, unresolved };
 });
 

@@ -43,6 +43,7 @@ describe('maintenance-checks — CHECKS manifest', () => {
       'arch-maintenance',
       'cache-hitrate',
       'context-staleness',
+      'debt-health',
       'learning-weekly-review',
       'memory-health',
       'migration-drift',
