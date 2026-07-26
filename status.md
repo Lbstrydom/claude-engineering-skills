@@ -1,5 +1,190 @@
 # Project Status Log
 
+## 2026-07-26 (continued) — persona-test auth-gated exploratory testing + env-var/URL-resolution conflation fixes
+
+Follow-up to user feedback on `/persona-test`: exploratory mode had no sanctioned
+path to authenticated testing, and `/cycle` conflated "`PERSONA_TEST_APP_URL`
+unset" with "no deployed instance exists". Verified both claims against source
+before acting (the first report's premise — "MCP has no equivalent lever" — was
+corrected: Playwright MCP's server *does* accept `--storage-state`/`--secrets`
+launch flags per `--help`; the gap was documentation/config-scope, not capability).
+
+### Changes
+- New `skills/persona-test/references/auth-bootstrap.md`: sanctioned pattern for
+  auth-gated exploratory testing — a per-repo sign-in script writing a
+  `storageState` file, wired into `.mcp.json`'s `playwright` server args at
+  connect time, mirroring consistency mode's existing `authBootstrap.storageState`
+  kind (`scripts/persona-consistency-run.mjs`'s `newAuthedContext`). Explicitly
+  rules out in-session credential injection via `browser_evaluate`.
+- `skills/persona-test/SKILL.md`: Phase 1 now checks for auth-bootstrap before
+  assuming a login wall will block; Phase 3's login-wall special case now
+  distinguishes a misconfigured bootstrap (P1) from no-bootstrap-configured (P3
+  + `authWallUntested` flag); Phase 4/5 cap OVERALL at `Needs work` (never
+  `Ready for users`) when `authWallUntested` is set — mirrors click-test's
+  existing `Incomplete`-never-`Clean` rule so a run that never reached the app's
+  authenticated surfaces can't read as a clean pass. Also corrected a stale
+  Phase 1a "Limits" claim: the MCP *server* (not just the per-call
+  `browser_resize` tool) accepts `--device`/`--mobile`/`--user-agent` at launch,
+  a session-wide lever short of switching to `--mode consistency`.
+- `skills/click-test/SKILL.md`: cross-links the same auth-bootstrap pattern
+  (click-test shares the persona-test MCP connection) instead of treating
+  auth-gated routes as an unresolved v1 limitation.
+- `skills/cycle/SKILL.md` Step 5: added `--persona-url` flag so a repo that only
+  sets `PERSONA_TEST_APP_URL` for CI/PR-preview but runs a normal local dev
+  server isn't silently skipped; an unresolved target now prints an explicit
+  skip reason instead of vanishing. Also stopped reading "0 P0 findings" as a
+  clean pass when `authWallUntested` is set — surfaces as a WARN instead.
+- `scripts/cross-skill.mjs` (`recommend-skills`) + `scripts/lib/skill-recommender.mjs`:
+  `--url` override so `hasLiveUrl` isn't solely `PERSONA_TEST_APP_URL`-derived.
+- `scripts/lib/fit-check/rules.mjs`: setup text now mentions the direct-URL path
+  alongside the env var.
+
+### Decisions Made
+- Kept the MCP-server-level auth pattern config/one-time-setup rather than
+  inventing a per-tool-call auth lever — there isn't one, and pretending
+  otherwise would just move the credential-injection risk back into
+  `browser_evaluate`.
+- Regenerated `.claude/skills/**` + `skills.manifest.json` in an isolated throwaway
+  worktree (`git worktree add ... HEAD`, copy changed files in, run
+  `skills:regenerate`, copy the results back) rather than in the shared working
+  tree — a concurrent session's uncommitted `audit-code`/`ledger-format.md`
+  changes were also dirty here, and regenerating in-place would have baked
+  their unrelated, uncommitted hashes into the manifest this commit ships.
+
+### Files Affected
+- `skills/persona-test/SKILL.md`, `skills/persona-test/references/auth-bootstrap.md` (new)
+- `skills/click-test/SKILL.md`, `skills/cycle/SKILL.md`
+- `scripts/cross-skill.mjs`, `scripts/lib/skill-recommender.mjs`, `scripts/lib/fit-check/rules.mjs`
+- `.claude/skills/{persona-test,click-test,cycle}/**`, `skills.manifest.json` (regenerated, scoped)
+
+### Next Steps
+- None outstanding for this change. 62 pre-existing unlocked HIGH findings surfaced
+  by Step 0.5b — unrelated backlog from prior sessions, not addressed here.
+
+---
+
+## 2026-07-26 (continued) — 30 days of lost consumer telemetry traced to a Windows path bug; a verified (not model-guessed) location for tiered findings
+
+Follow-on to the same day's epoch-gate session. Two more root-caused fixes,
+both found by chasing symptoms rather than accepting the first plausible story.
+
+### 1. Why wine-cellar-app had 101 real audit runs and ZERO final reviews
+
+Investigated on request: `audit_runs` showed real, non-zero rounds/findings for
+every run (the audit itself genuinely worked) but `gemini_verdict`/
+`final_review_model` were NULL on all 101, across 30 days. That session's own
+status.md proved a Gemini gate genuinely ran and produced a verdict
+("Consolidated Gemini gate: round 1 CONCERNS") — so the review wasn't skipped,
+its **persistence** was silently lost.
+
+Root cause, reproduced directly on this machine, not inferred: the skill's own
+`--run-id` extraction snippet —
+`node -e "process.stdout.write(require('/tmp/'+process.env.SID+'-result.json')._cloudRunId||'')"`
+— throws `MODULE_NOT_FOUND`, because Bash's `/tmp` and Node's own resolution of
+the identical literal string land in two different directories on Windows
+(confirmed: Bash → `AppData/Local/Temp`, Node → `C:\tmp`). The crash happens
+inside `$(...)`, which silently discards it, leaving `RUN_ID` empty and
+`--run-id` never passed. Every review's real verdict computed, then vanished,
+invisibly, every time.
+
+Fixed three ways, not one:
+- **The snippet itself** (`skills/audit-code/SKILL.md` Step 7): pass the path
+  as `process.argv[1]`, never re-embed it as a string for Node to re-resolve;
+  `fs.readFileSync` + `JSON.parse`, not `require` (it's data, not a module).
+- **A second, previously-unknown occurrence** of the identical bug in the
+  shared `ledger-format.md` reference (used by both `/audit-code` and
+  `/audit-plan`) — fixed via the canonical source
+  (`docs/audit/shared-references/`) and re-synced, not hand-edited in both
+  copies.
+- **A mechanical regression guard**, `tests/skill-tmp-path-safety.test.mjs`,
+  scanning all skill markdown for this exact anti-pattern — it's what *found*
+  the second occurrence, and mutation-tested against both the historical bug
+  and the fixed form.
+- **Defense in depth**: `gemini-review.mjs` now warns loudly
+  (`shouldWarnMissingRunId`, extracted as a pure, unit-tested predicate) when
+  cloud is enabled and `--run-id` is still absent for any other reason,
+  instead of vanishing silently.
+
+Nothing needed doing to consumer deployments beyond the normal `/ship` → sync
+path — this propagates automatically. The historical 101 runs' lost verdicts
+cannot be recovered; they were never persisted anywhere to recover from.
+
+### 2. Giving tiered findings a REAL location — not a model's guess
+
+Closed the deferred half of the morning's `overlapCount` investigation: findings
+from every audit pass essentially never carried a resolvable line number
+(`_primaryLine` was referenced nowhere except the one function that reads it;
+a census of 10 real findings found 0 matching `file:LINE`; every one of 10
+historical `tiered_shadow_observations` rows read 100% unlocalized, both
+sides). Blast-radius check first: `FindingBase`/`ProducerFindingSchema` feeds
+five consumers (legacy 5-pass audit, Gemini final review, model-A/B/C shadow);
+the tiered pipeline's discovery generators already asked for a line
+(`startLine`/`endLine` in the evidence-anchor contract) — the gap was never the
+schema, it was that **nothing verified the model's claim, and nothing surfaced
+it onto the final finding**.
+
+Traced the actual composition path: `flattenEnvelopeToFinding` spreads
+`{...canonicalFinding}` onto the final finding, and `findingLine()`
+(`tiered-shadow-compare.mjs`) already checked `_primaryLine` FIRST — that
+precedence was correct since the day it was written; nothing had ever set the
+field. `evidence-triage.mjs` gained `findQuoteLineInHunk` — the same
+fixed-window/normalize/join technique `findAllLineRangesInContent` already used
+for its HEAD-content fallback, scoped to one diff hunk's own real line numbers
+(never the model's self-reported claim). `resolveAnchorLocation`'s `in_hunk`
+path — the most common success case, and the one that discarded location
+entirely before today — now returns a verified line; `outside_hunk_in_head`'s
+existing `headLineRange` gets the same treatment.
+`runStage0EvidenceTriage` attaches either onto `envelope.canonicalFinding._primaryLine`.
+Two call sites changed; the reading side needed zero changes.
+
+**Proof, not claim**: this repo's own `HEAD_ANCHOR` test fixture — used in this
+exact test suite since before today — self-reports `startLine: 12` for a quote
+whose real, diff-verified line is 11. A genuine, one-line-off model claim that
+sat unexercised the whole time, and that nothing would have caught before this
+fix. 85 tests now cover multi-hunk resolution, base-vs-head counters, the
+blank-context-line join edge case, a promoted-alternative's own real line, and
+the reading side correlating on `_primaryLine` alone with no colon anywhere in
+`section` (the real shape a tiered finding now has). Verified via rigorous unit
+testing, deliberately not a live LLM run — both changed functions are
+documented as pure/no-I/O (Tier 1 per this repo's own testing doctrine), and a
+live tiered-pipeline run would spend real GLM/Sonnet/Gemini budget to re-prove
+a pure function, not add confidence.
+
+**Declined for the legacy 5-pass audit, with cause recorded at the schema
+itself** (`scripts/lib/schemas.mjs`, next to `FindingBase`): no verification
+substrate exists there, so a self-reported line would recreate the exact
+unverifiable-hallucination risk this whole investigation started from — the
+`HEAD_ANCHOR` discrepancy is concrete proof a model's claim can be wrong by
+exactly the margin that matters. A `defer` with the independence named, not
+silence.
+
+**Closed a gap the fix exposed in the morning's own digest guard**:
+`TIERED_SHADOW_CONTRACT_SEMANTICS_DIGEST` only pinned two files; this fix
+changes what a comparison row means without touching either of them.
+`SEMANTICS_REGIONS` extended to a third file (`evidence-triage.mjs`, pinning
+just the two pure location functions, not the larger Gate-B orchestrator around
+them). `TIERED_SHADOW_CONTRACT_EPOCH` bumped a third time today:
+`v6-verified-line-2026-07-26`. Mutation-tested the extension too — and caught
+my own mistake doing it: a non-global regex replace hit a near-identical line
+in the wrong, unpinned function first (`quoteAppearsOnSide` shares text with
+`findQuoteLineInHunk`), proving nothing, until the test itself failed and named
+why.
+
+### Shared working tree
+
+Another session is active in this same checkout (persona-test auth-bootstrap
+work: `cross-skill.mjs`, `fit-check/rules.mjs`, `skill-recommender.mjs`,
+`click-test`/`cycle`/`persona-test` skills, a new `auth-bootstrap.md`
+reference). None of it is touched here — staged and shipped by exact path only.
+
+### Audit trail
+
+Full suite green throughout every check this session: 8751 pass / 0 fail
+(the tiered-recall pieces alone: 263 tests across the five affected files).
+No live audit run against this specific diff — the fixes are unit-testable by
+design (pure functions, static-source pins) and were verified that way, per
+the doctrine each fix's own commentary states.
+
 ## 2026-07-26 — Model-evaluation governance: epoch-gated shadow windows, a working final-review A/B, and two prompt/persistence defects found only by running it
 
 Session started as a question — "which plans are waiting on telemetry that now

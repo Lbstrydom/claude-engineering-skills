@@ -199,6 +199,16 @@ and stick with it for the whole session.
 
 Full tier-fallback protocol + Windows MCP caveats: `references/browser-tool-detection.md`.
 
+**If the target requires login for its primary surfaces** (not just an
+optional account page), check whether the MCP session is already
+authenticated (e.g., landing on a logged-in view instead of a login
+form) before assuming a login wall will block the run. If it isn't, and
+this is a repeat session against the same app, ask whether a
+`--storage-state` bootstrap has been set up for it — see
+`references/auth-bootstrap.md`. This is a **one-time per-session setup
+step**, not something to attempt mid-exploration (see Phase 3's login-wall
+special case for what happens when no bootstrap exists).
+
 ---
 
 ## Phase 1a — Device Profile Resolution (MANDATORY)
@@ -263,20 +273,32 @@ behave that way. The device is a runner-side fact, not persona dialogue.
 
 ### Limits — what viewport-only emulation does NOT cover
 
-`browser_resize` changes the visual viewport. It does **not**:
+`browser_resize` (the per-call MCP tool used in Step 1a.2) changes only
+the visual viewport. It does **not**:
 
-- Inject a mobile user-agent at the network layer (server-side UA
-  sniffing still sees Chromium desktop).
-- Fire real touch events — synthesised clicks remain mouse events;
-  touch-only handlers (`touchstart` without `click` fallback) won't trigger.
+- Inject a mobile user-agent at the network layer.
+- Fire real touch events — synthesised clicks may remain mouse events;
+  touch-only handlers (`touchstart` without `click` fallback) may not trigger.
 - Change `navigator.maxTouchPoints` or pointer-type media queries.
 - Apply device-pixel-ratio scaling that affects `@media (resolution: ...)`.
 
-For full emulation — proper touch events, UA injection, DPR-correct
-rendering, geolocation, network throttling — use `--mode consistency`
-(code-driven Playwright with launch context). The exploratory loop
-trades fidelity for narrative coverage; if a bug depends on real touch
-events or UA-sniffed server responses, write a consistency canary.
+**Note this is a per-tool-call limit, not a hard ceiling on the MCP
+session.** The Playwright MCP *server* itself accepts `--device <name>`,
+`--mobile`, and `--user-agent <string>` launch flags (`npx @playwright/mcp
+--help`), which apply Playwright's real device descriptor (UA string, DPR,
+`hasTouch`) for the whole session via `.mcp.json` — a heavier, session-wide
+lever that doesn't require switching modes. It has real limits of its own,
+though: it's static once the server connects (can't switch devices between
+Plan→Act→Reflect steps, and pair mode's two personas share one connection —
+see "Pair-mode interaction" below), and whether the MCP's click/tap tool
+implementations actually dispatch genuine touch events under `hasTouch:
+true` is worth verifying empirically before relying on it, not assumed from
+the flag's existence.
+
+For per-step device switching, geolocation, or network throttling — or
+if the empirical check above shows synthesised events still aren't real —
+use `--mode consistency` (code-driven Playwright with launch context) and
+write a consistency canary instead.
 
 ### Pair-mode interaction
 
@@ -366,7 +388,15 @@ Record a finding only when confidence ≥0.6. Below that, note it as
 ### Special cases
 
 - **404 / page-not-found** → 1 retry after 5s; if still 404, emit P0 "Target URL unreachable" and stop
-- **Login wall** → emit P3 "App requires login; test scope limited to public surface" and continue with public pages only
+- **Login wall** → if an auth bootstrap was expected but the session still
+  landed on a login form (misconfigured/expired `storageState` —
+  `references/auth-bootstrap.md`), emit **P1** "Auth bootstrap did not
+  authenticate the session" (this is a setup regression, not a normal
+  gap). Otherwise (no bootstrap was ever configured for this app), emit P3
+  "App requires login; test scope limited to public surface", continue
+  with public pages only, and set `authWallUntested = true` for Phase 4 —
+  this run did **not** cover the app's primary authenticated surfaces, and
+  the report must say so even when it finds 0 P0s there.
 - **Page-load timeout** → retry once with viewport reset; if it still times out, emit P1 "Slow initial load (>15s)" and continue
 - **Visible JS errors / console errors** → emit P1 or higher with the exact error text
 
@@ -475,6 +505,14 @@ Full grammar + manifest schema + canary schema + flow details:
 Confidence threshold: ≥0.6 to report, ≥0.7 for P0, ≥0.8 when calling a
 recurring P0 from history.
 
+**Gate-honesty rule for `authWallUntested`**: 0 P0 findings on an
+`authWallUntested` run means "0 P0s on the public shell", not "0 P0s on
+the app". OVERALL must never read `Ready for users` in this case — cap it
+at `Needs work` (see Phase 5) so a downstream consumer (`/cycle` Step 5)
+can't read this run as a clean pass on a surface it never reached. This
+mirrors click-test's rule that the OVERALL verdict caps at `Incomplete`
+when any route is `auth-required` — same failure mode, same fix.
+
 ---
 
 ## Phase 5 — Structured Report
@@ -502,6 +540,16 @@ FINDINGS
 
 OVERALL: <Ready for users | Needs work | Blocked>
   Reason: <one sentence>
+```
+
+If `authWallUntested = true` (Phase 3 special cases), OVERALL is capped at
+`Needs work` regardless of finding count, with a reason naming the gap
+explicitly, e.g.:
+
+```
+OVERALL: Needs work
+  Reason: Primary authenticated surfaces untested — login wall hit, no
+          auth bootstrap configured (see references/auth-bootstrap.md).
 ```
 
 If `audit_link = true` and Phase 0d candidates match the persona findings,
@@ -845,6 +893,7 @@ situations — read them only when the trigger applies.
 |---|---|---|
 | `references/audit-correlation.md` | Pre-test audit enrichment + post-test persona↔audit correlation emission — full rules. | `audit_link = true` AND (Phase 0d fetches audit candidates OR Phase 6b's manual-repair path is needed). |
 | `references/browser-tool-detection.md` | Full browser-tool detection algorithm with tier priority, fallback rules, and Windows caveats. | Phase 1 tool selection fails on first try, OR the user is on Windows and Playwright MCP tools aren't appearing. |
+| `references/auth-bootstrap.md` | Sanctioned pattern for auth-gated exploratory testing via MCP-server storageState, not in-session injection. | Phase 1 detects a login-gated target, OR Phase 3 hits a login wall and no auth bootstrap is configured. |
 | `references/consistency-mode.md` | Full consistency-mode grammar, manifest schema, canary schema, runner exit codes, contradiction kinds. | Phase 3b runs (i.e., `--mode consistency` was passed) and you need the full grammar reference; OR the user asks how the rig decides severity / coercion / negative-space. |
 | `references/persona-debrief-format.md` | Full persona debrief generation rules, tone guide, and output wrapper. | About to write the Phase 5b debrief. |
 | `references/session-history.md` | Post-session history readback — recurring-issue surface + cross-session pattern detection. | Phase 6c runs AND Supabase is configured. |

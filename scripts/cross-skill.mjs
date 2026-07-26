@@ -165,7 +165,7 @@ const KNOWN_FLAGS = [
   '--severity',
   // ── persona-outcomes label ────────────────────────────────────────────────
   '--session', '--hash', '--outcome', '--rationale', '--by',
-  // ── recommend-skills ──────────────────────────────────────────────────────
+  // ── recommend-skills (also reads shared '--url' declared above) ──────────
   '--changed', '--just-ran', '--max', '--plan-lenses', '--findings',
   // ── detect-stack ──────────────────────────────────────────────────────────
   '--include-env-manager',
@@ -1548,7 +1548,12 @@ async function cmdGetReachabilityEvidence() {
 async function cmdRecommendSkills() {
   const csv = (s) => (s ? s.split(',').map((x) => x.trim()).filter(Boolean) : []);
   const changedFiles = argOption('changed') ? csv(argOption('changed')) : gitChangedFiles();
-  const hasLiveUrl = Boolean(process.env.PERSONA_TEST_APP_URL);
+  // `PERSONA_TEST_APP_URL` unset is not the same fact as "no live target" — a repo
+  // that only sets the env var for CI/PR-preview but runs a normal local dev server
+  // otherwise has a runnable URL this env-only check would miss. `--url` lets a
+  // caller (e.g. /cycle with --persona-url) pass the actual target explicitly,
+  // mirroring how every other persona-test-adjacent subcommand resolves its URL.
+  const hasLiveUrl = Boolean(argOption('url') || process.env.PERSONA_TEST_APP_URL);
   const justRan = argOption('just-ran') || null;
   const max = Number.isFinite(Number(argOption('max'))) && argOption('max') ? Number(argOption('max')) : 2;
   const planLenses = csv(argOption('plan-lenses'));

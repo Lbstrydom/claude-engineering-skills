@@ -98,7 +98,11 @@ function collectLensEvidence({ changedFiles = [], auditFindings = [], planLenses
  *
  * @param {object} input
  * @param {string[]} [input.changedFiles]   repo-relative changed paths
- * @param {boolean}  [input.hasLiveUrl]     a deployed app URL is configured (PERSONA_TEST_APP_URL)
+ * @param {boolean}  [input.hasLiveUrl]     a runnable app URL is available — from an explicit
+ *   `--url`/`--persona-url` pass-through, PERSONA_TEST_APP_URL, or any other resolution the
+ *   caller trusts. This flag means "a target exists", not "PERSONA_TEST_APP_URL is set" —
+ *   the two are NOT equivalent (a repo may only set the env var for CI/PR-preview while
+ *   running a normal local dev server otherwise).
  * @param {Array}    [input.auditFindings]  `/audit-code` findings ({category,title,message,…}) — highest signal
  * @param {string[]} [input.planLenses]     plan `applicable_lenses` (`nav|visual|click|persona`)
  * @param {boolean}  [input.unlockedHighFix] a HIGH/P0 fix lacks a `/ux-lock` spec (from the `unlocked_fixes` view)

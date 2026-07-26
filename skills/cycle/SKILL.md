@@ -21,6 +21,7 @@ Usage: /cycle <task-description>          — Full chain from scratch
 Usage: /cycle plan <plan-file>            — Skip planning; use existing plan
 Usage: /cycle code <plan-file>            — Skip to code-audit-then-ship
 Usage: /cycle <plan-file> --no-persona    — Skip persona-test step
+Usage: /cycle <plan-file> --persona-url <url> — Explicit persona-test target (local dev server, no PERSONA_TEST_APP_URL needed)
 Usage: /cycle <plan-file> --no-uxlock     — Skip ux-lock step (no UI changes)
 Usage: /cycle <plan-file> --no-ship       — Stop after audit; don't commit or push
 Usage: /cycle <plan-file> --max-rounds N  — Pass through to /audit-plan and /audit-code
@@ -53,6 +54,9 @@ golden-path workflow without thinking about it.
 
 Optional flags:
 - `--no-persona` — skip /persona-test (use when no live URL or backend-only)
+- `--persona-url <url>` — explicit persona-test target. Use this for a repo that
+  only sets `PERSONA_TEST_APP_URL` for CI/PR-preview but runs a normal local dev
+  server otherwise (Step 5 would silently skip without it — see Step 5).
 - `--no-uxlock` — skip /ux-lock (use when no UI changes shipped)
 - `--no-ship` — stop after audit; don't commit or push
 - `--max-rounds N` — pass through to /audit-plan and /audit-code
@@ -285,7 +289,17 @@ review. Max 6 rounds; quality threshold `HIGH==0 && MEDIUM<=2 && quickFix==0`.
 Detect whether persona-test is applicable:
 - Skip if plan scope is `backend` only
 - Skip if `--no-persona` flag passed
-- Skip if no `PERSONA_TEST_APP_URL` env var (no deployed instance)
+- Resolve the target URL in the same order `/persona-test` itself uses
+  (Phase 0b): `--persona-url` flag → `PERSONA_TEST_APP_URL` env → (in
+  `--autonomous` mode, where there's no human to ask) a running local dev
+  server if one is detectable, else skip. **`PERSONA_TEST_APP_URL` unset is
+  not the same fact as "no deployed instance"** — a repo that only sets the
+  env var for CI/PR-preview but runs a normal local dev server otherwise has
+  a perfectly runnable target that this env-only check would miss. If no
+  target resolves by any of these, **do not skip silently** — print
+  `Step 5 skipped — persona-test has no target (PERSONA_TEST_APP_URL unset;
+  pass --persona-url <url> to run it)` in the Step 8 summary so the gap is
+  visible rather than assumed-away.
 
 ### Step 5.0 — Deploy-topology gate (GREEN ≠ REALIZED #7)
 
@@ -309,7 +323,14 @@ Invoke `/persona-test <persona> <url>` — drives a browser as a registered
 persona, collects P0–P3 findings.
 
 **On verdict**:
-- 0 P0 findings → proceed to Step 6
+- 0 P0 findings AND OVERALL is `Ready for users` → proceed to Step 6
+- 0 P0 findings AND OVERALL is `Needs work` because of `authWallUntested`
+  (persona-test hit a login wall with no auth bootstrap configured — see
+  `/persona-test`'s `references/auth-bootstrap.md`) → this is **not** a
+  clean pass; it means the run never reached the app's primary
+  authenticated surfaces. Surface this explicitly in the Step 8 summary
+  (don't silently read "0 P0" as "proceed") and proceed only as a WARN,
+  same posture as the `[WARN]` deploy-topology case above.
 - ≥1 P0 finding → present to user, recommend fix before ship; offer to feed findings back into a new `/audit-code` round (under `[HALT]`, a P0 **blocks** ship until fixed)
 
 ---

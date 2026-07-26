@@ -193,7 +193,9 @@ export const SKILLS = [
       return {
         label: 'PARTIAL',
         reason: 'Web surface detected.',
-        setup: 'set PERSONA_TEST_APP_URL in .env (deployed URL); Playwright MCP must be enabled in your client.',
+        setup: 'set PERSONA_TEST_APP_URL in .env (deployed URL), OR pass a URL directly ' +
+          '("/persona-test \\"<persona>\\" http://localhost:3000", "/cycle ... --persona-url <url>") ' +
+          'if you only run a local dev server; Playwright MCP must be enabled in your client.',
       };
     },
   },

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "43a19d43ed6af55c",
+  "bundleVersion": "0ea8764706ceacf8",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -118,14 +118,14 @@
     },
     "click-test": {
       "path": "skills/click-test/SKILL.md",
-      "sha": "232a2ac26f8d",
-      "size": 35867,
+      "sha": "3e5052ff5b48",
+      "size": 36588,
       "summary": "Structural DOM audit of a live app — walk every interactive element and",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "232a2ac26f8d",
-          "size": 35867
+          "sha": "3e5052ff5b48",
+          "size": 36588
         },
         {
           "relPath": "references/dom-scanner.md",
@@ -136,14 +136,14 @@
     },
     "cycle": {
       "path": "skills/cycle/SKILL.md",
-      "sha": "584856ec7818",
-      "size": 24164,
+      "sha": "f34303a8ddc7",
+      "size": 25770,
       "summary": "End-to-end feature cycle orchestrator. Runs the full skill chain in",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "584856ec7818",
-          "size": 24164
+          "sha": "f34303a8ddc7",
+          "size": 25770
         }
       ]
     },
@@ -200,14 +200,14 @@
     },
     "persona-test": {
       "path": "skills/persona-test/SKILL.md",
-      "sha": "aae63bfcd7ef",
-      "size": 37958,
+      "sha": "29fe1e1545fb",
+      "size": 40917,
       "summary": "Persona-driven exploratory browser testing against a live URL.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "aae63bfcd7ef",
-          "size": 37958
+          "sha": "29fe1e1545fb",
+          "size": 40917
         },
         {
           "relPath": "examples/report-and-debrief.md",
@@ -218,6 +218,11 @@
           "relPath": "references/audit-correlation.md",
           "sha": "96edb36cdd75",
           "size": 7229
+        },
+        {
+          "relPath": "references/auth-bootstrap.md",
+          "sha": "67ee12258d6c",
+          "size": 4181
         },
         {
           "relPath": "references/browser-tool-detection.md",

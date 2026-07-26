@@ -115,7 +115,7 @@ compared:
 | Device | `desktop` (1280×720, touch=false) | `--device <preset>` / `--devices "<list>"` (matrix) / `--viewport WxH` (legacy) |
 | Browser | whatever the MCP tool provides (Playwright MCP = Chromium) | — |
 | Locale / timezone | tool default (do NOT randomise) | — |
-| Auth | none — public surface only | Out of scope for v1; see "Auth-gated routes" below |
+| Auth | none by default — public surface only | pre-authenticate the shared MCP session; see "Auth-gated routes" below |
 | Network idle | wait for `load` + ready-selector or 8000ms | `--ready-timeout` |
 
 **Auth-gated routes**: after each navigation, BEFORE running the static
@@ -130,8 +130,19 @@ scan, check:
    `[type=password]`, classify as `coverageStatus: "auth-required"`. Catches
    first-party login walls.
 
-Do NOT attempt to log in — credentials are out of scope. The OVERALL verdict
-becomes at most `Incomplete` (never `Clean`) when any route is `auth-required`.
+click-test itself never attempts to log in — credentials are out of scope
+for this skill's own logic. But click-test drives the same Playwright MCP
+connection as persona-test (see `references/dom-scanner.md` and the
+delegated browser-tool detection below), so the same session-level
+pre-authentication applies here: if the target's primary surfaces need a
+login, pre-authenticate the shared MCP connection via `--storage-state`
+BEFORE running click-test — see
+[`../persona-test/references/auth-bootstrap.md`](../persona-test/references/auth-bootstrap.md)
+for the sanctioned pattern (a per-repo sign-in script writing a
+`storageState` file, wired into `.mcp.json`). Without it, `auth-required`
+routes are real coverage gaps, not a v1 limitation. The OVERALL verdict
+becomes at most `Incomplete` (never `Clean`) when any route is
+`auth-required`.
 
 ---
 
