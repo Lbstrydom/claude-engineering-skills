@@ -60,6 +60,157 @@ pre-existing tool bug in the cloud lifecycle-tracking path
 non-fatal warning on every round this session, unrelated to any of this
 plan's 9 themes).
 
+---
+
+## 2026-07-27 — Fixed transaction.mjs's WAL cleanup-failure-distinction bug (#2 tech-debt item, full /cycle --autonomous run)
+
+Picked the next-highest-leverage item from the same LLM-clustered debt-review
+this session's previous entry used, and ran it end-to-end through
+`/cycle --autonomous`: `/plan` → `/audit-plan` (7 rounds — see below) →
+autonomous implement → `/audit-code` (3 rounds) → mandatory Gemini gate →
+`/ship`.
+
+### The bug
+
+`scripts/lib/install/transaction.mjs`'s WAL called `cleanupJournal()`
+unconditionally on completion of a code path, even when that path's own
+failure tracking showed the underlying operation (snapshot capture, rollback
+restore, delete, or recovery replay) did not actually succeed — silently
+discarding the one durable record a crash-recovery WAL exists to provide. 9
+original tech-debt-ledger entries, plus 3 more newly-discovered instances of
+the same root cause found during plan-audit (a normal-completion delete
+failure, a recovery delete-replay failure, and a non-idempotent staged-tmp
+discard retry).
+
+### Changes
+
+- `scripts/lib/install/transaction.mjs`: Phase 1's snapshot loop drops the
+  `existsSync` TOCTOU probe for a single classified `readFileSync`.
+  `attemptDelete()` is now a discriminated result (`{kind: 'deleted'|
+  'absent'|'conflict-skipped'|'delete-failed', reason?, degradation?}`) —
+  `kind` is the sole discriminant everywhere; no code branches on `reason`
+  text. `rollbackPartialTransaction()` returns a failure array; a rollback
+  restore failure durably marks the journal `'rollback-failed'` (a new,
+  additive `JournalSchema` stage) **before** attempting any rollback
+  mutation, so a crash mid-rollback can never leave the journal readable as
+  a safe roll-forward candidate. `recoverFromJournal()` refuses all
+  automatic action on a `'rollback-failed'` journal (never quarantines it —
+  quarantine would silently remove the pre-flight block over unresolved
+  state) and gains a `recoveryFailures` field covering both the roll-forward
+  branch's rename+delete-replay failures and (separately) the staged-discard
+  branch's non-blocking degradations. `cleanupJournal()` takes a `context`
+  parameter (`'success'|'rollback'|'recovery'|'abort'`) so its failure
+  message never misattributes which operation actually completed.
+- `scripts/install-skills.mjs`: `reconcileJournals()` exits 1 on a non-empty
+  `recoveryFailures` list, mirroring its existing `rec.error` pattern;
+  `main()` exits 1 when `deleteFailures` is non-empty after a successful
+  install (the writes succeeded; the retained journal will block the next
+  install until resolved).
+- `tests/install/transaction-hardening.test.mjs`: ~20 new regression tests
+  covering the discriminated `attemptDelete()` result, the TOCTOU removal,
+  the rollback-failed marker's full lifecycle (write-before-mutate, retained
+  at its original path, `recoverFromJournal()` refusing to act on it),
+  ENOENT-scoping (delete branch exempt, restore branch never exempt —
+  a data-loss bug I introduced and then caught mid-plan, see below),
+  staged-discard proportionality, `cleanupJournal()`'s context-aware
+  messaging, and `reconcileJournals()`'s exit behavior.
+- `docs/plans/transaction-wal-cleanup-failure-distinction.md`: full plan +
+  audit trail, including an "Out of Scope (Future)" section for two
+  deliberately-declined items (a full durable-rollback state machine with
+  persisted before-images; a durable "rollback-complete" terminal state with
+  formal operator tooling) and the pre-existing `isWithinAllowedRoots()`
+  symlink+`..` containment gap surfaced during code-audit.
+
+### Process notes (things that actually happened, not just the happy path)
+
+- **Plan-audit ran 7 rounds** — 4 past the normal cap — because rounds 3-6
+  each found a genuine, concrete, code-traced correctness bug in the plan's
+  own evolving rollback-failure design, several of them bugs I introduced
+  while fixing the PREVIOUS round's finding:
+  - Round 3: retaining the journal on rollback failure was pointless (no
+    before-images are ever persisted, so nothing could be restored anyway).
+  - Round 4: my round-3 fix (reusing `quarantineJournal()`) solved the wrong
+    problem — the on-disk journal still read `'renaming'`, so a future
+    recovery run would roll the ABORTED transaction FORWARD, completing what
+    the process was trying to undo.
+  - Round 4→5→6: my successive fixes for round 4's finding each introduced a
+    new gap — quarantining silently removed the pre-flight block (round 4→5
+    fix); writing the safety marker AFTER rollback left a window if that
+    write itself failed (round 5→6 fix: reorder to write it first); still
+    attempting rollback when the marker-write failed reopened the exact
+    split-brain bug on the first failure instead of a rare compound one
+    (round 6 fix: don't attempt rollback at all if the marker write fails —
+    a simplification, not new machinery).
+  - Round 7's sole HIGH finding restated round 6's already-declined "build a
+    full durable terminal-state + operator-resolution protocol" ask without
+    new evidence of an unsafe outcome — sent to rebuttal, GPT conceded the
+    scope boundary (`compromise`, HIGH→LOW): "the current retain-and-block
+    behavior is safe... the missing automatic retry is an
+    operational-availability limitation, not an unsafe automatic completion
+    or silent data loss."
+- **The Gemini plan-gate caught a genuine data-loss bug in my own round-6
+  fix**: I'd applied the ENOENT-as-success exemption (correctly needed for
+  the rollback restore loop's *delete* sub-branch) to BOTH sub-branches,
+  including the *restore* sub-branch — where ENOENT means the restore
+  genuinely failed (e.g. a missing parent directory), not "already done."
+  Exempting it there would have cleared the rollback-failed marker and
+  reported success while the original file content was silently lost. Fixed
+  by scoping the exemption strictly to the delete sub-branch (a restore has
+  no "already done" precondition to reconverge against — it either wrote
+  the bytes or it didn't). This is why the Gemini gate ran 3 rounds instead
+  of the normal 1-2: round 2's finding was the genuine-bug exception to the
+  cap, not rigor pressure.
+- **Code-audit round 2's one HIGH finding** (a symlink+lexical-`..`
+  containment gap in `isWithinAllowedRoots()`) was real but entirely
+  pre-existing — the function is byte-identical before and after this diff.
+  Empirically tested the claim on this dev machine (Windows) before
+  responding rather than asserting from theory alone; couldn't reproduce
+  the divergence here (Windows reparse-point resolution differs from the
+  POSIX incremental-resolution the finding assumes), but didn't use that to
+  dismiss the underlying concern — the reasoning is sound in general and
+  the module's own docstring already documents a prior real symlink-related
+  incident (INC-001). Rebutted on scope; GPT conceded (`compromise`,
+  HIGH→MEDIUM) and agreed it needs its own POSIX-tested plan, not folding
+  into this one. Captured as tech debt.
+- **The rest of round 1-2's code-audit findings** were pre-existing,
+  unrelated debt in files this diff never touches (an `install-skills.mjs`
+  CLI-flag validation gap, sustainability/god-module findings on files that
+  predate this diff, and architecture cross-domain-import findings in
+  completely unrelated subsystems the whole-codebase Architecture pass
+  surfaced incidentally) — dismissed with the "impact, not authorship" test
+  applied explicitly, not just asserted.
+- **The Gemini code-gate's non-gating Claude-Opus shadow** surfaced 4
+  additional observations (a `cleanupJournal()` context-parameter silent
+  fallback, a minor orphaned-tmp leak inside an already-blocked state, the
+  pre-existing `reconcileJournals()` early-exit-skips-second-journal
+  pattern, and a cross-installer-version journal-schema compatibility
+  question for the shared global surface). Left as documented residual risk
+  per the shadow's explicit non-gating status — none change this diff's
+  correctness for the versions actually deployed today.
+
+### Verification
+
+- 7 plan-audit rounds (GPT, 4 past cap for genuine bugs) + 3 Gemini gate
+  rounds (2 past cap for a genuine data-loss bug) → **APPROVE**.
+- 3 code-audit rounds (GPT): round 1 H:0 M:7 L:1 (all deferred/dismissed as
+  pre-existing/unrelated); round 2 H:1 M:5 L:1 (H1 rebutted →
+  compromise/MEDIUM, captured as debt; rest dismissed as tooling artifacts
+  or unrelated-file duplicates); round 3 PASS, H:0 M:0 L:0. Gemini
+  **APPROVE** (1 LOW test-quality nit, fixed) + Opus shadow CONCERNS_REMAINING
+  (non-gating, documented above).
+- Full repo suite green: 8800 passed, 0 failed, 22 skipped (unrelated
+  host-capability skips).
+
+### Next Steps
+
+- Tech debt captured: the `isWithinAllowedRoots()` symlink+`..` containment
+  gap (topicId `76b2ab13`) needs its own POSIX-tested plan+audit.
+- Remaining `refactor-install-wal-vcs-2026-07.md` scope (`vcs.mjs`,
+  `find-rmsync-sites.mjs`) explicitly deferred as separate, independent
+  concerns per that document's own framing — not touched here.
+
+---
+
 ## 2026-07-26 (continued 5) — Fixed visual-contract.json split-brain validation (top tech-debt item, full /cycle --autonomous run)
 
 Picked the #1-ranked item from an LLM-clustered debt-review of the 211-entry

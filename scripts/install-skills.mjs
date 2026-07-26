@@ -206,6 +206,18 @@ function reconcileJournals(repoRoot) {
     if (rec.recovered) {
       console.log(`  ${Y}Journal recovered${X} (${jp}): rolled-forward=${rec.rolledForward} rolled-back=${rec.rolledBack}`);
     }
+
+    // Sibling to reportDegradations() but a distinct channel and heading —
+    // a recoveryFailures entry means the WAL could not be fully resolved
+    // and the installer is about to abort, categorically different from a
+    // non-critical durability degradation.
+    if ((rec.recoveryFailures || []).length > 0) {
+      process.stderr.write(`${R}[install] ABORT — unresolved WAL at ${jp}${X}\n`);
+      for (const f of rec.recoveryFailures) {
+        process.stderr.write(`  ${R}✗${X} ${f.absPath} — ${f.reason}\n`);
+      }
+      process.exit(1);
+    }
   }
 }
 
@@ -524,6 +536,9 @@ function main() {
   for (const skip of result.skippedDeletes) {
     console.log(`  ${Y}○${X} ${skip.absPath}: ${skip.reason}`);
   }
+  if ((result.deleteFailures || []).length > 0) {
+    console.error(`${R}[install] journal retained${X} — the next install will block until this is resolved.`);
+  }
 
   const { repoManaged, globalManaged } = writeReceiptsByScope(
     managedFiles, manifest, args, repoReceiptPath, globalReceiptPath,
@@ -562,6 +577,13 @@ function main() {
   if (repoManaged.length > 0) console.log(`  Repo receipt: ${path.relative(repoRoot, repoReceiptPath)}`);
   if (globalManaged.length > 0) console.log(`  Global receipt: ${globalReceiptPath}`);
   for (const w of allSafe) console.log(`  ${G}+${X} ${w.path} ${D}(${w.scope})${X}`);
+
+  // deleteFailures.length > 0 is the ONLY signal driving this exit code —
+  // never skippedDeletes.length (which also counts benign conflict-skipped
+  // entries) and never a reason-string match. The install itself succeeded
+  // (writes/renames committed); this only means a retained journal will
+  // block the NEXT install until resolved.
+  if ((result.deleteFailures || []).length > 0) process.exit(1);
 }
 
 /**

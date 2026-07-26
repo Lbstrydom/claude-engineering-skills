@@ -102,8 +102,14 @@ describe('containment — allowedRoots, not a single repoRoot (Gemini-G1)', () =
   });
 
   it('rejects a literal ../ embedded in the un-resolved tail', () => {
+    // path.join() eagerly collapses '..' segments itself, so building `sneaky`
+    // with path.join would hand isWithinAllowedRoots() an already-resolved
+    // absolute path outside repo — passing for the wrong reason (Gemini
+    // gate G1, code-audit round). A template literal preserves the literal
+    // '..' tokens so this actually exercises path.resolve()'s own collapse
+    // inside the function under test, not the test's own setup.
     const repo = mkTmp('dotdot');
-    const sneaky = path.join(repo, 'sub', '..', '..', 'escaped.md');
+    const sneaky = `${repo}${path.sep}sub${path.sep}..${path.sep}..${path.sep}escaped.md`;
     assert.equal(_internals.isWithinAllowedRoots(sneaky, [repo]), false);
   });
 
@@ -638,5 +644,425 @@ describe('a crashed run does not block installs forever (code-audit R4-H2)', () 
     });
     assert.equal(result.success, false, 'a live holder must still win');
     assert.match(result.error, /another install is in progress/);
+  });
+});
+
+// ─── cleanup-failure-distinction plan (docs/plans/transaction-wal-cleanup-failure-distinction.md) ───
+
+describe('Phase 1 snapshot loop — no existsSync probe, classified read only', () => {
+  it('a genuinely absent target reads undefined via readFileSync ENOENT alone', () => {
+    const repo = mkTmp('snap-absent');
+    const target = path.join(repo, 'never-existed.md');
+    const result = executeTransaction({
+      writes: [{ absPath: target, content: 'new content' }],
+      journalPath: journalIn(repo), repoRoot: repo,
+    });
+    assert.equal(result.success, true);
+    assert.equal(fs.readFileSync(target, 'utf8'), 'new content');
+  });
+
+  it('Phase 1 adds no SECOND existsSync probe on the snapshot target — the TOCTOU race is gone by construction', () => {
+    // existsSync(target) legitimately fires ONCE already, from the unrelated,
+    // pre-existing containment/scope check (touchesGlobalSurface ->
+    // isWithinAllowedRoots), which runs before Phase 1 and this plan does not
+    // touch. Before this fix, Phase 1's OWN snapshot loop added a SECOND,
+    // redundant existsSync(w.absPath) probe followed by a separate read —
+    // the TOCTOU gap. This test asserts that second call is gone: the target
+    // is existsSync-probed at most once in the whole transaction.
+    const repo = mkTmp('snap-toctou');
+    const target = path.join(repo, 'x.md');
+    fs.writeFileSync(target, 'original');
+    const txnUrl = pathToFileURL(path.join(process.cwd(), 'scripts/lib/install/transaction.mjs')).href;
+    const r = spawnSync(process.execPath, ['--input-type=module', '-e', `
+      import fs from 'node:fs';
+      const target = ${JSON.stringify(target)};
+      let existsSyncCallsOnTarget = 0;
+      const real = fs.existsSync;
+      fs.existsSync = (p, ...rest) => {
+        if (String(p) === target) existsSyncCallsOnTarget++;
+        return real(p, ...rest);
+      };
+      const { executeTransaction } = await import(${JSON.stringify(txnUrl)});
+      const res = executeTransaction({
+        writes: [{ absPath: target, content: 'updated' }],
+        repoRoot: ${JSON.stringify(repo)},
+      });
+      console.log(JSON.stringify({ existsSyncCallsOnTarget, success: res.success }));
+    `], { cwd: process.cwd(), encoding: 'utf8', timeout: 60_000 });
+    const out = JSON.parse((r.stdout || '').trim().split('\n').pop());
+    assert.equal(out.success, true, `transaction must succeed: ${r.stderr}`);
+    assert.equal(out.existsSyncCallsOnTarget, 1, 'the target must be existsSync-probed exactly once (containment only) — Phase 1 must add no second, redundant probe');
+  });
+
+  it('a non-ENOENT snapshot read failure aborts BEFORE any journal write, staging, or mutation', () => {
+    // A directory where a file is expected forces EISDIR on readFileSync,
+    // deterministically and portably (no chmod/EACCES cross-platform concerns).
+    const repo = mkTmp('snap-eisdir');
+    const target = path.join(repo, 'a-directory');
+    fs.mkdirSync(target);
+    const other = path.join(repo, 'unrelated.md');
+    fs.writeFileSync(other, 'must remain untouched');
+
+    const result = executeTransaction({
+      writes: [
+        { absPath: other, content: 'should never be written' },
+        { absPath: target, content: 'cannot snapshot a directory' },
+      ],
+      journalPath: journalIn(repo), repoRoot: repo,
+    });
+
+    assert.equal(result.success, false, 'a non-ENOENT snapshot read failure must abort the whole transaction');
+    assert.equal(fs.existsSync(journalIn(repo)), false, 'no journal may be written on a precondition abort');
+    assert.equal(fs.readFileSync(other, 'utf8'), 'must remain untouched', 'no partial mutation of other targets');
+    const leaked = fs.readdirSync(repo).filter(n => n.includes('.tmp.'));
+    assert.deepEqual(leaked, [], `precondition abort must leave zero .tmp residue: ${leaked.join(', ')}`);
+  });
+});
+
+describe('attemptDelete() — discriminated result, kind is the sole discriminant', () => {
+  it('kind: absent when the target does not exist', () => {
+    const repo = mkTmp('ad-absent');
+    const r = _internals.attemptDelete({ absPath: path.join(repo, 'nope.md') });
+    assert.deepEqual(r, { kind: 'absent' });
+  });
+
+  it('kind: deleted (no degradation) on a normal successful unlink', () => {
+    const repo = mkTmp('ad-deleted');
+    const target = path.join(repo, 'x.md');
+    fs.writeFileSync(target, 'x');
+    const r = _internals.attemptDelete({ absPath: target });
+    assert.equal(r.kind, 'deleted');
+    assert.equal(fs.existsSync(target), false);
+  });
+
+  it('kind: conflict-skipped when expectedSha mismatches (user-modified)', () => {
+    const repo = mkTmp('ad-conflict');
+    const target = path.join(repo, 'x.md');
+    fs.writeFileSync(target, 'user changed this');
+    const r = _internals.attemptDelete({ absPath: target, expectedSha: 'deadbeefcafe' });
+    assert.equal(r.kind, 'conflict-skipped');
+    assert.match(r.reason, /CONFLICT_DELETION_SKIPPED/);
+    assert.equal(fs.existsSync(target), true, 'orphan protection must spare the user-modified file');
+  });
+
+  it('kind: delete-failed when unlink genuinely fails (target is a non-empty directory)', () => {
+    const repo = mkTmp('ad-failed');
+    const dir = path.join(repo, 'not-a-file');
+    fs.mkdirSync(dir);
+    fs.writeFileSync(path.join(dir, 'child.md'), 'x'); // non-empty -> unlinkSync on the dir fails
+    const r = _internals.attemptDelete({ absPath: dir });
+    assert.equal(r.kind, 'delete-failed');
+    assert.match(r.reason, /DELETE_FAILED/);
+  });
+});
+
+describe('normal-completion delete-failure gating — kind-based, not reason-string (round-4 M1, round-6 M1, round-7 M1)', () => {
+  it('a kind:delete-failed outcome retains the journal and surfaces deleteFailures', () => {
+    const repo = mkTmp('normal-delete-failed');
+    const dir = path.join(repo, 'blocked-delete');
+    fs.mkdirSync(dir);
+    fs.writeFileSync(path.join(dir, 'child.md'), 'x'); // forces DELETE_FAILED via ENOTEMPTY
+
+    const result = executeTransaction({
+      writes: [{ absPath: path.join(repo, 'new.md'), content: 'x' }],
+      deletes: [{ absPath: dir }],
+      journalPath: journalIn(repo), repoRoot: repo,
+    });
+
+    assert.equal(result.success, true, 'the writes/renames genuinely succeeded');
+    assert.equal(result.deleteFailures.length, 1, 'deleteFailures must be unconditionally present and populated');
+    assert.equal(fs.existsSync(journalIn(repo)), true, 'the journal must be retained, not cleaned up');
+  });
+
+  it('a kind:conflict-skipped outcome does NOT retain the journal', () => {
+    const repo = mkTmp('normal-conflict-skipped');
+    const victim = path.join(repo, 'victim.md');
+    fs.writeFileSync(victim, 'user-modified');
+
+    const result = executeTransaction({
+      writes: [{ absPath: path.join(repo, 'new.md'), content: 'x' }],
+      deletes: [{ absPath: victim, expectedSha: 'deadbeefcafe' }],
+      journalPath: journalIn(repo), repoRoot: repo,
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(result.deleteFailures.length, 0, 'a conflict-skip is a complete, non-failure outcome');
+    assert.equal(fs.existsSync(journalIn(repo)), false, 'cleanup must proceed on a conflict-skip alone');
+    assert.equal(fs.existsSync(victim), true);
+  });
+
+  it('deleteFailures is present (empty array) even on a fail() result — never undefined', () => {
+    const repo = mkTmp('normal-fail-deletefailures');
+    writeRawJournal(repo, { version: 1, stage: 'staged', staged: [], deletes: [] }); // pre-flight block
+    const result = executeTransaction({
+      writes: [{ absPath: path.join(repo, 'new.md'), content: 'x' }],
+      journalPath: journalIn(repo), repoRoot: repo,
+    });
+    assert.equal(result.success, false);
+    assert.deepEqual(result.deleteFailures, [], 'fail() must carry deleteFailures unconditionally, matching skippedDeletes/degradations');
+  });
+});
+
+describe('cleanupJournal() context-aware messaging (Gemini gate round-1 finding G2)', () => {
+  it('a normal-completion cleanup failure logs "success" context, never "rollback"', () => {
+    const repo = mkTmp('cleanup-ctx-success');
+    const jp = journalIn(repo);
+    const txnUrl = pathToFileURL(path.join(process.cwd(), 'scripts/lib/install/transaction.mjs')).href;
+    const r = spawnSync(process.execPath, ['--input-type=module', '-e', `
+      import fs from 'node:fs';
+      const jp = ${JSON.stringify(jp)};
+      const real = fs.unlinkSync;
+      fs.unlinkSync = (p) => {
+        if (String(p) === jp) throw Object.assign(new Error('EBUSY: forced cleanup failure'), { code: 'EBUSY' });
+        return real(p);
+      };
+      let captured = '';
+      const origWrite = process.stderr.write;
+      process.stderr.write = (chunk, ...args) => { captured += chunk; return origWrite.call(process.stderr, chunk, ...args); };
+      const { executeTransaction } = await import(${JSON.stringify(txnUrl)});
+      const result = executeTransaction({
+        writes: [{ absPath: ${JSON.stringify(path.join(repo, 'new.md'))}, content: 'x' }],
+        journalPath: jp, repoRoot: ${JSON.stringify(repo)},
+      });
+      process.stderr.write = origWrite;
+      console.log(JSON.stringify({ success: result.success, captured }));
+    `], { cwd: process.cwd(), encoding: 'utf8', timeout: 60_000 });
+
+    let out;
+    try { out = JSON.parse((r.stdout || '').trim().split('\n').pop()); }
+    catch { assert.fail(`probe failed: ${r.stdout}\n${r.stderr}`); }
+
+    assert.equal(out.success, true, 'the install itself must still succeed despite the cleanup failure');
+    assert.match(out.captured, /a successful install/, 'a success-context cleanup failure must say so');
+    assert.doesNotMatch(out.captured, /rollback completed/i, 'a normal install failure must NEVER claim a rollback occurred (Gemini G2)');
+  });
+});
+
+describe('rollback-failed marker — retained-and-marked, not quarantined (round-4/5/6 H1)', () => {
+  // Both targets are plain files under repo/, so Phase 2 (staging) succeeds
+  // for both. A subprocess fs.renameSync patch then: (a) fails the SECOND
+  // target's Phase-3 rename (forcing the catch with stage === 'renaming' and
+  // 'good' already in writtenPaths from its own successful Phase-3 rename),
+  // and (b) fails the FIRST target's rename the second time it's called —
+  // which is rollback's own restore attempt. This is the only way to inject
+  // a failure inside rollbackPartialTransaction(), which is not exported.
+  it('a rollback restore failure marks the journal rollback-failed AT ITS ORIGINAL PATH, blocking future installs, without recoverFromJournal ever rolling it forward', () => {
+    const repo = mkTmp('rollback-failed-marker');
+    const good = path.join(repo, 'first.md');
+    fs.writeFileSync(good, 'original content');
+    const doomed = path.join(repo, 'second.md');
+    const jp = journalIn(repo);
+
+    const txnUrl = pathToFileURL(path.join(process.cwd(), 'scripts/lib/install/transaction.mjs')).href;
+    const r = spawnSync(process.execPath, ['--input-type=module', '-e', `
+      import fs from 'node:fs';
+      const good = ${JSON.stringify(good)};
+      const doomed = ${JSON.stringify(doomed)};
+      let goodRenamedOnce = false;
+      const real = fs.renameSync;
+      fs.renameSync = (from, to) => {
+        if (String(to) === doomed) {
+          throw Object.assign(new Error('EACCES: forced Phase-3 failure on second target'), { code: 'EACCES' });
+        }
+        if (String(to) === good) {
+          if (goodRenamedOnce) {
+            throw Object.assign(new Error('EACCES: forced rollback-restore failure'), { code: 'EACCES' });
+          }
+          goodRenamedOnce = true;
+        }
+        return real(from, to);
+      };
+      const { executeTransaction, recoverFromJournal } = await import(${JSON.stringify(txnUrl)});
+      const res = executeTransaction({
+        writes: [
+          { absPath: good, content: 'updated content' },
+          { absPath: doomed, content: 'never gets renamed into place' },
+        ],
+        journalPath: ${JSON.stringify(jp)}, repoRoot: ${JSON.stringify(repo)},
+      });
+      const journalExists = fs.existsSync(${JSON.stringify(jp)});
+      const journalBody = journalExists ? JSON.parse(fs.readFileSync(${JSON.stringify(jp)}, 'utf8')) : null;
+      const blockedRetry = executeTransaction({
+        writes: [{ absPath: ${JSON.stringify(path.join(repo, 'another.md'))}, content: 'y' }],
+        journalPath: ${JSON.stringify(jp)}, repoRoot: ${JSON.stringify(repo)},
+      });
+      const rec = recoverFromJournal(${JSON.stringify(jp)}, { repoRoot: ${JSON.stringify(repo)} });
+      console.log(JSON.stringify({
+        txnSuccess: res.success,
+        rollbackFailures: res.rollbackFailures,
+        journalExists, stage: journalBody?.stage ?? null,
+        blockedRetrySuccess: blockedRetry.success, blockedRetryError: blockedRetry.error,
+        recRecovered: rec.recovered, recRolledForward: rec.rolledForward, recError: rec.error,
+      }));
+    `], { cwd: process.cwd(), encoding: 'utf8', timeout: 60_000 });
+
+    let out;
+    try { out = JSON.parse((r.stdout || '').trim().split('\n').pop()); }
+    catch { assert.fail(`probe failed: ${r.stdout}\n${r.stderr}`); }
+
+    assert.equal(out.txnSuccess, false, 'the original transaction must fail (Phase 3 blocked on the second target)');
+    assert.ok(out.rollbackFailures && out.rollbackFailures.length > 0, `the forced restore failure must be reported: ${JSON.stringify(out)}`);
+    assert.equal(out.journalExists, true, 'the journal must remain AT ITS ORIGINAL PATH — not quarantined, not deleted');
+    assert.equal(out.stage, 'rollback-failed', 'the on-disk stage must no longer read renaming');
+    assert.equal(out.blockedRetrySuccess, false, 'the pre-flight check must block a subsequent install');
+    assert.equal(out.recRecovered, false, 'recoverFromJournal must refuse to act on a rollback-failed journal');
+    assert.equal(out.recRolledForward, 0, 'recovery must NEVER roll this transaction forward');
+    assert.match(out.recError, /rollback/, 'the refusal must explain why');
+  });
+});
+
+describe('ENOENT scoping in rollback restore — Gemini gate round-2 finding G1 (data-loss regression guard)', () => {
+  // The critical correction: ENOENT is safe-to-ignore only in the DELETE
+  // sub-branch (snapshot === undefined). In the RESTORE sub-branch (writing
+  // back captured content), ENOENT means the restore genuinely failed and
+  // must be reported, never silently treated as success.
+  it('ENOENT while restoring a captured snapshot is a REAL failure, not exempted', () => {
+    const repo = mkTmp('rollback-enoent-restore');
+    const restoreTarget = path.join(repo, 'existing.md');
+    fs.writeFileSync(restoreTarget, 'must be restored on rollback');
+    const doomed = path.join(repo, 'second.md');
+    const jp = journalIn(repo);
+
+    const txnUrl = pathToFileURL(path.join(process.cwd(), 'scripts/lib/install/transaction.mjs')).href;
+    const r = spawnSync(process.execPath, ['--input-type=module', '-e', `
+      import fs from 'node:fs';
+      const restoreTarget = ${JSON.stringify(restoreTarget)};
+      const doomed = ${JSON.stringify(doomed)};
+      // Both targets stage successfully; force the SECOND target's Phase-3
+      // rename to fail (after the first's own Phase-3 rename already
+      // succeeded), then force rollback's restore write for the FIRST target
+      // to throw ENOENT — the data-loss scenario a missing parent directory
+      // would produce for real.
+      const realRename = fs.renameSync;
+      fs.renameSync = (from, to) => {
+        if (String(to) === doomed) {
+          throw Object.assign(new Error('EACCES: forced Phase-3 failure on second target'), { code: 'EACCES' });
+        }
+        return realRename(from, to);
+      };
+      const realWrite = fs.writeFileSync;
+      fs.writeFileSync = (p, content, ...rest) => {
+        if (String(p).includes(restoreTarget + '.tmp.')) {
+          throw Object.assign(new Error('ENOENT: forced restore failure'), { code: 'ENOENT' });
+        }
+        return realWrite(p, content, ...rest);
+      };
+      const { executeTransaction } = await import(${JSON.stringify(txnUrl)});
+      const res = executeTransaction({
+        writes: [
+          { absPath: restoreTarget, content: 'updated content' },
+          { absPath: doomed, content: 'never gets renamed into place' },
+        ],
+        journalPath: ${JSON.stringify(jp)}, repoRoot: ${JSON.stringify(repo)},
+      });
+      console.log(JSON.stringify({ success: res.success, rollbackFailures: res.rollbackFailures }));
+    `], { cwd: process.cwd(), encoding: 'utf8', timeout: 60_000 });
+
+    let out;
+    try { out = JSON.parse((r.stdout || '').trim().split('\n').pop()); }
+    catch { assert.fail(`probe failed: ${r.stdout}\n${r.stderr}`); }
+
+    assert.equal(out.success, false);
+    assert.ok(
+      out.rollbackFailures && out.rollbackFailures.some(f => f.absPath === restoreTarget),
+      `an ENOENT during snapshot RESTORE must be reported as a rollback failure (data-loss guard), got: ${JSON.stringify(out.rollbackFailures)}`,
+    );
+  });
+
+  it('ENOENT while deleting a never-existed target (undefined snapshot) is exempted (benign TOCTOU)', () => {
+    // This is the delete sub-branch's legitimate exemption: writtenPaths only
+    // ever contains already-renamed files, so this documents the contract via
+    // a direct successful-rollback case (no injected failure needed) — the
+    // undefined-snapshot path deletes a brand-new file cleanly.
+    const repo = mkTmp('rollback-enoent-delete');
+    const blocker = path.join(repo, 'blocker');
+    fs.writeFileSync(blocker, 'i am a file, not a directory');
+    const doomed = path.join(blocker, 'sub', 'second.md');
+    const brandNew = path.join(repo, 'brand-new.md');
+
+    const result = executeTransaction({
+      writes: [
+        { absPath: brandNew, content: 'never existed before' },
+        { absPath: doomed, content: 'cannot be staged' },
+      ],
+      journalPath: journalIn(repo), repoRoot: repo,
+    });
+
+    assert.equal(result.success, false);
+    assert.equal(fs.existsSync(brandNew), false, 'the rolled-back new file must be gone');
+    assert.deepEqual(result.rollbackFailures, [], 'a clean delete-branch rollback must report zero failures');
+  });
+});
+
+describe('staged-discard proportionality — Gemini gate round-2 finding G2', () => {
+  it('a tmp-unlink failure during staged-stage recovery does NOT block cleanupJournal', () => {
+    const repo = mkTmp('staged-discard-proportional');
+    const target = path.join(repo, 'x.md');
+    const tmp = `${target}.tmp.1`;
+    fs.mkdirSync(tmp); // a DIRECTORY at the tmp path -> unlinkSync fails (ENOTEMPTY/EPERM), not ENOENT
+    fs.writeFileSync(path.join(tmp, 'child'), 'x');
+    writeRawJournal(repo, { version: 1, stage: 'staged', staged: [{ absPath: target, tmpPath: tmp }], deletes: [] });
+
+    const rec = recoverFromJournal(journalIn(repo), { repoRoot: repo });
+
+    assert.equal(rec.recovered, true);
+    assert.equal(fs.existsSync(journalIn(repo)), false, 'a harmless leaked .tmp must NEVER block journal cleanup');
+    assert.equal(rec.recoveryFailures.length, 0, 'staged-discard failures must never populate recoveryFailures');
+    assert.ok(rec.degradations.some(d => String(d.what).includes(tmp)), 'the failure must still be reported, non-blocking, via degradations');
+  });
+});
+
+describe('reconcileJournals() exits on recoveryFailures (round-1 H3, round-7 M1 field name)', () => {
+  it('a non-empty recoveryFailures list from recoverFromJournal aborts before any new transaction', () => {
+    // HOME/USERPROFILE are redirected so reconcileJournals()'s scan of the
+    // GLOBAL journal anchor never touches real machine state (matching the
+    // "shared global surface" test's own convention above).
+    const repo = mkTmp('reconcile-exit');
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'reconcilehome-'));
+    tmpDirs.push(home);
+    const target = path.join(repo, 'x.md');
+    const tmp = `${target}.tmp.1`;
+    fs.writeFileSync(tmp, 'pending');
+    writeRawJournal(repo, {
+      version: 1,
+      stage: 'renaming',
+      staged: [{ absPath: target, tmpPath: tmp }],
+      deletes: [],
+    });
+
+    const modUrl = pathToFileURL(path.join(process.cwd(), 'scripts/install-skills.mjs')).href;
+    const r = spawnSync(process.execPath, ['--input-type=module', '-e', `
+      import fs from 'node:fs';
+      const target = ${JSON.stringify(target)};
+      const real = fs.renameSync;
+      fs.renameSync = (from, to) => {
+        if (String(to) === target) {
+          throw Object.assign(new Error('EACCES: forced roll-forward failure'), { code: 'EACCES' });
+        }
+        return real(from, to);
+      };
+      const { _internals } = await import(${JSON.stringify(modUrl)});
+      let exited = false, exitCode = null;
+      const origExit = process.exit;
+      process.exit = (code) => { exited = true; exitCode = code; throw new Error('__EXIT__'); };
+      try {
+        _internals.reconcileJournals(${JSON.stringify(repo)});
+      } catch (e) {
+        if (e.message !== '__EXIT__') throw e;
+      } finally {
+        process.exit = origExit;
+      }
+      console.log(JSON.stringify({ exited, exitCode }));
+    `], {
+      cwd: process.cwd(), encoding: 'utf8', timeout: 60_000,
+      env: { ...process.env, HOME: home, USERPROFILE: home },
+    });
+
+    let out;
+    try { out = JSON.parse((r.stdout || '').trim().split('\n').pop()); }
+    catch { assert.fail(`probe failed: ${r.stdout}\n${r.stderr}`); }
+
+    assert.equal(out.exited, true, `reconcileJournals must call process.exit on a non-empty recoveryFailures list: ${JSON.stringify(out)}`);
+    assert.equal(out.exitCode, 1);
   });
 });

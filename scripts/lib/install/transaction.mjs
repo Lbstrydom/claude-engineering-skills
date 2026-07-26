@@ -344,7 +344,7 @@ const JournalSchema = z.object({
    */
   originRepoRoot: z.string().min(1).optional(),
   startedAt: z.string().optional(),
-  stage: z.enum(['staged', 'renaming']),
+  stage: z.enum(['staged', 'renaming', 'rollback-failed']),
   staged: z.array(StagedEntrySchema).optional(),
   deletes: z.array(DeleteEntrySchema).optional(),
 });
@@ -520,28 +520,36 @@ function journalBody(stage, staged, deletes, repoRoot) {
 
 /**
  * Attempt one delete with orphan protection. Shared by `executeTransaction`'s
- * Phase 4 and `recoverFromJournal` so the two can never drift.
- * @returns {{deleted: boolean, skipped?: {absPath: string, reason: string}}}
+ * Phase 4 and `recoverFromJournal`'s delete-replay so the two can never drift.
+ *
+ * Discriminated result — `kind` is the sole discriminant every caller reads;
+ * `reason` is diagnostic text only, never parsed for control flow.
+ * @returns {
+ *   {kind: 'deleted', degradation?: Degradation} |
+ *   {kind: 'absent'} |
+ *   {kind: 'conflict-skipped', reason: string} |
+ *   {kind: 'delete-failed', reason: string}
+ * }
  */
 function attemptDelete(d) {
-  if (!fs.existsSync(d.absPath)) return { deleted: false };
+  if (!fs.existsSync(d.absPath)) return { kind: 'absent' };
   if (d.expectedSha) {
     let actualSha;
     try { actualSha = shaShort(fs.readFileSync(d.absPath)); } catch { actualSha = null; }
     if (actualSha && actualSha !== d.expectedSha) {
       return {
-        deleted: false,
-        skipped: {
-          absPath: d.absPath,
-          reason: `CONFLICT_DELETION_SKIPPED: user-modified since last install (expected ${d.expectedSha}, found ${actualSha})`,
-        },
+        kind: 'conflict-skipped',
+        reason: `CONFLICT_DELETION_SKIPPED: user-modified since last install (expected ${d.expectedSha}, found ${actualSha})`,
       };
     }
   }
-  try { retrySync(() => fs.unlinkSync(d.absPath)); return { deleted: true }; }
-  catch (err) {
-    return { deleted: false, skipped: { absPath: d.absPath, reason: `DELETE_FAILED: ${err.message}` } };
+  try {
+    retrySync(() => fs.unlinkSync(d.absPath));
+  } catch (err) {
+    return { kind: 'delete-failed', reason: `DELETE_FAILED: ${err.message}` };
   }
+  const dir = fsyncDir(path.dirname(d.absPath), `directory for deleted ${d.absPath}`);
+  return dir.ok ? { kind: 'deleted' } : { kind: 'deleted', degradation: dir.degraded };
 }
 
 // ── Transaction ─────────────────────────────────────────────────────────────
@@ -582,7 +590,8 @@ export function executeTransaction(opsOrWrites) {
 
   const skippedDeletes = [];
   const degradations = [];
-  const fail = (error) => ({ success: false, written: 0, deleted: 0, skippedDeletes, degradations, error });
+  const deleteFailures = [];
+  const fail = (error) => ({ success: false, written: 0, deleted: 0, skippedDeletes, degradations, deleteFailures, error });
 
   // Lock EVERY root this transaction actually mutates, not just the repo.
   // A transaction legitimately spans the SHARED global ~/.claude/skills
@@ -632,13 +641,20 @@ export function executeTransaction(opsOrWrites) {
       return fail(`a prior install transaction was quarantined at ${blocked} and has not been resolved — inspect it, then remove it to unblock installs`);
     }
 
-    // Phase 1 — snapshot + journal
+    // Phase 1 — snapshot + journal. One classified read per target, no
+    // existsSync probe first: existsSync collapses stat/access failures to
+    // a bare `false`, which would silently treat some non-ENOENT "can't
+    // tell if it exists" states as absent, and races against the read that
+    // follows. ENOENT alone means genuinely absent; anything else aborts
+    // BEFORE any journal write, staging, rename, or delete — `stage` is
+    // still 'not-started' here, so the existing catch-block dispatch
+    // already handles the abort correctly.
     for (const w of writes) {
-      if (fs.existsSync(w.absPath)) {
-        try { snapshots.set(w.absPath, fs.readFileSync(w.absPath)); }
-        catch { snapshots.set(w.absPath, null); }
-      } else {
-        snapshots.set(w.absPath, undefined);
+      try {
+        snapshots.set(w.absPath, fs.readFileSync(w.absPath));
+      } catch (err) {
+        if (err.code === 'ENOENT') snapshots.set(w.absPath, undefined);
+        else throw err;
       }
     }
 
@@ -683,65 +699,137 @@ export function executeTransaction(opsOrWrites) {
     let deletedCount = 0;
     for (const d of deletes) {
       const r = attemptDelete(d);
-      if (r.deleted) deletedCount++;
-      if (r.skipped) skippedDeletes.push(r.skipped);
+      if (r.kind === 'deleted') {
+        deletedCount++;
+        if (r.degradation) degradations.push(r.degradation);
+      } else if (r.kind === 'conflict-skipped') {
+        skippedDeletes.push({ absPath: d.absPath, reason: r.reason });
+      } else if (r.kind === 'delete-failed') {
+        skippedDeletes.push({ absPath: d.absPath, reason: r.reason });
+        deleteFailures.push({ absPath: d.absPath, reason: r.reason });
+      }
     }
 
-    cleanupJournal(journalPath);
-    return { success: true, written: writtenPaths.length, deleted: deletedCount, skippedDeletes, degradations };
+    // Safe to retain unmodified on a delete-failed outcome: the on-disk
+    // journal already reads stage 'renaming' at this point, and recovery's
+    // roll-forward branch replays journal.deletes through this same
+    // attemptDelete() — so a future recovery run's retry is the correct
+    // completion of this transaction, not an unwanted one.
+    if (deleteFailures.length === 0) cleanupJournal(journalPath, 'success');
+    return { success: true, written: writtenPaths.length, deleted: deletedCount, skippedDeletes, degradations, deleteFailures };
   } catch (err) {
     // Single top-level catch, dispatching on the stage the disk is actually in.
     // Temp files are enumerated from `staged` (the same list the journal
     // records), so this and `recoverFromJournal` share one source of truth.
+    let rollbackFailures = [];
     switch (stage) {
       case 'not-started':
       case 'journal-written':
         // Journal may exist but nothing else does.
-        cleanupJournal(journalPath);
+        cleanupJournal(journalPath, 'abort');
         break;
       case 'staging':
       case 'staged':
-      case 'renaming':
-        rollbackPartialTransaction(writtenPaths, snapshots, staged);
-        cleanupJournal(journalPath);
+      case 'renaming': {
+        // Durably mark the journal as unsafe-for-automatic-recovery BEFORE
+        // attempting any rollback mutation — not after. The on-disk journal
+        // already reads stage 'renaming' (written before Phase 3 even
+        // starts), so a rollback failure followed by plain retention would
+        // let a future recoverFromJournal() roll this transaction FORWARD
+        // instead of back. Writing the marker first closes that window for
+        // the entire rollback attempt, not just after it.
+        let markerWritten = false;
+        try {
+          writeJournal(journalPath, journalBody('rollback-failed', staged, deletes, repoRoot));
+          markerWritten = true;
+        } catch (markErr) {
+          process.stderr.write(`  [transaction] Failed to write rollback-failed marker: ${markErr.message}\n`);
+        }
+        if (!markerWritten) {
+          // Do not attempt rollback without the safety marker in place —
+          // leave the journal exactly as it durably stood on entry (stage
+          // 'renaming', unmodified). This is safe, not merely a fallback:
+          // no rollback mutation has been attempted, so the filesystem is
+          // still in its plain partially-renamed Phase-3 state, which the
+          // existing roll-forward branch already handles correctly.
+          break;
+        }
+        rollbackFailures = rollbackPartialTransaction(writtenPaths, snapshots, staged);
+        if (rollbackFailures.length === 0) cleanupJournal(journalPath, 'rollback');
         break;
+      }
       case 'renamed':
       case 'deleting':
         // Renames are complete and correct — rolling them back would be wrong.
         // Leave the journal so recovery can finish the deletes next run.
         break;
     }
-    return fail(err.message);
+    return { ...fail(err.message), rollbackFailures };
   } finally {
     for (const lp of held.reverse()) releaseLock(lp);
   }
 }
 
+/**
+ * @returns {Array<{absPath: string, reason: string}>} every path whose
+ *   restore attempt failed — empty means rollback fully succeeded.
+ */
 function rollbackPartialTransaction(writtenPaths, snapshots, staged) {
-  // Remove any unused .tmp files first
+  // Remove any unused .tmp files first — harmless, uniquely-named garbage;
+  // never tracked as a rollback failure.
   for (const { tmpPath } of staged) {
     try { if (fs.existsSync(tmpPath)) retrySync(() => fs.unlinkSync(tmpPath)); } catch { /* best effort */ }
   }
-  // Revert any completed renames to their snapshot
+  // Revert any completed renames to their snapshot. The domain is
+  // deliberately binary: `undefined` (delete the new file) vs anything
+  // else (a Buffer — restore it).
+  const failures = [];
   for (const absPath of writtenPaths) {
     const snapshot = snapshots.get(absPath);
     try {
       if (snapshot === undefined) {
-        if (fs.existsSync(absPath)) retrySync(() => fs.unlinkSync(absPath));
-      } else if (snapshot !== null) {
+        try {
+          if (fs.existsSync(absPath)) retrySync(() => fs.unlinkSync(absPath));
+        } catch (err) {
+          // ENOENT here means the target is already gone — a benign TOCTOU
+          // outcome, not a real restore failure (the delete goal is
+          // idempotently reachable however you get there).
+          if (err.code !== 'ENOENT') throw err;
+        }
+      } else {
+        // Restore has no "already done" precondition to reconverge
+        // against — a restore's end state is specific bytes, which either
+        // got written or didn't. Every error here, including ENOENT
+        // (e.g. a missing parent directory), is a genuine failure.
         const tmpPath = `${absPath}.tmp.${tmpSuffix()}`;
         fs.writeFileSync(tmpPath, snapshot);
         retrySync(() => fs.renameSync(tmpPath, absPath));
       }
     } catch (err) {
+      failures.push({ absPath, reason: err.message });
       process.stderr.write(`  [rollback] Failed to restore ${absPath}: ${err.message}\n`);
     }
   }
+  return failures;
 }
 
-function cleanupJournal(journalPath) {
-  try { if (fs.existsSync(journalPath)) retrySync(() => fs.unlinkSync(journalPath)); }
-  catch { /* best effort */ }
+/**
+ * `context` distinguishes the three real call sites so a cleanup failure's
+ * logged message never claims a rollback happened when it didn't (or vice
+ * versa) — this function is shared, its callers are not interchangeable.
+ * @param {string} journalPath
+ * @param {'success'|'rollback'|'recovery'|'abort'} context
+ */
+function cleanupJournal(journalPath, context) {
+  try {
+    if (fs.existsSync(journalPath)) retrySync(() => fs.unlinkSync(journalPath));
+  } catch (err) {
+    const what = context === 'rollback' ? 'a fully successful rollback'
+      : context === 'recovery' ? 'recovery completing successfully'
+      : context === 'abort' ? 'an abort before any mutation'
+      : 'a successful install';
+    process.stderr.write(`  [transaction] Failed to remove journal ${journalPath} after ${what} (only journal cleanup failed): ${err.message}\n`);
+  }
 }
 
 /**
@@ -759,7 +847,8 @@ function cleanupJournal(journalPath) {
 export function recoverFromJournal(journalPath = defaultJournalPath(), opts = {}) {
   const skippedDeletes = [];
   const degradations = [];
-  const none = { recovered: false, rolledForward: 0, rolledBack: 0, skippedDeletes, degradations };
+  const recoveryFailures = [];
+  const none = { recovered: false, rolledForward: 0, rolledBack: 0, skippedDeletes, degradations, recoveryFailures };
   if (!fs.existsSync(journalPath)) return none;
 
   const repoRoot = opts.repoRoot || path.dirname(path.resolve(journalPath));
@@ -837,6 +926,25 @@ export function recoverFromJournal(journalPath = defaultJournalPath(), opts = {}
     }
     const journal = v.journal;
 
+    // A journal marked 'rollback-failed' describes a VALID, partially-
+    // resolved transaction whose in-process rollback attempt itself failed —
+    // structurally different from a corrupt/foreign journal. It is never
+    // safe to roll forward (that would complete the very transaction the
+    // original process tried to abort) and there are no persisted
+    // before-images to roll back with, so recovery refuses ALL automatic
+    // action and performs NO filesystem mutation. The journal is left
+    // exactly where it is (never quarantined) so the pre-flight
+    // `existsSync` check keeps blocking future installs until a human
+    // resolves it.
+    if (journal.stage === 'rollback-failed') {
+      return {
+        ...none,
+        error: `a prior install transaction failed during rollback and could not be safely auto-resolved at ${journalPath}. `
+          + 'This repo cannot safely recover it automatically. Inspect the journal and the filesystem state it describes, '
+          + 'then delete the journal to unblock installs once you have verified the state is acceptable.',
+      };
+    }
+
     let rolledForward = 0, rolledBack = 0;
 
     if (journal.stage === 'renaming') {
@@ -853,25 +961,50 @@ export function recoverFromJournal(journalPath = defaultJournalPath(), opts = {}
             rolledForward++;
             const d = fsyncDir(path.dirname(absPath), `target directory for ${absPath}`);
             if (!d.ok) degradations.push(d.degraded);
-          } catch (err) { process.stderr.write(`  [recover] roll-forward failed for ${absPath}: ${err.message}\n`); }
+          } catch (err) {
+            recoveryFailures.push({ absPath, reason: err.message });
+            process.stderr.write(`  [recover] roll-forward failed for ${absPath}: ${err.message}\n`);
+          }
         }
       }
       // Deletes were never reconciled if the crash landed in Phase 4.
       for (const d of journal.deletes || []) {
         const r = attemptDelete(d);
-        if (r.skipped) skippedDeletes.push(r.skipped);
-      }
-    } else {
-      // stage === 'staged' — nothing was renamed yet; discard all .tmp files.
-      for (const { tmpPath } of journal.staged || []) {
-        if (fs.existsSync(tmpPath)) {
-          try { retrySync(() => fs.unlinkSync(tmpPath)); rolledBack++; } catch { /* best effort */ }
+        if (r.kind === 'deleted' && r.degradation) {
+          degradations.push(r.degradation);
+        } else if (r.kind === 'conflict-skipped') {
+          skippedDeletes.push({ absPath: d.absPath, reason: r.reason });
+        } else if (r.kind === 'delete-failed') {
+          skippedDeletes.push({ absPath: d.absPath, reason: r.reason });
+          recoveryFailures.push({ absPath: d.absPath, reason: r.reason });
         }
       }
+      if (recoveryFailures.length === 0) cleanupJournal(journalPath, 'recovery');
+    } else {
+      // stage === 'staged' — nothing was renamed yet; discard all .tmp files.
+      // A leaked .tmp file is uniquely-named, harmless garbage (never read by
+      // anything, never conflicts with a future transaction's own .tmp
+      // files) — matching rollbackPartialTransaction()'s own equivalent
+      // loop, a discard failure here never blocks journal cleanup. ENOENT
+      // (already gone, a prior attempt converged on it) produces no output;
+      // a real unlink failure is reported via `degradations` (informational,
+      // non-blocking) so the operator has visibility without being blocked.
+      for (const { tmpPath } of journal.staged || []) {
+        if (fs.existsSync(tmpPath)) {
+          try {
+            retrySync(() => fs.unlinkSync(tmpPath));
+            rolledBack++;
+          } catch (err) {
+            if (err.code !== 'ENOENT') {
+              degradations.push({ code: err.code || 'UNKNOWN', what: `discard of orphaned ${tmpPath}` });
+            }
+          }
+        }
+      }
+      cleanupJournal(journalPath, 'recovery');
     }
 
-    cleanupJournal(journalPath);
-    return { recovered: true, rolledForward, rolledBack, skippedDeletes, degradations };
+    return { recovered: true, rolledForward, rolledBack, skippedDeletes, degradations, recoveryFailures };
   } finally {
     releaseLock(lockPath);
   }
