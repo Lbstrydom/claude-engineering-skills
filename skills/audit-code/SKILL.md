@@ -535,9 +535,27 @@ Run Gemini 3.1 Pro as the final gate. Falls back to Claude Opus when
 ```bash
 # Pass --run-id <_cloudRunId> when the audit --out JSON carries one, so the
 # final-review (and the optional shadow A/B reviewer) persist their per-finding
-# results keyed to this audit_run. Read it from the audit result:
-#   RUN_ID=$(node -e "process.stdout.write(require('/tmp/'+process.env.SID+'-result.json')._cloudRunId||'')")
-# Omit --run-id when absent (cloud off) → gemini-review runs local-only.
+# results keyed to this audit_run. Read it from the audit result — pass the path
+# as an ARGUMENT (process.argv[1]), never embed it as a literal string inside
+# the -e source. On Windows, Bash and Node resolve a bare `/tmp/...` path
+# DIFFERENTLY (confirmed live 2026-07-26: Bash's /tmp lands in
+# AppData/Local/Temp; Node's own resolution of the same literal string lands in
+# C:\tmp — two different, unrelated locations). Embedding the path as a string
+# makes Node re-resolve it itself and throw MODULE_NOT_FOUND on a file that
+# genuinely exists; passing it as argv lets the SAME shell that resolved the
+# audit's --out path resolve this one identically. This was found by tracing
+# WHY a consumer repo's 101 real audit runs, over 30 days, all had a genuine
+# Gemini verdict computed (visible in that session's own logs) but NEVER
+# persisted to audit_runs — this exact snippet was silently throwing inside
+# $(...), which discards the failure and leaves RUN_ID empty with no visible
+# error. fs.readFileSync + JSON.parse (not require — this is a data file, not a
+# module) with a try/catch fails safe to an empty RUN_ID rather than crashing.
+# <N> = the last round actually run (matches the `-r<N>-result.json` convention
+# Step 2/Step 3.5b/Step 6.6 already use — NOT a bare `-result.json`).
+RUN_ID=$(node -e "const fs=require('fs'); try { process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],'utf8'))._cloudRunId||''); } catch { process.stdout.write(''); }" "/tmp/$SID-r<N>-result.json")
+# gemini-review.mjs itself now warns loudly (2026-07-26) when cloud is enabled
+# but --run-id is absent — if you see that warning, the extraction above
+# failed; don't ignore it. Omit --run-id only when cloud is genuinely off.
 node scripts/gemini-review.mjs review <plan-file> /tmp/$SID-transcript.json \
   --out /tmp/$SID-gemini-result.json \
   ${RUN_ID:+--run-id "$RUN_ID"} 2>/tmp/$SID-gemini-stderr.log

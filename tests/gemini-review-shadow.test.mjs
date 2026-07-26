@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { _internals } from '../scripts/gemini-review.mjs';
+import { _internals, shouldWarnMissingRunId } from '../scripts/gemini-review.mjs';
 
 const {
   resolveShadow, diffFindingBuckets, dedupByHash, shadowModelMatchesFamily,
@@ -337,5 +337,32 @@ describe('streamAnthropicMessage reassembles streamed tool_use input', () => {
     const final = { content: [{ type: 'text', text: '{}' }], usage: {} };
     const r = await streamAnthropicMessage({ messages: { create: async () => final } });
     assert.equal(r, final, 'an adapter that ignores stream:true must be returned unchanged');
+  });
+});
+
+// ── Missing --run-id warning (2026-07-26 — 101 lost consumer reviews) ───────
+// Root-cause chain: a cloud-enabled `review` invocation with no --run-id
+// silently never persists to audit_runs (runShadowAndPersist's cloud-write
+// guard is `if (!runId) return` — no log, no error). Found tracing why a
+// consumer repo's 101 real audit runs over 30 days all had a genuine Gemini
+// verdict computed but NEVER reached the store. This pins the pure predicate
+// that decides when to warn, extracted specifically so this is unit-testable
+// without mocking the whole CLI/cloud-detection flow.
+describe('shouldWarnMissingRunId — the loud warning for a silent persistence loss', () => {
+  it('warns: review mode, cloud enabled, no run-id — the exact incident shape', () => {
+    assert.equal(shouldWarnMissingRunId({ mode: 'review', runId: null, cloudEnabled: true }), true);
+  });
+
+  it('does not warn when --run-id is supplied', () => {
+    assert.equal(shouldWarnMissingRunId({ mode: 'review', runId: 'abc-123', cloudEnabled: true }), false);
+  });
+
+  it('does not warn when cloud is genuinely off — that is the legitimate local-only case', () => {
+    assert.equal(shouldWarnMissingRunId({ mode: 'review', runId: null, cloudEnabled: false }), false);
+  });
+
+  it('does not warn for non-review modes (ping, set-provider)', () => {
+    assert.equal(shouldWarnMissingRunId({ mode: 'ping', runId: null, cloudEnabled: true }), false);
+    assert.equal(shouldWarnMissingRunId({ mode: 'set-provider', runId: null, cloudEnabled: true }), false);
   });
 });

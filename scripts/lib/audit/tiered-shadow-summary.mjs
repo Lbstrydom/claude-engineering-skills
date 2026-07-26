@@ -56,8 +56,56 @@ export const WINDOW_MAX = 15;
  * unstamped, rather than backfilled by commit date. Backfilling would have
  * been mechanically easy and is exactly the reasoning this constant exists to
  * forbid; 8 re-collected runs are cheaper than a sixth false green.
+ *
+ * **Bumped again, same day (v4 → v5)**: `findingLine`'s parsing changed
+ * (`tiered-shadow-compare.mjs`) — a "lines N-M" prose fallback recovers some
+ * real findings that previously read as unresolvable, changing what
+ * `overlapCount`/`legacyUnlocalizedCount`/`tieredUnlocalizedCount` mean for any
+ * row measured after this change. Caught by
+ * `TIERED_SHADOW_CONTRACT_SEMANTICS_DIGEST` below, exactly as designed — the
+ * v5 bump IS that guard's first real catch, not a hypothetical.
+ *
+ * **Bumped a third time, same day (v5 → v6)**: the tiered pipeline's Stage 0
+ * (`evidence-triage.mjs`) now attaches a VERIFIED `_primaryLine` to a tiered
+ * finding when the anchor's quote can be precisely windowed within its diff
+ * hunk (`findQuoteLineInHunk`) or located in HEAD content — real, diff-derived
+ * line numbers where before there were none. This is a change to what a
+ * comparison row means (`overlapCount`/`tieredUnlocalizedCount` will read
+ * meaningfully differently for real tiered findings) made ENTIRELY upstream of
+ * both files this digest was pinning — `findingLine`/`compareAuditRunResults`
+ * were not touched; they already preferred `_primaryLine`, nothing had ever
+ * set it. `SEMANTICS_REGIONS` extended to a third file
+ * (`EVIDENCE_TRIAGE_FILE`) to close that exact gap. See
+ * docs/plans/tiered-recall-audit-pipeline.md Addendum 2026-07-26 for the full
+ * `overlapCount` investigation these two bumps close out.
  */
-export const TIERED_SHADOW_CONTRACT_EPOCH = 'v4-collector-stamped-2026-07-26';
+export const TIERED_SHADOW_CONTRACT_EPOCH = 'v6-verified-line-2026-07-26';
+
+/**
+ * PINNED companion to the epoch above — closes the OTHER omission class the
+ * epoch alone cannot (found by the shadow final reviewer, 2026-07-26,
+ * accepted in adjudication: run daed294b-5856-48d2-8460-71ada0d550a4,
+ * fingerprint 74a77de1). The epoch's own collector→verifier binding test
+ * (below, "the collector stamps the same constant the verifier checks")
+ * guards against the stamping mechanism silently breaking. It does nothing
+ * for the omission that actually produced all five prior incidents: a fix
+ * changes what a comparison row MEANS, and nobody remembers to bump the epoch
+ * string, because nothing forces them to.
+ *
+ * This is that force. `tests/tiered-shadow-summary.test.mjs` recomputes
+ * `computeContractSemanticsDigest()` (`tiered-shadow-contract-digest.mjs`) —
+ * a comment/whitespace-insensitive hash of the exact functions and predicates
+ * that decide row eligibility and correlation — and fails, naming both this
+ * constant and the epoch, if the live value no longer matches.
+ *
+ * **When the test fails**: (1) bump `TIERED_SHADOW_CONTRACT_EPOCH` above to a
+ * new string (the window restarts — that is the point), (2) regenerate this
+ * value with `node scripts/lib/audit/tiered-shadow-contract-digest.mjs` and
+ * paste it here, in the SAME commit as the semantic change. Never update only
+ * this constant to silence the test — that repeats the exact omission this
+ * guard exists to catch.
+ */
+export const TIERED_SHADOW_CONTRACT_SEMANTICS_DIGEST = 'ac04b10917018c84';
 
 /** DB row (snake_case) → the exact shape `summarize()` expects (camelCase,
  * matching the local JSONL record shape) — one normalizer so both sources

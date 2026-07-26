@@ -50,14 +50,27 @@ Iterate the round's `--out` result findings and write entries from them.
 > raw JSON.) **Import paths in a file resolve against the FILE, not cwd** — hence
 > `../../scripts/shared.mjs` below; `node -e` resolved `./scripts/…` and copying
 > that verbatim into a file silently breaks every import.
+>
+> **Pass the result/ledger PATHS as arguments — never rebuild them from a bare
+> SID inside the script (2026-07-26 incident).** `` `/tmp/${SID}-r1-result.json` ``
+> reconstructed inside the `.mjs` file is resolved by NODE's own path logic,
+> which on Windows disagrees with what BASH resolved when `--out /tmp/$SID-r1-
+> result.json` was originally passed to the audit CLI (confirmed live: Bash's
+> `/tmp` lands in `AppData/Local/Temp`; Node's own resolution of the identical
+> string lands in `C:\tmp` — two different, unrelated directories). The script
+> then throws on a file that genuinely exists. This exact class — reconstructing
+> an ambiguous `/tmp/...` path instead of threading through the one BASH already
+> resolved — cost a consumer repo 30 days of silently-lost final-review
+> persistence (101 real runs, traced 2026-07-26); fixed there by passing paths
+> as `process.argv[N]`, never rebuilding them.
 
 ```bash
 # 1. Write the triage script. The quoted 'EOF' means the shell expands nothing.
 cat > .claude/tmp/ledger-r1.mjs <<'EOF'
 import { writeLedgerEntry, generateTopicId, populateFindingMetadata } from '../../scripts/shared.mjs';
 import fs from 'node:fs';
-const SID = process.argv[2];
-const r = JSON.parse(fs.readFileSync(`/tmp/${SID}-r1-result.json`, 'utf8'));
+const [resultPath, ledgerPath] = process.argv.slice(2);
+const r = JSON.parse(fs.readFileSync(resultPath, 'utf8'));
 // Your triage decisions, keyed by the round's finding ids. Apostrophes are safe
 // here — this is a file, not a shell string.
 const triage = {
@@ -76,7 +89,7 @@ for (const f of r.findings) {
   // get it right: openai-audit.mjs:925/943 + plan-audit-cloud.mjs:96 pass the
   // literal 'plan'; legacy-production-audit.mjs:2369 passes `f._pass`.
   populateFindingMetadata(f, f._pass || 'plan');  // idempotent; ensures _hash/_primaryFile
-  writeLedgerEntry(`/tmp/${SID}-ledger.json`, {
+  writeLedgerEntry(ledgerPath, {
     topicId: generateTopicId(f),                // from the REAL finding — never a stand-in
     latestFindingId: f.id,                      // second join key for outcome labeling
     semanticHash: f._hash,
@@ -97,8 +110,10 @@ for (const f of r.findings) {
 console.log('ledger entries written');
 EOF
 
-# 2. Run it — $SID is an ARGUMENT, never interpolated into the source.
-node .claude/tmp/ledger-r1.mjs "$SID"
+# 2. Run it — paths are ARGUMENTS resolved by THIS shell, never rebuilt inside
+# the script from a bare SID (that would let Node re-resolve /tmp/ itself and
+# disagree with what this line just resolved — the 2026-07-26 incident above).
+node .claude/tmp/ledger-r1.mjs "/tmp/$SID-r1-result.json" "/tmp/$SID-ledger.json"
 ```
 
 The split to remember: **identity fields come from the finding verbatim;

@@ -211,6 +211,68 @@ function quoteAppearsOnSide(section, quote, side) {
 }
 
 /**
+ * The REAL, diff-derived line range where `quote` appears within a SINGLE
+ * hunk's wanted-side content — never the model's self-reported
+ * `startLine`/`endLine` (2026-07-26; docs/plans/tiered-recall-audit-pipeline.md
+ * "Addendum 2026-07-26 (continued)"). `resolveAnchorLocation`'s `in_hunk`
+ * status has only ever confirmed the quote's TEXT is present somewhere in the
+ * hunk — it never checked the model's claimed line, and the caller
+ * (`runStage0EvidenceTriage`) never surfaced ANY location for this, the most
+ * common success path, onto the final finding. A census of this repo's own
+ * real audit findings found `_primaryLine` unset on effectively every one
+ * (both legacy AND tiered) — this closes that gap for the tiered side, where
+ * a VERIFIED line is actually derivable, rather than trusting a number a
+ * model could hallucinate.
+ *
+ * Same fixed-window/normalize/join technique as `findAllLineRangesInContent`
+ * below (the quote's own line count as window size — a whole-blob normalize
+ * would make the matched character offset impossible to map back to a line
+ * number), scoped to one hunk's WANTED-SIDE lines with their REAL file line
+ * numbers attached via the hunk's own parsed header (`baseStart`/`headStart`
+ * — never a naive index into `hunk.lines`, which mixes both sides and context
+ * lines and would misnumber the moment either side's line count differs).
+ *
+ * Deliberately NOT a drop-in replacement for `quoteAppearsOnSide` (whose
+ * looser whole-hunk-join substring match is unchanged, still used by
+ * `verifyAnchor` and as this function's own fallback below) — a fixed-size
+ * window is a STRICTER match than an arbitrary-length join, so a real quote
+ * this function can't precisely window-match must still be reported as
+ * verified-but-unlocatable, never silently un-verified.
+ *
+ * @param {{header: object|null, lines: string[]}} hunk
+ * @param {string} quote
+ * @param {'head'|'base'} side
+ * @returns {{startLine:number, endLine:number} | null} 1-indexed, inclusive.
+ *   The FIRST window match if the quote occurs more than once in this hunk —
+ *   the same occurrence-identity limitation `quoteAppearsOnSide` already
+ *   accepts (it doesn't disambiguate multiple occurrences within one hunk
+ *   either); this function does not need to be MORE precise than the
+ *   verification it's attached to.
+ */
+export function findQuoteLineInHunk(hunk, quote, side) {
+  if (!hunk.header) return null;
+  const wantedPrefixes = side === 'head' ? ['+', ' '] : ['-', ' '];
+  let lineNum = side === 'head' ? hunk.header.headStart : hunk.header.baseStart;
+  const entries = [];
+  for (const rawLine of hunk.lines) {
+    const prefix = rawLine[0];
+    if (!wantedPrefixes.includes(prefix)) continue;
+    entries.push({ lineNum, text: normalizeWhitespace(rawLine.slice(1)) });
+    lineNum++;
+  }
+  const normQuote = normalizeWhitespace(quote);
+  if (!normQuote) return null;
+  const quoteLineCount = String(quote).split('\n').length;
+  for (let start = 0; start + quoteLineCount <= entries.length; start++) {
+    const windowLines = entries.slice(start, start + quoteLineCount).map((e) => e.text);
+    if (normalizeWhitespace(windowLines.join(' ')).includes(normQuote)) {
+      return { startLine: entries[start].lineNum, endLine: entries[start + quoteLineCount - 1].lineNum };
+    }
+  }
+  return null;
+}
+
+/**
  * Line-indexed sliding-window search for `quote` within `content` — never
  * normalizes the WHOLE blob first (a whole-blob normalize-then-search makes
  * the matched character offset impossible to map back to a line number
@@ -347,6 +409,7 @@ export function mapHeadRangeToBase(headRange, hunks) {
  *   content, for the HEAD-fallback search on a hunk miss
  * @returns {{status: 'in_hunk'|'outside_hunk_in_head'|'unverifiable'|'unsupported'|'contradicted'|'malformed',
  *   reasonDetail?: string,
+ *   verifiedLine?: {startLine:number, endLine:number} | null,
  *   headLineRange?: {startLine:number, endLine:number},
  *   hunks?: Array<{header: object|null, lines: string[]}>}}
  */
@@ -376,7 +439,20 @@ export function resolveAnchorLocation(anchor, diffText, headContent) {
   }
 
   if (quoteAppearsOnSide(section.section, anchor.quote, anchor.side)) {
-    return { status: 'in_hunk' };
+    // Re-derive the SAME verified match's real line, hunk by hunk, in the
+    // SAME iteration order quoteAppearsOnSide used — never a second,
+    // independently-ordered scan that could land on a different hunk than
+    // the one that just verified. A verified-but-unlocatable quote (the
+    // stricter window match fails where the looser join succeeded — e.g. a
+    // quote's normalized text spans a window boundary differently) still
+    // returns 'in_hunk': this line-finding step only ADDS information, it
+    // must never revoke a verification that already succeeded.
+    let verifiedLine = null;
+    for (const hunk of splitIntoHunks(section.section)) {
+      verifiedLine = findQuoteLineInHunk(hunk, anchor.quote, anchor.side);
+      if (verifiedLine) break;
+    }
+    return { status: 'in_hunk', verifiedLine };
   }
 
   // HEAD-fallback only makes sense for head-side anchors — discovery only
@@ -617,7 +693,7 @@ export function runStage0EvidenceTriage(envelopes, ctx, adapters = {}) {
     const anchorField = evidenceType === 'omission' ? 'triggerAnchor' : 'anchor';
     const reasonPrefix = evidenceType === 'omission' ? 'omission_trigger' : 'commission_anchor';
 
-    const { envelope, status, reasonDetail, headLineRange, hunks } = resolveWithFallback(
+    const { envelope, status, reasonDetail, headLineRange, hunks, verifiedLine } = resolveWithFallback(
       rawEnvelope, anchorField, ctx.diffText, adapters.headContentAdapter,
     );
 
@@ -657,6 +733,15 @@ export function runStage0EvidenceTriage(envelopes, ctx, adapters = {}) {
       // in_hunk (implicit change_related) and unverifiable (safe default) —
       // neither runs Gate B, per the result-model table above.
       envelope.scopeBucket = 'change_related';
+      // A VERIFIED line (2026-07-26) — only when status is genuinely 'in_hunk'
+      // AND findQuoteLineInHunk could precisely window-match it; `unverifiable`
+      // never reaches here with a verifiedLine (resolveAnchorLocation only sets
+      // it on the 'in_hunk' return), and a verified-but-unlocatable in_hunk
+      // candidate correctly leaves `_primaryLine` unset rather than guessing.
+      // Sets the SAME field name `findingLine()` (tiered-shadow-compare.mjs)
+      // already checks first — no reader-side change needed for this to reach
+      // the final comparison; see that function's own doc comment.
+      if (verifiedLine) envelope.canonicalFinding._primaryLine = verifiedLine.startLine;
       verified.push(envelope);
       continue;
     }
@@ -664,6 +749,16 @@ export function runStage0EvidenceTriage(envelopes, ctx, adapters = {}) {
     // Gate B — only for outside_hunk_in_head candidates.
     const anchorObj = envelope.canonicalFinding[anchorField];
     const filePath = anchorObj.side === 'base' ? anchorObj.oldFile : anchorObj.newFile;
+    // A VERIFIED line (2026-07-26), unconditional here — `outside_hunk_in_head`
+    // always carries a real `headLineRange` (resolveAnchorLocation only returns
+    // this status when the HEAD-fallback search found EXACTLY one match), so
+    // every candidate reaching Gate B has one regardless of which scopeBucket
+    // it's classified into below. Deliberately `headLineRange`, NOT the
+    // base-mapped range Gate B computes next: this side ONLY ever fires for
+    // head-side anchors (see resolveAnchorLocation's own comment), and the
+    // location worth reporting is where the quote lives in the file a reader
+    // has open NOW — the base-mapped range is an internal blame/impact detail.
+    envelope.canonicalFinding._primaryLine = headLineRange.startLine;
     const mappedBaseRange = mapHeadRangeToBase(headLineRange, hunks);
 
     if (mappedBaseRange === null) {

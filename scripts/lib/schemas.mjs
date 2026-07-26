@@ -32,6 +32,37 @@ export const ClassificationSchema = z.object({
 
 // ── Finding Schema ───────────────────────────────────────────────────────────
 
+/**
+ * DELIBERATELY NO `line`/`startLine`/`endLine` FIELD HERE (decided 2026-07-26,
+ * investigating docs/plans/tiered-recall-audit-pipeline.md "Addendum 2026-07-26
+ * (continued) — the overlapCount question"). `section` is free text with no
+ * required location format — confirmed the dominant real shape: a census of
+ * this repo's own findings found 0/10 matching `file:LINE`, and every one of 10
+ * historical `tiered_shadow_observations` rows read 100% unlocalized on the
+ * LEGACY side too (this schema is what the legacy 5-pass GPT audit, Gemini
+ * final review, and the model-A/B/C shadow all emit against).
+ *
+ * A model-self-reported line was considered and REJECTED for this shared
+ * schema: unlike the tiered pipeline (which has a diff/hunk-verification
+ * apparatus — `evidence-triage.mjs`'s `findQuoteLineInHunk`/
+ * `resolveAnchorLocation` — and now attaches a genuinely VERIFIED `_primaryLine`
+ * to tiered findings, checked against the real diff, never trusted blind), the
+ * legacy 5-pass audit has no equivalent substrate to check a claimed line
+ * against. Adding an unverifiable `line` field here would recreate the exact
+ * problem this investigation started from — a number a consumer would have to
+ * trust despite no way to tell a correct claim from a hallucinated one (proven
+ * concretely: this session's own `HEAD_ANCHOR` test fixture self-reports line
+ * 12 for a quote whose REAL, verified line is 11 — a real, not hypothetical,
+ * one-line-off model claim that nothing would have caught before the tiered
+ * fix, and that adding an unverified field HERE would not catch either).
+ *
+ * The legacy path therefore stays intentionally, permanently unlocalized-by-
+ * design — not an oversight, a `defer` with the load-bearing reason named:
+ * verified-but-narrow beats broad-but-untrustworthy for a field a production-
+ * flip metric (`overlapCount`) reads. Revisit only if a verification substrate
+ * for the legacy path is ever built (there is none today — it has no
+ * diff/hunk-anchor apparatus at all, unlike the tiered pipeline).
+ */
 const FindingBase = {
   id: z.string().max(10).describe('Finding ID, e.g. H1, M3, L2, G1'),
   severity: z.enum(['HIGH', 'MEDIUM', 'LOW']),

@@ -188,17 +188,52 @@ function findingFile(f) {
 }
 
 /**
- * Resolve the line a finding cites, from `_primaryLine` or the `section`'s
+ * Resolve the line a finding cites, from `_primaryLine`, the `section`'s
  * `file:line` prefix (the same `file:line (fn)` convention `findingFile`
- * strips the file from). Returns `null` when no line is resolvable — never a
- * fabricated 0 (a shape mismatch must not masquerade as line 0).
+ * strips the file from), or a "lines N-M" / "line N" prose fallback. Returns
+ * `null` when no line is resolvable — never a fabricated 0 (a shape mismatch
+ * must not masquerade as line 0).
+ *
+ * **The prose fallback is a real, quantified, but PARTIAL fix, not a full one
+ * (2026-07-26, the shadow reviewer's `overlapCount` finding — accepted,
+ * run daed294b-5856-48d2-8460-71ada0d550a4, fingerprint e7f64458).** A census
+ * of this repo's own real finding output — legacy AND tiered, the exact
+ * `AuditRunResult.findings` this function reads — found **0 of 10** real
+ * `section` values matching the `:LINE` colon form at all, matching the
+ * `tiered_shadow_observations` telemetry exactly: `legacyUnlocalizedCount ===
+ * legacyFindingCount` and `tieredUnlocalizedCount === tieredFindingCount` on
+ * every one of 10 historical rows, pre- AND post- the 2026-07-22 fix. `_primaryLine`
+ * is set NOWHERE in this codebase (grepped — the only reference to it anywhere
+ * is this function). `overlapCount` was therefore never actually measuring
+ * cross-pipeline agreement in production; it was reading a structural zero,
+ * because `FindingBase.section`'s schema description ("which plan/code section
+ * or file this relates to") never promised a machine-parseable location and
+ * real producers overwhelmingly write a bare filename or free prose instead.
+ *
+ * This is the ONE occurrence of a real, recoverable line-prose convention found
+ * in that census ("tests/foo.mjs, lines 1-10") — 1 of 10, not the dominant
+ * shape. Recovering it is a genuine, in-scope, comment/whitespace-insensitive-
+ * pinned improvement to THIS module; it is NOT a fix for the underlying gap
+ * (producers not emitting a resolvable location at all covers the other 9),
+ * which is out of this module's scope — see
+ * docs/plans/tiered-recall-audit-pipeline.md Addendum 2026-07-26 for the full
+ * verdict and the deferred follow-up.
+ *
+ * Deliberately takes the FIRST number in a range ("lines 1-10" -> 1): a
+ * range's start is the best single-number approximation available, and
+ * `OVERLAP_LINE_WINDOW`'s 5-line tolerance already absorbs "the issue is
+ * somewhere around here" imprecision — a range's exact width is not worth a
+ * more elaborate parse.
  * @param {object} f
  * @returns {number|null}
  */
 function findingLine(f) {
   if (Number.isInteger(f?._primaryLine)) return f._primaryLine;
-  const m = (f?.section || '').match(/:(\d+)\b/);
-  return m ? Number.parseInt(m[1], 10) : null;
+  const section = f?.section || '';
+  const colon = section.match(/:(\d+)\b/);
+  if (colon) return Number.parseInt(colon[1], 10);
+  const prose = section.match(/\blines?\s+(\d+)\b/i);
+  return prose ? Number.parseInt(prose[1], 10) : null;
 }
 
 /**

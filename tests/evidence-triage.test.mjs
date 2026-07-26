@@ -12,6 +12,7 @@ import {
   verifyAnchor, tagPreExisting, runStage0EvidenceTriage,
   resolveAnchorLocation, mapHeadLineToBase, mapHeadRangeToBase,
   resolveScopeBucketForFinding, ANCHOR_FAILURE_STATUSES,
+  findQuoteLineInHunk,
 } from '../scripts/lib/audit/evidence-triage.mjs';
 import { createEnvelope } from '../scripts/lib/audit/candidate-envelope.mjs';
 
@@ -396,6 +397,69 @@ describe('runStage0EvidenceTriage — evidenceType branch (Gemini gate round-1 f
   });
 });
 
+// ── runStage0EvidenceTriage sets a VERIFIED _primaryLine (2026-07-26) ───────
+// The end-to-end proof: `_primaryLine` reaching `envelope.canonicalFinding` is
+// what makes it survive `flattenEnvelopeToFinding`'s later `{...canonicalFinding}`
+// spread (candidate-envelope.mjs) into the finding tiered-shadow-compare.mjs's
+// `findingLine()` actually reads — and that reader needs ZERO changes, because
+// it already checks `_primaryLine` first (its own doc comment always has).
+// Before this fix: a census of this repo's OWN real tiered_shadow_observations
+// found `tieredUnlocalizedCount === tieredFindingCount` on every one of 10
+// historical rows — 100% unlocalized, always. These tests are the "after".
+describe('runStage0EvidenceTriage — sets a VERIFIED _primaryLine, not the model\'s claim (2026-07-26)', () => {
+  function makeEnvelope(finding, sourceModel = 'gpt') {
+    return createEnvelope({ ...finding, _fingerprint: 'fp' }, { sourceModel, pass: 'backend' });
+  }
+
+  it('in_hunk: the envelope carries the REAL line (11), not HEAD_ANCHOR\'s own wrong self-report (12)', () => {
+    const envelope = makeEnvelope({ evidenceType: 'commission', anchor: HEAD_ANCHOR });
+    const { verified } = runStage0EvidenceTriage([envelope], { diffText: DIFF }, {});
+    assert.equal(verified.length, 1);
+    assert.equal(verified[0].canonicalFinding._primaryLine, 11);
+  });
+
+  it('outside_hunk_in_head: the envelope carries the real HEAD-file line via Gate B', () => {
+    const anchor = { ...HEAD_ANCHOR, quote: 'return 42;', startLine: 999, endLine: 999 };
+    const envelope = makeEnvelope({ evidenceType: 'commission', anchor });
+    const { verified, preExistingIndependent } = runStage0EvidenceTriage(
+      [envelope], { diffText: DIFF },
+      { headContentAdapter: () => FOO_HEAD_CONTENT },
+    );
+    const result = [...verified, ...preExistingIndependent][0];
+    assert.ok(result, 'precondition: the candidate reached one of the two success buckets');
+    assert.equal(result.canonicalFinding._primaryLine, 2, '"return 42;" is the 2nd line of FOO_HEAD_CONTENT');
+  });
+
+  it('unverifiable candidates never get a fabricated _primaryLine', () => {
+    const envelope = makeEnvelope({
+      evidenceType: 'commission',
+      anchor: { ...HEAD_ANCHOR, diffPathId: 'src/nope.js', oldFile: 'src/nope.js', newFile: 'src/nope.js' },
+    });
+    const { verified } = runStage0EvidenceTriage([envelope], { diffText: DIFF }, {});
+    assert.equal(verified.length, 1);
+    assert.equal(verified[0].stageDecisions[0].outcome, 'unverifiable');
+    assert.equal(verified[0].canonicalFinding._primaryLine, undefined, 'no verified evidence exists — never guess a line');
+  });
+
+  it('a promoted alternative still gets its own real line, not the original failed anchor\'s', () => {
+    // The CANONICAL anchor is fabricated; the alternative (a different quote,
+    // same file) is real and verified. promoteAlternative swaps canonicalFinding
+    // to a NEW object — this proves _primaryLine-setting still reaches it
+    // (mutating through the fresh reference resolveWithFallback returns).
+    const failedAnchor = { ...HEAD_ANCHOR, quote: 'this text never appears' };
+    const goodAlternative = { ...HEAD_ANCHOR, quote: 'const a = 1;' }; // real HEAD line 10
+    const envelope = makeEnvelope({ evidenceType: 'commission', anchor: failedAnchor });
+    envelope.evidenceAlternatives = [{
+      sourceModel: 'gpt2', evidenceType: 'commission', anchor: goodAlternative,
+      triggerAnchor: null, causalChain: null, rawDetail: 'the alt', verificationFailed: false,
+    }];
+    const { verified, rejected } = runStage0EvidenceTriage([envelope], { diffText: DIFF }, {});
+    assert.equal(rejected.length, 0, 'precondition: the alternative rescues this candidate');
+    assert.equal(verified.length, 1);
+    assert.equal(verified[0].canonicalFinding._primaryLine, 10);
+  });
+});
+
 // Full current content of src/foo.js — note "return 42;" inside unrelated()
 // is genuinely pre-existing content, outside any diff hunk entirely, unlike
 // anything DIFF's hunk for src/foo.js shows.
@@ -479,6 +543,102 @@ describe('resolveAnchorLocation — Gate A (docs/plans/stage0-evidence-relevance
     const anchor = { ...HEAD_ANCHOR, quote: 'return 42;', startLine: 2, endLine: 2 };
     const r = resolveAnchorLocation(anchor, DIFF, FOO_HEAD_CONTENT);
     assert.equal(r.status, 'outside_hunk_in_head');
+  });
+});
+
+// ── findQuoteLineInHunk — the REAL, diff-derived line (2026-07-26) ──────────
+// docs/plans/tiered-recall-audit-pipeline.md "Addendum 2026-07-26 (continued)":
+// resolveAnchorLocation's 'in_hunk' status has only ever confirmed the quote's
+// TEXT is present in the hunk — it never checked the model's claimed line, and
+// nothing surfaced ANY location for this, the most common success path, onto
+// the final finding. A census of this repo's own real audit findings found
+// `_primaryLine` unset on effectively every one. This closes that gap for the
+// tiered side, where a VERIFIED line is actually derivable.
+describe('findQuoteLineInHunk — the real line, never the model\'s self-reported claim', () => {
+  // Matches DIFF's first hunk exactly: `@@ -10,3 +10,4 @@`, head side.
+  //   head 10: ' const a = 1;'
+  //   head 11: '+  await db.insert(a);'
+  //   head 12: '+  return a;'
+  //   head 13: ' }'
+  const FOO_HUNK = {
+    header: { baseStart: 10, baseCount: 3, headStart: 10, headCount: 4 },
+    lines: [' const a = 1;', '-  return a;', '+  await db.insert(a);', '+  return a;', ' }'],
+  };
+
+  it('finds the REAL head-side line — proves the fix, not just the mechanism: HEAD_ANCHOR self-reports 12, reality is 11', () => {
+    // HEAD_ANCHOR (this file's own shared fixture) claims startLine/endLine: 12
+    // for this exact quote. That claim was NEVER checked before this fix — the
+    // model's self-report is simply wrong, and nothing would have caught it.
+    assert.equal(HEAD_ANCHOR.startLine, 12, 'precondition: the fixture\'s own self-reported claim is 12');
+    const r = findQuoteLineInHunk(FOO_HUNK, 'await db.insert(a);', 'head');
+    assert.deepEqual(r, { startLine: 11, endLine: 11 }, 'the VERIFIED line is 11, not the model\'s claimed 12');
+  });
+
+  it('finds the real base-side line for a removed line, using baseStart (not headStart)', () => {
+    // 'return a;' is REMOVED (base side only) — must resolve via baseStart (10),
+    // landing on base line 11, an entirely different counter than the head side.
+    const r = findQuoteLineInHunk(FOO_HUNK, 'return a;', 'base');
+    assert.deepEqual(r, { startLine: 11, endLine: 11 });
+  });
+
+  it('resolves a multi-line quote to its full real range, not just its start', () => {
+    const r = findQuoteLineInHunk(FOO_HUNK, 'await db.insert(a);\n  return a;', 'head');
+    assert.deepEqual(r, { startLine: 11, endLine: 12 });
+  });
+
+  it('returns null when the quote is not on the requested side (base has no "await db.insert")', () => {
+    const r = findQuoteLineInHunk(FOO_HUNK, 'await db.insert(a);', 'base');
+    assert.equal(r, null);
+  });
+
+  it('returns null when the hunk header failed to parse — never guesses a line from an unparseable anchor', () => {
+    const r = findQuoteLineInHunk({ header: null, lines: [' const a = 1;'] }, 'const a = 1;', 'head');
+    assert.equal(r, null);
+  });
+
+  it('returns null for a quote genuinely absent from the hunk', () => {
+    const r = findQuoteLineInHunk(FOO_HUNK, 'this text is nowhere in the hunk', 'head');
+    assert.equal(r, null);
+  });
+
+  it('a context line ( ) counts on BOTH sides, at each side\'s own independent counter', () => {
+    const headMatch = findQuoteLineInHunk(FOO_HUNK, 'const a = 1;', 'head');
+    const baseMatch = findQuoteLineInHunk(FOO_HUNK, 'const a = 1;', 'base');
+    assert.deepEqual(headMatch, { startLine: 10, endLine: 10 });
+    assert.deepEqual(baseMatch, { startLine: 10, endLine: 10 }, 'same text, same line number on both sides — it is unchanged context');
+  });
+
+  it('a blank context line does not corrupt the join (mirrors quoteAppearsOnSide\'s own G1 fix)', () => {
+    const hunkWithBlank = {
+      header: { baseStart: 1, baseCount: 3, headStart: 1, headCount: 3 },
+      lines: [' function alpha() {', ' ', ' function beta() {'],
+    };
+    // 'alpha() {' + blank + 'function beta' must still match as one span —
+    // a double-space from the blank line's naive join must not break it.
+    const r = findQuoteLineInHunk(hunkWithBlank, 'alpha() {\n\nfunction beta', 'head');
+    assert.ok(r, 'a quote spanning a blank context line must still resolve');
+    assert.deepEqual(r, { startLine: 1, endLine: 3 });
+  });
+});
+
+describe('resolveAnchorLocation — surfaces the REAL line via verifiedLine (2026-07-26)', () => {
+  it('an in_hunk verification now carries the REAL line, correcting the fixture\'s own wrong self-report', () => {
+    const r = resolveAnchorLocation(HEAD_ANCHOR, DIFF, FOO_HEAD_CONTENT);
+    assert.equal(r.status, 'in_hunk');
+    assert.deepEqual(r.verifiedLine, { startLine: 11, endLine: 11 });
+  });
+
+  it('a multi-hunk file resolves against the SAME hunk quoteAppearsOnSide verified, never a different one', () => {
+    // two-hunks.js has hunk1 @@ -5,2 +5,2 @@ and hunk2 @@ -40,2 +40,2 @@; a quote
+    // unique to hunk2 must resolve to hunk2's line numbers, not hunk1's.
+    const anchor = {
+      diffPathId: 'src/two-hunks.js', oldFile: 'src/two-hunks.js', newFile: 'src/two-hunks.js',
+      fileStatus: 'modified', side: 'head', startLine: 999, endLine: 999,
+      quote: 'return newBeta;', headSha: 'abc123',
+    };
+    const r = resolveAnchorLocation(anchor, DIFF, null);
+    assert.equal(r.status, 'in_hunk');
+    assert.deepEqual(r.verifiedLine, { startLine: 40, endLine: 40 }, 'hunk2 starts at head line 40; its one head-side line is the changed line');
   });
 });
 

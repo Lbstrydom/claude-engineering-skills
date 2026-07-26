@@ -1928,6 +1928,37 @@ function runFixtureReview({ transcriptFile, outFile, jsonMode }) {
   return finishAndExit(0);
 }
 
+/**
+ * A cloud-enabled `review` invocation with no `--run-id` is a SILENT total
+ * loss of this review's persistence (found live 2026-07-26, chasing a
+ * consumer repo whose `audit_runs` rows all showed real, non-zero
+ * rounds/findings — the audit itself genuinely ran — but
+ * `gemini_verdict`/`final_review_model` were NULL on every one of 101 runs
+ * across 30 days). Root cause: `runId` simply defaults to null when
+ * `--run-id` is omitted (a manual, easy-to-forget CLI flag — the caller must
+ * extract `_cloudRunId` from the audit `--out` JSON and pass it through), and
+ * `runShadowAndPersist`'s cloud-write guard (`if (!runId) return`) then
+ * no-ops with ZERO signal that anything was skipped. The review still runs,
+ * still prints a real verdict — it just never reaches the store, silently,
+ * every time, indistinguishable from a deliberate "cloud is off" run.
+ *
+ * Extracted as a pure predicate (Tier 1 — a deterministic seam per this
+ * repo's testing doctrine) so the condition is unit-testable without mocking
+ * the whole CLI/cloud-detection flow.
+ *
+ * @param {{mode: string, runId: string|null, cloudEnabled: boolean}} args
+ * @returns {boolean}
+ */
+export function shouldWarnMissingRunId({ mode, runId, cloudEnabled }) {
+  return mode === 'review' && !runId && cloudEnabled;
+}
+
+export const MISSING_RUN_ID_WARNING =
+  '  [gemini-review] WARNING: cloud is enabled but no --run-id was supplied. '
+  + 'This review\'s verdict and findings will NOT be persisted to audit_runs — '
+  + 'they exist only in this process\'s stdout/--out file. If this is unintentional, '
+  + 're-invoke with --run-id <audit_runs.id> (read _cloudRunId from the audit --out JSON).\n';
+
 async function main() {
   assertRepoRoot(import.meta.url);
   await refreshCatalogAndWarn();
@@ -1938,6 +1969,23 @@ async function main() {
   if (mode === 'set-provider') return runSetProvider(args[1]);
 
   const { planFile, transcriptFile, jsonMode, outFile, providerOverride, auditMode, runId, role } = parseReviewArgs(args);
+  // A cloud-enabled invocation with no --run-id is a SILENT total loss of this
+  // review's persistence (found live 2026-07-26, chasing a consumer repo whose
+  // audit_runs rows all showed real, non-zero rounds/findings — the audit
+  // itself genuinely ran — but `gemini_verdict`/`final_review_model` were NULL
+  // on every one of 101 runs across 30 days). Root cause: `runId` simply
+  // defaults to null when `--run-id` is omitted (a manual, easy-to-forget CLI
+  // flag — the caller must extract `_cloudRunId` from the audit --out JSON and
+  // pass it through), and `runShadowAndPersist`'s cloud-write guard
+  // (`if (!runId) return`) then no-ops with ZERO signal that anything was
+  // skipped. The review still runs, still prints a real verdict — it just
+  // never reaches the store, silently, every time, indistinguishable from a
+  // deliberate "cloud is off" run. Warn loudly instead of vanishing quietly;
+  // this is advisory only (never blocks a review) — the same "audit your
+  // success paths" doctrine as everything else this session hardened.
+  if (shouldWarnMissingRunId({ mode, runId, cloudEnabled: await isCloudEnabled() })) {
+    console.error(MISSING_RUN_ID_WARNING);
+  }
   if (mode !== 'review' || !planFile || !transcriptFile) {
     console.error('Usage: node scripts/gemini-review.mjs review <plan-file> <transcript-file> [--json] [--out <file>] [--provider gemini|azure-claude|anthropic|openai-compatible|openrouter] [--mode plan|code] [--role adjudicator-only] [--run-id <audit_runs.id>]');
     console.error('       node scripts/gemini-review.mjs set-provider <gemini|azure-claude|anthropic|openai-compatible|openrouter|default>');

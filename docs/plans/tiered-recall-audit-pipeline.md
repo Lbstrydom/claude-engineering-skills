@@ -976,12 +976,218 @@ Guarded by `tests/tiered-shadow-summary.test.mjs` ("measurement-contract epoch")
 including a collector→verifier binding test so the writer cannot stop stamping
 silently.
 
-**Still open (unchanged by this fix)**: `overlapCount` read 0 on all 8 post-fix
-rows. That may be honest (the two pipelines genuinely flagged different
-locations) or a residual defect in the 07-22 correlation fix, which was never
-live-verified per [pre-ship-empirical-verify.md](../runbooks/pre-ship-empirical-verify.md).
-Spot-check one diff where both pipelines are known to flag the same bug before
-reading a future 0% overlap as a real disagreement.
+**The epoch guard above catches the collector silently stopping stamping. It
+does NOT catch the OTHER omission that produced all five prior incidents: a fix
+changes what a row means and the epoch string simply isn't bumped, because
+nothing forces anyone to notice.** Closed the same day, accepted in
+adjudication from the shadow final reviewer's first real run (run
+`daed294b-5856-48d2-8460-71ada0d550a4`, fingerprint `74a77de1`): a pinned
+**semantics digest**, `TIERED_SHADOW_CONTRACT_SEMANTICS_DIGEST` (next to the
+epoch constant), computed by
+[`tiered-shadow-contract-digest.mjs`](../../scripts/lib/audit/tiered-shadow-contract-digest.mjs)
+from an AST-based (not regex-based — this source contains a regex literal a
+naive comment-stripper could misparse), comment/whitespace-insensitive hash of
+the six named functions/predicates that decide correlation and eligibility
+(`OVERLAP_LINE_WINDOW`, `findingFile`, `findingLine`, `normSeverityForOverlap`,
+`findingsCorrelate`, `compareAuditRunResults` in `tiered-shadow-compare.mjs`;
+`hasComparablePopulation`, `isContractFailure`, `isCurrentEpoch`, `compared` in
+`tiered-shadow-summary.mjs`). Changing any of them without also bumping the
+digest fails a test naming both. Mutation-tested both directions (a real
+one-character semantic change moves the digest; a comment-only change does
+not; CRLF canonicalises identically to committed LF) — and then genuinely
+caught its first real change same-day: the `findingLine` fix below.
+
+#### Addendum 2026-07-26 (continued) — the `overlapCount` question, closed out
+
+The paragraph above asked whether `overlapCount:0` on all 8 post-fix rows was
+honest disagreement or a residual matcher defect. **Investigated the same day,
+before the window could fill under an unconfirmed correlation function** (the
+plan's own doctrine: doing this before the window fills costs one session;
+after, it costs 10-15 wasted runs). Verdict, evidenced three independent ways:
+
+**1. The matching ALGORITHM (`findingsCorrelate`) is correct** — already proven
+by the existing synthetic test suite (`tests/tiered-shadow-compare.test.mjs`
+"cross-pipeline correlation by location, not prose": same file+line+severity
+overlaps regardless of prose, different severity doesn't, the line window is
+respected, matching is one-to-one). Nothing in this investigation found a bug
+in the comparison logic itself.
+
+**2. The INPUT DATA is the problem — quantified, not asserted.** `_primaryLine`
+is set **nowhere in this codebase** (grepped: the only reference anywhere is
+inside `findingLine` itself, which reads it). A census of this repo's own real
+`AuditRunResult.findings` — the exact objects `compareAuditRunResults` consumes,
+from two real `/audit-code` rounds this same session — found **0 of 10** real
+`section` values matching the `:LINE` colon form `findingLine` checked. This
+matches the DB telemetry exactly: `legacyUnlocalizedCount === legacyFindingCount`
+and `tieredUnlocalizedCount === tieredFindingCount` on **every one of 10**
+historical `tiered_shadow_observations` rows, pre- **and** post- the 2026-07-22
+fix. `overlapCount` was therefore never actually measuring cross-pipeline
+agreement in production — it was reading a structural zero, because
+`FindingBase.section`'s own schema description ("which plan/code section or
+file this relates to") never promised a machine-parseable location, and real
+producers overwhelmingly write a bare filename or free prose instead. This is
+the same false-green *class* the epoch gate exists to end, one layer down: a
+metric that reads as "measured and zero" when it was actually "never
+measurable at all."
+
+**3. One real recoverable case found, fixed, and epoch-bumped.** Of the 10
+real findings censused, exactly 1 used a recognisable prose convention:
+`"tests/foo.test.mjs, lines 1-10"`. `findingLine` now falls back to a
+`lines? N` pattern (colon form still takes precedence when both are present),
+taking the range's start as the anchor line — `OVERLAP_LINE_WINDOW`'s existing
+5-line tolerance already absorbs a range's imprecision. This is a **genuine but
+partial** fix: it recovers roughly 1-in-10 real cases, not the dominant shape.
+Guarded in `tests/tiered-shadow-compare.test.mjs` ("lines N-M prose fallback"),
+including a test that a bare filename with no line info anywhere STILL
+correctly reads as unlocalized (the fallback recovers a real convention, it
+does not fabricate a line from nothing) and a regression guard that the
+existing colon form is unaffected.
+
+Because `findingLine` is one of the six named regions
+`TIERED_SHADOW_CONTRACT_SEMANTICS_DIGEST` pins (Task 1's own guard — see
+below), this change was caught automatically: the digest test failed the
+moment the parsing changed, naming exactly what to do. `TIERED_SHADOW_CONTRACT_EPOCH`
+bumped v4 → `v5-line-prose-fallback-2026-07-26`; the window (already at 0/10-15
+from the v4 bump above) stays honestly at 0/10-15 — no rows existed under v5 to
+lose.
+
+**What's deliberately NOT fixed here, and why**: getting either pipeline's
+finding producers to *always* emit a resolvable location (a first-class,
+schema-validated line field, checked against the diff the way the tiered
+pipeline's evidence-anchor apparatus already checks quote/file/status) would
+fix the remaining ~9-in-10 case. That is a change to `FindingBase` — the shared
+schema every audit pass across the WHOLE pipeline uses, GPT and tiered alike —
+not a change scoped to `tiered-shadow-compare.mjs`. Doing it here would be the
+over-engineering half of this repo's own design-rightsizing rule: a
+cross-cutting schema/prompt change smuggled into a narrow correlation-module
+fix. Tracked as a separate follow-up (spawned as a task the same session).
+
+**Reading a future low `overlapCount` correctly**: given the above, do NOT read
+a near-0% overlap in the next collected window as evidence the tiered pipeline
+disagrees with legacy — read it as the EXPECTED consequence of the current
+producer contract until the deeper fix lands. `legacyUnlocalizedCount`/
+`tieredUnlocalizedCount` are the fields that say whether a low overlap is
+"disagreement" or "couldn't tell" — check them before drawing either
+conclusion, exactly as the fields' own doc comments already said, now with real
+numbers behind the warning.
+
+---
+
+#### Addendum 2026-07-26 (continued, part 2) — the deeper fix, done for the side that can be verified
+
+The paragraph above deferred "give every finding a real, schema-validated
+location" as a separate, cross-cutting task. Investigated the same day. Verdict:
+**built for the tiered pipeline, deliberately declined for the legacy 5-pass
+audit** — not half-finished, a reasoned asymmetry.
+
+**Blast-radius check first** (`FindingBase`/`ProducerFindingSchema` usage):
+`gemini-review.mjs`, `audit-shadow.mjs`, `legacy-production-audit.mjs`,
+`openai-audit.mjs`, `shared.mjs` — the legacy 5-pass audit, Gemini final review,
+and the model-A/B/C shadow all emit against this ONE shared schema. The tiered
+pipeline's discovery generators do NOT use it directly — they use a per-run
+`producerFindingSchema` built in `discovery-prompts.mjs` (the evidence-anchor
+contract: `diffPathId`/`quote`/`side`/`startLine`/`endLine`), which ALREADY asks
+the model for a line — the gap was never the schema, it was that **nothing
+verified the model's claim, and nothing surfaced it onto the final finding**.
+
+**Where the location actually gets composed** (traced, not guessed):
+`tiered-pipeline.mjs`'s return statement calls `flattenEnvelopeToFinding`
+(`candidate-envelope.mjs`), which spreads `{...canonicalFinding}` onto the
+final finding — so anything set on `envelope.canonicalFinding` before that
+point survives untouched into `AuditRunResult.findings`. And
+`findingLine()`/`findingFile()` (`tiered-shadow-compare.mjs`) already check
+`_primaryLine` FIRST, before falling back to prose-parsing `section` — that
+precedence has been correct since the function was written; **nothing had ever
+set the field**.
+
+**The fix — a VERIFIED line, never the model's claim:**
+`evidence-triage.mjs` gained `findQuoteLineInHunk` (same fixed-window/
+normalize/join technique `findAllLineRangesInContent` already used for the
+HEAD-content fallback, scoped to one hunk's wanted-side lines with their real
+file line numbers attached via the hunk's own parsed `@@ -a,b +c,d @@` header —
+never the model's `startLine`/`endLine`, which is discarded now that a checked
+alternative exists). `resolveAnchorLocation`'s `in_hunk` success path — the most
+common one, and the one that discarded location entirely before today — now
+tries every hunk in the SAME order `quoteAppearsOnSide` already verified
+against, and returns `verifiedLine` when precisely locatable (never revoking a
+verification the looser match already confirmed if the stricter window can't
+place it — additive only). `outside_hunk_in_head`'s existing `headLineRange`
+gets the same treatment. `runStage0EvidenceTriage` attaches either onto
+`envelope.canonicalFinding._primaryLine`. Two call sites changed in total; the
+comparison/reading side (`tiered-shadow-compare.mjs`) needed **zero** changes.
+
+**Proof, not just claim — the fixture that motivated writing this fix:**
+`HEAD_ANCHOR` (this repo's own shared test fixture for this module, used since
+before today) self-reports `startLine: 12, endLine: 12` for the quote
+`'await db.insert(a);'`. The REAL line, verified against the diff hunk, is
+**11**. That one-line discrepancy sat in the test suite, unexercised, for as
+long as the fixture existed — nothing ever checked a model's self-reported line
+against reality until this fix, and nothing would have caught a wrong claim
+before it. 85 tests in `tests/evidence-triage.test.mjs` (up from 62), 75 in
+`tests/tiered-shadow-compare.test.mjs`, cover: the real-vs-claimed correction
+above; multi-hunk resolution (a quote in hunk 2 of a 2-hunk file resolves to
+hunk 2's line numbers, never hunk 1's); base-side vs head-side counters;
+multi-line quote ranges; the blank-context-line join edge case
+(`quoteAppearsOnSide`'s own G1 fix, mirrored); Gate B's HEAD-file line; a
+promoted-alternative candidate still getting ITS real line, not the original
+failed anchor's; and the reading side correlating correctly on a finding
+located ONLY via `_primaryLine`, with no colon anywhere in `section` — the real
+shape a tiered finding now has.
+
+**Before/after, the honest way — no live LLM run.** Per
+`docs/runbooks/pre-ship-empirical-verify.md`'s own doctrine, a live-runtime
+verification is for skills that assert on a live provider/browser; this fix
+lives entirely in `resolveAnchorLocation`/`runStage0EvidenceTriage`, both
+explicitly documented as PURE (no I/O, no VCS) — Tier 1 per this repo's own
+testing doctrine, and rigorous fixture-based unit testing is the CORRECT
+verification method for that tier, not a live tiered-pipeline run spending real
+GLM/Sonnet/Gemini budget to re-prove a pure function. The "before" number is
+already real and already gathered: **100% unlocalized, both sides, every one of
+10 historical `tiered_shadow_observations` rows** (this addendum's earlier
+section). The "after" number is the fixture suite above: `in_hunk` and
+`outside_hunk_in_head` candidates now resolve to a verified, diff-checked line
+in every realistic shape tested, including the exact one that used to silently
+carry a wrong model-reported number.
+
+**A gap this fix exposed in Task 1's OWN digest guard, closed the same day:**
+`TIERED_SHADOW_CONTRACT_SEMANTICS_DIGEST` (part 1 of this addendum) only pinned
+`tiered-shadow-compare.mjs` and `tiered-shadow-summary.mjs`. This fix changes
+what a row means — real tiered findings will now frequently carry a location
+where before they never did — **without touching either pinned file**, which
+means the digest would have read UNCHANGED while the actual measurement
+contract shifted. `SEMANTICS_REGIONS` extended to a third file
+(`EVIDENCE_TRIAGE_FILE`, pinning just `findQuoteLineInHunk` +
+`resolveAnchorLocation` — the two pure, location-specific functions, not the
+much larger Gate-B orchestrator around them, so an unrelated blame/impact edit
+in the same file doesn't force a bump). `TIERED_SHADOW_CONTRACT_EPOCH` bumped a
+THIRD time today, v5 → `v6-verified-line-2026-07-26`. Mutation-tested that the
+extended guard fires on a real change inside `findQuoteLineInHunk` specifically
+(a non-global-regex mistake in an early draft of that test silently mutated the
+WRONG, unpinned function first — `quoteAppearsOnSide` contains near-identical
+text — which is exactly the kind of guard-that-can't-fail this session has
+repeatedly found and fixed elsewhere; caught by the test itself failing until
+a genuinely unique target line was used).
+
+**Declined for the legacy 5-pass audit — the load-bearing reason, not silence.**
+Documented directly at `FindingBase` (`scripts/lib/schemas.mjs`) so a future
+reader sees the reasoning, not just the absence: the legacy path has no
+diff/hunk-verification substrate at all, so a self-reported line there would
+carry the EXACT unverifiable-hallucination risk this whole investigation
+started from — and the `HEAD_ANCHOR` fixture's own real 12-vs-11 discrepancy is
+concrete proof a model's claim can be wrong by exactly the margin that matters.
+Verified-but-narrow beats broad-but-untrustworthy for a field a production-flip
+metric reads. This is a `defer` with a named independence condition (per
+AGENTS.md's own scope-discipline rule): revisit ONLY if a verification
+substrate for the legacy path is ever built — there is no such substrate today.
+
+**Still open, tracked separately (out of scope for both fixes today)**: nothing.
+Both halves of the deferred task are resolved — one built, one deliberately
+declined with cause. Everything this addendum originally flagged as open now
+has a verified, evidenced answer: the epoch gate is general (epoch-bumped THREE
+times today: v4, v5, v6), `overlapCount`'s root cause is diagnosed and
+partially recovered for prose (`v5`) and now genuinely fixed for the tiered
+side specifically (`v6`), and the digest guard that watches all of it has
+already caught two real changes it was built to catch.
 
 > **Empirical verification (pre-ship doctrine) — done 2026-07-22, with one caveat.**
 > - **Legacy cost: CONFIRMED live.** A real `tiered_shadow_observations` row

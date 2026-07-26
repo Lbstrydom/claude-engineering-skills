@@ -311,6 +311,89 @@ describe('compareAuditRunResults — cross-pipeline correlation by location, not
     assert.equal(c.overlapCount + c.onlyTieredCount, 2);
     assert.equal(c.overlapDebtRouted, 1);
   });
+
+  // ── A Stage-0-VERIFIED _primaryLine, with NO colon in section (2026-07-26) ──
+  // Proves the reading side needed ZERO changes for the evidence-triage fix:
+  // findingLine() already checks `_primaryLine` first (its own doc comment
+  // always has) — nothing set it before now. This is the real shape a tiered
+  // finding now carries: `section` is free prose with no line info at all
+  // (matching the census — 0/10 real findings had a colon-line section), and
+  // ONLY `_primaryLine` (set by runStage0EvidenceTriage) carries the location.
+  test('a tiered finding located ONLY via a Stage-0-verified _primaryLine (no colon in section) correlates correctly', () => {
+    const legacyFinding = { category: 'bug', section: 'src/auth.mjs:42', detail: 'legacy cites a colon line', severity: 'HIGH', _primaryFile: 'src/auth.mjs' };
+    const tieredFinding = {
+      category: 'bug',
+      section: 'src/auth.mjs', // free prose, no ":line" — the real shape after this fix
+      detail: 'tiered cites only a verified _primaryLine',
+      severity: 'HIGH', _primaryFile: 'src/auth.mjs',
+      _primaryLine: 44, // set by runStage0EvidenceTriage, NOT parsed from section
+    };
+    const c = compareAuditRunResults({ findings: [legacyFinding] }, { findings: [tieredFinding] });
+    assert.equal(c.tieredUnlocalizedCount, 0, '_primaryLine alone must be enough — no colon-format section required');
+    assert.equal(c.overlapCount, 1, 'lines 42 and 44 are within the 5-line OVERLAP_LINE_WINDOW');
+  });
+});
+
+// ── "lines N-M" prose fallback (2026-07-26 — shadow finding e7f64458, accepted) ──
+// Real producers overwhelmingly DON'T use the `file:LINE` colon form findingLine
+// already handled: a census of this repo's own real audit output (legacy +
+// tiered findings, the exact objects this function reads) found 0/10 real
+// `section` values matching `:LINE` at all — matching the tiered_shadow_
+// observations telemetry exactly (legacyUnlocalizedCount === legacyFindingCount
+// on every one of 10 historical rows, pre- AND post- 2026-07-22). This recovers
+// the ONE real prose convention the census found ("file.mjs, lines N-M"); it is
+// a genuine but PARTIAL fix — the other 9/10 real findings carry no line info
+// in any form, which this function correctly still reports as unresolvable.
+// Full verdict: docs/plans/tiered-recall-audit-pipeline.md Addendum 2026-07-26.
+describe('compareAuditRunResults — "lines N-M" prose fallback (partial fix, not a full one)', () => {
+  const withSection = (section, severity = 'HIGH') => ({ category: 'bug', section, detail: 'x', severity, _primaryFile: section.split(',')[0].split(':')[0].trim() });
+
+  test('a real-shaped "file.mjs, lines N-M" section now resolves (the exact 2026-07-26 census sample)', () => {
+    const c = compareAuditRunResults(
+      { findings: [withSection('tests/foo.test.mjs, lines 1-10')] },
+      { findings: [withSection('tests/foo.test.mjs, lines 3-12')] },
+    );
+    assert.equal(c.legacyUnlocalizedCount, 0, 'a "lines N-M" section must now resolve to a line, not be left unlocalized');
+    assert.equal(c.tieredUnlocalizedCount, 0);
+    assert.equal(c.overlapCount, 1, 'lines 1 and 3 are within the 5-line OVERLAP_LINE_WINDOW');
+  });
+
+  test('singular "line N" (no trailing s) also resolves', () => {
+    const c = compareAuditRunResults(
+      { findings: [withSection('src/a.mjs, line 42')] },
+      { findings: [withSection('src/a.mjs, line 44')] },
+    );
+    assert.equal(c.overlapCount, 1);
+  });
+
+  test('a range far outside the window still correctly reads as no overlap (the fallback is not a leniency backdoor)', () => {
+    const c = compareAuditRunResults(
+      { findings: [withSection('src/big.mjs, lines 1-10')] },
+      { findings: [withSection('src/big.mjs, lines 400-410')] },
+    );
+    assert.equal(c.overlapCount, 0, 'the fallback recovers a line number; it does not widen OVERLAP_LINE_WINDOW');
+    assert.equal(c.legacyUnlocalizedCount, 0, 'both sides DID resolve a line — this is a genuine miss, not an unlocalized case');
+  });
+
+  test('the colon form still takes precedence when both would match — no regression on the existing, more precise path', () => {
+    // A section could theoretically contain both forms; the colon form is
+    // exact (a single asserted line) while "lines N-M" is an approximation, so
+    // colon must win when present.
+    const c = compareAuditRunResults(
+      { findings: [withSection('src/a.mjs:20, see lines 1-10 for context')] },
+      { findings: [withSection('src/a.mjs:21, see lines 1-10 for context')] },
+    );
+    assert.equal(c.overlapCount, 1, 'both resolve via the colon form (20 vs 21) — a correct, expected overlap');
+  });
+
+  test('a bare filename with no line info anywhere still correctly reads as unlocalized (the dominant real shape — 9/10 in the census)', () => {
+    const c = compareAuditRunResults(
+      { findings: [withSection('src/a.mjs')] },
+      { findings: [withSection('src/a.mjs')] },
+    );
+    assert.equal(c.legacyUnlocalizedCount, 1, 'the fallback recovers a REAL prose convention — it must not fabricate a line from nothing');
+    assert.equal(c.overlapCount, 0);
+  });
 });
 
 // ── Cost capture (2026-07-22 defect) — static producer guards ─────────────

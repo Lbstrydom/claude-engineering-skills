@@ -7,9 +7,28 @@
  */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {
   windowProgress, WINDOW_MIN, WINDOW_MAX, summarize, TIERED_SHADOW_CONTRACT_EPOCH,
+  TIERED_SHADOW_CONTRACT_SEMANTICS_DIGEST,
 } from '../scripts/lib/audit/tiered-shadow-summary.mjs';
+import {
+  computeContractSemanticsDigest, computeDigestFromSources, SEMANTICS_REGIONS,
+  COMPARE_FILE, SUMMARY_FILE, EVIDENCE_TRIAGE_FILE,
+} from '../scripts/lib/audit/tiered-shadow-contract-digest.mjs';
+
+/** All three pinned files' CURRENT real source, read once — every
+ * computeDigestFromSources call below must supply all of SEMANTICS_REGIONS'
+ * keys or extraction throws "could not locate ..." (a real gap this exact
+ * situation caught: SEMANTICS_REGIONS grew a third file the same day, and
+ * these fixtures had to grow with it). */
+const ALL_PINNED_SOURCES = {
+  [COMPARE_FILE]: fs.readFileSync(COMPARE_FILE, 'utf8'),
+  [SUMMARY_FILE]: fs.readFileSync(SUMMARY_FILE, 'utf8'),
+  [EVIDENCE_TRIAGE_FILE]: fs.readFileSync(EVIDENCE_TRIAGE_FILE, 'utf8'),
+};
 
 describe('windowProgress', () => {
   test('below the minimum: neither withinWindow nor met', () => {
@@ -389,6 +408,91 @@ describe('measurement-contract epoch (the general false-"met" gate)', () => {
       'tiered-shadow-compare.mjs must stamp the epoch at write time — a reader-side date cutoff is retroactive relabelling');
     assert.match(src, /import\s*\{\s*TIERED_SHADOW_CONTRACT_EPOCH\s*\}/,
       'and it must import the SAME constant, never a copied string literal');
+  });
+});
+
+// ── The OTHER omission the epoch alone cannot catch (2026-07-26 shadow finding,
+// fingerprint 74a77de1, ACCEPTED) ────────────────────────────────────────────
+// The test above guards the collector→verifier STAMPING contract. It does
+// nothing for the actual failure class behind all five prior incidents: a fix
+// changes what a comparison row MEANS, and TIERED_SHADOW_CONTRACT_EPOCH simply
+// doesn't get bumped, because nothing forces a human to notice. This block
+// pins a digest of the semantics-bearing surface (tiered-shadow-contract-
+// digest.mjs) so THAT omission fails loudly instead of silently.
+describe('semantics digest — the epoch must move when the measurement CONTRACT does', () => {
+  test('the live digest matches the pinned TIERED_SHADOW_CONTRACT_SEMANTICS_DIGEST', () => {
+    const live = computeContractSemanticsDigest();
+    assert.equal(
+      live, TIERED_SHADOW_CONTRACT_SEMANTICS_DIGEST,
+      `The tiered-shadow correlation/eligibility logic changed (live digest ${live}) but `
+      + `TIERED_SHADOW_CONTRACT_SEMANTICS_DIGEST (${TIERED_SHADOW_CONTRACT_SEMANTICS_DIGEST}) `
+      + 'was not updated to match. This is the exact omission class behind all five prior false '
+      + '"window met" incidents: a fix changed what a row means and the counter was never reset. '
+      + 'Fix BOTH, in this commit: (1) bump TIERED_SHADOW_CONTRACT_EPOCH to a new string (the window '
+      + 'restarts — that is the point), (2) run `node scripts/lib/audit/tiered-shadow-contract-digest.mjs` '
+      + `and paste its output as the new TIERED_SHADOW_CONTRACT_SEMANTICS_DIGEST value (${live}).`,
+    );
+  });
+
+  // Proves the guard actually BITES — a pin that can never fail is worthless
+  // (this session found two such: a vacuous egress test, and a "met" reading
+  // that had never actually checked anything). Mutates the ACTUAL real source
+  // files' text (in memory, via computeDigestFromSources — no disk writes
+  // needed), so this is not just a synthetic-snippet claim; it demonstrates
+  // the guard fires on the real file shape, on the real named region.
+  test('mutating a real semantics-bearing region changes the digest', () => {
+    const compareSrc = ALL_PINNED_SOURCES[COMPARE_FILE];
+    const baseline = computeDigestFromSources(ALL_PINNED_SOURCES);
+
+    // Mutate OVERLAP_LINE_WINDOW's VALUE (5 -> 6) — a real, one-character
+    // semantic change to the correlation logic Task 2 is about to
+    // investigate, not a synthetic example.
+    assert.match(compareSrc, /OVERLAP_LINE_WINDOW = 5;/, 'precondition: the real source still reads 5');
+    const mutatedCompare = compareSrc.replace('OVERLAP_LINE_WINDOW = 5;', 'OVERLAP_LINE_WINDOW = 6;');
+    const afterCodeChange = computeDigestFromSources({ ...ALL_PINNED_SOURCES, [COMPARE_FILE]: mutatedCompare });
+    assert.notEqual(afterCodeChange, baseline, 'a real semantic change (line-window 5->6) must move the digest');
+
+    // Same file, but the ONLY change is a comment — proves the guard doesn't
+    // cry wolf on the thing it's explicitly meant to ignore.
+    const commentOnly = compareSrc.replace(
+      'const OVERLAP_LINE_WINDOW = 5;',
+      '// a purely explanatory comment with no code effect\nconst OVERLAP_LINE_WINDOW = 5;',
+    );
+    const afterCommentOnly = computeDigestFromSources({ ...ALL_PINNED_SOURCES, [COMPARE_FILE]: commentOnly });
+    assert.equal(afterCommentOnly, baseline, 'a comment-only change must NOT move the digest — it would cry wolf');
+  });
+
+  // 2026-07-26, same day: proves the THIRD file (added when giving tiered
+  // findings a verified line moved what a row means without touching either
+  // of the first two files) is genuinely covered, not just declared.
+  test('mutating the third pinned file (evidence-triage.mjs) also changes the digest', () => {
+    const triageSrc = ALL_PINNED_SOURCES[EVIDENCE_TRIAGE_FILE];
+    const baseline = computeDigestFromSources(ALL_PINNED_SOURCES);
+    // This exact return line is unique to findQuoteLineInHunk — unlike the
+    // side-prefix array literal above, which quoteAppearsOnSide ALSO contains
+    // verbatim (a non-global .replace() on that shared text silently mutated
+    // the WRONG, unpinned function first, proving nothing — caught by this
+    // test itself failing when written that way).
+    const target = 'return { startLine: entries[start].lineNum, endLine: entries[start + quoteLineCount - 1].lineNum };';
+    assert.match(triageSrc, new RegExp(target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), 'precondition: findQuoteLineInHunk\'s real, unique return line');
+    const mutated = triageSrc.replace(target, 'return { startLine: entries[start].lineNum, endLine: entries[start].lineNum };');
+    const after = computeDigestFromSources({ ...ALL_PINNED_SOURCES, [EVIDENCE_TRIAGE_FILE]: mutated });
+    assert.notEqual(after, baseline, 'a semantic change inside findQuoteLineInHunk must move the digest');
+  });
+
+  test('a CRLF-only difference does not move the digest (the skills.manifest.json incident, one file over)', () => {
+    const lf = computeDigestFromSources(ALL_PINNED_SOURCES);
+    const crlf = computeDigestFromSources(Object.fromEntries(
+      Object.entries(ALL_PINNED_SOURCES).map(([p, src]) => [p, src.replace(/\n/g, '\r\n')]),
+    ));
+    assert.equal(crlf, lf, 'a working-tree CRLF must canonicalise to the same digest as committed LF');
+  });
+
+  test('reordering SEMANTICS_REGIONS changes the digest (order is part of the contract, documented)', () => {
+    const forward = computeDigestFromSources(ALL_PINNED_SOURCES);
+    const reordered = { ...SEMANTICS_REGIONS, [COMPARE_FILE]: [...SEMANTICS_REGIONS[COMPARE_FILE]].reverse() };
+    const backward = computeDigestFromSources(ALL_PINNED_SOURCES, reordered);
+    assert.notEqual(backward, forward, 'the module doc warns order affects the digest — pin that behaviour, not just assert it in prose');
   });
 });
 
