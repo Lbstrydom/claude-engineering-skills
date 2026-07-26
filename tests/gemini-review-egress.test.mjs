@@ -54,9 +54,17 @@ describe('final-review egress envelope (H2/C3)', () => {
     },
     {
       provider: 'claude-opus', // → anthropic transport
+      // Returns a `tool_use` block: this transport forces tool-use as of
+      // 2026-07-26 so the provider enforces finding shape. The egress assertion
+      // below is unchanged — what matters here is the OUTBOUND payload, and
+      // adding tools/tool_choice must not alter it.
       client: (capture) => ({ messages: { create: async (body) => {
         capture(body.messages?.[0]?.content ?? '');
-        return { content: [{ type: 'text', text: VALID_REVIEW }], usage: { input_tokens: 1, output_tokens: 1 } };
+        return {
+          content: [{ type: 'tool_use', name: 'submit_review', input: JSON.parse(VALID_REVIEW) }],
+          usage: { input_tokens: 1, output_tokens: 1 },
+          stop_reason: 'tool_use',
+        };
       } } }),
     },
     {

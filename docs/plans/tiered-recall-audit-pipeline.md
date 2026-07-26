@@ -934,6 +934,55 @@ cost) are now cleared in code — Phase 14 needs the window to **re-accumulate**
 10–15 real `complete` runs and then verify the rows carry a correlating
 `overlapCount` and a non-null `tieredCostUsd`/`legacyCostUsd`.
 
+#### Addendum 2026-07-26 — the FIFTH false "met", and the general fix (epoch gate)
+
+The paragraph above asked a **human** to verify the rows before trusting a
+"met" reading. That instruction was followed and it caught a fifth false green,
+which is the point: the check worked, but only because someone happened to run
+it. On 2026-07-26 the report read **`comparedRuns: 19` — "window met"**. Direct
+inspection of `tiered_shadow_observations` showed 11 of the 19 predated the
+2026-07-22 fix (`tieredCostUsd:0`, `legacyCostUsd:null` — the documented void
+signature) and only **8** were genuinely post-fix. `comparedRuns` had no notion
+of *when the metric started meaning something*.
+
+Root cause of the whole five-incident series, stated once: **every guard was
+retrospective.** Each fix added an `excluded*` predicate describing the defect
+just found, so the next defect — unknown at patch time — was un-excluded by
+construction. Five patches, five re-reads of green.
+
+**The general fix**: `TIERED_SHADOW_CONTRACT_EPOCH`
+([tiered-shadow-summary.mjs](../../scripts/lib/audit/tiered-shadow-summary.mjs)).
+The collector stamps `contractEpoch` on every comparison row at write time; the
+verifier counts only rows matching the current epoch. Unstamped ⇒ ineligible
+(never "assume current"). Rows measured under a superseded contract are excluded
+under a **named** reason (`excludedStaleEpoch`, printed by the CLI) rather than
+silently counted or misdiagnosed as degenerate.
+
+Two deliberate choices, both load-bearing:
+- **Stamped by the collector, not inferred by the reader.** A reader-side
+  `created_at > fixDate` cutoff would be retroactive relabelling — deciding
+  after seeing the data which rows *should* count. That is the reasoning that
+  let the 07-26 reading pass.
+- **No backfill.** The 8 genuinely-valid post-fix rows are let go rather than
+  stamped by date. Backfilling was mechanically trivial and is exactly what the
+  constant exists to forbid; 8 re-collected runs cost less than a sixth false
+  green.
+
+**Window status supersedes the paragraph above: 0 eligible rows.** The window
+restarts from the first row stamped `v4-collector-stamped-2026-07-26`. Bump the
+epoch on any future fix that changes what a row *means*, and the window restarts
+automatically — a sixth false "met" is no longer constructable from stale rows.
+Guarded by `tests/tiered-shadow-summary.test.mjs` ("measurement-contract epoch"),
+including a collector→verifier binding test so the writer cannot stop stamping
+silently.
+
+**Still open (unchanged by this fix)**: `overlapCount` read 0 on all 8 post-fix
+rows. That may be honest (the two pipelines genuinely flagged different
+locations) or a residual defect in the 07-22 correlation fix, which was never
+live-verified per [pre-ship-empirical-verify.md](../runbooks/pre-ship-empirical-verify.md).
+Spot-check one diff where both pipelines are known to flag the same bug before
+reading a future 0% overlap as a real disagreement.
+
 > **Empirical verification (pre-ship doctrine) — done 2026-07-22, with one caveat.**
 > - **Legacy cost: CONFIRMED live.** A real `tiered_shadow_observations` row
 >   this date carried `legacyCostUsd: 0.146` (NULL on all 13 prior rows) and

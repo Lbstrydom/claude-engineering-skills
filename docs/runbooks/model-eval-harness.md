@@ -18,6 +18,101 @@ from, the live `solo-control-audit.mjs` experiment), the $/KD cost formula,
 `model-resolver.mjs`'s sentinel system, and the shadow-final-review A/B's
 pre-registered stopping rule.
 
+## Playbook — "a new model just shipped, is it worth switching to?"
+
+**Start here.** This is the standing answer, written 2026-07-26 so the next swap
+is a one-sitting job rather than a fresh design exercise. Decided via a
+`/brainstorm --debate` round (GPT-5.6 + Gemini-pro both conceded the key point);
+rationale in §"Why synchronous" below.
+
+**Rule 0 — a model swap is SYNCHRONOUS. Never open a window for it.** Run it,
+adjudicate it, and record the verdict in one sitting. Do not build a collector,
+do not add a toggle, do not "let it gather data for a few weeks". Four of this
+repo's five evaluation subsystems died exactly there.
+
+### Step 1 — pick the role, because the epistemics differ
+
+| The candidate would replace… | Role | Command | Scoring |
+|---|---|---|---|
+| GPT, generating audit findings | `auditor` | `node scripts/model-eval-auditor.mjs --candidate <spec> --tier promotion` | Oracle — `known-defects.json` ground truth |
+| Gemini, the final-review gate | `adjudicator` | `node scripts/model-eval-adjudicator.mjs --candidate <spec> --tier promotion` | Oracle (Tier C) or live shadow (Tier A/B) |
+| The Stage-1 cheap triager | `auditor`, screen tier | `--tier screen` | Oracle, single-shot |
+| A `/brainstorm` or `/plan` partner | *not the harness* | see §"Brainstorm/plan roles" | Blinded judge — relative preference, no ground truth |
+
+**Do not unify these two scoring modes.** The oracle asks a partly-objective
+question ("did it find the known bug?"); the blinded judge asks a
+comparative-preference one ("which output is better?"). A shared `score: number`
+would silently license invalid comparisons between them. One CLI per role,
+sharing only plumbing, is deliberate.
+
+### Step 2 — read the result with the recall ceiling in mind
+
+`recall` is a **floor constraint, not the deciding metric** — the oracle credits
+only the one curated defect per case, so a good model that finds a *different*
+real bug scores 0. The verdict rides on **false-positive rate and cost**; that
+is what actually decided GLM-5.2 vs GPT-5.6. Before believing any low recall,
+read the raw per-case extraction output.
+
+### Step 3 — adjudicate in the same sitting
+
+Anything needing a human call gets rendered as a worksheet, never raw JSON:
+
+```bash
+node scripts/cross-skill.mjs final-review-stats --repo <owner/repo> --worksheet
+```
+
+Grade it now. A queue left for later is a queue never graded — that is the
+empirical record, not a prediction.
+
+### Step 4 — write the verdict where it survives
+
+Terminal verdict → **`docs/research/experiment-N-<topic>.md`**, committed. This
+is not a new artifact category; it is an authored decision document, which is
+why `experiment-3-model-swap-glm-vs-gpt.md` survived the 2026-07-14 database
+wipe while every arm-eval DB row did not. Cite the corpus version, the commands
+run, and the numbers. Volatile run bundles stay gitignored (Category A) — commit
+the conclusion, not the transcript.
+
+### Step 5 — grow the corpus, but never score against a moving oracle
+
+The corpus is the only compounding asset here; every harness around it is cheap
+and rewritable. So when a run surfaces genuine bugs that were not curated:
+
+- **Append them** — a permanently frozen corpus lets the recall ceiling flatline
+  as models improve.
+- **Never credit them in the run that found them.** The discoverer would be
+  helping define the oracle it is then scored against.
+- **Re-run the incumbent against the new corpus version, same day.** Comparability
+  comes from both models facing the same snapshot — not from freezing the data.
+  Inference is cheap; curating real defects is what costs.
+- Keep one small **frozen anchor subset** untouched by active evaluation, purely
+  as rot-detection.
+
+### Brainstorm/plan roles
+
+Not in this harness — they use the blinded-judge arm-eval framework
+(`docs/plans/arm-eval-framework.md`), which is **deliberately switched off** as a
+background collector. If you need this judgement, run it synchronously for the
+decision at hand and write the verdict to `docs/research/`; do not re-enable
+passive capture. Its 25 archived sessions in `docs/arm-eval/sessions/` survived
+the wipe; its DB rows did not — same lesson as Step 4.
+
+### Why synchronous (the reasoning, so it is not re-litigated)
+
+A swap decision arises roughly quarterly. A quarterly decision does not need a
+standing apparatus, and the apparatus is what generated every pathology: epoch
+drift needs *elapsed time* between window-open and verdict; dormancy needs
+nothing to force the sitting; the wipe only mattered because evidence sat in
+mutable storage for months. Run it in one sitting and all three stop existing.
+
+**The one legitimate exception** is a question about behaviour over live incoming
+work — an *intervention*, not a model swap. Exactly two are open: the
+tiered-pipeline architecture comparison, and the final-review second-gate A/B.
+Those keep their shadows, and their window metrics are epoch-stamped
+(`TIERED_SHADOW_CONTRACT_EPOCH`) so a stale row can never read green.
+**Adding a sixth standing collector is the band-aid this playbook exists to
+prevent.**
+
 ## Running an evaluation
 
 - **Auditor role**: `node scripts/model-eval-auditor.mjs --candidate <spec> --tier screen|promotion`

@@ -414,6 +414,20 @@ export async function updateRunMeta(runId, meta) {
 /** The closed domain of the final-review diff bucket (app-layer enforced). */
 const VALID_BUCKETS = new Set(['both', 'primary-only', 'shadow-only']);
 
+/**
+ * Stand-in written to the NOT NULL `category` column when a producer omits it.
+ * Deliberately self-describing rather than a neutral 'unknown': the value shows
+ * up in dashboards and adjudication worksheets, so it should read as a producer
+ * defect, not as a legitimate category.
+ *
+ * Deliberately NOT exported: `scripts/learning-store.mjs` re-exports this module
+ * with `export *`, and that barrel's surface is pinned to callable functions only
+ * (`tests/learning-store-exports.test.mjs`). Widening a pinned public contract to
+ * let a test import a string is the wrong trade — the test asserts the value from
+ * source instead.
+ */
+const MISSING_CATEGORY_MARKER = '(missing — producer omitted category)';
+
 /** Coerce a bucket value to the valid domain or null (logs unexpected values). */
 function normaliseBucket(b) {
   if (b == null) return null;
@@ -457,7 +471,7 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
   // returns every finding when disabled or on any error. Only `merged` findings
   // (the code-audit path that carries the measured churn) are considered.
   const { kept: keptFindings, vectorByFinding } = await applyRecordTimeSuppression(runId, findings, passName);
-  const rows = keptFindings.map((f) => {
+  const mappedRows = keptFindings.map((f) => {
     const base = {
       run_id: runId,
       finding_fingerprint: f._hash || 'unknown',
@@ -491,6 +505,53 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
     if (hasIsQuickFix) base.is_quick_fix = f.is_quick_fix ?? null;
     return base;
   });
+
+  // ── NOT-NULL write-boundary guard (2026-07-26) ────────────────────────────
+  // `finding_fingerprint` has always had a `|| 'unknown'` fallback; `severity`
+  // and `category` had none, yet both are NOT NULL with no DB default. One
+  // malformed finding therefore aborted the whole INSERT — and inside a
+  // caller-supplied transaction that poisons the tx, so the subsequent COMMIT
+  // silently degrades to ROLLBACK and the entire batch disappears with no error
+  // reaching the caller. Found live: the Opus shadow reviewer returned a finding
+  // with a null `category`, which discarded the PRIMARY reviewer's findings too.
+  //
+  // Coerce vs skip is deliberately asymmetric:
+  //  - `category` is descriptive → coerce to a visible defect marker so the row
+  //    survives. `detail_snapshot` is what a human grades; keeping the row keeps
+  //    it gradeable, and the marker makes the provider bug visible IN THE DATA
+  //    rather than only in a log line that scrolls away.
+  //  - `severity` is the metric → NEVER fabricated. The shadow A/B's stopping
+  //    rule counts HIGH/MEDIUM findings; inventing a severity would corrupt the
+  //    exact number the row exists to feed. Drop it, loudly.
+  const rows = [];
+  let coercedCategories = 0;
+  const droppedFingerprints = [];
+  for (const row of mappedRows) {
+    if (!row.severity) {
+      droppedFingerprints.push(row.finding_fingerprint);
+      continue;
+    }
+    if (row.category == null || row.category === '') {
+      row.category = MISSING_CATEGORY_MARKER;
+      coercedCategories++;
+    }
+    rows.push(row);
+  }
+  if (coercedCategories > 0) {
+    process.stderr.write(
+      `  [learning] WARNING: ${coercedCategories} ${passName} finding(s) had no category — `
+      + `the producer omitted a REQUIRED field. Persisted as "${MISSING_CATEGORY_MARKER}" so the `
+      + 'batch is not lost; fix the producer\'s structured-output contract.\n'
+    );
+  }
+  if (droppedFingerprints.length > 0) {
+    // Never a silent cap — name what was dropped and why (AGENTS.md).
+    process.stderr.write(
+      `  [learning] WARNING: dropped ${droppedFingerprints.length} ${passName} finding(s) with no severity `
+      + `(${droppedFingerprints.join(', ')}) — severity is the metric the A/B stopping rule counts, so it is `
+      + 'never fabricated. These findings are NOT persisted.\n'
+    );
+  }
   if (rows.length === 0) return;
   // Bulk INSERT — homogeneous rows by construction. Use the caller's tx client
   // when provided (atomic delete+insert); otherwise grab a pool connection.
@@ -521,6 +582,16 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
     }
   } catch (err) {
     process.stderr.write(`  [learning] recordFindings failed: ${err.message}\n`);
+    // RETHROW when running inside a caller-supplied transaction (2026-07-26).
+    // Swallowing here is right for the standalone-pool callers — findings
+    // telemetry is best-effort and must never break an audit. But inside a tx
+    // the caller owns commit/rollback, and a failed statement has already put
+    // Postgres in an aborted state: the caller's COMMIT then silently degrades
+    // to a ROLLBACK, so it believes it persisted while everything vanished.
+    // That is the unverified-write-success class this codebase treats as HIGH.
+    // Surfacing it lets the caller decide (and, for the final review, keep the
+    // primary's rows even when the shadow's are unwritable).
+    if (opts.client) throw err;
   }
 }
 
@@ -573,7 +644,19 @@ export async function recordFinalReviewFindings(runId, { primary = [], shadow = 
     finalReviewShadowOutputTokens: models.shadowOutputTokens,
     finalReviewShadowLatencyMs: models.shadowLatencyMs,
   });
-  // (b) Replace the findings atomically.
+  // (b) Replace the findings. TWO transactions, deliberately — the shadow is
+  // observation-only and must never be able to damage the primary's record.
+  //
+  // This function's own header promises "primary final-review rows persist
+  // whenever cloud+runId, INDEPENDENT of the shadow". Until 2026-07-26 that was
+  // only true of the *decision* to write, not of the write itself: both inserts
+  // shared one tx, so a malformed shadow finding (null `category`, NOT NULL)
+  // aborted the tx and the COMMIT silently degraded to ROLLBACK — taking the
+  // DELETE and the primary's findings with it, with no error surfaced. The run
+  // kept STALE findings from an earlier review and nobody could tell. Splitting
+  // the transactions makes the documented invariant actually true.
+  //
+  // tx1 keeps the atomic delete+insert the idempotent-replace contract needs.
   try {
     await withTx(async (client) => {
       // Scoped to final-review pass_names so the GPT audit's own rows are
@@ -584,12 +667,27 @@ export async function recordFinalReviewFindings(runId, { primary = [], shadow = 
         [runId]
       );
       await recordFindings(runId, primary, 'final-review', 0, { client });
-      if (shadow.length > 0) {
-        await recordFindings(runId, shadow, 'final-review-shadow', 0, { client });
-      }
     });
   } catch (err) {
-    process.stderr.write(`  [learning] recordFinalReviewFindings failed: ${err.message}\n`);
+    process.stderr.write(`  [learning] recordFinalReviewFindings failed (primary): ${err.message}\n`);
+    // The shadow rows belong to a review whose primary half is now unrecorded —
+    // writing them alone would produce a run with shadow-only findings and no
+    // baseline to diff against, which reads as "the primary found nothing".
+    return;
+  }
+  // tx2 — shadow. Its own transaction so a provider-shaped defect here cannot
+  // roll back tx1. A failure is loud but non-fatal: the A/B loses one
+  // observation, the audit record stays intact.
+  if (shadow.length > 0) {
+    try {
+      await withTx(async (client) => {
+        await recordFindings(runId, shadow, 'final-review-shadow', 0, { client });
+      });
+    } catch (err) {
+      process.stderr.write(
+        `  [learning] recordFinalReviewFindings failed (shadow, non-fatal — primary rows are safe): ${err.message}\n`
+      );
+    }
   }
 }
 

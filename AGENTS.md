@@ -656,36 +656,30 @@ stopping-rule rationale: [`docs/plans/final-review-shadow-reviewer.md`](docs/pla
 ## Tiered-Recall Audit Pipeline
 
 A discovery → Stage 0 (deterministic evidence triage) → Stage 1 (cheap-model
-triage) → Stage 2 (Gemini adjudicator + bounded clean-challenge) alternative
-to the always-on GPT 5-pass legacy audit. All 12 phases (Clusters A-F) are
-implemented and tested. `openai-audit.mjs`'s chooser
-(`tieredAuditConfig.pipelineEnabled`, env `AUDIT_TIERED_PIPELINE_ENABLED`)
-defaults **off** — production runs the legacy path today.
+triage) → Stage 2 (Gemini adjudicator + bounded clean-challenge) alternative to
+the always-on GPT 5-pass legacy audit. All 12 phases (Clusters A-F) implemented
+and tested. `openai-audit.mjs`'s chooser (`tieredAuditConfig.pipelineEnabled`,
+env `AUDIT_TIERED_PIPELINE_ENABLED`) defaults **off** — production runs legacy.
 
-**Load-bearing invariants** (mechanics, model-resolution rules, cross-repo
-behaviour, CLI/dashboard surfaces, and the full incident history live in the
-plan doc — see the pointer below):
+**Load-bearing invariants** (mechanics, model-resolution, cross-repo behaviour,
+CLI/dashboard surfaces and full incident history: plan doc, pointer below):
 
 - **Execution eligibility is per-call, not env-global** (`allowTiered` — the
-  2026-07-13 incident fix): the env flags only express "the window is open";
-  only `openai-audit.mjs`'s `main()` passes `allowTiered: true`, so tests and
-  library callers can never spend. Both must hold before any provider is
-  constructed.
+  2026-07-13 incident fix): env flags only express "the window is open"; only
+  `openai-audit.mjs`'s `main()` passes `allowTiered: true`, so tests and library
+  callers can never spend. Both must hold before a provider is constructed.
 - **The discovery generator needs forced `tool_choice`, so it pins
-  `{backend:'sdk'}` explicitly** — never the ambient `CLAUDE_BACKEND` (see
-  the Anthropic Backend Routing gotcha above). This silently produced 20
+  `{backend:'sdk'}` explicitly** — never the ambient `CLAUDE_BACKEND` (see the
+  Anthropic Backend Routing gotcha above); silently produced 20
   all-`fallback_legacy` runs before 2026-07-14.
-- **A "window met" reading is not self-evidencing.**
-  `comparedRuns` counts only `tieredRunStatus === 'complete'` runs — a
-  `fallback_legacy` run is not a comparison. Any future "met" must also be
-  checked against the rows (`tieredStage0Verified > 0`,
-  `excludedMalformedAnchors === 0`). Pre-2026-07-17 rows are void; the window
-  restarts from zero.
-- **Not yet done**: the shadow-validation window (10–15 real commits) and
-  Phase 14 (the production-flip gate). **Also check at Phase 14**: the
-  model-swap-eval-harness's adjudicator-role eval has never run (Stage 2 uses
-  Gemini) — [model-eval-harness.md](docs/runbooks/model-eval-harness.md)
-  §"Adjudicator role — not yet run".
+- **"Window met" is now epoch-gated, not eyeballed** (2026-07-26, after the 5th
+  false green): `comparedRuns` counts only rows the collector stamped with the
+  current `TIERED_SHADOW_CONTRACT_EPOCH`. All pre-stamp rows are ineligible and
+  the window restarts — re-collect, never backfill (see the swap-eval section).
+- **Not yet done**: the shadow window (10–15 commits) and Phase 14. **Also at
+  Phase 14**: the adjudicator-role eval has never run (Stage 2 uses Gemini) —
+  [model-eval-harness.md](docs/runbooks/model-eval-harness.md) §"Adjudicator
+  role — not yet run".
 
 → Full plan, phase spec, Stage-1 triager resolution, shadow-validation
 mechanics + CLI/dashboard surfaces, Stage-2 adapter wiring, and the audit
@@ -694,34 +688,40 @@ trail: [`docs/plans/tiered-recall-audit-pipeline.md`](docs/plans/tiered-recall-a
 
 ## Model Swap-In Evaluation Harness
 
-A standing test suite (`scripts/lib/model-eval/`) answering "is this new LLM
-release worth switching to?" for the **auditor** role (currently GPT) or the
-**adjudicator** role (currently Gemini), with the audit-effectiveness
-research's rigor. Entry points:
-`node scripts/model-eval-{auditor,adjudicator}.mjs --candidate <spec> --tier screen|promotion`.
+A standing suite (`scripts/lib/model-eval/`) answering "is this new LLM release
+worth switching to?" for the **auditor** (currently GPT) or **adjudicator**
+(currently Gemini) role. Entry:
+`node scripts/model-eval-{auditor,adjudicator}.mjs --candidate <spec> --tier screen|promotion`
+— **step-by-step playbook in the runbook below; start there.**
 
-**Load-bearing invariants** (full mechanics, tiers, and history in the docs
-below):
-- **Accepted false-negative direction**: a Tier-C-only run (e.g. a
-  restricted-catalog Azure repo) can never emit `verdict:'switch'` — only
-  `keep`/`inconclusive`/`manual_review_required`. Schema-enforced, not a
-  convention.
-- **The oracle-matching recall ceiling**: `known-defects.json` scoring can
-  only credit the ONE curated defect per entry, but real models find OTHER
-  genuine bugs in the same organic diffs — so a low recall or `inconclusive`
-  is NOT necessarily a model-quality signal; check the raw per-case
-  extraction output before trusting it. Applies to promotion-tier's Tier C
-  fallback too (same single-shot extractor) — Tier C never substitutes for a
-  Tier A/B comparative result.
-- **Egress-gate prose/diff false-positive classes were found + fixed
-  2026-07-12** (`looksLikeRealPath` gate; `(?<!\w)` lookbehind for `.env`;
-  category/metachar/extension carve-outs) — historical recall is the
-  contract; don't re-add trailing-punctuation stripping (tried, reverted:
-  it re-blocked valid corpus entries). Guarded in
-  `tests/egress-path-scan.test.mjs` + `tests/sensitive-paths.test.mjs`.
+**Load-bearing invariants** (mechanics, tiers, history in the docs below):
+- **Accepted false-negative direction**: a Tier-C-only run (restricted-catalog
+  Azure) can never emit `verdict:'switch'` — only `keep`/`inconclusive`/
+  `manual_review_required`. Schema-enforced, not a convention.
+- **The oracle-matching recall ceiling**: scoring credits only the ONE curated
+  defect per entry while real models find OTHER genuine bugs in the same diff,
+  so **low recall is not a quality signal** — read the raw per-case output
+  first, and treat recall as a floor, not the deciding metric (FP-rate + cost
+  decide). Applies to promotion-tier's Tier C fallback too; Tier C never
+  substitutes for a Tier A/B comparative result.
+- **Egress-gate prose/diff false-positive classes: fixed 2026-07-12** — historical
+  recall is the contract; don't re-add trailing-punctuation stripping (tried,
+  reverted: re-blocked valid entries). Guarded in `tests/egress-path-scan.test.mjs`
+  + `tests/sensitive-paths.test.mjs`.
 - **Verdict of record (2026-07-13): GLM-5.2 vs GPT-5.6 → `keep` GPT-5.6**
   (real Tier A, $1.87; FP-rate drove it; the recall column is untrustworthy
   per the ceiling above).
+- **A model swap is SYNCHRONOUS, never a background window** (2026-07-26): run it
+  when the model ships, adjudicate in the same sitting, verdict → `docs/research/`.
+  Passive collection killed arm-eval and produced five false "window met" reads —
+  epoch drift, dormancy and the wipe all need *elapsed time*. Only
+  intervention-over-organic-work earns a shadow; exactly two are open
+  (tiered-pipeline, final-review 2nd gate). **Do not add a sixth collector.**
+- **Evidence counts only if produced under the contract the stopping rule
+  validates**: stamp `contractEpoch` **at the collector**, verify by match
+  (`TIERED_SHADOW_CONTRACT_EPOCH`). Unstamped ⇒ ineligible, never "assume
+  current"; bump on a meaning-changing fix and re-collect — **never backfill by
+  date** (the relabelling that let the 5th false green through).
 
 → **Operational reference**: [`docs/runbooks/model-eval-harness.md`](docs/runbooks/model-eval-harness.md) · **Design + prior-art trace**: [`docs/plans/model-swap-eval-harness.md`](docs/plans/model-swap-eval-harness.md) · **First real verdict write-up**: [`docs/research/experiment-3-model-swap-glm-vs-gpt.md`](docs/research/experiment-3-model-swap-glm-vs-gpt.md).
 

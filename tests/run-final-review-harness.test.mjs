@@ -32,15 +32,24 @@ import { FalsePositiveTracker } from '../scripts/lib/findings.mjs';
  * `streamAnthropicMessage` treats a returned object with no
  * `Symbol.asyncIterator` as an already-final message, so a plain object
  * (no real streaming emulation needed) exercises the full parse path.
+ *
+ * Returns a `tool_use` block, not a `text` block (2026-07-26): the anthropic
+ * transport now forces tool-use so the provider enforces finding shape, after a
+ * text-mode response with a null `category` aborted a persistence transaction
+ * and silently discarded the primary reviewer's findings. A stub still emitting
+ * `type:'text'` would be testing a contract the transport no longer has.
  */
+const REVIEW_TOOL_NAME = 'submit_review';
+
 function mkStubClient(cannedResult, captured) {
   return {
     messages: {
       create: async (params) => {
         if (captured) captured.push(params);
         return {
-          content: [{ type: 'text', text: JSON.stringify(cannedResult) }],
+          content: [{ type: 'tool_use', name: REVIEW_TOOL_NAME, input: cannedResult }],
           usage: { input_tokens: 10, output_tokens: 20 },
+          stop_reason: 'tool_use',
         };
       },
     },

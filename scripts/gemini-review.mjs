@@ -171,6 +171,26 @@ export const GeminiFinalReviewSchema = z.object({
 // Derived from GeminiFinalReviewSchema — single source of truth via Zod → JSON Schema
 const GeminiFinalReviewJsonSchema = zodToGeminiSchema(GeminiFinalReviewSchema);
 
+/**
+ * Anthropic forced-tool-use `input_schema` — the SAME Zod source of truth as
+ * the Gemini schema above, but a different dialect on purpose.
+ * `zodToGeminiSchema` strips `maxLength`/`additionalProperties`/etc. for
+ * Gemini's restricted subset; Anthropic accepts standard JSON Schema, and the
+ * length hints are worth keeping (the provider does not enforce them — see the
+ * anthropic transport — but they steer the model, and `truncateToSchema` is
+ * still the actual enforcement downstream).
+ *
+ * `$schema` is dropped: it is metadata, not a constraint, and tool `input_schema`
+ * has no use for it.
+ */
+const AnthropicReviewToolSchema = (() => {
+  const { $schema: _ignored, ...rest } = z.toJSONSchema(GeminiFinalReviewSchema);
+  return rest;
+})();
+
+/** Tool name for the Anthropic structured-review call. Exported for tests. */
+export const ANTHROPIC_REVIEW_TOOL_NAME = 'submit_review';
+
 // ── Schema-driven truncation ──────────────────────────────────────────────────
 // Gemini verbosity regularly exceeds field maxLength constraints, causing Zod to
 // reject the entire response. Instead of failing, we truncate verbose fields and
@@ -479,16 +499,68 @@ const REVIEW_TRANSPORTS = {
     };
   },
 
-  async anthropic(client, { model, maxTokens, systemPrompt, userPrompt, signal }) {
-    // Stream — non-streaming create() throws above the SDK's max_tokens ceiling.
-    const r = await streamAnthropicMessage(client, {
+  async anthropic(client, { model, maxTokens, systemPrompt, userPrompt, toolSchema, signal }) {
+    // FORCED TOOL-USE, not a prompt instruction (2026-07-26). Gemini gets a real
+    // `responseSchema`; this transport used to get only "Output strictly valid
+    // JSON", which enforces nothing. Opus duly returned a review whose finding
+    // objects were missing the REQUIRED `category`/`section` and had an empty
+    // `detail`. Zod here is warn-and-keep (see callReviewer), so the malformed
+    // object flowed downstream and the DB INSERT hit `category NOT NULL`,
+    // rolling back the whole persistence tx — losing the PRIMARY reviewer's
+    // findings too. Tool-use makes the provider enforce object shape, which is
+    // exactly the missing guarantee.
+    //
+    // Anthropic validates SHAPE provider-side but NOT `maxLength` (same caveat
+    // as `tiered-provider-calls.mjs::createSonnetDiscoveryCall`) — length is
+    // handled downstream by `truncateToSchema`, so no clamping is needed here.
+    //
+    // REQUIRES the sdk backend: `CLAUDE_BACKEND=cli` silently drops
+    // `tools`/`tool_choice` (AGENTS.md "Anthropic Backend Routing"), which would
+    // return prose and defeat this entirely. `buildShadowClient` pins it; the
+    // primary-reviewer anthropic fallback builds via `createAnthropicClient()`
+    // and is guarded by the readiness assertion below.
+    const useTool = Boolean(toolSchema);
+    const req = {
       model,
       max_tokens: maxTokens,
-      system: `${systemPrompt}\n\nOutput strictly valid JSON. No markdown fences.`,
+      system: useTool
+        ? `${systemPrompt}\n\nSubmit your review by calling the submit_review tool. Every field is required.`
+        : `${systemPrompt}\n\nOutput strictly valid JSON. No markdown fences.`,
       messages: [{ role: 'user', content: userPrompt }],
-    }, { signal });
+    };
+    if (useTool) {
+      req.tools = [{
+        name: ANTHROPIC_REVIEW_TOOL_NAME,
+        description: 'Submit the structured final-review result. All fields are required.',
+        input_schema: toolSchema,
+      }];
+      req.tool_choice = { type: 'tool', name: ANTHROPIC_REVIEW_TOOL_NAME };
+    }
+    // Stream — non-streaming create() throws above the SDK's max_tokens ceiling.
+    const r = await streamAnthropicMessage(client, req, { signal });
+
+    let text;
+    if (useTool) {
+      const toolUse = r.content?.find((b) => b.type === 'tool_use' && b.name === ANTHROPIC_REVIEW_TOOL_NAME);
+      if (!toolUse?.input) {
+        // stop_reason:'max_tokens' is the truncation signature — surfaced so a
+        // recurrence is diagnosable from the message alone (same rationale as
+        // the tiered discovery generator's error).
+        throw new Error(
+          `anthropic response contained no ${ANTHROPIC_REVIEW_TOOL_NAME} tool call `
+          + `(stop_reason: ${r.stop_reason ?? 'unknown'}). Under CLAUDE_BACKEND=cli the `
+          + 'tools/tool_choice params are silently dropped — this transport needs the sdk backend.'
+        );
+      }
+      // Re-serialize so the shared downstream path (parse → truncate → Zod) is
+      // byte-identical across transports; parseReviewJson handles clean JSON first.
+      text = JSON.stringify(toolUse.input);
+    } else {
+      text = r.content?.find((b) => b.type === 'text')?.text?.trim() || '{}';
+    }
+
     return {
-      text: r.content?.[0]?.text?.trim() || '{}',
+      text,
       usage: {
         input_tokens: r.usage?.input_tokens ?? 0,
         output_tokens: r.usage?.output_tokens ?? 0,
@@ -536,10 +608,14 @@ const REVIEW_TRANSPORTS = {
  * @param {string} opts.userPrompt - the single egress envelope (already sensitive-filtered)
  * @param {z.ZodType} [opts.zodSchema]
  * @param {object} [opts.jsonSchema] - only used by the gemini transport (responseSchema)
+ * @param {object} [opts.toolSchema] - only used by the anthropic transport
+ *   (forced tool-use `input_schema`). Separate from `jsonSchema` because the
+ *   two providers take different dialects of the same Zod source; omitting it
+ *   degrades that transport to the old prompt-instruction mode.
  * @param {string} [opts.passName]
  * @returns {Promise<{result: object, usage: object, latencyMs: number}>}
  */
-async function callReviewer(client, { transportKind, model, systemPrompt, userPrompt, zodSchema, jsonSchema, passName }) {
+async function callReviewer(client, { transportKind, model, systemPrompt, userPrompt, zodSchema, jsonSchema, toolSchema, passName }) {
   const startMs = Date.now();
   const label = passName || 'final-review';
   const adapter = REVIEW_TRANSPORTS[transportKind];
@@ -563,7 +639,7 @@ async function callReviewer(client, { transportKind, model, systemPrompt, userPr
 
   try {
     const raw = await Promise.race([
-      adapter(client, { model, maxTokens: MAX_OUTPUT_TOKENS, systemPrompt, userPrompt, jsonSchema, signal: controller.signal }),
+      adapter(client, { model, maxTokens: MAX_OUTPUT_TOKENS, systemPrompt, userPrompt, jsonSchema, toolSchema, signal: controller.signal }),
       timeoutPromise,
     ]);
     const latencyMs = Date.now() - startMs;
@@ -634,19 +710,56 @@ async function streamAnthropicMessage(client, params, { signal } = {}) {
   // Adapter ignored stream:true (e.g. cli backend) → already a final message.
   if (!resp || typeof resp[Symbol.asyncIterator] !== 'function') return resp;
   let text = '';
+  let stopReason = null;
+  // TOOL-USE REASSEMBLY (2026-07-26). This reader used to accumulate only
+  // `text_delta` events and return a hardcoded single text block, silently
+  // DROPPING any `tool_use` block and `stop_reason`. That made forced tool-use
+  // structurally impossible through this path however correct the request was:
+  // the caller always saw an empty text block and reported "no tool call".
+  // A streamed tool call arrives as `content_block_start` (type:'tool_use') then
+  // a run of `input_json_delta` fragments that must be concatenated and parsed.
+  const toolBlocks = new Map(); // block index → { name, json }
   const usage = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0 };
   for await (const event of resp) {
     if (event.type === 'message_start') {
       usage.input_tokens = event.message?.usage?.input_tokens ?? usage.input_tokens;
       usage.cache_creation_input_tokens =
         event.message?.usage?.cache_creation_input_tokens ?? usage.cache_creation_input_tokens;
-    } else if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
-      text += event.delta.text;
+      stopReason = event.message?.stop_reason ?? stopReason;
+    } else if (event.type === 'content_block_start' && event.content_block?.type === 'tool_use') {
+      toolBlocks.set(event.index, { name: event.content_block.name, json: '' });
+    } else if (event.type === 'content_block_delta') {
+      if (event.delta?.type === 'text_delta') {
+        text += event.delta.text;
+      } else if (event.delta?.type === 'input_json_delta') {
+        const block = toolBlocks.get(event.index);
+        if (block) block.json += event.delta.partial_json ?? '';
+      }
     } else if (event.type === 'message_delta') {
       usage.output_tokens = event.usage?.output_tokens ?? usage.output_tokens;
+      stopReason = event.delta?.stop_reason ?? stopReason;
     }
   }
-  return { content: [{ type: 'text', text }], usage };
+  const content = [];
+  for (const block of toolBlocks.values()) {
+    let input;
+    try {
+      input = block.json ? JSON.parse(block.json) : {};
+    } catch (err) {
+      // Truncation is the overwhelmingly likely cause (max_tokens reached
+      // mid-JSON), so name it — a silent `{}` here would look like a model that
+      // returned an empty review.
+      throw new Error(
+        `tool_use "${block.name}" streamed malformed JSON (${err.message}); `
+        + `stop_reason: ${stopReason ?? 'unknown'} — usually max_tokens truncation`
+      );
+    }
+    content.push({ type: 'tool_use', name: block.name, input });
+  }
+  // Text block preserved only when non-empty: the non-tool path reads it with a
+  // `|| '{}'` fallback, and an empty block would mask a dropped tool call.
+  if (text) content.push({ type: 'text', text });
+  return { content, usage, stop_reason: stopReason };
 }
 
 // ── Provider descriptor catalog (single source of truth) ────────────────────
@@ -917,6 +1030,7 @@ export async function runFinalReview(provider, client, planContent, transcriptCo
     userPrompt,
     zodSchema: GeminiFinalReviewSchema,
     jsonSchema: GeminiFinalReviewJsonSchema,
+    toolSchema: AnthropicReviewToolSchema,
     passName: `${provider}-review`,
   });
 }
@@ -1064,7 +1178,23 @@ async function buildShadowClient(canonicalProvider) {
     }
     return createOpenAIClient({ purpose: 'foundry-claude' });
   }
-  return createAnthropicClient();
+  // `backend:'sdk'` PINNED, never the ambient CLAUDE_BACKEND (found live
+  // 2026-07-26 on the shadow's first real run). This transport gets its JSON
+  // contract from a PROMPT INSTRUCTION ("Output strictly valid JSON") with no
+  // provider-side enforcement — Gemini has `responseSchema`, Anthropic here has
+  // nothing. Under `CLAUDE_BACKEND=cli` the call is served by a conversational
+  // `claude -p`, which returned a markdown report ("# Final Gate Review … ##
+  // Verdict: **APPROVE**") — no JSON object anywhere, so `parseReviewJson`
+  // threw and the observation was dropped as `error-unavailable`. The shadow
+  // stayed enabled and silently recorded NOTHING: precisely the dead-experiment
+  // failure mode the A/B exists to avoid, and the same class as the tiered
+  // pipeline's discovery generator (AGENTS.md: any call needing a structured
+  // response must pin the sdk backend explicitly).
+  //
+  // Cost note: this bills ANTHROPIC_API_KEY rather than drawing Max-20x Agent
+  // SDK credit. Accepted deliberately — the pre-registered window is ~20 runs,
+  // and a shadow that produces no parseable verdict has zero value at any price.
+  return createAnthropicClient({ backend: 'sdk' });
 }
 
 // ── Model-eval adjudicator Tier A/B override (model-swap-eval-harness
@@ -1893,6 +2023,8 @@ export const _internals = {
   PROVIDERS,
   resolveCompatCreds,
   resolveOpenRouterCreds,
+  AnthropicReviewToolSchema,
+  streamAnthropicMessage,
 };
 
 // Auto-run only when invoked directly (node scripts/gemini-review.mjs ...),

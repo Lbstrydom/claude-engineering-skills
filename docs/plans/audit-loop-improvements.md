@@ -258,17 +258,33 @@ Rather than injecting language comment syntax into the file content, wrap the en
 ### path/to/file.js [CHANGED] — Review ONLY the CHANGED sections below
 \`\`\`js
 [unchanged code]
-/* ━━━━ UNCHANGED CONTEXT — DO NOT FLAG ━━━━ */
+// ━━━━ UNCHANGED CONTEXT — DO NOT FLAG ━━━━
 [unchanged code block]
-/* ━━━━ END UNCHANGED CONTEXT ━━━━ */
-/* ━━━━ CHANGED ━━━━ */
+// ━━━━ END UNCHANGED CONTEXT ━━━━
+// ── CHANGED ──
 [changed hunk]
-/* ━━━━ END CHANGED ━━━━ */
-/* ━━━━ UNCHANGED CONTEXT — DO NOT FLAG ━━━━ */
+// ── END CHANGED ──
+// ━━━━ UNCHANGED CONTEXT — DO NOT FLAG ━━━━
 [remaining unchanged code]
-/* ━━━━ END UNCHANGED CONTEXT ━━━━ */
+// ━━━━ END UNCHANGED CONTEXT ━━━━
 \`\`\`
 ```
+
+> **Corrected 2026-07-26 — markers are LINE comments, never block comments.**
+> This section originally specified `/* … */` block-comment markers, and that is
+> what shipped. It was wrong. A git hunk boundary routinely lands *inside* a
+> file-level JSDoc block (git's leading context lines start mid-comment whenever
+> the first change is near the top of a file), so the marker's closing delimiter
+> closed the JSDoc early and the file's real one became a stray token — the
+> annotated payload handed to the auditor was genuinely invalid JavaScript, and
+> `node --check` rejected it. It cost a HIGH `[Sustainability] Syntax error`
+> finding against a file that parses cleanly and runs 119 green tests. A `//`
+> marker landing inside a block comment is inert: it degrades to plain text
+> instead of corrupting the parse. Invariant now enforced by
+> [`tests/diff-annotation-marker-safety.test.mjs`](../../tests/diff-annotation-marker-safety.test.mjs)
+> ("no marker contains a block-comment close delimiter"). Note the CHANGED pair
+> shown above also differs from this section's original `/* ━━━━ CHANGED ━━━━ */`
+> — the implementation has always used line comments there.
 
 **For non-JS/TS files** where block comment syntax is invalid (JSON, YAML, Markdown, plain text): use a **line-numbered margin + header** approach. GPT cannot follow `[CHANGED — LINES 45-52]` in a header without visible line numbers in the content. Instead:
 
@@ -647,7 +663,7 @@ export class PredictiveStrategy {
 ### 4.13 `tests/file-io.test.mjs` (NEW — P1-A)
 
 **Tests**:
-- JS file with diff hunks: inline block-comment markers appear, UNCHANGED CONTEXT regions are marked
+- JS file with diff hunks: inline line-comment markers appear, UNCHANGED CONTEXT regions are marked (line comments, not block — see the 2026-07-26 correction in §"Transport-neutral boundary envelope")
 - JSON file with diff hunks: header shows `[CHANGED — LINES X-Y]`, no markers injected into content
 - File with no diff entry: no annotation markers
 - Profile routing: Python uses `#`-style block markers; JSON uses header-only

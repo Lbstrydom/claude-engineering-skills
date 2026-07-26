@@ -29,12 +29,13 @@ import { isCloudEnabled } from './lib/store/repo.mjs';
 import { getTieredShadowObservations } from './lib/store/tiered-shadow.mjs';
 import {
   WINDOW_MIN, WINDOW_MAX, normalizeDbRow, median, mean, readRecords, summarize, windowProgress,
+  TIERED_SHADOW_CONTRACT_EPOCH,
 } from './lib/audit/tiered-shadow-summary.mjs';
 
 // Re-exported for backward compatibility — tests and any external caller
 // importing these from this file (rather than the new lib module) keep
 // working unchanged. The lib module is the canonical source (2026-07-13).
-export { normalizeDbRow, median, mean, summarize };
+export { normalizeDbRow, median, mean, summarize, TIERED_SHADOW_CONTRACT_EPOCH };
 
 // argOption re-exported for backward compatibility (tests import it directly
 // from this file). The guarded implementation (guards against swallowing a
@@ -135,9 +136,22 @@ function reportRows(records, jsonMode, { source, logPath, repoLabels, repoCount,
   // "verifiable but degenerate" vs "fell back to legacy" are different
   // problems with different fixes, and collapsing them into one number is
   // exactly what made the 2026-07-14 all-fallback window undiagnosable.
-  const excluded = summary.excludedNoStage0Evidence + summary.excludedDegenerateComparison + summary.excludedFallback;
+  // `excludedMalformedAnchors` and `excludedStaleEpoch` are summed and printed
+  // here too. Both were/would-be counted by summarize() but invisible in this
+  // CLI, which is the same silent-exclusion failure this block exists to
+  // prevent: an operator reading a shrunken comparedRuns with no reason line
+  // cannot tell "our schema ate the candidates" or "we changed the contract"
+  // from "the pipeline is quiet".
+  const excluded = summary.excludedNoStage0Evidence + summary.excludedDegenerateComparison
+    + summary.excludedFallback + (summary.excludedMalformedAnchors || 0) + (summary.excludedStaleEpoch || 0);
   if (excluded > 0) {
     console.log(`  excluded from the decision window (${excluded}):`);
+    if (summary.excludedStaleEpoch > 0) {
+      console.log(`    ${summary.excludedStaleEpoch} × superseded measurement contract — measured before the current epoch (${TIERED_SHADOW_CONTRACT_EPOCH}); re-collect, do not backfill`);
+    }
+    if (summary.excludedMalformedAnchors > 0) {
+      console.log(`    ${summary.excludedMalformedAnchors} × malformed anchors — OUR schema rejected the candidates; a contract failure, not a tiered-quality signal`);
+    }
     if (summary.excludedFallback > 0) {
       console.log(`    ${summary.excludedFallback} × fell back to legacy — the tiered pipeline never really ran (see fallback reasons below)`);
     }

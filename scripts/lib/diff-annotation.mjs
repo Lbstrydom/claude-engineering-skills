@@ -87,6 +87,40 @@ export function getCommentStyle(relPath) {
   return 'block';
 }
 
+/**
+ * Marker text injected around unchanged regions.
+ *
+ * **LINE comments, never `/* … *\/` block comments — load-bearing (2026-07-26).**
+ * A hunk boundary lands wherever git put it, which is routinely *inside* a
+ * file-level JSDoc block (git's 3 lines of leading context start mid-comment
+ * whenever the first change is near the top of the file — the common case).
+ * A marker containing `*\/` then CLOSES that JSDoc early and the file's real
+ * `*\/` becomes a stray token, so the annotated payload handed to the auditor is
+ * genuinely invalid JavaScript — `node --check` rejects it. That is not a
+ * theoretical risk: it made a GPT pass emit a HIGH `[Sustainability] Syntax
+ * error` against `tests/tiered-shadow-summary.test.mjs`, a file that parses
+ * cleanly and runs 119 passing tests. The auditor was reading the corrupted
+ * payload correctly; the annotator was lying to it.
+ *
+ * A `//` marker that lands inside a block comment is inert — it degrades to
+ * plain comment text (the model still *sees* the words, it just carries no
+ * delimiter force) instead of corrupting the parse. Degrading beats corrupting.
+ * This also makes all four markers consistent: the CHANGED pair below has
+ * always used line comments.
+ *
+ * Enforced by `tests/diff-annotation.test.mjs` — the invariant under test is
+ * literally "no marker contains the two characters `*` `/` adjacent".
+ */
+const UNCHANGED_OPEN = '// ━━━━ UNCHANGED CONTEXT — DO NOT FLAG ━━━━';
+const UNCHANGED_CLOSE = '// ━━━━ END UNCHANGED CONTEXT ━━━━';
+const CHANGED_OPEN = '// ── CHANGED ──';
+const CHANGED_CLOSE = '// ── END CHANGED ──';
+
+/** Exported for the regression test that pins the no-`*\/` invariant. */
+export const _annotationMarkers = {
+  UNCHANGED_OPEN, UNCHANGED_CLOSE, CHANGED_OPEN, CHANGED_CLOSE,
+};
+
 function _annotateBlockStyle(raw, sortedHunks) {
   const lines = raw.split('\n');
   const annotated = [];
@@ -98,25 +132,25 @@ function _annotateBlockStyle(raw, sortedHunks) {
 
     if (cursor < hunkStart) {
       annotated.push(
-        '/* ━━━━ UNCHANGED CONTEXT — DO NOT FLAG ━━━━ */',
+        UNCHANGED_OPEN,
         ...lines.slice(cursor, hunkStart),
-        '/* ━━━━ END UNCHANGED CONTEXT ━━━━ */'
+        UNCHANGED_CLOSE
       );
     }
 
     annotated.push(
-      '// ── CHANGED ──',
+      CHANGED_OPEN,
       ...lines.slice(hunkStart, hunkEnd),
-      '// ── END CHANGED ──'
+      CHANGED_CLOSE
     );
     cursor = hunkEnd;
   }
 
   if (cursor < lines.length) {
     annotated.push(
-      '/* ━━━━ UNCHANGED CONTEXT — DO NOT FLAG ━━━━ */',
+      UNCHANGED_OPEN,
       ...lines.slice(cursor),
-      '/* ━━━━ END UNCHANGED CONTEXT ━━━━ */'
+      UNCHANGED_CLOSE
     );
   }
 

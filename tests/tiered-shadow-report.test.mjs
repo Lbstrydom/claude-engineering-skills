@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { median, mean, summarize, argOption } from '../scripts/tiered-shadow-report.mjs';
+import { median, mean, summarize, argOption, TIERED_SHADOW_CONTRACT_EPOCH } from '../scripts/tiered-shadow-report.mjs';
 import { retrySync } from '../scripts/lib/retry-transient-fs.mjs';
 
 describe('median/mean', () => {
@@ -25,9 +25,14 @@ describe('summarize', () => {
   // suite would silently stop testing its own subject (the failure/delta math)
   // rather than fail loudly. They mirror the finding counts because
   // `compareAuditRunResults` derives both from the same `findings.length`.
+  // `contractEpoch` is here for the SAME reason as the eligible counts above:
+  // it is a precondition of decision-grade, so omitting it would quietly
+  // exclude every row and this suite would test nothing. It is stamped by
+  // `compareAuditRunResults` on every real row.
   const okRecord = (overrides = {}) => ({
     legacyOk: true, shadowOk: true,
     comparison: {
+      contractEpoch: TIERED_SHADOW_CONTRACT_EPOCH,
       legacyCostUsd: 2, tieredCostUsd: 0.5, legacyLatencySec: 20, tieredLatencySec: 8,
       overlapCount: 3, legacyFindingCount: 4, onlyTieredCount: 1, tieredRunStatus: 'complete',
       legacyEligibleCount: 4, tieredEligibleCount: 4, tieredStage0Verified: 4,
@@ -160,8 +165,11 @@ describe('CLI', () => {
     // This is not hypothetical: every real observation recorded 2026-07-15/16
     // has `legacyCostUsd: null`, which is why the live report shows "mean —"
     // for cost. The fixture must be DECISION-GRADE (non-empty eligible counts
-    // on both sides) or `comparedRuns` excludes it and the renderer never runs
-    // — the test would then pass by printing nothing at all.
+    // on both sides, AND a current `contractEpoch`) or `comparedRuns` excludes
+    // it and the renderer never runs — the test would then pass by printing
+    // nothing at all. That is not hypothetical either: adding the epoch gate
+    // (2026-07-26) broke this test in exactly the way this comment predicted,
+    // which is the comment earning its keep.
     //
     // The overlap half of the original guard is now unreachable by
     // construction: `compareAuditRunResults` derives `legacyEligibleCount` and
@@ -172,6 +180,7 @@ describe('CLI', () => {
     fs.writeFileSync(tmpLog, `${JSON.stringify({
       legacyOk: true, shadowOk: true,
       comparison: {
+        contractEpoch: TIERED_SHADOW_CONTRACT_EPOCH,
         legacyFindingCount: 2, onlyTieredCount: 0, overlapCount: 2, tieredRunStatus: 'complete',
         legacyEligibleCount: 2, tieredEligibleCount: 2, tieredStage0Verified: 2,
       },

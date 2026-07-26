@@ -22,6 +22,43 @@ import fs from 'node:fs';
 export const WINDOW_MIN = 10;
 export const WINDOW_MAX = 15;
 
+/**
+ * MEASUREMENT-CONTRACT EPOCH — the general fix for the false-"met" class.
+ *
+ * This gate produced FIVE successive false "window met" readings (2026-07-13
+ * fallback-only, 07-14 transport, 07-15/16 zero-findings, 07-17 evidence-anchor,
+ * 07-26 stale-row inclusion). Each was patched with one more `excluded*`
+ * predicate below, and each patch was retrospective: it described the specific
+ * defect just found, so the NEXT defect — unknown at patch time — was
+ * un-excluded by construction. That is why the count kept reading green.
+ *
+ * The invariant those patches were all approximating:
+ *
+ *   > Evidence is eligible only if it was produced under the exact measurement
+ *   > contract the stopping rule claims to validate.
+ *
+ * So the epoch is stamped by the COLLECTOR at write time
+ * (`tiered-shadow-compare.mjs`), never inferred by the reader from a date. A
+ * reader-side date cutoff would be retroactive relabelling — precisely the
+ * "decide after seeing the data which rows should count" move that let the
+ * 07-26 reading pass. Rows without a matching stamp are INELIGIBLE, not zero
+ * and not legacy: they were measured by a contract we no longer claim.
+ *
+ * **Bump this string whenever a fix changes what a comparison row MEANS**
+ * (a scoring/correlation change, a new persisted decision field, a pipeline
+ * fix that alters which runs complete). The window then restarts from zero
+ * automatically and no sixth false "met" is constructable. Do NOT bump it for
+ * changes that cannot move the metric (logging, comments, CLI wording).
+ *
+ * History — why the current value and why no backfill: the 2026-07-22 fix
+ * (overlap correlated by location instead of finding prose, plus real
+ * per-stage cost capture) made 8 rows genuinely valid. They are still let go,
+ * unstamped, rather than backfilled by commit date. Backfilling would have
+ * been mechanically easy and is exactly the reasoning this constant exists to
+ * forbid; 8 re-collected runs are cheaper than a sixth false green.
+ */
+export const TIERED_SHADOW_CONTRACT_EPOCH = 'v4-collector-stamped-2026-07-26';
+
 /** DB row (snake_case) → the exact shape `summarize()` expects (camelCase,
  * matching the local JSONL record shape) — one normalizer so both sources
  * feed the SAME aggregation logic, no duplicated math. */
@@ -86,7 +123,7 @@ export function readRecords(logPath) {
  * @returns {{totalRuns:number, historicalCompleteRuns:number, comparedRuns:number,
  *   legacyFailures:number, shadowFailures:number, excludedNoStage0Evidence:number,
  *   excludedDegenerateComparison:number, excludedFallback:number,
- *   excludedMalformedAnchors:number,
+ *   excludedMalformedAnchors:number, excludedStaleEpoch:number,
  *   costDeltaUsd:object, latencyDeltaSec:object, findingOverlapRate:object,
  *   tieredRunStatusCounts:object, tieredFallbackReasons:object,
  *   shadowFailureReasons:object}}
@@ -201,14 +238,31 @@ export function summarize(records) {
   // schema ate the candidates, so a legacy-only population would otherwise let
   // it count as a legitimate 0%-overlap "recall failure" — attributing OUR bug
   // to the tiered pipeline's quality.
+  // Epoch gate — applied FIRST, ahead of every defect-specific predicate above,
+  // because it is the only one that is not retrospective. The predicates below
+  // each encode a defect we already found; this one excludes rows measured
+  // under ANY superseded contract, including defects not yet discovered when
+  // the row was written. A row with no stamp predates collector stamping and
+  // is ineligible by the same rule — never "assume current".
+  const isCurrentEpoch = (c) => c.contractEpoch === TIERED_SHADOW_CONTRACT_EPOCH;
   const compared = historicalComplete
+    .filter((r) => isCurrentEpoch(r.comparison))
     .filter((r) => !isContractFailure(r.comparison))
     .filter((r) => hasComparablePopulation(r.comparison));
 
   // Exclusion reasons — computed over the same record sets, reported
   // separately (round-3 plan-audit M1's "not collapsed into one count").
   const excludedFallback = withComparison.filter((r) => r.comparison.tieredRunStatus === 'fallback_legacy').length;
-  const notCompared = historicalComplete.filter((r) => !hasComparablePopulation(r.comparison));
+  // Epoch takes PRECEDENCE over the defect-specific reasons so every excluded
+  // row lands in exactly one printed bucket (this module's standing rule:
+  // reasons are reported separately, never collapsed — and never double-counted,
+  // or the printed total exceeds the rows that actually exist). Saying a
+  // superseded-contract row was "degenerate" would also be a false diagnosis:
+  // we cannot judge its population under a contract we no longer claim.
+  const excludedStaleEpoch = historicalComplete.filter((r) => !isCurrentEpoch(r.comparison)).length;
+  const notCompared = historicalComplete
+    .filter((r) => isCurrentEpoch(r.comparison))
+    .filter((r) => !hasComparablePopulation(r.comparison));
   // "Tiered found nothing verifiable at all" — Stage 0 verified zero
   // candidates. Distinct from a degenerate-but-nonzero-evidence run. Under
   // the `||` predicate this class only lands here when the LEGACY side was
@@ -236,6 +290,11 @@ export function summarize(records) {
     excludedNoStage0Evidence,
     excludedDegenerateComparison,
     excludedFallback,
+    // Rows measured under a superseded measurement contract. Its own named
+    // reason for the same reason every other exclusion has one: "we changed
+    // how this is measured" and "the pipeline underperformed" look identical
+    // in an aggregate and have opposite responses (re-collect vs investigate).
+    excludedStaleEpoch,
     // evidence-anchor-path-contract §7c — reported as its OWN named reason,
     // never folded into excludedNoStage0Evidence: "our schema ate the
     // candidates" and "the tiered pipeline found nothing" look identical in

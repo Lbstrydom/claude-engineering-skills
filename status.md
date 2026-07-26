@@ -1,5 +1,152 @@
 # Project Status Log
 
+## 2026-07-26 — Model-evaluation governance: epoch-gated shadow windows, a working final-review A/B, and two prompt/persistence defects found only by running it
+
+Session started as a question — "which plans are waiting on telemetry that now
+has enough data?" — and became four connected fixes. The through-line: **every
+one of these was a gate or an experiment that read green while checking nothing.**
+
+### 1. The tiered-shadow window's FIFTH false "window met"
+
+`npm run audit:tiered-shadow-report` announced *"19 compared runs — window met,
+time for the Phase-14 review."* Querying `tiered_shadow_observations` directly
+showed 11 of the 19 predated the 2026-07-22 overlap+cost fix and carried the
+documented void signature (`tieredCostUsd:0`, `legacyCostUsd:null`). Only 8 were
+genuinely post-fix — short of the 10–15 target.
+
+Root cause of the whole five-incident series, stated once: **every guard was
+retrospective.** Each prior fix added an `excluded*` predicate describing the
+defect just found, so the next defect — unknown at patch time — was un-excluded
+by construction.
+
+- **`TIERED_SHADOW_CONTRACT_EPOCH`** ([tiered-shadow-summary.mjs](scripts/lib/audit/tiered-shadow-summary.mjs)):
+  the collector stamps `contractEpoch` on every comparison row at write time;
+  the verifier counts only matching rows. Unstamped ⇒ ineligible, never "assume
+  current". Excluded rows get a **named** reason (`excludedStaleEpoch`).
+- Stamped by the **collector**, not inferred by the reader — a `created_at >
+  fixDate` cutoff is retroactive relabelling, which is precisely how the 07-26
+  reading passed.
+- **No backfill.** The 8 valid post-fix rows were let go rather than stamped by
+  date. Backfilling was trivial and is exactly what the constant forbids; 8
+  re-collected runs cost less than a sixth false green.
+- The report now honestly reads **`0/10-15 — keep collecting`**.
+- Also surfaced two exclusions the CLI counted but never printed
+  (`excludedMalformedAnchors`, and the new epoch one) — same silent-exclusion
+  class the block exists to prevent.
+
+### 2. Final-review shadow A/B switched ON — and made to actually work
+
+Enabled `FINAL_REVIEW_SHADOW=claude-opus` with `FINAL_REVIEW_SHADOW_MODEL=claude-opus-5`
+**pinned** (the stopping rule is N≥20 per *fixed* pair, and `latest-opus`
+resolves to `claude-opus-4-8` cold but `claude-opus-5` after the catalog refresh
+real runs perform — an unpinned sentinel would silently reset the window).
+
+Its first real runs exposed **four stacked defects**, each hiding the next:
+
+1. **`buildShadowClient` inherited the ambient `CLAUDE_BACKEND`.** Under
+   `cli` the shadow was served by a conversational `claude -p` and returned a
+   markdown report with no JSON — parse threw, observation dropped as
+   `error-unavailable`. Enabled, running, recording nothing. Now pins
+   `{backend:'sdk'}`. **Second subsystem this gotcha has silently killed** (the
+   tiered pipeline lost 20 runs to it).
+2. **No provider-side schema enforcement.** The anthropic transport asked for
+   JSON by *prompt instruction* while Gemini got a real `responseSchema`; Zod in
+   `callReviewer` is warn-and-keep, so a finding missing required
+   `category`/`section` flowed straight through. Now forced tool-use
+   (`submit_review` + `input_schema` from the same Zod source, standard dialect
+   — deliberately not the Gemini-stripped one).
+3. **`streamAnthropicMessage` discarded `tool_use` blocks entirely** —
+   it accumulated only `text_delta` events and returned a hardcoded single text
+   block, dropping tool blocks *and* `stop_reason`. Tool-use was structurally
+   impossible through that reader however correct the request. **The first live
+   run after fixing (2) still failed for exactly this reason**; both halves had
+   to land together. Now reassembles `input_json_delta` fragments and names
+   truncation on malformed JSON.
+4. **Persistence coupling — the serious one.** A null `category` (NOT NULL)
+   aborted the INSERT; `recordFindings` swallowed the error; the poisoned tx made
+   `COMMIT` **silently degrade to ROLLBACK**; and because primary and shadow
+   shared one transaction, **the primary reviewer's findings were discarded
+   too**. The run kept stale findings from an earlier review with no error
+   anywhere. Fixed three ways: two transactions (the function's own header
+   already *promised* this independence), rethrow when a caller supplies a tx
+   client, and a NOT-NULL write-boundary guard — coerce a missing `category` to a
+   visible marker (row survives, `detail` stays gradeable) but **drop** a
+   severity-less row loudly, because severity is the number the stopping rule
+   counts and fabricating it would corrupt the metric.
+
+**Live-verified**: `buckets both:0 primary-only:2 shadow-only:3`, five rows
+persisted with 272/281/600/600/513-char details, `source_model` + `bucket`
+populated for the first time, and `shadowOnlyQueue` returning **3 gradeable
+findings**. Progress 1/20.
+
+*Correction to an earlier claim in-session*: the shadow is not near-free on Max
+credit — it only works on the `sdk` path, so it bills `ANTHROPIC_API_KEY`
+(~$1–3 across the 20-run window). Accepted; an unparseable shadow is worthless
+at any price.
+
+### 3. The diff annotator was handing the auditor broken JavaScript
+
+An `/audit-code` round raised a HIGH `[Sustainability] Syntax error` against
+`tests/tiered-shadow-summary.test.mjs`. It was a false positive **about the
+source file** — but not a hallucination. Reproduced and confirmed with
+`node --check`: git prepends 3 context lines, so a change near the top of a file
+puts the hunk boundary *inside* the file-level JSDoc; the injected
+`/* … END UNCHANGED CONTEXT … */` marker's closing delimiter then closed that
+JSDoc early and the file's real one became a stray token. **The auditor was
+reading the corrupted payload correctly; the annotator was lying to it.**
+
+- Markers converted to line-comment form (matching the `// ── CHANGED ──` pair
+  that was already correct in the same function). A `//` marker landing inside a
+  block comment is inert — it degrades instead of corrupting.
+- `.audit/clusterB-gates-r3-rebuttal.md` records this same class hitting before
+  and being dismissed as "the model misread" — at least the third occurrence
+  without root-causing. A false positive with a plausible "the model got
+  confused" story is exactly the kind that never gets fixed.
+- **My change silently made an existing test vacuous**: the egress test's
+  hardcoded marker regex stopped matching, so `unchangedBlocks` became `[]`, its
+  loop never ran, and it passed having checked nothing. Fixed by deriving the
+  matcher from the exported constants plus an explicit non-vacuity assertion.
+
+### 4. Model-evaluation doctrine written down
+
+A `/brainstorm --debate` round (GPT-5.6 + Gemini-pro) converged on a premise
+neither had questioned: **a model swap is a point-in-time decision and must not
+be a background window.** Passive collection is what killed arm-eval and
+produced five false "met" readings — epoch drift, dormancy and the DB wipe all
+need *elapsed time* to happen.
+
+- AGENTS.md: swaps are synchronous; only **intervention-over-organic-work**
+  questions earn a shadow (exactly two are open); evidence counts only under the
+  contract the stopping rule validates. Kept under the 1200-line cap by
+  condensing dossier text, not raising it.
+- [`docs/runbooks/model-eval-harness.md`](docs/runbooks/model-eval-harness.md):
+  a "new model shipped, what do I do?" playbook — role table, the recall ceiling
+  as a *floor* not a verdict, worksheet-first adjudication, verdicts to
+  `docs/research/` (an authored decision document, which is why the GLM-vs-GPT
+  write-up survived the wipe while every arm-eval DB row did not), and corpus
+  growth with same-day incumbent re-baselining.
+
+### Audit trail (honest)
+- `/audit-code` R1 H:0 M:5, R2 H:1 M:4. **All 5 R1 findings were pre-existing and
+  out-of-scope**, each deferred with a written *independence* argument rather than
+  an authorship excuse; the one load-bearing part (the plan asserting a window
+  state this change invalidated) was fixed in-scope.
+- R2's HIGH was the annotator false positive above — disproved mechanically
+  (`node --check` exit 0; the blamed marker appears 0 times in the file; 119
+  tests run from it), so dismissed without GPT deliberation. Deliberating a
+  mechanically-disproven claim is rigor theatre.
+- Gemini gate: **CONCERNS on one run, APPROVE on a re-run of the identical
+  transcript** (re-run was forced by a 120s timeout, not verdict-shopping, but
+  the divergence is real and worth weighing).
+- Full suite green throughout: **8713 pass / 0 fail**, `npm run check` exit 0.
+- Deferred, recorded, not silently dropped: `root-scripts → install` domain-map
+  gap (×2), `store/arch/coverage.mjs` layering, plan-doc path drift, and the
+  tiered-shadow observation-durability subsystem. Gemini also raised three
+  findings in untouched code (`costEurAsRecorded` nullification, `globMatch`
+  placeholders, `findingFingerprint` pipe collisions) — real, unaddressed.
+- Still open: `overlapCount` reads 0 on every post-fix row. Possibly honest,
+  possibly a residual defect in the 07-22 correlation fix, never live-verified.
+
 ## 2026-07-24 — Dropped 20 legacy "allow all for anon" RLS policies + closed a missed SECURITY DEFINER grant
 
 Follow-up to the same session's RLS fix: verifying `finding_embeddings`/

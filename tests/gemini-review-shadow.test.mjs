@@ -157,3 +157,185 @@ describe('resolveModelEvalShadowOverride — discovery is unconditional, never r
     assert.equal(result, null);
   });
 });
+
+// ── The shadow must pin the sdk backend (found live 2026-07-26) ─────────────
+// First real run of the enabled shadow: Opus produced a genuine review whose
+// verdict was APPROVE, but as a MARKDOWN report — no JSON object at all — so
+// parseReviewJson threw and the observation was dropped (`error-unavailable`).
+// Root cause: `buildShadowClient` used the ambient `CLAUDE_BACKEND`, which is
+// `cli` on the operator's machine, and the cli backend serves a conversational
+// `claude -p`. This transport's JSON contract is a prompt instruction with no
+// provider-side enforcement, so a conversational backend silently voids it.
+//
+// A source-level pin (not a behavioural mock) because the failure is a MISSING
+// ARGUMENT: there is no return value to assert on, and constructing the real
+// client would either spawn the CLI or need an API key. This mirrors the
+// existing `tests/tiered-pipeline-wiring.test.mjs` static pin guarding the same
+// invariant for the discovery generator.
+describe('buildShadowClient pins backend:sdk — a conversational backend silently voids the JSON contract', () => {
+  it('passes backend:"sdk" explicitly rather than inheriting the ambient CLAUDE_BACKEND', async () => {
+    const fs = await import('node:fs');
+    const src = fs.readFileSync('scripts/gemini-review.mjs', 'utf8');
+    const fn = src.slice(src.indexOf('async function buildShadowClient'));
+    const body = fn.slice(0, fn.indexOf('\n}'));
+    assert.match(
+      body,
+      /return createAnthropicClient\(\{\s*backend:\s*'sdk'\s*\}\)/,
+      'the claude-opus shadow branch must pin backend:sdk — a bare createAnthropicClient() '
+      + 'inherits CLAUDE_BACKEND=cli and returns markdown prose, which drops every observation',
+    );
+    assert.doesNotMatch(
+      body,
+      /return createAnthropicClient\(\)\s*;/,
+      'a bare, argument-less createAnthropicClient() in this function is the exact 2026-07-26 defect',
+    );
+  });
+});
+
+// ── Anthropic transport: forced tool-use, not a prompt instruction ──────────
+// Live 2026-07-26. The anthropic transport asked for JSON via the system prompt
+// only ("Output strictly valid JSON"), which enforces nothing, while Gemini got
+// a real `responseSchema`. Opus returned a review whose finding objects were
+// missing the REQUIRED `category`/`section` and had an empty `detail`. Zod in
+// callReviewer is warn-and-keep, so the malformed object flowed through
+// bucketing into persistence, where `category NOT NULL` aborted the INSERT and
+// silently rolled back the PRIMARY reviewer's findings too.
+//
+// Schema-level assertions only — no live API call.
+describe('anthropic review transport forces structured output via tool-use', () => {
+  const { AnthropicReviewToolSchema } = _internals;
+
+  it('the tool input_schema requires the fields that went missing', () => {
+    const itemRequired = AnthropicReviewToolSchema.properties.new_findings.items.required;
+    for (const field of ['category', 'section', 'detail', 'severity']) {
+      assert.ok(
+        itemRequired.includes(field),
+        `${field} must be provider-enforced as required — its absence is what broke persistence`,
+      );
+    }
+  });
+
+  it('the tool schema is the standard dialect, NOT the Gemini-stripped one', () => {
+    // zodToGeminiSchema strips maxLength for Gemini's restricted subset. Handing
+    // that to Anthropic would silently drop the length hints; they are different
+    // dialects of the same Zod source and must not be conflated.
+    const detail = AnthropicReviewToolSchema.properties.new_findings.items.properties.detail;
+    assert.equal(detail.maxLength, 600, 'standard JSON Schema keeps maxLength');
+    assert.equal(AnthropicReviewToolSchema.$schema, undefined, '$schema is metadata, dropped for input_schema');
+  });
+});
+
+// ── Shadow-only findings must round-trip with gradeable content ─────────────
+// The A/B's pre-registered stopping rule is "KEEP iff human-accepted shadow-only
+// HIGH/MEDIUM >= 1 per 5 runs". A shadow-only finding with an empty `detail` is
+// ungradeable, so the accept-rate numerator can never be evaluated and the
+// experiment silently collects only cost data — the dead-experiment failure mode
+// it exists to avoid. This pins the mapping end of that contract.
+describe('shadow-only findings round-trip with gradeable content', () => {
+  const { diffFindingBuckets } = _internals;
+
+  const finding = (over = {}) => ({
+    id: 'G1', severity: 'MEDIUM', category: 'Data Contract Violation',
+    section: 'scripts/lib/audit/candidate-envelope.mjs',
+    detail: 'evidenceAlternatives[0] is not the canonical claim after promotion.',
+    risk: 'Downstream consumers read the wrong evidence.',
+    recommendation: 'Swap the promoted entry to index 0.',
+    is_quick_fix: false, is_mechanical: true, principle: 'Respect declared invariants.',
+    _hash: 'aaaa1111', ...over,
+  });
+
+  // Mirrors runShadowAndPersist's shadowOnlyFindings projection (gemini-review.mjs).
+  const project = (f) => ({
+    fingerprint: f._hash, severity: f.severity, category: f.category,
+    section: f.section, detail: (f.detail || '').slice(0, 600),
+  });
+
+  it('a shadow-only finding keeps detail/category/section through bucketing', () => {
+    const primary = { new_findings: [finding({ _hash: 'bbbb2222', id: 'P1' })] };
+    const shadowResult = { new_findings: [finding()] };
+    const diff = diffFindingBuckets(primary, shadowResult);
+
+    const shadowOnly = diff.shadow.filter((f) => f._bucket === 'shadow-only').map(project);
+    assert.equal(shadowOnly.length, 1, 'precondition: exactly one shadow-only finding');
+    const [f] = shadowOnly;
+    assert.ok(f.detail.length > 0, 'detail must be non-empty — an empty detail is ungradeable');
+    assert.equal(f.category, 'Data Contract Violation');
+    assert.equal(f.section, 'scripts/lib/audit/candidate-envelope.mjs');
+    assert.equal(f.severity, 'MEDIUM');
+    assert.equal(f.fingerprint, 'aaaa1111');
+  });
+
+  // The exact 2026-07-26 shape, as a canary: if a producer ever regresses to
+  // omitting these fields, the projection reproduces the ungradeable row. The
+  // provider-side tool schema is what prevents it; this documents the symptom
+  // so a future empty queue is diagnosed in seconds rather than re-investigated.
+  it('documents the malformed shape that produced the empty adjudication queue', () => {
+    const malformed = { _hash: 'e3852b1f', severity: 'MEDIUM' }; // no category/section/detail
+    const projected = project(malformed);
+    assert.equal(projected.detail, '', 'the observed symptom: empty detail');
+    assert.equal(projected.category, undefined, 'and an absent category — NOT NULL in audit_findings');
+  });
+});
+
+// ── Streamed tool_use reassembly ────────────────────────────────────────────
+// The defect that made forced tool-use structurally impossible (2026-07-26):
+// streamAnthropicMessage accumulated only `text_delta` events and returned a
+// hardcoded single text block, silently discarding any `tool_use` block AND
+// `stop_reason`. So the transport always reported "no submit_review tool call"
+// no matter how correct the request was. Two fixes had to land together — the
+// request (tools/tool_choice) and the reader — which is why the first live run
+// after the request-side fix still failed.
+describe('streamAnthropicMessage reassembles streamed tool_use input', () => {
+  const { streamAnthropicMessage } = _internals;
+
+  /** A stub client whose create() yields a canned Anthropic event stream. */
+  const streamingClient = (events) => ({
+    messages: {
+      create: async () => (async function* () { yield* events; })(),
+    },
+  });
+
+  it('concatenates input_json_delta fragments into a parsed tool input', async () => {
+    const r = await streamAnthropicMessage(streamingClient([
+      { type: 'message_start', message: { usage: { input_tokens: 100 } } },
+      { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', name: 'submit_review' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{"verdict":"APP' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: 'ROVE"}' } },
+      { type: 'message_delta', delta: { stop_reason: 'tool_use' }, usage: { output_tokens: 42 } },
+    ]));
+    const tool = r.content.find((b) => b.type === 'tool_use');
+    assert.ok(tool, 'the tool_use block must survive streaming — dropping it was the bug');
+    assert.equal(tool.name, 'submit_review');
+    assert.deepEqual(tool.input, { verdict: 'APPROVE' }, 'fragments must be concatenated then parsed');
+    assert.equal(r.stop_reason, 'tool_use', 'stop_reason must survive — it is the truncation signature');
+    assert.equal(r.usage.input_tokens, 100);
+    assert.equal(r.usage.output_tokens, 42);
+  });
+
+  it('still handles a pure-text stream (the non-tool path is unchanged)', async () => {
+    const r = await streamAnthropicMessage(streamingClient([
+      { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '{"verdict":' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '"REJECT"}' } },
+    ]));
+    assert.equal(r.content.find((b) => b.type === 'text')?.text, '{"verdict":"REJECT"}');
+  });
+
+  it('throws a truncation-naming error on malformed streamed JSON, never a silent empty input', async () => {
+    // A silent `{}` here would read as "the model returned an empty review",
+    // sending the next investigation at the model instead of at max_tokens.
+    await assert.rejects(
+      () => streamAnthropicMessage(streamingClient([
+        { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', name: 'submit_review' } },
+        { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{"verdict":"APPRO' } },
+        { type: 'message_delta', delta: { stop_reason: 'max_tokens' } },
+      ])),
+      /malformed JSON.*stop_reason: max_tokens.*truncation/s,
+    );
+  });
+
+  it('passes a non-streaming adapter response straight through (cli backend guard)', async () => {
+    const final = { content: [{ type: 'text', text: '{}' }], usage: {} };
+    const r = await streamAnthropicMessage({ messages: { create: async () => final } });
+    assert.equal(r, final, 'an adapter that ignores stream:true must be returned unchanged');
+  });
+});

@@ -62,6 +62,7 @@ import { resolveRepoIdentity } from '../repo-identity.mjs';
 import { appendTieredShadowObservation } from '../store/tiered-shadow.mjs';
 import { isFileInChangedScope } from './deferral-classifier.mjs';
 import { TieredUnavailableError } from './discovery-fallback.mjs';
+import { TIERED_SHADOW_CONTRACT_EPOCH } from './tiered-shadow-summary.mjs';
 
 export const SHADOW_LOG_PATH = path.join('.audit', 'tiered-shadow-log.jsonl');
 
@@ -406,6 +407,13 @@ export function compareAuditRunResults(legacyResult, tieredResult, opts = undefi
   }
 
   return {
+    // Measurement-contract stamp, written HERE by the collector rather than
+    // inferred by the reader — see TIERED_SHADOW_CONTRACT_EPOCH's doc comment
+    // in tiered-shadow-summary.mjs for why a reader-side date cutoff is the
+    // wrong shape (it is retroactive relabelling, and it is how the 2026-07-26
+    // false "window met" reading passed). `summarize()` counts a row toward
+    // the Phase-14 window only when this equals its current epoch constant.
+    contractEpoch: TIERED_SHADOW_CONTRACT_EPOCH,
     legacyFindingCount: legacyFindings.length,
     tieredFindingCount: tieredFindings.length,
     overlapCount,
@@ -678,9 +686,9 @@ async function recordObservation({ ctx, logPath, legacyOk, shadowOk, shadowLaten
       legacyOk, shadowOk, shadowError, shadowLatencyMs, comparison,
     });
     if (!result.ok) {
-      process.stderr.write(`  [tiered-shadow] WARNING: cloud persistence failed (local log unaffected): ${result.error}\n`);
+      process.stderr.write(`  [tiered-shadow] WARNING: cloud persistence failed — this observation exists ONLY in ${logPath}, and the default report is cloud-first, so it will NOT be counted toward the window; recover it with --log ${logPath}. Cause: ${result.error}\n`);
     }
   } catch (err) {
-    process.stderr.write(`  [tiered-shadow] WARNING: cloud persistence failed (local log unaffected): ${err.message}\n`);
+    process.stderr.write(`  [tiered-shadow] WARNING: cloud persistence failed — this observation exists ONLY in ${logPath}, and the default report is cloud-first, so it will NOT be counted toward the window; recover it with --log ${logPath}. Cause: ${err.message}\n`);
   }
 }

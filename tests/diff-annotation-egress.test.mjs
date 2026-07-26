@@ -14,9 +14,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { readFilesAsAnnotatedContext } from '../scripts/lib/diff-annotation.mjs';
+import { readFilesAsAnnotatedContext, _annotationMarkers } from '../scripts/lib/diff-annotation.mjs';
 import { assertEgressSafe } from '../scripts/lib/sensitive-egress-gate.mjs';
 import { mkdtemp } from './helpers/fixtures.mjs';
+
+/** Escape a literal string for safe interpolation into a RegExp. */
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const DSN = 'postgresql://user:hunter2@host.example.com/db';
 
@@ -115,9 +118,24 @@ test('multi-line PEM redaction does not desync diff-hunk CHANGED/UNCHANGED annot
     );
   }
 
+  // Markers are LINE comments (2026-07-26 — a block-comment marker corrupts any
+  // file whose hunk boundary falls inside a JSDoc; see
+  // tests/diff-annotation-marker-safety.test.mjs). Derived from the exported
+  // marker constants rather than re-hardcoded, so the next format change updates
+  // this matcher instead of silently zeroing it out.
   const unchangedBlocks = [...out.matchAll(
-    /\/\* ━━━━ UNCHANGED CONTEXT.*?━━━━ \*\/([\s\S]*?)\/\* ━━━━ END UNCHANGED CONTEXT ━━━━ \*\//g,
+    new RegExp(`${escapeRe(_annotationMarkers.UNCHANGED_OPEN)}\\n([\\s\\S]*?)${escapeRe(_annotationMarkers.UNCHANGED_CLOSE)}`, 'g'),
   )].map(m => m[1]);
+  // NON-VACUITY GUARD. Without this the whole check below is a no-op when the
+  // matcher stops matching: the loop body simply never runs and the test reads
+  // green having verified nothing. That is exactly what happened when the marker
+  // format changed under the old hardcoded regex — this test passed while
+  // checking zero blocks. "Can this go green without checking anything?" is the
+  // repo's own success-path rule (AGENTS.md); here the answer must be no.
+  assert.ok(
+    unchangedBlocks.length > 0,
+    'precondition: at least one UNCHANGED block must be found — a zero match makes the leak assertions below vacuous',
+  );
   for (const block of unchangedBlocks) {
     for (let i = 0; i < changedLines.length; i++) {
       assert.ok(!block.includes(`const b${i} = ${i};`), `const b${i} must NOT leak into an UNCHANGED block`);

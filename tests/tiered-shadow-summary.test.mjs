@@ -7,7 +7,9 @@
  */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { windowProgress, WINDOW_MIN, WINDOW_MAX, summarize } from '../scripts/lib/audit/tiered-shadow-summary.mjs';
+import {
+  windowProgress, WINDOW_MIN, WINDOW_MAX, summarize, TIERED_SHADOW_CONTRACT_EPOCH,
+} from '../scripts/lib/audit/tiered-shadow-summary.mjs';
 
 describe('windowProgress', () => {
   test('below the minimum: neither withinWindow nor met', () => {
@@ -48,6 +50,7 @@ describe('windowProgress gates on comparedRuns, not totalRuns (H3 regression)', 
 
   test('15 real comparisons → window met, matching comparedRuns', () => {
     const comparison = {
+      contractEpoch: TIERED_SHADOW_CONTRACT_EPOCH,
       legacyCostUsd: 1, tieredCostUsd: 0.5, legacyLatencySec: 10, tieredLatencySec: 5,
       overlapCount: 2, legacyFindingCount: 2, onlyTieredCount: 0, tieredRunStatus: 'complete',
       // docs/plans/stage0-evidence-relevance-split.md round-3 M1: the
@@ -86,7 +89,7 @@ describe('windowProgress gates on comparedRuns, not totalRuns (H3 regression)', 
   });
 
   test('a mix of complete and fallback_legacy counts only the complete ones toward comparedRuns', () => {
-    const complete = { legacyCostUsd: 1, tieredCostUsd: 0.5, legacyLatencySec: 10, tieredLatencySec: 5, overlapCount: 1, legacyFindingCount: 1, onlyTieredCount: 0, tieredRunStatus: 'complete', legacyEligibleCount: 1, tieredEligibleCount: 1, tieredStage0Verified: 1 };
+    const complete = { contractEpoch: TIERED_SHADOW_CONTRACT_EPOCH, legacyCostUsd: 1, tieredCostUsd: 0.5, legacyLatencySec: 10, tieredLatencySec: 5, overlapCount: 1, legacyFindingCount: 1, onlyTieredCount: 0, tieredRunStatus: 'complete', legacyEligibleCount: 1, tieredEligibleCount: 1, tieredStage0Verified: 1 };
     const fallback = { legacyCostUsd: 1, tieredCostUsd: null, legacyLatencySec: 10, tieredLatencySec: 9, overlapCount: 0, legacyFindingCount: 1, onlyTieredCount: 0, tieredRunStatus: 'fallback_legacy', tieredFallbackReason: 'oss_provider_unavailable' };
     const records = [
       { legacyOk: true, shadowOk: true, comparison: complete },
@@ -109,6 +112,9 @@ describe('windowProgress gates on comparedRuns, not totalRuns (H3 regression)', 
 // asserting these two do NOT agree on an old-shape row.
 describe('two-metric window readiness — historicalCompleteRuns vs comparedRuns', () => {
   const OLD_SHAPE = {
+    // Stamped current-epoch on purpose: this block exercises the ELIGIBLE-COUNT
+    // rule, so the epoch gate must not be what excludes these rows.
+    contractEpoch: TIERED_SHADOW_CONTRACT_EPOCH,
     legacyCostUsd: 1, tieredCostUsd: 0.5, legacyLatencySec: 10, tieredLatencySec: 5,
     overlapCount: 2, legacyFindingCount: 2, onlyTieredCount: 0, tieredRunStatus: 'complete',
     // No legacyEligibleCount / tieredEligibleCount / tieredStage0Verified —
@@ -195,6 +201,7 @@ describe('two-metric window readiness — historicalCompleteRuns vs comparedRuns
 describe('contract-failure runs (malformed anchors) are excluded and named (§7c)', () => {
   // Local fixture — the sibling block's OLD_SHAPE is scoped to its own describe.
   const BASE = {
+    contractEpoch: TIERED_SHADOW_CONTRACT_EPOCH,
     legacyCostUsd: 1, tieredCostUsd: 0.5, legacyLatencySec: 10, tieredLatencySec: 5,
     overlapCount: 2, legacyFindingCount: 2, onlyTieredCount: 0, tieredRunStatus: 'complete',
   };
@@ -291,6 +298,97 @@ describe('contract-failure runs (malformed anchors) are excluded and named (§7c
     const summary = summarize([{ legacyOk: true, shadowOk: true, comparison: historical }]);
     assert.equal(summary.comparedRuns, 1);
     assert.equal(summary.excludedMalformedAnchors, 0);
+  });
+});
+
+// ── Measurement-contract epoch — the general anti-false-"met" gate ─────────
+// The FIFTH false "window met" (2026-07-26) was not a new defect class: the
+// report read 19 compared runs, of which 11 predated the 2026-07-22
+// overlap+cost fix and carried `tieredCostUsd:0`/`legacyCostUsd:null`. Every
+// prior guard was retrospective (it described the defect just found), so a row
+// measured under a superseded contract was excluded only if it happened to trip
+// one of them. The epoch gate is the non-retrospective one.
+describe('measurement-contract epoch (the general false-"met" gate)', () => {
+  const CURRENT = {
+    contractEpoch: TIERED_SHADOW_CONTRACT_EPOCH,
+    legacyCostUsd: 1, tieredCostUsd: 0.5, legacyLatencySec: 10, tieredLatencySec: 5,
+    overlapCount: 2, legacyFindingCount: 2, onlyTieredCount: 0, tieredRunStatus: 'complete',
+    legacyEligibleCount: 2, tieredEligibleCount: 2, tieredStage0Verified: 2,
+  };
+
+  test('an UNSTAMPED row is ineligible — absent is never "assume current"', () => {
+    const { contractEpoch, ...unstamped } = CURRENT;
+    assert.equal(unstamped.contractEpoch, undefined, 'precondition: pre-stamping row shape');
+    const summary = summarize([{ legacyOk: true, shadowOk: true, comparison: unstamped }]);
+    assert.equal(summary.historicalCompleteRuns, 1, 'it is still a complete run — not hidden');
+    assert.equal(summary.comparedRuns, 0, 'but not decision-grade under a contract it was not measured by');
+    assert.equal(summary.excludedStaleEpoch, 1);
+  });
+
+  test('a row stamped with a SUPERSEDED epoch is ineligible', () => {
+    const stale = { ...CURRENT, contractEpoch: 'v3-overlap-cost-2026-07-22' };
+    const summary = summarize([{ legacyOk: true, shadowOk: true, comparison: stale }]);
+    assert.equal(summary.comparedRuns, 0);
+    assert.equal(summary.excludedStaleEpoch, 1);
+  });
+
+  // The exact 2026-07-26 reading, reproduced: enough rows to trip the window,
+  // all otherwise-healthy, none stamped. This is the regression that matters.
+  test('15 healthy-but-unstamped rows do NOT satisfy the window (the 2026-07-26 false "met")', () => {
+    const { contractEpoch, ...unstamped } = CURRENT;
+    const records = Array.from({ length: WINDOW_MAX }, () => ({ legacyOk: true, shadowOk: true, comparison: unstamped }));
+    const summary = summarize(records);
+    assert.equal(summary.historicalCompleteRuns, WINDOW_MAX, 'the wider metric still shows them');
+    assert.equal(summary.comparedRuns, 0);
+    assert.equal(windowProgress(summary.comparedRuns).met, false, 'a sixth false "met" must be unconstructable from stale rows');
+  });
+
+  test('current-epoch rows still count normally — the gate is not a blanket zero', () => {
+    const records = Array.from({ length: WINDOW_MAX }, () => ({ legacyOk: true, shadowOk: true, comparison: CURRENT }));
+    const summary = summarize(records);
+    assert.equal(summary.comparedRuns, WINDOW_MAX);
+    assert.equal(summary.excludedStaleEpoch, 0);
+    assert.equal(windowProgress(summary.comparedRuns).met, true);
+  });
+
+  test('a mixed corpus counts only the current-epoch rows', () => {
+    const { contractEpoch, ...unstamped } = CURRENT;
+    const summary = summarize([
+      { legacyOk: true, shadowOk: true, comparison: CURRENT },
+      { legacyOk: true, shadowOk: true, comparison: CURRENT },
+      { legacyOk: true, shadowOk: true, comparison: unstamped },
+      { legacyOk: true, shadowOk: true, comparison: { ...CURRENT, contractEpoch: 'v3-overlap-cost-2026-07-22' } },
+    ]);
+    assert.equal(summary.comparedRuns, 2);
+    assert.equal(summary.excludedStaleEpoch, 2);
+    assert.equal(summary.historicalCompleteRuns, 4, 'all four are still visible as complete runs');
+  });
+
+  // Exclusion reasons must partition, or the CLI's printed total exceeds the
+  // rows that exist — and "we changed the contract" gets misdiagnosed as "the
+  // pipeline degenerated", which has the opposite response.
+  test('a stale row is counted ONCE, as stale — not also as degenerate', () => {
+    const staleAndDegenerate = {
+      ...CURRENT, contractEpoch: 'v3-overlap-cost-2026-07-22',
+      legacyEligibleCount: 0, tieredEligibleCount: 0, tieredStage0Verified: 4,
+    };
+    const summary = summarize([{ legacyOk: true, shadowOk: true, comparison: staleAndDegenerate }]);
+    assert.equal(summary.excludedStaleEpoch, 1);
+    assert.equal(summary.excludedDegenerateComparison, 0, 'no double-count: epoch takes precedence');
+    assert.equal(summary.excludedNoStage0Evidence, 0);
+  });
+
+  // Guards the collector→reader contract itself. If the writer ever stops
+  // stamping (or stamps a value the reader does not recognise), the window
+  // silently reads 0 forever — a false NEGATIVE, which is the safe direction
+  // but still needs to be attributable rather than mysterious.
+  test('the collector stamps the same constant the verifier checks', async () => {
+    const src = await import('node:fs').then((fs) =>
+      fs.readFileSync('scripts/lib/audit/tiered-shadow-compare.mjs', 'utf8'));
+    assert.match(src, /contractEpoch:\s*TIERED_SHADOW_CONTRACT_EPOCH/,
+      'tiered-shadow-compare.mjs must stamp the epoch at write time — a reader-side date cutoff is retroactive relabelling');
+    assert.match(src, /import\s*\{\s*TIERED_SHADOW_CONTRACT_EPOCH\s*\}/,
+      'and it must import the SAME constant, never a copied string literal');
   });
 });
 
