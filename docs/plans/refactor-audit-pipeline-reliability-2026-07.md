@@ -901,10 +901,10 @@ not just a label:
 
 | Deferred item | Topic IDs | Suggested follow-up plan file | Trigger to open it |
 |---|---|---|---|
-| God-module decomposition (Theme 2) | 9 | `docs/plans/audit-pipeline-god-module-decomposition.md` | Next time either `legacy-production-audit.mjs` or `openai-audit.mjs` needs a non-trivial change — decompose before extending further |
-| Ledger-v2 schema/migration (Theme 8) | 6 | `docs/plans/tech-debt-ledger-v2-schema.md` | Before the next full-backlog triage pass like this one, so duplicate-entry noise doesn't recur |
-| Orphan-preimage ownership manifest (Theme 6 residual) | 0 new — same 2 topicIds as the partial fix, residual noted in-line | `docs/plans/orphan-preimage-ownership-manifest.md` | If this heuristic is ever observed to delete something it shouldn't (no incident has occurred; this is preventative) |
-| Git-quote-path parser (Theme 4 C-style escaping) | 3 | `docs/plans/evidence-triage-git-path-escaping.md` | If a repo with non-ASCII/quoted filenames in its diffs is onboarded and evidence anchoring misbehaves on it |
+| God-module decomposition (Theme 2) | 9 | `docs/plans/audit-pipeline-god-module-decomposition.md` (planned) | Next time either `legacy-production-audit.mjs` or `openai-audit.mjs` needs a non-trivial change — decompose before extending further |
+| Ledger-v2 schema/migration (Theme 8) | 6 | `docs/plans/tech-debt-ledger-v2-schema.md` (planned) | Before the next full-backlog triage pass like this one, so duplicate-entry noise doesn't recur |
+| Orphan-preimage ownership manifest (Theme 6 residual) | 0 new — same 2 topicIds as the partial fix, residual noted in-line | `docs/plans/orphan-preimage-ownership-manifest.md` (planned) | If this heuristic is ever observed to delete something it shouldn't (no incident has occurred; this is preventative) |
+| Git-quote-path parser (Theme 4 C-style escaping) | 3 | `docs/plans/evidence-triage-git-path-escaping.md` (planned) | If a repo with non-ASCII/quoted filenames in its diffs is onboarded and evidence anchoring misbehaves on it |
 
 None of these four are blocking — they're accepted, named debt, not
 silent gaps.
