@@ -28,6 +28,10 @@ const CORE_ENTRY = [
   'scripts/check-setup.mjs',
   'scripts/check-audit-tool-version.mjs',
   'scripts/cache-hitrate-check.mjs',
+  // The unknown-flag gate + its npm `--`-swallow sibling. Authoritative list
+  // is sync-to-repos.mjs; keep in lock-step.
+  'scripts/check-cli-flags.mjs',
+  'scripts/check-npm-run-args.mjs',
   'scripts/brainstorm-round.mjs',
   'scripts/explain-history.mjs',
   'scripts/skills-help.mjs',
@@ -41,6 +45,12 @@ const CORE_ENTRY = [
   // setup-postgres.mjs. Authoritative list lives in sync-to-repos.mjs;
   // keep in lock-step (see plan §7 R2 H2 — single-source-of-truth intent).
   'scripts/check-rls.mjs',
+  // Standalone operator CLIs nothing imports (branch-protection ratchet,
+  // audit_repos identity reconcile, tiered-shadow report reader). Authoritative
+  // list is sync-to-repos.mjs; keep in lock-step.
+  'scripts/ensure-branch-protection.mjs',
+  'scripts/reconcile-repo-identity.mjs',
+  'scripts/tiered-shadow-report.mjs',
   '.claude/hooks/quickfix-scan.mjs',
   'scripts/persona-consistency-run.mjs',
   'scripts/persona-consistency-promote.mjs',
@@ -55,9 +65,24 @@ const CORE_ENTRY = [
   // /nav-audit CLI entry — walker pulls in scripts/lib/nav/** closure.
   // Authoritative list is sync-to-repos.mjs; keep in lock-step.
   'scripts/nav-audit.mjs',
+  // /visual-audit CLI entry — walker pulls in lib/visual/** closure.
+  // Authoritative list is sync-to-repos.mjs; keep in lock-step.
+  'scripts/visual-audit.mjs',
   // GREEN≠REALIZED Cluster A efficacy-lints CLI — walker pulls in lib/efficacy-lints.mjs +
   // its model-resolver / glob-match / sensitive-paths closure. Keep in lock-step with sync-to-repos.mjs.
   'scripts/efficacy-lints-check.mjs',
+  // Local weekly-maintenance replica of the (now 7) GH Actions / opt-in
+  // checks — opt-in, default-OFF, invoked opportunistically from the
+  // pre-push hook. maintenance-checks.mjs spawns the other four as
+  // subprocesses, so all five must ship together. Authoritative list is
+  // sync-to-repos.mjs; keep in lock-step (a prior drift here produced a
+  // live MODULE_NOT_FOUND when a consumer first enabled the opt-in — see
+  // sync-to-repos.mjs's comment).
+  'scripts/maintenance-checks.mjs',
+  'scripts/memory-health.mjs',
+  'scripts/check-model-freshness.mjs',
+  'scripts/context-staleness.mjs',
+  'scripts/debt-health-check.mjs',
   // Deterministic /ship commit helper (AI-* provenance trailers). Authoritative
   // list is sync-to-repos.mjs; keep in lock-step. Walker pulls in
   // lib/commit-trailers.mjs + sensitive-paths closure.
@@ -66,15 +91,28 @@ const CORE_ENTRY = [
 
 // CORE_NON_IMPORTABLE lists modules that are documented runtime injection
 // points (callers `import()` them dynamically) so the static import-graph
-// walker cannot reach them. Both `./lib/redact.mjs` (resolved relative to a
-// scripts/* caller) and `scripts/lib/redact.mjs` (absolute-from-repo-root)
-// appear because different callers in the synced bundle use each form. This
-// is a known wart preserved from the original bundler — see plan §7 R1 M7.
-// Adding a canonical resolver here would change deployment behaviour for
-// consumers mid-flight; keep the duplicate, document its origin.
+// walker cannot reach them. Authoritative list is sync-to-repos.mjs; keep in
+// lock-step.
+//
+// NOTE: this used to also carry a `./lib/redact.mjs` entry (relative-form
+// duplicate of the absolute `scripts/lib/redact.mjs` below), on the theory
+// that different callers use each form. sync-to-repos.mjs's CORE_ENTRY only
+// ever lists the absolute form — and a bare `./lib/redact.mjs` entry point
+// normalises (in collectImportClosure) to the nonexistent repo-root path
+// `lib/redact.mjs`, which silently entered every consumer's file list as a
+// phantom entry (readFile returns null, but the path stays in `visited`,
+// so it surfaced in `files` and in `bundleDeps()`'s external-package scan
+// with nothing to read). Removed; the closure reaches redact.mjs's own
+// dynamic imports via the entries below regardless.
 const CORE_NON_IMPORTABLE = [
-  './lib/redact.mjs',
   'scripts/lib/redact.mjs',
+  // Arm-eval framework — reached only via dynamic imports in cross-skill.mjs
+  // and openai-audit.mjs, so the walker cannot follow. Authoritative list is
+  // sync-to-repos.mjs; keep in lock-step.
+  'scripts/lib/arm-eval/run.mjs',
+  'scripts/lib/arm-eval/decision.mjs',
+  'scripts/lib/arm-eval/toggle.mjs',
+  'scripts/lib/store/arm-eval.mjs',
   'scripts/lib/persona-test/semantic-compare.mjs',
   // Bash-shelled from persona-test/click-test SKILL.mds (`node
   // scripts/lib/device-presets.mjs prep|prep-matrix`) — never statically
@@ -116,7 +154,6 @@ const DEBT_ENTRY = [
   'scripts/debt-auto-capture.mjs',
   'scripts/debt-backfill.mjs',
   'scripts/debt-budget-check.mjs',
-  'scripts/debt-health-check.mjs',
   'scripts/debt-pr-comment.mjs',
   'scripts/debt-resolve.mjs',
   'scripts/debt-review.mjs',
@@ -175,7 +212,15 @@ const CORE_ASSETS = [
   'scripts/lib/dashboard/assets/dashboard.css',
   'scripts/lib/dashboard/assets/dashboard.js',
   'docs/reference/consistency-contract.md',
+  // Tiered-pipeline OSS call budgets — read via a module-relative fs read
+  // (`new URL('./oss-call-policy.json', import.meta.url)`), so the import
+  // walker never sees it. Authoritative list is sync-to-repos.mjs; keep in
+  // lock-step.
+  'scripts/lib/oss-call-policy.json',
   'scripts/lib/db/compat-bootstrap.sql',
+  // `--adopt`'s schema contract, fs-read by setup-postgres.mjs. Authoritative
+  // list is sync-to-repos.mjs; keep in lock-step.
+  'tests/fixtures/expected-schema.json',
 ];
 
 function buildFileUniverse() {
