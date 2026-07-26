@@ -44,6 +44,8 @@ import { PromptBandit } from './bandit.mjs';
 import { getActivePrompt, getActiveRevisionId, bootstrapFromConstants } from './lib/prompt-registry.mjs';
 import { getRepoContext } from './lib/repo-context.mjs';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';
+import { RUN_ID_RE } from './lib/commit-trailers.mjs';
+import { GATE_EVIDENCE_RELPATH } from './lib/audit/gate-evidence.mjs';
 import { resolveRepoIdentity } from './lib/repo-identity.mjs';
 import { isCloudEnabled } from './lib/store/repo.mjs';
 import { getActiveEvalRunId } from './lib/store/model-eval.mjs';
@@ -1959,6 +1961,60 @@ export const MISSING_RUN_ID_WARNING =
   + 'they exist only in this process\'s stdout/--out file. If this is unintentional, '
   + 're-invoke with --run-id <audit_runs.id> (read _cloudRunId from the audit --out JSON).\n';
 
+/**
+ * How stale a gate-evidence marker may be and still identify THIS review's run.
+ *
+ * Step 7 runs minutes after the audit round that wrote the marker. Six hours is
+ * far beyond any real gap while still refusing yesterday's marker — attaching a
+ * review to a run it did not review is a worse failure than not persisting it,
+ * because a wrong row looks like real evidence.
+ */
+export const RUN_ID_MARKER_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Recover the audit run id from the gate-evidence marker when `--run-id` was
+ * not passed.
+ *
+ * **Why a fallback exists at all.** The flag is extracted by an AGENT following
+ * a markdown snippet in SKILL.md, so its correctness depends on the agent
+ * reading the current instructions — which a long-running session that loaded
+ * an older SKILL.md into context will not do. That is not a hypothetical: a
+ * consumer repo lost 101 runs' final reviews to it, and then lost one MORE
+ * immediately after the snippet was fixed, because the session already
+ * mid-flight kept executing the stale snippet from memory. A flag whose only
+ * enforcement is "the caller remembers" fails exactly this way. `.audit/last-audit-run.json`
+ * is written by the audit itself ([`lib/audit/gate-evidence.mjs`](lib/audit/gate-evidence.mjs)),
+ * so the id is already on disk and needs no agent cooperation to find.
+ *
+ * Pure (marker content + clock in, decision out) so every branch is testable
+ * without a filesystem — Tier 1 per this repo's testing doctrine.
+ *
+ * @param {{marker: unknown, nowMs: number, maxAgeMs?: number}} args
+ * @returns {{runId: string|null, reason: 'recovered'|'no-marker'|'malformed'|'stale'}}
+ */
+export function recoverRunIdFromMarker({ marker, nowMs, maxAgeMs = RUN_ID_MARKER_MAX_AGE_MS }) {
+  if (!marker || typeof marker !== 'object') return { runId: null, reason: 'no-marker' };
+  const { runId, ts } = /** @type {{runId?: unknown, ts?: unknown}} */ (marker);
+  // Same shape gate the ship-commit readers apply, so a marker this accepts can
+  // never be one they reject.
+  if (typeof runId !== 'string' || !RUN_ID_RE.test(runId)) return { runId: null, reason: 'malformed' };
+  const tsMs = typeof ts === 'string' ? Date.parse(ts) : NaN;
+  if (Number.isNaN(tsMs)) return { runId: null, reason: 'malformed' };
+  if (nowMs - tsMs > maxAgeMs) return { runId: null, reason: 'stale' };
+  return { runId, reason: 'recovered' };
+}
+
+/** Read + parse the gate-evidence marker. Any I/O or parse failure → null. */
+function readGateEvidenceMarker(repoRoot) {
+  try {
+    const p = resolve(repoRoot, GATE_EVIDENCE_RELPATH);
+    if (!existsSync(p)) return null;
+    return JSON.parse(readFileSync(p, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
 async function main() {
   assertRepoRoot(import.meta.url);
   await refreshCatalogAndWarn();
@@ -1968,7 +2024,8 @@ async function main() {
   if (mode === 'ping') return runPing();
   if (mode === 'set-provider') return runSetProvider(args[1]);
 
-  const { planFile, transcriptFile, jsonMode, outFile, providerOverride, auditMode, runId, role } = parseReviewArgs(args);
+  const { planFile, transcriptFile, jsonMode, outFile, providerOverride, auditMode, runId: cliRunId, role } = parseReviewArgs(args);
+  let runId = cliRunId;
   // A cloud-enabled invocation with no --run-id is a SILENT total loss of this
   // review's persistence (found live 2026-07-26, chasing a consumer repo whose
   // audit_runs rows all showed real, non-zero rounds/findings — the audit
@@ -1983,8 +2040,26 @@ async function main() {
   // deliberate "cloud is off" run. Warn loudly instead of vanishing quietly;
   // this is advisory only (never blocks a review) — the same "audit your
   // success paths" doctrine as everything else this session hardened.
+  //
+  // Warning alone was NOT enough (proven the same day it shipped): a session
+  // already holding a stale SKILL.md kept omitting the flag, and the warning
+  // scrolled past unread. So recover the id from the marker the audit itself
+  // wrote — no agent cooperation required — and only warn when that also fails.
   if (shouldWarnMissingRunId({ mode, runId, cloudEnabled: await isCloudEnabled() })) {
-    console.error(MISSING_RUN_ID_WARNING);
+    const rec = recoverRunIdFromMarker({
+      marker: readGateEvidenceMarker(process.cwd()),
+      nowMs: Date.now(),
+    });
+    if (rec.runId) {
+      runId = rec.runId;
+      console.error(
+        `  [gemini-review] no --run-id supplied; recovered ${runId} from ${GATE_EVIDENCE_RELPATH} `
+        + '(written by this audit). Persisting to that run.\n'
+      );
+    } else {
+      console.error(MISSING_RUN_ID_WARNING);
+      console.error(`  [gemini-review] (marker fallback also unavailable: ${rec.reason})\n`);
+    }
   }
   if (mode !== 'review' || !planFile || !transcriptFile) {
     console.error('Usage: node scripts/gemini-review.mjs review <plan-file> <transcript-file> [--json] [--out <file>] [--provider gemini|azure-claude|anthropic|openai-compatible|openrouter] [--mode plan|code] [--role adjudicator-only] [--run-id <audit_runs.id>]');

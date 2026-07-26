@@ -1,6 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { _internals, shouldWarnMissingRunId } from '../scripts/gemini-review.mjs';
+import {
+  _internals, shouldWarnMissingRunId, recoverRunIdFromMarker, RUN_ID_MARKER_MAX_AGE_MS,
+} from '../scripts/gemini-review.mjs';
 
 const {
   resolveShadow, diffFindingBuckets, dedupByHash, shadowModelMatchesFamily,
@@ -364,5 +366,77 @@ describe('shouldWarnMissingRunId — the loud warning for a silent persistence l
   it('does not warn for non-review modes (ping, set-provider)', () => {
     assert.equal(shouldWarnMissingRunId({ mode: 'ping', runId: null, cloudEnabled: true }), false);
     assert.equal(shouldWarnMissingRunId({ mode: 'set-provider', runId: null, cloudEnabled: true }), false);
+  });
+});
+
+// The warning above was NOT sufficient — proven the same day it shipped. A
+// wine-cellar-app session already holding a pre-fix SKILL.md in context kept
+// omitting --run-id, and run 94a2676f persisted final_review_model: null even
+// though Gemini demonstrably ran (the verdict is in that repo's local
+// .audit/outcomes.jsonl). A flag whose only enforcement is "the calling agent
+// remembers to pass it" fails exactly this way, so the id is now recovered from
+// the marker the AUDIT wrote, which needs no agent cooperation.
+describe('recoverRunIdFromMarker — the id the audit already wrote to disk', () => {
+  const FRESH_TS = '2026-07-26T17:44:54.387Z';
+  const NOW = Date.parse('2026-07-26T17:46:00.000Z');
+  // Verbatim shape of wine-cellar-app's real marker at the moment run
+  // 94a2676f lost its final review.
+  const REAL_MARKER = {
+    runId: '94a2676f-ed92-40f1-abce-251310eacfdd',
+    sid: 'audit-1785087895857',
+    round: 4,
+    auditedSha: '046449a834dbebe6591e721c25c8d53e174a343f',
+    auditedTree: '43d9ac56c3d61456f1030d87080a82cb23f65098',
+    ts: FRESH_TS,
+  };
+
+  it('recovers the run id from the real marker that was on disk during the incident', () => {
+    const got = recoverRunIdFromMarker({ marker: REAL_MARKER, nowMs: NOW });
+    assert.deepEqual(got, { runId: '94a2676f-ed92-40f1-abce-251310eacfdd', reason: 'recovered' });
+  });
+
+  it('refuses a stale marker rather than attaching this review to an older run', () => {
+    // A wrong row looks like real evidence, which is worse than no row.
+    const dayLater = Date.parse('2026-07-27T18:00:00.000Z');
+    assert.deepEqual(
+      recoverRunIdFromMarker({ marker: REAL_MARKER, nowMs: dayLater }),
+      { runId: null, reason: 'stale' }
+    );
+  });
+
+  it('accepts a marker right at the age boundary and refuses one just past it', () => {
+    const base = Date.parse(FRESH_TS);
+    assert.equal(
+      recoverRunIdFromMarker({ marker: REAL_MARKER, nowMs: base + RUN_ID_MARKER_MAX_AGE_MS }).reason,
+      'recovered'
+    );
+    assert.equal(
+      recoverRunIdFromMarker({ marker: REAL_MARKER, nowMs: base + RUN_ID_MARKER_MAX_AGE_MS + 1 }).reason,
+      'stale'
+    );
+  });
+
+  it('reports no-marker when the file was absent or unreadable', () => {
+    assert.deepEqual(recoverRunIdFromMarker({ marker: null, nowMs: NOW }), { runId: null, reason: 'no-marker' });
+    assert.deepEqual(recoverRunIdFromMarker({ marker: 'not-an-object', nowMs: NOW }), { runId: null, reason: 'no-marker' });
+  });
+
+  it('rejects a run id the ship-commit readers would reject, so the two can never disagree', () => {
+    // RUN_ID_RE is /^[A-Za-z0-9-]{8,64}$/ — too short, and illegal characters.
+    for (const bad of ['short', 'has spaces in it', 'semi;colon;injection', '', 'a'.repeat(65)]) {
+      assert.equal(
+        recoverRunIdFromMarker({ marker: { ...REAL_MARKER, runId: bad }, nowMs: NOW }).reason,
+        'malformed',
+        `expected malformed for runId ${JSON.stringify(bad)}`
+      );
+    }
+  });
+
+  it('treats a missing or unparseable ts as malformed — freshness cannot be assumed', () => {
+    assert.equal(recoverRunIdFromMarker({ marker: { runId: REAL_MARKER.runId }, nowMs: NOW }).reason, 'malformed');
+    assert.equal(
+      recoverRunIdFromMarker({ marker: { ...REAL_MARKER, ts: 'not-a-date' }, nowMs: NOW }).reason,
+      'malformed'
+    );
   });
 });
