@@ -1,5 +1,65 @@
 # Project Status Log
 
+## 2026-07-26 (continued) — run-id recovery fix confirmed live in wine-cellar-app; first shadow-only adjudication
+
+Follow-up to the same day's wine-cellar-app final-review persistence work.
+The fix that shipped earlier (recovering `--run-id` from `.audit/last-audit-run.json`
+when the CLI flag is missing, commit `cd6d228`) needed a live re-run to prove it —
+the user was mid-flight in a wine-cellar-app session implementing a
+tenant-isolation/drift-tooling plan (Cluster A) and couldn't stop to restart.
+
+### What happened
+- Confirmed via direct `audit_runs` query: wine-cellar-app's run `05cf0283-b52c-46d3-a858-5f2a4421fbf5`
+  (round 3) persisted `final_review_model: gemini-pro-latest` AND
+  `final_review_shadow_model: claude-opus-5` — the first successful final-review
+  row this repo has ever produced, and the first live confirmation the recovery
+  fix works without requiring the calling session to have the current SKILL.md
+  in context.
+- The shadow surfaced 4 findings Gemini's primary pass missed. Verified each
+  against wine-cellar-app's actual source before recommending a disposition
+  (not taken at face value):
+  - `check-required-env.mjs`'s `isDirectInvocation` guard is fragile-by-construction
+    (breaks under symlinks/wrappers/loader indirection) but its sole call site
+    (`arch-drift-scoped.yml`) is a plain Linux-runner invocation where it works
+    today — accepted as a cheap hardening, not urgent.
+  - `backfill.js` fabricates `occurredAt` as current time when the source
+    timestamp is NULL, and the write path's `ON CONFLICT (idempotency_key) DO
+    NOTHING` makes that permanent — a re-run can never correct it. Verified the
+    idempotency mechanism directly in `emitter.js`. Also checked local
+    `outcomes.jsonl` for the claim that GPT raised this in round 1 and it
+    vanished without adjudication — found no trace, consistent with (not
+    proof of) the claim. Accepted.
+  - `cacheService.js`'s `getCacheTTL()` does unvalidated `parseInt` on a
+    DB-sourced config value. Corrected the shadow's exact failure-mode claim:
+    `new Date(NaN).toISOString()` throws in Node rather than silently producing
+    `"Invalid Date"`, but the call site's surrounding `try/catch` downgrades
+    that to a logged warning + skipped cache write. Still a real gap, correctly
+    scoped LOW. Accepted.
+  - `cellarAllocation.js` has two call sites doing `(await
+    import('../../../db/postgres.js')).wrapClient(client)` when `wrapClient`
+    is already statically imported at the top of the file from `db/index.js`
+    (confirmed byte-identical: `db/index.js` just re-exports
+    `postgres.wrapClient`). The shadow's specific worry — that the new Phase 4
+    function `repairOrphanedZoneRows` would copy the dynamic-import idiom —
+    did not happen; it correctly uses the static import already in scope.
+    Accepted anyway, reframed as cleanup of the two pre-existing call sites to
+    match what the new code already does right.
+- All 4 committed via `cross-skill.mjs final-review-adjudicate --bucket
+  shadow-only --action accepted`; queue confirmed at 0 pending afterward.
+
+### Where the shadow A/B stands
+Combined N=2 for the (gemini-pro-latest, claude-opus-5) pair across repos (1
+here, 1 wine-cellar-app) — still far short of the pre-registered N>=20
+threshold. ai-organiser remains at zero final-review rows (no Step 7 run there
+yet; a usage-timing gap, not a bug). A daily background check
+(session-scoped, not persisted) is tracking new runs across all three repos.
+
+### Shared working tree
+Two unrelated foreign changes present in this repo's working tree during this
+session and left untouched: `.audit-loop/domain-map.json` (modified) and a new
+untracked `docs/plans/refactor-architecture-debt-remainder-2026-07.md` — not
+part of this work, presumably another concurrent session's in-progress edits.
+
 ## 2026-07-26 (continued) — tech-debt tracking: close the capture→resolution loop, fix consumer-sync gap
 
 User asked whether tech-debt tracking exists and whether it actually works.
