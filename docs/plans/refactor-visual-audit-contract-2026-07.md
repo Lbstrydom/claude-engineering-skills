@@ -10,6 +10,21 @@
 > read/write validation is asymmetric. Verified against current source
 > 2026-07-26.
 
+> **The `scripts/lib/visual/contract.mjs` cluster (7 entries) is IMPLEMENTED
+> — discovered at rebase time by a concurrent session that independently
+> picked the same cluster off the same tech-debt backlog.** See
+> [visual-contract-semantic-validation.md](visual-contract-semantic-validation.md)
+> — the fix shape matches this plan's proposed `validateContractSemantics()`
+> extraction, with one deliberate deviation: `SurfaceSchema.sourceGlobs`
+> was NOT given a schema-level `.min(1)` (this plan's second suggested line
+> of defense) — the `--bootstrap` review-queue draft legitimately needs to
+> persist an empty `sourceGlobs` array, and schema validation in
+> `writeContract()` isn't skippable per-caller the way semantic validation
+> is; a `.min(1)` would break `--bootstrap` outright. See that plan's §2
+> "Why not a Zod-schema-level constraint" for the full reasoning. The
+> `scripts/lib/visual/drift.mjs` entry below (`fa6e120c`) is **unrelated
+> and still open** — this plan's remaining scope.
+
 ---
 
 ## The core issue
@@ -51,19 +66,19 @@ failure mode).
 ## Full entry table
 
 
-**`scripts/lib/visual/contract.mjs`**
+**`scripts/lib/visual/contract.mjs`** — RESOLVED, see the note above
 
-| topicId | severity | evidence |
-|---|---|---|
-| `0df0b70f` | HIGH | visual/contract.mjs:44-53 readContract only checks tokenSources theme, never surfaces sourceGlobs |
-| `20d465d7` | MEDIUM | visual/contract.mjs:44-53 + schema.mjs:98 no min(1) on sourceGlobs |
-| `23bb6ea7` | HIGH | visual/contract.mjs:107-119 writeContract no cross-field theme check |
-| `2610ad91` | HIGH | visual/contract.mjs read/write asymmetry duplicate |
-| `32499d7a` | HIGH | visual/contract.mjs read/write asymmetry duplicate |
-| `54b9b2b0` | MEDIUM | visual/contract.mjs read/write asymmetry duplicate |
-| `f261562c` | MEDIUM | visual/contract.mjs read/write asymmetry duplicate |
+| topicId | severity | evidence | status |
+|---|---|---|---|
+| `0df0b70f` | HIGH | visual/contract.mjs:44-53 readContract only checks tokenSources theme, never surfaces sourceGlobs | fixed |
+| `20d465d7` | MEDIUM | visual/contract.mjs:44-53 + schema.mjs:98 no min(1) on sourceGlobs | fixed (semantic-layer, not schema-level — see note above) |
+| `23bb6ea7` | HIGH | visual/contract.mjs:107-119 writeContract no cross-field theme check | fixed |
+| `2610ad91` | HIGH | visual/contract.mjs read/write asymmetry duplicate | fixed |
+| `32499d7a` | HIGH | visual/contract.mjs read/write asymmetry duplicate | fixed |
+| `54b9b2b0` | MEDIUM | visual/contract.mjs read/write asymmetry duplicate | fixed |
+| `f261562c` | MEDIUM | visual/contract.mjs read/write asymmetry duplicate | fixed |
 
-**`scripts/lib/visual/drift.mjs`**
+**`scripts/lib/visual/drift.mjs`** — still open
 
 | topicId | severity | evidence |
 |---|---|---|

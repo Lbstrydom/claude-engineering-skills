@@ -62,3 +62,8 @@ node scripts/visual-audit.mjs --bootstrap --force  # replace an existing contrac
 
 Fill `surfaces[].sourceGlobs`, declare `tokenSources` + `themes`, then remove the
 `_note`. The skeleton never overwrites an existing contract without `--force`.
+
+An un-edited skeleton (empty `sourceGlobs`) is intentionally left invalid: the
+next normal (non-`--bootstrap`) `visual-audit` run fails with an error naming
+the surface and the missing field, rather than silently auditing a contract
+with no gate-attributable surfaces.

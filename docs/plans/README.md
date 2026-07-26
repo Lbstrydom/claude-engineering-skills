@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**10 active · 146 terminal · 23 audit summaries · 4 reference docs**
+**10 active · 147 terminal · 24 audit summaries · 4 reference docs**
 
 ---
 
@@ -50,7 +50,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 143 completed plans</summary>
+<summary>Show all 144 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -196,6 +196,7 @@ source comments that no docs linter sees — stays valid.
 | [`visual-audit` — the visual/paint inspection skill (4th UX lens)](./visual-audit-skill.md) | `Complete` | built autonomously via /cycle across 3 clusters; see Implementation Log |
 | [visual-audit "theme-safety" v1 — catch "color that didn't adapt"](./visual-audit-theme-safety-v1.md) | `Complete` | implemented + shipped 2026-07-01 (via /cycle code --autonomous |
 | [visual-audit Theme-safety v2 — two-theme contrast parity-delta + full-DOM sweep](./visual-audit-theme-safety-v2.md) | `Complete` |  |
+| [Unify visual-contract.json read/write semantic validation](./visual-contract-semantic-validation.md) | `Complete` |  |
 | [Harden Filesystem Operations Against Transient Windows EPERM/EBUSY](./windows-fs-transient-error-hardening.md) | `Complete` | audit-plan gate: Gemini APPROVE round 4; audit-code gate: Gemini APPROVE round 1, 3 GPT rounds |
 
 </details>
@@ -206,7 +207,7 @@ Companion `*-audit-summary.md` records. Exempt from the status vocabulary
 (they carry a free-text convergence sentence by convention).
 
 <details>
-<summary>Show all 23 audit summaries</summary>
+<summary>Show all 24 audit summaries</summary>
 
 | Plan | Notes |
 |---|---|
@@ -233,6 +234,7 @@ Companion `*-audit-summary.md` records. Exempt from the status vocabulary
 | [Postgres-Parity M3 + M4 — `/audit-code` Summary](./postgres-parity-m3m4-audit-summary.md) |  |
 | [Audit Summary — Requirements Layer](./requirements-layer-audit-summary.md) |  |
 | [Audit Summary — symbol-index-bugs](./symbol-index-bugs-audit-summary.md) |  |
+| [Audit Summary: visual-contract-semantic-validation](./visual-contract-semantic-validation-audit-summary.md) |  |
 
 </details>
 

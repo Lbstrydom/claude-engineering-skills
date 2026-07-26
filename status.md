@@ -1,5 +1,101 @@
 # Project Status Log
 
+## 2026-07-26 (continued 5) — Fixed visual-contract.json split-brain validation (top tech-debt item, full /cycle --autonomous run)
+
+Picked the #1-ranked item from an LLM-clustered debt-review of the 211-entry
+tech-debt ledger (leverage 10.5, EASY effort) and ran it end-to-end through
+`/cycle --autonomous`: `/plan` → `/audit-plan` (3 rounds) → autonomous
+implement → `/audit-code` (3 rounds) → mandatory Gemini gate → `/ship`.
+
+### The bug
+
+`scripts/lib/visual/contract.mjs`'s `writeContract()` only ran schema
+validation before persisting; `readContract()` additionally ran cross-field
+semantic checks (`tokenSources[].theme` must exist in `themes[]`) — so
+`writeContract()` could report `{ok:true}` and persist a contract
+`readContract()` would immediately reject. A second gap: `readContract()`'s
+own comment claimed "every surface needs ≥1 sourceGlob" but nothing enforced
+it anywhere. 7 tech-debt-ledger entries (`0df0b70f`, `20d465d7`, `23bb6ea7`,
+`2610ad91`, `32499d7a`, `54b9b2b0`, `f261562c`).
+
+### Changes
+
+- `scripts/lib/visual/contract.mjs`: extracted `validateContractSemantics(data,
+  {requireSourceGlobs})`, called from both `readContract()` and
+  `writeContract()`. `writeContract()` gains `allowDraft` (default `false`) —
+  relaxes ONLY the sourceGlobs-completeness rule for the `--bootstrap` draft
+  path; the theme-reference check is **never** bypassable, even with
+  `allowDraft: true` (a round-1 plan-audit finding caught an earlier draft
+  that bypassed the whole validator via this flag). Also fixed a
+  round-1 code-audit HIGH: `writeContract()` was persisting the raw caller
+  object instead of the Zod-validated `result.data`.
+- `scripts/visual-audit.mjs`: `--bootstrap` call site passes `allowDraft: true`.
+- New `tests/visual-contract.test.mjs`: table-driven matrix (4 fixtures × 2
+  boundaries), no-write-on-rejection assertions (absent + pre-existing
+  destination, byte-for-byte preservation), the `allowDraft` regression
+  guard, a bootstrap round-trip test, a real-world compliance fixture built
+  from `wine-cellar-app`'s actual committed `visual-contract.json`, and a
+  CLI-level test via `execFileSync`.
+- `skills/visual-audit/references/contract-and-bootstrap.md`: documented the
+  new stricter validation behavior.
+- `docs/plans/visual-contract-semantic-validation.md` +
+  `-audit-summary.md`: full plan + audit trail.
+
+### Process notes (things that actually happened, not just the happy path)
+
+- **Plan-audit round 1** caught a real design flaw I'd have shipped
+  otherwise: my first draft's `allowDraft` bypassed the *entire* semantic
+  validator, not just the sourceGlobs rule — recreating the exact
+  false-success-write bug the plan exists to close, behind a flag. Also
+  caught a compatibility claim I hadn't verified — fixed by reading
+  `wine-cellar-app`'s actual committed contract directly (compliant, zero
+  changes needed) instead of building migration tooling nobody needs yet.
+- **Gemini's Claude-Opus shadow reviewer** (non-gating A/B) surfaced 2 real
+  gaps the primary Gemini review missed: a second `readContract()` consumer
+  (`collect-visual.mjs`, the dashboard collector) whose existing
+  `unexpected-error` degradation path needed documenting as intentional, and
+  a stale-doc gap in the skill reference. Folded both in even though
+  non-gating — verified against real code first.
+- **Code-audit round 1** found a second, independent instance of the exact
+  bug class this plan fixes: `writeContract()` validated `result.data` but
+  persisted the raw `contract` object. Fixed. Also correctly deferred 7
+  pre-existing findings (TOCTOU race, unguarded write errors, doc-drift risk,
+  4× repo-wide Architecture-pass domain-map noise in files this plan never
+  touches) to `.audit/tech-debt.json` — Gemini's independent read confirmed
+  6/7 as out-of-scope/false-positive.
+- **A post-gate `npm test` run** caught a real regression I introduced while
+  fixing the LOW test-cleanup finding: the new `fs.rmSync()` call wasn't
+  Windows-retry-hardened per a repo-wide convention
+  (`tests/rmsync-retry-guard.test.mjs`). Mechanical one-line fix, no re-audit
+  needed.
+- **Rebase-time discovery**: a concurrent session's full tech-debt-backlog
+  triage (see the entry directly below) independently reached the same
+  cluster — its `docs/plans/refactor-visual-audit-contract-2026-07.md`
+  describes this exact defect (same 7 topicIds) and proposes the same fix,
+  but only as a scoped-out plan, not an implementation. Marked that plan
+  `Status: Superseded` with a pointer to this fix rather than leaving a
+  stale "still needs doing" doc for the next backlog pass to rediscover.
+
+### Verification
+
+- 3 plan-audit rounds (GPT) + Gemini APPROVE + Opus shadow (partial fold-in).
+- 3 code-audit rounds (GPT): round 1 H:2 M:6 L:1 → fixed 2, deferred 7;
+  rounds 2-3 PASS, H:0 M:0 L:0, 2/2 stable. Gemini APPROVE (0 new findings) +
+  Opus shadow APPROVE (unanimous).
+- Full suite green (only the expected commit-time-resolved
+  `skills-artifact-freshness-wiring` check remains, per the generated-artifact
+  doctrine).
+
+### Next Steps
+
+- None for this item. Next highest-leverage candidate per the same
+  debt-review was `transaction-wal-integrity` (leverage 6.4, MAJOR effort,
+  19 entries) — now also covered by the concurrent session's
+  `refactor-install-wal-vcs-2026-07.md` (10/19 already fixed per that
+  session's notes below).
+
+---
+
 ## 2026-07-26 (continued 4) — tech-debt backlog triage: 384 → 167 open entries
 
 Full triage pass over `.audit/tech-debt.json`'s 384 open entries (the
@@ -127,6 +223,8 @@ Two unrelated foreign changes present in this repo's working tree during this
 session and left untouched: `.audit-loop/domain-map.json` (modified) and a new
 untracked `docs/plans/refactor-architecture-debt-remainder-2026-07.md` — not
 part of this work, presumably another concurrent session's in-progress edits.
+
+---
 
 ## 2026-07-26 (continued 3) — sync-inventory.mjs reconciled with sync-to-repos.mjs; drift-guard test added
 

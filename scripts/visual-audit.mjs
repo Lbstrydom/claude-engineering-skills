@@ -51,7 +51,7 @@ async function main() {
   // ── Bootstrap ──
   if (args.bootstrap) {
     const draft = bootstrapContract({ surfaceSelectors: args.fromUrl ? ['main'] : [] });
-    const res = writeContract(root, draft, { force: args.force });
+    const res = writeContract(root, draft, { force: args.force, allowDraft: true });
     if (!res.ok) { process.stderr.write(`  [visual-audit] ${res.error}\n`); process.exit(2); }
     process.stderr.write(`  [visual-audit] wrote review-queue ${res.path} — fill sourceGlobs/tokenSources/themes, then remove _note\n`);
     process.exit(0);

@@ -16,6 +16,36 @@ import { atomicWriteFileSync } from '../file-io.mjs';
 import { VisualContractSchema, CONTRACT_FILE } from './schema.mjs';
 
 /**
+ * Cross-field semantic validation beyond the Zod schema — shared by
+ * `readContract()` and `writeContract()` so the two boundaries can never
+ * diverge (plan: docs/plans/visual-contract-semantic-validation.md).
+ *
+ * The theme-reference check is never gated by `requireSourceGlobs` — it is
+ * a referential-integrity invariant with no legitimate exception, unlike
+ * sourceGlobs completeness which a review-queue draft cannot yet satisfy.
+ *
+ * @param {object} data - schema-valid VisualContract data
+ * @param {{requireSourceGlobs?: boolean}} [opts]
+ * @returns {string|null} the first violation found, or null if valid
+ */
+function validateContractSemantics(data, { requireSourceGlobs = true } = {}) {
+  const themeNames = new Set(data.themes.map((t) => t.name));
+  for (const ts of data.tokenSources) {
+    if (ts.theme && !themeNames.has(ts.theme)) {
+      return `tokenSource '${ts.path}' references theme '${ts.theme}' not declared in themes[] (have: ${[...themeNames].join(', ') || 'none'})`;
+    }
+  }
+  if (requireSourceGlobs) {
+    for (const s of data.surfaces) {
+      if (!s.sourceGlobs || s.sourceGlobs.length === 0) {
+        return `surface '${s.id}' has no sourceGlobs — every surface must declare at least one sourceGlob to be gate-attributable`;
+      }
+    }
+  }
+  return null;
+}
+
+/**
  * Read + validate the committed visual-contract.json.
  * @param {string} root
  * @returns {{contract: object|null, present: boolean, error: string|null}}
@@ -42,13 +72,9 @@ export function readContract(root) {
     return { contract: null, present: true, error: `contract failed schema${where}: ${issue?.message ?? 'invalid'}` };
   }
   const data = result.data;
-  // Cross-field validation: every theme referenced by a token source must exist,
-  // and every surface needs at least one sourceGlob to be gate-attributable.
-  const themeNames = new Set(data.themes.map((t) => t.name));
-  for (const ts of data.tokenSources) {
-    if (ts.theme && !themeNames.has(ts.theme)) {
-      return { contract: null, present: true, error: `tokenSource '${ts.path}' references theme '${ts.theme}' not declared in themes[] (have: ${[...themeNames].join(', ') || 'none'})` };
-    }
+  const semanticError = validateContractSemantics(data);
+  if (semanticError) {
+    return { contract: null, present: true, error: semanticError };
   }
   return { contract: data, present: true, error: null };
 }
@@ -99,12 +125,18 @@ export function bootstrapContract({ surfaceSelectors = [] } = {}) {
 
 /**
  * Persist a contract. Refuses to overwrite an existing file unless `force`.
+ *
+ * `allowDraft` relaxes ONLY the sourceGlobs-completeness invariant (for the
+ * `--bootstrap` review-queue skeleton, which cannot satisfy it yet) — the
+ * theme-reference referential-integrity check always runs and can always
+ * reject the write, regardless of `allowDraft`.
+ *
  * @param {string} root
  * @param {object} contract
- * @param {{force?: boolean}} [opts]
+ * @param {{force?: boolean, allowDraft?: boolean}} [opts]
  * @returns {{ok: boolean, path: string, error?: string}}
  */
-export function writeContract(root, contract, { force = false } = {}) {
+export function writeContract(root, contract, { force = false, allowDraft = false } = {}) {
   const file = path.join(root, CONTRACT_FILE);
   if (!force && fs.existsSync(file)) {
     return { ok: false, path: file, error: `${CONTRACT_FILE} already exists — pass force to replace` };
@@ -114,6 +146,13 @@ export function writeContract(root, contract, { force = false } = {}) {
   if (!result.success) {
     return { ok: false, path: file, error: `refusing to write invalid contract: ${result.error.issues[0]?.message ?? 'invalid'}` };
   }
-  atomicWriteFileSync(file, `${JSON.stringify(contract, null, 2)}\n`);
+  const semanticError = validateContractSemantics(result.data, { requireSourceGlobs: !allowDraft });
+  if (semanticError) {
+    return { ok: false, path: file, error: `refusing to write semantically invalid contract: ${semanticError}` };
+  }
+  // Persist the validated, Zod-normalized result — not the raw caller-owned
+  // `contract` object — so what's on disk is exactly what was validated
+  // (defaults applied, unknown-key stripping already enforced by `.strict()`).
+  atomicWriteFileSync(file, `${JSON.stringify(result.data, null, 2)}\n`);
   return { ok: true, path: file };
 }
