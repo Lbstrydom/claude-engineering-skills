@@ -22,5 +22,15 @@
       "kind": "document-only",
       "reason": "The >999-findings -> scanner-error cap (a Zod .max(999) inside the scanner) and the failed-validation -> scanner-error classification live in code the agent runs via page.evaluate against the live DOM; they surface as a coverageStatus field, not a process exit code. Assertable only by importing the scanner into a browser context, which the closed cli-exit/unit-seam registry does not cover."
     }
+  ],
+  "ignoredCandidates": [
+    {
+      "line": "click-test itself never attempts to log in — credentials are out of scope",
+      "reason": "Restates click-test's existing scope boundary (credentials out of scope) in the new auth-bootstrap cross-link paragraph. Same agent-behavioural-refusal category as the already-contracted 'arg-validation-refusals' gate — click-test has no CLI to exit, so this is a rule the model follows while running the skill, not a mechanical gate."
+    },
+    {
+      "line": "becomes at most `Incomplete` (never `Clean`) when any route is",
+      "reason": "This is the same claim already covered by the 'verdict-precedence' document-only gate above — the surrounding paragraph was rewritten to add the auth-bootstrap cross-link, which shifted this sentence onto a new diff line without changing its meaning. 'verdict-precedence' already explains why no cli-exit/unit-seam oracle applies (no click-test CLI entry point)."
+    }
   ]
 }

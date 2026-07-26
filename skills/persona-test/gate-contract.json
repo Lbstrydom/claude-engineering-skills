@@ -28,5 +28,43 @@
       "kind": "document-only",
       "reason": "'NEVER include typed input values … the store rejects any' is enforced at the STORE boundary (a server-side rejection), not by the persona-test skill's own CLI. Asserting it would mean exercising the store's validation, which is a different subsystem's contract, not persona-test's exit behaviour; document-only here."
     }
+  ],
+  "ignoredCandidates": [
+    {
+      "line": "**If the target requires login for its primary surfaces** (not just an",
+      "reason": "Phase 1 guidance for the agent to check whether an auth bootstrap already authenticated the MCP session before assuming a login wall will block exploration. A judgement call the model makes while driving the browser via MCP tool calls — exploratory mode has no CLI, so there is no exit code a cli-exit recipe can assert."
+    },
+    {
+      "line": "form) before assuming a login wall will block the run. If it isn't, and",
+      "reason": "Continuation of the same Phase 1 auth-bootstrap-detection sentence as the candidate above; same disposition."
+    },
+    {
+      "line": "lever that doesn't require switching modes. It has real limits of its own,",
+      "reason": "Describes the Playwright MCP *server's* own `--device`/`--mobile`/`--user-agent` launch-flag capability (corrected Phase 1a Limits section) — a fact about the external tool, not a persona-test-enforced gate. No oracle in the closed registry binds a third-party MCP server's own CLI flags."
+    },
+    {
+      "line": "\"App requires login; test scope limited to public surface\", continue",
+      "reason": "Phase 3's login-wall special case (the authWallUntested gate-honesty rule below) — the model decides how to classify a login wall and what flag to set while running the Plan→Act→Reflect loop. Exploratory mode has no CLI/exit code; same category as the already-contracted 'no-typed-input-values-persisted' and 'persona-finding-hash-single-source' gates above."
+    },
+    {
+      "line": "the report must say so even when it finds 0 P0s there.",
+      "reason": "Same authWallUntested gate-honesty rule as above — the model must state the coverage gap in its own generated report text; there is no CLI exit code to assert this against."
+    },
+    {
+      "line": "**Gate-honesty rule for `authWallUntested`**: 0 P0 findings on an",
+      "reason": "Same authWallUntested gate-honesty rule — Phase 4's statement of why 0 P0s must not read as a clean pass when the login wall was never resolved. Agent-followed prose, no exit code."
+    },
+    {
+      "line": "the app\". OVERALL must never read `Ready for users` in this case — cap it",
+      "reason": "Same authWallUntested gate-honesty rule — caps the OVERALL verdict the model writes into its own Phase 5 report text. No persona-test CLI exists for exploratory mode to bind an exit code to."
+    },
+    {
+      "line": "can't read this run as a clean pass on a surface it never reached. This",
+      "reason": "Same authWallUntested gate-honesty rule as above; continuation sentence."
+    },
+    {
+      "line": "mirrors click-test's rule that the OVERALL verdict caps at `Incomplete`",
+      "reason": "Same authWallUntested gate-honesty rule, explicitly cross-referencing click-test's already-contracted 'verdict-precedence' document-only gate as the parallel case."
+    }
   ]
 }

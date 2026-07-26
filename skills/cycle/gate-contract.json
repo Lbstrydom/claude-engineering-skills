@@ -31,6 +31,10 @@
     {
       "line": "Usage: /cycle <plan-file> --max-rounds N  — Pass through to /audit-plan and /audit-code",
       "reason": "Usage/description documentation line surfaced by the 2026-07-21 Copilot-cap description trim (Usage relocated to the SKILL body). Not a new gate claim — it documents an existing flag; the real gate (where one exists, e.g. nav-audit --gate) is contracted separately in this file."
+    },
+    {
+      "line": "clean pass; it means the run never reached the app's primary",
+      "reason": "Part of Step 5's new guidance on reading persona-test's authWallUntested flag: /cycle reads the persona-test report and decides not to treat 0-P0-with-untested-auth-surface as a clean pass. Same category as the already-contracted 'preview-gate-halt-blocks-ship' gate — /cycle is an orchestrator with no CLI exit code of its own; this is agent flow reading another skill's report, not a mechanical gate."
     }
   ]
 }
