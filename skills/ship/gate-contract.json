@@ -10,12 +10,34 @@
     {
       "id": "category-a-never-staged",
       "kind": "document-only",
-      "reason": "'Do NOT git add scripts/.sync-manifest.json / dashboard/index.html — they are gitignored Category-A artifacts' is an instruction to the AGENT running /ship about what NOT to stage. There is no exit code to assert; it is a staging-discipline rule the model follows, enforced downstream by .gitignore, not by a ship CLI."
+      "reason": "'Do NOT git add <Category-A artifact>' (scripts/.sync-manifest.json, dashboard/index.html, dashboard/telemetry.html, docs/architecture-map.md) is an instruction to the AGENT running /ship about what NOT to stage. Still document-only as a GATE — there is no ship-CLI exit code to assert, because the rule constrains what the model chooses to stage, not what a command returns. REVISED 2026-07-26: the previous reason claimed this was 'enforced downstream by .gitignore, not by a ship CLI' and stopped there, which read as 'not mechanically checkable' and was wrong — the SKILL TEXT side is now guarded by tests/skill-staging-instructions.test.mjs, which fails when any shell-fenced `git add <literal path>` line in skills/** names a gitignored path. That guard exists because prose alone failed twice: dashboard/index.html (2026-06) got a 'do NOT stage' note, and docs/architecture-map.md then kept its `git add` line for six days sitting two steps above that very note until an agent followed it on 2026-07-26."
     },
     {
       "id": "step-0-5-gates-non-blocking",
       "kind": "document-only",
       "reason": "'Step 0.5 pre-ship gates are non-blocking by default; a query failure never makes the gate stricter OR blind' is a NEGATIVE guarantee about the agent's orchestration of the pre-ship queries. Asserting an absence-of-blocking across cloud-off / query-failure / no-session states is a judgement about agent flow, not a single CLI exit; document-only."
+    }
+  ],
+  "ignoredCandidates": [
+    {
+      "line": "what's about to ship. The map itself is **never committed** — see below.",
+      "reason": "Restates the category-a-never-staged gate for docs/architecture-map.md; not a separate claim. Its skill-text side is mechanically guarded by tests/skill-staging-instructions.test.mjs."
+    },
+    {
+      "line": "> **`docs/architecture-map.md` is Category A and is NEVER staged.** This step",
+      "reason": "Same restatement as above, in the explanatory blockquote. The rule is category-a-never-staged; this line names the artifact it applies to."
+    },
+    {
+      "line": "> survived two steps away from that note. `git add` on a gitignored path *fails*,",
+      "reason": "Describes GIT's own behaviour (git refuses to stage an ignored path without -f), not a project gate. Included to explain why the removed instruction failed SILENTLY — it paired that failure with 2>/dev/null || true."
+    },
+    {
+      "line": "> It fails the byte-identical Category B test three independent ways: the header",
+      "reason": "Explains why docs/architecture-map.md is classified Category A (timestamp+sha+refresh_id header, LLM-written summaries, renders from the cloud symbol_index). A classification rationale, not an enforced gate — the enforcement is the .gitignore entry plus GENERATED_UNTRACKED_TARGETS in check-docs-refs.mjs."
+    },
+    {
+      "line": "the weekly GH workflow, never by /ship directly.",
+      "reason": "Pre-existing prose about who updates the arch-drift sticky issue; it became a candidate only because the 2026-07-26 edit reflowed the paragraph and moved 'never' onto this line. Scope statement about a GH workflow, not a /ship gate."
     }
   ]
 }

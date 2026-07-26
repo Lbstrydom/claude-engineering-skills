@@ -146,8 +146,8 @@ record which override is active — it goes into the ship_event.
 
 If the architectural memory is configured for this repo (per the
 `docs/plans/architectural-memory.md` rollout), refresh the per-repo
-symbol-index and regenerate `docs/architecture-map.md` so the committed
-artefact stays current with what's about to ship.
+symbol-index and regenerate `docs/architecture-map.md` so the LOCAL map matches
+what's about to ship. The map itself is **never committed** — see below.
 
 ```bash
 # Determine since-commit (last shipped). Use upstream/origin HEAD as a proxy
@@ -155,9 +155,28 @@ artefact stays current with what's about to ship.
 LAST=$(git rev-parse "@{upstream}" 2>/dev/null || git rev-parse "HEAD~1")
 node scripts/symbol-index/refresh.mjs --since-commit "$LAST" || true
 node scripts/symbol-index/render-mermaid.mjs || true
-# Stage the regenerated map if it changed (pure additive; never blocks ship)
-git add docs/architecture-map.md 2>/dev/null || true
+# NOTE: do NOT `git add docs/architecture-map.md` — it is gitignored (Category A).
 ```
+
+> **`docs/architecture-map.md` is Category A and is NEVER staged.** This step
+> used to end with `git add docs/architecture-map.md 2>/dev/null || true`, which
+> outlived the file's B → A reclassification (2026-07-20) — the same stale-staging
+> instruction that Step 0.5d below already documents for the dashboard, and it
+> survived two steps away from that note. `git add` on a gitignored path *fails*,
+> and the `2>/dev/null || true` swallowed the failure, so an agent following the
+> instruction was told nothing while believing the map had shipped.
+>
+> It fails the byte-identical Category B test three independent ways: the header
+> embeds a timestamp + commit sha + refresh_id; the body carries LLM-written
+> per-domain summaries (two renders of one commit differ in wording); and it
+> renders from the **cloud** `symbol_index`, i.e. external mutable state, not from
+> committed source. Citations to it in AGENTS.md stay legal via
+> `GENERATED_UNTRACKED_TARGETS` in `check-docs-refs.mjs`; a fresh clone
+> regenerates it with `npm run dashboard:setup`. The reasoning lives beside the
+> `.gitignore` entry.
+>
+> So this step's value is a current LOCAL map plus a fresh cloud symbol-index for
+> future arch-memory consultations — not a commit artifact.
 
 **This step is ALWAYS advisory — it never blocks a ship.** Per the
 plan's failure matrix:
@@ -171,9 +190,8 @@ plan's failure matrix:
   the working-tree edits about to be committed are visible
   (per Gemini-G1 fix).
 
-If `docs/architecture-map.md` has changed, it's staged and included in
-the ship commit. The drift sticky-issue is only updated by the weekly
-GH workflow, never by /ship directly.
+Nothing from this step is ever staged. The drift sticky-issue is only updated by
+the weekly GH workflow, never by /ship directly.
 
 ---
 
