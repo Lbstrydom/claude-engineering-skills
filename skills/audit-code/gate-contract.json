@@ -61,5 +61,27 @@
       "statedIn": "skills/audit-code/SKILL.md",
       "stated": "Threshold met, 0 new, 2/2 stable"
     }
+  ],
+  "ignoredCandidates": [
+    {
+      "line": "# as an ARGUMENT (process.argv[1]), never embed it as a literal string inside",
+      "reason": "Comment instructing future editors of this Step 7 snippet not to reintroduce a literal /tmp path string for Node to independently re-resolve. The actual invariant is mechanically enforced repo-wide by tests/skill-tmp-path-safety.test.mjs (scans every skills/**/*.md for require/readFileSync/existsSync called on a string-literal path), not by anything this skill's own execution exits on."
+    },
+    {
+      "line": "# Gemini verdict computed (visible in that session's own logs) but NEVER",
+      "reason": "Incident narrative (wine-cellar-app's 101 lost final-review verdicts) explaining WHY this snippet was rewritten; not itself a new rule. Same already-covered no-literal-tmp-path invariant as the candidate above."
+    },
+    {
+      "line": "# error. fs.readFileSync + JSON.parse (not require — this is a data file, not a",
+      "reason": "Continuation of the same incident-narrative comment, explaining the fs.readFileSync/JSON.parse replacement for require(); no new claim beyond the no-literal-tmp-path invariant already covered above."
+    },
+    {
+      "line": "# module) with a try/catch fails safe to an empty RUN_ID rather than crashing.",
+      "reason": "Continuation of the same comment block — describes the try/catch already visible on the snippet's own next line, not a separate enforceable claim."
+    },
+    {
+      "line": "RUN_ID=$(node -e \"const fs=require('fs'); try { process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],'utf8'))._cloudRunId||''); } catch { process.stdout.write(''); }\" \"/tmp/$SID-r<N>-result.json\")",
+      "reason": "The corrected extraction line itself — its correctness (argv-based path, never a literal string) is exactly what tests/skill-tmp-path-safety.test.mjs asserts across every skill markdown file. This is a code snippet a human/agent runs inline, not a CLI /audit-code itself exits on, so there is no separate cli-exit oracle to bind here beyond that regression test."
+    }
   ]
 }
