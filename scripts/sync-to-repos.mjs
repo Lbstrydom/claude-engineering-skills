@@ -1571,9 +1571,17 @@ async function maybePromptSharedCloudUpdate({ sourceRepoDir, stdio }) {
 }
 
 // Test seam — exposes the sync-time D2b trigger helper so behaviour
-// tests can drive it directly instead of regex-asserting source text.
+// tests can drive it directly instead of regex-asserting source text, PLUS
+// the entry-point arrays themselves. sync-inventory.mjs hand-maintains a
+// mirror of these (a library seam that can't import this CLI module without
+// running its own main() logic at import time — see its header), and that
+// mirror silently drifted from this, the authoritative list, for months
+// (four maintenance-checks entries missing entirely). Exporting the raw
+// arrays here lets a test diff them against sync-inventory.mjs's own
+// `_internals` export instead of trusting the "keep in lock-step" comments.
 export const _internals = Object.freeze({
   maybePromptSharedCloudUpdate, classifyConsumerRuntime, assessConsumerAzureEmbed,
+  CORE_ENTRY, CORE_ASSETS, LEARNING_ENTRY, ARCH_ENTRY, DEBT_ENTRY, SYNC_ISOLATION_ENTRY,
 });
 
 // Only execute when invoked as a script (canonical-path compare). When

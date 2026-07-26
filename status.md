@@ -60,6 +60,80 @@ session and left untouched: `.audit-loop/domain-map.json` (modified) and a new
 untracked `docs/plans/refactor-architecture-debt-remainder-2026-07.md` — not
 part of this work, presumably another concurrent session's in-progress edits.
 
+## 2026-07-26 (continued 3) — sync-inventory.mjs reconciled with sync-to-repos.mjs; drift-guard test added
+
+`scripts/lib/sync-inventory.mjs` is a hand-maintained mirror of
+`sync-to-repos.mjs`'s entry-point arrays, and every array carried a "keep in
+lock-step" comment pointing at `sync-to-repos.mjs` as authoritative. The two
+had drifted well beyond the 4 files reported — a line-by-line diff of every
+array found 16 missing entries across `CORE_ENTRY`, `CORE_NON_IMPORTABLE`, and
+`CORE_ASSETS`, plus a stale phantom entry. Since `sync-inventory.mjs` backs the
+isolation verifier, the relocation guard, and `install/deps.mjs`'s derived
+npm-dependency computation (not the actual `npm run sync`), the gap was a
+blind spot in verification/drift-detection tooling, not the sync itself.
+
+### Changes
+- `scripts/lib/sync-inventory.mjs`: added the missing `CORE_ENTRY` entries
+  (`check-cli-flags.mjs`, `check-npm-run-args.mjs`, `ensure-branch-protection.mjs`,
+  `reconcile-repo-identity.mjs`, `tiered-shadow-report.mjs`, `visual-audit.mjs`,
+  and the 4 local-maintenance-checks files: `maintenance-checks.mjs`,
+  `memory-health.mjs`, `check-model-freshness.mjs`, `context-staleness.mjs`);
+  added the missing `CORE_NON_IMPORTABLE` arm-eval dynamic-import targets
+  (`lib/arm-eval/{run,decision,toggle}.mjs`, `lib/store/arm-eval.mjs`); added
+  the missing `CORE_ASSETS` fs-read files (`scripts/lib/oss-call-policy.json`,
+  `tests/fixtures/expected-schema.json`); removed a stale `./lib/redact.mjs`
+  entry — a bare relative-form entry point that `collectImportClosure`
+  normalises to the nonexistent repo-root path `lib/redact.mjs`, which was
+  silently leaking a phantom path into every consumer inventory's `files` list
+  (the path lands in `visited` before `readFile` is attempted, so a failed
+  read doesn't remove it). `LEARNING_ENTRY`, `ARCH_ENTRY`, `DEBT_ENTRY`, and
+  `SYNC_ISOLATION_ENTRY` had no other drift.
+- `scripts/sync-to-repos.mjs`: extended its `_internals` export with the raw
+  `CORE_ENTRY`/`CORE_ASSETS`/`LEARNING_ENTRY`/`ARCH_ENTRY`/`DEBT_ENTRY`/
+  `SYNC_ISOLATION_ENTRY` arrays so a test can diff them directly instead of
+  trusting the "keep in lock-step" comments.
+- New `tests/sync-inventory-parity.test.mjs`: imports both modules' `_internals`
+  and set-diffs every entry-point array (accounting for `sync-inventory.mjs`'s
+  `CORE_ENTRY`/`CORE_NON_IMPORTABLE` split and the `CORE_ASSETS` migrations-tail
+  asymmetry), plus a dedicated check that no bare `./`-relative entry point can
+  reappear in any array.
+- **Rebase-time catch**: rebasing onto the concurrent tech-debt-tracking commit
+  (below) surfaced a *second, brand-new* instance of the same drift class —
+  that commit added `debt-health-check.mjs` to `CORE_ENTRY` in
+  `sync-to-repos.mjs` (it's spawned by `maintenance-checks.mjs`, same as the
+  other 4 local-check files) but to `DEBT_ENTRY` in `sync-inventory.mjs`.
+  Moved it to `sync-inventory.mjs`'s `CORE_ENTRY` to match; the new parity
+  test would otherwise have failed on `main` immediately after merge.
+
+### Decisions Made
+- Removed the `./lib/redact.mjs` duplicate-form entry rather than keeping it as
+  a documented "known wart" — `sync-to-repos.mjs` only ever listed the absolute
+  form, and the relative form doesn't just duplicate work, it actively
+  corrupts the inventory with a nonexistent path.
+- Wrote the regression test as a direct array diff (via extended `_internals`
+  exports) rather than a source-text regex scan, matching the pattern the task
+  suggested and giving an exact `onlyInA`/`onlyInB` diagnostic on failure
+  instead of a pass/fail-only text match.
+
+### Files Affected
+- `scripts/lib/sync-inventory.mjs`, `scripts/sync-to-repos.mjs`
+- `tests/sync-inventory-parity.test.mjs` (new)
+
+### Verification
+- New test: 7/7 pass, both before and after the rebase-time
+  `debt-health-check.mjs` fix. `tests/relocation-guard.test.mjs` +
+  `tests/sync-ownership-recording.test.mjs` and the other files importing
+  `sync-inventory.mjs`/`sync-to-repos.mjs`/`install/deps.mjs`: all green.
+  `node scripts/check-isolation-inventory.mjs`: clean round-trip. Full suite
+  green pre-rebase (8763 passed / 0 failed / 22 pre-existing skips) and
+  re-verified green post-rebase against the merged tree.
+
+### Next Steps
+- None — reconciliation + guard test both landed, including the drift the
+  concurrent tech-debt-tracking commit introduced.
+
+---
+
 ## 2026-07-26 (continued) — tech-debt tracking: close the capture→resolution loop, fix consumer-sync gap
 
 User asked whether tech-debt tracking exists and whether it actually works.
