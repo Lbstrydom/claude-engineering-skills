@@ -400,7 +400,9 @@
       "plan",
       "shared-lib"
     ],
-    "root-scripts": [],
+    "root-scripts": [
+      "install"
+    ],
     "scripts": [
       "arch-intent",
       "arm-eval",
@@ -673,7 +675,7 @@
     "supabase",
     "docs"
   ],
-  "_comment_allowedDeps": "BASELINE, NOT ENDORSEMENT (domain-map-reconciliation Phase C, 2026-07-17). Set to the OBSERVED graph AFTER Phase A fixed rule coverage (13 orphaned lib subsystems) and the file-lock move removed the false trapped-primitive edges — so these are real edges, not measurement artifacts. This makes the violation check a RATCHET: it cannot fail on what exists today, only on NEW undeclared edges. THREE entries are recorded debt, NOT intent: (1) shared-lib -> audit-orchestration/claude-hooks/model-eval/nav-audit/stores — ~6 top-level lib files (efficacy-lints, config, repo-inventory, audit-shadow, finalize-outcomes, audit-arms) are feature coordinators, not domain-neutral primitives; retag or move them. (2) stores -> model-eval/persona-test — a LAYER INVERSION: the persistence layer reaching UP into feature domains. (3) cross-skill-bridge -> 11 domains — AGENTS.md calls this a thin facade; eleven deps is not thin. Do not grow these three without fixing the underlying coupling.",
+  "_comment_allowedDeps": "BASELINE, NOT ENDORSEMENT (domain-map-reconciliation Phase C, 2026-07-17). Set to the OBSERVED graph AFTER Phase A fixed rule coverage (13 orphaned lib subsystems) and the file-lock move removed the false trapped-primitive edges — so these are real edges, not measurement artifacts. This makes the violation check a RATCHET: it cannot fail on what exists today, only on NEW undeclared edges. THREE entries are recorded debt, NOT intent: (1) shared-lib -> audit-orchestration/claude-hooks/model-eval/nav-audit/stores — ~6 top-level lib files (efficacy-lints, config, repo-inventory, audit-shadow, finalize-outcomes, audit-arms) are feature coordinators, not domain-neutral primitives; retag or move them. (2) stores -> model-eval/persona-test — a LAYER INVERSION: the persistence layer reaching UP into feature domains. (3) cross-skill-bridge -> 11 domains — AGENTS.md calls this a thin facade; eleven deps is not thin. Do not grow these three without fixing the underlying coupling. ADDENDUM (tech-debt-backlog-triage, 2026-07-26): root-scripts -> install added — install.mjs/setup.mjs (repo-root entry points, caught by the *.mjs catch-all) import scripts/lib/install/prompt.mjs; same entry-point-to-implementation shape already declared for `scripts`, just never extended to the two root-level installers. Closes tech-debt topicIds 0fd83d0f/99f61113/a122a79b/d9f8c219.",
   "_adjudication_2026_07_20": {
     "_date": "2026-07-20",
     "_context": "Four domain edges were reported by /audit-code's architecture pass in NINE consecutive rounds across two clusters (plan: sast-triage-routing). Adjudicated once, on the merits, so they stop consuming a finding slot every round.",

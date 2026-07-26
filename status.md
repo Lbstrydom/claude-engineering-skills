@@ -1,5 +1,73 @@
 # Project Status Log
 
+## 2026-07-26 (continued 4) — tech-debt backlog triage: 384 → 167 open entries
+
+Full triage pass over `.audit/tech-debt.json`'s 384 open entries (the
+capture-to-resolution loop this repo shipped earlier today via commit
+`5305c50`, applied for the first time at scale). Used `debt-review.mjs
+--local-only` for the initial file/edge clustering, then verified every
+entry against current source before disposing of it — never resolved on
+"not reopened this round" alone.
+
+### Architecture pass (183 entries) — 173 resolved
+Cross-checked every `[Architecture]` edge-shaped finding against
+`.audit-loop/domain-map.json`'s current `allowedDeps`/rules. Most were
+already resolved by retagging/declaration work done since the findings were
+captured (mid-July) — the domain-map's own Phase A/C reconciliation had
+caught up, the audit backlog just hadn't. Caught and corrected one trap
+along the way: `domain-deps-observed.json` itself undercounted a real edge
+(`scripts/brainstorm-round.mjs` is retagged to the `brainstorm` domain via a
+specific rule, so its internal import doesn't show as cross-domain — a
+different file's import graph gap, not a false alarm, but it meant trusting
+the observed-graph file alone would have been wrong). Fixed one small real
+gap directly: `root-scripts` (`install.mjs`/`setup.mjs`) was never declared
+as depending on the `install` domain even though it legitimately does — added
+the one-line `allowedDeps` entry + a dated note in the domain-map's own
+adjudication log. 21 entries were already-tracked accepted debt (the
+domain-map's own `_comment_allowedDeps` names 3 specific boundary-erosion
+clusters) — consolidated rather than left as N duplicate ledger rows. 10
+genuinely still-open items scoped into
+`docs/plans/refactor-architecture-debt-remainder-2026-07.md`.
+
+### Everything else (201 entries — Sustainability/be-services/backend/etc.) — 44 resolved, 156 confirmed still-valid
+Dispatched 13 parallel sub-agents (one per file cluster) to verify against
+current code. Opposite result from the architecture pass: only 44 resolved,
+**156 (78%) confirmed still-valid real bugs** — a recurring "cloud/DB
+failure indistinguishable from success or empty" pattern across
+`persona-consistency-promote.mjs`, `quickfix-stats.mjs`,
+`persona-outcomes.mjs`; two god-modules (`legacy-production-audit.mjs`
+~2280 lines, `openai-audit.mjs`); and a WAL recovery module
+(`transaction.mjs`, 19 findings) that turned out to be already 10/19 fixed
+(locking, journal validation, fsync-on-critical, delete-reconciliation) —
+the remaining 9 are the same "cleanup catch doesn't distinguish nothing-to-
+clean-up from cleanup-failed" shape repeated across the module. One entry
+left `UNCERTAIN` (a god-module size judgment call).
+
+Caught my own process error mid-run: two of the 12 dispatched batches got
+the same file (`transaction.mjs`) under different labels — a mismatch in
+how I split the work, not the sub-agents' fault. One agent self-corrected
+and flagged it; I dispatched a 13th corrective agent for the file that
+almost got skipped (`legacy-production-audit.mjs`, 16 entries) once I
+noticed the gap. Full disclosure, not swept under the rug, given the whole
+point of this session was "verify, don't assume."
+
+The 156 still-valid entries are grouped into 7 subsystem refactor plans by
+theme, each with per-cluster fix guidance and a full entry table:
+`refactor-audit-pipeline-reliability-2026-07.md`,
+`refactor-arch-memory-symbol-index-2026-07.md`,
+`refactor-install-wal-vcs-2026-07.md`,
+`refactor-visual-audit-contract-2026-07.md`,
+`refactor-learning-persona-quickfix-2026-07.md`,
+`refactor-model-eval-pricing-2026-07.md`,
+`refactor-claudemd-skills-governance-2026-07.md`,
+`refactor-misc-small-items-2026-07.md` (all under `docs/plans/`).
+
+### Result
+384 → 167 open ledger entries (56% resolved). `.audit/tech-debt.json` is
+gitignored so the 217 resolutions live only in the local ledger + cloud
+mirror (`debt-triage-2026-07-26-fixed`/`-consolidate`/`-fixed-phase2` run
+ids); this commit ships the one domain-map fix + the 9 new plan docs.
+
 ## 2026-07-26 (continued) — run-id recovery fix confirmed live in wine-cellar-app; first shadow-only adjudication
 
 Follow-up to the same day's wine-cellar-app final-review persistence work.
