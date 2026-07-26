@@ -252,7 +252,11 @@ function initResultCache(outFile) {
     : os.tmpdir();
   _cacheDir = path.join(base, `.audit-cache-${process.pid}`);
   try {
-    fs.mkdirSync(_cacheDir, { recursive: true });
+    // 9e965821: explicit mode (masked by the process umask on POSIX; a no-op
+    // on Windows, which doesn't meaningfully honor POSIX mode bits) rather
+    // than the filesystem's default dir mode for a cache holding audit
+    // pass results.
+    fs.mkdirSync(_cacheDir, { recursive: true, mode: 0o700 });
   } catch { _cacheDir = null; }
 }
 
@@ -523,7 +527,7 @@ async function runMapReducePass(openai, files, passName, buildPromptForUnit, max
 
   // Collect findings + aggregate usage (including failed units)
   const allFindings = [];
-  const mapUsage = { input_tokens: 0, output_tokens: 0, reasoning_tokens: 0 };
+  const mapUsage = { input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, cached_tokens: 0 };
   let effectiveFailures = 0;
   for (let i = 0; i < results.length; i++) {
     if (results[i].status === 'fulfilled') {
@@ -532,6 +536,7 @@ async function runMapReducePass(openai, files, passName, buildPromptForUnit, max
         mapUsage.input_tokens += val.usage.input_tokens ?? 0;
         mapUsage.output_tokens += val.usage.output_tokens ?? 0;
         mapUsage.reasoning_tokens += val.usage.reasoning_tokens ?? 0;
+        mapUsage.cached_tokens += val.usage.cached_tokens ?? 0;
       }
       if (!val?.result || !Array.isArray(val.result.findings)) {
         effectiveFailures++;
@@ -547,6 +552,7 @@ async function runMapReducePass(openai, files, passName, buildPromptForUnit, max
         mapUsage.input_tokens += results[i].reason._accumulatedUsage.input_tokens ?? 0;
         mapUsage.output_tokens += results[i].reason._accumulatedUsage.output_tokens ?? 0;
         mapUsage.reasoning_tokens += results[i].reason._accumulatedUsage.reasoning_tokens ?? 0;
+        mapUsage.cached_tokens += results[i].reason._accumulatedUsage.cached_tokens ?? 0;
       }
       process.stderr.write(`  [map-${passName}-${i}] FAILED: ${results[i].reason?.message || 'unknown'}\n`);
     }
@@ -660,7 +666,10 @@ async function runMapReducePass(openai, files, passName, buildPromptForUnit, max
       input_tokens: mapUsage.input_tokens + (reduceResult.usage?.input_tokens ?? 0),
       output_tokens: mapUsage.output_tokens + (reduceResult.usage?.output_tokens ?? 0),
       reasoning_tokens: mapUsage.reasoning_tokens + (reduceResult.usage?.reasoning_tokens ?? 0),
-      cached_tokens: reduceResult.usage?.cached_tokens ?? 0,
+      // cd77d84e/d96b1e86: sum MAP + REDUCE cached_tokens, matching the other
+      // three fields above — previously only REDUCE's figure was reported,
+      // silently dropping MAP's cached-token count from the aggregate.
+      cached_tokens: mapUsage.cached_tokens + (reduceResult.usage?.cached_tokens ?? 0),
       latency_ms: totalLatency,
     },
     latencyMs: totalLatency,
@@ -1080,7 +1089,13 @@ export function groundArchFindingsToReport(findings, report) {
   const fileOf = (f) => {
     const raw = f?._primaryFile || f?.section;
     if (typeof raw !== 'string' || !raw) return null;
-    const stripped = raw.replace(/^([A-Za-z]:)/, '$1 ').split(':')[0].replace(' ', ':');
+    // Skip a leading Windows drive letter (e.g. "C:") before splitting off a
+    // trailing ":symbol"/":line" suffix, so the drive letter's own colon
+    // isn't mistaken for that suffix separator (39a73f09 — the prior
+    // sentinel-based approach also embedded literal NUL bytes in the source).
+    const driveMatch = raw.match(/^[A-Za-z]:/);
+    const rest = driveMatch ? raw.slice(driveMatch[0].length) : raw;
+    const stripped = (driveMatch ? driveMatch[0] : '') + rest.split(':')[0];
     return /[\\/]|\.[A-Za-z0-9]+$/.test(stripped) ? normalizePath(stripped) : null;
   };
   const kept = [], dropped = [];
@@ -1302,7 +1317,12 @@ export async function runLegacyProductionAudit(ctx) {
 
   // Deterministic outcome capture: finalize the prior round's outcomes before
   // running round N's audit (best-effort, never blocks). See the helper above.
-  await finalizePriorRoundOutcomes({ outFile, round, ledgerFile });
+  // 062e1be1: gated on learningWritesAllowed — this call previously ran
+  // unconditionally, writing learning-outcome state even during a shadow/
+  // observation-only (noCloudRecording) run. finalizePriorRoundOutcomes
+  // already catches and logs its own internal failures (never throws), so
+  // no result-checking is needed here beyond the policy gate.
+  await writeLearningState(learningWritesAllowed, () => finalizePriorRoundOutcomes({ outFile, round, ledgerFile }));
 
   // Count diff lines for metadata (lines starting with + or - but not +++ / ---)
   let diffLinesChanged = null;
@@ -1401,8 +1421,15 @@ export async function runLegacyProductionAudit(ctx) {
           diffFiles: diffFilesChanged,
           scopeMode: scopeMode || null,
         };
-        // Best-effort.  These calls return { ok, error? } — never throw.
-        recordDiffComplexity(cloudRunId, diffComplexity).catch(() => {});
+        // 656f6586: gated on learningWritesAllowed (previously unconditional
+        // — a shadow/observation-only run would still record diff-complexity
+        // telemetry). The function returns { ok, error? } — never throws —
+        // so `.catch()` was dead code masking nothing; check the result and
+        // log a failure instead of silently discarding it.
+        await writeLearningState(learningWritesAllowed, async () => {
+          const r = await recordDiffComplexity(cloudRunId, diffComplexity);
+          if (!r?.ok) process.stderr.write(`  [learning] recordDiffComplexity failed: ${r?.error ?? 'unknown'}\n`);
+        });
 
         // Record pass_selection decision (telemetry-only in v1; choice always
         // 'all' until Phase 3 promotes pass-selector to live).
@@ -1481,7 +1508,13 @@ export async function runLegacyProductionAudit(ctx) {
     repoId: cloudRepoId,
     // cloudRepoId is only set inside the `await isCloudEnabled()` block above,
     // so a non-null value proves cloud is on and the repo resolved.
-    cloudEnabled: cloudRepoId != null,
+    // 9d9d478a: also require learningWritesAllowed — previously a shadow/
+    // observation-only run still wrote debt events to the SHARED cloud
+    // store; selectEventSource degrades gracefully to the local event log
+    // when cloudEnabled is false (matching the pattern the other 5 already-
+    // migrated write sites use — a downgrade, not a hard block), so this is
+    // additive, not a new failure mode.
+    cloudEnabled: cloudRepoId != null && learningWritesAllowed,
   });
   // Opportunistic local→cloud reconciliation when we're online (fix R3-H3)
   if (debtContext.source === 'cloud') {
@@ -2042,7 +2075,12 @@ export async function runLegacyProductionAudit(ctx) {
   }
 
   const runFrontend = shouldRunPass('frontend');
-  if (runFrontend && effectiveFrontend.length > 0) {
+  // M6 (code-audit r1): dispatch and passRegistry used to check different
+  // predicates (this flag vs bare runFrontend) — a pass can be "on" via
+  // --passes but have zero frontend files, in which case no model call
+  // happens and the registry must not report it as having ran.
+  const frontendWillRun = runFrontend && effectiveFrontend.length > 0;
+  if (frontendWillRun) {
     if (shouldMapReduceHighReasoning(effectiveFrontend)) {
       mapReducePasses.push('frontend');
       process.stderr.write(`  [frontend] ${effectiveFrontend.length} files — using map-reduce\n`);
@@ -2443,17 +2481,38 @@ export async function runLegacyProductionAudit(ctx) {
     return null;
   }
 
+  // 6ae952bf: the reasoning level actually used per pass is set at each
+  // pass's own safeCallGPT invocation (scattered across this function, since
+  // several backend sub-passes branch on shouldMapReduceHighReasoning) — not
+  // threaded back onto that pass's result object. Reproducing that here
+  // exactly would mean touching ~10 call sites in this already-oversized
+  // function, out of proportion for a MEDIUM debt item (see Theme 2's
+  // interim-containment note: no new orchestration complexity added here).
+  // This resolves the narrower, real complaint instead: recordPassStats used
+  // to keep its OWN independent copy of this name->reasoning guess, so the
+  // two could silently drift apart. There is now exactly one definition.
+  function reasoningLevelForPass(name) {
+    if (name === 'sustainability' || name === 'architecture') return 'medium';
+    if (name === 'quickfix' || name === 'orphan-introduced') return 'low';
+    return 'high';
+  }
+
   const passRegistry = [
     { name: 'structure', ran: runStructure, result: structureResult, displayPrefix: 'Structure' },
     { name: 'wiring', ran: runWiring, result: wiringResult, displayPrefix: 'Wiring' },
     ...backendPassNames.map((name, i) => ({ name, ran: true, result: backendResults[i], displayPrefix: name })),
-    { name: 'frontend', ran: runFrontend, result: frontendResult, displayPrefix: 'Frontend' },
+    { name: 'frontend', ran: frontendWillRun, result: frontendResult, displayPrefix: 'Frontend' },
     { name: 'sustainability', ran: runSustainability, result: sustainResult, displayPrefix: 'Sustainability' },
     { name: 'quickfix', ran: runQuickfix, result: quickfixResult, displayPrefix: 'Quickfix' },
     { name: 'duplication', ran: runDuplication, result: duplicationResult, displayPrefix: 'Duplication' },
     { name: 'adjacency', ran: runAdjacency, result: adjacencyResult, displayPrefix: 'Adjacency' },
-    { name: 'architecture', ran: archState !== 'SKIPPED_PASS_FILTER', result: archResult, displayPrefix: 'Architecture' },
-    { name: 'orphan-introduced', ran: orphanState !== 'SKIPPED_PASS_FILTER', result: orphanResult, displayPrefix: 'Orphan' },
+    // M1 (code-audit r2): archState/orphanState have MULTIPLE skip reasons
+    // (SKIPPED_PASS_FILTER, SKIPPED_NO_INTENT, SKIPPED_NO_GRAPH, ...) — a
+    // `!== 'SKIPPED_PASS_FILTER'` check reported `ran: true` for every OTHER
+    // skip reason too, the exact frontendWillRun-vs-runFrontend mismatch
+    // (M6, round 1) recurring for the pass immediately below it.
+    { name: 'architecture', ran: !archState.startsWith('SKIPPED_'), result: archResult, displayPrefix: 'Architecture' },
+    { name: 'orphan-introduced', ran: !orphanState.startsWith('SKIPPED_'), result: orphanResult, displayPrefix: 'Orphan' },
   ].map(({ name, ran, result, displayPrefix }) => {
     const mrReason = mapReduceFailureReason(result);
     const status = !ran ? 'skipped' : (result?.failed || mrReason) ? 'failed' : 'succeeded';
@@ -2471,6 +2530,7 @@ export async function runLegacyProductionAudit(ctx) {
       // file's `_hash`/`_pass`/`_mapUnit` convention for internal-only data.
       _displayPrefix: displayPrefix,
       _result: result,
+      _reasoning: reasoningLevelForPass(name),
     };
   });
 
@@ -3113,10 +3173,10 @@ export async function runLegacyProductionAudit(ctx) {
         inputTokens: entry.usage?.input_tokens,
         outputTokens: entry.usage?.output_tokens,
         latencyMs: entry.latencyMs,
-        reasoning: entry.name === 'sustainability' ? 'medium'
-          : entry.name === 'architecture' ? 'medium'
-          : (entry.name === 'quickfix' || entry.name === 'orphan-introduced') ? 'low'
-          : 'high',
+        // 6ae952bf: read from the single reasoningLevelForPass definition
+        // (attached to each entry as _reasoning above) instead of a second,
+        // independently-maintained copy of the same name->level guess.
+        reasoning: entry._reasoning,
       }, round).catch(e => process.stderr.write(`  [learning] ${e.message}\n`));
     }
 
@@ -3316,9 +3376,16 @@ export async function runLegacyProductionAudit(ctx) {
     //     that is the honest value, and it is what makes `passed` refuse.
     try {
       const { recordConvergenceState } = await import('../store/learning-decisions.mjs');
+      // bf45c2f7: reuse the SAME effSeverity/countFor-derived counts the
+      // verdict above used, rather than recomputing from raw allFindings/
+      // f.severity — the two previously could disagree whenever a finding
+      // was excluded from the verdict (refuted by the verification gate, or
+      // a tool finding under advisory mode), silently letting this gate
+      // license `passed`/`converged` on a stricter or looser count than the
+      // verdict actually reported.
       const convergedNow = evaluateConvergence({
-        high: allFindings.filter((f) => f.severity === 'HIGH').length,
-        medium: allFindings.filter((f) => f.severity === 'MEDIUM').length,
+        high,
+        medium,
         quickFix: allFindings.filter((f) => f.is_quick_fix).length,
       });
       // The SUBJECT is recorded whether or not the run converged (E1 hop 2):
@@ -3384,16 +3451,23 @@ export async function runLegacyProductionAudit(ctx) {
         round: round || 1,
         sequence: 0,
       });
-      await backfillLearningOutcome({
-        decisionKey,
-        outcome: {
-          totalFindings: allFindings.length,
-          highKept: allFindings.filter(f => f.severity === 'HIGH' && f.adjudicationOutcome !== 'dismissed').length,
-          mediumKept: allFindings.filter(f => f.severity === 'MEDIUM' && f.adjudicationOutcome !== 'dismissed').length,
-          dismissed: allFindings.filter(f => f.adjudicationOutcome === 'dismissed').length,
-          durationMs: totalLatency,
-        },
-      }).catch(() => {});
+      // 4235a115: gated on learningWritesAllowed (previously unconditional).
+      // backfillLearningOutcome returns { ok, error? } — never throws — so
+      // `.catch()` was dead code; check the result and log a failure
+      // instead of silently discarding it.
+      await writeLearningState(learningWritesAllowed, async () => {
+        const r = await backfillLearningOutcome({
+          decisionKey,
+          outcome: {
+            totalFindings: allFindings.length,
+            highKept: allFindings.filter(f => f.severity === 'HIGH' && f.adjudicationOutcome !== 'dismissed').length,
+            mediumKept: allFindings.filter(f => f.severity === 'MEDIUM' && f.adjudicationOutcome !== 'dismissed').length,
+            dismissed: allFindings.filter(f => f.adjudicationOutcome === 'dismissed').length,
+            durationMs: totalLatency,
+          },
+        });
+        if (!r?.ok) process.stderr.write(`  [learning] backfillLearningOutcome failed: ${r?.error ?? 'unknown'}\n`);
+      });
       const flushSummary = await _learningFlush({
         store: { insertLearningDecision, backfillLearningOutcome, isCloudEnabled },
       });

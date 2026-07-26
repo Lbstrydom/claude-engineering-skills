@@ -1,5 +1,65 @@
 # Project Status Log
 
+## 2026-07-27 — `/cycle --autonomous` on the audit-pipeline-reliability plan: implemented, code-audited, shipped
+
+Ran `/cycle --autonomous docs/plans/refactor-audit-pipeline-reliability-2026-07.md`
+end to end on the plan produced by the previous session's tech-debt triage
+(45-entry cluster, 9 themes). No `## 11. Execution Clustering` block, so
+`/cycle` took the degenerate single-cluster autonomous path: implement the
+whole plan as one unit → `/audit-code` to a stopping point → mandatory
+Gemini gate → ship.
+
+### Implementation (Themes 1, 3, 5, 6, 7, 9 — the 22 fix-now topicIds)
+Mid-implementation, Theme 1's extensively GPT/Gemini-audited "durable outbox"
+design turned out to be solving a problem that didn't exist — reading the
+actual target functions showed all four already degrade gracefully and never
+throw. Corrected to the much simpler shipped fix (reuse the existing
+`writeLearningState` gate + log the already-computed `{ok,error}` result
+instead of discarding it) and disclosed the correction in full in the plan
+rather than silently deviating from the audited design. Full detail in the
+plan's own Round History / Theme 1 sections.
+
+### Code audit — 3 GPT rounds (H:6→5→4) + Gemini gate (APPROVE)
+Every genuinely new, in-scope bug the audit found was fixed the same round
+it surfaced, including three found in **this session's own R1/R2 fixes** —
+the audit turned on itself effectively: `existsOnDisk` (a new sensitive-path
+helper in `discovery-diff-scope.mjs`) got scrutinized three rounds running,
+each time surfacing a real gap (`ENOTDIR` uncaught → `EACCES` uncaught →
+fixed by deferring entirely to `resolveAndClassify`'s own tested fail-closed
+contract rather than the helper making its own policy call), and a
+`passRegistry` `ran`-predicate bug fixed for `frontend` in R1 recurred
+identically for `architecture`/`orphan-introduced` in R2. Two hallucinated
+findings were dismissed with hard evidence (a plan reference that doesn't
+exist anywhere — verified by exact-match grep; a `costFromUsage` null-
+dereference claim refuted by reading `model-pricing.mjs`, which never
+returns `null` itself). One finding flagged as "regressed" by the tool's own
+lifecycle tracking was verified NOT reproducible against the current working
+tree — a likely stale/base-revision artifact in the duplication wave, not a
+real regression. 19 genuinely valid, out-of-scope, independent findings
+(mostly `noCloudRecording` scope questions, the already-once-rejected
+shared-typed-failure-contract redesign, and pre-existing architecture-layer
+violations unrelated to this diff) were deferred with full honest-deferral
+disclosure and captured into `.audit/tech-debt.json` (ledger: 186→194
+entries across the 3 rounds). Stopped after round 3 — remaining
+HIGH/MEDIUM findings were restatements of the same handful of
+already-disclosed architectural themes, the code-audit analogue of the
+plan-audit's own rigor-pressure stop rule. Gemini's mandatory final gate
+(1 round) returned APPROVE with one real LOW finding (a redundant
+`oldPath`/`newPath` dedup miss in the sensitive-path check loop —
+independently corroborated by the parallel Opus shadow reviewer) — fixed.
+`deliberation_was_fair: true`, 0 wrongly-dismissed.
+
+Full test suite green throughout: 8795/8817 passing, 22 pre-existing
+environment-gated skips, 0 failing, verified after every round's fixes.
+Skipped `/persona-test`/`/ux-lock` (backend-only, no UI changes).
+
+Noticed in passing (not touched, flagged as separate debt): a real,
+pre-existing tool bug in the cloud lifecycle-tracking path
+(`markFindingsRemediation` fails a NOT-NULL constraint on
+`adjudication_outcome` for every non-`fixed` disposition — logged as a
+non-fatal warning on every round this session, unrelated to any of this
+plan's 9 themes).
+
 ## 2026-07-26 (continued 5) — Fixed visual-contract.json split-brain validation (top tech-debt item, full /cycle --autonomous run)
 
 Picked the #1-ranked item from an LLM-clustered debt-review of the 211-entry

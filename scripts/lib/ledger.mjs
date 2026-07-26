@@ -36,7 +36,13 @@ function getFileRegex() { return buildFileReferenceRegex(); }
 // ── Topic ID & Ledger Write ─────────────────────────────────────────────────
 
 /**
- * Deterministic fingerprint from structured fields. No content hash (stable across rewordings).
+ * Deterministic fingerprint from structured fields PLUS a content hash
+ * (`finding._hash`, falling back to `semanticId(finding)`) folded into the
+ * hashed input for disambiguation — d486a8691080: this docstring previously
+ * claimed "no content hash (stable across rewordings)", which the code
+ * below never did; the content-hash inclusion is the actual, load-bearing
+ * behavior (existing topicId consumers depend on it), so the docstring was
+ * corrected to match the code rather than the reverse.
  * @param {object} finding - Finding object with section, principle, category, _pass fields
  * @returns {string} 12-char hex topic ID
  */

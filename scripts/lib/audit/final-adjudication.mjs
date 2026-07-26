@@ -100,12 +100,15 @@ export function selectAdjudicationSample(triageResult, cleanRegionFiles, { tailS
     tailCandidates.push(e);
   }
 
-  const tailSize = Math.ceil(tailCandidates.length * tailSampleRate);
+  // M7 (code-audit r1): same Array.slice(0, negative) hazard as ab71f952
+  // above — an out-of-range rate (e.g. a negative tailSampleRate) must
+  // degrade to "sample nothing", not silently return almost-everything.
+  const tailSize = Math.max(0, Math.ceil(tailCandidates.length * tailSampleRate));
   const tailSample = seededShuffleCopy(tailCandidates, rng).slice(0, tailSize);
 
   const cleanFiles = cleanRegionFiles || [];
   const sizingBaseline = totalChangedFilesCount ?? cleanFiles.length;
-  const cleanRegionSize = Math.min(Math.ceil(sizingBaseline * cleanRegionRate), cleanFiles.length);
+  const cleanRegionSize = Math.max(0, Math.min(Math.ceil(sizingBaseline * cleanRegionRate), cleanFiles.length));
   const cleanRegionSample = seededShuffleCopy(cleanFiles, rng).slice(0, cleanRegionSize);
 
   return { mandatory, tailSample, cleanRegionSample };
@@ -151,11 +154,15 @@ export function selectAdjudicationSample(triageResult, cleanRegionFiles, { tailS
 export function selectFinalAdjudicationWorkItems(triageResult, cleanRegionFiles, budget = {}) {
   const { maxCleanRegionFiles, maxMechanicalTailItems, ...sampleOpts } = budget;
   const sample = selectAdjudicationSample(triageResult, cleanRegionFiles, sampleOpts);
+  // ab71f952: Number.isFinite(n) accepts negative n, and Array.slice(0, n)
+  // for negative n means "all but the last |n| items" — not a cap. Math.max
+  // floors it at 0 so a negative budget value degrades to "sample nothing"
+  // rather than silently returning almost-everything.
   const tailSample = Number.isFinite(maxMechanicalTailItems)
-    ? sample.tailSample.slice(0, maxMechanicalTailItems)
+    ? sample.tailSample.slice(0, Math.max(0, maxMechanicalTailItems))
     : sample.tailSample;
   const cleanRegionSample = Number.isFinite(maxCleanRegionFiles)
-    ? sample.cleanRegionSample.slice(0, maxCleanRegionFiles)
+    ? sample.cleanRegionSample.slice(0, Math.max(0, maxCleanRegionFiles))
     : sample.cleanRegionSample;
   return {
     mandatory: sample.mandatory,

@@ -30,8 +30,15 @@ describe('runDiscoveryPortfolio', () => {
     const ctx = {};
     const adapters = { glmCall: async () => [], sonnetCall: async () => [] };
     await runDiscoveryPortfolio(ctx, adapters, { fire: false });
-    assert.equal(ctx.generatorOutcomes.length, 2);
-    assert.ok(ctx.generatorOutcomes.every((o) => o.status === 'succeeded' && o.findingCount === 0));
+    // 33593f74/7ceef72a: no gptCall adapter now records an explicit
+    // skipped/no-adapter outcome too, instead of being silently absent.
+    assert.equal(ctx.generatorOutcomes.length, 3);
+    const required = ctx.generatorOutcomes.filter((o) => o.role === 'required');
+    assert.equal(required.length, 2);
+    assert.ok(required.every((o) => o.status === 'succeeded' && o.findingCount === 0));
+    const optional = ctx.generatorOutcomes.find((o) => o.role === 'optional');
+    assert.equal(optional.status, 'skipped');
+    assert.equal(optional.reason, 'no-adapter');
   });
 
   it('marks requiredGeneratorFailed=true when a required generator throws, without throwing itself', async () => {
@@ -111,7 +118,8 @@ describe('runDiscoveryPortfolio', () => {
     const ctx = { generatorOutcomes: [{ model: 'prior', role: 'required', status: 'succeeded', findingCount: 0 }] };
     const adapters = { glmCall: async () => [], sonnetCall: async () => [] };
     await runDiscoveryPortfolio(ctx, adapters, { fire: false });
-    assert.equal(ctx.generatorOutcomes.length, 3); // prior entry preserved + 2 new
+    // prior entry preserved + 2 required + 1 no-adapter skip (33593f74/7ceef72a)
+    assert.equal(ctx.generatorOutcomes.length, 4);
     assert.equal(ctx.generatorOutcomes[0].model, 'prior');
   });
 
@@ -120,6 +128,7 @@ describe('runDiscoveryPortfolio', () => {
     const adapters = { glmCall: async () => [], sonnetCall: async () => [] }; // this round's calls succeed
     const { requiredGeneratorFailed } = await runDiscoveryPortfolio(ctx, adapters, { fire: false });
     assert.equal(requiredGeneratorFailed, false);
-    assert.equal(ctx.generatorOutcomes.length, 3); // stale entry preserved for audit trail, just not counted
+    // stale entry preserved for audit trail + 2 required + 1 no-adapter skip
+    assert.equal(ctx.generatorOutcomes.length, 4);
   });
 });

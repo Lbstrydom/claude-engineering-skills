@@ -7,10 +7,15 @@
  *
  * Plan: docs/plans/tiered-recall-audit-pipeline.md Phase 6.
  *
- * **Scoped-Cluster-D note** (2026-07-10): this module is new, tested, and
- * NOT wired into `openai-audit.mjs`'s production chooser in this pass — see
- * `gpt-sentinel-trigger.mjs`'s module header for the same note and
- * `.audit/cycle-cluster-state.json` for the full rationale.
+ * **L3 (code-audit r1, corrects the stale 2026-07-10 Scoped-Cluster-D note
+ * this replaced)**: this module IS wired — `tiered-pipeline.mjs` imports and
+ * calls `runDiscoveryPortfolio` directly, and `tiered-pipeline.mjs` is itself
+ * reachable from `openai-audit.mjs`'s chooser (see stage1-triage.mjs's own
+ * header, and AGENTS.md's Tiered-Recall Audit Pipeline section). "Wired"
+ * means reachable from the chooser, not "on by default" —
+ * `tieredAuditConfig.pipelineEnabled` (env `AUDIT_TIERED_PIPELINE_ENABLED`)
+ * still defaults off in production, per the per-call `allowTiered` gate
+ * (AGENTS.md's "Execution eligibility is per-call, not env-global").
  *
  * **Run-level generator status tracking** (round-2 finding #2, Gemini gate
  * round-1 finding #G3): each generator's outcome is recorded on
@@ -39,6 +44,9 @@ import { resolveModel } from '../model-resolver.mjs';
  *   recorded on success AND failure. Absent on `skipped` (nothing ran) and on
  *   rows written before 2026-07-18 — treat as unknown, never as 0.
  * @property {string} [errorMessage]
+ * @property {number|null} [errorStatus] - err.status when the underlying error carried
+ *   an HTTP-like status (audit fix M3 round 2) — was previously pushed but
+ *   undocumented here (M14, code-audit r1).
  * @property {string|null} [category] - classifyLlmError category (timeout/network/
  *   http-4xx/permanent), when the underlying error was classified. Threaded from
  *   err.category (docs/plans/oss-call-reliability-hardening.md).
@@ -149,8 +157,14 @@ export async function runDiscoveryPortfolio(ctx, adapters, triggerDecision) {
       const role = triggerDecision.firedBy === 'exploration' ? 'exploratory' : 'optional';
       optionalFindings = await runOneGenerator({ model: optionalGptModel, role, call: adapters.gptCall }, generatorOutcomes);
     } else {
-      generatorOutcomes.push({ model: optionalGptModel, role: 'optional', status: 'skipped', findingCount: 0 });
+      generatorOutcomes.push({ model: optionalGptModel, role: 'optional', status: 'skipped', findingCount: 0, reason: 'not-triggered' });
     }
+  } else {
+    // 33593f74/7ceef72a: previously nothing was pushed at all when no GPT
+    // adapter was supplied — indistinguishable from GPT having succeeded
+    // with zero findings. Mirrors the trigger-not-fired branch above,
+    // distinguished only by `reason`.
+    generatorOutcomes.push({ model: optionalGptModel, role: 'optional', status: 'skipped', findingCount: 0, reason: 'no-adapter' });
   }
 
   const findings = [...requiredResults.flat(), ...optionalFindings];

@@ -18,6 +18,7 @@ import { execFileSync } from 'node:child_process';
 import { sweepStaleOrphanPreimages } from '../scripts/lib/audit/diff-scope-resolver.mjs';
 import { retrySync } from '../scripts/lib/retry-transient-fs.mjs';
 import { gitFixtureEnv } from './helpers/fixtures.mjs';
+import { trySymlink } from './helpers/fs-symlink-test-utils.mjs';
 
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], env: gitFixtureEnv() });
 
@@ -67,7 +68,14 @@ describe('sweepStaleOrphanPreimages', () => {
     git(repo, 'worktree', 'remove', '--force', fresh);
   });
 
-  test('removes a stale UNREGISTERED dir too (fs fallback when git does not know it)', () => {
+  test('refuses (keeps) a stale dir that is not a real git worktree — ce44f372/e5f71156 safety fix', () => {
+    // Previously this fell through to an unconditional fs.rmSync fallback
+    // whenever `git worktree remove` failed (which it always does for a
+    // directory git never registered) — i.e. ANY same-prefix directory with
+    // the right age got deleted, registered or not. That is the unsafe
+    // "delete on unverified plausibility" gap the plan's Theme 6 fix closes:
+    // a directory that isn't shaped like a git worktree (no `.git` regular
+    // file with `gitdir:`-prefixed content) is now refused, not swept.
     const rogue = path.join(tmpHome, 'orphan-preimage-rogue');
     fs.mkdirSync(rogue, { recursive: true });
     fs.writeFileSync(path.join(rogue, 'AGENTS.md'), '# sentinel bait'); // the poisoning shape
@@ -75,8 +83,29 @@ describe('sweepStaleOrphanPreimages', () => {
 
     const r = sweepStaleOrphanPreimages({ repoPath: repo, env: gitFixtureEnv(), tmpDir: tmpHome });
 
-    assert.ok(r.swept.includes(rogue));
-    assert.equal(fs.existsSync(rogue), false);
+    assert.equal(r.swept.includes(rogue), false, 'a non-worktree-shaped directory is refused, not deleted');
+    assert.equal(fs.existsSync(rogue), true, 'left in place for a human to inspect / next sweep');
+    assert.ok(r.kept >= 1, 'counted as kept, not silently ignored');
+    fs.rmSync(rogue, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); // test cleanup
+  });
+
+  test('still removes a genuine unregistered-but-worktree-shaped dir (forged .git marker) — the accepted residual gap', () => {
+    // Documents, rather than silently hides, the residual: a forged
+    // NON-symlink `.git` file with plausible content still passes the
+    // marker check and gets deleted. This is the accepted, deferred gap
+    // named in the plan (Theme 6) — closing it needs the ownership-manifest
+    // redesign, out of scope for this fix. This test pins today's known
+    // behavior so a future change to it is a deliberate decision, not a
+    // silent regression either way.
+    const forged = path.join(tmpHome, 'orphan-preimage-forged');
+    fs.mkdirSync(forged, { recursive: true });
+    fs.writeFileSync(path.join(forged, '.git'), 'gitdir: /nowhere/real');
+    backdate(forged, 2);
+
+    const r = sweepStaleOrphanPreimages({ repoPath: repo, env: gitFixtureEnv(), tmpDir: tmpHome });
+
+    assert.ok(r.swept.includes(forged), 'KNOWN GAP: a forged non-symlink marker still passes — see Theme 6 residual');
+    assert.equal(fs.existsSync(forged), false);
   });
 
   test('ignores non-matching names, plain files, and a missing tmp dir — never throws', () => {
@@ -93,6 +122,11 @@ describe('sweepStaleOrphanPreimages', () => {
     assert.equal(fs.existsSync(asFile), true);
 
     assert.doesNotThrow(() => sweepStaleOrphanPreimages({ repoPath: repo, env: gitFixtureEnv(), tmpDir: path.join(tmpHome, 'nope') }));
+    // 82e60a82: a readdir failure (missing tmp dir here) is now surfaced
+    // rather than silently reading identical to "checked, found nothing".
+    const missingDirResult = sweepStaleOrphanPreimages({ repoPath: repo, env: gitFixtureEnv(), tmpDir: path.join(tmpHome, 'nope') });
+    assert.equal(missingDirResult.readdirFailed, true);
+    assert.equal(r.readdirFailed, false, 'the real tmpHome dir was listed successfully');
     retrySync(() => fs.rmSync(asFile, { force: true }));
     fs.rmSync(other, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
@@ -141,13 +175,52 @@ describe('sweepStaleOrphanPreimages', () => {
   });
 
   test('maxAgeMs is honored (a 36s-old dir sweeps under a 1s gate, kept under the 1h default)', () => {
+    // Uses a real worktree fixture (git worktree add) rather than a plain
+    // directory so this test isolates age-gating from the ownership check
+    // added for ce44f372/e5f71156 — a real worktree's `git worktree remove`
+    // succeeds directly, never reaching the fallback/marker check at all.
     const d = path.join(tmpHome, 'orphan-preimage-now');
-    fs.mkdirSync(d, { recursive: true });
+    git(repo, 'worktree', 'add', '--detach', '--quiet', d, 'HEAD');
     backdate(d, 0.01); // ~36s old — beyond a 1s gate, well inside the 1h default
     const kept = sweepStaleOrphanPreimages({ repoPath: repo, env: gitFixtureEnv(), tmpDir: tmpHome });
     assert.equal(kept.swept.includes(d), false, 'default 1h gate keeps it');
     const r = sweepStaleOrphanPreimages({ repoPath: repo, env: gitFixtureEnv(), tmpDir: tmpHome, maxAgeMs: 1000 });
     assert.ok(r.swept.includes(d));
     assert.equal(fs.existsSync(d), false);
+  });
+
+  test('refuses a symlinked OUTER directory masquerading as an orphan-preimage dir', () => {
+    const real = path.join(tmpHome, 'symlink-target-outer');
+    fs.mkdirSync(real, { recursive: true });
+    const link = path.join(tmpHome, 'orphan-preimage-symlinked-outer');
+    if (!trySymlink(real, link, 'dir')) return; // host can't create symlinks — skip
+    backdate(link, 2);
+
+    const r = sweepStaleOrphanPreimages({ repoPath: repo, env: gitFixtureEnv(), tmpDir: tmpHome });
+
+    assert.equal(r.swept.includes(link), false, 'a symlinked outer dir is never followed or deleted');
+    assert.equal(fs.existsSync(link), true);
+    fs.rmSync(link, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); // unlink the symlink itself, not its target
+    fs.rmSync(real, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  });
+
+  test('refuses a symlinked NESTED .git marker (the statSync-follows-symlinks bypass, audit-plan M2)', () => {
+    const outer = path.join(tmpHome, 'orphan-preimage-symlinked-git');
+    fs.mkdirSync(outer, { recursive: true });
+    const decoyTarget = path.join(tmpHome, 'decoy-gitdir-file');
+    fs.writeFileSync(decoyTarget, 'gitdir: /nowhere/real');
+    const gitMarkerPath = path.join(outer, '.git');
+    if (!trySymlink(decoyTarget, gitMarkerPath, 'file')) {
+      fs.rmSync(outer, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      return; // host can't create symlinks — skip
+    }
+    backdate(outer, 2);
+
+    const r = sweepStaleOrphanPreimages({ repoPath: repo, env: gitFixtureEnv(), tmpDir: tmpHome });
+
+    assert.equal(r.swept.includes(outer), false, 'a symlinked .git marker fails lstatSync().isFile() and is refused');
+    assert.equal(fs.existsSync(outer), true);
+    fs.rmSync(outer, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    fs.rmSync(decoyTarget, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 });

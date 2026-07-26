@@ -18,6 +18,7 @@ import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { trySymlink } from './helpers/fs-symlink-test-utils.mjs';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -54,26 +55,13 @@ function agedFile(p, content = 'x') {
   return p;
 }
 
-/**
- * @returns {boolean} false ONLY when the host genuinely cannot create symlinks
- *   (unelevated Windows without Developer Mode → EPERM/EACCES).
- *
- * The catch is deliberately NARROW. A blanket `catch { return false }` would
- * treat ENOSPC, EIO, or a structural fixture defect as "unsupported host" and
- * silently skip the symlink regression tests — a real failure masquerading as a
- * platform limitation. That is precisely the false-green class this whole file
- * exists to guard against; it would be absurd to reproduce it in the helper
- * gating the most important tests here. Anything other than a permission signal
- * rethrows and fails the test loudly.
- */
-const SYMLINK_UNSUPPORTED = new Set(['EPERM', 'EACCES']);
-function trySymlink(target, linkPath) {
-  try { fs.symlinkSync(target, linkPath, 'dir'); return true; }
-  catch (err) {
-    if (SYMLINK_UNSUPPORTED.has(err.code)) return false;
-    throw err;   // a real error must never read as "this host can't do symlinks"
-  }
-}
+// M6 (code-audit r2): this file's symlinks are always directory symlinks, so
+// every call site below passes 'dir' to the shared trySymlink directly rather
+// than through a same-named local wrapper — a wrapper with an identical name
+// and near-identical body was itself flagged as a near-duplicate of the
+// helper it delegates to (compounding the exact class of drift the shared
+// helper was extracted to prevent — see tests/helpers/fs-symlink-test-utils.mjs
+// for the false ⟷ real-failure distinction this narrow catch preserves).
 
 const MATCH_ALL = /./;
 // The real cutoff shape: `main()` computes `Date.now() - ageDays * 86400000`.
@@ -91,7 +79,7 @@ describe('collectCandidates — symlinks are a boundary it never crosses', () =>
     const outside = path.join(root, 'outside');
     agedFile(path.join(outside, 'important.txt'), 'unrelated user data');
     const cache = path.join(root, 'cache');
-    if (!trySymlink(outside, cache)) {
+    if (!trySymlink(outside, cache, 'dir')) {
       t.skip('symlink creation unavailable (needs Developer Mode/elevation) — traversal NOT verified on this host');
       return;
     }
@@ -114,7 +102,7 @@ describe('collectCandidates — symlinks are a boundary it never crosses', () =>
     const cache = path.join(root, 'cache');
     fs.mkdirSync(cache, { recursive: true });
     const link = path.join(cache, 'link');
-    if (!trySymlink(outside, link)) {
+    if (!trySymlink(outside, link, 'dir')) {
       t.skip('symlink creation unavailable — entry-traversal NOT verified on this host');
       return;
     }
@@ -135,7 +123,7 @@ describe('collectCandidates — symlinks are a boundary it never crosses', () =>
     const cache = path.join(root, 'cache');
     fs.mkdirSync(cache, { recursive: true });
     const link = path.join(cache, 'link');
-    if (!trySymlink(outside, link)) {
+    if (!trySymlink(outside, link, 'dir')) {
       t.skip('symlink creation unavailable — link-deletion NOT verified on this host');
       return;
     }
@@ -256,7 +244,7 @@ describe('audit-clean --apply — the deletion sink, sandboxed', () => {
     // The real shape: <fixture>/.audit-loop/cache, the one recurse:true entry.
     fs.mkdirSync(path.join(fixture, '.audit-loop'), { recursive: true });
     const cache = path.join(fixture, '.audit-loop', 'cache');
-    if (!trySymlink(outside, cache)) {
+    if (!trySymlink(outside, cache, 'dir')) {
       t.skip('symlink creation unavailable — sink NOT verified on this host');
       return;
     }

@@ -4,15 +4,16 @@
  *
  * Plan: docs/plans/tiered-recall-audit-pipeline.md Phase 7.
  *
- * **Scoped-Cluster-D note** (2026-07-10): this module is new, tested, and
- * NOT wired into `openai-audit.mjs`'s production chooser in this pass — see
- * `gpt-sentinel-trigger.mjs`'s module header for the same note and
- * `.audit/cycle-cluster-state.json` for the full rationale. In production
- * this would call the model chosen by Cluster C's `cheap-triager-validate.mjs`
- * manifest (freshness-checked via `datasetHash`, falling back to GPT-5.5 on
- * staleness) — that manifest does not exist yet (Cluster C's own documented
- * human-grading boundary), so `runStage1CheapTriage` takes the triager as an
- * injected adapter rather than resolving a model itself.
+ * **Wiring status (71a8f46a, corrected 2026-07-26)**: this module IS wired
+ * into `openai-audit.mjs`'s production chooser — it imports/calls
+ * `runTieredAuditPipeline` (`tiered-pipeline.mjs`), which uses
+ * `runStage1CheapTriage` from this file. `scripts/cheap-triager-validate.mjs`
+ * (the Cluster C validation manifest this header used to say "does not exist
+ * yet") also now exists. The prior "Scoped-Cluster-D note" (2026-07-10)
+ * describing this as new/unwired/unvalidated is stale; `runStage1CheapTriage`
+ * still takes the triager as an injected adapter rather than resolving a
+ * model itself — that architectural choice is unaffected by the wiring
+ * having landed since.
  *
  * **Dismissal validity is severity-independent; escalation-on-valid-dismissal
  * is severity-gated** (Gemini gate round-2 finding #G2): a dismissal is valid

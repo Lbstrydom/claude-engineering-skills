@@ -269,22 +269,52 @@ function parseLsTreeZ(buf) {
  *   genuine `repoPath` and want ambient inherit).
  * @returns {{swept: string[], kept: number}}
  */
+// ce44f372/e5f71156/82e60a82: before falling back to raw recursive deletion,
+// verify the candidate directory actually looks like a git worktree —
+// refuse a symlinked candidate outright (never follow it), and require a
+// nested `.git` REGULAR file (never a symlink — lstatSync does not follow
+// one, unlike statSync) whose content starts with `gitdir:`. This is a
+// bounded, precedent-matching improvement (mirrors audit-clean.mjs's
+// symlink guard), not a full ownership-manifest system — see the plan's
+// Theme 6 note for the residual gap this does NOT close (a forged
+// non-symlink `.git` file with plausible content still passes; closing
+// that needs the deferred ownership-manifest redesign).
+function looksLikeOwnedWorktree(p) {
+  try {
+    if (fs.lstatSync(p).isSymbolicLink()) return false;
+  } catch { return false; }
+  const gitMarker = path.join(p, '.git');
+  let markerStat;
+  try {
+    markerStat = fs.lstatSync(gitMarker);
+  } catch { return false; }
+  if (!markerStat.isFile()) return false; // symlink or missing — refuse
+  let content;
+  try {
+    content = fs.readFileSync(gitMarker, 'utf-8');
+  } catch { return false; }
+  return content.startsWith('gitdir:');
+}
+
 export function sweepStaleOrphanPreimages({ repoPath, tmpDir = os.tmpdir(), maxAgeMs = 60 * 60 * 1000, env }) {
   const gitOpts = env ? { env } : {};
   const swept = [];
   let kept = 0;
   let entries = [];
-  try { entries = fs.readdirSync(tmpDir); } catch { return { swept, kept }; }
+  let readdirFailed = false;
+  try { entries = fs.readdirSync(tmpDir); } catch { readdirFailed = true; return { swept, kept, readdirFailed }; }
   for (const name of entries) {
     if (!name.startsWith('orphan-preimage-')) continue;
     const p = path.join(tmpDir, name);
     let st;
-    try { st = fs.statSync(p); } catch { continue; }
+    try { st = fs.lstatSync(p); } catch { continue; }
+    if (st.isSymbolicLink()) { kept++; continue; } // never follow/delete a symlinked candidate
     if (!st.isDirectory()) continue;
     if (Date.now() - st.mtimeMs < maxAgeMs) { kept++; continue; } // possibly live — leave it
     try {
       execFileSync('git', ['worktree', 'remove', '--force', p], { cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'], ...gitOpts });
     } catch {
+      if (!looksLikeOwnedWorktree(p)) { kept++; continue; } // refuse the unverified fallback delete, leave for next sweep
       try { fs.rmSync(p, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { continue; } // still held → skip, next sweep retries
     }
     swept.push(p);
@@ -318,7 +348,7 @@ export function sweepStaleOrphanPreimages({ repoPath, tmpDir = os.tmpdir(), maxA
     try { execFileSync('git', ['worktree', 'prune'], { cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'], ...gitOpts }); } catch { /* best-effort */ }
     process.stderr.write(`  [orphan] swept ${swept.length} stale preimage worktree(s) from a previously killed run\n`);
   }
-  return { swept, kept };
+  return { swept, kept, readdirFailed };
 }
 
 function materialisePreimages(repoPath, baseRef, changedFiles, env) {
@@ -332,7 +362,15 @@ function materialisePreimages(repoPath, baseRef, changedFiles, env) {
 
   // Heal any casualties of a previously hard-killed run before creating a new
   // worktree (the `finally` below can't run through SIGKILL).
-  try { sweepStaleOrphanPreimages({ repoPath, env }); } catch { /* never block the audit */ }
+  try {
+    const sweepResult = sweepStaleOrphanPreimages({ repoPath, env });
+    // 82e60a82: a readdir failure previously returned silently, so the sweep
+    // looked identical to "checked, found zero orphans" — surface it so an
+    // operator can tell "nothing to sweep" from "couldn't even look".
+    if (sweepResult?.readdirFailed) {
+      process.stderr.write('  [orphan] WARNING: could not list the temp directory to sweep stale preimage worktrees — skipped, not confirmed clean\n');
+    }
+  } catch { /* never block the audit */ }
 
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'orphan-preimage-'));
   // Worktree expects the target directory NOT to exist or to be empty.

@@ -81,19 +81,34 @@ export async function buildStage0RelevanceContext(ctx, envelopes) {
   try {
     repoUuid = resolveRepoIdentity(process.cwd())?.repoUuid ?? null;
   } catch { /* no resolvable repo identity — every impact lookup degrades to null (unknown) */ }
-  for (const filePath of candidateFiles) {
-    let result = null;
-    try {
-      result = await getFreshImportersOrNull({
-        repoUuid,
-        headSha: ctx.commitSha,
-        workingTreeDirty: !!ctx.workingTreeDirty,
-        filePath,
-        changedFiles: ctx.changedFiles || [],
-      });
-    } catch { result = null; }
-    impactCache.set(filePath, result);
-  }
+  // 5308a5d6: bounded-concurrency worker pool over the local Postgres RPC
+  // (getFreshImportersOrNull), replacing a fully sequential for...of loop.
+  // Not a semaphore around the same sequential loop — that shape provides
+  // no concurrency at all (audit-plan round-3 M1 caught exactly this
+  // mistake in an earlier draft of this fix). candidateFiles is a bounded,
+  // known-size array (this run's own diff scope), so no cancellation/
+  // backpressure protocol is needed beyond each worker's own loop ending.
+  const STAGE0_IMPACT_CONCURRENCY = 8;
+  let nextIndex = 0;
+  const worker = async () => {
+    let i;
+    while ((i = nextIndex++) < candidateFiles.length) {
+      const filePath = candidateFiles[i];
+      let result = null;
+      try {
+        result = await getFreshImportersOrNull({
+          repoUuid,
+          headSha: ctx.commitSha,
+          workingTreeDirty: !!ctx.workingTreeDirty,
+          filePath,
+          changedFiles: ctx.changedFiles || [],
+        });
+      } catch { result = null; }
+      impactCache.set(filePath, result);
+    }
+  };
+  const workerCount = Math.min(STAGE0_IMPACT_CONCURRENCY, candidateFiles.length);
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
 
   return { headContentCache, baseContentCache, impactCache };
 }
