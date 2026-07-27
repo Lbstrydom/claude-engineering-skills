@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**11 active · 156 terminal · 25 audit summaries · 4 reference docs**
+**10 active · 157 terminal · 25 audit summaries · 4 reference docs**
 
 ---
 
@@ -24,7 +24,6 @@ This is the list to read when asking "what is in flight?".
 | [Arch-Memory / Symbol-Index Pipeline Debt (2026-07-26 triage)](./refactor-arch-memory-symbol-index-2026-07.md) | `Draft` |  |
 | [Architecture-Debt Backlog Remainder (2026-07-26 triage)](./refactor-architecture-debt-remainder-2026-07.md) | `Draft` |  |
 | [CLAUDE.md Autofix + Skill-Copy Governance Debt (2026-07-26 triage)](./refactor-claudemd-skills-governance-2026-07.md) | `Draft` |  |
-| [Refactor evidence-integrity — bind anchor locations to their verified match, and parse Git diff headers unambiguously (`scripts/lib/audit/evidence-triage.mjs`)](./refactor-evidence-integrity.md) | `Approved` | audited, NOT yet implemented (3 GPT plan-audit |
 | [Learning / Persona / Quickfix Reliability Debt (2026-07-26 triage)](./refactor-learning-persona-quickfix-2026-07.md) | `Draft` |  |
 | [Miscellaneous Small-Cluster Debt (2026-07-26 triage)](./refactor-misc-small-items-2026-07.md) | `Draft` | items resolved individually as picked up (see per-item status below), not implemented as one batch |
 | [Model-Eval / Pricing Debt (2026-07-26 triage)](./refactor-model-eval-pricing-2026-07.md) | `Draft` |  |
@@ -51,7 +50,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 153 completed plans</summary>
+<summary>Show all 154 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -171,6 +170,7 @@ source comments that no docs linter sees — stays valid.
 | [Fix `redactSecrets` Positional-Collision Bug](./redact-secrets-positional-collision-fix.md) | `Complete` |  |
 | [Audit-Pipeline Reliability Debt (2026-07-26 triage)](./refactor-audit-pipeline-reliability-2026-07.md) | `Complete` | code-audited (3 GPT rounds + Gemini gate, APPROVE), shipped |
 | [Refactor autofix-security — containment, dedup, and silent-failure fixes in `scripts/lib/claudemd/autofix.mjs`](./refactor-autofix-security.md) | `Complete` | implemented + audited (3 GPT + 3 Gemini plan-audit |
+| [Refactor evidence-integrity — bind anchor locations to their verified match, and parse Git diff headers unambiguously (`scripts/lib/audit/evidence-triage.mjs`)](./refactor-evidence-integrity.md) | `Complete` | implemented via `/cycle code --autonomous` (3 GPT |
 | [Failure-Contract Refactor — Stop Reporting Dependency Failure As Success](./refactor-failure-contract.md) | `Complete` | implemented + audited (3 GPT + 2 Gemini plan-audit |
 | [Install-Transaction WAL + VCS Parsing Debt (2026-07-26 triage)](./refactor-install-wal-vcs-2026-07.md) | `Complete` |  |
 | [Refactor symbol-index — close the progress-channel sensitive-path disclosure and the drift pragma-cap re-opener](./refactor-symbol-index.md) | `Complete` | implemented via `/cycle code --autonomous` (3 GPT |
