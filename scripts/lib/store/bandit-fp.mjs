@@ -67,6 +67,7 @@ export async function syncBanditArms(arms) {
   const rows = buildBanditArmRows(arms);
   if (rows.length === 0) return;
   try {
+    // @on-conflict-ok(context_bucket): falls back to GLOBAL_CONTEXT_BUCKET ('global', scripts/lib/config.mjs:260) — a module constant the intra-file resolver cannot see; never null.
     await upsert('bandit_arms', rows, {
       onConflict: ['pass_name', 'variant_id', 'context_bucket'],
       update: 'all',

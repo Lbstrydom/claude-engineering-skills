@@ -20,6 +20,7 @@
 
 import { parse } from '@babel/parser';
 import _traverse from '@babel/traverse';
+import { resolvesToModuleBinding, resolvesToNamedImport, findSyncCallbackWrapper } from './import-binding.mjs';
 
 // @babel/traverse ships CJS; under ESM the callable lands on .default (and on
 // .default.default via some interop paths). Normalise once, loudly — same
@@ -29,49 +30,22 @@ const traverse = _traverse?.default?.default ?? _traverse?.default ?? _traverse;
 const FS_IMPORT_SOURCES = new Set(['node:fs', 'fs']);
 
 /**
- * Resolve a scope binding to which recognized fs-import shape (if any) it
- * traces back to. Returns `null` for every other case, including a binding
- * with no declaration path (e.g. a function parameter) or an import from a
- * source other than `node:fs`/`fs` — this is what makes a shadowing
- * parameter or local variable correctly NOT match, unlike name-only checks.
- * @param {object|undefined} binding - result of `path.scope.getBinding(name)`
+ * Resolve an identifier reference to which recognized fs-import shape (if
+ * any) it traces back to, via real lexical scope resolution. Delegates to
+ * scripts/lib/import-binding.mjs's binding predicates so this file and any
+ * future fs-binding consumer share one implementation rather than a second
+ * hand-rolled classifier. Returns `null` for every case those predicates
+ * return `false` for, including a shadowing parameter/local binding or an
+ * import from a source other than `node:fs`/`fs` — this is what makes a
+ * shadowing parameter or local variable correctly NOT match, unlike
+ * name-only checks.
+ * @param {import('@babel/traverse').NodePath} identifierPath - the Identifier reference to resolve
  * @returns {'namespace' | 'named-rmsync' | null}
  */
-function resolveFsImportKind(binding) {
-  if (!binding || !binding.path) return null;
-  const declPath = binding.path;
-  // `imported` is an Identifier (`.name`) for the ordinary spelling
-  // (`import { default as fs }`) but a StringLiteral (`.value`) for the
-  // ES2022 arbitrary-module-namespace-name spelling
-  // (`import { "default" as fs }` / `import { "rmSync" as remove }`) —
-  // both are valid, real syntax and must resolve identically.
-  const importedName = declPath.node?.imported?.name ?? declPath.node?.imported?.value;
-  const isDefaultLike = declPath.isImportDefaultSpecifier()
-    || declPath.isImportNamespaceSpecifier()
-    // `import { default as fs } from 'node:fs'` is a valid, semantically
-    // equivalent ESM spelling of a default import — Babel parses it as an
-    // ImportSpecifier with imported name/value === 'default', not an
-    // ImportDefaultSpecifier, so it needs its own check here.
-    || (declPath.isImportSpecifier() && importedName === 'default');
-  if (isDefaultLike) {
-    // default (`import fs from 'node:fs'`), namespace
-    // (`import * as fs from 'node:fs'`), and `import { default as fs }`
-    // all produce a local binding used identically at the call site — one
-    // rule covers all three.
-    const importDecl = declPath.parentPath;
-    if (importDecl?.isImportDeclaration() && FS_IMPORT_SOURCES.has(importDecl.node.source.value)) {
-      return 'namespace';
-    }
-    return null;
-  }
-  if (declPath.isImportSpecifier() && importedName === 'rmSync') {
-    // named import, aliasing supported via the local binding name
-    // (`import { rmSync as remove } from 'node:fs'` resolves as `remove`).
-    const importDecl = declPath.parentPath;
-    if (importDecl?.isImportDeclaration() && FS_IMPORT_SOURCES.has(importDecl.node.source.value)) {
-      return 'named-rmsync';
-    }
-    return null;
+function resolveFsImportKind(identifierPath) {
+  if (resolvesToModuleBinding(identifierPath, { moduleSources: FS_IMPORT_SOURCES })) return 'namespace';
+  if (resolvesToNamedImport(identifierPath, { importedName: 'rmSync', moduleSources: FS_IMPORT_SOURCES })) {
+    return 'named-rmsync';
   }
   return null;
 }
@@ -147,46 +121,16 @@ function extractOptionsInfo(optionsArgNode) {
  * try/catch, so the call would not actually be retry-protected at runtime
  * despite superficially matching the wrapping shape.
  *
+ * Delegates to scripts/lib/import-binding.mjs's findSyncCallbackWrapper,
+ * which was extracted verbatim from this function (including the
+ * `arrowFn.async` rejection above) so a second consumer never drifts from
+ * this one again.
+ *
  * @param {object} rmSyncCallNode
  * @param {object[]} ancestors
  */
-// @duplicate-justification: target=tests/atomic-write-adoption-guard.test.mjs:findEnclosingCall reason=that test file's own docstring documents this as a deliberate local inline copy — its 9-file target set is fixed and stated in-file, not discovered via a repo-wide corpus like this module's, so it intentionally avoids taking this module as a dependency rather than sharing an accidental duplicate.
 function findEnclosingCall(rmSyncCallNode, ancestors) {
-  const n = ancestors.length;
-  if (n === 0) return null;
-
-  const immediateParent = ancestors[n - 1];
-  let arrowFn = null;
-
-  if (immediateParent.type === 'ArrowFunctionExpression' && immediateParent.body === rmSyncCallNode) {
-    // Concise-body arrow: () => fs.rmSync(...)
-    arrowFn = immediateParent;
-  } else if (immediateParent.type === 'ReturnStatement' && n >= 3) {
-    // Block-body arrow: () => { return fs.rmSync(...); }
-    const blockParent = ancestors[n - 2];
-    const arrowParent = ancestors[n - 3];
-    if (
-      blockParent?.type === 'BlockStatement'
-      && arrowParent?.type === 'ArrowFunctionExpression'
-      && arrowParent.body === blockParent
-    ) {
-      arrowFn = arrowParent;
-    }
-  }
-
-  if (!arrowFn || arrowFn.async) return null;
-
-  const arrowIdx = ancestors.lastIndexOf(arrowFn);
-  if (arrowIdx <= 0) return null;
-  const outerCall = ancestors[arrowIdx - 1];
-  if (
-    outerCall?.type === 'CallExpression'
-    && outerCall.arguments.length === 1
-    && outerCall.arguments[0] === arrowFn
-  ) {
-    return outerCall;
-  }
-  return null;
+  return findSyncCallbackWrapper(rmSyncCallNode, ancestors);
 }
 
 /**
@@ -222,12 +166,12 @@ export function findRmSyncCallSites(sourceText) {
           ? callee.property.name
           : (callee.computed && callee.property.type === 'StringLiteral' ? callee.property.value : null);
         if (propName === 'rmSync' && callee.object.type === 'Identifier') {
-          const binding = path.scope.getBinding(callee.object.name);
-          if (resolveFsImportKind(binding) === 'namespace') isRmSync = true;
+          const objectPath = path.get('callee').get('object');
+          if (resolveFsImportKind(objectPath) === 'namespace') isRmSync = true;
         }
       } else if (callee.type === 'Identifier') {
-        const binding = path.scope.getBinding(callee.name);
-        if (resolveFsImportKind(binding) === 'named-rmsync') isRmSync = true;
+        const calleePath = path.get('callee');
+        if (resolveFsImportKind(calleePath) === 'named-rmsync') isRmSync = true;
       }
 
       if (!isRmSync) return;

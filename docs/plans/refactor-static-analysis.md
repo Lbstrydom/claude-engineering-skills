@@ -1,9 +1,9 @@
 # Plan: Refactor static-analysis — make "I can't tell" representable in the repo's own guards and lints
 
 - **Date**: 2026-07-27
-- **Status**: **Approved** — audited, NOT yet implemented (3 GPT plan-audit
-  rounds + 4 Gemini gate rounds; final verdict APPROVE, 0 findings, 0
-  over-engineering flags — see Audit Trail)
+- **Status**: **Complete** — implemented, code-audited (Cluster A: 6 GPT
+  rounds, the max; Cluster B: 2 GPT rounds), consolidated Gemini gate APPROVE
+  (1 fixed post-approval) — see Implementation Log
 - **Author**: Claude + Test
 - **Scope**: backend
 - **Target domain(s)**: `shared-lib`, `tests`, `scripts`
@@ -1664,7 +1664,158 @@ Recorded because in each case the number, not the argument, decided the outcome:
 | Full new fs grammar vs both Rule-2 files | 12 and 1, unchanged | Site-count assertions kept, as evidence |
 | `columnExprs` fixture blast radius | 1 test file, 24 occurrences | Confirmed the §4.0 file set is complete |
 
-### Status
+### Status (superseded by the Implementation Log below)
 
-**Approved, not implemented.** No source file in §4.0 was modified by this
-session — the only change is this plan document.
+**Approved, not implemented** at the time of the plan audit. No source file in
+§4.0 was modified by that session — the only change was this plan document.
+Implementation followed in a separate session; see below.
+
+---
+
+## Implementation Log
+
+### 2026-07-28
+
+**Completed**: both clusters, fully audited and gated.
+
+#### Cluster A (Phases 1-3, fix-gate: yes)
+
+`scripts/lib/import-binding.mjs` created with `resolvesToNamedImport`,
+`resolvesToModuleBinding`, `findSyncCallbackWrapper` (the plan's originally-
+audited three), plus two more added during audit — see Deviations.
+`find-rmsync-sites.mjs`'s `resolveFsImportKind`/`findEnclosingCall` now
+delegate to it (behaviour-preserving: all 24 existing regression tests and
+the 1,043-site `rmsync-retry-guard` corpus scan stayed green throughout).
+`tests/atomic-write-adoption-guard.test.mjs`'s spelling-only guard was
+rewritten onto a new `tests/helpers/atomic-write-guard-analysis.mjs` support
+module doing real binding resolution, closing all four proven false-passes
+(2a/2a'/2b/2c/2d); `tests/atomic-write-guard-soundness.test.mjs` (new) proves
+the analyzer can fail. The now-orphaned `@duplicate-justification` pragma in
+`find-rmsync-sites.mjs` was deleted in the same commit as its target.
+
+**Audit**: 6 GPT rounds (the max), and — unusually — every one of the first 5
+found a genuine issue:
+- R1: `analyzeShapeADelegation` used byte-range containment over the whole
+  program, so a call inside an unexecuted nested closure counted as
+  delegation (H1/H2). Fixed by traversing from the target function's own
+  NodePath and skipping nested `Function` boundaries.
+- R2: `findNamedFunctionNodePath`/`findNamedFunctionRange` didn't unwrap
+  `export const name = () => {}` — only `export function`. Fixed both.
+- R3: `importLocalName` was a scalar overwritten by each matching
+  `ImportSpecifier`, so importing the same export under two aliases hid the
+  first alias from candidate-call discovery. Fixed to a `Set`.
+- R3 + R5: GPT's **compromise** ruling on "two independent
+  `scope.getBinding()` derivations for one correctness check" (M4/M1) — see
+  Deviations below.
+- R4: `validateModuleSourceSpec` didn't catch a stray single abs-path field
+  (only one of `moduleAbsPath`/`fromFileAbsPath` supplied). Fixed.
+- R6 (the cap): only the expected recurring set — Phase 5 not yet reached,
+  and a stale architectural-memory duplication-index re-raise (its cited
+  target was deleted in this same Phase-3 diff; re-verified via `grep` and
+  dismissed six times, once per round).
+
+Genuinely out-of-scope, deferred: `ast.mjs`'s `recoveredErrors` not consumed
+by any static-analysis guard (a cross-cutting concern shared by every
+`parseSource` consumer, not something this plan's design depends on); two
+pre-existing, unrelated architecture findings (`scripts/lib/store/arch/`
+`coverage.mjs`, `scripts/lib/audit/tiered-shadow-contract-digest.mjs`) neither
+touched nor depended on by this plan.
+
+#### Cluster B (Phases 4-5, fix-gate: final)
+
+`on-conflict.mjs`'s `isNullableExpr` (boolean) replaced by
+`classifyNullability`/`classifyColumnValue` — the plan's §2.2.1 two-layer
+`'nullable'|'non-null'|'unknown'|'opaque'` lattice, exactly as specified;
+`isNullableExpr` kept as a byte-identical thin `=== 'nullable'` projection.
+The site payload gained `nullability` + `callId`; `analyzeUpsert` now returns
+`{findings, diagnostics}` with a new `unresolved-conflict-key-nullability`
+diagnostic. The suppression pragma widened to an optional column-selector
+form (`@on-conflict-ok(col): reason`) with duplicate/unknown-column/orphan
+hygiene diagnostics, while the five never-suppressible `unresolved-*` kinds
+stayed untouched. One live pragma added to `bandit-fp.mjs`
+(`@on-conflict-ok(context_bucket)`). `tests/on-conflict-scope-columns.test.mjs`
+(Phase 5) asserts every `SCOPE_COLUMNS` entry exists in the committed schema
+fixture (measured: `repo_id` 33, `user_id` 9, `repo_name` 5 tables), hard-
+failing on a missing/empty/unparseable fixture.
+
+**Audit**: 2 GPT rounds. Both found only pre-existing/independent debt —
+`bandit-fp.mjs`'s persistence-verification and error-handling logging
+(100% pre-existing `syncBanditArms` behaviour; the diff there is exactly one
+added comment line), and two concerns (SCOPE_COLUMNS auto-discovery,
+cross-file constant resolution for the pragma) the plan's own §2.2/§2.3
+already explicitly measured and rejected as over-engineering, recorded in its
+own "Out of Scope (Future)" section — or unrelated architecture debt on files
+not in this plan's scope.
+
+**Close-out**: `npm test` — 9233 pass, 22 pre-existing env-gated skips, 0
+fail. `npm run on-conflict:check` — clean (9 suppressed, 1 unresolved).
+`npm run on-conflict:check -- --all --strict` — exit 3, exactly as predicted
+(the one pre-existing `plans-ship.mjs` `unresolved-conflict-target` this plan
+does not own). `npm run skills:check` and `npm run plans:index` — both clean.
+
+**Consolidated Gemini gate** (union diff, both clusters): **APPROVE**, 1 new
+finding (G1, fixed post-approval — see below), 0 wrongly-dismissed. Parallel
+shadow reviewer (Claude Opus, never gating): 4 shadow-only findings, all
+adjudicated on their merits (see below).
+
+#### Deviations from the plan's original design (all audit-driven)
+
+1. **`import-binding.mjs` grew from the audited "exactly three" exports to
+   five** (`resolveNamedImportBinding`, `classifyCallbackWrapper` added).
+   Both are GPT-compromise-driven, each closing a real drift-prone
+   duplication the plan's own thesis (§1.1) is about: `resolveNamedImportBinding`
+   (a discriminated `'matched'|'different-binding'|'unresolvable'` result)
+   lets `analyzeRetryWrapping`'s `resolveSiteStatus` stop independently
+   re-deriving `scope.getBinding()` after `resolvesToNamedImport` already
+   returned false; `classifyCallbackWrapper` (a discriminated
+   `'sync-wrapper'|'async-wrapper'|'no-wrapper'` classifier) lets the
+   async-wrapper diagnostic path and `findSyncCallbackWrapper` share one
+   ancestor-chain implementation instead of two. Both original boolean/
+   sync-only functions are kept as thin, equivalence-tested projections —
+   no existing caller's behaviour changed. Each addition is tied to a named
+   *current* requirement discovered during implementation, consistent with
+   §2.4's "exactly tied to a named current requirement" principle — not
+   speculative symmetry (the shadow reviewer separately noted
+   `resolvesToModuleBinding` did NOT receive the same treatment; deliberately
+   — no current consumer needs that 3-valued split).
+2. **A `malformed-suppression` diagnostic kind, not named in the original
+   plan.** The plan's §2.2.2 states `@on-conflict-ok(): reason` "is reported
+   malformed, not treated as call-wide" — the shipped Phase-4 implementation
+   satisfied only the second half (the strict regex correctly fails to
+   match, so it's never call-wide) but not the first (nothing was actually
+   *reported* — the line was silently invisible). Gemini's consolidated-gate
+   finding G1 caught this directly. Fixed post-approval: a loose
+   `SUPPRESSION_ATTEMPT_RE` detects a pragma-shaped line that failed the
+   strict grammar and emits `malformed-suppression` (joins the existing
+   pragma-hygiene family — `duplicate-suppression`/`unknown-suppression-column`
+   — deliberately outside the `unresolved-*` `--strict` family, since it's the
+   same "your suppression is malformed" claim class). 3 regression tests
+   added, including a false-positive guard (an ordinary comment mentioning
+   "on-conflict" must not trip it).
+
+#### Shadow reviewer findings (never gating), adjudicated
+
+- **Recovered-parse-errors not consumed by `on-conflict.mjs`** — same
+  cross-cutting, out-of-scope concern as Cluster A's deferred `H3`; not
+  re-litigated.
+- **The column-selector pragma can silence a gating `nullable-conflict-key`
+  FINDING, not just the `unknown` diagnostic, with no signal distinguishing
+  which** — re-examined against the plan's own §2.2.2 text, which explicitly
+  specifies exactly this ("governs the exact `{callId, column, kind}`
+  signal(s) for that one column — allowlisted diagnostic **and** that
+  column's findings"). Not a bug: the column-selector form is a
+  narrower-scoped version of the same trust the bare form has always
+  extended to findings. No action.
+- **The two new pragma-hygiene kinds don't gate `--strict` and aren't in the
+  close-out's exact-set assertion** — true, and explicitly by design (the
+  plan's own shadow-review S4b: naming them outside the `unresolved-*` family
+  is the mechanism that keeps "your suppression is malformed" separate from
+  "the lint couldn't read this site"). No action.
+- **`resolvesToModuleBinding` didn't get a discriminated companion** — no
+  current consumer needs the 3-valued split for the module-binding case
+  (unlike `resolveNamedImportBinding`, which a real caller needed to avoid
+  double-deriving `getBinding`); adding one would be speculative symmetry.
+  Deferred with independence stated, not fixed.
+
+**Gate**: `waived` — the post-approval `malformed-suppression` fix means the
+committed tree differs from the audited one.

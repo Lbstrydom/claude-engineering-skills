@@ -23,7 +23,9 @@
  * recursive walker with no scope/binding resolution. Callers that need real
  * lexical analysis (`scope.getBinding`) must use `@babel/traverse` directly —
  * its `Scope` API only exists on a `NodePath`, which this walker does not
- * produce. See the adjacency detector for that path.
+ * produce. See the adjacency detector for that path, or
+ * `scripts/lib/import-binding.mjs` for the shared import-binding predicates
+ * (resolvesToNamedImport / resolvesToModuleBinding / findSyncCallbackWrapper).
  *
  * @module scripts/lib/ast
  */

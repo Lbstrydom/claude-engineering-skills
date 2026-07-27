@@ -27,6 +27,24 @@
  *     (`repo_id`/`user_id`/`repo_name`) written on the row but absent from a
  *     DO-UPDATE/DO-NOTHING conflict target → cross-tenant overwrite or lost row.
  *
+ * **A third, honest state for the nullability axis.** `isNullableExpr` used to
+ * answer a three-valued question ("can this be null?") with a boolean — every
+ * shape it did not recognise (a bare identifier, a member read, an awaited
+ * call) fell through to `false`, silently treated as "definitely non-null"
+ * exactly like a proven-safe literal. `classifyNullability`/`classifyColumnValue`
+ * (below) replace it with a `'nullable' | 'non-null' | 'unknown' | 'opaque'`
+ * lattice: an `unknown` conflict-target column value emits a
+ * `unresolved-conflict-key-nullability` **diagnostic** (not a gating finding —
+ * "I can't decide" is not "you have a bug"), routed through the same
+ * `@on-conflict-ok` pragma as findings. The scope is deliberate: only a
+ * fallback expression (`a || b` / `a ? b : c`) whose default branch isn't a
+ * literal is `unknown`; a bare column read stays the quiet `opaque` state,
+ * because flagging every one of the 74 such writes in the live store would be
+ * a permanently-red strict gate for a shape none of the three real defect
+ * instances exhibited (all three were explicit `|| null` fallbacks). See
+ * docs/plans/refactor-static-analysis.md §2.2 for the full census that decided
+ * this boundary.
+ *
  * **Honesty over coverage.** Instances 1 and 2 lived INSIDE builder functions
  * (`buildBanditArmRows`, `buildFpPatternRows`), not inline literals — so a lint
  * that only read inline `[{...}]` would report "store clean" while structurally
@@ -62,39 +80,51 @@ export const SCOPE_COLUMNS = new Set(['repo_id', 'user_id', 'repo_name']);
 const UPSERT_CALLEES = new Set(['upsert']);
 
 /**
- * The pure heart: given one already-extracted upsert site, return its findings.
- * Everything here is plain data — the entire instance matrix is tested against
- * this function with no AST and no DB.
+ * The pure heart: given one already-extracted upsert site, return its findings
+ * and diagnostics. Everything here is plain data — the entire instance matrix
+ * is tested against this function with no AST and no DB.
  *
  * @param {object} site
  * @param {string} site.table            - table name (or '<dynamic>')
  * @param {string[]} site.columns        - top-level columns written on the row
- * @param {Record<string,{nullable:boolean}>} site.columnExprs - per-column value facts
+ * @param {Record<string,{nullability:'nullable'|'non-null'|'unknown'|'opaque'}>} site.columnExprs - per-column value facts
  * @param {string[]|null} site.conflictTarget - normalized onConflict columns, or null (plain insert / unresolved)
  * @param {boolean} [site.hasSpread]      - row object contains a spread (columns may be incomplete)
  * @param {number} [site.line]            - the upsert call's start line
  * @param {number} [site.endLine]         - the upsert call's end line (for drift range)
- * @returns {Array<{rule:string, table:string, column:string, line:number, endLine:number, message:string}>}
+ * @param {string} [site.callId]          - `${start}:${end}` byte span of the upsert CallExpression, for diagnostic identity
+ * @returns {{findings: Array<{rule:string, table:string, column:string, line:number, endLine:number, message:string}>, diagnostics: Array<{kind:string, table:string, column:string, line:number, endLine:number, callId:string, message:string}>}}
  */
 export function analyzeUpsert(site) {
-  const { table = '<dynamic>', columns = [], columnExprs = {}, conflictTarget, hasSpread = false, line = 0, endLine = line } = site;
+  const { table = '<dynamic>', columns = [], columnExprs = {}, conflictTarget, hasSpread = false, line = 0, endLine = line, callId = null } = site;
   const findings = [];
+  const diagnostics = [];
   const at = { table, line, endLine };
 
   // A plain insert (no onConflict) has no upsert identity — neither rule applies.
-  if (!Array.isArray(conflictTarget) || conflictTarget.length === 0) return findings;
+  if (!Array.isArray(conflictTarget) || conflictTarget.length === 0) return { findings, diagnostics };
 
   const targetSet = new Set(conflictTarget);
 
   // Rule 1 — nullable-conflict-key (instances 1, 2). Sound even with a spread:
   // a spread cannot make an EXPLICITLY nullable conflict-key column non-nullable.
+  // A definite 'nullable' always wins over 'unknown' — a provable finding must
+  // never be downgraded to a non-gating diagnostic.
   for (const col of conflictTarget) {
-    if (columnExprs[col]?.nullable) {
+    const nullability = columnExprs[col]?.nullability;
+    if (nullability === 'nullable') {
       findings.push({
         ...at,
         rule: 'nullable-conflict-key',
         column: col,
         message: `conflict-target column "${col}" is written with a nullable value — NULLs are DISTINCT in a unique index, so the upsert can never match and degrades to unbounded INSERTs (the 403k-row / bandit_arms class). Guarantee it non-null on this path (see isSyncableRepoId / a sentinel default).`,
+      });
+    } else if (nullability === 'unknown') {
+      diagnostics.push({
+        kind: 'unresolved-conflict-key-nullability',
+        table, line, endLine, callId,
+        column: col,
+        message: `conflict-target column "${col}" is written with a fallback expression this lint cannot classify as null-safe (the default branch isn't a literal) — verify by hand that it can never be null, or add "// @on-conflict-ok(${col}): <reason>" once confirmed.`,
       });
     }
   }
@@ -116,38 +146,103 @@ export function analyzeUpsert(site) {
       });
     }
   }
-  return findings;
+  return { findings, diagnostics };
 }
 
 // ── AST extraction ─────────────────────────────────────────────────────────
 
-/** Is this value-expression node capable of yielding null/undefined? Precise,
- *  not heuristic: only the shapes the instances actually use. `a || null`,
- *  `a ?? null`, literal `null`/`undefined`, or a conditional with a nullable
- *  branch. Crucially `arm.contextBucket || GLOBAL_CONTEXT_BUCKET` is NOT
- *  nullable (right side is a non-null identifier) — so the FIXED bandit builder
- *  is not false-flagged, while the pre-fix `|| null` is. */
-export function isNullableExpr(node) {
-  if (!node || typeof node.type !== 'string') return false;
-  if (node.type === 'NullLiteral') return true;
-  if (node.type === 'Identifier' && node.name === 'undefined') return true;
+/** A literal (of any of these types) can never be null/undefined. */
+const NON_NULL_LITERAL_TYPES = new Set([
+  'StringLiteral', 'NumericLiteral', 'BooleanLiteral', 'BigIntLiteral',
+  'TemplateLiteral', 'ObjectExpression', 'ArrayExpression', 'NewExpression',
+]);
+
+/**
+ * Layer 1 (docs/plans/refactor-static-analysis.md §2.2.1) — classify a
+ * value-expression node's nullability. Three values; **never** returns
+ * `'unknown'` (that value is minted by `classifyColumnValue` alone, at the
+ * root-eligibility layer). A dynamic read — a bare `Identifier`,
+ * `MemberExpression`, `CallExpression`, `AwaitExpression`, … — is `'opaque'`:
+ * the fix this replaces `isNullableExpr` for is exactly that such a read is
+ * NOT evidence of non-nullity, unlike a literal.
+ *
+ * Precedence: a provable `'nullable'` always wins over `'opaque'` in the two
+ * compound (`&&`, `?:`) arms below — a definite finding must never be
+ * downgraded to a non-gating diagnostic.
+ *
+ * @param {object} node
+ * @returns {'nullable'|'non-null'|'opaque'}
+ */
+export function classifyNullability(node) {
+  if (!node || typeof node.type !== 'string') return 'opaque';
+  if (node.type === 'NullLiteral') return 'nullable';
+  if (node.type === 'Identifier' && node.name === 'undefined') return 'nullable';
+  if (NON_NULL_LITERAL_TYPES.has(node.type)) return 'non-null';
   if (node.type === 'LogicalExpression') {
-    // `a && b` evaluates to `a` when `a` is falsy (so `null && x` IS null) and to
-    // `b` otherwise — nullable if EITHER operand is. This is a deliberate OVER-
-    // approximation: `false && null` / `0 && null` actually evaluate to the
-    // falsy-but-non-null left, yet we report them nullable. That's the SAFE
-    // direction for a safety gate (a false-positive nullable-conflict-key, which
-    // drift + the pragma absorb, never a missed real one), and the excluded case
-    // — a literal-falsy left `&&` a value, as a DB column — does not occur.
+    if (node.operator === '&&') {
+      // `a && b` evaluates to `a` when `a` is falsy (so `null && x` IS null) and
+      // to `b` otherwise — nullable if EITHER operand is. This is a deliberate
+      // OVER-approximation: `false && null` / `0 && null` actually evaluate to
+      // the falsy-but-non-null left, yet we report them nullable. That's the
+      // SAFE direction for a safety gate (a false-positive `nullable`, which
+      // drift + the pragma absorb, never a missed real one), and the excluded
+      // case — a literal-falsy left `&&` a value, as a DB column — does not occur.
+      const left = classifyNullability(node.left);
+      const right = classifyNullability(node.right);
+      if (left === 'nullable' || right === 'nullable') return 'nullable';
+      if (left === 'opaque' || right === 'opaque') return 'opaque';
+      return 'non-null';
+    }
     // `a || b` / `a ?? b` return the fallback `b` whenever `a` is absent, so
-    // `a`'s nullness is masked by a non-null `b`: nullable iff the fallback is.
-    if (node.operator === '&&') return isNullableExpr(node.left) || isNullableExpr(node.right);
-    return isNullableExpr(node.right);
+    // `a`'s class is irrelevant — the fallback alone decides the result.
+    return classifyNullability(node.right);
   }
   if (node.type === 'ConditionalExpression') {
-    return isNullableExpr(node.consequent) || isNullableExpr(node.alternate);
+    const cons = classifyNullability(node.consequent);
+    const alt = classifyNullability(node.alternate);
+    if (cons === 'nullable' || alt === 'nullable') return 'nullable';
+    if (cons === 'opaque' || alt === 'opaque') return 'opaque';
+    return 'non-null';
   }
-  return false;
+  return 'opaque';
+}
+
+/**
+ * Layer 2 — Layer 1 plus the root-kind reporting-eligibility gate
+ * (docs/plans/refactor-static-analysis.md §2.2.1). Only the ROOT node of a
+ * conflict-target column's value is consulted here; recursion never emits —
+ * `classifyNullability` already did the recursive walk.
+ *
+ * `'unknown'` is minted ONLY for an `'opaque'` root whose node kind is a
+ * `LogicalExpression` or `ConditionalExpression` (a fallback whose default
+ * branch this lint couldn't classify) — never for a bare read (`refreshId`,
+ * `row.importerPath`), which stays the quiet `'opaque'`. Relabelling a bare
+ * read as `'non-null'` to keep it quiet would be exactly the laundering this
+ * module's honesty doctrine exists to remove one layer down; `'opaque'` stays
+ * an honest "undecidable, and out of this rule's declared scope."
+ *
+ * @param {object} node
+ * @returns {'nullable'|'non-null'|'unknown'|'opaque'}
+ */
+export function classifyColumnValue(node) {
+  const layer1 = classifyNullability(node);
+  if (layer1 !== 'opaque') return layer1;
+  if (node?.type === 'LogicalExpression' || node?.type === 'ConditionalExpression') return 'unknown';
+  return 'opaque';
+}
+
+/** Precise, not heuristic: only the shapes the instances actually use. `a ||
+ *  null`, `a ?? null`, literal `null`/`undefined`, or a conditional with a
+ *  nullable branch. Crucially `arm.contextBucket || GLOBAL_CONTEXT_BUCKET` is
+ *  NOT nullable (right side is a non-null identifier) — so the FIXED bandit
+ *  builder is not false-flagged, while the pre-fix `|| null` is.
+ *
+ *  Kept as a thin boolean projection of `classifyNullability` for existing
+ *  callers/tests (#18 backward compat) — behaviour is byte-identical, since
+ *  the new `'opaque'` value is only distinguishable from `'non-null'` above
+ *  this wrapper. */
+export function isNullableExpr(node) {
+  return classifyNullability(node) === 'nullable';
 }
 
 /** Normalize an `onConflict` value node into a column-name array, or null when
@@ -166,7 +261,11 @@ function readConflictTarget(node) {
   return null; // Identifier / ternary (e.g. plans-ship's `isCandidate ? [...] : [...]`) → unresolved
 }
 
-/** Pull `{columns, columnExprs, hasSpread}` from an ObjectExpression row. */
+/** Pull `{columns, columnExprs, hasSpread}` from an ObjectExpression row.
+ *  Uses `classifyColumnValue` (not `classifyNullability`) — this is the
+ *  component that still has the AST, so it's where the root-eligibility
+ *  layer must run; `analyzeUpsert` is deliberately AST-free and does a pure
+ *  lookup on the stored `nullability` value. */
 function readRowObject(objExpr) {
   const columns = [];
   const columnExprs = {};
@@ -179,7 +278,7 @@ function readRowObject(objExpr) {
     const name = key?.type === 'Identifier' ? key.name : key?.type === 'StringLiteral' ? key.value : null;
     if (name == null) continue;
     columns.push(name);
-    columnExprs[name] = { nullable: isNullableExpr(prop.value) };
+    columnExprs[name] = { nullability: classifyColumnValue(prop.value) };
   }
   return { columns, columnExprs, hasSpread };
 }
@@ -340,15 +439,48 @@ function makeResolver(chain) {
  *  guard-narrowed nullability) are the reason this exists: drift-only gating
  *  keeps them quiet today, and this is the escape hatch for the rare case where
  *  an edit to one of their lines re-surfaces the finding. */
-const SUPPRESSION_RE = /@on-conflict-ok:\s*(.*)$/;
+// Optional column-selector form (docs/plans/refactor-static-analysis.md §2.2.2):
+// `@on-conflict-ok(<column>): reason` governs the exact {callId, column} signal
+// for that one column (findings AND the unresolved-conflict-key-nullability
+// diagnostic); the bare form (no parens, column: null below) stays call-wide,
+// findings-only — byte-identical to the pre-existing behaviour. The colon is
+// NOT optional and the identifier class requires >=1 char, so
+// `@on-conflict-ok(col)` (no colon) and `@on-conflict-ok(): reason` (empty
+// selector) both fail to match this strict form — SUPPRESSION_ATTEMPT_RE below
+// still recognizes them as an ATTEMPTED pragma so they are reported malformed
+// rather than silently invisible (consolidated-gate G1).
+const SUPPRESSION_RE = /@on-conflict-ok(?:\(([A-Za-z_][A-Za-z0-9_]*)\))?:\s*(.*)$/;
 
-/** Find a suppression pragma governing an upsert call at `callLine` (1-based). */
-function findSuppression(sourceLines, callLine) {
+/** Loose detector for "this line looks like an @on-conflict-ok pragma attempt",
+ *  used only to distinguish a malformed pragma from an ordinary comment once
+ *  SUPPRESSION_RE has already failed to match it. */
+const SUPPRESSION_ATTEMPT_RE = /@on-conflict-ok\b/;
+
+/**
+ * Find every suppression pragma governing an upsert call at `callLine`
+ * (1-based), scanning the call's own line and up to two lines above it. A
+ * bare form and one or more distinct-column selectors may legitimately
+ * coexist above one call (each governs a different signal) — this returns
+ * every match in scan order (closest to the call first); the caller
+ * reconciles duplicate keys (`column ?? '*'`). `malformed` carries every line
+ * that looks like a pragma attempt but doesn't match the strict grammar
+ * (e.g. `@on-conflict-ok(): reason`, `@on-conflict-ok(col)` with no colon) —
+ * these must be reported, never silently treated as call-wide.
+ * @returns {{records: Array<{column: string|null, reason: string, line: number}>, malformed: Array<{line: number, text: string}>}}
+ */
+function findSuppressions(sourceLines, callLine) {
+  const records = [];
+  const malformed = [];
   for (let ln = callLine; ln >= Math.max(1, callLine - 2); ln--) {
-    const m = (sourceLines[ln - 1] || '').match(SUPPRESSION_RE);
-    if (m) return { reason: m[1].trim(), line: ln };
+    const rawLine = sourceLines[ln - 1] || '';
+    const m = rawLine.match(SUPPRESSION_RE);
+    if (m) {
+      records.push({ column: m[1] ?? null, reason: m[2].trim(), line: ln });
+    } else if (SUPPRESSION_ATTEMPT_RE.test(rawLine)) {
+      malformed.push({ line: ln, text: rawLine.trim() });
+    }
   }
-  return null;
+  return { records, malformed };
 }
 
 /**
@@ -432,13 +564,42 @@ export function extractUpsertSites(source) {
 function processUpsertCall(node, resolver, sites, diagnostics, sourceLines) {
   const line = node.loc?.start?.line ?? 0;
   const endLine = node.loc?.end?.line ?? line;
+  const callId = `${node.start}:${node.end}`;
   const [tableArg, rowsArg, optsArg] = node.arguments || [];
   const table = tableArg?.type === 'StringLiteral' ? tableArg.value : '<dynamic>';
 
-  const pragma = findSuppression(sourceLines, line);
-  if (pragma && pragma.reason === '') {
-    diagnostics.push({ kind: 'unreasoned-suppression', table, line,
-      message: `@on-conflict-ok at line ${pragma.line} carries no reason — a suppression must state WHY the conflict target is correct, or it's indistinguishable from hiding the bug.` });
+  // Reconcile raw pragma matches into one record per key (`column ?? '*'`) — a
+  // bare form and distinct-column selectors coexist, but two records sharing a
+  // key is a copy-paste that isn't governing what the author thinks it is.
+  const { records: rawSuppressions, malformed } = findSuppressions(sourceLines, line);
+  for (const m of malformed) {
+    diagnostics.push({
+      kind: 'malformed-suppression', table, line,
+      message: `@on-conflict-ok pragma at line ${m.line} ("${m.text}") does not match the required syntax — expected `
+        + '`@on-conflict-ok: <reason>` or `@on-conflict-ok(<column>): <reason>`. It is NOT applied (never silently '
+        + 'treated as call-wide) — fix the syntax or the finding/diagnostic it was meant to excuse still gates.',
+    });
+  }
+  const suppressions = [];
+  const seenKeys = new Map();
+  for (const rec of rawSuppressions) {
+    const key = rec.column ?? '*';
+    const prior = seenKeys.get(key);
+    if (prior) {
+      diagnostics.push({
+        kind: 'duplicate-suppression', table, line,
+        message: `duplicate @on-conflict-ok${rec.column ? `(${rec.column})` : ''} suppression at lines ${prior.line} and ${rec.line} — only the first (line ${prior.line}) is applied.`,
+      });
+      continue;
+    }
+    seenKeys.set(key, rec);
+    suppressions.push(rec);
+    if (rec.reason === '') {
+      diagnostics.push({
+        kind: 'unreasoned-suppression', table, line,
+        message: `@on-conflict-ok${rec.column ? `(${rec.column})` : ''} at line ${rec.line} carries no reason — a suppression must state WHY the conflict target is correct, or it's indistinguishable from hiding the bug.`,
+      });
+    }
   }
 
   let conflictTarget = null;
@@ -463,16 +624,36 @@ function processUpsertCall(node, resolver, sites, diagnostics, sourceLines) {
   }
 
   const { columns, columnExprs, hasSpread } = readRowObject(rowObj);
-  const suppression = pragma && pragma.reason !== '' ? pragma : null;
-  sites.push({ table, columns, columnExprs, conflictTarget, hasSpread, line, endLine, suppression });
+
+  // A selector naming a column absent from this call's row is a typo or a
+  // stale pragma — report it rather than silently matching nothing.
+  for (const rec of suppressions) {
+    if (rec.column && !columns.includes(rec.column)) {
+      diagnostics.push({
+        kind: 'unknown-suppression-column', table, line,
+        message: `@on-conflict-ok(${rec.column}) at line ${rec.line} names a column not present on this upsert's row — check for a typo or a stale pragma.`,
+      });
+    }
+  }
+
+  sites.push({ table, columns, columnExprs, conflictTarget, hasSpread, line, endLine, callId, suppressions });
 }
+
+/** The only diagnostic kind a pragma may silence — the author holds knowledge
+ *  the intra-file resolver lacks about ITS OWN nullability axis. Every other
+ *  `unresolved-*`/`parse-error`/`indeterminate-row` kind says "the lint could
+ *  not read this site at all," and a pragma that could hide THAT would let an
+ *  author silence the coverage self-check this module's honesty doctrine
+ *  exists to enforce. A named constant so widening it is a visible edit. */
+const SUPPRESSIBLE_DIAGNOSTIC_KINDS = new Set(['unresolved-conflict-key-nullability']);
 
 /**
  * Lint one source string.
  * @returns {{findings:Array, suppressed:Array, diagnostics:Array}} — `findings`
- * are live (gating); `suppressed` are findings a reasoned pragma silenced (each
- * carries `.suppressionReason`); diagnostics include unresolved/parse/pragma-
- * hygiene notes.
+ * are live (gating); `suppressed` are findings AND allowlisted diagnostics a
+ * reasoned pragma silenced (each carries `.suppressionReason`); `diagnostics`
+ * holds everything else — unresolved/parse/pragma-hygiene notes that can
+ * never be suppressed.
  */
 export function lintSource(rel, source) {
   const { sites, diagnostics, parseError } = extractUpsertSites(source);
@@ -487,18 +668,48 @@ export function lintSource(rel, source) {
       diagnostics.push({ kind: 'indeterminate-row', table: site.table, line: site.line,
         message: `row for "${site.table}" contains a spread — explicit columns were checked, but a scope column supplied ENTIRELY via the spread can't be seen and would be missed. Verify the conflict target by hand or inline the spread.` });
     }
-    const siteFindings = analyzeUpsert(site);
-    if (site.suppression) {
-      // A pragma over a site that produces NO finding is stale — surface it so
-      // suppressions don't outlive the thing they excused (mirrors the
-      // duplication wave's orphaned-pragma check).
-      if (siteFindings.length === 0) {
-        diagnostics.push({ kind: 'orphaned-suppression', table: site.table, line: site.suppression.line,
-          message: `@on-conflict-ok at line ${site.suppression.line} suppresses nothing — the finding it excused is gone; remove the pragma.` });
+    const { findings: siteFindings, diagnostics: siteDiagnostics } = analyzeUpsert(site);
+    const suppressions = site.suppressions || [];
+    // A reasonless pragma is separately flagged (unreasoned-suppression,
+    // emitted in processUpsertCall) but does NOT actively suppress anything —
+    // "carries no reason" must not be indistinguishable from "silences this".
+    const activeSuppressions = suppressions.filter((s) => s.reason !== '');
+    // A bare pragma governs every column (findings-only, back-compat); a
+    // column-selector pragma governs only its own column's findings AND the
+    // allowlisted diagnostic for that column.
+    const bareSuppression = activeSuppressions.find((s) => s.column === null) || null;
+    const byColumn = new Map(activeSuppressions.filter((s) => s.column !== null).map((s) => [s.column, s]));
+
+    for (const f of siteFindings) {
+      const sup = bareSuppression || byColumn.get(f.column);
+      if (sup) suppressed.push({ ...f, file: rel, suppressionReason: sup.reason });
+      else findings.push({ ...f, file: rel });
+    }
+
+    for (const d of siteDiagnostics) {
+      const sup = SUPPRESSIBLE_DIAGNOSTIC_KINDS.has(d.kind) ? (bareSuppression || byColumn.get(d.column)) : null;
+      if (sup) suppressed.push({ ...d, file: rel, suppressionReason: sup.reason });
+      else diagnostics.push({ ...d, file: rel });
+    }
+
+    // Orphan detection: a pragma governing zero findings AND zero allowlisted
+    // diagnostics in its declared scope is stale — a suppression must not
+    // outlive its cause. Evaluated per ACTIVE record (a reasonless pragma
+    // already gets its own unreasoned-suppression diagnostic above and never
+    // suppressed anything to begin with, so it can't also be "orphaned") so a
+    // bare pragma and a column-selector pragma at the same call are judged
+    // independently.
+    for (const sup of activeSuppressions) {
+      const inScopeFindings = siteFindings.filter((f) => sup.column === null || f.column === sup.column);
+      const inScopeDiagnostics = siteDiagnostics.filter(
+        (d) => SUPPRESSIBLE_DIAGNOSTIC_KINDS.has(d.kind) && (sup.column === null || d.column === sup.column)
+      );
+      if (inScopeFindings.length === 0 && inScopeDiagnostics.length === 0) {
+        diagnostics.push({
+          kind: 'orphaned-suppression', table: site.table, line: sup.line,
+          message: `@on-conflict-ok${sup.column ? `(${sup.column})` : ''} at line ${sup.line} suppresses nothing — the finding/diagnostic it excused is gone; remove the pragma.`,
+        });
       }
-      for (const f of siteFindings) suppressed.push({ ...f, file: rel, suppressionReason: site.suppression.reason });
-    } else {
-      for (const f of siteFindings) findings.push({ ...f, file: rel });
     }
   }
   const tagged = diagnostics.map((d) => ({ ...d, file: rel }));
