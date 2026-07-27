@@ -1,5 +1,45 @@
 # Project Status Log
 
+## 2026-07-27 (even later) — first shadow findings actually FIXED, not just accepted
+
+The standing critique of the final-review shadow A/B has been that accepts were
+being counted as outcomes while zero converted to fixes. Three of wine-cellar-app's
+accepted findings are now fixed and PR'd
+([wine-cellar-app#193](https://github.com/Lbstrydom/wine-cellar-app/pull/193)),
+so the conversion rate stops being 0.
+
+- **`6682c363`** — `_setBackgroundInert()` now restores only the elements it
+  recorded. `closeModal()` strips `.active` BEFORE calling
+  `_setBackgroundInert(false)`, so a just-closed overlay fell through the restore
+  branch with `prior === undefined` and had `inert`/`aria-hidden` removed —
+  clobbering what `app.js`'s `toggleAuthScreen()` set via its own registry.
+  Mutation-checked: reverting the guard fails 2 of the new suite's 4 tests.
+- **`c11b8944`** — `data-track-wine-name` emits empty instead of the domain.
+  Verified nothing consumes it before reversing the earlier round-2 compromise.
+  Two tests pinned the old behaviour and were rewritten to state the reversal
+  rather than quietly patched green.
+- **`d99f9e30`** — inline `style.display` → `hidden`. Template and JS had to
+  change together: an inline `style="display:none"` beats the UA `[hidden]`
+  rule, so a JS-only conversion would have left both fields permanently hidden.
+
+### A cosmetic finding was the thread that led to a functional bug
+Worth recording as an argument about audit value: `d99f9e30` was LOW and
+purely stylistic, but tracing its inline styles surfaced that the wine-detail
+**"Link" row never displays at all** — the `.modal-meta-item` wrapper is
+hardcoded hidden and no JS touches it (the code toggles the inner `<dd>`), so
+all four branches are dead code even for a valid `vivino_url`. Left unfixed
+pending a product decision (deliberate retirement vs. real bug); the PR
+preserves current behaviour so the call stays explicit.
+
+### Shared-checkout hazard, hit for real
+The first attempt at these fixes was **lost**: a concurrent session in the same
+wine-cellar-app checkout ran `git reset` (reflog: `reset: moving to eea203b5`)
+while the edits were in the working tree, discarding all four tracked-file
+changes. Only the untracked new test file survived. Recovered from a scratchpad
+note and reapplied on a branch, then committed immediately — committing early is
+the actual protection here, not care. Worth remembering before doing multi-file
+work in a checkout another session is live in.
+
 ## 2026-07-27 (even later) — shipped failure-contract refactor (stop reporting dependency failure as success)
 
 Implemented `docs/plans/refactor-failure-contract.md` via `/cycle code
