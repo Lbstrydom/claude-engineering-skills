@@ -90,10 +90,11 @@ const EXPECTED_EXPORTS = [
   'loadFalsePositivePatterns',
   'syncBanditArms',
   'syncFalsePositivePatterns',
-  // plans-ship (21 — 17 + 3 WS1 + 1 WS3 persona-nav-feedback-recovery additions)
+  // plans-ship (22 — 17 + 3 WS1 + 1 WS3 persona-nav-feedback-recovery + 1 CCR)
   'getCandidateAuditFindings', // WS1 — auto-correlator candidate read (temporally bounded)
   'getExistingCorrelationHashesForSession', // WS1 — first-hit-wins existence check
   'getUnlockedFixes',
+  'getUnremediatedAcceptances', // accepted-but-never-remediated /ship nudge (2026-07-27)
   'insertRunRowWithPolicyFallback', // selector-policy 42703 write seam (plan: ux-lock-selector-policy)
   'listConsistencyCandidates',
   'promoteRegressionSpec',
@@ -322,6 +323,12 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // pipeline-reliability-hardening Theme 2) — lets drift.mjs detect when
     // its 10000-row pragma-reconciliation candidate pool is truncated,
     // rather than silently reconciling against a partial snapshot.
-    assert.equal(EXPECTED_EXPORTS.length, 178);
+    // 178 → 179: getUnremediatedAcceptances added 2026-07-27 — reads the
+    // `unremediated_acceptances` view for /ship Step 0.5e. Sibling of
+    // getUnlockedFixes one step earlier in the lifecycle: that one asks "this
+    // was fixed — is the fix locked?", this asks "this was accepted — was it
+    // ever fixed at all?". Measured that day: only 3 of 10 accepted
+    // final-review-shadow findings had a confirmed code fix.
+    assert.equal(EXPECTED_EXPORTS.length, 179);
   });
 });

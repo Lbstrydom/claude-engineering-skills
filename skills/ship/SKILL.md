@@ -135,10 +135,61 @@ A non-zero exit means a locked contract broke — treat as a `test-failure`
 block reason. Cloud off → it still runs + prints; Playwright missing → exit 5
 (skip the gate, don't fail the ship on a missing optional dep).
 
-### 0.5c — Override flags
+### 0.5e — Accepted findings that were never remediated
+
+```bash
+node scripts/cross-skill.mjs list-unremediated-acceptances
+```
+
+Returns `{ok, cloud, rows: [...]}`. Count the rows as `unremediated_count`.
+
+One step EARLIER in the lifecycle than 0.5b: `unlocked_fixes` asks *"this was
+fixed — is the fix locked?"*; this asks *"this was accepted — was it ever
+fixed at all?"*. The `unremediated_acceptances` view lists HIGH/MEDIUM findings
+whose `adjudication_outcome` is `accepted`/`severity_adjusted` but whose
+`remediation_state` is still NULL/`pending`/`planned` after 7+ days.
+
+**Why this exists**: measured 2026-07-27 on the 10 accepted final-review-shadow
+findings in this repo, only 3 had a confirmed targeted code fix. One — the bare
+`catch { result = null; }` in `stage0-relevance-context.mjs` — was accepted,
+shipped, and is still in the code today. **`accepted` is not evidence of a
+fix.** The audit loop is already designed to re-raise these (`suppressReRaises`
+suppresses only `dismissed` or `fixed`/`verified`), so an unremediated
+acceptance is an open obligation, not a closed one.
+
+If > 0, print — **never blocks, and there is no override flag for it** (nudge,
+not gate; the same philosophy as quick-fix detection). **Show at most 5 rows**,
+HIGH first; the reader is capped at 20 and the point is the signal, not the
+backlog:
+
+```
+⚠ UNREMEDIATED ACCEPTANCES (non-blocking)
+  <n> finding(s) you accepted were never marked fixed (showing <=5):
+    • [<severity>] <primary_file> — accepted <days_open>d ago
+  Either remediate them, or close the loop honestly:
+    node scripts/cross-skill.mjs finalize-outcomes    # transition to fixed/verified
+  Leaving them open is fine — leaving them open SILENTLY is what this catches.
+```
+
+Judge the list before echoing it — two rows look identical but are not:
+
+- `audit_mode = 'code'` → `primary_file` is a real path; the defect is in the
+  code right now.
+- `audit_mode = 'plan'` → `primary_file` is a plan SECTION reference (e.g.
+  `§7 ws-a migration; close-out`), not a file. Equally a real obligation (the
+  plan was never amended), but say so rather than printing it as a code path.
+- `remediation_state = 'planned'` with a live plan is genuinely in-flight, not
+  forgotten — drop it from the printed list.
+
+### 0.5f — Override flags
 
 If `$ARGUMENTS` contains `--no-tests`, `--ignore-p0`, or `--skip-ux-lock`,
 record which override is active — it goes into the ship_event.
+
+> **Numbering note**: this sub-step is `0.5f`, not `0.5d`, because two H2
+> sections below already claim `Step 0.5c` and `Step 0.5d` (a pre-existing
+> collision referenced from ~20 other files, so renumbering them is out of
+> scope here). The H3 sub-step order is `0.5a → 0.5b → 0.5e → 0.5f`.
 
 ---
 

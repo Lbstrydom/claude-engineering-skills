@@ -1,5 +1,60 @@
 # Project Status Log
 
+## 2026-07-27 (latest) — measured CCR on accepted findings; new `/ship` 0.5e gate
+
+Companion to the entry below, from the other direction. That one records the
+first accepted shadow findings converting to fixes; this one measures how often
+that conversion actually happens, and wires the answer into `/ship`.
+
+### The measurement: 3 of 10, not 10 of 10
+Computed Code Change Rate on the 10 `accepted-permanent` final-review-shadow
+findings in this repo. **The mechanical proxy is worthless without a control** —
+"cited file changed afterwards" reads 90% for accepted, but 71% for *dismissed*
+and 50% for any file in the audited commit. Only reading the follow-up diffs
+separated real fixes from acceptance theatre:
+
+- **3 confirmed targeted fixes** — `361650a` (overlapCount location
+  verification), `5137ff3` (`reconcileJournals` per-path failure signal),
+  `d042237` (`writeJournal` rename-cleanup gap, implements the finding's claim
+  verbatim with a regression test).
+- **3 confirmed NOT fixed** — `existsOnDisk` kept its `return true` and grew a
+  justification comment instead; the bare `catch { result = null; }` in
+  `stage0-relevance-context.mjs` is **still at line 106 today**; one plan
+  finding got no commit at all.
+- 1 doc-only, 3 unattributable inside bulk commit `56296cc`.
+
+**`accepted` is not evidence of a fix.** Do not use human-acceptance counts as
+a model-quality metric — acceptance is cheap and partly rubber-stamped.
+
+### What was NOT broken
+`suppressReRaises` was already correct: it suppresses only `dismissed` or
+`remediationState` `fixed`/`verified`, so an accepted+pending finding stays
+re-raisable as an open obligation. And `remediation_state` *is* written on the
+main audit path (270 accepted/fixed rows in 30d) — an earlier read of "NULL
+everywhere" was wrong. The real gap is narrower: the shadow adjudication verb
+writes `user_action` + `adjudication_outcome` but not `remediation_state`, so
+its 17 accepted findings land NULL, and **nothing ever looked at the open
+obligations**.
+
+### Shipped
+- `unremediated_acceptances` view (migrations `…180000` + `…190000`) — HIGH/MEDIUM,
+  accepted/severity_adjusted, remediation NULL/pending/planned, aged 7–30d.
+- `getUnremediatedAcceptances()` + `list-unremediated-acceptances` CLI verb.
+- `/ship` **Step 0.5e** — warn-only, no override flag, capped at 5 rows,
+  distinguishes `code` from `plan` mode. It fires on this very repo: 20 rows,
+  8 code, oldest 10d.
+
+Two Postgres facts worth keeping: `CREATE OR REPLACE VIEW` can only **append**
+columns (slotting `audit_mode` mid-list fails with `cannot change name of view
+column "severity" to "audit_mode"`), and the migration ledger stores a **sha256
+per file**, so amending an applied migration reads as drift — hence two files.
+
+### Known-open
+`tests/fixtures/expected-schema.json` is **stale** for the new view;
+`postgres-parity` CI will go red until `npm run db:local:regen` runs (Docker was
+down this session). The fixture generator correctly *refused* to regenerate from
+the Supabase DSN — hosted extensions/grants would drift CI red anyway.
+
 ## 2026-07-27 (even later) — first shadow findings actually FIXED, not just accepted
 
 The standing critique of the final-review shadow A/B has been that accepts were

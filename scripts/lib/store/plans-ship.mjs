@@ -471,6 +471,35 @@ export async function getUnlockedFixes(repoId) {
   }
 }
 
+/**
+ * Accepted findings that never got a remediation transition (from the
+ * `unremediated_acceptances` view). Optionally scoped to a repo.
+ *
+ * Companion to `getUnlockedFixes`, one step earlier in the lifecycle:
+ * `unlocked_fixes` asks "this was fixed — is the fix locked?", this asks
+ * "this was accepted — was it ever fixed at all?". Measured 2026-07-27, only
+ * 3 of 10 accepted final-review-shadow findings had a confirmed code fix, so
+ * `adjudication_outcome = 'accepted'` is NOT evidence of remediation.
+ *
+ * Same failure contract as getUnlockedFixes: cloud-off and query failure both
+ * return `[]` — this is a non-blocking /ship nudge and must never break a push.
+ */
+export async function getUnremediatedAcceptances(repoId) {
+  if (!await isCloudEnabled()) return [];
+  try {
+    if (repoId) {
+      return await many(
+        `SELECT * FROM unremediated_acceptances WHERE repo_id = $1 LIMIT 20`,
+        [repoId]
+      );
+    }
+    return await many(`SELECT * FROM unremediated_acceptances LIMIT 20`);
+  } catch (err) {
+    process.stderr.write(`  [learning] getUnremediatedAcceptances failed: ${err.message}\n`);
+    return [];
+  }
+}
+
 // ── persona_audit_correlations ─────────────────────────────────────────────
 
 /**
