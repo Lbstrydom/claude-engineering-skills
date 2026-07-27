@@ -1,5 +1,55 @@
 # Project Status Log
 
+## 2026-07-27 — Fixed markFindingsRemediation's NOT-NULL crash on every lifecycle write
+
+Follow-up to the debt item flagged at the bottom of the previous `/cycle`
+session's entry below: `markFindingsRemediation`
+(`scripts/lib/store/runs-findings.mjs`) deleted a finding's
+`finding_adjudication_events` row and re-inserted one carrying only
+`finding_id`/`remediation_state`/`round` — omitting the table's `NOT NULL`
+`adjudication_outcome` column. Every call threw a `23502` violation, and
+because the write runs inside `withTx`, the throw rolled back the paired
+`audit_findings.remediation_state` UPDATE with it. This affected **every**
+target state (fixed/verified/regressed alike, not only non-terminal
+dispositions as first suspected) and has been broken, silently, since the
+function was introduced in `183810d` (2026-07-21) — confirmed via git
+history and cross-checked against the `finding_adjudication_events` schema.
+
+### Fix
+
+Replaced the delete+insert with a targeted `UPDATE
+finding_adjudication_events SET remediation_state = $1 [, round = $2] WHERE
+finding_id = $3`, touching only `remediation_state` (+`round` when known) and
+leaving `adjudication_outcome`/`ruling`/`ruling_rationale` on the existing row
+untouched — matching intent already documented in `ledger.mjs` ("touches only
+remediation_state," so this self-heal projector never re-adjudicates a
+finding or wipes a human `severity_adjusted` ruling). Also closes a second
+latent bug the crash was masking: the reconcile self-heal path calls with no
+`resolvedRound`, and the old code would have written `round: null` into a
+column that is also `NOT NULL`.
+
+### Test
+
+Added a DB-integration `describe` block to
+`tests/mark-findings-remediation.test.mjs` (gated on `AUDIT_DB_TEST_URL`,
+following the `tests/final-review-adjudicate.test.mjs` convention) — the
+existing tests in that file were deliberately pure/no-DB, which is exactly
+why this class of bug shipped invisibly. Verifies the UPDATE happens in
+place (same event-row id), `adjudication_outcome`/`ruling`/`ruling_rationale`
+survive untouched, `round` isn't nulled when `resolvedRound` is absent, and a
+missing sibling event row doesn't roll back the `audit_findings` projection.
+No local test DB was available to actually run the new block this session
+(Docker Desktop wasn't running); the pure-logic tests (9/9) plus the adjacent
+`adjudication-remediation-propagation` suite (3/3) pass.
+
+Also corrected a stale memory (`remediation-state-never-written`) that had
+declared this writer "verified climbing" on 2026-07-21 — that observation was
+real but, per `scripts/lib/outcome-sync.mjs`'s separate, correctly-implemented
+`recordAdjudicationEvent` call, almost certainly came from a different write
+path, not this one.
+
+---
+
 ## 2026-07-27 — `/cycle --autonomous` on the audit-pipeline-reliability plan: implemented, code-audited, shipped
 
 Ran `/cycle --autonomous docs/plans/refactor-audit-pipeline-reliability-2026-07.md`
