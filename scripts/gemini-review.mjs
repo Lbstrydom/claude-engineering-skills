@@ -1955,6 +1955,33 @@ export function shouldWarnMissingRunId({ mode, runId, cloudEnabled }) {
   return mode === 'review' && !runId && cloudEnabled;
 }
 
+/**
+ * Whether marker-based run-id recovery may even be ATTEMPTED for this call.
+ *
+ * Restricted to `auditMode === 'code'` because `.audit/last-audit-run.json`
+ * is written ONLY by the code-audit path (`legacy-production-audit.mjs` via
+ * `writeGateEvidence`) — `/audit-plan`'s `--mode plan` review never refreshes
+ * it, and never has. Without this gate, a plan review that omits --run-id
+ * (which is not a stale-context bug for plan mode — audit-plan's SKILL.md
+ * never teaches it to pass one at all, because a plan isn't a commit-scoped
+ * `audit_runs` row the same way code is) would recover whatever CODE audit's
+ * marker happened to still sit inside the freshness window and misattach to
+ * it. Found live 2026-07-27, the day this recovery shipped: a wine-cellar-app
+ * `/audit-plan` session's shadow findings landed under an unrelated code
+ * audit's run_id, and `recordFinalReviewFindings`'s own DELETE (scoped only
+ * by `run_id`, so it cannot tell "replace this run's stale findings" apart
+ * from "wipe another run's findings out from under it") then destroyed that
+ * code audit's 4 already-adjudicated findings as a side effect — not just a
+ * mislabel, real data loss. A wrong row is worse than no row; here it was
+ * worse than that again.
+ *
+ * @param {{auditMode: string}} args
+ * @returns {boolean}
+ */
+export function canAttemptRunIdRecovery({ auditMode }) {
+  return auditMode === 'code';
+}
+
 export const MISSING_RUN_ID_WARNING =
   '  [gemini-review] WARNING: cloud is enabled but no --run-id was supplied. '
   + 'This review\'s verdict and findings will NOT be persisted to audit_runs — '
@@ -2046,10 +2073,9 @@ async function main() {
   // scrolled past unread. So recover the id from the marker the audit itself
   // wrote — no agent cooperation required — and only warn when that also fails.
   if (shouldWarnMissingRunId({ mode, runId, cloudEnabled: await isCloudEnabled() })) {
-    const rec = recoverRunIdFromMarker({
-      marker: readGateEvidenceMarker(process.cwd()),
-      nowMs: Date.now(),
-    });
+    const rec = canAttemptRunIdRecovery({ auditMode })
+      ? recoverRunIdFromMarker({ marker: readGateEvidenceMarker(process.cwd()), nowMs: Date.now() })
+      : { runId: null, reason: 'plan-mode-has-no-marker' };
     if (rec.runId) {
       runId = rec.runId;
       console.error(

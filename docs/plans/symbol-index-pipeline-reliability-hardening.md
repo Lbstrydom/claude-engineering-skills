@@ -1234,3 +1234,27 @@ cluster's files.
   swallow bug in `extract.mjs`'s own CLI parser (Cluster C) using the
   same guard idiom the plan already established for `drift.mjs` and
   `refresh-args.mjs`.
+
+### 2026-07-27 (merge reconciliation)
+
+While this branch was in flight, another session independently fixed the
+identical `restrictFiles===null` vs `===[]` conflation + manifest-symlink
+issue this plan's Phase 4 (Cluster D) also targeted — merged into `main`
+as `a86a5ca` (topicIds `b021576b`/`e86a9cbb`), landing `enumerateFiles`'s
+own instance of the fix in `extract.mjs` too (topicId shared with this
+plan's Phase 3/Cluster C fix). Reconciled at merge time in favor of
+`main`'s already-shipped, already-tested implementation
+(`writeFilesManifestIfRestricted`, `isFullRunFromFiles`) rather than this
+plan's originally-specified `writeFilesManifest`/`{skipped: true}`
+early-return: `main`'s design runs the real extract/summarise/embed
+pipeline through an empty scope (producing a genuine zero-symbol
+coverage measurement via `isFullRunFromFiles`) rather than short-circuiting
+before any subprocess spawn — a more coherent design once both
+approaches were compared side by side, and it additionally covers the
+`main()`-level `isFullRun` computation this plan's Phase 3 had explicitly
+left out of scope. This plan's own duplicate implementation (the
+`writeFilesManifest` helper, the `{skipped: true}` early return in
+`runExtractSummariseEmbed`, and its dedicated test file) was dropped
+during the merge. Every other Cluster A-E fix in this plan is unaffected
+(no other overlapping hunks; full suite re-verified green post-merge,
+9014 tests / 22 pre-existing skips / 0 failing).

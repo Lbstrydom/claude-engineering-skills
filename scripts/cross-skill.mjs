@@ -117,6 +117,7 @@ import { decideCorrelations, MATCHER_VERSION, personaFindingHash } from './lib/p
 import { buildPersonaSessionId } from './lib/persona-test/session-id.mjs';
 import { recordNavAuditRun, listNavAuditRunHistory } from './lib/store/nav-audit.mjs';
 import { upsertPersonaFindingOutcome, getPersonaOutcomesSummary, getActionablePersonaOutcomeItems, resolveLabelTarget } from './lib/store/persona-outcomes.mjs';
+import { backfillPersonaFindingHashV2 } from './lib/store/persona-outcomes-hash-backfill.mjs';
 import { firstSeenFromHistory } from './lib/nav/drift.mjs';
 import { z } from 'zod';
 
@@ -1381,7 +1382,13 @@ async function cmdPersonaOutcomes() {
   if (process.argv.includes('--worksheet')) {
     const repoName = argOption('repo');
     if (!repoName) return emitError('BAD_INPUT', '--repo <name> is required for --worksheet');
-    const res = await getActionablePersonaOutcomeItems({ repoName });
+    // 88bc75e1/8993b96f: repoName alone is an ambiguous, caller-supplied
+    // display string — resolve the stable repoId (same mechanism used
+    // elsewhere in this file) so session selection can't land on a
+    // different repo that happens to share the name. --repo-id overrides
+    // when supplied; otherwise best-effort from the current git remote.
+    const repoId = argOption('repo-id') || (await resolveRepoIdentityQuiet());
+    const res = await getActionablePersonaOutcomeItems({ repoName, repoId });
     if (!res.ok) return emitError('STORE_ERROR', res.error || 'worksheet query failed');
     if (!res.cloud) return emit({ ok: true, cloud: false, count: 0 });
     const { renderAdjudicationWorksheet } = await import('./lib/adjudication-worksheet.mjs');
@@ -1417,7 +1424,9 @@ async function cmdPersonaOutcomes() {
   if (sub === 'summary') {
     const repoName = argOption('repo') || process.env.PERSONA_TEST_REPO_NAME;
     if (!repoName) return emitError('BAD_INPUT', '--repo <name> is required (or set PERSONA_TEST_REPO_NAME)');
-    const res = await getPersonaOutcomesSummary({ repoName });
+    // 88bc75e1/8993b96f: same repoId-primary resolution as --worksheet above.
+    const repoId = argOption('repo-id') || (await resolveRepoIdentityQuiet());
+    const res = await getPersonaOutcomesSummary({ repoName, repoId });
     return emit(res);
   }
 
@@ -1447,7 +1456,29 @@ async function cmdPersonaOutcomes() {
     return emit({ ok: true, cloud: true });
   }
 
-  return emitError('BAD_INPUT', 'usage: persona-outcomes <summary|label> [flags] | persona-outcomes --worksheet --repo <name>');
+  if (sub === 'backfill-hash') {
+    const repoName = argOption('repo');
+    if (!repoName) return emitError('BAD_INPUT', '--repo <name> is required for backfill-hash');
+    const repoId = argOption('repo-id') || (await resolveRepoIdentityQuiet());
+    if (!repoId) return emitError('BAD_INPUT', 'could not resolve a repoId — pass --repo-id explicitly');
+    const dryRun = process.argv.includes('--dry-run');
+    const reportPath = argOption('report-path');
+    const res = await backfillPersonaFindingHashV2({ repoId, dryRun, reportPath });
+    if (res.alreadyCurrent) {
+      process.stderr.write(`  [persona-outcomes backfill-hash] repo ${repoName}: already current, nothing to migrate\n`);
+    } else {
+      process.stderr.write(
+        `  [persona-outcomes backfill-hash] repo ${repoName}${dryRun ? ' (dry-run)' : ''}: ` +
+        `scanned=${res.scanned} recoveredThisRun=${res.recoveredThisRun} ` +
+        `reconciledThisRun=${res.reconciledThisRun} ` +
+        `targetAlreadyExists=${res.targetAlreadyExists} unrecoverable=${res.unrecoverable} ` +
+        `ambiguous=${res.ambiguousCount}${res.ambiguousReportPath ? ` (report: ${res.ambiguousReportPath})` : ''}\n`,
+      );
+    }
+    return emit({ ok: true, ...res });
+  }
+
+  return emitError('BAD_INPUT', 'usage: persona-outcomes <summary|label|backfill-hash> [flags] | persona-outcomes --worksheet --repo <name>');
 }
 
 // ── Persona session readers (post-RLS-hardening — service-role only) ──────

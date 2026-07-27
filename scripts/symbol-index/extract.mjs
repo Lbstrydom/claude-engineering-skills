@@ -693,35 +693,48 @@ const MAX_FILE_BYTES = 500 * 1024;
 // side-effect-free walker is not an implementation of
 // docs/plans/observed-graph-discovery-unification.md design (e) — that plan
 // remains blocked on the measurements this export enables.
+/**
+ * Pure gate for the coverage-measurement "was this a full run" decision
+ * (b021576b). `null` means no restriction was ever passed (--files/
+ * --files-from absent) — the only genuine full-run case. `[]` means a
+ * restriction WAS passed and resolved to zero files (e.g. an incremental
+ * diff touching only docs/config) — a real, valid, ZERO-file incremental
+ * run, not a full one; measuring it as full would compute the coverage
+ * ratio against the wrong denominator (plan §2.1.3 row 4).
+ *
+ * @param {string[]|null} files - `args.files` as parsed by parseArgs
+ * @returns {boolean}
+ */
+export function isFullRunFromFiles(files) {
+  return files === null;
+}
+
 export function enumerateFiles(repoRoot, restrictFiles) {
-  // Tri-state contract (symbol-index-pipeline-reliability-hardening Theme 3,
-  // the identical conflation Phase 4 fixes at refresh-subprocess.mjs's
-  // equivalent gate): `null`/`undefined` means "no restriction — full walk";
-  // a genuinely EMPTY array means "nothing to extract this run" and must NOT
-  // be silently promoted to a full walk. The old `restrictFiles &&
-  // restrictFiles.length > 0` truth-tested BOTH null-ness and emptiness with
-  // one check, so `[]` (falls through the `> 0` half) fell all the way to the
-  // full-walk branch below — exactly backwards from its caller's intent.
-  if (restrictFiles == null) {
-    // Default: walk repo for source files. Keep the walk small + fast.
-    const out = [];
-    function walk(dir) {
-      let entries;
-      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
-      for (const e of entries) {
-        if (SKIP_DIRS.has(e.name)) continue;
-        const full = path.join(dir, e.name);
-        if (e.isDirectory()) walk(full);
-        else if (e.isFile()) out.push(full);
-      }
+  // b021576b (origin/main) / Theme 3 (this branch) — the same fix landed
+  // independently on both sides: `null`/`undefined` means "no restriction,
+  // full walk"; `[]` means "a valid incremental scope of ZERO files" (e.g.
+  // a diff touching only docs/config) — these are opposite intents. The old
+  // `restrictFiles && restrictFiles.length > 0` check conflated them,
+  // silently falling back to a full repo walk whenever the resolved scope
+  // was legitimately empty. `!= null` (not `!==`) also covers `undefined`
+  // defensively, though `args.files` is always explicitly `null` in practice.
+  if (restrictFiles != null) {
+    return restrictFiles.map(f => path.isAbsolute(f) ? f : path.join(repoRoot, f));
+  }
+  // Default: walk repo for source files. Keep the walk small + fast.
+  const out = [];
+  function walk(dir) {
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (SKIP_DIRS.has(e.name)) continue;
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) walk(full);
+      else if (e.isFile()) out.push(full);
     }
-    walk(repoRoot);
-    return out;
   }
-  if (Array.isArray(restrictFiles) && restrictFiles.length === 0) {
-    return [];
-  }
-  return restrictFiles.map(f => path.isAbsolute(f) ? f : path.join(repoRoot, f));
+  walk(repoRoot);
+  return out;
 }
 
 async function main() {
@@ -738,7 +751,7 @@ async function main() {
   // measuring against it would produce a real-looking ratio computed from the
   // wrong denominator. Pass null and let refresh.mjs copy the prior row
   // forward as stale instead.
-  const isFullRun = !args.files || args.files.length === 0;
+  const isFullRun = isFullRunFromFiles(args.files);
   // §2.1.1's third clause: a file this pipeline refuses to read must not count
   // against the denominator. An unreadable file is excluded for the same
   // reason — it is not a coverage failure, and failing closed here would

@@ -39,13 +39,14 @@ array no longer silently promotes to a full repo walk. Same flag-value-
 swallow bug fixed in `extract.mjs`'s own CLI parser.
 
 **Cluster D** — refresh-subprocess/file-scope/args CLI hardening.
-`runExtractSummariseEmbed` short-circuits on an empty `restrictFiles`
-(`{skipped: true}`, no subprocess spawned) instead of promoting to a full
-walk; the `--files-from` manifest write gains `wx` + a bounded EEXIST
-retry. `resolveIncrementalFileScope` now runs the summary-retry queue
-through the same sensitive-path filter the git-diff files already get.
+`resolveIncrementalFileScope` now runs the summary-retry queue through the
+same sensitive-path filter the git-diff files already get.
 `refresh-args.mjs`'s `parseArgs` rewritten for `=`-form support, a POSIX
 `--` terminator, and `--since-commit` rejecting every value-less shape.
+(The `restrictFiles` tri-state + manifest-symlink fix this cluster also
+targeted turned out to be a duplicate of a86a5ca below, independently
+fixed by another session on `main` while this one was in flight — see
+the merge-reconciliation note.)
 
 **Cluster E** — store-layer rowCount honesty (fix-gate: final).
 `recordSymbolEmbedding(s)`/`copyForwardUntouchedFiles` (symbols.mjs) and
@@ -71,6 +72,178 @@ Many findings across all 5 clusters were legitimately out-of-scope
 across store-layer writers, `--files-from`'s newline-delimiter limitation)
 — all properly deferred to `.audit/tech-debt.json` with impact-tested
 rationale, not silently dropped.
+
+**Merge-reconciliation note**: while this branch was in flight, another
+session independently fixed the identical `restrictFiles===null` vs
+`===[]` conflation + manifest-symlink issue in `extract.mjs`/
+`refresh-subprocess.mjs` (see `a86a5ca` below, topicIds `b021576b`/
+`e86a9cbb`) — the same bug this branch's Cluster D also targeted.
+Reconciled at merge time in favor of `main`'s already-shipped, already-
+tested implementation (`writeFilesManifestIfRestricted`, `isFullRunFromFiles`):
+it runs the real extract/summarise/embed pipeline through an empty scope
+(producing a genuine zero-symbol coverage measurement) rather than this
+branch's alternative of short-circuiting before any subprocess spawn —
+a more coherent design once both were compared side by side. This
+branch's OWN duplicate implementation (`writeFilesManifest`, the
+`{skipped:true}` early return, and its dedicated test file) was dropped
+during the merge; every other Cluster A-E fix in this entry is
+unaffected (verified no other overlapping hunks).
+
+## 2026-07-27 (later) — shipped `personaFindingHash` v2 versioning + safe backfill
+
+Implemented the audited plan (`docs/plans/persona-finding-hash-versioning.md`,
+tech-debt topicId `c6b3df92`) via `/cycle --autonomous`'s degenerate
+single-cluster path — the plan carried no `## 11. Execution Clustering`
+block, so the whole plan was treated as one unit.
+
+**The bug being fixed**: `personaFindingHash()` hashed only
+`{element, code, observed}`, so two genuinely different persona findings —
+same element, severity, observed text, but on different pages/flows —
+collided onto the same durable identity in `persona_finding_outcomes`
+(a cross-session, cross-repo table where the hash is a PRIMARY KEY
+component). Fixed by adding `route` (resolved via the session's
+`click_path`) and `expected` to the hash payload, and switching to a full
+64-hex SHA-256 (was an 8-hex truncation). The hard part — this hash is a
+durable primary key — required a real migration path, not just a formula
+change: `PERSONA_FINDING_HASH_VERSION = 2` (independent of
+`MATCHER_VERSION`), a `hash_version`/`migrated_at`-tracked non-destructive
+backfill (`backfillPersonaFindingHashV2`), and a `cross-skill.mjs
+persona-outcomes backfill-hash` operator command.
+
+**Audit**: 5 GPT `/audit-code` rounds + 2 Gemini gate rounds (code-audit
+phase, on top of the pre-implementation plan's own 3 GPT + 3 Gemini
+rounds). Real bugs caught and fixed across rounds: a malformed-finding
+hash-collision gap; a migration `DEFAULT` bump that would have silently
+mislabeled a bare INSERT from an un-synced consumer (bumped, then reverted
+once the shared-Postgres/staggered-sync deployment topology made the risk
+clear — `DEFAULT` stays at 1 permanently); a `DO NOTHING`-masks-a-later-v1-edit
+idempotency gap (fixed with a conditional `DO UPDATE ... WHERE migrated_at
+IS NOT NULL AND newer`); a `writeAmbiguousReport` temp-file-doesn't-exist
+edge case; and a report-published-before-transaction-commit ordering bug
+(fixed by splitting stage/publish so the rename only happens after
+`COMMIT`). One Gemini `wrongly_dismissed` claim on the idempotency fix was
+a false positive — direct code inspection showed the fix already matched
+Gemini's own recommendation; likely cause was a stale module docstring
+(fixed regardless). Full detail: the plan's own Implementation Log section.
+
+Files: `scripts/lib/persona/audit-correlator.mjs`,
+`scripts/lib/store/{persona-outcomes,persona-outcomes-hash-backfill,plans-ship}.mjs`,
+`scripts/cross-skill.mjs`, migration
+`20260727120000_persona_finding_outcomes_hash_version.sql`, plus tests.
+Scope: backend only — persona-test and ux-lock skipped per the plan's own
+`Scope: backend` header. Full suite green (8933 passing, 22 skipped —
+disposable-DB integration tests, no `AUDIT_DB_TEST_URL` in this environment).
+
+## 2026-07-27 (continued) — adjudicated 14 more shadow-only findings; a critical fix along the way
+
+Daily shadow-telemetry check (final-review shadow A/B, `FINAL_REVIEW_SHADOW=claude-opus-5`)
+turned up a real bug and real new findings.
+
+### The bug (and its fix)
+The prior day's `--run-id` marker-recovery fix (`cd6d228`) had a blind spot:
+`.audit/last-audit-run.json` is written ONLY by the code-audit path — `/audit-plan`
+never refreshes it. A wine-cellar-app `/audit-plan` session correctly omitted
+`--run-id` at its Gemini review step (plan mode never has a commit-scoped
+`audit_runs` row to attach to), but the recovery fallback fired anyway, found a
+still-fresh (<6h) marker from an unrelated CODE audit, and misattached the plan
+review's shadow findings to that run's id. Worse: `recordFinalReviewFindings`'s
+own DELETE (scoped only by `run_id`) then wiped the 4 already-adjudicated
+findings from that earlier code audit as a side effect — real data loss, not
+just a mislabel.
+
+Fixed (`49468e5`): `canAttemptRunIdRecovery({auditMode})` gates the whole
+recovery attempt on `auditMode === 'code'` — the only mode that ever writes the
+marker. Repaired the wine-cellar-app data directly: deleted the 3 misattributed
+findings, restored the original 4 (reconstructed from this session's own
+transcript — the only surviving copy) with identical content, re-adjudicated
+accepted. Audited every other new shadow run_id created since the recovery fix
+shipped, in both repos — all confirmed legitimate (each has its own distinct,
+real `commit_sha`/`rounds`); this was the only incident.
+
+### 14 new shadow-only findings, adjudicated (8 accepted / 6 dismissed)
+Verified each against the actual current code/plan text rather than taking the
+shadow's claims at face value:
+- **Accepted** (real, verified): a cross-version journal-quarantine hazard in
+  `scripts/lib/install/transaction.mjs` (an older reader schema-rejects a
+  `'rollback-failed'` journal and quarantines it, defeating the deliberate
+  no-mutation handling); `reconcileJournals()`'s `process.exit(1)` inside its
+  `for` loop genuinely skips checking the second (global) journal on a
+  first-journal failure; a silently-logged-nowhere RPC failure in
+  `stage0-relevance-context.mjs`'s 8-way worker pool that collapses to
+  indistinguishable-from-"no import graph"; the `refactor-audit-pipeline-reliability-2026-07.md`
+  Disposition Matrix's own "22+18+5=45, checked total" excludes 12 real
+  code-audit-discovered debt items that exist only in prose; no test pins
+  `learningWritesAllowed===false` gating at the 3 specific call sites the
+  plan's "test passed unmodified" claim relies on; an untested EACCES/ELOOP
+  coupling in sensitive-path filtering; a documentation-consistency gap in the
+  architecture-debt-remainder plan's item 1 (verified the underlying risk is
+  moot — both edges are already in `domain-map.json`'s `allowedDeps`).
+- **Dismissed** (verified false against the shipped code): a lock-leak concern
+  refuted by an already-present `try/finally`; an `fs.rmSync`-detection
+  edge case refuted by an already-present `!binding || !binding.path` guard;
+  a `sinceCommit` injection concern refuted by an already-present internal
+  `isSafeGitRevision` call; a "vacuous test" claim refuted by an
+  already-present, purpose-built 200-site-floor assertion; two findings
+  evaluating plan content (a grep criterion, a `check-architecture-intent-drift.mjs`
+  script) that does not exist anywhere in the plan's current text.
+
+**Pattern worth tracking**: every dismissal on the two most-iterated runs (3
+and 6 GPT rounds respectively) was the shadow raising "what if X isn't
+handled" concerns the code — hardened across rounds it wasn't present for —
+already handles. The shadow reviews blind, single-pass, at the final state; it
+doesn't carry the "this was round 3's whole point" context a reviewer present
+for every round would have. Worth watching whether this correlation holds as
+N grows toward the pre-registered stopping-rule threshold.
+
+### Where the shadow A/B stands
+Combined N=8 for the (gemini-pro-latest, claude-opus-5) pair (6
+claude-engineering-skills + 2 wine-cellar-app), still short of the
+pre-registered N>=20. ai-organiser remains at zero — no Step 7 run there yet.
+
+## 2026-07-27 — tech-debt backlog: persona-outcomes repo-identity + refresh empty-scope/symlink fixes
+
+**`scripts/lib/store/persona-outcomes.mjs`** (`88bc75e1`/`8993b96f`) —
+`getPersonaOutcomesSummary`/`getActionablePersonaOutcomeItems` selected the
+repo's latest persona session by `repo_name` alone — a caller-supplied,
+free-form display string (`PERSONA_TEST_REPO_NAME`), not derived from git
+remote the way `LEARNING_REPO_NAME` is. Two repos sharing or reusing a name
+had a real path to the ship-gate summary silently reading another repo's
+persona findings. A prior fix (code-audit H4) made the lookup internally
+consistent (whatever session got picked, its own `repo_id` is used
+everywhere) but never addressed the SELECTION itself. Both functions now
+accept an optional `repoId` used as the PRIMARY selection key
+(`WHERE repo_id = $1`), falling back to `repo_name` only when identity
+resolution fails. `cross-skill.mjs`'s `persona-outcomes summary`/
+`--worksheet` now resolve `repoId` via the existing `resolveRepoIdentityQuiet()`
+helper (same mechanism used elsewhere in that file) before calling in.
+Verified end-to-end against this repo's real DB connection.
+
+**`scripts/symbol-index/refresh-subprocess.mjs` + `extract.mjs`**
+(`b021576b`/`e86a9cbb`) — two related bugs in the same code path:
+- `restrictFiles === null` (unrestricted, full walk) and `restrictFiles ===
+  []` (a valid incremental scope of ZERO files — e.g. a diff touching only
+  docs/config) were conflated at THREE call sites (the manifest-writing
+  decision, `enumerateFiles`, and the coverage `isFullRun` measurement),
+  all using a `.length > 0` check instead of `!== null`. Real-world impact:
+  a docs-only incremental refresh was silently falling back to a full
+  repo walk instead of correctly doing nothing.
+- The temp manifest path was PID+timestamp (predictable) and written with
+  a plain `'w'` flag (follows a pre-existing symlink) — a local attacker
+  able to pre-stage a symlink at the path could redirect the write.
+  Extracted `writeFilesManifestIfRestricted()` with a random suffix
+  (matching this repo's own `tmpSuffix()` convention) and `flag: 'wx'`
+  (`O_CREAT|O_EXCL`), which closes the race regardless of predictability.
+
+13 new tests across 3 files. Full suite green (8847/8869, 22 pre-existing
+skips, 0 failing). Verified end-to-end against a real `arch:refresh` run.
+
+**Flagged, not fixed**: `c6b3df92` — `personaFindingHash()` omits route/page
+context (`finding.step`, click-path URL), so valid findings on different
+pages can collide onto the same durable identity. The fix requires changing
+what a DURABLE, cross-session, cross-repo hash is computed FROM — every
+existing labeled outcome in `persona_finding_outcomes` (across all consumer
+repos) would silently orphan unless migrated. Real bug, but a data-migration
+decision, not an inline fix — surfaced for a decision before touching it.
 
 ## 2026-07-27 — tech-debt backlog: 2 more file clusters fixed (pragma anchor + arch/symbols.mjs)
 
