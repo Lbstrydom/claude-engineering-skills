@@ -96,7 +96,12 @@ const PINNED_DOCUMENT_ONLY = {
   'nav-audit': ['gate-exit-1-on-regression'],
   'persona-test': ['consistency-exit-codes-live', 'persona-finding-hash-single-source', 'no-typed-input-values-persisted'],
   'ux-lock': ['verify-is-a-report-not-a-blocker', 'status-rubric'],
-  ship: ['gate-passed-refused-without-evidence', 'category-a-never-staged', 'step-0-5-gates-non-blocking'],
+  // `unremediated-acceptances-never-blocks` added 2026-07-27 with /ship Step 0.5e.
+  // Document-only for the same reason as step-0-5-gates-non-blocking beside it:
+  // the READ half is mechanically honest (getUnremediatedAcceptances returns []
+  // on cloud-off AND on query failure), but "never blocks the ship" is a claim
+  // about agent flow with deliberately no override flag to assert against.
+  ship: ['gate-passed-refused-without-evidence', 'category-a-never-staged', 'step-0-5-gates-non-blocking', 'unremediated-acceptances-never-blocks'],
   cycle: ['preview-gate-halt-blocks-ship', 'fix-gate-convergence-before-next-cluster', 'author-tier-never-routes', 'consolidated-gemini-gate-mandatory'],
   plan: ['gate-1-phase-triggers', 'never-a-lone-phase-1', 'warnings-never-block-plan-generation', 'section-10-graded-by-ux-lock-verify'],
 };
@@ -157,7 +162,8 @@ describe('gate-honesty — real skills/', () => {
     const totalExecutable = Object.values(PINNED_EXECUTABLE).flat().length;
     const totalDocOnly = Object.values(PINNED_DOCUMENT_ONLY).flat().length;
     assert.equal(totalExecutable, 12); // +1 ux-lock strict-selectors (Phase C final)
-    assert.equal(totalDocOnly, 35);   // +2 ux-lock, +3 ship, +4 cycle, +4 plan (Phase C final — ALL 15 contracted)
+    // 35 → 36: +1 ship (unremediated-acceptances-never-blocks, /ship Step 0.5e, 2026-07-27).
+    assert.equal(totalDocOnly, 36);   // +2 ux-lock, +4 ship, +4 cycle, +4 plan (Phase C final — ALL 15 contracted)
 
     const allSkillNames = listSkillNames(skillsRoot);
     const expectedUncontracted = allSkillNames.filter((n) => !PINNED_CONTRACTED_SKILLS.includes(n));
