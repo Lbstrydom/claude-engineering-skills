@@ -121,6 +121,27 @@ describe('PRAGMA_RE', () => {
     assert.ok(m);
     assert.equal(m[1], 'a.py');
   });
+
+  it('matches an indented // comment pragma (leading whitespace, not column 0)', () => {
+    const m = PRAGMA_RE.exec('    // @duplicate-justification: target=a/b.mjs:foo reason=nested declaration');
+    assert.ok(m);
+    assert.equal(m[1], 'a/b.mjs');
+  });
+
+  it('does NOT match pragma-shaped text embedded mid-line inside a string literal (67f8f414/fbd71c9a)', () => {
+    // A code example or test fixture inside a JS string — the comment marker
+    // is real text on the line, but not at line-start, so it must not be
+    // treated as an active suppression.
+    const line = 'const example = "// @duplicate-justification: target=a.mjs:foo reason=example in docs";';
+    const m = PRAGMA_RE.exec(line);
+    assert.equal(m, null);
+  });
+
+  it('does NOT match pragma-shaped prose describing the syntax (no comment marker anywhere at line-start)', () => {
+    const line = 'See the @duplicate-justification: target=a.mjs:foo reason=... syntax above.';
+    const m = PRAGMA_RE.exec(line);
+    assert.equal(m, null);
+  });
 });
 
 describe('resolvePragmasToDefinitions', () => {

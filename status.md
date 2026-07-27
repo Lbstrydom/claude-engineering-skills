@@ -1,5 +1,39 @@
 # Project Status Log
 
+## 2026-07-27 — tech-debt backlog: 2 more file clusters fixed (pragma anchor + arch/symbols.mjs)
+
+Continuing down the "leverage 3, EASY" tier from the backlog pass below.
+
+**`duplicate-justification-pragma.mjs`** (`67f8f414`/`fbd71c9a`) — `PRAGMA_RE`
+had no start-of-line anchor, so pragma-shaped text mid-line (a string
+literal, prose describing the syntax) matched as if it were a real
+suppression. Added a `^\s*` anchor (permits indentation; verified against
+every real pragma in this repo via a live sweep). 4 new tests. While
+verifying, also found and fixed a related bug: a real pragma in
+`scripts/setup-postgres.mjs` was written as a JSDoc continuation line with
+no comment-marker prefix, so it never actually matched at all — moved to a
+standalone `//` line, confirmed now recognized by `findRepoPragmas`.
+
+**`scripts/lib/store/arch/symbols.mjs`** — two entries:
+- `0aa2b07f`: `recordDuplicateJustifications`'s apply statement bound 4
+  params/row with no cap — PostgreSQL's 65,535-param limit is exceeded at
+  16,384+ justifications, so a sufficiently large refresh would throw
+  before doing any work. The function's own docstring had explicitly argued
+  against chunking here (round-2 H1), but that reasoning conflated
+  statement COUNT (fixed) with parameter count PER statement (unbounded) —
+  a real reasoning error in prior review, not just a stale comment.
+  Chunked the apply at `UPSERT_CHUNK_SIZE` (this file's existing constant),
+  same atomicity as before (still one transaction). Added a DB-free
+  invariant test; full behavior stays covered by the existing
+  `AUDIT_DB_TEST_URL`-gated suite (not run here — no test DB configured in
+  this session).
+- `db707fba`: `recordSymbolIndex`/`recordLayeringViolations` reported the
+  attempted row count (`slice.length`) instead of `upsert()`'s own
+  `rowCount`, treating an attempted write as a verified one. Now uses the
+  real `rowCount`, with a stderr warning if it ever diverges.
+
+Full suite green (8834/8856, 22 pre-existing skips, 0 failing).
+
 ## 2026-07-27 — symbol-index/refresh.mjs: heartbeat failures now visible on the run's own result
 
 Follow-up to the tech-debt backlog pass below: `runWithHeartbeat`'s liveness

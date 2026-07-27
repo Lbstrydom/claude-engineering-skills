@@ -395,13 +395,14 @@ export function hashRawBytes(buf) {
 /**
  * Canonical hash of a migration file on disk.
  *
- * @duplicate-justification: target=scripts/sync-to-repos.mjs:sha256 reason=deliberate
- * divergence, not duplication. sync-to-repos hashes RAW bytes to prove a synced
- * file is byte-identical in a consumer repo — EOL normalization there would hide
- * a real transfer corruption. This one hashes CANONICALIZED bytes so a migration's
- * tamper guard is invariant to checkout mode. Unifying them would break one of the
+ * Deliberate divergence from sync-to-repos.mjs's sha256, not duplication:
+ * sync-to-repos hashes RAW bytes to prove a synced file is byte-identical in
+ * a consumer repo — EOL normalization there would hide a real transfer
+ * corruption. This one hashes CANONICALIZED bytes so a migration's tamper
+ * guard is invariant to checkout mode. Unifying them would break one of the
  * two invariants; they must stay separate.
  */
+// @duplicate-justification: target=scripts/sync-to-repos.mjs:sha256 reason=raw-bytes vs canonicalized-bytes hashing serve different invariants (transfer-corruption detection vs checkout-mode-invariant tamper guard) -- see docstring above
 async function sha256(filePath) {
   return hashCanonicalMigrationBytes(await fs.promises.readFile(filePath));
 }

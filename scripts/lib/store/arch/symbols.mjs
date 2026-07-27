@@ -90,11 +90,20 @@ export async function recordSymbolIndex(refreshId, repoId, rows) {
   for (const slice of chunk(payload, UPSERT_CHUNK_SIZE)) {
     try {
       // @on-conflict-ok: repo_id is functionally determined by refresh_id — refresh_id is NOT NULL FK to refresh_runs, whose repo_id is NOT NULL, so adding repo_id cannot change which rows conflict. Measured 2026-07-19: 0 of 223,623 rows have symbol_index.repo_id <> refresh_runs.repo_id. Widening would rebuild a 223k-row unique index for zero semantic gain (WS-C2).
-      await upsert('symbol_index', slice, {
+      const result = await upsert('symbol_index', slice, {
         onConflict: ['refresh_id', 'definition_id'],
         update: 'all',
       });
-      total += slice.length;
+      // db707fba: report the DB's own rowCount, not the attempted slice
+      // size — an attempted write is not a verified one. Under this
+      // conflict target's ON CONFLICT DO UPDATE semantics rowCount should
+      // always equal slice.length (every row either inserts or updates,
+      // never no-ops), so a mismatch is unexpected and worth a visible
+      // warning rather than silently trusting the attempted count.
+      if (result.rowCount !== slice.length) {
+        process.stderr.write(`  [symbol-index] recordSymbolIndex: chunk attempted ${slice.length} rows but DB reports rowCount=${result.rowCount} — investigate\n`);
+      }
+      total += result.rowCount;
     } catch (err) {
       throw new Error(`recordSymbolIndex failed: ${err.message}`);
     }
@@ -200,11 +209,16 @@ export async function recordLayeringViolations(refreshId, repoId, violations) {
   for (const slice of chunk(payload, UPSERT_CHUNK_SIZE)) {
     try {
       // @on-conflict-ok: repo_id is functionally determined by refresh_id — refresh_id is NOT NULL FK to refresh_runs, whose repo_id is NOT NULL, so adding repo_id cannot change which rows conflict. Measured 2026-07-19: 0 rows have symbol_layering_violations.repo_id <> refresh_runs.repo_id. Same FD as symbol_index above (WS-C2).
-      await upsert('symbol_layering_violations', slice, {
+      const result = await upsert('symbol_layering_violations', slice, {
         onConflict: ['refresh_id', 'rule_name', 'from_path', 'to_path'],
         update: 'all',
       });
-      total += slice.length;
+      // db707fba: same fix as recordSymbolIndex above — report the DB's
+      // own rowCount, not the attempted slice size.
+      if (result.rowCount !== slice.length) {
+        process.stderr.write(`  [symbol-index] recordLayeringViolations: chunk attempted ${slice.length} rows but DB reports rowCount=${result.rowCount} — investigate\n`);
+      }
+      total += result.rowCount;
     } catch (err) {
       throw new Error(`recordLayeringViolations failed: ${err.message}`);
     }
@@ -220,12 +234,18 @@ export async function recordLayeringViolations(refreshId, repoId, violations) {
  * or empty `justifications` array still runs the reset, correctly
  * un-flagging any row whose pragma was removed since the last refresh.
  *
- * **Two statements, one transaction** (round-3 H2 fix) — NOT row-count
- * chunking (round-2 H1 fix, correcting an earlier contradictory draft):
- * `recordLayeringViolations`'s chunking exists because it bulk-INSERTS
- * many new rows and a single INSERT's parameter list has a practical
- * size limit; this function only ever issues two fixed statements
- * against rows that already exist, regardless of how many are justified.
+ * **One reset statement, N chunked apply statements, one transaction**
+ * (0aa2b07f correction, 2026-07-27): round-2 H1's earlier "NOT row-count
+ * chunking" reasoning conflated STATEMENT COUNT (always fixed at "one
+ * reset") with PARAMETER COUNT PER STATEMENT (which scales linearly with
+ * `justifications.length` regardless of how many statements there are) —
+ * the apply statement binds 4 params/row with no cap, so a refresh with
+ * 16,384+ justifications exceeded PostgreSQL's 65,535-parameter limit and
+ * threw before doing any work. The apply is now chunked at
+ * `UPSERT_CHUNK_SIZE` (this file's other record* functions' own constant),
+ * same atomicity as before: still one reset + all applies inside the SAME
+ * transaction, so a partial-chunk failure still rolls back the whole
+ * reset-and-reapply as one unit.
  *
  * @param {string} refreshId
  * @param {string} repoId - bound explicitly in both statements' WHERE
@@ -255,32 +275,44 @@ export async function recordDuplicateJustifications(refreshId, repoId, justifica
         [refreshId, repoId],
       );
       if (rows.length === 0) return 0;
-      const values = [];
-      const params = [];
-      rows.forEach((j, i) => {
-        const base = i * 4;
-        values.push(`($${base + 1}::uuid, $${base + 2}, $${base + 3}, $${base + 4})`);
-        params.push(j.definitionId, j.reason ?? null, j.target ?? null, j.source ?? null);
-      });
-      params.push(refreshId, repoId);
-      const applyResult = await client.query(
-        `UPDATE symbol_index AS si
-           SET duplicate_justified = true,
-               duplicate_justification_reason = v.reason,
-               duplicate_justification_target = v.target,
-               duplicate_justification_source = v.source
-           FROM (VALUES ${values.join(', ')}) AS v(definition_id, reason, target, source)
-          WHERE si.definition_id = v.definition_id
-            AND si.refresh_id = $${params.length - 1}
-            AND si.repo_id = $${params.length}`,
-        params,
-      );
-      // round-3 H2 fix: report the ACTUAL rows the UPDATE touched
-      // (applyResult.rowCount), not rows.length — a definitionId that
-      // doesn't exist in this refresh's symbol_index (a stale resolution,
-      // a race with a concurrent refresh) previously reported success for
-      // a write that never happened.
-      return applyResult.rowCount;
+      // 0aa2b07f: a single VALUES-list apply statement binds 4 params per
+      // row with no cap — PostgreSQL's 65,535-parameter limit is exceeded
+      // at 16,384+ justifications. Chunking the APPLY into UPSERT_CHUNK_SIZE
+      // batches (same constant this file's other record* functions already
+      // use) keeps every statement well under the limit while preserving
+      // the round-3 H2 invariant this docstring documents: still exactly
+      // one reset + N apply statements, all inside the SAME transaction, so
+      // "reset, then reapply" stays atomic regardless of chunk count.
+      let totalRowCount = 0;
+      for (const slice of chunk(rows, UPSERT_CHUNK_SIZE)) {
+        const values = [];
+        const params = [];
+        slice.forEach((j, i) => {
+          const base = i * 4;
+          values.push(`($${base + 1}::uuid, $${base + 2}, $${base + 3}, $${base + 4})`);
+          params.push(j.definitionId, j.reason ?? null, j.target ?? null, j.source ?? null);
+        });
+        params.push(refreshId, repoId);
+        const applyResult = await client.query(
+          `UPDATE symbol_index AS si
+             SET duplicate_justified = true,
+                 duplicate_justification_reason = v.reason,
+                 duplicate_justification_target = v.target,
+                 duplicate_justification_source = v.source
+             FROM (VALUES ${values.join(', ')}) AS v(definition_id, reason, target, source)
+            WHERE si.definition_id = v.definition_id
+              AND si.refresh_id = $${params.length - 1}
+              AND si.repo_id = $${params.length}`,
+          params,
+        );
+        // round-3 H2 fix: report the ACTUAL rows the UPDATE touched
+        // (applyResult.rowCount), not rows.length — a definitionId that
+        // doesn't exist in this refresh's symbol_index (a stale resolution,
+        // a race with a concurrent refresh) previously reported success for
+        // a write that never happened.
+        totalRowCount += applyResult.rowCount;
+      }
+      return totalRowCount;
     });
   } catch (err) {
     throw new Error(`recordDuplicateJustifications failed: ${err.message}`, { cause: err });
