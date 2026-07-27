@@ -1,7 +1,7 @@
 # Plan: Symbol-Index / Arch-Memory Pipeline Reliability Hardening
 
 - **Date**: 2026-07-27
-- **Status**: Implemented — all 5 execution clusters (A-E) built and audited via `/cycle --autonomous` on 2026-07-27; consolidated Gemini final gate APPROVE (0 new findings) over the union diff; shadow reviewer's 4 observation-only findings triaged (1 fixed, 2 deferred, 1 dismissed as a verified false positive). Full test suite green (8954 passing); dogfooded end-to-end via `npm run arch:refresh` + `arch:render` against this repo's own code.
+- **Status**: Complete — all 5 execution clusters (A-E) built and audited via `/cycle --autonomous` on 2026-07-27; consolidated Gemini final gate APPROVE (0 new findings) over the union diff; shadow reviewer's 4 observation-only findings triaged (1 fixed, 2 deferred, 1 dismissed as a verified false positive). Full test suite green (8954 passing); dogfooded end-to-end via `npm run arch:refresh` + `arch:render` against this repo's own code.
 - **Author**: Claude + user
 - **Scope**: backend
 - **Target domain(s)**: `arch-memory`, `stores`
