@@ -1,9 +1,18 @@
 # Plan: Install-Transaction WAL + VCS Parsing Debt (2026-07-26 triage)
 
 - **Date**: 2026-07-26
-- **Status**: Draft
+- **Status**: Complete
 - **Author**: Claude (tech-debt backlog triage session)
 - **Scope**: backend
+
+> **Closure note (2026-07-27)**: all 22 entries resolved via two derivative
+> implementation plans — the `transaction.mjs` 9-entry portion via
+> [`transaction-wal-cleanup-failure-distinction.md`](./transaction-wal-cleanup-failure-distinction.md),
+> and the `vcs.mjs`/`find-rmsync-sites.mjs` 13-entry portion via
+> [`vcs-parsing-and-rmsync-scope-hardening.md`](./vcs-parsing-and-rmsync-scope-hardening.md)
+> (audit trail: [`vcs-parsing-and-rmsync-scope-hardening-audit-summary.md`](./vcs-parsing-and-rmsync-scope-hardening-audit-summary.md)).
+> This triage document is kept in place as the historical record of the
+> original 22-entry cluster; the tables below are as originally triaged.
 
 > Origin: full `.audit/tech-debt.json` backlog triage (384 entries). This
 > cluster (22 entries) covers `scripts/lib/install/transaction.mjs` (the

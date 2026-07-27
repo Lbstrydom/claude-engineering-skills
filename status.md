@@ -86,6 +86,58 @@ Next up: `scripts/symbol-index/refresh.mjs`'s `runWithHeartbeat` — 2 HIGH
 entries, fire-and-forgets its own liveness heartbeat and swallows the
 rejection.
 
+## 2026-07-27 — vcs.mjs / find-rmsync-sites.mjs scope-hardening: full autonomous cycle, shipped
+
+Closed the remaining 13 entries of `docs/plans/refactor-install-wal-vcs-2026-07.md`
+(the `transaction.mjs` 9-entry portion had already shipped separately). Plan:
+`docs/plans/vcs-parsing-and-rmsync-scope-hardening.md`; audit trail:
+`docs/plans/vcs-parsing-and-rmsync-scope-hardening-audit-summary.md`.
+
+### Implementation
+- `scripts/lib/vcs.mjs`: `gitDiffWithWorkingTree` migrated from whitespace-
+  splitting `git diff --name-status` parsing to NUL-delimited (`-z`) parsing
+  via new `parseNameStatusZ`/`parseUntrackedPathsZ` `_internals`-exposed
+  functions with an explicit wire-format framing contract (fails closed on
+  a malformed stream); added an explicit `trackedDiffOmitted` boolean so a
+  falsy `sinceCommit` is a checkable field, not a silent gap. Replaced the
+  mutable exported `RETRYABLE_VCS_ERRORS` `Set` with a real `ReadOnlySet`
+  subclass (throwing mutators, built from one canonical private `Set`).
+- `scripts/lib/find-rmsync-sites.mjs`: rewritten from a hand-rolled AST
+  walker + name-only import matching to `@babel/traverse` +
+  `scope.getBinding()`-based real lexical resolution (this repo's
+  established pattern, per `adjacency-detector.mjs`) — closes the class of
+  bug where a shadowing local variable/parameter with the same name as a
+  genuine `fs` import could be misclassified.
+
+### Code audit — 6 GPT rounds + 2 Gemini rounds (APPROVE)
+Fixed beyond the plan's original text, all found during the audit loop: a
+`retrySync(...)` wrapper name-only-matching bypass in the compliance guard
+itself (same shadowing class as the core fix, in the same file); a
+spread/computed-key/`ObjectMethod` options bypass in `extractOptionsInfo`
+(Gemini gate G1 — a computed key like `{recursive:true, [overrideVar]:
+false}` was silently mis-attributed under the literal identifier name
+instead of failing closed); an async-wrapper-arrow acceptance bug in
+`findEnclosingCall`; a missed `import { default as fs }` / ES2022
+string-literal-import-name form (Gemini gate G2) in `resolveFsImportKind`.
+One GPT finding (a claimed `Set`-algebra Liskov-substitution violation) was
+empirically disproven — directly tested on Node v22.19.0 and confirmed the
+Set methods construct a plain `Set`, never via the subclass constructor —
+and dismissed with the repro evidence rather than fixed. Two pre-existing,
+unrelated-file findings and one genuinely-new-but-unbounded-scope aliasing
+gap (`const rm = fs.rmSync.bind(fs)`) were deferred as debt
+(`.audit/tech-debt.json`); the raw-AST-node cross-module position-join
+contract between the two rewritten files was accepted as `accepted-
+permanent` debt after evaluating and rejecting a redesign (would either
+break the module's other consumer's raw-node contract or reintroduce equal
+complexity with real wrong-scope risk).
+
+Every fix was verified with a standalone empirical repro script (the
+`ReadOnlySet` construction gotcha, the NUL-parser wire format, the
+`@babel/traverse` scope-shadowing boundary, the `retrySync` shadowing
+bypass, the options-bypass shapes, the ES2022 import form) before being
+folded into permanent regression tests. `npm test`: 8876 passing, 22
+pre-existing skips, 0 failures.
+
 ## 2026-07-27 — `/cycle --autonomous` on the audit-pipeline-reliability plan: implemented, code-audited, shipped
 
 Ran `/cycle --autonomous docs/plans/refactor-audit-pipeline-reliability-2026-07.md`
