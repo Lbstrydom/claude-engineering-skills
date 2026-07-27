@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   _internals, shouldWarnMissingRunId, recoverRunIdFromMarker, RUN_ID_MARKER_MAX_AGE_MS,
+  canAttemptRunIdRecovery,
 } from '../scripts/gemini-review.mjs';
 
 const {
@@ -438,5 +439,32 @@ describe('recoverRunIdFromMarker — the id the audit already wrote to disk', ()
       recoverRunIdFromMarker({ marker: { ...REAL_MARKER, ts: 'not-a-date' }, nowMs: NOW }).reason,
       'malformed'
     );
+  });
+});
+
+// Found live 2026-07-27, the day the recovery above shipped: a wine-cellar-app
+// /audit-plan session's Gemini review (--mode plan) omitted --run-id — which
+// is CORRECT for plan mode, since audit-plan never has a commit-scoped
+// audit_runs row to attach to — but recoverRunIdFromMarker still fired,
+// because auditMode was never checked. It found the still-fresh (< 6h old)
+// marker from an EARLIER, unrelated code audit and misattached the plan
+// review's shadow findings to that run_id. Worse than a wrong label:
+// recordFinalReviewFindings's own DELETE (scoped only by run_id) then wiped
+// that code audit's 4 already-adjudicated findings as a side effect. This
+// predicate is the fix — it must be auditMode-only, deliberately blind to
+// whether a marker actually exists, so the two failure classes stay separate.
+describe('canAttemptRunIdRecovery — plan mode has no marker to recover, ever', () => {
+  it('permits recovery for code mode — the only mode that writes the marker', () => {
+    assert.equal(canAttemptRunIdRecovery({ auditMode: 'code' }), true);
+  });
+
+  it('refuses for plan mode — this is the exact incident shape', () => {
+    assert.equal(canAttemptRunIdRecovery({ auditMode: 'plan' }), false);
+  });
+
+  it('refuses for any mode string that is not literally "code" (fail closed, not an allowlist bypass)', () => {
+    for (const auditMode of ['rebuttal', '', undefined, null, 'Code', 'CODE']) {
+      assert.equal(canAttemptRunIdRecovery({ auditMode }), false, `expected false for auditMode ${JSON.stringify(auditMode)}`);
+    }
   });
 });
