@@ -1,6 +1,58 @@
 # Project Status Log
 
-## 2026-07-27 (latest) — evidence-integrity tech-debt cluster shipped (Git header parser + anchor-location binding)
+## 2026-07-28 (latest) — static-analysis tech-debt cluster shipped (binding-resolution primitive + three-valued nullability lattice)
+
+Third and final of the three plan+audit passes from the 2026-07-27 tech-debt
+backlog sweep to be implemented (`docs/plans/refactor-static-analysis.md`,
+`/cycle code --autonomous`). All three plans (symbol-index, evidence-integrity,
+static-analysis) are now shipped.
+
+**What shipped**: two independent guards shared the same root cause — a
+three-valued question answered with a two-valued type, silently laundering
+"I couldn't tell" into "this is fine." `scripts/lib/import-binding.mjs`
+(new) gives `find-rmsync-sites.mjs` and a rewritten `tests/atomic-write-adoption-guard.test.mjs`
+one shared, real lexical-scope binding-resolution primitive instead of the
+old identifier-spelling comparison — closing 4 proven false-passes (a helper
+call shadowed by a parameter or local const, a no-op local `retrySync`
+wrapper, an async callback silently NOT retry-protected, a computed
+`fs['renameSync']` call). `scripts/lib/lint/on-conflict.mjs`'s `isNullableExpr`
+(boolean) is replaced by a `classifyNullability`/`classifyColumnValue`
+two-layer `'nullable'|'non-null'|'unknown'|'opaque'` lattice; an `'unknown'`
+conflict-key value now emits a non-gating `unresolved-conflict-key-nullability`
+diagnostic (routed through a widened `@on-conflict-ok(column): reason`
+suppression pragma) instead of being silently treated as safe.
+`tests/on-conflict-scope-columns.test.mjs` (new) asserts every `SCOPE_COLUMNS`
+entry still exists in the committed schema fixture.
+
+**Audit**: Cluster A (binding-resolution primitive + guard rewrite) — 6 GPT
+rounds (the max), and unusually every one of the first 5 caught a genuine
+bug: a nested-unexecuted-closure false-positive in the delegation analyzer,
+an incomplete `export const = () => {}` grammar gap, a multi-alias
+import-collapse bug, a validator gap for a partial abs-path spec, and (via
+two GPT **compromise** rulings) a real drift-prone duplication — two
+independent files each independently re-deriving `scope.getBinding()`/an
+ancestor-chain shape for the same correctness check — closed by extracting
+two more shared primitives (`resolveNamedImportBinding`, `classifyCallbackWrapper`),
+growing the module from the plan's originally-audited "exactly three" exports
+to five, each tied to a concretely-discovered current requirement. Cluster B
+(nullability lattice) — 2 GPT rounds, both surfacing only pre-existing,
+independent debt (a bandit-fp.mjs comment-only diff pulled in unrelated
+pre-existing persistence/error-handling findings) or concerns the plan's own
+audit had already explicitly measured and rejected as over-engineering.
+Consolidated Gemini gate: `APPROVE`, 1 new finding — the plan's own text said
+a malformed `@on-conflict-ok(): reason` pragma must be "reported," but the
+shipped regex only made it correctly non-matching, not actually reported;
+fixed post-approval with a `malformed-suppression` diagnostic. The parallel
+shadow reviewer (never gating) raised 4 more points, all re-examined against
+the plan's own explicit design decisions and design-intentional — no action
+needed beyond confirming none was a live gap.
+
+**Gate**: `waived` — the post-approval shadow-driven fix means the committed
+tree differs from the audited one.
+
+Full trail: `docs/plans/refactor-static-analysis.md` Implementation Log.
+
+## 2026-07-27 — evidence-integrity tech-debt cluster shipped (Git header parser + anchor-location binding)
 
 Second of the three plan+audit passes from today's tech-debt backlog sweep to
 be implemented (`docs/plans/refactor-evidence-integrity.md`,
