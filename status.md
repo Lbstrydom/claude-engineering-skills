@@ -1,6 +1,53 @@
 # Project Status Log
 
-## 2026-07-27 (latest) — symbol-index tech-debt cluster shipped (progress-channel disclosure + drift cap)
+## 2026-07-27 (latest) — evidence-integrity tech-debt cluster shipped (Git header parser + anchor-location binding)
+
+Second of the three plan+audit passes from today's tech-debt backlog sweep to
+be implemented (`docs/plans/refactor-evidence-integrity.md`,
+`/cycle code --autonomous`). One remaining (static-analysis) is in progress.
+
+**What shipped**: `evidence-triage.mjs`'s `diff --git` header parser was a
+lazy regex that mis-split an unquoted header containing the literal
+substring `" b/"` at the first occurrence — a CONFIDENTLY WRONG path pair
+(e.g. `a/x b/y.js b/x b/y.js` → `oldPath:'x'`, `newPath:'y.js b/x b/y.js'`),
+not the safe `null` the module's own accepted-debt note promised. Replaced
+with a byte-correct C-style path decoder (`unquoteGitPath` — octal escapes
+accumulate BYTES then decode once, never per-character) plus a four-rule
+grammar (`resolveHeaderPaths`): quoted tokens are self-delimiting; a
+rename/copy pair reads from its own dedicated lines; the remaining shape is
+only ever the symmetric `old===new` case, verified by reconstruction;
+anything else fails closed and loud (`pathDecodeFailed` →
+`undecodable_diff_header`, wired into the tiered pipeline's legacy-fallback
+branch), never guessed. Separately: anchor-location binding used to keep the
+FIRST diff hunk that verified a quote even when a later hunk was the one a
+model's declared range actually pointed at — `findQuoteLineRangesInHunk`
+(every match, all hunks) + a new shared `selectAnchoredMatch` selector fix
+this, and an ambiguous HEAD-fallback match now reports `unverifiable`
+instead of `unsupported` (the quote WAS found, so it's no longer
+misattributed as the model's own fabrication).
+
+**Audit**: Cluster A (Git header parsing) — 2 GPT rounds, converged; caught a
+genuine HIGH in an unrelated function I'd touched for another reason
+(`parseHunkTargets` silently excluded added lines rendering as `+++` on the
+wire) plus several real in-scope fixes (byte-budget enforcement, unmarked
+symlink-test disablement, a missing termination check). Cluster B (anchor
+binding + contract-epoch bump) — audited as one R2+ round over the union
+diff (evidence-triage.mjs is shared between clusters); caught one more
+genuine HIGH (an asymmetric defensive check, hardened though structurally
+unreachable today) and several real pre-existing-and-independent findings,
+captured as new debt. Consolidated Gemini gate: `APPROVE`, 0 new, 0
+wrongly-dismissed. The parallel shadow reviewer (never gating) caught a real
+gap applied post-approval: `parseHunkTargets`'s new failure path was
+SILENT, unlike every other skip class in `adjacency-detector.mjs`'s own
+coverage-honesty discipline — fixed by reporting it as `PARSE_FAILURE`
+incompleteness instead of a silent drop.
+
+**Gate**: `waived` — the post-approval shadow-driven fix means the committed
+tree differs from the audited one.
+
+Full trail: `docs/plans/refactor-evidence-integrity.md` Implementation Log.
+
+## 2026-07-27 — symbol-index tech-debt cluster shipped (progress-channel disclosure + drift cap)
 
 Third of three plan+audit passes from today's tech-debt backlog sweep to be
 implemented (`docs/plans/refactor-symbol-index.md`, `/cycle code --autonomous`).
