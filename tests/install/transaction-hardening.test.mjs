@@ -477,6 +477,46 @@ describe('journal writes carry the current version (R2-H1)', () => {
   });
 });
 
+describe('writeJournal cleans up its temp file when the final rename fails (0b7661a0/22bb5573/aea521d8/ee735643)', () => {
+  it('an exhausted-retry rename failure does not leak the .tmp.* journal file', () => {
+    // Subprocess pattern (matches every other renameSync-failure test in this
+    // file) so the monkeypatch never leaks into other tests sharing the
+    // process-global fs module.
+    const repo = mkTmp('journal-rename-fails');
+    const jp = journalIn(repo);
+    const txnUrl = pathToFileURL(path.join(process.cwd(), 'scripts/lib/install/transaction.mjs')).href;
+    const r = spawnSync(process.execPath, ['--input-type=module', '-e', `
+      import fs from 'node:fs';
+      import path from 'node:path';
+      const jp = ${JSON.stringify(jp)};
+      const real = fs.renameSync;
+      fs.renameSync = (from, to) => {
+        if (String(to) === jp) {
+          // Non-retryable code (retrySync only retries EPERM/EBUSY) — fails
+          // on the first attempt, matching an exhausted-retry outcome.
+          throw Object.assign(new Error('EACCES: forced journal-rename failure'), { code: 'EACCES' });
+        }
+        return real(from, to);
+      };
+      const { _internals } = await import(${JSON.stringify(txnUrl)});
+      let threw = false;
+      try {
+        _internals.writeJournal(jp, { stage: 'staged', staged: [], deletes: [] });
+      } catch { threw = true; }
+      const dir = fs.readdirSync(path.dirname(jp));
+      const leaked = dir.filter((f) => f.startsWith(path.basename(jp) + '.tmp.'));
+      console.log(JSON.stringify({ threw, leaked }));
+    `], { cwd: process.cwd(), encoding: 'utf8', timeout: 60_000 });
+
+    let out;
+    try { out = JSON.parse((r.stdout || '').trim().split('\n').pop()); }
+    catch { assert.fail(`probe failed: ${r.stdout}\n${r.stderr}`); }
+
+    assert.equal(out.threw, true, 'writeJournal must still propagate the rename failure');
+    assert.deepEqual(out.leaked, [], `no .tmp.* journal file may remain on disk: ${JSON.stringify(out.leaked)}`);
+  });
+});
+
 describe('the lock covers the SHARED global surface, not just the repo (code-audit H6)', () => {
   // A transaction legitimately spans repoRoot AND ~/.claude/skills. The
   // repo-local journal lock serialises same-repo installs only — two DIFFERENT
