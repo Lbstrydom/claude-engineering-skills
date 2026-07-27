@@ -1548,10 +1548,24 @@ export async function markFindingsRemediation(repoId, updates) {
           [state, finding.id]
         );
         if (rows.length === 0) return 0; // 0-row → do not write a phantom event
-        await deleteWhere('finding_adjudication_events', { finding_id: finding.id });
-        await insertReturning('finding_adjudication_events', {
-          finding_id: finding.id, remediation_state: state, round: resolvedRound,
-        });
+        // UPDATE, never delete+insert: `finding_adjudication_events.adjudication_outcome`
+        // is NOT NULL with no default, and this projector never re-adjudicates a
+        // finding (Gemini-gate-2 — that would desync the DB from a human
+        // severity_adjusted ruling), so it must touch remediation_state (+round,
+        // when known) only, leaving adjudication_outcome/ruling/ruling_rationale
+        // untouched on the existing row.
+        const eventRows = resolvedRound != null
+          ? await many(
+              `UPDATE finding_adjudication_events SET remediation_state = $1, round = $2 WHERE finding_id = $3 RETURNING id`,
+              [state, resolvedRound, finding.id]
+            )
+          : await many(
+              `UPDATE finding_adjudication_events SET remediation_state = $1 WHERE finding_id = $2 RETURNING id`,
+              [state, finding.id]
+            );
+        if (eventRows.length === 0) {
+          process.stderr.write(`  [lifecycle] markFindingsRemediation(${fp}): audit_findings projected but no adjudication_events row exists to update\n`);
+        }
         return rows.length;
       });
       if (affected > 0) updated += 1;
