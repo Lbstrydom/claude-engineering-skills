@@ -18,11 +18,23 @@
 import { z } from 'zod';
 import { many, one, upsert, withTx } from '../db/query.mjs';
 import { isCloudEnabled } from './repo.mjs';
-import { personaFindingHash, isP0OrP1 } from '../persona/audit-correlator.mjs';
+import {
+  personaFindingHash, isP0OrP1, isMalformedFinding, buildStepUrlLookup,
+  PERSONA_FINDING_HASH_VERSION, PERSONA_FINDING_HASH_SHAPE,
+} from '../persona/audit-correlator.mjs';
 import { retireMissedCorrelationsForHash } from './plans-ship.mjs';
 
 const OUTCOMES = ['fixed', 'dismissed', 'wont_fix', 'stale'];
 const DISMISSIVE = new Set(['dismissed', 'wont_fix']);
+
+// Gemini gate finding G1: a malformed finding (missing element/observed)
+// collapses onto the SAME synthetic personaFindingHash as every other
+// malformed finding in the repo — decideCorrelations already quarantines
+// these before hashing; every read/write path here that filters P0/P1
+// findings before hashing must ALSO exclude malformed ones, or a human
+// dismissing one malformed finding silently wildcard-dismisses all others
+// sharing that empty-fields hash.
+const isIdentifiableP0OrP1 = (f) => isP0OrP1(f) && !isMalformedFinding(f);
 
 /**
  * Resolve a `label` command's `--session <id> --hash <h>` pair into a
@@ -42,12 +54,13 @@ export async function resolveLabelTarget({ sessionId, personaFindingHash: hash }
   if (!await isCloudEnabled()) return { ok: false, error: 'cloud not configured' };
   try {
     const session = await one(
-      `SELECT id, repo_id, findings FROM persona_test_sessions WHERE id = $1`,
+      `SELECT id, repo_id, findings, click_path FROM persona_test_sessions WHERE id = $1`,
       [sessionId],
     );
     if (!session) return { ok: false, error: `no session found for id ${sessionId}` };
     if (!session.repo_id) return { ok: false, error: `session ${sessionId} has no resolved repo_id — cannot scope a durable outcome label` };
-    const known = (session.findings || []).filter(isP0OrP1).some((f) => personaFindingHash(f) === hash);
+    const stepUrlByNumber = buildStepUrlLookup(session.click_path);
+    const known = (session.findings || []).filter(isIdentifiableP0OrP1).some((f) => personaFindingHash(f, stepUrlByNumber) === hash);
     if (!known) return { ok: false, error: `hash ${hash} does not match any P0/P1 finding in session ${sessionId}` };
     return { ok: true, repoId: session.repo_id };
   } catch (err) {
@@ -56,9 +69,23 @@ export async function resolveLabelTarget({ sessionId, personaFindingHash: hash }
   }
 }
 
+// docs/plans/persona-finding-hash-versioning.md, code-audit R1 findings
+// M1/M7, tightened at R2 (H1/H5/H6 — the R1 fix accepted EITHER shape but
+// still unconditionally stamped `hash_version: PERSONA_FINDING_HASH_VERSION`
+// (2), so a v1-shaped (8-hex) hash could be persisted confidently
+// mislabeled as v2): `upsertPersonaFindingOutcome` is the write path for
+// NEW durable labels going forward — there is no legitimate caller that
+// should ever target a v1-shaped hash here (the backfill writes v2 rows
+// via its own direct SQL, never through this function). Only the CURRENT
+// v2 shape (64-hex) is accepted; v1 (8-hex) values are historical-only and
+// belong exclusively to the backfill's read path (`personaFindingHashV1`).
+// `PERSONA_FINDING_HASH_SHAPE` itself now lives in audit-correlator.mjs —
+// shared with `plans-ship.mjs`'s `recordPersonaAuditCorrelation` (Gemini
+// gate R2 shadow finding 6277c9df).
+
 const LabelArgsSchema = z.object({
   repoId: z.string().min(1),
-  personaFindingHash: z.string().min(1),
+  personaFindingHash: z.string().regex(PERSONA_FINDING_HASH_SHAPE, 'must be a 64-hex (v2) persona finding hash — v1 (8-hex) hashes are historical-only and never a valid write target'),
   outcome: z.enum(OUTCOMES),
   lastSeenSessionId: z.string().nullable().optional(),
   labeledBy: z.string().min(1),
@@ -107,7 +134,7 @@ export async function upsertPersonaFindingOutcome(rawArgs) {
       // INSERT, keeping both `created_at`/`updated_at` on the same
       // (server) clock. buildUpsert requires every `update` column to be
       // present in the inserted row, so it cannot be listed here either.
-      await upsert(
+      const { rowCount } = await upsert(
         'persona_finding_outcomes',
         [{
           repo_id: args.repoId,
@@ -116,12 +143,30 @@ export async function upsertPersonaFindingOutcome(rawArgs) {
           last_seen_session_id: args.lastSeenSessionId ?? null,
           labeled_by: args.labeledBy,
           rationale: args.rationale ?? null,
+          // docs/plans/persona-finding-hash-versioning.md, R2 finding M3 —
+          // NOT MATCHER_VERSION, a separate concern.
+          hash_version: PERSONA_FINDING_HASH_VERSION,
+          // code-audit R4 finding H2 (compromise): a direct human label is
+          // ALWAYS authoritative over a backfill's provenance — clearing
+          // `migrated_at` here (on both insert AND re-label) means the
+          // backfill's conditional-reconciliation `WHERE migrated_at IS
+          // NOT NULL` can never touch a row a human has directly written
+          // or re-labeled, protecting genuine intent from ever being
+          // silently overwritten by a later backfill run.
+          migrated_at: null,
         }],
         {
           onConflict: ['repo_id', 'persona_finding_hash'],
-          update: ['outcome', 'last_seen_session_id', 'labeled_by', 'rationale'],
+          update: ['outcome', 'last_seen_session_id', 'labeled_by', 'rationale', 'hash_version', 'migrated_at'],
         },
       );
+      // code-audit R1 finding H2: the write's success was never actually
+      // verified — a silently-swallowed conflict or RLS denial would still
+      // return {ok:true}. One row affected is the only expected outcome
+      // for a single-row upsert.
+      if (rowCount !== 1) {
+        throw new Error(`upsertPersonaFindingOutcome: expected exactly 1 affected row, got ${rowCount}`);
+      }
       if (DISMISSIVE.has(args.outcome)) {
         await retireMissedCorrelationsForHash(args.repoId, args.personaFindingHash);
       }
@@ -131,6 +176,35 @@ export async function upsertPersonaFindingOutcome(rawArgs) {
     process.stderr.write(`  [persona-outcomes] upsertPersonaFindingOutcome failed: ${err.message}\n`);
     return { ok: false, error: err.message };
   }
+}
+
+/**
+ * `staleHashCount` = rows still on an older hash scheme than the current
+ * `PERSONA_FINDING_HASH_VERSION` — a plain, honest fact ("N rows are on
+ * the old scheme"), NOT a proxy for "N rows need action." The backfill is
+ * additive-only (a v1 row is never deleted whether recovered or
+ * unrecoverable), so this count can NEVER mechanically reach zero for a
+ * repo with even one genuinely unrecoverable finding — the hint text below
+ * says so explicitly rather than implying an unconditional "run this to
+ * fix it" (docs/plans/persona-finding-hash-versioning.md, Gemini gate R3
+ * finding G1 — a real UX bug: an unconditional hint would nag every
+ * `/ship` forever). Deliberately no new "already attempted" tracking
+ * column — that would itself go stale the day a matching new session
+ * makes a previously-unrecoverable finding recoverable after all.
+ * @returns {Promise<{staleHashCount: number, hint: string|null}>}
+ */
+async function getStaleHashSummary(repoId, repoName) {
+  const row = await one(
+    `SELECT count(*)::int AS n FROM persona_finding_outcomes
+      WHERE repo_id = $1 AND hash_version < $2`,
+    [repoId, PERSONA_FINDING_HASH_VERSION],
+  );
+  const staleHashCount = row?.n ?? 0;
+  if (staleHashCount === 0) return { staleHashCount: 0, hint: null };
+  const hint = `${staleHashCount} outcome label(s) are on an old hash scheme. ` +
+    `Run: node scripts/cross-skill.mjs persona-outcomes backfill-hash --repo ${repoName ?? '<name>'} ` +
+    `(safe to re-run). Some may be permanently unrecoverable — this count is not guaranteed to reach zero.`;
+  return { staleHashCount, hint };
 }
 
 /**
@@ -178,7 +252,7 @@ export async function getPersonaOutcomesSummary({ repoName, repoId: callerRepoId
     // <verdict>`, which the original summary shape didn't carry.
     const session = callerRepoId
       ? await one(
-        `SELECT id, repo_id, persona, verdict, created_at, findings
+        `SELECT id, repo_id, persona, verdict, created_at, findings, click_path
            FROM persona_test_sessions
           WHERE repo_id = $1
           ORDER BY created_at DESC
@@ -186,7 +260,7 @@ export async function getPersonaOutcomesSummary({ repoName, repoId: callerRepoId
         [callerRepoId],
       )
       : await one(
-        `SELECT id, repo_id, persona, verdict, created_at, findings
+        `SELECT id, repo_id, persona, verdict, created_at, findings, click_path
            FROM persona_test_sessions
           WHERE repo_name = $1
           ORDER BY created_at DESC
@@ -195,14 +269,15 @@ export async function getPersonaOutcomesSummary({ repoName, repoId: callerRepoId
       );
     if (!session) return { ok: true, cloud: true, sessionId: null };
 
-    const p0p1 = (session.findings || []).filter(isP0OrP1);
+    const stepUrlByNumber = buildStepUrlLookup(session.click_path);
+    const p0p1 = (session.findings || []).filter(isIdentifiableP0OrP1);
     const rawP0 = p0p1.filter((f) => f.code === 'P0').length;
     const rawP1 = p0p1.filter((f) => f.code === 'P1').length;
 
     const repoId = session.repo_id;
     const outcomeByHash = new Map();
     if (repoId && p0p1.length > 0) {
-      const hashes = p0p1.map((f) => personaFindingHash(f));
+      const hashes = p0p1.map((f) => personaFindingHash(f, stepUrlByNumber));
       const rows = await many(
         `SELECT persona_finding_hash, outcome
            FROM persona_finding_outcomes
@@ -214,7 +289,7 @@ export async function getPersonaOutcomesSummary({ repoName, repoId: callerRepoId
 
     let closed = 0, openRelabeledFixed = 0, openRelabeledStale = 0, unlabeled = 0, openP0 = 0, openP1 = 0;
     for (const f of p0p1) {
-      const hash = personaFindingHash(f);
+      const hash = personaFindingHash(f, stepUrlByNumber);
       const outcome = outcomeByHash.get(hash);
       const isOpen = !DISMISSIVE.has(outcome);
       if (!isOpen) { closed += 1; continue; }
@@ -224,6 +299,10 @@ export async function getPersonaOutcomesSummary({ repoName, repoId: callerRepoId
       if (f.code === 'P0') openP0 += 1; else openP1 += 1;
     }
 
+    const { staleHashCount, hint } = repoId
+      ? await getStaleHashSummary(repoId, repoName)
+      : { staleHashCount: 0, hint: null };
+
     return {
       ok: true, cloud: true,
       sessionId: session.id, sessionCreatedAt: session.created_at,
@@ -231,6 +310,7 @@ export async function getPersonaOutcomesSummary({ repoName, repoId: callerRepoId
       rawP0, rawP1,
       labeled: { closed, open_relabeled_fixed: openRelabeledFixed, open_relabeled_stale: openRelabeledStale, unlabeled },
       openP0, openP1,
+      staleHashCount, hint,
     };
   } catch (err) {
     process.stderr.write(`  [persona-outcomes] getPersonaOutcomesSummary failed: ${err.message}\n`);
@@ -278,7 +358,7 @@ export async function getActionablePersonaOutcomeItems({ repoName, repoId: calle
   try {
     const sessions = callerRepoId
       ? await many(
-        `SELECT id, repo_id, created_at, findings
+        `SELECT id, repo_id, created_at, findings, click_path
            FROM persona_test_sessions
           WHERE repo_id = $1
           ORDER BY created_at DESC
@@ -286,7 +366,7 @@ export async function getActionablePersonaOutcomeItems({ repoName, repoId: calle
         [callerRepoId, WORKSHEET_SESSION_LIMIT],
       )
       : await many(
-        `SELECT id, repo_id, created_at, findings
+        `SELECT id, repo_id, created_at, findings, click_path
            FROM persona_test_sessions
           WHERE repo_name = $1
           ORDER BY created_at DESC
@@ -295,15 +375,25 @@ export async function getActionablePersonaOutcomeItems({ repoName, repoId: calle
       );
     if (sessions.length === 0) return { ok: true, cloud: true, items: [], truncated: false };
 
+    // One stepUrlByNumber PER session — `step` numbers are session-relative
+    // indices, so a single shared map across sessions would misattribute
+    // routes (docs/plans/persona-finding-hash-versioning.md, §4).
+    const stepUrlBySessionId = new Map(
+      sessions.map((s) => [s.id, buildStepUrlLookup(s.click_path)]),
+    );
     const latestSessionId = sessions[0].id;
-    const latestHashes = new Set((sessions[0].findings || []).filter(isP0OrP1).map((f) => personaFindingHash(f)));
+    const latestStepUrlByNumber = stepUrlBySessionId.get(latestSessionId);
+    const latestHashes = new Set(
+      (sessions[0].findings || []).filter(isIdentifiableP0OrP1).map((f) => personaFindingHash(f, latestStepUrlByNumber)),
+    );
 
     // Dedupe by hash across the scanned sessions, keeping the NEWEST
     // occurrence for display (sessions are already newest-first).
     const byHash = new Map();
     for (const s of sessions) {
-      for (const f of (s.findings || []).filter(isP0OrP1)) {
-        const hash = personaFindingHash(f);
+      const stepUrlByNumber = stepUrlBySessionId.get(s.id);
+      for (const f of (s.findings || []).filter(isIdentifiableP0OrP1)) {
+        const hash = personaFindingHash(f, stepUrlByNumber);
         if (!byHash.has(hash)) byHash.set(hash, { finding: f, sessionId: s.id, sessionCreatedAt: s.created_at });
       }
     }
@@ -335,6 +425,9 @@ export async function getActionablePersonaOutcomeItems({ repoName, repoId: calle
         observed: entry.finding.observed,
       });
     }
+    const { staleHashCount, hint } = repoId
+      ? await getStaleHashSummary(repoId, repoName)
+      : { staleHashCount: 0, hint: null };
     // Newest-session-first (already the dedup-keep order); cap the OUTPUT,
     // never the underlying scan — truncation is observable, not silent.
     actionable.sort((a, b) => new Date(b.sessionCreatedAt) - new Date(a.sessionCreatedAt));
@@ -344,6 +437,7 @@ export async function getActionablePersonaOutcomeItems({ repoName, repoId: calle
       items: actionable.slice(0, WORKSHEET_ROW_LIMIT),
       truncated,
       latestSessionId,
+      staleHashCount, hint,
     };
   } catch (err) {
     process.stderr.write(`  [persona-outcomes] getActionablePersonaOutcomeItems failed: ${err.message}\n`);

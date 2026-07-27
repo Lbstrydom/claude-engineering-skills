@@ -1,7 +1,7 @@
 # Plan: Version `personaFindingHash` (route/expected context) + safe backfill
 
 - **Date**: 2026-07-27
-- **Status**: Approved (3 GPT audit rounds + 3 Gemini gate rounds — see Audit Trail; not yet implemented)
+- **Status**: Complete — implemented + audited (3 GPT + 3 Gemini plan-audit rounds; 5 GPT + 2 Gemini code-audit rounds — see Audit Trail and Implementation Log)
 - **Author**: Claude + Lbstrydom
 - **Scope**: backend
 - **Target domain(s)**: `persona-test`, `stores`
@@ -1187,4 +1187,103 @@ graph TD
 
 ## Implementation Log
 
-### (pending)
+### 2026-07-27 — Implemented via `/cycle --autonomous` (degenerate single-cluster path)
+
+**Built, matching the File-Level Plan:**
+- `personaFindingHash(finding, stepUrlByNumber)` rewritten to hash
+  `{element, code, route, expected, observed}` (full 64-hex SHA-256);
+  `personaFindingHashV1` frozen as the legacy 8-hex formula;
+  `PERSONA_FINDING_HASH_VERSION = 2` (independent of `MATCHER_VERSION`).
+  `scripts/lib/persona/audit-correlator.mjs`.
+- `hash_version` (both tables) + `migrated_at` (`persona_finding_outcomes`)
+  columns added, non-destructively (`DEFAULT 1`, never bumped — see
+  Deviations). `supabase/migrations/20260727120000_persona_finding_outcomes_hash_version.sql`.
+- `recordPersonaAuditCorrelation` (the sole writer to
+  `persona_audit_correlations`) stamps `hash_version` unconditionally.
+  `scripts/lib/store/plans-ship.mjs`.
+- `upsertPersonaFindingOutcome` rejects anything but a 64-hex v2 hash,
+  stamps `hash_version`, clears `migrated_at` on every direct label (so a
+  human edit always outranks a backfill), and verifies its own write count.
+  `getPersonaOutcomesSummary`/`getActionablePersonaOutcomeItems` thread
+  `click_path` → `stepUrlByNumber` and report `staleHashCount`/`hint`.
+  `scripts/lib/store/persona-outcomes.mjs`.
+- `backfillPersonaFindingHashV2` — keyset-paged, `REPEATABLE READ`,
+  bounded-memory backfill with three-way accounting (recovered /
+  reconciled / already-current), streamed ambiguity reporting, and a
+  hard version-guard. `scripts/lib/store/persona-outcomes-hash-backfill.mjs`
+  (new) + `backfill-hash` subcommand in `cross-skill.mjs`.
+- Full test coverage per §6, including a disposable-DB integration suite
+  for the backfill (`tests/persona-outcomes-hash-backfill.test.mjs`) and
+  for correlation hash-version stamping
+  (`tests/plans-ship-persona-correlation.test.mjs`).
+
+**Audit trail (code-audit phase — distinct from the pre-implementation
+plan-audit trail above):** 5 GPT `/audit-code` rounds (H:3→6→1→2→1 — the
+mid-loop rises were my own under-fixes caught and corrected, not
+instability) + 2 Gemini gate rounds, both mandatory Step 7. Gemini round 1
+found the malformed-finding hash-collision gap (fixed: `isMalformedFinding`
+exported + threaded into every read/write path, not just
+`decideCorrelations`). Gemini round 2 findings:
+- **G1** (real, trivial): `writeAmbiguousReport`'s temp file was only
+  created lazily inside the pagination loop, so a first page with zero
+  rows would leave nothing to rename. Fixed — the temp file is now created
+  unconditionally before the loop, and the function was split into
+  `stageAmbiguousReportTemp` (runs inside the transaction) +
+  `publishAmbiguousReport` (rename, called only after commit).
+- **Shadow finding 121c7d93** (never gates, but genuine): the ambiguity
+  report was being renamed to its final path *inside* the `REPEATABLE READ`
+  transaction, so a rollback after that point would leave a published
+  report describing DB accounting that never happened. Fixed by the same
+  stage/publish split as G1 — publish only runs after `withTx` resolves.
+- **Shadow finding 6277c9df** (never gates, but genuine): the manual
+  `record-correlation` CLI repair path had no shape check on
+  `personaFindingHash` before stamping `hash_version: 2`, unlike the
+  outcome-label write path. Fixed — `PERSONA_FINDING_HASH_SHAPE` promoted
+  to a shared export in `audit-correlator.mjs`; `recordPersonaAuditCorrelation`
+  now rejects a non-64-hex hash (loud `{ok:false}`, both callers already
+  handle it).
+- **Shadow finding 88a9efee** (never gates) — accepted as a documented,
+  pre-existing tradeoff, not a backfill-introduced regression: a
+  route-less (`click_path: []`) legacy session hashes with `route: ''`,
+  same as v1's own resolution granularity (v1 never used route at all).
+  Two v1-colliding findings that are *also* both route-less were already
+  one row under v1; the ambiguous-detection safety net still correctly
+  catches any case where a real, resolvable route differs across sessions.
+- **`wrongly_dismissed` claim re: H2 — rebutted, not fixed.** Gemini
+  asserted the round-4 conditional-reconciliation fix (`DO UPDATE ... WHERE
+  migrated_at IS NOT NULL AND EXCLUDED.updated_at > ...`) was missing;
+  direct inspection of `persona-outcomes-hash-backfill.mjs` lines ~339–365
+  confirms it is already there, verbatim to what Gemini itself recommended.
+  Likely cause: the module docstring still said "every write is `DO
+  NOTHING`, never `DO UPDATE`" (stale since round 4) — fixed regardless,
+  since it's a real doc/code mismatch that could mislead the next reader
+  even though it wasn't a code bug.
+
+**Gemini loop closed after round 2** (not round 3): every primary finding
+was either fixed or conclusively rebutted with code citations, and G1 was
+trivial/mechanical rather than an open design question — re-running would
+re-litigate settled ground rather than surface new substance, the
+documented stop signal for this gate.
+
+**Deviations from the original plan text:**
+- The conditional `DO UPDATE ... WHERE migrated_at IS NOT NULL AND
+  EXCLUDED.updated_at > ...` reconciliation (recovering from a lagging,
+  un-synced consumer's post-backfill v1 edit) was not in the original
+  plan's SQL sketch — added during GPT round 4 as a three-way compromise
+  between "always DO NOTHING" (masks legitimate later edits) and a full
+  dual-write framework (over-engineered for this scope).
+- A migration draft briefly bumped `hash_version`'s column `DEFAULT` from 1
+  to 2 (GPT round 2), then was reverted (GPT round 3) once the shared,
+  multi-consumer, staggered-sync deployment topology (AGENTS.md) made clear
+  this could silently mislabel a bare INSERT from an un-synced consumer's
+  still-v1 code. `DEFAULT` stays at 1 permanently — see the migration's
+  own comments.
+- `isMalformedFinding` needed exporting and threading into the backfill and
+  outcome-read paths (not just `decideCorrelations`) to avoid a
+  malformed-finding hash collision — a gap the original plan didn't
+  anticipate, surfaced by Gemini round 1.
+
+**Remaining**: none open. All P0/HIGH findings across both audit phases
+are fixed or rebutted with evidence; full test suite green (8933 passing,
+22 skipped — the disposable-DB integration suites, no `AUDIT_DB_TEST_URL`
+in this environment).

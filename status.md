@@ -1,5 +1,50 @@
 # Project Status Log
 
+## 2026-07-27 (later) — shipped `personaFindingHash` v2 versioning + safe backfill
+
+Implemented the audited plan (`docs/plans/persona-finding-hash-versioning.md`,
+tech-debt topicId `c6b3df92`) via `/cycle --autonomous`'s degenerate
+single-cluster path — the plan carried no `## 11. Execution Clustering`
+block, so the whole plan was treated as one unit.
+
+**The bug being fixed**: `personaFindingHash()` hashed only
+`{element, code, observed}`, so two genuinely different persona findings —
+same element, severity, observed text, but on different pages/flows —
+collided onto the same durable identity in `persona_finding_outcomes`
+(a cross-session, cross-repo table where the hash is a PRIMARY KEY
+component). Fixed by adding `route` (resolved via the session's
+`click_path`) and `expected` to the hash payload, and switching to a full
+64-hex SHA-256 (was an 8-hex truncation). The hard part — this hash is a
+durable primary key — required a real migration path, not just a formula
+change: `PERSONA_FINDING_HASH_VERSION = 2` (independent of
+`MATCHER_VERSION`), a `hash_version`/`migrated_at`-tracked non-destructive
+backfill (`backfillPersonaFindingHashV2`), and a `cross-skill.mjs
+persona-outcomes backfill-hash` operator command.
+
+**Audit**: 5 GPT `/audit-code` rounds + 2 Gemini gate rounds (code-audit
+phase, on top of the pre-implementation plan's own 3 GPT + 3 Gemini
+rounds). Real bugs caught and fixed across rounds: a malformed-finding
+hash-collision gap; a migration `DEFAULT` bump that would have silently
+mislabeled a bare INSERT from an un-synced consumer (bumped, then reverted
+once the shared-Postgres/staggered-sync deployment topology made the risk
+clear — `DEFAULT` stays at 1 permanently); a `DO NOTHING`-masks-a-later-v1-edit
+idempotency gap (fixed with a conditional `DO UPDATE ... WHERE migrated_at
+IS NOT NULL AND newer`); a `writeAmbiguousReport` temp-file-doesn't-exist
+edge case; and a report-published-before-transaction-commit ordering bug
+(fixed by splitting stage/publish so the rename only happens after
+`COMMIT`). One Gemini `wrongly_dismissed` claim on the idempotency fix was
+a false positive — direct code inspection showed the fix already matched
+Gemini's own recommendation; likely cause was a stale module docstring
+(fixed regardless). Full detail: the plan's own Implementation Log section.
+
+Files: `scripts/lib/persona/audit-correlator.mjs`,
+`scripts/lib/store/{persona-outcomes,persona-outcomes-hash-backfill,plans-ship}.mjs`,
+`scripts/cross-skill.mjs`, migration
+`20260727120000_persona_finding_outcomes_hash_version.sql`, plus tests.
+Scope: backend only — persona-test and ux-lock skipped per the plan's own
+`Scope: backend` header. Full suite green (8933 passing, 22 skipped —
+disposable-DB integration tests, no `AUDIT_DB_TEST_URL` in this environment).
+
 ## 2026-07-27 (continued) — adjudicated 14 more shadow-only findings; a critical fix along the way
 
 Daily shadow-telemetry check (final-review shadow A/B, `FINAL_REVIEW_SHADOW=claude-opus-5`)

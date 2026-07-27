@@ -117,6 +117,7 @@ import { decideCorrelations, MATCHER_VERSION, personaFindingHash } from './lib/p
 import { buildPersonaSessionId } from './lib/persona-test/session-id.mjs';
 import { recordNavAuditRun, listNavAuditRunHistory } from './lib/store/nav-audit.mjs';
 import { upsertPersonaFindingOutcome, getPersonaOutcomesSummary, getActionablePersonaOutcomeItems, resolveLabelTarget } from './lib/store/persona-outcomes.mjs';
+import { backfillPersonaFindingHashV2 } from './lib/store/persona-outcomes-hash-backfill.mjs';
 import { firstSeenFromHistory } from './lib/nav/drift.mjs';
 import { z } from 'zod';
 
@@ -1455,7 +1456,29 @@ async function cmdPersonaOutcomes() {
     return emit({ ok: true, cloud: true });
   }
 
-  return emitError('BAD_INPUT', 'usage: persona-outcomes <summary|label> [flags] | persona-outcomes --worksheet --repo <name>');
+  if (sub === 'backfill-hash') {
+    const repoName = argOption('repo');
+    if (!repoName) return emitError('BAD_INPUT', '--repo <name> is required for backfill-hash');
+    const repoId = argOption('repo-id') || (await resolveRepoIdentityQuiet());
+    if (!repoId) return emitError('BAD_INPUT', 'could not resolve a repoId — pass --repo-id explicitly');
+    const dryRun = process.argv.includes('--dry-run');
+    const reportPath = argOption('report-path');
+    const res = await backfillPersonaFindingHashV2({ repoId, dryRun, reportPath });
+    if (res.alreadyCurrent) {
+      process.stderr.write(`  [persona-outcomes backfill-hash] repo ${repoName}: already current, nothing to migrate\n`);
+    } else {
+      process.stderr.write(
+        `  [persona-outcomes backfill-hash] repo ${repoName}${dryRun ? ' (dry-run)' : ''}: ` +
+        `scanned=${res.scanned} recoveredThisRun=${res.recoveredThisRun} ` +
+        `reconciledThisRun=${res.reconciledThisRun} ` +
+        `targetAlreadyExists=${res.targetAlreadyExists} unrecoverable=${res.unrecoverable} ` +
+        `ambiguous=${res.ambiguousCount}${res.ambiguousReportPath ? ` (report: ${res.ambiguousReportPath})` : ''}\n`,
+      );
+    }
+    return emit({ ok: true, ...res });
+  }
+
+  return emitError('BAD_INPUT', 'usage: persona-outcomes <summary|label|backfill-hash> [flags] | persona-outcomes --worksheet --repo <name>');
 }
 
 // ── Persona session readers (post-RLS-hardening — service-role only) ──────

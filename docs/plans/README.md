@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**9 active · 151 terminal · 25 audit summaries · 4 reference docs**
+**8 active · 152 terminal · 25 audit summaries · 4 reference docs**
 
 ---
 
@@ -21,7 +21,6 @@ This is the list to read when asking "what is in flight?".
 
 | Plan | Status | Notes |
 |---|---|---|
-| [Version `personaFindingHash` (route/expected context) + safe backfill](./persona-finding-hash-versioning.md) | `Approved` | 3 GPT audit rounds + 3 Gemini gate rounds — see Audit Trail; not yet implemented |
 | [Arch-Memory / Symbol-Index Pipeline Debt (2026-07-26 triage)](./refactor-arch-memory-symbol-index-2026-07.md) | `Draft` |  |
 | [Architecture-Debt Backlog Remainder (2026-07-26 triage)](./refactor-architecture-debt-remainder-2026-07.md) | `Draft` |  |
 | [CLAUDE.md Autofix + Skill-Copy Governance Debt (2026-07-26 triage)](./refactor-claudemd-skills-governance-2026-07.md) | `Draft` |  |
@@ -49,7 +48,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 148 completed plans</summary>
+<summary>Show all 149 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -148,6 +147,7 @@ source comments that no docs linter sees — stays valid.
 | [OpenAI prompt prefix-caching for the audit pipeline](./openai-prefix-cache.md) | `Complete` | implemented + verified 2026-05-11 (PR-1..5 shipped; Gemini final review APPROVE |
 | [OSS/OpenRouter Call Reliability Hardening](./oss-call-reliability-hardening.md) | `Complete` | implemented (all 12 File-Level Plan items), GPT code-audit ran the full 6-round cap (H:2→2→0→2→2→0 — 4 genu… |
 | [Persona Click-Path Capture → nav-audit Reachability Seeding](./persona-clickpath-nav-seeding.md) | `Complete` | 2026-06-27 — built via `/cycle` autonomous, both clusters; consolidated Gemini gate APPROVE round 2). See I… |
+| [Version `personaFindingHash` (route/expected context) + safe backfill](./persona-finding-hash-versioning.md) | `Complete` | implemented + audited (3 GPT + 3 Gemini plan-audit rounds; 5 GPT + 2 Gemini code-audit rounds — see Audit T… |
 | [Persona/Nav feedback-loop recovery — deterministic correlator, nav-audit v2 persistence, telemetry surfacing, outcome labels](./persona-nav-feedback-recovery.md) | `Complete` | all 4 workstreams (WS1-WS4) implemented across 4 |
 | [Persona-Test Consistency Mode + UX-Lock Capture Library](./persona-test-consistency-mode.md) | `Complete` | shipped 2026-05-20; status line was stale at "Audited" from the pre-implementation phase. Plan ran 7 phases… |
 | [Phase A — Language-Aware Code Analysis](./phase-a-language-aware-analysis.md) | `Complete` | shipped — `scripts/lib/repo-stack.mjs::detectRepoStack` is the production artefact; consumed by `/plan`, `/… |
