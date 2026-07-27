@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**9 active · 149 terminal · 24 audit summaries · 4 reference docs**
+**8 active · 153 terminal · 25 audit summaries · 4 reference docs**
 
 ---
 
@@ -24,9 +24,8 @@ This is the list to read when asking "what is in flight?".
 | [Arch-Memory / Symbol-Index Pipeline Debt (2026-07-26 triage)](./refactor-arch-memory-symbol-index-2026-07.md) | `Draft` |  |
 | [Architecture-Debt Backlog Remainder (2026-07-26 triage)](./refactor-architecture-debt-remainder-2026-07.md) | `Draft` |  |
 | [CLAUDE.md Autofix + Skill-Copy Governance Debt (2026-07-26 triage)](./refactor-claudemd-skills-governance-2026-07.md) | `Draft` |  |
-| [Install-Transaction WAL + VCS Parsing Debt (2026-07-26 triage)](./refactor-install-wal-vcs-2026-07.md) | `Draft` |  |
 | [Learning / Persona / Quickfix Reliability Debt (2026-07-26 triage)](./refactor-learning-persona-quickfix-2026-07.md) | `Draft` |  |
-| [Miscellaneous Small-Cluster Debt (2026-07-26 triage)](./refactor-misc-small-items-2026-07.md) | `Draft` |  |
+| [Miscellaneous Small-Cluster Debt (2026-07-26 triage)](./refactor-misc-small-items-2026-07.md) | `Draft` | items resolved individually as picked up (see per-item status below), not implemented as one batch |
 | [Model-Eval / Pricing Debt (2026-07-26 triage)](./refactor-model-eval-pricing-2026-07.md) | `Draft` |  |
 | [Visual-Audit Contract Validation Debt (2026-07-26 triage)](./refactor-visual-audit-contract-2026-07.md) | `Draft` |  |
 | [Tiered Recall-Weighted Audit Pipeline](./tiered-recall-audit-pipeline.md) | `In Progress` | implementation complete (Clusters A-F implemented |
@@ -49,7 +48,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 146 completed plans</summary>
+<summary>Show all 150 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -148,6 +147,7 @@ source comments that no docs linter sees — stays valid.
 | [OpenAI prompt prefix-caching for the audit pipeline](./openai-prefix-cache.md) | `Complete` | implemented + verified 2026-05-11 (PR-1..5 shipped; Gemini final review APPROVE |
 | [OSS/OpenRouter Call Reliability Hardening](./oss-call-reliability-hardening.md) | `Complete` | implemented (all 12 File-Level Plan items), GPT code-audit ran the full 6-round cap (H:2→2→0→2→2→0 — 4 genu… |
 | [Persona Click-Path Capture → nav-audit Reachability Seeding](./persona-clickpath-nav-seeding.md) | `Complete` | 2026-06-27 — built via `/cycle` autonomous, both clusters; consolidated Gemini gate APPROVE round 2). See I… |
+| [Version `personaFindingHash` (route/expected context) + safe backfill](./persona-finding-hash-versioning.md) | `Complete` | implemented + audited (3 GPT + 3 Gemini plan-audit rounds; 5 GPT + 2 Gemini code-audit rounds — see Audit T… |
 | [Persona/Nav feedback-loop recovery — deterministic correlator, nav-audit v2 persistence, telemetry surfacing, outcome labels](./persona-nav-feedback-recovery.md) | `Complete` | all 4 workstreams (WS1-WS4) implemented across 4 |
 | [Persona-Test Consistency Mode + UX-Lock Capture Library](./persona-test-consistency-mode.md) | `Complete` | shipped 2026-05-20; status line was stale at "Audited" from the pre-implementation phase. Plan ran 7 phases… |
 | [Phase A — Language-Aware Code Analysis](./phase-a-language-aware-analysis.md) | `Complete` | shipped — `scripts/lib/repo-stack.mjs::detectRepoStack` is the production artefact; consumed by `/plan`, `/… |
@@ -167,6 +167,7 @@ source comments that no docs linter sees — stays valid.
 | [Adaptive Audit Intelligence — Efficiency, Learning, and Continuous Improvement](./r2-efficiency.md) | `Complete` | shipped — R2+ mode is the canonical audit re-run path: `R2_ROUND_MODIFIER` + `buildRulingsBlock` in `script… |
 | [Fix `redactSecrets` Positional-Collision Bug](./redact-secrets-positional-collision-fix.md) | `Complete` |  |
 | [Audit-Pipeline Reliability Debt (2026-07-26 triage)](./refactor-audit-pipeline-reliability-2026-07.md) | `Complete` | code-audited (3 GPT rounds + Gemini gate, APPROVE), shipped |
+| [Install-Transaction WAL + VCS Parsing Debt (2026-07-26 triage)](./refactor-install-wal-vcs-2026-07.md) | `Complete` |  |
 | [Repo-Wide Reference-Integrity Gate](./reference-integrity-gate.md) | `Complete` | all three clusters implemented, converged, final-gated |
 | [Remediation-State Fix-Lifecycle Writer (un-starve `unlocked_fixes` + the /ship missing-spec gate)](./remediation-state-fix-lifecycle.md) | `Complete` |  |
 | [Requirements Layer — a materialized view of the codebase's de-facto requirements](./requirements-layer.md) | `Complete` |  |
@@ -185,6 +186,7 @@ source comments that no docs linter sees — stays valid.
 | [Stage 0 Evidence-Relevance Split (Tiered-Recall Audit Pipeline)](./stage0-evidence-relevance-split.md) | `Complete` | implemented 2026-07-16; all 3 clusters landed via `/cycle --autonomous`. Plan-audit: 3 GPT rounds + 2 Gemin… |
 | [Sustainability cleanup batch — god-module split + monolithic renderer decomp + refresh.mjs hardening](./sustainability-cleanup-batch.md) | `Complete` | WS1 (efca5ea), WS2 (13a0af9), WS3 (this commit |
 | [symbol-index bugs — patches for arch:refresh --force + arch:duplicates thin-delegate](./symbol-index-bugs.md) | `Complete` | applied 2026-05-11 |
+| [Symbol-Index / Arch-Memory Pipeline Reliability Hardening](./symbol-index-pipeline-reliability-hardening.md) | `Complete` | all 5 execution clusters (A-E) built and audited via `/cycle --autonomous` on 2026-07-27; consolidated Gemi… |
 | [Sync ownership from content, not a tracked artifact](./sync-ownership-from-content.md) | `Complete` | all sections (§0 rollback detection, §A content-derived |
 | [Tech Debt Wave 2 — Responsibility Splits & Safety Fixes](./tech-debt-wave-2.md) | `Complete` | shipped — `scripts/shared.mjs` god-module split into focused `scripts/lib/*.mjs` files: `code-analysis.mjs`… |
 | [Tech Debt Wave 3 — Lint Modernization + Cognitive-Complexity Sweep](./tech-debt-wave-3.md) | `Complete` | all 5 PRs shipped 2026-04-27 |
@@ -194,6 +196,7 @@ source comments that no docs linter sees — stays valid.
 | [Tiered-shadow cloud persistence + report CLI cross-repo aggregation](./tiered-shadow-cloud-persistence.md) | `Complete` |  |
 | [Distinguish "nothing to clean up" from "cleanup failed" in the install WAL](./transaction-wal-cleanup-failure-distinction.md) | `Complete` |  |
 | [/ux-lock selector policy — locate semantically, lint the drift](./ux-lock-selector-policy.md) | `Complete` | implemented + code-audited 2026-07-04; consolidated |
+| [Harden vcs.mjs's git-output parsing and find-rmsync-sites.mjs's scope resolution](./vcs-parsing-and-rmsync-scope-hardening.md) | `Complete` |  |
 | [`visual-audit` — the visual/paint inspection skill (4th UX lens)](./visual-audit-skill.md) | `Complete` | built autonomously via /cycle across 3 clusters; see Implementation Log |
 | [visual-audit "theme-safety" v1 — catch "color that didn't adapt"](./visual-audit-theme-safety-v1.md) | `Complete` | implemented + shipped 2026-07-01 (via /cycle code --autonomous |
 | [visual-audit Theme-safety v2 — two-theme contrast parity-delta + full-DOM sweep](./visual-audit-theme-safety-v2.md) | `Complete` |  |
@@ -208,7 +211,7 @@ Companion `*-audit-summary.md` records. Exempt from the status vocabulary
 (they carry a free-text convergence sentence by convention).
 
 <details>
-<summary>Show all 24 audit summaries</summary>
+<summary>Show all 25 audit summaries</summary>
 
 | Plan | Notes |
 |---|---|
@@ -235,6 +238,7 @@ Companion `*-audit-summary.md` records. Exempt from the status vocabulary
 | [Postgres-Parity M3 + M4 — `/audit-code` Summary](./postgres-parity-m3m4-audit-summary.md) |  |
 | [Audit Summary — Requirements Layer](./requirements-layer-audit-summary.md) |  |
 | [Audit Summary — symbol-index-bugs](./symbol-index-bugs-audit-summary.md) |  |
+| [Audit Summary — vcs-parsing-and-rmsync-scope-hardening](./vcs-parsing-and-rmsync-scope-hardening-audit-summary.md) |  |
 | [Audit Summary: visual-contract-semantic-validation](./visual-contract-semantic-validation-audit-summary.md) |  |
 
 </details>

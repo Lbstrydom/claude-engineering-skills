@@ -21,20 +21,13 @@ import {
   copyForwardUntouchedFiles,
 } from '../scripts/lib/store/arch/symbols.mjs';
 import { computeDriftScore, getTopDuplicateClusters } from '../scripts/lib/store/arch/neighbourhood.mjs';
+import { insertRefreshRun } from './helpers/db-fixtures.mjs';
 
 const TEST_URL = process.env.AUDIT_DB_TEST_URL;
 const skip = TEST_URL ? false : 'AUDIT_DB_TEST_URL not set';
 
 let savedUrl, repoId;
 const REPO_UUID = `test-duplicate-justification-${crypto.randomUUID()}`;
-
-async function insertRefreshRun(pool, repoId) {
-  const { rows } = await pool.query(
-    `INSERT INTO refresh_runs (repo_id, mode, status) VALUES ($1, 'full', 'published') RETURNING id`,
-    [repoId],
-  );
-  return rows[0].id;
-}
 
 async function makeSymbol(refreshId, repoId, { filePath, symbolName, kind, signatureHash }) {
   const defMap = await recordSymbolDefinitions(repoId, [{ canonicalPath: filePath, symbolName, kind }]);
@@ -110,6 +103,21 @@ describe('duplicate-justification exclusion — end-to-end (disposable DB)', { s
     if (cleanupErrors.length > 0) {
       throw new AggregateError(cleanupErrors, `${cleanupErrors.length} teardown step(s) failed — disposable DB may have residual rows`);
     }
+  });
+
+  it('drift_score RPC returns a genuine JS number for `score` (symbol-index-pipeline-reliability-hardening Theme 2)', async () => {
+    // computeDriftScore's result comes back through jsonb_build_object -> pg's
+    // JSONB auto-parse, NOT a plain NUMERIC column read (which pg stringifies)
+    // — drift.mjs's UNKNOWN guard (`Number.isFinite(drift.score) ? classify(...)
+    // : DRIFT_STATUS.UNKNOWN`) depends on this being a real number, not a
+    // numeric string that would fail Number.isFinite and always read UNKNOWN.
+    const pool = await getPool();
+    const refreshId = await insertRefreshRun(pool, repoId);
+    await makeSymbol(refreshId, repoId, { filePath: 'score-check.mjs', symbolName: 'zed', kind: 'function', signatureHash: `sig-score-${crypto.randomUUID()}` });
+
+    const drift = await computeDriftScore({ repoId, refreshId, simDup: 0.85, simName: 0.9 });
+    assert.equal(typeof drift.score, 'number', `drift.score must be a genuine number, got ${typeof drift.score}`);
+    assert.ok(Number.isFinite(drift.score), 'drift.score must be finite for a normal snapshot');
   });
 
   it('a justified pair drops out of top_duplicate_clusters + drift_score, an unannotated pair does not', async () => {

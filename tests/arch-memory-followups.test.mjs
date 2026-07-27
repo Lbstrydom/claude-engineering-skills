@@ -21,8 +21,9 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 
 test('getRefreshRun: known columns accepted; unknown columns throw', async () => {
   const mod = await import('../scripts/lib/store/arch-memory.mjs');
-  // Cloud disabled in test env → known-good path returns null silently.
-  const ok = await mod.getRefreshRun('some-id', { select: ['walk_start_commit', 'mode'] });
+  // Cloud disabled in test env → known-good path returns null silently
+  // (repoId supplied — a missing one now throws, see the dedicated test below).
+  const ok = await mod.getRefreshRun('some-id', { repoId: 'some-repo', select: ['walk_start_commit', 'mode'] });
   assert.equal(ok, null);
 
   // Unknown column must throw with the column name in the message.
@@ -34,6 +35,13 @@ test('getRefreshRun: known columns accepted; unknown columns throw', async () =>
     () => mod.getRefreshRun('some-id', { select: ['nonexistent_field'] }),
     /unknown column.*nonexistent_field/i,
   );
+});
+
+test('getRefreshRun: a missing refreshId/repoId throws — a call-site error, not "not found"', async () => {
+  const mod = await import('../scripts/lib/store/arch-memory.mjs');
+  await assert.rejects(() => mod.getRefreshRun('some-id'), /refreshId and repoId are both required/);
+  await assert.rejects(() => mod.getRefreshRun('some-id', {}), /refreshId and repoId are both required/);
+  await assert.rejects(() => mod.getRefreshRun(null, { repoId: 'some-repo' }), /refreshId and repoId are both required/);
 });
 
 test('getRefreshRun: non-string select entries rejected', async () => {

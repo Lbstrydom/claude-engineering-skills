@@ -21,6 +21,7 @@ import { isCloudEnabled } from './repo.mjs';
 // is the single definition; both this store and the plan-domain parser import
 // it. See status-vocabulary.mjs for why the shared contract lives there.
 import { DB_PLAN_STATUSES, toDbPlanStatus } from '../status-vocabulary.mjs';
+import { PERSONA_FINDING_HASH_VERSION, PERSONA_FINDING_HASH_SHAPE } from '../persona/audit-correlator.mjs';
 
 // ── plans ──────────────────────────────────────────────────────────────────
 
@@ -486,6 +487,23 @@ export async function recordPersonaAuditCorrelation(personaSessionId, correlatio
   if (!correlation?.personaFindingHash || !correlation?.correlationType || !correlation?.personaSeverity) {
     return { ok: true };
   }
+  // Gemini gate R2 shadow finding 6277c9df: this function stamps
+  // `hash_version: PERSONA_FINDING_HASH_VERSION` unconditionally below, but
+  // until now applied no shape check on `personaFindingHash` itself — unlike
+  // `upsertPersonaFindingOutcome`'s write-schema regex, the manual
+  // `record-correlation` CLI repair path could supply an arbitrary or
+  // v1-shaped (8-hex) value and have it persisted confidently mislabeled v2.
+  // Loud rejection (not a silent `{ok:true}` no-op like the field-presence
+  // guard above) — both callers already handle `ok:false` (the CLI surfaces
+  // it via WRITE_FAILED; the automatic decideCorrelations loop logs and
+  // continues), so failing loud here costs nothing and catches a real bug
+  // class instead of persisting it.
+  if (!PERSONA_FINDING_HASH_SHAPE.test(correlation.personaFindingHash)) {
+    return {
+      ok: false,
+      error: `personaFindingHash must be a 64-hex (v2) hash — got ${JSON.stringify(correlation.personaFindingHash)}`,
+    };
+  }
   try {
     await withTx(async () => {
       // Retire any auto-emitted `audit_missed` (NULL audit_finding_id) row
@@ -507,6 +525,15 @@ export async function recordPersonaAuditCorrelation(personaSessionId, correlatio
         match_score: correlation.matchScore ?? null,
         match_rationale: correlation.matchRationale || null,
         matcher_version: correlation.matcherVersion ?? null,
+        // Stamped unconditionally, not threaded through `correlation` — this
+        // function is the SOLE writer to persona_audit_correlations (both
+        // the automatic decideCorrelations path and the manual
+        // `record-correlation` CLI repair path), and there is no scenario
+        // where a row written today should carry anything other than the
+        // CURRENT hash-identity version (unlike matcher_version, which is a
+        // genuinely call-site-varying value).
+        // docs/plans/persona-finding-hash-versioning.md, Gemini gate R3 G2.
+        hash_version: PERSONA_FINDING_HASH_VERSION,
       };
       if (correlation.auditFindingId) {
         // Retiring the stale NULL row first — see the function doc above.

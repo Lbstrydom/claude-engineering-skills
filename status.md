@@ -1,5 +1,250 @@
 # Project Status Log
 
+## 2026-07-27 — symbol-index-pipeline-reliability-hardening: full 5-cluster /cycle --autonomous shipped
+
+`docs/plans/symbol-index-pipeline-reliability-hardening.md` — 4 GPT audit-plan
+rounds + 3 Gemini final-gate rounds at plan stage, then all 5 execution
+clusters (A-E) implemented and audited autonomously, closing with a
+consolidated Gemini final gate (APPROVE, 0 new findings) over the full
+union diff.
+
+**Cluster A** — heartbeat cancellation + repo-scoped refresh-run mutations.
+`abortRefreshRun`/`getRefreshRun`/`heartbeatRefreshRun` all now require
+`repoId`, throw on missing call-site args instead of silently returning
+null/false, and scope mutations by `(id, repo_id, status='running')` so a
+stale abort/publish race resolves deterministically at the DB layer.
+`runWithHeartbeat` rewritten with a self-scheduling `setTimeout` (no
+overlapping ticks) + `MAX_CONSECUTIVE_HEARTBEAT_FAILURES` self-abort. 6 GPT
+rounds + 3 Gemini rounds, converged clean.
+
+**Cluster B** — `drift.mjs`/`graph-verdict.mjs` explicit-unknown-state.
+New `DRIFT_STATUS` enum (mirrors `GRAPH_STATUS`'s "unknown ≠ verified"
+doctrine); `graph-verdict.mjs`'s three degradation checks restructured so a
+non-finite measurement is tracked in a `missing` array → new
+`UNKNOWN`/`MALFORMED_MEASUREMENT` verdict instead of silently falling
+through to `VERIFIED`. New `countSymbolsForSnapshot` lets `drift.mjs` detect
+when its pragma-reconciliation candidate pool is capped. Also fixed in-pass:
+`atomicWrite` wrapped for `--out` write failures, a `parseArgs` flag-value-
+swallow bug (`--out --json` used to silently discard `--json`), and a test-
+duplication dedup (new `tests/helpers/db-fixtures.mjs`).
+
+**Cluster C** — `extract.mjs` hardening. The 213-line `extractSymbols`
+decomposed into `admitFile → loadAndParseFile → classifySymbolsInFile →
+redactAndEmit`; the extension-allowlist gate now runs on the CANONICAL
+(symlink-resolved) path, not the raw one, closing a bypass in both
+directions. `ts.ScriptTarget.ESNext`/`ts.ModuleKind.ESNext`/
+`ts.ModuleResolutionKind.Bundler` replace hardcoded `99`/`99`/`100`.
+`enumerateFiles`'s `restrictFiles` tri-state fixed — a genuinely empty
+array no longer silently promotes to a full repo walk. Same flag-value-
+swallow bug fixed in `extract.mjs`'s own CLI parser.
+
+**Cluster D** — refresh-subprocess/file-scope/args CLI hardening.
+`resolveIncrementalFileScope` now runs the summary-retry queue through the
+same sensitive-path filter the git-diff files already get.
+`refresh-args.mjs`'s `parseArgs` rewritten for `=`-form support, a POSIX
+`--` terminator, and `--since-commit` rejecting every value-less shape.
+(The `restrictFiles` tri-state + manifest-symlink fix this cluster also
+targeted turned out to be a duplicate of a86a5ca below, independently
+fixed by another session on `main` while this one was in flight — see
+the merge-reconciliation note.)
+
+**Cluster E** — store-layer rowCount honesty (fix-gate: final).
+`recordSymbolEmbedding(s)`/`copyForwardUntouchedFiles` (symbols.mjs) and
+`recordSymbolFileImports`/`copyForwardImports` (imports.mjs) all switched
+from summing attempted input length to summing the DB write's own
+`rowCount`, matching the pattern already proven in
+`recordDuplicateJustifications`. New DB-integration tests verify reported
+counts against a real post-write `SELECT count(*)`.
+
+**Consolidated gate**: primary (Gemini) verdict `APPROVE`, 0 new findings.
+The observation-only shadow reviewer (Claude Opus) surfaced 4 additional
+findings — 1 confirmed real and fixed (`abortRefreshRun` was missing the
+`isCloudEnabled()` guard its two D1 siblings have), 2 already-deferred
+duplicates, 1 verified false positive (a claimed race in the manifest
+wx-retry that synchronous `fs.writeFileSync` semantics rule out). Full test
+suite green (8954/8976, 22 pre-existing skips). Dogfooded end-to-end via
+`npm run arch:refresh -- --since-commit <branch-base>` (169 symbols,
+2195 import edges) + `npm run arch:render` (3690 symbols) against this
+repo's own code.
+
+Many findings across all 5 clusters were legitimately out-of-scope
+(repo-ownership scoping for symbol reads/writes, error-cause-swallowing
+across store-layer writers, `--files-from`'s newline-delimiter limitation)
+— all properly deferred to `.audit/tech-debt.json` with impact-tested
+rationale, not silently dropped.
+
+**Merge-reconciliation note**: while this branch was in flight, another
+session independently fixed the identical `restrictFiles===null` vs
+`===[]` conflation + manifest-symlink issue in `extract.mjs`/
+`refresh-subprocess.mjs` (see `a86a5ca` below, topicIds `b021576b`/
+`e86a9cbb`) — the same bug this branch's Cluster D also targeted.
+Reconciled at merge time in favor of `main`'s already-shipped, already-
+tested implementation (`writeFilesManifestIfRestricted`, `isFullRunFromFiles`):
+it runs the real extract/summarise/embed pipeline through an empty scope
+(producing a genuine zero-symbol coverage measurement) rather than this
+branch's alternative of short-circuiting before any subprocess spawn —
+a more coherent design once both were compared side by side. This
+branch's OWN duplicate implementation (`writeFilesManifest`, the
+`{skipped:true}` early return, and its dedicated test file) was dropped
+during the merge; every other Cluster A-E fix in this entry is
+unaffected (verified no other overlapping hunks).
+
+## 2026-07-27 (later) — shipped `personaFindingHash` v2 versioning + safe backfill
+
+Implemented the audited plan (`docs/plans/persona-finding-hash-versioning.md`,
+tech-debt topicId `c6b3df92`) via `/cycle --autonomous`'s degenerate
+single-cluster path — the plan carried no `## 11. Execution Clustering`
+block, so the whole plan was treated as one unit.
+
+**The bug being fixed**: `personaFindingHash()` hashed only
+`{element, code, observed}`, so two genuinely different persona findings —
+same element, severity, observed text, but on different pages/flows —
+collided onto the same durable identity in `persona_finding_outcomes`
+(a cross-session, cross-repo table where the hash is a PRIMARY KEY
+component). Fixed by adding `route` (resolved via the session's
+`click_path`) and `expected` to the hash payload, and switching to a full
+64-hex SHA-256 (was an 8-hex truncation). The hard part — this hash is a
+durable primary key — required a real migration path, not just a formula
+change: `PERSONA_FINDING_HASH_VERSION = 2` (independent of
+`MATCHER_VERSION`), a `hash_version`/`migrated_at`-tracked non-destructive
+backfill (`backfillPersonaFindingHashV2`), and a `cross-skill.mjs
+persona-outcomes backfill-hash` operator command.
+
+**Audit**: 5 GPT `/audit-code` rounds + 2 Gemini gate rounds (code-audit
+phase, on top of the pre-implementation plan's own 3 GPT + 3 Gemini
+rounds). Real bugs caught and fixed across rounds: a malformed-finding
+hash-collision gap; a migration `DEFAULT` bump that would have silently
+mislabeled a bare INSERT from an un-synced consumer (bumped, then reverted
+once the shared-Postgres/staggered-sync deployment topology made the risk
+clear — `DEFAULT` stays at 1 permanently); a `DO NOTHING`-masks-a-later-v1-edit
+idempotency gap (fixed with a conditional `DO UPDATE ... WHERE migrated_at
+IS NOT NULL AND newer`); a `writeAmbiguousReport` temp-file-doesn't-exist
+edge case; and a report-published-before-transaction-commit ordering bug
+(fixed by splitting stage/publish so the rename only happens after
+`COMMIT`). One Gemini `wrongly_dismissed` claim on the idempotency fix was
+a false positive — direct code inspection showed the fix already matched
+Gemini's own recommendation; likely cause was a stale module docstring
+(fixed regardless). Full detail: the plan's own Implementation Log section.
+
+Files: `scripts/lib/persona/audit-correlator.mjs`,
+`scripts/lib/store/{persona-outcomes,persona-outcomes-hash-backfill,plans-ship}.mjs`,
+`scripts/cross-skill.mjs`, migration
+`20260727120000_persona_finding_outcomes_hash_version.sql`, plus tests.
+Scope: backend only — persona-test and ux-lock skipped per the plan's own
+`Scope: backend` header. Full suite green (8933 passing, 22 skipped —
+disposable-DB integration tests, no `AUDIT_DB_TEST_URL` in this environment).
+
+## 2026-07-27 (continued) — adjudicated 14 more shadow-only findings; a critical fix along the way
+
+Daily shadow-telemetry check (final-review shadow A/B, `FINAL_REVIEW_SHADOW=claude-opus-5`)
+turned up a real bug and real new findings.
+
+### The bug (and its fix)
+The prior day's `--run-id` marker-recovery fix (`cd6d228`) had a blind spot:
+`.audit/last-audit-run.json` is written ONLY by the code-audit path — `/audit-plan`
+never refreshes it. A wine-cellar-app `/audit-plan` session correctly omitted
+`--run-id` at its Gemini review step (plan mode never has a commit-scoped
+`audit_runs` row to attach to), but the recovery fallback fired anyway, found a
+still-fresh (<6h) marker from an unrelated CODE audit, and misattached the plan
+review's shadow findings to that run's id. Worse: `recordFinalReviewFindings`'s
+own DELETE (scoped only by `run_id`) then wiped the 4 already-adjudicated
+findings from that earlier code audit as a side effect — real data loss, not
+just a mislabel.
+
+Fixed (`49468e5`): `canAttemptRunIdRecovery({auditMode})` gates the whole
+recovery attempt on `auditMode === 'code'` — the only mode that ever writes the
+marker. Repaired the wine-cellar-app data directly: deleted the 3 misattributed
+findings, restored the original 4 (reconstructed from this session's own
+transcript — the only surviving copy) with identical content, re-adjudicated
+accepted. Audited every other new shadow run_id created since the recovery fix
+shipped, in both repos — all confirmed legitimate (each has its own distinct,
+real `commit_sha`/`rounds`); this was the only incident.
+
+### 14 new shadow-only findings, adjudicated (8 accepted / 6 dismissed)
+Verified each against the actual current code/plan text rather than taking the
+shadow's claims at face value:
+- **Accepted** (real, verified): a cross-version journal-quarantine hazard in
+  `scripts/lib/install/transaction.mjs` (an older reader schema-rejects a
+  `'rollback-failed'` journal and quarantines it, defeating the deliberate
+  no-mutation handling); `reconcileJournals()`'s `process.exit(1)` inside its
+  `for` loop genuinely skips checking the second (global) journal on a
+  first-journal failure; a silently-logged-nowhere RPC failure in
+  `stage0-relevance-context.mjs`'s 8-way worker pool that collapses to
+  indistinguishable-from-"no import graph"; the `refactor-audit-pipeline-reliability-2026-07.md`
+  Disposition Matrix's own "22+18+5=45, checked total" excludes 12 real
+  code-audit-discovered debt items that exist only in prose; no test pins
+  `learningWritesAllowed===false` gating at the 3 specific call sites the
+  plan's "test passed unmodified" claim relies on; an untested EACCES/ELOOP
+  coupling in sensitive-path filtering; a documentation-consistency gap in the
+  architecture-debt-remainder plan's item 1 (verified the underlying risk is
+  moot — both edges are already in `domain-map.json`'s `allowedDeps`).
+- **Dismissed** (verified false against the shipped code): a lock-leak concern
+  refuted by an already-present `try/finally`; an `fs.rmSync`-detection
+  edge case refuted by an already-present `!binding || !binding.path` guard;
+  a `sinceCommit` injection concern refuted by an already-present internal
+  `isSafeGitRevision` call; a "vacuous test" claim refuted by an
+  already-present, purpose-built 200-site-floor assertion; two findings
+  evaluating plan content (a grep criterion, a `check-architecture-intent-drift.mjs`
+  script) that does not exist anywhere in the plan's current text.
+
+**Pattern worth tracking**: every dismissal on the two most-iterated runs (3
+and 6 GPT rounds respectively) was the shadow raising "what if X isn't
+handled" concerns the code — hardened across rounds it wasn't present for —
+already handles. The shadow reviews blind, single-pass, at the final state; it
+doesn't carry the "this was round 3's whole point" context a reviewer present
+for every round would have. Worth watching whether this correlation holds as
+N grows toward the pre-registered stopping-rule threshold.
+
+### Where the shadow A/B stands
+Combined N=8 for the (gemini-pro-latest, claude-opus-5) pair (6
+claude-engineering-skills + 2 wine-cellar-app), still short of the
+pre-registered N>=20. ai-organiser remains at zero — no Step 7 run there yet.
+
+## 2026-07-27 — tech-debt backlog: persona-outcomes repo-identity + refresh empty-scope/symlink fixes
+
+**`scripts/lib/store/persona-outcomes.mjs`** (`88bc75e1`/`8993b96f`) —
+`getPersonaOutcomesSummary`/`getActionablePersonaOutcomeItems` selected the
+repo's latest persona session by `repo_name` alone — a caller-supplied,
+free-form display string (`PERSONA_TEST_REPO_NAME`), not derived from git
+remote the way `LEARNING_REPO_NAME` is. Two repos sharing or reusing a name
+had a real path to the ship-gate summary silently reading another repo's
+persona findings. A prior fix (code-audit H4) made the lookup internally
+consistent (whatever session got picked, its own `repo_id` is used
+everywhere) but never addressed the SELECTION itself. Both functions now
+accept an optional `repoId` used as the PRIMARY selection key
+(`WHERE repo_id = $1`), falling back to `repo_name` only when identity
+resolution fails. `cross-skill.mjs`'s `persona-outcomes summary`/
+`--worksheet` now resolve `repoId` via the existing `resolveRepoIdentityQuiet()`
+helper (same mechanism used elsewhere in that file) before calling in.
+Verified end-to-end against this repo's real DB connection.
+
+**`scripts/symbol-index/refresh-subprocess.mjs` + `extract.mjs`**
+(`b021576b`/`e86a9cbb`) — two related bugs in the same code path:
+- `restrictFiles === null` (unrestricted, full walk) and `restrictFiles ===
+  []` (a valid incremental scope of ZERO files — e.g. a diff touching only
+  docs/config) were conflated at THREE call sites (the manifest-writing
+  decision, `enumerateFiles`, and the coverage `isFullRun` measurement),
+  all using a `.length > 0` check instead of `!== null`. Real-world impact:
+  a docs-only incremental refresh was silently falling back to a full
+  repo walk instead of correctly doing nothing.
+- The temp manifest path was PID+timestamp (predictable) and written with
+  a plain `'w'` flag (follows a pre-existing symlink) — a local attacker
+  able to pre-stage a symlink at the path could redirect the write.
+  Extracted `writeFilesManifestIfRestricted()` with a random suffix
+  (matching this repo's own `tmpSuffix()` convention) and `flag: 'wx'`
+  (`O_CREAT|O_EXCL`), which closes the race regardless of predictability.
+
+13 new tests across 3 files. Full suite green (8847/8869, 22 pre-existing
+skips, 0 failing). Verified end-to-end against a real `arch:refresh` run.
+
+**Flagged, not fixed**: `c6b3df92` — `personaFindingHash()` omits route/page
+context (`finding.step`, click-path URL), so valid findings on different
+pages can collide onto the same durable identity. The fix requires changing
+what a DURABLE, cross-session, cross-repo hash is computed FROM — every
+existing labeled outcome in `persona_finding_outcomes` (across all consumer
+repos) would silently orphan unless migrated. Real bug, but a data-migration
+decision, not an inline fix — surfaced for a decision before touching it.
+
 ## 2026-07-27 — Fixed markFindingsRemediation's NOT-NULL crash on every lifecycle write
 
 Follow-up to the debt item flagged at the bottom of the previous `/cycle`
@@ -49,6 +294,144 @@ real but, per `scripts/lib/outcome-sync.mjs`'s separate, correctly-implemented
 path, not this one.
 
 ---
+
+## 2026-07-27 — tech-debt backlog: 2 more file clusters fixed (pragma anchor + arch/symbols.mjs)
+
+Continuing down the "leverage 3, EASY" tier from the backlog pass below.
+
+**`duplicate-justification-pragma.mjs`** (`67f8f414`/`fbd71c9a`) — `PRAGMA_RE`
+had no start-of-line anchor, so pragma-shaped text mid-line (a string
+literal, prose describing the syntax) matched as if it were a real
+suppression. Added a `^\s*` anchor (permits indentation; verified against
+every real pragma in this repo via a live sweep). 4 new tests. While
+verifying, also found and fixed a related bug: a real pragma in
+`scripts/setup-postgres.mjs` was written as a JSDoc continuation line with
+no comment-marker prefix, so it never actually matched at all — moved to a
+standalone `//` line, confirmed now recognized by `findRepoPragmas`.
+
+**`scripts/lib/store/arch/symbols.mjs`** — two entries:
+- `0aa2b07f`: `recordDuplicateJustifications`'s apply statement bound 4
+  params/row with no cap — PostgreSQL's 65,535-param limit is exceeded at
+  16,384+ justifications, so a sufficiently large refresh would throw
+  before doing any work. The function's own docstring had explicitly argued
+  against chunking here (round-2 H1), but that reasoning conflated
+  statement COUNT (fixed) with parameter count PER statement (unbounded) —
+  a real reasoning error in prior review, not just a stale comment.
+  Chunked the apply at `UPSERT_CHUNK_SIZE` (this file's existing constant),
+  same atomicity as before (still one transaction). Added a DB-free
+  invariant test; full behavior stays covered by the existing
+  `AUDIT_DB_TEST_URL`-gated suite (not run here — no test DB configured in
+  this session).
+- `db707fba`: `recordSymbolIndex`/`recordLayeringViolations` reported the
+  attempted row count (`slice.length`) instead of `upsert()`'s own
+  `rowCount`, treating an attempted write as a verified one. Now uses the
+  real `rowCount`, with a stderr warning if it ever diverges.
+
+Full suite green (8834/8856, 22 pre-existing skips, 0 failing).
+
+## 2026-07-27 — symbol-index/refresh.mjs: heartbeat failures now visible on the run's own result
+
+Follow-up to the tech-debt backlog pass below: `runWithHeartbeat`'s liveness
+heartbeat (`heartbeatRefreshRun`) used to log its first failure to stderr
+and then swallow every subsequent one for the rest of the run, with nothing
+about the failure reaching the refresh's own final output. Refactored to
+track `{failureCount, lastError}` in a status object passed to the run's
+callback, which now folds `heartbeatFailures` into the success-path JSON
+result — `0` in the common case, a real count when the liveness signal
+went dark. `runWithHeartbeat` also gained an injectable `beatFn` param
+(defaults to the real `heartbeatRefreshRun`) so this is unit-testable
+without module-mocking (this repo's existing ESM-mocking limitation for
+plain named exports). 5 new tests in `tests/refresh-heartbeat.test.mjs`;
+verified end-to-end against a real `arch:refresh` run. Resolved
+`41bf7af6`/`812d9d83`.
+
+Noted but out of scope: `--force`'s stale-refresh detection
+(`findStaleRunningRefresh`) doesn't actually consult heartbeat age at all
+today — it just aborts whatever's currently marked `running` — and
+`refresh-lock.mjs`'s comment describing an aborted worker's heartbeat loop
+"exiting cleanly when it observes status!='running'" doesn't match the
+code (no such status-check exists anywhere in the heartbeat loop). Not a
+correctness risk in practice: `publish_refresh_run`'s server-side RPC
+independently rejects a publish from a non-`running` refresh_run, so a
+stale/aborted worker can never clobber a newer one even without a
+client-side self-abort. Real gap, but a different and larger feature than
+the 2 entries just fixed — not touched here.
+
+## 2026-07-27 — tech-debt backlog: resolved 16 stale entries, fixed a real gap the resolving found
+
+Picked up "what's next on the tech-debt backlog" and verified the top
+candidates against current code rather than trusting the ledger:
+
+- **visual-contract.mjs** (7 entries): genuinely all fixed by the concurrent
+  visual-audit session — resolved.
+- **transaction.mjs** (9 entries): only 5 were actually fixed by commit
+  `5137ff3` (the `transaction-wal-cleanup-failure-distinction` plan) —
+  resolved those. The other 4 (`0b7661a0`/`22bb5573`/`aea521d8`/`ee735643`,
+  all the same bug) were still genuinely open: that plan's own File-Level
+  Plan §4 specced wrapping `writeJournal()`'s final `retrySync(renameSync(tmp,
+  journalPath))` in a cleanup try/catch, but the shipped diff never touched
+  `writeJournal()` at all — confirmed directly via `git show`. Its
+  Implementation Log's "Deviations: none... matches exactly" claim was
+  false. Implemented the originally-specified fix, added a regression test,
+  resolved all 4 entries, and corrected that plan's log with the actual
+  discrepancy rather than leaving the false claim in place.
+
+Full suite green throughout (8821/8843, 22 pre-existing skips, 0 failing).
+Next up: `scripts/symbol-index/refresh.mjs`'s `runWithHeartbeat` — 2 HIGH
+entries, fire-and-forgets its own liveness heartbeat and swallows the
+rejection.
+
+## 2026-07-27 — vcs.mjs / find-rmsync-sites.mjs scope-hardening: full autonomous cycle, shipped
+
+Closed the remaining 13 entries of `docs/plans/refactor-install-wal-vcs-2026-07.md`
+(the `transaction.mjs` 9-entry portion had already shipped separately). Plan:
+`docs/plans/vcs-parsing-and-rmsync-scope-hardening.md`; audit trail:
+`docs/plans/vcs-parsing-and-rmsync-scope-hardening-audit-summary.md`.
+
+### Implementation
+- `scripts/lib/vcs.mjs`: `gitDiffWithWorkingTree` migrated from whitespace-
+  splitting `git diff --name-status` parsing to NUL-delimited (`-z`) parsing
+  via new `parseNameStatusZ`/`parseUntrackedPathsZ` `_internals`-exposed
+  functions with an explicit wire-format framing contract (fails closed on
+  a malformed stream); added an explicit `trackedDiffOmitted` boolean so a
+  falsy `sinceCommit` is a checkable field, not a silent gap. Replaced the
+  mutable exported `RETRYABLE_VCS_ERRORS` `Set` with a real `ReadOnlySet`
+  subclass (throwing mutators, built from one canonical private `Set`).
+- `scripts/lib/find-rmsync-sites.mjs`: rewritten from a hand-rolled AST
+  walker + name-only import matching to `@babel/traverse` +
+  `scope.getBinding()`-based real lexical resolution (this repo's
+  established pattern, per `adjacency-detector.mjs`) — closes the class of
+  bug where a shadowing local variable/parameter with the same name as a
+  genuine `fs` import could be misclassified.
+
+### Code audit — 6 GPT rounds + 2 Gemini rounds (APPROVE)
+Fixed beyond the plan's original text, all found during the audit loop: a
+`retrySync(...)` wrapper name-only-matching bypass in the compliance guard
+itself (same shadowing class as the core fix, in the same file); a
+spread/computed-key/`ObjectMethod` options bypass in `extractOptionsInfo`
+(Gemini gate G1 — a computed key like `{recursive:true, [overrideVar]:
+false}` was silently mis-attributed under the literal identifier name
+instead of failing closed); an async-wrapper-arrow acceptance bug in
+`findEnclosingCall`; a missed `import { default as fs }` / ES2022
+string-literal-import-name form (Gemini gate G2) in `resolveFsImportKind`.
+One GPT finding (a claimed `Set`-algebra Liskov-substitution violation) was
+empirically disproven — directly tested on Node v22.19.0 and confirmed the
+Set methods construct a plain `Set`, never via the subclass constructor —
+and dismissed with the repro evidence rather than fixed. Two pre-existing,
+unrelated-file findings and one genuinely-new-but-unbounded-scope aliasing
+gap (`const rm = fs.rmSync.bind(fs)`) were deferred as debt
+(`.audit/tech-debt.json`); the raw-AST-node cross-module position-join
+contract between the two rewritten files was accepted as `accepted-
+permanent` debt after evaluating and rejecting a redesign (would either
+break the module's other consumer's raw-node contract or reintroduce equal
+complexity with real wrong-scope risk).
+
+Every fix was verified with a standalone empirical repro script (the
+`ReadOnlySet` construction gotcha, the NUL-parser wire format, the
+`@babel/traverse` scope-shadowing boundary, the `retrySync` shadowing
+bypass, the options-bypass shapes, the ES2022 import form) before being
+folded into permanent regression tests. `npm test`: 8876 passing, 22
+pre-existing skips, 0 failures.
 
 ## 2026-07-27 — `/cycle --autonomous` on the audit-pipeline-reliability plan: implemented, code-audited, shipped
 

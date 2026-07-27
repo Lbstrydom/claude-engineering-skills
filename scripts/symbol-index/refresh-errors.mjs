@@ -26,3 +26,14 @@ export class RefreshInFlightError extends Error {}
 
 /** Thrown when `--force`'s abort-and-retry attempt itself fails. */
 export class LockAbortError extends Error {}
+
+/**
+ * Thrown when `runWithHeartbeat`'s AbortController signal fires — either
+ * because a concurrent `--force` invocation aborted this run's row, or
+ * because the heartbeat could not confirm `running` status for
+ * `MAX_CONSECUTIVE_HEARTBEAT_FAILURES` consecutive ticks. `main()` treats
+ * this as "stop early, do not publish" — the row itself may already be
+ * `aborted` (the common case) or still `running` (the sustained-DB-outage
+ * case), and the catch block's own `abortRefreshRun` call handles either.
+ */
+export class RefreshAbortedError extends Error {}

@@ -11,17 +11,49 @@
  * trustworthy signal for the bandit user-impact reward and the
  * `audit_effectiveness` view, not just "some rows."
  *
- * Versioned matching contract: bump MATCHER_VERSION on any change to
- * `personaFindingHash()` or the matching algorithm. A version bump
- * orphans OLD outcome labels from NEW sessions only (accepted
- * single-operator debt — see the plan's Risks table).
+ * Versioned matching contract: bump MATCHER_VERSION on any change to the
+ * fuzzy CORRELATION/matching algorithm (thresholds, tokenisation, tier
+ * logic). This is a separate concern from `personaFindingHash`'s own
+ * identity contract — see `PERSONA_FINDING_HASH_VERSION` below — because
+ * the two can change independently (docs/plans/persona-finding-hash-
+ * versioning.md, Gemini gate R2 finding M3). A version bump orphans OLD
+ * outcome labels from NEW sessions only (accepted single-operator debt —
+ * see the plan's Risks table).
  *
  * @module scripts/lib/persona/audit-correlator
  */
+import crypto from 'node:crypto';
 import { semanticId } from '../findings.mjs';
 import { sanitizeStepUrl } from '../store/persona.mjs';
 
 export const MATCHER_VERSION = 1;
+
+/**
+ * Versioned identity contract for `personaFindingHash`'s OWN payload
+ * composition and encoding — independent of `MATCHER_VERSION` above
+ * (docs/plans/persona-finding-hash-versioning.md, Gemini gate R2 finding
+ * M3). Bump this, and ONLY this, when `personaFindingHash`'s payload
+ * shape or encoding changes (including a change to `sanitizeStepUrl`'s
+ * normalization behavior, which the `route` field depends on — Gemini
+ * gate R1 shadow finding). Freeze the pre-bump formula as a new
+ * `personaFindingHashVN` export (see `personaFindingHashV1` below) before
+ * changing this function, so a backfill can still compute what an old row's
+ * hash WAS.
+ */
+export const PERSONA_FINDING_HASH_VERSION = 2;
+
+/**
+ * Shape of a CURRENT (v2) `personaFindingHash` — full 64-hex SHA-256, never
+ * the 8-hex `personaFindingHashV1` truncation. Single source of truth for
+ * every writer that persists a `persona_finding_hash` value (shared by
+ * `persona-outcomes.mjs`'s `upsertPersonaFindingOutcome` schema and
+ * `plans-ship.mjs`'s `recordPersonaAuditCorrelation`) so a v1-shaped or
+ * malformed hash can't be silently stamped `hash_version: 2` from either
+ * writer (Gemini gate R2 shadow finding 6277c9df — the manual
+ * `record-correlation` CLI repair path had no equivalent check to the one
+ * already enforced on the outcome-label write path).
+ */
+export const PERSONA_FINDING_HASH_SHAPE = /^[0-9a-f]{64}$/;
 
 // Strengthened at code-audit time (H3/M2 — "false ground-truth from generic
 // UI vocabulary overlap"): 0.5 combined with the dual-signal floor below
@@ -55,11 +87,60 @@ const MIN_TOKEN_LEN = 3;
  * `{ fix, code, step, element, expected, observed, confidence }` — `code`
  * IS the severity ("P0".."P3"), there is no separate `category` field.
  *
+ * v2 identity contract (docs/plans/persona-finding-hash-versioning.md):
+ * a fixed-order, always-present 5-key payload — `element`, `code`, `route`,
+ * `expected`, `observed` — each `?? ''`-coerced (never `undefined`, so
+ * `JSON.stringify` can't silently drop a key), `.trim()`-ed then
+ * `.toLowerCase()`-ed, serialized via `JSON.stringify` (quote/escape
+ * structure disambiguates field boundaries — no hand-rolled delimiter),
+ * hashed with full untruncated SHA-256 (64 hex chars, not `semanticId`'s
+ * 8-hex truncation — this is a NEW durable, cross-repo identity with an
+ * untyped `text` column, so the extra digest length costs nothing).
+ * `stepUrlByNumber` is REQUIRED — every production caller has one
+ * available after this fix, and a caller that forgot to pass it would
+ * otherwise silently produce a weaker, route-less hash with no signal.
+ * An explicit empty `Map()` is the supported way to represent a
+ * genuinely route-less/pre-migration session; omitting the argument
+ * entirely throws. `route` is read directly from `stepUrlByNumber` —
+ * `buildStepUrlLookup` already sanitizes via `sanitizeStepUrl` at
+ * construction time, so this function does NOT call `sanitizeStepUrl` a
+ * second time (canonicalization has exactly one owner).
+ *
+ * Any future change to `personaFindingHash`'s payload/encoding, OR to
+ * `sanitizeStepUrl`'s normalization behavior (which `route` depends on
+ * transitively), must bump `PERSONA_FINDING_HASH_VERSION` — see that
+ * constant's own docstring.
+ *
  * @param {object} finding
- * @returns {string} 8-char hex hash, stable across sessions for the same
- *   observation
+ * @param {Map<number, string>} stepUrlByNumber - required; from
+ *   `buildStepUrlLookup(clickPath)`. Pass an empty `Map()` for a
+ *   route-less session, never omit the argument.
+ * @returns {string} 64-char hex SHA-256, stable across sessions for the
+ *   same observation
  */
-export function personaFindingHash(finding) {
+export function personaFindingHash(finding, stepUrlByNumber) {
+  const payload = {
+    element: String(finding?.element ?? '').trim().toLowerCase(),
+    code: String(finding?.code ?? '').trim().toLowerCase(),
+    route: String(stepUrlByNumber.get(finding?.step) ?? '').trim().toLowerCase(),
+    expected: String(finding?.expected ?? '').trim().toLowerCase(),
+    observed: String(finding?.observed ?? '').trim().toLowerCase(),
+  };
+  return crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+}
+
+/**
+ * FROZEN legacy formula — byte-identical to what `personaFindingHash`
+ * computed before docs/plans/persona-finding-hash-versioning.md (v1: no
+ * route/expected context, 8-hex `semanticId` truncation). Exported ONLY
+ * for `persona-outcomes-hash-backfill.mjs`'s use, to compute what an old
+ * `hash_version=1` outcome row's hash WAS so it can be matched against a
+ * freshly-recomputed v2 hash. Never call this from new code — new code
+ * always wants the current `personaFindingHash`.
+ * @param {object} finding
+ * @returns {string} 8-char hex hash (the v1 identity)
+ */
+export function personaFindingHashV1(finding) {
   const section = String(finding?.element ?? '');
   const category = String(finding?.code ?? '');
   const detail = String(finding?.observed ?? '');
@@ -79,8 +160,17 @@ export function isP0OrP1(finding) {
  * outcome-label identity collision, not just a harmless empty match
  * (code-audit H4 fix). Quarantine before hashing rather than let it
  * silently acquire a colliding identity.
+ *
+ * Exported (Gemini gate finding G1, docs/plans/persona-finding-hash-
+ * versioning.md): `decideCorrelations` already quarantines malformed
+ * findings before hashing, but the durable-outcome read/write paths in
+ * `persona-outcomes.mjs` and the backfill's session scan did NOT apply
+ * the same filter — a human dismissing one malformed finding would
+ * silently apply a wildcard label to every OTHER malformed finding in the
+ * repo sharing the same empty-fields hash. Every caller that filters
+ * `isP0OrP1` before hashing must ALSO filter out malformed findings.
  */
-function isMalformedFinding(finding) {
+export function isMalformedFinding(finding) {
   return !finding?.element || !String(finding.element).trim()
     || !finding?.observed || !String(finding.observed).trim();
 }
@@ -276,7 +366,7 @@ export function decideCorrelations({ findings, clickPath, candidates, alreadyCor
 
   for (const finding of p0p1) {
     if (isMalformedFinding(finding)) { malformed += 1; continue; }
-    const hash = personaFindingHash(finding);
+    const hash = personaFindingHash(finding, stepUrlByNumber);
     if (seen.has(hash)) { skippedExisting += 1; continue; }
     seen.add(hash);
 

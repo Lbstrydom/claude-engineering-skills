@@ -1,12 +1,13 @@
 /**
  * @fileoverview Shared AST module locating `fs.rmSync` call sites.
- * Exhaustive by construction for ES module imports (this repo's only
- * import form): every specifier of every `node:fs`/`fs` `ImportDeclaration`
- * is enumerated and classified, so there is no "unaccounted for" shape
- * left to miss for the two supported forms. CommonJS `require('fs').rmSync`
- * and further local aliasing of an `fs` method reference (e.g.
- * `const remove = fs.rmSync`) are explicitly out of scope — see
- * docs/plans/windows-fs-transient-error-hardening.md's "Out of Scope"
+ * Uses `@babel/traverse`'s real lexical-scope resolution (`scope.getBinding`)
+ * rather than name-only matching — the established pattern in this repo for
+ * callers needing real scope analysis (see `ast.mjs`'s own docstring, and
+ * `scripts/lib/audit/adjacency-detector.mjs`). Name-only matching cannot tell
+ * a genuine `fs` import from a local variable/parameter that happens to be
+ * named `fs` (or `remove`, for an aliased named import) and shadows it — scope
+ * resolution can. CommonJS `require('fs').rmSync` is explicitly out of scope —
+ * see docs/plans/windows-fs-transient-error-hardening.md's "Out of Scope"
  * section for the rationale.
  *
  * One implementation, two consumers: the Phase 3 codemod (gitignored,
@@ -18,43 +19,84 @@
  */
 
 import { parse } from '@babel/parser';
+import _traverse from '@babel/traverse';
+
+// @babel/traverse ships CJS; under ESM the callable lands on .default (and on
+// .default.default via some interop paths). Normalise once, loudly — same
+// pattern as adjacency-detector.mjs.
+const traverse = _traverse?.default?.default ?? _traverse?.default ?? _traverse;
 
 const FS_IMPORT_SOURCES = new Set(['node:fs', 'fs']);
 
 /**
- * Enumerate every specifier of every node:fs/fs ImportDeclaration and
- * classify local bindings into the two recognized shapes.
- * @param {object} program - Babel Program node
- * @returns {{ memberAccessIdents: Set<string>, bareCallIdents: Set<string> }}
+ * Resolve a scope binding to which recognized fs-import shape (if any) it
+ * traces back to. Returns `null` for every other case, including a binding
+ * with no declaration path (e.g. a function parameter) or an import from a
+ * source other than `node:fs`/`fs` — this is what makes a shadowing
+ * parameter or local variable correctly NOT match, unlike name-only checks.
+ * @param {object|undefined} binding - result of `path.scope.getBinding(name)`
+ * @returns {'namespace' | 'named-rmsync' | null}
  */
-function collectFsImportBindings(program) {
-  const memberAccessIdents = new Set();
-  const bareCallIdents = new Set();
-  for (const node of program.body) {
-    if (node.type !== 'ImportDeclaration') continue;
-    if (!FS_IMPORT_SOURCES.has(node.source.value)) continue;
-    for (const spec of node.specifiers) {
-      if (spec.type === 'ImportDefaultSpecifier' || spec.type === 'ImportNamespaceSpecifier') {
-        // default (`import fs from 'node:fs'`) and namespace
-        // (`import * as fs from 'node:fs'`) both produce a local binding
-        // used identically at the call site — one rule covers both.
-        memberAccessIdents.add(spec.local.name);
-      } else if (spec.type === 'ImportSpecifier' && spec.imported.name === 'rmSync') {
-        // named import, aliasing supported via the local binding name
-        // (`import { rmSync as remove } from 'node:fs'` resolves as `remove`).
-        bareCallIdents.add(spec.local.name);
-      }
-      // Every other named specifier (mkdtempSync, existsSync, ...) is
-      // enumerated here and ignored — not a removal call, not a failure
-      // to classify.
+function resolveFsImportKind(binding) {
+  if (!binding || !binding.path) return null;
+  const declPath = binding.path;
+  // `imported` is an Identifier (`.name`) for the ordinary spelling
+  // (`import { default as fs }`) but a StringLiteral (`.value`) for the
+  // ES2022 arbitrary-module-namespace-name spelling
+  // (`import { "default" as fs }` / `import { "rmSync" as remove }`) —
+  // both are valid, real syntax and must resolve identically.
+  const importedName = declPath.node?.imported?.name ?? declPath.node?.imported?.value;
+  const isDefaultLike = declPath.isImportDefaultSpecifier()
+    || declPath.isImportNamespaceSpecifier()
+    // `import { default as fs } from 'node:fs'` is a valid, semantically
+    // equivalent ESM spelling of a default import — Babel parses it as an
+    // ImportSpecifier with imported name/value === 'default', not an
+    // ImportDefaultSpecifier, so it needs its own check here.
+    || (declPath.isImportSpecifier() && importedName === 'default');
+  if (isDefaultLike) {
+    // default (`import fs from 'node:fs'`), namespace
+    // (`import * as fs from 'node:fs'`), and `import { default as fs }`
+    // all produce a local binding used identically at the call site — one
+    // rule covers all three.
+    const importDecl = declPath.parentPath;
+    if (importDecl?.isImportDeclaration() && FS_IMPORT_SOURCES.has(importDecl.node.source.value)) {
+      return 'namespace';
     }
+    return null;
   }
-  return { memberAccessIdents, bareCallIdents };
+  if (declPath.isImportSpecifier() && importedName === 'rmSync') {
+    // named import, aliasing supported via the local binding name
+    // (`import { rmSync as remove } from 'node:fs'` resolves as `remove`).
+    const importDecl = declPath.parentPath;
+    if (importDecl?.isImportDeclaration() && FS_IMPORT_SOURCES.has(importDecl.node.source.value)) {
+      return 'named-rmsync';
+    }
+    return null;
+  }
+  return null;
 }
 
 /**
  * Parse a call's options argument (arguments[1]) into a properties map,
  * plus the byte offset a codemod should splice new properties after.
+ *
+ * Only a non-computed `ObjectProperty` with an `Identifier` or
+ * `StringLiteral` key has a runtime key/value pair readable straight off
+ * the AST. Anything else — `SpreadElement` (`{...opts, recursive: true}`),
+ * `ObjectMethod` (`{ get recursive() {...} }`), or a COMPUTED key
+ * (`{ [overrideVar]: false }`, whose actual runtime key is `overrideVar`'s
+ * VALUE, not the literal identifier text "overrideVar") — makes the
+ * object's full effective property set statically unknowable from this
+ * call site alone: any of these forms could itself supply, mask, or
+ * override `recursive`/`maxRetries`/`retryDelay` set elsewhere in the same
+ * literal. Reporting only the safely-readable entries would silently hide
+ * that override (e.g. `{recursive: true, [overrideVar]: false}` would
+ * report `recursive: true` even though `overrideVar === 'recursive'` makes
+ * the runtime object `{recursive: false}`). So ANY such entry fails the
+ * WHOLE object closed to `properties: null` — the same "can't verify"
+ * signal used for a non-ObjectExpression argument — rather than reporting
+ * a partial map a caller could mistake for the complete runtime options.
+ *
  * @param {object|undefined} optionsArgNode
  */
 function extractOptionsInfo(optionsArgNode) {
@@ -63,19 +105,31 @@ function extractOptionsInfo(optionsArgNode) {
   }
   const properties = {};
   let lastPropertyEnd = null;
+  let hasUnknowableProperty = false;
   for (const prop of optionsArgNode.properties) {
-    if (prop.type === 'ObjectProperty' && prop.key.type === 'Identifier') {
+    if (
+      prop.type === 'ObjectProperty'
+      && !prop.computed
+      && (prop.key.type === 'Identifier' || prop.key.type === 'StringLiteral')
+    ) {
+      // `{ 'recursive': true }` (quoted key) is syntactically and
+      // semantically identical to `{ recursive: true }` — both must resolve
+      // to the same property name, or a quoted-key options object would be
+      // silently misreported as omitting keys it actually sets.
+      const keyName = prop.key.type === 'Identifier' ? prop.key.name : prop.key.value;
       let value;
       if (prop.value.type === 'BooleanLiteral' || prop.value.type === 'NumericLiteral') {
         value = prop.value.value;
       } else {
         value = undefined; // non-literal value — recorded as present but unclassified
       }
-      properties[prop.key.name] = value;
+      properties[keyName] = value;
+    } else {
+      hasUnknowableProperty = true;
     }
     if (typeof prop.end === 'number') lastPropertyEnd = prop.end;
   }
-  return { optionsNode: optionsArgNode, properties, lastPropertyEnd };
+  return { optionsNode: optionsArgNode, properties: hasUnknowableProperty ? null : properties, lastPropertyEnd };
 }
 
 /**
@@ -84,9 +138,19 @@ function extractOptionsInfo(optionsArgNode) {
  * ancestor chain (root-to-immediate-parent order). Returns the outer
  * CallExpression node (so the guard can resolve `.callee` against its own
  * file's import bindings) or null if the call isn't wrapped this way.
+ *
+ * An `async` arrow (`retrySync(async () => fs.rmSync(...))`) is NOT
+ * recognized as this wrapping shape: `retrySync` is a synchronous retry
+ * helper (its own name says so), and an async callback returns a Promise
+ * immediately — an exception thrown inside it rejects that Promise
+ * asynchronously rather than throwing synchronously into `retrySync`'s own
+ * try/catch, so the call would not actually be retry-protected at runtime
+ * despite superficially matching the wrapping shape.
+ *
  * @param {object} rmSyncCallNode
  * @param {object[]} ancestors
  */
+// @duplicate-justification: target=tests/atomic-write-adoption-guard.test.mjs:findEnclosingCall reason=that test file's own docstring documents this as a deliberate local inline copy — its 9-file target set is fixed and stated in-file, not discovered via a repo-wide corpus like this module's, so it intentionally avoids taking this module as a dependency rather than sharing an accidental duplicate.
 function findEnclosingCall(rmSyncCallNode, ancestors) {
   const n = ancestors.length;
   if (n === 0) return null;
@@ -110,7 +174,7 @@ function findEnclosingCall(rmSyncCallNode, ancestors) {
     }
   }
 
-  if (!arrowFn) return null;
+  if (!arrowFn || arrowFn.async) return null;
 
   const arrowIdx = ancestors.lastIndexOf(arrowFn);
   if (arrowIdx <= 0) return null;
@@ -125,24 +189,6 @@ function findEnclosingCall(rmSyncCallNode, ancestors) {
   return null;
 }
 
-function walkAst(node, ancestors, visit) {
-  if (!node || typeof node.type !== 'string') return;
-  visit(node, ancestors);
-  const nextAncestors = ancestors.concat([node]);
-  for (const key of Object.keys(node)) {
-    if (key === 'loc' || key === 'start' || key === 'end' || key === 'range'
-      || key === 'leadingComments' || key === 'trailingComments' || key === 'innerComments') {
-      continue;
-    }
-    const val = node[key];
-    if (Array.isArray(val)) {
-      for (const v of val) if (v && typeof v === 'object') walkAst(v, nextAncestors, visit);
-    } else if (val && typeof val === 'object' && typeof val.type === 'string') {
-      walkAst(val, nextAncestors, visit);
-    }
-  }
-}
-
 /**
  * @typedef {Object} RmSyncCallSite
  * @property {number} start - byte offset of the CallExpression's start
@@ -155,48 +201,54 @@ function walkAst(node, ancestors, visit) {
  */
 
 /**
- * Locate every `fs.rmSync`/bare-`rmSync` call site in `sourceText`.
+ * Locate every `fs.rmSync`/bare-`rmSync` call site in `sourceText`, resolved
+ * via real lexical scope (not name matching) — a call through a shadowing
+ * local variable or parameter is correctly excluded.
  * @param {string} sourceText
  * @returns {RmSyncCallSite[]}
  */
 export function findRmSyncCallSites(sourceText) {
   const ast = parse(sourceText, { sourceType: 'module', plugins: [] });
-  const { memberAccessIdents, bareCallIdents } = collectFsImportBindings(ast.program);
-
   const sites = [];
 
-  walkAst(ast.program, [], (node, ancestors) => {
-    if (node.type !== 'CallExpression') return;
-    const callee = node.callee;
-    let isRmSync = false;
+  traverse(ast, {
+    'CallExpression|OptionalCallExpression'(path) {
+      const node = path.node;
+      const callee = node.callee;
+      let isRmSync = false;
 
-    if (
-      callee.type === 'MemberExpression'
-      && !callee.computed
-      && callee.property.type === 'Identifier'
-      && callee.property.name === 'rmSync'
-      && callee.object.type === 'Identifier'
-      && memberAccessIdents.has(callee.object.name)
-    ) {
-      isRmSync = true;
-    } else if (callee.type === 'Identifier' && bareCallIdents.has(callee.name)) {
-      isRmSync = true;
-    }
+      if (callee.type === 'MemberExpression' || callee.type === 'OptionalMemberExpression') {
+        const propName = !callee.computed && callee.property.type === 'Identifier'
+          ? callee.property.name
+          : (callee.computed && callee.property.type === 'StringLiteral' ? callee.property.value : null);
+        if (propName === 'rmSync' && callee.object.type === 'Identifier') {
+          const binding = path.scope.getBinding(callee.object.name);
+          if (resolveFsImportKind(binding) === 'namespace') isRmSync = true;
+        }
+      } else if (callee.type === 'Identifier') {
+        const binding = path.scope.getBinding(callee.name);
+        if (resolveFsImportKind(binding) === 'named-rmsync') isRmSync = true;
+      }
 
-    if (!isRmSync) return;
+      if (!isRmSync) return;
 
-    const { optionsNode, properties, lastPropertyEnd } = extractOptionsInfo(node.arguments[1]);
-    const enclosingCall = findEnclosingCall(node, ancestors);
+      const { optionsNode, properties, lastPropertyEnd } = extractOptionsInfo(node.arguments[1]);
+      // Adapt Babel's immediate-to-root NodePath ancestry (current node included
+      // at index 0) into the root-to-immediate-parent raw-node array
+      // findEnclosingCall expects (its index arithmetic counts back from the end).
+      const ancestors = path.getAncestry().slice(1).reverse().map((p) => p.node);
+      const enclosingCall = findEnclosingCall(node, ancestors);
 
-    sites.push({
-      start: node.start,
-      end: node.end,
-      line: node.loc.start.line,
-      optionsNode,
-      properties,
-      lastPropertyEnd,
-      enclosingCall,
-    });
+      sites.push({
+        start: node.start,
+        end: node.end,
+        line: node.loc.start.line,
+        optionsNode,
+        properties,
+        lastPropertyEnd,
+        enclosingCall,
+      });
+    },
   });
 
   return sites;

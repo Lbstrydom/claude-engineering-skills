@@ -42,23 +42,65 @@ import path from 'node:path';
  */
 
 /**
- * Codes where retry can succeed — only transient subprocess crashes.
- * NOTE: V8's `Object.freeze(new Set(...))` does NOT prevent `.add()` /
- * `.delete()` mutation (R1-audit M6). The exported binding is `const`,
- * but the Set's contents are mutable at runtime. Treat this as read-only
- * by convention or call `isRetryableVcsError(code)` instead.
+ * A real `Set` subclass whose mutators throw instead of silently
+ * succeeding. `Object.freeze(new Set(...))` does NOT prevent `.add()`/
+ * `.delete()` mutation (verified empirically — freeze only protects an
+ * object's own properties, not a Set's internal storage slots), so the
+ * override happens at the method level instead.
+ *
+ * Constructed via `Set.prototype.add.call(this, item)` rather than
+ * `super(items)`: passing an iterable to `super()` makes the native `Set`
+ * constructor call `this.add()` for each item, which would dispatch to
+ * THIS subclass's own throwing override during construction and break it.
+ * Calling `Set.prototype.add` directly bypasses the override for seeding
+ * only — the override applies to every call after the constructor returns.
  */
-export const RETRYABLE_VCS_ERRORS = new Set(['EXEC_FAILED']);
+class ReadOnlySet extends Set {
+  constructor(items) {
+    super();
+    for (const item of items) Set.prototype.add.call(this, item);
+  }
+  add() { throw new TypeError('RETRYABLE_VCS_ERRORS is read-only; see isRetryableVcsError()'); }
+  delete() { throw new TypeError('RETRYABLE_VCS_ERRORS is read-only; see isRetryableVcsError()'); }
+  clear() { throw new TypeError('RETRYABLE_VCS_ERRORS is read-only; see isRetryableVcsError()'); }
+}
 
 /**
- * Read-only accessor: true iff the code is in the retryable set. Prefer
- * this over reading the Set directly — it can't be poisoned by callers.
+ * Codes where retry can succeed — only transient subprocess crashes.
+ * Private — `isRetryableVcsError()` is the only access point production
+ * code should use.
+ */
+const _retryableVcsErrors = new Set(['EXEC_FAILED']);
+
+/**
+ * Deprecated compatibility export: a real `Set` (`instanceof Set` is
+ * `true`, every native read method — `has`/`size`/iteration/`forEach`/
+ * `Object.prototype.toString` — works unmodified) constructed from the
+ * SAME canonical `_retryableVcsErrors` above, not a second literal, so
+ * the two can never diverge. `.add()`/`.delete()`/`.clear()` throw
+ * immediately on any mutation attempt (production code never reads this
+ * export — only `isRetryableVcsError()`'s private Set — so even a
+ * deliberate bypass of the throwing overrides, e.g. via
+ * `Set.prototype.add.call(RETRYABLE_VCS_ERRORS, code)`, cannot affect
+ * this module's own retry behaviour). `Object.freeze` on top guards the
+ * instance's own properties as a further layer, though the overridden
+ * methods — not the freeze — are what actually block ordinary mutation.
+ * Prefer `isRetryableVcsError(code)`; this export is retained only for
+ * external compatibility and removal goes through this repo's own
+ * consumer-adoption/release process, not a unilateral change here.
+ */
+export const RETRYABLE_VCS_ERRORS = Object.freeze(new ReadOnlySet(_retryableVcsErrors));
+
+/**
+ * Read-only accessor: true iff the code is in the retryable set. This is
+ * the SOLE place the retryable-code policy is expressed — prefer this
+ * over reading `RETRYABLE_VCS_ERRORS` directly.
  *
  * @param {VcsErrorCode | string} code
  * @returns {boolean}
  */
 export function isRetryableVcsError(code) {
-  return code === 'EXEC_FAILED';
+  return _retryableVcsErrors.has(code);
 }
 
 /**
@@ -259,19 +301,116 @@ export function gitIndexTree(cwd, opts = {}) {
 }
 
 /**
+ * Parse `git diff --name-status -z` output into bucketed file lists.
+ *
+ * Wire format: empty stdout is valid and yields empty buckets. Non-empty
+ * stdout MUST end in a NUL — splitting on `\0` then yields exactly one
+ * trailing empty token, which is discarded (it is not a record). An
+ * interior empty token (an empty status, path, or rename endpoint) means
+ * the stream is truncated or otherwise malformed and is NOT tolerated —
+ * silently skipping it would desync every subsequent record.
+ *
+ * Token consumption per status letter (required for every letter, not
+ * just the bucketed ones — an unconsumed or over-consumed token desyncs
+ * the rest of the stream): `A`/`M`/`D`/`T`/`U`/`X`/`B` each consume 1
+ * status token + 1 path token (2 total); `R`/`C` consume 1 status token +
+ * 2 path tokens (from/to, 3 total). Only `A`/`M`/`D`/`R` are bucketed
+ * (byte-identical to the pre-existing shape); `C`/`T`/`U`/`X`/`B` are
+ * consumed to keep the stream aligned but produce no entry.
+ *
+ * @param {string} stdout
+ * @returns {{ok: true, files: {added: string[], modified: string[], deleted: string[], renamed: {from: string, to: string}[]}} | {ok: false, error: VcsError}}
+ */
+function parseNameStatusZ(stdout) {
+  const files = { added: [], modified: [], deleted: [], renamed: [] };
+  if (stdout === '') return { ok: true, files };
+  if (!stdout.endsWith('\0')) {
+    return { ok: false, error: { code: 'WORKING_TREE_UNREADABLE', message: 'git diff --name-status -z output did not end with a NUL terminator' } };
+  }
+  const tokens = stdout.split('\0');
+  tokens.pop(); // discard exactly one trailing token — the empty string after the final NUL
+
+  let i = 0;
+  while (i < tokens.length) {
+    const statusToken = tokens[i];
+    if (statusToken === '') {
+      return { ok: false, error: { code: 'WORKING_TREE_UNREADABLE', message: `malformed git diff -z stream: empty status token at index ${i}` } };
+    }
+    const status = statusToken[0];
+    if (status === 'R' || status === 'C') {
+      const from = tokens[i + 1];
+      const to = tokens[i + 2];
+      if (!from || !to) {
+        return { ok: false, error: { code: 'WORKING_TREE_UNREADABLE', message: `malformed git diff -z stream: incomplete ${status} record at index ${i}` } };
+      }
+      if (status === 'R') files.renamed.push({ from, to });
+      i += 3;
+    } else {
+      const p = tokens[i + 1];
+      if (!p) {
+        return { ok: false, error: { code: 'WORKING_TREE_UNREADABLE', message: `malformed git diff -z stream: incomplete ${status} record at index ${i}` } };
+      }
+      if (status === 'A') files.added.push(p);
+      else if (status === 'M') files.modified.push(p);
+      else if (status === 'D') files.deleted.push(p);
+      // C/T/U/X/B: token consumed, not bucketed.
+      i += 2;
+    }
+  }
+  return { ok: true, files };
+}
+
+/**
+ * Parse `git ls-files --others --exclude-standard -z` output into a flat
+ * path list. Same framing contract as {@link parseNameStatusZ} (empty
+ * stdout valid; non-empty must end in NUL; exactly one trailing token
+ * discarded) but each record is a single path — no status letter.
+ *
+ * @param {string} stdout
+ * @returns {{ok: true, paths: string[]} | {ok: false, error: VcsError}}
+ */
+function parseUntrackedPathsZ(stdout) {
+  if (stdout === '') return { ok: true, paths: [] };
+  if (!stdout.endsWith('\0')) {
+    return { ok: false, error: { code: 'WORKING_TREE_UNREADABLE', message: 'git ls-files -z output did not end with a NUL terminator' } };
+  }
+  const tokens = stdout.split('\0');
+  tokens.pop();
+  const paths = [];
+  for (const t of tokens) {
+    if (t === '') {
+      return { ok: false, error: { code: 'WORKING_TREE_UNREADABLE', message: 'malformed git ls-files -z stream: empty path token' } };
+    }
+    paths.push(t);
+  }
+  return { ok: true, paths };
+}
+
+/**
  * Working-tree-aware diff: includes uncommitted + untracked entries.
+ * Both git calls use `-z` (NUL-delimited) output, parsed via
+ * {@link parseNameStatusZ}/{@link parseUntrackedPathsZ} — safe against
+ * filenames containing spaces or newlines (the prior whitespace-splitting
+ * regex parse truncated those).
  *
  * `sinceCommit` MUST already pass `isSafeGitRevision` — callers that take
  * the value from CLI flags should validate eagerly so a malformed input
  * surfaces as BAD_REVISION at the right layer.
  *
+ * `trackedDiffOmitted` is `true` whenever `sinceCommit` is falsy: the
+ * tracked-diff half of the call is skipped entirely (untracked files are
+ * still collected) and this field makes that an explicit, checkable part
+ * of the return shape rather than a silent gap a caller could mistake for
+ * "no tracked changes" (one range, one resolver — see push-range.mjs).
+ *
  * @param {string} cwd
  * @param {string | null | undefined} sinceCommit
  * @param {{env?: NodeJS.ProcessEnv}} [opts]
- * @returns {{ok: true, files: DiffShape} | {ok: false, error: VcsError}}
+ * @returns {{ok: true, files: DiffShape, trackedDiffOmitted: boolean} | {ok: false, error: VcsError}}
  */
 export function gitDiffWithWorkingTree(cwd, sinceCommit, opts = {}) {
   const files = { added: [], modified: [], deleted: [], untracked: [], renamed: [] };
+  const trackedDiffOmitted = !sinceCommit;
 
   if (sinceCommit) {
     if (!isSafeGitRevision(sinceCommit)) {
@@ -282,7 +421,7 @@ export function gitDiffWithWorkingTree(cwd, sinceCommit, opts = {}) {
     }
     let diffRes;
     try {
-      diffRes = spawnSync('git', ['diff', '--name-status', sinceCommit], {
+      diffRes = spawnSync('git', ['diff', '--name-status', '-z', sinceCommit], {
         cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], ...(opts.env ? { env: opts.env } : {}),
       });
     } catch (err) {
@@ -296,19 +435,17 @@ export function gitDiffWithWorkingTree(cwd, sinceCommit, opts = {}) {
       const synth = { stderr: diffRes.stderr, status: diffRes.status, signal: diffRes.signal };
       return { ok: false, error: classifyChildError(synth, { wantedRev: sinceCommit }) };
     }
-    for (const line of (diffRes.stdout || '').split('\n')) {
-      const m = line.match(/^([AMDR])\d*\s+(.+?)(?:\s+(.+))?$/);
-      if (!m) continue;
-      if (m[1] === 'A') files.added.push(m[2]);
-      else if (m[1] === 'M') files.modified.push(m[2]);
-      else if (m[1] === 'D') files.deleted.push(m[2]);
-      else if (m[1] === 'R') files.renamed.push({ from: m[2], to: m[3] });
-    }
+    const parsed = parseNameStatusZ(diffRes.stdout || '');
+    if (!parsed.ok) return parsed;
+    files.added = parsed.files.added;
+    files.modified = parsed.files.modified;
+    files.deleted = parsed.files.deleted;
+    files.renamed = parsed.files.renamed;
   }
 
   let lsRes;
   try {
-    lsRes = spawnSync('git', ['ls-files', '--others', '--exclude-standard'], {
+    lsRes = spawnSync('git', ['ls-files', '--others', '--exclude-standard', '-z'], {
       cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], ...(opts.env ? { env: opts.env } : {}),
     });
   } catch (err) {
@@ -321,12 +458,11 @@ export function gitDiffWithWorkingTree(cwd, sinceCommit, opts = {}) {
     const synth = { stderr: lsRes.stderr, status: lsRes.status, signal: lsRes.signal };
     return { ok: false, error: classifyChildError(synth) };
   }
-  for (const line of (lsRes.stdout || '').split('\n')) {
-    const t = line.trim();
-    if (t) files.untracked.push(t);
-  }
+  const untrackedParsed = parseUntrackedPathsZ(lsRes.stdout || '');
+  if (!untrackedParsed.ok) return untrackedParsed;
+  files.untracked = untrackedParsed.paths;
 
-  return { ok: true, files };
+  return { ok: true, files, trackedDiffOmitted };
 }
 
 /**
@@ -575,4 +711,4 @@ function canonicalizeForOccurrenceMatch(s) {
  *
  * @internal
  */
-export const _internals = Object.freeze({ classifyChildError });
+export const _internals = Object.freeze({ classifyChildError, parseNameStatusZ, parseUntrackedPathsZ });

@@ -47,6 +47,9 @@ describe('exitCodeFor', () => {
 });
 
 describe('RETRYABLE_VCS_ERRORS', () => {
+  it('is a real Set instance', () => {
+    assert.ok(RETRYABLE_VCS_ERRORS instanceof Set);
+  });
   it('contains exactly EXEC_FAILED', () => {
     assert.equal(RETRYABLE_VCS_ERRORS.size, 1);
     assert.ok(RETRYABLE_VCS_ERRORS.has('EXEC_FAILED'));
@@ -54,6 +57,24 @@ describe('RETRYABLE_VCS_ERRORS', () => {
     assert.ok(!RETRYABLE_VCS_ERRORS.has('NOT_A_GIT_REPOSITORY'));
     assert.ok(!RETRYABLE_VCS_ERRORS.has('BAD_REVISION'));
     assert.ok(!RETRYABLE_VCS_ERRORS.has('WORKING_TREE_UNREADABLE'));
+  });
+  it('supports native iteration', () => {
+    assert.deepEqual([...RETRYABLE_VCS_ERRORS], ['EXEC_FAILED']);
+  });
+  it('is frozen', () => {
+    assert.ok(Object.isFrozen(RETRYABLE_VCS_ERRORS));
+  });
+  it('.add() throws TypeError and does not mutate', () => {
+    assert.throws(() => RETRYABLE_VCS_ERRORS.add('X'), TypeError);
+    assert.equal(RETRYABLE_VCS_ERRORS.size, 1);
+  });
+  it('.delete() throws TypeError and does not mutate', () => {
+    assert.throws(() => RETRYABLE_VCS_ERRORS.delete('EXEC_FAILED'), TypeError);
+    assert.ok(RETRYABLE_VCS_ERRORS.has('EXEC_FAILED'));
+  });
+  it('.clear() throws TypeError and does not mutate', () => {
+    assert.throws(() => RETRYABLE_VCS_ERRORS.clear(), TypeError);
+    assert.equal(RETRYABLE_VCS_ERRORS.size, 1);
   });
 });
 
@@ -127,6 +148,138 @@ describe('classifyChildError (via _internals)', () => {
     const longStderr = 'fatal: ' + 'x'.repeat(500);
     const r = classifyChildError({ stderr: longStderr, status: 128 });
     assert.ok(r.message.length <= 200);
+  });
+});
+
+describe('parseNameStatusZ (via _internals)', () => {
+  const { parseNameStatusZ } = _internals;
+
+  it('empty stdout -> ok, all buckets empty', () => {
+    const r = parseNameStatusZ('');
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.files, { added: [], modified: [], deleted: [], renamed: [] });
+  });
+
+  it('A record', () => {
+    const r = parseNameStatusZ('A\0added.js\0');
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.files.added, ['added.js']);
+  });
+
+  it('M record', () => {
+    const r = parseNameStatusZ('M\0changed.js\0');
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.files.modified, ['changed.js']);
+  });
+
+  it('D record', () => {
+    const r = parseNameStatusZ('D\0removed.js\0');
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.files.deleted, ['removed.js']);
+  });
+
+  it('R record — two-token from/to pair, bucketed', () => {
+    const r = parseNameStatusZ('R100\0old name.js\0new name.js\0');
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.files.renamed, [{ from: 'old name.js', to: 'new name.js' }]);
+  });
+
+  it('C record — two-token pair consumed, NOT bucketed, stream stays aligned', () => {
+    const r = parseNameStatusZ('C100\0src.js\0copy.js\0A\0added.js\0');
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.files.added, ['added.js']);
+    assert.deepEqual(r.files.renamed, []);
+  });
+
+  for (const letter of ['T', 'U', 'X', 'B']) {
+    it(`${letter} record — one-token consumed, NOT bucketed, stream stays aligned`, () => {
+      const r = parseNameStatusZ(`${letter}\0weird.js\0A\0added.js\0`);
+      assert.equal(r.ok, true);
+      // Both assertions are load-bearing: the first proves the record wasn't
+      // bucketed, the second proves exactly one token was consumed for it
+      // (a wrong count here would desync the following record's classification).
+      assert.deepEqual(r.files.modified, []);
+      assert.deepEqual(r.files.deleted, []);
+      assert.deepEqual(r.files.added, ['added.js']);
+    });
+  }
+
+  it('filenames containing spaces are not truncated (the bug -z fixes)', () => {
+    const r = parseNameStatusZ('M\0path with spaces/file name.js\0');
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.files.modified, ['path with spaces/file name.js']);
+  });
+
+  describe('malformed streams', () => {
+    it('missing terminal NUL -> WORKING_TREE_UNREADABLE', () => {
+      const r = parseNameStatusZ('A\0incomplete.js');
+      assert.equal(r.ok, false);
+      assert.equal(r.error.code, 'WORKING_TREE_UNREADABLE');
+    });
+
+    it('interior empty token -> WORKING_TREE_UNREADABLE', () => {
+      const r = parseNameStatusZ('A\0\0M\0foo.js\0');
+      assert.equal(r.ok, false);
+      assert.equal(r.error.code, 'WORKING_TREE_UNREADABLE');
+    });
+
+    it('truncated record (status with no following path) -> WORKING_TREE_UNREADABLE', () => {
+      const r = parseNameStatusZ('A\0');
+      assert.equal(r.ok, false);
+      assert.equal(r.error.code, 'WORKING_TREE_UNREADABLE');
+    });
+
+    it('truncated rename record (missing to-path) -> WORKING_TREE_UNREADABLE', () => {
+      const r = parseNameStatusZ('R100\0onlyfrom.js\0');
+      assert.equal(r.ok, false);
+      assert.equal(r.error.code, 'WORKING_TREE_UNREADABLE');
+    });
+
+    it('valid empty stdout is NOT malformed', () => {
+      const r = parseNameStatusZ('');
+      assert.equal(r.ok, true);
+    });
+  });
+});
+
+describe('parseUntrackedPathsZ (via _internals)', () => {
+  const { parseUntrackedPathsZ } = _internals;
+
+  it('empty stdout -> ok, empty paths', () => {
+    const r = parseUntrackedPathsZ('');
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.paths, []);
+  });
+
+  it('single path', () => {
+    const r = parseUntrackedPathsZ('untracked.js\0');
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.paths, ['untracked.js']);
+  });
+
+  it('path containing spaces is not truncated', () => {
+    const r = parseUntrackedPathsZ('new file with spaces.txt\0');
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.paths, ['new file with spaces.txt']);
+  });
+
+  describe('malformed streams', () => {
+    it('missing terminal NUL -> WORKING_TREE_UNREADABLE', () => {
+      const r = parseUntrackedPathsZ('incomplete.txt');
+      assert.equal(r.ok, false);
+      assert.equal(r.error.code, 'WORKING_TREE_UNREADABLE');
+    });
+
+    it('interior empty token -> WORKING_TREE_UNREADABLE', () => {
+      const r = parseUntrackedPathsZ('foo.txt\0\0bar.txt\0');
+      assert.equal(r.ok, false);
+      assert.equal(r.error.code, 'WORKING_TREE_UNREADABLE');
+    });
+
+    it('valid empty stdout is NOT malformed', () => {
+      const r = parseUntrackedPathsZ('');
+      assert.equal(r.ok, true);
+    });
   });
 });
 
@@ -232,5 +385,72 @@ describe('gitDiffWithWorkingTree', () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
+  });
+
+  it('detects added/modified/deleted files against sinceCommit', () => {
+    const dir = mkdtemp();
+    try {
+      gitInit(dir);
+      const fixtureEnv = gitFixtureEnv();
+      fs.writeFileSync(path.join(dir, 'keep.txt'), 'v1\n');
+      fs.writeFileSync(path.join(dir, 'remove.txt'), 'bye\n');
+      spawnSync('git', ['add', 'keep.txt', 'remove.txt'], { cwd: dir, stdio: 'ignore', env: fixtureEnv });
+      spawnSync('git', ['commit', '-m', 'base'], { cwd: dir, stdio: 'ignore', env: fixtureEnv });
+      const sha = execSync('git rev-parse HEAD', { cwd: dir, env: fixtureEnv }).toString().trim();
+
+      fs.writeFileSync(path.join(dir, 'keep.txt'), 'v2\n');
+      fs.writeFileSync(path.join(dir, 'new.txt'), 'brand new\n');
+      fs.rmSync(path.join(dir, 'remove.txt'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      spawnSync('git', ['add', '-A'], { cwd: dir, stdio: 'ignore', env: fixtureEnv });
+
+      const r = gitDiffWithWorkingTree(dir, sha, { env: fixtureEnv });
+      assert.equal(r.ok, true);
+      assert.deepEqual(r.files.added, ['new.txt']);
+      assert.deepEqual(r.files.modified, ['keep.txt']);
+      assert.deepEqual(r.files.deleted, ['remove.txt']);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+
+  it('captures untracked paths containing spaces', () => {
+    const dir = mkdtemp();
+    try {
+      gitInit(dir);
+      fs.writeFileSync(path.join(dir, 'new file with spaces.txt'), 'hi');
+      const r = gitDiffWithWorkingTree(dir, null, { env: gitFixtureEnv() });
+      assert.equal(r.ok, true);
+      assert.ok(r.files.untracked.includes('new file with spaces.txt'));
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+
+  describe('trackedDiffOmitted', () => {
+    it('is true when sinceCommit is falsy (tracked diff skipped)', () => {
+      const dir = mkdtemp();
+      try {
+        gitInit(dir);
+        const r = gitDiffWithWorkingTree(dir, null, { env: gitFixtureEnv() });
+        assert.equal(r.ok, true);
+        assert.equal(r.trackedDiffOmitted, true);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      }
+    });
+
+    it('is false when sinceCommit is a valid revision (tracked diff ran)', () => {
+      const dir = mkdtemp();
+      try {
+        gitInit(dir);
+        const fixtureEnv = gitFixtureEnv();
+        const sha = execSync('git rev-parse HEAD', { cwd: dir, env: fixtureEnv }).toString().trim();
+        const r = gitDiffWithWorkingTree(dir, sha, { env: fixtureEnv });
+        assert.equal(r.ok, true);
+        assert.equal(r.trackedDiffOmitted, false);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      }
+    });
   });
 });

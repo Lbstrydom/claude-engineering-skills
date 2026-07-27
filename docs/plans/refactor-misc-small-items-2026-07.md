@@ -1,7 +1,7 @@
 # Plan: Miscellaneous Small-Cluster Debt (2026-07-26 triage)
 
 - **Date**: 2026-07-26
-- **Status**: Draft
+- **Status**: Draft — items resolved individually as picked up (see per-item status below), not implemented as one batch
 - **Author**: Claude (tech-debt backlog triage session)
 - **Scope**: backend
 
@@ -10,6 +10,13 @@
 > 1-2-entry issue not sharing enough theme with another cluster to warrant
 > its own plan doc. Verified against current source 2026-07-26. Grouped
 > here by file, no cross-cutting theme implied.
+
+**Progress (2026-07-27)**: `duplicate-justification-pragma.mjs` (`67f8f414`/
+`fbd71c9a`) — **done**. `^\s*` anchor added to `PRAGMA_RE`; 4 regression
+tests added. Also fixed a related bug found while verifying: a real pragma
+in `scripts/setup-postgres.mjs` was written as a JSDoc continuation line
+(no comment-marker prefix), so it never actually matched at all — moved to
+a standalone `//` comment line. All other items below remain open.
 
 ---
 
@@ -26,7 +33,8 @@
 - **`duplicate-justification-pragma.mjs`** — `67f8f414`/`fbd71c9a`: the
   pragma regex has no `^` start anchor, so pragma-looking text inside a
   string/template literal (not a real comment) still matches. One-line
-  anchor fix.
+  anchor fix. **Done (2026-07-27)** — `^\s*` (permits leading whitespace/
+  indentation, verified against every real pragma in this repo).
 - **`linter.mjs`** — `6a74fc5a892d` (external lint tools run with
   `cwd: process.cwd()` against the whole repo, filtered only after the
   fact) and `b99706f9393b` (the documented `AUDIT_LOOP_ALLOW_TOOLS` env gate

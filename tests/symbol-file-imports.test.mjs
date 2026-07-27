@@ -24,7 +24,7 @@ import crypto from 'node:crypto';
 import { renderSymbolTable } from '../scripts/lib/arch-render.mjs';
 import { getPool, closePool, _resetForTest, assertDisposableDbUrl } from '../scripts/lib/db/client.mjs';
 import { upsertRepoByUuid } from '../scripts/lib/store/repo.mjs';
-import { recordSymbolFileImports } from '../scripts/lib/store/arch/imports.mjs';
+import { recordSymbolFileImports, copyForwardImports } from '../scripts/lib/store/arch/imports.mjs';
 
 // Mirror the chain-of-trust logic from refresh.mjs
 function computeImportGraphPopulated(mode, priorPopulated) {
@@ -233,5 +233,33 @@ describe('recordSymbolFileImports — duplicate edges in one batch', { skip: dbS
       `SELECT count(*)::int AS n FROM symbol_file_imports
         WHERE refresh_id = $1 AND imported_path = 'src/shared.js'`, [refreshId]);
     assert.equal(rows[0].n, 600, 'no duplicate rows persisted');
+  });
+
+  // symbol-index-pipeline-reliability-hardening Theme 5 (D5): copyForwardImports
+  // must report a rowCount backed by the DB's own result, not payload.length.
+  it('copyForwardImports reports a count matching a real post-write SELECT, not the attempted payload length', async () => {
+    const pool = await getPool();
+    await recordSymbolFileImports(refreshId, [
+      { importer: 'kept-a.js', imported: 'lib.js' },
+      { importer: 'kept-b.js', imported: 'lib.js' },
+      { importer: 'touched.js', imported: 'lib.js' },
+    ]);
+    const toRefreshId = (await pool.query(
+      `INSERT INTO refresh_runs (repo_id, mode, status) VALUES ($1, 'incremental', 'running') RETURNING id`,
+      [repoId],
+    )).rows[0].id;
+
+    const { copied } = await copyForwardImports({
+      fromRefreshId: refreshId, toRefreshId, touchedFileSet: new Set(['touched.js']),
+    });
+    assert.equal(copied, 2, 'only the two untouched importers copy forward');
+
+    const { rows } = await pool.query(
+      `SELECT count(*)::int AS n FROM symbol_file_imports WHERE refresh_id = $1`, [toRefreshId],
+    );
+    assert.equal(rows[0].n, 2, 'the reported count matches the real row count in the DB');
+
+    await pool.query(`DELETE FROM symbol_file_imports WHERE refresh_id = $1`, [toRefreshId]);
+    await pool.query(`DELETE FROM refresh_runs WHERE id = $1`, [toRefreshId]);
   });
 });

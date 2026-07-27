@@ -225,6 +225,69 @@ describe('graphVerdict — precedence table (§2.1.3)', () => {
   });
 });
 
+describe('graphVerdict — malformed measurement (non-finite fields, symbol-index-pipeline-reliability-hardening Theme 6)', () => {
+  it('non-finite elapsedMs → unknown/malformed_measurement, not silently VERIFIED', () => {
+    const v = graphVerdict({
+      extraction: okExtraction({ elapsedMs: NaN }),
+      config: COVERAGE_DEFAULTS,
+    });
+    assert.deepEqual(v, { status: 'unknown', reason: 'malformed_measurement', missing: ['elapsedMs'] });
+  });
+
+  it('non-finite extraction.ratio → unknown/malformed_measurement', () => {
+    const v = graphVerdict({
+      extraction: okExtraction({ ratio: undefined }),
+      config: COVERAGE_DEFAULTS,
+    });
+    assert.deepEqual(v, { status: 'unknown', reason: 'malformed_measurement', missing: ['ratio'] });
+  });
+
+  it('non-finite attribution.ratio (attribution present) → unknown/malformed_measurement', () => {
+    const v = graphVerdict({
+      extraction: okExtraction(),
+      attribution: { attributable: 10, attributed: 5, ratio: NaN },
+      config: COVERAGE_DEFAULTS,
+    });
+    assert.deepEqual(v, { status: 'unknown', reason: 'malformed_measurement', missing: ['attributionRatio'] });
+  });
+
+  it('absent attribution (null) is NOT malformed — no attribution measurement was ever taken', () => {
+    // attribution is optional-by-design (the vacuity guard at row 7 already
+    // treats a null attribution as "not applicable", not "missing"); this
+    // must stay a clean two-key {status, reason} object, unchanged from
+    // before this fix.
+    const v = graphVerdict({ extraction: okExtraction(), config: COVERAGE_DEFAULTS });
+    assert.deepEqual(v, { status: 'verified', reason: null });
+  });
+
+  it('multiple non-finite fields accumulate in `missing`', () => {
+    const v = graphVerdict({
+      extraction: okExtraction({ elapsedMs: NaN, ratio: NaN }),
+      config: COVERAGE_DEFAULTS,
+    });
+    assert.deepEqual(v, { status: 'unknown', reason: 'malformed_measurement', missing: ['elapsedMs', 'ratio'] });
+  });
+
+  it('a present-and-degraded field still wins over a separately-missing sibling', () => {
+    // ratio is below floor (a real degradation) while elapsedMs is
+    // non-finite (a malformed sibling) — the degradation must win, per the
+    // plan's "check finite-and-degraded first per field" ordering.
+    const v = graphVerdict({
+      extraction: okExtraction({ elapsedMs: NaN, ratio: 0.1 }),
+      config: COVERAGE_DEFAULTS,
+    });
+    assert.deepEqual(v, { status: 'degraded', reason: 'below_floor' });
+  });
+
+  it('existing VERIFIED/DEGRADED/UNVERIFIED verdicts stay exact two-key {status, reason} objects', () => {
+    // Additive-only contract (plan Theme 6): a consumer doing exact
+    // deep-equality on a pre-existing verdict shape must not need a fixture
+    // update. Only the new UNKNOWN/malformed_measurement case gains `missing`.
+    const v = graphVerdict({ extraction: okExtraction(), config: COVERAGE_DEFAULTS });
+    assert.deepEqual(Object.keys(v).sort(), ['reason', 'status']);
+  });
+});
+
 describe('parseCoverageConfig', () => {
   it('returns defaults for absent or non-object input', () => {
     assert.deepEqual(parseCoverageConfig(undefined), COVERAGE_DEFAULTS);

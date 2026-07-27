@@ -1390,7 +1390,22 @@ verified-successful rollback whose own `cleanupJournal()` call failed.**
 - **Remaining**: none for this plan's scope. The two explicitly deferred
   items (durable-rollback state machine; `isWithinAllowedRoots()`
   containment hardening) are tracked separately, not partially started.
-- **Deviations**: none from the final round-7/Gemini-round-3 design — the
-  implementation matches the plan's File-Level Plan section exactly,
-  including the `context`-parameterized `cleanupJournal()` signature and
-  the `deleteFailures`/`recoveryFailures` field names.
+- **Deviations (correction, 2026-07-27, found during an unrelated tech-debt
+  verification pass)**: the "none" claim above was wrong. §4's File-Level
+  Plan item 1 — wrap `writeJournal()`'s final
+  `retrySync(() => fs.renameSync(tmp, journalPath))` in a try/catch that
+  unlinks `tmp` before re-throwing — was never actually implemented in the
+  commit this log describes; `writeJournal()`'s body was untouched by that
+  diff (verified directly against `git show <that commit> --
+  scripts/lib/install/transaction.mjs`, which has no hunk touching
+  `writeJournal()` at all). This left tech-debt-ledger entries `0b7661a0`/
+  `22bb5573`/`aea521d8`/`ee735643` genuinely open — a subsequent session
+  caught the gap via `debt-review.mjs`, verified it against current code,
+  implemented the originally-specified fix, added a regression test
+  (`writeJournal cleans up its temp file when the final rename fails`,
+  `tests/install/transaction-hardening.test.mjs`), and resolved all 4
+  entries. Everything else in this log's "Completed" list was independently
+  re-verified against current code during that same pass and confirmed
+  accurate. Lesson for future logs: verify a "matches exactly" claim against
+  the actual diff before writing it, not against the plan's own design
+  section.

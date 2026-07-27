@@ -4,7 +4,8 @@
  *
  * Clusters accumulated tech-debt into refactor candidates ranked by leverage.
  * Three modes:
- *   default (LLM)   — sends debt to GPT-5.4 for clustering + effort estimation
+ *   default (LLM)   — sends debt to the resolved GPT audit model (`openaiConfig.model`,
+ *                     see scripts/lib/model-resolver.mjs) for clustering + effort estimation
  *   --local-only    — deterministic heuristic clustering (no LLM), good for
  *                     sensitive debt or offline/cost-sensitive workflows
  *   --include-sensitive — explicit opt-in to send sensitive entries to LLM
@@ -64,7 +65,7 @@ function printUsage() {
 
 Cluster accumulated tech-debt into refactor candidates ranked by leverage.
 
-Modes (default = LLM clustering via GPT-5.4):
+Modes (default = LLM clustering via the resolved GPT audit model):
   --local-only           Deterministic heuristic clustering, no external LLM
   --include-sensitive    Include sensitive entries in LLM payload (opt-in)
 
@@ -182,7 +183,7 @@ function runLocalClustering(entries, ttlDays) {
   };
 }
 
-// ── LLM Clustering (GPT-5.4) ────────────────────────────────────────────────
+// ── LLM Clustering (resolved GPT audit model — see scripts/lib/model-resolver.mjs) ──
 
 const DEBT_REVIEW_SYSTEM = `You are a senior engineer reviewing accumulated technical debt.
 

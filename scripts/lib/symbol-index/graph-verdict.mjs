@@ -32,6 +32,7 @@ export const GRAPH_REASON = Object.freeze({
   BUDGET_EXCEEDED: 'budget_exceeded',
   BELOW_FLOOR: 'below_floor',
   BELOW_ATTRIBUTION_FLOOR: 'below_attribution_floor',
+  MALFORMED_MEASUREMENT: 'malformed_measurement',
 });
 
 /**
@@ -219,16 +220,40 @@ export function graphVerdict({
   if (attribution && attribution.attributable > 0 && attribution.attributed === 0) {
     return { status: S.UNVERIFIED, reason: R.ZERO_ATTRIBUTED };
   }
-  // 8-10. Degradations.
-  if (Number.isFinite(extraction.elapsedMs) && extraction.elapsedMs > config.maxCruiseMs) {
-    return { status: S.DEGRADED, reason: R.BUDGET_EXCEEDED };
+  // 8-10. Degradations. A non-finite measurement is tracked in `missing`
+  // rather than silently skipped — the old `Number.isFinite(X) && X > …`
+  // guard let a malformed X (NaN, undefined, a stringified number) fall
+  // through to VERIFIED indistinguishably from "healthy", which is exactly
+  // the silent-green failure mode this whole module exists to prevent. A
+  // present-and-degraded field still wins even if a sibling is separately
+  // missing — each field's own finite-check gates its own degradation
+  // return, and only the fallthrough case consults `missing`.
+  const missing = [];
+  if (Number.isFinite(extraction.elapsedMs)) {
+    if (extraction.elapsedMs > config.maxCruiseMs) {
+      return { status: S.DEGRADED, reason: R.BUDGET_EXCEEDED };
+    }
+  } else {
+    missing.push('elapsedMs');
   }
-  if (Number.isFinite(extraction.ratio) && extraction.ratio < config.floor) {
-    return { status: S.DEGRADED, reason: R.BELOW_FLOOR };
+  if (Number.isFinite(extraction.ratio)) {
+    if (extraction.ratio < config.floor) {
+      return { status: S.DEGRADED, reason: R.BELOW_FLOOR };
+    }
+  } else {
+    missing.push('ratio');
   }
-  if (attribution && Number.isFinite(attribution.ratio)
-      && attribution.ratio < config.attributionFloor) {
-    return { status: S.DEGRADED, reason: R.BELOW_ATTRIBUTION_FLOOR };
+  if (attribution) {
+    if (Number.isFinite(attribution.ratio)) {
+      if (attribution.ratio < config.attributionFloor) {
+        return { status: S.DEGRADED, reason: R.BELOW_ATTRIBUTION_FLOOR };
+      }
+    } else {
+      missing.push('attributionRatio');
+    }
+  }
+  if (missing.length > 0) {
+    return { status: S.UNKNOWN, reason: R.MALFORMED_MEASUREMENT, missing };
   }
   return { status: S.VERIFIED, reason: null };
 }

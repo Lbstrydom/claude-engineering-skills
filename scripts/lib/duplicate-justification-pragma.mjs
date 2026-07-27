@@ -32,6 +32,18 @@ import { execFileSync } from 'node:child_process';
  * python}.test.mjs), so a hardcoded `//` match would force a syntax error
  * in non-JS files.
  *
+ * `^\s*` anchor (67f8f414/fbd71c9a): without it, pragma-shaped text
+ * appearing mid-line — inside a string literal, a template literal, or
+ * prose describing the pragma syntax rather than using it — still matched,
+ * since the comment-marker alternation could be satisfied anywhere in the
+ * line, not just at its start. Every real pragma in this repo already
+ * starts the marker at column 0 or after only leading whitespace
+ * (`git grep` verified), so `^\s*` costs no real coverage while closing the
+ * false-positive class. This is a start-of-line-text anchor only — it
+ * intentionally does NOT require the comment marker to be a `//`
+ * specifically or forbid other leading characters within the marker
+ * alternation itself.
+ *
  * TODO(sast-sandbox-backlog-hardening.md item 6, Gemini final-review M1):
  * the target-file capture `([^\s:]+)` still cannot represent a colon in the
  * TARGET path (`target=<file>:<symbol>` uses `:` as its own delimiter) — a
@@ -42,7 +54,7 @@ import { execFileSync } from 'node:child_process';
  * parser change). No known real target path contains a colon today; revisit
  * if one ever does.
  */
-export const PRAGMA_RE = /(?:\/\/|#|\/\*|<!--)\s*@duplicate-justification:\s*target=([^\s:]+):([^\s]+)\s+reason=(.+?)(?:\*\/|-->)?\s*$/;
+export const PRAGMA_RE = /^\s*(?:\/\/|#|\/\*|<!--)\s*@duplicate-justification:\s*target=([^\s:]+):([^\s]+)\s+reason=(.+?)(?:\*\/|-->)?\s*$/;
 
 /**
  * Full-repo `git grep` sweep for `@duplicate-justification` pragmas,
