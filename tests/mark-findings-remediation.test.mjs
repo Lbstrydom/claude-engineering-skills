@@ -3,13 +3,17 @@
  * (fix-lifecycle plan §9). The DB round-trip itself is an integration concern;
  * here we lock the deterministic reconciliation logic and the cloud-off no-op.
  */
-import { test } from 'node:test';
+import { test, describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import {
   buildLedgerTerminalIndex, selectReconcileTargets,
   markFindingsRemediation, reconcileRemediationProjection,
   normalizeRemediationUpdates,
 } from '../scripts/lib/store/runs-findings.mjs';
+
+const TEST_URL = process.env.AUDIT_DB_TEST_URL;
+const skip = TEST_URL ? false : 'AUDIT_DB_TEST_URL not set (integration block)';
 
 // ── normalizeRemediationUpdates: validation as a PURE seam (audit R1/M7) ─────
 // These do NOT rely on cloud-off, so a broken validator is caught directly.
@@ -104,4 +108,134 @@ test('markFindingsRemediation ignores updates missing a fingerprint or state', a
     const r = await markFindingsRemediation('repo-1', [{ action: 'mark-fixed' }, { findingFingerprint: 'a' }]);
     assert.equal(r.updated, 0);
   } finally { if (prev !== undefined) process.env.AUDIT_DB_URL = prev; }
+});
+
+// ── DB write shape (integration) ────────────────────────────────────────────
+// The pure-logic tests above cannot see this: `markFindingsRemediation` used to
+// DELETE the finding's `finding_adjudication_events` row and re-INSERT one
+// carrying only `finding_id`/`remediation_state`/`round` — omitting the NOT
+// NULL `adjudication_outcome` column, so the write threw `23502` on every call
+// (fixed/verified/regressed alike, not just non-terminal dispositions) and
+// `withTx` rolled back the paired `audit_findings.remediation_state` UPDATE
+// along with it. A no-DB unit test would have re-implemented the same broken
+// assumption and stayed green. This block needs a real constraint-enforcing
+// Postgres, so it only runs with `AUDIT_DB_TEST_URL` set.
+describe('markFindingsRemediation — DB write shape (integration)', { skip }, () => {
+  let mod, q, repoId, runId;
+  const FP_WITH_EVENT = 'fpevent1';
+  const FP_NO_ROUND = 'fpevent2';
+  const FP_NO_EVENT_ROW = 'fpevent3';
+  let findingIdWithEvent, findingIdNoRound, findingIdNoEventRow;
+  let eventIdWithEvent;
+
+  before(async () => {
+    const { assertDisposableDbUrl, _resetForTest } = await import('../scripts/lib/db/client.mjs');
+    const savedUrl = process.env.AUDIT_DB_URL;
+    // Refuses a production-identical DSN (the July 2026 wipe incident guard).
+    assertDisposableDbUrl(TEST_URL, { productionUrl: savedUrl });
+    process.env.AUDIT_DB_URL = TEST_URL;
+    _resetForTest?.();
+    q = await import('../scripts/lib/db/query.mjs');
+    mod = await import('../scripts/lib/store/runs-findings.mjs');
+
+    repoId = crypto.randomUUID();
+    runId = crypto.randomUUID();
+    await q.query(`INSERT INTO audit_repos (id, name) VALUES ($1, $2)
+                   ON CONFLICT (id) DO NOTHING`, [repoId, `test-${repoId.slice(0, 8)}`]);
+    await q.query(`INSERT INTO audit_runs (id, repo_id) VALUES ($1, $2)
+                   ON CONFLICT (id) DO NOTHING`, [runId, repoId]);
+
+    const insFinding = async (fp, adjudicationOutcome, remediationState) => {
+      const row = await q.one(
+        `INSERT INTO audit_findings
+           (run_id, finding_fingerprint, pass_name, severity, category, adjudication_outcome, remediation_state)
+         VALUES ($1, $2, 'test', 'HIGH', 'test', $3, $4)
+         RETURNING id`,
+        [runId, fp, adjudicationOutcome, remediationState]
+      );
+      return row.id;
+    };
+    const insEvent = async (findingId, outcome, remediationState, ruling, rationale, round) => {
+      const row = await q.one(
+        `INSERT INTO finding_adjudication_events
+           (finding_id, adjudication_outcome, remediation_state, ruling, ruling_rationale, round)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING id`,
+        [findingId, outcome, remediationState, ruling, rationale, round]
+      );
+      return row.id;
+    };
+
+    findingIdWithEvent = await insFinding(FP_WITH_EVENT, 'accepted', 'pending');
+    eventIdWithEvent = await insEvent(findingIdWithEvent, 'accepted', 'pending', 'sustain', 'real bug, needs fix', 1);
+
+    findingIdNoRound = await insFinding(FP_NO_ROUND, 'severity_adjusted', 'fixed');
+    await insEvent(findingIdNoRound, 'severity_adjusted', 'fixed', 'compromise', 'partially valid', 2);
+
+    findingIdNoEventRow = await insFinding(FP_NO_EVENT_ROW, 'accepted', 'pending');
+  });
+
+  after(async () => {
+    if (!q) return;
+    // FK is ON DELETE CASCADE finding_adjudication_events -> audit_findings, so
+    // deleting audit_findings is sufficient to clean up both tables.
+    await q.query('DELETE FROM audit_findings WHERE run_id = $1', [runId]);
+    await q.query('DELETE FROM audit_runs WHERE id = $1', [runId]);
+    await q.query('DELETE FROM audit_repos WHERE id = $1', [repoId]);
+    const { closePool } = await import('../scripts/lib/db/client.mjs');
+    await closePool();
+  });
+
+  it('projects remediation_state + round WITHOUT clobbering adjudication_outcome/ruling', async () => {
+    const res = await mod.markFindingsRemediation(repoId, [
+      { findingFingerprint: FP_WITH_EVENT, state: 'fixed', resolvedRound: 3 },
+    ]);
+    assert.equal(res.updated, 1, 'markFindingsRemediation must succeed, not silently fail the whole transaction');
+
+    const finding = await q.one(`SELECT remediation_state FROM audit_findings WHERE id = $1`, [findingIdWithEvent]);
+    assert.equal(finding.remediation_state, 'fixed');
+
+    const event = await q.one(
+      `SELECT id, adjudication_outcome, remediation_state, ruling, ruling_rationale, round
+         FROM finding_adjudication_events WHERE finding_id = $1`,
+      [findingIdWithEvent]
+    );
+    assert.equal(event.id, eventIdWithEvent, 'must UPDATE the existing row in place, not delete+recreate it');
+    assert.equal(event.remediation_state, 'fixed');
+    assert.equal(event.round, 3);
+    // The crux of the regression: the old delete+insert wrote only
+    // finding_id/remediation_state/round, omitting the NOT NULL
+    // adjudication_outcome column (crash) and silently dropping
+    // ruling/ruling_rationale too.
+    assert.equal(event.adjudication_outcome, 'accepted', 'adjudication_outcome must be preserved, never nulled');
+    assert.equal(event.ruling, 'sustain', 'ruling must be preserved');
+    assert.equal(event.ruling_rationale, 'real bug, needs fix', 'ruling_rationale must be preserved');
+  });
+
+  it('the self-heal reconcile shape (no resolvedRound) updates state without touching round', async () => {
+    // reconcileRemediationProjection's targets carry only {fingerprint, state} —
+    // no resolvedRound — so this mirrors that call shape.
+    const res = await mod.markFindingsRemediation(repoId, [
+      { findingFingerprint: FP_NO_ROUND, state: 'regressed' },
+    ]);
+    assert.equal(res.updated, 1);
+
+    const event = await q.one(
+      `SELECT remediation_state, round, adjudication_outcome
+         FROM finding_adjudication_events WHERE finding_id = $1`,
+      [findingIdNoRound]
+    );
+    assert.equal(event.remediation_state, 'regressed');
+    assert.equal(event.round, 2, 'round must stay at its prior value, never be nulled, when resolvedRound is unknown');
+    assert.equal(event.adjudication_outcome, 'severity_adjusted', 'preserved across the reconcile-driven update');
+  });
+
+  it('projects audit_findings even when no prior adjudication_events row exists (logs, never throws or rolls back)', async () => {
+    const res = await mod.markFindingsRemediation(repoId, [
+      { findingFingerprint: FP_NO_EVENT_ROW, state: 'fixed', resolvedRound: 1 },
+    ]);
+    assert.equal(res.updated, 1, 'a missing sibling event row must not roll back the audit_findings projection');
+    const finding = await q.one(`SELECT remediation_state FROM audit_findings WHERE id = $1`, [findingIdNoEventRow]);
+    assert.equal(finding.remediation_state, 'fixed');
+  });
 });
