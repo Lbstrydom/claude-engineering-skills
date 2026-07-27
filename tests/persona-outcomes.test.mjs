@@ -82,6 +82,13 @@ test('getPersonaOutcomesSummary: missing repoName is rejected', async () => {
   assert.match(r.error, /repoName/);
 });
 
+test('getPersonaOutcomesSummary: cloud off → degrades gracefully even when repoId is supplied (88bc75e1/8993b96f)', async () => {
+  const r = await getPersonaOutcomesSummary({ repoName: 'my-repo', repoId: 'r-1234' });
+  assert.equal(r.ok, true);
+  assert.equal(r.cloud, false);
+  assert.equal(r.sessionId, null);
+});
+
 test('getActionablePersonaOutcomeItems: cloud off → {ok:true, cloud:false, items:[]}', async () => {
   const r = await getActionablePersonaOutcomeItems({ repoName: 'my-repo' });
   assert.equal(r.ok, true);
@@ -94,6 +101,13 @@ test('getActionablePersonaOutcomeItems: missing repoName is rejected', async () 
   const r = await getActionablePersonaOutcomeItems({});
   assert.equal(r.ok, false);
   assert.match(r.error, /repoName/);
+});
+
+test('getActionablePersonaOutcomeItems: cloud off → degrades gracefully even when repoId is supplied (88bc75e1/8993b96f)', async () => {
+  const r = await getActionablePersonaOutcomeItems({ repoName: 'my-repo', repoId: 'r-1234' });
+  assert.equal(r.ok, true);
+  assert.equal(r.cloud, false);
+  assert.deepEqual(r.items, []);
 });
 
 test('resolveLabelTarget: cloud off → {ok:false} (label requires a real session lookup, never proceeds blind)', async () => {

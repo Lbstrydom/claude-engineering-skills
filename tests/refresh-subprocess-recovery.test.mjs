@@ -33,9 +33,84 @@
  *   wires the two together stays at the level of direct source inspection,
  *   not an executed integration test.
  */
-import { describe, it } from 'node:test';
+import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { shouldAttemptTimeoutRecovery, buildTimeoutRecovery } from '../scripts/symbol-index/refresh-subprocess.mjs';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { shouldAttemptTimeoutRecovery, buildTimeoutRecovery, writeFilesManifestIfRestricted } from '../scripts/symbol-index/refresh-subprocess.mjs';
+
+const SYMLINK_UNSUPPORTED = new Set(['EPERM', 'EACCES']);
+function trySymlink(target, linkPath, type = 'file') {
+  try { fs.symlinkSync(target, linkPath, type); return true; }
+  catch (err) { if (SYMLINK_UNSUPPORTED.has(err.code)) return false; throw err; }
+}
+
+describe('writeFilesManifestIfRestricted (b021576b/e86a9cbb)', () => {
+  const written = [];
+  after(() => {
+    while (written.length) {
+      const p = written.pop();
+      try { fs.unlinkSync(p); } catch { /* best-effort */ }
+    }
+  });
+
+  it('null restrictFiles returns null — no manifest written', () => {
+    const result = writeFilesManifestIfRestricted(null);
+    assert.equal(result, null);
+  });
+
+  it('an empty array WRITES a manifest (b021576b — zero-file scope is not "unrestricted")', () => {
+    const result = writeFilesManifestIfRestricted([]);
+    assert.ok(result, 'must write a manifest even for a zero-file scope');
+    written.push(result);
+    assert.ok(fs.existsSync(result));
+    assert.equal(fs.readFileSync(result, 'utf-8').trim(), '');
+  });
+
+  it('a non-empty array writes the newline-delimited file list', () => {
+    const result = writeFilesManifestIfRestricted(['a.mjs', 'b/c.mjs']);
+    written.push(result);
+    assert.equal(fs.readFileSync(result, 'utf-8'), 'a.mjs\nb/c.mjs\n');
+  });
+
+  it('refuses to write through a pre-existing symlink at the (randomized) manifest path (e86a9cbb)', () => {
+    // Simulate an attacker having pre-staged a symlink at the exact path this
+    // function is about to compute — not generally possible in practice given
+    // the random suffix, but this proves the `wx` flag itself closes the race
+    // regardless of predictability: writeFileSync must refuse, never follow it.
+    const outsideTarget = path.join(os.tmpdir(), `e86a9cbb-outside-target-${process.pid}.txt`);
+    fs.writeFileSync(outsideTarget, 'pre-existing content that must survive untouched');
+    written.push(outsideTarget);
+
+    const originalRandom = Math.random;
+    const originalNow = Date.now;
+    let plantedLink = null;
+    try {
+      // Force a deterministic suffix so we can pre-stage the exact path.
+      Math.random = () => 0.5;
+      Date.now = () => 1234567890;
+      const suffix = `${process.pid}-1234567890-${Math.floor(0.5 * 0xFFFFFF).toString(16)}`;
+      plantedLink = path.join(os.tmpdir(), `arch-refresh-files-${suffix}.txt`);
+      if (!trySymlink(outsideTarget, plantedLink, 'file')) return; // host can't create symlinks — skip
+
+      assert.throws(
+        () => writeFilesManifestIfRestricted(['x.mjs']),
+        /EEXIST/,
+        'wx must refuse to write through a pre-existing path, symlink or not',
+      );
+      assert.equal(
+        fs.readFileSync(outsideTarget, 'utf-8'),
+        'pre-existing content that must survive untouched',
+        'the symlink target must never be overwritten',
+      );
+    } finally {
+      Math.random = originalRandom;
+      Date.now = originalNow;
+      if (plantedLink) { try { fs.unlinkSync(plantedLink); } catch { /* best-effort */ } }
+    }
+  });
+});
 
 describe('shouldAttemptTimeoutRecovery', () => {
   it('true only for {mode: "full", extractionTimedOut: true}', () => {

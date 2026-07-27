@@ -1,5 +1,50 @@
 # Project Status Log
 
+## 2026-07-27 — tech-debt backlog: persona-outcomes repo-identity + refresh empty-scope/symlink fixes
+
+**`scripts/lib/store/persona-outcomes.mjs`** (`88bc75e1`/`8993b96f`) —
+`getPersonaOutcomesSummary`/`getActionablePersonaOutcomeItems` selected the
+repo's latest persona session by `repo_name` alone — a caller-supplied,
+free-form display string (`PERSONA_TEST_REPO_NAME`), not derived from git
+remote the way `LEARNING_REPO_NAME` is. Two repos sharing or reusing a name
+had a real path to the ship-gate summary silently reading another repo's
+persona findings. A prior fix (code-audit H4) made the lookup internally
+consistent (whatever session got picked, its own `repo_id` is used
+everywhere) but never addressed the SELECTION itself. Both functions now
+accept an optional `repoId` used as the PRIMARY selection key
+(`WHERE repo_id = $1`), falling back to `repo_name` only when identity
+resolution fails. `cross-skill.mjs`'s `persona-outcomes summary`/
+`--worksheet` now resolve `repoId` via the existing `resolveRepoIdentityQuiet()`
+helper (same mechanism used elsewhere in that file) before calling in.
+Verified end-to-end against this repo's real DB connection.
+
+**`scripts/symbol-index/refresh-subprocess.mjs` + `extract.mjs`**
+(`b021576b`/`e86a9cbb`) — two related bugs in the same code path:
+- `restrictFiles === null` (unrestricted, full walk) and `restrictFiles ===
+  []` (a valid incremental scope of ZERO files — e.g. a diff touching only
+  docs/config) were conflated at THREE call sites (the manifest-writing
+  decision, `enumerateFiles`, and the coverage `isFullRun` measurement),
+  all using a `.length > 0` check instead of `!== null`. Real-world impact:
+  a docs-only incremental refresh was silently falling back to a full
+  repo walk instead of correctly doing nothing.
+- The temp manifest path was PID+timestamp (predictable) and written with
+  a plain `'w'` flag (follows a pre-existing symlink) — a local attacker
+  able to pre-stage a symlink at the path could redirect the write.
+  Extracted `writeFilesManifestIfRestricted()` with a random suffix
+  (matching this repo's own `tmpSuffix()` convention) and `flag: 'wx'`
+  (`O_CREAT|O_EXCL`), which closes the race regardless of predictability.
+
+13 new tests across 3 files. Full suite green (8847/8869, 22 pre-existing
+skips, 0 failing). Verified end-to-end against a real `arch:refresh` run.
+
+**Flagged, not fixed**: `c6b3df92` — `personaFindingHash()` omits route/page
+context (`finding.step`, click-path URL), so valid findings on different
+pages can collide onto the same durable identity. The fix requires changing
+what a DURABLE, cross-session, cross-repo hash is computed FROM — every
+existing labeled outcome in `persona_finding_outcomes` (across all consumer
+repos) would silently orphan unless migrated. Real bug, but a data-migration
+decision, not an inline fix — surfaced for a decision before touching it.
+
 ## 2026-07-27 — tech-debt backlog: 2 more file clusters fixed (pragma anchor + arch/symbols.mjs)
 
 Continuing down the "leverage 3, EASY" tier from the backlog pass below.

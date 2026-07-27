@@ -80,6 +80,42 @@ export function buildTimeoutRecovery({ priorForRecovery, finalSymbols }) {
  * @param {{repoRoot: string, repoId: string, mode: string, restrictFiles: string[]|null, includeDelegates: boolean, coverageConfig: object, concreteEmbedModel: string, logOk: (s: string) => void}} args
  * @returns {Promise<{finalSymbols: Array<object>, violations: Array<object>, importEdges: Array<object>, coverageLine: object|null, extractionTimedOut: boolean, timeoutRecovery: object|null, recoveredTouchedSet: Set<string>|null}>}
  */
+/**
+ * Write the newline-delimited `--files-from` manifest for a resolved
+ * `restrictFiles` scope, or return `null` when there is no restriction at
+ * all. Factored out so the two fixes below are directly unit-testable
+ * without spawning the real extract/summarise/embed subprocess chain.
+ *
+ * b021576b: `restrictFiles === null` means "no restriction, full walk";
+ * `restrictFiles === []` means "a valid incremental scope of ZERO files"
+ * (e.g. a diff touching only docs/config, nothing indexable changed) —
+ * these are opposite intents. The old `restrictFiles.length > 0` check
+ * conflated them, silently falling back to a full repo walk whenever the
+ * incremental scope was legitimately empty. `!== null` is the correct
+ * test: write the manifest (even empty) for ANY resolved array, so
+ * extract.mjs (enumerateFiles/isFullRunFromFiles — same fix applied
+ * there) sees the real zero-file scope instead of guessing "unrestricted".
+ *
+ * e86a9cbb: the prior PID+timestamp path was predictable, and a plain 'w'
+ * write follows a pre-existing symlink — a local attacker able to
+ * pre-stage one at the guessable path could redirect this write. Adds a
+ * random suffix (matching this repo's own `tmpSuffix()` convention in
+ * transaction.mjs) AND `flag: 'wx'` (`O_CREAT|O_EXCL` — atomically refuses
+ * to write if ANYTHING already exists at the path, symlink or not), which
+ * closes the race regardless of predictability.
+ *
+ * @param {string[]|null} restrictFiles
+ * @returns {string|null} the manifest's absolute path, or null if no
+ *   restriction was passed at all
+ */
+export function writeFilesManifestIfRestricted(restrictFiles) {
+  if (restrictFiles === null) return null;
+  const suffix = `${process.pid}-${Date.now()}-${Math.floor(Math.random() * 0xFFFFFF).toString(16)}`;
+  const manifestPath = path.join(os.tmpdir(), `arch-refresh-files-${suffix}.txt`);
+  fs.writeFileSync(manifestPath, restrictFiles.join('\n') + '\n', { encoding: 'utf-8', flag: 'wx' });
+  return manifestPath;
+}
+
 export async function runExtractSummariseEmbed({ repoRoot, repoId, mode, restrictFiles, includeDelegates, coverageConfig, concreteEmbedModel, logOk }) {
   // 6. Run extract → summarise → embed pipeline
   const extractArgs = [sibling('extract.mjs'), '--root', repoRoot, '--mode', mode];
@@ -88,10 +124,8 @@ export async function runExtractSummariseEmbed({ repoRoot, repoId, mode, restric
   // changeset (1600+ files on Windows) overflows the OS command-line limit
   // → `spawn ENAMETOOLONG`. The manifest is newline-delimited (safe for any
   // filename) and removed in the finally below.
-  let filesManifest = null;
-  if (restrictFiles && restrictFiles.length > 0) {
-    filesManifest = path.join(os.tmpdir(), `arch-refresh-files-${process.pid}-${Date.now()}.txt`);
-    fs.writeFileSync(filesManifest, restrictFiles.join('\n') + '\n', 'utf-8');
+  const filesManifest = writeFilesManifestIfRestricted(restrictFiles);
+  if (filesManifest) {
     extractArgs.push('--files-from', filesManifest);
   }
   if (includeDelegates) {

@@ -1381,7 +1381,13 @@ async function cmdPersonaOutcomes() {
   if (process.argv.includes('--worksheet')) {
     const repoName = argOption('repo');
     if (!repoName) return emitError('BAD_INPUT', '--repo <name> is required for --worksheet');
-    const res = await getActionablePersonaOutcomeItems({ repoName });
+    // 88bc75e1/8993b96f: repoName alone is an ambiguous, caller-supplied
+    // display string — resolve the stable repoId (same mechanism used
+    // elsewhere in this file) so session selection can't land on a
+    // different repo that happens to share the name. --repo-id overrides
+    // when supplied; otherwise best-effort from the current git remote.
+    const repoId = argOption('repo-id') || (await resolveRepoIdentityQuiet());
+    const res = await getActionablePersonaOutcomeItems({ repoName, repoId });
     if (!res.ok) return emitError('STORE_ERROR', res.error || 'worksheet query failed');
     if (!res.cloud) return emit({ ok: true, cloud: false, count: 0 });
     const { renderAdjudicationWorksheet } = await import('./lib/adjudication-worksheet.mjs');
@@ -1417,7 +1423,9 @@ async function cmdPersonaOutcomes() {
   if (sub === 'summary') {
     const repoName = argOption('repo') || process.env.PERSONA_TEST_REPO_NAME;
     if (!repoName) return emitError('BAD_INPUT', '--repo <name> is required (or set PERSONA_TEST_REPO_NAME)');
-    const res = await getPersonaOutcomesSummary({ repoName });
+    // 88bc75e1/8993b96f: same repoId-primary resolution as --worksheet above.
+    const repoId = argOption('repo-id') || (await resolveRepoIdentityQuiet());
+    const res = await getPersonaOutcomesSummary({ repoName, repoId });
     return emit(res);
   }
 

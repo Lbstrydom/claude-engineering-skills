@@ -146,32 +146,53 @@ export async function upsertPersonaFindingOutcome(rawArgs) {
  * as before. No session found → `{ok:true, sessionId:null}` (gate
  * silent). Store/query failure → `{ok:false, error}` (caller falls back).
  *
- * Repo scope comes from the SESSION's OWN `repo_id` column (code-audit
- * H4 fix), not a second `repo_id = getRepoIdByName(repoName)` lookup —
- * `repo_name` is a display string that can drift (renames, two repos
- * sharing a bare name); re-resolving it independently of the session
- * that was just selected BY that same name risked the session lookup and
- * the ledger join silently landing on two DIFFERENT canonical repos. A
- * session with no resolved `repo_id` (couldn't be identified at record
- * time) correctly degrades to "no ledger data" rather than guessing.
+ * Repo scope, once a session is selected, comes from that SESSION's OWN
+ * `repo_id` column (code-audit H4 fix), not a second
+ * `repo_id = getRepoIdByName(repoName)` lookup — re-resolving it
+ * independently of the session that was just selected risked the session
+ * lookup and the ledger join silently landing on two DIFFERENT canonical
+ * repos.
  *
- * @param {{repoName: string}} args
+ * 88bc75e1/8993b96f (2026-07-27 correction): H4's fix above only made the
+ * lookup INTERNALLY consistent (whatever session gets picked, its own
+ * repo_id is used everywhere) — it did not address the SELECTION itself.
+ * `repo_name` is a caller-supplied display string (`PERSONA_TEST_REPO_NAME`,
+ * a free-form per-project `.env` value, not derived from git remote the
+ * way `LEARNING_REPO_NAME` is), so two distinct repos sharing or reusing a
+ * name still had a real path to selecting the WRONG repo's session
+ * entirely. `repoId`, when the caller can resolve one (via the same
+ * `resolveRepoIdentity()` mechanism used elsewhere), is now the PRIMARY
+ * selection key — `repo_name` is used only as a fallback when identity
+ * resolution genuinely fails (not a git repo, not yet registered), which
+ * is the same class of degradation this function already applies for a
+ * session with no resolved `repo_id`.
+ *
+ * @param {{repoName: string, repoId?: string|null}} args
  */
-export async function getPersonaOutcomesSummary({ repoName }) {
+export async function getPersonaOutcomesSummary({ repoName, repoId: callerRepoId = null }) {
   if (!repoName) return { ok: false, error: 'repoName is required' };
   if (!await isCloudEnabled()) return { ok: true, cloud: false, sessionId: null };
   try {
     // persona/verdict included (code-audit M1 fix) — /ship's UX-GATE
     // warning template renders `Last persona test: "<persona>" ... →
     // <verdict>`, which the original summary shape didn't carry.
-    const session = await one(
-      `SELECT id, repo_id, persona, verdict, created_at, findings
-         FROM persona_test_sessions
-        WHERE repo_name = $1
-        ORDER BY created_at DESC
-        LIMIT 1`,
-      [repoName],
-    );
+    const session = callerRepoId
+      ? await one(
+        `SELECT id, repo_id, persona, verdict, created_at, findings
+           FROM persona_test_sessions
+          WHERE repo_id = $1
+          ORDER BY created_at DESC
+          LIMIT 1`,
+        [callerRepoId],
+      )
+      : await one(
+        `SELECT id, repo_id, persona, verdict, created_at, findings
+           FROM persona_test_sessions
+          WHERE repo_name = $1
+          ORDER BY created_at DESC
+          LIMIT 1`,
+        [repoName],
+      );
     if (!session) return { ok: true, cloud: true, sessionId: null };
 
     const p0p1 = (session.findings || []).filter(isP0OrP1);
@@ -237,26 +258,41 @@ const WORKSHEET_ROW_LIMIT = 50;
  * `WORKSHEET_ROW_LIMIT` rows, newest first — never a silent truncation
  * (`truncated: true` when clipped).
  *
- * Repo scope comes from the LATEST session's OWN `repo_id` (code-audit
- * H4 fix), matching `getPersonaOutcomesSummary` — never a second
- * `getRepoIdByName` lookup independent of which session/name was
- * actually selected.
+ * Repo scope, once sessions are selected, comes from the LATEST session's
+ * OWN `repo_id` (code-audit H4 fix), matching `getPersonaOutcomesSummary`
+ * — never a second `getRepoIdByName` lookup independent of which
+ * session/name was actually selected.
  *
- * @param {{repoName: string}} args
+ * 88bc75e1/8993b96f (2026-07-27): same correction as
+ * `getPersonaOutcomesSummary` — `repoId`, when the caller can resolve one,
+ * is the PRIMARY selection key; `repo_name` is the fallback only when
+ * identity resolution genuinely fails. See that function's docstring for
+ * the full rationale.
+ *
+ * @param {{repoName: string, repoId?: string|null}} args
  * @returns {Promise<{ok: boolean, cloud: boolean, items: Array<object>, truncated: boolean, error?: string}>}
  */
-export async function getActionablePersonaOutcomeItems({ repoName }) {
+export async function getActionablePersonaOutcomeItems({ repoName, repoId: callerRepoId = null }) {
   if (!repoName) return { ok: false, cloud: false, items: [], truncated: false, error: 'repoName is required' };
   if (!await isCloudEnabled()) return { ok: true, cloud: false, items: [], truncated: false };
   try {
-    const sessions = await many(
-      `SELECT id, repo_id, created_at, findings
-         FROM persona_test_sessions
-        WHERE repo_name = $1
-        ORDER BY created_at DESC
-        LIMIT $2`,
-      [repoName, WORKSHEET_SESSION_LIMIT],
-    );
+    const sessions = callerRepoId
+      ? await many(
+        `SELECT id, repo_id, created_at, findings
+           FROM persona_test_sessions
+          WHERE repo_id = $1
+          ORDER BY created_at DESC
+          LIMIT $2`,
+        [callerRepoId, WORKSHEET_SESSION_LIMIT],
+      )
+      : await many(
+        `SELECT id, repo_id, created_at, findings
+           FROM persona_test_sessions
+          WHERE repo_name = $1
+          ORDER BY created_at DESC
+          LIMIT $2`,
+        [repoName, WORKSHEET_SESSION_LIMIT],
+      );
     if (sessions.length === 0) return { ok: true, cloud: true, items: [], truncated: false };
 
     const latestSessionId = sessions[0].id;

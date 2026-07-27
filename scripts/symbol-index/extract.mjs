@@ -556,8 +556,29 @@ const MAX_FILE_BYTES = 500 * 1024;
 // side-effect-free walker is not an implementation of
 // docs/plans/observed-graph-discovery-unification.md design (e) — that plan
 // remains blocked on the measurements this export enables.
+/**
+ * Pure gate for the coverage-measurement "was this a full run" decision
+ * (b021576b). `null` means no restriction was ever passed (--files/
+ * --files-from absent) — the only genuine full-run case. `[]` means a
+ * restriction WAS passed and resolved to zero files (e.g. an incremental
+ * diff touching only docs/config) — a real, valid, ZERO-file incremental
+ * run, not a full one; measuring it as full would compute the coverage
+ * ratio against the wrong denominator (plan §2.1.3 row 4).
+ *
+ * @param {string[]|null} files - `args.files` as parsed by parseArgs
+ * @returns {boolean}
+ */
+export function isFullRunFromFiles(files) {
+  return files === null;
+}
+
 export function enumerateFiles(repoRoot, restrictFiles) {
-  if (restrictFiles && restrictFiles.length > 0) {
+  // b021576b: `null` means "no restriction, full walk"; `[]` means "a valid
+  // incremental scope of ZERO files" (e.g. a diff touching only docs/config).
+  // The old `.length > 0` check treated both the same, silently falling back
+  // to a full repo walk when the caller's resolved scope was legitimately
+  // empty. `!== null` is the correct test.
+  if (restrictFiles !== null) {
     return restrictFiles.map(f => path.isAbsolute(f) ? f : path.join(repoRoot, f));
   }
   // Default: walk repo for source files. Keep the walk small + fast.
@@ -590,7 +611,7 @@ async function main() {
   // measuring against it would produce a real-looking ratio computed from the
   // wrong denominator. Pass null and let refresh.mjs copy the prior row
   // forward as stale instead.
-  const isFullRun = !args.files || args.files.length === 0;
+  const isFullRun = isFullRunFromFiles(args.files);
   // §2.1.1's third clause: a file this pipeline refuses to read must not count
   // against the denominator. An unreadable file is excluded for the same
   // reason — it is not a coverage failure, and failing closed here would
