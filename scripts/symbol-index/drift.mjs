@@ -65,6 +65,40 @@ function atomicWrite(file, content) {
  */
 const DRIFT_STATUS = Object.freeze({ GREEN: 'GREEN', AMBER: 'AMBER', RED: 'RED', UNKNOWN: 'UNKNOWN' });
 
+// Single source for the pragma-reconciliation candidate-pool cap
+// (docs/plans/refactor-symbol-index.md D4/Phase 3). The query `limit` and
+// the `capped` comparison below MUST use the same number, or a partial pool
+// gets reconciled as if it were complete — resurrecting exactly the false
+// "unresolved pragma" warnings the `capped` skip-check exists to prevent
+// (see the Gemini final-gate note at the `capped` branch below). Not
+// configurable — no current requirement asks for a different value.
+const PRAGMA_CANDIDATE_POOL_CAP = 10000;
+
+/**
+ * Pure predicate for the pragma-reconciliation cap decision — the ONE thing
+ * `main()` calls to decide `capped`, so a test exercises this exact
+ * comparison rather than re-deriving an arithmetic tautology of its own
+ * (round-1 code-audit M2/M3 on Phase 3: an earlier test asserted `CAP > CAP`
+ * directly, which passes regardless of whether this function's operator or
+ * cap value ever changes). `totalCount` is the TRUE total from
+ * `countSymbolsForSnapshot` (an unbounded COUNT), never the length of the
+ * `limit`-bounded candidate array — comparing the bounded array's length
+ * here would make `capped` unreachable (it can never exceed its own limit).
+ *
+ * Deliberately NOT parameterised on `cap` (final-gate shadow finding
+ * `28bb874a`): an earlier draft accepted an optional `cap` argument so a
+ * test could prove genuine parametricity, but that created a SECOND place a
+ * cap value could come from — a caller could pass a different cap here
+ * without touching the query's `limit:` argument, silently reopening the
+ * exact one-sided-edit risk D4 exists to close. Both this comparison and the
+ * query limit now reference the SAME identifier, not merely the same value.
+ * @param {number} totalCount
+ * @returns {boolean}
+ */
+function isPragmaPoolCapped(totalCount) {
+  return totalCount > PRAGMA_CANDIDATE_POOL_CAP;
+}
+
 function classify(driftScore, threshold) {
   if (driftScore <= threshold * 0.5) return DRIFT_STATUS.GREEN;
   if (driftScore <= threshold) return DRIFT_STATUS.AMBER;
@@ -185,12 +219,12 @@ async function main() {
       // earlier draft read snake_case here, so every candidate silently
       // had undefined fields and this whole reconciliation was a no-op.
       const [symbols, totalCount] = await Promise.all([
-        listSymbolsForSnapshot({ refreshId: snap.refreshId, limit: 10000 }),
+        listSymbolsForSnapshot({ refreshId: snap.refreshId, limit: PRAGMA_CANDIDATE_POOL_CAP }),
         countSymbolsForSnapshot({ refreshId: snap.refreshId }),
       ]);
-      const capped = totalCount > 10000;
+      const capped = isPragmaPoolCapped(totalCount);
       if (capped) {
-        process.stderr.write(`arch:drift: showing 10000 of ${totalCount} symbols in this cluster analysis (capped)\n`);
+        process.stderr.write(`arch:drift: showing ${PRAGMA_CANDIDATE_POOL_CAP} of ${totalCount} symbols in this cluster analysis (capped)\n`);
       }
       // Gemini final-gate finding (round 1): this candidate pool feeds
       // pragma reconciliation below, NOT the rendered drift score/cluster
@@ -199,7 +233,7 @@ async function main() {
       // entirely rather than report a misleading partial result.
       if (capped) {
         ambiguousUnresolvedSection = `\n## Unresolved suppression pragmas — skipped (LOW — capped snapshot)\n\n` +
-          `This snapshot has ${totalCount} symbols, over the 10000-row candidate-pool cap; pragma reconciliation was skipped rather than risk false "unresolved" warnings for symbols outside the capped pool.\n`;
+          `This snapshot has ${totalCount} symbols, over the ${PRAGMA_CANDIDATE_POOL_CAP}-row candidate-pool cap; pragma reconciliation was skipped rather than risk false "unresolved" warnings for symbols outside the capped pool.\n`;
       } else {
         const candidates = symbols.map((s) => ({
           filePath: s.filePath, symbolName: s.symbolName, kind: s.kind,
@@ -252,7 +286,7 @@ async function main() {
   process.exitCode = outWriteFailed ? 2 : (status === DRIFT_STATUS.RED ? 1 : 0);
 }
 
-export const _internals = { atomicWrite, parseArgs };
+export const _internals = { atomicWrite, parseArgs, PRAGMA_CANDIDATE_POOL_CAP, isPragmaPoolCapped };
 
 const isMain = (() => {
   try {

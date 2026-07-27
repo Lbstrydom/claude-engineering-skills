@@ -11,6 +11,8 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 
 import { getPool, closePool, _resetForTest, assertDisposableDbUrl } from '../scripts/lib/db/client.mjs';
 import { upsertRepoByUuid } from '../scripts/lib/store/repo.mjs';
@@ -37,6 +39,34 @@ async function makeSymbol(refreshId, repoId, { filePath, symbolName, kind, signa
   }]);
   return definitionId;
 }
+
+// No DB needed — runs unconditionally, unlike the disposable-DB suite below.
+describe('drift.mjs — PRAGMA_CANDIDATE_POOL_CAP (docs/plans/refactor-symbol-index.md Phase 3, D4)', () => {
+  it('_internals exposes the single source-of-truth cap constant', async () => {
+    const { _internals } = await import('../scripts/symbol-index/drift.mjs');
+    assert.equal(typeof _internals.PRAGMA_CANDIDATE_POOL_CAP, 'number');
+    assert.ok(_internals.PRAGMA_CANDIDATE_POOL_CAP > 0);
+  });
+
+  it('isPragmaPoolCapped boundary: exactly CAP is not capped, CAP + 1 is (round-1 M2/M3 — exercises the REAL production predicate, not a re-derived tautology)', async () => {
+    const { _internals } = await import('../scripts/symbol-index/drift.mjs');
+    const { PRAGMA_CANDIDATE_POOL_CAP: CAP, isPragmaPoolCapped } = _internals;
+    // No injectable `cap` argument (final-gate shadow finding 28bb874a) — the
+    // predicate references PRAGMA_CANDIDATE_POOL_CAP directly, the same
+    // identifier the query's `limit:` argument uses, so there is exactly one
+    // place a cap value can come from. Boundary is proven against the real
+    // constant, not a test-supplied override.
+    assert.equal(isPragmaPoolCapped(CAP - 1), false);
+    assert.equal(isPragmaPoolCapped(CAP), false, 'exactly CAP symbols: capped === false — reconciliation runs');
+    assert.equal(isPragmaPoolCapped(CAP + 1), true, 'CAP + 1 symbols: capped === true — reconciliation skipped');
+  });
+
+  it('no duplicated literal: exactly one raw "10000" in drift.mjs — the constant\'s own definition (§1c one-sided-edit guard)', () => {
+    const src = fs.readFileSync(path.join(process.cwd(), 'scripts', 'symbol-index', 'drift.mjs'), 'utf-8');
+    const literalOccurrences = (src.match(/\b10000\b/g) || []).length;
+    assert.equal(literalOccurrences, 1, 'every use site must reference PRAGMA_CANDIDATE_POOL_CAP instead of re-typing the number');
+  });
+});
 
 describe('duplicate-justification exclusion — end-to-end (disposable DB)', { skip }, () => {
   before(async () => {

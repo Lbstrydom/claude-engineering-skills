@@ -42,6 +42,30 @@ export function buildExtractSpawnOpts(coverageConfig) {
 }
 
 /**
+ * Describe an idle-timeout stall from the latest `progress` record only
+ * (docs/plans/refactor-symbol-index.md D3). A record carrying `file` means
+ * that admitted file's parse is in flight; a bare record means path
+ * admission/classification is in flight for a file the sensitive-path gate
+ * has not yet cleared, so its name is deliberately withheld — naming the
+ * previously-admitted file instead would be a confidently WRONG culprit.
+ * `Object.hasOwn`, not truthiness: the discriminator is the field's
+ * presence, so an empty or falsy path can never be silently reclassified as
+ * an admission-stage stall. Pure + exported for direct unit testing without
+ * provoking a real timeout.
+ *
+ * @param {Array<object>} records
+ * @returns {string}
+ */
+export function describeExtractStall(records) {
+  const progress = (records ?? []).filter(r => r?.type === 'progress');
+  const last = progress[progress.length - 1];
+  if (!last) return 'no progress records — wedged before the first file';
+  return Object.hasOwn(last, 'file')
+    ? `last file: ${last.file}`
+    : 'wedged during path admission (filename withheld — not yet cleared by the sensitive-path gate)';
+}
+
+/**
  * Pure gate for the 8b timed-out-full recovery path — returns the exact
  * boolean the 8b `if` condition currently tests, synchronous, no I/O.
  * `runExtractSummariseEmbed` calls this FIRST and only calls
@@ -156,8 +180,12 @@ export async function runExtractSummariseEmbed({ repoRoot, repoId, mode, restric
     if (err.code === SUBPROC_ERROR_CODES.KILLED_BY_SIGNAL && err.cause?.timedOut) {
       extractionTimedOut = true;
       extracted = err.cause.records || [];
+      // The record count is deliberately surfaced here (final-gate shadow
+      // finding 0a6e553b): D3's withheld-admission case names no file, so
+      // this count plus the formatSkipLog aggregate are what actually bound
+      // the operator's search when the name is withheld.
       logOk(`WARNING: extract went idle for ${coverageConfig.hardTimeoutMs}ms `
-        + `(no output — a wedged parse, not a slow one${err.cause?.records?.length ? `; last file: ${err.cause.records[err.cause.records.length - 1]?.file ?? '?'}` : ''}) — `
+        + `(no output — a wedged parse, not a slow one; ${(err.cause?.records ?? []).length} progress record(s) seen; ${describeExtractStall(err.cause?.records)}) — `
         + `coverage will report extraction_timeout; reached symbols publish and the un-reached tail recovers via copy-forward`);
     } else {
       throw err;

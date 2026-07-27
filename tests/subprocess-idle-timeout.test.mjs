@@ -11,6 +11,7 @@
  */
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -20,12 +21,21 @@ import {
   runJsonLinesAsyncStrict,
   SUBPROC_ERROR_CODES,
 } from '../scripts/lib/subprocess.mjs';
-import { buildExtractSpawnOpts } from '../scripts/symbol-index/refresh-subprocess.mjs';
+import { buildExtractSpawnOpts, describeExtractStall } from '../scripts/symbol-index/refresh-subprocess.mjs';
+import { classifyPath } from '../scripts/lib/sensitive-paths.mjs';
+import { trySymlink } from './helpers/fs-symlink-test-utils.mjs';
 
 const EXTRACT = path.join(process.cwd(), 'scripts', 'symbol-index', 'extract.mjs');
 // The record types refresh.mjs consumes; a `progress` heartbeat is deliberately
 // none of them, so it is dropped from the published snapshot.
 const PUBLISHED_TYPES = ['symbol', 'violation', 'import', 'coverage', 'summary'];
+
+/** Valid, parseable JS padded to roughly `bytes` — for size-boundary fixtures. */
+function fileOfSize(bytes) {
+  const header = '// pad ';
+  const filler = 'x'.repeat(Math.max(0, bytes - header.length - 1)) + '\n';
+  return header + filler + 'export const PADDED = 1;\n';
+}
 
 // ── A fake clock: setTimeoutFn/clearTimeoutFn the controller can be driven by ──
 function makeFakeClock() {
@@ -173,19 +183,211 @@ describe('extract.mjs per-file heartbeat (audit H1) — real subprocess on a fix
   });
   after(() => { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 
-  it('emits a {type:progress, file} record per file even when the files yield no symbols', async () => {
+  it('emits [bare, named] progress records per admitted file even when the files yield no symbols (D1/D2)', async () => {
     const res = await runJsonLinesAsync('node',
       [EXTRACT, '--root', tmp, '--files', 'a.mjs,b.mjs', '--mode', 'incremental']);
     const byType = {};
     for (const r of res.records) byType[r.type] = (byType[r.type] || 0) + 1;
     assert.equal(byType.symbol ?? 0, 0, 'fixture is symbol-less — proves progress is not incidental symbol output');
     const progress = res.records.filter(r => r.type === 'progress');
-    assert.deepEqual(progress.map(p => p.file).sort(), ['a.mjs', 'b.mjs'], 'one heartbeat per file, carrying the path');
+    assert.equal(progress.length, 4, 'two beats per admitted file (D2): one anonymous tick, one named beat');
+    const named = progress.filter(p => Object.hasOwn(p, 'file'));
+    assert.deepEqual(named.map(p => p.file).sort(), ['a.mjs', 'b.mjs'], 'one NAMED heartbeat per admitted file, carrying the path');
+    const bare = progress.filter(p => !Object.hasOwn(p, 'file'));
+    assert.equal(bare.length, 2, 'one anonymous tick per file, emitted before admission is decided (position unchanged)');
   });
 
   it('the progress type is not a published record type (dropped from the snapshot)', () => {
     // refresh.mjs filters records with `.filter(r => r.type === '<one of these>')`,
     // so a `progress` record can never reach the published snapshot.
     assert.ok(!PUBLISHED_TYPES.includes('progress'), 'progress is not consumed by any refresh filter');
+  });
+});
+
+describe('extract.mjs — per-outcome progress cardinality, isolated single-file fixtures (round-2 M1)', () => {
+  function isolatedRoot() {
+    return fs.mkdtempSync(path.join(os.tmpdir(), 'extract-seq-'));
+  }
+  async function runFullWalk(root) {
+    const res = await runJsonLinesAsync('node', [EXTRACT, '--root', root]);
+    return res.records.filter(r => r.type === 'progress');
+  }
+  function shapes(records) {
+    return records.map(r => (Object.hasOwn(r, 'file') ? 'named' : 'bare'));
+  }
+
+  it('admitted, small file → [bare, named]', async () => {
+    const root = isolatedRoot();
+    try {
+      fs.writeFileSync(path.join(root, 'a.mjs'), 'export const A = 1;\n');
+      const progress = await runFullWalk(root);
+      assert.deepEqual(shapes(progress), ['bare', 'named']);
+      assert.equal(progress[1].file, 'a.mjs');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+
+  it('admitted, >250KB file → [bare, named] — the deleted large-file tick is NOT resurrected as a third beat (R2)', async () => {
+    const root = isolatedRoot();
+    try {
+      fs.writeFileSync(path.join(root, 'big.mjs'), fileOfSize(300_000));
+      const progress = await runFullWalk(root);
+      assert.deepEqual(shapes(progress), ['bare', 'named']);
+      assert.equal(progress[1].file, 'big.mjs');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+
+  it('lexically-skipped (.env) → [bare] only, name never attached', async () => {
+    const root = isolatedRoot();
+    try {
+      fs.writeFileSync(path.join(root, '.env'), 'SECRET=1\n');
+      assert.deepEqual(shapes(await runFullWalk(root)), ['bare']);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+
+  it('non-allowlisted extension (.txt) → [bare] only', async () => {
+    const root = isolatedRoot();
+    try {
+      fs.writeFileSync(path.join(root, 'notes.txt'), 'hello\n');
+      assert.deepEqual(shapes(await runFullWalk(root)), ['bare']);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+
+  it('over the size cap → [bare] only', async () => {
+    const root = isolatedRoot();
+    try {
+      fs.writeFileSync(path.join(root, 'huge.mjs'), fileOfSize(600_000));
+      assert.deepEqual(shapes(await runFullWalk(root)), ['bare']);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+
+  it('a symlink (broken or valid) is invisible to enumerateFiles — zero progress records, not a disclosure (independent, pre-existing walker gap)', async (t) => {
+    const root = isolatedRoot();
+    try {
+      const link = path.join(root, 'dangling.mjs');
+      if (!trySymlink(path.join(root, 'does-not-exist-target.mjs'), link, 'file')) {
+        t.skip('symlink creation unavailable on this host (needs Developer Mode/elevation) — '
+          + 'this case NOT verified here; the core disclosure defect is still covered by the '
+          + 'symlink-free lexical/extension/size cases above');
+        return;
+      }
+      // Empirically confirmed (node v22, win32 AND per Node's cross-platform
+      // Dirent contract — d_type reflects the raw entry type, not the resolved
+      // target): enumerateFiles's walker keys off `e.isFile()`/`e.isDirectory()`,
+      // both of which are false for ANY symlink dirent. The symlink never
+      // reaches the per-file loop at all, so it produces NO progress record —
+      // not even the anonymous tick — rather than a rejected `[bare]`. This is
+      // a pre-existing, independent gap in enumerateFiles (a coverage
+      // limitation: symlinked source is silently never indexed, sensitive or
+      // not) — orthogonal to this plan's disclosure-prevention design, since
+      // there is nothing for admitFile's gate to withhold when the walker
+      // never surfaces the path in the first place.
+      assert.deepEqual(await runFullWalk(root), [], 'a symlink produces zero progress records — the walker excludes it before the loop, so nothing is disclosed and nothing is a false "bare" tick either');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+
+  it('mixed unrestricted walk: totals reconcile, no two consecutive named, no named record names a rejected path', async () => {
+    const root = isolatedRoot();
+    try {
+      fs.writeFileSync(path.join(root, 'a.mjs'), 'export const A = 1;\n');
+      fs.writeFileSync(path.join(root, 'b.mjs'), 'export const B = 2;\n');
+      fs.writeFileSync(path.join(root, '.env'), 'SECRET=1\n');
+      fs.mkdirSync(path.join(root, 'secrets'));
+      fs.writeFileSync(path.join(root, 'secrets', 'token.ts'), 'export const T = 1;\n');
+      fs.writeFileSync(path.join(root, 'notes.txt'), 'hello\n');
+      fs.writeFileSync(path.join(root, 'huge.mjs'), fileOfSize(600_000));
+
+      const progress = await runFullWalk(root);
+      const walked = 6; // a.mjs, b.mjs, .env, secrets/token.ts, notes.txt, huge.mjs
+      const admitted = 2; // a.mjs, b.mjs
+      assert.equal(progress.length, walked + admitted, 'per-outcome cardinality: rejected=1, admitted=2 (D2)');
+
+      const seq = shapes(progress);
+      for (let i = 0; i < seq.length - 1; i++) {
+        assert.ok(!(seq[i] === 'named' && seq[i + 1] === 'named'), 'no two consecutive named records — every named beat is preceded by its own file\'s bare tick');
+      }
+
+      const rejectedPaths = new Set(['.env', 'secrets/token.ts', 'notes.txt', 'huge.mjs']);
+      for (const r of progress) {
+        if (Object.hasOwn(r, 'file')) {
+          assert.ok(!rejectedPaths.has(r.file), `named record must never name a rejected path (got ${r.file})`);
+        }
+      }
+      const namedFiles = progress.filter(r => Object.hasOwn(r, 'file')).map(r => r.file).sort();
+      assert.deepEqual(namedFiles, ['a.mjs', 'b.mjs']);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+});
+
+describe('extract.mjs — empirical no-sensitive-name verifier (Tier 3, never "by inspection")', () => {
+  // Automated, reduces every record to a redacted digest immediately — the raw
+  // path is never retained past the reduction, never logged, never printed
+  // (docs/plans/refactor-symbol-index.md §8 Empirical). A failure's assertion
+  // message carries only a category + an 8-hex-char digest, mirroring
+  // formatSkipLog's `[redacted:<sha256-hex8>]` convention.
+  it('every progress record naming a file classifies non-sensitive by the repo\'s own classifyPath', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'extract-verify-'));
+    try {
+      fs.writeFileSync(path.join(root, '.env'), 'SECRET=1\n');
+      fs.mkdirSync(path.join(root, 'secrets'));
+      fs.writeFileSync(path.join(root, 'secrets', 'token.ts'), 'export const T = 1;\n');
+      fs.writeFileSync(path.join(root, 'notes.txt'), 'hello\n');
+      fs.writeFileSync(path.join(root, 'app.mjs'), 'export const A = 1;\n');
+
+      const res = await runJsonLinesAsync('node', [EXTRACT, '--root', root]);
+      // Reduce IMMEDIATELY — never hold the raw records past this line.
+      const digest = res.records
+        .filter(r => r.type === 'progress' && Object.hasOwn(r, 'file'))
+        .map(r => ({
+          category: classifyPath(r.file) ?? 'clean',
+          hash: crypto.createHash('sha256').update(r.file).digest('hex').slice(0, 8),
+        }));
+      const leaked = digest.filter(d => d.category === 'sensitive');
+      assert.equal(leaked.length, 0,
+        `${leaked.length} sensitive name(s) reached the progress channel: ${leaked.map(d => `[redacted:${d.hash}]`).join(', ')}`);
+      assert.ok(digest.length >= 1, 'at least the admitted app.mjs must have produced a named beat');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+});
+
+describe('describeExtractStall (D3) — pure, latest-record-only, no timeout provoked', () => {
+  it('last progress record is named → reports that file', () => {
+    const msg = describeExtractStall([{ type: 'progress' }, { type: 'progress', file: 'big.mjs' }]);
+    assert.equal(msg, 'last file: big.mjs');
+  });
+
+  it('last progress record is bare (admission-stage stall) → withholds the name, and does NOT name an earlier admitted file (R2 H1)', () => {
+    const msg = describeExtractStall([
+      { type: 'progress' },
+      { type: 'progress', file: 'earlier-admitted.mjs' },
+      { type: 'progress' }, // bare tick for the NEXT (still-uncleared) file
+    ]);
+    assert.match(msg, /wedged during path admission/);
+    assert.doesNotMatch(msg, /earlier-admitted\.mjs/, 'a confidently wrong culprit is worse than none');
+  });
+
+  it('no progress records at all → explicit fallback, never a guess', () => {
+    assert.equal(describeExtractStall([]), 'no progress records — wedged before the first file');
+    assert.equal(describeExtractStall(undefined), 'no progress records — wedged before the first file');
+    assert.equal(describeExtractStall([{ type: 'symbol', symbolName: 'x' }]), 'no progress records — wedged before the first file');
+  });
+
+  it('presence, not truthiness (round-2 M1) — an empty-string file is still "named"', () => {
+    assert.equal(describeExtractStall([{ type: 'progress', file: '' }]), 'last file: ');
   });
 });

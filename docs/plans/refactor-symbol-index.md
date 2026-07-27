@@ -1,9 +1,10 @@
 # Plan: Refactor symbol-index — close the progress-channel sensitive-path disclosure and the drift pragma-cap re-opener
 
 - **Date**: 2026-07-27
-- **Status**: **Approved — NOT yet implemented** (3 GPT plan-audit rounds +
-  2 Gemini final-gate rounds, final verdict `APPROVE` with 0 new findings
-  and 0 wrongly-dismissed — see Audit Trail)
+- **Status**: **Complete** — implemented via `/cycle code --autonomous` (3 GPT
+  plan-audit rounds + 2 Gemini plan final-gate rounds; then Cluster A + Cluster
+  B code-audited independently and gated by 1 consolidated Gemini review,
+  `APPROVE`, 0 new findings, 0 wrongly-dismissed — see Implementation Log)
 - **Author**: Claude + Test
 - **Scope**: backend
 - **Target domain(s)**: `arch-memory`, `tests`
@@ -1066,6 +1067,83 @@ final design's two safety properties are positional and provable rather than
 estimated: the first beat never moves, and a filename is attached only
 downstream of the gate that cleared it.
 
-**Status on close**: Approved, **not implemented**. No source file was
-modified by this session — only `docs/plans/refactor-symbol-index.md` was
+**Status on close (plan-audit session)**: Approved, not yet implemented. No
+source file was modified by that session — only this plan document was
 created.
+
+---
+
+## Implementation Log
+
+### 2026-07-27 — implemented via `/cycle code --autonomous`
+
+**Completed** — both clusters, per §6's Execution Clustering:
+
+- **Cluster A** (Phases 1-2, `extract.mjs` + `refresh-subprocess.mjs` +
+  `tests/subprocess-idle-timeout.test.mjs`): implemented exactly per §5's D1/D2/D3
+  design — the progress beat split (anonymous pre-admission tick, named
+  post-admission beat), the deleted large-file tick, and `describeExtractStall`'s
+  latest-record-only three-way rule. Code-audit: 1 GPT round (H:1 M:8 →
+  rebuttal). The one HIGH (`recoveredTouchedSet`/`finalSymbols` under-counting
+  reached files during timed-out-full recovery) was a genuine, pre-existing bug
+  but independent of this cluster's diff (different function, no call
+  relationship) — deferred to `.audit/tech-debt.json` per GPT's own compromise
+  ruling. All other findings (a plan-reference false positive, two
+  already-tracked `--files-from` manifest-lossiness duplicates, a rejected
+  design alternative the plan's own audit trail already declined, an
+  already-tested unrelated timeout-bound decision from a different plan, a
+  mechanical adjacency coverage-cap marker, and two already-tracked
+  build-manifest.mjs layering-debt duplicates) were dismissed as invalid or
+  out-of-scope-and-independent. `fix-gate: none` — no per-cluster convergence
+  gate; deferred to the consolidated review.
+- **Cluster B** (Phase 3, `drift.mjs` + `tests/symbol-index-drift-justification.test.mjs`):
+  the `PRAGMA_CANDIDATE_POOL_CAP` constant + 3 call-site replacements, per D4.
+  Code-audit: 2 GPT rounds. Round 1 (H:0 M:5 L:1) found one genuine bug **in my
+  own test**: the boundary test asserted `CAP > CAP` / `(CAP+1) > CAP` directly
+  — a JS-operator tautology that would pass even if `drift.mjs`'s own
+  comparison changed. Fixed by extracting the comparison itself into a new pure
+  predicate, `isPragmaPoolCapped(totalCount)`, wired `main()` to call it, and
+  rewrote the test to exercise the real function. A second finding (claiming
+  `capped` derives from the `limit`-bounded array's length rather than the true
+  unbounded `countSymbolsForSnapshot` total) was invalid — quoted the code to
+  show it was already correct. Round 2 (PASS, H:0 M:2) re-raised the same
+  already-tracked `build-manifest.mjs` layering debt from Cluster A — dismissed
+  as duplicate. `fix-gate: final`.
+- **Consolidated Gemini gate** (mandatory, union diff of both clusters):
+  `APPROVE`, 0 new findings, 0 wrongly-dismissed, first round. The parallel
+  observation-only Claude Opus shadow reviewer surfaced 3 shadow-only findings
+  (never gating, per the Shadow Final-Review A/B design) — evaluated on merits
+  regardless: two were genuine and fixed post-approval (an earlier draft of
+  `isPragmaPoolCapped` accepted an optional `cap` override parameter, which
+  reopened a narrower version of the exact one-sided-edit risk D4 closes —
+  removed the parameter so the predicate and the query `limit:` reference the
+  same identifier, not merely the same value; the wedge-diagnostic message
+  never surfaced the progress-record count D3's own prose says should "bound
+  the search" — added it). The third (a MEDIUM claiming no regression test
+  would catch a hoisted named-emit) was evaluated and found overstated: the
+  `.env`/non-allowlisted-extension/size-cap fixture tests already fail hard and
+  cross-platform on exactly that regression; no further test change was made.
+- **Close-out**: full test suite green (66/66 across the touched
+  symbol-index test files; only one unrelated pre-existing failure elsewhere in
+  the repo from a different concurrent session's in-flight change). The
+  `npm run arch:refresh:full` dogfood ran against this repo's own working
+  tree; its extraction phase (the part this plan's Cluster A touches) completed
+  cleanly with zero sensitive filenames observed on the progress channel.
+- **Debt ledger**: 8 stale topicIds from the original 11-entry cluster resolved
+  in the plan-audit session (see that session's own record); one NEW,
+  genuinely independent debt item (`recoveredTouchedSet` under-counting)
+  captured this session.
+
+**Deviations from the approved design**: none in the shipped Phases 1-3
+themselves. The two shadow-driven post-approval touch-ups (dropping
+`isPragmaPoolCapped`'s optional `cap` parameter; adding the progress-record
+count to the wedge message) are strict strengthenings of D3/D4's own stated
+intent, not scope changes — both stay inside the same two files Cluster B and
+Cluster A already owned.
+
+**Remaining**: none. The `enumerateFiles`/symlink walker behavior discovered
+empirically during test-writing (a symlink, broken or valid, never reaches the
+per-file loop at all on this platform — and, per Node's Dirent contract, on any
+platform) is documented in `tests/subprocess-idle-timeout.test.mjs`'s symlink
+test as a pre-existing, independent coverage limitation, not a defect this plan
+introduces or is scoped to fix.

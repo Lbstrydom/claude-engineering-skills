@@ -358,9 +358,14 @@ export function extractSymbols(filePaths, repoRoot, opts = {}) {
     // is exactly one file's processing time regardless of outcome. Goes to
     // stdout via `emit` (NOT `emitProgress`, which is stderr and invisible to
     // the parent's timer). refresh.mjs's record filters ignore the `progress`
-    // type, so the published snapshot is unchanged; the file path lets a
-    // wedge kill name the culprit.
-    emit({ type: 'progress', file: rel });
+    // type, so the published snapshot is unchanged.
+    // Position is UNCHANGED — before any filesystem work — so the maximum
+    // silent interval is <= what it was before this change, for every file.
+    // The path is NOT attached here: nothing has classified it yet, and a
+    // full (unrestricted) walk enumerates `.env`/`secrets/**` like any
+    // other file. The name is attached only after admitFile clears it
+    // (docs/plans/refactor-symbol-index.md D1 — INC-001 fail-closed).
+    emit({ type: 'progress' });
 
     const admission = admitFile(abs, { repoRoot });
     if (!admission.admitted) {
@@ -399,15 +404,16 @@ export function extractSymbols(filePaths, repoRoot, opts = {}) {
       continue;
     }
 
-    // Extra liveness tick for a large ADMITTED file, immediately before its
-    // ts-morph parse — a single large file's parse can itself run long
-    // enough to look wedged with no interior signal (round-4 scope note:
-    // rejected candidates never reach here — admitFile's checks are cheap
-    // and synchronous, so a long walk over many rejected files is fast by
-    // construction; this is specifically about one admitted file's parse time).
-    if (admission.size > MAX_FILE_BYTES / 2) {
-      emit({ type: 'progress', file: rel });
-    }
+    // Named beat: admitFile is the single point that has cleared this path
+    // against the sensitive-path policy (lexical + canonical + escape +
+    // extension + size). Fail-closed BY CONSTRUCTION — the name is
+    // attached iff admitted, so a rejection reason added later is silent
+    // by default (INC-001: never allow what you could not classify).
+    // Also the parse-start marker the parent's wedge diagnostic reads (D3),
+    // and the pre-parse liveness tick for EVERY admitted file (D2) — this
+    // supersedes the old size-gated large-file tick, which fired only for
+    // files over MAX_FILE_BYTES/2.
+    emit({ type: 'progress', file: rel });
 
     const parsed = loadAndParseFile(admission.canonicalPath, project);
     if (!parsed.ok) {
