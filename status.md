@@ -1,5 +1,33 @@
 # Project Status Log
 
+## 2026-07-27 — symbol-index/refresh.mjs: heartbeat failures now visible on the run's own result
+
+Follow-up to the tech-debt backlog pass below: `runWithHeartbeat`'s liveness
+heartbeat (`heartbeatRefreshRun`) used to log its first failure to stderr
+and then swallow every subsequent one for the rest of the run, with nothing
+about the failure reaching the refresh's own final output. Refactored to
+track `{failureCount, lastError}` in a status object passed to the run's
+callback, which now folds `heartbeatFailures` into the success-path JSON
+result — `0` in the common case, a real count when the liveness signal
+went dark. `runWithHeartbeat` also gained an injectable `beatFn` param
+(defaults to the real `heartbeatRefreshRun`) so this is unit-testable
+without module-mocking (this repo's existing ESM-mocking limitation for
+plain named exports). 5 new tests in `tests/refresh-heartbeat.test.mjs`;
+verified end-to-end against a real `arch:refresh` run. Resolved
+`41bf7af6`/`812d9d83`.
+
+Noted but out of scope: `--force`'s stale-refresh detection
+(`findStaleRunningRefresh`) doesn't actually consult heartbeat age at all
+today — it just aborts whatever's currently marked `running` — and
+`refresh-lock.mjs`'s comment describing an aborted worker's heartbeat loop
+"exiting cleanly when it observes status!='running'" doesn't match the
+code (no such status-check exists anywhere in the heartbeat loop). Not a
+correctness risk in practice: `publish_refresh_run`'s server-side RPC
+independently rejects a publish from a non-`running` refresh_run, so a
+stale/aborted worker can never clobber a newer one even without a
+client-side self-abort. Real gap, but a different and larger feature than
+the 2 entries just fixed — not touched here.
+
 ## 2026-07-27 — tech-debt backlog: resolved 16 stale entries, fixed a real gap the resolving found
 
 Picked up "what's next on the tech-debt backlog" and verified the top
