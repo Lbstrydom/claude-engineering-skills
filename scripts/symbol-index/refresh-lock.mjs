@@ -71,14 +71,20 @@ export async function acquireRefreshLock({ repoId, mode, walkStartCommit, force,
     if (action === 'retry-with-abort') {
       // Abort the prior in-flight run, then retry openRefreshRun.
       // Partial-unique index on (repo_id, status='running') guarantees at
-      // most one row to clear. The aborted worker's heartbeat loop exits
-      // cleanly when it observes status!='running'.
+      // most one row to clear. The aborted worker's own heartbeat tick
+      // observes this abort within one interval and calls its
+      // AbortController — the tick's next `heartbeatRefreshRun` call
+      // returns false (this row is no longer `running`), which is what
+      // actually stops the in-flight worker's pipeline (not a status
+      // poll inside this file).
       logOk(`--force: aborting prior in-flight refresh for repo ${repoId}`);
       try {
         const stale = await findStaleRunningRefresh(repoId);
         if (stale) {
-          await abortRefreshRun({ refreshId: stale.id, reason: 'aborted by --force' });
-          logOk(`--force: aborted refresh_run ${stale.id}`);
+          const { aborted } = await abortRefreshRun({ refreshId: stale.id, repoId, reason: 'aborted by --force' });
+          logOk(aborted
+            ? `--force: aborted refresh_run ${stale.id}`
+            : `--force: refresh_run ${stale.id} was already terminal by the time abort ran — proceeding`);
         } else {
           logOk(`--force: no in-flight row found, retrying openRefreshRun`);
         }

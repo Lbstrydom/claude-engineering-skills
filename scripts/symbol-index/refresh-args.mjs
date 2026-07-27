@@ -35,11 +35,43 @@ export function parseArgs(argv) {
 
   const args = { full: false, sinceCommit: null, force: false, includeDelegates: false };
   for (let i = 2; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === '--full') args.full = true;
-    else if (a === '--since-commit') args.sinceCommit = argv[++i];
-    else if (a === '--force') args.force = true;
-    else if (a === '--include-delegates') args.includeDelegates = true;
+    let a = argv[i], inlineValue = null;
+    // POSIX `--` terminator: assertKnownFlags above already stops validating
+    // at this token (cli-io.mjs), so this parser must honor the same
+    // boundary — without this break, `refresh.mjs -- --full` would pass
+    // validation but this loop would keep going and match the positional
+    // `--full` as a real flag (Gemini-shadow finding, symbol-index-pipeline-
+    // reliability-hardening final-gate round 2).
+    if (a === '--') break;
+    const eq = a.indexOf('=');
+    if (eq !== -1) { inlineValue = a.slice(eq + 1); a = a.slice(0, eq); }
+    switch (a) {
+      case '--full':
+        if (inlineValue !== null) throw new Error(`--full does not take a value; got --full=${inlineValue}`);
+        args.full = true; break;
+      case '--since-commit': {
+        const value = inlineValue !== null ? inlineValue : argv[i + 1];
+        // round-2 H2: reject, never silently accept, every shape that would
+        // otherwise fall through to "value is falsy → treated as absent →
+        // silently promoted to a full walk" — end-of-argv (value undefined),
+        // a missing value where the NEXT token is itself a known flag
+        // (`--since-commit --force`, which used to consume `--force` as the
+        // commit and leave force disabled), and `--since-commit=` (empty
+        // string).
+        if (!value || value.startsWith('--')) {
+          throw new Error(`--since-commit requires a non-empty value (got ${JSON.stringify(value ?? null)})`);
+        }
+        if (inlineValue === null) i++; // only advance past a space-separated value
+        args.sinceCommit = value;
+        break;
+      }
+      case '--force':
+        if (inlineValue !== null) throw new Error(`--force does not take a value; got --force=${inlineValue}`);
+        args.force = true; break;
+      case '--include-delegates':
+        if (inlineValue !== null) throw new Error(`--include-delegates does not take a value; got --include-delegates=${inlineValue}`);
+        args.includeDelegates = true; break;
+    }
   }
   return args;
 }

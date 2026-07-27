@@ -50,6 +50,9 @@ const EXPECTED_EXPORTS = [
   'recordLayeringViolations',
   'recordDuplicateJustifications',
   'listSymbolsForSnapshot',
+  // symbol-index-pipeline-reliability-hardening Theme 2 — capped-pool
+  // detector for drift.mjs's pragma reconciliation.
+  'countSymbolsForSnapshot',
   // Bounded null-summary re-queue (plan §2.1 C9) — arch/symbols.mjs.
   'listFilesNeedingSummaryRetry',
   'recordSummaryOutcomes',
@@ -77,8 +80,8 @@ const EXPECTED_EXPORTS = [
 ];
 
 describe('arch-memory.mjs barrel — public export contract', () => {
-  test(`exactly 42 public functions in EXPECTED_EXPORTS`, () => {
-    assert.equal(EXPECTED_EXPORTS.length, 42);
+  test(`exactly 43 public functions in EXPECTED_EXPORTS`, () => {
+    assert.equal(EXPECTED_EXPORTS.length, 43);
   });
 
   // Every public member is a FUNCTION. `SUMMARY_RETRY_CAP` was briefly exported
@@ -177,10 +180,19 @@ describe('arch-memory cloud-disabled neutral-value contract', () => {
     else process.env.AUDIT_LOOP_DISABLE_SHARED = saved.disableShared;
   });
 
-  test('getRefreshRun returns null when cloud-off', async () => {
+  test('getRefreshRun returns null when cloud-off (repoId supplied)', async () => {
     const { getRefreshRun } = await import('../scripts/lib/store/arch-memory.mjs');
-    const r = await getRefreshRun('any-id', { select: ['id'] });
+    const r = await getRefreshRun('any-id', { repoId: 'any-repo', select: ['id'] });
     assert.equal(r, null);
+  });
+
+  test('abortRefreshRun returns {aborted:false} when cloud-off, never throws (consolidated-gate shadow finding)', async () => {
+    // Without this guard, abortRefreshRun let updateWhere() reach for a pool
+    // that doesn't exist — the one D1 sibling of heartbeatRefreshRun/
+    // getRefreshRun that didn't degrade gracefully.
+    const { abortRefreshRun } = await import('../scripts/lib/store/arch-memory.mjs');
+    const r = await abortRefreshRun({ refreshId: 'any-id', repoId: 'any-repo', reason: 'test' });
+    assert.deepEqual(r, { aborted: false });
   });
 
   test('getRefreshRun throws on unknown column BEFORE checking cloud (validation deterministic)', async () => {
@@ -188,6 +200,14 @@ describe('arch-memory cloud-disabled neutral-value contract', () => {
     await assert.rejects(
       () => getRefreshRun('any-id', { select: ['nonexistent_col'] }),
       /unknown column/i,
+    );
+  });
+
+  test('getRefreshRun throws on a missing repoId — a call-site error, not "not found"', async () => {
+    const { getRefreshRun } = await import('../scripts/lib/store/arch-memory.mjs');
+    await assert.rejects(
+      () => getRefreshRun('any-id', { select: ['id'] }),
+      /refreshId and repoId are both required/,
     );
   });
 
@@ -310,9 +330,15 @@ describe('arch-memory cloud-disabled neutral-value contract', () => {
     assert.deepEqual(await listFileImportsForSnapshot('refresh-x'), []);
   });
 
-  test('getImportGraphPopulated returns false when cloud-off', async () => {
+  test('getImportGraphPopulated returns false when cloud-off (repoId supplied)', async () => {
     const { getImportGraphPopulated } = await import('../scripts/lib/store/arch-memory.mjs');
-    assert.equal(await getImportGraphPopulated('refresh-x'), false);
+    assert.equal(await getImportGraphPopulated('refresh-x', 'repo-x'), false);
+  });
+
+  test('getImportGraphPopulated throws on a missing repoId — a call-site error, not "not populated"', async () => {
+    const { getImportGraphPopulated } = await import('../scripts/lib/store/arch-memory.mjs');
+    await assert.rejects(() => getImportGraphPopulated('refresh-x'), /refreshId and repoId are both required/);
+    await assert.rejects(() => getImportGraphPopulated(null, 'repo-x'), /refreshId and repoId are both required/);
   });
 
   test('getImportersForFiles returns empty Map when cloud-off OR empty paths', async () => {
@@ -335,6 +361,11 @@ describe('arch-memory cloud-disabled neutral-value contract', () => {
   test('listSymbolsForSnapshot returns [] when cloud-off', async () => {
     const { listSymbolsForSnapshot } = await import('../scripts/lib/store/arch-memory.mjs');
     assert.deepEqual(await listSymbolsForSnapshot({ refreshId: 'r' }), []);
+  });
+
+  test('countSymbolsForSnapshot returns 0 when cloud-off', async () => {
+    const { countSymbolsForSnapshot } = await import('../scripts/lib/store/arch-memory.mjs');
+    assert.equal(await countSymbolsForSnapshot({ refreshId: 'r' }), 0);
   });
 
   test('listLayeringViolationsForSnapshot returns [] when cloud-off', async () => {

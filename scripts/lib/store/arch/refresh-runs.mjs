@@ -59,26 +59,78 @@ export async function publishRefreshRun({ repoId, refreshId, activeEmbeddingMode
   }
 }
 
-/** Mark a refresh_run aborted — workers polling status see this and exit. */
-export async function abortRefreshRun({ refreshId, reason }) {
+/**
+ * Mark a refresh_run aborted — workers polling status see this and exit.
+ *
+ * Scoped by `(id, repo_id, status='running')` — the status predicate is
+ * what makes concurrent abort/publish race-safe: a stale/late abort call
+ * arriving after the run has already published is a 0-row no-op, never a
+ * silent flip of an already-published run back to `aborted`. Paired with
+ * `publishRefreshRun`'s own atomic RPC guard (rejects publishing a
+ * non-`running` row), the two transitions are mutually exclusive at the
+ * database layer regardless of any in-process signal's timing.
+ *
+ * Returns `{aborted: boolean}` (audit-code round-2 L1) rather than logging
+ * directly to stderr and returning void — a store-layer persistence
+ * function shouldn't own a CLI logging convention, and a caller silently
+ * unable to see whether its abort actually landed can't report accurately
+ * (this was a real bug in `refresh-lock.mjs`'s `--force` path, which
+ * logged "aborted refresh_run X" unconditionally even on a 0-row no-op).
+ */
+export async function abortRefreshRun({ refreshId, repoId, reason }) {
+  // Guarded by isCloudEnabled() like every sibling in this file (consolidated
+  // final-gate shadow finding): without it, a cloud-disabled process reaching
+  // this function would let updateWhere() throw instead of a graceful no-op
+  // — heartbeatRefreshRun/getRefreshRun already degrade cleanly, this one
+  // didn't. `{aborted: false}` is the honest answer (nothing exists to
+  // abort when there is no store), distinct from heartbeatRefreshRun's
+  // cloud-off `true` (a "never interferes with cancellation" contract
+  // specific to that function, not a template for this one).
+  if (!await isCloudEnabled()) return { aborted: false };
   try {
-    await updateWhere('refresh_runs',
+    const rows = await updateWhere('refresh_runs',
       {
         status: 'aborted',
         error: reason || null,
         completed_at: new Date().toISOString(),
         retention_class: 'aborted',
       },
-      { id: refreshId }
+      { id: refreshId, repo_id: repoId, status: 'running' },
+      { returning: ['id'] }
     );
+    return { aborted: rows.length > 0 };
   } catch (err) {
     throw new Error(`abortRefreshRun failed: ${err.message}`);
   }
 }
 
-/** Touch heartbeat so --force can detect a live worker. */
-export async function heartbeatRefreshRun({ refreshId }) {
-  await updateWhere('refresh_runs', { last_heartbeat_at: new Date().toISOString() }, { id: refreshId });
+/**
+ * Touch heartbeat so --force can detect a live worker. Returns whether
+ * the run is still `running` for this repo — a caller uses this as the
+ * cancellation signal (a `false` means the run was force-aborted or
+ * belongs to a different repo, and should stop).
+ *
+ * Guarded by `isCloudEnabled()` like every sibling in this file (shadow
+ * final-gate finding) — without it, a cloud-disabled process reaching this
+ * function would have `updateWhere` throw on every tick (no pool), and
+ * `runWithHeartbeat`'s consecutive-failure counter would eventually
+ * self-abort the whole pipeline over "no store configured", a
+ * configuration state, not a liveness failure. Returns `true` (never
+ * interferes) rather than `false` (which would read as "force-aborted")
+ * when cloud is disabled — `main()` already exits before this pipeline
+ * runs in that case, so this is a defensive/consistency guard, not a
+ * currently-reachable path.
+ *
+ * @returns {Promise<boolean>}
+ */
+export async function heartbeatRefreshRun({ refreshId, repoId }) {
+  if (!await isCloudEnabled()) return true;
+  const rows = await updateWhere('refresh_runs',
+    { last_heartbeat_at: new Date().toISOString() },
+    { id: refreshId, repo_id: repoId, status: 'running' },
+    { returning: ['id'] }
+  );
+  return rows.length > 0;
 }
 
 /**
@@ -100,15 +152,17 @@ const GET_REFRESH_RUN_COLUMNS = new Set([
 ]);
 
 /**
- * Read a single refresh_run by id. `select` is an optional column allowlist.
+ * Read a single refresh_run by id, scoped to the owning repo. `select` is
+ * an optional column allowlist.
  *
  * @param {string} refreshId
  * @param {object} [opts]
+ * @param {string} opts.repoId - required; the run must belong to this repo.
  * @param {string[]} [opts.select] - columns to project; MUST be from
  *   GET_REFRESH_RUN_COLUMNS. Unknown columns throw — no silent quoting.
  * @returns {Promise<object|null>}
  */
-export async function getRefreshRun(refreshId, { select } = {}) {
+export async function getRefreshRun(refreshId, { repoId, select } = {}) {
   // Validate the `select` allowlist BEFORE checking cloud — invalid column
   // names are programmer errors that must surface deterministically, not
   // get silently masked by cloud-disabled fall-through.
@@ -122,11 +176,20 @@ export async function getRefreshRun(refreshId, { select } = {}) {
   } else {
     cols = 'id, repo_id, mode, status, walk_start_commit, started_at, completed_at, retention_class, last_heartbeat_at, import_graph_populated';
   }
-  if (!refreshId || !await isCloudEnabled()) return null;
+  // A missing refreshId/repoId is a call-site programmer error — surfaced
+  // deterministically (Gemini final-gate round-2 finding), same treatment
+  // as the unknown-column check just above and getImportGraphPopulated's
+  // matching guard: a caller that forgot repoId must not be told "not
+  // found" (indistinguishable from a real miss), it must be told it made
+  // a mistake.
+  if (!refreshId || !repoId) {
+    throw new Error(`getRefreshRun: refreshId and repoId are both required (got refreshId=${JSON.stringify(refreshId)}, repoId=${JSON.stringify(repoId)})`);
+  }
+  if (!await isCloudEnabled()) return null;
   try {
     return await one(
-      `SELECT ${cols} FROM refresh_runs WHERE id = $1 LIMIT 1`,
-      [refreshId]
+      `SELECT ${cols} FROM refresh_runs WHERE id = $1 AND repo_id = $2 LIMIT 1`,
+      [refreshId, repoId]
     );
   } catch {
     return null;

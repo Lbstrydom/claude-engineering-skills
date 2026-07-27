@@ -1,5 +1,77 @@
 # Project Status Log
 
+## 2026-07-27 — symbol-index-pipeline-reliability-hardening: full 5-cluster /cycle --autonomous shipped
+
+`docs/plans/symbol-index-pipeline-reliability-hardening.md` — 4 GPT audit-plan
+rounds + 3 Gemini final-gate rounds at plan stage, then all 5 execution
+clusters (A-E) implemented and audited autonomously, closing with a
+consolidated Gemini final gate (APPROVE, 0 new findings) over the full
+union diff.
+
+**Cluster A** — heartbeat cancellation + repo-scoped refresh-run mutations.
+`abortRefreshRun`/`getRefreshRun`/`heartbeatRefreshRun` all now require
+`repoId`, throw on missing call-site args instead of silently returning
+null/false, and scope mutations by `(id, repo_id, status='running')` so a
+stale abort/publish race resolves deterministically at the DB layer.
+`runWithHeartbeat` rewritten with a self-scheduling `setTimeout` (no
+overlapping ticks) + `MAX_CONSECUTIVE_HEARTBEAT_FAILURES` self-abort. 6 GPT
+rounds + 3 Gemini rounds, converged clean.
+
+**Cluster B** — `drift.mjs`/`graph-verdict.mjs` explicit-unknown-state.
+New `DRIFT_STATUS` enum (mirrors `GRAPH_STATUS`'s "unknown ≠ verified"
+doctrine); `graph-verdict.mjs`'s three degradation checks restructured so a
+non-finite measurement is tracked in a `missing` array → new
+`UNKNOWN`/`MALFORMED_MEASUREMENT` verdict instead of silently falling
+through to `VERIFIED`. New `countSymbolsForSnapshot` lets `drift.mjs` detect
+when its pragma-reconciliation candidate pool is capped. Also fixed in-pass:
+`atomicWrite` wrapped for `--out` write failures, a `parseArgs` flag-value-
+swallow bug (`--out --json` used to silently discard `--json`), and a test-
+duplication dedup (new `tests/helpers/db-fixtures.mjs`).
+
+**Cluster C** — `extract.mjs` hardening. The 213-line `extractSymbols`
+decomposed into `admitFile → loadAndParseFile → classifySymbolsInFile →
+redactAndEmit`; the extension-allowlist gate now runs on the CANONICAL
+(symlink-resolved) path, not the raw one, closing a bypass in both
+directions. `ts.ScriptTarget.ESNext`/`ts.ModuleKind.ESNext`/
+`ts.ModuleResolutionKind.Bundler` replace hardcoded `99`/`99`/`100`.
+`enumerateFiles`'s `restrictFiles` tri-state fixed — a genuinely empty
+array no longer silently promotes to a full repo walk. Same flag-value-
+swallow bug fixed in `extract.mjs`'s own CLI parser.
+
+**Cluster D** — refresh-subprocess/file-scope/args CLI hardening.
+`runExtractSummariseEmbed` short-circuits on an empty `restrictFiles`
+(`{skipped: true}`, no subprocess spawned) instead of promoting to a full
+walk; the `--files-from` manifest write gains `wx` + a bounded EEXIST
+retry. `resolveIncrementalFileScope` now runs the summary-retry queue
+through the same sensitive-path filter the git-diff files already get.
+`refresh-args.mjs`'s `parseArgs` rewritten for `=`-form support, a POSIX
+`--` terminator, and `--since-commit` rejecting every value-less shape.
+
+**Cluster E** — store-layer rowCount honesty (fix-gate: final).
+`recordSymbolEmbedding(s)`/`copyForwardUntouchedFiles` (symbols.mjs) and
+`recordSymbolFileImports`/`copyForwardImports` (imports.mjs) all switched
+from summing attempted input length to summing the DB write's own
+`rowCount`, matching the pattern already proven in
+`recordDuplicateJustifications`. New DB-integration tests verify reported
+counts against a real post-write `SELECT count(*)`.
+
+**Consolidated gate**: primary (Gemini) verdict `APPROVE`, 0 new findings.
+The observation-only shadow reviewer (Claude Opus) surfaced 4 additional
+findings — 1 confirmed real and fixed (`abortRefreshRun` was missing the
+`isCloudEnabled()` guard its two D1 siblings have), 2 already-deferred
+duplicates, 1 verified false positive (a claimed race in the manifest
+wx-retry that synchronous `fs.writeFileSync` semantics rule out). Full test
+suite green (8954/8976, 22 pre-existing skips). Dogfooded end-to-end via
+`npm run arch:refresh -- --since-commit <branch-base>` (169 symbols,
+2195 import edges) + `npm run arch:render` (3690 symbols) against this
+repo's own code.
+
+Many findings across all 5 clusters were legitimately out-of-scope
+(repo-ownership scoping for symbol reads/writes, error-cause-swallowing
+across store-layer writers, `--files-from`'s newline-delimiter limitation)
+— all properly deferred to `.audit/tech-debt.json` with impact-tested
+rationale, not silently dropped.
+
 ## 2026-07-27 — tech-debt backlog: 2 more file clusters fixed (pragma anchor + arch/symbols.mjs)
 
 Continuing down the "leverage 3, EASY" tier from the backlog pass below.

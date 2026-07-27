@@ -21,7 +21,7 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
-import { Project } from 'ts-morph';
+import { Project, ts } from 'ts-morph';
 import { cruise } from 'dependency-cruiser';
 import { signatureHash } from '../lib/symbol-index.mjs';
 import {
@@ -43,12 +43,29 @@ import {
 import { COVERAGE_DEFAULTS } from '../lib/symbol-index/graph-verdict.mjs';
 import { emit } from '../lib/cli-io.mjs';
 
+/**
+ * Consume argv[i+1] as a value for the flag at argv[i], rejecting a missing
+ * value or one that looks like another flag (round-1 L1, symbol-index-
+ * pipeline-reliability-hardening) — same idiom as refresh-args.mjs's
+ * --since-commit guard and drift.mjs's --out guard. Without this, `node
+ * extract.mjs --files --mode incremental` silently consumed `--mode` as the
+ * files value and left mode at its default, never processing the requested
+ * mode.
+ */
+function requireFlagValue(argv, i, flagName) {
+  const value = argv[i + 1];
+  if (!value || value.startsWith('--')) {
+    throw new Error(`${flagName} requires a non-empty value (got ${JSON.stringify(value ?? null)})`);
+  }
+  return value;
+}
+
 function parseArgs(argv) {
   const args = { root: process.cwd(), files: null, mode: 'full', sinceCommit: null, includeDelegates: false };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '--root') args.root = argv[++i];
-    else if (a === '--files') args.files = argv[++i].split(',').filter(Boolean);
+    if (a === '--root') args.root = requireFlagValue(argv, i++, '--root');
+    else if (a === '--files') args.files = requireFlagValue(argv, i++, '--files').split(',').filter(Boolean);
     // --files-from <path>: read a newline-delimited manifest of files. Used by
     // refresh.mjs for incremental runs so a large touched-file list never hits
     // the OS argv length limit (Windows ENAMETOOLONG at ~1600+ files). Newline-
@@ -60,11 +77,11 @@ function parseArgs(argv) {
     // names never contain those); a real fix is a NUL-delimited manifest (git -z
     // style). Deferred, not fixed here — see .audit/tech-debt.json.
     else if (a === '--files-from') {
-      const manifestPath = argv[++i];
+      const manifestPath = requireFlagValue(argv, i++, '--files-from');
       args.files = fs.readFileSync(manifestPath, 'utf-8').split('\n').map(s => s.trim()).filter(Boolean);
     }
-    else if (a === '--mode') args.mode = argv[++i];
-    else if (a === '--since-commit') args.sinceCommit = argv[++i];
+    else if (a === '--mode') args.mode = requireFlagValue(argv, i++, '--mode');
+    else if (a === '--since-commit') args.sinceCommit = requireFlagValue(argv, i++, '--since-commit');
     else if (a === '--include-delegates') args.includeDelegates = true;
   }
   return args;
@@ -76,7 +93,224 @@ function emitProgress(msg) {
 }
 
 /**
- * Walk the repo (or a subset of files) and emit symbol records.
+ * The single per-file admission decision: sensitive/generated-noise/drift-
+ * exempt path skip, canonical (symlink-resolved) sensitivity + escape check,
+ * extension allowlist, and the size cap — in that order, all before any
+ * ts-morph read. Fail-closed with NO fallback to the pre-resolution path
+ * (D4, resolves round-1 H6): a resolution failure, an escaped symlink, or a
+ * canonical-sensitive target is refused outright, never re-tried against the
+ * unresolved `abs` path.
+ *
+ * The extension gate runs on the CANONICAL path (`cls.canonical`), never the
+ * raw `rel` — closing the symlink-bypass gap where a lexically-safe name
+ * could point at a canonical target of a different (or no) extension. This
+ * is the one behavior change from the pre-decomposition code (which checked
+ * the extension on `rel`, before canonical resolution even ran).
+ *
+ * `classify` defaults to the real resolveAndClassify but is injectable —
+ * mirrors the `beatFn` pattern Phase 1 established for runWithHeartbeat, so
+ * a test can stub canonical-path resolution without a real filesystem
+ * symlink fixture (round-2 M1).
+ *
+ * @param {string} abs - absolute path
+ * @param {{repoRoot: string, classify?: typeof resolveAndClassify}} ctx
+ * @returns {{admitted: boolean, rel: string, reason?: string, canonicalPath?: string, size?: number, cls?: object, lexicalSkip?: object, error?: Error}}
+ */
+function admitFile(abs, { repoRoot, classify = resolveAndClassify }) {
+  const rel = path.relative(repoRoot, abs).replace(/\\/g, '/');
+
+  // Lexical skip covers categories `resolveAndClassify` does not: generatedNoise
+  // and driftExempt (it only ever resolves/reports `sensitive`). In incremental
+  // mode this is defence-in-depth (refresh.mjs already filtered the diff); in
+  // full mode (no --files restriction) this IS the discovery filter — the same
+  // skip policy applies to both modes (plan §6 WS3 R3-H3).
+  const lexicalSkip = shouldSkipForIndexing(rel, ['sensitive', 'generatedNoise', 'driftExempt']);
+  if (lexicalSkip.skip) {
+    return { admitted: false, rel, reason: 'lexical-skip', lexicalSkip };
+  }
+
+  // WS-CANON (Gemini-G2 fix): canonical-path resolution happens ONCE per
+  // file, BEFORE ts-morph reads the file into memory — resolve once, skip
+  // the entire file if sensitive / escaped / unresolvable, AND feed ts-morph
+  // the canonical path so we read exactly what the gate approved.
+  const cls = classify(rel, { repoRoot });
+  if (cls.resolutionFailed) {
+    return { admitted: false, rel, reason: 'resolution-failed', cls };
+  }
+  if (cls.escapedRepo) {
+    return { admitted: false, rel, reason: 'escaped-repo', cls };
+  }
+  if (cls.category === 'sensitive') {
+    return { admitted: false, rel, reason: 'sensitive', cls };
+  }
+
+  // Only reachable with a real, safe, non-sensitive canonical path.
+  const canonicalRel = path.relative(repoRoot, cls.canonical).replace(/\\/g, '/');
+  if (!isExtensionAllowlisted(canonicalRel)) {
+    return { admitted: false, rel, reason: 'extension-not-allowlisted', cls };
+  }
+
+  // Size cap — skip generated/bundled monsters before they OOM ts-morph.
+  // Use the canonical path so a symlink to a huge real file is still caught.
+  let size;
+  try {
+    size = fs.statSync(cls.canonical).size;
+  } catch (err) {
+    return { admitted: false, rel, reason: 'stat-error', cls, error: err };
+  }
+  if (size > MAX_FILE_BYTES) {
+    return { admitted: false, rel, reason: 'size-cap', cls, size };
+  }
+
+  return { admitted: true, rel, canonicalPath: cls.canonical, cls, size };
+}
+
+/**
+ * Load + parse one admitted file's SourceFile via ts-morph. Isolated from
+ * `admitFile` so a parse failure (exception OR ts-morph's `*IfExists` silent
+ * undefined return) is the only thing this step can report.
+ *
+ * @param {string} canonicalPath
+ * @param {import('ts-morph').Project} project
+ * @returns {{ok: true, sourceFile: import('ts-morph').SourceFile} | {ok: false, reason: 'parse-error'|'no-source-file', error?: Error}}
+ */
+function loadAndParseFile(canonicalPath, project) {
+  let sf;
+  try {
+    sf = project.addSourceFileAtPathIfExists(canonicalPath);
+  } catch (err) {
+    return { ok: false, reason: 'parse-error', error: err };
+  }
+  if (!sf) {
+    // ts-morph's `*IfExists` APIs return undefined instead of throwing on
+    // failure — a non-exception failure a try/catch alone can't see
+    // (audit M5, 2026-07-24: the exception path was counted, this one
+    // wasn't, so a file could fail to load without appearing anywhere in
+    // failure accounting).
+    return { ok: false, reason: 'no-source-file' };
+  }
+  return { ok: true, sourceFile: sf };
+}
+
+/**
+ * Declaration extraction: functions, classes, and function-valued variable
+ * declarations. Pure — no redaction, no emission, no stats.
+ *
+ * @param {import('ts-morph').SourceFile} sourceFile
+ * @returns {Array<{symbolName: string, kind: string, startLine: number, endLine: number, signature: string, bodyText: string, isExported: boolean}>}
+ */
+function classifySymbolsInFile(sourceFile) {
+  const candidates = [];
+
+  for (const fn of sourceFile.getFunctions()) {
+    candidates.push({
+      symbolName: fn.getName() || '(anonymous)',
+      kind: 'function',
+      startLine: fn.getStartLineNumber(),
+      endLine: fn.getEndLineNumber(),
+      signature: `function ${fn.getName() || ''}(${fn.getParameters().map(p => p.getText()).join(',')})`,
+      bodyText: fn.getBodyText() || '',
+      isExported: fn.isExported(),
+    });
+  }
+  for (const cls of sourceFile.getClasses()) {
+    candidates.push({
+      symbolName: cls.getName() || '(anonymous)',
+      kind: 'class',
+      startLine: cls.getStartLineNumber(),
+      endLine: cls.getEndLineNumber(),
+      signature: `class ${cls.getName() || ''}`,
+      bodyText: cls.getText() || '',
+      isExported: cls.isExported(),
+    });
+  }
+  for (const v of sourceFile.getVariableDeclarations()) {
+    const init = v.getInitializer();
+    if (!init) continue;
+    const initKind = init.getKindName();
+    if (initKind === 'ArrowFunction' || initKind === 'FunctionExpression') {
+      candidates.push({
+        symbolName: v.getName(),
+        kind: 'function',
+        startLine: v.getStartLineNumber(),
+        endLine: v.getEndLineNumber(),
+        signature: `const ${v.getName()} = ${initKind}`,
+        bodyText: v.getText() || '',
+        isExported: v.isExported() || v.getVariableStatement()?.isExported() || false,
+      });
+    }
+  }
+
+  return candidates;
+}
+
+/**
+ * Thin-delegate filter + secret redaction + emission — runs strictly after
+ * `admitFile`'s decision (a file only reaches here once admission, load, and
+ * classification have all already happened), mutating the shared `stats`
+ * counters for skippedDelegate/redacted/symbolCount.
+ *
+ * @param {ReturnType<typeof classifySymbolsInFile>} candidates
+ * @param {{rel: string, includeDelegates: boolean, stats: object}} ctx
+ */
+function redactAndEmit(candidates, { rel, includeDelegates, stats }) {
+  for (const c of candidates) {
+    // Thin-delegate filter: skip 1-line facades like
+    //   const addListener = (...args) => target.method(...args);
+    // before they enter the cluster index. See isThinDelegate().
+    // --include-delegates flag disables the filter for operators who want
+    // the full per-module view in arch:render.
+    if (!includeDelegates && isThinDelegate(c.bodyText)) {
+      stats.skippedDelegate++;
+      continue;
+    }
+    // WS-CANON (Gemini-G2 fix): path-level enforcement (sensitive,
+    // extension, symlink-escape) is done ONCE per file in admitFile — we
+    // know this file already passed. This loop only needs the body-secret
+    // check to decide whether to redact this specific candidate's body
+    // before egress.
+    const willRedact = containsSecrets(c.bodyText);
+    if (willRedact) stats.redacted++;
+
+    // R1 H3: signature can carry default-arg literals that contain secrets
+    // (e.g. `function f(key="AKIA...")`). When the body fired the secret
+    // gate, redact the signature too so no field leaks to summarise/embed.
+    // Also defensive-check signature even when body looked clean — a parser
+    // edge case could put the secret only in the signature.
+    const safeSignature = (willRedact || containsSecrets(c.signature))
+      ? redactSecrets(c.signature)
+      : c.signature;
+
+    const record = {
+      type: 'symbol',
+      filePath: rel,
+      symbolName: c.symbolName,
+      kind: c.kind,
+      startLine: c.startLine,
+      endLine: c.endLine,
+      signature: safeSignature,
+      bodyText: willRedact ? '' : c.bodyText,
+      signatureHash: signatureHash({
+        symbolName: c.symbolName,
+        // hash always uses the ORIGINAL signature/body so cache identity
+        // tracks the real artifact, not the redacted display copy
+        signature: c.signature,
+        bodyText: c.bodyText,
+      }),
+      isExported: c.isExported,
+      purposeSummary: willRedact ? SECRET_REDACTED : null,
+      embedding: null,
+      redacted: willRedact,
+    };
+    emit(record);
+    stats.symbolCount++;
+  }
+}
+
+/**
+ * Walk the repo (or a subset of files) and emit symbol records. Sequences
+ * the four per-file steps: admitFile -> loadAndParseFile ->
+ * classifySymbolsInFile -> redactAndEmit.
  *
  * @param {string[]} filePaths - absolute paths
  * @param {string} repoRoot - absolute path
@@ -103,9 +337,13 @@ export function extractSymbols(filePaths, repoRoot, opts = {}) {
     compilerOptions: {
       allowJs: true,
       checkJs: false,
-      target: 99,
-      module: 99,
-      moduleResolution: 100,
+      // Named constants, not magic numbers (symbol-index-pipeline-reliability-
+      // hardening Theme 3, R3): verified against the installed ts-morph's
+      // re-exported `ts` at implementation time — target/module/moduleResolution
+      // resolve to 99/99/100, the exact values these constants replace.
+      target: ts.ScriptTarget.ESNext,
+      module: ts.ModuleKind.ESNext,
+      moduleResolution: ts.ModuleResolutionKind.Bundler,
     },
   });
 
@@ -116,179 +354,78 @@ export function extractSymbols(filePaths, repoRoot, opts = {}) {
     // any stdout record. A file yields no `symbol` records if it is skipped or
     // contains no extractable declarations, so symbol output alone is NOT a
     // reliable liveness signal — emit a `progress` beat at the TOP of every
-    // iteration, BEFORE this file's ts-morph work, so the max silent interval is
-    // exactly one file's processing time. Goes to stdout via `emit` (NOT
-    // `emitProgress`, which is stderr and invisible to the parent's timer).
-    // refresh.mjs's record filters ignore the `progress` type, so the published
-    // snapshot is unchanged; the file path lets a wedge kill name the culprit.
+    // iteration, BEFORE admission is even decided, so the max silent interval
+    // is exactly one file's processing time regardless of outcome. Goes to
+    // stdout via `emit` (NOT `emitProgress`, which is stderr and invisible to
+    // the parent's timer). refresh.mjs's record filters ignore the `progress`
+    // type, so the published snapshot is unchanged; the file path lets a
+    // wedge kill name the culprit.
     emit({ type: 'progress', file: rel });
-    // Skip filter covers BOTH categories. In incremental mode this is
-    // defence-in-depth (refresh.mjs already filtered the diff). In full
-    // mode (refresh.mjs passes no `--files`) this IS the discovery filter
-    // — so the same skip policy applies to both modes (plan §6 WS3 R3-H3).
-    // Sensitive entries aggregate; generatedNoise/driftExempt stay per-path (visible).
-    const skip = shouldSkipForIndexing(rel, ['sensitive', 'generatedNoise', 'driftExempt']);
-    if (skip.skip) {
-      stats.skippedPath++;
-      skippedSensitive.push({ path: rel, category: skip.category, pattern: skip.pattern, action: 'dropped' });
-      continue;
-    }
-    if (!isExtensionAllowlisted(rel)) {
-      stats.skippedExt++;
-      continue;
-    }
-    // WS-CANON (Gemini-G2 fix): canonical-path resolution happens ONCE
-    // per file, BEFORE ts-morph reads the file into memory. The previous
-    // implementation called gateSymbolForEgress (and therefore
-    // fs.realpathSync) inside the inner per-candidate loop — dozens of
-    // syscalls per file, AND the file was already in ts-morph's memory
-    // via the unresolved path before any canonical check could run.
-    // Now: resolve once, skip the entire file if sensitive / escaped /
-    // unresolvable, AND feed ts-morph the canonical path so we read
-    // exactly what the gate approved.
-    const cls = resolveAndClassify(rel, { repoRoot });
-    if (cls.escapedRepo) {
-      stats.skippedPath++;
-      skippedSensitive.push({ path: rel, category: 'sensitive', pattern: null, action: 'skip-symlink-escape' });
-      continue;
-    }
-    if (cls.category === 'sensitive') {
-      stats.skippedPath++;
-      const action = cls.resolutionFailed ? 'skip-resolution-failed'
-                   : (cls.lexical === 'sensitive' ? 'dropped' : 'skip-canonical-sensitive');
-      skippedSensitive.push({ path: rel, category: 'sensitive', pattern: null, action });
-      continue;
-    }
-    // Size cap — skip generated/bundled monsters before they OOM ts-morph.
-    // Use the canonical path so a symlink to a huge real file is still caught.
-    const readPath = cls.canonical || abs;
-    try {
-      const size = fs.statSync(readPath).size;
-      if (size > MAX_FILE_BYTES) {
-        stats.skippedSize++;
-        emitProgress(`skip-size: ${rel} (${Math.round(size/1024)}KB > ${MAX_FILE_BYTES/1024}KB)`);
-        continue;
+
+    const admission = admitFile(abs, { repoRoot });
+    if (!admission.admitted) {
+      switch (admission.reason) {
+        case 'lexical-skip':
+          stats.skippedPath++;
+          skippedSensitive.push({ path: rel, category: admission.lexicalSkip.category, pattern: admission.lexicalSkip.pattern, action: 'dropped' });
+          break;
+        case 'resolution-failed':
+          stats.skippedPath++;
+          skippedSensitive.push({ path: rel, category: 'sensitive', pattern: null, action: 'skip-resolution-failed' });
+          break;
+        case 'escaped-repo':
+          stats.skippedPath++;
+          skippedSensitive.push({ path: rel, category: 'sensitive', pattern: null, action: 'skip-symlink-escape' });
+          break;
+        case 'sensitive':
+          stats.skippedPath++;
+          skippedSensitive.push({
+            path: rel, category: 'sensitive', pattern: null,
+            action: admission.cls.lexical === 'sensitive' ? 'dropped' : 'skip-canonical-sensitive',
+          });
+          break;
+        case 'extension-not-allowlisted':
+          stats.skippedExt++;
+          break;
+        case 'stat-error':
+          stats.statFailures++;
+          emitProgress(`stat-error: ${rel} — ${admission.error.message}`);
+          break;
+        case 'size-cap':
+          stats.skippedSize++;
+          emitProgress(`skip-size: ${rel} (${Math.round(admission.size / 1024)}KB > ${MAX_FILE_BYTES / 1024}KB)`);
+          break;
       }
-    } catch (err) {
-      stats.statFailures++;
-      emitProgress(`stat-error: ${rel} — ${err.message}`);
       continue;
     }
-    let sf;
-    try {
-      sf = project.addSourceFileAtPathIfExists(readPath);
-    } catch (err) {
+
+    // Extra liveness tick for a large ADMITTED file, immediately before its
+    // ts-morph parse — a single large file's parse can itself run long
+    // enough to look wedged with no interior signal (round-4 scope note:
+    // rejected candidates never reach here — admitFile's checks are cheap
+    // and synchronous, so a long walk over many rejected files is fast by
+    // construction; this is specifically about one admitted file's parse time).
+    if (admission.size > MAX_FILE_BYTES / 2) {
+      emit({ type: 'progress', file: rel });
+    }
+
+    const parsed = loadAndParseFile(admission.canonicalPath, project);
+    if (!parsed.ok) {
       stats.parseFailures++;
-      emitProgress(`parse-error: ${rel} — ${err.message}`);
-      continue;
-    }
-    if (!sf) {
-      // ts-morph's `*IfExists` APIs return undefined instead of throwing on
-      // failure — a non-exception failure the try/catch above can't see
-      // (audit M5, 2026-07-24: the exception path was counted, this one
-      // wasn't, so a file could fail to load without appearing anywhere in
-      // failure accounting).
-      stats.parseFailures++;
-      emitProgress(`parse-error: ${rel} — addSourceFileAtPathIfExists returned no source file`);
+      const detail = parsed.reason === 'parse-error'
+        ? parsed.error.message
+        : 'addSourceFileAtPathIfExists returned no source file';
+      emitProgress(`parse-error: ${rel} — ${detail}`);
       continue;
     }
 
-    const candidates = [];
+    const candidates = classifySymbolsInFile(parsed.sourceFile);
+    redactAndEmit(candidates, { rel, includeDelegates: opts.includeDelegates, stats });
 
-    for (const fn of sf.getFunctions()) {
-      candidates.push({
-        symbolName: fn.getName() || '(anonymous)',
-        kind: 'function',
-        startLine: fn.getStartLineNumber(),
-        endLine: fn.getEndLineNumber(),
-        signature: `function ${fn.getName() || ''}(${fn.getParameters().map(p => p.getText()).join(',')})`,
-        bodyText: fn.getBodyText() || '',
-        isExported: fn.isExported(),
-      });
-    }
-    for (const cls of sf.getClasses()) {
-      candidates.push({
-        symbolName: cls.getName() || '(anonymous)',
-        kind: 'class',
-        startLine: cls.getStartLineNumber(),
-        endLine: cls.getEndLineNumber(),
-        signature: `class ${cls.getName() || ''}`,
-        bodyText: cls.getText() || '',
-        isExported: cls.isExported(),
-      });
-    }
-    for (const v of sf.getVariableDeclarations()) {
-      const init = v.getInitializer();
-      if (!init) continue;
-      const initKind = init.getKindName();
-      if (initKind === 'ArrowFunction' || initKind === 'FunctionExpression') {
-        candidates.push({
-          symbolName: v.getName(),
-          kind: 'function',
-          startLine: v.getStartLineNumber(),
-          endLine: v.getEndLineNumber(),
-          signature: `const ${v.getName()} = ${initKind}`,
-          bodyText: v.getText() || '',
-          isExported: v.isExported() || v.getVariableStatement()?.isExported() || false,
-        });
-      }
-    }
-
-    for (const c of candidates) {
-      // Thin-delegate filter: skip 1-line facades like
-      //   const addListener = (...args) => target.method(...args);
-      // before they enter the cluster index. See isThinDelegate().
-      // --include-delegates flag (opts.includeDelegates) disables the filter
-      // for operators who want the full per-module view in arch:render.
-      if (!opts.includeDelegates && isThinDelegate(c.bodyText)) {
-        stats.skippedDelegate++;
-        continue;
-      }
-      // WS-CANON (Gemini-G2 fix): path-level enforcement (sensitive,
-      // extension, symlink-escape) is done ONCE per file above — we
-      // know this file already passed. Inner loop only needs the
-      // body-secret check to decide whether to redact this specific
-      // candidate's body before egress.
-      const willRedact = containsSecrets(c.bodyText);
-      if (willRedact) stats.redacted++;
-
-      // R1 H3: signature can carry default-arg literals that contain secrets
-      // (e.g. `function f(key="AKIA...")`). When the body fired the secret
-      // gate, redact the signature too so no field leaks to summarise/embed.
-      // Also defensive-check signature even when body looked clean — a parser
-      // edge case could put the secret only in the signature.
-      const safeSignature = (willRedact || containsSecrets(c.signature))
-        ? redactSecrets(c.signature)
-        : c.signature;
-
-      const record = {
-        type: 'symbol',
-        filePath: rel,
-        symbolName: c.symbolName,
-        kind: c.kind,
-        startLine: c.startLine,
-        endLine: c.endLine,
-        signature: safeSignature,
-        bodyText: willRedact ? '' : c.bodyText,
-        signatureHash: signatureHash({
-          symbolName: c.symbolName,
-          // hash always uses the ORIGINAL signature/body so cache identity
-          // tracks the real artifact, not the redacted display copy
-          signature: c.signature,
-          bodyText: c.bodyText,
-        }),
-        isExported: c.isExported,
-        purposeSummary: willRedact ? SECRET_REDACTED : null,
-        embedding: null,
-        redacted: willRedact,
-      };
-      emit(record);
-      stats.symbolCount++;
-    }
     // Release SourceFile after we're done with it so the project doesn't
     // accumulate 800+ in-memory ASTs (memory growth was a contributor to
     // the 4.3GB heap in wine-cellar's hung run).
-    try { project.removeSourceFile(sf); } catch { /* ignore */ }
+    try { project.removeSourceFile(parsed.sourceFile); } catch { /* ignore */ }
   }
 
   for (const line of formatSkipLog(skippedSensitive, { logger: 'extract' })) {
@@ -557,23 +694,34 @@ const MAX_FILE_BYTES = 500 * 1024;
 // docs/plans/observed-graph-discovery-unification.md design (e) — that plan
 // remains blocked on the measurements this export enables.
 export function enumerateFiles(repoRoot, restrictFiles) {
-  if (restrictFiles && restrictFiles.length > 0) {
-    return restrictFiles.map(f => path.isAbsolute(f) ? f : path.join(repoRoot, f));
-  }
-  // Default: walk repo for source files. Keep the walk small + fast.
-  const out = [];
-  function walk(dir) {
-    let entries;
-    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
-    for (const e of entries) {
-      if (SKIP_DIRS.has(e.name)) continue;
-      const full = path.join(dir, e.name);
-      if (e.isDirectory()) walk(full);
-      else if (e.isFile()) out.push(full);
+  // Tri-state contract (symbol-index-pipeline-reliability-hardening Theme 3,
+  // the identical conflation Phase 4 fixes at refresh-subprocess.mjs's
+  // equivalent gate): `null`/`undefined` means "no restriction — full walk";
+  // a genuinely EMPTY array means "nothing to extract this run" and must NOT
+  // be silently promoted to a full walk. The old `restrictFiles &&
+  // restrictFiles.length > 0` truth-tested BOTH null-ness and emptiness with
+  // one check, so `[]` (falls through the `> 0` half) fell all the way to the
+  // full-walk branch below — exactly backwards from its caller's intent.
+  if (restrictFiles == null) {
+    // Default: walk repo for source files. Keep the walk small + fast.
+    const out = [];
+    function walk(dir) {
+      let entries;
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+      for (const e of entries) {
+        if (SKIP_DIRS.has(e.name)) continue;
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) walk(full);
+        else if (e.isFile()) out.push(full);
+      }
     }
+    walk(repoRoot);
+    return out;
   }
-  walk(repoRoot);
-  return out;
+  if (Array.isArray(restrictFiles) && restrictFiles.length === 0) {
+    return [];
+  }
+  return restrictFiles.map(f => path.isAbsolute(f) ? f : path.join(repoRoot, f));
 }
 
 async function main() {
@@ -623,6 +771,17 @@ async function main() {
   emit({ type: 'summary', counts: { ...stats, ...graphCounts } });
   emitProgress(`done — symbols=${stats.symbolCount} violations=${graphStats.violationCount} skipped-path=${stats.skippedPath} skipped-ext=${stats.skippedExt} skipped-size=${stats.skippedSize} skipped-delegate=${stats.skippedDelegate} redacted=${stats.redacted} stat-failures=${stats.statFailures} parse-failures=${stats.parseFailures}`);
 }
+
+// Test seam (symbol-index-pipeline-reliability-hardening Theme 3) — mirrors
+// the `_internals` pattern already used by drift.mjs / anthropic-client.mjs /
+// file-io.mjs / shared.mjs. `admitFile`'s four `classify`-stubbable reason
+// values (resolution-failed, escaped-repo, sensitive, extension-not-
+// allowlisted) are independently testable via `classify` injection with no
+// real filesystem symlink fixture; `MAX_FILE_BYTES` lets a size-cap test
+// assert the boundary without hand-computing the constant twice.
+export const _internals = {
+  admitFile, loadAndParseFile, classifySymbolsInFile, redactAndEmit, MAX_FILE_BYTES, parseArgs,
+};
 
 // CLI-only entry guard (2026-07-18). `main()` used to run unconditionally at
 // module scope, so ANY `import` of this file kicked off a full symbol

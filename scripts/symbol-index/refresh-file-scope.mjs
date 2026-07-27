@@ -10,7 +10,7 @@
  */
 
 import * as vcs from '../lib/vcs.mjs';
-import { filterDiffFiles, formatSkipLog } from '../lib/sensitive-paths.mjs';
+import { filterDiffFiles, formatSkipLog, shouldSkipForIndexing, normalisePath } from '../lib/sensitive-paths.mjs';
 import { listFilesNeedingSummaryRetry } from '../learning-store.mjs';
 
 /**
@@ -101,7 +101,27 @@ export async function resolveIncrementalFileScope({ mode, repoRoot, sinceCommit,
       logOk(`WARNING: summary re-queue lookup failed (${err.message}) — continuing without it`);
     }
   }
-  const retryOnly = retryFiles.filter(f => !fileList.includes(f));
+  // round-1 H4: retryFiles come from symbol_definitions (not from the git
+  // diff above), so they never passed through the sensitive-path filter a
+  // fresh diff entry gets at line 59 — a file that became sensitive since it
+  // was last indexed (a new .auditignore rule, a move into a sensitive dir)
+  // could otherwise re-enter the extraction set purely via the summary-retry
+  // queue. Same categories, same shouldSkipForIndexing() used above; logged
+  // through the identical formatSkipLog() convention.
+  const retrySkipped = [];
+  const retryOnly = retryFiles
+    .filter(f => !fileList.includes(f))
+    .filter((f) => {
+      const r = shouldSkipForIndexing(f, ['sensitive', 'generatedNoise']);
+      if (r.skip) {
+        retrySkipped.push({ path: normalisePath(f), category: r.category, pattern: r.pattern, action: 'dropped' });
+        return false;
+      }
+      return true;
+    });
+  for (const line of formatSkipLog(retrySkipped, { logger: 'refresh' })) {
+    process.stderr.write(`  ${line}\n`);
+  }
   const restrictFiles = [...fileList, ...retryOnly];
   const touchedSet = new Set([
     ...restrictFiles,

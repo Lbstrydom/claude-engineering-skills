@@ -79,7 +79,7 @@ import { assertRepoRoot } from '../lib/assert-repo-root.mjs';
 import { findRepoPragmas, resolvePragmasToDefinitions, PRAGMA_RESOLUTION_MAX_GAP_LINES } from '../lib/duplicate-justification-pragma.mjs';
 import { SUBPROC_ERROR_CODES } from '../lib/subprocess.mjs';
 import { parseArgs } from './refresh-args.mjs';
-import { RepoRegistrationError, RefreshInFlightError, LockAbortError } from './refresh-errors.mjs';
+import { RepoRegistrationError, RefreshInFlightError, LockAbortError, RefreshAbortedError } from './refresh-errors.mjs';
 import { resolveAndRegisterRepo } from './refresh-repo-setup.mjs';
 import { resolveWalkStartCommit, acquireRefreshLock } from './refresh-lock.mjs';
 import { finalizeRefreshMode } from './refresh-mode.mjs';
@@ -128,6 +128,8 @@ async function persistExtractionCoverage({ mode, extractionTimedOut, coverageCon
     + `${res.recorded ? '' : ` — NOT persisted: ${res.reason}`}`);
 }
 
+const MAX_CONSECUTIVE_HEARTBEAT_FAILURES = 3;   // ~45s at the 15s interval
+
 /**
  * 41bf7af6/812d9d83: a failed heartbeat write used to be silently swallowed
  * after the first stderr line — the refresh continued (correct: a telemetry
@@ -138,23 +140,77 @@ async function persistExtractionCoverage({ mode, extractionTimedOut, coverageCon
  * can fold into its own final output, so the degradation is observable
  * rather than swallowed.
  *
+ * ENFORCEMENT (docs/plans/symbol-index-pipeline-reliability-hardening.md
+ * Theme 1): the heartbeat used to be purely advisory — nothing ever
+ * checked whether the run's own row was still `running`, so a
+ * `--force`-aborted refresh kept executing unaware. `fn` now also
+ * receives an `AbortSignal`; `main()` checks `signal.aborted` at exactly
+ * two points (before the extract/summarise/embed subprocess spawn, and
+ * before the atomic publish RPC — the only truly irreversible step). The
+ * ACTUAL correctness boundary is server-side (`abortRefreshRun`'s
+ * `AND status='running'` guard + `publishRefreshRun`'s own atomic RPC
+ * check) — this signal is a cost-saving optimization that skips wasted
+ * work early, not the thing that makes the race safe.
+ *
+ * Ticks are self-scheduling (`setTimeout`, never `setInterval`) so two
+ * ticks can never run concurrently, and a `settled` flag closes the race
+ * where an in-flight tick observes a stale `false` after `fn()` already
+ * resolved. `MAX_CONSECUTIVE_HEARTBEAT_FAILURES` consecutive `beatFn`
+ * rejections (e.g. a sustained DB outage) also trigger an abort — a
+ * cancellation mechanism that can never get an answer is exactly as dead
+ * as one that never checks at all.
+ *
  * `beatFn` defaults to the real `heartbeatRefreshRun` and is injectable so
  * tests can simulate a failing heartbeat without mocking module imports
  * (mirrors this repo's adapter-injection convention, e.g.
  * discovery-portfolio.mjs).
  */
-async function runWithHeartbeat(refreshId, intervalMs, fn, beatFn = heartbeatRefreshRun) {
-  const heartbeatStatus = { failureCount: 0, lastError: null };
-  const beat = setInterval(() => {
-    beatFn({ refreshId }).catch((err) => {
+async function runWithHeartbeat(refreshId, repoId, intervalMs, fn, beatFn = heartbeatRefreshRun) {
+  let consecutiveFailures = 0;
+  const controller = new AbortController();
+  const heartbeatStatus = { failureCount: 0, lastError: null, aborted: false };
+  let settled = false;
+  let timer = null;
+
+  async function tick() {
+    if (settled) return;
+    try {
+      const stillRunning = await beatFn({ refreshId, repoId });
+      consecutiveFailures = 0;
+      if (!settled && !stillRunning && !heartbeatStatus.aborted) {
+        heartbeatStatus.aborted = true;
+        controller.abort(new RefreshAbortedError(`refresh ${refreshId} force-stopped externally`));
+      }
+    } catch (err) {
       heartbeatStatus.failureCount++;
       heartbeatStatus.lastError = err.message;
-      if (heartbeatStatus.failureCount > 1) return;
-      logErr(`heartbeat failed for refresh ${refreshId}: ${err.message} (further failures this run are counted in heartbeatFailures but not logged individually)`);
-    });
-  }, intervalMs);
-  try { return await fn(heartbeatStatus); }
-  finally { clearInterval(beat); }
+      consecutiveFailures++;
+      if (heartbeatStatus.failureCount <= 1) {
+        logErr(`heartbeat failed for refresh ${refreshId}: ${err.message} (further failures this run are counted in heartbeatFailures but not logged individually)`);
+      }
+      if (!settled && consecutiveFailures >= MAX_CONSECUTIVE_HEARTBEAT_FAILURES && !heartbeatStatus.aborted) {
+        heartbeatStatus.aborted = true;
+        controller.abort(new RefreshAbortedError(`refresh ${refreshId}: heartbeat unreachable for ${consecutiveFailures} consecutive ticks`));
+      }
+    } finally {
+      if (!settled) scheduleTick();
+    }
+  }
+
+  // Wraps the scheduled tick's own promise in a no-op `.catch` (shadow
+  // final-gate finding, defensive): `tick()`'s body already catches every
+  // realistic failure, but `setTimeout(tick, ...)` alone would leave an
+  // unhandled rejection if anything ever threw outside that guarded
+  // region — matching this function's own stated invariant that no
+  // unhandled rejection is ever raised by the heartbeat loop.
+  function scheduleTick() {
+    if (settled) return;
+    timer = setTimeout(() => { tick().catch(() => {}); }, intervalMs);
+  }
+
+  scheduleTick();
+  try { return await fn(heartbeatStatus, controller.signal); }
+  finally { settled = true; if (timer) clearTimeout(timer); }
 }
 
 async function main() {
@@ -187,10 +243,11 @@ async function main() {
   let mode = args.full ? 'full' : 'incremental';
   let sinceCommit = args.sinceCommit;
   let refreshId;
+  let repoId;   // hoisted (mirrors refreshId) so the catch block can scope its abortRefreshRun call
 
   try {
     // 1. Resolve identity + register repo.
-    const { repoId } = await resolveAndRegisterRepo(repoRoot);
+    ({ repoId } = await resolveAndRegisterRepo(repoRoot));
 
     // 2. Resolve embedding model NOW (per Gemini G2: persist concrete id).
     //    The ONE shared profile (embed-text.mjs) — the same resolver embed.mjs uses,
@@ -222,7 +279,7 @@ async function main() {
     sinceCommit = finalized.sinceCommit;
     const prior = finalized.prior;
 
-    await runWithHeartbeat(refreshId, 15_000, async (heartbeatStatus) => {
+    await runWithHeartbeat(refreshId, repoId, 15_000, async (heartbeatStatus, signal) => {
       // 6. Enumerate files.
       const { restrictFiles, touchedSet: scopeTouchedSet, diffStats } = await resolveIncrementalFileScope({
         mode, repoRoot, sinceCommit, repoId, prior, logOk,
@@ -236,6 +293,11 @@ async function main() {
       //     never landed.
 
       // 7. Run extract → summarise → embed pipeline (+ 8b timeout recovery).
+      // Cost-saving cancellation checkpoint (Theme 1): skip the most
+      // expensive single step entirely if a concurrent --force already
+      // aborted this run. The actual correctness guarantee is the DB-level
+      // guards on abortRefreshRun/publishRefreshRun, not this check.
+      if (signal.aborted) throw signal.reason instanceof Error ? signal.reason : new RefreshAbortedError(`refresh ${refreshId} aborted before extraction`);
       const {
         finalSymbols, violations, importEdges, coverageLine,
         extractionTimedOut, timeoutRecovery, recoveredTouchedSet,
@@ -467,7 +529,7 @@ async function main() {
               ? `copy-forward coverage from ${prior.refreshId} (stale — reports \`unknown\`)`
               : `no prior coverage to copy forward (${cov.reason}); graph reads \`unknown\``);
           }
-          priorImportGraphPopulated = await getImportGraphPopulated(prior.refreshId);
+          priorImportGraphPopulated = await getImportGraphPopulated(prior.refreshId, repoId);
         }
       }
 
@@ -477,8 +539,10 @@ async function main() {
       //   - Incremental from un-populated → false (untouched files have no edges)
       const populated = (mode === 'full') || (mode === 'incremental' && priorImportGraphPopulated);
       if (populated) {
-        await markImportGraphPopulated(refreshId);
-        logOk(`import_graph_populated=true (mode=${mode}, prior=${priorImportGraphPopulated})`);
+        const { populated: didLand } = await markImportGraphPopulated(refreshId, repoId);
+        logOk(didLand
+          ? `import_graph_populated=true (mode=${mode}, prior=${priorImportGraphPopulated})`
+          : `WARNING: import_graph_populated write did not land (mode=${mode}, prior=${priorImportGraphPopulated}) — the flag may now understate what this refresh actually did`);
       } else {
         logOk(`import_graph_populated=false (mode=${mode}, prior=${priorImportGraphPopulated}); run \`npm run arch:refresh:full\` to flip`);
       }
@@ -487,6 +551,14 @@ async function main() {
       // R1 H4: active_embedding_model + dim are set INSIDE this RPC, in the
       // same transaction as active_refresh_id, so an abort cannot leave repo
       // metadata pointing at an unpublished model.
+      //
+      // Correctness-critical cancellation checkpoint (Theme 1): this is the
+      // ONE point of no return in the whole pipeline — everything before it
+      // is an unpublished, safely-abandonable snapshot. If a concurrent
+      // --force raced past this check, publishRefreshRun's own atomic RPC
+      // guard (rejects a non-`running` row) still fails it server-side; this
+      // check just avoids paying for a doomed publish attempt.
+      if (signal.aborted) throw signal.reason instanceof Error ? signal.reason : new RefreshAbortedError(`refresh ${refreshId} aborted before publish`);
       await publishRefreshRun({
         repoId,
         refreshId,
@@ -615,7 +687,11 @@ async function main() {
     }
     // ALWAYS abort the open refresh_run first so the row leaves `running`
     // state + the per-repo lock is released. Only after that do we exit.
-    try { await abortRefreshRun({ refreshId, reason: err.message }); } catch { /* best-effort */ }
+    // `repoId` is hoisted above the try so it's available here even when
+    // the failure happened before it would otherwise have been assigned —
+    // in that case it's still undefined and abortRefreshRun's own
+    // repo_id-scoped predicate simply matches 0 rows (logged, not thrown).
+    try { await abortRefreshRun({ refreshId, repoId, reason: err.message }); } catch { /* best-effort */ }
     // Structured VCS failures: surface the precise exit code via
     // vcs.exitCodeFor(vcsCode). Everything else exits 2.
     const isVcsFailure = err.code === 'VCS_FAILURE' && typeof err.vcsCode === 'string';

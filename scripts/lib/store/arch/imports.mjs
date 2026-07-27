@@ -61,11 +61,21 @@ export async function recordSymbolFileImports(refreshId, edges) {
       imported_path: e.imported,
     }));
     try {
-      await upsert('symbol_file_imports', payload, {
+      const result = await upsert('symbol_file_imports', payload, {
         onConflict: ['refresh_id', 'importer_path', 'imported_path'],
         update: 'all',
       });
-      inserted += payload.length;
+      // symbol-index-pipeline-reliability-hardening Theme 5 (D5): report the
+      // DB's own rowCount, not the attempted payload length — this function's
+      // own docstring already promised "count of DISTINCT edges PERSISTED",
+      // so this makes the implementation match its contract for the first
+      // time (the old payload.length counted attempts, which could silently
+      // overstate "persisted" whenever a distinct edge's FK target didn't yet
+      // exist). Same pattern as recordSymbolIndex's existing mismatch warning.
+      if (result.rowCount !== payload.length) {
+        process.stderr.write(`  [symbol-index] recordSymbolFileImports: chunk attempted ${payload.length} rows but DB reports rowCount=${result.rowCount} — investigate\n`);
+      }
+      inserted += result.rowCount;
     } catch (err) {
       throw new Error(`recordSymbolFileImports failed: ${err.message}`);
     }
@@ -105,11 +115,23 @@ export async function copyForwardImports({ fromRefreshId, toRefreshId, touchedFi
         importer_path: r.importer_path,
         imported_path: r.imported_path,
       }));
-      await upsert('symbol_file_imports', payload, {
+      const result = await upsert('symbol_file_imports', payload, {
         onConflict: ['refresh_id', 'importer_path', 'imported_path'],
         update: 'all',
       });
-      copied += payload.length;
+      // symbol-index-pipeline-reliability-hardening Theme 5 (D5). Note
+      // (shadow finding, plan §5): every row here targets a brand-NEW
+      // toRefreshId under this ON CONFLICT — by construction every row is a
+      // fresh insert, never an update, so rowCount === payload.length is
+      // expected on EVERY call. This warning is a defensive tripwire for an
+      // unexpected reachable case (a batch-partial failure, or a conflict on
+      // some other constraint), not something normally expected to fire —
+      // unlike recordSymbolIndex's sibling warning, which DOES expect real
+      // updates and can legitimately fire on ordinary runs.
+      if (result.rowCount !== payload.length) {
+        process.stderr.write(`  [symbol-index] copyForwardImports: page attempted ${payload.length} rows but DB reports rowCount=${result.rowCount} — investigate\n`);
+      }
+      copied += result.rowCount;
     }
     if (rows.length < pageSize) break;
     offset += pageSize;
@@ -141,21 +163,60 @@ export async function listFileImportsForSnapshot(refreshId) {
   }
 }
 
-export async function markImportGraphPopulated(refreshId) {
-  if (!await isCloudEnabled()) return;
+/**
+ * Mutates the same multi-tenant `refresh_runs` table `abortRefreshRun`/
+ * `getRefreshRun`/`heartbeatRefreshRun` are repo-scoped in (D1,
+ * docs/plans/symbol-index-pipeline-reliability-hardening.md) — widened to
+ * match rather than leave a same-class gap unacknowledged. Also scoped by
+ * `status = 'running'` and returns `{populated: boolean}` (audit-code
+ * round-1 H3 + round-4 H2): the caller must be able to tell a 0-row update
+ * (wrong repo, or already-terminal) apart from a real success, rather than
+ * silently continuing as if the flag had landed — the same fix `abortRefreshRun`
+ * got (round-2 L1), applied consistently here too.
+ */
+export async function markImportGraphPopulated(refreshId, repoId) {
+  // A missing refreshId/repoId is a call-site programmer error, not "did
+  // not land" (shadow finding, closing the last instance of this class —
+  // getImportGraphPopulated and getRefreshRun already got this treatment).
+  if (!refreshId || !repoId) {
+    throw new Error(`markImportGraphPopulated: refreshId and repoId are both required (got refreshId=${JSON.stringify(refreshId)}, repoId=${JSON.stringify(repoId)})`);
+  }
+  if (!await isCloudEnabled()) return { populated: false };
   try {
-    await updateWhere('refresh_runs', { import_graph_populated: true }, { id: refreshId });
+    const rows = await updateWhere('refresh_runs',
+      { import_graph_populated: true },
+      { id: refreshId, repo_id: repoId, status: 'running' },
+      { returning: ['id'] });
+    // No direct stderr write here (Gemini final-gate finding) — matches
+    // abortRefreshRun's pattern (round-2 L1): a store-layer persistence
+    // function shouldn't own a CLI logging convention. The caller already
+    // logs based on the returned {populated} — see refresh.mjs.
+    return { populated: rows.length > 0 };
   } catch (err) {
     throw new Error(`markImportGraphPopulated failed: ${err.message}`);
   }
 }
 
-export async function getImportGraphPopulated(refreshId) {
-  if (!refreshId || !await isCloudEnabled()) return false;
+/**
+ * A missing `refreshId`/`repoId` is a call-site programmer error, not "the
+ * graph isn't populated" — it THROWS rather than returning `false`, which
+ * is the same value a genuine "not populated" reads as (shadow final-gate
+ * finding: a silently-missing repoId at some future call site would
+ * indistinguishably degrade the architecture map). Cloud-disabled and
+ * genuine not-found/error cases still return `false` — that's the correct,
+ * safe default for this flag's actual semantics (treat "can't confirm" the
+ * same as "not populated", which only ever costs a future full re-embed,
+ * never a correctness risk).
+ */
+export async function getImportGraphPopulated(refreshId, repoId) {
+  if (!refreshId || !repoId) {
+    throw new Error(`getImportGraphPopulated: refreshId and repoId are both required (got refreshId=${JSON.stringify(refreshId)}, repoId=${JSON.stringify(repoId)})`);
+  }
+  if (!await isCloudEnabled()) return false;
   try {
     const row = await one(
-      `SELECT import_graph_populated FROM refresh_runs WHERE id = $1 LIMIT 1`,
-      [refreshId]
+      `SELECT import_graph_populated FROM refresh_runs WHERE id = $1 AND repo_id = $2 LIMIT 1`,
+      [refreshId, repoId]
     );
     return row?.import_graph_populated === true;
   } catch {

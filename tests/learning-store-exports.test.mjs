@@ -179,6 +179,7 @@ const EXPECTED_EXPORTS = [
   'listFilesNeedingSummaryRetry',
   'listLayeringViolationsForSnapshot',
   'listSymbolsForSnapshot',
+  'countSymbolsForSnapshot', // symbol-index-pipeline-reliability-hardening Theme 2 — capped-pool detector for drift.mjs's pragma reconciliation
   'markImportGraphPopulated',
   'openRefreshRun',
   'publishRefreshRun',
@@ -317,6 +318,10 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // of recordSymbolEmbedding (chunked multi-row upsert instead of one
     // round trip per symbol; the per-row loop was the dominant driver of
     // the project's Supabase Disk IO budget warning).
-    assert.equal(EXPECTED_EXPORTS.length, 177);
+    // 177 → 178: countSymbolsForSnapshot added 2026-07-27 (symbol-index-
+    // pipeline-reliability-hardening Theme 2) — lets drift.mjs detect when
+    // its 10000-row pragma-reconciliation candidate pool is truncated,
+    // rather than silently reconciling against a partial snapshot.
+    assert.equal(EXPECTED_EXPORTS.length, 178);
   });
 });
