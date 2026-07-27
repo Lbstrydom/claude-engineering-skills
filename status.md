@@ -1,5 +1,40 @@
 # Project Status Log
 
+## 2026-07-27 (later still) — shipped autofix-security refactor (containment, dedup, silent-I/O fixes)
+
+Implemented `docs/plans/refactor-autofix-security.md` via `/cycle code <plan>
+--autonomous` (degenerate single-cluster path — the plan had no §11 block).
+This closes out the #3-ranked (by leverage) tech-debt cluster from the
+2026-07-27 GPT-5.6 debt clustering pass, alongside `refactor-vcs-protocol.md`
+(already fully resolved — see the earlier entry today) and
+`refactor-failure-contract.md` (planned, not yet implemented).
+
+**What changed**: `scripts/lib/claudemd/autofix.mjs` — the CLAUDE.md/AGENTS.md
+hygiene auto-fixer — now (1) dedups findings by resolved canonical path +
+line before mutating (closing a real double-splice bug: this repo's own
+`` [`docs/<gone>.md`](docs/<gone>.md) `` link style triggers duplicate
+findings from two independent regexes in `ref-checker.mjs`), (2) gates every
+finding through `resolveAndClassify` (reused from `sensitive-paths.mjs`,
+tying into INC-001's symlink-bypass lesson) before any read/write, refusing
+paths that escape `repoRoot` or match a sensitive pattern, and (3) reports
+silent read failures instead of swallowing them.
+
+**Audit**: 4 GPT `/audit-code` rounds (one over the base-3 cap — round 3
+caught a genuine bug in round 1's OWN fix: `Number(finding.line)` accepted
+`true`/single-element-arrays as valid lines and could throw on a `Symbol()`
+mid-run; replaced with a strict `normalizeLineNumber()`) + 1 Gemini round,
+clean APPROVE with 0 new findings and 0 wrongly-dismissed on the first pass.
+Two independent, pre-existing findings (a scan-time-vs-fix-time content
+race; unsupported `+`/ordered-list markers) captured as separate debt rather
+than fixed — both verified byte-identical to the pre-plan original, so
+genuinely out of this plan's scope.
+
+Files: `scripts/lib/claudemd/autofix.mjs`, `tests/claudemd/autofix.test.mjs`
+(20 tests, 0 skipped — symlink tests ran for real on this host). Scope:
+backend only, persona-test/ux-lock skipped per the plan's own header. Full
+suite green (9013+ passing, 22 skipped — disposable-DB tests, no
+`AUDIT_DB_TEST_URL` here).
+
 ## 2026-07-27 (continued) — wine-cellar-app product-code shadow findings adjudicated (3 accept / 1 dismiss)
 
 Adjudicated run `87cf64e3`'s 4 shadow-only findings — the first batch from

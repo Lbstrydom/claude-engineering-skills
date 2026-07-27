@@ -1,8 +1,8 @@
 # Plan: Refactor autofix-security — containment, dedup, and silent-failure fixes in `scripts/lib/claudemd/autofix.mjs`
 
 - **Date**: 2026-07-27
-- **Status**: Approved — audited via `/audit-plan` (3 GPT rounds + 3 Gemini
-  rounds, closed clean at Gemini Round 3 APPROVE); NOT YET IMPLEMENTED
+- **Status**: Complete — implemented + audited (3 GPT + 3 Gemini plan-audit
+  rounds; 4 GPT + 1 Gemini code-audit rounds — see Implementation Log)
 - **Author**: Claude + Test
 - **Scope**: backend
 - **Target domain(s)**: `claudemd-management`, `tests`
@@ -937,3 +937,81 @@ expected to need any changes.
   and the observation-only shadow reviewer converged on APPROVE with zero
   further primary-gating findings — the practical signal that diminishing
   returns have set in. The plan is ready for implementation.
+
+## Implementation Log
+
+### 2026-07-27 — Implemented via `/cycle code <plan> --autonomous`
+
+**Built, matching §4 exactly**: the three defects fixed as designed —
+dedup by `(gate.canonical, line)` before splice; `resolveAndClassify`
+(reused verbatim) gating every finding before grouping, `repoRoot`
+canonicalized once up front; silent `readFileSync` failures now produce a
+`skipped` entry per finding in the group. `node:path` import dropped as
+planned (dead once `path.join` was replaced). All two files touched:
+`scripts/lib/claudemd/autofix.mjs`, `tests/claudemd/autofix.test.mjs`
+(20 tests, all passing, 0 skipped — symlink-dependent tests ran for
+real on this host).
+
+**Code-audit trail** (4 GPT rounds + 1 Gemini round — GPT capped at 4,
+one round higher than the base-3 due to a genuine bug found in round 3):
+- **R1** (H:5 M:5): fixed 817bc3d4 (`finding.line` type coercion —
+  extends defect #2's "untrusted `file`" treatment to `line`) and
+  67233241 (non-string `file` now reports `'invalid file path'` instead
+  of crashing; null/non-object array entries silently filtered, per
+  GPT's own compromise). Deferred to debt (GPT compromise, severity
+  reduced) 317264be (scan-time-vs-fix-time content race — verified
+  byte-identical to pre-plan behavior, independent of all 3 defects) and
+  be9cd051 (list-marker regex gap — also byte-identical, independent).
+  Dismissed via GPT overrule: 81bdbea9 (no repo function-length
+  threshold; plan's own Right-sizing already rejected decomposition),
+  de56e0cf/ed3415ec/bc43fcc8 (Adjacency-wave false positives — the
+  dry-run/real-run branch statements ARE genuinely condition-dependent),
+  f8ce9835/17a5972d (Architecture findings on files not in this diff).
+- **R2** (H:0 M:1): fixed 5a482bc2 (`is_quick_fix:true` — malformed
+  findings-array entries now get an explicit `skipped` entry keyed by
+  array index, instead of the round-1 fix's silent filter).
+  **Deviation from round-1's own design**: round-1 silently dropped
+  these; round-2 correctly caught that this recreated the exact
+  observability gap the plan itself is about — real GPT self-correction,
+  not scope creep.
+- **R3** (H:1): fixed 69995e0f — a genuine bug in round-1's OWN
+  `Number(finding.line)` coercion (accepted `true`/single-element arrays
+  as valid lines; a `Symbol()` would throw mid-run, aborting after
+  earlier canonical groups had already been written). Replaced with a
+  dedicated `normalizeLineNumber()` — strict safe-integer or canonical
+  decimal-string grammar only — wired into the sort comparator (which
+  must never throw) and the main validation loop.
+- **R4** (H:0 M:2, verdict PASS): both findings dismissed via GPT
+  overrule after rebuttal — e7782de2 (extending malformed-reporting to a
+  full finding-schema validator: judged out of this plan's bounded scope,
+  qualitatively different from the `file`/`line` hardening already
+  accepted) and 0f6209ac (function-size re-raise of round-1's own
+  already-settled 81bdbea9). GPT loop closed here: H:0, M:0
+  (post-disposition), quickFix:0 — genuine convergence, not a numeric
+  squeak-by.
+- **Gemini gate**: 1 round, **APPROVE** (0 new findings, 0
+  wrongly-dismissed) — the clean, best-case outcome, no further rounds
+  needed. Shadow (Claude Opus, non-gating) raised 3 findings: write-path
+  (`atomicWriteFileSync`) error handling (MEDIUM) — the exact concern the
+  original plan's own audit already deferred with reasoning, re-verified
+  here that the partial-write-then-crash property is unchanged from the
+  pre-plan original (which also looped over multiple file groups with an
+  unguarded write); string-line reporting (MEDIUM) — `applied`/`skipped`
+  report the finding's original `line` value even when it was a
+  normalized decimal string, judged a deliberate, consistent convention
+  (matching the established `file`-vs-`canonical` reporting split, not a
+  bug); a test-comment overclaim (LOW) — fixed, softened the cross-alias
+  test's comment to not overstate what one fixture alone proves.
+
+**Deviations from the original plan text**: none structural — every
+fix matches §4's design precisely. The only additions are the 4 rounds'
+worth of untrusted-input hardening on `finding.line`/`finding.file`/the
+findings array shape itself, all either direct extensions of the plan's
+existing defect #1/#2 philosophy or corrections of bugs introduced by
+this implementation's own earlier rounds — never new scope beyond that.
+
+**Remaining**: none open for this plan. Two independent, pre-existing
+debt items captured (317264be, be9cd051) for future consideration
+outside this plan's scope. Full test suite green (9013+ passing, 22
+skipped — disposable-DB integration tests, no `AUDIT_DB_TEST_URL` in
+this environment).
