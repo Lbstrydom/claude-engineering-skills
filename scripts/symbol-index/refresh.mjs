@@ -128,16 +128,32 @@ async function persistExtractionCoverage({ mode, extractionTimedOut, coverageCon
     + `${res.recorded ? '' : ` — NOT persisted: ${res.reason}`}`);
 }
 
-async function runWithHeartbeat(refreshId, intervalMs, fn) {
-  let heartbeatFailureLogged = false;
+/**
+ * 41bf7af6/812d9d83: a failed heartbeat write used to be silently swallowed
+ * after the first stderr line — the refresh continued (correct: a telemetry
+ * write failing is not a reason to abort real work already in flight) but
+ * the failure itself was invisible to the run's own result, so nothing
+ * downstream could ever tell a healthy refresh from one whose liveness
+ * signal had gone dark. `fn` now receives a live `heartbeatStatus` object it
+ * can fold into its own final output, so the degradation is observable
+ * rather than swallowed.
+ *
+ * `beatFn` defaults to the real `heartbeatRefreshRun` and is injectable so
+ * tests can simulate a failing heartbeat without mocking module imports
+ * (mirrors this repo's adapter-injection convention, e.g.
+ * discovery-portfolio.mjs).
+ */
+async function runWithHeartbeat(refreshId, intervalMs, fn, beatFn = heartbeatRefreshRun) {
+  const heartbeatStatus = { failureCount: 0, lastError: null };
   const beat = setInterval(() => {
-    heartbeatRefreshRun({ refreshId }).catch((err) => {
-      if (heartbeatFailureLogged) return;
-      heartbeatFailureLogged = true;
-      logErr(`heartbeat failed for refresh ${refreshId}: ${err.message} (further failures this run are not logged individually)`);
+    beatFn({ refreshId }).catch((err) => {
+      heartbeatStatus.failureCount++;
+      heartbeatStatus.lastError = err.message;
+      if (heartbeatStatus.failureCount > 1) return;
+      logErr(`heartbeat failed for refresh ${refreshId}: ${err.message} (further failures this run are counted in heartbeatFailures but not logged individually)`);
     });
   }, intervalMs);
-  try { return await fn(); }
+  try { return await fn(heartbeatStatus); }
   finally { clearInterval(beat); }
 }
 
@@ -206,7 +222,7 @@ async function main() {
     sinceCommit = finalized.sinceCommit;
     const prior = finalized.prior;
 
-    await runWithHeartbeat(refreshId, 15_000, async () => {
+    await runWithHeartbeat(refreshId, 15_000, async (heartbeatStatus) => {
       // 6. Enumerate files.
       const { restrictFiles, touchedSet: scopeTouchedSet, diffStats } = await resolveIncrementalFileScope({
         mode, repoRoot, sinceCommit, repoId, prior, logOk,
@@ -553,6 +569,14 @@ async function main() {
         logOk(`WARNING: band calibration failed (${err.message}) — repo stays uncalibrated, refresh stands`);
       }
 
+      // 41bf7af6/812d9d83: surface heartbeat health on the run's own result
+      // rather than a stderr line an operator may never see in a long log —
+      // `heartbeatFailures: 0` is the common case; a non-zero count means
+      // this refresh's liveness signal went dark for at least one beat
+      // while the real work (visibly) still completed successfully.
+      if (heartbeatStatus.failureCount > 0) {
+        logOk(`WARNING: heartbeat failed ${heartbeatStatus.failureCount} time(s) during this refresh (last: ${heartbeatStatus.lastError}) — refresh completed anyway`);
+      }
       process.stdout.write(JSON.stringify({
         ok: true,
         cloud: true,
@@ -566,6 +590,7 @@ async function main() {
         },
         embeddingModel: embedProfile.provenanceId,
         embeddingDim: embedDim,
+        heartbeatFailures: heartbeatStatus.failureCount,
       }) + '\n');
     });
   } catch (err) {
@@ -613,8 +638,12 @@ async function main() {
   }
 }
 
-// Run as a CLI only — importing this module (e.g. from tests, to exercise the
-// pure `provenanceRequiresFullReembed` seam) must NOT kick off the whole pipeline.
+// Exported for direct test assertion (mirrors this repo's `_internals`
+// convention, e.g. transaction.mjs, anthropic-client.mjs).
+export const _internals = { runWithHeartbeat };
+
+// Run as a CLI only — importing this module (e.g. from tests) must NOT kick
+// off the whole pipeline.
 const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : '';
 const thisPath = fileURLToPath(import.meta.url);
 if (invokedPath === thisPath) {

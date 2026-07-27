@@ -493,7 +493,19 @@ function writeJournal(journalPath, body) {
     if (!closed) { try { fs.closeSync(fd); } catch { /* ignore */ } }
   }
 
-  retrySync(() => fs.renameSync(tmp, journalPath));
+  // 0b7661a0/22bb5573/aea521d8/ee735643: an exhausted-retry rename failure
+  // used to leak `tmp` — this call sat outside the try/catch/finally above,
+  // which only covers the open/write/fsync/close phase. Mirror that same
+  // cleanup style here rather than introduce a new pattern.
+  try {
+    retrySync(() => fs.renameSync(tmp, journalPath));
+  } catch (err) {
+    try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); }
+    catch (cleanupErr) {
+      process.stderr.write(`  [transaction] Journal temp cleanup failed: ${cleanupErr.message}\n`);
+    }
+    throw err;
+  }
   // Critical: an undurable journal rename means the WAL may not survive the
   // crash it exists for, and nothing real has happened yet — so abort rather
   // than proceed on a WAL we cannot trust.

@@ -1,5 +1,57 @@
 # Project Status Log
 
+## 2026-07-27 — symbol-index/refresh.mjs: heartbeat failures now visible on the run's own result
+
+Follow-up to the tech-debt backlog pass below: `runWithHeartbeat`'s liveness
+heartbeat (`heartbeatRefreshRun`) used to log its first failure to stderr
+and then swallow every subsequent one for the rest of the run, with nothing
+about the failure reaching the refresh's own final output. Refactored to
+track `{failureCount, lastError}` in a status object passed to the run's
+callback, which now folds `heartbeatFailures` into the success-path JSON
+result — `0` in the common case, a real count when the liveness signal
+went dark. `runWithHeartbeat` also gained an injectable `beatFn` param
+(defaults to the real `heartbeatRefreshRun`) so this is unit-testable
+without module-mocking (this repo's existing ESM-mocking limitation for
+plain named exports). 5 new tests in `tests/refresh-heartbeat.test.mjs`;
+verified end-to-end against a real `arch:refresh` run. Resolved
+`41bf7af6`/`812d9d83`.
+
+Noted but out of scope: `--force`'s stale-refresh detection
+(`findStaleRunningRefresh`) doesn't actually consult heartbeat age at all
+today — it just aborts whatever's currently marked `running` — and
+`refresh-lock.mjs`'s comment describing an aborted worker's heartbeat loop
+"exiting cleanly when it observes status!='running'" doesn't match the
+code (no such status-check exists anywhere in the heartbeat loop). Not a
+correctness risk in practice: `publish_refresh_run`'s server-side RPC
+independently rejects a publish from a non-`running` refresh_run, so a
+stale/aborted worker can never clobber a newer one even without a
+client-side self-abort. Real gap, but a different and larger feature than
+the 2 entries just fixed — not touched here.
+
+## 2026-07-27 — tech-debt backlog: resolved 16 stale entries, fixed a real gap the resolving found
+
+Picked up "what's next on the tech-debt backlog" and verified the top
+candidates against current code rather than trusting the ledger:
+
+- **visual-contract.mjs** (7 entries): genuinely all fixed by the concurrent
+  visual-audit session — resolved.
+- **transaction.mjs** (9 entries): only 5 were actually fixed by commit
+  `5137ff3` (the `transaction-wal-cleanup-failure-distinction` plan) —
+  resolved those. The other 4 (`0b7661a0`/`22bb5573`/`aea521d8`/`ee735643`,
+  all the same bug) were still genuinely open: that plan's own File-Level
+  Plan §4 specced wrapping `writeJournal()`'s final `retrySync(renameSync(tmp,
+  journalPath))` in a cleanup try/catch, but the shipped diff never touched
+  `writeJournal()` at all — confirmed directly via `git show`. Its
+  Implementation Log's "Deviations: none... matches exactly" claim was
+  false. Implemented the originally-specified fix, added a regression test,
+  resolved all 4 entries, and corrected that plan's log with the actual
+  discrepancy rather than leaving the false claim in place.
+
+Full suite green throughout (8821/8843, 22 pre-existing skips, 0 failing).
+Next up: `scripts/symbol-index/refresh.mjs`'s `runWithHeartbeat` — 2 HIGH
+entries, fire-and-forgets its own liveness heartbeat and swallows the
+rejection.
+
 ## 2026-07-27 — vcs.mjs / find-rmsync-sites.mjs scope-hardening: full autonomous cycle, shipped
 
 Closed the remaining 13 entries of `docs/plans/refactor-install-wal-vcs-2026-07.md`
