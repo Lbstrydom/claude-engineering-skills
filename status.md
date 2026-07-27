@@ -1,6 +1,40 @@
 # Project Status Log
 
-## 2026-07-27 (latest) — measured CCR on accepted findings; new `/ship` 0.5e gate
+## 2026-07-27 (latest) — symbol-index tech-debt cluster shipped (progress-channel disclosure + drift cap)
+
+Third of three plan+audit passes from today's tech-debt backlog sweep to be
+implemented (`docs/plans/refactor-symbol-index.md`, `/cycle code --autonomous`).
+Two remaining plans (evidence-integrity, static-analysis) are in progress.
+
+**What shipped**: `extract.mjs`'s per-file progress heartbeat was split into an
+anonymous pre-admission tick (position unchanged) plus a named beat emitted
+only after `admitFile` clears the path — an unrestricted full-repo walk no
+longer puts `.env`/`secrets/**` names on stdout before they're classified.
+`refresh-subprocess.mjs`'s wedge diagnostic now reads the *latest* progress
+record's state instead of scanning backwards for the last named one (the prior
+approach could confidently blame the wrong, already-parsed file when admission
+itself was what stalled). `drift.mjs`'s quadruplicated `10000` pragma-pool-cap
+literal is now one named constant behind a pure predicate.
+
+**Audit**: Cluster A (Phases 1-2) — 1 GPT round; the only HIGH
+(`recoveredTouchedSet` under-counting zero-symbol admitted files during
+timed-out-full recovery) was real but independent of this diff — deferred to
+debt. Cluster B (Phase 3) — 2 GPT rounds; round 1 caught a genuine bug in my
+own fix (a boundary test asserting `CAP > CAP` directly — a tautology that
+never actually exercised `drift.mjs`'s comparison), fixed by extracting a real
+exported predicate. Consolidated Gemini gate: `APPROVE`, 0 new, 0
+wrongly-dismissed. The parallel shadow reviewer (never gating) caught two more
+real, cheap fixes applied post-approval: an injectable `cap` parameter on the
+new predicate reopened a narrower one-sided-edit risk (removed); the wedge
+message didn't actually surface the record count its own design doc claimed
+bounds the search (added).
+
+**Gate**: `waived` — the post-approval shadow-driven fixes mean the committed
+tree differs from the audited one.
+
+Full trail: `docs/plans/refactor-symbol-index.md` Implementation Log.
+
+## 2026-07-27 — measured CCR on accepted findings; new `/ship` 0.5e gate
 
 Companion to the entry below, from the other direction. That one records the
 first accepted shadow findings converting to fixes; this one measures how often
