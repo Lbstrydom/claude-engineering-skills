@@ -12,7 +12,8 @@ import {
   verifyAnchor, tagPreExisting, runStage0EvidenceTriage,
   resolveAnchorLocation, mapHeadLineToBase, mapHeadRangeToBase,
   resolveScopeBucketForFinding, ANCHOR_FAILURE_STATUSES,
-  findQuoteLineInHunk,
+  findQuoteLineRangesInHunk, selectAnchoredMatch, unquoteGitPath, resolveHeaderPaths,
+  parseAllDiffSections, formatLocToken, parseLocToken,
 } from '../scripts/lib/audit/evidence-triage.mjs';
 import { createEnvelope } from '../scripts/lib/audit/candidate-envelope.mjs';
 
@@ -73,10 +74,26 @@ index 5555555..6666666 100644
  function beta() {
 `;
 
-const QUOTED_PATH_DIFF = `diff --git "a/path with spaces.js" "b/path with spaces.js"
+// The REAL shape git emits for a space-containing path — UNQUOTED. Measured
+// (docs/plans/refactor-evidence-integrity.md §1): a space alone does NOT
+// force git to quote a header path (`cq_must_quote` fires on `"`, `\`,
+// control bytes, and non-ASCII only under `core.quotePath`). The prior
+// QUOTED_PATH_DIFF fixture pinned a shape git never actually emits.
+const UNQUOTED_SPACE_DIFF = `diff --git a/path with spaces.js b/path with spaces.js
 index 7777777..8888888 100644
---- "a/path with spaces.js"
-+++ "b/path with spaces.js"
+--- a/path with spaces.js
++++ b/path with spaces.js
+@@ -1,1 +1,1 @@
+-old content
++new content
+`;
+
+// A path git DOES quote — an embedded `"`, one of the actual must-quote
+// triggers. Both header tokens are quoted, each with an escaped inner quote.
+const QUOTED_PATH_DIFF = `diff --git "a/quo\\"te.js" "b/quo\\"te.js"
+index 7777777..8888888 100644
+--- "a/quo\\"te.js"
++++ "b/quo\\"te.js"
 @@ -1,1 +1,1 @@
 -old content
 +new content
@@ -155,9 +172,189 @@ describe('verifyAnchor', () => {
     const anchor = { ...HEAD_ANCHOR, diffPathId: 'src/blank-line.js', oldFile: 'src/blank-line.js', newFile: 'src/blank-line.js', side: 'base', quote: 'function alpha() { function beta() {' };
     assert.equal(verifyAnchor(anchor, DIFF), 'verified');
   });
-  it('verifies content in a diff with quoted (space-containing) file paths (consolidated Gemini gate fix G3, round 3)', () => {
+  it('verifies content in a diff with a real UNQUOTED space-containing header (consolidated Gemini gate fix G3, corrected in refactor-evidence-integrity.md)', () => {
     const anchor = { diffPathId: 'path with spaces.js', oldFile: 'path with spaces.js', newFile: 'path with spaces.js', fileStatus: 'modified', side: 'head', startLine: 1, endLine: 1, quote: 'new content', headSha: 'abc123' };
+    assert.equal(verifyAnchor(anchor, UNQUOTED_SPACE_DIFF), 'verified');
+  });
+  it('verifies content in a diff with a genuinely-quoted header (embedded `"`, a real must-quote trigger)', () => {
+    const anchor = { diffPathId: 'quo"te.js', oldFile: 'quo"te.js', newFile: 'quo"te.js', fileStatus: 'modified', side: 'head', startLine: 1, endLine: 1, quote: 'new content', headSha: 'abc123' };
     assert.equal(verifyAnchor(anchor, QUOTED_PATH_DIFF), 'verified');
+  });
+});
+
+// ── unquoteGitPath — pure C-style git path decoder (refactor-evidence-integrity.md §4.1) ──
+describe('unquoteGitPath', () => {
+  it('returns an unquoted token verbatim (no decoding attempted)', () => {
+    assert.equal(unquoteGitPath('a/plain/path.js'), 'a/plain/path.js');
+  });
+
+  it('decodes simple backslash escapes: \\t \\n \\\\ \\"', () => {
+    assert.equal(unquoteGitPath('"a\\tb"'), 'a\tb');
+    assert.equal(unquoteGitPath('"a\\nb"'), 'a\nb');
+    assert.equal(unquoteGitPath('"a\\\\b"'), 'a\\b');
+    assert.equal(unquoteGitPath('"a\\"b"'), 'a"b');
+  });
+
+  it('decodes an octal escape as BYTES, not per-character (the mojibake trap)', () => {
+    // \303\251 is the two-byte UTF-8 sequence for 'é'. A char-wise
+    // String.fromCharCode(parseInt(o,8)) decode would yield 'Ã©' — measured
+    // wrong output this plan explicitly guards against.
+    assert.equal(unquoteGitPath('"src/caf\\303\\251.js"'), 'src/café.js');
+  });
+
+  it('decodes a mix of literal characters and octal escapes in one token', () => {
+    assert.equal(unquoteGitPath('"caf\\303\\251-bar.js"'), 'café-bar.js');
+  });
+
+  it('a trailing lone backslash (right before the closing quote) is malformed → null', () => {
+    // Runtime value: `"ab\"` — five characters: quote, a, b, backslash, quote.
+    // The backslash has nothing to escape within the token content.
+    assert.equal(unquoteGitPath('"ab\\"'), null);
+  });
+
+  it('an unknown escape letter (\\8) is malformed → null', () => {
+    assert.equal(unquoteGitPath('"a\\8b"'), null);
+  });
+
+  it('an invalid UTF-8 byte sequence (lone \\377) → null', () => {
+    assert.equal(unquoteGitPath('"\\377"'), null);
+  });
+
+  it('rejects an embedded NUL byte (\\000) → null', () => {
+    assert.equal(unquoteGitPath('"a\\000b"'), null);
+  });
+
+  it('a BOM (\\357\\273\\277) is RETAINED, not stripped — the ignoreBOM regression case', () => {
+    // Reachable specifically via a rename/copy token, which carries no a/b
+    // prefix, so the BOM can sit at byte 0. Without ignoreBOM:true, WHATWG
+    // TextDecoder silently strips a leading BOM.
+    const decoded = unquoteGitPath('"\\357\\273\\277rest.js"');
+    assert.equal(decoded, '﻿rest.js');
+    assert.equal(decoded.codePointAt(0), 0xfeff);
+  });
+
+  it('a decoded U+FFFD (\\357\\277\\275) is ACCEPTED — the guard is on raw provenance, not the character', () => {
+    const decoded = unquoteGitPath('"\\357\\277\\275name.js"');
+    assert.equal(decoded, '�name.js');
+  });
+
+  it('an unterminated quoted token (no closing quote at all) fails closed → null, never a mis-sliced guess (round-1 code-audit M5)', () => {
+    // Rule 2 (rename/copy) hands unquoteGitPath a raw line slice with no
+    // prior termination check, unlike Rule 1's readQuotedHeaderToken-
+    // validated tokens — this function must not assume its precondition.
+    assert.equal(unquoteGitPath('"abc'), null);
+  });
+
+  it('trailing content AFTER the real closing quote fails closed → null', () => {
+    assert.equal(unquoteGitPath('"abc"def'), null);
+  });
+});
+
+// ── resolveHeaderPaths — the four-rule header grammar (§2 decision 5) ───────
+describe('resolveHeaderPaths', () => {
+  it('rule 1: both sides quoted, octal-escaped UTF-8', () => {
+    const part = 'diff --git "a/src/caf\\303\\251.js" "b/src/caf\\303\\251.js"\nindex a..b 100644\n';
+    assert.deepEqual(resolveHeaderPaths(part), { oldPath: 'src/café.js', newPath: 'src/café.js' });
+  });
+
+  it('rule 1: one-side-quoted (old quoted, new unquoted)', () => {
+    const part = 'diff --git "a/quo\\"te.js" b/quote.js\nindex a..b 100644\n';
+    assert.deepEqual(resolveHeaderPaths(part), { oldPath: 'quo"te.js', newPath: 'quote.js' });
+  });
+
+  it('rule 1: one-side-quoted (old unquoted, new quoted)', () => {
+    const part = 'diff --git a/quote.js "b/quo\\"te.js"\nindex a..b 100644\n';
+    assert.deepEqual(resolveHeaderPaths(part), { oldPath: 'quote.js', newPath: 'quo"te.js' });
+  });
+
+  it('the real unquoted-space header git actually emits (not the old, disproven quoted-space fixture)', () => {
+    const part = 'diff --git a/path with spaces.js b/path with spaces.js\nindex a..b 100644\n';
+    assert.deepEqual(resolveHeaderPaths(part), { oldPath: 'path with spaces.js', newPath: 'path with spaces.js' });
+  });
+
+  it('defect #3 regression pin: an unquoted header containing the literal substring " b/" resolves correctly on BOTH sides, never mis-split at the first occurrence', () => {
+    const part = 'diff --git a/x b/y.js b/x b/y.js\nindex a..b 100644\n';
+    assert.deepEqual(resolveHeaderPaths(part), { oldPath: 'x b/y.js', newPath: 'x b/y.js' });
+  });
+
+  it('rule 2: a rename block reads paths from rename from/rename to, not the ambiguous header line', () => {
+    const part = 'diff --git a/old-name.js b/new-name.js\nsimilarity index 95%\nrename from old-name.js\nrename to new-name.js\nindex a..b 100644\n--- a/old-name.js\n+++ b/new-name.js\n';
+    assert.deepEqual(resolveHeaderPaths(part), { oldPath: 'old-name.js', newPath: 'new-name.js' });
+  });
+
+  it('rule 2: a copy block reads paths from copy from/copy to', () => {
+    const part = 'diff --git a/orig.js b/copy.js\nsimilarity index 100%\ncopy from orig.js\ncopy to copy.js\nindex a..b 100644\n--- a/orig.js\n+++ b/copy.js\n';
+    assert.deepEqual(resolveHeaderPaths(part), { oldPath: 'orig.js', newPath: 'copy.js' });
+  });
+
+  it('rule 2: a rename block whose endpoints are themselves quoted decodes correctly (no a/b transport prefix on these tokens)', () => {
+    const part = 'diff --git "a/caf\\303\\251-old.js" "b/caf\\303\\251-new.js"\nsimilarity index 90%\nrename from "caf\\303\\251-old.js"\nrename to "caf\\303\\251-new.js"\nindex a..b 100644\n';
+    assert.deepEqual(resolveHeaderPaths(part), { oldPath: 'café-old.js', newPath: 'café-new.js' });
+  });
+
+  it('rule 2 prelude bound: a HUNK BODY line reading "rename from …" must NOT be treated as metadata', () => {
+    const part = 'diff --git a/x.js b/x.js b/x.js\nindex a..b 100644\n--- a/x.js\n+++ b/x.js\n@@ -1,1 +1,1 @@\n-rename from fake.js\n+rename to fake2.js\n';
+    // Not a real rename (no rename from/to in the prelude) and not symmetric
+    // (old !== new per the header) — must fail closed, never bind from the
+    // hunk body text.
+    assert.equal(resolveHeaderPaths(part), null);
+  });
+
+  it('rule 2: an incomplete pair (rename from with no rename to) falls through, never binds a path', () => {
+    // old !== new, so rule 3 (symmetric) cannot rescue this — an incomplete
+    // rename pair must genuinely fail closed, not fall back to a guess.
+    const part = 'diff --git a/old.js b/new.js\nrename from old.js\nindex a..b 100644\n';
+    assert.equal(resolveHeaderPaths(part), null);
+  });
+
+  it('rule 2: a duplicated rename from falls through', () => {
+    const part = 'diff --git a/old.js b/new.js\nrename from old.js\nrename from also-old.js\nrename to new.js\nindex a..b 100644\n';
+    assert.equal(resolveHeaderPaths(part), null);
+  });
+
+  it('rule 2: mixed rename from + copy to falls through, never binds a path', () => {
+    const part = 'diff --git a/old.js b/new.js\nrename from old.js\ncopy to new.js\nindex a..b 100644\n';
+    assert.equal(resolveHeaderPaths(part), null);
+  });
+
+  it('rule 3: CRLF (\\r\\n) throughout does not break resolution (the G1 regression must not return)', () => {
+    const part = 'diff --git a/foo.js b/foo.js\r\nindex a..b 100644\r\n--- a/foo.js\r\n+++ b/foo.js\r\n';
+    assert.deepEqual(resolveHeaderPaths(part), { oldPath: 'foo.js', newPath: 'foo.js' });
+  });
+
+  it('a header no rule resolves (genuinely asymmetric, unquoted, no rename/copy metadata) → null', () => {
+    const part = 'diff --git a/left.js b/right.js\nindex a..b 100644\n';
+    assert.equal(resolveHeaderPaths(part), null);
+  });
+
+  it('a literal U+FFFD in an unquoted raw header token fails closed → null (§4.1a ingress-corruption guard)', () => {
+    const part = 'diff --git a/�name.js b/�name.js\nindex a..b 100644\n';
+    assert.equal(resolveHeaderPaths(part), null);
+  });
+});
+
+// ── parseAllDiffSections — pathDecodeFailed sections (§4.2) ─────────────────
+describe('parseAllDiffSections — pathDecodeFailed sections', () => {
+  it('a header no rule resolves yields a pathDecodeFailed section with null paths, not silent omission', () => {
+    const diffText = 'diff --git a/left.js b/right.js\nindex a..b 100644\n--- a/left.js\n+++ b/right.js\n';
+    const sections = parseAllDiffSections(diffText);
+    assert.equal(sections.length, 1, 'the section is still emitted, not dropped');
+    assert.equal(sections[0].pathDecodeFailed, true);
+    assert.equal(sections[0].oldPath, null);
+    assert.equal(sections[0].newPath, null);
+    assert.equal(sections[0].fileStatus, 'modified');
+  });
+
+  it('a resolvable header yields a normal (non-pathDecodeFailed) section', () => {
+    const sections = parseAllDiffSections(DIFF);
+    assert.ok(sections.length > 0);
+    for (const s of sections) assert.equal(s.pathDecodeFailed, undefined);
+  });
+
+  it('leading preamble text before the first "diff --git" line is skipped, not mistaken for a section', () => {
+    const diffText = 'some preamble text\n' + DIFF;
+    const sections = parseAllDiffSections(diffText);
+    assert.deepEqual(sections.map((s) => s.newPath), parseAllDiffSections(DIFF).map((s) => s.newPath));
   });
 });
 
@@ -526,16 +723,24 @@ describe('resolveAnchorLocation — Gate A (docs/plans/stage0-evidence-relevance
     assert.equal(r.status, 'unsupported');
   });
 
-  it('a quote matching TWO distinct locations outside the hunk is unsupported (ambiguous), never a silent first-match pick (item 11)', () => {
+  it('a quote matching TWO distinct locations outside the hunk is ambiguous, never a silent first-match pick (item 11) — now unverifiable per §2 decision 3, not unsupported', () => {
     // "return 42;" appears twice in this content — once inside unrelated()
     // (the case the earlier tests already cover) and again inside a second,
     // near-identical function. Neither is in a diff hunk. Before item 11,
     // findLineRangeInContent returned the FIRST match unconditionally.
+    // Superseded by refactor-evidence-integrity.md §2 decision 3 (the
+    // attribution fix): the quote WAS found, so this is no longer the
+    // model's fault (`unsupported`) — it is `unverifiable`, the same
+    // "can't confirm or refute" status already used for a genuinely-missing
+    // diff section. See the dedicated test below for the full assertion.
+    // Declared range (999) intersects NEITHER real occurrence, so the
+    // declaration cannot disambiguate — genuinely ambiguous (a declared
+    // range of 2, matching the first occurrence, would legitimately
+    // disambiguate under §2 decision 1 and is a different, non-ambiguous case).
     const duplicatedContent = FOO_HEAD_CONTENT + '\n\nfunction alsoUnrelated() {\n  return 42;\n}\n';
-    const anchor = { ...HEAD_ANCHOR, quote: 'return 42;', startLine: 2, endLine: 2 };
+    const anchor = { ...HEAD_ANCHOR, quote: 'return 42;', startLine: 999, endLine: 999 };
     const r = resolveAnchorLocation(anchor, DIFF, duplicatedContent);
-    assert.equal(r.status, 'unsupported');
-    assert.match(r.reasonDetail, /2 distinct locations/);
+    assert.equal(r.status, 'unverifiable');
   });
 
   it('a quote matching exactly ONE location outside the hunk still resolves normally (no false ambiguity)', () => {
@@ -546,7 +751,10 @@ describe('resolveAnchorLocation — Gate A (docs/plans/stage0-evidence-relevance
   });
 });
 
-// ── findQuoteLineInHunk — the REAL, diff-derived line (2026-07-26) ──────────
+// ── findQuoteLineRangesInHunk — EVERY real, diff-derived range (2026-07-26; ──
+// widened to all-matches by docs/plans/refactor-evidence-integrity.md §4.3,
+// superseding the removed findQuoteLineInHunk, which broke on the first
+// match and could only ever keep the first hunk's location).
 // docs/plans/tiered-recall-audit-pipeline.md "Addendum 2026-07-26 (continued)":
 // resolveAnchorLocation's 'in_hunk' status has only ever confirmed the quote's
 // TEXT is present in the hunk — it never checked the model's claimed line, and
@@ -554,7 +762,7 @@ describe('resolveAnchorLocation — Gate A (docs/plans/stage0-evidence-relevance
 // the final finding. A census of this repo's own real audit findings found
 // `_primaryLine` unset on effectively every one. This closes that gap for the
 // tiered side, where a VERIFIED line is actually derivable.
-describe('findQuoteLineInHunk — the real line, never the model\'s self-reported claim', () => {
+describe('findQuoteLineRangesInHunk — every real line, never the model\'s self-reported claim', () => {
   // Matches DIFF's first hunk exactly: `@@ -10,3 +10,4 @@`, head side.
   //   head 10: ' const a = 1;'
   //   head 11: '+  await db.insert(a);'
@@ -570,42 +778,42 @@ describe('findQuoteLineInHunk — the real line, never the model\'s self-reporte
     // for this exact quote. That claim was NEVER checked before this fix — the
     // model's self-report is simply wrong, and nothing would have caught it.
     assert.equal(HEAD_ANCHOR.startLine, 12, 'precondition: the fixture\'s own self-reported claim is 12');
-    const r = findQuoteLineInHunk(FOO_HUNK, 'await db.insert(a);', 'head');
-    assert.deepEqual(r, { startLine: 11, endLine: 11 }, 'the VERIFIED line is 11, not the model\'s claimed 12');
+    const r = findQuoteLineRangesInHunk(FOO_HUNK, 'await db.insert(a);', 'head');
+    assert.deepEqual(r, [{ startLine: 11, endLine: 11 }], 'the VERIFIED line is 11, not the model\'s claimed 12');
   });
 
   it('finds the real base-side line for a removed line, using baseStart (not headStart)', () => {
     // 'return a;' is REMOVED (base side only) — must resolve via baseStart (10),
     // landing on base line 11, an entirely different counter than the head side.
-    const r = findQuoteLineInHunk(FOO_HUNK, 'return a;', 'base');
-    assert.deepEqual(r, { startLine: 11, endLine: 11 });
+    const r = findQuoteLineRangesInHunk(FOO_HUNK, 'return a;', 'base');
+    assert.deepEqual(r, [{ startLine: 11, endLine: 11 }]);
   });
 
   it('resolves a multi-line quote to its full real range, not just its start', () => {
-    const r = findQuoteLineInHunk(FOO_HUNK, 'await db.insert(a);\n  return a;', 'head');
-    assert.deepEqual(r, { startLine: 11, endLine: 12 });
+    const r = findQuoteLineRangesInHunk(FOO_HUNK, 'await db.insert(a);\n  return a;', 'head');
+    assert.deepEqual(r, [{ startLine: 11, endLine: 12 }]);
   });
 
-  it('returns null when the quote is not on the requested side (base has no "await db.insert")', () => {
-    const r = findQuoteLineInHunk(FOO_HUNK, 'await db.insert(a);', 'base');
-    assert.equal(r, null);
+  it('returns [] when the quote is not on the requested side (base has no "await db.insert")', () => {
+    const r = findQuoteLineRangesInHunk(FOO_HUNK, 'await db.insert(a);', 'base');
+    assert.deepEqual(r, []);
   });
 
-  it('returns null when the hunk header failed to parse — never guesses a line from an unparseable anchor', () => {
-    const r = findQuoteLineInHunk({ header: null, lines: [' const a = 1;'] }, 'const a = 1;', 'head');
-    assert.equal(r, null);
+  it('returns [] when the hunk header failed to parse — never guesses a line from an unparseable anchor', () => {
+    const r = findQuoteLineRangesInHunk({ header: null, lines: [' const a = 1;'] }, 'const a = 1;', 'head');
+    assert.deepEqual(r, []);
   });
 
-  it('returns null for a quote genuinely absent from the hunk', () => {
-    const r = findQuoteLineInHunk(FOO_HUNK, 'this text is nowhere in the hunk', 'head');
-    assert.equal(r, null);
+  it('returns [] for a quote genuinely absent from the hunk', () => {
+    const r = findQuoteLineRangesInHunk(FOO_HUNK, 'this text is nowhere in the hunk', 'head');
+    assert.deepEqual(r, []);
   });
 
   it('a context line ( ) counts on BOTH sides, at each side\'s own independent counter', () => {
-    const headMatch = findQuoteLineInHunk(FOO_HUNK, 'const a = 1;', 'head');
-    const baseMatch = findQuoteLineInHunk(FOO_HUNK, 'const a = 1;', 'base');
-    assert.deepEqual(headMatch, { startLine: 10, endLine: 10 });
-    assert.deepEqual(baseMatch, { startLine: 10, endLine: 10 }, 'same text, same line number on both sides — it is unchanged context');
+    const headMatch = findQuoteLineRangesInHunk(FOO_HUNK, 'const a = 1;', 'head');
+    const baseMatch = findQuoteLineRangesInHunk(FOO_HUNK, 'const a = 1;', 'base');
+    assert.deepEqual(headMatch, [{ startLine: 10, endLine: 10 }]);
+    assert.deepEqual(baseMatch, [{ startLine: 10, endLine: 10 }], 'same text, same line number on both sides — it is unchanged context');
   });
 
   it('a blank context line does not corrupt the join (mirrors quoteAppearsOnSide\'s own G1 fix)', () => {
@@ -615,9 +823,99 @@ describe('findQuoteLineInHunk — the real line, never the model\'s self-reporte
     };
     // 'alpha() {' + blank + 'function beta' must still match as one span —
     // a double-space from the blank line's naive join must not break it.
-    const r = findQuoteLineInHunk(hunkWithBlank, 'alpha() {\n\nfunction beta', 'head');
-    assert.ok(r, 'a quote spanning a blank context line must still resolve');
-    assert.deepEqual(r, { startLine: 1, endLine: 3 });
+    const r = findQuoteLineRangesInHunk(hunkWithBlank, 'alpha() {\n\nfunction beta', 'head');
+    assert.deepEqual(r, [{ startLine: 1, endLine: 3 }], 'a quote spanning a blank context line must still resolve');
+  });
+
+  it('the SAME quote appearing TWICE in one hunk returns BOTH ranges (the case the old shape could not express)', () => {
+    const hunk = {
+      header: { baseStart: 1, baseCount: 4, headStart: 1, headCount: 4 },
+      lines: ['+dup();', ' unrelated();', '+dup();', ' end();'],
+    };
+    const r = findQuoteLineRangesInHunk(hunk, 'dup();', 'head');
+    assert.deepEqual(r, [{ startLine: 1, endLine: 1 }, { startLine: 3, endLine: 3 }]);
+  });
+});
+
+describe('selectAnchoredMatch — the single disambiguation seam (§2 decision 1)', () => {
+  it('0 matches -> none', () => {
+    assert.deepEqual(selectAnchoredMatch([], null), { kind: 'none' });
+    assert.deepEqual(selectAnchoredMatch([], { startLine: 5, endLine: 5 }), { kind: 'none' });
+  });
+
+  it('1 match -> unique, EVEN with a deliberately WRONG declared range (the declaration is irrelevant here)', () => {
+    const only = { startLine: 11, endLine: 11 };
+    const r = selectAnchoredMatch([only], { startLine: 999, endLine: 999 });
+    assert.deepEqual(r, { kind: 'unique', match: only });
+  });
+
+  it('2 matches, declared range intersects EXACTLY ONE -> unique (the declaration did real work)', () => {
+    const a = { startLine: 5, endLine: 5 };
+    const b = { startLine: 40, endLine: 40 };
+    const r = selectAnchoredMatch([a, b], { startLine: 39, endLine: 41 });
+    assert.deepEqual(r, { kind: 'unique', match: b });
+  });
+
+  it('2 matches, declared range intersects NEITHER -> ambiguous', () => {
+    const a = { startLine: 5, endLine: 5 };
+    const b = { startLine: 40, endLine: 40 };
+    const r = selectAnchoredMatch([a, b], { startLine: 999, endLine: 999 });
+    assert.deepEqual(r, { kind: 'ambiguous', count: 2 });
+  });
+
+  it('2 matches, declared range intersects BOTH -> ambiguous (a range spanning both is not a disambiguation)', () => {
+    const a = { startLine: 5, endLine: 5 };
+    const b = { startLine: 6, endLine: 6 };
+    const r = selectAnchoredMatch([a, b], { startLine: 1, endLine: 100 });
+    assert.deepEqual(r, { kind: 'ambiguous', count: 2 });
+  });
+
+  it('2+ matches with declaredRange: null (inadmissible coordinate space) -> ambiguous, never guessed', () => {
+    const a = { startLine: 5, endLine: 5 };
+    const b = { startLine: 40, endLine: 40 };
+    assert.deepEqual(selectAnchoredMatch([a, b], null), { kind: 'ambiguous', count: 2 });
+  });
+});
+
+describe('formatLocToken / parseLocToken — the §4.4 telemetry token round-trips', () => {
+  it('single_match: the declaration is recorded but was not needed', () => {
+    const match = { startLine: 11, endLine: 11 };
+    const token = formatLocToken({
+      side: 'head', declaredRange: { startLine: 12, endLine: 12 },
+      matchCount: 1, selection: { kind: 'unique', match },
+    });
+    assert.equal(token, 'loc/v1 side=head declared=12-12 selected=11-11 outcome=single_match candidates=1');
+    assert.deepEqual(parseLocToken(token), { side: 'head', declared: '12-12', selected: '11-11', outcome: 'single_match', candidates: 1 });
+  });
+
+  it('range_disambiguated: the declared range picked exactly one of several', () => {
+    const match = { startLine: 40, endLine: 40 };
+    const token = formatLocToken({
+      side: 'head', declaredRange: { startLine: 39, endLine: 41 },
+      matchCount: 2, selection: { kind: 'unique', match },
+    });
+    assert.match(token, /outcome=range_disambiguated candidates=2$/);
+    assert.equal(parseLocToken(token).outcome, 'range_disambiguated');
+  });
+
+  it('ambiguous, with declared=none for an INADMISSIBLE (side:base) range — inadmissibility is observable, not assumed', () => {
+    const token = formatLocToken({
+      side: 'base', declaredRange: null, matchCount: 2, selection: { kind: 'ambiguous', count: 2 },
+    });
+    assert.equal(token, 'loc/v1 side=base declared=none selected=none outcome=ambiguous candidates=2');
+    assert.deepEqual(parseLocToken(token), { side: 'base', declared: 'none', selected: 'none', outcome: 'ambiguous', candidates: 2 });
+  });
+
+  it('unlocatable: zero candidates', () => {
+    const token = formatLocToken({ side: 'head', declaredRange: { startLine: 1, endLine: 1 }, matchCount: 0, selection: { kind: 'none' } });
+    assert.equal(token, 'loc/v1 side=head declared=1-1 selected=none outcome=unlocatable candidates=0');
+  });
+
+  it('parseLocToken rejects a malformed/foreign string, never throws', () => {
+    assert.equal(parseLocToken('not a token'), null);
+    assert.equal(parseLocToken(''), null);
+    assert.equal(parseLocToken(null), null);
+    assert.equal(parseLocToken(undefined), null);
   });
 });
 
@@ -639,6 +937,65 @@ describe('resolveAnchorLocation — surfaces the REAL line via verifiedLine (202
     const r = resolveAnchorLocation(anchor, DIFF, null);
     assert.equal(r.status, 'in_hunk');
     assert.deepEqual(r.verifiedLine, { startLine: 40, endLine: 40 }, 'hunk2 starts at head line 40; its one head-side line is the changed line');
+  });
+
+  // ── §9 R2/M2 — the two end-to-end binding cases selector unit tests cannot ──
+  // cover, because both failures live in what resolveAnchorLocation PASSES to
+  // the selector, not in the selector itself.
+  const SAME_QUOTE_TWO_HUNKS = `diff --git a/src/repeat.js b/src/repeat.js
+index abc..def 100644
+--- a/src/repeat.js
++++ b/src/repeat.js
+@@ -5,1 +5,1 @@ function alpha() {
++shared();
+@@ -40,1 +40,1 @@ function beta() {
++shared();
+`;
+
+  it('cross-hunk collection: the same head-side quote in TWO hunks, declared range intersecting only the LATER one, selects the LATER range (would fail under a first-hunk-wins break)', () => {
+    const anchor = {
+      diffPathId: 'src/repeat.js', oldFile: 'src/repeat.js', newFile: 'src/repeat.js',
+      fileStatus: 'modified', side: 'head', startLine: 40, endLine: 40,
+      quote: 'shared();', headSha: 'abc123',
+    };
+    const r = resolveAnchorLocation(anchor, SAME_QUOTE_TWO_HUNKS, null);
+    assert.equal(r.status, 'in_hunk');
+    assert.deepEqual(r.verifiedLine, { startLine: 40, endLine: 40 }, 'the declared range (40) must select hunk 2\'s line, not hunk 1\'s (5)');
+  });
+
+  const TWO_BASE_OCCURRENCES = `diff --git a/src/dual.js b/src/dual.js
+index abc..def 100644
+--- a/src/dual.js
++++ b/src/dual.js
+@@ -5,1 +5,0 @@ function alpha() {
+-shared();
+@@ -40,1 +40,0 @@ function beta() {
+-shared();
+`;
+
+  it('base-side inadmissibility: 2 distinct base-side occurrences with a declared range intersecting exactly one still resolve to in_hunk with verifiedLine: null (proves declaredRange:null was passed, not the HEAD-coordinate declaration)', () => {
+    // The declared range (40) is in HEAD-file coordinates (discovery only ever
+    // shows HEAD content) but BOTH occurrences here are on the BASE side —
+    // an implementation that forwarded the HEAD-coordinate declared range
+    // would "successfully" disambiguate to line 40 and FAIL this test.
+    const anchor = {
+      diffPathId: 'src/dual.js', oldFile: 'src/dual.js', newFile: 'src/dual.js',
+      fileStatus: 'modified', side: 'base', startLine: 40, endLine: 40,
+      quote: 'shared();', headSha: 'abc123',
+    };
+    const r = resolveAnchorLocation(anchor, TWO_BASE_OCCURRENCES, null);
+    assert.equal(r.status, 'in_hunk', 'verification (quoteAppearsOnSide) still succeeds — the quote IS in the diff');
+    assert.equal(r.verifiedLine, null, 'ambiguous with an inadmissible declared range — never a false disambiguation');
+  });
+
+  it('HEAD-fallback ambiguity (§2 decision 3): 2 distinct HEAD-only occurrences now resolve to unverifiable, not unsupported', () => {
+    const duplicatedContent = FOO_HEAD_CONTENT + '\n\nfunction alsoUnrelated() {\n  return 42;\n}\n';
+    // Declared range intersects NEITHER real occurrence — genuinely ambiguous.
+    const anchor = { ...HEAD_ANCHOR, quote: 'return 42;', startLine: 999, endLine: 999 };
+    const r = resolveAnchorLocation(anchor, DIFF, duplicatedContent);
+    assert.equal(r.status, 'unverifiable', 'the quote WAS found — blaming the model for our inability to localise is the misattribution §7a exists to eliminate');
+    assert.match(r.reasonDetail, /^loc\/v1 /);
+    assert.match(r.reasonDetail, /outcome=ambiguous candidates=2$/);
   });
 });
 

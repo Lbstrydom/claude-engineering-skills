@@ -468,16 +468,29 @@ describe('semantics digest — the epoch must move when the measurement CONTRACT
   test('mutating the third pinned file (evidence-triage.mjs) also changes the digest', () => {
     const triageSrc = ALL_PINNED_SOURCES[EVIDENCE_TRIAGE_FILE];
     const baseline = computeDigestFromSources(ALL_PINNED_SOURCES);
-    // This exact return line is unique to findQuoteLineInHunk — unlike the
-    // side-prefix array literal above, which quoteAppearsOnSide ALSO contains
-    // verbatim (a non-global .replace() on that shared text silently mutated
-    // the WRONG, unpinned function first, proving nothing — caught by this
-    // test itself failing when written that way).
-    const target = 'return { startLine: entries[start].lineNum, endLine: entries[start + quoteLineCount - 1].lineNum };';
-    assert.match(triageSrc, new RegExp(target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), 'precondition: findQuoteLineInHunk\'s real, unique return line');
-    const mutated = triageSrc.replace(target, 'return { startLine: entries[start].lineNum, endLine: entries[start].lineNum };');
+    // Retargeted (docs/plans/refactor-evidence-integrity.md §4.5): the removed
+    // findQuoteLineInHunk's `return` became a `push` on the new
+    // findQuoteLineRangesInHunk, so the old target string no longer exists.
+    // This push line is unique to it — unlike the side-prefix array literal
+    // above, which quoteAppearsOnSide ALSO contains verbatim (a non-global
+    // .replace() on that shared text silently mutated the WRONG, unpinned
+    // function first, proving nothing — caught by this test itself failing
+    // when written that way).
+    const target = 'matches.push({ startLine: entries[start].lineNum, endLine: entries[start + quoteLineCount - 1].lineNum });';
+    assert.match(triageSrc, new RegExp(target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), 'precondition: findQuoteLineRangesInHunk\'s real, unique push line');
+    const mutated = triageSrc.replace(target, 'matches.push({ startLine: entries[start].lineNum, endLine: entries[start].lineNum });');
     const after = computeDigestFromSources({ ...ALL_PINNED_SOURCES, [EVIDENCE_TRIAGE_FILE]: mutated });
-    assert.notEqual(after, baseline, 'a semantic change inside findQuoteLineInHunk must move the digest');
+    assert.notEqual(after, baseline, 'a semantic change inside findQuoteLineRangesInHunk must move the digest');
+  });
+
+  test('mutating selectAnchoredMatch (the new shared selector) also changes the digest', () => {
+    const triageSrc = ALL_PINNED_SOURCES[EVIDENCE_TRIAGE_FILE];
+    const baseline = computeDigestFromSources(ALL_PINNED_SOURCES);
+    const target = "if (matches.length === 1) return { kind: 'unique', match: matches[0] };";
+    assert.match(triageSrc, new RegExp(target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), 'precondition: selectAnchoredMatch\'s real, unique single-match line');
+    const mutated = triageSrc.replace(target, "if (matches.length === 2) return { kind: 'unique', match: matches[0] };");
+    const after = computeDigestFromSources({ ...ALL_PINNED_SOURCES, [EVIDENCE_TRIAGE_FILE]: mutated });
+    assert.notEqual(after, baseline, 'a semantic change inside selectAnchoredMatch must move the digest — it is now one of the three pinned functions');
   });
 
   test('a CRLF-only difference does not move the digest (the skills.manifest.json incident, one file over)', () => {

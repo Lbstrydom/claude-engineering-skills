@@ -35,12 +35,14 @@
  * `findingsCorrelate`'s own text, which would otherwise be an invisible gap),
  * plus the fields `compareAuditRunResults` persists onto the comparison row;
  * `summarize()`'s eligibility predicates in `tiered-shadow-summary.mjs`; and (added
- * 2026-07-26, the same day this digest caught its first real change) the two
- * pure, location-verification functions in `evidence-triage.mjs` that decide
- * whether/what `_primaryLine` gets attached to a tiered finding — upstream of
- * the other two files, but just as meaning-changing: it changed what
- * `overlapCount`/`*UnlocalizedCount` mean for real data without touching
- * either of them.
+ * 2026-07-26, the same day this digest caught its first real change; widened
+ * 2026-07-27 by docs/plans/refactor-evidence-integrity.md, which rewrote
+ * `findQuoteLineInHunk` into `findQuoteLineRangesInHunk` + the new shared
+ * `selectAnchoredMatch` selector) the pure, location-verification functions in
+ * `evidence-triage.mjs` that decide whether/what `_primaryLine` gets attached
+ * to a tiered finding — upstream of the other two files, but just as
+ * meaning-changing: it changed what `overlapCount`/`*UnlocalizedCount` mean
+ * for real data without touching either of them.
  *
  * **What's deliberately excluded**: comments (JSDoc + inline) and whitespace,
  * so a documentation edit or reformat never fires this guard — coarse enough
@@ -92,7 +94,7 @@ export const SEMANTICS_REGIONS = Object.freeze({
     'hasComparablePopulation', 'isContractFailure', 'isCurrentEpoch', 'compared',
   ]),
   [EVIDENCE_TRIAGE_FILE]: Object.freeze([
-    'findQuoteLineInHunk', 'resolveAnchorLocation',
+    'findQuoteLineRangesInHunk', 'selectAnchoredMatch', 'resolveAnchorLocation',
   ]),
 });
 

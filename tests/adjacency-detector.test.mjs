@@ -258,7 +258,7 @@ describe('parseHunkTargets — anchors', () => {
       '+three();',
       '',
     ].join('\n');
-    const [t] = parseHunkTargets(diff);
+    const { targets: [t] } = parseHunkTargets(diff);
     assert.deepEqual(t.anchorLines, [10, 11, 12]);
   });
 
@@ -273,7 +273,7 @@ describe('parseHunkTargets — anchors', () => {
       '-gone();',
       '',
     ].join('\n');
-    const [t] = parseHunkTargets(diff);
+    const { targets: [t] } = parseHunkTargets(diff);
     assert.deepEqual(t.anchorLines, [9], 'the insertion position is the deletion anchor');
   });
 
@@ -286,17 +286,54 @@ describe('parseHunkTargets — anchors', () => {
       '+a();',
       '',
     ].join('\n');
-    const [t] = parseHunkTargets(diff);
+    const { targets: [t] } = parseHunkTargets(diff);
     assert.deepEqual(t.anchorLines, [2, 5]);
   });
 
   test('a file with no hunks produces no target', () => {
-    assert.deepEqual(parseHunkTargets('diff --git a/x.mjs b/x.mjs\n'), []);
+    const { targets, undecodableCount } = parseHunkTargets('diff --git a/x.mjs b/x.mjs\n');
+    assert.deepEqual(targets, []);
+    assert.equal(undecodableCount, 0);
   });
 
   test('empty/absent diff text is handled', () => {
-    assert.deepEqual(parseHunkTargets(''), []);
-    assert.deepEqual(parseHunkTargets(null), []);
+    assert.deepEqual(parseHunkTargets(''), { targets: [], undecodableCount: 0 });
+    assert.deepEqual(parseHunkTargets(null), { targets: [], undecodableCount: 0 });
+  });
+
+  test('an added line whose OWN content starts with "+" (rendering as "+++" on the wire) is still counted as an anchor (round-1 code-audit H1)', () => {
+    // The diff-marker '+' followed by source content '++counter;' renders as
+    // the literal wire text '+++counter;' — indistinguishable BY PREFIX ALONE
+    // from a `+++ b/file` header line, but this line is inside a hunk body
+    // (after the `@@` marker), where a real file header can never appear.
+    const diff = [
+      'diff --git a/x.mjs b/x.mjs',
+      '--- a/x.mjs',
+      '+++ b/x.mjs',
+      '@@ -10,0 +10,2 @@',
+      '+++counter;',
+      '+normal();',
+      '',
+    ].join('\n');
+    const { targets: [t] } = parseHunkTargets(diff);
+    assert.deepEqual(t.anchorLines, [10, 11], 'both added lines counted, including the one starting with "+"');
+  });
+
+  test('a pathDecodeFailed section (§4.2) is skipped from targets, COUNTED not silently dropped (final-gate shadow finding, round 3)', () => {
+    // Genuinely asymmetric, unquoted, no rename/copy metadata — resolveHeaderPaths
+    // returns null, so this section carries newPath: null.
+    const diff = [
+      'diff --git a/left.js b/right.js',
+      '--- a/left.js',
+      '+++ b/right.js',
+      '@@ -1,0 +1,1 @@',
+      '+one();',
+      '',
+    ].join('\n');
+    assert.doesNotThrow(() => parseHunkTargets(diff));
+    const { targets, undecodableCount } = parseHunkTargets(diff);
+    assert.deepEqual(targets, [], 'no target for an unresolved path — nothing to name');
+    assert.equal(undecodableCount, 1, 'but the skip itself is counted, never silent');
   });
 });
 
@@ -358,6 +395,24 @@ describe('runAdjacencyAnalysis — facts, not a state', () => {
     });
     assert.equal(r.incompleteness[0].kind, INCOMPLETENESS_KINDS.PARSE_FAILURE);
     assert.match(r.incompleteness[0].detail, /partial parse/);
+  });
+
+  test('a pathDecodeFailed section is reported as PARSE_FAILURE incompleteness, never a silent skip (final-gate shadow finding, round 3)', async () => {
+    // Same coverage-honesty discipline as every other skip class in this
+    // module — parseHunkTargets used to drop this file with no trace at all.
+    const undecodableHeader = 'diff --git a/left.js b/right.js\n--- a/left.js\n+++ b/right.js\n@@ -1,0 +1,1 @@\n+one();\n';
+    const r = await runAdjacencyAnalysis({
+      repoRoot: process.cwd(),
+      auditBaseCommit: 'HEAD',
+      bounds,
+      adapters: {
+        numstat: () => ({ ok: true, files: [{ path: 'left.js', added: 1, deleted: 0, binary: false }], totalChangedLines: 1 }),
+        unifiedDiff: () => ({ ok: true, truncated: false, diffText: undecodableHeader }),
+      },
+    });
+    assert.equal(r.incompleteness[0].kind, INCOMPLETENESS_KINDS.PARSE_FAILURE);
+    assert.match(r.incompleteness[0].detail, /pathDecodeFailed/);
+    assert.equal(r.candidates.length, 0);
   });
 
   test('a sensitive path is dropped WITHOUT a diagnostic that leaks its existence', async () => {

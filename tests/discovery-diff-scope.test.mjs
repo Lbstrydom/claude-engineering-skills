@@ -44,12 +44,15 @@ describe('resolveEligibleDiffPathMap', () => {
     assert.equal(skipped.length, 0);
   });
 
-  test('a live symlink resolving to a sensitive target is dropped (6cfb5541 fix)', () => {
+  test('a live symlink resolving to a sensitive target is dropped (6cfb5541 fix)', (t) => {
     const sensitiveTarget = path.join(repoRoot, '.env');
     fs.writeFileSync(sensitiveTarget, 'SECRET=1');
     const benignName = 'config.mjs';
     const linkPath = path.join(repoRoot, benignName);
-    if (!trySymlink(sensitiveTarget, linkPath, 'file')) return; // host can't create symlinks — skip
+    if (!trySymlink(sensitiveTarget, linkPath, 'file')) {
+      t.skip('symlink creation unavailable on this host — sensitive-symlink drop NOT verified');
+      return;
+    }
 
     const diffText = diffFor(benignName);
     const { map, skipped } = resolveEligibleDiffPathMap(diffText, { repoRoot });
@@ -58,12 +61,15 @@ describe('resolveEligibleDiffPathMap', () => {
     assert.equal(skipped[0].path, benignName);
   });
 
-  test('a live symlink resolving to a benign target stays eligible', () => {
+  test('a live symlink resolving to a benign target stays eligible', (t) => {
     const benignTarget = path.join(repoRoot, 'real-source.mjs');
     fs.writeFileSync(benignTarget, 'export const x = 1;');
     const linkName = 'alias.mjs';
     const linkPath = path.join(repoRoot, linkName);
-    if (!trySymlink(benignTarget, linkPath, 'file')) return; // host can't create symlinks — skip
+    if (!trySymlink(benignTarget, linkPath, 'file')) {
+      t.skip('symlink creation unavailable on this host — benign-symlink pass-through NOT verified');
+      return;
+    }
 
     const diffText = diffFor(linkName);
     const { map, skipped } = resolveEligibleDiffPathMap(diffText, { repoRoot });
@@ -88,7 +94,7 @@ describe('resolveEligibleDiffPathMap', () => {
     assert.equal(skipped[0].category, 'sensitive');
   });
 
-  test('a live BROKEN symlink with a benign lexical name is dropped, not treated as deleted (H2 fix)', () => {
+  test('a live BROKEN symlink with a benign lexical name is dropped, not treated as deleted (H2 fix)', (t) => {
     // Before H2: the gate used fs.existsSync, which follows the final symlink
     // and returns false for a dangling target — identical to a genuinely
     // deleted file, so this case silently skipped resolveAndClassify and
@@ -98,7 +104,10 @@ describe('resolveEligibleDiffPathMap', () => {
     const missingTarget = path.join(repoRoot, 'this-target-does-not-exist.mjs');
     const benignName = 'broken-link.mjs';
     const linkPath = path.join(repoRoot, benignName);
-    if (!trySymlink(missingTarget, linkPath, 'file')) return; // host can't create symlinks — skip
+    if (!trySymlink(missingTarget, linkPath, 'file')) {
+      t.skip('symlink creation unavailable on this host — broken-symlink drop NOT verified');
+      return;
+    }
 
     const diffText = diffFor(benignName);
     const { map, skipped } = resolveEligibleDiffPathMap(diffText, { repoRoot });
@@ -121,5 +130,19 @@ describe('resolveEligibleDiffPathMap', () => {
     const { map, skipped } = resolveEligibleDiffPathMap(diffText, { repoRoot });
     assert.equal(map.kind, 'ready', 'ENOTDIR degrades to the deleted-file (lexical-only) path, same as ENOENT');
     assert.equal(skipped.length, 0);
+  });
+
+  test('the sensitive gate sees the DECODED path from a genuinely-quoted, octal-escaped header (refactor-evidence-integrity.md §9 seam test 4)', () => {
+    // Deleted (no filesystem target — no symlink fixture needed), so this
+    // exercises exactly "the gate receives the real path", not "the gate
+    // works" (already covered above). secrets/ is a lexically-sensitive
+    // directory regardless of the accented filename.
+    const diffText = 'diff --git "a/secrets/caf\\303\\251.env" "b/secrets/caf\\303\\251.env"\n'
+      + 'deleted file mode 100644\nindex abc..000\n--- "a/secrets/caf\\303\\251.env"\n+++ /dev/null\n@@ -1 +0,0 @@\n-x\n';
+    const { map, skipped } = resolveEligibleDiffPathMap(diffText, { repoRoot });
+    assert.equal(map.kind, 'empty', 'the only entry was dropped');
+    assert.equal(skipped.length, 1);
+    assert.equal(skipped[0].category, 'sensitive');
+    assert.equal(skipped[0].path, 'secrets/café.env', 'reported path is the DECODED form, not the raw octal-escaped wire text');
   });
 });

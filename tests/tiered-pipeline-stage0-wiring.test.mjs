@@ -629,10 +629,19 @@ describe('static pins — producer-contract wiring (evidence-anchor-path-contrac
 
   it('an over-budget map is a NAMED required-generator failure (§8a) — never truncated, never partitioned', () => {
     assert.match(src, /diffPathMap\.reason === 'discovery_map_exceeds_budget'/);
-    const branch = src.match(/if \(diffPathMap\.kind === 'invalid' && diffPathMap\.reason === 'discovery_map_exceeds_budget'\)[\s\S]*?\n  \}/);
+    const branch = src.match(/if \(diffPathMap\.kind === 'invalid'[\s\S]*?diffPathMap\.reason === 'discovery_map_exceeds_budget'[\s\S]*?\n  \}/);
     assert.ok(branch, 'expected the budget branch');
     assert.match(branch[0], /failRequiredGenerator\(/, 'must reuse §1.5\'s EXISTING semantics, not new failure machinery');
     assert.match(branch[0], /required generator failed: /, 'the reason prefix summarize() and the ledger read by name');
+  });
+
+  it('undecodable_diff_header (docs/plans/refactor-evidence-integrity.md §4.2) joins the SAME required-generator-failure branch, not the generic "nothing to audit" shape', () => {
+    // Without this, the new reason would fall to the generic `kind !== 'ready'`
+    // branch below — skippedNoGeneratorResult's shape — which is FALSE: there
+    // IS a changed file, it just cannot be cited. Legacy CAN audit it.
+    const branch = src.match(/if \(diffPathMap\.kind === 'invalid'[\s\S]*?diffPathMap\.reason === 'discovery_map_exceeds_budget'[\s\S]*?\n  \}/);
+    assert.ok(branch, 'expected the budget/undecodable branch');
+    assert.match(branch[0], /diffPathMap\.reason === 'undecodable_diff_header'/, 'both reasons must share the failRequiredGenerator branch');
   });
 
   it('BOTH generators emit the V3 producer shape and are handed the SAME table', () => {

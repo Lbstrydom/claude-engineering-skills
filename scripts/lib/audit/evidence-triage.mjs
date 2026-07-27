@@ -43,19 +43,16 @@ import { normalizeWhitespace } from '../text-normalize.mjs';
  * isn't mentioned in the diff at all.
  *
  * PRE-EXISTING function (predates the Stage 0 relevance-split restructure —
- * `verifyAnchor` has always used it); `resolveAnchorLocation` (Gate A) now
- * also calls it, which is a genuine load-bearing dependency, not just
- * pre-existing debt to ignore. Round-1 code-audit M3/L2: the header regex
- * below handles unquoted paths and a narrow quoted-space case, not Git's
- * full C-style quoted-path grammar (octal escapes, embedded quotes/
- * backslashes) — an exotic filename can fail to match here. Documented
- * as accepted debt rather than fixed now because the failure direction is
- * SAFE: a header match miss returns `null` → the caller treats the anchor
- * as `unverifiable` (never a false match/wrong classification), and a full
- * grammar-compliant parser is a substantial, orthogonal scope expansion
- * this plan (evidence RELEVANCE, not diff-parsing robustness) does not
- * need to absorb. Revisit if a real discovery run surfaces a rejected
- * candidate citing a quote-grammar-affected filename.
+ * `verifyAnchor` has always used it); `resolveAnchorLocation` (Gate A) also
+ * calls it, a genuine load-bearing dependency. Path resolution is delegated
+ * to `parseAllDiffSections` → `resolveHeaderPaths`, which parses Git's full
+ * C-style quoted-path grammar (docs/plans/refactor-evidence-integrity.md) —
+ * the narrower unquoted/quoted-space-only regex this docblock used to
+ * describe as accepted debt is gone. A header whose paths cannot be
+ * unambiguously resolved becomes a `pathDecodeFailed` section (`oldPath`/
+ * `newPath: null`), which this function still safely treats as "not this
+ * file" (never a false match) — see `parseAllDiffSections` for the loud,
+ * named failure that produces.
  *
  * @param {string} diffText
  * @param {string} filePath - either the old or new path
@@ -74,6 +71,294 @@ function extractFileDiffSection(diffText, filePath) {
 }
 
 /**
+ * Decode a single Git diff-header path token: `token` is either an unquoted
+ * literal path (git never escapes anything outside quotes) or a
+ * self-delimited C-style-quoted token (the caller has already located the
+ * closing UNESCAPED `"` — this function only strips and decodes).
+ *
+ * Bytes, then ONE UTF-8 decode (docs/plans/refactor-evidence-integrity.md
+ * §4.1) — `\303\251` is a two-byte UTF-8 sequence for `é`; decoding octal
+ * escapes one JS character at a time (`String.fromCharCode(parseInt(o,8))`)
+ * produces mojibake (`Ã©`), not the real path. So every escape — literal
+ * character or octal — is accumulated into a raw byte buffer, and the WHOLE
+ * buffer is UTF-8-decoded once at the end.
+ *
+ * Fail-closed (`null`), never a half-decoded string (INC-001's lesson: never
+ * "I couldn't classify it so I'll allow it"): a malformed escape, an
+ * embedded NUL, an invalid UTF-8 sequence, or ANY loss between the decoded
+ * string and its own re-encoding (the identity check) all return `null`.
+ * `ignoreBOM: true` is load-bearing, not defensive filler: WHATWG
+ * `TextDecoder` strips a leading BOM by default, which would silently change
+ * a path legitimately beginning with U+FEFF — reachable specifically via a
+ * `rename from`/`rename to` token, which (unlike a `diff --git` header
+ * token) carries no `a/`/`b/` prefix, so the BOM really can sit at byte 0.
+ *
+ * @param {string} token
+ * @returns {string | null}
+ */
+const GIT_QUOTE_SIMPLE_ESCAPES = Object.freeze({
+  a: 0x07, b: 0x08, f: 0x0c, n: 0x0a, r: 0x0d, t: 0x09, v: 0x0b, '\\': 0x5c, '"': 0x22,
+});
+
+export function unquoteGitPath(token) {
+  if (typeof token !== 'string' || !token.startsWith('"')) return token;
+  // Verify the token is genuinely well-formed BEFORE trusting `slice(1, -1)`
+  // (round-1 code-audit M5): the docblock's precondition ("caller has
+  // already located the closing unescaped quote") holds for Rule 1's
+  // `readQuotedHeaderToken`-validated tokens, but Rule 2's rename/copy path
+  // hands over a raw line slice with no such pre-check — an unterminated or
+  // malformed token there would otherwise be silently mis-sliced instead of
+  // failing closed. Scan for the first UNESCAPED closing quote and require
+  // it to be the token's LAST character; anything else is malformed.
+  let closeIdx = -1;
+  for (let j = 1; j < token.length; j++) {
+    if (token[j] === '\\') { j++; continue; }
+    if (token[j] === '"') { closeIdx = j; break; }
+  }
+  if (closeIdx !== token.length - 1) return null; // unterminated, or trailing content after the close
+  const inner = token.slice(1, -1);
+  const bytes = [];
+  const encoder = new TextEncoder();
+  let i = 0;
+  while (i < inner.length) {
+    const ch = inner[i];
+    if (ch === '\\') {
+      const next = inner[i + 1];
+      if (next !== undefined && Object.hasOwn(GIT_QUOTE_SIMPLE_ESCAPES, next)) {
+        bytes.push(GIT_QUOTE_SIMPLE_ESCAPES[next]);
+        i += 2;
+        continue;
+      }
+      if (next !== undefined && next >= '0' && next <= '7') {
+        let digits = next;
+        let j = i + 2;
+        while (digits.length < 3 && inner[j] >= '0' && inner[j] <= '7') {
+          digits += inner[j];
+          j++;
+        }
+        const value = Number.parseInt(digits, 8);
+        if (value > 0o377) return null; // not a representable byte
+        bytes.push(value);
+        i = j;
+        continue;
+      }
+      return null; // malformed escape — neither a known letter nor an octal digit
+    }
+    const codePoint = inner.codePointAt(i);
+    const charLen = codePoint > 0xffff ? 2 : 1; // surrogate-pair aware
+    for (const b of encoder.encode(inner.slice(i, i + charLen))) bytes.push(b);
+    i += charLen;
+  }
+  if (bytes.some((b) => b === 0x00)) return null; // NUL cannot occur in a POSIX pathname
+  const buf = Uint8Array.from(bytes);
+  let decoded;
+  try {
+    decoded = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(buf);
+  } catch {
+    return null; // invalid UTF-8 sequence
+  }
+  const reencoded = new TextEncoder().encode(decoded);
+  if (reencoded.length !== buf.length || !reencoded.every((b, idx) => b === buf[idx])) {
+    return null; // decoding was lossy on the accumulated bytes — never ship a half-faithful path
+  }
+  return decoded;
+}
+
+/**
+ * Reject a raw (pre-decode) header token that contains a LITERAL U+FFFD
+ * (docs/plans/refactor-evidence-integrity.md §4.1a, corrected at R2/M1).
+ *
+ * The guard is on PROVENANCE, not the character: U+FFFD is a perfectly legal
+ * POSIX filename character, and under git's default `core.quotePath=true` a
+ * path containing it arrives octal-escaped (`\357\277\275`) — which
+ * `unquoteGitPath` decodes correctly and this guard must NOT reject (it only
+ * ever inspects the RAW pre-decode text, and a decoded octet sequence is not
+ * literally the character `�` in that raw text). A LITERAL `�` in
+ * the raw header text can only mean `fs.readFileSync(..., 'utf-8')`
+ * replaced an invalid byte before this module ever saw it — an ingress
+ * corruption this module cannot recover, so it fails closed rather than
+ * mint a silently wrong path.
+ *
+ * @param {string} rawToken
+ * @returns {boolean}
+ */
+function hasLiteralReplacementChar(rawToken) {
+  return typeof rawToken === 'string' && rawToken.includes('�');
+}
+
+/**
+ * Read one self-delimiting quoted token starting at `s[start]` (`s[start]`
+ * MUST be `"`). Returns the token INCLUDING its surrounding quotes (the
+ * shape `unquoteGitPath` expects) and the index just past the closing quote,
+ * or `null` if the quote is never closed.
+ *
+ * @param {string} s
+ * @param {number} start
+ * @returns {{raw: string, end: number} | null}
+ */
+function readQuotedHeaderToken(s, start) {
+  let j = start + 1;
+  while (j < s.length) {
+    if (s[j] === '\\') { j += 2; continue; }
+    if (s[j] === '"') return { raw: s.slice(start, j + 1), end: j + 1 };
+    j++;
+  }
+  return null; // unterminated quote
+}
+
+/**
+ * Rule 1 (docs/plans/refactor-evidence-integrity.md §2 decision 5): a token
+ * starting with `"` is self-delimiting — ends at the first UNESCAPED `"`, no
+ * ambiguity possible. Handles both-quoted and the one-quoted-one-not case
+ * (git quotes each side independently): an unquoted OLD token structurally
+ * cannot contain a literal `"` (git's own quoting rule would have quoted it),
+ * so the first `"` anywhere in `rest` unambiguously starts a quoted token —
+ * either OLD (at position 0) or NEW (mid-string, immediately after OLD's
+ * single trailing space).
+ *
+ * @param {string} rest - the header line's text after `diff --git `
+ * @returns {{oldPath: string, newPath: string} | null}
+ */
+function resolveQuotedHeaderRule(rest) {
+  const firstQuote = rest.indexOf('"');
+  if (firstQuote === -1) return null; // no quoting at all — this rule does not apply
+
+  let oldRaw, afterOld;
+  if (firstQuote === 0) {
+    const oldTok = readQuotedHeaderToken(rest, 0);
+    if (!oldTok) return null;
+    oldRaw = oldTok.raw;
+    afterOld = oldTok.end;
+  } else {
+    if (rest[firstQuote - 1] !== ' ') return null; // quote mid-token — not a legal boundary
+    oldRaw = rest.slice(0, firstQuote - 1);
+    afterOld = firstQuote - 1;
+    // Structurally unreachable — oldRaw is everything BEFORE the FIRST quote
+    // in `rest`, so it cannot itself contain one — but asserted explicitly
+    // (round-3 code-audit H1) rather than left asymmetric with the unquoted-
+    // NEW branch's explicit check below, so the invariant survives a future
+    // edit to how `firstQuote` is computed.
+    if (oldRaw.includes('"')) return null;
+  }
+  if (rest[afterOld] !== ' ') return null;
+  const newStart = afterOld + 1;
+
+  let newRaw;
+  if (rest[newStart] === '"') {
+    const newTok = readQuotedHeaderToken(rest, newStart);
+    if (!newTok || newTok.end !== rest.length) return null; // must consume to end of line
+    newRaw = newTok.raw;
+  } else {
+    newRaw = rest.slice(newStart);
+    if (newRaw.includes('"')) return null; // an unquoted token cannot legally contain a raw quote
+  }
+
+  if (hasLiteralReplacementChar(oldRaw) || hasLiteralReplacementChar(newRaw)) return null;
+  const oldDecoded = unquoteGitPath(oldRaw);
+  const newDecoded = unquoteGitPath(newRaw);
+  if (oldDecoded === null || newDecoded === null) return null;
+  if (!oldDecoded.startsWith('a/') || !newDecoded.startsWith('b/')) return null;
+  return { oldPath: oldDecoded.slice(2), newPath: newDecoded.slice(2) };
+}
+
+/**
+ * Rule 2 (§2 decision 5): a `rename from`/`rename to` (or `copy from`/
+ * `copy to`) pair, read ONLY from the extended-header PRELUDE — strictly
+ * after the `diff --git` line and strictly before the first `---`, `+++`,
+ * `@@`, or `Binary files ` line (round-3 code-audit H1: the whole-section
+ * `fileStatus` scan at `:121-124` is pre-existing and unchanged, but this
+ * rule makes the SAME kind of scan load-bearing for path *identity*, so it
+ * must be bounded here — impact, not authorship). Exactly one complete,
+ * same-kind pair; incomplete, duplicated, or mixed-kind metadata falls
+ * through to rule 3. These tokens carry no `a/`/`b/` transport prefix.
+ *
+ * @param {string} part - the file's full diff section
+ * @returns {{oldPath: string, newPath: string} | null}
+ */
+function resolveRenameCopyHeaderRule(part) {
+  const lines = part.split(/\r?\n/);
+  const prelude = [];
+  for (let i = 1; i < lines.length; i++) {
+    const l = lines[i];
+    if (/^---( |$)/.test(l) || /^\+\+\+( |$)/.test(l) || /^@@/.test(l) || l.startsWith('Binary files ')) break;
+    prelude.push(l);
+  }
+  const renameFrom = prelude.filter((l) => l.startsWith('rename from '));
+  const renameTo = prelude.filter((l) => l.startsWith('rename to '));
+  const copyFrom = prelude.filter((l) => l.startsWith('copy from '));
+  const copyTo = prelude.filter((l) => l.startsWith('copy to '));
+
+  let fromLine, toLine, fromPrefixLen, toPrefixLen;
+  if (renameFrom.length === 1 && renameTo.length === 1 && copyFrom.length === 0 && copyTo.length === 0) {
+    fromLine = renameFrom[0]; toLine = renameTo[0];
+    fromPrefixLen = 'rename from '.length; toPrefixLen = 'rename to '.length;
+  } else if (copyFrom.length === 1 && copyTo.length === 1 && renameFrom.length === 0 && renameTo.length === 0) {
+    fromLine = copyFrom[0]; toLine = copyTo[0];
+    fromPrefixLen = 'copy from '.length; toPrefixLen = 'copy to '.length;
+  } else {
+    return null; // incomplete, duplicated, or mixed-kind — this rule does not apply
+  }
+
+  const oldRaw = fromLine.slice(fromPrefixLen);
+  const newRaw = toLine.slice(toPrefixLen);
+  if (hasLiteralReplacementChar(oldRaw) || hasLiteralReplacementChar(newRaw)) return null;
+  const oldDecoded = unquoteGitPath(oldRaw);
+  const newDecoded = unquoteGitPath(newRaw);
+  if (oldDecoded === null || newDecoded === null) return null;
+  return { oldPath: oldDecoded, newPath: newDecoded };
+}
+
+/**
+ * Rule 3 (§2 decision 5): the only remaining shape a rename-detecting `git
+ * diff` emits is `oldPath === newPath` — the header line must be EXACTLY
+ * `a/P + ' b/' + P`. A derivation, not a heuristic: `P`'s length is fixed by
+ * the total length (`afterA.length === 2*|P| + 3`), so there is exactly one
+ * candidate split, and it is accepted only if reconstructing the header from
+ * it is byte-identical to the original — never a guess.
+ *
+ * @param {string} rest - the header line's text after `diff --git `
+ * @returns {{oldPath: string, newPath: string} | null}
+ */
+function resolveSymmetricHeaderRule(rest) {
+  if (!rest.startsWith('a/')) return null;
+  const afterA = rest.slice(2);
+  if ((afterA.length - 3) % 2 !== 0) return null;
+  const pLen = (afterA.length - 3) / 2;
+  if (pLen <= 0) return null;
+  const candidateP = afterA.slice(0, pLen);
+  if (candidateP + ' b/' + candidateP !== afterA) return null; // reconstruction check
+  if (hasLiteralReplacementChar(candidateP)) return null;
+  return { oldPath: candidateP, newPath: candidateP };
+}
+
+/**
+ * Resolve a `diff --git` header's old/new paths unambiguously
+ * (docs/plans/refactor-evidence-integrity.md §2 decision 5 — replaces the
+ * lazy-regex split that let an unquoted header containing the literal
+ * substring `" b/"` mis-split at the FIRST occurrence, e.g.
+ * `diff --git a/x b/y.js b/x b/y.js` captured `oldPath: 'x'`,
+ * `newPath: 'y.js b/x b/y.js'` — a CONFIDENTLY WRONG pair, not the safe
+ * `null` the pre-existing accepted-debt note promised). Four rules, tried in
+ * order, each either succeeds verifiably or falls through; `null` means none
+ * applied (`pathDecodeFailed` at the call site — fail closed and loud, never
+ * a fourth heuristic rule guessing at patch-marker grammar no call site in
+ * this repo actually feeds into this parser).
+ *
+ * @param {string} part - the file's full diff section, starting with the
+ *   `diff --git ` line
+ * @returns {{oldPath: string, newPath: string} | null}
+ */
+export function resolveHeaderPaths(part) {
+  const headerMatch = part.match(/^diff --git (.+)\r?\n/);
+  if (!headerMatch) return null;
+  const rest = headerMatch[1];
+  return resolveQuotedHeaderRule(rest)
+    ?? resolveRenameCopyHeaderRule(part)
+    ?? resolveSymmetricHeaderRule(rest)
+    ?? null;
+}
+
+/**
  * Parse EVERY file section out of a unified diff. The shared core extracted
  * from `extractFileDiffSection` (evidence-anchor-path-contract §7i, Gemini
  * gate G2): that function takes a KNOWN `filePath` and returns only that
@@ -82,7 +367,7 @@ function extractFileDiffSection(diffText, filePath) {
  * re-implement the parser (and silently lose the fixes below), the loop is
  * lifted here and both callers filter over it.
  *
- * The two header fixes are REGRESSION-LOCKED behaviour, not incidental:
+ * The header fixes are REGRESSION-LOCKED behaviour, not incidental:
  *
  * - Consolidated Gemini gate fix G1: `.` never matches a line terminator in
  *   JS regex (not just `\n` — `\r` is excluded too), so the original
@@ -90,39 +375,41 @@ function extractFileDiffSection(diffText, filePath) {
  *   Windows-generated diff (or one round-tripped through a CRLF-preserving
  *   tool) would silently fail EVERY file lookup, degrading Stage 0 to
  *   unverifiable-escalate-everything with no signal anything was wrong.
- * - Consolidated Gemini gate fix G3, round 3: git quotes each path in the
- *   header (`diff --git "a/path with spaces.js" "b/path with spaces.js"`)
- *   whenever it contains a space or other char core.quotepath treats as
- *   special — the unquoted-only regex returned null for every such file.
- *   Unlike G1 (which corrupted a valid match into a false 'fabricated'),
- *   this failure mode was already SAFE (unverifiable → escalate, never a
- *   silent wrong answer) — fixed anyway for correctness, not urgency.
+ * - Consolidated Gemini gate fix G3, round 3 / refactor-evidence-integrity.md:
+ *   git quotes each path in the header whenever it contains a char
+ *   `core.quotePath` treats as special — NOT "whenever it contains a
+ *   space" (measured: a space alone does not force quoting). The header is
+ *   now resolved by `resolveHeaderPaths`'s four-rule grammar (§2 decision 5)
+ *   rather than a regex that only handled a narrow quoted-space case.
  *
- * ACCEPTED DEBT, INHERITED not re-litigated (§7i): the header regex handles
- * unquoted paths and a narrow quoted-space case, NOT Git's full C-style
- * quoted-path grammar (octal escapes, embedded quotes/backslashes). An exotic
- * filename yields no section here — and the failure direction stays SAFE by
- * construction: no section → `extractFileDiffSection` returns null → the
- * anchor resolves `unverifiable` (never a false match), and `buildDiffPathMap`
- * simply mints no id for it, so no anchor can cite it.
+ * A part that matches the `diff --git` shape but whose paths cannot be
+ * resolved is no longer silently dropped — it is pushed with
+ * `oldPath: null, newPath: null, pathDecodeFailed: true`, so a downstream
+ * consumer sees a NAMED, loud failure instead of the file silently vanishing
+ * from the diff (docs/plans/refactor-evidence-integrity.md §4.2).
  *
  * @param {string} diffText
  * @returns {Array<{section: string, fileStatus: 'modified'|'added'|'deleted'|'renamed'|'copied',
- *   oldPath: string, newPath: string}>} in diff-header order; `[]` when nothing parses.
+ *   oldPath: string|null, newPath: string|null, pathDecodeFailed?: true}>}
+ *   in diff-header order; `[]` when nothing parses.
  */
 export function parseAllDiffSections(diffText) {
   if (!diffText) return [];
   const out = [];
   for (const part of String(diffText).split(/(?=^diff --git )/m)) {
-    const header = part.match(/^diff --git "?a\/(.+?)"? "?b\/(.+?)"?\r?\n/);
-    if (!header) continue;
-    const [, oldPath, newPath] = header;
+    if (!part.startsWith('diff --git ')) continue;
     let fileStatus = 'modified';
     if (/^new file mode/m.test(part)) fileStatus = 'added';
     else if (/^deleted file mode/m.test(part)) fileStatus = 'deleted';
     else if (/^rename from /m.test(part)) fileStatus = 'renamed';
     else if (/^copy from /m.test(part)) fileStatus = 'copied';
-    out.push({ section: part, fileStatus, oldPath, newPath });
+
+    const paths = resolveHeaderPaths(part);
+    if (!paths) {
+      out.push({ section: part, fileStatus, oldPath: null, newPath: null, pathDecodeFailed: true });
+      continue;
+    }
+    out.push({ section: part, fileStatus, oldPath: paths.oldPath, newPath: paths.newPath });
   }
   return out;
 }
@@ -211,7 +498,7 @@ function quoteAppearsOnSide(section, quote, side) {
 }
 
 /**
- * The REAL, diff-derived line range where `quote` appears within a SINGLE
+ * Every REAL, diff-derived line range where `quote` appears within a SINGLE
  * hunk's wanted-side content — never the model's self-reported
  * `startLine`/`endLine` (2026-07-26; docs/plans/tiered-recall-audit-pipeline.md
  * "Addendum 2026-07-26 (continued)"). `resolveAnchorLocation`'s `in_hunk`
@@ -239,18 +526,22 @@ function quoteAppearsOnSide(section, quote, side) {
  * this function can't precisely window-match must still be reported as
  * verified-but-unlocatable, never silently un-verified.
  *
+ * Returns EVERY window match, not just the first (docs/plans/refactor-
+ * evidence-integrity.md §4.3 — supersedes the removed `findQuoteLineInHunk`,
+ * which `break`d on the first match and is why a cross-hunk collection could
+ * only ever keep the first hunk's location, never disambiguate against a
+ * declared range in a later hunk). `selectAnchoredMatch` is the single place
+ * that turns this array into a decision.
+ *
  * @param {{header: object|null, lines: string[]}} hunk
  * @param {string} quote
  * @param {'head'|'base'} side
- * @returns {{startLine:number, endLine:number} | null} 1-indexed, inclusive.
- *   The FIRST window match if the quote occurs more than once in this hunk —
- *   the same occurrence-identity limitation `quoteAppearsOnSide` already
- *   accepts (it doesn't disambiguate multiple occurrences within one hunk
- *   either); this function does not need to be MORE precise than the
- *   verification it's attached to.
+ * @returns {Array<{startLine:number, endLine:number}>} 1-indexed, inclusive.
+ *   `[]` when `hunk.header` failed to parse, the quote is empty, or no window
+ *   matches.
  */
-export function findQuoteLineInHunk(hunk, quote, side) {
-  if (!hunk.header) return null;
+export function findQuoteLineRangesInHunk(hunk, quote, side) {
+  if (!hunk.header) return [];
   const wantedPrefixes = side === 'head' ? ['+', ' '] : ['-', ' '];
   let lineNum = side === 'head' ? hunk.header.headStart : hunk.header.baseStart;
   const entries = [];
@@ -261,15 +552,55 @@ export function findQuoteLineInHunk(hunk, quote, side) {
     lineNum++;
   }
   const normQuote = normalizeWhitespace(quote);
-  if (!normQuote) return null;
+  if (!normQuote) return [];
   const quoteLineCount = String(quote).split('\n').length;
+  const matches = [];
   for (let start = 0; start + quoteLineCount <= entries.length; start++) {
     const windowLines = entries.slice(start, start + quoteLineCount).map((e) => e.text);
     if (normalizeWhitespace(windowLines.join(' ')).includes(normQuote)) {
-      return { startLine: entries[start].lineNum, endLine: entries[start + quoteLineCount - 1].lineNum };
+      matches.push({ startLine: entries[start].lineNum, endLine: entries[start + quoteLineCount - 1].lineNum });
     }
   }
-  return null;
+  return matches;
+}
+
+/**
+ * The single disambiguation seam used by BOTH the in-hunk and HEAD-fallback
+ * localisation paths (docs/plans/refactor-evidence-integrity.md §2 decision
+ * 1 — this is the fix for the divergence §1 identified between
+ * `findQuoteLineInHunk`'s first-match and `findAllLineRangesInContent`'s
+ * all-matches behaviour).
+ *
+ * The declared range EARNS its authority rather than gating by default:
+ * exactly one match wins outright (the declaration is irrelevant); two or
+ * more matches are disambiguated ONLY if the declared range intersects
+ * EXACTLY one of them; anything else — zero matches, or a declared range
+ * intersecting zero or multiple matches — is `ambiguous`. Never a nearest-
+ * match guess: intersection is a verifiable predicate that either holds or
+ * does not.
+ *
+ * `declaredRange` must be `null` whenever the coordinate space cannot be
+ * established (docs/plans/refactor-evidence-integrity.md §2 decision 1a — a
+ * `side: 'base'` anchor's declared range is in HEAD-file coordinates while
+ * the derived range is in base-diff coordinates; comparing them is a
+ * category error). Passing `null` here always degrades a multi-match case to
+ * `ambiguous`, which is the correct, honest answer when disambiguation is
+ * inadmissible.
+ *
+ * @param {Array<{startLine:number, endLine:number}>} matches
+ * @param {{startLine:number, endLine:number} | null} declaredRange
+ * @returns {{kind:'none'} | {kind:'unique', match:{startLine:number, endLine:number}} | {kind:'ambiguous', count:number}}
+ */
+export function selectAnchoredMatch(matches, declaredRange) {
+  if (matches.length === 0) return { kind: 'none' };
+  if (matches.length === 1) return { kind: 'unique', match: matches[0] };
+  if (declaredRange) {
+    const intersecting = matches.filter(
+      (m) => m.startLine <= declaredRange.endLine && declaredRange.startLine <= m.endLine,
+    );
+    if (intersecting.length === 1) return { kind: 'unique', match: intersecting[0] };
+  }
+  return { kind: 'ambiguous', count: matches.length };
 }
 
 /**
@@ -371,6 +702,66 @@ export function mapHeadRangeToBase(headRange, hunks) {
 }
 
 /**
+ * §4.4 telemetry: one versioned, machine-readable token per localisation
+ * attempt, so the design's own assumption ("declared lines are unreliable,
+ * so do not gate on them" — §2 decision 1) is falsifiable from real data
+ * instead of argued from a sample size of one fixture. Deliberately NOT a
+ * free-form prose suffix (round-3 M1): a prose string loses `endLine`,
+ * loses whether the declaration was used or merely ignored, loses the
+ * coordinate space, and invites a consumer to scrape a human-oriented
+ * field. `outcome` is a closed set so "did the declaration do work?" is
+ * answerable directly:
+ *
+ * - `single_match` — exactly one candidate; the declaration was irrelevant.
+ * - `range_disambiguated` — ≥2 candidates, and the declared range picked
+ *   exactly one — the declaration did real work.
+ * - `ambiguous` — ≥2 candidates and the declared range intersects zero or
+ *   more than one (or was inadmissible — see `declared=none` below).
+ * - `unlocatable` — zero candidates.
+ *
+ * `declared=none` means the declared range was INADMISSIBLE as a
+ * disambiguator (§2 decision 1a's `side:'base'` case), not merely absent —
+ * so inadmissibility is observable rather than assumed.
+ */
+const LOC_TOKEN_VERSION = 'loc/v1';
+const LOC_TOKEN_RE = /^loc\/v1 side=(head|base) declared=(none|\d+-\d+) selected=(none|\d+-\d+) outcome=(single_match|range_disambiguated|ambiguous|unlocatable) candidates=(\d+)$/;
+
+function rangeToToken(range) {
+  return range ? `${range.startLine}-${range.endLine}` : 'none';
+}
+
+function locOutcomeFor(matchCount, selection) {
+  if (selection.kind === 'none') return 'unlocatable';
+  if (selection.kind === 'ambiguous') return 'ambiguous';
+  return matchCount === 1 ? 'single_match' : 'range_disambiguated';
+}
+
+/**
+ * Format the §4.4 telemetry token. Exported (with its parser) so the
+ * producer/consumer pair is round-trip tested rather than assumed.
+ * @param {{side: 'head'|'base', declaredRange: {startLine:number,endLine:number}|null,
+ *   matchCount: number, selection: {kind:'none'}|{kind:'unique',match:object}|{kind:'ambiguous',count:number}}} args
+ * @returns {string}
+ */
+export function formatLocToken({ side, declaredRange, matchCount, selection }) {
+  const outcome = locOutcomeFor(matchCount, selection);
+  const selected = selection.kind === 'unique' ? selection.match : null;
+  return `${LOC_TOKEN_VERSION} side=${side} declared=${rangeToToken(declaredRange)} selected=${rangeToToken(selected)} outcome=${outcome} candidates=${matchCount}`;
+}
+
+/**
+ * Parse a `formatLocToken` token back into its fields, or `null` if `token`
+ * is not a well-formed `loc/v1` string.
+ * @param {string} token
+ * @returns {{side:string, declared:string, selected:string, outcome:string, candidates:number} | null}
+ */
+export function parseLocToken(token) {
+  const m = typeof token === 'string' ? LOC_TOKEN_RE.exec(token) : null;
+  if (!m) return null;
+  return { side: m[1], declared: m[2], selected: m[3], outcome: m[4], candidates: Number(m[5]) };
+}
+
+/**
  * resolveAnchorLocation — Gate A. Confirms an anchor's `quote` is real,
  * content-verified against the actual diff OR (on a hunk miss, head-side
  * anchors only) the current working-tree file content, AND that the
@@ -439,20 +830,34 @@ export function resolveAnchorLocation(anchor, diffText, headContent) {
   }
 
   if (quoteAppearsOnSide(section.section, anchor.quote, anchor.side)) {
-    // Re-derive the SAME verified match's real line, hunk by hunk, in the
-    // SAME iteration order quoteAppearsOnSide used — never a second,
-    // independently-ordered scan that could land on a different hunk than
-    // the one that just verified. A verified-but-unlocatable quote (the
-    // stricter window match fails where the looser join succeeded — e.g. a
-    // quote's normalized text spans a window boundary differently) still
-    // returns 'in_hunk': this line-finding step only ADDS information, it
-    // must never revoke a verification that already succeeded.
-    let verifiedLine = null;
+    // Collect matches across ALL hunks of the section — never break on the
+    // first hunk that happens to verify (docs/plans/refactor-evidence-
+    // integrity.md §9 R2/M2: a quote unique to a LATER hunk must resolve to
+    // that hunk's lines, not an earlier hunk's). `selectAnchoredMatch` is
+    // the single seam that turns the collected matches into a decision.
+    const matches = [];
     for (const hunk of splitIntoHunks(section.section)) {
-      verifiedLine = findQuoteLineInHunk(hunk, anchor.quote, anchor.side);
-      if (verifiedLine) break;
+      matches.push(...findQuoteLineRangesInHunk(hunk, anchor.quote, anchor.side));
     }
-    return { status: 'in_hunk', verifiedLine };
+    // §2 decision 1a: the declared range is admissible ONLY for side:'head'.
+    // Discovery is prompted with the full CURRENT (HEAD) file content, never
+    // base content, so a model's startLine/endLine is always a HEAD-file
+    // line number regardless of the side it declares. For side:'base' the
+    // derived range is in BASE-diff coordinates — comparing HEAD-coordinate
+    // and base-diff-coordinate numbers is a category error, so the declared
+    // range is withheld (`null`) and a multi-match case degrades straight to
+    // ambiguous, never a false disambiguation.
+    const declaredRange = anchor.side === 'head' ? { startLine: anchor.startLine, endLine: anchor.endLine } : null;
+    const selection = selectAnchoredMatch(matches, declaredRange);
+    // A verified-but-unlocatable quote (none/ambiguous) still returns
+    // 'in_hunk': this step only ADDS information, it must never revoke a
+    // verification that already succeeded via the looser quoteAppearsOnSide.
+    const verifiedLine = selection.kind === 'unique' ? selection.match : null;
+    return {
+      status: 'in_hunk',
+      verifiedLine,
+      reasonDetail: formatLocToken({ side: anchor.side, declaredRange, matchCount: matches.length, selection }),
+    };
   }
 
   // HEAD-fallback only makes sense for head-side anchors — discovery only
@@ -460,16 +865,26 @@ export function resolveAnchorLocation(anchor, diffText, headContent) {
   // from the hunk has no head-content equivalent to search.
   if (anchor.side === 'head' && headContent) {
     const ranges = findAllLineRangesInContent(headContent, anchor.quote);
-    if (ranges.length === 1) {
-      return { status: 'outside_hunk_in_head', headLineRange: ranges[0], hunks: splitIntoHunks(section.section) };
+    // Admissible by construction — this branch only ever runs for side:'head'.
+    const declaredRange = { startLine: anchor.startLine, endLine: anchor.endLine };
+    const selection = selectAnchoredMatch(ranges, declaredRange);
+    const locToken = formatLocToken({ side: anchor.side, declaredRange, matchCount: ranges.length, selection });
+    if (selection.kind === 'unique') {
+      return { status: 'outside_hunk_in_head', headLineRange: selection.match, hunks: splitIntoHunks(section.section), reasonDetail: locToken };
     }
-    if (ranges.length > 1) {
-      // Genuinely ambiguous — an identical snippet appears at more than one
-      // location outside the hunk, and there is no occurrence identity on
-      // the anchor to disambiguate. Asserting the first match would silently
-      // pick a location the model may never have meant (item 11).
-      return { status: 'unsupported', reasonDetail: `quote matches ${ranges.length} distinct locations in HEAD content outside the diff hunk — ambiguous, no single location can be asserted` };
+    if (selection.kind === 'ambiguous') {
+      // §2 decision 3: the quote WAS found — more than once. Blaming the
+      // model for OUR inability to localise it is exactly the misattribution
+      // §7a exists to eliminate. `unverifiable` already means "can't confirm
+      // or refute — benefit of the doubt": it escalates to Stage 1, takes
+      // the safe change_related bucket, and never asserts a _primaryLine.
+      // No new status, no new bucket — only a distinct reasonCode
+      // (runStage0EvidenceTriage) so the existing generic message doesn't
+      // become a lie about WHY this is unverifiable.
+      return { status: 'unverifiable', reasonDetail: locToken };
     }
+    // kind === 'none' — the fallback ran and genuinely found nothing.
+    return { status: 'unsupported', reasonDetail: locToken };
   }
 
   return { status: 'unsupported', reasonDetail: 'quote not found in the diff section or HEAD content' };
@@ -721,10 +1136,19 @@ export function runStage0EvidenceTriage(envelopes, ctx, adapters = {}) {
 
     // Gate A decision — exactly one `stage0a` entry per candidate, always.
     const anchorVerified = status === 'in_hunk' || status === 'outside_hunk_in_head';
+    // §2 decision 3 / §4.3: an `unverifiable` result that carries a
+    // `reasonDetail` is the NEW ambiguous-HEAD-fallback case (the quote WAS
+    // found, more than once) — distinct from the original "file not in the
+    // diff at all" unverifiable, which carries no reasonDetail. One
+    // conditional; no new bucket, no new status, no partition change.
+    const reasonCode = anchorVerified
+      ? `${reasonPrefix}_content_verified`
+      : (status === 'unverifiable' && reasonDetail ? `${reasonPrefix}_location_ambiguous` : `${reasonPrefix}_diff_section_unavailable`);
     envelope.stageDecisions.push({
       stage: 'stage0a',
       outcome: anchorVerified ? 'verified' : 'unverifiable',
-      reasonCode: anchorVerified ? `${reasonPrefix}_content_verified` : `${reasonPrefix}_diff_section_unavailable`,
+      reasonCode,
+      reasonDetail: reasonDetail ?? null,
       evidenceRef: envelope.fingerprint,
       createdAt: nowIso(adapters.clock),
     });

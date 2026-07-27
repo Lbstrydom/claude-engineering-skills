@@ -93,11 +93,23 @@ function defaultAdapters() {
  * current parsed source (see `findEnclosingConditional`), never a trusted location.
  *
  * @param {string} diffText
- * @returns {{newPath:string, oldPath:string, fileStatus:string, anchorLines:number[]}[]}
+ * @returns {{targets: {newPath:string, oldPath:string, fileStatus:string, anchorLines:number[]}[], undecodableCount: number}}
  */
 export function parseHunkTargets(diffText) {
   const out = [];
+  let undecodableCount = 0;
   for (const { section, fileStatus, oldPath, newPath } of parseAllDiffSections(diffText)) {
+    // pathDecodeFailed section (docs/plans/refactor-evidence-integrity.md
+    // §4.2) — no resolvable path to report. Explicit, not incidental: the
+    // caller's `SOURCE_EXT_RE.test(newPath)` filter happens to coerce `null`
+    // to the string "null" and reject it too, but that is an accident of the
+    // current regex, not a guarantee — skip here so this never rides on it.
+    // Counted, not silently dropped (final-gate shadow finding, round-3): the
+    // caller reports this as PARSE_FAILURE incompleteness — the diff header
+    // for this file could not be resolved, the same class of "this input is
+    // unavailable" as an unparseable source file, so adjacency analysis for
+    // it is honestly incomplete, never silently "clean".
+    if (newPath === null) { undecodableCount++; continue; }
     const anchorLines = [];
     const lines = section.split('\n');
     let cursor = null;
@@ -111,7 +123,15 @@ export function parseHunkTargets(diffText) {
         continue;
       }
       if (!cursor) continue;
-      if (line.startsWith('+') && !line.startsWith('+++')) {
+      // Round-1 code-audit H1: `!line.startsWith('+++')` was meant to exclude
+      // the `+++ b/file` FILE HEADER line, but that line always precedes every
+      // `@@` hunk marker in a unified diff — it can never appear once `cursor`
+      // is set (the `!cursor` guard above already skips everything before the
+      // first hunk). The check was therefore not just redundant but actively
+      // wrong: a genuinely ADDED source line whose own content happens to
+      // start with `+` (e.g. `++counter;`) renders as `+++counter;` on the
+      // wire and was silently excluded from anchorLines.
+      if (line.startsWith('+')) {
         anchorLines.push(cursor.next);
         cursor.next += 1;
       }
@@ -122,7 +142,7 @@ export function parseHunkTargets(diffText) {
       out.push({ newPath, oldPath, fileStatus, anchorLines: [...new Set(anchorLines)].sort((a, b) => a - b) });
     }
   }
-  return out;
+  return { targets: out, undecodableCount };
 }
 
 /**
@@ -408,7 +428,19 @@ export async function runAdjacencyAnalysis({ repoRoot, auditBaseCommit, bounds, 
       return done();
     }
 
-    const targets = parseHunkTargets(ud.diffText).filter((t) => SOURCE_EXT_RE.test(t.newPath));
+    const { targets: allTargets, undecodableCount } = parseHunkTargets(ud.diffText);
+    if (undecodableCount > 0) {
+      // Final-gate shadow finding (round 3): a pathDecodeFailed section used
+      // to be a SILENT skip here, unlike buildDiffPathMap's loud
+      // undecodable_diff_header — this module's own coverage-honesty
+      // discipline (every other skip class already reports incompleteness)
+      // was the one exception. PARSE_FAILURE fits: the diff header for this
+      // file could not be resolved, the same "input unavailable" class as an
+      // unparseable source file — not a new incompleteness kind.
+      inc.push(incompleteness(INCOMPLETENESS_KINDS.PARSE_FAILURE, 'diff',
+        `${undecodableCount} diff header(s) could not be decoded (pathDecodeFailed) — the affected file(s) are not enumerated for adjacency analysis`));
+    }
+    const targets = allTargets.filter((t) => SOURCE_EXT_RE.test(t.newPath));
     if (targets.length === 0) return done();
 
     const seenContainers = new Set();

@@ -210,11 +210,17 @@ export async function runTieredAuditPipeline(ctx) {
     for (const line of formatSkipLog(mapSkipped, { logger: 'diff-path-map' })) process.stderr.write(`  ${line}\n`);
   }
 
-  if (diffPathMap.kind === 'invalid' && diffPathMap.reason === 'discovery_map_exceeds_budget') {
+  if (diffPathMap.kind === 'invalid'
+    && (diffPathMap.reason === 'discovery_map_exceeds_budget' || diffPathMap.reason === 'undecodable_diff_header')) {
     // §8a: bounded by a NAMED FAILURE, not by truncation (which would make real
     // changed files unauditable while reporting success) and not by partitioning
     // (deferred — no current requirement, and it changes recall). Reuses §1.5's
     // existing required-generator-failure semantics verbatim.
+    // `undecodable_diff_header` (docs/plans/refactor-evidence-integrity.md
+    // §4.2) joins this branch for the SAME reason: without it, the new reason
+    // would fall to the generic `kind !== 'ready'` branch below —
+    // `skippedNoGeneratorResult`'s "nothing to audit" shape — which is false:
+    // there IS a changed file, it just can't be cited. Legacy CAN audit it.
     return await failRequiredGenerator(
       ctx,
       `required generator failed: discovery-map ${diffPathMap.reason} — ${diffPathMap.detail}`,

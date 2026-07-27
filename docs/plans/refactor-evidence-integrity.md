@@ -1,9 +1,10 @@
 # Plan: Refactor evidence-integrity — bind anchor locations to their verified match, and parse Git diff headers unambiguously (`scripts/lib/audit/evidence-triage.mjs`)
 
 - **Date**: 2026-07-27
-- **Status**: **Approved — audited, NOT yet implemented** (3 GPT plan-audit
-  rounds, stopped at the cap; 1 Gemini final-gate round, **APPROVE**, 0 new
-  findings / 0 wrongly dismissed — see Audit Trail)
+- **Status**: **Complete** — implemented via `/cycle code --autonomous` (3 GPT
+  plan-audit rounds; then Cluster A + Cluster B code-audited (3 rounds total)
+  and gated by 1 consolidated Gemini review, `APPROVE`, 0 new findings, 0
+  wrongly-dismissed — see Implementation Log)
 - **Author**: Claude + Test
 - **Scope**: backend
 - **Target domain(s)**: `audit-orchestration`, `tests`
@@ -1255,3 +1256,97 @@ Three defects to fix (one HIGH-severity pair collapsed into the anchor-binding
 defect, one MEDIUM triple collapsed into the decoding defect, one net-new
 unreported defect found during verification), one debt entry retired as
 already-fixed, and no new module, dependency, schema change, or status added.
+
+**Status on close (plan-audit session)**: Approved, not yet implemented. No
+source file was modified by that session — only this plan document was
+created.
+
+---
+
+## Implementation Log
+
+### 2026-07-27 — implemented via `/cycle code --autonomous`
+
+**Completed** — both clusters, per §11's Execution Clustering:
+
+- **Cluster A** (Phases 1-2, `evidence-triage.mjs`'s `unquoteGitPath`/
+  `resolveHeaderPaths` + `parseAllDiffSections`, `diff-path-map.mjs`,
+  `adjacency-detector.mjs`, `tiered-pipeline.mjs`): implemented per §4's exact
+  spec — the byte-correct C-style decoder, the four-rule header grammar
+  (quoted / rename-copy / symmetric-reconstruction / fail-closed), the
+  `pathDecodeFailed` → `undecodable_diff_header` channel wired into
+  `tiered-pipeline.mjs`'s required-generator-failure branch, and the
+  JSON-encoded prompt-table path column. Code-audit: 2 GPT rounds. Round 1
+  (H:1 M:12 L:2) found a genuine, in-scope HIGH in `parseHunkTargets` (an
+  added line rendering as `+++counter;` was silently excluded — fixed by
+  removing the redundant/wrong `+++`-prefix check) plus several real,
+  in-scope-because-I-touched-the-file fixes (byte-budget enforcement,
+  unmarked symlink-test disablement, a stale docblock, `unquoteGitPath`'s
+  missing termination check) alongside out-of-scope pre-existing debt
+  (deferred) and already-tracked architecture-layering re-raises (dismissed).
+  Round 2 (PASS) confirmed the fixes and correctly overruled a re-litigation
+  of the plan's own already-accepted U+FFFD provenance trade-off. `fix-gate:
+  yes` — converged before Cluster B.
+- **Cluster B** (Phases 3-5, the same `evidence-triage.mjs` +
+  `tiered-shadow-contract-digest.mjs` + `tiered-shadow-summary.mjs`):
+  `findQuoteLineRangesInHunk` (every match, all hunks) + the new
+  `selectAnchoredMatch` selector, used by both the in-hunk and HEAD-fallback
+  paths per §2 decision 1/1a; the HEAD-fallback ambiguity attribution fix
+  (§2 decision 3 — `unverifiable`, not `unsupported`); the `loc/v1` telemetry
+  token (§4.4); `TIERED_SHADOW_CONTRACT_EPOCH` bumped v6→v7 and the semantics
+  digest regenerated. Code-audit: run as ONE R2+ round (round 3) over the
+  UNION diff of both clusters (rather than a fresh session), since
+  `evidence-triage.mjs` is shared and the ledger's suppression correctly
+  carried Cluster A's already-resolved findings forward without re-litigating
+  them. Round 3 (SIGNIFICANT_ISSUES → resolved) found one genuine, in-scope
+  HIGH: an asymmetric raw-quote-rejection check between the quoted-OLD and
+  unquoted-OLD header branches — structurally unreachable today (proven), but
+  hardened defensively for symmetry against a future edit. Four further
+  findings were real but pre-existing/independent (deferred as new debt: the
+  pure-deletion coordinate heuristic, budget-before-sensitive-filter
+  ordering, digest canonicalisation, bare-identifier extraction risk); one
+  was a confirmed false positive from a stale architectural-memory index
+  entry for the deliberately-removed `findQuoteLineInHunk`; the rest were
+  already-tracked layering debt or the plan's own already-decided octal-digit
+  leniency. `fix-gate: final`.
+- **Consolidated Gemini gate** (mandatory, union diff of both clusters,
+  `GEMINI_REVIEW_TIMEOUT_MS=420000` — the 120s default timed out on a diff
+  this size, matching the plan-audit session's own note): `APPROVE`, 0 new
+  findings, 0 wrongly-dismissed, first round. The parallel observation-only
+  Claude Opus shadow reviewer (never gating) surfaced 3 findings, evaluated
+  on merits: (1) MEDIUM — `buildDiffPathMap`'s `undecodable_diff_header`
+  check aborts the WHOLE map on one bad header rather than excluding just
+  that file. Accepted as a real, deliberate trade-off matching the plan's own
+  stated precedent (`discovery_map_exceeds_budget`'s identical
+  whole-diff-abort shape) — the abort routes to the LEGACY audit path, which
+  CAN still audit every file, so this is an efficiency cost on a
+  git-never-actually-produces-this-shape input, not a coverage loss; recorded
+  here rather than redesigned, since partial-exclusion would be a materially
+  larger scope change (a different map shape/id scheme) with no current
+  requirement forcing it. (2) MEDIUM — `parseHunkTargets`'s `pathDecodeFailed`
+  skip was SILENT, unlike every other skip class in
+  `adjacency-detector.mjs`'s own `INCOMPLETENESS_KINDS` discipline — FIXED:
+  `parseHunkTargets` now returns `{targets, undecodableCount}`, and
+  `runAdjacencyAnalysis` reports a `PARSE_FAILURE` incompleteness record
+  (reusing the existing kind rather than adding a new one, since
+  `adjacency-report.mjs` maps the enum exhaustively and this is semantically
+  the same "input unavailable" class as an unparseable source file). (3) LOW —
+  `SEMANTICS_REGIONS` name-coupling cost — already extensively documented in
+  the plan's own §4.5/R5, no new action.
+- **Close-out**: full test suite green throughout (9148 pass, 0 fail, 22
+  pre-existing unrelated skips, after every round).
+
+**Deviations from the approved design**: the shadow-driven `parseHunkTargets`
+return-shape change (`{targets, undecodableCount}` instead of a bare array)
+is new relative to the plan's original file-level spec, but stays within
+Cluster A's own file (`adjacency-detector.mjs`) and has exactly one call site
+(verified) — a strict strengthening of the plan's own coverage-honesty intent
+(§1.1's thesis: "a three-valued question answered with a two-valued type"),
+not a scope change.
+
+**Remaining**: none owned by this plan. Four items captured as new,
+independent tech debt (pure-deletion coordinate heuristic; budget-before-
+sensitive-filter ordering, worsened by but not introduced by this plan's new
+byte-budget check; digest comment/whitespace canonicalisation; bare-identifier
+region extraction) — none block this plan's own stated defects, all recorded
+with an explicit independence rationale per AGENTS.md's honest-deferral check.

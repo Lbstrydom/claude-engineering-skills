@@ -78,7 +78,12 @@ const mintId = (i) => `f${String(i + 1).padStart(4, '0')}`;
  *   - `invalid` — input that is not a parseable unified diff. Non-empty input
  *                 yielding zero sections is `invalid`, NOT `empty`: a parser
  *                 that finds no `diff --git` header in non-whitespace input has
- *                 FAILED, not found nothing.
+ *                 FAILED, not found nothing. `undecodable_diff_header`
+ *                 (docs/plans/refactor-evidence-integrity.md §4.2) is the same
+ *                 kind of failure at file granularity: `parseAllDiffSections`
+ *                 found a real `diff --git` header whose paths could not be
+ *                 unambiguously resolved (`pathDecodeFailed: true`) — loud and
+ *                 named, never a silently vanished file.
  *
  * @param {string} diffText - the run's RAW unified diff. This function only
  *   PARSES locally (no egress); do not rely on the input being pre-filtered.
@@ -93,7 +98,7 @@ const mintId = (i) => `f${String(i + 1).padStart(4, '0')}`;
  * @param {{maxMapEntries?: number}} [budgets]
  * @returns {{kind:'ready', entries: Array<{id:string, oldPath:string, newPath:string, fileStatus:string}>}
  *   | {kind:'empty', reason:'no_eligible_diff_files'}
- *   | {kind:'invalid', reason:'malformed_diff_header'|'parser_threw'|'discovery_map_exceeds_budget', detail?:string}}
+ *   | {kind:'invalid', reason:'malformed_diff_header'|'parser_threw'|'discovery_map_exceeds_budget'|'undecodable_diff_header', detail?:string}}
  */
 export function buildDiffPathMap(diffText, budgets = DIFF_PATH_MAP_BUDGETS) {
   const raw = diffText == null ? '' : String(diffText);
@@ -114,6 +119,20 @@ export function buildDiffPathMap(diffText, budgets = DIFF_PATH_MAP_BUDGETS) {
     return { kind: 'invalid', reason: 'malformed_diff_header', detail: 'no `diff --git` header found in non-empty input' };
   }
 
+  // A real `diff --git` header whose paths could not be unambiguously resolved
+  // (docs/plans/refactor-evidence-integrity.md §4.2) — loud and named, never a
+  // silently missing map entry. `tiered-pipeline.mjs:213` treats this the same
+  // as `discovery_map_exceeds_budget`: fall back to legacy, which CAN audit
+  // the file, rather than the generic "nothing to audit" shape.
+  const undecodable = sections.filter((s) => s.pathDecodeFailed);
+  if (undecodable.length > 0) {
+    return {
+      kind: 'invalid',
+      reason: 'undecodable_diff_header',
+      detail: `${undecodable.length} header(s) could not be decoded — the diff contains a path this parser cannot unambiguously resolve`,
+    };
+  }
+
   const max = budgets?.maxMapEntries ?? DIFF_PATH_MAP_BUDGETS.maxMapEntries;
   if (sections.length > max) {
     // Loud, named, and NOT truncated (§8a). The caller treats this as a
@@ -126,24 +145,54 @@ export function buildDiffPathMap(diffText, budgets = DIFF_PATH_MAP_BUDGETS) {
     };
   }
 
-  return {
-    kind: 'ready',
-    entries: sections.map((s, i) => ({
-      id: mintId(i), oldPath: s.oldPath, newPath: s.newPath, fileStatus: s.fileStatus,
-    })),
-  };
+  const entries = sections.map((s, i) => ({
+    id: mintId(i), oldPath: s.oldPath, newPath: s.newPath, fileStatus: s.fileStatus,
+  }));
+
+  // Round-1 code-audit M1/M3 (docs/plans/refactor-evidence-integrity.md):
+  // `maxPromptTableBytes` was declared but never enforced — pre-existing, but
+  // §4.2a's JSON-encoding of decoded paths (renderDiffPathTable, below) can
+  // only ever INCREASE the rendered byte count relative to the old wire-form
+  // text (escaped control chars + wrapping quotes), so this cluster's own
+  // change makes the unenforced budget more reachable, not equally distant
+  // debt. Reuses `discovery_map_exceeds_budget` (not a new reason) — same
+  // family of failure (the generation budget was exceeded), and the
+  // `tiered-pipeline.mjs` consumer already branches on it.
+  const maxBytes = budgets?.maxPromptTableBytes ?? DIFF_PATH_MAP_BUDGETS.maxPromptTableBytes;
+  const tableBytes = new TextEncoder().encode(renderDiffPathTable(entries)).length;
+  if (tableBytes > maxBytes) {
+    return {
+      kind: 'invalid',
+      reason: 'discovery_map_exceeds_budget',
+      detail: `rendered prompt table is ${tableBytes} bytes, exceeds maxPromptTableBytes=${maxBytes}; not truncated (truncation would make changed files silently unauditable)`,
+    };
+  }
+
+  return { kind: 'ready', entries };
 }
 
 /**
  * Render the map as the prompt table the generator sees. Built from the SAME
  * `entries` array the enum is built from (D7) so they cannot disagree.
+ *
+ * The path column is `JSON.stringify`-encoded (docs/plans/refactor-evidence-
+ * integrity.md §4.2a) — decoding turns Git's escapes into LITERAL control
+ * characters (`\n`, `\t`, `"`, `\\`), which is inert while paths stay
+ * textually escaped but becomes a NEW model-facing risk once decoded: a
+ * repository-controlled filename containing a decoded newline or tab could
+ * otherwise forge a new row or column in this table. The `id` is the
+ * machine-readable key the provider's enum actually enforces (D7); the path
+ * is display-only context, so encoding it costs nothing semantically and
+ * makes every control character re-escaped within one string literal —
+ * no path can ever produce a row or column boundary here.
+ *
  * @param {Array<object>} entries
  * @returns {string}
  */
 export function renderDiffPathTable(entries) {
   const rows = entries.map((e) => (e.oldPath === e.newPath
-    ? `${e.id}\t${e.fileStatus}\t${e.newPath}`
-    : `${e.id}\t${e.fileStatus}\t${e.oldPath} -> ${e.newPath}`));
+    ? `${e.id}\t${e.fileStatus}\t${JSON.stringify(e.newPath)}`
+    : `${e.id}\t${e.fileStatus}\t${JSON.stringify(e.oldPath)} -> ${JSON.stringify(e.newPath)}`));
   return ['id\tstatus\tpath', ...rows].join('\n');
 }
 

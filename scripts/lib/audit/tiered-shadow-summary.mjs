@@ -78,8 +78,24 @@ export const WINDOW_MAX = 15;
  * (`EVIDENCE_TRIAGE_FILE`) to close that exact gap. See
  * docs/plans/tiered-recall-audit-pipeline.md Addendum 2026-07-26 for the full
  * `overlapCount` investigation these two bumps close out.
+ *
+ * **Bumped a fourth time (v6 → v7, 2026-07-27,
+ * docs/plans/refactor-evidence-integrity.md)**: `findQuoteLineInHunk` (first-
+ * match, `break`s on the first hunk that verifies) was replaced by
+ * `findQuoteLineRangesInHunk` (every match, across ALL hunks) plus a new
+ * shared `selectAnchoredMatch` selector used by BOTH the in-hunk and
+ * HEAD-fallback localisation paths. This changes what `_primaryLine` is
+ * attached to and when — a cross-hunk quote now correctly resolves against
+ * whichever hunk the declared range disambiguates to, and an ambiguous
+ * HEAD-fallback now reports `unverifiable` (not `unsupported`) — so
+ * `overlapCount`/`*UnlocalizedCount` mean something different for real data
+ * measured after this change than before it. `SEMANTICS_REGIONS` updated to
+ * name the three functions that now carry the decision
+ * (`findQuoteLineRangesInHunk`, `selectAnchoredMatch`, `resolveAnchorLocation`).
+ * Per the accepted policy: the shadow window restarts at zero and is
+ * re-collected, never backfilled.
  */
-export const TIERED_SHADOW_CONTRACT_EPOCH = 'v6-verified-line-2026-07-26';
+export const TIERED_SHADOW_CONTRACT_EPOCH = 'v7-multi-hunk-selector-2026-07-27';
 
 /**
  * PINNED companion to the epoch above — closes the OTHER omission class the
@@ -105,7 +121,7 @@ export const TIERED_SHADOW_CONTRACT_EPOCH = 'v6-verified-line-2026-07-26';
  * this constant to silence the test — that repeats the exact omission this
  * guard exists to catch.
  */
-export const TIERED_SHADOW_CONTRACT_SEMANTICS_DIGEST = 'ac04b10917018c84';
+export const TIERED_SHADOW_CONTRACT_SEMANTICS_DIGEST = '33fb7fc1b1ebb8ad';
 
 /** DB row (snake_case) → the exact shape `summarize()` expects (camelCase,
  * matching the local JSONL record shape) — one normalizer so both sources

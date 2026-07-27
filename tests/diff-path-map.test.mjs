@@ -69,6 +69,17 @@ describe('buildDiffPathMap — the three-way result (§7j)', () => {
     assert.match(r.detail, /not truncated/);
   });
 
+  it('invalid: the DECLARED maxPromptTableBytes budget is actually ENFORCED (round-1 code-audit M1/M3)', () => {
+    // JSON.stringify-encoding the path column (§4.2a) can only ever increase
+    // the rendered byte count, so an unenforced budget is more reachable, not
+    // equally-distant debt, once decoded paths are involved.
+    const r = buildDiffPathMap(MODIFIED, { maxMapEntries: 10, maxPromptTableBytes: 5 });
+    assert.equal(r.kind, 'invalid');
+    assert.equal(r.reason, 'discovery_map_exceeds_budget');
+    assert.match(r.detail, /maxPromptTableBytes/);
+    assert.match(r.detail, /not truncated/);
+  });
+
   it('inherits the parser\'s accepted debt SAFELY: an unparseable header mints no id', () => {
     // A file the header regex can't parse simply has no entry, so no anchor can
     // cite it (§7i's inherited debt, failure direction preserved).
@@ -87,15 +98,59 @@ describe('buildDiffPathMap — the three-way result (§7j)', () => {
     assert.ok(DIFF_PATH_MAP_BUDGETS.maxMapEntries > 0);
     assert.match(DIFF_PATH_MAP_BUDGETS.calibrationNote, /[Rr]ecalibrate/);
   });
+
+  it('invalid: undecodable_diff_header when a real diff --git header cannot be resolved (§4.2) — loud, never a silently missing file', () => {
+    // Deliberately SYNTHETIC (round-2 code-audit M4): no real `git diff`
+    // invocation emits an unquoted `modified`-status header with two
+    // DIFFERENT old/new paths and no rename/copy metadata — a modified file
+    // always has old===new; only rename/copy produces old!==new, and those
+    // always carry dedicated `rename from`/`rename to` lines (§2 decision 5
+    // rule 2). This hand-constructed header exercises the fail-closed rule 4
+    // path (§2 decision 5) that no current producer in this repo reaches,
+    // proving the parser degrades loudly rather than guessing if one ever did.
+    const undecodable = section('a/left.js b/right.js', '--- a/left.js\n+++ b/right.js\n@@ -1 +1 @@\n-a\n+b');
+    const r = buildDiffPathMap(MODIFIED + undecodable);
+    assert.equal(r.kind, 'invalid');
+    assert.equal(r.reason, 'undecodable_diff_header');
+    assert.match(r.detail, /1 header/);
+  });
+
+  it('seam: a real git-quoted header (escaped char + octal-escaped UTF-8) yields a map entry with the DECODED path', () => {
+    const decodeCase = section('"a/quo\\"te.js" "b/quo\\"te.js"', '--- "a/quo\\"te.js"\n+++ "b/quo\\"te.js"\n@@ -1 +1 @@\n-a\n+b');
+    const octalCase = section('"a/caf\\303\\251.js" "b/caf\\303\\251.js"', '--- "a/caf\\303\\251.js"\n+++ "b/caf\\303\\251.js"\n@@ -1 +1 @@\n-a\n+b');
+    const r = buildDiffPathMap(decodeCase + octalCase);
+    assert.equal(r.kind, 'ready');
+    assert.deepEqual(r.entries.map((e) => e.newPath), ['quo"te.js', 'café.js']);
+    assert.deepEqual(r.entries.map((e) => e.id), ['f0001', 'f0002'], 'ordinal ids, unaffected by decoding');
+  });
+
+  it('seam: defect #3 end to end — the whole failure chain in the plan\'s §1, pinned', () => {
+    const defect3 = section('a/x b/y.js b/x b/y.js', '--- a/x b/y.js\n+++ a/x b/y.js\n@@ -1 +1 @@\n-a\n+b');
+    const r = buildDiffPathMap(defect3);
+    assert.equal(r.kind, 'ready');
+    assert.equal(r.entries[0].oldPath, 'x b/y.js');
+    assert.equal(r.entries[0].newPath, 'x b/y.js');
+  });
 });
 
 describe('renderDiffPathTable — the prompt table and the enum share one source (D7)', () => {
   it('renders every entry, showing both paths only for a rename', () => {
     const { entries } = buildDiffPathMap(MODIFIED + RENAMED);
     const t = renderDiffPathTable(entries);
-    assert.match(t, /f0001\tmodified\tsrc\/foo\.js/);
-    assert.match(t, /f0002\trenamed\tsrc\/old-name\.js -> src\/new-name\.js/);
+    assert.match(t, /f0001\tmodified\t"src\/foo\.js"/);
+    assert.match(t, /f0002\trenamed\t"src\/old-name\.js" -> "src\/new-name\.js"/);
     for (const e of entries) assert.ok(t.includes(e.id), `table must offer ${e.id}`);
+  });
+
+  it('encodes control characters in the path so no filename can forge a row or column boundary (§4.2a)', () => {
+    const entries = [
+      { id: 'f0001', oldPath: 'a\nb\tc"d\\e.js', newPath: 'a\nb\tc"d\\e.js', fileStatus: 'modified' },
+    ];
+    const t = renderDiffPathTable(entries);
+    const rows = t.split('\n');
+    assert.equal(rows.length, 2, 'header row + exactly one entry row — no forged row from the embedded newline');
+    assert.equal(rows[1].split('\t').length, 3, 'exactly id/status/path columns — no forged column from the embedded tab');
+    assert.ok(rows[1].includes(JSON.stringify('a\nb\tc"d\\e.js')), 'the path is JSON-encoded, control characters re-escaped');
   });
 });
 
