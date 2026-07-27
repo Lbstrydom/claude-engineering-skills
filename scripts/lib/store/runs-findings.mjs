@@ -736,37 +736,10 @@ export async function adjudicateFinalReviewFinding(runId, fingerprint, action, o
     process.stderr.write('  [learning] adjudicate: bucket column absent — run migration 20260610120000\n');
     return { ok: false, updated: 0, cloud: true, reason: 'bucket-column-absent' };
   }
-  const bucketGiven = Object.prototype.hasOwnProperty.call(opts, 'bucket');
   try {
-    const candidates = await many(
-      `SELECT DISTINCT bucket FROM audit_findings
-        WHERE run_id = $1 AND finding_fingerprint = $2`,
-      [runId, fingerprint]
-    );
-    if (candidates.length === 0) {
-      return { ok: false, updated: 0, cloud: true, reason: 'no-match' };
-    }
-    let bucket;
-    if (bucketGiven) {
-      bucket = opts.bucket;
-      const known = candidates.some((c) => c.bucket === bucket);
-      if (!known) {
-        return {
-          ok: false, updated: 0, cloud: true, reason: 'no-match-in-bucket',
-          buckets: candidates.map((c) => c.bucket),
-        };
-      }
-    } else if (candidates.length > 1) {
-      // Do NOT guess. Two buckets sharing a fingerprint are two independent
-      // observations (primary vs shadow) — collapsing them would corrupt the
-      // A/B comparison the shadow experiment exists to make.
-      return {
-        ok: false, updated: 0, cloud: true, reason: 'ambiguous-bucket',
-        buckets: candidates.map((c) => c.bucket),
-      };
-    } else {
-      bucket = candidates[0].bucket;
-    }
+    const resolved = await resolveFindingBucket(runId, fingerprint, opts);
+    if (!resolved.ok) return { ...resolved, updated: 0, cloud: true };
+    const bucket = resolved.bucket;
     // `bucket` may legitimately be null (a primary finding), which updateWhere
     // renders as `IS NULL` — the reason this uses a raw predicate rather than
     // an equality object.
@@ -785,6 +758,121 @@ export async function adjudicateFinalReviewFinding(runId, fingerprint, action, o
     return { ok: true, updated, cloud: true, bucket };
   } catch (err) {
     process.stderr.write(`  [learning] adjudicateFinalReviewFinding failed: ${err.message}\n`);
+    return { ok: false, updated: 0, cloud: true, reason: `db-error: ${err.message}` };
+  }
+}
+
+/**
+ * Resolve which `bucket` a (runId, fingerprint) pair refers to.
+ *
+ * Extracted so `adjudicateFinalReviewFinding` and `recordFinalReviewFix` share
+ * ONE disambiguation oracle — a second copy would be free to drift, and the
+ * rule it encodes (never guess between primary and shadow) is exactly the one
+ * whose violation would corrupt the A/B comparison.
+ *
+ * @param {string} runId
+ * @param {string} fingerprint
+ * @param {{bucket?: string|null}} [opts] - omit to auto-resolve; pass explicitly to disambiguate
+ * @returns {Promise<{ok: true, bucket: string|null} | {ok: false, reason: string, buckets?: Array<string|null>}>}
+ */
+async function resolveFindingBucket(runId, fingerprint, opts = {}) {
+  const candidates = await many(
+    `SELECT DISTINCT bucket FROM audit_findings
+      WHERE run_id = $1 AND finding_fingerprint = $2`,
+    [runId, fingerprint]
+  );
+  if (candidates.length === 0) return { ok: false, reason: 'no-match' };
+  if (Object.prototype.hasOwnProperty.call(opts, 'bucket')) {
+    const bucket = opts.bucket;
+    if (!candidates.some((c) => c.bucket === bucket)) {
+      return { ok: false, reason: 'no-match-in-bucket', buckets: candidates.map((c) => c.bucket) };
+    }
+    return { ok: true, bucket };
+  }
+  if (candidates.length > 1) {
+    // Do NOT guess. Two buckets sharing a fingerprint are two independent
+    // observations (primary vs shadow) — collapsing them would corrupt the
+    // A/B comparison the shadow experiment exists to make.
+    return { ok: false, reason: 'ambiguous-bucket', buckets: candidates.map((c) => c.bucket) };
+  }
+  return { ok: true, bucket: candidates[0].bucket };
+}
+
+/**
+ * Record that a final-review finding was actually FIXED, with the commit.
+ *
+ * **Why this exists — the shadow A/B could not measure its own headline claim.**
+ * `adjudicateFinalReviewFinding` writes the *adjudication* axis (accepted /
+ * dismissed). The *remediation* axis (`remediation_state`, `fix_commit_sha`)
+ * had exactly one writer, `markFindingsRemediation`, whose sole caller projects
+ * from the `/audit-code` LEDGER (legacy-production-audit.mjs). Final-review
+ * shadow findings carry `pass_name='final-review-shadow'` and are adjudicated
+ * through a different path, so they never enter that ledger — no code path
+ * could ever set their remediation state. The only fix-related CLI was
+ * `list-unlocked-fixes`, a read.
+ *
+ * So "14 accepted, 0 converted to fixes" — the single strongest argument that
+ * the second gate produces observations rather than caught defects — was not a
+ * measurement. It was an artifact of there being no way to record the other
+ * outcome. Four wine-cellar-app findings had genuinely shipped fixes
+ * (wine-cellar-app#193) and would still have read 0.
+ *
+ * Kept as a SEPARATE command rather than an `--action fixed` on the adjudication
+ * CLI, because this repo's two-axis model (AGENTS.md: `adjudicationOutcome` +
+ * `remediationState`) is load-bearing: "accepted" and "fixed" are orthogonal
+ * facts, and collapsing them would make "accepted but not yet fixed" —
+ * precisely the state worth counting — unrepresentable.
+ *
+ * Refuses a `dismissed` finding: recording a fix for something judged a
+ * non-issue is incoherent. Allows a not-yet-adjudicated one, so a fix-first
+ * workflow is not blocked.
+ *
+ * @param {string} runId
+ * @param {string} fingerprint
+ * @param {{bucket?: string|null, commitSha?: string|null, state?: 'fixed'|'verified'|'regressed'}} [opts]
+ * @returns {Promise<{ok: boolean, updated: number, cloud: boolean, reason?: string, buckets?: Array<string|null>, bucket?: string|null}>}
+ */
+export async function recordFinalReviewFix(runId, fingerprint, opts = {}) {
+  if (!await isCloudEnabled()) return { ok: false, updated: 0, cloud: false, reason: 'cloud-disabled' };
+  const state = opts.state ?? 'fixed';
+  if (!TERMINAL_REMEDIATION.has(state)) {
+    return { ok: false, updated: 0, cloud: true, reason: `non-terminal state "${state}"` };
+  }
+  if (!await columnExists('audit_findings', 'bucket', many, isCloudEnabled)) {
+    process.stderr.write('  [learning] record-fix: bucket column absent — run migration 20260610120000\n');
+    return { ok: false, updated: 0, cloud: true, reason: 'bucket-column-absent' };
+  }
+  try {
+    const resolved = await resolveFindingBucket(runId, fingerprint, opts);
+    if (!resolved.ok) return { ...resolved, updated: 0, cloud: true };
+    const bucket = resolved.bucket;
+
+    const existing = await one(
+      `SELECT user_action FROM audit_findings
+        WHERE run_id = $1 AND finding_fingerprint = $2 AND bucket IS NOT DISTINCT FROM $3
+        LIMIT 1`,
+      [runId, fingerprint, bucket]
+    );
+    if (existing?.user_action === 'dismissed') {
+      return { ok: false, updated: 0, cloud: true, reason: 'dismissed-cannot-be-fixed', bucket };
+    }
+
+    const patch = { remediation_state: state };
+    if (opts.commitSha != null) patch.fix_commit_sha = opts.commitSha;
+    const sets = Object.keys(patch).map((k, i) => `${k} = $${i + 4}`).join(', ');
+    const res = await query(
+      `UPDATE audit_findings SET ${sets}
+        WHERE run_id = $1 AND finding_fingerprint = $2
+          AND bucket IS NOT DISTINCT FROM $3`,
+      [runId, fingerprint, bucket, ...Object.values(patch)]
+    );
+    const updated = res.rowCount ?? 0;
+    // A 0-row write reported as success is the exact class this codebase treats
+    // as HIGH elsewhere — and the class that hid the hardcoded-bucket bug.
+    if (updated === 0) return { ok: false, updated: 0, cloud: true, reason: 'no-rows-affected', bucket };
+    return { ok: true, updated, cloud: true, bucket, state };
+  } catch (err) {
+    process.stderr.write(`  [learning] recordFinalReviewFix failed: ${err.message}\n`);
     return { ok: false, updated: 0, cloud: true, reason: `db-error: ${err.message}` };
   }
 }

@@ -630,9 +630,8 @@ call-site list: [`docs/reference/anthropic-backend-routing.md`](docs/reference/a
 ## Shadow Final-Review A/B
 
 Plan: [`docs/plans/final-review-shadow-reviewer.md`](docs/plans/final-review-shadow-reviewer.md).
-An **opt-in, observation-only** second final reviewer that runs **blind** (same
-audit transcript, never sees the primary's output) in parallel with the primary
-final review, to empirically test whether a second final gate is worth keeping.
+An **opt-in, observation-only** second final reviewer running **blind** (same audit
+transcript, never sees the primary's output), to test whether a 2nd gate earns its keep.
 
 - **Enable**: set `FINAL_REVIEW_SHADOW=claude-opus` (or `gemini`). Unset → the
   shadow path is not entered at all (byte-identical to today). **No-op under an
@@ -643,11 +642,12 @@ final review, to empirically test whether a second final gate is worth keeping.
   collect `N ≥ 20` runs per fixed (primary, shadow) model pair; **KEEP** iff
   human-accepted shadow-only HIGH/MEDIUM ≥ 1 per 5 runs AND cost in tolerance;
   **DROP** if shadow-only is predominantly dismissed/LOW. Don't conflate "always
-  catches something" with effectiveness.
-- **Operator-doc convention (repo-wide recurrence guard, bit twice pre-2026-07-02)**:
-  CLI examples use real values or PowerShell variables, **never `<angle-bracket>`
-  placeholders** (PowerShell reserves `<` — the command can't be pasted), and a
-  raw-JSON queue is not a human review surface — render a `--worksheet`.
+  catches something" with effectiveness. **Blind spot disclosed + dated 2026-07-27,
+  NOT amended** (retuning a pre-registered rule against its own bad data is
+  p-hacking); record fixes via `final-review-record-fix`. Both → plan doc below.
+- **Operator-doc convention (repo-wide, bit twice pre-2026-07-02)**: real values or
+  PowerShell vars in CLI examples, **never `<angle-brackets>`** (PowerShell reserves
+  `<` — unpasteable); render a `--worksheet`, not raw JSON.
 
 → Measurement how-to (`final-review-stats --worksheet`), attribution schema
 (`source_model`, `bucket`, idempotent-replace persistence), and the full

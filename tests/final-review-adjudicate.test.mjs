@@ -53,6 +53,50 @@ describe('adjudicateFinalReviewFinding — contract (no DB required)', () => {
   });
 });
 
+// The closing edge of the shadow A/B loop. Before this existed, NOTHING could
+// write `remediation_state` for a final-review finding: the only writer
+// (markFindingsRemediation) is called solely from legacy-production-audit.mjs,
+// projecting from the /audit-code ledger, which final-review findings never
+// enter. So "14 accepted, 0 fixed" — the strongest argument that the second
+// gate yields observations rather than caught defects — was not a measurement,
+// it was missing plumbing. Six findings had genuinely shipped fixes
+// (wine-cellar-app#193) and would still have read 0.
+describe('recordFinalReviewFix — contract (no DB required)', () => {
+  it('is exported', async () => {
+    const mod = await import('../scripts/lib/store/runs-findings.mjs');
+    assert.equal(typeof mod.recordFinalReviewFix, 'function');
+  });
+
+  it('refuses a non-terminal remediation state instead of writing it', async () => {
+    // TERMINAL_REMEDIATION is fixed|verified|regressed. 'pending'/'planned' are
+    // real states elsewhere in the two-axis model but are not FIX outcomes.
+    const mod = await import('../scripts/lib/store/runs-findings.mjs');
+    const prior = process.env.AUDIT_DB_URL;
+    process.env.AUDIT_DB_URL = prior || 'postgresql://unused/deliberately';
+    try {
+      const res = await mod.recordFinalReviewFix('run', 'fp', { state: 'pending' });
+      assert.equal(res.ok, false);
+      assert.match(res.reason, /non-terminal/);
+    } finally {
+      if (prior === undefined) delete process.env.AUDIT_DB_URL;
+      else process.env.AUDIT_DB_URL = prior;
+    }
+  });
+
+  it('names a REASON on every failure, never a bare ok:false', async () => {
+    const mod = await import('../scripts/lib/store/runs-findings.mjs');
+    const prior = process.env.AUDIT_DB_URL;
+    delete process.env.AUDIT_DB_URL;
+    try {
+      const res = await mod.recordFinalReviewFix('run', 'fp', {});
+      assert.equal(res.ok, false);
+      assert.ok(res.reason, 'a failure must carry a reason');
+    } finally {
+      if (prior !== undefined) process.env.AUDIT_DB_URL = prior;
+    }
+  });
+});
+
 describe('adjudicateFinalReviewFinding — bucket resolution (integration)', { skip }, () => {
   let mod, q, client, repoId, runId;
   const FP_SHADOW = 'fpshadow';

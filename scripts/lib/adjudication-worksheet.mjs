@@ -32,6 +32,9 @@
  * @property {string} [category]
  * @property {string} [file]       - primary file / section anchor
  * @property {string} [detail]     - snippet shown as the quoted summary
+ * @property {string} [groundingNote] - pre-fetched disconfirming evidence from
+ *   `lib/audit/finding-grounding.mjs` when the finding asserts an absence the
+ *   named file appears to contradict. Advisory; empty string / absent when clean.
  * @property {{action: string, why: string, canonical?: string|null}} [suggestion] -
  *   an advisory pre-judgment (e.g. from the blinded Claude adjudicator). The
  *   HUMAN confirms by pasting the pre-filled command, or overrides by editing
@@ -107,6 +110,12 @@ export function renderAdjudicationWorksheet({ title, introLines = [], items, com
     md.push(`### \`${it.fingerprint}\`${tags ? ` [${tags}]` : ''} ${line(it.category ?? '', 90)}`);
     if (it.file) md.push(`*${line(it.file, 120)}*`);
     md.push(`> ${line(it.detail, 300)}`, '');
+    // Disconfirming evidence, gathered before the human looks. Findings that
+    // assert an absence the named file already contradicts were 5 of the 8
+    // shadow dismissals to date, each refuted by hand at real cost. Advisory
+    // only — it never suppresses or pre-decides, because a wrongly-hidden
+    // finding is a far worse error than a redundant line.
+    if (it.groundingNote) md.push(it.groundingNote, '');
     const s = it.suggestion;
     if (s) md.push(`**Suggested: \`${s.action}\`${s.canonical ? ` (duplicate of \`${s.canonical}\`)` : ''}** — ${line(s.why, 300)}`, '');
     const cmd = commandFor(it, s?.action ?? defaultAction, s?.canonical ?? null);

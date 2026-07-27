@@ -42,6 +42,7 @@ const EXPECTED_EXPORTS = [
   'recordFindings',
   'recordFinalReviewFindings',      // shadow A/B — idempotent replace-persistence
   'adjudicateFinalReviewFinding',   // shadow A/B — human-adjudication writeback
+  'recordFinalReviewFix',           // shadow A/B — fix-outcome writeback (remediation axis)
   'getFinalReviewStats',            // shadow A/B — measurement read surface
   'persistKeptEmbeddings',          // GH #59 — record-time embedding write, exported (undecorated) as a test seam
   'recordPassStats',
@@ -329,6 +330,8 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // was fixed — is the fix locked?", this asks "this was accepted — was it
     // ever fixed at all?". Measured that day: only 3 of 10 accepted
     // final-review-shadow findings had a confirmed code fix.
-    assert.equal(EXPECTED_EXPORTS.length, 179);
+    // 179 → 180: recordFinalReviewFix — shadow A/B fix-outcome writeback
+    // (the remediation axis this file's 178 → 179 entry exists to surface).
+    assert.equal(EXPECTED_EXPORTS.length, 180);
   });
 });

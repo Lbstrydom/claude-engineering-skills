@@ -29,7 +29,9 @@
 
 import 'dotenv/config';
 import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { execSync } from 'node:child_process';
+import { checkFindingGrounding, formatGroundingNote } from './lib/audit/finding-grounding.mjs';
 
 import {
   initLearningStore,
@@ -88,6 +90,7 @@ import {
   // Shadow final-review A/B (docs/plans/final-review-shadow-reviewer.md)
   getFinalReviewStats,
   adjudicateFinalReviewFinding,
+  recordFinalReviewFix,
   // Determinism follow-ups WS1 — deterministic outcome finalize
   recordAdjudicationEvent,
   updatePassStatsPostDeliberation,
@@ -703,6 +706,34 @@ async function cmdAuditEffectiveness() {
 
 // ── Shadow final-review A/B (docs/plans/final-review-shadow-reviewer.md) ──────
 
+/**
+ * Pre-fetch disconfirming evidence for one queued finding.
+ *
+ * Best-effort by contract: this decorates a review surface, so any failure
+ * (unreadable file, path outside the repo) must degrade to "no note" rather
+ * than break the worksheet the operator is waiting on.
+ *
+ * @param {{primary_file?: string, detail_snapshot?: string}} f
+ * @returns {string} note, or '' when the finding is clean / uncheckable
+ */
+function groundingNoteFor(f) {
+  try {
+    const root = process.cwd();
+    const res = checkFindingGrounding({
+      detail: f.detail_snapshot || '',
+      primaryFile: f.primary_file || '',
+      readFile: (rel) => {
+        const p = path.resolve(root, rel);
+        // Containment: `primary_file` is model-authored text, so it is not a
+        // trusted path source.
+        if (!p.startsWith(path.resolve(root))) return null;
+        return readFileSync(p, 'utf8');
+      },
+    });
+    return formatGroundingNote(res);
+  } catch { return ''; }
+}
+
 async function cmdFinalReviewStats() {
   await initLearningStore();
   const repoName = argOption('repo');
@@ -723,6 +754,7 @@ async function cmdFinalReviewStats() {
       items: pending.map((f) => ({
         runId: f.run_id, fingerprint: f.finding_fingerprint, severity: f.severity,
         category: f.category, file: f.primary_file, detail: f.detail_snapshot,
+        groundingNote: groundingNoteFor(f),
       })),
       actions: ['accepted', 'dismissed'],
       // `--bucket shadow-only` is explicit, not implied: this queue is
@@ -771,6 +803,48 @@ async function cmdFinalReviewAdjudicate() {
         ? ` — no row in that bucket; present in [${(res.buckets || []).map((b) => b ?? 'primary').join(', ')}]`
         : '';
     return emitError('ADJUDICATION_FAILED', `${res.reason || 'unknown'}${hint}`, {
+      updated: 0, cloud: res.cloud, buckets: res.buckets,
+    });
+  }
+  emit(res);
+}
+
+/**
+ * Record that an accepted final-review finding was actually FIXED.
+ *
+ * The closing edge of the shadow A/B loop. `final-review-adjudicate` writes the
+ * adjudication axis (accepted/dismissed); nothing could write the remediation
+ * axis for these findings, because the only `remediation_state` writer projects
+ * from the /audit-code ledger, which final-review findings never enter. That
+ * made "accepted but never fixed" — the strongest argument against keeping the
+ * second gate — an artifact of missing plumbing rather than a measurement.
+ *
+ * Deliberately separate from `--action`: accepted and fixed are orthogonal axes
+ * (AGENTS.md two-axis model), and collapsing them would make "accepted, fix
+ * pending" unrepresentable.
+ */
+async function cmdFinalReviewRecordFix() {
+  await initLearningStore();
+  if (!await isCloudEnabled()) return emit({ ok: false, cloud: false, updated: 0 });
+  const runId = argOption('run-id');
+  const fingerprint = argOption('fingerprint');
+  if (!runId || !fingerprint) {
+    return emitError('BAD_INPUT', '--run-id <id> and --fingerprint <hash> are both required');
+  }
+  const rawBucket = argOption('bucket');
+  const opts = {
+    commitSha: argOption('commit'),
+    ...(argOption('state') ? { state: argOption('state') } : {}),
+    ...(rawBucket === null ? {} : { bucket: (rawBucket === 'primary' || rawBucket === 'none') ? null : rawBucket }),
+  };
+  const res = await recordFinalReviewFix(runId, fingerprint, opts);
+  if (!res.ok) {
+    const hint = res.reason === 'ambiguous-bucket'
+      ? ` — fingerprint spans buckets [${(res.buckets || []).map((b) => b ?? 'primary').join(', ')}]; re-run with --bucket <name>`
+      : res.reason === 'dismissed-cannot-be-fixed'
+        ? ' — this finding was adjudicated `dismissed`; recording a fix for a non-issue is incoherent'
+        : '';
+    return emitError('RECORD_FIX_FAILED', `${res.reason || 'unknown'}${hint}`, {
       updated: 0, cloud: res.cloud, buckets: res.buckets,
     });
   }
@@ -2381,6 +2455,7 @@ const commands = {
   'audit-effectiveness': cmdAuditEffectiveness,
   'final-review-stats': cmdFinalReviewStats,
   'final-review-adjudicate': cmdFinalReviewAdjudicate,
+  'final-review-record-fix': cmdFinalReviewRecordFix,
   'finalize-outcomes': cmdFinalizeOutcomes,
   // Model-A/B/C experiment harness (Cluster C)
   'model-ab-adjudicate': cmdModelAbAdjudicate,

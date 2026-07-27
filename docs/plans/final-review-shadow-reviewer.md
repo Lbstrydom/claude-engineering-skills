@@ -599,3 +599,73 @@ fix).** Operator CLI examples use real values or PowerShell variables, **never
 command cannot even be pasted. And a raw-JSON queue is not a human review
 surface — render a worksheet. Applies to every operator-facing CLI example in
 this repo, not just this feature.
+
+---
+
+## Addendum 2026-07-27 — the loop had no closing edge, and the rule has a disclosed blind spot
+
+### The conversion metric was unmeasurable by construction
+
+The strongest standing critique of this experiment was "14 accepted, 0 converted
+to fixes — accepts are observations, not caught defects." That number was **not a
+measurement**. It was missing plumbing.
+
+`adjudicateFinalReviewFinding` writes the *adjudication* axis (`user_action`,
+`adjudication_outcome`). The *remediation* axis (`remediation_state`,
+`fix_commit_sha`) had exactly one writer, `markFindingsRemediation`, whose sole
+caller is `legacy-production-audit.mjs:2801` — it projects terminal states out of
+the **`/audit-code` ledger**. Final-review findings carry
+`pass_name='final-review'|'final-review-shadow'` and are adjudicated through a
+different path entirely, so they never enter that ledger. No code path could set
+their remediation state. The only fix-related CLI surface was
+`list-unlocked-fixes`, a read.
+
+So six findings with genuinely shipped fixes (wine-cellar-app#193) would still
+have reported 0, and the Aug-3 review would have drawn a KEEP/DROP conclusion
+from an artifact.
+
+**Fix**: `recordFinalReviewFix(runId, fingerprint, {bucket, commitSha, state})`
++ `cross-skill.mjs final-review-record-fix`. Notes on the design:
+
+- **A separate command, not `--action fixed`.** This repo's two-axis model
+  (`adjudicationOutcome` × `remediationState`) is load-bearing. Collapsing them
+  would make *"accepted, fix pending"* — precisely the population worth counting
+  — unrepresentable.
+- **Shares one bucket-resolution oracle** with the adjudication command
+  (`resolveFindingBucket`, extracted). A second copy would be free to drift, and
+  the rule it encodes — never guess between primary and shadow — is exactly the
+  one whose violation corrupts the A/B comparison.
+- **Refuses a `dismissed` finding** (recording a fix for an adjudicated non-issue
+  is incoherent) but allows a not-yet-adjudicated one, so a fix-first workflow is
+  not blocked.
+- **0 rows affected is a failure, never a silent success** — the same class that
+  hid the hardcoded-bucket bug this file already documents.
+
+State after backfilling the real fixes: **6 fixed** (2 MEDIUM + 4 LOW, all
+`fix_commit_sha=9b8077d4`), 11 accepted-pending, 8 dismissed.
+
+### Disclosed blind spot in the stopping rule — deliberately NOT amended
+
+The pre-registered rule counts **human-accepted HIGH/MEDIUM** only. A LOW finding
+contributes zero.
+
+`d99f9e30` was LOW and purely cosmetic — inline `style.display` instead of the
+`hidden` attribute. Tracing it is what surfaced that wine-cellar-app's
+wine-detail **"Link" row had never displayed since the feature shipped**
+(`e0af9a74`, 2026-04-03): the JS toggled `urlEl.parentElement` (the `<dd>`) while
+the template hid the `.modal-meta-item` wrapper, so all four branches were dead
+code for ~4 months. Arguably the single highest-value thing this experiment has
+produced — and under the rule as written it scores **0**.
+
+This is recorded as a **known limitation, dated, before the verdict**. The
+threshold is deliberately left untouched: rewriting a pre-registered stopping
+rule after seeing data it scores badly is precisely the p-hacking that
+pre-registration exists to prevent. Amending it is the operator's call, and any
+amendment must be dated in the final write-up so the reader can see the rule
+changed after data was in hand.
+
+The honest reading is narrower than "the rule is wrong": severity is a poor
+proxy for *investigative* value, and a second gate's worth may lie partly in
+which threads it pulls rather than in what it directly reports. That is a
+hypothesis this experiment was not designed to test — worth stating, not worth
+retrofitting the metric to.
