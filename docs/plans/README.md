@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**12 active · 155 terminal · 25 audit summaries · 4 reference docs**
+**11 active · 156 terminal · 25 audit summaries · 4 reference docs**
 
 ---
 
@@ -29,7 +29,6 @@ This is the list to read when asking "what is in flight?".
 | [Miscellaneous Small-Cluster Debt (2026-07-26 triage)](./refactor-misc-small-items-2026-07.md) | `Draft` | items resolved individually as picked up (see per-item status below), not implemented as one batch |
 | [Model-Eval / Pricing Debt (2026-07-26 triage)](./refactor-model-eval-pricing-2026-07.md) | `Draft` |  |
 | [Refactor static-analysis — make "I can't tell" representable in the repo's own guards and lints](./refactor-static-analysis.md) | `Approved` | audited, NOT yet implemented (3 GPT plan-audit |
-| [Refactor symbol-index — close the progress-channel sensitive-path disclosure and the drift pragma-cap re-opener](./refactor-symbol-index.md) | `Approved` | NOT yet implemented (3 GPT plan-audit rounds + |
 | [vcs-protocol Tech-Debt Cluster — Verification & Ledger Reconciliation](./refactor-vcs-protocol.md) | `Approved` | audited, not yet implemented (3 GPT + 1 Gemini |
 | [Visual-Audit Contract Validation Debt (2026-07-26 triage)](./refactor-visual-audit-contract-2026-07.md) | `Draft` |  |
 | [Tiered Recall-Weighted Audit Pipeline](./tiered-recall-audit-pipeline.md) | `In Progress` | implementation complete (Clusters A-F implemented |
@@ -52,7 +51,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 152 completed plans</summary>
+<summary>Show all 153 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -174,6 +173,7 @@ source comments that no docs linter sees — stays valid.
 | [Refactor autofix-security — containment, dedup, and silent-failure fixes in `scripts/lib/claudemd/autofix.mjs`](./refactor-autofix-security.md) | `Complete` | implemented + audited (3 GPT + 3 Gemini plan-audit |
 | [Failure-Contract Refactor — Stop Reporting Dependency Failure As Success](./refactor-failure-contract.md) | `Complete` | implemented + audited (3 GPT + 2 Gemini plan-audit |
 | [Install-Transaction WAL + VCS Parsing Debt (2026-07-26 triage)](./refactor-install-wal-vcs-2026-07.md) | `Complete` |  |
+| [Refactor symbol-index — close the progress-channel sensitive-path disclosure and the drift pragma-cap re-opener](./refactor-symbol-index.md) | `Complete` | implemented via `/cycle code --autonomous` (3 GPT |
 | [Repo-Wide Reference-Integrity Gate](./reference-integrity-gate.md) | `Complete` | all three clusters implemented, converged, final-gated |
 | [Remediation-State Fix-Lifecycle Writer (un-starve `unlocked_fixes` + the /ship missing-spec gate)](./remediation-state-fix-lifecycle.md) | `Complete` |  |
 | [Requirements Layer — a materialized view of the codebase's de-facto requirements](./requirements-layer.md) | `Complete` |  |
