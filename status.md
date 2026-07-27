@@ -1,5 +1,71 @@
 # Project Status Log
 
+## 2026-07-27 (continued) — adjudicated 14 more shadow-only findings; a critical fix along the way
+
+Daily shadow-telemetry check (final-review shadow A/B, `FINAL_REVIEW_SHADOW=claude-opus-5`)
+turned up a real bug and real new findings.
+
+### The bug (and its fix)
+The prior day's `--run-id` marker-recovery fix (`cd6d228`) had a blind spot:
+`.audit/last-audit-run.json` is written ONLY by the code-audit path — `/audit-plan`
+never refreshes it. A wine-cellar-app `/audit-plan` session correctly omitted
+`--run-id` at its Gemini review step (plan mode never has a commit-scoped
+`audit_runs` row to attach to), but the recovery fallback fired anyway, found a
+still-fresh (<6h) marker from an unrelated CODE audit, and misattached the plan
+review's shadow findings to that run's id. Worse: `recordFinalReviewFindings`'s
+own DELETE (scoped only by `run_id`) then wiped the 4 already-adjudicated
+findings from that earlier code audit as a side effect — real data loss, not
+just a mislabel.
+
+Fixed (`49468e5`): `canAttemptRunIdRecovery({auditMode})` gates the whole
+recovery attempt on `auditMode === 'code'` — the only mode that ever writes the
+marker. Repaired the wine-cellar-app data directly: deleted the 3 misattributed
+findings, restored the original 4 (reconstructed from this session's own
+transcript — the only surviving copy) with identical content, re-adjudicated
+accepted. Audited every other new shadow run_id created since the recovery fix
+shipped, in both repos — all confirmed legitimate (each has its own distinct,
+real `commit_sha`/`rounds`); this was the only incident.
+
+### 14 new shadow-only findings, adjudicated (8 accepted / 6 dismissed)
+Verified each against the actual current code/plan text rather than taking the
+shadow's claims at face value:
+- **Accepted** (real, verified): a cross-version journal-quarantine hazard in
+  `scripts/lib/install/transaction.mjs` (an older reader schema-rejects a
+  `'rollback-failed'` journal and quarantines it, defeating the deliberate
+  no-mutation handling); `reconcileJournals()`'s `process.exit(1)` inside its
+  `for` loop genuinely skips checking the second (global) journal on a
+  first-journal failure; a silently-logged-nowhere RPC failure in
+  `stage0-relevance-context.mjs`'s 8-way worker pool that collapses to
+  indistinguishable-from-"no import graph"; the `refactor-audit-pipeline-reliability-2026-07.md`
+  Disposition Matrix's own "22+18+5=45, checked total" excludes 12 real
+  code-audit-discovered debt items that exist only in prose; no test pins
+  `learningWritesAllowed===false` gating at the 3 specific call sites the
+  plan's "test passed unmodified" claim relies on; an untested EACCES/ELOOP
+  coupling in sensitive-path filtering; a documentation-consistency gap in the
+  architecture-debt-remainder plan's item 1 (verified the underlying risk is
+  moot — both edges are already in `domain-map.json`'s `allowedDeps`).
+- **Dismissed** (verified false against the shipped code): a lock-leak concern
+  refuted by an already-present `try/finally`; an `fs.rmSync`-detection
+  edge case refuted by an already-present `!binding || !binding.path` guard;
+  a `sinceCommit` injection concern refuted by an already-present internal
+  `isSafeGitRevision` call; a "vacuous test" claim refuted by an
+  already-present, purpose-built 200-site-floor assertion; two findings
+  evaluating plan content (a grep criterion, a `check-architecture-intent-drift.mjs`
+  script) that does not exist anywhere in the plan's current text.
+
+**Pattern worth tracking**: every dismissal on the two most-iterated runs (3
+and 6 GPT rounds respectively) was the shadow raising "what if X isn't
+handled" concerns the code — hardened across rounds it wasn't present for —
+already handles. The shadow reviews blind, single-pass, at the final state; it
+doesn't carry the "this was round 3's whole point" context a reviewer present
+for every round would have. Worth watching whether this correlation holds as
+N grows toward the pre-registered stopping-rule threshold.
+
+### Where the shadow A/B stands
+Combined N=8 for the (gemini-pro-latest, claude-opus-5) pair (6
+claude-engineering-skills + 2 wine-cellar-app), still short of the
+pre-registered N>=20. ai-organiser remains at zero — no Step 7 run there yet.
+
 ## 2026-07-27 — tech-debt backlog: persona-outcomes repo-identity + refresh empty-scope/symlink fixes
 
 **`scripts/lib/store/persona-outcomes.mjs`** (`88bc75e1`/`8993b96f`) —
