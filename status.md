@@ -1,5 +1,55 @@
 # Project Status Log
 
+## 2026-07-27 (continued) — wine-cellar-app product-code shadow findings adjudicated (3 accept / 1 dismiss)
+
+Adjudicated run `87cf64e3`'s 4 shadow-only findings — the first batch from
+*product* code rather than this repo's audit pipeline introspecting itself, so
+a more representative sample of what the second gate is worth. Verified each
+against wine-cellar-app source rather than the finding text.
+
+- **`6682c363` (MEDIUM, state desync) — ACCEPTED, severity overstated.** Real
+  and traced end-to-end: `_setBackgroundInert()` deliberately skips the active
+  modal overlay, so a `toggleAuthScreen(true)` firing with a modal open inerts
+  that overlay and records it in `_authInertedEls`. `closeModal()` then removes
+  `.active` (line 291) *before* calling `_setBackgroundInert(false)` (line 304),
+  so the overlay is no longer in `overlaySet`, has no `_priorInertState` entry,
+  and gets its `inert`/`aria-hidden` stripped while the auth gate is still up —
+  with auth's own bookkeeping still believing it owns the element. Reachable in
+  practice: the ungated `toggleAuthScreen(true)` calls inside
+  `supabase.auth.onAuthStateChange` fire mid-session. Consequence is currently
+  masked only by `.modal-overlay { display: none }` keeping the element out of
+  the a11y tree — fragile (an opacity-based fade would expose it), so worth
+  fixing, but not currently user-visible.
+- **`d99f9e30` (LOW, inline styles) — ACCEPTED**, and slightly understated:
+  four branches set `urlEl.parentElement.style.display`, plus `reduceField`,
+  with two branches mixing `hidden` on the child and inline style on the
+  parent. Violates a documented AGENTS.md Do-NOT in a file the PR touched.
+- **`c11b8944` (LOW, data semantics) — ACCEPTED, blast radius corrected.** The
+  defect is real (`data-track-wine-name="${safeWine || safeDomain}"` writes a
+  hostname into the `wine_name` field of a permanently-persisted
+  `feedback_events` row), but the finding's named victim is wrong:
+  `vendorLearning.js` selects/groups on `payload->>'vendor_domain'` only and
+  never reads `wine_name`. Future-consumer hygiene issue, not a live one.
+- **`1cf493f1` (LOW, missing test) — DISMISSED.** Both claims false. The
+  reentrant-`onClose` test and the try/finally `_draining`-reset test both
+  exist in `tests/unit/shared/modalLifecycleCloseAll.test.js` — and the latter
+  is literally titled *"(Gemini-gate shadow catch)"*, i.e. a PRIOR shadow
+  finding already caused it to be written.
+
+That last one is the sharpest instance yet of the pattern being tracked: the
+shadow reviews blind at final state, so it re-raises concerns that earlier
+rounds — including earlier *shadow* findings — already resolved. Counterweight
+from the same run: `6682c363` is a genuine cross-module ownership bug that took
+tracing four call sites plus a CSS file to confirm, which a skim would not
+produce.
+
+wine-cellar-app now 8 shadow-only findings, 7 accepted, 1 dismissed, 0 pending.
+Combined N=9 for the (gemini-pro-latest, claude-opus-5) pair, still short of the
+pre-registered N>=20. A Monday 2026-08-03 checkpoint is scheduled to review
+accumulation — and, more importantly, the methodology caveats recorded with it
+(every adjudication so far is Claude's, not the user's; zero HIGH findings in
+25; zero accepted findings converted to actual fixes).
+
 ## 2026-07-27 — symbol-index-pipeline-reliability-hardening: full 5-cluster /cycle --autonomous shipped
 
 `docs/plans/symbol-index-pipeline-reliability-hardening.md` — 4 GPT audit-plan
