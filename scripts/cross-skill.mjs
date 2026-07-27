@@ -88,7 +88,6 @@ import {
   // Shadow final-review A/B (docs/plans/final-review-shadow-reviewer.md)
   getFinalReviewStats,
   adjudicateFinalReviewFinding,
-  recordFinalReviewFix,
   // Determinism follow-ups WS1 — deterministic outcome finalize
   recordAdjudicationEvent,
   updatePassStatsPostDeliberation,
@@ -772,48 +771,6 @@ async function cmdFinalReviewAdjudicate() {
         ? ` — no row in that bucket; present in [${(res.buckets || []).map((b) => b ?? 'primary').join(', ')}]`
         : '';
     return emitError('ADJUDICATION_FAILED', `${res.reason || 'unknown'}${hint}`, {
-      updated: 0, cloud: res.cloud, buckets: res.buckets,
-    });
-  }
-  emit(res);
-}
-
-/**
- * Record that an accepted final-review finding was actually FIXED.
- *
- * The closing edge of the shadow A/B loop. `final-review-adjudicate` writes the
- * adjudication axis (accepted/dismissed); nothing could write the remediation
- * axis for these findings, because the only `remediation_state` writer projects
- * from the /audit-code ledger, which final-review findings never enter. That
- * made "accepted but never fixed" — the strongest argument against keeping the
- * second gate — an artifact of missing plumbing rather than a measurement.
- *
- * Deliberately separate from `--action`: accepted and fixed are orthogonal axes
- * (AGENTS.md two-axis model), and collapsing them would make "accepted, fix
- * pending" unrepresentable.
- */
-async function cmdFinalReviewRecordFix() {
-  await initLearningStore();
-  if (!await isCloudEnabled()) return emit({ ok: false, cloud: false, updated: 0 });
-  const runId = argOption('run-id');
-  const fingerprint = argOption('fingerprint');
-  if (!runId || !fingerprint) {
-    return emitError('BAD_INPUT', '--run-id <id> and --fingerprint <hash> are both required');
-  }
-  const rawBucket = argOption('bucket');
-  const opts = {
-    commitSha: argOption('commit'),
-    ...(argOption('state') ? { state: argOption('state') } : {}),
-    ...(rawBucket === null ? {} : { bucket: (rawBucket === 'primary' || rawBucket === 'none') ? null : rawBucket }),
-  };
-  const res = await recordFinalReviewFix(runId, fingerprint, opts);
-  if (!res.ok) {
-    const hint = res.reason === 'ambiguous-bucket'
-      ? ` — fingerprint spans buckets [${(res.buckets || []).map((b) => b ?? 'primary').join(', ')}]; re-run with --bucket <name>`
-      : res.reason === 'dismissed-cannot-be-fixed'
-        ? ' — this finding was adjudicated `dismissed`; recording a fix for a non-issue is incoherent'
-        : '';
-    return emitError('RECORD_FIX_FAILED', `${res.reason || 'unknown'}${hint}`, {
       updated: 0, cloud: res.cloud, buckets: res.buckets,
     });
   }
@@ -2424,7 +2381,6 @@ const commands = {
   'audit-effectiveness': cmdAuditEffectiveness,
   'final-review-stats': cmdFinalReviewStats,
   'final-review-adjudicate': cmdFinalReviewAdjudicate,
-  'final-review-record-fix': cmdFinalReviewRecordFix,
   'finalize-outcomes': cmdFinalizeOutcomes,
   // Model-A/B/C experiment harness (Cluster C)
   'model-ab-adjudicate': cmdModelAbAdjudicate,
