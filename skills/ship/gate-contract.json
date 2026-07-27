@@ -16,6 +16,12 @@
       "id": "step-0-5-gates-non-blocking",
       "kind": "document-only",
       "reason": "'Step 0.5 pre-ship gates are non-blocking by default; a query failure never makes the gate stricter OR blind' is a NEGATIVE guarantee about the agent's orchestration of the pre-ship queries. Asserting an absence-of-blocking across cloud-off / query-failure / no-session states is a judgement about agent flow, not a single CLI exit; document-only."
+    },
+    {
+      "id": "unremediated-acceptances-never-blocks",
+      "kind": "document-only",
+      "stated": "never blocks, and there is no override flag for it",
+      "reason": "Step 0.5e's nudge-not-gate guarantee. The READ half is mechanically honest and covered by the reader's own failure contract — getUnremediatedAcceptances returns [] on both cloud-off and query failure, exactly like getUnlockedFixes — so the query can never make the step stricter or blind. But 'never BLOCKS the ship' is a claim about what the agent does with a non-empty row set, and there is deliberately no override flag to assert against (the absence of one is the point: an override implies something to override). Same shape and same document-only rationale as step-0-5-gates-non-blocking above; asserting an absence-of-blocking is a judgement about agent flow, not a CLI exit code."
     }
   ],
   "ignoredCandidates": [
@@ -34,6 +40,22 @@
     {
       "line": "> It fails the byte-identical Category B test three independent ways: the header",
       "reason": "Explains why docs/architecture-map.md is classified Category A (timestamp+sha+refresh_id header, LLM-written summaries, renders from the cloud symbol_index). A classification rationale, not an enforced gate — the enforcement is the .gitignore entry plus GENERATED_UNTRACKED_TARGETS in check-docs-refs.mjs."
+    },
+    {
+      "line": "### 0.5e — Accepted findings that were never remediated",
+      "reason": "Section heading. 'never remediated' names the POPULATION the step reads (findings whose remediation_state never advanced), not a guarantee the step enforces. The step's actual enforcement claim is contracted as unremediated-acceptances-never-blocks."
+    },
+    {
+      "line": "not gate; the same philosophy as quick-fix detection). **Show at most 5 rows**,",
+      "reason": "'not gate' is the tail of the never-blocks claim contracted above, reflowed onto the next line. 'Show at most 5 rows' is a DISPLAY instruction to the agent about how much of the row set to echo — it caps output verbosity, not behaviour, and the reader's own LIMIT 20 is the only mechanical bound (asserting how many rows a model chooses to print is not a gate)."
+    },
+    {
+      "line": "<n> finding(s) you accepted were never marked fixed (showing <=5):",
+      "reason": "Line inside the fenced OUTPUT TEMPLATE the agent prints — sample text shown to the user, not a rule the skill enforces. 'never marked fixed' restates the view's own predicate (remediation_state NULL/pending/planned)."
+    },
+    {
+      "line": "plan was never amended), but say so rather than printing it as a code path.",
+      "reason": "Interpretation guidance for plan-mode rows: it explains what a stale plan-mode finding MEANS (the plan was never amended) so the agent does not print a section reference as if it were a file path. Descriptive, not an enforced gate."
     },
     {
       "line": "the weekly GH workflow, never by /ship directly.",
