@@ -9,8 +9,17 @@ import {
   shouldSkipPattern,
   aggregateDecisions,
   rebuildFromBootstrap,
+  rebuildFromCloud,
   _internals,
 } from '../scripts/lib/learning/quickfix-stats.mjs';
+
+function fakeStore(overrides = {}) {
+  return {
+    isCloudEnabled: async () => true,
+    initLearningStore: async () => {},
+    ...overrides,
+  };
+}
 
 // ── aggregateDecisions ────────────────────────────────────────────────────
 
@@ -60,6 +69,49 @@ describe('quickfix-stats / aggregateDecisions', () => {
     assert.equal(stats.p1.totalHits, 2);
     assert.equal(stats.p1.alpha, 1);
     assert.equal(stats.p1.beta, 0);
+  });
+
+  it('rejects a truthy-but-non-string pattern identifier (round-1 code-audit finding 0e342a58, sustained) — object/array/boolean/number all skipped, mixed with a valid record stays tolerant', () => {
+    const decisions = [
+      { context: { pattern: {} }, outcome: { action: 'accept' } },
+      { context: { pattern: [] }, outcome: { action: 'accept' } },
+      { context: { pattern: true }, outcome: { action: 'accept' } },
+      { context: { pattern: 123 }, outcome: { action: 'accept' } },
+      { context: { pattern: 'p1' }, outcome: { action: 'accept' } },
+    ];
+    const stats = aggregateDecisions(decisions);
+    assert.equal(Object.keys(stats).length, 1, 'only the one well-formed string pattern is aggregated');
+    assert.ok(stats.p1);
+    assert.equal(stats.p1.totalHits, 1);
+  });
+
+  it('rejects a blank/whitespace-only string pattern identifier', () => {
+    const decisions = [
+      { context: { pattern: '' }, outcome: { action: 'accept' } },
+      { context: { pattern: '   ' }, outcome: { action: 'accept' } },
+      { context: { pattern: 'p1' }, outcome: { action: 'accept' } },
+    ];
+    const stats = aggregateDecisions(decisions);
+    assert.equal(Object.keys(stats).length, 1);
+  });
+
+  it('an all-malformed-pattern array (no valid string patterns at all) aggregates to empty stats, not a crash', () => {
+    const decisions = [{ context: { pattern: {} } }, { context: { pattern: 42 } }];
+    const stats = aggregateDecisions(decisions);
+    assert.equal(Object.keys(stats).length, 0);
+  });
+
+  it('a "__proto__"-named pattern is a safe own property, not a prototype reassignment (null-prototype result container)', () => {
+    const decisions = [{ context: { pattern: '__proto__' }, outcome: { action: 'accept' } }];
+    const stats = aggregateDecisions(decisions);
+    assert.equal(Object.getPrototypeOf({}), Object.prototype, 'sanity: a normal object literal still has the real prototype');
+    assert.ok(Object.prototype.hasOwnProperty.call(stats, '__proto__'), '__proto__ must be a real OWN property of the result, not have silently reassigned the prototype');
+    assert.equal(stats.__proto__.alpha, 1);
+    // If this had polluted a plain {} instead of Object.create(null), the
+    // stats object's OWN prototype would have been reassigned to
+    // {alpha:1,...} and stats.__proto__ would read back Object.prototype
+    // instead (or throw), not the aggregated record.
+    assert.equal(Object.getPrototypeOf(stats), null);
   });
 });
 
@@ -189,6 +241,90 @@ describe('quickfix-stats / rebuildFromBootstrap', () => {
     const r = await rebuildFromBootstrap();
     assert.equal(r.ok, true);
     assert.equal(r.totalHits, 1);
+  });
+});
+
+// ── rebuildFromCloud (failure-contract refactor, Defect 2 + Round 1/3 fixes) ─
+
+describe('quickfix-stats / rebuildFromCloud — failure vs empty vs malformed', () => {
+  let tmpDir, cachePath;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'qfs-rebuild-'));
+    cachePath = path.join(tmpDir, 'quickfix-pattern-stats.json');
+  });
+
+  afterEach(() => {
+    try { fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* ignore */ }
+  });
+
+  it('a thrown read exception returns {ok:false} and leaves an existing cache byte-identical (Defect 2)', async () => {
+    const preExisting = JSON.stringify({ _version: 1, patterns: { good: { alpha: 1, beta: 0, acceptanceRate: 0.9, totalHits: 1, ci_low: 0.1 } } }, null, 2);
+    fs.writeFileSync(cachePath, preExisting);
+
+    const store = fakeStore({ readDecisionsPaginated: async () => { throw new Error('connection reset'); } });
+    const r = await rebuildFromCloud({ cachePath, store });
+
+    assert.equal(r.ok, false);
+    assert.match(r.error, /connection reset/);
+    assert.equal(fs.readFileSync(cachePath, 'utf-8'), preExisting, 'a transient read failure must never clobber a good existing cache');
+  });
+
+  it('a genuinely empty cloud response is not a failure — the cache IS written with patterns:{}', async () => {
+    const store = fakeStore({ readDecisionsPaginated: async () => [] });
+    const r = await rebuildFromCloud({ cachePath, store });
+
+    assert.equal(r.ok, true);
+    assert.equal(r.totalDecisions, 0);
+    assert.equal(r.patternCount, 0);
+    const cache = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
+    assert.deepEqual(cache.patterns, {});
+  });
+
+  it('a store missing readDecisionsPaginated is treated as a failure, not silent empty', async () => {
+    const store = fakeStore(); // no readDecisionsPaginated
+    const r = await rebuildFromCloud({ cachePath, store });
+    assert.equal(r.ok, false);
+    assert.ok(r.error);
+    assert.equal(fs.existsSync(cachePath), false, 'no cache should be written on this failure path');
+  });
+
+  it('a non-array success payload is a protocol violation, not an empty result (round-1 finding M1)', async () => {
+    const store = fakeStore({ readDecisionsPaginated: async () => ({ not: 'an array' }) });
+    const r = await rebuildFromCloud({ cachePath, store });
+    assert.equal(r.ok, false);
+    assert.match(r.error, /non-array payload/);
+    assert.equal(fs.existsSync(cachePath), false);
+  });
+
+  it('an all-malformed non-empty array is treated as a protocol regression, not empty (round-3 fix M4) — pre-existing cache untouched', async () => {
+    const preExisting = JSON.stringify({ _version: 1, patterns: { good: { alpha: 1, beta: 0, acceptanceRate: 0.9, totalHits: 1, ci_low: 0.1 } } }, null, 2);
+    fs.writeFileSync(cachePath, preExisting);
+
+    const store = fakeStore({ readDecisionsPaginated: async () => [{}, { foo: 'bar' }] });
+    const r = await rebuildFromCloud({ cachePath, store });
+
+    assert.equal(r.ok, false);
+    assert.equal(r.totalDecisions, 2);
+    assert.equal(r.patternCount, 0);
+    assert.match(r.error, /lacked a recognizable pattern field/);
+    assert.equal(fs.readFileSync(cachePath, 'utf-8'), preExisting, 'the all-malformed case must not clobber an existing good cache either');
+  });
+
+  it('a MIX of one good and one malformed record does NOT regress aggregateDecisions\'s existing tolerance — cache IS written', async () => {
+    const store = fakeStore({
+      readDecisionsPaginated: async () => [
+        { context: { pattern: 'p1' }, outcome: { action: 'accept' } },
+        { foo: 'bar' },
+      ],
+    });
+    const r = await rebuildFromCloud({ cachePath, store });
+
+    assert.equal(r.ok, true);
+    assert.equal(r.totalDecisions, 2);
+    assert.equal(r.patternCount, 1);
+    const cache = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
+    assert.ok(cache.patterns.p1);
   });
 });
 

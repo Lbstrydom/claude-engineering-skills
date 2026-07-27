@@ -17,6 +17,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { redactSecrets } from './secret-patterns.mjs';
 import { classifyPath, normalisePath as canonicalNormalisePath } from './sensitive-paths.mjs';
+import {
+  parseValidatedThreshold, parseValidatedMinHits,
+  QUICKFIX_SKIP_THRESHOLD_DEFAULT, QUICKFIX_MIN_HITS_DEFAULT,
+} from './quickfix-policy.mjs';
 
 const STATS_CACHE_PATH = '.audit/quickfix-pattern-stats.json';
 
@@ -471,8 +475,8 @@ export function matchPatterns(diffText, opts = {}) {
 // Plan: docs/plans/adaptive-learning-phase-2-quickfix.md §2 (synchronous
 // hot-path contract).
 
-const _SKIP_THRESHOLD = parseFloat(process.env.LEARNING_QUICKFIX_SKIP_THRESHOLD || '0.20');
-const _MIN_HITS       = parseInt(process.env.LEARNING_QUICKFIX_MIN_HITS || '10', 10);
+const _SKIP_THRESHOLD = parseValidatedThreshold(process.env.LEARNING_QUICKFIX_SKIP_THRESHOLD, QUICKFIX_SKIP_THRESHOLD_DEFAULT);
+const _MIN_HITS       = parseValidatedMinHits(process.env.LEARNING_QUICKFIX_MIN_HITS, QUICKFIX_MIN_HITS_DEFAULT);
 
 /**
  * Synchronously load the skip-set from the adaptive-learning cache.
@@ -523,4 +527,17 @@ export function _loadStatsForTest(cachePath = STATS_CACHE_PATH) {
     if (!fs.existsSync(cachePath)) return null;
     return JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
   } catch { return null; }
+}
+
+/**
+ * @internal — exposed for tests only (failure-contract refactor, Round 2
+ * fix M3). `_SKIP_THRESHOLD`/`_MIN_HITS` are module-level `const`s computed
+ * once at import time, so a test cannot retroactively change them by
+ * mutating `process.env` after this module has already been evaluated —
+ * the migration-regression test spawns a fresh child process and reads
+ * this export's JSON output instead.
+ * @returns {{ skipThreshold: number, minHits: number }}
+ */
+export function _getResolvedPolicyForTest() {
+  return { skipThreshold: _SKIP_THRESHOLD, minHits: _MIN_HITS };
 }

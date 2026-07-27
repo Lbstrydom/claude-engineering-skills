@@ -1,5 +1,52 @@
 # Project Status Log
 
+## 2026-07-27 (even later) — shipped failure-contract refactor (stop reporting dependency failure as success)
+
+Implemented `docs/plans/refactor-failure-contract.md` via `/cycle code
+<plan> --autonomous` (§7's clustered path — 2 independent clusters, no
+cross-cluster dependency). This closes the #2-ranked (by leverage) and
+last-remaining tech-debt cluster from the 2026-07-27 GPT-5.6 debt
+clustering pass (`vcs-protocol` and `autofix-security` shipped earlier
+today).
+
+**What changed**: two independent CLI/learning-store code paths that
+converted a real dependency failure into a fabricated success result now
+say so honestly. **Cluster A** — `quickfix-stats.mjs`'s `rebuildFromCloud`
+no longer overwrites a good cache with an empty one on a transient cloud
+read failure (and a new all-malformed-records case is caught too); a new
+`quickfix-policy.mjs` replaces two independent unvalidated
+`parseFloat`/`parseInt` env-var reads (`quickfix-stats.mjs` +
+`quickfix-patterns.mjs`) with one shared, validated parser. **Cluster B**
+— `persona-consistency-promote.mjs` no longer conflates "the
+candidate-list call failed" with "there's nothing to promote" (new
+`EXIT.DEPENDENCY_FAILURE`), and no longer conflates "cloud is
+deliberately off" with "a real ship-event recording failure" — both via
+new pure interpreter functions.
+
+**Audit**: per-cluster GPT audits (Cluster A: 2 rounds, Cluster B: 2
+rounds) + 1 consolidated Gemini gate over the union diff (8 files),
+clean APPROVE on the first pass. Two genuine bugs caught mid-audit: a
+`__proto__`-collision-adjacent gap in `aggregateDecisions`'s pattern-key
+handling (fixed with a null-prototype result container), and a bug in
+Cluster B's OWN round-1 fix (`parsed.rowsAffected || 0` let a truthy
+string `'0'` bypass a strict `=== 0` guard downstream — fixed with a
+proper integer check). Four independent, pre-existing `loadStats`
+fail-open/validation gaps captured as debt rather than fixed — outside
+this plan's named scope. The shared validator module was relocated
+mid-audit (GPT's own recommendation) from `scripts/lib/learning/` to the
+domain-neutral `scripts/lib/quickfix-policy.mjs`.
+
+Files: `scripts/lib/quickfix-policy.mjs` (new),
+`scripts/lib/learning/quickfix-stats.mjs`,
+`scripts/lib/quickfix-patterns.mjs`,
+`scripts/persona-consistency-promote.mjs`, plus their 4 test files.
+Scope: backend only. Full suite green (9057+ passing, 22 skipped —
+disposable-DB tests, no `AUDIT_DB_TEST_URL` here).
+
+**All 3 clusters from today's tech-debt clustering pass are now closed**:
+vcs-protocol (already-fixed, reconciled), autofix-security (shipped),
+failure-contract (shipped).
+
 ## 2026-07-27 (later still) — shipped autofix-security refactor (containment, dedup, silent-I/O fixes)
 
 Implemented `docs/plans/refactor-autofix-security.md` via `/cycle code <plan>

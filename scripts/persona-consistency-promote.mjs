@@ -47,22 +47,17 @@ import {
   isCloudEnabled,
   getRepoIdByUuid,
 } from './learning-store.mjs';
-// Resolves Gemini-final-G3: `promoteRegressionSpec` and `recordShipEvent`
-// were direct learning-store imports; the plan's Phase 6 explicitly routes
-// them through the cross-skill CLI facade (the same way it does for
-// list-consistency-candidates). The helpers below replace the direct
-// calls with subprocess invocations. getRepoIdByUuid stays direct — it's
-// a read-only identity-resolution helper used by reconcile-time DB
-// disambiguation, not a persistence write.
-
-// Resolves Gemini-final-wronglyDismissed-R4-M4: the audited plan dictates
-// that `persona-consistency-promote.mjs` MUST invoke the cross-skill CLI
-// for `list-consistency-candidates` (NOT a direct DB call). We honour the
-// plan's explicit architectural mandate by spawning the CLI as a subprocess
-// — the cross-skill facade is the canonical persistence boundary for this
-// read path. promoteRegressionSpec, getRepoIdByUuid, recordShipEvent
-// remain direct imports because the plan didn't explicitly route them
-// through the facade.
+// Resolves Gemini-final-G3 + Gemini-final-wronglyDismissed-R4-M4 (round-1
+// code-audit finding 470f7e66 — the two comment blocks these replace
+// contradicted each other on which calls go through the facade). The
+// actual, current contract: `promoteRegressionSpec`, `recordShipEvent`,
+// and `list-consistency-candidates` ALL route through the cross-skill CLI
+// facade (`callCrossSkill` below) as subprocess invocations — the plan's
+// Phase 6 explicitly mandates this for all three persistence/read
+// operations. `getRepoIdByUuid` stays a direct `learning-store.mjs`
+// import — it's a read-only identity-resolution helper used by
+// reconcile-time DB disambiguation, not a persistence write, and was
+// never part of the facade mandate.
 // Resolve cross-skill.mjs as a sibling of this script (source layout:
 // `scripts/cross-skill.mjs`; consumer layout: `scripts/.claude-skills/cross-skill.mjs`).
 // Hardcoding `scripts/...` would break after consumer-side relocation.
@@ -70,8 +65,15 @@ const CROSS_SKILL_PATH = fileURLToPath(new URL('./cross-skill.mjs', import.meta.
 
 function callCrossSkill(repoRoot, command, payload) {
   try {
+    // process.execPath (not a bare 'node'), matching the same PATH-drift
+    // reasoning already applied to this plan's own migration test
+    // (tests/quickfix-patterns.test.mjs) — a bare 'node' can resolve to a
+    // different runtime than the parent process, or not resolve at all,
+    // under a version manager, a stripped PATH (git hooks, CI containers,
+    // launchd/systemd), or certain Windows shells (Gemini gate shadow
+    // finding 58e35e26).
     const out = execFileSync(
-      'node',
+      process.execPath,
       [CROSS_SKILL_PATH, command, '--json', JSON.stringify(payload)],
       { cwd: repoRoot, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] },
     );
@@ -95,44 +97,159 @@ function callCrossSkill(repoRoot, command, payload) {
   }
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// Failure-contract refactor (docs/plans/refactor-failure-contract.md,
+// Cluster B) — pure interpreters for each callCrossSkill() response, so the
+// actual decision logic (a real dependency failure must never read as an
+// empty/cloud-off/successful result) is directly assertable with plain
+// objects, no DB/subprocess involved.
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A malformed top-level `callCrossSkill` result (`null`, an array, a
+ * string, a number, or an object with a non-boolean `ok`) must never reach
+ * an interpreter's own field access — that would throw a TypeError BEFORE
+ * the interpreter's own failure-handling logic (including
+ * `EXIT.DEPENDENCY_FAILURE`) ever runs. Checked first by every interpreter
+ * below.
+ * @param {unknown} parsed
+ * @returns {boolean}
+ */
+function isWellFormedCliResponse(parsed) {
+  return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) && typeof parsed.ok === 'boolean';
+}
+
+/**
+ * Interpret `list-consistency-candidates`'s response. A real dependency
+ * failure (`ok:false`) must never be conflated with a legitimate empty
+ * result — that conflation was Defect 3 (a broken candidate-list check
+ * looked identical, in every log and exit code, to a repo with genuinely
+ * nothing to promote).
+ * @param {unknown} parsed
+ * @returns {{ok:true, candidates: Array} | {ok:false, message: string}}
+ */
+export function interpretCandidateListResult(parsed) {
+  if (!isWellFormedCliResponse(parsed)) {
+    return { ok: false, message: 'list-consistency-candidates returned an invalid response envelope (not a well-formed {ok:boolean,...} object)' };
+  }
+  if (parsed.ok === true) {
+    if (!Array.isArray(parsed.candidates)) {
+      return { ok: false, message: `list-consistency-candidates returned ok:true without a candidates array (got ${typeof parsed.candidates}) — protocol violation` };
+    }
+    return { ok: true, candidates: parsed.candidates };
+  }
+  return { ok: false, message: parsed.error || parsed.code || 'list-consistency-candidates failed' };
+}
+
+/**
+ * Turn an interpreted candidate-list result into the caller's actual
+ * decision: continue with the candidates, report a genuine empty queue, or
+ * treat a dependency failure as UNKNOWN (never as zero).
+ * @param {{ok:true, candidates: Array} | {ok:false, message: string}} listResult
+ * @returns {{shouldContinue:false, exitCode:number, message:string} | {shouldContinue:true, candidates: Array}}
+ */
+export function evaluateCandidateListOutcome(listResult) {
+  if (!listResult.ok) {
+    return {
+      shouldContinue: false,
+      exitCode: EXIT.DEPENDENCY_FAILURE,
+      message: `Could not check for consistency candidates: ${listResult.message} — treating this as unknown, not zero.`,
+    };
+  }
+  if (listResult.candidates.length === 0) {
+    return { shouldContinue: false, exitCode: EXIT.OK, message: 'No pending consistency candidates.' };
+  }
+  return { shouldContinue: true, candidates: listResult.candidates };
+}
+
+/**
+ * Interpret `record-ship-event`'s response. Defect 4: the old guard
+ * (`!parsed.ok && !parsed.cloud`) conflated "cloud deliberately off" with
+ * "a real failure" — every failure response lacks a `cloud` field
+ * entirely, so `!parsed.cloud` was true for BOTH cases, silently reporting
+ * every real failure as `{ok:true}`.
+ * @param {unknown} parsed
+ * @returns {{ok:true, cloud:boolean} | {ok:false, message:string}}
+ */
+export function interpretShipEventResult(parsed) {
+  if (!isWellFormedCliResponse(parsed)) {
+    return { ok: false, message: 'record-ship-event returned an invalid response envelope (not a well-formed {ok:boolean,...} object)' };
+  }
+  if (parsed.ok === true) {
+    if (typeof parsed.cloud !== 'boolean') {
+      return { ok: false, message: `record-ship-event returned ok:true with a non-boolean cloud field (got ${typeof parsed.cloud}) — protocol violation` };
+    }
+    return { ok: true, cloud: parsed.cloud };
+  }
+  return { ok: false, message: parsed.error || parsed.code || 'record-ship-event failed' };
+}
+
+/**
+ * Interpret `promote-regression-spec`'s response — the third, previously
+ * unguarded `callCrossSkill` consumer (round-4 shadow finding da923982).
+ * Behavior-preserving for the already-handled case (`promoteOne`'s
+ * existing `!updateResult.ok || updateResult.rowsAffected === 0` check is
+ * unchanged); this replaces an uncaught TypeError on a malformed envelope
+ * with a typed failure result.
+ *
+ * Round-2 code-audit finding c014fb2a (genuine bug in this file's own
+ * round-1 fix): the original `parsed.rowsAffected || 0` only checked the
+ * top-level `ok` boolean, not `rowsAffected` itself — a malformed response
+ * like `{ok:true, rowsAffected:'0'}` (a STRING, truthy in JS) would pass
+ * through as the string `'0'`, and `promoteOne`'s strict `=== 0` guard
+ * would then fail to catch it (`'0' === 0` is `false`), letting a
+ * zero-row DB write silently proceed as a reported success. `rowsAffected`
+ * on an `ok:true` response must now be a finite, non-negative safe
+ * integer; anything else is a protocol violation.
+ * @param {unknown} parsed
+ * @returns {{ok:true, rowsAffected:number} | {ok:false, rowsAffected:0, error:string}}
+ */
+export function interpretPromoteRegressionSpecResult(parsed) {
+  if (!isWellFormedCliResponse(parsed)) {
+    return { ok: false, rowsAffected: 0, error: 'promote-regression-spec returned an invalid response envelope (not a well-formed {ok:boolean,...} object)' };
+  }
+  if (parsed.ok === true) {
+    const rows = parsed.rowsAffected;
+    if (!(typeof rows === 'number' && Number.isSafeInteger(rows) && rows >= 0)) {
+      return { ok: false, rowsAffected: 0, error: `promote-regression-spec returned ok:true with a non-integer rowsAffected (got ${JSON.stringify(rows)}) — protocol violation` };
+    }
+    return { ok: true, rowsAffected: rows };
+  }
+  return { ok: false, rowsAffected: 0, error: parsed.error || parsed.code || 'promote-regression-spec failed' };
+}
+
 function listConsistencyCandidatesViaCli(repoRoot, repoId, sinceTs) {
   const parsed = callCrossSkill(repoRoot, 'list-consistency-candidates', {
     repoId, sinceTs, limit: 100,
   });
-  if (!parsed.ok) {
-    process.stderr.write(`  [promote] list-consistency-candidates failed: ${parsed.code || parsed.error || 'unknown'}\n`);
-    return [];
+  const result = interpretCandidateListResult(parsed);
+  if (!result.ok) {
+    process.stderr.write(`  [promote] list-consistency-candidates failed: ${result.message}\n`);
   }
-  return parsed.candidates || [];
+  return result;
 }
 
 async function promoteRegressionSpecViaCli(repoRoot, args) {
   const parsed = callCrossSkill(repoRoot, 'promote-regression-spec', args);
-  if (!parsed.ok) {
-    return { ok: false, rowsAffected: 0, error: parsed.code || parsed.error || 'unknown' };
-  }
-  return { ok: true, rowsAffected: parsed.rowsAffected || 0 };
+  return interpretPromoteRegressionSpecResult(parsed);
 }
 
 async function recordShipEventViaCli(repoRoot, args) {
   const parsed = callCrossSkill(repoRoot, 'record-ship-event', args);
-  if (!parsed.ok && !parsed.cloud) {
-    // Cloud off — silently OK
-    return { ok: true };
-  }
-  return { ok: !!parsed.ok };
+  return interpretShipEventResult(parsed);
 }
 
 const JOURNAL_DIR = path.join('.persona-test', 'promotion-journal');
 const E2E_DIR     = path.join('tests', 'e2e');
 
 export const EXIT = Object.freeze({
-  OK:               0,
-  NOTHING_PENDING:  0,    // empty queue is success, not failure
-  CLOUD_OFF:        0,    // no candidates to promote when cloud is off
-  USER_DECLINED:    0,    // user said n — also success
-  BAD_INPUT:        1,
-  PARTIAL_FAILURE:  2,    // some promotions succeeded, some failed
+  OK:                 0,
+  NOTHING_PENDING:    0,    // empty queue is success, not failure
+  CLOUD_OFF:          0,    // no candidates to promote when cloud is off
+  USER_DECLINED:      0,    // user said n — also success
+  BAD_INPUT:          1,
+  PARTIAL_FAILURE:    2,    // some promotions succeeded, some failed
+  DEPENDENCY_FAILURE: 3,    // the candidate-list call itself failed — unknown, not zero
 });
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -223,11 +340,14 @@ export async function promoteCandidates(args, deps = {}) {
     return result;
   }
 
-  const candidates = listConsistencyCandidatesViaCli(args.repoRoot, repoId, args.since || null);
-  if (!candidates || candidates.length === 0) {
-    process.stdout.write('No pending consistency candidates.\n');
+  const listResult = listConsistencyCandidatesViaCli(args.repoRoot, repoId, args.since || null);
+  const outcome = evaluateCandidateListOutcome(listResult);
+  if (!outcome.shouldContinue) {
+    (outcome.exitCode === EXIT.OK ? process.stdout : process.stderr).write(outcome.message + '\n');
+    result.exitCode = outcome.exitCode;
     return result;
   }
+  const candidates = outcome.candidates;
 
   // Render header.
   process.stdout.write(`\n${candidates.length} consistency candidate(s) pending:\n`);
@@ -404,14 +524,20 @@ async function promoteOne(repoRoot, repoId, cand, promotedBy) {
       timestamp: new Date().toISOString(),
     });
     try {
-      // Routed through cross-skill CLI (Gemini-final-G3).
-      await recordShipEventViaCli(repoRoot, {
+      // Routed through cross-skill CLI (Gemini-final-G3). Promotion still
+      // never blocks on this result (unchanged, deliberate, pre-existing
+      // design) — only the previous silence on a REAL failure is fixed
+      // (Defect 4: recordShipEventViaCli's old guard misreported every
+      // failure as {ok:true}, so there was nothing for this caller to
+      // observe even if it had looked).
+      const r = await recordShipEventViaCli(repoRoot, {
         repoId,
         commitSha: safeGitSha(repoRoot),
         branch: safeGitBranch(repoRoot),
         outcome: 'shipped',
         blockReasons: [],
       });
+      if (!r.ok) process.stderr.write(`  [promote] ship-event recording failed for ${cand.id}: ${r.message}\n`);
     } catch { /* observability — never block promotion on it */ }
 
     removeJournal(repoRoot, cand.id);
@@ -457,9 +583,12 @@ export async function reconcilePromotionJournal(repoRoot) {
   if (canQueryDb) {
     // Pre-fetch the current candidate set so we can probe individual
     // fingerprints below. (Listing via the CLI honours the cross-skill
-    // facade per the plan.)
-    const liveCandidates = listConsistencyCandidatesViaCli(repoRoot, repoId, null);
-    for (const c of liveCandidates) {
+    // facade per the plan.) A dependency failure here degrades to "can't
+    // disambiguate any pending entry this run" (same as !canQueryDb below)
+    // rather than throwing — reconcile is a best-effort recovery pass, and
+    // a stale journal entry is safely picked up again on the NEXT run.
+    const listResult = listConsistencyCandidatesViaCli(repoRoot, repoId, null);
+    for (const c of (listResult.ok ? listResult.candidates : [])) {
       if (c.candidate_fingerprint) candidateByFingerprint.set(c.candidate_fingerprint, c);
     }
   }

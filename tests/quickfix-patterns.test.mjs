@@ -4,6 +4,9 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import path from 'node:path';
 import {
   PATTERNS,
   SUPPRESS_BY_EXT,
@@ -11,7 +14,11 @@ import {
   isSensitivePath,
   hasSuppression,
   matchPatterns,
+  _getResolvedPolicyForTest,
 } from '../scripts/lib/quickfix-patterns.mjs';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const QUICKFIX_PATTERNS_PATH = path.resolve(__dirname, '../scripts/lib/quickfix-patterns.mjs');
 
 describe('PATTERNS schema', () => {
   it('AC14 — at least 10 entries; each has name/severity/regex/suggestion', () => {
@@ -528,6 +535,36 @@ describe('matchPatterns — accepted overlap between new and existing patterns (
     const m = matchPatterns(code, { filePath: 'a.js' });
     assert.ok(m.some(x => x.name === 'masked-error'));
     assert.ok(m.some(x => x.name === 'transaction-empty-catch'));
+  });
+});
+
+describe('quickfix env-var policy migration (failure-contract refactor, Round 1 H3 + Round 2 M3)', () => {
+  it('_getResolvedPolicyForTest() with no env override matches the unchanged defaults (weaker check — see the child-process test below for the actual migration proof)', () => {
+    const resolved = _getResolvedPolicyForTest();
+    assert.deepEqual(resolved, { skipThreshold: 0.20, minHits: 10 });
+  });
+
+  it('spawns a fresh process to prove quickfix-patterns.mjs actually imports the shared validated parser, not a bare parseFloat/parseInt (Round 2 fix M3)', () => {
+    // '0.2junk' can't distinguish the two implementations: parseFloat('0.2junk')
+    // (the OLD behavior) is ALSO 0.2, coincidentally equal to the new fallback
+    // default. '0.7junk' genuinely differs: legacy parseFloat -> 0.7; the new
+    // validator rejects it (Number('0.7junk') is NaN) -> falls back to 0.20.
+    const moduleUrl = pathToFileURL(QUICKFIX_PATTERNS_PATH).href;
+    const script = `import { _getResolvedPolicyForTest } from ${JSON.stringify(moduleUrl)}; console.log(JSON.stringify(_getResolvedPolicyForTest()));`;
+    const stdout = execFileSync(process.execPath, ['--input-type=module', '-e', script], {
+      encoding: 'utf-8',
+      env: {
+        ...process.env,
+        LEARNING_QUICKFIX_SKIP_THRESHOLD: '0.7junk',
+        LEARNING_QUICKFIX_MIN_HITS: '25junk',
+      },
+    });
+    // The malformed env values trigger quickfix-policy.mjs's validator
+    // warnings, which go to stderr — stdout must carry ONLY the JSON line
+    // from _getResolvedPolicyForTest's own console.log.
+    const resolved = JSON.parse(stdout);
+    assert.equal(resolved.skipThreshold, 0.20, 'legacy parseFloat("0.7junk") would be 0.7 — 0.20 proves the new validator rejected it');
+    assert.equal(resolved.minHits, 10, 'legacy parseInt("25junk", 10) would be 25 — 10 proves the new validator rejected it');
   });
 });
 

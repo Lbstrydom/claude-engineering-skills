@@ -28,13 +28,17 @@ import fs from 'node:fs';
 
 import { betaPosterior } from './beta-posterior.mjs';
 import { atomicWriteFileSync } from '../file-io.mjs';
+import {
+  parseValidatedThreshold, parseValidatedMinHits,
+  QUICKFIX_SKIP_THRESHOLD_DEFAULT, QUICKFIX_MIN_HITS_DEFAULT,
+} from '../quickfix-policy.mjs';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
 const CACHE_PATH        = '.audit/quickfix-pattern-stats.json';
 const HITS_JSONL_PATH   = '.audit/quickfix-hits.jsonl';
-const SKIP_THRESHOLD    = parseFloat(process.env.LEARNING_QUICKFIX_SKIP_THRESHOLD || '0.20');
-const MIN_HITS          = parseInt(process.env.LEARNING_QUICKFIX_MIN_HITS || '10', 10);
+const SKIP_THRESHOLD    = parseValidatedThreshold(process.env.LEARNING_QUICKFIX_SKIP_THRESHOLD, QUICKFIX_SKIP_THRESHOLD_DEFAULT);
+const MIN_HITS          = parseValidatedMinHits(process.env.LEARNING_QUICKFIX_MIN_HITS, QUICKFIX_MIN_HITS_DEFAULT);
 const CACHE_VERSION     = 1;
 
 // ── Public API ─────────────────────────────────────────────────────────────
@@ -103,8 +107,30 @@ export async function rebuildFromCloud({ repoId = null, cachePath = CACHE_PATH, 
   if (!cloudEnabled) {
     return { ok: false, totalDecisions: 0, patternCount: 0, error: 'cloud-disabled' };
   }
-  const decisions = await readQuickfixDecisions(learningStore, { repoId });
+  const readResult = await readQuickfixDecisions(learningStore, { repoId });
+  if (!readResult.ok) {
+    // Reuses the exact {ok:false, error} shape the cloud-disabled branch
+    // above already returns — a transient read failure or a malformed
+    // success payload must never clobber an existing good cache, so
+    // writeAtomic is never reached on this path.
+    return { ok: false, totalDecisions: 0, patternCount: 0, error: readResult.error };
+  }
+  const decisions = readResult.decisions;
   const stats = aggregateDecisions(decisions);
+  // Round 3 fix M4: every legitimate quickfix_hit decision carries a
+  // recognizable context.pattern by construction — a non-empty decisions
+  // array where NONE aggregated into a pattern is a protocol/data-shape
+  // regression, not a genuine empty result. aggregateDecisions already
+  // tolerates a MIX of good and malformed records correctly (this only
+  // fires when EVERY record failed to aggregate).
+  if (decisions.length > 0 && Object.keys(stats).length === 0) {
+    return {
+      ok: false,
+      totalDecisions: decisions.length,
+      patternCount: 0,
+      error: `all ${decisions.length} decisions read from cloud lacked a recognizable pattern field — treating as a protocol/data-shape regression, not a genuine empty result`,
+    };
+  }
   const cacheBody = {
     _version: CACHE_VERSION,
     _generatedAt: new Date().toISOString(),
@@ -193,6 +219,18 @@ export async function rebuildFromBootstrap({
  *   no_action → not counted (insufficient evidence yet)
  *   <missing>→ not counted
  *
+ * `context.pattern` is untrusted cloud-read data — round-1 code-audit
+ * finding 0e342a58 (sustained): a truthy-but-non-string value (an object,
+ * array, boolean, number) previously passed the old `if (!pattern)
+ * continue;` guard and became a Map/object key via implicit coercion,
+ * which for a value like `'__proto__'` risks reassigning the plain
+ * object's prototype rather than creating an own property. Now requires a
+ * non-blank STRING pattern, and the result container is a null-prototype
+ * object (`Object.create(null)`) so no pattern string, however chosen, can
+ * ever reach `Object.prototype`. Mixed good/bad records stay tolerant
+ * (unchanged) — only individual malformed records are skipped, same as
+ * today's `!pattern` guard already did for falsy values.
+ *
  * @param {Array<{context: {pattern: string}, outcome: {action: string}|null}>} decisions
  * @returns {Record<string, {alpha:number, beta:number, acceptanceRate:number, totalHits:number, ci_low:number}>}
  */
@@ -200,7 +238,7 @@ export function aggregateDecisions(decisions) {
   const counters = new Map(); // pattern → { alpha, beta, totalHits }
   for (const d of decisions) {
     const pattern = d?.context?.pattern;
-    if (!pattern) continue;
+    if (typeof pattern !== 'string' || pattern.trim() === '') continue;
     let c = counters.get(pattern);
     if (!c) { c = { alpha: 0, beta: 0, totalHits: 0 }; counters.set(pattern, c); }
     c.totalHits += 1;
@@ -209,7 +247,7 @@ export function aggregateDecisions(decisions) {
     else if (action === 'suppress' || action === 'ignore') c.beta += 1;
     // 'no_action' or unknown → not counted in alpha/beta (totalHits still bumps)
   }
-  const out = {};
+  const out = Object.create(null);
   for (const [pattern, c] of counters) {
     const post = betaPosterior(c.alpha, c.beta);
     out[pattern] = {
@@ -234,18 +272,29 @@ function computeWatermark(decisions) {
 
 /**
  * Read all quickfix_hit decisions from cloud.  Pulls in pages of 1000
- * to avoid Supabase row-limit truncation surprises.  Best-effort — empty
- * array on failure.
+ * to avoid Supabase row-limit truncation surprises.
+ *
+ * Returns a typed result rather than a bare array (failure-contract
+ * refactor, Defect 2): the missing-capability branch, the caught-exception
+ * branch, and a non-array success payload (Round 1 finding M1 — a protocol
+ * violation, not a legitimate empty result) all now return
+ * `{ok:false, error}` instead of `[]`, which was bitwise indistinguishable
+ * from a genuinely empty cloud response and let `rebuildFromCloud` silently
+ * overwrite a good cache with an empty one on a transient read failure.
+ * @returns {Promise<{ok:true, decisions: Array} | {ok:false, error:string}>}
  */
 async function readQuickfixDecisions(learningStore, { repoId } = {}) {
   // M3 P3 — replaced the raw `lib/stores/supabase-store::getWriteClient()` +
   // a hand-rolled pagination loop with the typed `readDecisionsPaginated`
   // export. The store passed in is the barrel learning-store; if it's
-  // missing the helper we degrade gracefully to empty results.
+  // missing the helper we degrade gracefully to a failure result.
   const ls = learningStore;
-  if (!ls || typeof ls.readDecisionsPaginated !== 'function') return [];
+  if (!ls || typeof ls.readDecisionsPaginated !== 'function') {
+    return { ok: false, error: 'readDecisionsPaginated is not available on the provided learning store' };
+  }
+  let decisions;
   try {
-    return await ls.readDecisionsPaginated({
+    decisions = await ls.readDecisionsPaginated({
       decisionType: 'quickfix_hit',
       repoId: repoId || null,
       pageSize: 1000,
@@ -253,8 +302,12 @@ async function readQuickfixDecisions(learningStore, { repoId } = {}) {
     });
   } catch (err) {
     process.stderr.write(`[quickfix-stats] read exception: ${err.message}\n`);
-    return [];
+    return { ok: false, error: err.message };
   }
+  if (!Array.isArray(decisions)) {
+    return { ok: false, error: `readDecisionsPaginated returned a non-array payload (${typeof decisions}) — protocol violation` };
+  }
+  return { ok: true, decisions };
 }
 
 /**

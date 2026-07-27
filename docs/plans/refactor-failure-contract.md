@@ -1,7 +1,9 @@
 # Plan: Failure-Contract Refactor — Stop Reporting Dependency Failure As Success
 
 - **Date**: 2026-07-27
-- **Status**: Approved — audited via `/audit-plan` (3 GPT rounds, 9 findings all accepted/fixed; 2 Gemini gate rounds, both primary APPROVE — see Audit Trail). NOT YET IMPLEMENTED — planning + audit only; implementation is future work for a separate session.
+- **Status**: Complete — implemented + audited (3 GPT + 2 Gemini plan-audit
+  rounds; per-cluster code-audit: Cluster A 2 GPT rounds, Cluster B 2 GPT
+  rounds, consolidated Gemini gate 1 round — see Implementation Log).
 - **Author**: Claude + Lbstrydom
 - **Scope**: backend
 - **Target domain(s)**: `learning-store`, `persona-test`, `claude-hooks`
@@ -1549,3 +1551,79 @@ cross-cluster dependency graph: none.
     coherence/clarification-only findings, not new design defects) — a
     3rd round would chase a shrinking, non-gating tail rather than surface
     further substance. The plan is ready for implementation.
+
+## Implementation Log
+
+### 2026-07-27 — Implemented via `/cycle code <plan> --autonomous` (§7 clustered path)
+
+**Built, matching §4/§7 exactly**: both clusters implemented per their
+declared derived scope, audited independently (no cross-cluster
+dependency, as §7 argued), then gated by one mandatory consolidated
+Gemini review over the union diff.
+
+**Cluster A (Phase 1, `fix-gate: none`)** — `quickfix-policy.mjs` (new,
+zero-dependency validators), `quickfix-stats.mjs` (Defect 2: typed
+`readQuickfixDecisions` result, `rebuildFromCloud` never writes on
+failure, round-3 M4 all-malformed guard), `quickfix-patterns.mjs`
+(migrated onto the shared validators, `_getResolvedPolicyForTest`export).
+2 GPT rounds:
+- **R1** (H:1 M:7): fixed **0e342a58** (HIGH, sustained) —
+  `aggregateDecisions` accepted any truthy `pattern` value as a key
+  (prototype-pollution-adjacent via `__proto__`); now requires a non-blank
+  string and uses a null-prototype result container. Compromised on
+  **7eb839d1** (relocated `quickfix-policy.mjs` from
+  `scripts/lib/learning/` to the domain-neutral `scripts/lib/`, since
+  GPT's own recommendation judged the original path a cross-domain-
+  ownership smell). Deferred 4 findings to debt (`loadStats`'s own,
+  separate, pre-existing fail-open/validation gaps — a third function,
+  never named in this plan's scope). Dismissed 2 findings already settled
+  by the plan's own audit trail (the excluded bootstrap-heuristic item;
+  the already-audited warn+fallback env-var design).
+- **R2** (H:0 M:2 L:1): all 3 dismissed — 2 were the round-1 relocation
+  showing up as a stale plan-vs-code structural diff, 1 was a documented
+  `ADJACENCY_INCOMPLETE` coverage-cap control marker.
+
+**Cluster B (Phase 2, `fix-gate: final`)** — `persona-consistency-promote.mjs`:
+added `isWellFormedCliResponse` + 4 pure interpreters
+(`interpretCandidateListResult`, `evaluateCandidateListOutcome`,
+`interpretShipEventResult`, `interpretPromoteRegressionSpecResult`),
+`EXIT.DEPENDENCY_FAILURE`, and wired `promoteCandidates`/`promoteOne`
+through them. 2 GPT rounds:
+- **R1** (H:1 M:4 L:1): fixed **ecf391e6** (HIGH — added the missing
+  `{ok:true, rowsAffected:0}` test case; `promoteOne`'s own existing
+  check already handled it correctly, the gap was test coverage only) and
+  **470f7e66** (LOW — two adjacent comments genuinely contradicted each
+  other and the code about which calls route through the cross-skill
+  facade; consolidated into one accurate block). Dismissed 4 findings:
+  2 were the same Cluster-A relocation diff, 1 an unrelated repo-wide
+  Architecture finding, 1 the same `ADJACENCY_INCOMPLETE` marker.
+- **R2** (H:1 M:1): fixed **c014fb2a** (HIGH — a genuine bug in round-1's
+  own fix: `parsed.rowsAffected || 0` let a truthy STRING `'0'` pass
+  through unchanged, and `promoteOne`'s strict `=== 0` guard would then
+  fail to catch it — a zero-row DB write could silently read as success;
+  now requires a finite non-negative safe integer). Dismissed 1 unrelated
+  Architecture finding.
+
+**Consolidated Gemini gate**: 1 round, **APPROVE** (0 new findings, 0
+wrongly-dismissed) over the union diff (8 files: 4 production + 4 test,
+matching §7's own count exactly). Shadow (Claude Opus, non-gating) raised
+3 findings: 2 were re-discoveries of already-adjudicated concerns
+(`loadStats`'s fail-open behavior, already debt-captured from Cluster A's
+own round 1; the `list-consistency-candidates` `limit:100` pagination
+gap, already named and excluded as `bbd58a09` in this plan's own §1 "Prior
+art" section) — no new action; 1 was genuine and cheap (`callCrossSkill`
+spawned via a bare `'node'` string rather than `process.execPath`, an
+inconsistency with the exact PATH-drift reasoning this plan's own
+migration test already applied) — fixed.
+
+**Deviations from the original plan text**: only the `quickfix-policy.mjs`
+location (relocated per an in-audit GPT finding, not a plan defect) and
+the extra hardening rounds (0e342a58, ecf391e6/c014fb2a) closing gaps in
+the plan's OWN File-Level Plan text that surfaced only once real code
+existed to audit — never new scope beyond the plan's 4 named defects.
+
+**Remaining**: none open. 4 independent, pre-existing `loadStats` findings
+captured as debt (Cluster A round 1) for a future, separately-scoped
+follow-up. Full test suite green (9057+ passing, 22 skipped —
+disposable-DB integration tests, no `AUDIT_DB_TEST_URL` in this
+environment).
