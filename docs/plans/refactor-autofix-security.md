@@ -51,7 +51,7 @@ Three defects, verified live:
    (line 73, `` /`([^`]+\.(?:mjs|js|ts|py|json|yml|yaml|md|sql|toml|sh))`/g ``)
    — and pushes a `{ref, line}` for every match of EITHER. A line whose
    link text is itself backtick-quoted — e.g.
-   `` [`docs/gone.md`](docs/gone.md) `` — matches BOTH patterns on the
+   `` [`docs/<gone>.md`](docs/<gone>.md) `` — matches BOTH patterns on the
    SAME line, so `checkStaleFileRefs` emits TWO `stale/file-ref` findings
    sharing the identical `(file, line)`. **This exact style is pervasive
    in this repo's own AGENTS.md** (e.g. every
@@ -659,7 +659,7 @@ existing tests (both continue to pass unchanged).
 **Defect #1 — dedup regression**:
 - Two findings sharing the identical `(file, line)` (simulating the
   dual-regex duplicate: e.g.
-  `` [`docs/gone.md`](docs/gone.md) `` on line 2 of a fixture), both
+  `` [`docs/<gone>.md`](docs/<gone>.md) `` on line 2 of a fixture), both
   `fixable: true` / `ruleId: 'stale/file-ref'`. **Unambiguous expected
   result** (`/audit-plan` R1 finding L2 — the prior "either/or" wording
   was ambiguous): given the implementation processes the already
