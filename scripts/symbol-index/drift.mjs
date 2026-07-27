@@ -25,6 +25,7 @@ import {
   computeDriftScore,
   getTopDuplicateClusters,
   listSymbolsForSnapshot,
+  countSymbolsForSnapshot,
 } from '../learning-store.mjs';
 import { resolveRepoIdentity } from '../lib/repo-identity.mjs';
 import { symbolIndexConfig } from '../lib/config.mjs';
@@ -35,7 +36,18 @@ import { atomicWriteFileSync } from '../lib/file-io.mjs';
 function parseArgs(argv) {
   const args = { out: null, json: false };
   for (let i = 2; i < argv.length; i++) {
-    if (argv[i] === '--out') args.out = argv[++i];
+    if (argv[i] === '--out') {
+      // round-1 M2: reject a missing/flag-looking value rather than
+      // silently consuming the NEXT flag as the path (`--out --json` used
+      // to set out="--json" and leave args.json false) — same idiom as
+      // refresh-args.mjs's `--since-commit` guard.
+      const value = argv[i + 1];
+      if (!value || value.startsWith('--')) {
+        throw new Error(`--out requires a non-empty path value (got ${JSON.stringify(value ?? null)})`);
+      }
+      args.out = value;
+      i++;
+    }
     else if (argv[i] === '--json') args.json = true;
   }
   return args;
@@ -45,10 +57,18 @@ function atomicWrite(file, content) {
   atomicWriteFileSync(file, content);
 }
 
+/**
+ * Closed status set (docs/plans/symbol-index-pipeline-reliability-hardening.md
+ * Theme 2), mirroring `GRAPH_STATUS`'s "unknown is NOT a synonym for
+ * verified/green" doctrine — a missing/non-finite score must never read as
+ * GREEN via silent coercion.
+ */
+const DRIFT_STATUS = Object.freeze({ GREEN: 'GREEN', AMBER: 'AMBER', RED: 'RED', UNKNOWN: 'UNKNOWN' });
+
 function classify(driftScore, threshold) {
-  if (driftScore <= threshold * 0.5) return 'GREEN';
-  if (driftScore <= threshold) return 'AMBER';
-  return 'RED';
+  if (driftScore <= threshold * 0.5) return DRIFT_STATUS.GREEN;
+  if (driftScore <= threshold) return DRIFT_STATUS.AMBER;
+  return DRIFT_STATUS.RED;
 }
 
 // R1 audit M2: drift.mjs delegates rendering to lib/arch-render.mjs's
@@ -61,7 +81,10 @@ function renderMarkdownViaShared(drift, threshold, status, identity, clusters) {
     threshold,
     status,
     generatedAt: drift.generated_at,
-    commitSha: drift.refresh_id, // best-available identifier without git lookup
+    // No `commitSha` — renderDriftIssue already renders `refreshId`
+    // separately (`Commit: ${commitSha||'unknown'}   refresh_id:
+    // ${refreshId||'unknown'}`); passing the refresh UUID as `commitSha`
+    // too mislabeled it as a git commit (round-1 H5).
     refreshId: drift.refresh_id,
     repoName: identity.name,
     clusters,
@@ -103,7 +126,16 @@ async function main() {
     process.exit(2);
   }
   const threshold = symbolIndexConfig.driftThreshold;
-  const status = classify(Number(drift.score) || 0, threshold);
+  // Deliberately stricter than the old `Number(x) || 0` (round-1 H8):
+  // drift.score is a genuine JS number here (traced end-to-end through the
+  // drift_score RPC's jsonb_build_object serialization and pg's JSONB
+  // auto-parse, round-2 H3 rebuttal) — a non-finite value is a real
+  // data-integrity anomaly worth surfacing as UNKNOWN, never silently
+  // coerced to 0 (which reads as GREEN). `status = classify(...)` is
+  // computed as a plain value, never an early `return` — this line sits
+  // inside main() itself, and an early return here would skip the
+  // markdown render + stdout emission entirely (round-3 H1's real bug).
+  const status = Number.isFinite(drift.score) ? classify(drift.score, threshold) : DRIFT_STATUS.UNKNOWN;
 
   // Surface the top duplicate clusters for the issue body. Best-effort —
   // if the RPC fails (e.g. older Supabase without the migration applied),
@@ -152,20 +184,37 @@ async function main() {
       // filePath, startLine, symbolName, kind) — round-3 M1 fix: an
       // earlier draft read snake_case here, so every candidate silently
       // had undefined fields and this whole reconciliation was a no-op.
-      const symbols = await listSymbolsForSnapshot({ refreshId: snap.refreshId, limit: 10000 });
-      const candidates = symbols.map((s) => ({
-        filePath: s.filePath, symbolName: s.symbolName, kind: s.kind,
-        startLine: s.startLine, definitionId: s.definitionId,
-      }));
-      const { ambiguous, unresolved } = resolvePragmasToDefinitions(repoPragmas, candidates);
-      if (ambiguous.length > 0 || unresolved.length > 0) {
-        const rows = [
-          ...ambiguous.map((a) => `| \`${a.pragmaFile}:${a.pragmaLine}\` | ambiguous — declaration already claimed by another pragma |`),
-          ...unresolved.map((u) => `| \`${u.pragmaFile}:${u.pragmaLine}\` | unresolved — no declaration found within the resolution window |`),
-        ].join('\n');
-        ambiguousUnresolvedSection = `\n## Unresolved suppression pragmas (LOW — not excluded, not a safety gap)\n\n` +
-          `| Pragma location | Issue |\n|---|---|\n${rows}\n\n` +
-          `These \`// @duplicate-justification\` pragmas could not be resolved to a single declaration this refresh — they do NOT exclude anything from the drift score. Check placement (the pragma must sit immediately above the declaration it justifies) and that at most one pragma targets each declaration.\n`;
+      const [symbols, totalCount] = await Promise.all([
+        listSymbolsForSnapshot({ refreshId: snap.refreshId, limit: 10000 }),
+        countSymbolsForSnapshot({ refreshId: snap.refreshId }),
+      ]);
+      const capped = totalCount > 10000;
+      if (capped) {
+        process.stderr.write(`arch:drift: showing 10000 of ${totalCount} symbols in this cluster analysis (capped)\n`);
+      }
+      // Gemini final-gate finding (round 1): this candidate pool feeds
+      // pragma reconciliation below, NOT the rendered drift score/cluster
+      // body — a cap here risks false "unresolved pragma" warnings for
+      // symbols outside the capped pool, so skip the reconciliation
+      // entirely rather than report a misleading partial result.
+      if (capped) {
+        ambiguousUnresolvedSection = `\n## Unresolved suppression pragmas — skipped (LOW — capped snapshot)\n\n` +
+          `This snapshot has ${totalCount} symbols, over the 10000-row candidate-pool cap; pragma reconciliation was skipped rather than risk false "unresolved" warnings for symbols outside the capped pool.\n`;
+      } else {
+        const candidates = symbols.map((s) => ({
+          filePath: s.filePath, symbolName: s.symbolName, kind: s.kind,
+          startLine: s.startLine, definitionId: s.definitionId,
+        }));
+        const { ambiguous, unresolved } = resolvePragmasToDefinitions(repoPragmas, candidates);
+        if (ambiguous.length > 0 || unresolved.length > 0) {
+          const rows = [
+            ...ambiguous.map((a) => `| \`${a.pragmaFile}:${a.pragmaLine}\` | ambiguous — declaration already claimed by another pragma |`),
+            ...unresolved.map((u) => `| \`${u.pragmaFile}:${u.pragmaLine}\` | unresolved — no declaration found within the resolution window |`),
+          ].join('\n');
+          ambiguousUnresolvedSection = `\n## Unresolved suppression pragmas (LOW — not excluded, not a safety gap)\n\n` +
+            `| Pragma location | Issue |\n|---|---|\n${rows}\n\n` +
+            `These \`// @duplicate-justification\` pragmas could not be resolved to a single declaration this refresh — they do NOT exclude anything from the drift score. Check placement (the pragma must sit immediately above the declaration it justifies) and that at most one pragma targets each declaration.\n`;
+        }
       }
     }
   } catch (err) {
@@ -177,13 +226,33 @@ async function main() {
   if (args.json) process.stdout.write(JSON.stringify({ drift, threshold, status, stalePragmas }, null, 2) + '\n');
   else process.stdout.write(md);
 
-  if (args.out) atomicWrite(args.out, md);
+  // round-1 M1: an unwritable --out path (bad dir, full disk, permissions)
+  // must not read the same as an ordinary RED/AMBER/GREEN result — the
+  // report was already generated correctly (stdout above already has it);
+  // only its on-disk persistence failed. Caught here (not left to the
+  // top-level main().catch) so that distinction is visible in the message,
+  // not collapsed into a generic fatal.
+  let outWriteFailed = false;
+  if (args.out) {
+    try {
+      atomicWrite(args.out, md);
+    } catch (err) {
+      outWriteFailed = true;
+      process.stderr.write(`arch:drift: report generated but writing --out file ${args.out} failed: ${err.message}\n`);
+    }
+  }
 
   process.stderr.write(`arch:drift: status=${status} score=${drift.score}/${threshold}\n`);
-  process.exit(status === 'RED' ? 1 : 0);
+  // `process.exitCode` (not `process.exit()`) — avoids truncating the
+  // stdout write above before the event loop flushes it on a piped stdout
+  // (D3). Exit-code contract: UNKNOWN behaves exactly like GREEN/AMBER (0)
+  // — it is reported, never gating; only RED is non-zero. A failed --out
+  // write is an infra-level failure (mirrors the RPC-failure exit(2)
+  // convention above) and takes precedence over the status-driven code.
+  process.exitCode = outWriteFailed ? 2 : (status === DRIFT_STATUS.RED ? 1 : 0);
 }
 
-export const _internals = { atomicWrite };
+export const _internals = { atomicWrite, parseArgs };
 
 const isMain = (() => {
   try {

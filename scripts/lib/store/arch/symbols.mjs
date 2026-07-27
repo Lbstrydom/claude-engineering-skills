@@ -3,11 +3,12 @@
  * symbol_layering_violations + the listSymbolsForSnapshot JOIN reader +
  * copyForwardUntouchedFiles incremental-refresh helper.
  *
- * Owns 9 exports:
+ * Owns 10 exports:
  *   recordSymbolDefinitions, recordSymbolIndex, recordSymbolEmbedding,
  *   recordSymbolEmbeddings, recordLayeringViolations,
  *   recordDuplicateJustifications, listSymbolsForSnapshot,
- *   listLayeringViolationsForSnapshot, copyForwardUntouchedFiles
+ *   countSymbolsForSnapshot, listLayeringViolationsForSnapshot,
+ *   copyForwardUntouchedFiles
  *
  * Plan: docs/plans/sustainability-cleanup-batch.md (WS1);
  * recordDuplicateJustifications added by
@@ -16,7 +17,7 @@
  * @module scripts/lib/store/arch/symbols
  */
 
-import { many, upsert, withTx } from '../../db/query.mjs';
+import { many, one, upsert, withTx } from '../../db/query.mjs';
 import { getPool } from '../../db/client.mjs';
 import { isCloudEnabled } from '../repo.mjs';
 import { UPSERT_CHUNK_SIZE, chunk } from './_shared.mjs';
@@ -120,7 +121,7 @@ export async function recordSymbolEmbedding({ definitionId, embeddingModel, dime
   const pool = await getPool();
   if (!pool) return;
   try {
-    await pool.query(
+    const result = await pool.query(
       `INSERT INTO symbol_embeddings
          (definition_id, embedding_model, dimension, embedding, signature_hash)
        VALUES ($1::uuid, $2, $3, $4::vector, $5)
@@ -128,6 +129,14 @@ export async function recordSymbolEmbedding({ definitionId, embeddingModel, dime
        DO UPDATE SET embedding = EXCLUDED.embedding`,
       [definitionId, embeddingModel, dimension, literal, signatureHash]
     );
+    // symbol-index-pipeline-reliability-hardening Theme 5 (D5), extended
+    // to this single-record sibling for consistency with the batched
+    // recordSymbolEmbeddings fix — an INSERT..ON CONFLICT DO UPDATE should
+    // always affect exactly one row; a 0-row result is worth a visible
+    // warning rather than a silently "succeeded" void return.
+    if (result.rowCount !== 1) {
+      process.stderr.write(`  [symbol-index] recordSymbolEmbedding: expected 1 row written but DB reports rowCount=${result.rowCount} (definitionId=${definitionId}) — investigate\n`);
+    }
   } catch (err) {
     throw new Error(`recordSymbolEmbedding failed: ${err.message}`, { cause: err });
   }
@@ -178,7 +187,7 @@ export async function recordSymbolEmbeddings(rows) {
       params.push(r.definitionId, r.embeddingModel, r.dimension, literal, r.signatureHash);
     });
     try {
-      await pool.query(
+      const result = await pool.query(
         `INSERT INTO symbol_embeddings
            (definition_id, embedding_model, dimension, embedding, signature_hash)
          VALUES ${placeholders.join(', ')}
@@ -186,7 +195,16 @@ export async function recordSymbolEmbeddings(rows) {
          DO UPDATE SET embedding = EXCLUDED.embedding`,
         params
       );
-      total += batch.length;
+      // symbol-index-pipeline-reliability-hardening Theme 5 (D5): report the
+      // DB's own rowCount, not the attempted batch length — same fix already
+      // proven in this file's recordDuplicateJustifications/
+      // recordLayeringViolations. An INSERT..ON CONFLICT DO UPDATE should
+      // always match every attempted row, so a mismatch is worth a visible
+      // warning rather than silently trusting the attempted count.
+      if (result.rowCount !== batch.length) {
+        process.stderr.write(`  [symbol-index] recordSymbolEmbeddings: chunk attempted ${batch.length} rows but DB reports rowCount=${result.rowCount} — investigate\n`);
+      }
+      total += result.rowCount;
     } catch (err) {
       throw new Error(`recordSymbolEmbeddings failed: ${err.message}`, { cause: err });
     }
@@ -376,6 +394,47 @@ export async function listSymbolsForSnapshot({ refreshId, kind, domainTag, fileP
   }
 }
 
+/**
+ * Total count of symbols matching the same filters as
+ * listSymbolsForSnapshot, ignoring limit/offset — lets a caller detect
+ * when a paginated read is truncated (e.g. drift.mjs's pragma
+ * reconciliation, which needs to know whether its 10000-row candidate
+ * pool actually covers the whole snapshot). `count(*)` is Postgres
+ * `bigint` by default, which node-postgres returns as a STRING — the
+ * explicit `::int` cast is required so this returns a genuine number.
+ */
+export async function countSymbolsForSnapshot({ refreshId, kind, domainTag, filePathPrefix }) {
+  if (!await isCloudEnabled()) return 0;
+  const params = [refreshId];
+  const wheres = ['si.refresh_id = $1'];
+  if (Array.isArray(kind) && kind.length > 0) {
+    params.push(kind);
+    wheres.push(`sd.kind = ANY($${params.length})`);
+  }
+  if (domainTag) {
+    params.push(domainTag);
+    wheres.push(`si.domain_tag = $${params.length}`);
+  }
+  if (filePathPrefix) {
+    params.push(`${filePathPrefix}%`);
+    wheres.push(`si.file_path LIKE $${params.length}`);
+  }
+  const sql = `
+    SELECT count(*)::int AS total
+      FROM symbol_index si
+      JOIN symbol_definitions sd ON sd.id = si.definition_id
+     WHERE ${wheres.join(' AND ')}
+  `;
+  try {
+    const row = await one(sql, params);
+    return row ? row.total : 0;
+  } catch (err) {
+    const e = new Error(`countSymbolsForSnapshot failed: ${err.message}`);
+    e.code = 'RPC_ERROR';
+    throw e;
+  }
+}
+
 export async function listLayeringViolationsForSnapshot(refreshId) {
   if (!await isCloudEnabled()) return [];
   try {
@@ -486,12 +545,21 @@ export async function copyForwardUntouchedFiles({ repoId, fromRefreshId, toRefre
         });
         return `(${placeholders.join(', ')})`;
       });
-      await pool.query(
+      const result = await pool.query(
         `INSERT INTO symbol_index (${cols.map((c) => `"${c}"`).join(', ')})
          VALUES ${valueGroups.join(', ')}`,
         ps
       );
-      copied += payload.length;
+      // symbol-index-pipeline-reliability-hardening Theme 5 (D5): report the
+      // DB's own rowCount, not the attempted payload length — same fix as
+      // recordSymbolEmbeddings/recordDuplicateJustifications/
+      // recordLayeringViolations in this file. No ON CONFLICT here (a plain
+      // INSERT), so every attempted row should insert; a mismatch is worth a
+      // visible warning rather than silently trusting the attempted count.
+      if (result.rowCount !== payload.length) {
+        process.stderr.write(`  [symbol-index] copyForwardUntouchedFiles: page attempted ${payload.length} rows but DB reports rowCount=${result.rowCount} — investigate\n`);
+      }
+      copied += result.rowCount;
     }
     if (rows.length < pageSize) break;
     offset += pageSize;

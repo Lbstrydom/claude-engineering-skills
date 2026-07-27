@@ -72,6 +72,7 @@ export async function finalizeRefreshMode({ mode, sinceCommit, repoId, embedProf
       if (prior?.refreshId) {
         try {
           const priorRun = await getRefreshRun(prior.refreshId, {
+            repoId,
             select: ['walk_start_commit'],
           });
           // Anchor on the prior run's START commit (its HEAD-at-open), NOT a

@@ -75,12 +75,6 @@ export function buildTimeoutRecovery({ priorForRecovery, finalSymbols }) {
 }
 
 /**
- * Run the extract → summarise → embed subprocess pipeline (steps 6-8 + 8b).
- *
- * @param {{repoRoot: string, repoId: string, mode: string, restrictFiles: string[]|null, includeDelegates: boolean, coverageConfig: object, concreteEmbedModel: string, logOk: (s: string) => void}} args
- * @returns {Promise<{finalSymbols: Array<object>, violations: Array<object>, importEdges: Array<object>, coverageLine: object|null, extractionTimedOut: boolean, timeoutRecovery: object|null, recoveredTouchedSet: Set<string>|null}>}
- */
-/**
  * Write the newline-delimited `--files-from` manifest for a resolved
  * `restrictFiles` scope, or return `null` when there is no restriction at
  * all. Factored out so the two fixes below are directly unit-testable
@@ -94,7 +88,11 @@ export function buildTimeoutRecovery({ priorForRecovery, finalSymbols }) {
  * incremental scope was legitimately empty. `!== null` is the correct
  * test: write the manifest (even empty) for ANY resolved array, so
  * extract.mjs (enumerateFiles/isFullRunFromFiles — same fix applied
- * there) sees the real zero-file scope instead of guessing "unrestricted".
+ * there) sees the real zero-file scope instead of guessing "unrestricted"
+ * — the caller below always runs the real pipeline rather than
+ * short-circuiting on an empty scope, so a docs-only incremental refresh
+ * still gets a genuine (zero-symbol) coverage measurement instead of no
+ * measurement at all.
  *
  * e86a9cbb: the prior PID+timestamp path was predictable, and a plain 'w'
  * write follows a pre-existing symlink — a local attacker able to
@@ -116,6 +114,12 @@ export function writeFilesManifestIfRestricted(restrictFiles) {
   return manifestPath;
 }
 
+/**
+ * Run the extract → summarise → embed subprocess pipeline (steps 6-8 + 8b).
+ *
+ * @param {{repoRoot: string, repoId: string, mode: string, restrictFiles: string[]|null, includeDelegates: boolean, coverageConfig: object, concreteEmbedModel: string, logOk: (s: string) => void}} args
+ * @returns {Promise<{finalSymbols: Array<object>, violations: Array<object>, importEdges: Array<object>, coverageLine: object|null, extractionTimedOut: boolean, timeoutRecovery: object|null, recoveredTouchedSet: Set<string>|null}>}
+ */
 export async function runExtractSummariseEmbed({ repoRoot, repoId, mode, restrictFiles, includeDelegates, coverageConfig, concreteEmbedModel, logOk }) {
   // 6. Run extract → summarise → embed pipeline
   const extractArgs = [sibling('extract.mjs'), '--root', repoRoot, '--mode', mode];

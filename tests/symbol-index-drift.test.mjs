@@ -41,3 +41,34 @@ describe('symbol-index/drift.mjs — atomicWrite (atomic-write-adoption plan)', 
     assert.equal(fs.readFileSync(target, 'utf-8'), 'second');
   });
 });
+
+describe('symbol-index/drift.mjs — parseArgs (symbol-index-pipeline-reliability-hardening round-1 M2)', () => {
+  const { parseArgs } = _internals;
+
+  it('parses --out <path> and --json normally', () => {
+    const args = parseArgs(['node', 'drift.mjs', '--out', 'report.md', '--json']);
+    assert.equal(args.out, 'report.md');
+    assert.equal(args.json, true);
+  });
+
+  it('--out immediately followed by --json throws instead of silently swallowing --json (the exact bug)', () => {
+    assert.throws(
+      () => parseArgs(['node', 'drift.mjs', '--out', '--json']),
+      /--out requires a non-empty path value/,
+    );
+  });
+
+  it('--out at end-of-argv (no value at all) throws', () => {
+    assert.throws(
+      () => parseArgs(['node', 'drift.mjs', '--out']),
+      /--out requires a non-empty path value/,
+    );
+  });
+
+  it('a legitimate path value that happens to start with a dash-like name is still accepted (only a literal --flag form is rejected)', () => {
+    // Sanity: the guard checks `startsWith('--')`, not "contains a dash" —
+    // a normal relative path is never mistaken for a flag.
+    const args = parseArgs(['node', 'drift.mjs', '--out', 'my-report.md']);
+    assert.equal(args.out, 'my-report.md');
+  });
+});

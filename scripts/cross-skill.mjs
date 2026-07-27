@@ -2047,11 +2047,16 @@ async function cmdPublishRefreshRun() {
 
 async function cmdAbortRefreshRun() {
   const p = parsePayload();
-  if (!p.refreshId) return emitError('BAD_INPUT', 'refreshId required');
+  if (!p.repoId || !p.refreshId) return emitError('BAD_INPUT', 'repoId and refreshId required');
   await initLearningStore();
   try {
-    await abortRefreshRun({ refreshId: p.refreshId, reason: p.reason });
-    emit({ ok: true, cloud: true });
+    // Reflect the real outcome (shadow final-gate finding) — the same
+    // false-success class already fixed for refresh-lock.mjs (round-2 L1)
+    // and refresh.mjs's caller (round-4 H2): an external caller (CI,
+    // another skill) that aborts a wrong-repo or already-terminal run must
+    // be told so, not given an unconditional {ok:true}.
+    const { aborted } = await abortRefreshRun({ refreshId: p.refreshId, repoId: p.repoId, reason: p.reason });
+    emit({ ok: true, cloud: true, aborted });
   } catch (err) {
     emitError(err.code || 'EXCEPTION', err.message);
   }
