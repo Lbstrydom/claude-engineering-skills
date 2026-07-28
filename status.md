@@ -1,6 +1,58 @@
 # Project Status Log
 
-## 2026-07-28 (latest) — knip added standalone + wired into the pre-push gate
+## 2026-07-28 (latest) — cheap final-reviewer bake-off: routing fixed, schema wired, window opened
+
+Follow-on from the shadow A/B closing KEEP at $1.45/run. Three commits
+(`208eba2`, `862642d`, `8a1eb99`) chasing "can a cheaper model do this job?"
+
+**Two of our own defects, found by trying.** `kimi-k3` and `glm-5.2` first looked
+flaky — timeouts at 120s, 300s, 420s, and GLM passing the *large* transcript
+while failing the *small* one. Neither was the model:
+
+- **OpenRouter provider roulette.** One model id is served by many backends with
+  incompatible limits — `kimi-k3` is offered by Nebius at **8,000 context** and
+  by others at 1M; `glm-5.2` by AkashML at 96,890, under a 106K review. Same
+  request unpinned: Moonshot AI 15.5s vs Fireworks 5.0s. Fixed with
+  `provider: {require_parameters, sort:'throughput'}`.
+- **Reasoning tokens count against `max_tokens`.** `kimi-k3` spent 597 of a
+  600-token budget thinking. At `MAX_OUTPUT_TOKENS` (32,000) on a ~39 tok/s
+  backend that is ~830s of reasoning before the first byte of JSON — every
+  timeout we saw. Fixed with `reasoning: {effort:'low'}`.
+
+Latency went 420s-timeout → 34–62s. Both fixes benefit **every** OpenRouter
+route in the repo, not just this experiment.
+
+**Then the disqualifying result disqualified us, not them.** With routing fixed,
+both cheap models returned findings in *invented* schemas (`file`/`title`/
+`description` instead of `category`/`section`/`detail`/`risk`). That read as a
+hard no-swap — until the cause turned out to be that the `openai` transport
+never *asked* for a schema; it appended "Output strictly valid JSON" to the
+prompt and hoped. Opus complied only because the anthropic transport forces a
+`submit_review` tool call carrying the real schema. Wiring
+`response_format: json_schema` (from the same Zod source, opt-in per descriptor
+so Azure Foundry stays byte-identical) took both models from 0/4 compliant to
+**11/11 fields on every finding**. Result 2 is kept unedited in the write-up as
+the audit trail; Result 3 supersedes it.
+
+**Still no swap** — n=2, arms disagree with themselves across transcripts, and
+the code-drift confound stands. Insufficient evidence, not insufficient
+capability.
+
+**Window opened, honestly.** `scripts/final-review-bakeoff.mjs` counts readiness
+(`--status`, now 2/8) rather than eyeballing it, rejects plan-mode and
+unreplayable transcripts with reasons, and **refuses `--run` below target with
+exit 3** so a thin result cannot read like a verdict. The synchronous-swap rule
+genuinely cannot apply here: the known-defect corpus tests the *auditor*
+question, while a final reviewer judges a *deliberation*. The slot is free
+because the 2nd-gate shadow closed today.
+
+**Also fixed en route**: transcripts now persist to `.audit/` instead of `/tmp`
+(the reason 35 shadow runs left zero replayable inputs); a CRLF bug in
+`check-gate-contracts` that failed every multi-line `stated` quote on Windows
+while passing CI; and a `cross-skill shadow-overlap` probe that measures
+shadow-vs-pipeline marginal value from columns that already existed.
+
+## 2026-07-28 — knip added standalone + wired into the pre-push gate
 
 Direct follow-on from the same-day orphan-wave telemetry work below: added `knip`
 (unused files/deps/unresolved-imports) to this repo AND to `wine-cellar-app`

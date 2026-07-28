@@ -445,6 +445,7 @@ Self-check: `node scripts/lib/model-resolver.mjs resolve | catalog`.
 - Do NOT retry 404 — `classifyLlmError` treats any 4xx (except 429) as non-retryable.
 - When rewrapping an LLM error, surface `err.status` + the real provider
   `error.message` — don't collapse to `"API error ${status}"` (it names the bad model).
+- **OpenRouter**: one model id → many backends w/ incompatible ctx limits, picked per request; and reasoning tokens count against `max_tokens`. Unpinned runs fail at random, reading as model flakiness — always send `provider:{require_parameters,sort}` + `reasoning:{effort}`. [experiment-4](docs/research/experiment-4-cheap-final-reviewer-smoke.md)
 
 → Resolution-order detail, live-catalog mechanics, startup-log example, static-pool
 maintenance: [`docs/reference/model-resolution.md`](docs/reference/model-resolution.md).
