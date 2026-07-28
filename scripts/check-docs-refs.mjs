@@ -275,6 +275,10 @@ const TEXT_EXT = new Set([
   // carries tool-reported file paths, and treating it as binary would skip a
   // file whose contents genuinely look like references.
   '.sarif',
+  // .jsonc is JSON-with-comments (knip.jsonc, JSON5-shaped tool configs) — text
+  // for the same reason .sarif is: comments and values alike can carry a
+  // repo-relative path worth checking, and it is never an opaque binary blob.
+  '.jsonc',
 ]);
 const BINARY_EXT = new Set([
   '.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico', '.woff', '.woff2',
