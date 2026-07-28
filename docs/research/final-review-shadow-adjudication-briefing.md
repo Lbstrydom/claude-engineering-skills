@@ -1797,3 +1797,86 @@ node scripts/cross-skill.mjs final-review-stats adjudicate f69b1f8a-2ba3-4553-83
 node scripts/cross-skill.mjs final-review-stats adjudicate f69b1f8a-2ba3-4553-8349-b1c3f6a69d87 c5300134 dismissed
 ```
 
+
+---
+
+## Addendum — second-judge pass, and the resolved verdict (2026-07-28)
+
+A second LLM adjudicated all 88 shadow-only findings **blind**: no GPT column, no
+human labels, and the 25 already-adjudicated findings folded back in as a hidden
+calibration set. Prompt and payload: `.audit/shadow-eval/blind-adjudication-prompt.md`.
+
+### The second judge is not a better judge
+
+| | GPT-5.6 | judge 2 |
+|---|---|---|
+| agreement vs 25 human labels | 52% | **44%** |
+| recall on human-accepted | 29% | **24%** |
+| false-positive rate | **0%** | 13% |
+| two-judge verdict agreement (63 unadjudicated) | — | **41%** |
+
+Two independent models agreeing on 41% of verdicts is close to uninformative.
+This is the third time this repo has measured LLM re-judgement of historical
+findings and got an unreliable answer; treat both columns as triage aids, never
+as adjudication.
+
+### What the second judge did produce that GPT did not
+
+Its `unclear` verdicts carry a **checkable claim** rather than a shrug: 15 of 30
+say, in substance, *"real when filed, since fixed — here is the comment in the
+code that credits it."* 13 of those are in the unadjudicated tail.
+
+That claim is verifiable, so it was verified rather than believed:
+
+- **Mechanical, fingerprint-level**: only **3/63** unadjudicated findings have
+  their fingerprint cited in committed source (`0a6e553b`, `28bb874a`,
+  `caf64562` — all LOW). Attribution comments usually cite prose, not the hash,
+  so this materially undercounts.
+- **By hand, 4/4 correct**: `refresh-subprocess.mjs:184` cites
+  "final-gate shadow finding 0a6e553b" verbatim; `sync-to-repos.mjs:707` reads
+  "Gemini gate round-2 shadow finding #2 **(real bug, fixed)**";
+  `flagFromEnv.js:24` cites the "consolidated-gate shadow-review catch" for the
+  exact Docker `ARG`→`ENV` empty-string case; `undoManager.js:106` cites the
+  "Gemini-gate shadow catch" for guarding the stamp itself. Every spot-check
+  mapped to the right finding.
+
+### This falsifies the DROP arm
+
+The briefing left KEEP and DROP both live because they are measured in different
+units. The tail is now measured, and DROP fails on its own terms:
+
+| | count | share of the 63 |
+|---|---|---|
+| judged not-a-defect **and** LOW (the "predominantly dismissed/LOW" population) | 13 | **21%** |
+| fixed-during-loop with in-code attribution | 13 | 21% |
+| judged still-open real defects | 13 | 21% |
+
+"Predominantly" requires a majority. 21% is not one.
+
+**Crucially, KEEP does not depend on the contested measurement.** It was already
+met on formally-accepted-in-store HIGH/MED alone: **10 vs a threshold of 7**.
+Adding the fixed-with-attribution HIGH/MED findings takes it to 21 — but that
+addition only widens a margin that already held, so no judgement call about
+whether "fixed in code with attribution" counts as "human-accepted" needs to be
+made to reach the verdict. Recording it as an open question rather than
+resolving it silently.
+
+### Verdict: KEEP
+
+Both arms now point the same way, on the pre-registered rule as written. The
+substantive reason the tail looked like noise is structural and was named in the
+briefing: **the audit loop remediates between rounds, so the shadow's best
+catches get fixed before anyone formally adjudicates them.** The store records
+them as unresolved; the source records them as fixed, with credit. Roughly a
+fifth of the tail is in that state.
+
+Standing caveat: this measures the shadow's *finding quality*, not whether a
+permanent second gate is the right shape. It cost $50.90 over 35 runs ($1.45/run)
+and added 59.5s of gate latency. Re-enabling is
+`FINAL_REVIEW_SHADOW=claude-opus` in `~/.audit-loop.env`.
+
+**Follow-up worth doing regardless of the gate decision**: findings fixed
+mid-loop should be closed in the store at fix time. The attribution already gets
+written into the source comment; it is not written back to `user_action`. That
+gap is what made a $50.90 experiment hard to read, and it will make the next one
+hard to read too.
