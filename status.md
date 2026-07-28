@@ -1,6 +1,43 @@
 # Project Status Log
 
-## 2026-07-28 (latest) — skill-governance cluster shipped (retired the `.github/skills/` escape hatch across all three write paths)
+## 2026-07-28 (latest) — final-review shadow A/B adjudicated: verdict KEEP
+
+Closed the `FINAL_REVIEW_SHADOW` experiment (35 runs, $50.90, +59.5s gate
+latency, pair `gemini-pro-latest` × `claude-opus-5`). Deliverable is
+`docs/research/final-review-shadow-adjudication-briefing.md` — briefing +
+three dated addenda, each recording a correction to the one before it.
+
+**Verdict KEEP**, on formally-accepted HIGH/MEDIUM alone (10 vs a pre-registered
+threshold of 7). The floor-vs-ratio deadlock recorded on 2026-07-27 resolved
+without amending the rule: DROP's "predominantly dismissed/LOW" population is
+21% of the 63-finding tail, not a majority.
+
+**Root cause of the unreadable tail**: the audit loop remediates between rounds,
+so the shadow's best catches are fixed *before* anyone adjudicates them. Credit
+is written into a source comment (`sync-to-repos.mjs:707` reads "Gemini gate
+round-2 shadow finding #2 (real bug, fixed)") and never reaches `user_action`.
+
+**Method**: a second LLM adjudicated all 88 findings blind, with the 25
+human-labelled ones folded back in as a hidden calibration set. It scored *worse*
+than GPT (44% vs 52% agreement, 24% vs 29% recall, 13% vs 0% FP) and the two
+models agreed on only 41% — so neither column was used as adjudication. Its value
+was that its `unclear` rationales made *checkable* claims, which then verified
+4/4 by hand. A follow-up substantiation pass cut the attributed count 13→12 and
+HIGH/MED 11→9, and the judge volunteered a flat retraction plus four confidence
+downgrades rather than defending its prior answer.
+
+**Marginal value, measured**: `audit_findings` joins GPT passes and the shadow on
+`run_id` + `pass_name`. Across 19 runs carrying both, **zero files** were flagged
+by both — so for 69 of 88 the shadow found what GPT's 5-pass audit did not.
+Cross-run re-raises are a separate, confirmed, unmeasured leak.
+
+**Open follow-ups** (same missing write-back): set `user_action` at fix time, and
+record same-run pass-finding refs on the shadow observation.
+
+Working artifacts in `.audit/shadow-eval/` (gitignored): the blinded prompt
+template with hidden calibration set, the scorer, and the overlap probes.
+
+## 2026-07-28 — skill-governance cluster shipped (retired the `.github/skills/` escape hatch across all three write paths)
 
 Implemented via `/cycle --autonomous` from `docs/plans/refactor-skill-governance.md`
 (planned + audited via `/audit-plan` in a prior turn, 3 GPT rounds + 3 Gemini

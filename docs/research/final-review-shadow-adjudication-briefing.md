@@ -235,12 +235,12 @@ node scripts/cross-skill.mjs final-review-record-fix 66bdeaea-3c3c-430e-9c1e-100
 | 16 | ces | MEDIUM | unclear | low | code unavailable | no | `scripts/check-architecture-intent-drift.mjs` | ☐ accept ☐ dismiss |
 | 17 | wine | MEDIUM | unclear | low | code unavailable | ? | `—` | ☐ accept ☐ dismiss |
 | 18 | wine | MEDIUM | unclear | low | code unavailable | yes (1) | `public/js/wineShop/state.js` | ☐ accept ☐ dismiss |
-| 19 | wine | MEDIUM | unclear | low | code unavailable | yes (1) | `docs/plans/monolith-commercial-quality.md` | ☐ accept ☐ dismiss |
+| 19 | wine | MEDIUM | unclear | low | code unavailable | yes (1) | `[wine-cellar-app] monolith-commercial-quality.md` | ☐ accept ☐ dismiss |
 | 20 | wine | MEDIUM | unclear | low | code unavailable | yes (1) | `src/routes/pairing.js` | ☐ accept ☐ dismiss |
 | 21 | wine | MEDIUM | unclear | low | code unavailable | ? | `—` | ☐ accept ☐ dismiss |
 | 22 | wine | MEDIUM | unclear | low | code unavailable | yes (1) | `scripts/start.sh` | ☐ accept ☐ dismiss |
 | 23 | wine | MEDIUM | unclear | medium | code unavailable | yes (1) | `public/js/cellarSwitcher.js` | ☐ accept ☐ dismiss |
-| 24 | wine | MEDIUM | unclear | low | code unavailable | yes (1) | `docs/plans/monolith-commercial-quality.md` | ☐ accept ☐ dismiss |
+| 24 | wine | MEDIUM | unclear | low | code unavailable | yes (1) | `[wine-cellar-app] monolith-commercial-quality.md` | ☐ accept ☐ dismiss |
 | 25 | wine | MEDIUM | unclear | low | code unavailable | yes (1) | `public/js/api/base.js` | ☐ accept ☐ dismiss |
 | 26 | wine | MEDIUM | unclear | low | code unavailable | yes (1) | `public/js/app.js` | ☐ accept ☐ dismiss |
 | 27 | ces | LOW | unclear | low | code unavailable | yes (1) | `scripts/lib/lint/on-conflict.mjs` | ☐ accept ☐ dismiss |
@@ -719,7 +719,7 @@ node scripts/cross-skill.mjs final-review-stats adjudicate 3d955dfd-8727-4f17-a1
 
 ### 19. [MEDIUM] Governance / Self-Approval of a Gated Decision
 
-- **Repo / file**: `wine-cellar-app` → `docs/plans/monolith-commercial-quality.md §9a + all six D2 deletions (src/routes/pairing.js, signalNormaliser.js, catego`
+- **Repo / file**: `wine-cellar-app` → `[wine-cellar-app] monolith-commercial-quality.md §9a + all six D2 deletions (src/routes/pairing.js, signalNormaliser.js, catego`
 - **Fingerprint**: `d5af90b7` · run `441eee38` · filed 2026-07-28
 - **File changed since filed**: **yes — 1 commit(s)**
 
@@ -839,7 +839,7 @@ node scripts/cross-skill.mjs final-review-stats adjudicate d7cb96cf-2275-48fb-91
 
 ### 24. [MEDIUM] Architectural Coherence / Plan-Code Divergence
 
-- **Repo / file**: `wine-cellar-app` → `docs/plans/monolith-commercial-quality.md §9b + §11 Cluster 2 — B0 blocker disposition`
+- **Repo / file**: `wine-cellar-app` → `[wine-cellar-app] monolith-commercial-quality.md §9b + §11 Cluster 2 — B0 blocker disposition`
 - **Fingerprint**: `45384efc` · run `d7cb96cf` · filed 2026-07-28
 - **File changed since filed**: **yes — 1 commit(s)**
 
@@ -1952,3 +1952,47 @@ It also found a class neither judge had a bucket for: `28bb874a` and `2e90aeb9`
 describe states matching **no committed revision**, i.e. the shadow reviewed an
 uncommitted working tree. Not a defect in the reviewer — but it explains part of
 the "contradicted by code" population that neither LLM column could resolve.
+
+---
+
+## The overlap question, measured (2026-07-28, same day)
+
+The correction above said the shadow-vs-pipeline overlap "cannot be measured
+from the collected data." **That was wrong** — too pessimistic by one join. The
+88-row extract lacks it, but the store does not: `audit_findings` carries
+`run_id` + `pass_name`, so GPT's audit passes (`merged`) and the shadow
+(`final-review-shadow`) are joinable on the run they shared.
+
+Measured (`.audit/shadow-eval/overlap-*.mjs`):
+
+| | |
+|---|---|
+| runs with shadow findings | 24 |
+| runs with GPT `merged` findings | 19 |
+| **runs with both** | **19** |
+| shadow findings living in a both-run | 69 of 88 |
+| **files flagged by BOTH the shadow and GPT in the same run** | **0** |
+
+Zero overlap at *file* granularity, which is stronger than a semantic match
+would give: two findings on different files are necessarily different findings.
+For those 69, the shadow found things GPT's 5-pass audit did not flag — not
+merely things Gemini missed at the gate.
+
+**The cross-run leak is real but separate.** `fd33a4e4`'s fix credits an
+"audit-code Cluster 2/H12" GPT finding, and its run *does* carry 22 `merged`
+rows — yet its file appears in none of them. So the GPT counterpart came from an
+**earlier** audit run. Same-run overlap is zero; **cross-run overlap exists,
+is confirmed in at least one case, and remains unmeasured.**
+
+**Net effect on the correction above**: "unproven in general and false in at
+least one case" was too harsh. The accurate statement is *within-run marginal
+value is clean at 69/69; cross-run re-raises are a real and unquantified leak.*
+KEEP is unaffected either way — it never rested on this.
+
+**Telemetry gap worth closing** (this is the actionable item): the shadow's
+persisted observation records no link to the audit-pass findings of its own run,
+so this join had to be reconstructed by hand after the fact. Recording
+`sameRunPassFindingRefs` at shadow-write time — the refs already exist in the
+same transaction — would make marginal value a queryable column instead of a
+forensic exercise. The same gap is why `user_action` never gets set on
+fixed-during-loop findings; both are the same missing write-back.

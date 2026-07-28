@@ -627,24 +627,23 @@ Smoke test: `npm run anthropic:ping`.
 → Backend table, cost-telemetry detail, migration pattern, and the full
 call-site list: [`docs/reference/anthropic-backend-routing.md`](docs/reference/anthropic-backend-routing.md).
 
-## Shadow Final-Review A/B
+## Shadow Final-Review A/B — CLOSED 2026-07-28, verdict KEEP
 
-Plan: [`docs/plans/final-review-shadow-reviewer.md`](docs/plans/final-review-shadow-reviewer.md).
-An **opt-in, observation-only** second final reviewer running **blind** (same audit
-transcript, never sees the primary's output), to test whether a 2nd gate earns its keep.
+Opt-in, observation-only 2nd final reviewer, run blind to test whether a second
+gate earns its keep. **Experiment over; shadow is OFF.** `FINAL_REVIEW_SHADOW=claude-opus|gemini`
+(unset ⇒ path not entered, byte-identical; no-op under Azure; never gates the build).
+Verdict/method/stopping rule + three dated corrections: [briefing](docs/research/final-review-shadow-adjudication-briefing.md) · [plan](docs/plans/final-review-shadow-reviewer.md).
+Three results that generalise — **read before any reviewer/model comparison**:
 
-- **Enable**: set `FINAL_REVIEW_SHADOW=claude-opus` (or `gemini`). Unset → the
-  shadow path is not entered at all (byte-identical to today). **No-op under an
-  active Azure profile** — Claude/Fable/Mythos aren't on Foundry (load-bearing
-  guard). The shadow **never gates the build** — its verdict is logged to the
-  `--out` `_shadow` block but never touches `gemini_verdict`.
-- **Pre-registered stopping rule** (load-bearing — decided before data collection):
-  collect `N ≥ 20` runs per fixed (primary, shadow) model pair; **KEEP** iff
-  human-accepted shadow-only HIGH/MEDIUM ≥ 1 per 5 runs AND cost in tolerance;
-  **DROP** if shadow-only is predominantly dismissed/LOW. Don't conflate "always
-  catches something" with effectiveness. **Blind spot disclosed + dated 2026-07-27,
-  NOT amended** (retuning a pre-registered rule against its own bad data is
-  p-hacking); record fixes via `final-review-record-fix`. Both → plan doc below.
+- **A floor arm and a ratio arm can BOTH fire.** Surface the contradiction; never pick
+  the arm fitting the data nor retune against the data that fired it — measure what
+  you left unmeasured instead.
+- **"Found it" ≠ "found it first."** KEEP = findings were real, NOT unique. Within-run
+  overlap vs GPT passes = 0 files / 19 both-runs; cross-run re-raises confirmed, unmeasured.
+- **The loop fixes the best catches BEFORE adjudication**, so credit lands in a source
+  comment, `user_action` stays null, and the tail reads as noise. One missing write-back,
+  two symptoms: set `user_action` at fix time; record same-run pass-finding refs.
+
 - **Operator-doc convention (repo-wide, bit twice pre-2026-07-02)**: real values or
   PowerShell vars in CLI examples, **never `<angle-brackets>`** (PowerShell reserves
   `<` — unpasteable); render a `--worksheet`, not raw JSON.
