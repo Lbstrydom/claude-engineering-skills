@@ -123,6 +123,7 @@ import { buildPersonaSessionId } from './lib/persona-test/session-id.mjs';
 import { recordNavAuditRun, listNavAuditRunHistory } from './lib/store/nav-audit.mjs';
 import { upsertPersonaFindingOutcome, getPersonaOutcomesSummary, getActionablePersonaOutcomeItems, resolveLabelTarget } from './lib/store/persona-outcomes.mjs';
 import { backfillPersonaFindingHashV2 } from './lib/store/persona-outcomes-hash-backfill.mjs';
+import { computeShadowOverlap } from './lib/model-eval/shadow-overlap.mjs';
 import { firstSeenFromHistory } from './lib/nav/drift.mjs';
 import { z } from 'zod';
 
@@ -2052,6 +2053,24 @@ async function cmdGetCallersForFile() {
   });
 }
 
+/**
+ * Same-run overlap between a shadow reviewer and the pipeline's own audit
+ * passes — the marginal-value check for any reviewer A/B. See
+ * scripts/lib/model-eval/shadow-overlap.mjs for how to read the result
+ * (notably: it measures WITHIN-run overlap only).
+ *
+ * Payload: {"runIds": ["<uuid>", ...], "shadowPass": "final-review-shadow"}
+ */
+async function cmdShadowOverlap() {
+  const p = parsePayload();
+  await initLearningStore();
+  if (!await isCloudEnabled()) {
+    return emit({ ok: true, cloud: false, hint: 'cloud disabled — overlap is unmeasurable locally' });
+  }
+  const res = await computeShadowOverlap({ runIds: p.runIds, shadowPass: p.shadowPass || 'final-review-shadow' });
+  return emit({ cloud: true, ...res });
+}
+
 async function cmdGetNeighbourhood() {
   const p = parsePayload();
   await initLearningStore();
@@ -2479,6 +2498,7 @@ const commands = {
   'preview-gate': cmdPreviewGate,
   'get-persona-sessions-by-url': cmdGetPersonaSessionsByUrl,
   'get-recent-findings': cmdGetRecentFindings,
+  'shadow-overlap':     cmdShadowOverlap,
   'whoami': cmdWhoami,
   // Architectural memory
   'resolve-repo-identity':            cmdResolveRepoIdentity,

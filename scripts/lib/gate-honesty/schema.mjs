@@ -266,10 +266,31 @@ function existsFile(abs) {
   try { return fs.statSync(abs).isFile(); } catch { return false; }
 }
 
+/**
+ * Normalise line endings before any verbatim text comparison.
+ *
+ * A `stated` quote is authored in JSON, so its newlines are always `\n`. The
+ * prose file it is checked against is read from the WORKING COPY, which on
+ * Windows carries CRLF even though `.gitattributes` pins `eol=lf` — git calls
+ * such a file clean, so the drift is invisible. Comparing raw bytes therefore
+ * failed every multi-line `stated` quote on a Windows checkout while passing in
+ * CI, reporting "prose/contract have drifted" against text that matches exactly.
+ *
+ * Same class as the `skills.manifest.json` CRLF defect recorded in AGENTS.md:
+ * anything that hashes or compares file bytes against a committed artifact must
+ * canonicalise CRLF→LF first. Both sides are normalised so a contract authored
+ * with literal CRLF cannot reintroduce the asymmetry.
+ */
+function normaliseEol(text) {
+  return text.replace(/\r\n/g, '\n');
+}
+
 function fileTextContains(abs, needle) {
-  try { return fs.readFileSync(abs, 'utf-8').includes(needle); } catch { return false; }
+  try {
+    return normaliseEol(fs.readFileSync(abs, 'utf-8')).includes(normaliseEol(needle));
+  } catch { return false; }
 }
 
 function fileTextReferencesId(abs, id) {
-  try { return fs.readFileSync(abs, 'utf-8').includes(id); } catch { return false; }
+  try { return normaliseEol(fs.readFileSync(abs, 'utf-8')).includes(normaliseEol(id)); } catch { return false; }
 }

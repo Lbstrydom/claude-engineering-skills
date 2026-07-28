@@ -576,7 +576,7 @@ const REVIEW_TRANSPORTS = {
     };
   },
 
-  async openai(client, { model, maxTokens, systemPrompt, userPrompt, signal }) {
+  async openai(client, { model, maxTokens, systemPrompt, userPrompt, signal, requestExtras }) {
     // OpenAI-shaped chat.completions — Azure Foundry (openai shape) + every
     // OpenAI-compatible gateway (OpenRouter/Together/Fireworks/Groq/vLLM/…).
     // azureThrottle is a no-op off the Azure path.
@@ -585,6 +585,10 @@ const REVIEW_TRANSPORTS = {
       model,
       max_tokens: maxTokens,
       messages: [{ role: 'system', content: sys }, { role: 'user', content: userPrompt }],
+      // Gateway-specific body fields (today: OpenRouter provider routing +
+      // reasoning control). Undefined on every other route, so Azure/compat
+      // requests stay byte-identical to before this existed.
+      ...(requestExtras || {}),
     }, { signal }));
     return {
       text: r.choices?.[0]?.message?.content?.trim() || '{}',
@@ -617,7 +621,7 @@ const REVIEW_TRANSPORTS = {
  * @param {string} [opts.passName]
  * @returns {Promise<{result: object, usage: object, latencyMs: number}>}
  */
-async function callReviewer(client, { transportKind, model, systemPrompt, userPrompt, zodSchema, jsonSchema, toolSchema, passName }) {
+async function callReviewer(client, { transportKind, model, systemPrompt, userPrompt, zodSchema, jsonSchema, toolSchema, passName, requestExtras }) {
   const startMs = Date.now();
   const label = passName || 'final-review';
   const adapter = REVIEW_TRANSPORTS[transportKind];
@@ -641,7 +645,7 @@ async function callReviewer(client, { transportKind, model, systemPrompt, userPr
 
   try {
     const raw = await Promise.race([
-      adapter(client, { model, maxTokens: MAX_OUTPUT_TOKENS, systemPrompt, userPrompt, jsonSchema, toolSchema, signal: controller.signal }),
+      adapter(client, { model, maxTokens: MAX_OUTPUT_TOKENS, systemPrompt, userPrompt, jsonSchema, toolSchema, signal: controller.signal, requestExtras }),
       timeoutPromise,
     ]);
     const latencyMs = Date.now() - startMs;
@@ -858,6 +862,30 @@ const PROVIDERS = {
       const c = resolveOpenRouterCreds();
       return createOpenAIClient({ oss: { baseURL: c.baseUrl, apiKey: c.apiKey } });
     },
+    // OpenRouter serves one model id from MANY backends with incompatible
+    // limits, and picks per request. Measured 2026-07-28 while smoke-testing
+    // kimi-k3/glm-5.2 as final reviewers:
+    //   - `moonshotai/kimi-k3` is offered by Nebius at 8K context and by others
+    //     at 1M. A 54K-token review routed to Nebius cannot succeed.
+    //   - `z-ai/glm-5.2` is offered by AkashML at 96,890 — under a 106K review.
+    //   - Same request, no pinning: Moonshot AI 15.5s vs Fireworks 5.0s. 3x.
+    // So identical runs failed or passed at random, which reads as "the model
+    // is flaky" when it is really the router.
+    //
+    // `require_parameters` drops backends that don't support what we send;
+    // `sort: throughput` avoids the slow tail. Both are OpenRouter-only body
+    // fields and are ignored by other OpenAI-compatible gateways.
+    //
+    // `reasoning.effort: low` is the load-bearing one for REASONING models.
+    // Reasoning tokens are billed and counted against `max_tokens`, so kimi-k3
+    // spent 597 of a 600-token budget thinking and emitted almost no answer.
+    // At MAX_OUTPUT_TOKENS (32000) on a ~39 tok/s backend that is ~830s of
+    // pure reasoning before the first byte of JSON — every timeout we saw.
+    // The final reviewer wants a verdict, not a visible chain of thought.
+    requestExtras: () => ({
+      provider: { require_parameters: true, sort: 'throughput' },
+      reasoning: { effort: 'low' },
+    }),
   },
 };
 
@@ -1034,6 +1062,8 @@ export async function runFinalReview(provider, client, planContent, transcriptCo
     jsonSchema: GeminiFinalReviewJsonSchema,
     toolSchema: AnthropicReviewToolSchema,
     passName: `${provider}-review`,
+    // Optional per-descriptor gateway body fields; only `openrouter` defines it.
+    requestExtras: descriptor.requestExtras?.(),
   });
 }
 

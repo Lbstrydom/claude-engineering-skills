@@ -556,7 +556,7 @@ RUN_ID=$(node -e "const fs=require('fs'); try { process.stdout.write(JSON.parse(
 # gemini-review.mjs itself now warns loudly (2026-07-26) when cloud is enabled
 # but --run-id is absent — if you see that warning, the extraction above
 # failed; don't ignore it. Omit --run-id only when cloud is genuinely off.
-node scripts/gemini-review.mjs review <plan-file> /tmp/$SID-transcript.json \
+node scripts/gemini-review.mjs review <plan-file> .audit/$SID-transcript.json \
   --out /tmp/$SID-gemini-result.json \
   ${RUN_ID:+--run-id "$RUN_ID"} 2>/tmp/$SID-gemini-stderr.log
 ```
