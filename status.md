@@ -1,6 +1,93 @@
 # Project Status Log
 
-## 2026-07-28 (latest) — orphan-wave telemetry verdict; event-wiring plan drafted
+## 2026-07-28 (latest) — knip added standalone + wired into the pre-push gate
+
+Direct follow-on from the same-day orphan-wave telemetry work below: added `knip`
+(unused files/deps/unresolved-imports) to this repo AND to `wine-cellar-app`
+independently, converged both configs to zero self-inflicted noise, fixed what
+each run actually found, then built a drift-only pre-push gate mirroring the
+repo's own `check-docs-refs.mjs` pattern — because that pattern is the direct
+answer to the telemetry lesson below: a check with no accepted-backlog concept
+is the thing that produced 78% FP / 0% triage in the first place.
+
+### What `npm run knip` found here (this repo)
+
+Config converged to **0 unresolved imports, 0 unlisted deps, 0 configuration
+hints** in both repos. Two silently-broken dynamic imports surfaced in
+`scripts/audit-loop.mjs` — `await import('./scripts/lib/debt-ledger.mjs')` and
+`'./scripts/meta-assess.mjs')`, both self-referential paths that broke when the
+file moved into `scripts/` and both wrapped in a `catch { … non-blocking }` that
+logged and moved on. **Step 6.5 (debt-review) and Step 8.5 (meta-assessment)
+have never actually run** since whenever that happened. Fixed (dropped the
+redundant `./scripts/` prefix) and verified both modules now resolve with the
+exact exports the call sites destructure.
+
+Also removed `tests/learning-smoke.test.mjs`: it imported
+`scripts/lib/stores/supabase-store.mjs`, deleted in the M3/M4 postgres-parity
+migration, but was gated on `SUPABASE_AUDIT_SERVICE_ROLE_KEY` — an env var the
+same migration sunset. The test always hit its early `return` before the dead
+import, so it had been passing vacuously (asserting nothing) since M4 shipped.
+
+### `scripts/knip-gate.mjs` — new pre-push gate
+
+Drift-only: fails ONLY on net-new findings against a committed
+`.knip-baseline.json` (17 accepted here); self-cleaning (a baseline entry that
+stops appearing is itself flagged, so a fixed finding can't silently re-accept
+itself if it regresses); `--report` mode never exits non-zero. 13 unit tests
+on the two pure functions (`tests/knip-gate.test.mjs`) — writing them caught a
+real cross-OS bug before it shipped: `keyFor` normalised the `file` half of a
+finding key but not the `name` half, so an unnormalised `name` equal to the
+file path failed the equality check and produced a spurious `file→file`
+variant never seen on the other OS.
+
+Resolves knip's own CLI script directly (`require.resolve('knip')` → derive
+`bin/knip.js` as a sibling of the published `dist/` entry) rather than shelling
+out to `npx`/`npx.cmd` — Node ≥22.19 EINVALs spawning a bare `.cmd` without
+`shell:true` (CVE-2024-27980 hardening), the same failure class
+`scripts/lib/playwright-runner.mjs` already worked around; `shell:true` would
+resolve it too but reopens the Windows quoting pitfalls that fix avoided.
+
+Wired into `npm run check` as `knip:gate`, right after `cli:flags:gate`.
+Added a `.cli-catalog.json` entry for each of the 4 new npm scripts
+(`knip`, `knip:gate`, `knip:baseline`, `knip:exports`) — a pre-existing
+regression gate (`dashboard-cli.test.mjs`) asserts every script has one.
+
+### wine-cellar-app — companion ship, independent repo
+
+Its own knip config (5 separate runtimes: Express, browser app via
+`<script type=module>`, service worker, Chrome extension via manifest.json,
+Vite/React island — none discoverable without declaring each). Fixed two
+stale JSDoc type-only imports (dead paths from refactors, never typechecked
+since `checkJs:false`, so pure doc rot rather than a build break) and deleted
+10 e2e specs (`r19-walkthrough-*.spec.js`) whose target modules were deleted
+2026-05-10 — every import in every one of them had been unresolvable for
+~11 weeks; the replacement `visualGuide/` API is a different (session-based
+vs plan-based) shape with its own unit coverage, so repointing wasn't
+possible, only delete-and-replace-nothing.
+
+wine's `scripts/knip-gate.mjs` is a deliberate fork, not shared code: inlined
+a dependency-free flag guard instead of importing this repo's
+`scripts/lib/cli-io.mjs`, since that only exists in wine's **gitignored**
+`scripts/.claude-skills/` mirror and this is wine's own tooling — it must not
+silently break on a fresh clone before the first `npm run sync`. Wired into
+`.githooks/pre-push.local`. Shipped as its own commit, in its own repo.
+
+### Files
+
+- `scripts/audit-loop.mjs` — 2 broken dynamic imports fixed.
+- `scripts/knip-gate.mjs`, `knip.jsonc`, `.knip-baseline.json` — new.
+- `tests/knip-gate.test.mjs` — new, 13 tests.
+- `tests/learning-smoke.test.mjs` — deleted (vacuous since M4).
+- `scripts/.cli-catalog.json` — 4 new entries.
+- `package.json` / `package-lock.json` — `knip` devDependency + 4 scripts.
+- `docs/architecture-map.md` — regenerated (advisory, Step 0.5c).
+
+Heads-up: a concurrent session added `scripts/final-review-bakeoff.mjs`
+(untracked) during this work — left untouched; this ship is `--path`-scoped.
+
+---
+
+## 2026-07-28 — orphan-wave telemetry verdict; event-wiring plan drafted
 
 Started from a user question — *"click-test checks if a button is wired, but do we
 check if a button is **missing**?"* — which resolved into something else entirely: the

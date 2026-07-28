@@ -1,0 +1,22 @@
+{
+  "generated": "knip-gate",
+  "keys": [
+    "files:scripts/lib/audit-dispatch.mjs",
+    "files:scripts/lib/bootstrap-template.mjs",
+    "files:scripts/lib/claudemd/step65-hook.mjs",
+    "files:scripts/lib/persona-test/context.mjs",
+    "files:scripts/lib/predictive-strategy.mjs",
+    "files:scripts/lib/solo-control/split-triager-worksheet.mjs",
+    "files:scripts/lib/visual/explain.mjs",
+    "files:tests/fixtures/config-shared-env-child.mjs",
+    "files:tests/fixtures/fit-check/node-cli-tool/bin/cli.mjs",
+    "files:tests/fixtures/gate-honesty/lying-skill/fake-cli.mjs",
+    "files:tests/fixtures/gate-honesty/lying-skill/fake-convergence.mjs",
+    "files:tests/fixtures/gate-honesty/lying-skill/fake-tiered-shadow.mjs",
+    "files:tests/fixtures/gate-honesty/lying-skill/lying-tests.mjs",
+    "files:tests/fixtures/gate-honesty/negative/nonexistent-implementation/missing-impl-tests.mjs",
+    "files:tests/fixtures/gate-honesty/negative/stated-absent/real-impl.mjs",
+    "files:tests/fixtures/gate-honesty/negative/stated-absent/real-tests.mjs",
+    "files:tests/fixtures/harness-plan/src/service.mjs"
+  ]
+}

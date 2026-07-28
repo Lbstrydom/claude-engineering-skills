@@ -149,14 +149,6 @@
       "description": "The DRIFT-gate form of cli:flags (part of `npm run check`): fails only on a NET-NEW CLI that parses flags but ignores unknown ones. The 24 pre-existing ones are baselined so the gate is a ratchet, not a wall. Origin: refresh.mjs --full --dry-run silently discarded --dry-run and ran a real full refresh.",
       "category": "diagnostic"
     },
-    "npm-args": {
-      "description": "Census of documented `npm run <script> --flag` commands that omit the `--` separator, so npm swallows the flag before the script sees it. Report-only.",
-      "category": "diagnostic"
-    },
-    "npm-args:gate": {
-      "description": "The DRIFT-gate form of npm-args (part of `npm run check`): fails only on a NET-NEW broken instruction in a live surface (plans/research/status.md excluded as records, not instructions). Origin: an AGENTS.md line omitted the `--` before a script flag, so npm consumed the flag and the sync ran unscoped, writing into every consumer repo instead of one.",
-      "category": "diagnostic"
-    },
     "context:check": {
       "description": "Detect drift between CLAUDE.md / AGENTS.md and the live codebase.",
       "category": "diagnostic"
@@ -234,6 +226,22 @@
       "description": "The gate form of db:local, wired into `npm run check`: runs the destructive DB suites against an ephemeral Docker Postgres so the DB seam is covered by the same gate as everything else. Blocks ONLY on a real suite/schema-diff failure (exit 1); a missing daemon, port clash, or concurrent container owner degrades to a loud skip that never implies coverage. AUDIT_LOOP_DB_TESTS_REQUIRED=1 promotes every skip to a hard failure; AUDIT_LOOP_DB_TESTS_SKIP=1 opts out (REQUIRED wins).",
       "category": "diagnostic"
     },
+    "debt:budget": {
+      "description": "Check debt-ledger entry counts against per-path budgets (opt-in policy gate).",
+      "category": "diagnostic"
+    },
+    "debt:health": {
+      "description": "Tech-debt ledger health — staleness, recurrence, budget violations (human report).",
+      "category": "diagnostic"
+    },
+    "debt:health:json": {
+      "description": "Tech-debt ledger health, JSON output.",
+      "category": "diagnostic"
+    },
+    "debt:review": {
+      "description": "Cluster accumulated tech-debt into ranked refactor candidates (local-only, no LLM call).",
+      "category": "diagnostic"
+    },
     "docs:check": {
       "description": "Enforce docs/ root placement: root holds only allowlisted generated artefacts + live ledgers; hand-written docs belong in a bucket (reference/, runbooks/, plans/, research/). Runs as part of `npm run check`. Decision rule: docs/README.md.",
       "category": "diagnostic"
@@ -281,6 +289,22 @@
     "hooks:wire": {
       "description": "Wire git at the tracked .githooks/ (same as prepare; run manually if hooks are not firing).",
       "category": "hooks"
+    },
+    "knip": {
+      "description": "knip drift-only report (--report mode) — shows net-new/stale findings without failing. Advisory diagnostic.",
+      "category": "audit"
+    },
+    "knip:baseline": {
+      "description": "Regenerate .knip-baseline.json to accept the CURRENT set of knip findings. Run after deliberately triaging/accepting a finding, never to silence one you have not looked at.",
+      "category": "audit"
+    },
+    "knip:exports": {
+      "description": "Full knip run including unused-exports/types — deliberately excluded from the gate (high volume, low precision; see knip-gate.mjs header). Run by hand when auditing dead exports.",
+      "category": "audit"
+    },
+    "knip:gate": {
+      "description": "knip drift-only pre-push gate (scripts/knip-gate.mjs). Fails ONLY on net-new dead-file/dependency/unresolved-import findings against the committed .knip-baseline.json — the pre-existing backlog never blocks a push. Part of npm run check.",
+      "category": "audit"
     },
     "learning:backfill-outcomes": {
       "description": "Drain .audit/quickfix-hits.jsonl into learning_decisions + resolve outcomes from file state.",
@@ -345,6 +369,14 @@
     "nav:audit": {
       "description": "Static navigation / IA audit — system-level nav-graph lens; offered-vs-needed, drift-only CI gate.",
       "category": "audit"
+    },
+    "npm-args": {
+      "description": "Census of documented `npm run <script> --flag` commands that omit the `--` separator, so npm swallows the flag before the script sees it. Report-only.",
+      "category": "diagnostic"
+    },
+    "npm-args:gate": {
+      "description": "The DRIFT-gate form of npm-args (part of `npm run check`): fails only on a NET-NEW broken instruction in a live surface (plans/research/status.md excluded as records, not instructions). Origin: an AGENTS.md line omitted the `--` before a script flag, so npm consumed the flag and the sync ran unscoped, writing into every consumer repo instead of one.",
+      "category": "diagnostic"
     },
     "on-conflict:all": {
       "description": "Run the ON CONFLICT identity lint across the whole store (non-drift; diagnostic, high false-positive).",
@@ -502,22 +534,6 @@
     "test:db": {
       "description": "Gated DB-integration tests (repo-identity stability + fragmentation guardrail). Requires a disposable AUDIT_DB_TEST_URL; skipped when unset. Never touches the live store.",
       "category": "test"
-    },
-    "debt:health": {
-      "description": "Tech-debt ledger health — staleness, recurrence, budget violations (human report).",
-      "category": "diagnostic"
-    },
-    "debt:health:json": {
-      "description": "Tech-debt ledger health, JSON output.",
-      "category": "diagnostic"
-    },
-    "debt:review": {
-      "description": "Cluster accumulated tech-debt into ranked refactor candidates (local-only, no LLM call).",
-      "category": "diagnostic"
-    },
-    "debt:budget": {
-      "description": "Check debt-ledger entry counts against per-path budgets (opt-in policy gate).",
-      "category": "diagnostic"
     }
   }
 }

@@ -50,7 +50,7 @@
     "models:check": "node scripts/check-model-freshness.mjs --strict",
     "maintenance:run": "node scripts/maintenance-checks.mjs",
     "maintenance:status": "node scripts/maintenance-checks.mjs --status",
-    "check": "npm run context:check && npm run docs:check && npm run docs:refs:gate && npm run plans:status && npm run plans:index:check && npm run requirements:map:check && npm run skills:check && npm run plans:lint && npm run parity:check-coupling && npm run efficacy:check && npm run on-conflict:check && npm run arch:coverage-gate && npm run db:check-rls:gate && npm run cli:flags:gate && npm run npm-args:gate && npm run db:suites:gate && npm test",
+    "check": "npm run context:check && npm run docs:check && npm run docs:refs:gate && npm run plans:status && npm run plans:index:check && npm run requirements:map:check && npm run skills:check && npm run plans:lint && npm run parity:check-coupling && npm run efficacy:check && npm run on-conflict:check && npm run arch:coverage-gate && npm run db:check-rls:gate && npm run cli:flags:gate && npm run knip:gate && npm run npm-args:gate && npm run db:suites:gate && npm test",
     "prepush:check": "node scripts/prepush-check.mjs",
     "docs:refs:gate": "node scripts/check-docs-refs.mjs --gating",
     "on-conflict:check": "node scripts/on-conflict-lint.mjs",
@@ -137,7 +137,11 @@
     "cli:flags:gate": "node scripts/check-cli-flags.mjs --gating",
     "npm-args": "node scripts/check-npm-run-args.mjs",
     "npm-args:gate": "node scripts/check-npm-run-args.mjs --gating",
-    "db:suites:gate": "node scripts/db-suites-gate.mjs"
+    "db:suites:gate": "node scripts/db-suites-gate.mjs",
+    "knip": "node scripts/knip-gate.mjs --report",
+    "knip:gate": "node scripts/knip-gate.mjs",
+    "knip:baseline": "node scripts/knip-gate.mjs --update-baseline",
+    "knip:exports": "npx knip --include exports,types,enumMembers"
   },
   "keywords": [
     "claude",
@@ -170,6 +174,7 @@
   },
   "devDependencies": {
     "dependency-cruiser": "^18.0.0",
+    "knip": "^6.29.0",
     "ts-morph": "^28.0.0"
   }
 }

@@ -378,8 +378,8 @@ async function main() {
   try {
     const debtLedgerPath = path.resolve('.audit', 'tech-debt.json');
     if (fs.existsSync(debtLedgerPath)) {
-      const { readDebtLedger } = await import('./scripts/lib/debt-ledger.mjs');
-      const { findRecurringEntries, buildLocalClusters, findBudgetViolations } = await import('./scripts/lib/debt-review-helpers.mjs');
+      const { readDebtLedger } = await import('./lib/debt-ledger.mjs');
+      const { findRecurringEntries, buildLocalClusters, findBudgetViolations } = await import('./lib/debt-review-helpers.mjs');
 
       const ledger = readDebtLedger({ ledgerPath: debtLedgerPath });
       const entries = ledger.entries || [];
@@ -510,7 +510,7 @@ async function main() {
 
   // Step 8.5 — Meta-assessment (every N runs)
   try {
-    const { shouldRunAssessment } = await import('./scripts/meta-assess.mjs');
+    const { shouldRunAssessment } = await import('./meta-assess.mjs');
     const { shouldRun, runsSinceLastAssessment } = shouldRunAssessment();
     if (shouldRun) {
       banner('META-ASSESSMENT — Loop Performance Review');
