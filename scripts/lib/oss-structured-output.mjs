@@ -116,7 +116,7 @@ export function sanitizeSchemaName(name) {
  * message (audit R1 M8) — a bare "not supported" is NOT enough, so an unrelated
  * 400 (bad model, quota) is not silently masked as a format downgrade.
  */
-function isResponseFormatUnsupported(err) {
+export function isResponseFormatUnsupported(err) {
   if (!err) return false;
   const status = err.status ?? err.response?.status;
   if (status !== 400 && status !== 404 && status !== 422) return false;

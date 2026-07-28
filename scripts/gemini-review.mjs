@@ -29,6 +29,7 @@ import { once } from 'node:events';
 import { GoogleGenAI } from '@google/genai';
 import { z } from 'zod';
 import { ProducerFindingSchema, zodToGeminiSchema } from './lib/schemas.mjs';
+import { zodToOpenAiJsonSchema, sanitizeSchemaName, isResponseFormatUnsupported } from './lib/oss-structured-output.mjs';
 import { buildClassificationRubric } from './lib/prompt-seeds.mjs';
 import { readFileOrDie, readFilesAsContext, extractPlanPaths, writeOutput, isAuditInfraFile, atomicWriteFileSync } from './lib/file-io.mjs';
 import { semanticId, formatFindings, appendOutcome, FalsePositiveTracker } from './lib/findings.mjs';
@@ -172,6 +173,23 @@ export const GeminiFinalReviewSchema = z.object({
 
 // Derived from GeminiFinalReviewSchema — single source of truth via Zod → JSON Schema
 const GeminiFinalReviewJsonSchema = zodToGeminiSchema(GeminiFinalReviewSchema);
+
+// The OpenAI-compatible dialect of the SAME Zod source of truth. Deliberately
+// NOT `GeminiFinalReviewJsonSchema`: `zodToGeminiSchema` strips `maxLength` /
+// `additionalProperties` / etc. for Gemini's dialect, and an OpenAI-compatible
+// router wants the unstripped draft schema.
+//
+// Why this exists (experiment-4, 2026-07-28): the openai transport only ever
+// appended "Output strictly valid JSON" to the system prompt and hoped. Opus
+// complies because the anthropic transport FORCES a `submit_review` tool call
+// carrying the real schema — so the OpenAI-side arms were being judged against
+// a contract they were never given. Measured: kimi-k3 returned
+// `{file,title,description,evidence}` and glm-5.2 returned
+// `{title,description,evidence_basis,cited_lines}`, neither carrying the
+// `category`/`section`/`risk`/`recommendation` the finding taxonomy and R2+
+// suppression ledger key on — and Zod validation here is warn-and-keep, so
+// those degraded rows flow into the store silently.
+const OpenAiFinalReviewJsonSchema = zodToOpenAiJsonSchema(GeminiFinalReviewSchema);
 
 /**
  * Anthropic forced-tool-use `input_schema` — the SAME Zod source of truth as
@@ -576,12 +594,12 @@ const REVIEW_TRANSPORTS = {
     };
   },
 
-  async openai(client, { model, maxTokens, systemPrompt, userPrompt, signal, requestExtras }) {
+  async openai(client, { model, maxTokens, systemPrompt, userPrompt, signal, requestExtras, openAiJsonSchema }) {
     // OpenAI-shaped chat.completions — Azure Foundry (openai shape) + every
     // OpenAI-compatible gateway (OpenRouter/Together/Fireworks/Groq/vLLM/…).
     // azureThrottle is a no-op off the Azure path.
     const sys = `${systemPrompt}\n\nOutput strictly valid JSON. No markdown fences.`;
-    const r = await azureThrottle(() => client.chat.completions.create({
+    const body = {
       model,
       max_tokens: maxTokens,
       messages: [{ role: 'system', content: sys }, { role: 'user', content: userPrompt }],
@@ -589,7 +607,32 @@ const REVIEW_TRANSPORTS = {
       // reasoning control). Undefined on every other route, so Azure/compat
       // requests stay byte-identical to before this existed.
       ...(requestExtras || {}),
-    }, { signal }));
+    };
+    // Ask for the schema, don't just describe it in prose. Opt-in per descriptor
+    // (`structuredOutput: true`) so Azure Foundry's openai shape — which shares
+    // this adapter — is untouched. `strict: false` matches oss-structured-output:
+    // the schema guides generation without the provider rejecting benign extras.
+    if (openAiJsonSchema) {
+      body.response_format = {
+        type: 'json_schema',
+        json_schema: { name: sanitizeSchemaName('final_review'), schema: openAiJsonSchema, strict: false },
+      };
+    }
+
+    let r;
+    try {
+      r = await azureThrottle(() => client.chat.completions.create(body, { signal }));
+    } catch (err) {
+      // A router that rejects `response_format` must still produce a review —
+      // degrade once to the prompt-only contract rather than failing the gate.
+      // Reuses oss-structured-output's predicate, which requires a structured-
+      // output keyword in the message so an unrelated 400 (bad model, quota) is
+      // never silently masked as a format downgrade.
+      if (!openAiJsonSchema || !isResponseFormatUnsupported(err)) throw err;
+      process.stderr.write(`  [final-review] "${model}" rejected response_format:json_schema — retrying prompt-only\n`);
+      delete body.response_format;
+      r = await azureThrottle(() => client.chat.completions.create(body, { signal }));
+    }
     return {
       text: r.choices?.[0]?.message?.content?.trim() || '{}',
       usage: {
@@ -621,7 +664,7 @@ const REVIEW_TRANSPORTS = {
  * @param {string} [opts.passName]
  * @returns {Promise<{result: object, usage: object, latencyMs: number}>}
  */
-async function callReviewer(client, { transportKind, model, systemPrompt, userPrompt, zodSchema, jsonSchema, toolSchema, passName, requestExtras }) {
+async function callReviewer(client, { transportKind, model, systemPrompt, userPrompt, zodSchema, jsonSchema, toolSchema, passName, requestExtras, openAiJsonSchema }) {
   const startMs = Date.now();
   const label = passName || 'final-review';
   const adapter = REVIEW_TRANSPORTS[transportKind];
@@ -645,7 +688,7 @@ async function callReviewer(client, { transportKind, model, systemPrompt, userPr
 
   try {
     const raw = await Promise.race([
-      adapter(client, { model, maxTokens: MAX_OUTPUT_TOKENS, systemPrompt, userPrompt, jsonSchema, toolSchema, signal: controller.signal, requestExtras }),
+      adapter(client, { model, maxTokens: MAX_OUTPUT_TOKENS, systemPrompt, userPrompt, jsonSchema, toolSchema, signal: controller.signal, requestExtras, openAiJsonSchema }),
       timeoutPromise,
     ]);
     const latencyMs = Date.now() - startMs;
@@ -820,6 +863,8 @@ const PROVIDERS = {
   // gateway verbatim (NO resolveModel sentinel rewrite — D6).
   'openai-compatible': {
     id: 'openai-compatible',
+    // Ask for the schema rather than describing it in prose (experiment-4).
+    structuredOutput: true,
     label: 'OpenAI-compatible',
     transportKind: () => 'openai',
     resolveModel: () => finalReviewConfig.model,
@@ -845,6 +890,7 @@ const PROVIDERS = {
   // EXPLICIT-SELECTION-ONLY (never auto-detect) — see G1 in selectProvider.
   openrouter: {
     id: 'openrouter',
+    structuredOutput: true,
     label: 'OpenRouter',
     transportKind: () => 'openai',
     resolveModel: () => finalReviewConfig.model,
@@ -1064,6 +1110,9 @@ export async function runFinalReview(provider, client, planContent, transcriptCo
     passName: `${provider}-review`,
     // Optional per-descriptor gateway body fields; only `openrouter` defines it.
     requestExtras: descriptor.requestExtras?.(),
+    // Only descriptors that opt in (`structuredOutput: true`) ask for the schema.
+    // Azure Foundry shares the openai adapter and deliberately does NOT.
+    openAiJsonSchema: descriptor.structuredOutput ? OpenAiFinalReviewJsonSchema : undefined,
   });
 }
 

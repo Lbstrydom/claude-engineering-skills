@@ -1,6 +1,10 @@
 # Experiment 4 — cheap final reviewers (kimi-k3, glm-5.2) vs claude-opus-5
 
-**Date**: 2026-07-28 · **Status**: smoke test, n=2 transcripts · **Verdict**: do not swap
+**Date**: 2026-07-28 · **Status**: smoke test, n=2 transcripts · **Verdict**: no swap yet — insufficient evidence, not insufficient capability
+
+> **Read §Result 3 before §Result 2.** Result 2's "schema non-compliance"
+> disqualification was **our defect, not the models'** — we never asked for the
+> schema. It is kept unedited as the audit trail; Result 3 supersedes it.
 **Follow-on from**: [`final-review-shadow-adjudication-briefing.md`](final-review-shadow-adjudication-briefing.md) (verdict KEEP, $1.45/run)
 
 ## Why
@@ -112,23 +116,59 @@ oracle-matching recall ceiling recorded in the model-eval runbook applies. The
 only signal firm enough to act on is the schema result, which is categorical and
 reproduced on every run.
 
-## Verdict — do not swap; the blocker is fixable
+## Result 3 — schema wired, re-run: both models now comply
 
-Not "the cheap models are worse." **The comparison is not yet valid**, because
-our request never asks for a schema — the `openai` adapter only appends *"Output
-strictly valid JSON"* to the system prompt and hopes. Opus complies because the
-anthropic transport forces a `submit_review` **tool call** with the real schema.
-The cheap arms were never given the contract they are being judged against.
+The §Verdict below originally said the comparison was invalid because our
+request never asked for a schema. That blocker is now fixed: the `openai`
+transport sends `response_format: {type:'json_schema', …}` derived from the SAME
+`GeminiFinalReviewSchema` Zod source (via `zodToOpenAiJsonSchema` — deliberately
+not the Gemini-key-stripped variant), opt-in per descriptor so Azure Foundry,
+which shares the adapter, is byte-identical. A router that rejects the field
+degrades once to prompt-only rather than failing the gate.
 
-To make a real decision, send `response_format: {type: 'json_schema', json_schema: …}`
-on the openai transport for providers advertising `structured_outputs`
-(`require_parameters: true` already filters to them — Fireworks, Together, Morph
-for kimi-k3; CoreWeave, StreamLake, Baidu, Alibaba for glm-5.2). Then re-run.
+Re-ran all four cells. **Every finding now carries all 7 required fields** —
+`id, severity, category, section, detail, risk, recommendation` — 11/11 keys
+including `is_quick_fix`/`is_mechanical`/`principle`, against 0/4 before:
 
-**Until then the honest state is: routing fixed, comparison invalid, no swap.**
-At n=2 with a stated code-drift confound this could not have justified a swap
-anyway — it is a smoke test, and it found a real defect in our own adapter rather
-than a verdict about the models.
+| arm | small | r2 | compliance |
+|---|---|---|---|
+| moonshotai/kimi-k3 | APPROVE, 0 new, 20s | CONCERNS, 2 new, 62s | **all fields present** |
+| z-ai/glm-5.2 | CONCERNS, 2 new, 100s | APPROVE, 0 new, 46s | **all fields present** |
+
+No provider issued a downgrade — `json_schema` was accepted on every call.
+
+Content is specific and genuine, not schema-shaped filler. The strongest signal
+is **independent convergence**: glm-5.2's top small-transcript finding (the
+`buildDiffPathMap` "filter before mapping, not after" contract drift, cited to
+the plan's Security Considerations) is the *same defect* claude-opus-5 raised
+first on that transcript. kimi-k3 independently escalated the
+`verify-anchor-contract.mjs` acceptance-grading gap to HIGH, which Opus also
+flagged (as MEDIUM, via a different route).
+
+One quality tell worth recording: glm-5.2 emitted a category string reading
+`"…deviating từ"` — a Vietnamese token leaked mid-field. Cosmetic here, but it is
+the kind of instability that matters in a field the taxonomy keys on.
+
+## Verdict — schema blocker cleared; still not enough evidence to swap
+
+The original blocker is gone: **both cheap models produce contract-compliant
+findings once actually asked to.** The earlier "non-compliant" result was our
+defect, not theirs.
+
+What still blocks a swap is evidence, not capability:
+
+- **n=2 transcripts**, with a stated code-drift confound (transcripts are from
+  ~2026-07-15; the reviewer reads code at current HEAD).
+- **The arms disagree with themselves across transcripts** — each returns
+  APPROVE on one and CONCERNS on the other, and they disagree about *which*.
+  With 2 data points that is unresolvable.
+- No human adjudication of the new findings, so precision is unmeasured. The
+  convergence with Opus is encouraging but is 2 findings, not a rate.
+
+**Recommendation**: the routing + schema fixes are worth keeping regardless —
+they were repo defects affecting every OpenRouter final review. For the swap
+decision, accumulate 8–10 transcripts now that `.audit/` retention is in place,
+then re-run all three arms and adjudicate. Cost of that run is ~$5.
 
 ## Artifacts
 
