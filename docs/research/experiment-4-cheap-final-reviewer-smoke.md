@@ -1,11 +1,11 @@
 # Experiment 4 — cheap final reviewers (kimi-k3, glm-5.2) vs claude-opus-5
 
 **Date**: 2026-07-28 · **Status**: smoke test, n=2 transcripts · **Verdict**: no swap yet — insufficient evidence, not insufficient capability
+**Follow-on from**: [`final-review-shadow-adjudication-briefing.md`](final-review-shadow-adjudication-briefing.md) (verdict KEEP, $1.45/run)
 
 > **Read §Result 3 before §Result 2.** Result 2's "schema non-compliance"
 > disqualification was **our defect, not the models'** — we never asked for the
 > schema. It is kept unedited as the audit trail; Result 3 supersedes it.
-**Follow-on from**: [`final-review-shadow-adjudication-briefing.md`](final-review-shadow-adjudication-briefing.md) (verdict KEEP, $1.45/run)
 
 ## Why
 
@@ -169,6 +169,61 @@ What still blocks a swap is evidence, not capability:
 they were repo defects affecting every OpenRouter final review. For the swap
 decision, accumulate 8–10 transcripts now that `.audit/` retention is in place,
 then re-run all three arms and adjudicate. Cost of that run is ~$5.
+
+## Collection protocol — the window, and why it is a passive one
+
+Re-running at n=8–10 needs real transcripts, and this is the one place where
+the repo's **synchronous-swap rule cannot be satisfied**. Stating that plainly
+rather than quietly running a collector:
+
+- The rule exists because passive collection killed arm-eval and produced five
+  false "window met" reads. It is not being waived.
+- But the known-defect corpus (18 curated cases) evaluates the **auditor** role
+  — can a model find a planted defect in a diff. The final reviewer's job is to
+  review a **deliberation** and judge whether it was sound. A synthesized
+  transcript with no real rounds would test the auditor question wearing the
+  final reviewer's name, so it is not a valid shortcut.
+- Real transcripts only appear as ordinary work happens. Hence: a window.
+
+The slot is legitimately free — the final-review 2nd-gate shadow **closed**
+2026-07-28 (verdict KEEP). This reuses that slot; it does not add a sixth
+collector.
+
+**Collection is already live and requires no action.** Transcripts now persist
+to `.audit/` (commit 208eba2) instead of `/tmp`, which is OS-cleaned and, on
+Windows, resolves differently for Bash and Node — the reason the 35-run shadow
+window left zero replayable inputs.
+
+**Readiness is counted, never eyeballed** (the lesson from those five false
+reads):
+
+```bash
+node scripts/final-review-bakeoff.mjs --status
+```
+
+Eligibility is deliberately strict: `mode: 'code'` only (a plan-mode transcript
+drives a different prompt path), and the referenced plan file must still exist
+(an unreplayable transcript would inflate readiness against inputs that cannot
+run). Rejections are printed with a reason, never silently dropped.
+
+When it reads READY:
+
+```bash
+node scripts/final-review-bakeoff.mjs --run --arms opus,kimi-k3,glm-5.2
+```
+
+Below target this **refuses with exit 3** rather than producing a thin result
+that reads like a verdict; `--min N` overrides deliberately. The runner records
+per-arm verdict, finding count, latency, and — measured, not assumed — schema
+compliance, since a regression there is silent (validation is warn-and-keep, so
+degraded rows reach the store rather than failing).
+
+**The stopping rule is the half that matters**: adjudicate the findings by hand
+**in the same sitting the window fills**. A filled window left unadjudicated is
+precisely how the $50.90 shadow experiment became unreadable — 63 of 88 findings
+sat unlabelled because the loop had already fixed them and nobody closed the
+loop in the store. Counts from this runner are not a quality ranking and must
+not be read as one.
 
 ## Artifacts
 
