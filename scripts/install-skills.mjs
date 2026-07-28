@@ -26,8 +26,13 @@
  *
  * Usage:
  *   node scripts/install-skills.mjs --local --target /path/to/consumer-repo
- *   node scripts/install-skills.mjs --local --target /path/to/repo --surface copilot
+ *   node scripts/install-skills.mjs --local --target /path/to/repo --surface both
  *   node scripts/install-skills.mjs --local --target /path/to/repo --dry-run
+ *
+ * `--surface` accepts `claude` | `agents` | `both` (default). `copilot`
+ * (`.github/skills/`) was retired 2026-07-28
+ * (docs/plans/refactor-skill-governance.md) and now errors immediately
+ * rather than completing a silent zero-write install.
  *
  * The --target flag is REQUIRED for cross-repo installs. Without it, the
  * installer targets the current repo (useful for self-install/testing only).
@@ -58,7 +63,6 @@ function parseArgs(argv) {
   const args = {
     local: false, remote: false, surface: 'both', skills: null,
     force: false, dryRun: false, target: null,
-    keepGithubSkills: false,
   };
   for (let i = 2; i < argv.length; i++) {
     switch (argv[i]) {
@@ -81,7 +85,14 @@ function parseArgs(argv) {
         args.target = path.resolve(v);
         break;
       }
-      case '--keep-github-skills': args.keepGithubSkills = true; break;
+      case '--keep-github-skills':
+        console.error(
+          `${R}Error${X}: --keep-github-skills was removed 2026-07-28 ` +
+          '(docs/plans/refactor-skill-governance.md) — the .github/skills/ escape ' +
+          'hatch no longer exists in this installer. Drop the flag.',
+        );
+        process.exit(2);
+        break;
     }
   }
   if (!args.local && !args.remote) {
@@ -254,7 +265,7 @@ function reportDegradations(degradations) {
 
 function maybeWarnGithubSkillsDeprecation(args, repoRoot) {
   const stale = path.join(repoRoot, '.github', 'skills');
-  if (args.keepGithubSkills || !fs.existsSync(stale)) return;
+  if (!fs.existsSync(stale)) return;
   process.stderr.write(
     `${Y}[install] SHADOWING RISK:${X} .github/skills/ exists and is no longer maintained.\n` +
     '  Copilot Agent Skills reads BOTH .github/skills/ and .claude/skills/, and\n' +
@@ -264,15 +275,14 @@ function maybeWarnGithubSkillsDeprecation(args, repoRoot) {
     '  simply absent — so ship events never recorded and nothing surfaced an error.)\n' +
     `  Existing files at ${path.relative(repoRoot, stale)} are not deleted by this install.\n` +
     '  Inspect: node scripts/check-stale-skill-surface.mjs --repo <repo>\n' +
-    '  Fix: delete the directory. To keep installing into it instead, pass --keep-github-skills.\n',
+    '  Fix: delete the directory manually — this installer can no longer write to it.\n',
   );
 }
 
 function buildSkillWrites(skillName, meta, args, repoRoot) {
   const skillSrcDir = path.resolve('skills', skillName);
   const files = expandSkillFiles(skillName, meta);
-  let surfaces = resolveSkillFiles(skillName, args.surface, repoRoot, files);
-  if (!args.keepGithubSkills) surfaces = surfaces.filter(t => t.surface !== 'copilot');
+  const surfaces = resolveSkillFiles(skillName, args.surface, repoRoot, files);
   const writes = [];
   const managedFiles = [];
   for (const t of surfaces) {
@@ -377,6 +387,19 @@ function computeDeletes(writes, prevGlobalReceipt, prevRepoReceipt, repoRoot, au
  * Which scopes is a `--surface` selection authoritative over? Mirrors
  * resolveSkillTargets' surface->scope mapping (claude lives in the global
  * surface; copilot + agents live in the repo). null = every scope.
+ *
+ * Gemini gate shadow finding #3: `args.surface === 'copilot'` can never
+ * actually reach this function post-retirement — `buildSkillWrites` (called
+ * earlier in `main()`, per skill, before this authority computation) calls
+ * `resolveSkillFiles`/`resolveSkillTargets`, which now throws for a bare
+ * `'copilot'` request and aborts the run. The `copilot` branch here is kept
+ * deliberately anyway: `computeDeletes`'s authority check consults THIS
+ * function's return value to decide whether a *pre-existing* repo-scope
+ * receipt entry (from an install made before this surface was retired) is
+ * within this run's pruning authority — that entry's OWN recorded `scope`
+ * can still be `'repo'` from when it was copilot-sourced, and a `--surface
+ * copilot` value passed here (defensively, or by a future caller with a
+ * different entry point) must still map to `'repo'`, not `null`/global.
  */
 function authoritativeScopesFor(surface) {
   if (surface === 'claude') return new Set(['global']);

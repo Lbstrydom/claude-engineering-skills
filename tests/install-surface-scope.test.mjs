@@ -19,13 +19,17 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 
-const SRC = fs.readFileSync(
-  path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../scripts/install-skills.mjs'),
-  'utf8',
-);
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const CLI = path.join(REPO_ROOT, 'scripts', 'install-skills.mjs');
+const execFileAsync = promisify(execFile);
+
+const SRC = fs.readFileSync(CLI, 'utf8');
 
 describe('install-skills / --surface gates repo-scope side effects', () => {
   test('authoritativeScopesFor maps claude->global-only and copilot/agents->repo', () => {
@@ -60,5 +64,61 @@ describe('install-skills / --surface gates repo-scope side effects', () => {
     // The fix aligns code with a contract the module already documented. If the
     // sentence goes, the guard loses its stated justification.
     assert.match(SRC, /`--surface claude` writes only global files/);
+  });
+});
+
+// docs/plans/refactor-skill-governance.md round-1 audit H1 — the parseArgs
+// switch has no default/unknown-flag case, so bare-deleting the
+// --keep-github-skills arm would make it SILENTLY ignored, not rejected.
+describe('install-skills / --keep-github-skills is rejected, not silently ignored (round-1 audit H1)', () => {
+  test('the source carries an explicit exit-2 case, not a bare removal', () => {
+    const arm = /case '--keep-github-skills':([\s\S]*?)break;/.exec(SRC);
+    assert.ok(arm, 'expected a case arm for --keep-github-skills');
+    assert.match(arm[1], /process\.exit\(2\)/, 'must exit 2, not silently fall through');
+  });
+
+  test('the --surface copilot rejection path (round-3 Gemini shadow finding #1)', () => {
+    // install-skills.mjs does not call resolveSkillTargets directly — it calls
+    // resolveSkillFiles, which delegates straight through with no swallowing.
+    // Pin that the real call site is used, not a function this file never calls.
+    assert.match(SRC, /resolveSkillFiles\(skillName, args\.surface, repoRoot, files\)/);
+    assert.doesNotMatch(SRC, /\bresolveSkillTargets\(/, 'this file must not call resolveSkillTargets directly');
+  });
+
+  // Functional (round-3 M3): the source-pattern tests above prove the code
+  // exists, not that it actually runs and exits with the promised code — spawn
+  // the real CLI, same execFileAsync pattern
+  // tests/db-test-container.integration.test.mjs already uses for CLI smoke
+  // coverage.
+  test('--keep-github-skills exits 2 with a diagnostic (functional)', async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'install-skills-'));
+    try {
+      await assert.rejects(
+        execFileAsync(process.execPath, [CLI, '--local', '--target', tmp, '--keep-github-skills'], { cwd: REPO_ROOT }),
+        (err) => {
+          assert.equal(err.code, 2);
+          assert.match(err.stderr, /--keep-github-skills was removed/);
+          return true;
+        },
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+
+  test('--surface copilot exits 1 with the retired-surface message (functional)', async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'install-skills-'));
+    try {
+      await assert.rejects(
+        execFileAsync(process.execPath, [CLI, '--local', '--target', tmp, '--surface', 'copilot', '--force'], { cwd: REPO_ROOT }),
+        (err) => {
+          assert.equal(err.code, 1);
+          assert.match(err.stderr, /retired 2026-07-28/);
+          return true;
+        },
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
   });
 });

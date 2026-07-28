@@ -1,6 +1,55 @@
 # Project Status Log
 
-## 2026-07-28 (latest) — static-analysis tech-debt cluster shipped (binding-resolution primitive + three-valued nullability lattice)
+## 2026-07-28 (latest) — skill-governance cluster shipped (retired the `.github/skills/` escape hatch across all three write paths)
+
+Implemented via `/cycle --autonomous` from `docs/plans/refactor-skill-governance.md`
+(planned + audited via `/audit-plan` in a prior turn, 3 GPT rounds + 3 Gemini
+gate rounds, stopped per the rigor-pressure/plateau doctrine with the
+remaining findings grounded or deferred to `## Out of Scope (Future)`).
+
+**What shipped**: `--keep-github-skills` — an opt-in flag that resurrected
+the deprecated `.github/skills/` directory — is removed entirely from all
+three independent places it existed: `regenerate-skill-copies.mjs` (this
+repo's own generator; now **actively deletes** a pre-existing tree via a new
+`removeStaleGithubSkills()`, with a halt-before-copy failure contract and a
+source-validation precondition — `loadSkillsOrDie`/`validateAllSkillsOrDie`
+now run *before* the delete, so a bad source tree is never discovered only
+after the deprecated surface is already destroyed), `install-skills.mjs` +
+`scripts/lib/install/surface-paths.mjs` (`resolveSkillTargets` now throws
+for the retired `'copilot'` surface *and* for any other unrecognized
+surface value, instead of silently returning `[]` and letting the installer
+report a zero-write success), and `sync-to-repos.mjs` + `sync-inventory.mjs`
+(the sync path gained a real-time stale-surface shadow detector —
+`check-stale-skill-surface.mjs` now exports a shared `listSurfaceNames`
+reader, and a genuine shadow **fails that repo's sync** via
+`decideShadowFailure`, never merely warning while Copilot keeps resolving
+the stale copy — the exact field incident this plan traces, relocated to
+the sync path).
+
+**Audit-code** (4 rounds; an OpenAI 429 quota outage forced a mid-session
+retry on round 1): HIGH dropped 8→1→1→1 across rounds, converging via 3
+genuine bug fixes (an `existsSync`/EACCES conflation duplicated across two
+files; a false-assurance test regex that captured only a function's
+parameter list, never its body; a root-vs-surface `ENOENT` conflation) plus
+13 debt-captured pre-existing/independent findings and 2
+`@duplicate-justification`-suppressed intentional duplications. **Gemini
+final gate**: round 1 `CONCERNS_REMAINING` (a real `resolveSkillTargets`
+gap for unrecognized surfaces; a correctly-challenged `wrongly_dismissed` —
+my own round-1 dismissal had misapplied a plan exemption to the wrong file;
+3 shadow-only findings including a genuine plan-vs-shipped-code divergence
+on the sync-failure design) — all fixed; round 2 **`APPROVE`**, with 4 more
+shadow-only findings addressed as voluntary due diligence (most
+significantly: `decideShadowFailure` had reintroduced the exact
+false-clean/silent-success pattern this whole plan exists to eliminate, one
+layer up — an unreadable stale surface was reported as sync SUCCESS; fixed
+to fail the repo on an inspection error too).
+
+**Gate**: `waived` — the shadow-driven due-diligence fixes landed after the
+Gemini round-2 `APPROVE`, so the committed tree differs from the audited one.
+
+Full trail: `docs/plans/refactor-skill-governance.md` Implementation Log.
+
+## 2026-07-28 — static-analysis tech-debt cluster shipped (binding-resolution primitive + three-valued nullability lattice)
 
 Third and final of the three plan+audit passes from the 2026-07-27 tech-debt
 backlog sweep to be implemented (`docs/plans/refactor-static-analysis.md`,

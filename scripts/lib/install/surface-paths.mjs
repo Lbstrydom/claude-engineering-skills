@@ -98,22 +98,52 @@ export function repoQuarantineDir(repoRoot) {
 
 /**
  * Resolve target paths for a skill based on surface selection.
+ *
+ * `'copilot'` (`.github/skills/`) was retired 2026-07-28
+ * (docs/plans/refactor-skill-governance.md) — a bare `surface === 'copilot'`
+ * request **throws** rather than silently returning an empty array. A silent
+ * `[]` is indistinguishable from "this surface legitimately has zero
+ * targets"; only the current caller (`install-skills.mjs`) happens to map an
+ * empty array to its own loud error today, but nothing in this function's own
+ * contract would guarantee a future caller does the same — it would inherit
+ * a silent no-op. Throwing here makes "unsupported surface" a fact every
+ * caller gets for free. `'both'` is unaffected: it is a DIFFERENT surface
+ * value, never promised `copilot` specifically, and continues to quietly
+ * narrow to `[claude, agents]` (2 targets instead of 3) — only the bare,
+ * explicit `'copilot'` request is unambiguously asking for a retired surface.
+ *
  * @param {string} skillName
  * @param {string} surface - 'claude' | 'copilot' | 'agents' | 'both'
  * @param {string} repoRoot
  * @returns {Array<{ surface: string, dir: string, filePath: string, scope: 'global'|'repo' }>}
+ * @throws {Error} if `surface === 'copilot'`, or `surface` is any other unrecognized value
  */
 export function resolveSkillTargets(skillName, surface, repoRoot) {
+  if (surface === 'copilot') {
+    throw new Error(
+      "surface 'copilot' (.github/skills/) was retired 2026-07-28 — " +
+      'see docs/plans/refactor-skill-governance.md. Use claude, agents, or both.',
+    );
+  }
+
+  // Gemini gate round-2 shadow finding #3: this reject-bad-input check used
+  // to sit AFTER the target-pushing branches below, splitting "reject an
+  // unrecognized surface" across two non-adjacent spots in the function body
+  // — a future contributor adding a new surface (e.g. 'cursor') could easily
+  // extend the branches below and forget this guard, silently reintroducing
+  // the exact fall-through G1 fixed. Co-located here with the `copilot`
+  // guard so all "reject bad surface" logic lives in one place.
+  if (surface !== 'claude' && surface !== 'agents' && surface !== 'both') {
+    throw new Error(
+      `unrecognized surface '${surface}' — expected one of: claude, agents, both.`,
+    );
+  }
+
   const targets = [];
 
   if (surface === 'claude' || surface === 'both') {
     const dir = path.join(globalSurfaceRoot(), skillName);
     targets.push({ surface: 'claude', dir, filePath: path.join(dir, 'SKILL.md'), scope: 'global' });
-  }
-
-  if (surface === 'copilot' || surface === 'both') {
-    const dir = path.join(repoRoot, '.github', 'skills', skillName);
-    targets.push({ surface: 'copilot', dir, filePath: path.join(dir, 'SKILL.md'), scope: 'repo' });
   }
 
   if (surface === 'agents' || surface === 'both') {
@@ -129,11 +159,15 @@ export function resolveSkillTargets(skillName, surface, repoRoot) {
  * Returns per-file entries so the installer can write references/ and examples/
  * content, not just SKILL.md.
  *
+ * Delegates straight to `resolveSkillTargets` with no swallowing — a bare
+ * `surface === 'copilot'` throws the same retired-surface error.
+ *
  * @param {string} skillName
  * @param {string} surface - 'claude' | 'copilot' | 'agents' | 'both'
  * @param {string} repoRoot
  * @param {Array<{ relPath: string, sha: string, size: number }>} files - from manifest v2 skill.files
  * @returns {Array<{ surface: string, dir: string, filePath: string, relPath: string, scope: 'global'|'repo' }>}
+ * @throws {Error} if `surface === 'copilot'`
  */
 export function resolveSkillFiles(skillName, surface, repoRoot, files) {
   const surfaceTargets = resolveSkillTargets(skillName, surface, repoRoot);

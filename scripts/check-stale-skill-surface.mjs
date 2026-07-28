@@ -42,13 +42,63 @@ const R = '\x1b[31m', G = '\x1b[32m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0
 export const STALE_SURFACE = '.github/skills';
 export const LIVE_SURFACE = '.claude/skills';
 
-function listSkillDirs(root, surface) {
+/**
+ * Read a surface's skill-directory names. `docs/plans/refactor-skill-governance.md`
+ * round-2 M1: exported (was a private `listSkillDirs`) so `sync-to-repos.mjs`
+ * shares this exact reader instead of re-deriving its own — and given a richer
+ * contract than before: no `fs.existsSync` pre-check, because `existsSync`
+ * swallows EVERY stat error (not just "doesn't exist") and returns `false` for
+ * an EACCES-unreadable directory exactly the same as a genuinely-absent one —
+ * that would silently misreport an unreadable surface as clean. `readdirSync`
+ * runs directly in a try/catch: `ENOENT` is the absent/clean case; ANY other
+ * `err.code` (`EACCES`, `EPERM`, `ENOTDIR` for a stray non-directory path at
+ * the surface location, or anything else) is `readable: false` — never
+ * silently "no shadow."
+ *
+ * **Audit-code round-3 M1 (real bug, fixed)**: an `ENOENT` on
+ * `<root>/<surface>` was unconditionally treated as "surface legitimately
+ * absent, clean" — but that same `ENOENT` also fires when `root` ITSELF
+ * doesn't exist (e.g. a typo'd `--repo` path), which is a fundamentally
+ * different, actionable error this contract should never mask as "nothing
+ * can shadow." Fixed: an `ENOENT` now checks whether `root` exists first.
+ *
+ * **Gemini gate shadow finding #2 (real bug, fixed)**: the round-3 fix
+ * above used `fs.existsSync(root)` for that root check — reintroducing, in
+ * this very function's own body, the exact `existsSync` EACCES-swallowing
+ * defect this whole reader exists to eliminate. A `root` that exists but is
+ * unreadable would have `existsSync` report `false`, misclassifying a real
+ * permissions problem as "repository root does not exist." Fixed: probes
+ * `root` with `lstatSync` in its own try/catch (same pattern as
+ * `regenerate-skill-copies.mjs`'s `removeStaleGithubSkills`) — `ENOENT`
+ * means genuinely absent; any other code (`EACCES`, etc.) is reported
+ * accurately as its own error, not relabeled as "does not exist."
+ *
+ * @param {string} root
+ * @param {string} surface
+ * @returns {{names: string[], readable: true} | {names: null, readable: false, error: {code: string, message: string, path: string}}}
+ */
+export function listSurfaceNames(root, surface) {
   const base = path.join(root, ...surface.split('/'));
-  if (!fs.existsSync(base)) return [];
-  return fs.readdirSync(base, { withFileTypes: true })
-    .filter(e => e.isDirectory())
-    .map(e => e.name)
-    .sort();
+  try {
+    const names = fs.readdirSync(base, { withFileTypes: true })
+      .filter(e => e.isDirectory())
+      .map(e => e.name)
+      .sort();
+    return { names, readable: true };
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      try {
+        fs.lstatSync(root);
+      } catch (rootErr) {
+        if (rootErr.code === 'ENOENT') {
+          return { names: null, readable: false, error: { code: 'ENOENT', message: `repository root does not exist: ${root}`, path: root } };
+        }
+        return { names: null, readable: false, error: { code: rootErr.code, message: rootErr.message, path: root } };
+      }
+      return { names: [], readable: true };
+    }
+    return { names: null, readable: false, error: { code: err.code, message: err.message, path: base } };
+  }
 }
 
 function readSkillMd(root, surface, name) {
@@ -111,7 +161,17 @@ function main() {
   const json = argv.includes('--format=json') ||
     (argv.includes('--format') && argv[argv.indexOf('--format') + 1] === 'json');
   const repoIdx = argv.indexOf('--repo');
-  const root = repoIdx >= 0 && argv[repoIdx + 1] ? path.resolve(argv[repoIdx + 1]) : process.cwd();
+  // Gemini gate wrongly_dismissed M3 (real bug, fixed) — this plan's own
+  // round-1 dismissal of this exact concern cited section 1.4, which only
+  // exempts install-skills.mjs's switch parser, not this file (actively
+  // modified by this diff). A malformed `--repo` (no value, or the next
+  // token is itself another flag) must not silently fall back to cwd — it
+  // would report a false-clean result for the WRONG directory entirely.
+  if (repoIdx >= 0 && (!argv[repoIdx + 1] || argv[repoIdx + 1].startsWith('--'))) {
+    process.stderr.write(`${R}Error${X}: --repo requires a directory path${X}\n`);
+    process.exit(2);
+  }
+  const root = repoIdx >= 0 ? path.resolve(argv[repoIdx + 1]) : process.cwd();
 
   // SANDBOX HONESTY (2026-07-20). The defect this check hunts is an UNTRACKED
   // `.github/skills/` tree — `git ls-files .github/skills` is empty by design,
@@ -143,11 +203,35 @@ function main() {
     process.exit(0);
   }
 
-  const staleNames = listSkillDirs(root, STALE_SURFACE);
-  const liveNames = listSkillDirs(root, LIVE_SURFACE);
+  const stale = listSurfaceNames(root, STALE_SURFACE);
+  const live = listSurfaceNames(root, LIVE_SURFACE);
+
+  // An inspection failure on EITHER surface must never present as a clean
+  // pass — exits 1 UNCONDITIONALLY (not gated by --gate), consistent with
+  // this repo's own capture-honesty doctrine ("audit your success paths").
+  // This deliberately also covers an unreadable LIVE (.claude/skills/)
+  // surface, not just the stale one: it is committed and tracked, so an
+  // unreadable copy in a normal checkout means the repo itself is broken,
+  // and a loud failure is the correct response — not the old silent
+  // existsSync-swallow into "0 skills, clean" this fix exists to close.
+  const failure = !stale.readable ? stale : !live.readable ? live : null;
+  if (failure) {
+    if (json) {
+      process.stdout.write(JSON.stringify({
+        repo: root, staleSurface: STALE_SURFACE, liveSurface: LIVE_SURFACE,
+        status: 'error', inspectionError: failure.error.message, exitCode: 1,
+      }, null, 2) + '\n');
+    } else {
+      process.stderr.write(
+        `${R}✗ cannot inspect ${failure.error.path}: ${failure.error.message}${X}\n`,
+      );
+    }
+    process.exit(1);
+  }
+
   const result = compareSkillSurfaces({
-    staleNames,
-    liveNames,
+    staleNames: stale.names,
+    liveNames: live.names,
     contentOf: (surface, name) => readSkillMd(root, surface, name),
   });
 

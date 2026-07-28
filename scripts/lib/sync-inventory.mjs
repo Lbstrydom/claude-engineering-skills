@@ -186,7 +186,7 @@ function syncMigrations() {
   }
 }
 
-function buildSkillFiles(keepGithubSkills = false) {
+function buildSkillFiles() {
   const out = [];
   const skillsDir = path.join(REPO_ROOT, 'skills');
   for (const name of listSkillNames(skillsDir)) {
@@ -194,7 +194,6 @@ function buildSkillFiles(keepGithubSkills = false) {
     const files = enumerateSkillFiles(skillDir, { strict: true });
     for (const rel of files) {
       out.push(`.claude/skills/${name}/${rel}`);
-      if (keepGithubSkills) out.push(`.github/skills/${name}/${rel}`);
     }
   }
   return out;
@@ -262,14 +261,15 @@ function resolveBundle(entryPoints, assets = []) {
   return { files: [...new Set([...files, ...assets])], unresolved, external };
 }
 
-function bundleForRepo({ keepGithubSkills = false } = {}) {
+// @duplicate-justification: target=scripts/sync-to-repos.mjs:bundleForRepo reason=deliberate mirror per this module's own header ("Extracts the existing bundleForRepo/REPOS logic from sync-to-repos.mjs into a library module so tests + the verifier CLI can import it without running the sync main") — sync-to-repos.mjs is the authoritative CLI entry point and cannot be imported as a library without triggering its own main(), so this is a source-only, side-effect-free re-implementation, kept in lock-step by tests/sync-inventory-parity.test.mjs's array-equality assertions rather than by sharing code.
+function bundleForRepo() {
   const entries = [
     ...CORE_ENTRY, ...CORE_NON_IMPORTABLE, ...LEARNING_ENTRY, ...ARCH_ENTRY,
     ...SYNC_ISOLATION_ENTRY, ...DEBT_ENTRY,
   ];
   const assets = [...CORE_ASSETS, ...syncMigrations()];
   const { files, unresolved, external } = resolveBundle(entries, assets);
-  const skillFiles = buildSkillFiles(keepGithubSkills);
+  const skillFiles = buildSkillFiles();
   const nonCode = [...skillFiles, ...EDITOR_FILES, ...CLAUDE_CODE_FILES];
   return { files: [...files, ...nonCode], unresolved, external };
 }
@@ -278,26 +278,24 @@ function bundleForRepo({ keepGithubSkills = false } = {}) {
  * Return the full source-relative file list for the named consumer.
  *
  * @param {string} aliasOrName — 'ai' / 'wine' / 'ai-organiser' / 'wine-cellar-app'
- * @param {{keepGithubSkills?: boolean}} [opts]
  * @returns {{files: string[], unresolved: Array<{from:string,specifier:string}>, external: Array<{from:string,specifier:string,pkg:string}>, name: string, alias: string}}
  */
-export function getSyncInventoryForRepo(aliasOrName, opts = {}) {
+export function getSyncInventoryForRepo(aliasOrName) {
   const repo = CONSUMER_REPOS.find((r) => r.alias === aliasOrName || r.name === aliasOrName);
   if (!repo) throw new Error(`getSyncInventoryForRepo: unknown consumer "${aliasOrName}". Known: ${CONSUMER_REPOS.map((r) => r.alias).join(', ')}`);
-  const { files, unresolved, external } = bundleForRepo(opts);
+  const { files, unresolved, external } = bundleForRepo();
   return { files, unresolved, external, name: repo.name, alias: repo.alias };
 }
 
 /**
  * Return inventories for ALL consumers, keyed by alias.
  *
- * @param {{keepGithubSkills?: boolean}} [opts]
  * @returns {Map<string, {files: string[], unresolved: Array<{from:string,specifier:string}>, external: Array<{from:string,specifier:string,pkg:string}>, name: string, alias: string}>}
  */
-export function getAllConsumerInventories(opts = {}) {
+export function getAllConsumerInventories() {
   const out = new Map();
   for (const repo of CONSUMER_REPOS) {
-    const inv = getSyncInventoryForRepo(repo.alias, opts);
+    const inv = getSyncInventoryForRepo(repo.alias);
     out.set(repo.alias, inv);
   }
   return out;

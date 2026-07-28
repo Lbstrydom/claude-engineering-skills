@@ -4,18 +4,15 @@ import path from 'node:path';
 import { resolveSkillTargets, receiptPath } from '../../scripts/lib/install/surface-paths.mjs';
 
 describe('resolveSkillTargets', () => {
-  it('returns copilot target for copilot surface', () => {
-    const targets = resolveSkillTargets('audit-loop', 'copilot', '/repo');
-    assert.equal(targets.length, 1);
-    assert.equal(targets[0].surface, 'copilot');
-    assert.ok(targets[0].filePath.includes('.github'));
+  it('throws for the retired copilot surface (docs/plans/refactor-skill-governance.md, round-1 M1)', () => {
+    assert.throws(() => resolveSkillTargets('audit-loop', 'copilot', '/repo'), /retired/);
   });
 
-  it('returns 3 targets for both surface', () => {
+  it('returns 2 targets for both surface (copilot no longer included)', () => {
     const targets = resolveSkillTargets('audit-loop', 'both', '/repo');
-    assert.equal(targets.length, 3);
+    assert.equal(targets.length, 2);
     const surfaces = targets.map(t => t.surface).sort();
-    assert.deepEqual(surfaces, ['agents', 'claude', 'copilot']);
+    assert.deepEqual(surfaces, ['agents', 'claude']);
   });
 
   it('returns claude target using home dir', () => {
@@ -23,6 +20,13 @@ describe('resolveSkillTargets', () => {
     assert.equal(targets.length, 1);
     assert.ok(targets[0].filePath.includes('.claude'));
     assert.ok(targets[0].filePath.includes('ship'));
+  });
+
+  it('Gemini gate G1 — throws for an entirely unrecognized surface, never a silent empty array', () => {
+    // The real bug: a typo like --surface claudd matched none of the
+    // existing branches and fell through to []. install-skills.mjs then
+    // performs zero writes and exits 0 — a broken install reported as success.
+    assert.throws(() => resolveSkillTargets('ship', 'claudd', '/repo'), /unrecognized surface 'claudd'/);
   });
 });
 

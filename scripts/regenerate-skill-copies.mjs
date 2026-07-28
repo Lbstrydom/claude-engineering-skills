@@ -1,13 +1,20 @@
 #!/usr/bin/env node
 /**
  * @fileoverview One-way generation: byte-copy skills from the authoritative
- * `skills/` tree to `.claude/skills/` (and optionally `.github/skills/`).
+ * `skills/` tree to `.claude/skills/`.
  *
  * - The top-level `skills/` directory is the ONLY place authors edit.
  * - `.claude/skills/` is always generated — never edited directly.
- * - `.github/skills/` is **deprecated** as of Phase 4 of ai-context-sync —
- *   no documented tool reads it. Pass `--keep-github-skills` to keep
- *   regenerating it during the deprecation window. Removed in next minor.
+ * - `.github/skills/` is **deprecated** as of Phase 4 of ai-context-sync.
+ *   VS Code Copilot Agent Skills DOES discover it (and wins on a name
+ *   collision against `.claude/skills/` — see
+ *   `scripts/check-stale-skill-surface.mjs`'s fileoverview), which is
+ *   exactly why this generator no longer just warns about it: a
+ *   pre-existing `.github/skills/` tree is **actively removed** on every
+ *   run (respecting `--dry-run`/`--check`, which report the would-be
+ *   removal without touching disk). Removed 2026-07-28
+ *   (docs/plans/refactor-skill-governance.md): this generator no longer
+ *   supports writing that surface at all.
  * - Prunes files in the destination that are no longer in the source so
  *   destinations exactly mirror source.
  *
@@ -15,14 +22,14 @@
  * and dotfile files never propagate.
  *
  * Usage:
- *   node scripts/regenerate-skill-copies.mjs                     # default: only .claude/skills/
- *   node scripts/regenerate-skill-copies.mjs --keep-github-skills # also write .github/skills/
- *   node scripts/regenerate-skill-copies.mjs --dry-run           # report, no writes
- *   node scripts/regenerate-skill-copies.mjs --check             # exit 1 if out of sync
+ *   node scripts/regenerate-skill-copies.mjs           # regenerate .claude/skills/; remove stale .github/skills/
+ *   node scripts/regenerate-skill-copies.mjs --dry-run # report, no writes
+ *   node scripts/regenerate-skill-copies.mjs --check   # exit 1 if out of sync
  *
  * Exit codes:
  *   0 = success (or --check: in sync)
- *   1 = --check: destinations differ from source
+ *   1 = --check: destinations differ from source; or a stale .github/skills/
+ *       removal failed (permissions, locked file) — halts before any copy
  *   2 = bad input / allowlist violation
  *
  * @module scripts/regenerate-skill-copies
@@ -35,28 +42,82 @@ import { sha, assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 const ROOT = path.resolve(import.meta.dirname, '..');
 const SRC_ROOT = path.join(ROOT, 'skills');
 
-const KEEP_GITHUB_SKILLS = process.argv.includes('--keep-github-skills');
-
-const DEST_ROOTS = [
-  path.join(ROOT, '.claude', 'skills'),
-  ...(KEEP_GITHUB_SKILLS ? [path.join(ROOT, '.github', 'skills')] : []),
-];
+const DEST_ROOTS = [path.join(ROOT, '.claude', 'skills')];
 
 const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', X = '\x1b[0m', D = '\x1b[2m', B = '\x1b[1m';
 
 
 // ── main() helpers — keep main() under cognitive-complexity 15 ────────────
 
-function warnGithubSkillsDeprecation() {
-  const ghSkillsDir = path.join(ROOT, '.github', 'skills');
-  if (KEEP_GITHUB_SKILLS || !fs.existsSync(ghSkillsDir)) return;
-  process.stderr.write(
-    `${Y}[regenerate] DEPRECATION: .github/skills/ is no longer maintained ` +
-    `(no documented tool reads it).\n` +
-    `  Existing files at ${path.relative(ROOT, ghSkillsDir)} are not deleted ` +
-    `by this run. To preserve them and keep regenerating, pass --keep-github-skills.\n` +
-    `  Once confirmed unused, delete the directory manually.${X}\n`,
-  );
+/** Thrown by `removeStaleGithubSkills` on a real removal failure — caught at
+ * the `isMain` boundary, mirroring the existing `ArgvError` pattern below, so
+ * the failure path is a plain throw (testable in-process) rather than a
+ * `process.exit` buried inside a helper. */
+class GithubSkillsRemovalError extends Error {
+  constructor(message) {
+    super(message);
+    this.code = 'GITHUB_SKILLS_REMOVAL_FAILED';
+    this.name = 'GithubSkillsRemovalError';
+  }
+}
+
+/**
+ * Actively remove a pre-existing `.github/skills/` tree. This is a required
+ * PRECONDITION — called before any `.claude/skills/` copy step runs, never
+ * interleaved with it, so a failure here halts before any write, rather than
+ * leaving a half-deleted stale tree next to a half-copied live one.
+ *
+ * `--dry-run`/`--check` report the would-be removal and never call `rmSync`,
+ * matching every other mutation in this script. A missing directory is a
+ * silent no-op success (idempotent, not an error). A real removal failure
+ * (locked file, permissions) throws `GithubSkillsRemovalError` — never
+ * silently swallowed, never allowed to proceed to the copy step.
+ *
+ * **Audit-code round-1 H4/M4/H8 (real bug, fixed)**: the inspection step
+ * used to be `if (!fs.existsSync(ghSkillsDir)) return 0`, but `existsSync`
+ * converts EVERY stat failure — including `EACCES`/`EPERM` — into `false`,
+ * identically to a genuinely-absent path. That would silently treat an
+ * unreadable `.github/skills/` as "nothing to remove," bypassing this whole
+ * function's stated precondition — the exact same class of bug already
+ * fixed in `check-stale-skill-surface.mjs`'s `listSurfaceNames`. Fixed by
+ * probing with `lstatSync` in a try/catch: `ENOENT` is the genuine-absence
+ * case; any other code throws `GithubSkillsRemovalError` before any copy
+ * step, same as a real removal failure.
+ *
+ * @returns {number} delete count to fold into `stats.deletes` (0 or 1 — the
+ *   whole-tree removal is one unit, matching `--check`'s exit-1-on-pending-
+ *   changes contract: it must count, or a pending removal reads as "in sync").
+ */
+function removeStaleGithubSkills(opts, {
+  rmSyncFn = fs.rmSync,
+  lstatFn = fs.lstatSync,
+  ghSkillsDir = path.join(ROOT, '.github', 'skills'), // injectable so tests never touch the real repo's .github/
+} = {}) {
+  try {
+    lstatFn(ghSkillsDir);
+  } catch (err) {
+    if (err.code === 'ENOENT') return 0;
+    throw new GithubSkillsRemovalError(
+      `cannot inspect deprecated ${path.relative(ROOT, ghSkillsDir)}: ${err.message} — ` +
+      `check filesystem permissions, then retry.`,
+    );
+  }
+
+  if (opts.dryOrCheck) {
+    process.stdout.write(`${R}-${X} ${path.relative(ROOT, ghSkillsDir)}/ ${D}(deprecated — would remove)${X}\n`);
+    return 1;
+  }
+
+  try {
+    rmSyncFn(ghSkillsDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  } catch (err) {
+    throw new GithubSkillsRemovalError(
+      `failed to remove deprecated ${path.relative(ROOT, ghSkillsDir)}: ${err.message} — ` +
+      `close any program holding a file open under that path, or check filesystem permissions, then retry.`,
+    );
+  }
+  process.stdout.write(`${R}-${X} ${path.relative(ROOT, ghSkillsDir)}/ ${D}(removed deprecated .github/skills)${X}\n`);
+  return 1;
 }
 
 function loadSkillsOrDie() {
@@ -70,6 +131,31 @@ function loadSkillsOrDie() {
     process.exit(2);
   }
   return skills;
+}
+
+/**
+ * Gemini gate shadow finding #1 (real bug, fixed): `removeStaleGithubSkills`
+ * ran as the FIRST step in `main()` — before this validation existed in that
+ * position, a repo with a missing/empty `skills/` tree, or a single skill
+ * containing a disallowed file, would permanently `rmSync -r` the deprecated
+ * `.github/skills/` tree and only THEN discover the source problem and exit
+ * 2 — destroying the deprecated surface while writing nothing new. Every
+ * skill's allowlist is validated (read-only — `enumerateSkillFiles` performs
+ * no writes) before ANY destructive or write step runs.
+ */
+function validateAllSkillsOrDie(skills, srcRoot = SRC_ROOT) {
+  const violations = [];
+  for (const name of skills) {
+    try {
+      enumerateSkillFiles(path.join(srcRoot, name), { strict: true });
+    } catch (err) {
+      violations.push(`${name}: ${err.message}`);
+    }
+  }
+  if (violations.length > 0) {
+    for (const v of violations) process.stderr.write(`${R}${v}${X}\n`);
+    process.exit(2);
+  }
 }
 
 function copyFileIfChanged(srcAbs, dstAbs, opts) {
@@ -175,13 +261,9 @@ function emitVerdict(stats, violations, check) {
 }
 
 /**
- * Every flag this CLI reads. Kept adjacent to `main()` rather than beside the
- * module-scope `KEEP_GITHUB_SKILLS` constant, which evaluates on IMPORT —
- * throwing there would break any consumer that imports this module.
- *
- * No flag here takes a value; all three are booleans.
+ * Every flag this CLI reads. No flag here takes a value; both are booleans.
  */
-const KNOWN_FLAGS = ['--keep-github-skills', '--dry-run', '--check'];
+const KNOWN_FLAGS = ['--dry-run', '--check'];
 
 function main() {
   // This CLI OVERWRITES the generated `.claude/skills/` tree by default, so
@@ -193,10 +275,20 @@ function main() {
   const CHECK = process.argv.includes('--check');
   const opts = { dryOrCheck: DRY || CHECK };
 
-  warnGithubSkillsDeprecation();
-  const skills = loadSkillsOrDie();
-
   const stats = { writes: 0, deletes: 0, unchanged: 0 };
+
+  // Gemini gate shadow finding #1 — the SOURCE must be validated before ANY
+  // destructive step. loadSkillsOrDie (does skills/ exist, non-empty?) and
+  // validateAllSkillsOrDie (does every skill's allowlist pass?) both run
+  // BEFORE removeStaleGithubSkills, so a bad source tree is never discovered
+  // only after the deprecated surface has already been destroyed.
+  const skills = loadSkillsOrDie();
+  validateAllSkillsOrDie(skills);
+
+  // Required precondition — before any copy step; halts (exit 1) on a real
+  // removal failure rather than proceeding into a half-deleted/half-copied state.
+  stats.deletes += removeStaleGithubSkills(opts);
+
   const violations = [];
 
   for (const name of skills) {
@@ -217,7 +309,7 @@ function main() {
 // underscore signals private; `copyFileIfChanged` is the seam where a dropped
 // `--dry-run` once still ran fs.mkdirSync — guarded by
 // tests/regenerate-skill-copies.test.mjs.
-export const _internals = Object.freeze({ copyFileIfChanged, pruneFilesNotInSource });
+export const _internals = Object.freeze({ copyFileIfChanged, pruneFilesNotInSource, removeStaleGithubSkills, validateAllSkillsOrDie });
 
 // Only run when invoked as a script. Without this guard, importing the module
 // for `_internals` would execute main() against the test runner's argv — and
@@ -240,6 +332,13 @@ if (isMain) {
     if (err instanceof ArgvError || err?.code === 'ARGV_ERROR') {
       process.stderr.write(`${err.message}\n`);
       process.exit(2);
+    }
+    // A real removal failure — halted before any copy step (main() has no
+    // try/catch around removeStaleGithubSkills, so this throw never reached
+    // loadSkillsOrDie()/the copy loop). Print the message alone, no stack.
+    if (err instanceof GithubSkillsRemovalError || err?.code === 'GITHUB_SKILLS_REMOVAL_FAILED') {
+      process.stderr.write(`${R}[regenerate] ${err.message}${X}\n`);
+      process.exit(1);
     }
     throw err;
   }

@@ -32,6 +32,7 @@ import { updateManagedBlock, parseGitignoreState } from './lib/sync-gitignore.mj
 import { untrackNewlyIgnored } from './lib/sync-untrack.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
+import { compareSkillSurfaces, listSurfaceNames, STALE_SURFACE } from './check-stale-skill-surface.mjs';
 // Reused rather than re-parsed: env-setting owns .env key resolution (dotenv's
 // last-wins semantics included), and it is pure — the caller supplies the text.
 import { resolveEnvValue } from './lib/env-setting.mjs';
@@ -140,7 +141,6 @@ const UNTRACK_PATTERNS = [
 ];
 
 const DRY_RUN = process.argv.includes('--dry-run');
-const KEEP_GITHUB_SKILLS = process.argv.includes('--keep-github-skills');
 const NO_PROMPT = process.argv.includes('--no-prompt');
 // Recovery escape hatch for orphaned ownership records: adopt files that sit at
 // a destination we intend to write but are absent from the consumer's manifest.
@@ -557,10 +557,13 @@ function realMissingDeps(unresolved) {
  * the hardcoded SKILL.md list with allowlist-based enumeration — new skills
  * + references/ + examples/ auto-register without editing this file.
  *
- * Phase 4 of ai-context-sync: dropped the .github/skills/ surface from the
- * default since no documented tool reads it. Pass --keep-github-skills to
- * keep mirroring during the deprecation window (one minor release).
+ * Phase 4 of ai-context-sync dropped the .github/skills/ surface from the
+ * default; the `--keep-github-skills` escape hatch that could still opt a
+ * sync back into mirroring it was removed entirely 2026-07-28
+ * (docs/plans/refactor-skill-governance.md) — this function now only ever
+ * produces `.claude/skills/` entries.
  */
+// @duplicate-justification: target=scripts/lib/sync-inventory.mjs:buildSkillFiles reason=this file's copy is the authoritative one (per tests/sync-inventory-parity.test.mjs's own header — sync-inventory.mjs cannot import this CLI module without triggering its own main()), kept in lock-step by that test's array-equality assertions rather than by sharing code (same pre-existing, deliberate architecture as bundleForRepo's own justified duplication just above)
 function buildSkillFiles() {
   const out = [];
   const skillsDir = path.join(SOURCE_ROOT, 'skills');
@@ -569,7 +572,6 @@ function buildSkillFiles() {
     const files = enumerateSkillFiles(skillDir, { strict: true });
     for (const rel of files) {
       out.push(`.claude/skills/${name}/${rel}`);
-      if (KEEP_GITHUB_SKILLS) out.push(`.github/skills/${name}/${rel}`);
     }
   }
   return out;
@@ -624,6 +626,109 @@ function bundleForRepo() {
   ];
   const { files, unresolved } = resolveBundle(entries, CORE_ASSETS);
   return { files: [...files, ...NON_CODE_FILES], unresolved };
+}
+
+/**
+ * Project a bundle's file list down to the canonical skill-name set that
+ * matters for stale-surface shadow detection — verified against the actual
+ * shape `buildSkillFiles` above emits (`.claude/skills/<name>/<rel-path>`,
+ * forward-slash template literals throughout, never `path.join`; the
+ * `[\\/]`-tolerant regex is zero-cost hardening against a future refactor
+ * introducing one, not an admission that claim was ever true — see
+ * docs/plans/refactor-skill-governance.md round-2 Gemini gate G1).
+ *
+ * @param {string[]} files
+ * @returns {string[]} sorted, de-duplicated skill names
+ */
+function extractLiveSkillNames(files) {
+  const names = new Set();
+  for (const f of files) {
+    const m = /^\.claude[\\/]skills[\\/]([^\\/]+)[\\/]/.exec(f);
+    if (m) names.add(m[1]);
+  }
+  return [...names].sort();
+}
+
+/**
+ * Check one consumer target's on-disk `.github/skills/` against the
+ * INTENDED (not post-write-observed) canonical name set this run computed —
+ * so detection is identical whether or not `--dry-run` suppresses the
+ * actual write (round-2 Gemini gate H1). Read-only by construction: never
+ * calls `fs.rmSync`/`fs.writeFileSync`/`fs.unlinkSync` — only warns (§2.1's
+ * "detect, don't delete in a repo we don't own" principle).
+ *
+ * `listSurfaceNamesFn` is an injectable default parameter (round-3 Gemini
+ * gate M2) so tests can drive the unreadable-path branch without module
+ * mocking.
+ *
+ * @param {{targetRoot: string, desiredLiveNames: string[], logger?: Console, listSurfaceNamesFn?: typeof listSurfaceNames}} opts
+ * @returns {{shadowed: object[], orphans: string[], inspectionError: object|null}}
+ */
+function inspectTargetSkillSurfaces({
+  targetRoot, desiredLiveNames, logger = console, listSurfaceNamesFn = listSurfaceNames,
+}) {
+  const stale = listSurfaceNamesFn(targetRoot, STALE_SURFACE);
+  if (!stale.readable) {
+    logger.warn(`[stale-skill-surface] cannot inspect ${STALE_SURFACE} under ${targetRoot}: ${stale.error.message}`);
+    return { shadowed: [], orphans: [], inspectionError: stale.error };
+  }
+  const { shadowed, orphans } = compareSkillSurfaces({
+    staleNames: stale.names, liveNames: desiredLiveNames, contentOf: () => null,
+  });
+  if (shadowed.length > 0) {
+    logger.warn(
+      `[stale-skill-surface] ${targetRoot}: ${shadowed.map(s => s.name).join(', ')} would be shadowed by ` +
+      `a stale ${STALE_SURFACE}/ tree — see check-stale-skill-surface.mjs --repo ${targetRoot}`,
+    );
+  }
+  // A non-overlapping stale name is not a live shadow, but it is still the
+  // exact deprecated debt install-skills.mjs already warns about
+  // unconditionally — surface it too (round-3 M1) so this check-site isn't
+  // silently narrower than the installer's.
+  if (orphans.length > 0) {
+    logger.warn(
+      `[stale-skill-surface] ${targetRoot}: deprecated ${STALE_SURFACE}/ contains ${orphans.join(', ')} ` +
+      `with no live counterpart today — consider removing (see check-stale-skill-surface.mjs --repo ${targetRoot})`,
+    );
+  }
+  return { shadowed, orphans, inspectionError: null };
+}
+
+/**
+ * Turn an `inspectTargetSkillSurfaces` result into a fail-this-repo decision
+ * — extracted as a pure function (audit-code round-1 H7) so the "a genuine
+ * shadow must not be reported as a successful sync" contract is testable in
+ * isolation, the same way `decideStaleSurfaceExit` in
+ * check-stale-skill-surface.mjs already is. An orphan (no live counterpart)
+ * is advisory only and does not fail the sync — only an actual shadow does,
+ * since only a shadow means the fresh write this run just made is
+ * unreachable behind the stale copy.
+ *
+ * **Gemini gate round-2 shadow finding #2 (real bug, fixed)**: an unreadable
+ * stale surface produces `{shadowed: [], inspectionError: {...}}` from
+ * `inspectTargetSkillSurfaces` — checking only `shadowed.length` treated
+ * that exactly like a genuinely-clean target, so sync reported SUCCESS for
+ * a repo whose `.github/skills/` could not even be inspected. This is the
+ * identical false-clean class already fixed three separate times elsewhere
+ * in this diff (`listSurfaceNames`'s own `existsSync`/EACCES conflation,
+ * twice), re-opened one layer up at this call site. Fixed: an
+ * `inspectionError` now fails the repo too, with its own distinct message —
+ * "cannot verify" is never reported as "verified clean," mirroring
+ * `check-stale-skill-surface.mjs`'s own unconditional-exit-on-unreadable
+ * contract.
+ *
+ * @param {{shadowed: object[], inspectionError: object|null}} inspection
+ * @param {string} repoName
+ * @returns {string|null} the failure message to print, or null if this repo passes
+ */
+function decideShadowFailure(inspection, repoName) {
+  if (inspection.inspectionError) {
+    return `stale-skill-surface FAILURE: cannot verify ${STALE_SURFACE}/ for ${repoName}: ` +
+      `${inspection.inspectionError.message} — this sync cannot confirm the target is not shadowed`;
+  }
+  if (inspection.shadowed.length === 0) return null;
+  return `stale-skill-surface FAILURE: ${inspection.shadowed.map(s => s.name).join(', ')} ` +
+    `shadowed by ${STALE_SURFACE}/ — remove that directory before this sync can succeed for ${repoName}`;
 }
 
 export const REPOS = CONSUMER_REPOS.map(r => {
@@ -750,7 +855,7 @@ function assessConsumerAzureEmbed(repoPath) {
  * `--target` takes a value; `assertKnownFlags` validates NAMES only, so the
  * value is a bare positional it ignores by design.
  */
-const KNOWN_FLAGS = ['--dry-run', '--keep-github-skills', '--no-prompt', '--adopt-orphans', '--target'];
+const KNOWN_FLAGS = ['--dry-run', '--no-prompt', '--adopt-orphans', '--target'];
 
 async function main() {
   // This CLI WRITES INTO CONSUMER REPOS and its default is the real sync, so a
@@ -761,14 +866,6 @@ async function main() {
   // already fixed, so it was reported as "baseline can shrink — fixed or gone".
   assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'sync-to-repos' });
   assertRepoRoot(import.meta.url);
-
-  if (!KEEP_GITHUB_SKILLS) {
-    process.stderr.write(
-      '[sync] DEPRECATION: .github/skills/ surface is no longer mirrored to consumer repos.\n' +
-      '  Pass --keep-github-skills to preserve mirroring during the deprecation window.\n' +
-      '  Existing .github/skills/ directories in consumer repos are NOT deleted by this sync.\n'
-    );
-  }
 
   let totalNew = 0;
   let totalUpdated = 0;
@@ -819,6 +916,32 @@ async function main() {
     let repoRemaps = 0, repoRewrites = 0, repoGcDeletions = 0;
 
     console.log(`${B}→ ${repo.name}${X} (${repo.path})`);
+
+    // ── Pre-flight: stale .github/skills/ shadow detection ────────────────
+    // Runs unconditionally (including --dry-run) since it uses the INTENDED
+    // bundle contents, not post-write disk state — round-2 Gemini gate H1.
+    // Wrapped in try/catch (round-2 shadow finding #3): an unexpected throw
+    // from this check must never abort the whole sync run.
+    //
+    // A genuine SHADOW (not an orphan) fails this repo's sync (audit-code
+    // round-1 H7): warn-and-continue let sync report success while Copilot
+    // kept resolving the stale copy — the exact field incident (§1.3) this
+    // plan exists to prevent, just relocated to the sync path instead of
+    // install. Still never deletes anything; only refuses to let the run
+    // claim success for a target whose intended live skills are unreachable.
+    try {
+      const inspection = inspectTargetSkillSurfaces({
+        targetRoot: repo.path,
+        desiredLiveNames: extractLiveSkillNames(repo.files),
+      });
+      const shadowFailure = decideShadowFailure(inspection, repo.name);
+      if (shadowFailure) {
+        console.error(`  ${R}✗ ${shadowFailure}${X}`);
+        repoErrors++; totalErrors++;
+      }
+    } catch (err) {
+      console.warn(`  ${Y}[stale-skill-surface] inspection failed unexpectedly: ${err.message}${X}`);
+    }
 
     // ── Pre-flight: adoption tier (advisory) ──────────────────────────────
     // WARN, never abort. A Tier-2 consumer still gets a fully-working
@@ -1582,6 +1705,7 @@ async function maybePromptSharedCloudUpdate({ sourceRepoDir, stdio }) {
 export const _internals = Object.freeze({
   maybePromptSharedCloudUpdate, classifyConsumerRuntime, assessConsumerAzureEmbed,
   CORE_ENTRY, CORE_ASSETS, LEARNING_ENTRY, ARCH_ENTRY, DEBT_ENTRY, SYNC_ISOLATION_ENTRY,
+  extractLiveSkillNames, inspectTargetSkillSurfaces, decideShadowFailure,
 });
 
 // Only execute when invoked as a script (canonical-path compare). When
