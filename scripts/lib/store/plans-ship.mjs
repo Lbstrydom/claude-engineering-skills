@@ -472,6 +472,48 @@ export async function getUnlockedFixes(repoId) {
 }
 
 /**
+ * How many unlocked fixes exist, split by run mode — the denominator
+ * `getUnlockedFixes` cannot report.
+ *
+ * That function caps at `LIMIT 20`, so a caller counting its rows cannot tell
+ * 20 obligations from 232. On 2026-07-29 the real total WAS 232 and /ship had
+ * been reporting "20" — an undercount by an order of magnitude, in a nudge
+ * whose entire job is to convey scale.
+ *
+ * `plan` rows are counted separately rather than hidden: a plan finding can
+ * never have a `regression_specs` row (there is no code artifact to lock), so
+ * it is a permanent non-obligation. Reporting one number that silently mixes
+ * the two is how half a backlog reads as real work.
+ *
+ * Same failure contract as its sibling — cloud-off and query failure both
+ * return zeroed counts, because this feeds a non-blocking nudge and must never
+ * break a push.
+ *
+ * @param {string|null} [repoId]
+ * @returns {Promise<{total:number, code:number, plan:number}>}
+ */
+export async function countUnlockedFixes(repoId) {
+  const empty = { total: 0, code: 0, plan: 0 };
+  if (!await isCloudEnabled()) return empty;
+  try {
+    const rows = repoId
+      ? await many(`SELECT audit_mode, count(*)::int AS n FROM unlocked_fixes WHERE repo_id = $1 GROUP BY audit_mode`, [repoId])
+      : await many(`SELECT audit_mode, count(*)::int AS n FROM unlocked_fixes GROUP BY audit_mode`);
+    return rows.reduce((acc, r) => {
+      const n = Number(r.n) || 0;
+      acc.total += n;
+      if (r.audit_mode === 'code') acc.code += n;
+      else if (r.audit_mode === 'plan') acc.plan += n;
+      return acc;
+    }, { ...empty });
+  } catch (err) {
+    process.stderr.write(`  [learning] countUnlockedFixes failed: ${err.message}
+`);
+    return empty;
+  }
+}
+
+/**
  * Accepted findings that never got a remediation transition (from the
  * `unremediated_acceptances` view). Optionally scoped to a repo.
  *

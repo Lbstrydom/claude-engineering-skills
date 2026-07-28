@@ -3591,7 +3591,7 @@ not in allowedDeps. Left UNFIXED and flagged: resolving it is a domain call
 migration 20260718120000 established — vs. widen allowedDeps, which inverts
 layering) and shouldn't be decided unilaterally on top of this turn's other calls.
 
-## 2026-07-20 (latest) — finishing the consumer verification unearthed a third, worse bug
+## 2026-07-20 — finishing the consumer verification unearthed a third, worse bug
 
 A prior entry closed the duplicate-justification copy-forward fix with the
 consumer half explicitly UNVERIFIED — its full refresh had aborted on a
@@ -3637,7 +3637,7 @@ dedup), a persistence gap (copy-forward columns), and a line-ending assumption
 (CRLF). Only the last was invisible here for the same reason the whole feature
 looked healthy — this repo's own line-ending discipline hid it.
 
-## 2026-07-20 (latest) — the npm `--` swallow was a class of 34, not three instances
+## 2026-07-20 — the npm `--` swallow was a class of 34, not three instances
 
 Built `check-npm-run-args.mjs` (`npm-args:gate`, wired into `npm run check`). It
 scans live instruction surfaces for `npm run <script> --flag` written without
@@ -3781,7 +3781,7 @@ Also closed: two orphaned Railway cron services (`shadow-eval-worker`,
 concluded they "were never scheduled" from the absence of a railway.json —
 they were scheduled in the Railway dashboard, which no repo-only check sees.
 
-## 2026-07-20 (latest) — the opt-out bucket is empty, and that was the point
+## 2026-07-20 — the opt-out bucket is empty, and that was the point
 
 Guarded all 13 opt-out CLIs `classifyPolarity` surfaced the same day it shipped,
 and paid the baseline down 80 → 67. The safety-flag bucket now reads 0.

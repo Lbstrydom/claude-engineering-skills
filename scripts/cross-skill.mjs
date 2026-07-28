@@ -52,6 +52,7 @@ import {
   readPlanSatisfaction,
   readPersistentPlanFailures,
   getUnlockedFixes,
+  countUnlockedFixes,
   getUnremediatedAcceptances,
   readAuditEffectiveness,
   listPersonasForApp,
@@ -685,7 +686,13 @@ async function cmdListUnlockedFixes() {
   if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, rows: [] });
   const repoId = argOption('repo-id');
   const rows = await getUnlockedFixes(repoId);
-  emit({ ok: true, cloud: true, rows });
+  // `rows` is capped at 20 by the view query, so its length is NOT the
+  // obligation count — reporting it as one undercounted 232 as "20" for weeks.
+  // `byMode.plan` is surfaced separately because a plan finding can never carry
+  // a regression spec; folding it into one total makes an unactionable half of
+  // the backlog read as work.
+  const byMode = await countUnlockedFixes(repoId);
+  emit({ ok: true, cloud: true, rows, shown: rows.length, total: byMode.total, byMode });
 }
 
 async function cmdListUnremediatedAcceptances() {

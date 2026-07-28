@@ -101,7 +101,15 @@ requires the outcome ledger — the legacy fallback path has no equivalent).
 node scripts/cross-skill.mjs list-unlocked-fixes
 ```
 
-Returns `{ok, cloud, rows: [...]}`. Count the rows as `missing_spec_count`.
+Returns `{ok, cloud, rows, shown, total, byMode:{total,code,plan}}`.
+
+**Use `byMode.code` as `missing_spec_count` — NOT `rows.length`.** `rows` is
+capped at 20 by the query, so counting it reported "20" when the real total was
+**232** (measured 2026-07-29). And `byMode.plan` findings come from `/audit-plan`
+runs: their `primary_file` is a section reference ("§9 testing strategy"), there
+is no code artifact, and **no lock of any kind can ever exist for them** — 113 of
+those 232 were plan rows, so a single mixed total makes half the backlog read as
+work that cannot be done.
 `unlocked_fixes` is a generic "HIGH fix, zero `regression_specs` rows in 14
 days" check — it has no UI-relevance filter, so it fires identically for a
 DOM-facing fix and a pure backend/CLI one. `/ux-lock` can only ever cover
@@ -113,7 +121,8 @@ If > 0, judge each row by `primary_file` before suggesting a fix:
 
 ```
 ⚠ REGRESSION LOCK GATE (non-blocking)
-  <n> recent HIGH-severity fix(es) have no locked regression coverage:
+  <byMode.code> code fix(es) have no locked regression coverage
+  (+ <byMode.plan> plan finding(s), which cannot be locked — not an obligation):
     • <primary_file>: <one-line detail>
   These will silently regress under future refactors.
   UI/DOM-facing fix → /ux-lock <commit-hash>.

@@ -94,6 +94,7 @@ const EXPECTED_EXPORTS = [
   // plans-ship (22 — 17 + 3 WS1 + 1 WS3 persona-nav-feedback-recovery + 1 CCR)
   'getCandidateAuditFindings', // WS1 — auto-correlator candidate read (temporally bounded)
   'getExistingCorrelationHashesForSession', // WS1 — first-hit-wins existence check
+  'countUnlockedFixes', // denominator for the /ship lock nudge — rows are LIMIT-capped (2026-07-29)
   'getUnlockedFixes',
   'getUnremediatedAcceptances', // accepted-but-never-remediated /ship nudge (2026-07-27)
   'insertRunRowWithPolicyFallback', // selector-policy 42703 write seam (plan: ux-lock-selector-policy)
@@ -332,6 +333,11 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // final-review-shadow findings had a confirmed code fix.
     // 179 → 180: recordFinalReviewFix — shadow A/B fix-outcome writeback
     // (the remediation axis this file's 178 → 179 entry exists to surface).
-    assert.equal(EXPECTED_EXPORTS.length, 180);
+    // 180 → 181: countUnlockedFixes added 2026-07-29. getUnlockedFixes caps at
+    // LIMIT 20, so /ship counted its rows and reported "20" when the real
+    // backlog was 232 — and 113 of those were plan-mode findings that can
+    // never carry a regression spec. The nudge needed a denominator it could
+    // not compute from a capped row list.
+    assert.equal(EXPECTED_EXPORTS.length, 181);
   });
 });
