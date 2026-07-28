@@ -2,6 +2,9 @@
 
 - **Date**: 2026-05-12
 - **Status**: Complete
+- ⚠ **The pre-registered stopping rule fired 2026-07-28** — the shipped heuristic is
+  retained only pending the pivot decision. See
+  [§Telemetry Verdict](#telemetry-verdict--2026-07-28).
 - **Author**: Claude + Louis (origin: /brainstorm with GPT-5 + Gemini-Pro on 2026-05-12)
 - **Scope**: backend
 - **Target domain(s)**: `audit-orchestration`, `shared-lib`, `tests`
@@ -398,7 +401,7 @@ The summary record is the FIRST line per run; per-finding records follow. Phase 
 
 - **Baseline resolution works on every CI environment**. Shallow clones (depth=1) and squash-merge repos may fail to resolve a baseline. Mitigation: orchestration-owned `resolveDiffScope` degrades to `SKIPPED_NO_BASELINE` and emits a stderr hint about `git fetch --deepen=1`. The detector never sees this case — orchestration short-circuits.
 - **dependency-cruiser parses all valid JS/TS imports**. Edge cases (custom Babel transforms, advanced TS-only syntax) might miss imports. The orphan check inherits whatever blind spots dependency-cruiser has — which is acceptable because the architecture pass already lives with them.
-- **Operators will triage orphan findings, not ignore them**. If telemetry shows 80% dismiss-without-action, the heuristic is too noisy and phase 2 should pivot to a higher-precision wrap (knip's own dead-code report has lower FPs).
+- ~~**Operators will triage orphan findings, not ignore them**. If telemetry shows 80% dismiss-without-action, the heuristic is too noisy and phase 2 should pivot to a higher-precision wrap (knip's own dead-code report has lower FPs).~~ → **FALSIFIED 2026-07-28 on both clauses**: 78% hard false-positive rate and *zero* findings triaged in 1,730 runs. See [§Telemetry Verdict](#telemetry-verdict--2026-07-28).
 
 ### Extension points deliberately built in
 
@@ -589,6 +592,97 @@ Sanity-check: `avg_surfaced ≤ 0.5` across 5 shipped commits (most should be 0)
 | Gemini gate (R3) | Gemini Pro | CONCERNS (1 HIGH type-only exclusion + 1 MED entry-point resolution gap + 1 LOW 'C' status). All 3 applied: adapter exposes two-track meta (violations excludes type-only, graph includes them), package.json output paths reverse-resolved via tsconfig rootDir/outDir, 'C' (copy) status handled like 'A'. |
 | Gemini gate (R4) | Gemini Pro | CONCERNS (1 HIGH telemetry-coupling-in-pipeline + 1 MED missing -z null-termination). Both applied: pipeline returns `{survivors, suppressed}` and each pass orchestration owns its own metrics-sink call; all git CLI invocations now use `-z` for null-byte path separation. |
 | Gemini gate (R5) | Gemini Pro | CONCERNS (1 HIGH unstable-removed-caller-identity + 1 MED variable-width record parser). Both applied: explicit `removedEdgesByTarget: Map<target, Set<caller>>` built during Step 1 (exact attribution, not reverse-walk); `-z` parser must consume 2 tokens for R/C, 1 for A/M/D. **Per protocol's documented max of 2 final-review rounds, stopping here and surfacing to user.** |
+
+## Telemetry Verdict — 2026-07-28
+
+The plan pre-registered a stopping rule in §6 ("Assumptions that could change") before any
+data existed. This section reads the telemetry it was written against. **The rule fired.**
+
+### Population
+
+`.audit/orphan-metrics.jsonl`, window **2026-05-12 → 2026-07-28** (~11 weeks, this repo;
+consumer repos have no telemetry — see "Wine" below).
+
+| Metric | Value |
+|---|---|
+| Runs recorded | 1,730 |
+| `ANALYZED_CLEAN` | 1,630 (94%) |
+| `ANALYZED_WITH_FINDINGS` | 100 (6%) |
+| Findings emitted | 113 |
+| **Distinct fingerprints** | **31** |
+| `subKind` split | 112 `born-orphan` / 1 `left-orphan` |
+| Findings ever suppressed (`suppressedBy`) | **0 of 113** |
+
+### Reclassification
+
+Each of the 31 distinct flagged files was re-checked for live (non-test) importers at
+HEAD on 2026-07-28:
+
+| Verdict | Files | Findings |
+|---|---|---|
+| **False positive** — has live importers today | 24 | **88 (78%)** |
+| Test-only importers (arguable by the detector's own rule) | 4 | 15 (13%) |
+| **Genuine** — still unreferenced today | 3 | 10 (9%) |
+
+Three true positives in eleven weeks:
+`scripts/lib/solo-control/split-triager-worksheet.mjs`,
+`scripts/lib/arch-memory/calibrate.mjs`, `scripts/lib/memory-paths.mjs`.
+
+### Root cause of the false positives: dynamic `import()`
+
+`arch-intent`'s import graph does not resolve dynamic specifiers, so any module reached
+only via `await import('./x.mjs')` reads as unreferenced. The decisive case:
+
+- `scripts/lib/solo-control/stratified-sample.mjs` was flagged **41 times** — **36% of
+  every finding this check has ever produced** — between 2026-07-09 and 2026-07-10.
+- Its sole live caller is `scripts/solo-control-audit.mjs:1290`, a destructured
+  `await import(...)`.
+- **The file and that caller landed in the same commit** (`cb892c7`, 2026-07-09). The
+  caller existed from the first instant the file did.
+
+This was anticipated in §8's risk register ("Reflection-based loaders … phase 2 will route
+these to per-stack heuristics via knip") but scored *Medium*; it is in fact the dominant
+failure mode.
+
+**Method caveat, stated plainly**: `born-orphan` is diff-scoped, so "has importers today"
+does not by itself prove a finding was wrong *at emission* — a file created in commit N and
+wired in commit N+1 is legitimately unreferenced when flagged. The `stratified-sample`
+same-commit case is what rules that explanation out for the dynamic-import class: there was
+no transient window. The 78% figure should still be read as "78% resolved to non-problems",
+not "78% were provably wrong the instant they fired".
+
+### Decision
+
+1. **The stopping rule is tripped.** Both clauses failed — noise (78%) and non-triage
+   (0/113). The rule was written before the data and applies as written.
+2. **Do NOT extend the detector to export/symbol granularity.** This was the intuitive next
+   step and the telemetry rules it out: it multiplies resolution on a detector with a 78%
+   base FP rate, and the dominant FP cause gets *more* common at symbol level
+   (`const { x } = await import(...)` is the same pattern, destructured).
+3. **Pivot or retire.** Per the pre-registered rule, replace the hand-rolled detector with a
+   `knip` wrap (handles dynamic imports, entry points, barrels, framework conventions) or
+   disable the wave. Leaving it emitting at 78% FP is the worse option: it trains operators
+   to scroll past audit output generally, which is a cost paid by every other pass.
+4. **Out of scope for any import-graph tool — including knip:** modules wired through an
+   **event bus** rather than imports. A handler that is exported, imported, and reachable
+   can still be dead because nothing dispatches to it. This class is real and field-proven
+   (see Wine below) and is tracked separately in
+   [`event-wiring-symmetry.md`](event-wiring-symmetry.md).
+
+### Wine (consumer-repo evidence)
+
+`wine-cellar-app` has **no `.audit/orphan-metrics.jsonl` at all** — the wave never executed
+there once. Its `status.md` records `/audit-code` aborting across three separate sessions
+because `scripts/lib/audit/orphan-introduced.mjs` and three sibling modules were absent from
+the checkout (`status.md:4651`, `:4680`, `:5547`).
+
+Separately, wine hand-rolled `docs/migration/tools/frontend-inventory-scan.mjs` and used it
+to find two genuine "built but never wired" defects — `cellar:mutation` dispatched with no
+listener, and `wineShop:coldStartAction` CTAs that were console-only no-ops
+(`status.md:1256`). **Both are event-wiring bugs that no import-graph check can see**, which
+is the direct origin of item 4 above.
+
+---
 
 ## Implementation Log
 

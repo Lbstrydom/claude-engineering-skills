@@ -1,6 +1,89 @@
 # Project Status Log
 
-## 2026-07-28 (latest) — final-review shadow A/B adjudicated: verdict KEEP
+## 2026-07-28 (latest) — orphan-wave telemetry verdict; event-wiring plan drafted
+
+Started from a user question — *"click-test checks if a button is wired, but do we
+check if a button is **missing**?"* — which resolved into something else entirely: the
+missed case was a **function created but never wired up**, i.e. static dead code, not a
+UI-lens gap. Neither `/click-test` (runtime DOM) nor `/nav-audit` (destination graph)
+can see that class, and neither is the right tool for it.
+
+### The orphan wave's telemetry verdict (`dead-code-phase-1-orphan-introduced.md`)
+
+Read `.audit/orphan-metrics.jsonl` (1,843 records) against its own **pre-registered**
+stopping rule. **The rule fired.**
+
+| Metric | Value |
+|---|---|
+| Runs (2026-05-12 → 2026-07-28) | 1,730 (1,630 clean) |
+| Findings / distinct fingerprints | 113 / **31** |
+| Ever suppressed (`suppressedBy`) | **0 of 113** |
+| False positive (has live importers today) | 24 files / **88 findings (78%)** |
+| Genuine (still unreferenced) | 3 files / 10 findings (9%) |
+
+Dominant FP cause: **dynamic `await import()`**, which `arch-intent`'s graph cannot
+resolve. Decisive case — `scripts/lib/solo-control/stratified-sample.mjs` flagged **41×**
+(36% of every finding ever emitted), while its only caller
+(`scripts/solo-control-audit.mjs:1290`, a destructured `await import`) **landed in the
+same commit** (`cb892c7`). There was never a transient window; the check simply cannot
+see that edge. Risk register had scored this *Medium*.
+
+Recorded as a new §Telemetry Verdict section + the falsified §6 assumption struck in
+place. **Decisions**: (1) do **NOT** extend the detector to export/symbol granularity —
+that multiplies resolution on a 78%-FP base and the dominant FP gets *more* common at
+symbol level; (2) pivot to a `knip` wrap or retire; (3) event-bus wiring is out of scope
+for any import-graph tool, `knip` included.
+
+### New plan — `event-wiring-symmetry.md` (Draft)
+
+The disjoint class: a symbol exported, imported and reachable can still be dead because
+nothing dispatches the event it listens for. Field prior art is wine's hand-rolled
+`frontend-inventory-scan.mjs` — 7 orphan events, **5 actionable (71%), 100% triaged**,
+including two real defects (`cellar:mutation` fan-out never wired;
+`wineShop:coldStartAction` a console-only no-op). Both invisible to every import-graph
+tool. Wine has **no** `.audit/orphan-metrics.jsonl` at all — the wave never ran there.
+
+Plan opens with a **GO/NO-GO falsification gate** (one machine-checked criterion,
+`npm run event-wiring:oracle` exit 0) — NO-GO ships the CLI as a diagnostic and adds no
+wave. That shape is a direct response to phase 1 shipping a wave on a hypothesis.
+
+### Audit — 3 GPT rounds + 2 Gemini rounds, 31 findings, 0 deferred, 0 dismissed
+
+H: 5 → 6 → 2, then Gemini `CONCERNS` ×2. The design changed materially, not cosmetically:
+
+- **D8 reversed** — counting test-file listeners as consumers was a systematic false
+  negative for exactly the `cellar:mutation` shape that motivates the plan.
+- **D6 replaced** — churn auto-suppression contradicted the plan's own "silence is a
+  failing outcome" principle; became dedupe-into-a-lifecycle-record.
+- **D2 → site-level diffing** — a changed *path* can't distinguish an added dispatch
+  from a pre-existing one, so the precision claim was unimplementable.
+- **D2b added** — removing the last listener causes the identical defect, no finding.
+- **Partial-corpus rule split** into policy-excludes vs failure-skips; the original form
+  made the detector **permanently inert** (any repo with one `.min.js`).
+- **Pragma lifecycle transition added** — the escape hatch broke the stopping rule.
+- **Three "reused unchanged" claims retracted** after reading source.
+
+Two of Gemini's code-grounded claims were **verified against real source before
+acceptance** (`findings-pipeline.mjs:89-113`, `orphan-metrics.mjs:116/121/142`) — both
+true. Stopped at the Gemini 2-round cap: all three round-2 findings were introduced by
+the round-1 fix, the third consecutive round where editing generated as many
+contradictions as it resolved. Verdict is **`CONCERNS`, not `APPROVE`** — recorded
+honestly in the plan's audit trail rather than glossed.
+
+### Files
+
+- `docs/plans/dead-code-phase-1-orphan-introduced.md` — §Telemetry Verdict; assumption struck.
+- `docs/plans/event-wiring-symmetry.md` — new Draft (D1–D12, pre-registered rule, §11 clusters).
+- `docs/plans/README.md` — regenerated (10 active).
+
+Heads-up: a concurrent session held 4 unrelated modified files
+(`skills/audit-code/SKILL.md`, `.claude/skills/audit-code/SKILL.md`,
+`scripts/lib/gate-honesty/schema.mjs`, `skills.manifest.json`) — left untouched, and this
+commit is `--path`-scoped to the three files above.
+
+---
+
+## 2026-07-28 — final-review shadow A/B adjudicated: verdict KEEP
 
 Closed the `FINAL_REVIEW_SHADOW` experiment (35 runs, $50.90, +59.5s gate
 latency, pair `gemini-pro-latest` × `claude-opus-5`). Deliverable is
