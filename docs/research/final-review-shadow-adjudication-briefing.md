@@ -1880,3 +1880,75 @@ mid-loop should be closed in the store at fix time. The attribution already gets
 written into the source comment; it is not written back to `user_action`. That
 gap is what made a $50.90 experiment hard to read, and it will make the next one
 hard to read too.
+
+---
+
+## Correction — substantiation pass on the attribution claim (2026-07-28, later)
+
+The addendum above claimed 13 unadjudicated findings were fixed-with-attribution,
+11 of them HIGH/MEDIUM, on the strength of 4 hand-verified spot-checks out of 13.
+The judge was asked to substantiate all of them with `file:line` + verbatim quote,
+and to say *who* each comment credits — with the bias direction named explicitly
+(crediting the shadow is what flatters the conclusion already written here).
+
+It did not cave, and it did not inflate. Three corrections follow.
+
+### 1. The count drops: 13 → 12 attributed, 11 → **9** HIGH/MEDIUM
+
+| fingerprint | sev | was | now |
+|---|---|---|---|
+| `6406f08f` | MEDIUM | claimed fixed | **`cannot_determine`** — a claim about a transcript, no artifact to check |
+| `df2dfeac` | HIGH | claimed fixed, shadow-credited | fixed, but comment credits **the primary** |
+| `caf64562` | LOW | missed by my regex | fixed, shadow-credited (cites the fingerprint inline) |
+
+### 2. Both HIGH-severity attributed findings credit a non-shadow source
+
+`df2dfeac` ("Guarded (Gemini gate, final review round 2)") and `fd33a4e4`
+("MAX_CHAT_TURNS was declared but never enforced (audit-code Cluster 2/H12)").
+Every remaining shadow-credited attribution is MEDIUM or LOW.
+
+### 3. The definitional hole this exposes — the most important item here
+
+Both of those findings carry `source_model: claude-opus-5` in the store. The
+shadow *did* raise them. Yet `fd33a4e4`'s fix credits **a GPT audit-code
+finding** (Cluster 2/H12), from the 5-pass audit that runs *before* final review.
+
+**"Shadow-only" is defined relative to the primary final reviewer, not relative
+to the whole pipeline.** A finding GPT already raised in audit-code, which the
+shadow then re-raised at the final gate, is still bucketed shadow-only — while
+adding nothing, because the pipeline already had it.
+
+This was never measured, and **cannot** be measured from the collected data: the
+88-row dataset carries only shadow rows, with no join back to the audit-pass
+findings of the same run. It is not a small caveat. It means the shadow's
+marginal value is an *upper bound*, not a measurement, and at least one confirmed
+instance of the overlap exists.
+
+### What survives
+
+**KEEP stands.** It rested on 10 formally-accepted HIGH/MEDIUM against a
+threshold of 7 — untouched by everything above. That is precisely why the
+addendum was structured to avoid depending on the attribution count, and the
+structure earned its keep.
+
+**DROP stays falsified**, though less comfortably: the dismissed-and-LOW
+population is still 21% of 63, nowhere near a majority.
+
+**What is materially weaker** is the *marginal-value* claim — "the shadow caught
+things nothing else would have." Against the pipeline as a whole rather than
+against Gemini alone, that is now unproven in general and false in at least one
+case. Anyone deciding whether to pay $1.45/run should read the KEEP verdict as
+"the shadow's findings were real," never as "the shadow's findings were unique."
+
+### On the judge's own reliability
+
+It volunteered a flat retraction — `76b61cba`, "my original 'since closed' was
+wrong," citing a test that predates the filing by days and covers a different
+function — and downgraded its own confidence on `e92150c0`, `da0a89fe`,
+`84f9bbd8` unprompted. Asked whether any `high` calls were miscalibrated, it
+named four and stopped, rather than manufacturing contrition.
+
+It also found a class neither judge had a bucket for: `28bb874a` and `2e90aeb9`
+describe states matching **no committed revision**, i.e. the shadow reviewed an
+uncommitted working tree. Not a defect in the reviewer — but it explains part of
+the "contradicted by code" population that neither LLM column could resolve.
