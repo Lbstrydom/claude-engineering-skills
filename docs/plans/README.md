@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**10 active · 158 terminal · 25 audit summaries · 4 reference docs**
+**9 active · 159 terminal · 25 audit summaries · 4 reference docs**
 
 ---
 
@@ -27,7 +27,6 @@ This is the list to read when asking "what is in flight?".
 | [Learning / Persona / Quickfix Reliability Debt (2026-07-26 triage)](./refactor-learning-persona-quickfix-2026-07.md) | `Draft` |  |
 | [Miscellaneous Small-Cluster Debt (2026-07-26 triage)](./refactor-misc-small-items-2026-07.md) | `Draft` | items resolved individually as picked up (see per-item status below), not implemented as one batch |
 | [Model-Eval / Pricing Debt (2026-07-26 triage)](./refactor-model-eval-pricing-2026-07.md) | `Draft` |  |
-| [Refactor skill-governance — remove the `.github/skills/` escape hatch everywhere it still exists](./refactor-skill-governance.md) | `Draft` |  |
 | [vcs-protocol Tech-Debt Cluster — Verification & Ledger Reconciliation](./refactor-vcs-protocol.md) | `Approved` | audited, not yet implemented (3 GPT + 1 Gemini |
 | [Visual-Audit Contract Validation Debt (2026-07-26 triage)](./refactor-visual-audit-contract-2026-07.md) | `Draft` |  |
 | [Tiered Recall-Weighted Audit Pipeline](./tiered-recall-audit-pipeline.md) | `In Progress` | implementation complete (Clusters A-F implemented |
@@ -50,7 +49,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 155 completed plans</summary>
+<summary>Show all 156 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -173,6 +172,7 @@ source comments that no docs linter sees — stays valid.
 | [Refactor evidence-integrity — bind anchor locations to their verified match, and parse Git diff headers unambiguously (`scripts/lib/audit/evidence-triage.mjs`)](./refactor-evidence-integrity.md) | `Complete` | implemented via `/cycle code --autonomous` (3 GPT |
 | [Failure-Contract Refactor — Stop Reporting Dependency Failure As Success](./refactor-failure-contract.md) | `Complete` | implemented + audited (3 GPT + 2 Gemini plan-audit |
 | [Install-Transaction WAL + VCS Parsing Debt (2026-07-26 triage)](./refactor-install-wal-vcs-2026-07.md) | `Complete` |  |
+| [Refactor skill-governance — remove the `.github/skills/` escape hatch everywhere it still exists](./refactor-skill-governance.md) | `Complete` |  |
 | [Refactor static-analysis — make "I can't tell" representable in the repo's own guards and lints](./refactor-static-analysis.md) | `Complete` | implemented, code-audited (Cluster A: 6 GPT |
 | [Refactor symbol-index — close the progress-channel sensitive-path disclosure and the drift pragma-cap re-opener](./refactor-symbol-index.md) | `Complete` | implemented via `/cycle code --autonomous` (3 GPT |
 | [Repo-Wide Reference-Integrity Gate](./reference-integrity-gate.md) | `Complete` | all three clusters implemented, converged, final-gated |
