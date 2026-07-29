@@ -158,6 +158,8 @@ const KNOWN_FLAGS = [
   '--plan-id',
   // ── final-review-stats / final-review-adjudicate / final-review-record-fix ─
   '--queue-limit', '--worksheet', '--run-id', '--fingerprint', '--action', '--bucket',
+  // lock-with-test: record a unit/integration test as a finding's regression lock
+  '--finding', '--test', '--description',
   '--commit', '--state',
   // ── model-ab-adjudicate ───────────────────────────────────────────────────
   '--suggestions', '--canonical', '--actor',
@@ -2078,6 +2080,119 @@ async function cmdShadowOverlap() {
   return emit({ cloud: true, ...res });
 }
 
+/**
+ * Record a unit/integration test as the regression lock for an audit finding.
+ *
+ * REUSES `recordRegressionSpec` — a `unit-test` row has the identical shape to
+ * an `audit-loop-fix` one (spec_path carries the test path), so a sibling
+ * writer would be duplication. What lives HERE and not in the store layer is
+ * the disk check: the store has no business touching the filesystem, and the
+ * claim being verified ("this test file exists") is a CLI-boundary fact.
+ *
+ * The refusal is the point. A row saying "tests/foo.test.mjs locks finding X"
+ * is a CLAIM, and closing 119 obligations by matching `primary_file` to a
+ * same-named test would have moved the number while proving nothing — file
+ * existence is not coverage, and a same-named file is not even existence. So:
+ * the path must resolve inside the repo, and `--description` is required so
+ * the operator states what the test actually pins. Neither check proves
+ * semantic coverage; together they refuse the cheapest ways to fake it.
+ *
+ * Flags: --finding (audit_finding_id uuid), --test (repo-relative path),
+ * --description (what the test pins). Angle-bracket syntax is avoided even
+ * here so a copied line stays PowerShell-safe.
+ */
+async function cmdLockWithTest() {
+  await initLearningStore();
+  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, locked: false });
+
+  if (hasFlag('worksheet')) return cmdLockWithTestWorksheet();
+
+  const findingId = argOption('finding');
+  const testPath = argOption('test');
+  const description = argOption('description');
+  if (!findingId || !testPath || !description) {
+    // Concrete example, not `<angle-bracket>` syntax: PowerShell reserves `<`,
+    // so a bracketed usage line is unpasteable on this repo's dev platform
+    // (operator-doc convention, bit twice before 2026-07-02).
+    return emit({ ok: false, error: 'lock-with-test needs --finding, --test and --description. Example: '
+      + 'node scripts/cross-skill.mjs lock-with-test --finding a4969127-d5d0-47bb-8b2e-0acb0ed71546 '
+      + '--test tests/foo.test.mjs --description "pins the NUL-delimited parse path". '
+      + 'The description is mandatory: an unexplained lock is an unverifiable claim. '
+      + 'Run --worksheet for the reviewed queue.' });
+  }
+
+  const { existsSync, realpathSync } = await import('node:fs');
+  const nodePath = await import('node:path');
+  const repoRoot = realpathSync(process.cwd());
+  const abs = nodePath.resolve(repoRoot, testPath);
+  // Contained-path check mirrors resolveContainedPath's intent: a lock naming
+  // a file outside the repo is not evidence about this repo.
+  if (!abs.startsWith(repoRoot + nodePath.sep)) {
+    return emit({ ok: false, error: `refusing: "${testPath}" resolves outside the repo` });
+  }
+  if (!existsSync(abs)) {
+    return emit({ ok: false, error: `refusing: test file "${testPath}" does not exist — a lock naming a missing file is a fake check` });
+  }
+
+  const rows = await getUnlockedFixes(null);
+  const finding = rows.find((r) => r.audit_finding_id === findingId);
+  const repoId = finding?.repo_id || (await resolveRepoForStore({}).catch(() => null))?.repoRowId || null;
+
+  const spec = await recordRegressionSpec(repoId, {
+    specPath: testPath,
+    description,
+    sourceKind: 'unit-test',
+    sourceFindingId: findingId,
+    sourceFindingType: 'audit',
+    assertionCount: 0,
+    domContractTypes: [],
+  });
+  return emit({ ok: !!spec, cloud: true, locked: !!spec, findingId, testPath });
+}
+
+/**
+ * Operator worksheet for the unlocked-code backlog.
+ *
+ * Emits markdown with REAL values and pasteable commands (never
+ * `<angle-brackets>` — PowerShell reserves `<`, so a bracketed example is
+ * unpasteable on the platform this repo is developed on).
+ *
+ * The suggested test is a FILENAME HEURISTIC and is labelled as one. It maps
+ * `primary_file`'s basename to `tests/<base>.test.mjs` and reports whether that
+ * file exists. It does NOT establish that the test covers the finding — that
+ * judgement is the operator's, which is why this emits a queue for review
+ * instead of writing rows.
+ */
+async function cmdLockWithTestWorksheet() {
+  const { existsSync } = await import('node:fs');
+  const nodePath = await import('node:path');
+  const rows = (await getUnlockedFixes(argOption('repo-id')))
+    .filter((r) => r.audit_mode === 'code');
+
+  const lines = ['# Unlocked code fixes — regression-lock worksheet', '',
+    `${rows.length} shown (query caps at 20; run \`list-unlocked-fixes\` for the true total).`,
+    '',
+    'The suggested test is a **filename heuristic only** — it does not prove the',
+    'test covers this finding. Confirm by reading the test, then run its command.',
+    'If no test covers it, write one; do NOT lock it to an unrelated file.', ''];
+
+  for (const r of rows) {
+    const base = nodePath.basename(String(r.primary_file || '')).replace(/\.mjs$/, '');
+    const guess = base ? `tests/${base}.test.mjs` : null;
+    const exists = guess ? existsSync(nodePath.resolve(process.cwd(), guess)) : false;
+    lines.push(`## ${r.audit_finding_id}`);
+    lines.push(`- file: \`${r.primary_file}\``);
+    lines.push(`- category: ${r.category}`);
+    lines.push(`- suggested test: ${exists ? `\`${guess}\` (exists — READ IT before locking)` : '**none found — write one**'}`);
+    if (exists) {
+      lines.push('', '```bash', `node scripts/cross-skill.mjs lock-with-test --finding ${r.audit_finding_id} --test ${guess} --description "pins: ${String(r.category).replace(/"/g, "'")}"`, '```');
+    }
+    lines.push('');
+  }
+  process.stdout.write(`${lines.join('\n')}\n`);
+  return undefined;
+}
+
 async function cmdGetNeighbourhood() {
   const p = parsePayload();
   await initLearningStore();
@@ -2506,6 +2621,7 @@ const commands = {
   'get-persona-sessions-by-url': cmdGetPersonaSessionsByUrl,
   'get-recent-findings': cmdGetRecentFindings,
   'shadow-overlap':     cmdShadowOverlap,
+  'lock-with-test':     cmdLockWithTest,
   'whoami': cmdWhoami,
   // Architectural memory
   'resolve-repo-identity':            cmdResolveRepoIdentity,

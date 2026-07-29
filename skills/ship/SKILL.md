@@ -125,10 +125,14 @@ If > 0, judge each row by `primary_file` before suggesting a fix:
   (+ <byMode.plan> plan finding(s), which cannot be locked — not an obligation):
     • <primary_file>: <one-line detail>
   These will silently regress under future refactors.
-  UI/DOM-facing fix → /ux-lock <commit-hash>.
-  Backend/CLI/library fix (no live URL to drive) → a regular unit or
-  integration test in tests/ covers the same intent; /ux-lock cannot
-  lock non-UI behavior.
+  Backend/CLI/library fix → a unit or integration test IS the lock. Record it:
+    node scripts/cross-skill.mjs lock-with-test --worksheet
+  (reviewed queue; read the test before locking — a same-named file is not
+  proof of coverage, and the writer refuses a missing path or empty rationale).
+  UI/DOM-facing fix → /ux-lock. Note it has a documented bad record on React
+  surfaces (wine-cellar-app 2026-07: generated specs proved brittle, several
+  reverted, root cause undiagnosed) — prefer a unit test there too unless the
+  contract genuinely needs a live DOM.
 ```
 
 **Re-running existing regression specs before a push** (optional gate): drive

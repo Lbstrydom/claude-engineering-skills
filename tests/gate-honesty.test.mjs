@@ -101,7 +101,14 @@ const PINNED_DOCUMENT_ONLY = {
   // the READ half is mechanically honest (getUnremediatedAcceptances returns []
   // on cloud-off AND on query failure), but "never blocks the ship" is a claim
   // about agent flow with deliberately no override flag to assert against.
-  ship: ['gate-passed-refused-without-evidence', 'category-a-never-staged', 'step-0-5-gates-non-blocking', 'unremediated-acceptances-never-blocks'],
+  // `unit-test-lock-refuses-unverifiable-claims` added 2026-07-29 with the
+  // unit-test lock kind. Unlike its neighbours the refusals ARE mechanically
+  // tested (tests/unit-test-lock-kind.test.mjs pins all three); it is
+  // document-only because they surface as a JSON `{ok:false}` payload, not a
+  // process exit code, and `cli-exit` is the only CLI oracle available.
+  // Claiming that oracle would assert an exit code the command does not
+  // produce — the fake-check class this suite exists to catch.
+  ship: ['gate-passed-refused-without-evidence', 'category-a-never-staged', 'step-0-5-gates-non-blocking', 'unremediated-acceptances-never-blocks', 'unit-test-lock-refuses-unverifiable-claims'],
   cycle: ['preview-gate-halt-blocks-ship', 'fix-gate-convergence-before-next-cluster', 'author-tier-never-routes', 'consolidated-gemini-gate-mandatory'],
   plan: ['gate-1-phase-triggers', 'never-a-lone-phase-1', 'warnings-never-block-plan-generation', 'section-10-graded-by-ux-lock-verify'],
 };
@@ -163,7 +170,8 @@ describe('gate-honesty — real skills/', () => {
     const totalDocOnly = Object.values(PINNED_DOCUMENT_ONLY).flat().length;
     assert.equal(totalExecutable, 12); // +1 ux-lock strict-selectors (Phase C final)
     // 35 → 36: +1 ship (unremediated-acceptances-never-blocks, /ship Step 0.5e, 2026-07-27).
-    assert.equal(totalDocOnly, 36);   // +2 ux-lock, +4 ship, +4 cycle, +4 plan (Phase C final — ALL 15 contracted)
+    // 36 → 37: +1 ship (unit-test-lock-refuses-unverifiable-claims, 2026-07-29).
+    assert.equal(totalDocOnly, 37);   // +2 ux-lock, +4 ship, +4 cycle, +4 plan (Phase C final — ALL 15 contracted)
 
     const allSkillNames = listSkillNames(skillsRoot);
     const expectedUncontracted = allSkillNames.filter((n) => !PINNED_CONTRACTED_SKILLS.includes(n));

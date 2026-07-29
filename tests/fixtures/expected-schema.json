@@ -8729,7 +8729,7 @@
       "table_name": "regression_specs",
       "constraint_name": "regression_specs_row_shape_check",
       "constraint_type": "CHECK",
-      "definition": "CHECK ((((source_kind = ANY (ARRAY['audit-loop-fix'::text, 'persona-test-p0'::text, 'persona-test-p1'::text, 'plan-frontend-verify'::text, 'plan-backend-verify'::text, 'manual'::text, 'other'::text])) AND (spec_path IS NOT NULL) AND (candidate_fingerprint IS NULL) AND (witness_snapshot IS NULL) AND (contradiction_payload IS NULL) AND (journey_context IS NULL) AND (promoted_at IS NULL) AND (promoted_by IS NULL)) OR ((source_kind = 'persona-consistency-candidate'::text) AND (spec_path IS NULL) AND (candidate_fingerprint IS NOT NULL) AND (witness_snapshot IS NOT NULL) AND (contradiction_payload IS NOT NULL) AND (journey_context IS NOT NULL) AND (promoted_at IS NULL) AND (promoted_by IS NULL)) OR ((source_kind = 'persona-consistency-locked'::text) AND (spec_path IS NOT NULL) AND (candidate_fingerprint IS NOT NULL) AND (witness_snapshot IS NOT NULL) AND (contradiction_payload IS NOT NULL) AND (journey_context IS NOT NULL) AND (promoted_at IS NOT NULL))))"
+      "definition": "CHECK ((((source_kind = ANY (ARRAY['audit-loop-fix'::text, 'persona-test-p0'::text, 'persona-test-p1'::text, 'plan-frontend-verify'::text, 'plan-backend-verify'::text, 'unit-test'::text, 'manual'::text, 'other'::text])) AND (spec_path IS NOT NULL) AND (candidate_fingerprint IS NULL) AND (witness_snapshot IS NULL) AND (contradiction_payload IS NULL) AND (journey_context IS NULL) AND (promoted_at IS NULL) AND (promoted_by IS NULL)) OR ((source_kind = 'persona-consistency-candidate'::text) AND (spec_path IS NULL) AND (candidate_fingerprint IS NOT NULL) AND (witness_snapshot IS NOT NULL) AND (contradiction_payload IS NOT NULL) AND (journey_context IS NOT NULL) AND (promoted_at IS NULL) AND (promoted_by IS NULL)) OR ((source_kind = 'persona-consistency-locked'::text) AND (spec_path IS NOT NULL) AND (candidate_fingerprint IS NOT NULL) AND (witness_snapshot IS NOT NULL) AND (contradiction_payload IS NOT NULL) AND (journey_context IS NOT NULL) AND (promoted_at IS NOT NULL))))"
     },
     {
       "table_name": "regression_specs",
@@ -8741,7 +8741,7 @@
       "table_name": "regression_specs",
       "constraint_name": "regression_specs_source_kind_check",
       "constraint_type": "CHECK",
-      "definition": "CHECK ((source_kind = ANY (ARRAY['audit-loop-fix'::text, 'persona-test-p0'::text, 'persona-test-p1'::text, 'plan-frontend-verify'::text, 'plan-backend-verify'::text, 'persona-consistency-candidate'::text, 'persona-consistency-locked'::text, 'manual'::text, 'other'::text])))"
+      "definition": "CHECK ((source_kind = ANY (ARRAY['audit-loop-fix'::text, 'persona-test-p0'::text, 'persona-test-p1'::text, 'plan-frontend-verify'::text, 'plan-backend-verify'::text, 'persona-consistency-candidate'::text, 'persona-consistency-locked'::text, 'unit-test'::text, 'manual'::text, 'other'::text])))"
     },
     {
       "table_name": "security_incidents",
