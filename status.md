@@ -34,10 +34,47 @@ all printed the same line as a successful one. The summary now reports
 machine that has not checked out the maintainer's consumers is a legitimate
 state, and nagging every public cloner on every push would be worse than the bug.
 
+**Defect 3 — the sync was un-tracking this repo's own committed records.** Chased
+down from a symptom that looked like a haunting: worktrees kept acquiring 25
+staged deletions of `docs/arm-eval/sessions/*` that nobody had asked for, while
+the main checkout stayed clean and a manual `npm run sync` never reproduced it.
+
+Root cause: git's hook machinery exports `GIT_DIR`/`GIT_WORK_TREE` into a hook's
+process (githooks(5)), and **those take precedence over `cwd`**. `/ship`'s push
+runs the pre-push hook → `sync-to-repos.mjs` → `untrackNewlyIgnored(consumerPath,
+UNTRACK_PATTERNS)`. Every git call inside it, despite its `cwd: <consumer>`,
+retargeted the **pushing** repo: it listed the SOURCE repo's tracked files,
+matched `docs/arm-eval/sessions/*` against them, and ran `git rm --cached` on the
+SOURCE index — un-tracking 25 committed, deliberately auditable experiment
+records. The files stayed on disk, so it presented as an unexplained staged mass
+deletion; a subsequent `git add -A` would have made it real. It fired once per
+worktree (a fresh index re-tracks them, and the untrack is idempotent), which is
+what made it look intermittent.
+
+This is the same class as the six HEAD-corruption incidents of 2026-07-23. That
+fix — [`git-env-sanitize.mjs`](scripts/lib/git-env-sanitize.mjs) — was applied to
+the test fixtures and the hook→sandbox boundary, and `sync-untrack.mjs` even grew
+an `env` option documenting this exact hazard ("could otherwise remove tracked
+files from the WRONG repo's index"). **The production call site never passed it.**
+A fix that exists but is not wired is indistinguishable from no fix.
+
+Scrubbed at the process boundary in `main()` rather than at the one call site we
+caught, or in the hook: the property belongs to this program — a tool whose job
+is running git against *other* repositories by `cwd` must never inherit a repo
+context from its launcher — and doing it once covers every git call site in the
+sync, present and future. Sibling hazard noted but not touched:
+`lib/remove-legacy-synced.mjs` runs `git rm -f --cached` with a bare `cwd`; it has
+no caller today, so it cannot fire.
+
 **Changed**
 - [`scripts/lib/consumer-repos.mjs`](scripts/lib/consumer-repos.mjs) —
   `mainCheckoutRoot()` + `SIBLING_ANCHOR`; `BASE_REPOS` and relative
   `consumer-repos.local.json` entries anchor to it; new `sourceRepoRoots()`.
+- [`scripts/sync-to-repos.mjs`](scripts/sync-to-repos.mjs) — `scrubAmbientGitEnv()`
+  at the top of `main()`.
+- [`tests/sync-git-env-isolation.test.mjs`](tests/sync-git-env-isolation.test.mjs)
+  — 4 cases, including a REPRODUCTION that asserts the corruption mechanism
+  itself, so the guard cannot quietly go vacuous if the env plumbing is reworked.
 - [`scripts/sync-to-repos.mjs`](scripts/sync-to-repos.mjs) — skip counter +
   coverage-reporting summary.
 - [`tests/consumer-repos-worktree-anchor.test.mjs`](tests/consumer-repos-worktree-anchor.test.mjs)

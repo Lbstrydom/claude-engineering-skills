@@ -30,6 +30,7 @@ import { injectUpstreamBanner, BANNER_BODY } from './lib/sync-banner.mjs';
 import { classifyOwnership, describeEvidence } from './lib/sync-ownership.mjs';
 import { updateManagedBlock, parseGitignoreState } from './lib/sync-gitignore.mjs';
 import { untrackNewlyIgnored } from './lib/sync-untrack.mjs';
+import { getGitLocalEnvVarNames } from './lib/git-env-sanitize.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { assertContainedDestination } from './lib/install/safe-destination.mjs';
 import { inspectLegacySurfaces, describeLegacySurfaces } from './lib/install/legacy-surfaces.mjs';
@@ -923,6 +924,48 @@ const KNOWN_FLAGS = [
   '--target-path', '--quiet-legacy-check',
 ];
 
+/**
+ * Drop git's repo-scoped environment before this process runs ANY git command.
+ *
+ * ## The incident (root-caused 2026-07-30)
+ *
+ * git's hook machinery exports `GIT_DIR`/`GIT_WORK_TREE` into a hook's process
+ * (documented, githooks(5)), and this CLI is invoked from `.githooks/pre-push`.
+ * Those variables take PRECEDENCE OVER `cwd`. So every git call this process
+ * makes with `cwd: <consumer>` silently retargeted the **pushing repo** instead:
+ * `untrackNewlyIgnored` listed the SOURCE repo's tracked files, matched
+ * `docs/arm-eval/sessions/*` from `UNTRACK_PATTERNS` against them, and ran
+ * `git rm --cached` on the SOURCE index — un-tracking 25 committed, deliberately
+ * auditable experiment records. The files stayed on disk, so it read as a staged
+ * mass deletion nobody had asked for, and anyone committing with `git add -A`
+ * afterwards would have deleted them for real.
+ *
+ * It fired **once per worktree** (a fresh worktree's index re-tracks the files;
+ * the untrack is idempotent once they are gone) and never when the sync was run
+ * by hand — which is exactly what made it look like a haunting rather than a bug.
+ *
+ * ## Why here, and not in the hook
+ *
+ * The hook could `unset` these, but that only protects invocations through THIS
+ * hook. The property belongs to this program: a tool whose whole job is running
+ * git against *other* repositories by `cwd` must never inherit a repo context
+ * from whoever launched it. Doing it once at the process boundary also covers
+ * every git call site in the sync — present and future — rather than the one we
+ * happened to catch. Same reasoning, and the same `sanitizeGitEnv`, that
+ * `prepush-check.mjs` already applies at the hook→sandbox boundary; this is the
+ * sibling boundary that was missed.
+ *
+ * Safe for the sync's SOURCE-repo git calls too: with the variables gone, they
+ * resolve from `cwd`, which is this repo — the same repo they intended.
+ *
+ * Sibling hazard, deliberately not touched: `lib/remove-legacy-synced.mjs` runs
+ * `git rm -f --cached` with a bare `cwd` and no env option. It has no caller
+ * (consumer-side asset, invoked by hand there), so it cannot fire today.
+ */
+function scrubAmbientGitEnv() {
+  for (const name of getGitLocalEnvVarNames(process.cwd())) delete process.env[name];
+}
+
 async function main() {
   // This CLI WRITES INTO CONSUMER REPOS and its default is the real sync, so a
   // dropped `--dry-runn` is the exact opt-out shape that caused the three
@@ -932,6 +975,7 @@ async function main() {
   // already fixed, so it was reported as "baseline can shrink — fixed or gone".
   assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'sync-to-repos' });
   assertRepoRoot(import.meta.url);
+  scrubAmbientGitEnv();
 
   let totalNew = 0;
   let totalUpdated = 0;
@@ -1882,6 +1926,7 @@ export const _internals = Object.freeze({
   maybePromptSharedCloudUpdate, classifyConsumerRuntime, assessConsumerAzureEmbed,
   CORE_ENTRY, CORE_ASSETS, LEARNING_ENTRY, ARCH_ENTRY, DEBT_ENTRY, SYNC_ISOLATION_ENTRY,
   extractLiveSkillNames, inspectTargetSkillSurfaces, decideShadowFailure,
+  scrubAmbientGitEnv,
 });
 
 // Only execute when invoked as a script (canonical-path compare). When
