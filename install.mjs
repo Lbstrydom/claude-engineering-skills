@@ -3,268 +3,470 @@
  * @fileoverview One-command installer for claude-engineering-skills.
  *
  * Usage:
- *   npx github:Lbstrydom/claude-engineering-skills
- *   node install.mjs
- *   node install.mjs /path/to/project
+ *   npx github:Lbstrydom/claude-engineering-skills /path/to/repo
+ *   node install.mjs /path/to/repo [--dry-run] [--ref <branch|tag|sha>] [--yes]
+ *
+ * ## What this is, and what it deliberately is NOT
+ *
+ * A **thin bootstrapper**. It acquires a verified copy of the bundle and then
+ * DELEGATES every concern to the one implementation that already owns it:
+ *
+ *   skills + runners + gitignore + manifest -> scripts/sync-to-repos.mjs
+ *   legacy-surface inspection               -> lib/install/legacy-surfaces.mjs
+ *   legacy-surface removal                  -> scripts/install-skills.mjs --uninstall-legacy
+ *
+ * It owns **no file lists**. The previous version carried a hardcoded
+ * `SCRIPTS = ['openai-audit.mjs', 'shared.mjs', …]` (7 of ~570 files, with no
+ * `lib/**` import closure — so every install was a guaranteed MODULE_NOT_FOUND),
+ * a hardcoded skill list naming `audit-loop` which no longer exists (1 of 15
+ * skills actually installed), a write to the retired `.github/skills/` surface,
+ * and a pre-push hook that ran a source-repo-only script inside the consumer.
+ * Every one of those was a hand-maintained duplicate of machinery that already
+ * existed in a correct, tested form. They are deleted rather than corrected:
+ * `resolveBundle`'s import-graph closure is the right answer, and a second list
+ * is how the first one rotted.
+ *
+ * ## Contract
+ *
+ * Bundle source is a CONSTANT read from this package's own `repository.url` —
+ * never `git remote`, never an env override. `npx github:…` may execute an
+ * unpacked tarball with no `.git` at all, and deriving the source from the
+ * execution context would additionally let whatever repo the operator happens to
+ * be standing in decide what gets installed. `--ref` is resolved to an immutable
+ * SHA and printed before anything is written.
+ *
+ * `--dry-run` is whole-run: the cache is still acquired (there is nothing to
+ * rehearse without it), the sync runs in dry-run mode, env prompts are SKIPPED,
+ * and the legacy migration inspects and reports only — it never deletes in any
+ * mode. A dry run that removed the legacy copy while writing no replacement
+ * would leave the machine with neither, from the one command that promised to
+ * change nothing.
+ *
+ * Plan: docs/plans/repo-scoped-skill-surfaces-and-installer.md §2 D6a-D6e.
+ *
+ * @module install
  */
 
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { execSync } from 'child_process';
-import { createPrompter } from './scripts/lib/install/prompt.mjs';
+import { execFileSync } from 'child_process';
+import { fileURLToPath, pathToFileURL } from 'url';
 
-const { rl, ask } = createPrompter();
+import { createPrompter } from './scripts/lib/install/prompt.mjs';
 
 const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', B = '\x1b[1m', D = '\x1b[2m', X = '\x1b[0m';
 
-const REPO = 'https://github.com/Lbstrydom/claude-engineering-skills.git';
-const SCRIPTS = ['openai-audit.mjs','shared.mjs','gemini-review.mjs','bandit.mjs','refine-prompts.mjs','learning-store.mjs','phase7-check.mjs'];
-// M4 — `@supabase/supabase-js` removed; `pg` (the Postgres driver) is the
-// new cloud-store dependency. Anyone running the audit-loop now needs `pg`,
-// not supabase-js.
-const DEPS = ['openai','zod','dotenv','@google/genai','@anthropic-ai/sdk','pg'];
+const SELF_DIR = path.dirname(fileURLToPath(import.meta.url));
+
+const KNOWN_FLAGS = ['--dry-run', '--ref', '--yes', '--help', '-h'];
+
 const KEYS = [
-  { name: 'OPENAI_API_KEY', req: true, hint: 'GPT-5.4 auditing (required)' },
-  { name: 'GEMINI_API_KEY', req: false, hint: 'Gemini 3.1 Pro final review' },
-  { name: 'ANTHROPIC_API_KEY', req: false, hint: 'Claude Haiku context briefs' },
-  { name: 'AUDIT_DB_URL', req: false, hint: 'audit-loop cloud store Postgres DSN (Supabase Connect → Session pooler)' },
-  { name: 'PERSONA_TEST_APP_URL', req: false, hint: 'default app URL for /persona-test list (e.g. https://myapp.railway.app)' },
-  { name: 'PERSONA_TEST_REPO_NAME', req: false, hint: 'repo name for cross-referencing audit findings (e.g. wine-cellar-app)' }
+  { name: 'OPENAI_API_KEY', req: true, hint: 'GPT auditing (required)' },
+  { name: 'GEMINI_API_KEY', req: false, hint: 'Gemini independent final review' },
+  { name: 'ANTHROPIC_API_KEY', req: false, hint: 'Claude Opus fallback reviewer, brief generation' },
+  { name: 'AUDIT_DB_URL', req: false, hint: 'cloud learning store Postgres DSN (Supabase Connect -> Session pooler)' },
+  { name: 'PERSONA_TEST_APP_URL', req: false, hint: 'default app URL for /persona-test (e.g. https://myapp.railway.app)' },
 ];
 
-async function main() {
-  console.log(`
-${B}══════════════════════════════════════════════════
-  Claude Engineering Skills — Install
-  3 models · 7 phases · adaptive learning
-══════════════════════════════════════════════════${X}
-`);
-
-  // 1. Get target directory
-  let target = process.argv[2];
-  if (target === '--help' || target === '-h') {
-    console.log('Usage: npx github:Lbstrydom/claude-engineering-skills <project-directory>');
-    console.log('       node install.mjs <project-directory>');
-    rl.close();
-    return;
+/**
+ * The canonical bundle source — a pure function of the package manifest.
+ *
+ * Takes `pkg` rather than reading it, so the hermetic end-to-end test can drive
+ * the real bootstrap against a local fixture remote through the module seam. That
+ * is deliberately the ONLY injection point: an env var or config override would
+ * reintroduce exactly what this constant exists to prevent — an ambient value
+ * choosing which code gets cloned and executed.
+ *
+ * @param {{repository?: string|{url?: string}}} pkg
+ * @returns {string} git-cloneable URL
+ */
+export function bundleSource(pkg) {
+  const raw = typeof pkg?.repository === 'string' ? pkg.repository : pkg?.repository?.url;
+  if (!raw) {
+    throw new Error('package.json has no `repository.url` — cannot determine the bundle source');
   }
-  if (!target || target.startsWith('-')) {
-    target = await ask(`  Project directory: `);
-  }
-  target = path.resolve(target);
+  return String(raw).replace(/^git\+/, '').replace(/\.git$/, '') + '.git';
+}
 
-  if (!fs.existsSync(target)) {
-    console.log(`${R}✗${X} Directory not found: ${target}`);
-    process.exit(1);
-  }
-  console.log(`  Target: ${B}${target}${X}\n`);
-
-  // 2. Clone to temp dir
-  const tmp = path.join(os.tmpdir(), `claude-engineering-skills-${Date.now()}`);
-  console.log(`${D}  Fetching latest from GitHub...${X}`);
-  try {
-    execSync(`git clone --depth 1 ${REPO} "${tmp}"`, { stdio: 'pipe' });
-    console.log(`${G}✓${X} Downloaded latest version\n`);
-  } catch (err) {
-    console.log(`${R}✗${X} Clone failed: ${err.message}`);
-    process.exit(1);
-  }
-
-  // 3. Copy scripts
-  console.log(`${B}Scripts${X}`);
-  const scriptsDir = path.join(target, 'scripts');
-  fs.mkdirSync(scriptsDir, { recursive: true });
-  for (const s of SCRIPTS) {
-    const src = path.join(tmp, 'scripts', s);
-    if (fs.existsSync(src)) {
-      fs.copyFileSync(src, path.join(scriptsDir, s));
-      console.log(`  ${G}✓${X} scripts/${s}`);
-    }
-  }
-
-  // 4. Install skills (all platforms)
-  console.log(`\n${B}Skills${X}`);
-  const skillNames = ['audit-loop', 'persona-test'];
-  for (const skillName of skillNames) {
-    const skillSrc = path.join(tmp, '.claude', 'skills', skillName, 'SKILL.md');
-    if (!fs.existsSync(skillSrc)) {
-      console.log(`  ${Y}⚠${X} ${skillName}/SKILL.md not found in bundle — skipping`);
+function parseArgs(argv) {
+  const args = { target: null, dryRun: false, ref: null, yes: false, help: false };
+  const positionals = [];
+  for (let i = 2; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--help' || a === '-h') { args.help = true; continue; }
+    if (a === '--dry-run') { args.dryRun = true; continue; }
+    if (a === '--yes') { args.yes = true; continue; }
+    if (a === '--ref') {
+      const v = argv[++i];
+      if (!v || v.startsWith('-')) throw new Error('--ref requires a value');
+      args.ref = v;
       continue;
     }
-    const skill = fs.readFileSync(skillSrc, 'utf-8');
-
-    // Claude Code
-    const claudeDir = path.join(target, '.claude', 'skills', skillName);
-    fs.mkdirSync(claudeDir, { recursive: true });
-    fs.writeFileSync(path.join(claudeDir, 'SKILL.md'), skill);
-
-    // VS Code Copilot / Cursor / Windsurf / JetBrains
-    const ghDir = path.join(target, '.github', 'skills', skillName);
-    fs.mkdirSync(ghDir, { recursive: true });
-    fs.writeFileSync(path.join(ghDir, 'SKILL.md'), skill);
-
-    // Cursor .cursor/rules (if .cursor exists)
-    if (fs.existsSync(path.join(target, '.cursor'))) {
-      const cursorDir = path.join(target, '.cursor', 'rules');
-      fs.mkdirSync(cursorDir, { recursive: true });
-      fs.writeFileSync(path.join(cursorDir, `${skillName}.md`), skill);
+    if (a.startsWith('-')) {
+      throw new Error(
+        `unknown flag "${a}". Accepted: ${KNOWN_FLAGS.join(', ')}. `
+        + 'Refusing to run rather than ignore it.',
+      );
     }
-    console.log(`  ${G}✓${X} ${skillName} → Claude Code + VS Code Copilot + Cursor + Windsurf`);
+    positionals.push(a);
   }
-
-  // 4b. Install pre-push hook for continuous skill sync
-  console.log(`\n${B}Git Hooks${X}`);
-  const hooksDir = path.join(target, '.git', 'hooks');
-  if (fs.existsSync(hooksDir)) {
-    const hookContent = `#!/bin/bash
-# Auto-sync skill files to consumer repos before every push.
-# Non-blocking — sync warnings never stop the push.
-REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
-SYNC_SCRIPT="$REPO_ROOT/scripts/sync-to-repos.mjs"
-if [ ! -f "$SYNC_SCRIPT" ]; then exit 0; fi
-echo "→ Syncing skills to consumer repos..."
-node "$SYNC_SCRIPT" 2>&1
-SYNC_EXIT=$?
-[ $SYNC_EXIT -ne 0 ] && echo "⚠  Sync completed with warnings — push continues"
-[ $SYNC_EXIT -eq 0 ] && echo "✓  Sync complete"
-exit 0
-`;
-    const hookPath = path.join(hooksDir, 'pre-push');
-    fs.writeFileSync(hookPath, hookContent);
-    fs.chmodSync(hookPath, 0o755);
-    console.log(`  ${G}✓${X} pre-push hook installed — skills auto-sync on every push`);
-  } else {
-    console.log(`  ${Y}⚠${X} No .git/hooks dir found — install in a git repo to enable auto-sync`);
+  if (positionals.length > 1) {
+    throw new Error(`expected one target directory, got ${positionals.length}: ${positionals.join(', ')}`);
   }
+  args.target = positionals[0] ?? null;
+  return args;
+}
 
-  // 4c. Claude Code permissions (minimize approval prompts)
-  console.log(`\n${B}Claude Code Permissions${X}`);
-  const setupPerms = path.join(tmp, 'scripts', 'setup-permissions.mjs');
-  if (fs.existsSync(setupPerms)) {
-    const doPerms = await ask(`  Set up permission rules to minimize audit-loop prompts? [Y/n] `);
-    if (!doPerms || doPerms.toLowerCase().startsWith('y')) {
-      try {
-        // Copy the script to target first so it can find the project dir
-        const targetScript = path.join(scriptsDir, 'setup-permissions.mjs');
-        fs.copyFileSync(setupPerms, targetScript);
-        execSync(`node "${targetScript}" --yes`, { cwd: target, stdio: 'inherit' });
-      } catch {
-        console.log(`  ${Y}⚠${X} Permission setup had issues — run manually: node scripts/setup-permissions.mjs`);
-      }
-    } else {
-      console.log(`  ${D}Skipped — run later: node scripts/setup-permissions.mjs${X}`);
-    }
+/**
+ * `interactive` is computed ONCE and is what every prompt/no-prompt decision
+ * keys on — including the legacy-migration split, which must never delete
+ * without a human saying yes.
+ */
+function isInteractive(args) {
+  return Boolean(process.stdin.isTTY) && !args.yes;
+}
+
+function usage() {
+  console.log(`${B}claude-engineering-skills${X} — install the skill bundle into a repo
+
+${B}Usage${X}
+  npx github:Lbstrydom/claude-engineering-skills <target-repo> [options]
+
+${B}Options${X}
+  --ref <branch|tag|sha>   Bundle version to install (default: the remote's default branch)
+  --dry-run                Show what would change; write nothing
+  --yes                    Non-interactive; skip prompts (never auto-deletes from your home dir)
+  --help                   This message
+
+Skills install REPO-SCOPED into <target>/.claude/skills/, and the runners into
+<target>/scripts/.claude-skills/. Nothing is written to your home directory.
+See docs/reference/skill-surface-ownership.md.
+`);
+}
+
+// ── Bundle cache ────────────────────────────────────────────────────────────
+
+function cacheRoot() {
+  return process.env.CES_BUNDLE_CACHE
+    || path.join(os.homedir(), '.claude-engineering-skills', 'bundle');
+}
+
+/** The lock lives BESIDE the cache, so relocating the cache relocates the lock. */
+function lockPath(cache) {
+  return path.join(path.dirname(cache), '.lock');
+}
+
+function git(args, cwd) {
+  return execFileSync('git', args, { cwd, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+}
+
+/**
+ * Resolve `ref` (or the remote's default branch) to an immutable SHA.
+ *
+ * Resolved BEFORE anything is fetched or written, and printed, so a moving
+ * branch cannot mean two different things within one run.
+ */
+function resolveRef(sourceUrl, ref) {
+  if (ref && /^[0-9a-f]{40}$/i.test(ref)) return { sha: ref, label: ref };
+  if (ref) {
+    const out = git(['ls-remote', sourceUrl, ref]);
+    const sha = out.split(/\s+/)[0];
+    if (!sha) throw new Error(`--ref "${ref}" not found at ${sourceUrl}`);
+    return { sha, label: ref };
   }
+  const symref = git(['ls-remote', '--symref', sourceUrl, 'HEAD']);
+  const branch = /^ref:\s+refs\/heads\/(\S+)\s+HEAD$/m.exec(symref)?.[1] ?? 'HEAD';
+  const sha = /^([0-9a-f]{40})\s+HEAD$/m.exec(symref)?.[1];
+  if (!sha) throw new Error(`could not resolve HEAD at ${sourceUrl}`);
+  return { sha, label: branch };
+}
 
-  // 5. Dependencies
-  console.log(`\n${B}Dependencies${X}`);
-  const pkgPath = path.join(target, 'package.json');
-  if (!fs.existsSync(pkgPath)) {
-    execSync('npm init -y', { cwd: target, stdio: 'pipe' });
-    console.log(`  ${Y}⚠${X} Created package.json`);
-  }
-  const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
-  const allDeps = { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) };
-  const needed = DEPS.filter(d => !allDeps[d]);
+/**
+ * Acquire or refresh the bundle at an exact SHA.
+ *
+ * A cache whose `origin` does not match the canonical source is DELETED and
+ * re-cloned rather than fetched into — a cache repointed by an earlier run must
+ * not be able to persist silently.
+ */
+function acquireBundle(sourceUrl, sha) {
+  const cache = cacheRoot();
+  fs.mkdirSync(path.dirname(cache), { recursive: true });
 
-  if (needed.length > 0) {
-    console.log(`  Installing: ${needed.join(', ')}`);
+  let reusable = false;
+  if (fs.existsSync(path.join(cache, '.git'))) {
     try {
-      execSync(`npm install ${needed.join(' ')}`, { cwd: target, stdio: 'pipe' });
-      console.log(`  ${G}✓${X} ${needed.length} packages installed`);
-    } catch { console.log(`  ${R}✗${X} npm install failed — run manually: npm install ${needed.join(' ')}`); }
-  } else {
-    console.log(`  ${G}✓${X} All dependencies present`);
+      reusable = git(['remote', 'get-url', 'origin'], cache) === sourceUrl;
+    } catch { reusable = false; }
+  }
+  if (fs.existsSync(cache) && !reusable) {
+    fs.rmSync(cache, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
 
-  if (pkg.type !== 'module') {
-    console.log(`  ${Y}⚠${X} Add "type": "module" to package.json for ES module support`);
+  if (!fs.existsSync(cache)) {
+    git(['clone', '--depth', '1', sourceUrl, cache]);
+  }
+  try {
+    git(['fetch', '--depth', '1', 'origin', sha], cache);
+  } catch {
+    git(['fetch', 'origin'], cache);   // shallow fetch-by-sha unsupported on some servers
+  }
+  git(['reset', '--hard', sha], cache);
+  return cache;
+}
+
+// ── Steps ───────────────────────────────────────────────────────────────────
+
+function installDeps(bundleRoot) {
+  execFileSync(process.platform === 'win32' ? 'npm.cmd' : 'npm',
+    ['ci', '--omit=dev'], { cwd: bundleRoot, stdio: 'pipe' });
+}
+
+/** Delegate the whole deployment. Child process, not import — see D6a. */
+function runSync(bundleRoot, target, { dryRun }) {
+  const argv = [
+    path.join(bundleRoot, 'scripts', 'sync-to-repos.mjs'),
+    '--target-path', target,
+    '--no-prompt',
+    '--quiet-legacy-check',     // this process reports it, and can act on it
+    ...(dryRun ? ['--dry-run'] : []),
+  ];
+  execFileSync(process.execPath, argv, { cwd: bundleRoot, stdio: 'inherit' });
+}
+
+/**
+ * The D6b/D6c legacy-migration state machine.
+ *
+ * An install that deploys correct repo-scoped skills while leaving the stranded
+ * `~/.claude/skills/**` tree in place has NOT fixed the reported bug — the shadow
+ * is still there, with undefined precedence between discovered roots. So this
+ * runs on every install.
+ *
+ * Ordering is sync-FIRST, migration-second: the correct copy must exist before
+ * the shadowing one is removed, so an aborted run never leaves a repo with
+ * neither.
+ */
+async function migrateLegacy(bundleRoot, target, { dryRun, interactive, ask }) {
+  // `pathToFileURL`, not a bare path: Node's ESM loader rejects an absolute
+  // Windows path outright ("Received protocol 'c:'"), so `import(path.join(...))`
+  // would have thrown on every Windows install. Caught by the hermetic e2e —
+  // which is precisely the class of defect source-only assertions cannot see.
+  const { inspectLegacySurfaces, describeLegacySurfaces } = await import(
+    pathToFileURL(path.join(bundleRoot, 'scripts', 'lib', 'install', 'legacy-surfaces.mjs')).href
+  );
+
+  let inspection;
+  try {
+    inspection = inspectLegacySurfaces({ repoRoot: target });
+  } catch (err) {
+    console.log(`  ${Y}⚠${X} could not inspect the retired skill surfaces: ${err.message}`);
+    return;
   }
 
-  // 6. API keys
-  console.log(`\n${B}API Keys${X}`);
+  if (inspection.overall === 'absent') return;
+
+  console.log(`\n${B}Retired skill surfaces${X}`);
+  for (const line of describeLegacySurfaces(inspection)) console.log(`  ${Y}•${X} ${line}`);
+  console.log(`  ${D}These shadow the repo-scoped copy just installed, with undefined precedence.${X}`);
+
+  const cleanupCmd =
+    `node "${path.join(bundleRoot, 'scripts', 'install-skills.mjs')}" --uninstall-legacy --repo-root "${target}"`;
+
+  if (inspection.overall === 'blocked') {
+    // Never fails the install: the repo-scoped copy is still an improvement, and
+    // refusing to install would withdraw a working fix to punish unrelated state.
+    console.log(`  ${Y}Cannot clean automatically${X} — resolve the files above, then run:`);
+    console.log(`  ${D}${cleanupCmd}${X}`);
+    return;
+  }
+
+  if (dryRun) {
+    console.log(`  ${Y}DRY RUN${X} — not removing anything. To clean up later:`);
+    console.log(`  ${D}${cleanupCmd}${X}`);
+    return;
+  }
+
+  if (!interactive) {
+    // Deleting from $HOME without consent is not something an install may do,
+    // and `--yes` means "don't prompt", not "you may delete my home directory".
+    console.log(`  ${D}Non-interactive — not removing anything. To clean up:${X}`);
+    console.log(`  ${D}${cleanupCmd}${X}`);
+    return;
+  }
+
+  const answer = await ask(`  Remove the retired copies now? [Y/n] `);
+  if (answer && !/^y(es)?$/i.test(answer.trim())) {
+    console.log(`  ${D}Left in place. To clean up later: ${cleanupCmd}${X}`);
+    return;
+  }
+  try {
+    execFileSync(process.execPath, [
+      path.join(bundleRoot, 'scripts', 'install-skills.mjs'),
+      '--uninstall-legacy', '--repo-root', target,
+    ], { cwd: bundleRoot, stdio: 'inherit' });
+  } catch {
+    console.log(`  ${Y}⚠${X} cleanup reported a problem — see above. Re-run: ${cleanupCmd}`);
+  }
+}
+
+async function collectKeys(target, ask) {
+  console.log(`\n${B}API keys${X}`);
   const envPath = path.join(target, '.env');
   let env = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf-8') : '';
-  let envChanged = false;
+  let changed = false;
 
   for (const k of KEYS) {
-    if (env.includes(`${k.name}=`) && !env.includes(`# ${k.name}=`)) {
+    if (new RegExp(`^${k.name}=`, 'm').test(env)) {
       console.log(`  ${G}✓${X} ${k.name} already set`);
       continue;
     }
     const label = k.req ? `${R}required${X}` : `${D}optional${X}`;
     const val = await ask(`  ${k.name} (${k.hint}, ${label}): `);
-    if (val?.trim()) {
-      env += `\n${k.name}=${val.trim()}`;
-      envChanged = true;
-    } else {
+    if (val?.trim()) env += `\n${k.name}=${val.trim()}`;
+    else {
       env += `\n# ${k.name}=  # ${k.hint}`;
-      envChanged = true;
-      if (k.req) console.log(`  ${Y}⚠${X} Required — set before running audits`);
+      if (k.req) console.log(`  ${Y}⚠${X} required — set it before running audits`);
     }
+    changed = true;
   }
-
-  if (envChanged) {
+  if (changed) {
     fs.writeFileSync(envPath, env.trim() + '\n');
     console.log(`  ${G}✓${X} .env updated`);
   }
-
-  // 6b. Weekly local maintenance (optional, default off)
-  // Opt-in replica of the 5 weekly GH Actions cron workflows (architectural
-  // drift, migration drift, model freshness, memory health, learning weekly
-  // review), run opportunistically from the pre-push hook — for consumers
-  // whose org blocks GitHub-hosted Actions runners, or who just want the
-  // signal without standing up separate CI. See docs/runbooks/local-maintenance-checks.md.
-  //
-  // LEARNING_REPO_NAME must be the owner/repo slug (matches audit_repos.name,
-  // itself derived from the git origin URL) — NOT the bare directory name.
-  // Found 2026-07-22: every consumer that ever set this by hand used the bare
-  // name (matching this file's own PERSONA_TEST_REPO_NAME hint two sections
-  // up, which uses a different, bare-name convention on a different table),
-  // so learning-weekly-review silently read {posted:false, reason:
-  // 'unknown-repo'} forever. Derive it automatically here instead of asking —
-  // it's the same value resolveRepoIdentity() already computes for the DB
-  // write path, so there's nothing for the operator to get wrong.
-  if (!env.match(/^AUDIT_LOOP_WEEKLY_MAINTENANCE=1/m)) {
-    console.log(`\n${B}Weekly maintenance checks${X}`);
-    console.log(`  Runs a local replica of 5 weekly GH Actions checks (architectural drift,`);
-    console.log(`  migration drift, model freshness, memory health, learning review)`);
-    console.log(`  opportunistically from your pre-push hook.\n`);
-    const wantMaintenance = await ask(`  Schedule weekly local maintenance checks? [y/N]: `);
-    if (/^y(es)?$/i.test(wantMaintenance?.trim() || '')) {
-      const { resolveRepoIdentity } = await import('./scripts/lib/repo-identity.mjs');
-      const { name: repoName } = resolveRepoIdentity(target);
-      env += `\nAUDIT_LOOP_WEEKLY_MAINTENANCE=1\nLEARNING_REPO_NAME=${repoName}`;
-      fs.writeFileSync(envPath, env.trim() + '\n');
-      console.log(`  ${G}✓${X} Weekly maintenance enabled (LEARNING_REPO_NAME=${repoName})`);
-    }
-  }
-
-  // Ensure audit-loop artifacts are gitignored
-  const { ensureAuditGitignore } = await import('./scripts/lib/install/gitignore.mjs');
-  ensureAuditGitignore(target);
-
-  // 7. Cleanup
-  fs.rmSync(tmp, { recursive: true, force: true });
-
-  // Done
-  console.log(`
-${B}══════════════════════════════════════════════════
-  ✓ Installed!
-══════════════════════════════════════════════════${X}
-
-  ${D}Audit:${X}         /audit-loop plan docs/plans/<name>.md
-  ${D}Persona test:${X}  /persona-test "first-time user" https://myapp.railway.app
-  ${D}List personas:${X} /persona-test list
-  ${D}Ship:${X}          /ship (includes UX P0 gate)
-  ${D}Terminal:${X}      node scripts/openai-audit.mjs code docs/plans/<name>.md
-  ${D}Sync skills:${X}   node scripts/sync-to-repos.mjs (also runs on git push)
-  ${D}Bandit:${X}        node scripts/bandit.mjs stats
-  ${D}Phase 7:${X}       node scripts/phase7-check.mjs
-`);
-
-  rl.close();
 }
 
-main().catch(err => { console.error('Install failed:', err.message); process.exit(1); });
+/**
+ * The whole bootstrap, as one injectable function.
+ *
+ * `pkg` is a parameter so the hermetic e2e test can point the real code at a
+ * fixture remote (D6d) without an env override existing in production.
+ */
+export async function bootstrap({
+  pkg, target, dryRun = false, ref = null, interactive = false, ask = null,
+  // Seams, injected ONLY by the hermetic end-to-end test:
+  //   installDepsFn — `npm ci` needs a registry, so the offline suite substitutes
+  //     a no-op. Everything else in the contract (ref->SHA, cache-origin
+  //     validation, delegation args, sync-then-migrate order) runs for real.
+  //   onStep — records the ORDER of the phases, because sync-before-migrate is
+  //     invisible when both succeed and there is no other way to assert it.
+  // Neither has a production caller, and neither can be reached from the CLI or
+  // the environment — the bundle SOURCE remains un-overridable (D6d).
+  installDepsFn = installDeps,
+  onStep = () => {},
+}) {
+  const sourceUrl = bundleSource(pkg);
+
+  const resolved = resolveRef(sourceUrl, ref);
+  console.log(`  Source: ${sourceUrl}`);
+  console.log(`  Version: ${resolved.label} @ ${resolved.sha.slice(0, 12)}`);
+
+  const { withFileLock } = await import('./scripts/lib/file-lock.mjs')
+    .catch(() => ({ withFileLock: null }));
+
+  const doWork = async () => {
+    const bundleRoot = acquireBundle(sourceUrl, resolved.sha);
+    onStep('acquire', { bundleRoot, sha: resolved.sha });
+    console.log(`  ${G}✓${X} bundle ready at ${bundleRoot}`);
+
+    // BEFORE any target write, so a dependency failure leaves the target
+    // completely untouched rather than half-deployed.
+    installDepsFn(bundleRoot);
+    onStep('deps');
+    console.log(`  ${G}✓${X} dependencies installed`);
+
+    console.log(`\n${B}Deploying${X}`);
+    runSync(bundleRoot, target, { dryRun });
+    onStep('sync');
+
+    // AFTER the sync: the correct copy must exist before the shadowing one is
+    // removed, so an aborted run never leaves a repo with neither.
+    await migrateLegacy(bundleRoot, target, { dryRun, interactive, ask });
+    onStep('migrate');
+
+    if (!dryRun && interactive && ask) await collectKeys(target, ask);
+    else if (!dryRun) console.log(`\n${D}Non-interactive — set API keys in ${path.join(target, '.env')}${X}`);
+
+    return bundleRoot;
+  };
+
+  const lock = lockPath(cacheRoot());
+  fs.mkdirSync(path.dirname(lock), { recursive: true });
+  // Signature is (lockPath, opts, fn) — the middle argument is NOT optional in
+  // the sense of being omittable, and dropping it silently passes `doWork` as
+  // `opts`, leaving `fn` undefined ("fn is not a function"). The clone + npm ci
+  // can legitimately take a while, so allow more than the default wait.
+  return withFileLock
+    ? withFileLock(lock, { maxWaitMs: 120_000 }, doWork)
+    : doWork();
+}
+
+async function main() {
+  let args;
+  try {
+    args = parseArgs(process.argv);
+  } catch (err) {
+    console.error(`${R}Error${X}: ${err.message}`);
+    return 1;
+  }
+  if (args.help) { usage(); return 0; }
+
+  console.log(`
+${B}══════════════════════════════════════════════════
+  Claude Engineering Skills — Install
+══════════════════════════════════════════════════${X}
+`);
+
+  const interactive = isInteractive(args);
+  const { rl, ask } = interactive ? createPrompter() : { rl: null, ask: null };
+
+  try {
+    let target = args.target;
+    if (!target) {
+      if (!interactive) {
+        console.error(`${R}Error${X}: a target directory is required.`);
+        console.error('  Usage: npx github:Lbstrydom/claude-engineering-skills <target-repo>');
+        return 1;
+      }
+      target = await ask('  Target repo directory: ');
+    }
+    target = path.resolve(String(target).trim());
+    if (!fs.existsSync(target)) {
+      console.error(`${R}✗${X} Directory not found: ${target}`);
+      return 1;
+    }
+    console.log(`  Target: ${B}${target}${X}`);
+    if (args.dryRun) console.log(`  ${Y}DRY RUN — nothing will be written${X}`);
+
+    const pkg = JSON.parse(fs.readFileSync(path.join(SELF_DIR, 'package.json'), 'utf-8'));
+    await bootstrap({ pkg, target, dryRun: args.dryRun, ref: args.ref, interactive, ask });
+
+    console.log(`
+${B}══════════════════════════════════════════════════
+  ${args.dryRun ? 'Dry run complete' : '✓ Installed'}
+══════════════════════════════════════════════════${X}
+
+  ${D}Plan:${X}        /plan <description>
+  ${D}Audit:${X}       /audit-code docs/plans/<name>.md
+  ${D}Full cycle:${X}  /cycle <description>
+
+  ${D}Update later — same command:${X}
+    npx github:Lbstrydom/claude-engineering-skills ${target}
+`);
+    return 0;
+  } finally {
+    rl?.close();
+  }
+}
+
+const isMain = import.meta.url === `file://${process.argv[1]}`
+  || import.meta.url === `file:///${process.argv[1]?.replace(/\\/g, '/')}`;
+
+if (isMain) {
+  main()
+    .then((code) => process.exit(code))
+    .catch((err) => {
+      console.error(`${R}Install failed${X}: ${err.message}`);
+      if (process.env.DEBUG) console.error(err.stack);
+      process.exit(1);
+    });
+}

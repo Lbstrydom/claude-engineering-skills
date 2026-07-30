@@ -99,7 +99,12 @@ function reconcileThenInstall(repoRoot, home, tag) {
     const skills = path.join(os.homedir(), '.claude', 'skills');
     const m = await import(${JSON.stringify(INSTALL_URL)});
     const { receiptPath } = await import(${JSON.stringify(pathToFileURL(path.join(REPO, 'scripts', 'lib', 'install', 'surface-paths.mjs')).href)});
-    m._internals.reconcileJournals(${JSON.stringify(repoRoot)}, receiptPath('global', ${JSON.stringify(repoRoot)}));
+    // Second argument is an OPTIONS BAG, not a positional path. This call used
+    // to pass receiptPath('global', repoRoot) here, which the old one-argument
+    // body silently ignored — a leftover that would have been reinterpreted as
+    // a home root the moment the signature grew.
+    void receiptPath;
+    m._internals.reconcileJournals(${JSON.stringify(repoRoot)});
     console.log('RECONCILE_PROCEEDED');
     const { executeTransaction } = await import(${JSON.stringify(TXN_URL)});
     const r = executeTransaction({

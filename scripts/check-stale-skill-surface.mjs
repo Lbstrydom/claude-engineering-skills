@@ -36,6 +36,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { inspectLegacySurfaces, describeLegacySurfaces } from './lib/install/legacy-surfaces.mjs';
+
 const R = '\x1b[31m', G = '\x1b[32m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0m';
 
 /** The deprecated surface, and the live one it shadows. */
@@ -203,6 +205,9 @@ function main() {
     process.exit(0);
   }
 
+  // Advisory, before any exit path so it prints regardless of the verdict.
+  reportRetiredSurfaces(root);
+
   const stale = listSurfaceNames(root, STALE_SURFACE);
   const live = listSurfaceNames(root, LIVE_SURFACE);
 
@@ -281,6 +286,52 @@ function main() {
     `${D}  (${LIVE_SURFACE}/ is the single Copilot-native surface.)${X}\n`
   );
   process.exit(exitCode);
+}
+
+/**
+ * Report — never gate on — a stranded tree from the RETIRED install surfaces.
+ *
+ * `.github/skills/` (above) and `~/.claude/skills/` + `.agents/skills/` (here)
+ * are the same failure shape: a copy in a discovered root shadowing the live one
+ * with undefined precedence. So this file is the natural place to surface both.
+ *
+ * Two deliberate choices:
+ *
+ * 1. **No second detector.** It delegates to `inspectLegacySurfaces`, which is
+ *    already the single oracle used by `sync-to-repos.mjs`, `setup.mjs` and
+ *    `install.mjs`. Re-deriving "is there a stale global tree?" here would be a
+ *    fourth answer to one question — precisely the duplication this whole change
+ *    exists to remove.
+ *
+ * 2. **It does NOT gate, and that is a stated scope boundary rather than
+ *    timidity.** Every machine that ever ran the old installer has this tree
+ *    right now, including the authoring one (56 files). A gate would fail every
+ *    push until each developer cleaned up — the cried-wolf gate that gets
+ *    `--no-verify`'d, after which it protects nothing. Gate it once the fleet is
+ *    clean; the cleanup command is one line and is printed here.
+ *
+ * @param {string} root repo root being checked
+ */
+function reportRetiredSurfaces(root) {
+  // SYNCHRONOUS on purpose. `main()` ends in `process.exit()` on every branch, so
+  // an async advisory would be scheduled and then discarded — a report that
+  // silently never prints is worse than none, because its absence reads as
+  // "nothing found".
+  try {
+    const legacy = inspectLegacySurfaces({ repoRoot: root });
+    if (legacy.overall === 'absent') return;
+    process.stderr.write(`\n${Y}Retired install surfaces still present${X} ${D}(advisory — not gated)${X}\n`);
+    for (const line of describeLegacySurfaces(legacy)) {
+      process.stderr.write(`  ${Y}•${X} ${line}\n`);
+    }
+    process.stderr.write(
+      `${D}  These shadow ${LIVE_SURFACE}/ with undefined precedence between discovered roots.\n` +
+      `  Remove: node scripts/install-skills.mjs --uninstall-legacy${X}\n`,
+    );
+  } catch (err) {
+    // Advisory only — never let it affect the run, but never swallow it either.
+    process.stderr.write(`${D}  (retired-surface check skipped: ${err.message})${X}\n`);
+  }
 }
 
 const isMain = (() => {

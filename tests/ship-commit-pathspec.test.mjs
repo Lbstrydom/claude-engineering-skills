@@ -106,6 +106,64 @@ describe('ship-commit --path', () => {
     assert.deepEqual(filesInHead(), ['brand-new.txt']);
   });
 
+  // A path absent from disk is only an error when git does not know it either.
+  // Rejecting a DELETION forced the caller to choose between dropping it from the
+  // commit — stranding a staged delete in a shared index — and abandoning --path
+  // scoping altogether, which bundles another session's work. Found shipping the
+  // `.githooks/post-merge` removal, where dropping the deletion would have left
+  // the hook live in HEAD and still recreating the tree the commit exists to
+  // retire.
+  it('commits a DELETED named path (tracked but gone from the worktree)', () => {
+    fs.writeFileSync(path.join(repo, 'doomed.txt'), 'bye\n');
+    git(['add', 'doomed.txt']);
+    git(['commit', '-q', '-m', 'add doomed']);
+    fs.rmSync(path.join(repo, 'doomed.txt'), { recursive: true, maxRetries: 3, retryDelay: 50 });
+
+    const r = runCli([...BASE(msgFile()), '--path', 'doomed.txt']);
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(filesInHead(), ['doomed.txt']);
+    assert.equal(
+      git(['ls-files', '--', 'doomed.txt']).trim(), '',
+      'the deletion must actually land, not just be named',
+    );
+  });
+
+  // The index and HEAD disagree here, and only HEAD is right: `git rm --cached`
+  // removes the path from the INDEX while it is still in HEAD, so an index-only
+  // probe reports "git does not track it" for a deletion that is already
+  // half-staged. This is the shape the real ship hit.
+  it('commits an ALREADY-STAGED deletion (gone from the index, still in HEAD)', () => {
+    fs.writeFileSync(path.join(repo, 'doomed.txt'), 'bye\n');
+    git(['add', 'doomed.txt']);
+    git(['commit', '-q', '-m', 'add doomed']);
+    fs.rmSync(path.join(repo, 'doomed.txt'), { recursive: true, maxRetries: 3, retryDelay: 50 });
+    git(['rm', '--cached', '-q', '--', 'doomed.txt']);   // deletion now staged
+
+    const r = runCli([...BASE(msgFile()), '--path', 'doomed.txt']);
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(filesInHead(), ['doomed.txt']);
+  });
+
+  it('a deletion is scoped like any other path — others stay staged', () => {
+    fs.writeFileSync(path.join(repo, 'doomed.txt'), 'bye\n');
+    git(['add', 'doomed.txt']);
+    git(['commit', '-q', '-m', 'add doomed']);
+    fs.rmSync(path.join(repo, 'doomed.txt'), { recursive: true, maxRetries: 3, retryDelay: 50 });
+    fs.writeFileSync(path.join(repo, 'theirs.txt'), 'their work\n');
+    git(['add', 'theirs.txt']);
+
+    const r = runCli([...BASE(msgFile()), '--path', 'doomed.txt']);
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(filesInHead(), ['doomed.txt']);
+    assert.deepEqual(git(['diff', '--cached', '--name-only']).split('\n').filter(Boolean), ['theirs.txt']);
+  });
+
+  it('still rejects a path that is neither on disk nor tracked', () => {
+    const r = runCli([...BASE(msgFile()), '--path', 'never-existed.txt']);
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /no such file, and git does not track it/);
+  });
+
   it('commits worktree content, not a stale staged version', () => {
     fs.writeFileSync(path.join(repo, 'f.txt'), 'staged version\n');
     git(['add', 'f.txt']);

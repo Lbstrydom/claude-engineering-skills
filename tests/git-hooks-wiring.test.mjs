@@ -21,7 +21,21 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 const REPO = process.cwd();
-const HOOKS = ['pre-push', 'post-checkout', 'post-merge'];
+
+// `post-merge` was REMOVED from this list on 2026-07-30, not lost.
+//
+// It ran `build-manifest.mjs` + `install-skills.mjs --local --surface claude
+// --force` after every pull. Both artifacts are committed Category-B files that
+// `git pull` already delivers and `npm run skills:check` already proves fresh, so
+// the hook's only real effect was writing the machine-global `~/.claude/skills/`
+// tree — the defect that
+// docs/plans/repo-scoped-skill-surfaces-and-installer.md retires. A hook that
+// regenerates committed, freshness-verified artifacts is churn at best; here it
+// manufactured the bug.
+//
+// Deliberately not replaced: if staleness is ever observed the honest fix is a
+// check (which exists), not a hook that writes.
+const HOOKS = ['pre-push', 'post-checkout'];
 const pkg = JSON.parse(fs.readFileSync(path.join(REPO, 'package.json'), 'utf-8'));
 
 const git = (args) => execFileSync('git', args, { cwd: REPO, encoding: 'utf-8' }).trim();

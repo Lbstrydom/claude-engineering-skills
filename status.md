@@ -1,6 +1,71 @@
 # Project Status Log
 
-## 2026-07-29 (latest) — the bake-off we audited to APPROVE and then parked
+## 2026-07-30 (latest) — the global skill surface was unfixable, and the bundle was un-installable
+
+A consumer session diagnosed its own tooling as "not installed" and skipped its
+audit gates on that premise. The diagnosis was wrong twice. Chasing it found two
+defects, the second bigger than the reported one.
+
+**Defect 1 — a machine-global surface cannot hold layout-dependent content.**
+A SKILL.md cites its runner paths, and those are a function of the deployment
+layout: `scripts/X.mjs` here, `scripts/.claude-skills/X.mjs` in a consumer.
+`~/.claude/skills/` is ONE directory shared by every repo, so it is
+layout-agnostic by construction and **no correct content for it exists**.
+Measured: `~/.claude/skills/ship/SKILL.md` had 0 references to
+`scripts/.claude-skills/`; the consumer's synced copy had 20. The global copy even
+contained the sentence *"the synced copy of this file already carries the rewritten
+path"* while itself carrying the unrewritten one. It was additionally 15
+skill-name collisions against every synced consumer — the exact hazard AGENTS.md
+forbids. **The obvious fix (rewrite the global copy) does not work**: it only
+flips which repo is broken. Writer was `install-skills.mjs --surface claude`, run
+by this repo's own `.githooks/post-merge` on every `git pull`.
+
+**Defect 2 — nobody outside this machine could install the bundle.**
+`sync-to-repos.mjs` is the only writer that deploys runners with rewritten paths,
+and it was gated on a hardcoded two-entry registry. Root `install.mjs` — the
+public `npx github:` entry point — installed 1 of 15 skills (its list named
+`audit-loop`, deleted long ago), wrote the retired `.github/skills/`, copied 7
+hardcoded scripts with no import closure (guaranteed MODULE_NOT_FOUND), and
+installed a source-repo-only pre-push hook into consumers.
+
+**What shipped.** Both retired surfaces throw; `install-skills.mjs` no longer
+installs and exists only for receipt-bounded `--uninstall-legacy`; a new
+single-oracle inspector reads BOTH receipt scopes; `--target-path <dir>` makes any
+repo a valid target; `install.mjs` became a bootstrapper owning no file lists;
+`.githooks/post-merge` is deleted. Net: **production code shrank** — the fix was
+deleting hand-maintained duplicates of machinery that already existed correctly.
+
+**Six defects the audit rounds caught that would have shipped:**
+`--home --dry-run` *and* `--home=<path>` both silently dropped the flag on the one
+command that deletes from `$HOME`; `recoverFromJournal` validated containment
+against the ambient home while discovery used the injected one, which
+**quarantines a healthy journal** rather than failing safe; `fs.existsSync`
+follows symlinks so a dangling link read as "already cleaned"; the containment
+guard returned a path that *lied* about where the write landed; and `import()` of
+an absolute Windows path would have crashed **every Windows install** — caught by
+the hermetic e2e, which is exactly the class source-only assertions cannot see.
+Also fixed a pre-existing one-time sync churn (first JSON write emitted raw source
+bytes, later writes `JSON.stringify`).
+
+**Two audit assertions did not survive being executed**, and were withdrawn
+rather than implemented: `transaction.mjs`'s containment is realpath-based, not
+"lexical"; `managedFileAbsPath` never reads `os.homedir()`. Both had been adopted
+into the plan before anyone ran them. Recorded as a rule — *a finding about code
+the diff did not write is a hypothesis until executed.*
+
+**Verification**: `npm run check` exits 0 — 9554 tests, 0 failures.
+Plan: [`repo-scoped-skill-surfaces-and-installer.md`](docs/plans/repo-scoped-skill-surfaces-and-installer.md).
+Reference: [`skill-surface-ownership.md`](docs/reference/skill-surface-ownership.md).
+
+**Known flakiness**: `tests/install-bootstrap-e2e.test.mjs` does real git clones
+(~50s). It passed in isolation and in two full-suite runs, and failed once under
+heavy parallel load — load-sensitive, not proven stable.
+
+**Migration for anyone on a pre-2026-07-30 install**:
+`node scripts/install-skills.mjs --uninstall-legacy` (receipt-bounded; it cannot
+touch a skill you wrote yourself).
+
+## 2026-07-29 — the bake-off we audited to APPROVE and then parked
 
 Docs-only ship: two plans, one AGENTS.md correction. No code changed. The
 substance is a **decision not to build something we had already fully specified.**

@@ -1,8 +1,5 @@
-import { describe, it, beforeEach, afterEach } from 'node:test';
+import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import path from 'node:path';
-import os from 'node:os';
 import {
   ManifestSchema, MANIFEST_SUPPORTED_VERSIONS, FileEntrySchema, SkillEntrySchema,
 } from '../../scripts/lib/schemas-install.mjs';
@@ -83,42 +80,19 @@ describe('ManifestSchema', () => {
   });
 });
 
-// End-to-end version-gate test: invoke the installer as a child process
-// against a crafted unsupported-version manifest and verify it exits 1
-// with UNSUPPORTED_MANIFEST_VERSION.
-describe('installer version-gate entrypoint', () => {
-  let tmp;
-  beforeEach(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'install-gate-')); });
-  afterEach(() => { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
-
-  it('rejects schemaVersion 99 with UNSUPPORTED_MANIFEST_VERSION', async () => {
-    // Arrange a synthetic target dir with a skills/ and a v99 manifest
-    const repoDir = path.join(tmp, 'repo');
-    fs.mkdirSync(repoDir);
-    fs.writeFileSync(path.join(repoDir, '.git'), '');
-    fs.writeFileSync(path.join(repoDir, 'package.json'), '{}');
-    fs.mkdirSync(path.join(repoDir, 'skills', 'demo'), { recursive: true });
-    fs.writeFileSync(path.join(repoDir, 'skills', 'demo', 'SKILL.md'), '# demo');
-    fs.writeFileSync(path.join(repoDir, 'skills.manifest.json'), JSON.stringify({
-      schemaVersion: 99,
-      bundleVersion: 'x',
-      repoUrl: 'https://example.com',
-      rawUrlBase: 'https://example.com/raw',
-      updatedAt: new Date().toISOString(),
-      skills: {},
-    }));
-
-    const { spawnSync } = await import('node:child_process');
-    const installerPath = path.resolve('scripts/install-skills.mjs');
-    const result = spawnSync(process.execPath, [installerPath, '--local', '--dry-run'], {
-      cwd: repoDir,
-      encoding: 'utf-8',
-      env: { ...process.env, NO_COLOR: '1' },
-    });
-
-    assert.notEqual(result.status, 0, `expected non-zero exit, got ${result.status}`);
-    const combined = (result.stdout || '') + (result.stderr || '');
-    assert.ok(combined.includes('UNSUPPORTED_MANIFEST_VERSION'), `missing error marker in: ${combined}`);
-    assert.ok(combined.includes('99'), `missing version in error: ${combined}`);
-  });
-});
+// The end-to-end "installer refuses a v99 manifest" test was REMOVED, not
+// weakened, when the install path was retired
+// (docs/plans/repo-scoped-skill-surfaces-and-installer.md §2 D2/D3/D4).
+//
+// The gate existed to protect ONE thing: an old installer reading a manifest
+// written by a newer bundle. `skills.manifest.json` no longer has a runtime
+// consumer — `build-manifest.mjs` writes and freshness-checks it, and
+// `tiered-shadow-contract-digest.mjs` reads only its `bundleVersion` string.
+// Nothing parses it as an install input, so there is no reader left to protect
+// and no entrypoint left to invoke. Keeping the test would have required
+// keeping a dead `loadManifest` in a script that can no longer install.
+//
+// The schema-level contract above is what survives and still matters: it is
+// what `build-manifest.mjs` writes against, and MANIFEST_SUPPORTED_VERSIONS is
+// still the declared compatibility window. If a manifest consumer is ever
+// reintroduced, restore an entrypoint test with it — not before.

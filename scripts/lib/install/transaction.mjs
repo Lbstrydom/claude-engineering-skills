@@ -285,9 +285,14 @@ function anchorFor(isGlobal, repoRoot, journalOverride) {
  * The anchor a journal ALREADY sits at, derived from its LOCATION — never from
  * its contents, which must work even for a journal too corrupt to parse.
  */
-function anchorForJournal(journalPath, repoRoot) {
-  return path.resolve(journalPath) === path.resolve(globalJournalPath())
-    ? { scope: 'global', quarantineDir: globalQuarantineDir() }
+function anchorForJournal(journalPath, repoRoot, homeRoot = undefined) {
+  // `homeRoot` threads through for the same reason it does in
+  // `recoverFromJournal`: a journal discovered under an explicit home must be
+  // RECOGNISED as the global anchor, or it is misclassified as repo-scoped and
+  // quarantined into the wrong directory. Undefined ⇒ ambient home, so every
+  // existing caller is unchanged.
+  return path.resolve(journalPath) === path.resolve(globalJournalPath(homeRoot))
+    ? { scope: 'global', quarantineDir: globalQuarantineDir(homeRoot) }
     : { scope: 'repo', quarantineDir: repoQuarantineDir(repoRoot) };
 }
 
@@ -867,8 +872,17 @@ export function recoverFromJournal(journalPath = defaultJournalPath(), opts = {}
   // Containment roots come from the CALLER only. The journal never contributes
   // one — that is what keeps `originRepoRoot` an identity claim rather than a
   // self-issued authorisation.
-  const allowedRoots = [repoRoot, globalSurfaceRoot()];
-  const anchor = anchorForJournal(journalPath, repoRoot);
+  //
+  // `opts.homeRoot` must be honoured here, not just at journal DISCOVERY. A
+  // caller that located this journal via `globalJournalPath(homeRoot)` and then
+  // had its entries validated against the AMBIENT `globalSurfaceRoot()` would
+  // find every entry out-of-containment — and per the ordering comment below,
+  // that path quarantines the journal. So the mismatch does not merely abort:
+  // it relocates a perfectly healthy record and destroys the owner's ability to
+  // self-heal. Defaults to the ambient home, so every existing caller is
+  // unchanged. (Found by the Cluster A audit, R2/M4→R3/H2.)
+  const allowedRoots = [repoRoot, globalSurfaceRoot(opts.homeRoot)];
+  const anchor = anchorForJournal(journalPath, repoRoot, opts.homeRoot);
   // Ownership of a GLOBAL journal cannot be established without the caller's own
   // repoRoot: nothing in a shared anchor's location identifies its author. Absent
   // one, every global journal is foreign — fail closed.

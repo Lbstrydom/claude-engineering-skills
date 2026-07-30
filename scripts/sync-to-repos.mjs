@@ -20,7 +20,7 @@ import crypto from 'node:crypto';
 import { execSync } from 'node:child_process';
 import { enumerateSkillFiles, listSkillNames } from './lib/skill-packaging.mjs';
 import { ensureAuditDeps } from './lib/install/deps.mjs';
-import { CONSUMER_REPOS } from './lib/consumer-repos.mjs';
+import { CONSUMER_REPOS, resolveAdHocTarget, canonicaliseRegistryTarget } from './lib/consumer-repos.mjs';
 import { writeManifest, detectOwnershipRegression } from './lib/sync-manifest.mjs';
 import { collectImportClosure } from './lib/module-graph.mjs';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';
@@ -31,6 +31,8 @@ import { classifyOwnership, describeEvidence } from './lib/sync-ownership.mjs';
 import { updateManagedBlock, parseGitignoreState } from './lib/sync-gitignore.mjs';
 import { untrackNewlyIgnored } from './lib/sync-untrack.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
+import { assertContainedDestination } from './lib/install/safe-destination.mjs';
+import { inspectLegacySurfaces, describeLegacySurfaces } from './lib/install/legacy-surfaces.mjs';
 import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 import { compareSkillSurfaces, listSurfaceNames, STALE_SURFACE } from './check-stale-skill-surface.mjs';
 // Reused rather than re-parsed: env-setting owns .env key resolution (dotenv's
@@ -160,6 +162,25 @@ const targetFilter = (() => {
   const idx = process.argv.indexOf('--target');
   return idx === -1 ? null : process.argv[idx + 1];
 })();
+
+// `--target-path <dir>` — sync into ANY repo, not only a registered one.
+//
+// This is what makes the bundle distributable: `CONSUMER_REPOS` is the
+// maintainer's convenience list ("sync all my repos"), never a gate on who may
+// install. `install.mjs` drives this flag; a third party can also call it
+// directly. Validation (canonicalisation, containment, eligibility) lives in
+// `resolveAdHocTarget`, not here.
+const targetPathArg = (() => {
+  const idx = process.argv.indexOf('--target-path');
+  return idx === -1 ? null : process.argv[idx + 1];
+})();
+
+// Suppress this run's legacy-surface warning because a PARENT process
+// (`install.mjs`) is about to report the same finding and offer to act on it.
+// Only the output is suppressed — the inspection still runs — so a direct
+// `npm run sync` is unchanged and the parent stays the single voice when it owns
+// the interaction.
+const QUIET_LEGACY_CHECK = process.argv.includes('--quiet-legacy-check');
 
 const SOURCE_ROOT = path.resolve(import.meta.dirname, '..');
 
@@ -731,10 +752,34 @@ function decideShadowFailure(inspection, repoName) {
     `shadowed by ${STALE_SURFACE}/ — remove that directory before this sync can succeed for ${repoName}`;
 }
 
-export const REPOS = CONSUMER_REPOS.map(r => {
+/**
+ * Turn a target IDENTITY (`{name, alias, path}`) into a fully-decorated sync
+ * target by attaching the deployment fields the repo loop consumes.
+ *
+ * **This is the single construction site for a sync target, and that is the
+ * point.** Two sources produce identities — the `CONSUMER_REPOS` registry and
+ * `resolveAdHocTarget('--target-path')` — and both flow through here. The
+ * alternative considered (and rejected) was to have each source build a complete
+ * target and keep their field lists in agreement: that is a second list to
+ * maintain against what the loop actually reads (`repo.files` feeds
+ * `buildOwnedSourceTails` and `extractLiveSkillNames`), and a missing field
+ * surfaces as an ad-hoc target silently copying nothing rather than as an error.
+ * With one construction site an ad-hoc target cannot diverge from a registered
+ * one — not because the lists match, but because there is only one list.
+ *
+ * `bundleForRepo()` takes no per-repo argument (every consumer gets every
+ * bundle), so the "default deployment profile" an ad-hoc target needs already
+ * exists and is the only profile there is.
+ *
+ * @param {{name: string, alias: string|null, path: string}} identity
+ * @returns {{name: string, alias: string|null, path: string, files: string[], unresolved: object[]}}
+ */
+export function decorateTarget(identity) {
   const { files, unresolved } = bundleForRepo();
-  return { ...r, files, unresolved };
-});
+  return { ...identity, files, unresolved };
+}
+
+export const REPOS = CONSUMER_REPOS.map(decorateTarget);
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -855,7 +900,10 @@ function assessConsumerAzureEmbed(repoPath) {
  * `--target` takes a value; `assertKnownFlags` validates NAMES only, so the
  * value is a bare positional it ignores by design.
  */
-const KNOWN_FLAGS = ['--dry-run', '--no-prompt', '--adopt-orphans', '--target'];
+const KNOWN_FLAGS = [
+  '--dry-run', '--no-prompt', '--adopt-orphans', '--target',
+  '--target-path', '--quiet-legacy-check',
+];
 
 async function main() {
   // This CLI WRITES INTO CONSUMER REPOS and its default is the real sync, so a
@@ -872,15 +920,41 @@ async function main() {
   let totalUnchanged = 0;
   let totalErrors = 0;
 
-  const targetRepos = targetFilter
-    ? REPOS.filter(r => r.name === targetFilter || r.alias === targetFilter)
-    : REPOS;
-
-  if (targetFilter && targetRepos.length === 0) {
-    console.error(`${R}Unknown target: "${targetFilter}"${X}`);
-    const knownTargets = REPOS.map(r => r.name + ' (' + r.alias + ')').join(', ');
-    console.error(`  Known: ${knownTargets}`);
+  // `--target` (registry) and `--target-path` (arbitrary) are mutually
+  // exclusive: they answer the same question differently, and silently
+  // preferring one would make the ignored flag a lie on a command that WRITES
+  // INTO OTHER REPOS.
+  if (targetFilter && targetPathArg) {
+    console.error(`${R}--target and --target-path are mutually exclusive${X}`);
+    console.error('  --target <name>      picks a registered consumer');
+    console.error('  --target-path <dir>  syncs into any repo by path');
     process.exit(1);
+  }
+
+  let targetRepos;
+  if (targetPathArg) {
+    let identity;
+    try {
+      identity = resolveAdHocTarget(targetPathArg, {
+        warn: (m) => console.log(`  ${Y}warn${X}  ${m}`),
+      });
+    } catch (err) {
+      console.error(`${R}${err.message}${X}`);
+      process.exit(1);
+    }
+    targetRepos = [decorateTarget(identity)];
+  } else {
+    targetRepos = targetFilter
+      ? REPOS.filter(r => r.name === targetFilter || r.alias === targetFilter)
+      : REPOS;
+
+    if (targetFilter && targetRepos.length === 0) {
+      console.error(`${R}Unknown target: "${targetFilter}"${X}`);
+      const knownTargets = REPOS.map(r => r.name + ' (' + r.alias + ')').join(', ');
+      console.error(`  Known: ${knownTargets}`);
+      console.error(`  Or sync an unregistered repo by path: --target-path <dir>`);
+      process.exit(1);
+    }
   }
 
   const dryRunSuffix = DRY_RUN ? ' ' + Y + '[DRY RUN]' + X : '';
@@ -905,9 +979,27 @@ async function main() {
     console.log('');
   }
 
-  for (const repo of targetRepos) {
-    if (!fs.existsSync(repo.path)) {
-      console.log(`${Y}Skipping ${repo.name}${X}: directory not found at ${repo.path}`);
+  for (const rawRepo of targetRepos) {
+    // Canonicalise + containment-check EVERY target, not just `--target-path`.
+    // The registry is not automatically trustworthy — its local half
+    // (consumer-repos.local.json) is an operator-authored file whose `path` is
+    // used verbatim — and a safety guarantee that depends on which flag produced
+    // a value rather than on the value itself will eventually be routed around.
+    // Ad-hoc targets are already canonical, so this is a no-op for them.
+    let repo;
+    try {
+      repo = canonicaliseRegistryTarget(rawRepo);
+    } catch (err) {
+      // A containment refusal is an ERROR, not a skip: it means a configured
+      // target points somewhere it must never be written, and a run that
+      // reported success would hide that.
+      console.log(`${R}Refusing ${rawRepo.name}${X}: ${err.message}`);
+      console.log('');
+      totalErrors++;
+      continue;
+    }
+    if (!repo) {
+      console.log(`${Y}Skipping ${rawRepo.name}${X}: directory not found at ${rawRepo.path}`);
       console.log('');
       continue;
     }
@@ -941,6 +1033,32 @@ async function main() {
       }
     } catch (err) {
       console.warn(`  ${Y}[stale-skill-surface] inspection failed unexpectedly: ${err.message}${X}`);
+    }
+
+    // ── Pre-flight: retired skill surfaces (advisory, D6b) ────────────────
+    // A repo that still carries `~/.claude/skills/**` or `.agents/skills/**`
+    // from the pre-retirement installer has those trees SHADOWING the correct
+    // rewritten copy this sync is about to write — with undefined precedence
+    // between discovered roots. Syncing without saying so would hand the
+    // operator a fixed repo that still behaves like a broken one.
+    //
+    // WARN only, never act: this is a file-distribution tool and must not touch
+    // `$HOME`. The delete lives solely behind `install-skills.mjs
+    // --uninstall-legacy`. Suppressed when `install.mjs` is the parent, because
+    // it reports the same finding and can actually offer to fix it.
+    if (!QUIET_LEGACY_CHECK) {
+      try {
+        const legacy = inspectLegacySurfaces({ repoRoot: repo.path });
+        for (const line of describeLegacySurfaces(legacy)) {
+          console.log(`  ${Y}legacy${X} ${line}`);
+        }
+        if (legacy.overall !== 'absent') {
+          console.log(`  ${D}Remove it: node scripts/install-skills.mjs --uninstall-legacy --repo-root ${repo.path.replaceAll('\\', '/')}${X}`);
+        }
+      } catch (err) {
+        // Advisory only — an inspection failure must never abort a sync.
+        console.warn(`  ${Y}[legacy-surfaces] inspection failed: ${err.message}${X}`);
+      }
     }
 
     // ── Pre-flight: adoption tier (advisory) ──────────────────────────────
@@ -1283,13 +1401,26 @@ async function main() {
       const isJson = dstRel.endsWith('.json');
       const dstExists = fs.existsSync(dstPath);
 
-      if (isJson && dstExists) {
+      if (isJson) {
         // Existing deepMerge behaviour preserved for JSON; rewriter runs
         // AFTER merge on the final value (plan §2 KD #9 + Gemini v3 G4 fix).
+        //
+        // The `!dstExists` branch is NOT a no-op, and adding it fixed a real
+        // one-time churn: the first sync used to write the RAW source bytes
+        // (`"args": ["a", "b"]` on one line) while every later sync wrote
+        // `JSON.stringify(merged, null, 2)` (the array expanded), so `.vscode/
+        // mcp.json` and `.claude/settings.json` always reported `upd` on a
+        // consumer's SECOND sync and were stable only from the third. A write
+        // whose bytes depend on whether the file already existed is the same
+        // "two regenerations differ" smell the generated-artifact policy exists
+        // to remove. Canonicalising both paths through one stringify makes the
+        // output a function of the source alone. (Pre-existing; surfaced by the
+        // idempotency assertion in tests/sync-target-path.test.mjs.)
         try {
           const src = JSON.parse(srcContent);
-          const dst = JSON.parse(fs.readFileSync(dstPath, 'utf-8'));
-          const merged = deepMerge(dst, src);
+          const merged = dstExists
+            ? deepMerge(JSON.parse(fs.readFileSync(dstPath, 'utf-8')), src)
+            : src;
           outContent = JSON.stringify(merged, null, 2) + '\n';
         } catch (err) {
           console.log(`  ${R}ERR${X}  ${dstRel}: JSON merge failed: ${err.message?.slice(0, 100)}`);
@@ -1343,8 +1474,17 @@ async function main() {
         }
       } else {
         try {
-          fs.mkdirSync(path.dirname(dstPath), { recursive: true });
-          atomicWriteFileSync(dstPath, outContent);
+          // S2 layer 2 — the ONLY write site, so the guard lives here rather
+          // than being restated per branch. Canonicalising the target ROOT is
+          // necessary but not sufficient: a managed destination beneath it
+          // (`.claude/`, `scripts/.claude-skills/`, …) can itself be a symlink
+          // or Windows junction pointing outside, and we would follow it and
+          // overwrite files the operator never named. Re-derived from
+          // (repo.path, dstRel) rather than trusting the precomputed dstPath,
+          // so the value written is the value validated.
+          const safeDst = assertContainedDestination({ root: repo.path, relPath: dstRel });
+          fs.mkdirSync(path.dirname(safeDst), { recursive: true });
+          atomicWriteFileSync(safeDst, outContent);
         } catch (err) {
           console.log(`  ${R}ERR${X}  ${dstRel}: ${err.message}`);
           repoErrors++; totalErrors++;

@@ -331,11 +331,32 @@ async function main() {
         });
         continue;
       }
+      // A path absent from disk is only an ERROR when git does not know it
+      // either. A DELETION is a legitimate scoped change — the file is gone from
+      // the worktree but still tracked in HEAD — and rejecting it forced the
+      // caller to either drop the deletion from the commit (leaving a staged
+      // delete stranded in a shared index) or abandon `--path` scoping entirely
+      // and commit another session's work along with their own. Found shipping
+      // the `.githooks/post-merge` removal, where dropping it would have left the
+      // hook live in HEAD and still recreating the tree the commit exists to
+      // retire.
       if (!fs.existsSync(abs)) {
-        pathErrors.push({
-          field: '--path',
-          custom: `AGENT FIX: --path ${p}: no such file. Example: --path scripts/foo.mjs`,
-        });
+        // BOTH the index and HEAD, because they disagree in exactly the case
+        // that matters: once `git rm --cached` (or `git add` of a removal) has
+        // staged the deletion, the path is GONE from the index while still
+        // present in HEAD — so an index-only probe reports "git does not track
+        // it" for a deletion that is already half-committed.
+        const inIndex = git(['ls-files', '--error-unmatch', '--', rel], repoRoot).status === 0;
+        const inHead = git(['cat-file', '-e', `HEAD:${rel}`], repoRoot).status === 0;
+        if (!inIndex && !inHead) {
+          pathErrors.push({
+            field: '--path',
+            custom: `AGENT FIX: --path ${p}: no such file, and git does not track it `
+              + `(so it is not a deletion either). Example: --path scripts/foo.mjs`,
+          });
+          continue;
+        }
+        rels.push(rel);      // tracked + absent = a deletion; commit it as one
         continue;
       }
       rels.push(rel);

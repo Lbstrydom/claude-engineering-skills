@@ -519,6 +519,10 @@
       "description": "Dry-run sync — preview what would be created/updated, no writes.",
       "category": "sync"
     },
+    "sync:path": {
+      "description": "Sync into ANY repo by path (append the directory) — no registry entry needed.",
+      "category": "sync"
+    },
     "sync:refresh": {
       "description": "Pull canonical then sync into one consumer (--target); shows its tracked changes. No commit/push.",
       "category": "sync"

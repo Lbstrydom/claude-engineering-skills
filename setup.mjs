@@ -7,8 +7,14 @@
  *   2. Learning database (none / SQLite / Supabase / Postgres)
  *   3. Weekly local maintenance checks (optional, default off)
  *   4. npm dependencies (in this repo)
- *   5. Global skill installation (~/.claude/skills/ — works in every repo)
- *   6. Auto-update git hook (skills update when you git pull)
+ *   5. Skill-surface verification (this repo's .claude/skills/ is committed —
+ *      nothing to install; also reports a stale machine-global tree if present)
+ *
+ * It does NOT install skills anywhere. Skills are repo-scoped: this repo's copy
+ * is committed, and another repo gets one via
+ * `npm run sync -- --target-path <dir>` or
+ * `npx github:Lbstrydom/claude-engineering-skills <dir>`.
+ * See docs/reference/skill-surface-ownership.md.
  *
  * Usage:
  *   node setup.mjs              # Interactive wizard
@@ -168,21 +174,49 @@ async function setupMaintenance(headless) {
   ok('Weekly maintenance enabled — will run opportunistically via the pre-push hook');
 }
 
-// ── Step 5: Install Skills Globally ─────────────────────────────────────────
+// ── Step 5: Verify this repo's own skill surface ─────────────────────────────
 
-function installSkills() {
+/**
+ * This repo's skills need no installation step at all.
+ *
+ * `.claude/skills/**` is a committed Category-B artifact, so `git clone` already
+ * delivered it and Claude Code picks it up as a project skill here. What used to
+ * live at this step — `install-skills.mjs --local --surface claude --force` —
+ * wrote a MACHINE-GLOBAL copy to `~/.claude/skills/`, which was the bug:
+ * a SKILL.md's runner paths are a function of the deployment layout
+ * (`scripts/X.mjs` here, `scripts/.claude-skills/X.mjs` in a consumer), and one
+ * machine-wide directory shared by every repo cannot carry either correctly.
+ * It also shipped 15 skill-name collisions into a Copilot-discovered personal
+ * root — the exact hazard AGENTS.md forbids.
+ *
+ * So this step now VERIFIES rather than installs, which is the honest operation:
+ * it tells the operator whether the committed surface is intact, and points at
+ * the cleanup command if a stale global tree is still on the machine.
+ *
+ * To install into ANOTHER repo: `npm run sync -- --target-path <dir>`.
+ * See docs/reference/skill-surface-ownership.md.
+ */
+async function verifySkillSurface() {
+  const skillsDir = path.join(SELF_DIR, '.claude', 'skills');
+  if (!fs.existsSync(skillsDir)) {
+    fail('.claude/skills/ is missing — run `npm run skills:regenerate`');
+  } else {
+    const count = fs.readdirSync(skillsDir, { withFileTypes: true }).filter(e => e.isDirectory()).length;
+    ok(`${count} skills available in this repo (.claude/skills/, committed)`);
+  }
+
+  // A stale global tree from a pre-retirement install still shadows the repo copy
+  // in EVERY repo on this machine, so surfacing it here is the whole point.
   try {
-    // Build manifest first
-    execFileSync('node', ['scripts/build-manifest.mjs'], { cwd: SELF_DIR, stdio: 'pipe' });
-
-    // Install to ~/.claude/skills/ (global — works in every repo)
-    execFileSync('node', ['scripts/install-skills.mjs', '--local', '--surface', 'claude', '--force'], {
-      cwd: SELF_DIR, stdio: 'pipe'
-    });
-    ok('Skills installed to ~/.claude/skills/ (available in every repo)');
+    const { inspectLegacySurfaces, describeLegacySurfaces } =
+      await import('./scripts/lib/install/legacy-surfaces.mjs');
+    const legacy = inspectLegacySurfaces({ repoRoot: SELF_DIR });
+    if (legacy.overall !== 'absent') {
+      for (const line of describeLegacySurfaces(legacy)) warn(line);
+      console.log(`  ${D}Remove it: node scripts/install-skills.mjs --uninstall-legacy${X}`);
+    }
   } catch (err) {
-    warn(`Skill install failed: ${err.message?.slice(0, 100)}`);
-    console.log(`  Run manually: node scripts/install-skills.mjs --local --surface claude --force`);
+    warn(`could not inspect retired skill surfaces: ${err.message?.slice(0, 120)}`);
   }
 }
 
@@ -197,37 +231,23 @@ function installDeps() {
   }
 }
 
-// ── Step 7: Git Hook for Auto-Update ────────────────────────────────────────
-
-function installGitHook() {
-  const hooksDir = path.join(SELF_DIR, '.git', 'hooks');
-  if (!fs.existsSync(hooksDir)) { warn('No .git/hooks — skip git hook'); return; }
-
-  const hookPath = path.join(hooksDir, 'post-merge');
-  const hookContent = `#!/bin/sh
-# Auto-update skills after git pull
-# Installed by setup.mjs — remove this file to disable
-
-echo "  [post-merge] Updating skills..."
-node scripts/build-manifest.mjs 2>/dev/null
-node scripts/install-skills.mjs --local --surface claude --force 2>/dev/null
-echo "  [post-merge] Skills updated."
-`;
-
-  if (fs.existsSync(hookPath)) {
-    const existing = fs.readFileSync(hookPath, 'utf-8');
-    if (existing.includes('install-skills.mjs')) {
-      ok('Post-merge hook already installed');
-      return;
-    }
-    // Append to existing hook
-    fs.appendFileSync(hookPath, '\n' + hookContent.split('\n').slice(1).join('\n'));
-    ok('Post-merge hook updated (appended skill update)');
-  } else {
-    fs.writeFileSync(hookPath, hookContent, { mode: 0o755 });
-    ok('Post-merge hook installed — skills auto-update on git pull');
-  }
-}
+// ── Step 7 (removed): the auto-update post-merge hook ───────────────────────
+//
+// There is nothing left for it to do, so it is gone rather than rewritten.
+//
+// It ran two commands after every `git pull`:
+//   node scripts/build-manifest.mjs                                → writes skills.manifest.json
+//   node scripts/install-skills.mjs --local --surface claude --force → wrote ~/.claude/skills/
+//
+// Both artifacts are COMMITTED Category-B files, so `git pull` has already
+// delivered them and `npm run skills:check` proves they are fresh — the hook's
+// only real effect was creating the machine-global skills tree that this change
+// retires. A hook that regenerates committed, freshness-verified artifacts is
+// pure churn at best; here it was actively producing the defect.
+//
+// `.githooks/post-merge` is deleted for the same reason. Nothing replaces it: if
+// staleness is ever observed, the honest fix is a check (which exists), not a
+// hook that writes.
 
 // ── Main ────────────────────────────────────────────────────────────────────
 
@@ -256,11 +276,8 @@ ${B}╔════════════════════════�
   console.log(`\n${B}Step 5 — Dependencies${X}`);
   installDeps();
 
-  console.log(`\n${B}Step 6 — Install Skills${X}`);
-  installSkills();
-
-  console.log(`\n${B}Step 7 — Auto-Update Hook${X}`);
-  installGitHook();
+  console.log(`\n${B}Step 6 — Skill Surface${X}`);
+  await verifySkillSurface();
 
   // Summary
   console.log(`
@@ -268,12 +285,16 @@ ${B}╔════════════════════════�
 ║  Setup Complete                                          ║
 ╚══════════════════════════════════════════════════════════╝${X}
 
-  ${G}Skills are now available in every repo you open in VS Code.${X}
+  ${G}This repo is ready.${X}
 
   ${B}How it works:${X}
-    - Skills live in ~/.claude/skills/ (global to your machine)
-    - Open any repo in VS Code → type /plan → it works
-    - Run ${D}git pull${X} in this repo to get updates (auto-installs via hook)
+    - Skills are REPO-SCOPED, never machine-global: this repo's live in
+      ${D}.claude/skills/${X} and are committed, so a ${D}git pull${X} is the whole update
+    - Claude Code reads them as project skills; VS Code Copilot (1.109+),
+      Cursor and Windsurf all discover ${D}.claude/skills/${X} in the workspace too
+    - Why not global: a SKILL.md's runner paths depend on the deployment
+      layout, so one machine-wide copy cannot be correct in two repos
+      (${D}docs/reference/skill-surface-ownership.md${X})
 
   ${B}Usage:${X}
     ${D}In any repo:${X}
@@ -287,12 +308,16 @@ ${B}╔════════════════════════�
       node scripts/openai-audit.mjs code <plan-file>
       node scripts/bandit.mjs stats
 
-  ${B}To update:${X}
+  ${B}To update this repo:${X}
     cd ${SELF_DIR}
-    git pull   ${D}# hook auto-reinstalls skills${X}
+    git pull   ${D}# .claude/skills/** is committed — that's the whole update${X}
 
-  ${B}To add skills to a specific repo${X} (Copilot/Cursor/Agents):
-    node scripts/install-skills.mjs --local --target /path/to/repo --force
+  ${B}To install the bundle into ANOTHER repo:${X}
+    npm run sync -- --target-path /path/to/repo   ${D}# from here${X}
+    npm run sync                                  ${D}# all registered consumers${X}
+
+  ${B}If a stale machine-global copy is still on this machine:${X}
+    node scripts/install-skills.mjs --uninstall-legacy
 `);
 
   rl.close();

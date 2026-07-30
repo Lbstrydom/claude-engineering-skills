@@ -77,19 +77,43 @@ See [`docs/architecture-map.md`](docs/architecture-map.md) — generated index o
 
 ## Quick Start
 
+**Add the bundle to a repo** — one command, and the same one to update it later:
+
+```bash
+npx github:Lbstrydom/claude-engineering-skills /path/to/your/repo
+```
+
+That installs the skills into `<repo>/.claude/skills/`, the runners into
+`<repo>/scripts/.claude-skills/`, maintains the managed `.gitignore` block, and
+prompts for API keys. Nothing is written to your home directory. Add `--dry-run`
+to see what would change.
+
+**Working on the bundle itself** (contributors):
+
 ```bash
 git clone https://github.com/Lbstrydom/claude-engineering-skills.git
 cd claude-engineering-skills
 node setup.mjs
 ```
 
-The wizard configures API keys, installs all skills globally, and sets up a git hook for auto-updates. Re-run `git pull` anytime to get updates.
+The wizard configures API keys, the learning database and dependencies. It does
+**not** install skills anywhere: this repo's `.claude/skills/**` is committed, so
+`git pull` is the whole update.
 
-To install into a specific repo (Copilot/Cursor/Agents support):
+**Deploying from here into another repo**:
 
 ```bash
-node scripts/install-skills.mjs --local --target /path/to/your/repo --force
+npm run sync -- --target-path /path/to/your/repo
 ```
+
+`npm run sync` with no argument syncs every registered consumer. Full model:
+[`docs/reference/skill-surface-ownership.md`](docs/reference/skill-surface-ownership.md).
+
+> **Upgrading from a pre-2026-07-30 install?** Earlier versions wrote a
+> machine-global copy to `~/.claude/skills/`, which shadows the correct
+> repo-scoped one with undefined precedence. Remove it with
+> `node scripts/install-skills.mjs --uninstall-legacy` (receipt-bounded — it
+> cannot touch skills you wrote yourself).
 
 ### API keys
 
@@ -242,13 +266,19 @@ Windows users — see [CLAUDE.md](CLAUDE.md#claude-code-only-notes) for the `npx
 
 ## Supported Platforms
 
+Skills are **repo-scoped**, never machine-global: they live in the repo's own
+`.claude/skills/<name>/`. A SKILL.md cites its runner paths, and those depend on
+the deployment layout (`scripts/X.mjs` here, `scripts/.claude-skills/X.mjs` in a
+consumer), so one machine-wide copy cannot be correct in two repos — see
+[`docs/reference/skill-surface-ownership.md`](docs/reference/skill-surface-ownership.md).
+
 | Platform | Skill location | Invoke |
 |----------|---------------|--------|
-| **Claude Code** (CLI, VS Code, Desktop) | `~/.claude/skills/<name>/` | `/<skill-name>` |
-| **VS Code Copilot** | `.claude/skills/<name>/` (Agent Skills) | `/<skill-name>` in Copilot Chat |
-| **Cursor** | `.claude/skills/` or `.cursor/rules/` | `/<skill-name>` or terminal |
-| **Windsurf** | `.claude/skills/` | `/<skill-name>` or terminal |
-| **Any terminal** | N/A | `node scripts/audit-loop.mjs` |
+| **Claude Code** (CLI, VS Code, Desktop) | `<repo>/.claude/skills/<name>/` | `/<skill-name>` |
+| **VS Code Copilot** (1.109+) | `<repo>/.claude/skills/<name>/` (Agent Skills) | `/<skill-name>` in Copilot Chat |
+| **Cursor** | `<repo>/.claude/skills/` | `/<skill-name>` or terminal |
+| **Windsurf** | `<repo>/.claude/skills/` | `/<skill-name>` or terminal |
+| **Any terminal** | N/A | `node scripts/openai-audit.mjs code <plan-file>` (in a consumer: `scripts/.claude-skills/openai-audit.mjs`) |
 
 ## Environment Variables
 

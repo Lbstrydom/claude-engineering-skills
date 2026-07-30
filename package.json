@@ -9,6 +9,10 @@
   "bin": {
     "claude-engineering-skills": "install.mjs"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Lbstrydom/claude-engineering-skills"
+  },
   "scripts": {
     "test": "node scripts/run-tests.mjs",
     "test:db": "node --test tests/repo-identity-store.test.mjs",
@@ -79,6 +83,7 @@
     "sync": "node scripts/sync-to-repos.mjs",
     "sync:refresh": "node scripts/sync-refresh.mjs",
     "sync:dry": "node scripts/sync-to-repos.mjs --dry-run",
+    "sync:path": "node scripts/sync-to-repos.mjs --target-path",
     "sync:check": "node scripts/check-sync.mjs",
     "sync:version-check": "node scripts/check-audit-tool-version.mjs",
     "skills:regenerate": "node scripts/sync-shared-audit-refs.mjs && node scripts/regenerate-skill-copies.mjs && node scripts/build-manifest.mjs",

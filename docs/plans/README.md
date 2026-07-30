@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**12 active · 159 terminal · 25 audit summaries · 1 parked · 4 reference docs**
+**12 active · 160 terminal · 25 audit summaries · 1 parked · 4 reference docs**
 
 ---
 
@@ -63,7 +63,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 156 completed plans</summary>
+<summary>Show all 157 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -191,6 +191,7 @@ source comments that no docs linter sees — stays valid.
 | [Refactor symbol-index — close the progress-channel sensitive-path disclosure and the drift pragma-cap re-opener](./refactor-symbol-index.md) | `Complete` | implemented via `/cycle code --autonomous` (3 GPT |
 | [Repo-Wide Reference-Integrity Gate](./reference-integrity-gate.md) | `Complete` | all three clusters implemented, converged, final-gated |
 | [Remediation-State Fix-Lifecycle Writer (un-starve `unlocked_fixes` + the /ship missing-spec gate)](./remediation-state-fix-lifecycle.md) | `Complete` |  |
+| [Repo-Scoped Skill Surfaces + a Third-Party-Usable Installer](./repo-scoped-skill-surfaces-and-installer.md) | `Complete` |  |
 | [Requirements Layer — a materialized view of the codebase's de-facto requirements](./requirements-layer.md) | `Complete` |  |
 | [Robustness Hardening & R2+ Ledger Auto-Write](./robustness-and-ledger-wiring.md) | `Complete` | shipped — `scripts/lib/ledger.mjs` exports `writeLedgerEntry` + tracks the two-axis state model (`adjudicat… |
 | [Sast-Routing, Sandbox Integrity & Migration-Adoption Hardening (7-item punch list)](./sast-sandbox-backlog-hardening.md) | `Complete` | all 7 items implemented + tested (19 new/updated |

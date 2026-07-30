@@ -37,19 +37,33 @@ export function findRepoRoot(startDir = process.cwd()) {
 }
 
 /**
- * Root of the GLOBAL (claude) install surface — `~/.claude/skills/`.
+ * Root of the GLOBAL (legacy) skill surface — `~/.claude/skills/`.
  *
- * Single source of truth: `resolveSkillTargets` writes under it, and
+ * **This surface is RETIRED as an install target** (see `resolveSkillTargets`).
+ * The resolver survives because the surface still has to be *inspected* and
+ * *cleaned up*: `legacy-surfaces.mjs` reads it, `install-skills.mjs
+ * --uninstall-legacy` deletes from it, and `transaction.mjs` validates
+ * containment against it. Nothing writes skills here any more.
+ *
+ * Single source of truth: the uninstaller acts under this root and
  * `transaction.mjs` validates journal-entry containment against it. Those two
- * MUST agree — a transaction legitimately spans both `repoRoot` and this root
- * (`install-skills.mjs` merges repo- and global-scope writes into one
- * transaction), so a containment check that recomputed the path locally could
- * drift from the writer and reject every global write.
+ * MUST agree — a transaction legitimately spans both `repoRoot` and this root,
+ * so a containment check that recomputed the path locally could drift from the
+ * writer and reject every global operation.
  *
+ * **`homeRoot` is explicit-by-parameter for a load-bearing reason** (plan D6e):
+ * `install-skills.mjs --uninstall-legacy --home <root>` promises that the delete
+ * acts on the root the operator was shown. If this stayed zero-argument,
+ * `transaction.mjs` — which resolves containment through here — would silently
+ * keep using the ambient `os.homedir()`, satisfying the flag in syntax while
+ * violating it in implementation. Defaulting to `os.homedir()` keeps every
+ * pre-existing caller unchanged.
+ *
+ * @param {string} [homeRoot=os.homedir()] explicit home root
  * @returns {string} absolute path to the global skills root
  */
-export function globalSurfaceRoot() {
-  return path.join(os.homedir(), '.claude', 'skills');
+export function globalSurfaceRoot(homeRoot = os.homedir()) {
+  return path.join(homeRoot, '.claude', 'skills');
 }
 
 /** Basename of the install transaction journal, at either anchor. */
@@ -69,8 +83,8 @@ export const INSTALL_JOURNAL_BASENAME = '.audit-loop-install-txn.json';
  * derive the anchor from ONE source. A locally-recomputed `os.homedir()` join
  * is exactly how the two drift apart.
  */
-export function globalJournalPath() {
-  return path.join(os.homedir(), INSTALL_JOURNAL_BASENAME);
+export function globalJournalPath(homeRoot = os.homedir()) {
+  return path.join(homeRoot, INSTALL_JOURNAL_BASENAME);
 }
 
 /**
@@ -82,8 +96,8 @@ export function globalJournalPath() {
  * Outside every repo by construction, so — unlike the repo-anchored
  * `.audit/quarantine/` — it needs no gitignore entry.
  */
-export function globalQuarantineDir() {
-  return path.join(os.homedir(), '.audit-loop-install-quarantine');
+export function globalQuarantineDir(homeRoot = os.homedir()) {
+  return path.join(homeRoot, '.audit-loop-install-quarantine');
 }
 
 /** Journal path for the REPO anchor. */
@@ -97,61 +111,91 @@ export function repoQuarantineDir(repoRoot) {
 }
 
 /**
+ * The retired install surfaces, and where a caller should go instead.
+ *
+ * `copilot` (`.github/skills/`) went first, 2026-07-28
+ * (docs/plans/refactor-skill-governance.md). `claude` (`~/.claude/skills/`) and
+ * `agents` (`<repoRoot>/.agents/skills/`) followed
+ * (docs/plans/repo-scoped-skill-surfaces-and-installer.md).
+ *
+ * The governing reason is one fact, and it is worth stating precisely because
+ * the obvious "fix" — rewriting the copied content — does not work:
+ *
+ *   A SKILL.md's runner paths are a function of the DEPLOYMENT LAYOUT. There are
+ *   exactly two: the source repo (`scripts/X.mjs`) and a consumer
+ *   (`scripts/.claude-skills/X.mjs`, produced by sourceRelToDestRel + applied by
+ *   rewriteCommandSurface). This module copies bytes VERBATIM.
+ *
+ * So `~/.claude/skills/` — one machine-wide directory shared by every repo — is
+ * layout-agnostic by construction and NO correct content for it exists; a rewrite
+ * would merely flip which repo is broken. `.agents/skills/` is repo-scoped but
+ * carries the identical unrewritten-path defect, and is additionally a SECOND
+ * Copilot-discovered root duplicating every name in `.claude/skills/` — the
+ * collision AGENTS.md forbids ("never ship the same skill name in two discovered
+ * roots").
+ *
+ * `.claude/skills/**` is therefore written by exactly one writer per layout:
+ * `regenerate-skill-copies.mjs` in the source repo, `sync-to-repos.mjs`
+ * (rewriting) in every other repo.
+ */
+const RETIRED_INSTALL_SURFACES = Object.freeze({
+  copilot: '.github/skills/ — retired 2026-07-28, see docs/plans/refactor-skill-governance.md',
+  claude: '~/.claude/skills/ — a machine-global directory cannot carry layout-dependent runner paths',
+  agents: '<repo>/.agents/skills/ — unrewritten runner paths, and a second discovered root colliding with .claude/skills/',
+  both: 'an alias for the retired claude + agents surfaces',
+});
+
+const REPLACEMENT_HINT =
+  'Skills are installed REPO-SCOPED into <repo>/.claude/skills/, never machine-global. '
+  + 'Use `npm run sync -- --target <name>` (registered consumer), '
+  + '`node scripts/sync-to-repos.mjs --target-path <dir>` (any repo), or '
+  + '`npx github:Lbstrydom/claude-engineering-skills <dir>`. '
+  + 'To remove a previously-installed global/agents tree: '
+  + '`node scripts/install-skills.mjs --uninstall-legacy`. '
+  + 'See docs/reference/skill-surface-ownership.md.';
+
+/**
  * Resolve target paths for a skill based on surface selection.
  *
- * `'copilot'` (`.github/skills/`) was retired 2026-07-28
- * (docs/plans/refactor-skill-governance.md) — a bare `surface === 'copilot'`
- * request **throws** rather than silently returning an empty array. A silent
- * `[]` is indistinguishable from "this surface legitimately has zero
- * targets"; only the current caller (`install-skills.mjs`) happens to map an
- * empty array to its own loud error today, but nothing in this function's own
- * contract would guarantee a future caller does the same — it would inherit
- * a silent no-op. Throwing here makes "unsupported surface" a fact every
- * caller gets for free. `'both'` is unaffected: it is a DIFFERENT surface
- * value, never promised `copilot` specifically, and continues to quietly
- * narrow to `[claude, agents]` (2 targets instead of 3) — only the bare,
- * explicit `'copilot'` request is unambiguously asking for a retired surface.
+ * **Every surface is now retired — this function can no longer return a write
+ * target, and always throws.** It is kept (rather than deleted along with its
+ * callers) because it is the one place that can state *why* a surface is refused
+ * and where to go instead; a caller that gets `undefined` from a deleted export
+ * learns nothing.
+ *
+ * Each retired surface **throws** rather than returning an empty array, for the
+ * reason the original `copilot` retirement documented: a silent `[]` is
+ * indistinguishable from "this surface legitimately has zero targets". Only the
+ * current caller happens to map an empty array to its own loud error today, and
+ * nothing in this contract would guarantee a future caller does the same — it
+ * would inherit a silent no-op. `'both'` throws for the same reason and is NOT a
+ * degradation-to-zero: with both member surfaces retired it is a request for two
+ * retired surfaces, not a request that narrows.
  *
  * @param {string} skillName
- * @param {string} surface - 'claude' | 'copilot' | 'agents' | 'both'
+ * @param {string} surface - any value; all are retired or unrecognized
  * @param {string} repoRoot
- * @returns {Array<{ surface: string, dir: string, filePath: string, scope: 'global'|'repo' }>}
- * @throws {Error} if `surface === 'copilot'`, or `surface` is any other unrecognized value
+ * @returns {never}
+ * @throws {Error & {code: string}} `RETIRED_SURFACE` for a known-but-retired
+ *   surface, `UNRECOGNIZED_SURFACE` otherwise
  */
-export function resolveSkillTargets(skillName, surface, repoRoot) {
-  if (surface === 'copilot') {
-    throw new Error(
-      "surface 'copilot' (.github/skills/) was retired 2026-07-28 — " +
-      'see docs/plans/refactor-skill-governance.md. Use claude, agents, or both.',
-    );
+export function resolveSkillTargets(skillName, surface, repoRoot) {  // eslint-disable-line no-unused-vars
+  const why = RETIRED_INSTALL_SURFACES[surface];
+  if (why) {
+    const err = new Error(`surface '${surface}' is retired: ${why}. ${REPLACEMENT_HINT}`);
+    err.code = 'RETIRED_SURFACE';
+    throw err;
   }
 
-  // Gemini gate round-2 shadow finding #3: this reject-bad-input check used
-  // to sit AFTER the target-pushing branches below, splitting "reject an
-  // unrecognized surface" across two non-adjacent spots in the function body
-  // — a future contributor adding a new surface (e.g. 'cursor') could easily
-  // extend the branches below and forget this guard, silently reintroducing
-  // the exact fall-through G1 fixed. Co-located here with the `copilot`
-  // guard so all "reject bad surface" logic lives in one place.
-  if (surface !== 'claude' && surface !== 'agents' && surface !== 'both') {
-    throw new Error(
-      `unrecognized surface '${surface}' — expected one of: claude, agents, both.`,
-    );
-  }
-
-  const targets = [];
-
-  if (surface === 'claude' || surface === 'both') {
-    const dir = path.join(globalSurfaceRoot(), skillName);
-    targets.push({ surface: 'claude', dir, filePath: path.join(dir, 'SKILL.md'), scope: 'global' });
-  }
-
-  if (surface === 'agents' || surface === 'both') {
-    const dir = path.join(repoRoot, '.agents', 'skills', skillName);
-    targets.push({ surface: 'agents', dir, filePath: path.join(dir, 'SKILL.md'), scope: 'repo' });
-  }
-
-  return targets;
+  // Kept co-located with the retirement guard rather than after any
+  // target-pushing branch (Gemini gate round-2 shadow finding #3 on the previous
+  // revision): all "reject bad surface" logic lives in one place, so a future
+  // contributor re-introducing a surface cannot forget it.
+  const err = new Error(
+    `unrecognized surface '${surface}' — every install surface is retired. ${REPLACEMENT_HINT}`,
+  );
+  err.code = 'UNRECOGNIZED_SURFACE';
+  throw err;
 }
 
 /**
@@ -196,13 +240,21 @@ export function resolveSkillFiles(skillName, surface, repoRoot, files) {
  * Splitting by scope fixes the G2 bug: claude-surface files live in
  * `~/.claude/skills/` but were previously recorded in the repo receipt using
  * machine-specific `../../../../Users/<name>/...` relative paths.
+ * `homeRoot` is optional for the same reason the other global resolvers take one
+ * (D6e): `--uninstall-legacy --home <root>` must act on the root the operator was
+ * shown, and the *receipt* is what bounds that delete. A zero-argument version
+ * here would silently read the ambient home's receipt while deleting under an
+ * explicit one — the delete set and the tree it acts on would come from two
+ * different homes, which is worse than either mistake alone.
+ *
  * @param {'repo'|'global'} scope
  * @param {string} repoRoot
+ * @param {string} [homeRoot=os.homedir()] explicit home root (global scope only)
  * @returns {string}
  */
-export function receiptPath(scope, repoRoot) {
+export function receiptPath(scope, repoRoot, homeRoot = os.homedir()) {
   if (scope === 'global') {
-    return path.join(os.homedir(), '.audit-loop-install-receipt.json');
+    return path.join(homeRoot, '.audit-loop-install-receipt.json');
   }
   return path.join(repoRoot, '.audit-loop-install-receipt.json');
 }
