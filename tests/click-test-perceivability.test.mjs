@@ -36,7 +36,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PERCEIVABLE_SOURCE, normaliseForDriftCheck } from '../scripts/lib/browser/perceivable.mjs';
+import { PERCEIVABLE_SOURCE, PERCEIVABLE_FN_NAME, normaliseForDriftCheck } from '../scripts/lib/browser/perceivable.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SCANNER_MD = path.join(repoRoot, 'skills', 'click-test', 'references', 'dom-scanner.md');
@@ -196,6 +196,44 @@ describe('click-test perceivability — behaviour (real browser)', () => {
     assert.equal(f.severity, 'P0', 'a visible-but-inert violation keeps its declared severity');
   });
 
+  it('a visibility:visible child of a visibility:hidden parent IS perceivable', async (t) => {
+    if (!available) return t.skip('chromium unavailable');
+    // REGRESSION GUARD for the property-SCOPE class (plan G1) — the second
+    // instance of the same bug [inert] was the first of. `visibility` is an
+    // INHERITED property, so a descendant can re-declare `visible` inside a
+    // hidden subtree and be fully painted. The fallback branch used to test it on
+    // every ancestor, which returned false here while checkVisibility() returns
+    // true — the two branches disagreeing on a rendered element.
+    //
+    // Fixed by SCOPE, not by removal: `visibility` is now read once on the target
+    // (its computed value already carries inheritance), while display/opacity/
+    // content-visibility keep the ancestor walk because none of them can be
+    // overridden from below.
+    const f = byKind(
+      await scan('<div style="visibility:hidden"><input type="text" style="visibility:visible"></div>'),
+      'input-no-name',
+    );
+    assert.ok(f);
+    assert.equal(f.perceivable, true,
+      'an inherited-property override makes this element painted — capping it would hide a real defect');
+    assert.equal(f.severity, 'P0');
+  });
+
+  it('a CSS-overridden [hidden] attribute IS perceivable', async (t) => {
+    if (!available) return t.skip('chromium unavailable');
+    // Third member of the same class (round-4 M4). The fallback used to treat the
+    // [hidden] ATTRIBUTE as authoritative. Under the UA default it is
+    // display:none — already caught by the walk — but when CSS overrides that
+    // default the element is genuinely painted, and the attribute check would
+    // disagree with checkVisibility(). The attribute is no longer tested at all.
+    const f = byKind(
+      await scan('<style>[hidden]{display:block}</style><input type="text" hidden>'),
+      'input-no-name',
+    );
+    assert.ok(f, 'the finding must still be emitted');
+    assert.equal(f.perceivable, true, 'CSS won — the element is painted, so the attribute must not cap it');
+  });
+
   it('content-visibility:hidden is not perceivable', async (t) => {
     if (!available) return t.skip('chromium unavailable');
     const f = byKind(
@@ -229,11 +267,48 @@ describe('click-test perceivability — behaviour (real browser)', () => {
     assert.equal(f.perceivable, true, 'the predicate answers "rendered", not "in viewport"');
   });
 
+  it('a DETACHED element is not perceivable — asserted on the predicate directly', async (t) => {
+    if (!available) return t.skip('chromium unavailable');
+    // Plan L1. This branch is UNREACHABLE through the scanner: a detached element
+    // is not in the document, so `scanDom()` can never enumerate it or reach
+    // `push()`. Asserting it via a scanner fixture would be a test that cannot
+    // fail. It is therefore asserted against the predicate itself.
+    //
+    // The guard stays in the predicate because /nav-audit's authSentinel path
+    // calls it on an element reference it already holds, where detachment IS
+    // reachable (a re-render between capture and check).
+    await page.setContent('<!doctype html><html><body></body></html>');
+    const verdict = await page.evaluate(`(() => {
+      ${PERCEIVABLE_SOURCE}
+      const orphan = document.createElement('input');
+      orphan.type = 'text';
+      return ${PERCEIVABLE_FN_NAME}(orphan);
+    })()`);
+    assert.equal(verdict, false,
+      'a detached node has no rendered state; false is the only honest answer');
+  });
+
   it('template-resident content is never scanned or reported', async (t) => {
     if (!available) return t.skip('chromium unavailable');
     const findings = await scan('<template><input type="text"></template>');
     assert.equal(byKind(findings, 'input-no-name'), undefined,
       'a <template>-resident node is inert content and must not produce findings');
+  });
+
+  it('aria-hidden-focusable skips [inert] subtrees — they are not in the tab order', async (t) => {
+    if (!available) return t.skip('chromium unavailable');
+    // Live-run finding: the correct pattern for a modal / auth gate is
+    // aria-hidden + inert on the background TOGETHER. Without this skip, one
+    // login overlay produced 24 false P1 focus-trap findings on a real app,
+    // while the actual tab order went straight to the login form.
+    const inert = await scan('<div aria-hidden="true" inert><button>x</button></div>');
+    assert.equal(byKind(inert, 'aria-hidden-focusable'), undefined,
+      'an inert subtree cannot strand keyboard focus — nothing inside it is tabbable');
+
+    // ...but a NON-inert aria-hidden subtree is still a real focus trap.
+    const trap = await scan('<div aria-hidden="true"><button>x</button></div>');
+    assert.ok(byKind(trap, 'aria-hidden-focusable'),
+      'aria-hidden WITHOUT inert is the genuine defect and must still fire');
   });
 
   it('the cap applies across kinds, not just inputs', async (t) => {

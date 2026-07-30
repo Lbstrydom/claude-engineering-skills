@@ -119,7 +119,9 @@ describe('inspectTargetSkillSurfaces (round-1 H2, round-2 H1/M1/M2, round-3 H1/M
     const result = inspectTargetSkillSurfaces({ targetRoot: tmp, desiredLiveNames: ['plan'], logger });
 
     assert.deepEqual(result.shadowed, []);
-    assert.deepEqual(result.orphans, ['plan-backend']);
+    // Orphans are SURFACE-PREFIXED now: with two shadowing roots, a bare name
+    // could not tell the operator which directory to look in.
+    assert.deepEqual(result.orphans, ['.github/skills/plan-backend']);
     assert.ok(warnings.some((w) => w.includes('plan-backend') && w.includes('no live counterpart')));
   });
 
@@ -175,8 +177,14 @@ describe('inspectTargetSkillSurfaces (round-1 H2, round-2 H1/M1/M2, round-3 H1/M
 // whether this repo's sync succeeded.
 describe('decideShadowFailure (round-1 H7)', () => {
   it('a genuine shadow fails the repo, naming the shadowed skill(s) and the repo', () => {
-    const msg = decideShadowFailure({ shadowed: [{ name: 'ship' }, { name: 'plan' }] }, 'wine-cellar-app');
-    assert.match(msg, /ship, plan/);
+    // `surface` is set by inspectTargetSkillSurfaces on every entry — the fixture
+    // mirrors the real shape rather than the pre-two-root one.
+    const msg = decideShadowFailure({
+      shadowed: [{ name: 'ship', surface: '.github/skills' }, { name: 'plan', surface: '.github/skills' }],
+    }, 'wine-cellar-app');
+    // The message names the SURFACE per shadow — a bare "ship, plan" would have
+    // been a wrong instruction half the time once `.agents/skills` joined the set.
+    assert.match(msg, /\.github\/skills\/ship, \.github\/skills\/plan/);
     assert.match(msg, /wine-cellar-app/);
     assert.match(msg, /FAILURE/);
   });

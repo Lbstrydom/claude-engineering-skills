@@ -98,7 +98,9 @@ describe('compareSkillSurfaces', () => {
 
   it('reports nothing when the stale surface is absent', () => {
     const r = compareSkillSurfaces({ staleNames: [], liveNames: ['ship'], contentOf: () => null });
-    assert.deepEqual(r, { shadowed: [], orphans: [], total: 0 });
+    // `aliased` joined the shape when same-target pairs (a symlink exposing one
+    // directory under two names) stopped being reported as shadows.
+    assert.deepEqual(r, { shadowed: [], orphans: [], aliased: [], total: 0 });
   });
 
   it('handles a missing SKILL.md without throwing', () => {

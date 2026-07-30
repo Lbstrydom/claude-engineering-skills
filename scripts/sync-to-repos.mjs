@@ -712,8 +712,9 @@ function inspectTargetSkillSurfaces({
   }
   if (shadowed.length > 0) {
     logger.warn(
-      `[stale-skill-surface] ${targetRoot}: ${shadowed.map(s => `${s.surface}/${s.name}`).join(', ')} would shadow ` +
-      `the skills this sync writes — see check-stale-skill-surface.mjs --repo ${targetRoot}`,
+      `[stale-skill-surface] ${targetRoot}: ${shadowed.map(s => `${s.surface}/${s.name}`).join(', ')} — ` +
+      `the skills this sync writes are shadowed by another discovered root; ` +
+      `see check-stale-skill-surface.mjs --repo ${targetRoot}`,
     );
   }
   // A non-overlapping stale name is not a live shadow, but it is still the
@@ -765,8 +766,8 @@ function decideShadowFailure(inspection, repoName) {
   // Name the SURFACE per shadow, not just the skill: the remedy differs by
   // directory, and with two shadowing roots "shadowed by .github/skills" would
   // have been a wrong instruction half the time.
-  return `stale-skill-surface FAILURE: ${inspection.shadowed.map(s => `${s.surface}/${s.name}`).join(', ')} ` +
-    `would shadow the skills this sync writes — remove those copies before this sync can succeed for ${repoName}`;
+  return `stale-skill-surface FAILURE: ${inspection.shadowed.map(s => (s.surface ? `${s.surface}/${s.name}` : s.name)).join(', ')} ` +
+    `shadowed by another discovered root — remove those copies before this sync can succeed for ${repoName}`;
 }
 
 /**

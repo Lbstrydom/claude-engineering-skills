@@ -64,17 +64,21 @@ Paste this into `browser_evaluate` as the function body. Returns a single
         // contentVisibilityAuto deliberately NOT passed — see module docs.
         return el.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true });
       }
-      // Fallback for engines without checkVisibility: walk self + ancestors.
-      // Required — a visible child of a hidden parent is not rendered, and
-      // offsetParent gets this wrong for position:fixed.
+      // Fallback for engines without checkVisibility. TWO SCOPES, deliberately.
+      // visibility is INHERITED, so read it ONCE on the target: its computed value
+      // already carries inheritance, AND a descendant may override a hidden
+      // ancestor with visibility:visible and still be painted. Walking it would
+      // return false where checkVisibility() correctly returns true.
+      if (['hidden', 'collapse'].includes(getComputedStyle(el).visibility)) return false;
+      // These three are NOT overridable from below — an ancestor with display:none
+      // removes the whole subtree regardless of what a descendant declares — so
+      // they DO need the walk. offsetParent gets this wrong for position:fixed.
       let node = el;
       while (node && node.nodeType === 1) {
         const cs = getComputedStyle(node);
         if (cs.display === 'none') return false;
-        if (cs.visibility === 'hidden' || cs.visibility === 'collapse') return false;
         if (parseFloat(cs.opacity) === 0) return false;
         if (cs.contentVisibility === 'hidden') return false;
-        if (node.hasAttribute('hidden')) return false;   // maps to display:none
         node = node.parentElement;
       }
       return true;
@@ -255,6 +259,15 @@ Paste this into `browser_evaluate` as the function body. Returns a single
   for (const hidden of document.querySelectorAll('[aria-hidden="true"]')) {
     const focusable = hidden.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])');
     for (const el of focusable) {
+      // `[inert]` removes a subtree from the TAB ORDER, so nothing inside it is
+      // reachable and this finding's premise — "keyboard users land in an
+      // invisible region" — cannot hold. Skipping is required, not cosmetic:
+      // the correct pattern for a modal/auth gate is aria-hidden + inert on the
+      // background together, so without this every gated app reports its entire
+      // shell as focus traps. Measured on a real app: 24 false P1s from one
+      // login overlay, with the tab order verified to go straight to the login
+      // form and never into the shell.
+      if (el.closest('[inert]')) continue;
       push('aria-hidden-focusable', 'P1', el,
         'Focusable element inside aria-hidden="true" subtree — keyboard users land in an "invisible" region');
     }
@@ -382,7 +395,7 @@ when aggregating across routes / dynamic surfaces.
 | **Closed shadow DOM** | Not accessible from JS by design | Cannot scan; report as coverage gap |
 | **Same-origin iframes** | Traversal feasible via `iframe.contentDocument`; deferred to v2 | Mark `iframeGapCount` per route |
 | **Cross-origin iframes** | Browser security blocks DOM access | Cannot scan; report as coverage gap |
-| ~~Inert / `hidden` subtrees~~ | **CLOSED 2026-07-30** — no longer a gap. `__isPerceivable` (applied in `push()` to every finding) detects `display:none`, `visibility:hidden`, `opacity:0`, `content-visibility:hidden`, `[inert]`, detached and zero-size elements. | Such findings are **demoted to P3** and tagged `perceivable:false`, not dropped — they may become perceivable (re-scan with `--with-modals`). |
+| ~~Inert / `hidden` subtrees~~ | **CLOSED 2026-07-30** — no longer a gap. `__isPerceivable` (applied in `push()` to every finding) detects `display:none`, `visibility:hidden`, `opacity:0`, `content-visibility:hidden`, detached and zero-size elements. **`[inert]` and the `[hidden]` attribute are deliberately NOT treated as invisible** — `inert` is an interactivity property (an inert element is still painted; honouring it suppressed 329 of 331 findings on a live app), and `[hidden]` resolves to `display:none` under the UA default, which is already caught. | Such findings are **demoted to P3** and tagged `perceivable:false`, not dropped — they may become perceivable (re-scan with `--with-modals`). |
 
 When the gap matters, run the appropriate sibling skill alongside.
 
