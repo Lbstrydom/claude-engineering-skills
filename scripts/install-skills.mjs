@@ -370,6 +370,64 @@ function reconcileReceipt(rp, removedAbsPaths, repoRoot, homeRoot) {
 }
 
 /**
+ * Remove directories that THIS RUN emptied, walking upward toward each surface
+ * root without ever reaching it.
+ *
+ * Deleting the receipt's files left the folder skeleton behind, so a `complete`
+ * cleanup was not literally complete — measured 2026-07-30, where removing 56
+ * managed files left 15 empty directories (`ship/references/`, `plan/`, …) that
+ * had to be cleared by hand, in three separate trees.
+ *
+ * Three properties make this safe, and none of them is optional:
+ *
+ * 1. **Seeded only from what we deleted.** The walk starts at the parent of each
+ *    removed file. A directory we did not empty is never even considered, so
+ *    this cannot become the directory enumeration that S3 forbids.
+ * 2. **`rmdirSync`, NOT `rmSync({recursive:true})`.** A non-recursive rmdir
+ *    throws `ENOTEMPTY` on a directory with any content left in it — so
+ *    "only if empty" is enforced by the SYSCALL rather than by a check we could
+ *    get wrong. A user file sitting beside ours physically cannot be removed.
+ * 3. **Stops below the surface root.** `~/.claude/skills/` and
+ *    `<repo>/.agents/skills/` are well-known locations; leaving them empty is
+ *    harmless, and removing a directory the operator expects to exist is not
+ *    ours to decide.
+ *
+ * Best-effort throughout: a prune failure must never turn a successful cleanup
+ * into a failed one. The files — the thing that actually shadows — are already
+ * gone by the time this runs.
+ *
+ * @param {string[]} removedAbsPaths absolute paths this run deleted
+ * @param {string[]} surfaceRoots the roots to stop beneath
+ * @returns {number} directories removed
+ */
+function pruneEmptiedDirs(removedAbsPaths, surfaceRoots) {
+  const roots = surfaceRoots.map(r => path.resolve(r));
+  const isUnderARoot = (dir) => roots.some((root) => {
+    const rel = path.relative(root, dir);
+    return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+  });
+
+  // Deepest-first, so `ship/references/` is gone before `ship/` is tried.
+  const candidates = [...new Set(removedAbsPaths.map(p => path.dirname(path.resolve(p))))]
+    .sort((a, b) => b.split(path.sep).length - a.split(path.sep).length);
+
+  let removed = 0;
+  for (const start of candidates) {
+    let dir = start;
+    while (isUnderARoot(dir)) {
+      try {
+        fs.rmdirSync(dir);          // ENOTEMPTY if anything remains — by design
+        removed++;
+      } catch {
+        break;                      // not empty, or not removable: stop climbing
+      }
+      dir = path.dirname(dir);
+    }
+  }
+  return removed;
+}
+
+/**
  * `--uninstall-legacy` — remove skill trees written by the retired installer.
  *
  * The bounded delete set comes from `inspectLegacySurfaces`, NOT from reading
@@ -448,10 +506,16 @@ function runUninstallLegacy(args) {
     if (outcome === 'reduced') console.log(`  ${D}receipt reduced to survivors: ${rp}${X}`);
   }
 
+  // Only AFTER the receipts are reconciled: the files are the thing that
+  // shadows, and their ownership record must be settled before we tidy the
+  // folders they lived in.
+  const prunedDirs = pruneEmptiedDirs([...removed], inspection.surfaces.map(s => s.root));
+
   const partial = skipped.length > 0 || inspection.overall === 'blocked';
   console.log(
     `\n${G}${partial ? 'partial' : 'complete'}${X} — removed ${removed.size} file(s)`
-    + (skipped.length ? `, skipped ${skipped.length}` : ''),
+    + (skipped.length ? `, skipped ${skipped.length}` : '')
+    + (prunedDirs ? `, pruned ${prunedDirs} empty director${prunedDirs === 1 ? 'y' : 'ies'}` : ''),
   );
   if (partial) {
     console.log(`  ${D}The skipped files were modified since install and are yours to remove.${X}`);
@@ -499,7 +563,7 @@ function main() {
  * convention (file-io.mjs, shared.mjs, anthropic-client.mjs).
  */
 export const _internals = {
-  parseArgs, reconcileJournals, reportDegradations, reconcileReceipt,
+  parseArgs, reconcileJournals, reportDegradations, reconcileReceipt, pruneEmptiedDirs,
   runUninstallLegacy, RETIRED_INSTALL_FLAGS,
 };
 

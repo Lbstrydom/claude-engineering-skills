@@ -123,6 +123,88 @@ describe('--uninstall-legacy outcomes', () => {
   });
 });
 
+// A `complete` cleanup that leaves the folder skeleton behind is not complete.
+// Measured 2026-07-30: removing 56 managed files left 15 empty directories that
+// had to be cleared by hand across three trees.
+//
+// The safety property is enforced by the SYSCALL, not by a check: the prune uses
+// non-recursive `rmdirSync`, which throws ENOTEMPTY on a directory with anything
+// left in it. A user file beside ours physically cannot be removed.
+describe('--uninstall-legacy prunes the directories it emptied', () => {
+  test('complete — no skill directory survives, nested levels included', async () => {
+    const a = seedGlobal('ship/SKILL.md', 'a');
+    const b = seedGlobal('ship/references/deep.md', 'b');
+    const c = seedGlobal('plan/SKILL.md', 'c');
+    writeGlobalReceipt([a, b, c]);
+
+    const r = await run();
+    assert.equal(r.code, 0);
+    assert.match(r.stdout, /pruned \d+ empty director/);
+    const skillsRoot = path.join(home, '.claude', 'skills');
+    assert.deepEqual(fs.readdirSync(skillsRoot), [],
+      'every emptied directory must go, including ship/references/');
+  });
+
+  test('STOPS BELOW the surface root — never removes ~/.claude/skills itself', async () => {
+    const a = seedGlobal('ship/SKILL.md', 'a');
+    writeGlobalReceipt([a]);
+    await run();
+    // Well-known location: leaving it empty is harmless; removing a directory the
+    // operator expects to exist is not ours to decide.
+    assert.equal(fs.existsSync(path.join(home, '.claude', 'skills')), true);
+    assert.equal(fs.existsSync(path.join(home, '.claude')), true);
+  });
+
+  test("a directory holding a USER file survives intact", async () => {
+    const ours = seedGlobal('ship/SKILL.md', 'ours');
+    writeGlobalReceipt([ours]);
+    const theirs = path.join(home, '.claude', 'skills', 'ship', 'my-notes.md');
+    fs.writeFileSync(theirs, 'the user put this here');
+
+    const r = await run();
+    assert.equal(r.code, 0);
+    assert.equal(fs.existsSync(ours.path), false, 'our file still goes');
+    assert.equal(fs.existsSync(theirs), true, 'ENOTEMPTY protects the directory');
+    assert.equal(fs.readFileSync(theirs, 'utf8'), 'the user put this here');
+  });
+
+  test('a PARTIAL run leaves the skipped member and its directory alone', async () => {
+    const clean = seedGlobal('plan/SKILL.md', 'original');
+    const dirty = seedGlobal('ship/SKILL.md', 'original');
+    writeGlobalReceipt([clean, dirty]);
+    fs.writeFileSync(dirty.path, 'HAND EDITED');
+
+    const r = await run();
+    assert.equal(r.code, 0);
+    assert.equal(fs.existsSync(dirty.path), true);
+    assert.equal(fs.existsSync(path.dirname(dirty.path)), true, 'its directory must survive too');
+    assert.equal(fs.existsSync(path.join(home, '.claude', 'skills', 'plan')), false,
+      'but the fully-emptied one is still pruned');
+  });
+
+  test('never touches a sibling directory we did not empty', async () => {
+    const ours = seedGlobal('ship/SKILL.md', 'ours');
+    writeGlobalReceipt([ours]);
+    // A skill the user wrote, never in any receipt — the prune is seeded only
+    // from what we deleted, so this is not even a candidate.
+    const theirDir = path.join(home, '.claude', 'skills', 'my-own-skill');
+    fs.mkdirSync(theirDir, { recursive: true });
+    fs.writeFileSync(path.join(theirDir, 'SKILL.md'), 'mine');
+
+    await run();
+    assert.equal(fs.existsSync(path.join(theirDir, 'SKILL.md')), true);
+  });
+
+  test('dry-run prunes nothing', async () => {
+    const a = seedGlobal('ship/SKILL.md', 'a');
+    writeGlobalReceipt([a]);
+    const r = await run(['--dry-run']);
+    assert.equal(r.code, 0);
+    assert.equal(fs.existsSync(path.dirname(a.path)), true);
+    assert.doesNotMatch(r.stdout, /pruned/);
+  });
+});
+
 describe('--uninstall-legacy is bounded by the receipt, not by the directory', () => {
   test("a user's own global skill is never touched", async () => {
     const ours = seedGlobal('plan/SKILL.md', 'ours');

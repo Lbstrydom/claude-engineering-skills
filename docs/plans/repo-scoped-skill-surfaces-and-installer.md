@@ -1095,3 +1095,23 @@ task and shipped by that session.
 
 **Verification**: `npm run check` exits 0 — 9554 tests, 0 failures. Audit trail in
 §9b; the plan-stage trail is in §10.
+
+### Follow-on work (same day, after the plan closed)
+
+The plan established the rule; three follow-ons make it hold. Recorded here so the
+plan is not read as the whole story.
+
+| Commit | What | Why it was not in the plan |
+|---|---|---|
+| `dd1b4b5a` | Ownership-scoped shadow gate at three enforcement points, incl. `sync-isolation-verify` **gate 8** (consumer-side, continuous) | The plan retired the surfaces; it did not ask who enforces the collision rule afterwards. Gate 8 is the answer to "how is this controlled from here" — we ship the verifier, consumers run it on their cadence. |
+| `3e478e33` | Session-start advisory for the machine-global surface | `npm run check` reports it at PUSH time; the harm happens at READ time. Reverses a judgement made during the plan ("nothing can create the tree any more") — true only of machines running current code. |
+| (this) | `--uninstall-legacy` prunes the directories it emptied | S3a defined the *file* outcomes; nothing said a `complete` run should leave no folder skeleton. Found by running it for real. |
+
+**Generalised rule, now in `docs/reference/skill-surface-ownership.md` §3b**: a
+check's enforcement level follows the KIND of state it reads — repo state may
+block, machine state may only advise, someone else's content may only be reported.
+
+**Deliberately not built**: content-drift detection for synced skills.
+`sync-isolation-verify` gate 2B already hashes the full manifest set including
+`.claude/skills/**` (an earlier fix closed exactly that gap). A second answer would
+be the two-writers-for-one-question defect this plan exists to remove.

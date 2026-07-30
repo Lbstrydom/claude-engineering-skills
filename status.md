@@ -1,6 +1,60 @@
 # Project Status Log
 
-## 2026-07-30 (latest) — the global skill surface was unfixable, and the bundle was un-installable
+## 2026-07-30 (latest) — enforcing the skill-surface rule, at three levels
+
+Follow-on to the retirement below. The rule was written down; this makes it hold.
+
+**Gate level follows the KIND of state a check reads.** That is the generalisable
+part, and it decided all three placements:
+
+- **Repo state → BLOCKS.** A name *we deploy* shadowed in `.github/skills/` or
+  `.agents/skills/` now fails in three places: `check-stale-skill-surface --gate`,
+  `sync-to-repos` (refuses to claim a successful sync), and **`sync-isolation-verify`
+  gate 8** — the last runs from the *consumer* side on their cadence, deriving
+  ownership from their own manifest. That is what makes the guarantee continuous
+  rather than "whenever we happen to sync".
+- **Machine state → ADVISES.** `~/.claude/skills/` gets a session-start hook
+  (once per session, silent when clean, ~100ms, never blocks). Deliberately not
+  gated: two developers on one commit get different answers, CI never sees `$HOME`,
+  and blocking a push does not remove the shadow.
+- **Their content → REPORTED only.** Gating on what nobody here can act on is how
+  a gate earns a permanent `--no-verify`.
+
+**Ownership must be derived, never assumed from location.** "Everything in
+`.claude/skills/` is ours" is false in a consumer — it also holds theirs. A naive
+"any name in two roots" predicate blocked a consumer's sync immediately, over
+plugin skills. Ownership now comes from our own `skills/` (source side) or the
+consumer's manifest (consumer side).
+
+**Two defects found while verifying, both of which would have shipped:**
+`listSurfaceNames` filtered on `Dirent.isDirectory()`, false for a symlink — so a
+symlinked shadow of one of our skills would have read as a harmless orphan and the
+gate would have *passed*. And `compareSkillSurfaces` requested content with the
+literal `STALE_SURFACE` constant, so every `.agents` shadow reported "0 lines",
+losing the staleness delta that is the whole diagnostic signal.
+
+**A claim retracted:** a consumer's `.claude/skills/use-railway` turned out to be a
+**symlink to** `.agents/skills/use-railway` — one directory, two names. There was
+no collision and nothing to warn them about. Same-target pairs are now `aliased`,
+so correct plugin wiring passes by design rather than by accident.
+
+**`--uninstall-legacy` now prunes the directories it emptied.** A `complete` run
+was leaving folder skeletons behind — 15 of them on this machine, cleared by hand.
+Safety is enforced by the syscall: non-recursive `rmdirSync` throws `ENOTEMPTY`, so
+a user file beside ours physically cannot be removed, and the walk stops *below*
+the surface root.
+
+**Also checked and NOT built:** content-drift detection for synced skills.
+`sync-isolation-verify` gate 2B already hashes the full manifest set including
+`.claude/skills/**`. Building a second answer would have been the
+two-writers-for-one-question defect this work exists to remove.
+
+Consumers cleaned: wine-cellar-app (1 file) and ai-organiser (5, including a live
+`ship` collision against its own `.claude/skills/ship`). Both pass all 8 gates.
+
+Commits `dd1b4b5a`, `3e478e33`. `npm run check` exits 0.
+
+## 2026-07-30 — the global skill surface was unfixable, and the bundle was un-installable
 
 A consumer session diagnosed its own tooling as "not installed" and skipped its
 audit gates on that premise. The diagnosis was wrong twice. Chasing it found two
