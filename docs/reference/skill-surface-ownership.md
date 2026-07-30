@@ -106,6 +106,17 @@ rewritten rather than deleted because it is the only authoritative
 bounded-membership record for the file still on disk; dropping it would orphan
 that file permanently.
 
+**Directories this run empties are removed too** (added 2026-07-30). Deleting
+only the receipt-listed *files* left the tree behind — a `complete` run cleared
+all 56 managed files and still left 15 empty skill skeletons, which reads as "the
+cleanup did not work". This is **not** "also delete directories under the root":
+the candidate set is exactly the parent of each file the transaction actually
+deleted, each is removed only while it is empty, and the walk stops at the first
+directory holding anything the run did not delete — a skill of yours, a member
+skipped as modified, or a subdirectory that failed to prune. The surface root
+itself (`~/.claude/skills/`) always survives; nothing here can prove this bundle
+created it.
+
 `.github/skills/` is **not** cleanable this way — it predates receipts, so there
 is no record proving what the bundle put there, and deleting an unrecorded tree
 would be exactly the unbounded enumeration the rule above forbids.

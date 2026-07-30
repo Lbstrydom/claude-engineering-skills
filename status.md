@@ -1,6 +1,62 @@
 # Project Status Log
 
-## 2026-07-30 (latest) — the global skill surface was unfixable, and the bundle was un-installable
+## 2026-07-30 (latest) — `--uninstall-legacy` now removes the directories it empties
+
+Field follow-up to the retirement below. A successful `complete` run against
+`~/.claude/skills/` removed all 56 managed files and the global receipt, and left
+**15 empty directory skeletons** (`ai-context-management/` … `ship/references/`)
+that had to be pruned by hand. Deleting the receipt-listed *files* was never the
+whole job.
+
+The fix had to not become the thing S3 forbids. Membership still comes from the
+receipt: the candidate set is exactly `dirname()` of each file the transaction
+actually deleted, each candidate walks upward while it is empty, and the walk
+stops at the first directory holding anything this run did not delete. A user's
+own `~/.claude/skills/my-skill/` never enters the candidate set at all — the same
+structural unreachability its files already had, not a filter.
+
+**Three decisions worth the ink.** *(1)* The prune lives in the CLI, not in
+`legacy-surfaces.mjs`. That module's first paragraph promises it never writes;
+a `pruneEmptiedDirs` there would be a second delete path, and splitting it (plan
+in the inspector, `rmdir` in the CLI) is worse than either — emptiness-check and
+removal are inherently check-then-act, so a module boundary between them widens
+the race while duplicating the logic. *(2)* `fs.rmdirSync`, **not**
+`fs.rmSync({recursive:true})`: losing that race with a recursive remove destroys
+whatever appeared, while `rmdir` fails ENOTEMPTY and leaves it. The repo-wide
+Windows EPERM/EBUSY hardening is honoured via `retrySync`, matching
+`transaction.mjs`'s own delete idiom. *(3)* Containment reuses
+`assertContainedAbsolute` rather than a local `path.relative` check — it already
+rejects `absPath === root` (which *is* "never past the surface root") and refuses
+any component crossing a symlink, so a planted junction cannot redirect an
+`rmdir`. Failures are reported, never fatal: the files are gone and the receipt
+reconciled, so an empty directory is cosmetic.
+
+**Changed**
+- [`scripts/install-skills.mjs`](scripts/install-skills.mjs) — new
+  `pruneEmptiedDirs({removedAbsPaths, roots})` + `isContainedUnder`, called from
+  `runUninstallLegacy` after `reconcileReceipt` (ownership is un-recorded first,
+  so a crash between the two leaves a cosmetic directory, never a live receipt
+  naming a vanished path). Roots come from the inspection, not recomputed.
+- [`tests/install/legacy-uninstall.test.mjs`](tests/install/legacy-uninstall.test.mjs)
+  — six cases: `complete` leaves nothing under the root; a directory holding a
+  user file survives with the file intact; a `partial` run keeps the skipped
+  member's directory; nested `ship/references/x.md` prunes both levels; one user
+  file anywhere in that chain stops the whole walk; the walk never reaches
+  `~/.claude` or `~`. Verified non-vacuous — 5 of 6 fail against the pre-fix
+  script (the 6th is a survival property the old code trivially satisfied, kept
+  as a boundary pin).
+- [`docs/reference/skill-surface-ownership.md`](docs/reference/skill-surface-ownership.md)
+  — §4 now documents the prune and its bound.
+
+**Gate**: `npm run check` exits 0 (9,562 tests). Eight
+`tests/install-bootstrap-e2e.test.mjs` failures seen on the first run were
+environmental and pre-existing — this git worktree had no `node_modules/` of its
+own, so that suite's junction to `REPO_ROOT/node_modules` dangled and its temp
+clone could not resolve `zod`. Creating the junction (exactly what
+`prepush-check.mjs:174` does for its sandbox, so the push path was never
+affected) turns all 8 green.
+
+## 2026-07-30 — the global skill surface was unfixable, and the bundle was un-installable
 
 A consumer session diagnosed its own tooling as "not installed" and skipped its
 audit gates on that premise. The diagnosis was wrong twice. Chasing it found two

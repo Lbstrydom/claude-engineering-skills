@@ -60,6 +60,8 @@ import { findRepoRoot, receiptPath, repoJournalPath, globalJournalPath }
 import { readReceipt, writeReceipt, buildReceipt } from './lib/install/receipt.mjs';
 import { executeTransaction, recoverFromJournal } from './lib/install/transaction.mjs';
 import { inspectLegacySurfaces, describeLegacySurfaces } from './lib/install/legacy-surfaces.mjs';
+import { assertContainedAbsolute } from './lib/install/safe-destination.mjs';
+import { retrySync } from './lib/retry-transient-fs.mjs';
 import { assertKnownFlags } from './lib/cli-io.mjs';
 
 const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', D = '\x1b[2m', B = '\x1b[1m', X = '\x1b[0m';
@@ -369,6 +371,119 @@ function reconcileReceipt(rp, removedAbsPaths, repoRoot, homeRoot) {
   return 'reduced';
 }
 
+/** Path depth, for ordering the prune walk deepest-first. */
+const pathDepth = (p) => p.split(/[\\/]/).filter(Boolean).length;
+
+/**
+ * Is `absPath` a STRICT descendant of `root`, by the one containment guard?
+ *
+ * Deliberately not a local `path.relative` check. `assertContainedAbsolute`
+ * already answers exactly the two questions this walk needs — is it under the
+ * root, and does any component cross a symlink or junction — and re-deriving
+ * either here would be a second, subtly different containment implementation on
+ * a path that removes directories from `$HOME`. It also rejects `absPath ===
+ * root` (`rel === ''`), which is precisely "walk toward but never past the
+ * surface root".
+ *
+ * Any throw is `false` (fail closed): a ContainmentError means the path is out
+ * of bounds, and any other error means we could not establish that it is in
+ * bounds. Neither may resolve to "remove it".
+ */
+function isContainedUnder(root, absPath) {
+  try {
+    assertContainedAbsolute({ root, absPath });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Remove the directories THIS RUN emptied — and only those.
+ *
+ * Deleting the receipt-listed files leaves the tree that held them behind: a
+ * `complete` run against `~/.claude/skills/` removed all 56 managed files and
+ * still left 15 empty skill directories (verified live 2026-07-30), which read
+ * to an operator as "the cleanup did not work".
+ *
+ * ## Why this is NOT "also delete directories under the root"
+ *
+ * Membership still comes from the receipt and never from enumerating the
+ * surface (S3). The candidate set is exactly `dirname()` of each file the
+ * transaction actually deleted; a directory is removed only if it is EMPTY at
+ * the moment we look, so anything the run did not delete — a user's own skill,
+ * a member we skipped as modified, a subdirectory that failed to prune — stops
+ * the walk with its parent chain intact. A user's `~/.claude/skills/my-skill/`
+ * is unreachable here for the same structural reason its files are: it never
+ * enters the candidate set.
+ *
+ * ## Why it lives in the CLI, not in `legacy-surfaces.mjs`
+ *
+ * That module documents, in its first paragraph, that it never writes and never
+ * deletes — the delete stays behind the transaction so there is exactly one
+ * delete path. A `pruneEmptiedDirs` helper *there* would be a second one, and
+ * splitting it (plan the prune in the inspector, rmdir in the CLI) is worse
+ * still: the emptiness check and the removal are inherently check-then-act, and
+ * putting a filesystem boundary between them widens the race while duplicating
+ * the logic. So the mutation lives beside the only caller that has any business
+ * performing it.
+ *
+ * `rmdirSync`, NOT `rmSync({recursive: true})`: the emptiness check is
+ * check-then-act, so if we lose that race a recursive remove destroys whatever
+ * appeared, while `rmdir` fails with ENOTEMPTY and leaves it alone. Wrapped in
+ * `retrySync` for the repo-wide Windows EPERM/EBUSY hardening (an AV scanner or
+ * indexer momentarily holding a directory must not strand it), matching
+ * `transaction.mjs`'s `retrySync(() => fs.unlinkSync(...))` idiom.
+ *
+ * Best-effort by design: a directory that cannot be removed is reported, never
+ * fatal. The files — the thing ownership is recorded for — are already gone and
+ * the receipt already reconciled; an empty directory is cosmetic, and failing
+ * the command over one would misreport a successful cleanup.
+ *
+ * The surface root ITSELF is never removed. `~/.claude/skills/` is not
+ * something this bundle can prove it created, and the containment guard draws
+ * the same line.
+ *
+ * @param {{removedAbsPaths: Set<string>|string[], roots: string[]}} args
+ * @returns {{pruned: string[], failed: Array<{dir: string, reason: string}>}}
+ */
+function pruneEmptiedDirs({ removedAbsPaths, roots }) {
+  const pruned = [];
+  const failed = [];
+
+  // Deepest-first so `ship/references` is tested before `ship`. The upward walk
+  // would reach `ship` from the child either way, but ordering makes that a
+  // property of the algorithm rather than of Set iteration order.
+  const candidates = [...new Set([...removedAbsPaths].map(p => path.dirname(path.resolve(p))))]
+    .sort((a, b) => pathDepth(b) - pathDepth(a));
+
+  for (const start of candidates) {
+    let dir = start;
+    for (;;) {
+      const root = roots.find(r => isContainedUnder(r, dir));
+      if (!root) break;                       // at (or outside) a surface root — stop
+
+      let entries;
+      try {
+        entries = fs.readdirSync(dir);
+      } catch {
+        break;      // ENOENT (a deeper candidate already pruned it) or unreadable
+      }
+      if (entries.length > 0) break;          // holds something we did not delete
+
+      try {
+        retrySync(() => fs.rmdirSync(dir));
+      } catch (err) {
+        failed.push({ dir, reason: err.code || err.message });
+        break;
+      }
+      pruned.push(dir);
+      dir = path.dirname(dir);
+    }
+  }
+  return { pruned, failed };
+}
+
 /**
  * `--uninstall-legacy` — remove skill trees written by the retired installer.
  *
@@ -448,6 +563,22 @@ function runUninstallLegacy(args) {
     if (outcome === 'reduced') console.log(`  ${D}receipt reduced to survivors: ${rp}${X}`);
   }
 
+  // After the receipt, not before: ownership is un-recorded first, so a crash
+  // between the two leaves an empty directory (cosmetic) rather than a live
+  // receipt naming files under a directory that is already gone.
+  //
+  // Roots come from the inspection rather than being recomputed from
+  // homeRoot/repoRoot — the delete set and the prune bound must be the same two
+  // surfaces, and a second derivation is how they would drift apart.
+  const { pruned, failed: pruneFailures } = pruneEmptiedDirs({
+    removedAbsPaths: removed,
+    roots: inspection.surfaces.map(s => s.root),
+  });
+  for (const d of pruned) console.log(`  ${D}pruned empty directory: ${d}${X}`);
+  for (const f of pruneFailures) {
+    console.log(`  ${Y}⚠ empty directory left in place${X}: ${f.dir} (${f.reason})`);
+  }
+
   const partial = skipped.length > 0 || inspection.overall === 'blocked';
   console.log(
     `\n${G}${partial ? 'partial' : 'complete'}${X} — removed ${removed.size} file(s)`
@@ -500,7 +631,7 @@ function main() {
  */
 export const _internals = {
   parseArgs, reconcileJournals, reportDegradations, reconcileReceipt,
-  runUninstallLegacy, RETIRED_INSTALL_FLAGS,
+  pruneEmptiedDirs, runUninstallLegacy, RETIRED_INSTALL_FLAGS,
 };
 
 // isMain guard — importing this module (e.g. from a test) must not run a

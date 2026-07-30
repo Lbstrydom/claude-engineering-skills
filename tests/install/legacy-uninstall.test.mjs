@@ -200,3 +200,108 @@ describe('--uninstall-legacy is bounded by the receipt, not by the directory', (
     assert.equal(fs.readFileSync(decoy, 'utf8'), 'a');
   });
 });
+
+/**
+ * Deleting the receipt-listed FILES used to leave their directories behind — a
+ * live `complete` run cleared all 56 managed files and still left 15 empty skill
+ * skeletons, which reads as "the cleanup did not work".
+ *
+ * The fix must not become the thing S3 forbids. Every test here pins the same
+ * boundary from a different side: a directory is removed only because THIS RUN
+ * emptied it, never because it sits under the surface root.
+ */
+describe('--uninstall-legacy prunes the directories it emptied, and only those', () => {
+  const skillsRoot = () => path.join(home, '.claude', 'skills');
+  const lsRoot = () => fs.readdirSync(skillsRoot()).sort();
+
+  test('complete — no directory is left behind under the surface root', async () => {
+    const members = [
+      seedGlobal('plan/SKILL.md', 'a'),
+      seedGlobal('ship/SKILL.md', 'b'),
+      seedGlobal('ship/references/gate.md', 'c'),
+      seedGlobal('audit-code/examples/out.md', 'd'),
+    ];
+    writeGlobalReceipt(members);
+
+    const r = await run();
+    assert.equal(r.code, 0);
+    assert.match(r.stdout, /complete/);
+    assert.deepEqual(lsRoot(), [], 'the emptied skill directories must go too, not just their files');
+  });
+
+  test("a directory holding a user-authored file the run did not delete SURVIVES, file intact", async () => {
+    const ours = seedGlobal('plan/SKILL.md', 'ours');
+    writeGlobalReceipt([ours]);
+
+    // Same directory as a managed file — the case a naive "remove the parent"
+    // would destroy, and the reason emptiness is checked rather than assumed.
+    const theirs = path.join(skillsRoot(), 'plan', 'my-notes.md');
+    fs.writeFileSync(theirs, 'the user wrote this');
+
+    const r = await run();
+    assert.equal(r.code, 0);
+    assert.equal(fs.existsSync(ours.path), false, 'the managed file still goes');
+    assert.equal(fs.existsSync(path.join(skillsRoot(), 'plan')), true,
+      'its directory holds something we did not delete, so it survives');
+    assert.equal(fs.readFileSync(theirs, 'utf8'), 'the user wrote this');
+  });
+
+  test('partial — a skipped member keeps its directory', async () => {
+    const clean = seedGlobal('plan/SKILL.md', 'original');
+    const dirty = seedGlobal('ship/SKILL.md', 'original');
+    writeGlobalReceipt([clean, dirty]);
+    fs.writeFileSync(dirty.path, 'HAND EDITED BY THE USER');
+
+    const r = await run();
+    assert.equal(r.code, 0);
+    assert.equal(fs.existsSync(path.join(skillsRoot(), 'ship')), true,
+      'the skipped file is still there, so its directory must be too');
+    assert.equal(fs.readFileSync(dirty.path, 'utf8'), 'HAND EDITED BY THE USER');
+    assert.deepEqual(lsRoot(), ['ship'], 'the fully-emptied sibling is pruned');
+  });
+
+  test('nested — pruning walks upward through emptied parents', async () => {
+    const members = [
+      seedGlobal('ship/SKILL.md', 'a'),
+      seedGlobal('ship/references/x.md', 'b'),
+    ];
+    writeGlobalReceipt(members);
+
+    const r = await run();
+    assert.equal(r.code, 0);
+    assert.equal(fs.existsSync(path.join(skillsRoot(), 'ship', 'references')), false);
+    assert.equal(fs.existsSync(path.join(skillsRoot(), 'ship')), false,
+      'the parent emptied by pruning its child must be pruned too');
+  });
+
+  test('nested — one user file anywhere in the chain stops the whole walk', async () => {
+    const members = [
+      seedGlobal('ship/SKILL.md', 'a'),
+      seedGlobal('ship/references/x.md', 'b'),
+    ];
+    writeGlobalReceipt(members);
+    fs.writeFileSync(path.join(skillsRoot(), 'ship', 'notes.md'), 'mine');
+
+    const r = await run();
+    assert.equal(r.code, 0);
+    assert.equal(fs.existsSync(path.join(skillsRoot(), 'ship', 'references')), false,
+      'the leaf this run emptied is still pruned');
+    assert.equal(fs.existsSync(path.join(skillsRoot(), 'ship')), true,
+      'but its parent holds a user file, so the walk stops there');
+    assert.equal(fs.readFileSync(path.join(skillsRoot(), 'ship', 'notes.md'), 'utf8'), 'mine');
+  });
+
+  test('the walk never escapes the surface root', async () => {
+    const a = seedGlobal('plan/SKILL.md', 'a');
+    writeGlobalReceipt([a]);
+
+    const r = await run();
+    assert.equal(r.code, 0);
+    assert.deepEqual(lsRoot(), [], 'everything under the root is gone');
+    // The root itself, and every ancestor, is not ours to remove: nothing here
+    // can prove this bundle created ~/.claude/skills, let alone ~/.claude or ~.
+    assert.equal(fs.existsSync(skillsRoot()), true, '~/.claude/skills survives');
+    assert.equal(fs.existsSync(path.join(home, '.claude')), true, '~/.claude survives');
+    assert.equal(fs.existsSync(home), true, '~ survives');
+  });
+});
