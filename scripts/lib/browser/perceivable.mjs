@@ -48,10 +48,19 @@
  *   offscreen `content-visibility:auto` subtree as invisible because rendering
  *   is *skipped*, which is a viewport-state answer and would contradict this
  *   rule. `content-visibility:hidden` (an authored intent to hide) IS honoured.
- * - **`[inert]` is checked explicitly.** `checkVisibility()` evaluates CSS
- *   visibility only, and an inert element is still painted — merely
- *   non-interactive and out of the a11y tree. Without the explicit term the
- *   primary and fallback branches would disagree.
+ * - **`[inert]` is deliberately NOT considered — corrected 2026-07-30 by a live
+ *   run.** `inert` is an *interactivity* property, not a visibility one: an
+ *   inert element is still painted and the user can still see it. Treating it as
+ *   non-perceivable suppressed **329 of 331** findings on a real app, because the
+ *   app had a modal open and marked `<header>`/`<main>` inert — the standard
+ *   background-inerting pattern. Both were `display:flex`/`block`,
+ *   `visibility:visible`, `opacity:1`, with 1248x90 and 1248x662 rects.
+ *
+ *   That is a far worse failure than the noise this predicate was written to
+ *   remove: it silently hides real, visible defects. A reviewer correctly noted
+ *   that `checkVisibility()` ignores `inert` while the fallback walk honoured it,
+ *   so the branches disagreed — but the right way to agree was to drop the check,
+ *   not to add it. Both branches now answer exactly "is this painted?".
  * - **Tri-state, because "unknown" is not "perceivable".** Returns `true`
  *   (rendered), `false` (not rendered) or **`null` (could not establish)**.
  *   An earlier version returned `true` on any thrown exception, which converted
@@ -86,9 +95,6 @@ export const PERCEIVABLE_SOURCE = `function ${PERCEIVABLE_FN_NAME}(el) {
   // null is NOT "perceivable" — see the module docs.
   if (!el || el.nodeType !== 1 || !el.isConnected) return false;
   try {
-    // [inert] first: checkVisibility() does not evaluate it, and an inert
-    // element is painted but non-interactive.
-    if (el.closest('[inert]')) return false;
     // Zero-size subsumes the old rect.width===0 guard. NOTE: visibility:hidden
     // and opacity:0 keep a real box, so this alone is not sufficient.
     const r = el.getBoundingClientRect();
@@ -107,7 +113,7 @@ export const PERCEIVABLE_SOURCE = `function ${PERCEIVABLE_FN_NAME}(el) {
       if (cs.visibility === 'hidden' || cs.visibility === 'collapse') return false;
       if (parseFloat(cs.opacity) === 0) return false;
       if (cs.contentVisibility === 'hidden') return false;
-      if (node.hasAttribute('inert') || node.hasAttribute('hidden')) return false;
+      if (node.hasAttribute('hidden')) return false;   // maps to display:none
       node = node.parentElement;
     }
     return true;

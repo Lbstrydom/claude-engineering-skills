@@ -56,9 +56,6 @@ Paste this into `browser_evaluate` as the function body. Returns a single
     // null is NOT "perceivable" — see the module docs.
     if (!el || el.nodeType !== 1 || !el.isConnected) return false;
     try {
-      // [inert] first: checkVisibility() does not evaluate it, and an inert
-      // element is painted but non-interactive.
-      if (el.closest('[inert]')) return false;
       // Zero-size subsumes the old rect.width===0 guard. NOTE: visibility:hidden
       // and opacity:0 keep a real box, so this alone is not sufficient.
       const r = el.getBoundingClientRect();
@@ -77,7 +74,7 @@ Paste this into `browser_evaluate` as the function body. Returns a single
         if (cs.visibility === 'hidden' || cs.visibility === 'collapse') return false;
         if (parseFloat(cs.opacity) === 0) return false;
         if (cs.contentVisibility === 'hidden') return false;
-        if (node.hasAttribute('inert') || node.hasAttribute('hidden')) return false;
+        if (node.hasAttribute('hidden')) return false;   // maps to display:none
         node = node.parentElement;
       }
       return true;

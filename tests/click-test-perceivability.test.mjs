@@ -180,13 +180,20 @@ describe('click-test perceivability — behaviour (real browser)', () => {
     assert.equal(f.perceivable, false);
   });
 
-  it('an [inert] ancestor makes a painted element non-perceivable', async (t) => {
+  it('an [inert] ancestor does NOT make a painted element non-perceivable', async (t) => {
     if (!available) return t.skip('chromium unavailable');
-    // The regression guard for the checkVisibility gap: inert elements ARE
-    // painted, so checkVisibility() alone returns true here.
+    // REGRESSION GUARD, found by a live run against a real app (V1). An earlier
+    // version treated [inert] as non-perceivable "for branch consistency". A real
+    // app with an open modal marks <header>/<main> inert — the standard
+    // background-inerting pattern — and that single attribute suppressed 329 of
+    // 331 findings, silently hiding plainly visible defects.
+    //
+    // `inert` is an INTERACTIVITY property, not a visibility one: the element is
+    // still painted. This predicate answers only "is it painted?".
     const f = byKind(await scan('<div inert><input type="text"></div>'), 'input-no-name');
     assert.ok(f);
-    assert.equal(f.perceivable, false, 'checkVisibility() does not evaluate [inert] — the explicit term must');
+    assert.equal(f.perceivable, true, '[inert] is still painted — capping it hides real, visible defects');
+    assert.equal(f.severity, 'P0', 'a visible-but-inert violation keeps its declared severity');
   });
 
   it('content-visibility:hidden is not perceivable', async (t) => {
