@@ -658,19 +658,21 @@ the finished card, so there is nothing to parse and no formatting decision here.
 Omit `--render` to get the versioned JSON instead (`schemaVersion`, `state`,
 `counts`, `items`) if you need it programmatically.
 
-**Advisory, and structurally incapable of blocking**: the command exits 0 in all
-three states (`ready` / `disabled` / `unavailable`), prints **nothing** when
-cloud is off or nothing is pending, and prints one non-blocking line carrying
-only a diagnostic CODE when the store is unreachable. Never fail a ship because
-a label is missing — and never re-run it with a stale sha to make the card
-prettier.
+**Advisory only — the reader always exits 0** across its three result states
+(`ready` / `disabled` / `unavailable`), emitting empty output when cloud is off
+or nothing is pending, and a single line carrying just a diagnostic CODE when
+the store is unreachable. A missing label is not a reason to stop a ship.
+
+Treat a stale sha as a reason to skip the card, not to re-render it: the
+`--commit` value should be the commit you just made.
 
 The card offers `accepted`/`dismissed` for unadjudicated findings, `accepted`
 only for a fixed-but-unlabelled one (a shipped fix implies the finding was
-real), and a complete `record-fix` line for an accepted-but-unfixed one. **The
-maintainer picks which finding a commit fixed** — attribution is never inferred
-from "a file changed". Output is bounded (10 items) with a pointer to
-`final-review-stats --worksheet` for the full queue.
+real), and a complete `record-fix` line for an accepted-but-unfixed one. **You
+choose which finding a commit fixed** — the card lists candidates and their
+commands, and infers no attribution from "a file changed". Output is bounded
+(10 items) with a pointer to `final-review-stats --worksheet` for the full
+queue.
 
 ---
 
