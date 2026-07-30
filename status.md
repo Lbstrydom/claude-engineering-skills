@@ -66,6 +66,54 @@ where the prior one reached 0.
 > call with `catch { break }` silently abandons the climb on a transient Windows
 > EPERM/EBUSY). Tracked, not bundled here.
 
+## 2026-07-30 — final-review credit loop + gateway shadow: both clusters shipped
+
+[`final-review-credit-and-cheap-shadow.md`](docs/plans/final-review-credit-and-cheap-shadow.md)
+is **Complete**. Cluster A (`15b7ad8f`…`c59f1f5b`) and Cluster B (`45b5db74`).
+
+**The headline number**: on its first live run the new `/ship` card reported
+**42 findings awaiting credit — 32 unadjudicated, 10 accepted-but-never-fixed.**
+That second figure is the "accepted ≠ remediated" gap that made the shadow A/B's
+value unreadable. It was never measurable before because
+`recordFinalReviewFix`/`adjudicateFinalReviewFinding` existed, tested and
+CLI-exposed since that experiment closed — and **no SKILL.md referenced either**,
+so nothing ever called them. The gap was wiring, not engineering; tracing that
+first is what stopped a `/cycle` run rebuilding a working subsystem.
+
+**Cluster B inherits rather than re-plumbs.** `FINAL_REVIEW_SHADOW=openrouter`
+works because `runFinalReview` resolves `PROVIDERS[canonical].requestExtras()`
+and the shadow supplies its canonical name — so `canonical: 'openrouter'` earns
+the routing pins for free. Verified by trace before implementing, because the
+failure mode is silent: unpinned, a shadow measures OpenRouter's router instead
+of the model (experiment-4). The test pins the *inheritance*.
+
+**Audit caught four things worth naming**, three of them mine:
+
+- `cmdFinalReviewAdjudicate` tested `rawBucket === undefined` while `argOption()`
+  returns `null` — the omitted-bucket branch was **unreachable**, so omitting
+  `--bucket` silently meant "primary bucket" and matched 0 rows for a
+  shadow-only finding. Its sibling did it correctly; a copy-paste divergence in
+  the exact command the new card points at.
+- The card offered `accepted` only for fixed-unlabelled. That collapses the two
+  axes AGENTS.md keeps orthogonal — a recorded fix proves *association*, not
+  validity — and mis-linking is easy. Overturned my own audited plan.
+- **Two of my own tests were wrong in the direction that flatters.** The
+  secret-leak test put credentials in neighbouring fields, never the one the
+  renderer interpolates, so it would have passed against a leaking renderer. The
+  "exhaustive" classifier test enumerated my own constant, so it could never
+  catch the DB drift it existed to catch.
+
+**Live-run correction to a number I published earlier**: Kimi's ~$0.044/review
+was a single-attempt measurement on a small input. On a large transcript the run
+needed **two** attempts (296.7 s, truncated → retry, 60.6 s). The retry is the
+designed mitigation and worked; the figure just shouldn't be quoted as
+single-attempt.
+
+Suite 9569 pass / 0 fail. Gemini gate on Cluster A: **APPROVE, 0 findings**,
+`gpt_false_positive_count: 1` (independently confirming a dismissal).
+What this does **not** settle: whether a cheap shadow should replace Opus — the
+instrument for that stays parked.
+
 ## 2026-07-30 — live-run triage closed out: wine PR #208, and the scanner learns two lessons
 
 Finished the capture-honesty session by taking its own medicine: every remaining

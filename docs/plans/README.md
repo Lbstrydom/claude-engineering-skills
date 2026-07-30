@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**11 active · 161 terminal · 25 audit summaries · 1 parked · 4 reference docs**
+**10 active · 162 terminal · 25 audit summaries · 1 parked · 4 reference docs**
 
 ---
 
@@ -22,7 +22,6 @@ This is the list to read when asking "what is in flight?".
 | Plan | Status | Notes |
 |---|---|---|
 | [Event-Wiring Symmetry Check](./event-wiring-symmetry.md) | `Draft` |  |
-| [Close the final-review credit loop + admit a cheap shadow](./final-review-credit-and-cheap-shadow.md) | `Approved` |  |
 | [Arch-Memory / Symbol-Index Pipeline Debt (2026-07-26 triage)](./refactor-arch-memory-symbol-index-2026-07.md) | `Draft` |  |
 | [Architecture-Debt Backlog Remainder (2026-07-26 triage)](./refactor-architecture-debt-remainder-2026-07.md) | `Draft` |  |
 | [CLAUDE.md Autofix + Skill-Copy Governance Debt (2026-07-26 triage)](./refactor-claudemd-skills-governance-2026-07.md) | `Draft` |  |
@@ -62,7 +61,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 158 completed plans</summary>
+<summary>Show all 159 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -124,6 +123,7 @@ source comments that no docs linter sees — stays valid.
 | [Plan-Declared Execution Clustering Across the Skill Chain](./execution-clustering-skill-chain.md) | `Complete` |  |
 | [Idle-timeout the extract subprocess (stop the coverage-sized SIGKILL truncating symbol extraction)](./extract-idle-timeout.md) | `Complete` |  |
 | [Background-safe & provider-agnostic final-review gate](./final-review-background-safe-provider-agnostic.md) | `Complete` |  |
+| [Close the final-review credit loop + admit a cheap shadow](./final-review-credit-and-cheap-shadow.md) | `Complete` |  |
 | [Shadow Final-Review Reviewer (A/B test final-gate effectiveness)](./final-review-shadow-reviewer.md) | `Complete` | verified built; status corrected from Approved during archive triage 2026-06-27 |
 | [Friction-Feedback Loop (recurrence-aware quality signal)](./friction-feedback-loop.md) | `Complete` | built Clusters A–C 2026-06-28; `/audit-code` R1 found 8 genuine in-scope bugs — all fixed; consolidated Gem… |
 | [Friction Log + Weekly Digest Surface (v1)](./friction-log-and-digest-v1.md) | `Complete` | shipped 2026-05-09; schema applied to live Supabase; auto-archived via `/ship` Step 5.5 |
