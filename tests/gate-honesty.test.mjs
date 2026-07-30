@@ -108,7 +108,13 @@ const PINNED_DOCUMENT_ONLY = {
   // process exit code, and `cli-exit` is the only CLI oracle available.
   // Claiming that oracle would assert an exit code the command does not
   // produce — the fake-check class this suite exists to catch.
-  ship: ['gate-passed-refused-without-evidence', 'category-a-never-staged', 'step-0-5-gates-non-blocking', 'unremediated-acceptances-never-blocks', 'unit-test-lock-refuses-unverifiable-claims'],
+  // `final-review-credit-advisory-exit-zero` added 2026-07-29 with Step 6.7's
+  // credit card. Same shape again: the read half IS unit-covered (closed
+  // diagnostic enum instead of a throw; renderer returns '' for disabled,
+  // zero-count ready, and unrecognised shapes), but "exits 0 therefore cannot
+  // stop the ship" is a claim about agent flow, and EVERY cross-skill subcommand
+  // exits 0 unconditionally — so a cli-exit oracle would be true but vacuous.
+  ship: ['gate-passed-refused-without-evidence', 'category-a-never-staged', 'step-0-5-gates-non-blocking', 'unremediated-acceptances-never-blocks', 'unit-test-lock-refuses-unverifiable-claims', 'final-review-credit-advisory-exit-zero'],
   cycle: ['preview-gate-halt-blocks-ship', 'fix-gate-convergence-before-next-cluster', 'author-tier-never-routes', 'consolidated-gemini-gate-mandatory'],
   plan: ['gate-1-phase-triggers', 'never-a-lone-phase-1', 'warnings-never-block-plan-generation', 'section-10-graded-by-ux-lock-verify'],
 };
@@ -171,7 +177,8 @@ describe('gate-honesty — real skills/', () => {
     assert.equal(totalExecutable, 12); // +1 ux-lock strict-selectors (Phase C final)
     // 35 → 36: +1 ship (unremediated-acceptances-never-blocks, /ship Step 0.5e, 2026-07-27).
     // 36 → 37: +1 ship (unit-test-lock-refuses-unverifiable-claims, 2026-07-29).
-    assert.equal(totalDocOnly, 37);   // +2 ux-lock, +4 ship, +4 cycle, +4 plan (Phase C final — ALL 15 contracted)
+    // 37 → 38: +1 ship (final-review-credit-advisory-exit-zero, 2026-07-29).
+    assert.equal(totalDocOnly, 38);   // +2 ux-lock, +4 ship, +4 cycle, +4 plan (Phase C final — ALL 15 contracted)
 
     const allSkillNames = listSkillNames(skillsRoot);
     const expectedUncontracted = allSkillNames.filter((n) => !PINNED_CONTRACTED_SKILLS.includes(n));
