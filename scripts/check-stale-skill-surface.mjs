@@ -44,6 +44,39 @@ const R = '\x1b[31m', G = '\x1b[32m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0
 export const STALE_SURFACE = '.github/skills';
 export const LIVE_SURFACE = '.claude/skills';
 
+/** `<repo>/.agents/skills/` — retired 2026-07-30, and a discovered root too. */
+export const AGENTS_SURFACE = '.agents/skills';
+
+/**
+ * Every workspace root that can shadow `LIVE_SURFACE`.
+ *
+ * Both are read by VS Code Copilot's Agent Skills alongside `.claude/skills/`,
+ * and precedence between roots is **not documented** — so a name in either one
+ * makes the live copy's resolution undefined, not merely redundant.
+ *
+ * `.agents/skills` joined the list when the `agents` install surface was retired
+ * (docs/reference/skill-surface-ownership.md §3). It was found live in a consumer
+ * the same day: a stale `ship/SKILL.md` there against the synced `.claude/skills/ship`.
+ *
+ * ## Ownership is the whole predicate
+ *
+ * A name here is only OUR problem when it collides with a skill this bundle
+ * deploys. Consumers legitimately keep their own skills in `.agents/skills/` —
+ * one carries `supabase-postgres-best-practices` and `use-railway` from unrelated
+ * plugins — and failing on those would be a gate about someone else's content
+ * that no one can act on, which is how a gate earns a permanent `--no-verify`.
+ * Ownership comes from `ourBundleSkillNames()` — this bundle's own `skills/`
+ * directory — NOT from whatever sits in the target's `.claude/skills/`, which in a
+ * consumer also holds their skills. A non-bundle name is an `orphan` (advisory),
+ * never a `shadowed` (fatal).
+ *
+ * And a name that resolves to the SAME directory in both roots is `aliased`, not
+ * shadowed: a consumer's plugin legitimately keeps a skill in `.agents/skills/<n>`
+ * and exposes it as `.claude/skills/<n>` via a symlink, so both roots read one
+ * file and precedence is moot. Verified in a consumer 2026-07-30.
+ */
+export const SHADOWING_SURFACES = Object.freeze([STALE_SURFACE, AGENTS_SURFACE]);
+
 /**
  * Read a surface's skill-directory names. `docs/plans/refactor-skill-governance.md`
  * round-2 M1: exported (was a private `listSkillDirs`) so `sync-to-repos.mjs`
@@ -83,7 +116,21 @@ export function listSurfaceNames(root, surface) {
   const base = path.join(root, ...surface.split('/'));
   try {
     const names = fs.readdirSync(base, { withFileTypes: true })
-      .filter(e => e.isDirectory())
+      // A SYMLINK to a directory is a skill directory. `Dirent.isDirectory()` is
+      // false for a link, so the original filter silently dropped them — and that
+      // was a false-green in this very gate: a plugin (or anyone) that exposes a
+      // skill via a symlink made the name invisible to `liveNames`, so a real
+      // shadow of one of OUR skills would have been misclassified as a harmless
+      // `orphan` and the gate would have passed. Found live in a consumer whose
+      // plugin skills are symlinks (2026-07-30).
+      //
+      // `statSync` follows the link, so a DANGLING link is correctly excluded —
+      // it is not a readable skill directory by any definition.
+      .filter((e) => {
+        if (e.isDirectory()) return true;
+        if (!e.isSymbolicLink()) return false;
+        try { return fs.statSync(path.join(base, e.name)).isDirectory(); } catch { return false; }
+      })
       .map(e => e.name)
       .sort();
     return { names, readable: true };
@@ -100,6 +147,31 @@ export function listSurfaceNames(root, surface) {
       return { names: [], readable: true };
     }
     return { names: null, readable: false, error: { code: err.code, message: err.message, path: base } };
+  }
+}
+
+/**
+ * The skill names THIS BUNDLE owns, read from the source repo's authoritative
+ * `skills/` directory.
+ *
+ * Ownership must not be inferred from `<target>/.claude/skills/` on disk. In the
+ * source repo the two sets are identical, but in a consumer `.claude/skills/`
+ * also holds the consumer's OWN skills — so an on-disk read would make this tool
+ * gate a collision between two copies of THEIR content, which is exactly the
+ * "policing someone else's repo" that earns a permanent `--no-verify`. The rule
+ * is the same one gate 8 in `sync-isolation-verify.mjs` applies from the consumer
+ * side (it derives ownership from the consumer's manifest): **fail only on a name
+ * we deploy.**
+ *
+ * @returns {string[]|null} null when the source `skills/` tree is unreadable
+ */
+function ourBundleSkillNames() {
+  const skillsDir = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), '..', 'skills');
+  try {
+    return fs.readdirSync(skillsDir, { withFileTypes: true })
+      .filter(e => e.isDirectory()).map(e => e.name).sort();
+  } catch {
+    return null;
   }
 }
 
@@ -121,12 +193,29 @@ function readSkillMd(root, surface, name) {
  * @param {{staleNames: string[], liveNames: string[], contentOf: (surface: string, name: string) => string|null}} a
  * @returns {{shadowed: object[], orphans: string[], total: number}}
  */
-export function compareSkillSurfaces({ staleNames, liveNames, contentOf }) {
+export function compareSkillSurfaces({ staleNames, liveNames, contentOf, realPathOf = null }) {
   const live = new Set(liveNames);
   const shadowed = [];
   const orphans = [];
+  const aliased = [];
   for (const name of staleNames) {
     if (!live.has(name)) { orphans.push(name); continue; }
+    // TWO NAMES FOR ONE DIRECTORY IS NOT A COLLISION.
+    //
+    // A consumer's plugin legitimately stores a skill in `.agents/skills/<n>` and
+    // exposes it as `.claude/skills/<n>` via a symlink — verified in a consumer
+    // 2026-07-30, where `realpath` of both was byte-identical. Whichever root the
+    // agent reads, it gets the same file, so precedence is irrelevant. Flagging
+    // that as a shadow would fail a repo for correct plugin wiring, which is how a
+    // gate earns a permanent `--no-verify`.
+    //
+    // Opt-in: callers that cannot resolve paths (the pure unit tests, the sync's
+    // name-only inspection) pass no resolver and keep the old behaviour.
+    if (realPathOf) {
+      const a = realPathOf('stale', name);
+      const b = realPathOf('live', name);
+      if (a && b && a === b) { aliased.push(name); continue; }
+    }
     const staleBody = contentOf(STALE_SURFACE, name);
     const liveBody = contentOf(LIVE_SURFACE, name);
     const staleLines = staleBody === null ? 0 : staleBody.split('\n').length;
@@ -139,7 +228,7 @@ export function compareSkillSurfaces({ staleNames, liveNames, contentOf }) {
       lineDelta: liveLines - staleLines,
     });
   }
-  return { shadowed, orphans, total: staleNames.length };
+  return { shadowed, orphans, aliased, total: staleNames.length };
 }
 
 /**
@@ -208,8 +297,15 @@ function main() {
   // Advisory, before any exit path so it prints regardless of the verdict.
   reportRetiredSurfaces(root);
 
-  const stale = listSurfaceNames(root, STALE_SURFACE);
   const live = listSurfaceNames(root, LIVE_SURFACE);
+  // Ownership comes from OUR bundle, not from what happens to sit in the target's
+  // `.claude/skills/` — see ourBundleSkillNames. Falls back to the on-disk read
+  // only if the source `skills/` tree is unreadable, which in this repo means
+  // something is badly wrong; a narrower check is better than none.
+  const ownedNames = ourBundleSkillNames() ?? live.names ?? [];
+  // Every shadowing root, not just `.github/skills` — see SHADOWING_SURFACES.
+  const reads = SHADOWING_SURFACES.map(surface => ({ surface, read: listSurfaceNames(root, surface) }));
+  const stale = reads.find(r => r.surface === STALE_SURFACE).read;
 
   // An inspection failure on EITHER surface must never present as a clean
   // pass — exits 1 UNCONDITIONALLY (not gated by --gate), consistent with
@@ -219,7 +315,7 @@ function main() {
   // unreadable copy in a normal checkout means the repo itself is broken,
   // and a loud failure is the correct response — not the old silent
   // existsSync-swallow into "0 skills, clean" this fix exists to close.
-  const failure = !stale.readable ? stale : !live.readable ? live : null;
+  const failure = reads.find(r => !r.read.readable)?.read ?? (!live.readable ? live : null);
   if (failure) {
     if (json) {
       process.stdout.write(JSON.stringify({
@@ -234,57 +330,91 @@ function main() {
     process.exit(1);
   }
 
-  const result = compareSkillSurfaces({
-    staleNames: stale.names,
-    liveNames: live.names,
-    contentOf: (surface, name) => readSkillMd(root, surface, name),
-  });
+  // One comparison per shadowing root, against the SAME live name set.
+  const perSurface = reads.map(({ surface, read }) => ({
+    surface,
+    ...compareSkillSurfaces({
+      staleNames: read.names,
+      liveNames: ownedNames,
+      // `compareSkillSurfaces` asks for content with the literal `STALE_SURFACE`
+      // constant, so a naive passthrough reads `.github/skills/<n>/SKILL.md`
+      // while comparing `.agents/skills` — reporting every `.agents` shadow as
+      // "0 lines" because the file it looked for does not exist. Map the
+      // stale-side request onto the surface actually under comparison.
+      contentOf: (which, name) => readSkillMd(root, which === LIVE_SURFACE ? LIVE_SURFACE : surface, name),
+      // Resolve both sides so a plugin symlink (one directory, two names) is
+      // recognised as an alias rather than reported as a shadow.
+      realPathOf: (which, name) => {
+        const dir = path.join(root, ...(which === 'live' ? LIVE_SURFACE : surface).split('/'), name);
+        try { return fs.realpathSync(dir); } catch { return null; }
+      },
+    }),
+  }));
 
-  const exitCode = decideStaleSurfaceExit({ gate, shadowedCount: result.shadowed.length });
+  const shadowedTotal = perSurface.reduce((n, s) => n + s.shadowed.length, 0);
+  const treeTotal = perSurface.reduce((n, s) => n + s.total, 0);
+  const exitCode = decideStaleSurfaceExit({ gate, shadowedCount: shadowedTotal });
 
   if (json) {
     process.stdout.write(JSON.stringify({
-      repo: root, staleSurface: STALE_SURFACE, liveSurface: LIVE_SURFACE, ...result, exitCode,
+      repo: root, liveSurface: LIVE_SURFACE, shadowingSurfaces: SHADOWING_SURFACES,
+      surfaces: perSurface, shadowedTotal, exitCode,
+      // Back-compat: the pre-2026-07-30 single-surface shape, so an existing
+      // reader keyed on `.github/skills` keeps working rather than silently
+      // reading `undefined` and concluding "clean".
+      staleSurface: STALE_SURFACE,
+      ...perSurface.find(s => s.surface === STALE_SURFACE),
     }, null, 2) + '\n');
     process.exit(exitCode);
   }
 
-  if (result.total === 0) {
-    process.stderr.write(`${G}✓ no ${STALE_SURFACE}/ tree — nothing can shadow ${LIVE_SURFACE}/${X}\n`);
+  if (treeTotal === 0) {
+    process.stderr.write(
+      `${G}✓ no ${SHADOWING_SURFACES.join('/ or ')}/ tree — nothing can shadow ${LIVE_SURFACE}/${X}\n`,
+    );
     process.exit(exitCode);
   }
 
-  process.stderr.write(
-    `${R}── stale skill surface ──${X}\n` +
-    `  ${root}\n` +
-    `  ${STALE_SURFACE}/ exists with ${result.total} skill(s).\n` +
-    `  Copilot Agent Skills reads BOTH surfaces and ${R}${STALE_SURFACE}/ WINS on a name collision${X}.\n\n`
-  );
-
-  if (result.shadowed.length > 0) {
-    process.stderr.write(`${R}SHADOWED${X} — the live copy is unreachable for these names:\n`);
-    for (const s of result.shadowed) {
-      const note = s.identical
-        ? `${D}identical content${X}`
-        : `${R}${s.staleLines} lines vs live ${s.liveLines}${X}` +
-          (s.lineDelta > 0 ? ` ${D}(stale is ${s.lineDelta} lines behind)${X}` : '');
-      process.stderr.write(`  ${R}✗${X} ${s.name.padEnd(24)} ${note}\n`);
+  // Report every shadowing surface that has content, not just the first.
+  for (const s of perSurface) {
+    if (s.total === 0) continue;
+    if (s.shadowed.length > 0) {
+      process.stderr.write(
+        `\n${R}── ${s.surface}/ shadows ${s.shadowed.length} live skill(s) ──${X}\n` +
+        `  ${root}\n` +
+        `  Copilot Agent Skills reads BOTH roots and precedence between them is ` +
+        `${R}undefined${X} — the live copy may be unreachable.\n\n`,
+      );
+      for (const sh of s.shadowed) {
+        // The line delta is the useful signal: it says HOW stale the shadow is,
+        // which is what told the 2026-07-19 investigation that the shadowing
+        // `ship` predated the cross-skill data loop entirely.
+        const note = sh.identical
+          ? `${D}identical content${X}`
+          : `${R}${sh.staleLines} lines vs live ${sh.liveLines}${X}` +
+            (sh.lineDelta > 0 ? ` ${D}(shadow is ${sh.lineDelta} lines behind)${X}` : '');
+        process.stderr.write(`  ${R}✗${X} ${sh.name.padEnd(24)} ${note}\n`);
+      }
+      process.stderr.write(
+        `\n${Y}Fix${X}: remove the shadowing copy (${LIVE_SURFACE}/ is the one this bundle owns) —\n` +
+        s.shadowed.map(sh => `  rm -rf "${path.join(root, ...s.surface.split('/'), sh.name)}"\n`).join(''),
+      );
     }
-    process.stderr.write('\n');
+    if (s.orphans.length > 0 && s.surface === STALE_SURFACE) {
+      process.stderr.write(
+        `${Y}orphans${X} ${D}(deprecated ${s.surface}/ copies with no live counterpart — not intercepting today):${X}\n` +
+        `  ${s.orphans.join(', ')}\n`,
+      );
+    } else if (s.orphans.length > 0 && s.surface === AGENTS_SURFACE) {
+      // Names we do NOT deploy. Not our gate, but the consumer may still have a
+      // real two-root ambiguity of their own, so say so without failing them.
+      process.stderr.write(
+        `${D}note: ${s.surface}/ holds ${s.total} skill(s) this bundle does not deploy ` +
+        `(${s.orphans.join(', ')}) — not gated here; if any also exists in ` +
+        `${LIVE_SURFACE}/, its precedence is undefined and that is yours to resolve.${X}\n`,
+      );
+    }
   }
-
-  if (result.orphans.length > 0) {
-    process.stderr.write(
-      `${Y}orphans${X} ${D}(deprecated copies with no live counterpart — not intercepting today):${X}\n` +
-      `  ${result.orphans.join(', ')}\n\n`
-    );
-  }
-
-  process.stderr.write(
-    `${Y}Fix${X}: delete the deprecated tree —\n` +
-    `  rm -rf "${path.join(root, ...STALE_SURFACE.split('/'))}"\n` +
-    `${D}  (${LIVE_SURFACE}/ is the single Copilot-native surface.)${X}\n`
-  );
   process.exit(exitCode);
 }
 

@@ -7,7 +7,7 @@
  * consumer's manifest as the source of truth and never scans the source
  * repo's filesystem (plan Gemini v2 G2 fix).
  *
- * Gates (each runnable independently via --gates 1,2A,2B,3,4,5,6,7):
+ * Gates (each runnable independently via --gates 1,2A,2B,3,4,5,6,7,8):
  *   1   Pre-migration git status / approval contract (read-only inspection)
  *   2A  Tracked-diff whitelist
  *   2B  Hydration-on-disk manifest hash check
@@ -16,6 +16,9 @@
  *   5   Consumer package.json npm-run reconciliation
  *   6   Manifest layout === 'isolated'
  *   7   .gitignore managed block presence + well-formedness
+ *   8   No other discovered root (.github/skills, .agents/skills) shadows a
+ *       skill this bundle deploys in .claude/skills/ — ownership derived from
+ *       the consumer's OWN manifest, so their own skills are never gated
  *
  * @module scripts/lib/sync-isolation-verify
  */
@@ -37,7 +40,7 @@ import { enumerateNpmRunRefs } from './npm-script-enumerator.mjs';
 // `scripts/check-isolation-inventory.mjs` instead — that script is
 // source-only and never shipped to consumers.
 
-const ALL_GATES = ['1', '2A', '2B', '3', '4', '5', '6', '7'];
+const ALL_GATES = ['1', '2A', '2B', '3', '4', '5', '6', '7', '8'];
 // Reuse the single source of truth from sync-rewriter — eliminates
 // parser drift between rewrite and detect surfaces (R1 M1 fix).
 const COMMAND_REGEX = SHARED_COMMAND_REGEX;
@@ -453,6 +456,105 @@ function gate7(consumerRoot) {
   };
 }
 
+/**
+ * Gate 8 — no other discovered root shadows a skill this bundle deploys here.
+ *
+ * ## Why this gate exists on the CONSUMER side
+ *
+ * The source repo already refuses to claim a successful sync into a shadowed
+ * target, but that only fires when someone happens to run `npm run sync`. A
+ * shadow introduced afterwards — a plugin installing into `.agents/skills/`, a
+ * developer copying a skill, an old bundle version — would sit undetected until
+ * the next sync, which may be weeks. Since this verifier is itself synced and
+ * consumers can wire it into their own `.githooks/pre-push.local`, putting the
+ * check here makes it CONTINUOUS: the guarantee is enforced from the consumer's
+ * side, on their cadence, using tooling we control from the source repo.
+ *
+ * ## Ownership: derived from the consumer's OWN manifest
+ *
+ * `manifest.files` lists exactly what this bundle deployed here, so the
+ * `.claude/skills/<name>/` keys are the authoritative set of names WE own — no
+ * hardcoded list to drift, and no need to know anything about the consumer's own
+ * skills. A name in another root that we do NOT deploy is reported and never
+ * fails: consumers legitimately keep their own skills in `.agents/skills/` (one
+ * carries `supabase-postgres-best-practices` and `use-railway` from unrelated
+ * plugins), and failing on those would be a gate about content nobody here can
+ * act on — which is how a gate earns a permanent `--no-verify`.
+ *
+ * Precedence between discovered roots is NOT documented by Copilot, so a
+ * collision means "which file gets read is undefined", not "the newer one wins".
+ * That is why it blocks rather than warns.
+ *
+ * @param {string} consumerRoot
+ * @param {{files?: Record<string, unknown>}} manifest
+ */
+function gate8(consumerRoot, manifest) {
+  const SHADOWING = ['.github/skills', '.agents/skills'];
+  const LIVE = '.claude/skills';
+
+  const ours = new Set();
+  for (const destRel of Object.keys(manifest?.files || {})) {
+    const m = /^\.claude[\\/]skills[\\/]([^\\/]+)[\\/]/.exec(destRel.split('\\').join('/'));
+    if (m) ours.add(m[1]);
+  }
+  if (ours.size === 0) {
+    // Nothing to protect — but say so rather than passing silently, so "gate 8
+    // OK" can never mean "the manifest listed no skills and I checked nothing".
+    return { gate: '8', pass: true, details: { ownedSkills: 0, note: 'manifest declares no .claude/skills entries' } };
+  }
+
+  /** Resolve to a real path, or null. */
+  const real = (p) => { try { return fs.realpathSync(p); } catch { return null; } };
+
+  const shadowed = [];
+  const aliased = [];
+  const foreign = [];
+  for (const surface of SHADOWING) {
+    const base = path.join(consumerRoot, ...surface.split('/'));
+    let names;
+    try {
+      names = fs.readdirSync(base, { withFileTypes: true })
+        // A symlink TO a directory is a skill directory. Skipping links (which
+        // `Dirent.isDirectory()` does) would let a symlinked shadow slip past
+        // this gate entirely — a false green in the check itself.
+        .filter((e) => {
+          if (e.isDirectory()) return true;
+          if (!e.isSymbolicLink()) return false;
+          try { return fs.statSync(path.join(base, e.name)).isDirectory(); } catch { return false; }
+        })
+        .map((e) => e.name);
+    } catch (err) {
+      if (err.code === 'ENOENT') continue;          // absent = clean
+      // Unreadable is NOT clean — fail closed rather than report a shadow-free
+      // verdict we did not earn.
+      return { gate: '8', pass: false, error: `cannot inspect ${surface}: ${err.code} ${err.message}` };
+    }
+    for (const n of names) {
+      if (!ours.has(n)) { foreign.push(`${surface}/${n}`); continue; }
+      // Two names for ONE directory is not a collision. A consumer's plugin
+      // legitimately keeps a skill in `.agents/skills/<n>` and exposes it as
+      // `.claude/skills/<n>` via a symlink — verified in a consumer 2026-07-30,
+      // where `realpath` of both was identical. Whichever root the agent reads it
+      // gets the same file, so there is nothing ambiguous to fail on.
+      const a = real(path.join(base, n));
+      const b = real(path.join(consumerRoot, ...LIVE.split('/'), n));
+      if (a && b && a === b) { aliased.push(`${surface}/${n}`); continue; }
+      shadowed.push(`${surface}/${n}`);
+    }
+  }
+
+  if (shadowed.length > 0) {
+    return {
+      gate: '8',
+      pass: false,
+      error: `${shadowed.join(', ')} shadow${shadowed.length === 1 ? 's' : ''} a skill this bundle deploys in ` +
+        `${LIVE}/ — precedence between discovered roots is undefined, so remove the shadowing copy`,
+      details: { shadowed, aliased, foreign, ownedSkills: ours.size },
+    };
+  }
+  return { gate: '8', pass: true, details: { ownedSkills: ours.size, aliased, foreign } };
+}
+
 function gate1(consumerRoot) {
   // Read-only — surfaces uncommitted state for the operator to decide on.
   // The actual approval is recorded out-of-band (AskUserQuestion in the
@@ -477,7 +579,7 @@ function runGates(opts) {
   const manifestRes = loadConsumerManifest(consumerRoot);
   const results = [];
 
-  const needManifest = gates.some((g) => ['2A', '2B', '3', '5', '6'].includes(g));
+  const needManifest = gates.some((g) => ['2A', '2B', '3', '5', '6', '8'].includes(g));
   if (needManifest && !manifestRes.ok) {
     return [{ gate: 'preflight', pass: false, error: manifestRes.error }];
   }
@@ -493,6 +595,7 @@ function runGates(opts) {
       else if (g === '5') results.push(gate5(consumerRoot, manifest));
       else if (g === '6') results.push(gate6(manifest));
       else if (g === '7') results.push(gate7(consumerRoot));
+      else if (g === '8') results.push(gate8(consumerRoot, manifest));
       else results.push({ gate: g, pass: false, error: `unknown gate: ${g}` });
     } catch (err) {
       results.push({ gate: g, pass: false, error: `gate threw: ${err.message}` });

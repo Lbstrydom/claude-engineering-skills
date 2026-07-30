@@ -34,7 +34,7 @@ import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { assertContainedDestination } from './lib/install/safe-destination.mjs';
 import { inspectLegacySurfaces, describeLegacySurfaces } from './lib/install/legacy-surfaces.mjs';
 import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
-import { compareSkillSurfaces, listSurfaceNames, STALE_SURFACE } from './check-stale-skill-surface.mjs';
+import { compareSkillSurfaces, listSurfaceNames, STALE_SURFACE, SHADOWING_SURFACES } from './check-stale-skill-surface.mjs';
 // Reused rather than re-parsed: env-setting owns .env key resolution (dotenv's
 // last-wins semantics included), and it is pure — the caller supplies the text.
 import { resolveEnvValue } from './lib/env-setting.mjs';
@@ -688,18 +688,32 @@ function extractLiveSkillNames(files) {
 function inspectTargetSkillSurfaces({
   targetRoot, desiredLiveNames, logger = console, listSurfaceNamesFn = listSurfaceNames,
 }) {
-  const stale = listSurfaceNamesFn(targetRoot, STALE_SURFACE);
-  if (!stale.readable) {
-    logger.warn(`[stale-skill-surface] cannot inspect ${STALE_SURFACE} under ${targetRoot}: ${stale.error.message}`);
-    return { shadowed: [], orphans: [], inspectionError: stale.error };
+  // EVERY shadowing root, not just `.github/skills`. `.agents/skills` joined the
+  // set when that install surface was retired, and it was found live in a
+  // consumer the same day (a stale `ship/SKILL.md` against the synced one).
+  //
+  // Ownership is the predicate, not the directory: `desiredLiveNames` is what
+  // THIS run deploys, so a consumer's own `.agents/skills/` skills come back as
+  // `orphans` (advisory) and never fail their sync. We refuse to claim success
+  // when a name WE write is ambiguous; we do not police their content.
+  const shadowed = [];
+  const orphans = [];
+  for (const surface of SHADOWING_SURFACES) {
+    const read = listSurfaceNamesFn(targetRoot, surface);
+    if (!read.readable) {
+      logger.warn(`[stale-skill-surface] cannot inspect ${surface} under ${targetRoot}: ${read.error.message}`);
+      return { shadowed: [], orphans: [], inspectionError: read.error };
+    }
+    const cmp = compareSkillSurfaces({
+      staleNames: read.names, liveNames: desiredLiveNames, contentOf: () => null,
+    });
+    for (const s of cmp.shadowed) shadowed.push({ ...s, surface });
+    for (const o of cmp.orphans) orphans.push(`${surface}/${o}`);
   }
-  const { shadowed, orphans } = compareSkillSurfaces({
-    staleNames: stale.names, liveNames: desiredLiveNames, contentOf: () => null,
-  });
   if (shadowed.length > 0) {
     logger.warn(
-      `[stale-skill-surface] ${targetRoot}: ${shadowed.map(s => s.name).join(', ')} would be shadowed by ` +
-      `a stale ${STALE_SURFACE}/ tree — see check-stale-skill-surface.mjs --repo ${targetRoot}`,
+      `[stale-skill-surface] ${targetRoot}: ${shadowed.map(s => `${s.surface}/${s.name}`).join(', ')} would shadow ` +
+      `the skills this sync writes — see check-stale-skill-surface.mjs --repo ${targetRoot}`,
     );
   }
   // A non-overlapping stale name is not a live shadow, but it is still the
@@ -744,12 +758,15 @@ function inspectTargetSkillSurfaces({
  */
 function decideShadowFailure(inspection, repoName) {
   if (inspection.inspectionError) {
-    return `stale-skill-surface FAILURE: cannot verify ${STALE_SURFACE}/ for ${repoName}: ` +
+    return `stale-skill-surface FAILURE: cannot verify ${SHADOWING_SURFACES.join('/ or ')}/ for ${repoName}: ` +
       `${inspection.inspectionError.message} — this sync cannot confirm the target is not shadowed`;
   }
   if (inspection.shadowed.length === 0) return null;
-  return `stale-skill-surface FAILURE: ${inspection.shadowed.map(s => s.name).join(', ')} ` +
-    `shadowed by ${STALE_SURFACE}/ — remove that directory before this sync can succeed for ${repoName}`;
+  // Name the SURFACE per shadow, not just the skill: the remedy differs by
+  // directory, and with two shadowing roots "shadowed by .github/skills" would
+  // have been a wrong instruction half the time.
+  return `stale-skill-surface FAILURE: ${inspection.shadowed.map(s => `${s.surface}/${s.name}`).join(', ')} ` +
+    `would shadow the skills this sync writes — remove those copies before this sync can succeed for ${repoName}`;
 }
 
 /**
