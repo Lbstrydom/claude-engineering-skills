@@ -24,7 +24,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { resolveAdHocTarget, SOURCE_REPO_ROOT } from '../scripts/lib/consumer-repos.mjs';
+import { resolveAdHocTarget, SOURCE_REPO_ROOT, sourceRepoRoots } from '../scripts/lib/consumer-repos.mjs';
 
 let tmp;
 
@@ -114,7 +114,20 @@ describe('resolveAdHocTarget — S2: containment', () => {
   it('allows a sibling directory that merely shares a name prefix', () => {
     // Guards against a lexical `startsWith` check: "<root>-other" is NOT inside
     // "<root>", but a naive prefix test says it is.
-    const sibling = `${SOURCE_REPO_ROOT}-other`;
+    //
+    // Built off the OUTERMOST source root, not `SOURCE_REPO_ROOT`. Since
+    // 2026-07-30 the guard refuses every source root — the running checkout AND
+    // the main one — so when this suite runs from a worktree nested under the
+    // main checkout, `<worktree>-other` is still inside main and is refused for
+    // that reason, masking the property under test. The outermost root has no
+    // enclosing root by definition.
+    const roots = sourceRepoRoots();
+    const enclosedBy = (p, root) => {
+      const rel = path.relative(root, p);
+      return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+    };
+    const outermost = roots.filter(r => !roots.some(o => enclosedBy(r, o)));
+    const sibling = `${outermost[0]}-other`;
     let made = false;
     try {
       if (!fs.existsSync(sibling)) { fs.mkdirSync(sibling); made = true; }

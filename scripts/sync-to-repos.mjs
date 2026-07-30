@@ -937,6 +937,10 @@ async function main() {
   let totalUpdated = 0;
   let totalUnchanged = 0;
   let totalErrors = 0;
+  // Targets skipped because their directory is absent. Counted so the summary
+  // can distinguish "synced, nothing to change" from "reached nothing at all" —
+  // see the coverage line at the end of main().
+  let totalSkipped = 0;
 
   // `--target` (registry) and `--target-path` (arbitrary) are mutually
   // exclusive: they answer the same question differently, and silently
@@ -1019,6 +1023,7 @@ async function main() {
     if (!repo) {
       console.log(`${Y}Skipping ${rawRepo.name}${X}: directory not found at ${rawRepo.path}`);
       console.log('');
+      totalSkipped++;
       continue;
     }
 
@@ -1765,12 +1770,25 @@ async function main() {
       console.log(`\nRun without --dry-run to apply.`);
     }
   } else {
+    const reached = targetRepos.length - totalSkipped;
     if (totalErrors > 0) {
       console.log(`${R}Sync completed with errors${X}`);
+    } else if (reached === 0) {
+      // NOT the green line. A run that resolved no target at all propagated
+      // nothing, and saying "Sync complete" for it is the false green that hid
+      // the worktree-anchoring bug: a push printed success having written to
+      // zero consumers (2026-07-30). Still exit 0 — a machine that simply has
+      // not checked out the maintainer's consumers is a legitimate state, not
+      // an error, and nagging every public cloner on every push would be worse.
+      console.log(`${Y}Sync reached no consumer${X} — ${totalSkipped} target(s) skipped, nothing propagated`);
     } else {
       console.log(`${G}Sync complete${X}`);
     }
-    console.log(`  Created: ${totalNew}  Updated: ${totalUpdated}  Unchanged: ${totalUnchanged}  Errors: ${totalErrors}`);
+    console.log(
+      `  Targets: ${reached}/${targetRepos.length} reached`
+      + (totalSkipped ? ` (${totalSkipped} skipped)` : '')
+      + `  Created: ${totalNew}  Updated: ${totalUpdated}  Unchanged: ${totalUnchanged}  Errors: ${totalErrors}`,
+    );
     // Hook-refresh reminder (reference-integrity-gate Cluster C, R2-H3/R16): the
     // pre-push audit hook is versioned and refreshes on `hooks:install`, but sync
     // does not re-install git hooks (opt-in, per-consumer). A consumer running an
