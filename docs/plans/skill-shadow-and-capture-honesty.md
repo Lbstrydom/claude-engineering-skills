@@ -1,10 +1,10 @@
 # Plan: Global skill-surface shadow detection + capture-honesty and repo-scoping fixes
 
 - **Date**: 2026-07-30
-- **Status**: In Progress — Clusters B, C, E implemented + audited; consolidated
-  Gemini gate **APPROVE** (0 findings) 2026-07-30. **V1 (live-app empirical
-  verification) is still OUTSTANDING** and is a declared gate for Phases 2 and 4;
-  V2 is blocked on the ceded plan landing.
+- **Status**: Complete — Clusters B, C, E implemented + audited; consolidated
+  Gemini gate **APPROVE** (0 findings); **V1 and V2 both discharged** against a
+  live app on 2026-07-30. V1 caught a real bug the unit suite could not (see
+  below). Cluster A remains ceded (D17) and its owning plan has landed.
 - **Author**: Claude + Louis
 - **Scope**: backend
 - **Stack**: `js-ts` (detected from `package.json`; `stackKinds: [js-ts, postgres]`)
@@ -411,17 +411,37 @@ oracle. Contract:
   an offscreen `content-visibility:auto` subtree as not-visible because rendering
   is *skipped*, which is a viewport-state answer and would contradict the
   scrolled-out rule below. Omitting it keeps the primary branch on rendered-state.
-- **Detached node** (`!el.isConnected`) → `false`, checked first.
+- **Detached node** (`!el.isConnected`) → `false`, checked first. *Round-4 L1:* this
+  branch is **not reachable through `scanDom()`** — a detached element is not in the
+  document, so it can never be enumerated or reach `push()`. It is therefore asserted
+  by a **direct predicate test** (inject `PERCEIVABLE_SOURCE`, build a detached
+  element inside `page.evaluate`, assert `false`), not by a scanner fixture. The
+  guard stays in the predicate because `nav-audit`'s sentinel path calls it on an
+  element it holds a reference to, where detachment *is* reachable.
 - Fallback when `checkVisibility` is absent or throws: walk `el` and its
   ancestors via `getComputedStyle`, returning `false` on any `display:none`,
   `visibility:hidden|collapse`, `opacity:0`, `content-visibility:hidden`, or
-  `[inert]`/`[hidden]`. `content-visibility:hidden` is included so both branches
+  `[inert]`. `content-visibility:hidden` is included so both branches
   implement the *same* rendered-state policy (round-2 M1); `content-visibility:auto`
   is ignored in both, matching the omission above. **The ancestor walk is
   required** — a visible child of a hidden parent is not rendered, and the
   original draft's `offsetParent` shorthand gets this wrong for `position:fixed`
   (whose `offsetParent` is `null` while visible). The walk is the reason the
   fallback is not a one-liner.
+- **The `[hidden]` ATTRIBUTE is deliberately not tested in either branch**
+  (round-4 M4). The fallback previously matched `[hidden]` as an attribute while
+  the primary branch had no equivalent term, so a page whose CSS overrides the UA
+  default `[hidden] { display: none }` would get `true` from the primary branch and
+  `false` from the fallback — violating this decision's own requirement that both
+  branches implement one policy. **Resolved toward effective CSS**, because the
+  question this predicate answers is *rendered*, not *semantically marked*: with
+  the UA default in force, `[hidden]` produces `display:none` and `getComputedStyle`
+  catches it anyway, so nothing about the motivating case (`<input type="file"
+  hidden>`) changes; and where CSS deliberately overrides the default, the element
+  genuinely *is* rendered and calling it non-perceivable would be the wrong answer.
+  `[inert]` stays an explicit term in **both** branches precisely because it is
+  *not* a CSS-rendering concept and computed style cannot see it. A fixture pins
+  the CSS-overridden `[hidden]` case so the two branches cannot drift apart again.
 - Zero-size (`getBoundingClientRect()` w or h === 0) → `false`, subsuming the
   existing `:226-228` guard, which is then removed so there is one rule.
 - Clipped-but-rendered (scrolled out of viewport, `overflow:hidden`) → `true`.
@@ -587,11 +607,25 @@ precedence chain with no global default:
 
 | # | Input | Behaviour |
 |---|---|---|
-| 1 | `--all-repos` | Explicit global, and the output says so |
-| 2 | `--repo-id <uuid>` | Scope to it (current behaviour, preserved) |
-| 3 | `--repo <slug>` | Resolve slug → `repo_id`; unknown slug → error, never global |
+| 1 | `--all-repos` | Explicit global, and the output says so — **read-only commands only, see D21** |
+| 2 | `--repo-id <uuid>` | **Resolve the id to a repo record**, then scope to it; unknown id → error, never global (round-4 M5) |
+| 3 | `--repo <slug>` | Resolve slug → repo record; unknown slug → error, never global |
 | 4 | Neither, identity resolvable | Scope to this repo (**new default**) |
 | 5 | Neither, identity unresolvable | **Zeroed counts + `reason`**, exit 0, never global |
+
+> **Round-4 M5 — an explicit `--repo-id` must be resolved, not trusted.** An
+> earlier version of row 2 read *"scope to it (current behaviour, preserved)"* —
+> i.e. the uuid went straight into `WHERE repo_id = $1` unvalidated. A
+> syntactically valid but nonexistent uuid then returns zero rows, which D19
+> stamps `measured: true` — meaning **"this repo genuinely has no obligations"**
+> for a repo that does not exist. That is the *exact* zero-versus-unmeasured
+> conflation Issue 4 was reported through, surviving in the explicit-input path of
+> its own fix (the same shape as the `--all-repos` ordering bug below: a hole left
+> in the fix for the bug the fix is about). Both explicit forms now resolve to a
+> repo **record** before any read or write; only a verified record may yield
+> `scope.mode:'repo'` + `measured:true`. Unknown, malformed or inaccessible
+> explicit identity → error before store access. §9 asserts the unknown-slug and
+> unknown-id cases symmetrically, so neither path can regress alone.
 
 > **Gemini-gate fix — `--all-repos` was unreachable.** It previously sat at the
 > *bottom* of this table, below "identity resolvable → scope to this repo". Since
@@ -645,7 +679,39 @@ leaving it implicit would reproduce the bug in the fix. Both handlers return:
   Distinguishing these is why `reason` is a field rather than prose.
 - The worksheet additionally filters rows to the resolved repo **before
   rendering**, so no foreign row is ever presented as actionable (the read half
-  of D18).
+  of D18). Per D21 the worksheet can never return `scope.mode:'all-repos'` — that
+  member of the union is reachable only by `list-unlocked-fixes`.
+
+**D21 — scope capability is per-COMMAND, not one chain for all (#15, #5).**
+*Round-4 H1.* D13 offered `--all-repos` to both handlers while D18 required the
+worksheet to perform an ownership-safe targeted lookup and write scoped to **one
+resolved repo**. Those cannot both hold: a command that may legitimately run
+unscoped has no single repo identity to scope a write to. D18 also contradicted
+itself internally — it said `:2211` "becomes an explicit `{allRepos: true}`" and
+then, in the Gemini-gate correction below it, that the fix "removes the last
+`{allRepos: true}` from a write path."
+
+The chain in D13 is the **shared mechanism**; permitted scope modes are a
+**per-command declaration** on top of it:
+
+| Command | `--all-repos` | Required scope | Why |
+|---|---|---|---|
+| `list-unlocked-fixes` | **allowed** (self-labelled) | any chain outcome | Read-only reporting; a global view is a legitimate operator question |
+| `cmdLockWithTestWorksheet` | **rejected before store access** | exactly one resolved repo | Renders a per-repo actionable queue; a global queue has no coherent meaning |
+| the recorder at `:2211-2213` | **rejected before store access** | exactly one resolved repo | It *writes*; cross-tenant mutation is the worst case in this issue |
+
+- Rejection is an **error before any store call**, not a filtered result — so an
+  unscoped write can never be attempted and then cleaned up. Combining
+  `--all-repos` with `--repo`/`--repo-id` is likewise a contradiction → error.
+- **New store operation**: `getUnlockedFixById({ repoId, findingId })`, querying on
+  **both** predicates. This replaces the `LIMIT 20` list-scan D18 identified, and
+  it accepts no `allRepos` variant at all — the capability is absent from the
+  signature rather than merely unused, so no future caller can pass it.
+- The written `repo_id` comes from the **resolved scope**, never from the fetched
+  row (D18's rule, now structurally enforced: the row is only reachable *via* the
+  resolved `repoId`).
+- §9 asserts `--all-repos` is refused by both write-adjacent paths and accepted by
+  `list-unlocked-fixes`, so the asymmetry is pinned rather than conventional.
 
 **D15 — the nudge is non-blocking and stays that way (#20).** Fixing the scope
 makes the count *correct*; it does not make it a gate. Turning a newly-trustworthy
@@ -713,9 +779,17 @@ once.
 `{repoId}` or `{allRepos: true}`. Anything else — `undefined`, `null`, `{}` —
 **throws**. Verified call sites, all in `scripts/cross-skill.mjs`: `:695`, `:701`
 and `:2243` are already Phase 5's targets; `:1780` (`recommend-skills`) already
-passes a real `ref.repoRowId` and just gains the wrapper; `:2211` becomes an
-explicit `{allRepos: true}`. Five edits plus two signatures — the whole reason
-the root-cause fix is affordable here rather than deferred.
+passes a real `ref.repoRowId` and just gains the wrapper; `:2211` **stops calling
+the list function entirely** and moves to the targeted
+`getUnlockedFixById({repoId, findingId})` under a resolved repo scope (D21). Five
+edits plus three signatures — the whole reason the root-cause fix is affordable
+here rather than deferred.
+
+> **Round-4 H1 — superseded sentence.** This paragraph previously ended *"`:2211`
+> becomes an explicit `{allRepos: true}`"*, which contradicted the Gemini-gate
+> correction further down this same decision (and D21): the write path ends with
+> **no** `allRepos` variant reachable. The `{allRepos: true}` form survives only
+> on `list-unlocked-fixes`.
 
 **Second half of H9 — the worksheet's cross-tenant WRITE.** `:2211-2213` calls
 `getUnlockedFixes(null)`, finds the row by `findingId`, and then adopts
@@ -880,16 +954,17 @@ parallel session owns it). No axe-core dependency. No login-flow automation. No
 | ~~`tests/stale-skill-surface.test.mjs`~~ | **CEDED** | D17 — same. |
 | `skills/click-test/references/dom-scanner.md` | modify | `isPerceivable()` per D10; call inside `push()`; severity cap; remove the `:226-228` duplicate guard; retire the `:310` debt row. |
 | `skills/click-test/SKILL.md` | modify | Severity table + report shape gain `perceivable`; correct the `/ship`-gate premise; note the v2-persistence interaction. |
-| `scripts/lib/browser/perceivable.mjs` | **create** | D20 — canonical `isPerceivable`; exports `PERCEIVABLE_SOURCE` (string, for `page.evaluate` injection) + `isPerceivable` (Node-side tests). Resolves the H8/D16 Catch-22; consumed by both `nav-audit` and the click-test fence. |
+| `scripts/lib/browser/perceivable.mjs` | **create** | D20 — canonical predicate source. Exports **exactly** `PERCEIVABLE_SOURCE` (the function as a string, for `page.evaluate` injection), `PERCEIVABLE_FN_NAME` and `normaliseForDriftCheck`. **No Node-callable `isPerceivable`** — it needs a DOM this repo cannot provide (round-4 M3). Resolves the H8/D16 Catch-22; consumed by both `nav-audit` and the click-test fence. |
 | `tests/click-test-perceivability.test.mjs` | **create** | Round-2 M4 — the executable home §9 previously promised but did not provide. Extracts the scanner's fenced JS block from `dom-scanner.md` (keeping the Markdown authoritative — no copy-paste fork), evaluates it via Playwright `page.setContent()` against DOM fixtures, and asserts the D10 matrix + severity capping. |
 | `scripts/lib/nav/bootstrap-draft.mjs` | modify | `buildDraftCaptureWarning({mode})`; add pure `composeCaptureVerdict()` (D12). |
 | `scripts/nav-audit.mjs` | modify | Wire the verify-path warning; render the composed verdict; fix the backwards `:146` message. |
 | `scripts/lib/nav/verify.mjs` | modify | Observe `authSentinel`; return `authLiveness`; bump `NAV_VERIFY_TOOL_VERSION`. |
-| `scripts/lib/nav/schema.mjs` | modify | Optional `authSentinel` object field with Zod validation (D11). |
+| `scripts/lib/nav/schema.mjs` | modify | **Two distinct schema changes (round-4 M2), both required:** (a) the *contract input* schema gains the optional `authSentinel` object with Zod validation (D11); (b) `NavVerifyResultSchema` — the *persisted result* schema — gains optional `authLiveness` and the composed capture `status`/`warnings`. (b) is not optional polish: `writeVerifyResult` runs `safeParse` and Zod strips unknown keys, so without it the new fields render in-process and are silently dropped from disk (D12). |
+| `tests/nav-verify-store.test.mjs` | modify | Round-4 M2 — persistence round-trip for `live`, `dead`, `unverified`, **and** a pre-bump stored fixture that must be rejected with "re-run --verify". Cited by D12 but previously absent from this table, so the round-trip was an unowned requirement. |
 | `skills/nav-audit/SKILL.md` | modify | `authSentinel` authoring recipe + worked example (M1 — JSON forbids comments, so the recipe lives here, not as a stub comment). |
 | `tests/nav-verify.test.mjs` | modify | Verify-path warning, `mode` text, all 7 D11 truth-table rows, D12 precedence. |
 | `scripts/cross-skill.mjs` | modify | D13 precedence chain in `cmdListUnlockedFixes` (`:691`) **and** `cmdLockWithTestWorksheet` (`:2241`); `--all-repos` opt-in; D19 result schema; D18 explicit scope at all 5 call sites (`:695`, `:701`, `:1780`, `:2211`, `:2243`) + the foreign-`repo_id` write fence at `:2211-2213`. ⚠ **concurrently edited — see below.** |
-| `scripts/lib/store/plans-ship.mjs` | modify | D18 — `getUnlockedFixes` / `countUnlockedFixes` take `{repoId}` \| `{allRepos:true}` and **throw** on an omitted/ambiguous scope, moving the unsafe default off the data-access boundary. Not under concurrent edit. |
+| `scripts/lib/store/plans-ship.mjs` | modify | D18 + D21. `getUnlockedFixes` / `countUnlockedFixes` take `{repoId}` \| `{allRepos:true}` and **throw** on an omitted/ambiguous scope (`undefined`/`null`/`{}`/both), moving the unsafe default off the data-access boundary. **New**: `getUnlockedFixById({repoId, findingId})` — queries on both predicates, and takes **no** `allRepos` variant, so the write path structurally cannot go global. Every direct importer of these three is migrated in the same change; no legacy positional call survives. Not under concurrent edit. |
 | `skills/ship/SKILL.md` | modify | Step 0.5b: pass repo scope; state that the count is repo-scoped; note that a `reason` means "not measured", not "zero obligations". |
 | `tests/cross-skill-unlocked-scope.test.mjs` | create | Tier-1 tests for the D13 chain on both handlers (no existing test file covers these two). |
 | `docs/plans/skill-shadow-and-capture-honesty.md` | create | This plan. |
@@ -907,13 +982,21 @@ sustained).
 > those four files. Per the shared-working-tree rule: stage by name only, never
 > `git add -A`, and re-read both files immediately before editing rather than
 > relying on line numbers in this plan. Cluster E is deliberately last (§11) so
-> that work lands first. Issue 4 needs no change to
-> `scripts/lib/store/plans-ship.mjs`, which is *not* under concurrent edit — the
-> scoped branches it needs already exist there.
+> that work lands first. `scripts/lib/store/plans-ship.mjs` is *not* under
+> concurrent edit, so it can be changed freely.
+>
+> **Round-4 M1 correction.** This note previously said Issue 4 "needs no change to
+> `scripts/lib/store/plans-ship.mjs` — the scoped branches it needs already exist
+> there." That was true of the *original* Issue-4 design and became false when D18
+> moved the unsafe default to the data-access boundary. The two are materially
+> different: reusing the existing scoped branches leaves `undefined`/`null` armed
+> as a future global-query footgun, which is the very thing D18 exists to
+> disarm. **D18 is the sole authoritative contract for that file**; this note now
+> speaks only to concurrency, not to scope of change.
 
 ### 7b. Implementation Phases
 
-*(Gate 1 fires: 12 files, 3 subsystems.)*
+*(Gate 1 fires: 14 files, 3 subsystems.)*
 
 > **Phase 1 (global surface detection) was CEDED to
 > [`repo-scoped-skill-surfaces-and-installer.md`](repo-scoped-skill-surfaces-and-installer.md)
@@ -931,6 +1014,8 @@ Files: `scripts/lib/browser/perceivable.mjs` (create),
 `skills/click-test/references/dom-scanner.md` (modify),
 `skills/click-test/SKILL.md` (modify),
 `tests/click-test-perceivability.test.mjs` (create).
+**All behaviour tests for the predicate execute in a real browser** — no
+Node-callable export exists to unit-test (round-4 M3, D20).
 
 **Phase 3 — nav-audit verify capture-honesty wiring.** Add `mode` to
 `buildDraftCaptureWarning`; add pure `composeCaptureVerdict` (D12); call it on the
@@ -939,21 +1024,29 @@ message. Files: `scripts/lib/nav/bootstrap-draft.mjs` (modify),
 `scripts/nav-audit.mjs` (modify), `tests/nav-verify.test.mjs` (modify).
 
 **Phase 4 — nav-audit auth-liveness assertion.** `authSentinel` on the contract
-schema with Zod validation; observe it in `runVerify` at the D11 timing; return
-`authLiveness`; feed `composeCaptureVerdict`; degrade via the existing
+schema with Zod validation; **and `NavVerifyResultSchema` gains optional
+`authLiveness` + composed `status`/`warnings`** (round-4 M2 — without this the new
+fields never reach disk); observe the sentinel in `runVerify` at the D11 timing;
+return `authLiveness`; feed `composeCaptureVerdict`; degrade via the existing
 `unverifiableLayers` path; bump `NAV_VERIFY_TOOL_VERSION`; document the authoring
 recipe. Files: `scripts/lib/nav/schema.mjs` (modify),
 `scripts/lib/nav/verify.mjs` (modify), `scripts/nav-audit.mjs` (modify),
-`skills/nav-audit/SKILL.md` (modify), `tests/nav-verify.test.mjs` (modify).
+`skills/nav-audit/SKILL.md` (modify), `tests/nav-verify.test.mjs` (modify),
+`tests/nav-verify-store.test.mjs` (modify).
 
 **Phase 5 — Repo-scoping for the unlocked-fix backlog.** Implement the D13
-precedence chain in `cmdListUnlockedFixes` and `cmdLockWithTestWorksheet`; honour
-`--repo` by slug resolution; add `--all-repos` as the explicit global opt-in
-(D14); return `reason` on the unresolvable path and never widen to global; update
-Step 0.5b to pass scope and to distinguish "0 obligations" from "not measured".
-Apply D18 (explicit store scope at all 5 call sites + the foreign-`repo_id` write
-fence) and the D19 result schema. Re-read both source files immediately before
-editing (concurrency hazard, §7). Files: `scripts/cross-skill.mjs` (modify),
+precedence chain in `cmdListUnlockedFixes` and `cmdLockWithTestWorksheet`, with
+**both explicit identity forms resolved to a repo record** before any store access
+(round-4 M5); apply the **per-command scope capabilities** of D21 — `--all-repos`
+allowed only on `list-unlocked-fixes`, refused before store access on the
+worksheet and the recorder; add `--all-repos` as that command's explicit global
+opt-in (D14); return `reason` on the unresolvable path and never widen to global;
+update Step 0.5b to pass scope and to distinguish "0 obligations" from "not
+measured". Apply D18 (explicit store scope at all 5 call sites) and add
+`getUnlockedFixById({repoId, findingId})`, replacing the `LIMIT 20` list-scan on
+the write path so no `allRepos` variant is reachable there. Apply the D19 result
+schema. Re-read both concurrently-edited source files immediately before editing
+(§7). Files: `scripts/cross-skill.mjs` (modify),
 `scripts/lib/store/plans-ship.mjs` (modify), `skills/ship/SKILL.md` (modify),
 `tests/cross-skill-unlocked-scope.test.mjs` (create).
 
@@ -1077,6 +1170,28 @@ auth-liveness decision across all 7 D11 rows; the D13 scope-precedence chain.
 - **Both handlers are asserted, not just the reported one** —
   `cmdLockWithTestWorksheet` gets the same matrix, since it was found unscoped by
   inspection rather than by field failure and has no test today.
+- **`--all-repos` is REFUSED by the worksheet and the recorder, before any store
+  call** (D21), and accepted by `list-unlocked-fixes` — the asymmetry is pinned in
+  both directions, so neither a lost capability nor a leaked one regresses silently.
+- **Unknown `--repo-id <uuid>` errors exactly like an unknown `--repo <slug>`**
+  (round-4 M5) — asserted as a *pair*, since the whole defect was one explicit
+  form being validated and the other trusted. A well-formed-but-nonexistent uuid
+  must never produce `measured: true`.
+- **A foreign `findingId` is refused** — `getUnlockedFixById({repoId, findingId})`
+  with a finding belonging to another repo returns not-found and **no**
+  `regression_specs` row is written; the assertion is on the absence of the write,
+  not merely on the error text.
+- **Persisted nav results round-trip** (round-4 M2) — `authLiveness` and the
+  composed `status` survive `writeVerifyResult` → read, for `live` / `dead` /
+  `unverified`; a pre-bump stored fixture is rejected with "re-run --verify".
+  Asserted through the store, because Zod's key-stripping means an in-process
+  assertion would pass while disk silently lost the fields.
+- **Detached-node perceivability is asserted directly, not via `scanDom()`**
+  (round-4 L1) — scanner fixtures cover only DOM-connected elements that can
+  actually reach `push()`.
+- **CSS-overridden `[hidden]` agrees across both branches** (round-4 M4) — the
+  primary and fallback paths return the same verdict for an element whose CSS
+  restores `display:block` over the UA default.
 
 **Sandbox honesty.** With Issue 1 ceded, this plan adds **no pre-push check**, so
 the "can it go green in a clean checkout having read nothing?" question applies
@@ -1246,3 +1361,127 @@ uncertainty a third reviewer could resolve. Continuing would be rigor-chasing
 against an infinite refinement surface, which is exactly what both caps exist to
 prevent. Residual risk is carried into implementation, where `/audit-code`
 verifies against real code — the right artifact for what remains.
+
+---
+
+**Round 4 — post-cap, triggered by a scope change, not by rigor-chasing**
+(`gpt-5.6-terra`, 152.5s, 32.3K in / 7.3K out) — `NEEDS_REVISION`, H:1 M:5 L:1.
+
+**Why a 4th round at all, when round 3 recorded a STOP.** The stop decision above
+was correct *for the document it was made on*. Issue 4 was then **added after that
+decision** (downstream field report, 2026-07-30) and D17-D21 restructured Issues 1
+and 4 substantially — so the plan the caps were spent on is not the plan on disk.
+A cap protects against re-auditing the *same* artifact for diminishing returns; it
+is not a licence to ship an unaudited section. No prior ledger existed on disk, so
+this ran fresh (no R2+ suppression) — an accepted cost, since suppression would
+have been keyed to the pre-Issue-4 document anyway.
+
+**The findings vindicate the decision to re-run**: all 7 are **internal
+self-contradictions introduced by accumulated editing**, not rigor pressure. Every
+one names two places in the plan that cannot both be true. That is the failure mode
+of a document edited across four sessions, and it is exactly what a fresh reader
+catches and an incremental one does not.
+
+All 7 accepted and fixed; none rebutted, deliberately — a rebuttal argues about
+*validity*, and each finding was confirmed by reading the two conflicting passages
+side by side, which leaves nothing to deliberate:
+
+| # | Contradiction | Resolution |
+|---|---|---|
+| H1 | D13/D19 gave `--all-repos` to the worksheet; D18 required one resolved repo for its ownership-safe lookup **and write**. D18 also contradicted *itself* (`:2211` "becomes `{allRepos:true}`" vs "removes the last `{allRepos:true}` from a write path"). | **D21** — scope capability is per-command. `--all-repos` is read-only-command-only, refused before store access on the worksheet and recorder. New `getUnlockedFixById({repoId, findingId})` has no `allRepos` variant *in its signature*. |
+| M1 | §7 required changing `plans-ship.mjs` (D18); the concurrency note said Issue 4 "needs no change" to it. | Stale sentence removed; **D18 is the sole authority** for that file. The note now speaks only to concurrency. |
+| M2 | D12 required `NavVerifyResultSchema` to gain the new fields and cited `tests/nav-verify-store.test.mjs`; §7 listed neither. | Schema row split into contract-input vs persisted-result; test file added to §7, Phase 4 and §9 with a pre-bump-fixture case. |
+| M3 | §7 still promised a Node-callable `isPerceivable` "for Node-side tests"; D20 records that it was deliberately **not built** (no DOM available). | §7 and Phase 2 now list the three real exports; all predicate tests run in-browser. |
+| M4 | Fallback treated `[hidden]` as non-perceivable; primary branch had no such term — so CSS overriding the UA default made the branches disagree, violating D10's own one-policy rule. | Resolved toward **effective CSS**: attribute check dropped from the fallback. `[inert]` stays explicit in both (not a CSS concept). Fixture pins it. |
+| M5 | `--repo <slug>` was validated but `--repo-id <uuid>` was trusted, so a nonexistent-but-well-formed uuid returned `measured:true` — "genuinely no obligations" for a repo that does not exist. | Both explicit forms resolve to a repo **record** before any access; symmetric tests. |
+| L1 | D10 required a detached-node case, but the prescribed test reaches the predicate only via `scanDom()`, which cannot enumerate a detached element. | Case moved to a direct in-page predicate test; scanner fixtures cover connected elements only. |
+
+**Pattern worth recording**: M5 and the round-2 `--all-repos` ordering bug are the
+same shape — *the fix for a silently-ignored input silently ignored a different
+input of the same kind*. Twice in one plan. When fixing an input-validation defect,
+enumerate **every** input on that path, not the one that was reported.
+
+**STOP — no round 5, and no third Gemini round.** The GPT surface is now genuinely
+converged on this artifact: round 4 found contradictions rather than design gaps,
+and the fixes were mechanical reconciliations of text that already agreed on
+intent. Remaining risk is implementation-shaped (do the signatures actually get
+migrated at every call site? does the fence really embed the predicate?) and
+belongs to `/audit-code` against real code — the right artifact, per the same
+reasoning round 3 used.
+
+---
+
+## V1 / V2 — empirical verification results (2026-07-30)
+
+Run against a live deployed instance of the wine-cellar app.
+
+### V1 found a real bug that the unit suite could not
+
+First live run: **331 findings, only 2 perceivable** — 329 capped to P3. The
+probe showed `<header>` and `<main>` were `display:flex`/`block`,
+`visibility:visible`, `opacity:1`, with 1248×90 and 1248×662 rects — plainly
+visible — yet the predicate returned `false`. Both carried **`[inert]`**: the app
+had a modal open and inerted the background, which is the standard pattern.
+
+One attribute suppressed almost an entire page. That is the **inverse** of the
+defect this work targeted, and strictly worse: noise merely annoys, but silent
+suppression hides real, visible violations.
+
+**Root cause was a design error, not a slip.** `inert` is an *interactivity*
+property, not a visibility one — an inert element is still painted. The Gemini
+gate had correctly observed that `checkVisibility()` ignores `inert` while the
+fallback walk honoured it, so the branches disagreed; that finding was accepted
+and "fixed" by **adding** the check to the primary branch. The correct resolution
+was to **remove** it from the fallback. Both branches now answer only "is this
+painted?".
+
+The lesson generalises: a reviewer flagging an *inconsistency* tells you two
+things disagree, not which one is right. Aligning on the wrong side is a way to
+close a finding while making the code worse.
+
+Post-fix live re-run: **29 perceivable, 302 capped, 0 unknown** (from 2/329).
+
+**Honest limits of the V1 click-test leg:**
+- The original field report's *"4 of 5 P0 `input-no-name` were hidden file
+  inputs"* is **NOT reproducible** on the current app state — there are **zero**
+  `input-no-name` findings and `P0_effective: 0`. That specific count is
+  therefore *unconfirmed*, not verified. What is verified is the cap mechanism
+  itself on a real page, and the `aria-hidden-focusable` split (271
+  non-perceivable vs 24 perceivable) which matches the reported pattern in kind.
+- The tri-state never returned `null` on this app, so the unknown path is
+  covered only by the fixture suite.
+
+### V1 — nav-audit auth-liveness: four legs, all as designed
+
+| Leg | `authLiveness` | status | `degrade` |
+|---|---|---|---|
+| no `--storage-state` | `n/a` | `shells-empty` | **false** |
+| `--storage-state`, no sentinel | `unverified` | `auth-unverified` | true |
+| `--storage-state` + sentinel observed | `live` | `live-empty-shells` | false |
+| `--storage-state` + sentinel absent | `dead` | `auth-dead` | true |
+
+Row 1 is the important one: an ordinary unauthenticated run does **not** degrade.
+An earlier draft degraded on `status !== 'live'`, which would have suppressed
+findings on every no-auth run — the D12/H7 contradiction, confirmed fixed live.
+
+`AUTH SESSION DEAD` reaches stderr as the **primary** warning with the
+empty-shell list demoted to detail, per the D12 precedence rule.
+
+**Synthetic leg, disclosed:** the `live` row points the sentinel at an element
+that is present on the served page. A genuinely authenticated session was not
+established — that needs credentials, which is out of bounds — so the
+observed→`live` branch is verified *mechanically*, not end-to-end.
+
+### V2 — the ceded Issue 1, verified as a consumer
+
+Its owning plan landed as `0965d54` + `b7efb9e`.
+
+- `install-skills.mjs --surface claude` now **refuses** with a migration message
+  pointing at `--uninstall-legacy`.
+- `~/.claude/skills/` is **empty (0 entries)** and the global receipt is absent —
+  the stranded tree that opened this whole investigation is gone, so the
+  precedence hazard is closed at the root.
+- `check-stale-skill-surface.mjs` still covers the global + `.agents` surfaces
+  (it imports `inspectLegacySurfaces`) and correctly reports clean now that
+  there is nothing to find — verified as *detection intact*, not as detection
+  removed.
