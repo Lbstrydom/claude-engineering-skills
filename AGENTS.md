@@ -631,7 +631,8 @@ call-site list: [`docs/reference/anthropic-backend-routing.md`](docs/reference/a
 ## Shadow Final-Review A/B — CLOSED 2026-07-28, verdict KEEP
 
 Opt-in, observation-only 2nd final reviewer, run blind to test whether a second
-gate earns its keep. **Experiment over; shadow is OFF.** `FINAL_REVIEW_SHADOW=claude-opus|gemini`
+gate earns its keep. **Committed default unset; re-enabled locally 2026-07-29** (KEEP
+was the verdict; the flag had drifted off). `FINAL_REVIEW_SHADOW=claude-opus|gemini`
 (unset ⇒ path not entered, byte-identical; no-op under Azure; never gates the build).
 Verdict/method/stopping rule + three dated corrections: [briefing](docs/research/final-review-shadow-adjudication-briefing.md) · [plan](docs/plans/final-review-shadow-reviewer.md).
 Three results that generalise — **read before any reviewer/model comparison**:
@@ -649,9 +650,7 @@ Three results that generalise — **read before any reviewer/model comparison**:
   PowerShell vars in CLI examples, **never `<angle-brackets>`** (PowerShell reserves
   `<` — unpasteable); render a `--worksheet`, not raw JSON.
 
-→ Measurement how-to (`final-review-stats --worksheet`), attribution schema
-(`source_model`, `bucket`, idempotent-replace persistence), and the full
-stopping-rule rationale: [`docs/plans/final-review-shadow-reviewer.md`](docs/plans/final-review-shadow-reviewer.md).
+→ Measurement how-to + attribution schema: [`final-review-shadow-reviewer.md`](docs/plans/final-review-shadow-reviewer.md). **Before building a bigger instrument**, read [`final-review-shadow-bakeoff.md`](docs/plans/final-review-shadow-bakeoff.md)'s PARKED banner (right-sizing) + [`final-review-credit-and-cheap-shadow.md`](docs/plans/final-review-credit-and-cheap-shadow.md) §1.2 (cheap-gateway evidence).
 
 ## Tiered-Recall Audit Pipeline
 

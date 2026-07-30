@@ -1,6 +1,66 @@
 # Project Status Log
 
-## 2026-07-28 (latest) — cheap final-reviewer bake-off: routing fixed, schema wired, window opened
+## 2026-07-29 (latest) — the bake-off we audited to APPROVE and then parked
+
+Docs-only ship: two plans, one AGENTS.md correction. No code changed. The
+substance is a **decision not to build something we had already fully specified.**
+
+**What happened.** A follow-up to the shadow A/B's KEEP verdict grew into a
+4-arm bake-off (Gemini primary × Gemini-self-shadow × Kimi × Opus) to measure the
+thing the closed experiment couldn't: *marginal* value. `/audit-plan` took it
+through 3 GPT + 2 Gemini rounds, 29/29 findings fixed, ending `arch_coherence:
+Strong`. Then we asked a question the audit structurally cannot ask — *should this
+exist at this size?* — and **parked it**.
+
+- **The economics were inverted.** Six tables, migrations, a journaled run
+  lifecycle, a labelled calibration corpus, a 12-row verification matrix — ~a
+  week of solo engineering to settle a **~$20–30/month** decision.
+- **Catch rate isn't the bottleneck.** 3 of 10 accepted shadow findings ever got
+  a code fix; 63 were never adjudicated; `remediation_state` is NULL nearly
+  everywhere. We already accept more real defects than we close.
+
+**Three findings that were worth the audit anyway** — each would have produced a
+*confidently wrong* result, not merely a rough one:
+
+- The plan's own risk table claimed clustering errors bias **against** KEEP.
+  Backwards: false *splits* inflate `marginal` and bias **toward** the incumbent.
+- The mechanism readout compared `exclusive(S1)` against `exclusive(S2|S3)` —
+  **definitionally impossible**, since a cluster exclusive to S2 contains no S1
+  finding by construction. It would have returned a null result for every
+  possible dataset.
+- Excluding failed-run spend from the cost ratio **subsidised a flaky arm**: its
+  parse failures void whole runs while none of that waste reached its own number.
+
+**What we did instead** (all three cheap, two already done):
+
+1. **Item 1 was already built.** `recordFinalReviewFix` + `adjudicateFinalReviewFinding`
+   exist with tests and CLIs — `recordFinalReviewFix`'s docstring says it was
+   written precisely because *"14 accepted, 0 converted to fixes was not a
+   measurement."* But **zero SKILL.md references either CLI**, so nothing ever
+   calls them. Wiring gap, not an engineering gap. Had we gone straight to
+   `/cycle` we would have rebuilt a working subsystem — the stale-plan trap
+   AGENTS.md warns about, hit live.
+2. **Shadow re-enabled** (`FINAL_REVIEW_SHADOW=claude-opus`, local `.env`). KEEP
+   was the verdict and the flag had drifted off. Drift, not a decision.
+3. **Kimi smoke test needed zero code.** The `openrouter` descriptor already
+   carries the mandated routing pins, so `--provider openrouter` +
+   `FINAL_REVIEW_MODEL` is a complete primary swap. On this repo's own 53K-token
+   transcript: Kimi k2-thinking, parseable CONCERNS, 92 s, **~$0.044** (Gemini
+   ~$0.15, Opus ~$1.45). Viable reviewer — but **zero finding overlap with
+   Gemini**, and all its findings were "specify X more precisely" rather than
+   consistency defects. One data point, reported as one.
+
+**Ships next**: [`final-review-credit-and-cheap-shadow.md`](docs/plans/final-review-credit-and-cheap-shadow.md)
+(Approved; GPT 3 rounds + Gemini R2 **APPROVE, 0 findings**). Its audit earned
+its keep by *falsifying* claims rather than adding rigor — including that
+`recordFinalReviewFix` never writes `user_action` (so a fixed-but-unadjudicated
+finding would nag forever), and that the store's queue selects `user_action` but
+**not** `remediation_state`, making the classification unbuildable as specified.
+
+**Process note**: a Gemini gate round hit a 120 s transport timeout. Retried, not
+counted — a timeout is a failure, not a pass, and that gate is mandatory.
+
+## 2026-07-28 — cheap final-reviewer bake-off: routing fixed, schema wired, window opened
 
 Follow-on from the shadow A/B closing KEEP at $1.45/run. Three commits
 (`208eba2`, `862642d`, `8a1eb99`) chasing "can a cheaper model do this job?"
