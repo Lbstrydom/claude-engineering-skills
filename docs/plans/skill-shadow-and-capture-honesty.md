@@ -418,16 +418,45 @@ oracle. Contract:
   element inside `page.evaluate`, assert `false`), not by a scanner fixture. The
   guard stays in the predicate because `nav-audit`'s sentinel path calls it on an
   element it holds a reference to, where detachment *is* reachable.
-- Fallback when `checkVisibility` is absent or throws: walk `el` and its
-  ancestors via `getComputedStyle`, returning `false` on any `display:none`,
-  `visibility:hidden|collapse`, `opacity:0`, `content-visibility:hidden`, or
-  `[inert]`. `content-visibility:hidden` is included so both branches
-  implement the *same* rendered-state policy (round-2 M1); `content-visibility:auto`
-  is ignored in both, matching the omission above. **The ancestor walk is
-  required** — a visible child of a hidden parent is not rendered, and the
-  original draft's `offsetParent` shorthand gets this wrong for `position:fixed`
-  (whose `offsetParent` is `null` while visible). The walk is the reason the
-  fallback is not a one-liner.
+- Fallback when `checkVisibility` is absent or throws — **two different scopes, and
+  the split is the contract** (Gemini gate, round-4 G1):
+  - **On `el` only**: `getComputedStyle(el).visibility` ∈ `{hidden, collapse}` →
+    `false`. `visibility` is an **inherited** property, so the computed value on the
+    element *already* accounts for inheritance — and, critically, a descendant may
+    override a hidden ancestor with `visibility: visible` and be fully rendered.
+    Walking ancestors for `visibility` would therefore return `false` for an element
+    `checkVisibility()` correctly calls `true`, breaking this decision's own
+    one-policy rule. Reading it once on the target is both sufficient and correct.
+  - **On `el` and every ancestor**: `display:none`, `opacity:0`,
+    `content-visibility:hidden`. These are *not* overridable from below —
+    an ancestor with `display:none` removes the whole subtree no matter what a
+    descendant declares — so the walk is required for them.
+  - **`[inert]` is NOT tested at all, in either branch.** *Superseded by a live run,
+    commit `03bd0ad`.* Earlier text in this decision (and the round-4 M4 note below)
+    argued `[inert]` must be an explicit term in both branches, on the reasoning that
+    `checkVisibility()` ignores it. **That reasoning was right about the mechanism and
+    wrong about the conclusion**: `inert` is an *interactivity* property, not a
+    visibility one — an inert element is still painted and the user can still see it.
+    A live run against a real app suppressed **329 of 331** elements, because the app
+    had a modal open and marked `<header>`/`<main>` inert — the standard
+    background-inerting pattern — while both were `display:flex`/`block`,
+    `visibility:visible`, `opacity:1`, at 1248×90 and 1248×662. Excluding `inert`
+    makes the two branches agree *by removing the term from both*, which is the same
+    one-policy outcome by a simpler route. **Do not re-add it.**
+
+  `content-visibility:hidden` is included so both branches implement the *same*
+  rendered-state policy (round-2 M1); `content-visibility:auto` is ignored in both,
+  matching the omission above. **The ancestor walk is still required** for the
+  non-inherited properties, and the original draft's `offsetParent` shorthand gets
+  this wrong for `position:fixed` (whose `offsetParent` is `null` while visible).
+  That, plus the two-scope split, is why the fallback is not a one-liner.
+
+  *The motivating field case is unaffected*: the ~31 `aria-hidden-focusable`
+  findings sat inside a `visibility:hidden` subtree **without** overriding it, so
+  their computed `visibility` is the inherited `hidden` and they still demote. A
+  fixture pins the overriding case (`visibility:visible` child of a
+  `visibility:hidden` parent → perceivable) so the two branches cannot diverge here
+  again.
 - **The `[hidden]` ATTRIBUTE is deliberately not tested in either branch**
   (round-4 M4). The fallback previously matched `[hidden]` as an attribute while
   the primary branch had no equivalent term, so a page whose CSS overrides the UA
@@ -439,9 +468,10 @@ oracle. Contract:
   catches it anyway, so nothing about the motivating case (`<input type="file"
   hidden>`) changes; and where CSS deliberately overrides the default, the element
   genuinely *is* rendered and calling it non-perceivable would be the wrong answer.
-  `[inert]` stays an explicit term in **both** branches precisely because it is
-  *not* a CSS-rendering concept and computed style cannot see it. A fixture pins
-  the CSS-overridden `[hidden]` case so the two branches cannot drift apart again.
+  A fixture pins the CSS-overridden `[hidden]` case so the two branches cannot drift
+  apart again. *(This note originally also claimed `[inert]` must stay an explicit
+  term in both branches — **falsified by a live run**; see the `[inert]` bullet
+  above. It is excluded from both branches.)*
 - Zero-size (`getBoundingClientRect()` w or h === 0) → `false`, subsuming the
   existing `:226-228` guard, which is then removed so there is one rule.
 - Clipped-but-rendered (scrolled out of viewport, `overflow:hidden`) → `true`.
@@ -1485,3 +1515,126 @@ Its owning plan landed as `0965d54` + `b7efb9e`.
   (it imports `inspectLegacySurfaces`) and correctly reports clean now that
   there is nothing to find — verified as *detection intact*, not as detection
   removed.
+
+**Gemini gate — round 3, invoked under the genuine-net-new-design-bug exception**
+(`claude-opus-5` fallback, 109s) — `CONCERNS`, 1 new (MEDIUM), 0 wrongly dismissed.
+Accepted and fixed.
+
+**G1 — the `visibility` ancestor walk was CSS-incorrect.** D10's fallback walked
+`el` and every ancestor returning `false` on `visibility:hidden|collapse`. But
+`visibility` is an **inherited** property, so a descendant can declare
+`visibility: visible` inside a hidden subtree and be fully rendered.
+`checkVisibility()` (primary branch) evaluates that as `true` while the walk would
+say `false` — the same branch-disagreement class as round-4 M4, in the same
+decision, found one edit later. Fixed by splitting the fallback into two scopes:
+`visibility` is read **once on the target** (its computed value already carries
+inheritance), while `display:none` / `opacity:0` / `content-visibility:hidden` /
+`[inert]` — none of which a descendant can override — keep the ancestor walk. The
+field-motivating case is unaffected, since those elements inherited `hidden`
+without overriding it.
+
+**Why this exceeded the 2-round Gemini cap, and why it stops here.** The cap's
+exception is a *concrete net-new design bug*, and G1 is exactly that: a wrong CSS
+semantic that would have shipped a predicate whose two branches disagree — not a
+completeness nit, not "specify X". The fix is one paragraph with no design
+uncertainty left, so a 4th gate round would resolve nothing and would be the
+rigor-chasing the cap exists to prevent. **Gate closed at CONCERNS-then-fixed.**
+
+**Note on the shadow reviewer** (observation-only, never gates): buckets were
+`both:0, primary-only:1, shadow-only:3`. Zero overlap between primary and shadow on
+this artifact. Per the standing finding that *"found it" ≠ "found it first"*, the
+three shadow-only items are **not** adopted here — the shadow is not a second gate,
+and adopting its output would silently convert an A/B instrument into one.
+
+**Convergence, stated plainly.** Round 4 + gate round 3 found **two instances of
+one bug class** in D10 (M4's `[hidden]` attribute check, G1's `visibility` walk):
+both were the fallback branch disagreeing with the primary branch. Two independent
+reviewers found two different instances, which is evidence the *class* was
+under-specified rather than that either instance was unlucky. D10 now states, for
+every property it tests, **which scope it is tested at and why** — the structural
+fix, rather than a third patch. If a third instance appears during implementation,
+that is a signal to replace the hand-written fallback with a single documented
+policy table, not to patch again.
+
+---
+
+## Round-4 implementation delta (verified against committed code, 2026-07-30)
+
+Round 4 + gate round 3 were run **after** Clusters B/C/E had already landed, so
+most of their findings describe code that was written in parallel. Each was checked
+against the working tree rather than assumed open. **Do not re-implement the rows
+marked DONE.**
+
+| # | State in code | Evidence |
+|---|---|---|
+| M5 (`--repo-id` unvalidated) | **DONE — and better than this plan specified.** `resolveShipNudgeScope` (`cross-skill.mjs:713-772`) validates against `listRepoIds()`, *translates* an arch-memory `repo_uuid` to the `audit_repos.id` the views key on, and refuses with `repo-id-unverifiable` when the store cannot be read rather than reporting a number. | commit `8d9c2e8` |
+| M2 (result schema + store test) | **DONE.** `NavVerifyResultSchema` carries `authLiveness` and `captureVerdict{status,degrade,warnings}` (`nav/schema.mjs:184-190`); `tests/nav-verify-store.test.mjs` exists. | — |
+| M3 (no Node-callable predicate) | **DONE.** `perceivable.mjs` exports exactly `PERCEIVABLE_FN_NAME`, `PERCEIVABLE_SOURCE`, `normaliseForDriftCheck`. | — |
+| H1 — cross-tenant **write** fence | **DONE, under a different name.** The targeted lookup shipped as `findUnlockedFixInRepo({repoId, findingId})` (`plans-ship.mjs:542`) — both predicates, throws on either missing, **no `allRepos` variant in the signature**. The recorder resolves identity first and takes `repo_id` from the resolved scope (`cross-skill.mjs:2333-2352`). **D21's `getUnlockedFixById` is that function; the code name is authoritative and this plan's name is the stale one.** | — |
+| **G1 — `visibility` inside the ancestor walk** | **OPEN.** `perceivable.mjs:113` tests `cs.visibility` on every ancestor. `visibility` is inherited, so a `visibility:visible` descendant of a hidden parent is rendered — the walk returns `false` where `checkVisibility()` returns `true`. Fix: read it **once on `el`**. | `perceivable.mjs:110-117` |
+| **M4 — `[hidden]` attribute in the walk** | **OPEN, narrow.** `perceivable.mjs:116` returns `false` on any `[hidden]` ancestor. Correct under the UA default (it *is* `display:none`, already caught by computed style) but wrong when CSS overrides it, which is the same branch-disagreement class as G1. Fix: drop the attribute test. | `perceivable.mjs:116` |
+| **H1 residual — worksheet accepts `--all-repos`** | **OPEN, narrow.** `cmdLockWithTestWorksheet` (`cross-skill.mjs:2390`) passes the generic `storeScopeFor(scope)`, so `--all-repos` still renders a *global* queue of pasteable `lock-with-test` commands. Consequence is bounded to a misleading worksheet — the recorder refuses foreign findings — but D21 requires refusal **before store access**. | `cross-skill.mjs:2390` |
+| **L1 — detached-node case untested** | **OPEN, minor.** The `!el.isConnected` guard exists (`perceivable.mjs:96`); no test covers it, and it is unreachable via `scanDom()`. Add the direct in-page predicate assertion. | — |
+
+**One plan claim was falsified by the implementation, not the reverse.** Round-4 M4
+asserted `[inert]` must be an explicit term in both branches. A live run
+(commit `03bd0ad`) removed it: `inert` is an interactivity property, an inert element
+is still painted, and the term suppressed **329 of 331** elements on a real app whose
+open modal inerted a fully-visible `<header>`/`<main>`. D10 now records the exclusion
+and says *do not re-add it*. This is the pre-ship-empirical-verify doctrine paying
+out exactly as intended — a live run beat four rounds of static review, and the
+correction flows plan-ward.
+
+**Net remaining work: two one-line predicate corrections, one guard, one test.** Both
+predicate fixes are the *same bug class* (a property tested at the wrong scope in the
+fallback branch), which is why D10 now states the scope for every property it tests.
+
+---
+
+## Round-4 delta — implemented, gated, and the stop decision
+
+All four open rows above are closed. Verified: full suite **9529 pass / 0 fail /
+22 skipped**; `tests/click-test-perceivability.test.mjs` **16/16 in real headless
+Chromium** (running, not skipped); `tests/cross-skill-unlocked-scope.test.mjs` 37/37.
+
+| Item | Change |
+|---|---|
+| G1 | `visibility` moved out of the ancestor walk, read once on the target (inherited property). Regression test: `visibility:visible` child of a `visibility:hidden` parent keeps P0. |
+| M4 | `[hidden]` attribute test removed from the fallback. Regression test: with `[hidden]{display:block}` the element is perceivable; the `<input type="file" hidden>` demotion still passes. |
+| L1 | Detached-node case asserted directly against the injected predicate inside `page.evaluate`, not via a scanner fixture that could never fail. |
+| H1 residual | `lock-with-test --worksheet` refuses `--all-repos` with `all-repos-unsupported` **before any store call**; `list-unlocked-fixes` keeps it. Test pins the asymmetry in **both** directions and asserts the guard precedes the store call. |
+
+**A HEAD-level break closed in passing.** A concurrent session swept the
+`dom-scanner.md` fence edit into commits `dd677848`/`dd1b4b5a` **without** its
+canonical source module, so at those commits the fence carried the new predicate
+while `perceivable.mjs` carried the old one — and the drift test asserts
+containment, so `main` was red until this delta landed. Cause: a shared working
+tree, which §7's concurrency note anticipated; the mitigation that mattered was
+staging by name and re-reading before editing.
+
+### Consolidated Gemini gate — 2 rounds, then STOP at CONCERNS-then-fixed
+
+| Round | Verdict | Finding | Disposition |
+|---|---|---|---|
+| 1 | `CONCERNS` | **G1** the walk used `parentElement`, which is `null` for a shadow root's direct child → an invisible *host* was missed. **G2** the new test bounded its slices with hardcoded `+2400`/`+1200` offsets. | Both fixed. G2 was a false-**pass** risk, not untidiness: a test whose bound depends on the length of what it measures cannot be trusted to fail. Replaced with `fnBody()`, bounded at the next top-level declaration. |
+| 2 | `CONCERNS` | **G1** slotted light-DOM elements bypass the shadow tree where their `<slot>` lives; follow `assignedSlot` first. | Fixed (one line), **gate closed without a round 3**. |
+
+**Why stop.** Rounds 1 and 2 produced the *third and fourth* correction to one
+code path, all of the same class — "the fallback disagrees with
+`checkVisibility()`" — at ~1 per round. That is the cap's explicit stop signal
+(rising nit-per-round on an infinite refinement surface), and a third round would
+predictably surface a fifth composed-tree edge case.
+
+**The trend is the finding, and it is recorded in the module rather than patched
+again.** Each fix was correct in isolation, but the branch **only executes when
+`checkVisibility` is absent**, and both consumers drive Playwright's Chromium 105+
+where it is always present — so none of the four corrections changed observable
+behaviour for any shipped caller. `perceivable.mjs` now carries an explicit
+**revisit trigger**: on a fifth instance, delete the fallback and return `null`
+(UNKNOWN — which the tri-state contract already handles honestly), or take a real
+composed-tree dependency. Continuing to hand-maintain a shadow implementation of a
+browser API for a path that never runs is the over-engineering cliff, named so the
+next reader does not walk into it.
+
+**Shadow reviewer** (observation-only): round 1 `both:0 / primary-only:2 /
+shadow-only:3`. Not adopted — the shadow is an A/B instrument, not a second gate.

@@ -2383,6 +2383,20 @@ async function cmdLockWithTestWorksheet() {
   // operator another repo's findings to "fix".
   const scope = await resolveShipNudgeScope();
   if (scope.error) return emit({ ok: false, error: scope.error, reason: scope.reason });
+  // PER-COMMAND SCOPE CAPABILITY (plan D21). `--all-repos` is legitimate on the
+  // read-only `list-unlocked-fixes` — "show me every repo's backlog" is a real
+  // operator question. It is NOT legitimate here: every row this worksheet prints
+  // carries a pasteable `lock-with-test` command, and `lock-with-test` refuses a
+  // finding outside the current repo (the cross-tenant write fence). A global
+  // worksheet would therefore be a queue of instructions that cannot be followed
+  // — the same "plausible output nobody questions" shape as the original bug.
+  // Refused BEFORE any store call, so an unscoped read is never even attempted.
+  if (scope.mode === 'all-repos') {
+    return emit({ ok: false, reason: 'all-repos-unsupported',
+      error: '--all-repos is not supported by lock-with-test --worksheet: every row it emits is a ' +
+        'per-repo lock command, and lock-with-test refuses findings from another repo. ' +
+        'Scope it (--repo/--repo-id, or run inside the repo), or use list-unlocked-fixes --all-repos to browse.' });
+  }
   if (!scope.measured) {
     return emit({ ok: true, measured: false, reason: scope.reason, worksheet: '',
       note: 'repo scope unresolved — nothing was measured (this is NOT "no unlocked fixes").' });

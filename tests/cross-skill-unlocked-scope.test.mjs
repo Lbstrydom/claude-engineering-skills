@@ -70,6 +70,31 @@ describe('unlocked-fix store boundary — global access must be ASKED for', () =
   });
 });
 
+/**
+ * Slice one top-level `async function <name>()` body out of the CLI source,
+ * bounded by the NEXT top-level function declaration.
+ *
+ * Deliberately not a fixed character offset (`indexOf(name) + 2400`): that was
+ * tried and is a false-PASS risk, not merely untidy — if the target function
+ * shrinks, the slice spills into the following function, and an assertion looking
+ * for a string can then find it in the neighbour and pass for the wrong reason.
+ * A test whose bound depends on the length of what it measures cannot be trusted
+ * to fail.
+ *
+ * Throws rather than returning a partial slice when the anchor is missing: a
+ * silently-empty haystack would make every `assert.match` against it fail with a
+ * confusing message, and every `assert.ok(!/…/)` pass vacuously.
+ */
+function fnBody(name) {
+  const start = cliSrc.indexOf(`async function ${name}()`);
+  assert.ok(start > -1, `could not find "async function ${name}()" in cross-skill.mjs — the test anchor is stale`);
+  const after = cliSrc.indexOf('\nasync function ', start + 1);
+  const end = after > -1 ? after : cliSrc.length;
+  const body = cliSrc.slice(start, end);
+  assert.ok(body.length > 50, `extracted an implausibly short body for ${name} (${body.length} chars)`);
+  return body;
+}
+
 describe('CLI scope precedence — explicit intent before ambient inference', () => {
   const chain = cliSrc.slice(
     cliSrc.indexOf('async function resolveShipNudgeScope()'),
@@ -95,6 +120,29 @@ describe('CLI scope precedence — explicit intent before ambient inference', ()
     assert.ok(iAll > -1 && iAmbient > -1, 'both branches must exist');
     assert.ok(iAll < iAmbient,
       '--all-repos must short-circuit before ambient identity resolution, else the flag is dead');
+  });
+
+  it('scope capability is PER-COMMAND: the worksheet refuses --all-repos, the reader allows it', () => {
+    // Plan D21. One shared precedence chain, but permitted scope MODES differ by
+    // command. `--all-repos` is a legitimate read on list-unlocked-fixes and
+    // incoherent on the worksheet, because every row the worksheet prints is a
+    // pasteable per-repo `lock-with-test` command that the write fence would then
+    // refuse. Emitting instructions that cannot be followed is the same
+    // plausible-but-wrong output class as the original bug.
+    const ws = fnBody('cmdLockWithTestWorksheet');
+    const iGuard = ws.indexOf("scope.mode === 'all-repos'");
+    const iStore = ws.indexOf('getUnlockedFixes(');
+    assert.ok(iGuard > -1, 'the worksheet must reject --all-repos explicitly');
+    assert.ok(iStore > -1, 'the worksheet must read the view');
+    assert.ok(iGuard < iStore,
+      'the refusal must come BEFORE any store call — an unscoped read must never be attempted');
+    assert.match(ws, /all-repos-unsupported/, 'the refusal needs a machine-readable reason code');
+
+    // ...and the reader must NOT have grown the same restriction, or the
+    // capability is silently lost rather than deliberately scoped.
+    const reader = fnBody('cmdListUnlockedFixes');
+    assert.ok(!/all-repos-unsupported/.test(reader),
+      'list-unlocked-fixes must keep --all-repos — it is a read-only reporting question');
   });
 
   it('--repo and --repo-id are both honoured (--repo was the ignored one)', () => {
