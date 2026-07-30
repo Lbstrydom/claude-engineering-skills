@@ -1,6 +1,68 @@
 # Project Status Log
 
-## 2026-07-30 (latest) — enforcing the skill-surface rule, at three levels
+## 2026-07-30 (latest) — the capture-honesty delta, and a number that was never ours
+
+Closed the round-4 delta on `skill-shadow-and-capture-honesty.md`, filed the
+upstream field report in the consumer, and merged the consumer-side fix.
+
+**A post-cap plan audit was the right call.** Both round caps (GPT 3, Gemini 2)
+had been spent *before* Issue 4 and D17-D21 were added, so the audited artifact
+was not the artifact on disk. Round 4 returned H:1 M:5 L:1 and **all seven were
+internal self-contradictions from multi-session editing** — each naming two
+passages that could not both be true. That is not rigor pressure: a cap protects
+against re-auditing the same artifact, not against shipping an unaudited section.
+
+**Four items were genuinely open; the rest had landed in parallel.** Verified
+against code rather than the plan (D3's own rule): M5, M2, M3 and H1's write
+fence had already shipped — the plan's `getUnlockedFixById` exists as
+`findUnlockedFixInRepo`, so the code name was authoritative and the plan's was
+stale. Implemented: the `visibility` scope fix (G1), the `[hidden]` attribute
+removal (M4), the detached-node predicate test (L1), and the worksheet's
+`--all-repos` refusal (H1 residual).
+
+**One code path, corrected four times, for one bug class.** `[inert]`, then
+`visibility` scope, then the shadow-host hop, then `assignedSlot` — every one an
+instance of "the fallback disagrees with `checkVisibility()`", arriving at ~1 per
+gate round. That branch only runs when `checkVisibility` is absent, and both
+consumers drive Chromium 105+, so **none of the four changed observable behaviour
+for any shipped caller**. Rather than patch a fifth time, `perceivable.mjs` now
+carries a revisit trigger: delete the fallback and return `null` (UNKNOWN, which
+the tri-state contract already handles honestly), or take a real composed-tree
+dependency. The trend was the finding, not any single instance.
+
+**The 207 was this repo's own backlog, seen from the consumer.**
+`list-unlocked-fixes` returned every repo's rows and silently ignored `--repo`.
+Dogfooded after the fix: `scope.mode: repo`, repoId `6461a693-…` — the exact id
+the consumer's 207 rows carried. Its own true count was 0. This repo reads
+**197 (85 code / 112 plan)** today.
+
+**A shared-tree hazard worth naming.** A concurrent session committed the
+`dom-scanner.md` fence *without* its canonical module, and the drift test asserts
+containment — so `main` was red while my working tree passed 16/16. A green local
+suite proves nothing about HEAD when another session is committing.
+
+### Consumer (private app)
+
+- Declared an `authSentinel` and verified it against production **both ways**:
+  live session → `live`, no degrade; dead session → `dead` + `degrade:true`, live
+  findings suppressed, zero authoritative verdicts. Merged as PR #207.
+- **An expired access token is not an expired session.** The committed
+  storage-state had lapsed 5h earlier and still reported `live` — correctly, because
+  Supabase auto-refreshed from a valid refresh token. I had to drop the auth entry
+  outright to reach the dead case, and nearly logged a false negative against
+  working code.
+- Filed the 2026-07-30 upstream report; all four issues were already fixed and
+  synced. It records two corrections to my own reporting — I called two of them
+  release blockers and neither was.
+
+### Verification
+
+Full suite 9529 pass / 0 fail / 22 skipped; perceivability 16/16 in real headless
+Chromium (running, not skipped); scope suite 37/37. Consolidated Gemini gate ran 2
+rounds, both CONCERNS-then-fixed, stopped at the cap. Shipped as `56b23484` and
+`8c303884`.
+
+## 2026-07-30 — enforcing the skill-surface rule, at three levels
 
 Follow-on to the retirement below. The rule was written down; this makes it hold.
 
