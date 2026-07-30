@@ -637,6 +637,43 @@ Advisory; never blocks the ship.
 
 ---
 
+## Step 6.7 — Final-review credit (after successful push, advisory)
+
+Closes the loop the shadow A/B could not measure. `final-review-adjudicate` and
+`final-review-record-fix` have existed and been tested since that experiment
+closed — and **nothing called them**, so `user_action` stayed null, credit landed
+only in source comments, and the resulting tail read as noise until a manual
+sweep recovered it (2026-07-28). This step is the missing caller.
+
+**Run AFTER the commit lands**, so the sha handed to `--commit` is the real one.
+`$REPO` is the `owner/repo` slug (same value `LEARNING_REPO_NAME` uses — the
+bare repo name silently misses the lookup):
+
+```bash
+node scripts/cross-skill.mjs final-review-pending --repo "$REPO" --render --commit "$(git rev-parse --short HEAD)"
+```
+
+Print its stdout verbatim. That is the whole integration — the command renders
+the finished card, so there is nothing to parse and no formatting decision here.
+Omit `--render` to get the versioned JSON instead (`schemaVersion`, `state`,
+`counts`, `items`) if you need it programmatically.
+
+**Advisory, and structurally incapable of blocking**: the command exits 0 in all
+three states (`ready` / `disabled` / `unavailable`), prints **nothing** when
+cloud is off or nothing is pending, and prints one non-blocking line carrying
+only a diagnostic CODE when the store is unreachable. Never fail a ship because
+a label is missing — and never re-run it with a stale sha to make the card
+prettier.
+
+The card offers `accepted`/`dismissed` for unadjudicated findings, `accepted`
+only for a fixed-but-unlabelled one (a shipped fix implies the finding was
+real), and a complete `record-fix` line for an accepted-but-unfixed one. **The
+maintainer picks which finding a commit fixed** — attribution is never inferred
+from "a file changed". Output is bounded (10 items) with a pointer to
+`final-review-stats --worksheet` for the full queue.
+
+---
+
 ## Step 7 — Emit Ship Event (always)
 
 After commit + push completes (or is blocked), record the outcome:

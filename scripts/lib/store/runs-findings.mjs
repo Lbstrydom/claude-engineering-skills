@@ -984,14 +984,14 @@ export async function markRunFindingsAutoDismissed(runId, fingerprints, reason) 
  * @param {{queueLimit?: number}} [opts]
  */
 export async function getFinalReviewStats(repoName, { queueLimit = 50 } = {}) {
-  if (!await isCloudEnabled()) return { ok: true, cloud: false, repoId: null, buckets: [], shadowOnlyQueue: [], runs: [] };
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, repoId: null, buckets: [], shadowOnlyQueue: [], actionablePairs: [], runs: [] };
   const repoRow = await one(`SELECT id FROM audit_repos WHERE name = $1 ORDER BY created_at DESC LIMIT 1`, [repoName]);
   const repoId = repoRow?.id || null;
-  if (!repoId) return { ok: true, cloud: true, repoId: null, buckets: [], shadowOnlyQueue: [], runs: [] };
+  if (!repoId) return { ok: true, cloud: true, repoId: null, buckets: [], shadowOnlyQueue: [], actionablePairs: [], runs: [] };
   // Guard: bail cleanly on an un-migrated store (no source_model column).
   if (!await columnExists('audit_findings', 'source_model', many, isCloudEnabled)) {
     process.stderr.write('  [final-review-stats] source_model column absent — run migration 20260610120000\n');
-    return { ok: false, cloud: true, repoId, buckets: [], shadowOnlyQueue: [], runs: [], error: 'NOT_MIGRATED' };
+    return { ok: false, cloud: true, repoId, buckets: [], shadowOnlyQueue: [], actionablePairs: [], runs: [], error: 'NOT_MIGRATED' };
   }
   try {
     const buckets = await many(
@@ -1006,14 +1006,35 @@ export async function getFinalReviewStats(repoName, { queueLimit = 50 } = {}) {
       [repoId]
     );
     const shadowOnlyQueue = await many(
+      // `f.remediation_state` (final-review-credit-and-cheap-shadow §2.1): the
+      // outcome classification reads BOTH axes, and this projection carried only
+      // `user_action`. Without it a fixed-but-unadjudicated finding is
+      // indistinguishable from a never-touched one — so the `/ship` credit card
+      // would either nag about a shipped fix forever or hide it by widening the
+      // filter. One column; no new function.
       `SELECT f.run_id, f.finding_fingerprint, f.severity, f.category,
-              f.primary_file, f.detail_snapshot, f.source_model, f.user_action, f.created_at
+              f.primary_file, f.detail_snapshot, f.source_model,
+              f.user_action, f.remediation_state, f.created_at
          FROM audit_findings f
          JOIN audit_runs r ON r.id = f.run_id
         WHERE r.repo_id = $1 AND f.bucket = 'shadow-only'
         ORDER BY f.created_at DESC
         LIMIT $2`,
       [repoId, queueLimit]
+    );
+    // Exact totals, INDEPENDENT of queueLimit. `shadowOnlyQueue` above is a
+    // bounded page (default 50), so counting it would under-report the moment the
+    // backlog exceeds the limit — and this repo already has ~63 unadjudicated
+    // shadow findings, so that is the live case, not a hypothetical. Grouping by
+    // the two axes keeps the result tiny (a handful of rows) and lets the pure
+    // classifier own the semantics; SQL never encodes the rules.
+    const actionablePairs = await many(
+      `SELECT f.user_action, f.remediation_state, COUNT(*) AS n
+         FROM audit_findings f
+         JOIN audit_runs r ON r.id = f.run_id
+        WHERE r.repo_id = $1 AND f.bucket = 'shadow-only'
+        GROUP BY f.user_action, f.remediation_state`,
+      [repoId]
     );
     const runs = await many(
       `SELECT r.final_review_model, r.final_review_shadow_model,
@@ -1027,10 +1048,10 @@ export async function getFinalReviewStats(repoName, { queueLimit = 50 } = {}) {
         ORDER BY n DESC`,
       [repoId]
     );
-    return { ok: true, cloud: true, repoId, buckets, shadowOnlyQueue, runs };
+    return { ok: true, cloud: true, repoId, buckets, shadowOnlyQueue, actionablePairs, runs };
   } catch (err) {
     process.stderr.write(`  [final-review-stats] query failed: ${err.message}\n`);
-    return { ok: false, cloud: true, repoId, buckets: [], shadowOnlyQueue: [], runs: [], error: err.message };
+    return { ok: false, cloud: true, repoId, buckets: [], shadowOnlyQueue: [], actionablePairs: [], runs: [], error: err.message };
   }
 }
 

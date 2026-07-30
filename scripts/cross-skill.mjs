@@ -112,6 +112,9 @@ import { semanticId } from './lib/findings.mjs';
 import { isControlMarkerDetail } from './lib/audit/control-markers.mjs';
 import { getLearningStats } from './lib/learning/stats.mjs';
 import { emit, assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
+import {
+  classifyFinalReviewOutcome, summariseCounts, orderItems, isActionable, renderFinalReviewCard,
+} from './lib/final-review-credit.mjs';
 import { resolveRepoIdentity, persistRepoIdentity } from './lib/repo-identity.mjs';
 import { getNeighbourhoodForIntent } from './lib/neighbourhood-query.mjs';
 import { detectRepoStack, detectPythonEnvironmentManager } from './lib/repo-stack.mjs';
@@ -158,6 +161,8 @@ const KNOWN_FLAGS = [
   '--plan-id',
   // ── final-review-stats / final-review-adjudicate / final-review-record-fix ─
   '--queue-limit', '--worksheet', '--run-id', '--fingerprint', '--action', '--bucket',
+  // final-review-pending: --render emits the card text instead of JSON
+  '--render', '--page-size',
   // lock-with-test: record a unit/integration test as a finding's regression lock
   '--finding', '--test', '--description',
   '--commit', '--state',
@@ -817,6 +822,75 @@ async function cmdFinalReviewAdjudicate() {
     });
   }
   emit(res);
+}
+
+/**
+ * Findings awaiting credit — the READ that makes `/ship`'s nudge possible.
+ *
+ * `final-review-{adjudicate,record-fix}` have existed, tested, since the shadow
+ * A/B closed. Nothing called them: no SKILL.md referenced either, so
+ * `user_action` stayed null and credit landed only in source comments. This
+ * command is the missing half — a discriminated, versioned result a shell caller
+ * can act on.
+ *
+ * **Three states, exit 0 for all of them.** `ready` / `disabled` /
+ * `unavailable` — because `/ship` must continue through every one of them. A
+ * credit nudge that can fail a ship is worse than no nudge.
+ *
+ * `--render --commit <sha>` returns the finished card TEXT instead of JSON, so
+ * the skill has one shell command to run and print. Same renderer either way:
+ * the unit-tested function and the text the operator sees cannot drift.
+ *
+ * The `unavailable` diagnostic is a CODE from a closed set — never `err.message`,
+ * whose contents can include a DSN or key.
+ */
+async function cmdFinalReviewPending() {
+  const repoName = argOption('repo');
+  if (!repoName) return emitError('BAD_INPUT', '--repo <name> is required');
+  const wantRender = process.argv.includes('--render');
+  const commitSha = argOption('commit') || null;
+  const pageSize = Math.min(Math.max(Number(argOption('page-size') || 10) || 10, 1), 50);
+
+  const done = (result) => {
+    if (!wantRender) return emit(result);
+    const text = renderFinalReviewCard(result, { commitSha });
+    if (text) process.stdout.write(`${text}\n`);
+    return undefined; // exit 0 with no JSON — the card IS the output
+  };
+
+  let res;
+  try {
+    await initLearningStore();
+    if (!await isCloudEnabled()) return done({ schemaVersion: 1, state: 'disabled' });
+    res = await getFinalReviewStats(repoName, { queueLimit: 50 });
+  } catch {
+    // Boundary classifier: any thrown failure becomes ONE literal. The error
+    // object never reaches the result.
+    return done({ schemaVersion: 1, state: 'unavailable', diagnostic: 'CLOUD_UNREACHABLE' });
+  }
+  if (!res?.ok) {
+    const diagnostic = res?.error === 'NOT_MIGRATED' ? 'NOT_MIGRATED' : 'CLOUD_UNREACHABLE';
+    return done({ schemaVersion: 1, state: 'unavailable', diagnostic });
+  }
+  if (!Array.isArray(res.shadowOnlyQueue) || !Array.isArray(res.actionablePairs)) {
+    return done({ schemaVersion: 1, state: 'unavailable', diagnostic: 'MALFORMED_RESPONSE' });
+  }
+
+  const counts = summariseCounts(res.actionablePairs);
+  const items = orderItems(res.shadowOnlyQueue)
+    .map((r) => ({ ...r, classification: classifyFinalReviewOutcome(r) }))
+    .filter((r) => isActionable(r.classification))
+    .slice(0, pageSize)
+    // Display-safe projection ONLY — `detail_snapshot` is deliberately dropped:
+    // it is free-form model prose and has no place in a ship card.
+    .map((r) => ({
+      run_id: r.run_id, finding_fingerprint: r.finding_fingerprint, bucket: 'shadow-only',
+      classification: r.classification, severity: r.severity, category: r.category,
+      user_action: r.user_action ?? null, remediation_state: r.remediation_state ?? null,
+      primary_file: r.primary_file ?? null, created_at: r.created_at ?? null,
+    }));
+
+  return done({ schemaVersion: 1, state: 'ready', cloud: true, repo: repoName, counts, shownCount: items.length, items });
 }
 
 /**
@@ -2595,6 +2669,7 @@ const commands = {
   'list-unremediated-acceptances': cmdListUnremediatedAcceptances,
   'audit-effectiveness': cmdAuditEffectiveness,
   'final-review-stats': cmdFinalReviewStats,
+  'final-review-pending': cmdFinalReviewPending,
   'final-review-adjudicate': cmdFinalReviewAdjudicate,
   'final-review-record-fix': cmdFinalReviewRecordFix,
   'finalize-outcomes': cmdFinalizeOutcomes,

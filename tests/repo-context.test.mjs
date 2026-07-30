@@ -15,7 +15,15 @@ function mkTmp() {
 
 describe('getRepoContext — tiers against the real repo', () => {
   it('T0 returns a commit-stamped inventory block', () => {
-    const r = getRepoContext({ tier: 'T0', baseDir: process.cwd() });
+    // maxTokens lifted from the default for the SAME reason the T1 case below
+    // already does it: the inventory is alphabetical and truncates at
+    // maxTokens*4 chars, so `scripts/lib/repo-context.mjs` — late in the sort —
+    // falls past the cut as the repo's file count grows. Adding three unrelated
+    // files elsewhere in the tree was enough to break this (2026-07-29). The
+    // assertion is about CONTENT (real repo files are listed); budget/truncation
+    // behaviour is exercised separately, so removing the budget from this case
+    // narrows nothing.
+    const r = getRepoContext({ tier: 'T0', baseDir: process.cwd(), maxTokens: 100_000 });
     assert.equal(r.resolvedTier, 'T0');
     assert.equal(r.degraded, false);
     assert.match(r.block, /<repo_inventory generated-at=[0-9a-f]{7}>/);
