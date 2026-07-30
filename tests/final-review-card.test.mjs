@@ -6,9 +6,11 @@
  * R3-M2). Everything the operator sees is decided here, so everything the plan
  * promises about the card is asserted here.
  *
- * The gate-honesty case for this module is the EMPTY-STRING path: a ship must
- * never fail or shout because a label is missing, so `disabled`, a zero-count
- * `ready`, and any unrecognised shape must all render nothing.
+ * The gate-honesty case is the EMPTY-STRING path, and it cuts BOTH ways: a ship
+ * must never fail or shout because a label is missing, so `disabled` and a
+ * well-formed zero-count `ready` render nothing — but a MALFORMED `ready` must
+ * NOT, because a reader/schema regression reading as "nothing pending" is the
+ * one failure that silently disables the whole loop (R1-M6).
  *
  * Plan: docs/plans/final-review-credit-and-cheap-shadow.md §2.2.
  */
@@ -38,9 +40,33 @@ describe('renderFinalReviewCard — silence is the safe default', () => {
   });
 
   it('renders NOTHING for junk, null, or an unrecognised state — never throws', () => {
-    for (const bad of [null, undefined, 'string', 42, {}, { state: 'bogus' }, { state: 'ready' }]) {
+    for (const bad of [null, undefined, 'string', 42, {}, { state: 'bogus' }]) {
       assert.equal(renderFinalReviewCard(bad), '', `expected '' for ${JSON.stringify(bad)}`);
     }
+  });
+
+  it('a MALFORMED ready warns instead of reading as a healthy empty queue (R1-M6)', () => {
+    // The anti-green case: a reader/schema regression is the one failure that
+    // would silently stop the credit loop surfacing anything, so it must NOT be
+    // indistinguishable from "nothing pending".
+    for (const broken of [
+      { state: 'ready' },                                             // no counts, no items
+      { state: 'ready', counts: {}, items: [] },                      // counts present but no total
+      { state: 'ready', counts: { totalActionable: 3 } },              // total but no items array
+      { state: 'ready', counts: { totalActionable: 'lots' }, items: [] }, // non-numeric total
+      { state: 'ready', counts: { totalActionable: 0 }, items: [] },        // no schemaVersion (R2-M4)
+    ]) {
+      const out = renderFinalReviewCard(broken);
+      assert.match(out, /MALFORMED_READY/, `expected a warning for ${JSON.stringify(broken)}`);
+      assert.match(out, /ship continues/, 'the warning must still be non-blocking');
+    }
+  });
+
+  it('a WELL-FORMED empty ready stays silent — silence is reserved for real emptiness', () => {
+    // Uses the CANONICAL envelope (R2-M4): asserting silence on a minimal
+    // hand-made object would have codified an incomplete payload as healthy,
+    // which is the very thing the malformed check above exists to reject.
+    assert.equal(renderFinalReviewCard(ready([], { totalActionable: 0 })), '');
   });
 
   it('unavailable renders exactly ONE non-blocking line carrying only the CODE', () => {
@@ -50,9 +76,20 @@ describe('renderFinalReviewCard — silence is the safe default', () => {
     assert.match(out, /ship continues/);
   });
 
-  it('unavailable NEVER leaks a DSN or key even if one is smuggled in as the diagnostic', () => {
-    // The reader maps errors to a closed enum, but the renderer is the last line
-    // of defence: this is the seam where an err.message would surface.
+  it('unavailable NEVER leaks a secret placed in the DIAGNOSTIC ITSELF (R2-M5)', () => {
+    // The earlier version of this test put credentials in `error`/`stack` while
+    // leaving `diagnostic` benign — so it never exercised the one field the
+    // renderer actually interpolates, and would have passed against a renderer
+    // that echoed `diagnostic` raw. It now does.
+    const out = renderFinalReviewCard({
+      state: 'unavailable',
+      diagnostic: 'postgresql://user:sekret@db.example.com:5432/postgres sk-ant-api03-DEADBEEF',
+    });
+    assert.doesNotMatch(out, /sekret|postgresql:\/\/|sk-ant/, 'an off-enum diagnostic must not reach stdout');
+    assert.match(out, /\(UNKNOWN\)/, 'it collapses to the UNKNOWN literal instead');
+  });
+
+  it('unavailable still ignores secrets smuggled into NEIGHBOURING fields', () => {
     const out = renderFinalReviewCard({
       state: 'unavailable',
       diagnostic: 'CLOUD_UNREACHABLE',
@@ -60,6 +97,7 @@ describe('renderFinalReviewCard — silence is the safe default', () => {
       stack: 'sk-ant-api03-DEADBEEF',
     });
     assert.doesNotMatch(out, /sekret|postgresql:\/\/|sk-ant/);
+    assert.match(out, /CLOUD_UNREACHABLE/);
   });
 });
 
@@ -70,13 +108,19 @@ describe('renderFinalReviewCard — the state→command matrix', () => {
     assert.match(out, /--action dismissed --bucket shadow-only/);
   });
 
-  it('fixed-unlabelled offers accepted ONLY — a shipped fix implies the finding was real', () => {
+  it('fixed-unlabelled offers BOTH actions — a recorded fix is not proof the finding was valid (R1-H4)', () => {
     const out = renderFinalReviewCard(
       ready([item({ remediation_state: 'fixed', classification: 'fixed-unlabelled' })], { fixedUnlabelled: 1 }),
       { commitSha: SHA },
     );
+    // BOTH actions (R1-H4): a recorded remediation proves a commit was
+    // ASSOCIATED with the finding, not that the finding was valid or that the
+    // fingerprint was the right one. Collapsing adjudication into remediation
+    // breaks the two-axis model, and mis-linking is exactly what needs a
+    // dismissal path.
     assert.match(out, /--action accepted/);
-    assert.doesNotMatch(out, /--action dismissed/, 'offering dismissed here invites a self-contradictory label');
+    assert.match(out, /--action dismissed/, 'a mis-linked fix must remain dismissable');
+    assert.match(out, /mis-linked/, 'the dismissal option should say when it applies');
   });
 
   it('accepted-unfixed emits record-fix --state fixed WITH the resolved commit', () => {

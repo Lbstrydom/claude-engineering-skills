@@ -14,10 +14,15 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   classifyFinalReviewOutcome, summariseCounts, orderItems, isActionable,
   KNOWN_USER_ACTIONS, ACTIONABLE,
 } from '../scripts/lib/final-review-credit.mjs';
+
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const REMEDIATION_DOMAIN = [null, 'fixed', 'verified', 'regressed', 'wat'];
 const ACTION_DOMAIN = [null, ...KNOWN_USER_ACTIONS, 'some-future-value'];
@@ -105,6 +110,32 @@ describe('classifyFinalReviewOutcome — total over the input product', () => {
   it('a missing/empty row does not throw', () => {
     assert.equal(classifyFinalReviewOutcome(), 'unadjudicated');
     assert.equal(classifyFinalReviewOutcome({}), 'unadjudicated');
+  });
+});
+
+describe('KNOWN_USER_ACTIONS is bound to the DATABASE domain, not just to itself', () => {
+  // Code-audit R2-M6: the exhaustive-product test above enumerates
+  // KNOWN_USER_ACTIONS, so it passes by construction when the DB CHECK gains a
+  // value the classifier has never heard of — the drift that already happened
+  // once (auto_dismissed, migration 20260722120000). A CHECK constraint cannot
+  // import JS, but the committed schema baseline records its definition, so the
+  // two CAN be compared without a live database.
+  it('matches audit_findings_user_action_check in the committed schema baseline', () => {
+    const schemaPath = path.join(REPO_ROOT, 'tests/fixtures/expected-schema.json');
+    const schema = JSON.parse(fs.readFileSync(schemaPath, 'utf-8'));
+    const check = (schema.constraints || []).find(
+      (c) => c.constraint_name === 'audit_findings_user_action_check',
+    );
+    assert.ok(check, 'the user_action CHECK constraint vanished from the baseline — regenerate or investigate');
+
+    // Pull every quoted literal out of the ARRAY[...] definition.
+    const sqlValues = [...String(check.definition).matchAll(/'([^']+)'::text/g)].map((m) => m[1]).sort();
+    assert.ok(sqlValues.length > 0, 'could not parse any literal out of the CHECK definition');
+    assert.deepEqual(
+      [...KNOWN_USER_ACTIONS].sort(),
+      sqlValues,
+      'KNOWN_USER_ACTIONS drifted from the DB CHECK domain — a new value classifies as `unknown` (safe, but unhandled). Update the classifier deliberately.',
+    );
   });
 });
 

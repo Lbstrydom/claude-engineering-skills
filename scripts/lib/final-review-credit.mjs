@@ -38,6 +38,16 @@ export const KNOWN_USER_ACTIONS = Object.freeze([
  */
 const FIXED_STATES = Object.freeze(['fixed', 'verified']);
 
+/**
+ * The closed diagnostic set for a `state:'unavailable'` result. Exported so the
+ * reader (which maps every caught failure onto one of these) and the renderer
+ * (which refuses anything else) share ONE definition — a second copy would be
+ * free to drift, and the whole point is that no free-form text reaches stdout.
+ */
+export const DIAGNOSTIC_CODES = Object.freeze([
+  'CLOUD_UNREACHABLE', 'AUTH_FAILED', 'NOT_MIGRATED', 'MALFORMED_RESPONSE', 'UNKNOWN',
+]);
+
 /** Classifications that want the operator's attention on a ship. */
 export const ACTIONABLE = Object.freeze([
   'unadjudicated', 'fixed-unlabelled', 'accepted-unfixed', 'regressed',
@@ -180,15 +190,42 @@ export function renderFinalReviewCard(result, { commitSha = null } = {}) {
   if (!result || typeof result !== 'object') return '';
   if (result.state === 'disabled') return '';
   if (result.state === 'unavailable') {
-    // One non-blocking line. The diagnostic is a CODE, never an error message —
-    // forwarding `err.message` here is how a DSN or key reaches stdout.
-    return `⚠ final-review credit check unavailable (${result.diagnostic || 'UNKNOWN'}) — ship continues; no labels recorded.`;
+    // One non-blocking line, and the code is VALIDATED against the closed set
+    // rather than interpolated (code-audit R2-M5). The reader only ever emits
+    // these literals, but this is an exported pure function: interpolating
+    // `result.diagnostic` raw meant an unexpected caller could put anything —
+    // including an err.message carrying a DSN — straight into stdout, while the
+    // test that claimed to cover "the last line of defence" only ever put
+    // secrets in NEIGHBOURING fields. Anything unrecognised collapses to
+    // UNKNOWN, so the leak is closed by construction, not by convention.
+    const code = DIAGNOSTIC_CODES.includes(result.diagnostic) ? result.diagnostic : 'UNKNOWN';
+    return `⚠ final-review credit check unavailable (${code}) — ship continues; no labels recorded.`;
   }
   if (result.state !== 'ready') return '';
 
-  const counts = result.counts || {};
-  const total = Number(counts.totalActionable ?? 0);
-  if (!Number.isFinite(total) || total <= 0) return '';
+  // A MALFORMED `ready` must not read as a healthy empty queue (code-audit
+  // R1-M6). An earlier version returned '' for `{state:'ready'}` with no
+  // counts/items, so a reader/schema regression — the one failure that would
+  // silently stop the whole credit loop surfacing anything — was indistinguishable
+  // from "nothing pending". That is precisely the anti-green class AGENTS.md
+  // says to be adversarial about: ask whether a path can return clean without
+  // having checked anything. Silence is now reserved for a WELL-FORMED empty
+  // result; a broken shape gets the same non-blocking warning shape as
+  // `unavailable`, so the ship still cannot fail.
+  // Validated against the CANONICAL envelope, not a loose subset (R2-M4): the
+  // reader declares a `schemaVersion`, so accepting a payload without one would
+  // codify a malformed response as healthy — the exact thing this check exists
+  // to prevent, one level up.
+  const counts = result.counts;
+  const shapeOk = result.schemaVersion === 1
+    && counts && typeof counts === 'object'
+    && typeof counts.totalActionable === 'number' && Number.isFinite(counts.totalActionable)
+    && Array.isArray(result.items);
+  if (!shapeOk) {
+    return '⚠ final-review credit check returned a malformed result (MALFORMED_READY) — ship continues; the pending queue was NOT surfaced.';
+  }
+  const total = counts.totalActionable;
+  if (total <= 0) return '';
 
   const items = orderItems(result.items);
   const sha = commitSha || null;
@@ -215,9 +252,18 @@ export function renderFinalReviewCard(result, { commitSha = null } = {}) {
       out.push(`      ${adjudicateCmd(it, 'accepted')}`);
       out.push(`      ${adjudicateCmd(it, 'dismissed')}`);
     } else if (cls === 'fixed-unlabelled') {
-      // `accepted` ONLY. A shipped fix implies the finding was real, so offering
-      // `dismissed` here invites a self-contradictory label.
+      // BOTH actions (code-audit R1-H4). An earlier version offered `accepted`
+      // only, reasoning that "a shipped fix implies the finding was real" — but
+      // that collapses the two axes this repo deliberately keeps orthogonal
+      // (AGENTS.md: adjudicationOutcome and remediationState are separate
+      // facts). A recorded remediation proves somebody ASSOCIATED a commit with
+      // the finding; it does not prove the finding was valid, that the change
+      // addressed it, or that the fingerprint was even the right one — and
+      // mis-linking is easy when the card lists many similar fingerprints. The
+      // adjudication is MOST worth capturing in exactly that state, so removing
+      // the only surface for it was the wrong call.
       out.push(`      ${adjudicateCmd(it, 'accepted')}`);
+      out.push(`      ${adjudicateCmd(it, 'dismissed')}   # if the recorded fix was mis-linked`);
     } else if (cls === 'accepted-unfixed' || cls === 'regressed') {
       const state = cls === 'regressed' ? 'verified' : 'fixed';
       // With no sha there is no runnable command, and the fallback must not

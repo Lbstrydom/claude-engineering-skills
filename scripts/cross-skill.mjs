@@ -182,8 +182,11 @@ const KNOWN_FLAGS = [
   '--since-days',
   // ── get-recent-findings ───────────────────────────────────────────────────
   '--severity',
-  // ── persona-outcomes label ────────────────────────────────────────────────
-  '--session', '--hash', '--outcome', '--rationale', '--by',
+  // ── persona-outcomes label / backfill-hash ────────────────────────────────
+  // `--report-path` is read by cmdPersonaOutcomes (backfill-hash) but was never
+  // registered, so assertKnownFlags rejected the flag before the handler could
+  // see it — the subcommand could not run at all (code-audit R3-M4).
+  '--session', '--hash', '--outcome', '--rationale', '--by', '--report-path',
   // ── recommend-skills (also reads shared '--url' declared above) ──────────
   '--changed', '--just-ran', '--max', '--plan-lenses', '--findings',
   // ── detect-stack ──────────────────────────────────────────────────────────
@@ -926,8 +929,16 @@ async function cmdFinalReviewAdjudicate() {
   // --bucket is optional. Omitted → the store resolves it, refusing rather than
   // guessing when a fingerprint spans several buckets. `primary` / `none` name
   // the NULL bucket, which is what a non-shadow final-review finding carries.
+  // `argOption` returns NULL for an absent flag, never `undefined` — so the
+  // `undefined` test made the omitted-bucket branch UNREACHABLE, and every
+  // caller that omitted `--bucket` silently got `{bucket: null}`, i.e. "scope to
+  // the PRIMARY bucket" rather than the documented "let the store resolve it".
+  // A shadow-only finding then matched 0 rows. Its sibling
+  // `cmdFinalReviewRecordFix` already tests `=== null` correctly; this is that
+  // copy-paste divergence, found by the code audit on the exact command the
+  // /ship credit card points operators at (R1-H3).
   const rawBucket = argOption('bucket');
-  const opts = rawBucket === undefined ? {}
+  const opts = rawBucket === null ? {}
     : { bucket: (rawBucket === 'primary' || rawBucket === 'none') ? null : rawBucket };
   const res = await adjudicateFinalReviewFinding(runId, fingerprint, action, opts);
   // A 0-row adjudication is a FAILURE, not a quiet success. Reporting ok:true
