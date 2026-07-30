@@ -38,6 +38,12 @@
             "shell": "bash",
             "timeout": 12,
             "statusMessage": "Consulting architectural memory..."
+          },
+          {
+            "type": "command",
+            "command": "node .claude/hooks/legacy-surface-advisory.mjs",
+            "timeout": 5,
+            "statusMessage": "Checking for retired skill surfaces..."
           }
         ]
       }

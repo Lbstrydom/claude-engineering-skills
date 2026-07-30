@@ -130,6 +130,35 @@ So the questions split cleanly, each with one owner:
 | Do I still have a retired surface to clean up? | `node scripts/install-skills.mjs --uninstall-legacy` |
 | Is a stale `.github/skills/` shadowing my skills? | `node scripts/check-stale-skill-surface.mjs` |
 
+## 3b. Where each check is enforced, and why the levels differ
+
+Three questions, three enforcement levels. The level is chosen by **what kind of
+state the check reads**, not by how much the answer matters:
+
+| Check | Reads | Level | Why |
+|---|---|---|---|
+| A name we deploy is shadowed in `.github/skills/` or `.agents/skills/` | **repo** state | **BLOCKS** — `check-stale-skill-surface --gate` (source), `sync-to-repos` (refuses to claim a successful sync), `sync-isolation-verify` gate 8 (consumer-side, continuous) | Deterministic and fixable by changing the repo. Two developers on one commit get the same answer; CI sees it. |
+| A retired surface survives in `~/.claude/skills/` | **machine** state | **ADVISORY** — [`.claude/hooks/legacy-surface-advisory.mjs`](../../.claude/hooks/legacy-surface-advisory.mjs) at session start, plus a line in `npm run check` | Not commit state. Two developers on one commit get *different* answers, CI never sees it, and blocking a push would stop unrelated work without removing the shadow. |
+| A consumer's own skills collide with each other | **their** content | **REPORTED, never gated** | Not ours to police. Gating on content nobody here can act on is how a gate earns a permanent `--no-verify`. |
+
+**The session-start advisory is the interesting one.** `npm run check` reports the
+same fact, but only at PUSH time — and the harm happens at READ time, when an
+agent resolves a skill from the stale root and every runner path in it is wrong
+for the repo it is standing in. That is the incident that started this work: the
+session concluded "the tooling is not installed" and skipped its audit gates.
+Telling the operator at the end of a session they already wasted is worth little.
+
+It fires **once per session** (sentinel keyed on `session_id` under the gitignored
+`.audit/`), is **silent when clean**, costs ~100–150ms of Node startup, and never
+blocks — `exit 0` on every path including malformed input. `LEGACY_SURFACE_HOOK_DISABLE=1`
+opts out.
+
+It exists even though the current bundle has no writer that can create the tree,
+because that is only true of machines running current code: a developer on a
+pre-2026-07-30 checkout still has the old installer and `.githooks/post-merge`,
+and a `git pull` there recreates it. "Nothing can produce this state" was the same
+assumption that let the original defect run undetected for months.
+
 ## 4. Migrating off a retired surface
 
 ```bash
