@@ -16,9 +16,78 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-// `import.meta.dirname` resolves to scripts/lib/, so '../..' is the
-// claude-audit-loop repo root.
+// `import.meta.dirname` resolves to scripts/lib/, so '../..' is the root of the
+// checkout THIS MODULE IS RUNNING FROM. In the main checkout that is the repo
+// root; in a linked git worktree it is the worktree. The two are not
+// interchangeable — see `mainCheckoutRoot` below.
 const REPO_ROOT = path.resolve(import.meta.dirname, '..', '..');
+
+/**
+ * The MAIN checkout of this repository — what the `../sibling` consumer paths
+ * below have always meant.
+ *
+ * **The bug this fixes (field-found 2026-07-30).** A `git push` from a linked
+ * worktree at `<main>/.claude/worktrees/<wt>` ran the pre-push sync, which
+ * resolved every registered consumer against the WORKTREE. Both looked for
+ * `<main>/.claude/worktrees/wine-cellar-app`, neither existed, both were
+ * skipped — and the run still printed a green "Sync complete", so the push
+ * reported success having propagated nothing. The `path` doc above says the
+ * constant "works regardless of cwd at invocation time", which is true and was
+ * never the exposure: `import.meta.dirname` is immune to cwd but not to which
+ * checkout the module was loaded from.
+ *
+ * Read from the filesystem rather than by shelling out to
+ * `git worktree list`: a linked worktree's `.git` is a FILE containing
+ * `gitdir: <main>/.git/worktrees/<name>`, which is the whole answer, and a
+ * subprocess in a module this widely imported would cost every consumer of the
+ * list a git invocation to learn something already written on disk.
+ *
+ * Every unrecognised shape returns `start` — today's behaviour — rather than
+ * guessing. A submodule's `.git` file points at `<super>/.git/modules/<name>`,
+ * whose grandparent is emphatically not a checkout root, and a submodule's
+ * siblings are its own anyway.
+ *
+ * @param {string} start root of the checkout this module was loaded from
+ * @returns {string} the main checkout root, or `start` when that cannot be established
+ */
+function mainCheckoutRoot(start) {
+  const dotGit = path.join(start, '.git');
+  let st;
+  try {
+    st = fs.statSync(dotGit);
+  } catch {
+    return start;                                   // not a git checkout at all
+  }
+  if (st.isDirectory()) return start;               // already the main checkout
+
+  let gitdir;
+  try {
+    const m = /^gitdir:\s*(.+)$/m.exec(fs.readFileSync(dotGit, 'utf8'));
+    if (!m) return start;
+    gitdir = path.resolve(start, m[1].trim());      // may be relative to `start`
+  } catch {
+    return start;
+  }
+
+  // <main>/.git/worktrees/<name> → <main>. Both path components are asserted
+  // rather than assumed: anything else is a layout we do not model.
+  const worktreesDir = path.dirname(gitdir);
+  if (path.basename(worktreesDir) !== 'worktrees') return start;
+  const commonGitDir = path.dirname(worktreesDir);
+  if (path.basename(commonGitDir) !== '.git') return start;
+  return path.dirname(commonGitDir);
+}
+
+/**
+ * Anchor for every RELATIVE consumer path — the main checkout, so a sync run
+ * from a worktree targets the same consumers a run from the main checkout does.
+ *
+ * Deliberately NOT the same value as `sourceRepoRoot()`. This one answers
+ * "where do my sibling repos live"; that one answers "what must I refuse to
+ * write into". They coincide in the main checkout and diverge in a worktree,
+ * which is exactly why `assertNotSourceRepo` now checks BOTH.
+ */
+const SIBLING_ANCHOR = mainCheckoutRoot(REPO_ROOT);
 
 /**
  * This bundle's own repo root, canonicalised.
@@ -62,10 +131,11 @@ export const SOURCE_REPO_ROOT = (() => {
   try { return sourceRepoRoot(); } catch { return path.resolve(REPO_ROOT); }
 })();
 
-// Public, committed consumer entries.
+// Public, committed consumer entries. Anchored to the MAIN checkout, never to
+// the worktree this module happens to be loaded from.
 const BASE_REPOS = [
-  { name: 'wine-cellar-app', alias: 'wine', path: path.resolve(REPO_ROOT, '..', 'wine-cellar-app') },
-  { name: 'ai-organiser',    alias: 'ai',   path: path.resolve(REPO_ROOT, '..', 'ai-organiser') },
+  { name: 'wine-cellar-app', alias: 'wine', path: path.resolve(SIBLING_ANCHOR, '..', 'wine-cellar-app') },
+  { name: 'ai-organiser',    alias: 'ai',   path: path.resolve(SIBLING_ANCHOR, '..', 'ai-organiser') },
 ];
 
 /**
@@ -99,7 +169,10 @@ function loadLocalRepos() {
       return {
         name:  String(e.name),
         alias: String(e.alias),
-        path:  path.isAbsolute(e.path) ? e.path : path.resolve(REPO_ROOT, e.path),
+        // Relative entries anchor to the main checkout for the same reason
+        // BASE_REPOS does: the operator wrote "../my-repo" meaning a sibling of
+        // their checkout, not of whichever worktree loaded this module.
+        path:  path.isAbsolute(e.path) ? e.path : path.resolve(SIBLING_ANCHOR, e.path),
       };
     });
   } catch (err) {
@@ -241,14 +314,48 @@ export function resolveAdHocTarget(rawPath, { warn } = {}) {
  * @throws {Error}
  */
 export function assertNotSourceRepo(realPath, label) {
-  const src = sourceRepoRoot();
-  if (isAtOrInside(realPath, src)) {
-    throw new Error(
-      `${label} resolves inside the source repo (${src}): ${realPath}\n`
-      + '  Syncing the bundle onto itself would rewrite source files into consumer '
-      + 'layout in place. Pick a different repo.',
-    );
+  for (const src of sourceRepoRoots()) {
+    if (isAtOrInside(realPath, src)) {
+      throw new Error(
+        `${label} resolves inside the source repo (${src}): ${realPath}\n`
+        + '  Syncing the bundle onto itself would rewrite source files into consumer '
+        + 'layout in place. Pick a different repo.',
+      );
+    }
   }
+}
+
+/**
+ * Every root a sync must refuse: the checkout this module runs from, plus the
+ * MAIN checkout when they differ.
+ *
+ * One root was sufficient while the sibling anchor and the guard anchor were
+ * the same value. They are not, from a worktree — consumer paths now resolve
+ * against the main checkout while `sourceRepoRoot()` is the worktree — so a
+ * registry entry naming the main checkout would have passed a guard that only
+ * knew about the worktree. Widening the set here rather than repointing
+ * `sourceRepoRoot()` keeps the running checkout refused too; both are source,
+ * and a rewrite-in-place into either is equally destructive.
+ *
+ * The main root is canonicalised best-effort: it is an ADDITIONAL refusal, so
+ * a resolution failure must not take the primary one down with it. The primary
+ * root still throws when it cannot be canonicalised (`sourceRepoRoot`).
+ *
+ * Known limit, unchanged by this: a linked worktree created OUTSIDE the main
+ * checkout is not in this set. Worktrees under `<main>/` (git's default and
+ * this repo's layout) are covered transitively by the main root.
+ *
+ * @returns {string[]} canonical roots, deduped
+ */
+export function sourceRepoRoots() {
+  const roots = [sourceRepoRoot()];
+  if (SIBLING_ANCHOR !== REPO_ROOT) {
+    try {
+      const main = fs.realpathSync(SIBLING_ANCHOR);
+      if (!roots.includes(main)) roots.push(main);
+    } catch { /* additive only — never weakens the primary refusal */ }
+  }
+  return roots;
 }
 
 /**
@@ -272,3 +379,14 @@ export function canonicaliseRegistryTarget(entry) {
   assertNotSourceRepo(real, `consumer "${entry.name}"`);
   return { ...entry, path: real };
 }
+
+/**
+ * Internal seams exposed for tests. Underscore-prefixed per this repo's
+ * convention (file-io.mjs, shared.mjs, anthropic-client.mjs).
+ *
+ * `mainCheckoutRoot` is pure with respect to its argument, so it can be driven
+ * over fixture directories — the alternative (creating a real git worktree and
+ * re-importing this module inside it) would test the module loader as much as
+ * the layout rules.
+ */
+export const _internals = { mainCheckoutRoot, SIBLING_ANCHOR, REPO_ROOT };
