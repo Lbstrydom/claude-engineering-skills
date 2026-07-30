@@ -1,6 +1,72 @@
 # Project Status Log
 
-## 2026-07-30 (latest) — live-run triage closed out: wine PR #208, and the scanner learns two lessons
+## 2026-07-30 (latest) — the sync anchored consumers to the worktree, and said "complete" after reaching none
+
+Found by watching a push's own output. The pre-push sync ran from a linked
+worktree at `<main>/.claude/worktrees/<wt>`, resolved both registered consumers
+relative to **the worktree**, looked for
+`<main>/.claude/worktrees/wine-cellar-app`, found neither — and printed a green
+`Sync complete  Created: 0 Updated: 0 Unchanged: 0 Errors: 0`. The push reported
+success having propagated to zero consumers. Every push from the main checkout
+was unaffected, which is why this survived: it fires only from a worktree, and
+announces itself as a clean no-op.
+
+**Defect 1 — the wrong anchor.** `consumer-repos.mjs` derived its root from
+`import.meta.dirname`, whose doc-comment promise ("works regardless of cwd") is
+true and was never the exposure: it is immune to cwd but not to *which checkout
+loaded the module*. The anchor is now the MAIN checkout, read from disk — a
+linked worktree's `.git` is a file containing
+`gitdir: <main>/.git/worktrees/<name>`, the whole answer, so no subprocess is
+needed in a module this widely imported. Unrecognised layouts return the
+starting root rather than guessing; a submodule's `.git` points at
+`.git/modules/<name>`, whose grandparent is not a checkout root.
+
+That splits two values which used to be one — the **sibling anchor** (main) and
+the **containment anchor** (the running checkout) — so `assertNotSourceRepo` now
+refuses both via `sourceRepoRoots()`. Otherwise a registry entry naming the main
+checkout would walk past a guard that only knew about the worktree. Widening the
+set beats repointing `sourceRepoRoot()`: a rewrite-in-place into either checkout
+is equally destructive.
+
+**Defect 2 — the false green that hid defect 1.** A run reaching no target at
+all printed the same line as a successful one. The summary now reports
+`Targets: n/N reached` and names a zero-reach run as such. Exit stays 0: a
+machine that has not checked out the maintainer's consumers is a legitimate
+state, and nagging every public cloner on every push would be worse than the bug.
+
+**Changed**
+- [`scripts/lib/consumer-repos.mjs`](scripts/lib/consumer-repos.mjs) —
+  `mainCheckoutRoot()` + `SIBLING_ANCHOR`; `BASE_REPOS` and relative
+  `consumer-repos.local.json` entries anchor to it; new `sourceRepoRoots()`.
+- [`scripts/sync-to-repos.mjs`](scripts/sync-to-repos.mjs) — skip counter +
+  coverage-reporting summary.
+- [`tests/consumer-repos-worktree-anchor.test.mjs`](tests/consumer-repos-worktree-anchor.test.mjs)
+  — 13 cases over fixture layouts (main / worktree / relative gitdir / worktree
+  outside main / submodule / no `.git` / malformed / odd common dir), the
+  regression pin that no consumer path lands inside a `worktrees` directory, and
+  the widened containment contract.
+- [`tests/consumer-repos-adhoc-target.test.mjs`](tests/consumer-repos-adhoc-target.test.mjs)
+  — the prefix-sibling containment test built its fixture off `SOURCE_REPO_ROOT`;
+  from a nested worktree `<worktree>-other` now lives inside the main checkout and
+  is correctly refused, masking the property under test. Rebuilt off the outermost
+  source root so it is ambient-independent.
+
+**Verified**: from a worktree both consumers resolve (`C:\GIT\wine-cellar-app`,
+`C:\GIT\ai-organiser`) and a real push reported `Targets: 2/2 reached  Updated: 96`
+where the prior one reached 0.
+
+> **Two sessions fixed `--uninstall-legacy`'s directory prune independently**
+> (this branch and `4155f8bc`, ~3h apart, same core design). `4155f8bc` is the
+> incumbent and this branch's duplicate was dropped. Two hardening deltas from
+> the dropped version are worth folding in and are NOT in the incumbent:
+> containment via `assertContainedAbsolute` (the incumbent uses a lexical
+> `path.relative` check, so a symlink/junction *below* the surface root is not
+> refused — the exact gap `safe-destination.mjs` exists to close, on a path that
+> deletes from `$HOME`), and `retrySync` around `rmdirSync` (the incumbent's bare
+> call with `catch { break }` silently abandons the climb on a transient Windows
+> EPERM/EBUSY). Tracked, not bundled here.
+
+## 2026-07-30 — live-run triage closed out: wine PR #208, and the scanner learns two lessons
 
 Finished the capture-honesty session by taking its own medicine: every remaining
 finding from the live wine click-test run was either fixed at the class level or
