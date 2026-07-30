@@ -113,7 +113,10 @@ export const BASELINE = new Set([
   'scripts/check-plan-status.mjs',
   'scripts/check-rls.mjs',
   'scripts/check-setup.mjs',
-  'scripts/check-skill-updates.mjs',
+  // 'scripts/check-skill-updates.mjs' — RETIRED 2026-07-30, baseline entry
+  // removed with the script. It only ever reported on install receipts, and
+  // every surface that wrote one is retired
+  // (docs/plans/repo-scoped-skill-surfaces-and-installer.md §2 D2/D3/D4).
   'scripts/check-stale-skill-surface.mjs',
   'scripts/check-sync.mjs',
   'scripts/context-staleness.mjs',

@@ -7,7 +7,13 @@
  * This file serves as the SOURCE TEMPLATE. The installer copies it to
  * consumer repos at .audit-loop/bootstrap.mjs.
  *
- * Sub-commands: install, check, version, help
+ * Sub-commands: install, version, help
+ *
+ * `check` was REMOVED 2026-07-30 with `scripts/check-skill-updates.mjs`
+ * (docs/plans/repo-scoped-skill-surfaces-and-installer.md §2 D2/D3/D4). Leaving
+ * the entry would be worse than dropping it: this dispatcher fetches its target
+ * from `RAW_BASE` on GitHub, so a command naming a deleted path fails with an
+ * HTTP 404 from the network layer rather than an honest "unknown command".
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -22,7 +28,6 @@ const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24hr
 
 const COMMANDS = {
   install: 'scripts/install-skills.mjs',
-  check: 'scripts/check-skill-updates.mjs',
 };
 
 function fetch(url) {
@@ -65,7 +70,6 @@ async function main() {
 
 Commands:
   install   Install/update skills (--surface both|claude|copilot|agents)
-  check     Check for updates + local drift
   version   Show installed bundle version
   help      Show this message`);
     return;

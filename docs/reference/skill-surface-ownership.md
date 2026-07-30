@@ -83,6 +83,53 @@ caller would inherit a silent no-op.
 `install-skills.mjs` no longer installs anything. Its remaining job is
 `--uninstall-legacy`.
 
+### Retired tooling
+
+Retiring the surfaces stranded the tools that only described them.
+
+| Tool | Retired | Replacement |
+|---|---|---|
+| `scripts/check-skill-updates.mjs` | 2026-07-30 (deleted) | see below |
+| `node .audit-loop/bootstrap.mjs check` | 2026-07-30 | — (sub-command removed) |
+| `scripts/lib/install/merge.mjs` | 2026-07-30 (deleted) | — (nothing writes `.github/copilot-instructions.md`) |
+| `scripts/lib/install/gitignore.mjs` | 2026-07-30 (deleted) | [`sync-gitignore.mjs`](../../scripts/lib/sync-gitignore.mjs) `updateManagedBlock` |
+
+The last two were orphaned by the retirement rather than described by it. `merge.mjs`
+built a managed block for `.github/copilot-instructions.md`; nothing writes that file
+now, and the block it emitted advertised two commands this table retires.
+`gitignore.mjs` lost its only caller when `install.mjs` became a bootstrapper — the
+managed-gitignore concern moved to the sync engine, which is §1's single-writer rule
+applied to `.gitignore` as well. Both were **deleted rather than kept for reuse**: a
+module with no caller cannot be shown to still work, and the next reader would have
+spent their time repairing the dead commands inside them.
+
+`check-skill-updates` hashed the files listed in an install receipt and reported
+drift. Every surface that wrote a receipt is now retired, so the receipts it read
+are legacy artefacts and reporting on them is
+[`inspectLegacySurfaces`](../../scripts/lib/install/legacy-surfaces.mjs)' job —
+the single oracle §4 describes, which the three callers share precisely so they
+cannot disagree about what "still there" means.
+
+**It was deleted rather than repointed at `scripts/.sync-manifest.json`**, which
+is the tempting move: "is my synced bundle current?" is the question operators
+actually have now. That question already has a complete owner —
+[`sync-isolation-verify.mjs`](../../scripts/lib/sync-isolation-verify.mjs)
+Gate 2B (*hydration-on-disk manifest hash check*) runs from the consumer side,
+reads the consumer's own manifest as source of truth, and is itself synced to
+consumers. A second answer to it would be two writers for one question, which is
+the same defect as §1's two-writers-for-one-directory, one level up. Repointing
+would also not have been a repoint: the tool's machinery is receipt-shaped
+(per-file SHAs against a receipt, plus a `--gitignore --fix` loop), so it would
+have been a rewrite into a duplicate of a tool that already exists.
+
+So the questions split cleanly, each with one owner:
+
+| Question | Ask |
+|---|---|
+| Is my synced bundle current? | `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` (consumer) · `npm run sync:dry` (source) |
+| Do I still have a retired surface to clean up? | `node scripts/install-skills.mjs --uninstall-legacy` |
+| Is a stale `.github/skills/` shadowing my skills? | `node scripts/check-stale-skill-surface.mjs` |
+
 ## 4. Migrating off a retired surface
 
 ```bash

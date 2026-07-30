@@ -38,7 +38,11 @@ const KNOWN_FLAGS = ['--check'];
 const SKILLS_DIR = path.resolve('skills');
 const MANIFEST_PATH = path.resolve('skills.manifest.json');
 const BOOTSTRAP_TEMPLATE = path.resolve('scripts/lib/bootstrap-template.mjs');
-const COPILOT_BLOCK_TEMPLATE = path.resolve('scripts/lib/install/copilot-block.txt');
+// COPILOT_BLOCK_TEMPLATE ('scripts/lib/install/copilot-block.txt') removed
+// 2026-07-30: the file has never existed, so its existsSync branch never fired
+// and it contributed nothing to bundleVersion. Its writer (install/merge.mjs)
+// was deleted with the install path — nothing emits a copilot-instructions
+// block any more. See docs/reference/skill-surface-ownership.md §3.
 
 const MANIFEST_SCHEMA_VERSION = 2;   // Phase B.2: flipped from 1 to 2
 
@@ -179,9 +183,6 @@ export function buildManifest() {
 
   if (fs.existsSync(BOOTSTRAP_TEMPLATE)) {
     artifactParts.push(`bootstrap:${fileSha(BOOTSTRAP_TEMPLATE)}`);
-  }
-  if (fs.existsSync(COPILOT_BLOCK_TEMPLATE)) {
-    artifactParts.push(`copilot-block:${fileSha(COPILOT_BLOCK_TEMPLATE)}`);
   }
   artifactParts.push(`manifest-schema:${MANIFEST_SCHEMA_VERSION}`);
 
