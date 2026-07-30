@@ -1,7 +1,7 @@
 # Plan: Close the final-review credit loop + admit a cheap shadow
 
 - **Date**: 2026-07-29
-- **Status**: Approved
+- **Status**: Complete
 - **Author**: Claude + Louis
 
 > **Audit trail** — `/audit-plan` (SID `audit-plan-1785374489`). **GPT 3 rounds**
@@ -454,3 +454,66 @@ generic `tests/`; R1-L1). Cases:
 and no test file, and neither needs a shared fixture. Cluster B's tests mock
 provider resolution; Cluster A's exercise the cross-skill reader. Either can land
 first.
+
+---
+
+## 7. Implementation Log
+
+### 2026-07-30 — both clusters shipped
+
+**Cluster A** (`15b7ad8f`, `1ae6231c`, `3a09fb48`, audit fixes `c59f1f5b`).
+`final-review-pending` reader + `classifyFinalReviewOutcome` /
+`renderFinalReviewCard` in `scripts/lib/final-review-credit.mjs`, one added
+column + one aggregate in `getFinalReviewStats`, `/ship` Step 6.7.
+**Live against the real store on first run: 42 actionable — 32 unadjudicated,
+10 accepted-but-never-fixed.** That second number is the "accepted ≠ remediated"
+gap the shadow A/B could not see, now visible on every ship.
+
+**Cluster B** (`45b5db74`). `FINAL_REVIEW_SHADOW=openrouter`. The routing pins
+are **inherited, not re-plumbed** — `runFinalReview` resolves
+`PROVIDERS[canonical].requestExtras()` and the shadow supplies its canonical
+name, so `canonical: 'openrouter'` earns them for free. Verified by trace before
+implementing; the test pins the inheritance so a refactor of that lookup fails
+loudly rather than silently unpinning.
+
+**Verified live, not only unit-tested** (pre-ship-empirical-verify): Gemini
+primary + Kimi shadow produced
+`[shadow-review] ran moonshotai/kimi-k2-thinking — buckets both:0 primary-only:2 shadow-only:0`.
+
+### Deviations from the audited plan
+
+1. **§2.1 `fixed-unlabelled` now offers BOTH actions, not `accepted` only**
+   (code-audit R1-H4, accepted against this plan). The original justification —
+   "a shipped fix implies the finding was real" — collapses the two axes
+   AGENTS.md keeps orthogonal. A recorded remediation proves a commit was
+   *associated* with the finding, not that the fingerprint was right, and
+   mis-linking is easy when the card lists similar fingerprints. The dismissal
+   path is most needed exactly there.
+2. **A closed `DIAGNOSTIC_CODES` enum is validated in the renderer**, not only
+   produced by the reader (R2-M5). The renderer interpolates `diagnostic`, so an
+   unexpected caller could have put an `err.message` — with a DSN — into stdout.
+   The plan's own test claimed to cover this and did not: it put secrets in
+   neighbouring fields, never the rendered one.
+3. **`KNOWN_USER_ACTIONS` is now bound to the DB CHECK constraint** via a
+   contract test parsing `expected-schema.json` (R2-M6). The exhaustive-product
+   test enumerated the constant itself, so it could never have caught the drift
+   it was written to catch — drift that already happened once (`auto_dismissed`).
+4. **Fixed one out-of-scope bug**: `--report-path` was read but never registered
+   in `KNOWN_FLAGS`, so `persona-outcomes backfill-hash` could not run at all.
+   Provably broken, one additive line, in a file already being changed.
+
+### Measured cost, corrected
+
+The earlier ~$0.044/review figure for Kimi was a **single-attempt** measurement
+on a smaller input. On a large transcript the live run needed **two** attempts —
+the first took 296.7 s and returned truncated JSON, and the pre-existing
+conciseness-retry recovered it in 60.6 s. The retry is the designed mitigation
+and it worked, so nothing was added for it, but the figure should not be quoted
+as single-attempt.
+
+### What this does NOT settle
+
+Whether a cheap shadow should replace Opus. Cluster B makes the switch a
+one-variable change; it does not produce the comparison. The instrument for that
+is the **parked** [`final-review-shadow-bakeoff.md`](./final-review-shadow-bakeoff.md),
+and its un-park trigger is unchanged.
