@@ -633,8 +633,8 @@ call-site list: [`docs/reference/anthropic-backend-routing.md`](docs/reference/a
 
 Opt-in, observation-only 2nd final reviewer, run blind to test whether a second
 gate earns its keep. **Committed default unset; re-enabled locally 2026-07-29** (KEEP
-was the verdict; the flag had drifted off). `FINAL_REVIEW_SHADOW=claude-opus|gemini`
-(unset ⇒ path not entered, byte-identical; no-op under Azure; never gates the build).
+was the verdict; the flag drifted off). `FINAL_REVIEW_SHADOW=claude-opus|gemini|openrouter`
+(a gateway needs an explicit `FINAL_REVIEW_SHADOW_MODEL`; unset ⇒ not entered, byte-identical; no-op under Azure; never gates).
 Verdict/method/stopping rule + three dated corrections: [briefing](docs/research/final-review-shadow-adjudication-briefing.md) · [plan](docs/plans/final-review-shadow-reviewer.md).
 Three results that generalise — **read before any reviewer/model comparison**:
 

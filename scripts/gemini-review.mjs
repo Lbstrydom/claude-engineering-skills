@@ -1191,16 +1191,44 @@ function formatReviewResult(result, usage, latencyMs, provider) {
 // entered at all (byte-identical to today), and a no-op under an active Azure
 // profile (these models aren't on Foundry).
 
-/** Canonical provider specs keyed by the raw FINAL_REVIEW_SHADOW value. */
+/**
+ * Canonical provider specs keyed by the raw FINAL_REVIEW_SHADOW value.
+ *
+ * `canonical` is not cosmetic — it is the `PROVIDERS` key the shared review path
+ * looks up (`runFinalReview`: `const descriptor = PROVIDERS[provider]`, then
+ * `requestExtras: descriptor.requestExtras?.()`). So a spec whose canonical name
+ * matches a PROVIDERS entry inherits that descriptor's wire behaviour for free —
+ * which is exactly how `openrouter` gets its routing pins without any plumbing
+ * here (verified by trace, docs/plans/final-review-credit-and-cheap-shadow.md §3).
+ *
+ * `hasCredential` replaces a bare `keyEnv` string because a GATEWAY has more than
+ * one legitimate source for its key: the review-scoped `FINAL_REVIEW_API_KEY`
+ * first, then the shared `OPENROUTER_API_KEY` other skills already use. It
+ * returns a BOOLEAN only — the secret itself must never reach the resolver's
+ * result object, the log line, or the persisted `_shadow` block.
+ *
+ * `gateway: true` marks a provider whose model ids are passed VERBATIM (descriptor
+ * D6: no `resolveModel` sentinel rewrite), which has two consequences below: the
+ * family regex cannot validate them, and there is no sensible per-provider
+ * default, so an explicit `FINAL_REVIEW_SHADOW_MODEL` is required.
+ */
 const SHADOW_PROVIDER_SPECS = {
-  'claude-opus': { canonical: 'claude-opus', family: 'claude', defaultSentinel: 'latest-opus', keyEnv: 'ANTHROPIC_API_KEY' },
-  'anthropic':   { canonical: 'claude-opus', family: 'claude', defaultSentinel: 'latest-opus', keyEnv: 'ANTHROPIC_API_KEY' },
-  'gemini':      { canonical: 'gemini',      family: 'gemini', defaultSentinel: 'latest-pro',  keyEnv: 'GEMINI_API_KEY' },
+  'claude-opus': { canonical: 'claude-opus', family: 'claude', defaultSentinel: 'latest-opus', hasCredential: (env) => Boolean(env.ANTHROPIC_API_KEY) },
+  'anthropic':   { canonical: 'claude-opus', family: 'claude', defaultSentinel: 'latest-opus', hasCredential: (env) => Boolean(env.ANTHROPIC_API_KEY) },
+  'gemini':      { canonical: 'gemini',      family: 'gemini', defaultSentinel: 'latest-pro',  hasCredential: (env) => Boolean(env.GEMINI_API_KEY) },
+  'openrouter':  {
+    canonical: 'openrouter', family: 'gateway', gateway: true, defaultSentinel: null,
+    hasCredential: (env) => Boolean(env.FINAL_REVIEW_API_KEY || env.OPENROUTER_API_KEY),
+  },
 };
 
 /** Cheap family check so an explicit model can't be paired with a wrong provider (R3 M1). */
 function shadowModelMatchesFamily(modelId, family) {
   const id = (modelId || '').toLowerCase();
+  // A gateway serves every family and takes ids verbatim (`moonshotai/kimi-k2-thinking`),
+  // so there is no family to match against — the guard here is the REQUIRED
+  // explicit model in resolveShadow, not a name pattern.
+  if (family === 'gateway') return true;
   if (family === 'gemini') return id.includes('gemini');
   // claude family — opus/sonnet/haiku today, mythos/fable when they land.
   return /claude|opus|sonnet|haiku|mythos|fable/.test(id);
@@ -1225,13 +1253,25 @@ function resolveShadow({
   if (azureActive) return { provider: raw, model: null, state: 'skipped-azure' };
   const spec = SHADOW_PROVIDER_SPECS[raw];
   if (!spec) return { provider: raw, model: null, state: 'skipped-unsupported-provider' };
-  if (!env[spec.keyEnv]) return { provider: spec.canonical, model: null, state: 'skipped-no-key' };
+  // Credential presence via the spec's own resolver — a gateway legitimately has
+  // two sources. Boolean only; the value never enters this result.
+  if (!spec.hasCredential(env)) return { provider: spec.canonical, model: null, state: 'skipped-no-key' };
+  // A GATEWAY has no meaningful default model: ids are passed verbatim, so there
+  // is nothing to derive and guessing one would send an unintended model at the
+  // operator's expense. Refuse explicitly instead — a named skip, never a silent
+  // default (docs/plans/final-review-credit-and-cheap-shadow.md §3.2).
+  if (spec.gateway && !shadowConfig.model) {
+    return { provider: spec.canonical, model: null, state: 'skipped-no-model' };
+  }
   // Derive the model: explicit override (validated against family) or per-
   // provider default. config injects NO default, so an unset model means
   // "derive from provider" (Gemini R2 G3).
   let model;
   if (shadowConfig.model) {
-    model = resolve(shadowConfig.model, { silent: true });
+    // Gateways bypass resolveModel entirely (descriptor D6): a sentinel rewrite
+    // would mangle `moonshotai/kimi-k2-thinking` into something the gateway has
+    // never heard of.
+    model = spec.gateway ? shadowConfig.model : resolve(shadowConfig.model, { silent: true });
     if (!shadowModelMatchesFamily(model, spec.family)) {
       return { provider: spec.canonical, model, state: 'skipped-unsupported-provider' };
     }
@@ -1252,6 +1292,18 @@ function resolveShadow({
 async function buildShadowClient(canonicalProvider) {
   if (canonicalProvider === 'gemini') {
     return new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  }
+  if (canonicalProvider === 'openrouter') {
+    // Delegates to the PRIMARY route's own credential resolver rather than
+    // re-deriving the baseURL/key here — one definition of "how do we reach
+    // OpenRouter", so the shadow can never drift onto a different endpoint than
+    // the primary. Note `buildShadowClient` deliberately does NOT call
+    // `PROVIDERS[...].buildClient`/`assertReady`; the openrouter descriptor's
+    // assertReady demands FINAL_REVIEW_MODEL (the PRIMARY's model), which a
+    // shadow run has no reason to set. Readiness for this path is enforced in
+    // resolveShadow instead — see its credential + explicit-model checks.
+    const c = resolveOpenRouterCreds();
+    return createOpenAIClient({ oss: { baseURL: c.baseUrl, apiKey: c.apiKey } });
   }
   if (canonicalProvider === 'azure-claude') {
     if (azureConfig.claudeApiShape === 'anthropic') {
