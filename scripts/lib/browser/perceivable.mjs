@@ -61,6 +61,26 @@
  *   that `checkVisibility()` ignores `inert` while the fallback walk honoured it,
  *   so the branches disagreed — but the right way to agree was to drop the check,
  *   not to add it. Both branches now answer exactly "is this painted?".
+ * - **Every property is tested at a specific SCOPE, and the scope is the
+ *   contract** (plan G1 + round-4 M4). The fallback branch is not one flat walk:
+ *   - `visibility` is read **only on the target element**. It is an *inherited*
+ *     property, so the computed value already carries inheritance — and a
+ *     descendant may declare `visibility:visible` inside a `visibility:hidden`
+ *     subtree and be fully painted. Walking ancestors for it returned `false`
+ *     where `checkVisibility()` correctly returns `true`.
+ *   - `display:none`, `opacity:0` and `content-visibility:hidden` are walked over
+ *     self **and every ancestor**, because none of them can be overridden from
+ *     below: an ancestor with `display:none` removes the whole subtree.
+ *   - The `[hidden]` **attribute** is not tested at all. Under the UA default it
+ *     *is* `display:none`, which the walk already catches; where CSS overrides
+ *     that default the element genuinely is painted, so treating the attribute as
+ *     authoritative would disagree with `checkVisibility()` — the same defect in a
+ *     different property. `<input type="file" hidden>`, the case this predicate was
+ *     written for, is unaffected: it resolves to `display:none`.
+ *
+ *   Two reviewers found two instances of this one class (`[inert]`, then
+ *   `visibility`). If a third appears, replace this hand-written fallback with a
+ *   declarative property→scope table rather than patching a third time.
  * - **Tri-state, because "unknown" is not "perceivable".** Returns `true`
  *   (rendered), `false` (not rendered) or **`null` (could not establish)**.
  *   An earlier version returned `true` on any thrown exception, which converted
@@ -103,17 +123,21 @@ export const PERCEIVABLE_SOURCE = `function ${PERCEIVABLE_FN_NAME}(el) {
       // contentVisibilityAuto deliberately NOT passed — see module docs.
       return el.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true });
     }
-    // Fallback for engines without checkVisibility: walk self + ancestors.
-    // Required — a visible child of a hidden parent is not rendered, and
-    // offsetParent gets this wrong for position:fixed.
+    // Fallback for engines without checkVisibility. TWO SCOPES, deliberately.
+    // visibility is INHERITED, so read it ONCE on the target: its computed value
+    // already carries inheritance, AND a descendant may override a hidden
+    // ancestor with visibility:visible and still be painted. Walking it would
+    // return false where checkVisibility() correctly returns true.
+    if (['hidden', 'collapse'].includes(getComputedStyle(el).visibility)) return false;
+    // These three are NOT overridable from below — an ancestor with display:none
+    // removes the whole subtree regardless of what a descendant declares — so
+    // they DO need the walk. offsetParent gets this wrong for position:fixed.
     let node = el;
     while (node && node.nodeType === 1) {
       const cs = getComputedStyle(node);
       if (cs.display === 'none') return false;
-      if (cs.visibility === 'hidden' || cs.visibility === 'collapse') return false;
       if (parseFloat(cs.opacity) === 0) return false;
       if (cs.contentVisibility === 'hidden') return false;
-      if (node.hasAttribute('hidden')) return false;   // maps to display:none
       node = node.parentElement;
     }
     return true;
