@@ -86,6 +86,14 @@
     {
       "line": "> `scope.mode` is echoed in the output so a global run is never mistakable for a",
       "reason": "Restates the self-labelling property of the result schema. The field is produced by cmdListUnlockedFixes and its presence/shape is asserted in tests/cross-skill-unlocked-scope.test.mjs; whether a reader NOTICES the label is not contractable."
+    },
+    {
+      "line": "> **Never hand-derive a repo id to pass here.** There are two ids per repo and",
+      "reason": "Operator guidance whose FAILURE MODE is mechanically caught, so it is not a separate gate. audit_repos carries both `id` (v4, the key these views use) and `repo_uuid` (v5, the arch-memory identity); resolveShipNudgeScope in scripts/cross-skill.mjs verifies --repo-id against listRepoIds(), translates a repo_uuid via getRepoIdByUuid, and returns reason:unknown-repo-id + measured:false otherwise — so a hand-derived id can no longer produce an authoritative zero. tests/cross-skill-unlocked-scope.test.mjs pins all three branches. Whether an operator CHOOSES to hand-derive one is advice, not an oracle."
+    },
+    {
+      "line": "> backlog for a repo that was never queried. That is how the incident above",
+      "reason": "Narrative. It recounts the 2026-07-30 consumer incident (a wrong-but-plausible repo id reported measured:true with a count of 0, and a `warned` ship event was corrected to `shipped` on the strength of it) to explain WHY the verification above exists. The 'never queried' verb describes the past defect, not a rule this skill enforces."
     }
   ]
 }
