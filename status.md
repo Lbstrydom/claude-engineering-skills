@@ -1,6 +1,39 @@
 # Project Status Log
 
-## 2026-07-30 (latest) — the capture-honesty delta, and a number that was never ours
+## 2026-07-30 (latest) — live-run triage closed out: wine PR #208, and the scanner learns two lessons
+
+Finished the capture-honesty session by taking its own medicine: every remaining
+finding from the live wine click-test run was either fixed at the class level or
+refuted with evidence.
+
+**Two scanner FP classes closed upstream** (the class, not the instance).
+`aria-hidden-focusable` now skips `[inert]` subtrees — they are out of the tab
+order, so the "keyboard users land in an invisible region" premise cannot hold;
+one login overlay had manufactured 24 false P1s. `form-field-no-name` is now P3
+advisory when the form has no `action` — there is no native submission path, so
+"value won't be submitted" is not a consequence, and the P1 actively pressured
+the unsafe fix (adding `name` to an action-less credentials form arms a
+GET-credentials-in-URL leak). Both carry both-branch regression tests; the
+genuine defects (non-inert aria-hidden traps, real-action forms) keep full
+severity.
+
+**Wine PR #208 merged (squash `e9ec56f4`)** — all three actionable findings:
+`method="post"` on the auth form (defence-in-depth: the guard, not the names),
+Today's heading h1→h2 (the site title is the page's single h1), and the WCAG
+2.5.8 24px floor made unconditional (the 2026-06-12 sweep had gated it on
+`pointer: coarse`, so desktop mice never got it). Verified over HTTP: one h1,
+pills 74×24, `form.method === "post"`; 11,980 unit tests green. Two traps
+dodged on the way: the first edit went into generated-and-gitignored
+`public/index.html` (source is `index.html.template` — prebuild would have
+silently reverted it), and a `file://` probe falsely showed the CSS floor not
+applying (opaque `@import` sheets; the HTTP path is what production serves).
+
+**The 0.5b gate now tells the truth in production**: repo-scoped
+`list-unlocked-fixes` reports 85 code / 112 plan for this repo under
+`scope.mode: "repo"` — the same query that once fed a consumer another repo's
+207.
+
+## 2026-07-30 — the capture-honesty delta, and a number that was never ours
 
 Closed the round-4 delta on `skill-shadow-and-capture-honesty.md`, filed the
 upstream field report in the consumer, and merged the consumer-side fix.
