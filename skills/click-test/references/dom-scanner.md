@@ -79,7 +79,11 @@ Paste this into `browser_evaluate` as the function body. Returns a single
         if (cs.display === 'none') return false;
         if (parseFloat(cs.opacity) === 0) return false;
         if (cs.contentVisibility === 'hidden') return false;
-        node = node.parentElement;
+        // Cross an open shadow boundary: parentElement is null for a shadow root's
+        // direct child, so a plain walk would stop there and miss an invisible HOST.
+        // checkVisibility() evaluates the composed tree, so not hopping the boundary
+        // is another way for the two branches to disagree.
+        node = node.assignedSlot || node.parentElement || (node.parentNode && node.parentNode.host) || null;
       }
       return true;
     } catch (e) {

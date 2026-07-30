@@ -78,9 +78,30 @@
  *     different property. `<input type="file" hidden>`, the case this predicate was
  *     written for, is unaffected: it resolves to `display:none`.
  *
- *   Two reviewers found two instances of this one class (`[inert]`, then
- *   `visibility`). If a third appears, replace this hand-written fallback with a
- *   declarative property→scope table rather than patching a third time.
+ *   - The ancestor walk follows the **composed tree**, not the light-DOM parent
+ *     chain: `assignedSlot || parentElement || parentNode.host`. `parentElement`
+ *     is `null` for a shadow root's direct child (so a plain walk would stop at
+ *     the boundary and miss an invisible *host*), and a slotted light-DOM element
+ *     has a truthy `parentElement` that bypasses the shadow tree where its
+ *     `<slot>` actually lives. `checkVisibility()` evaluates the composed tree
+ *     natively, so both omissions were branch disagreements.
+ *
+ *   **REVISIT TRIGGER — this fallback has now been corrected FOUR times** for one
+ *   class of defect ("the fallback disagrees with `checkVisibility()`"):
+ *   `[inert]`, `visibility` scope, the shadow-host hop, and `assignedSlot`. Every
+ *   fix was correct in isolation and the trend is the real signal: this branch is
+ *   being hand-reimplemented as a composed-tree visibility engine, which is what
+ *   `checkVisibility()` already is.
+ *
+ *   Note what it costs to keep: the branch **only runs when `checkVisibility` is
+ *   absent**, and both consumers drive Playwright's Chromium (105+), where it is
+ *   always present — so none of those four fixes changed observable behaviour for
+ *   any shipped caller. On a **fifth** instance, do not patch again: either delete
+ *   the fallback and return `null` (UNKNOWN — which the tri-state contract above
+ *   already handles honestly, and is the truthful answer for an engine we cannot
+ *   evaluate), or accept a real composed-tree library. Patching a fifth time would
+ *   be maintaining a shadow implementation of a browser API for a code path that
+ *   never executes.
  * - **Tri-state, because "unknown" is not "perceivable".** Returns `true`
  *   (rendered), `false` (not rendered) or **`null` (could not establish)**.
  *   An earlier version returned `true` on any thrown exception, which converted
@@ -138,7 +159,11 @@ export const PERCEIVABLE_SOURCE = `function ${PERCEIVABLE_FN_NAME}(el) {
       if (cs.display === 'none') return false;
       if (parseFloat(cs.opacity) === 0) return false;
       if (cs.contentVisibility === 'hidden') return false;
-      node = node.parentElement;
+      // Cross an open shadow boundary: parentElement is null for a shadow root's
+      // direct child, so a plain walk would stop there and miss an invisible HOST.
+      // checkVisibility() evaluates the composed tree, so not hopping the boundary
+      // is another way for the two branches to disagree.
+      node = node.assignedSlot || node.parentElement || (node.parentNode && node.parentNode.host) || null;
     }
     return true;
   } catch (e) {
