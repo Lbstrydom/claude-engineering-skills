@@ -20,7 +20,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { getUnlockedFixes, countUnlockedFixes } from '../scripts/lib/store/plans-ship.mjs';
+import {
+  getUnlockedFixes,
+  countUnlockedFixes,
+  getUnremediatedAcceptances,
+} from '../scripts/lib/store/plans-ship.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const cliSrc = fs.readFileSync(path.join(repoRoot, 'scripts', 'cross-skill.mjs'), 'utf-8');
@@ -42,6 +46,12 @@ describe('unlocked-fix store boundary — global access must be ASKED for', () =
     it(`countUnlockedFixes rejects ${label}`, async () => {
       await assert.rejects(() => countUnlockedFixes(arg), /explicit scope is required/);
     });
+    // Added 2026-07-30: this reader kept the pre-fix `if (repoId) … else every
+    // repository` shape for three days after its siblings were fenced, and
+    // /ship Step 0.5e calls it with no flags at all.
+    it(`getUnremediatedAcceptances rejects ${label}`, async () => {
+      await assert.rejects(() => getUnremediatedAcceptances(arg), /explicit scope is required/);
+    });
   }
 
   it('rejects an ambiguous {repoId, allRepos} pair rather than picking one', async () => {
@@ -62,16 +72,18 @@ describe('unlocked-fix store boundary — global access must be ASKED for', () =
 
 describe('CLI scope precedence — explicit intent before ambient inference', () => {
   const chain = cliSrc.slice(
-    cliSrc.indexOf('async function resolveUnlockedFixScope()'),
+    cliSrc.indexOf('async function resolveShipNudgeScope()'),
     cliSrc.indexOf('const storeScopeFor'),
   );
 
-  it('resolveUnlockedFixScope exists and is used by BOTH handlers', () => {
+  it('resolveShipNudgeScope exists and is used by EVERY nudge handler', () => {
     assert.ok(chain.length > 0, 'the scope chain must be one shared function, not duplicated per handler');
-    const uses = cliSrc.match(/await resolveUnlockedFixScope\(\)/g) || [];
-    assert.equal(uses.length, 2,
-      'both cmdListUnlockedFixes and cmdLockWithTestWorksheet must scope — the worksheet is the ' +
-      'command /ship PRINTS as its remediation, so leaving it unscoped hands over foreign findings');
+    const uses = cliSrc.match(/await resolveShipNudgeScope\(\)/g) || [];
+    assert.equal(uses.length, 3,
+      'cmdListUnlockedFixes, cmdLockWithTestWorksheet and cmdListUnremediatedAcceptances must all ' +
+      'scope. The worksheet is the command /ship PRINTS as its remediation, and the acceptance ' +
+      'backlog is a second /ship step that shipped unscoped for three days — leaving any of them ' +
+      'unscoped hands the operator another repository\'s findings');
   });
 
   it('--all-repos is evaluated BEFORE ambient identity, or it is unreachable', () => {
@@ -97,6 +109,26 @@ describe('CLI scope precedence — explicit intent before ambient inference', ()
       'an unknown slug must never fall back to global');
   });
 
+  it('an unverified --repo-id can never produce an authoritative zero', () => {
+    // The incident's FINAL number came from here, not from the missing scope:
+    // the operator passed the arch-memory repo_uuid (v5, from
+    // `.audit-loop/repo-id`) while these views key on `audit_repos.id` (v4).
+    // The id was trusted verbatim, matched no rows, and 0 was reported as a
+    // measured backlog — so a `warned` ship event was "corrected" to `shipped`.
+    assert.match(chain, /listRepoIds\(\)/,
+      '--repo-id must be checked against audit_repos, not trusted verbatim');
+    assert.match(chain, /unknown-repo-id/);
+    assert.match(chain, /repo-id-unverifiable/,
+      'an unreadable audit_repos must refuse to report a count, not fall through to one');
+
+    const branch = chain.slice(chain.indexOf('if (repoIdArg) {'), chain.indexOf('if (slugArg) {'));
+    assert.ok(!/measured: true[\s\S]*unknown-repo-id/.test(branch.slice(branch.indexOf('unknown-repo-id'))),
+      'the unknown-id exit must be measured:false');
+    assert.match(branch, /getRepoIdByUuid/,
+      'the arch-memory uuid names the same repo (a sibling column) — translate it rather than ' +
+      'rejecting the id an operator most plausibly has to hand');
+  });
+
   it('an unresolvable ambient identity is measured:false, not global', () => {
     assert.match(chain, /repo-identity-unresolvable/);
     assert.match(chain, /measured: false/);
@@ -108,6 +140,54 @@ describe('CLI scope precedence — explicit intent before ambient inference', ()
     assert.match(cliSrc, /measured: false, reason: scope\.reason/);
     assert.match(cliSrc, /measured: true, reason: null/);
   });
+});
+
+describe('the fence covers the whole view family, not just the reported one', () => {
+  // The 207-vs-0 fix added the fence and routed the two readers it knew about.
+  // `getUnremediatedAcceptances` queried a sibling view, skipped the fence, and
+  // reproduced the identical defect one /ship step later. Enumerating readers by
+  // hand is what missed it, so enumerate mechanically instead.
+  const storeSrc = fs.readFileSync(
+    path.join(repoRoot, 'scripts', 'lib', 'store', 'plans-ship.mjs'), 'utf-8');
+  const NUDGE_VIEWS = ['unlocked_fixes', 'unremediated_acceptances'];
+
+  // Split on function declarations so each body can be attributed to its owner.
+  const parts = storeSrc.split(/(?=^(?:export\s+)?(?:async\s+)?function\s+\w+)/m);
+  const readers = parts
+    .map((body) => ({ name: (body.match(/^(?:export\s+)?(?:async\s+)?function\s+(\w+)/) || [])[1], body }))
+    .filter((f) => f.name && NUDGE_VIEWS.some((v) => new RegExp(`FROM\\s+${v}\\b`).test(f.body)));
+
+  it('finds the readers at all (guards against the regex silently matching nothing)', () => {
+    assert.ok(readers.length >= 3,
+      `expected >=3 nudge-view readers, found ${readers.length} (${readers.map((r) => r.name).join(', ')}) ` +
+      '— if this dropped, the scan below is passing vacuously');
+  });
+
+  for (const { name, body } of readers) {
+    it(`${name} has no repo-unfiltered read of a nudge view`, () => {
+      // Per-STATEMENT, deliberately. A body-wide "does a repo_id predicate
+      // appear anywhere?" check passes the exact bug being guarded: the broken
+      // getUnremediatedAcceptances had a filtered branch AND an unfiltered one,
+      // so the filtered branch alibi'd the leak. Verified by reverting the fix
+      // against this assertion before trusting it.
+      const fenced = /resolveExplicitRepoScope\(/.test(body);
+      const statements = [...body.matchAll(/`([^`]*)`/g)].map((m) => m[1])
+        .filter((sql) => NUDGE_VIEWS.some((v) => new RegExp(`FROM\\s+${v}\\b`).test(sql)));
+      assert.ok(statements.length > 0, `no SQL extracted from ${name} — the scan would pass vacuously`);
+
+      const unfiltered = statements.filter((sql) => !/repo_id\s*=\s*\$\d/.test(sql));
+      if (fenced) {
+        // The fence makes global access an explicit, asked-for argument, so an
+        // unfiltered branch is legitimate — it is only reachable via allRepos.
+        return;
+      }
+      assert.equal(unfiltered.length, 0,
+        `${name} reads a /ship-nudge view with no repo_id predicate and does not route through ` +
+        `resolveExplicitRepoScope, so omission reaches every repository:\n  ${unfiltered.join('\n  ')}\n` +
+        'Either take the fence (if the caller chooses the scope) or require a repoId and always ' +
+        'filter on it (if the scope is inherent).');
+    });
+  }
 });
 
 describe('lock worksheet — cross-tenant WRITE fence', () => {

@@ -120,6 +120,18 @@ render it as a clean backlog.
 > scoped one. The `byMode.code` guidance below shipped one day earlier and is
 > correct — but it was fixing the arithmetic on the wrong *population*, so read
 > both together.
+>
+> **Never hand-derive a repo id to pass here.** There are two ids per repo and
+> they are different columns of the same `audit_repos` row: `id` (v4) is what
+> these views key on, and `repo_uuid` (v5, cached in `.audit-loop/repo-id`) is
+> the arch-memory identity. Passing the latter used to be trusted verbatim,
+> match nothing, and report `measured:true` with **0** — an authoritative empty
+> backlog for a repo that was never queried. That is how the incident above
+> reached its final answer, and a `warned` ship event got "corrected" to
+> `shipped` on the strength of it. `--repo-id` is now verified against
+> `audit_repos`: a `repo_uuid` is translated, anything unknown is
+> `reason: unknown-repo-id` + `measured:false`. Prefer no flag at all (ambient
+> identity) or `--repo <owner/repo>`.
 
 **Use `byMode.code` as `missing_spec_count` — NOT `rows.length`.** `rows` is
 capped at 20 by the query, so counting it reported "20" when the real total was
@@ -172,7 +184,25 @@ block reason. Cloud off → it still runs + prints; Playwright missing → exit 
 node scripts/cross-skill.mjs list-unremediated-acceptances
 ```
 
-Returns `{ok, cloud, rows: [...]}`. Count the rows as `unremediated_count`.
+Returns `{ok, cloud, scope:{mode,repoId,slug}, measured, reason, rows: [...]}`.
+Count the rows as `unremediated_count`.
+
+**Check `measured` BEFORE reading the count** — identical contract to 0.5b.
+`measured:false` (`reason: repo-identity-unresolvable` / `cloud-off`) means
+*nothing was measured*; an empty `rows` then means "not applicable", **not**
+"no unremediated acceptances". Report it as unmeasured.
+
+> **Scoping — fixed 2026-07-30, same defect as 0.5b, three days later.** This
+> command read `--repo-id` only, and this step invokes it with **no flags**, so
+> both the CLI and the store took their *unscoped* branch: a live run returned
+> rows spanning two repositories, which this step then told you to record as
+> *this* repo's `unremediated_count`. The 0.5b fix had introduced a data-access
+> fence for exactly this, but only the two `unlocked_fixes` readers were routed
+> through it — `getUnremediatedAcceptances` queried a sibling view and kept the
+> old shape. Scope now resolves identically for both steps (`--all-repos` →
+> `--repo-id` → `--repo <slug>` → ambient git identity → `measured:false`), and
+> `tests/cross-skill-unlocked-scope.test.mjs` enumerates the view family
+> mechanically so a *third* reader cannot repeat it.
 
 One step EARLIER in the lifecycle than 0.5b: `unlocked_fixes` asks *"this was
 fixed — is the fix locked?"*; this asks *"this was accepted — was it ever

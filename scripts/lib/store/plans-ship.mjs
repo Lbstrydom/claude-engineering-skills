@@ -456,9 +456,10 @@ export async function recordRegressionSpecRun(specId, run) {
  * Optionally scoped to a repo.
  */
 /**
- * Resolve an explicit scope argument for the cross-repo `unlocked_fixes` reads.
+ * Resolve an explicit scope argument for the cross-repo /ship-nudge readers
+ * (`unlocked_fixes`, `unremediated_acceptances`).
  *
- * WHY THIS EXISTS. Both readers previously took a bare `repoId` and treated
+ * WHY THIS EXISTS. These readers previously took a bare `repoId` and treated
  * *absent* as "every repository" — so a caller that simply forgot to pass one
  * silently got cross-tenant rows. That is not hypothetical: a consumer repo
  * reported an unlocked-fix backlog of 207 that belonged entirely to a DIFFERENT
@@ -470,11 +471,18 @@ export async function recordRegressionSpecRun(specId, run) {
  * access now has to be *asked for*. This is INC-002's lesson restated — an
  * omitted argument is not a safety gate.
  *
+ * EVERY view in this family routes through here. `getUnremediatedAcceptances`
+ * did not, and reproduced the identical defect one `/ship` step later (0.5e):
+ * invoked with no flags it returned rows spanning multiple repos, which the
+ * skill then told the operator to count as `unremediated_count` for THIS repo.
+ * A new repo-bearing reader added to this module belongs on this fence too —
+ * that is the whole point of it being one shared function.
+ *
  * @param {{repoId?: string|null, allRepos?: boolean}|string|null|undefined} scope
  * @param {string} fnName
  * @returns {{repoId: string|null, allRepos: boolean}}
  */
-function resolveUnlockedScope(scope, fnName) {
+function resolveExplicitRepoScope(scope, fnName) {
   if (scope && typeof scope === 'object' && !Array.isArray(scope)) {
     const { repoId = null, allRepos = false } = scope;
     if (allRepos && repoId) {
@@ -493,7 +501,7 @@ function resolveUnlockedScope(scope, fnName) {
 /**
  * Recent fixes lacking a regression spec (from the `unlocked_fixes` view).
  *
- * **Scope is mandatory and explicit** — see `resolveUnlockedScope`. Note the
+ * **Scope is mandatory and explicit** — see `resolveExplicitRepoScope`. Note the
  * `LIMIT 20`: this is a nudge sampler, not an exhaustive reader. Never use it
  * to look up ONE finding by id — under `{allRepos:true}` it returns an
  * arbitrary 20 rows out of hundreds across every repo, so a finding that
@@ -502,7 +510,7 @@ function resolveUnlockedScope(scope, fnName) {
  * @param {{repoId?: string|null, allRepos?: boolean}} scope
  */
 export async function getUnlockedFixes(scope) {
-  const { repoId, allRepos } = resolveUnlockedScope(scope, 'getUnlockedFixes');
+  const { repoId, allRepos } = resolveExplicitRepoScope(scope, 'getUnlockedFixes');
   if (!await isCloudEnabled()) return [];
   try {
     if (!allRepos) {
@@ -568,7 +576,7 @@ export async function findUnlockedFixInRepo({ repoId, findingId }) {
  * @returns {Promise<{total:number, code:number, plan:number}>}
  */
 export async function countUnlockedFixes(scope) {
-  const { repoId, allRepos } = resolveUnlockedScope(scope, 'countUnlockedFixes');
+  const { repoId, allRepos } = resolveExplicitRepoScope(scope, 'countUnlockedFixes');
   const empty = { total: 0, code: 0, plan: 0 };
   if (!await isCloudEnabled()) return empty;
   try {
@@ -591,7 +599,7 @@ export async function countUnlockedFixes(scope) {
 
 /**
  * Accepted findings that never got a remediation transition (from the
- * `unremediated_acceptances` view). Optionally scoped to a repo.
+ * `unremediated_acceptances` view).
  *
  * Companion to `getUnlockedFixes`, one step earlier in the lifecycle:
  * `unlocked_fixes` asks "this was fixed — is the fix locked?", this asks
@@ -599,13 +607,25 @@ export async function countUnlockedFixes(scope) {
  * 3 of 10 accepted final-review-shadow findings had a confirmed code fix, so
  * `adjudication_outcome = 'accepted'` is NOT evidence of remediation.
  *
+ * **Scope is mandatory and explicit** — see `resolveExplicitRepoScope`. This
+ * reader carried the pre-fix `if (repoId) … else every repository` shape until
+ * 2026-07-30: `/ship` Step 0.5e invokes it with no flags, so a live run
+ * returned rows spanning two repos and the skill told the operator to record
+ * the count as this repo's `unremediated_count`. It is the same defect as the
+ * 207-vs-0 unlocked-fix incident, one step later in the same gate.
+ *
  * Same failure contract as getUnlockedFixes: cloud-off and query failure both
  * return `[]` — this is a non-blocking /ship nudge and must never break a push.
+ * Note that an INVALID SCOPE still throws: a programming error must not be
+ * laundered into an empty nudge, which is what "no obligations" would read as.
+ *
+ * @param {{repoId?: string|null, allRepos?: boolean}} scope
  */
-export async function getUnremediatedAcceptances(repoId) {
+export async function getUnremediatedAcceptances(scope) {
+  const { repoId, allRepos } = resolveExplicitRepoScope(scope, 'getUnremediatedAcceptances');
   if (!await isCloudEnabled()) return [];
   try {
-    if (repoId) {
+    if (!allRepos) {
       return await many(
         `SELECT * FROM unremediated_acceptances WHERE repo_id = $1 LIMIT 20`,
         [repoId]

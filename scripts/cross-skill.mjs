@@ -69,6 +69,7 @@ import {
   getRepoIdByUuid,
   resolveRepoForStore,
   getRepoIdByName,
+  listRepoIds,
   openRefreshRun,
   publishRefreshRun,
   abortRefreshRun,
@@ -691,7 +692,10 @@ async function cmdRecordShipEvent() {
 }
 
 /**
- * Resolve the repository scope for the unlocked-fix readers.
+ * Resolve the repository scope for the /ship-nudge readers — the unlocked-fix
+ * backlog (Step 0.5b), its lock worksheet, and the unremediated-acceptance
+ * backlog (Step 0.5e). All of them print a number the operator reads as
+ * "obligations belonging to THIS repo", so all of them scope identically.
  *
  * **Order is the contract — it short-circuits, and explicit operator intent is
  * evaluated BEFORE ambient inference.** Putting `--all-repos` last (the first
@@ -707,7 +711,7 @@ async function cmdRecordShipEvent() {
  *
  * @returns {Promise<{mode:'repo'|'all-repos'|'unresolved', repoId:string|null, slug:string|null, measured:boolean, reason:string|null, error?:string}>}
  */
-async function resolveUnlockedFixScope() {
+async function resolveShipNudgeScope() {
   const allRepos = hasFlag('all-repos');
   const repoIdArg = argOption('repo-id');
   const slugArg = argOption('repo');
@@ -717,7 +721,37 @@ async function resolveUnlockedFixScope() {
       error: '--all-repos cannot be combined with --repo/--repo-id — pick one.' };
   }
   if (allRepos) return { mode: 'all-repos', repoId: null, slug: null, measured: true, reason: null };
-  if (repoIdArg) return { mode: 'repo', repoId: repoIdArg, slug: null, measured: true, reason: null };
+
+  if (repoIdArg) {
+    // An id absent from `audit_repos` used to be trusted verbatim, so it read
+    // as `measured:true` with a count of ZERO — an authoritative "no
+    // obligations" for a repo that was never queried. That false zero is not
+    // hypothetical either: it is how the consumer incident got its final
+    // number. The operator had passed the ARCH-MEMORY repo uuid (the v5 id in
+    // `.audit-loop/repo-id`, e.g. 25aa2cdf-…) while these views key on
+    // `audit_repos.id` (a v4 row id, e.g. 22865de8-…). Both name the same repo
+    // — they are two columns of the same row — so the id looked entirely
+    // plausible and the zero it produced was believed.
+    const known = await listRepoIds().catch(() => []);
+    if (known.length === 0) {
+      // Cannot confirm the id against the store; refuse to report a number
+      // rather than emit one we cannot stand behind.
+      return { mode: 'unresolved', repoId: null, slug: null, measured: false, reason: 'repo-id-unverifiable',
+        error: 'could not read audit_repos to verify --repo-id — refusing to report a count that cannot be attributed.' };
+    }
+    if (known.includes(repoIdArg)) {
+      return { mode: 'repo', repoId: repoIdArg, slug: null, measured: true, reason: null };
+    }
+    // Accept the arch-memory uuid too, translated — it is the id an operator
+    // most plausibly has to hand, and silently rejecting it teaches nothing.
+    const viaUuid = await getRepoIdByUuid(repoIdArg).catch(() => null);
+    if (viaUuid?.id) {
+      return { mode: 'repo', repoId: viaUuid.id, slug: viaUuid.name ?? null, measured: true, reason: null };
+    }
+    return { mode: 'unresolved', repoId: null, slug: null, measured: false, reason: 'unknown-repo-id',
+      error: `unknown --repo-id "${repoIdArg}" — not an audit_repos.id nor a known repo_uuid. ` +
+        'It is NOT an empty backlog; nothing was measured.' };
+  }
 
   if (slugArg) {
     // An explicitly-named repo that does not exist is an ERROR: the operator
@@ -747,7 +781,7 @@ async function cmdListUnlockedFixes() {
     return emit({ ok: true, cloud: false, scope: { mode: 'unresolved', repoId: null, slug: null },
       measured: false, reason: 'cloud-off', rows: [], shown: 0, total: 0, byMode: { total: 0, code: 0, plan: 0 } });
   }
-  const scope = await resolveUnlockedFixScope();
+  const scope = await resolveShipNudgeScope();
   if (scope.error) return emit({ ok: false, cloud: true, error: scope.error, reason: scope.reason });
 
   // `measured:false` is NOT "zero obligations" — it is "nothing was measured".
@@ -776,10 +810,26 @@ async function cmdListUnlockedFixes() {
 
 async function cmdListUnremediatedAcceptances() {
   await initLearningStore();
-  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, rows: [] });
-  const repoId = argOption('repo-id');
-  const rows = await getUnremediatedAcceptances(repoId);
-  emit({ ok: true, cloud: true, rows });
+  if (!await isCloudEnabled()) {
+    return emit({ ok: true, cloud: false, scope: { mode: 'unresolved', repoId: null, slug: null },
+      measured: false, reason: 'cloud-off', rows: [] });
+  }
+  // Same scope chain as list-unlocked-fixes. This handler read `--repo-id`
+  // alone until 2026-07-30, so a flagless /ship Step 0.5e — which is exactly
+  // how the skill invokes it — reported another repo's accepted-but-unfixed
+  // findings as this one's.
+  const scope = await resolveShipNudgeScope();
+  if (scope.error) return emit({ ok: false, cloud: true, error: scope.error, reason: scope.reason });
+  if (!scope.measured) {
+    return emit({ ok: true, cloud: true, scope: { mode: scope.mode, repoId: null, slug: scope.slug },
+      measured: false, reason: scope.reason, rows: [] });
+  }
+  const rows = await getUnremediatedAcceptances(storeScopeFor(scope));
+  emit({
+    ok: true, cloud: true,
+    scope: { mode: scope.mode, repoId: scope.repoId, slug: scope.slug },
+    measured: true, reason: null, rows,
+  });
 }
 
 async function cmdAuditEffectiveness() {
@@ -2331,7 +2381,7 @@ async function cmdLockWithTestWorksheet() {
   // Same scope chain as list-unlocked-fixes — this is the command Step 0.5b
   // PRINTS as its own remediation, so an unscoped worksheet would hand the
   // operator another repo's findings to "fix".
-  const scope = await resolveUnlockedFixScope();
+  const scope = await resolveShipNudgeScope();
   if (scope.error) return emit({ ok: false, error: scope.error, reason: scope.reason });
   if (!scope.measured) {
     return emit({ ok: true, measured: false, reason: scope.reason, worksheet: '',

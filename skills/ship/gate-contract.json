@@ -81,7 +81,7 @@
     },
     {
       "line": "> identity → `measured:false`. Global access must be asked for explicitly, and",
-      "reason": "Documents the scope precedence chain. It IS mechanically enforced: getUnlockedFixes/countUnlockedFixes throw on an omitted or ambiguous scope (scripts/lib/store/plans-ship.mjs::resolveUnlockedScope) and tests/cross-skill-unlocked-scope.test.mjs asserts every implicit-global shape rejects, plus that --all-repos is evaluated before ambient identity. This line is the human-readable restatement."
+      "reason": "Documents the scope precedence chain. It IS mechanically enforced: getUnlockedFixes/countUnlockedFixes/getUnremediatedAcceptances throw on an omitted or ambiguous scope (scripts/lib/store/plans-ship.mjs::resolveExplicitRepoScope) and tests/cross-skill-unlocked-scope.test.mjs asserts every implicit-global shape rejects, that --all-repos is evaluated before ambient identity, and that no reader of the /ship-nudge view family carries a repo-unfiltered statement without the fence. This line is the human-readable restatement."
     },
     {
       "line": "> `scope.mode` is echoed in the output so a global run is never mistakable for a",
