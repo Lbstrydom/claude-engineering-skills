@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "a11ccde470a1e995",
+  "bundleVersion": "c3d4bca72aff01b3",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -118,19 +118,19 @@
     },
     "click-test": {
       "path": "skills/click-test/SKILL.md",
-      "sha": "3e5052ff5b48",
-      "size": 36588,
+      "sha": "da0fc0a9109f",
+      "size": 39124,
       "summary": "Structural DOM audit of a live app — walk every interactive element and",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "3e5052ff5b48",
-          "size": 36588
+          "sha": "da0fc0a9109f",
+          "size": 39124
         },
         {
           "relPath": "references/dom-scanner.md",
-          "sha": "0c32935d46db",
-          "size": 15440
+          "sha": "a4e8862f33e1",
+          "size": 19718
         }
       ]
     },
@@ -162,14 +162,14 @@
     },
     "nav-audit": {
       "path": "skills/nav-audit/SKILL.md",
-      "sha": "931473a5d590",
-      "size": 11130,
+      "sha": "a1b228b664ff",
+      "size": 13537,
       "summary": "Static, code-derived navigation / information-architecture audit — the",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "931473a5d590",
-          "size": 11130
+          "sha": "a1b228b664ff",
+          "size": 13537
         },
         {
           "relPath": "examples/example-report.md",
@@ -309,14 +309,14 @@
     },
     "ship": {
       "path": "skills/ship/SKILL.md",
-      "sha": "ae0c854ab6de",
-      "size": 33375,
+      "sha": "286b814c4b86",
+      "size": 34571,
       "summary": "Sync all project documentation, optionally update a plan, then commit and push to git.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "ae0c854ab6de",
-          "size": 33375
+          "sha": "286b814c4b86",
+          "size": 34571
         },
         {
           "relPath": "references/python-environment-discovery.md",

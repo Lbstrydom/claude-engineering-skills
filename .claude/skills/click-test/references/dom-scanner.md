@@ -43,8 +43,82 @@ Paste this into `browser_evaluate` as the function body. Returns a single
     return s.length > 200 ? s.slice(0, 197) + '...' : s;
   };
 
+  // ---------------------------------------------------------------------
+  // perceivability — "is this element RENDERED in the state we captured?"
+  //
+  // CANONICAL SOURCE: scripts/lib/browser/perceivable.mjs (PERCEIVABLE_SOURCE).
+  // /nav-audit --verify injects the SAME function to qualify its authSentinel,
+  // so this copy is drift-checked by tests/click-test-perceivability.test.mjs.
+  // Edit the module, then mirror here — never the other way round.
+  // ---------------------------------------------------------------------
+  function __isPerceivable(el) {
+    // Tri-state: true = rendered, false = not rendered, null = could not establish.
+    // null is NOT "perceivable" — see the module docs.
+    if (!el || el.nodeType !== 1 || !el.isConnected) return false;
+    try {
+      // [inert] first: checkVisibility() does not evaluate it, and an inert
+      // element is painted but non-interactive.
+      if (el.closest('[inert]')) return false;
+      // Zero-size subsumes the old rect.width===0 guard. NOTE: visibility:hidden
+      // and opacity:0 keep a real box, so this alone is not sufficient.
+      const r = el.getBoundingClientRect();
+      if (r.width === 0 || r.height === 0) return false;
+      if (typeof el.checkVisibility === 'function') {
+        // contentVisibilityAuto deliberately NOT passed — see module docs.
+        return el.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true });
+      }
+      // Fallback for engines without checkVisibility: walk self + ancestors.
+      // Required — a visible child of a hidden parent is not rendered, and
+      // offsetParent gets this wrong for position:fixed.
+      let node = el;
+      while (node && node.nodeType === 1) {
+        const cs = getComputedStyle(node);
+        if (cs.display === 'none') return false;
+        if (cs.visibility === 'hidden' || cs.visibility === 'collapse') return false;
+        if (parseFloat(cs.opacity) === 0) return false;
+        if (cs.contentVisibility === 'hidden') return false;
+        if (node.hasAttribute('inert') || node.hasAttribute('hidden')) return false;
+        node = node.parentElement;
+      }
+      return true;
+    } catch (e) {
+      // Could not establish rendered state. Returning true here would assert a
+      // verdict we did not earn; returning false would cap every severity and
+      // disable the signal. Report UNKNOWN and let the caller surface it.
+      return null;
+    }
+  }
+
+  // Severity cap for non-perceivable elements. DEMOTE, never drop: a hidden
+  // element may become visible (--with-modals re-scans opened surfaces), so
+  // dropping destroys signal. Capping stops a `<input type="file" hidden>`
+  // from being reported P0 while keeping the finding available.
+  const NON_PERCEIVABLE_CAP = 'P3';
+
   const push = (kind, severity, el, detail) => {
-    findings.push({ kind, severity, selector: sel(el), snippet: snippet(el), detail });
+    // ONE call site — every kind gets the tag, and no future check can forget it.
+    const perceivable = __isPerceivable(el);
+    // Only a DEFINITE false caps. `null` (could not establish) keeps the
+    // declared severity but is flagged, so an unevaluated predicate surfaces
+    // instead of silently reading as "perceivable".
+    const capped = perceivable === false;
+    const unknown = perceivable === null;
+    let note = '';
+    if (capped) {
+      note = ` [not perceivable in the captured state — severity capped from ${severity} to ${NON_PERCEIVABLE_CAP}; re-scan with --with-modals if this lives behind a modal/menu]`;
+    } else if (unknown) {
+      note = ' [perceivability UNKNOWN — the predicate could not evaluate this element; severity is NOT capped, verify manually]';
+    }
+    findings.push({
+      kind,
+      severity: capped ? NON_PERCEIVABLE_CAP : severity,
+      declaredSeverity: severity,
+      perceivable,                 // true | false | null(unknown)
+      perceivabilityUnknown: unknown,
+      selector: sel(el),
+      snippet: snippet(el),
+      detail: detail + note,
+    });
   };
 
   // ---------------------------------------------------------------------
@@ -225,7 +299,11 @@ Paste this into `browser_evaluate` as the function body. Returns a single
   // ---------------------------------------------------------------------
   for (const el of document.querySelectorAll('button, a[href], input:not([type="hidden"]), [role="button"], [role="link"]')) {
     const rect = el.getBoundingClientRect();
-    if (rect.width === 0 || rect.height === 0) continue; // off-screen / hidden
+    // Zero-size is handled by __isPerceivable (which push() applies to every
+    // finding), but it is still skipped HERE rather than emitted-and-capped:
+    // a 0×0 element is not a *small* touch target, it is an absent one, so the
+    // finding would be wrong rather than merely low-severity.
+    if (rect.width === 0 || rect.height === 0) continue;
     if (rect.width < 24 || rect.height < 24) {
       push('small-touch-target', 'P2', el,
         `Interactive element is ${Math.round(rect.width)}×${Math.round(rect.height)}px — WCAG 2.5.8 minimum is 24×24`);
@@ -307,7 +385,7 @@ when aggregating across routes / dynamic surfaces.
 | **Closed shadow DOM** | Not accessible from JS by design | Cannot scan; report as coverage gap |
 | **Same-origin iframes** | Traversal feasible via `iframe.contentDocument`; deferred to v2 | Mark `iframeGapCount` per route |
 | **Cross-origin iframes** | Browser security blocks DOM access | Cannot scan; report as coverage gap |
-| **Inert / `hidden` subtrees** | Currently scanned; v2 will skip elements where computed `display:none` or ancestor `[inert]` | Findings inside hidden subtrees may not represent real user-facing issues — verify before fixing |
+| ~~Inert / `hidden` subtrees~~ | **CLOSED 2026-07-30** — no longer a gap. `__isPerceivable` (applied in `push()` to every finding) detects `display:none`, `visibility:hidden`, `opacity:0`, `content-visibility:hidden`, `[inert]`, detached and zero-size elements. | Such findings are **demoted to P3** and tagged `perceivable:false`, not dropped — they may become perceivable (re-scan with `--with-modals`). |
 
 When the gap matters, run the appropriate sibling skill alongside.
 

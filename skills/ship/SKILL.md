@@ -101,7 +101,25 @@ requires the outcome ledger — the legacy fallback path has no equivalent).
 node scripts/cross-skill.mjs list-unlocked-fixes
 ```
 
-Returns `{ok, cloud, rows, shown, total, byMode:{total,code,plan}}`.
+Returns `{ok, cloud, scope:{mode,repoId,slug}, measured, reason, rows, shown, total, byMode:{total,code,plan}}`.
+
+**Check `measured` BEFORE reading any count.** `measured:false` means *nothing
+was measured* (`reason: repo-identity-unresolvable` / `cloud-off`) — the zeroes
+are "not applicable", **not** "no obligations". Report it as unmeasured; never
+render it as a clean backlog.
+
+> **Scoping — fixed 2026-07-30, and worth knowing why.** This command used to
+> read `--repo-id` only. `--repo` was accepted (it is globally valid, since
+> sibling subcommands read it) and **silently ignored**, and with neither flag
+> both store queries took their *unscoped* branch — returning **every
+> repository's** rows. A consumer measured a backlog of **207** that belonged
+> entirely to a different repo; its own true count was **0**. Scope is now
+> resolved as: `--all-repos` → `--repo-id` → `--repo <slug>` → ambient git
+> identity → `measured:false`. Global access must be asked for explicitly, and
+> `scope.mode` is echoed in the output so a global run is never mistakable for a
+> scoped one. The `byMode.code` guidance below shipped one day earlier and is
+> correct — but it was fixing the arithmetic on the wrong *population*, so read
+> both together.
 
 **Use `byMode.code` as `missing_spec_count` — NOT `rows.length`.** `rows` is
 capped at 20 by the query, so counting it reported "20" when the real total was

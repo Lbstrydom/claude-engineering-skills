@@ -28,18 +28,105 @@ const DISCLOSURE_RE = /hamburger|drawer|burger|menu-?toggle|off-?canvas/i;
  * @param {{emptyNavShells?: string[], hasStorageState?: boolean}} args
  * @returns {string|null} the warning body (caller prefixes/streams it), or null
  */
-export function buildDraftCaptureWarning({ emptyNavShells = [], hasStorageState = false } = {}) {
+export function buildDraftCaptureWarning({ emptyNavShells = [], hasStorageState = false, mode = 'bootstrap' } = {}) {
+  // `mode` selects the REMEDY, never the decision. Both callers share one
+  // empty-shell judgement; only the command you'd re-run differs, and emitting
+  // `--bootstrap --from-url` advice on a `--verify` run would send the operator
+  // to redraft a contract they did not ask to change.
+  const reRun = mode === 'verify'
+    ? '--verify <url> --storage-state <auth.json>'
+    : '--bootstrap --from-url <url> --storage-state <auth.json> --force';
   if (Array.isArray(emptyNavShells) && emptyNavShells.length) {
     return `nav container(s) rendered EMPTY (0 items): ${emptyNavShells.join(', ')} — likely auth-gated or not-yet-engaged, `
       + `so the primary nav layer may be mis-detected. Re-run authenticated with `
-      + `--storage-state <auth.json> (refresh the token if one was already passed).`;
+      + `\`${reRun}\` (refresh the token if one was already passed).`;
   }
   if (!hasStorageState) {
-    return `drafted WITHOUT --storage-state: if this app is auth-gated, its primary nav `
-      + `may not have rendered, so the drafted navLayers can be wrong (review before committing). `
-      + `Re-run \`--bootstrap --from-url <url> --storage-state <auth.json> --force\` authenticated.`;
+    return mode === 'verify'
+      ? `ran WITHOUT --storage-state: if this app is auth-gated, only its logged-out shell was `
+        + `reconciled, so the scorecard describes the wrong surface. Re-run \`${reRun}\` authenticated.`
+      : `drafted WITHOUT --storage-state: if this app is auth-gated, its primary nav `
+        + `may not have rendered, so the drafted navLayers can be wrong (review before committing). `
+        + `Re-run \`${reRun}\` authenticated.`;
   }
   return null;
+}
+
+/**
+ * Compose the single capture verdict for a `--verify` run.
+ *
+ * `authLiveness` and `emptyNavShells` are INDEPENDENT signals that can fire
+ * together and contradict each other, so there is exactly one place that ranks
+ * them. Precedence: **dead > unverified > empty-shells > no-auth-state**, and
+ * at most ONE primary warning is emitted — a dead session *explains* empty
+ * shells, so presenting both as co-equal causes sends the operator after the
+ * wrong one.
+ *
+ * **`degrade` is the only field that gates suppression — never `status !==
+ * 'live'`.** Only `auth-dead` and `auth-unverified` degrade: those are the two
+ * states where authentication was ATTEMPTED and cannot be vouched for. An
+ * ordinary unauthenticated run is *honestly unauthenticated*, not unverified,
+ * so it keeps authoritative verdicts and gets an advisory line only. (An
+ * earlier design degraded on `status !== 'live'`, which would have suppressed
+ * findings on every normal no-auth run.)
+ *
+ * @param {{authLiveness?: 'live'|'dead'|'unverified'|'n/a', emptyNavShells?: string[], hasStorageState?: boolean}} a
+ * @returns {{status: string, degrade: boolean, warnings: string[]}}
+ */
+export function composeCaptureVerdict({ authLiveness = 'n/a', emptyNavShells = [], hasStorageState = false } = {}) {
+  const shells = Array.isArray(emptyNavShells) ? emptyNavShells : [];
+  // Domain invariant: `n/a` ⟺ no --storage-state was supplied. Enforced here
+  // rather than trusted, because the failure it prevents is exactly the one
+  // this feature exists to stop — an implementation that leaves liveness at its
+  // `n/a` initial value on the no-sentinel path would emit AUTHORITATIVE
+  // findings from a capture it never verified. Loud beats silently `live`.
+  if (authLiveness === 'n/a' && hasStorageState) {
+    throw new Error(
+      'composeCaptureVerdict: authLiveness "n/a" is impossible with --storage-state — ' +
+      'an authenticated run must resolve to live | dead | unverified. This is a wiring bug ' +
+      'in the caller, not a user error.',
+    );
+  }
+
+  const detail = shells.length ? [`empty nav container(s): ${shells.join(', ')}`] : [];
+
+  if (authLiveness === 'dead') {
+    return {
+      status: 'auth-dead', degrade: true,
+      warnings: [
+        'AUTH SESSION DEAD — the declared authSentinel was not observed in any captured state. '
+        + 'The run reconciled the LOGGED-OUT shell; scorecard and live findings are degraded to '
+        + '`unverified`. Refresh the token in your --storage-state file and re-run.',
+        ...detail,
+      ],
+    };
+  }
+  if (authLiveness === 'unverified') {
+    return {
+      status: 'auth-unverified', degrade: true,
+      warnings: [
+        'AUTH UNVERIFIED — --storage-state was supplied but the session could not be confirmed '
+        + '(no authSentinel declared in nav-contract.json, or its selector failed to evaluate). '
+        + 'Verdicts are degraded to `unverified`: declare an authSentinel to upgrade this run '
+        + 'from "we do not know" to "we checked".',
+        ...detail,
+      ],
+    };
+  }
+  if (shells.length) {
+    return {
+      status: authLiveness === 'live' ? 'live-empty-shells' : 'shells-empty',
+      degrade: false,
+      warnings: [buildDraftCaptureWarning({ emptyNavShells: shells, hasStorageState, mode: 'verify' })].filter(Boolean),
+    };
+  }
+  if (!hasStorageState) {
+    return {
+      status: 'no-auth-state', degrade: false,
+      warnings: [buildDraftCaptureWarning({ emptyNavShells: [], hasStorageState, mode: 'verify' })].filter(Boolean),
+    };
+  }
+  return { status: 'live', degrade: false, warnings: [] };
 }
 
 /** Prominence sort: sticky/fixed first, then more distinct targets, then earliest

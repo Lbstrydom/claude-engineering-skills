@@ -455,10 +455,57 @@ export async function recordRegressionSpecRun(specId, run) {
  * Recent fixes lacking a regression spec (from the `unlocked_fixes` view).
  * Optionally scoped to a repo.
  */
-export async function getUnlockedFixes(repoId) {
+/**
+ * Resolve an explicit scope argument for the cross-repo `unlocked_fixes` reads.
+ *
+ * WHY THIS EXISTS. Both readers previously took a bare `repoId` and treated
+ * *absent* as "every repository" — so a caller that simply forgot to pass one
+ * silently got cross-tenant rows. That is not hypothetical: a consumer repo
+ * reported an unlocked-fix backlog of 207 that belonged entirely to a DIFFERENT
+ * repository (its own true count was 0), and a second unscoped call site existed
+ * for months without anyone noticing.
+ *
+ * Patching the known callers would leave the footgun armed for the next one, so
+ * the unsafe default is removed at the DATA-ACCESS boundary instead: global
+ * access now has to be *asked for*. This is INC-002's lesson restated — an
+ * omitted argument is not a safety gate.
+ *
+ * @param {{repoId?: string|null, allRepos?: boolean}|string|null|undefined} scope
+ * @param {string} fnName
+ * @returns {{repoId: string|null, allRepos: boolean}}
+ */
+function resolveUnlockedScope(scope, fnName) {
+  if (scope && typeof scope === 'object' && !Array.isArray(scope)) {
+    const { repoId = null, allRepos = false } = scope;
+    if (allRepos && repoId) {
+      throw new Error(`${fnName}: pass EITHER {repoId} OR {allRepos:true}, never both — the intent is ambiguous.`);
+    }
+    if (allRepos) return { repoId: null, allRepos: true };
+    if (typeof repoId === 'string' && repoId) return { repoId, allRepos: false };
+  }
+  throw new Error(
+    `${fnName}: an explicit scope is required — pass {repoId:'<uuid>'} or {allRepos:true}. ` +
+    'An omitted/blank scope used to mean "every repository", which leaked another repo\'s ' +
+    'findings into a consumer\'s output; it is now a hard error rather than a silent widening.',
+  );
+}
+
+/**
+ * Recent fixes lacking a regression spec (from the `unlocked_fixes` view).
+ *
+ * **Scope is mandatory and explicit** — see `resolveUnlockedScope`. Note the
+ * `LIMIT 20`: this is a nudge sampler, not an exhaustive reader. Never use it
+ * to look up ONE finding by id — under `{allRepos:true}` it returns an
+ * arbitrary 20 rows out of hundreds across every repo, so a finding that
+ * genuinely exists usually will not be in them.
+ *
+ * @param {{repoId?: string|null, allRepos?: boolean}} scope
+ */
+export async function getUnlockedFixes(scope) {
+  const { repoId, allRepos } = resolveUnlockedScope(scope, 'getUnlockedFixes');
   if (!await isCloudEnabled()) return [];
   try {
-    if (repoId) {
+    if (!allRepos) {
       return await many(
         `SELECT * FROM unlocked_fixes WHERE repo_id = $1 LIMIT 20`,
         [repoId]
@@ -468,6 +515,34 @@ export async function getUnlockedFixes(repoId) {
   } catch (err) {
     process.stderr.write(`  [learning] getUnlockedFixes failed: ${err.message}\n`);
     return [];
+  }
+}
+
+/**
+ * Look up ONE unlocked fix by its audit-finding id, **within a repo**.
+ *
+ * The companion to the LIMIT-20 sampler above, and the reason it exists: the
+ * lock-with-test worksheet used to find its target by scanning
+ * `getUnlockedFixes(null)`'s 20 cross-repo rows, then adopt whatever
+ * `repo_id` the matched row carried. Two defects in one line — a legitimate
+ * finding usually was not in those 20 (so the lookup silently missed), and a
+ * foreign row's `repo_id` could be written straight into a regression spec.
+ *
+ * @param {{repoId: string, findingId: string}} a
+ * @returns {Promise<object|null>}
+ */
+export async function findUnlockedFixInRepo({ repoId, findingId }) {
+  if (!repoId || !findingId) throw new Error('findUnlockedFixInRepo: both repoId and findingId are required');
+  if (!await isCloudEnabled()) return null;
+  try {
+    const rows = await many(
+      `SELECT * FROM unlocked_fixes WHERE repo_id = $1 AND audit_finding_id = $2 LIMIT 1`,
+      [repoId, findingId]
+    );
+    return rows[0] ?? null;
+  } catch (err) {
+    process.stderr.write(`  [learning] findUnlockedFixInRepo failed: ${err.message}\n`);
+    return null;
   }
 }
 
@@ -492,11 +567,12 @@ export async function getUnlockedFixes(repoId) {
  * @param {string|null} [repoId]
  * @returns {Promise<{total:number, code:number, plan:number}>}
  */
-export async function countUnlockedFixes(repoId) {
+export async function countUnlockedFixes(scope) {
+  const { repoId, allRepos } = resolveUnlockedScope(scope, 'countUnlockedFixes');
   const empty = { total: 0, code: 0, plan: 0 };
   if (!await isCloudEnabled()) return empty;
   try {
-    const rows = repoId
+    const rows = !allRepos
       ? await many(`SELECT audit_mode, count(*)::int AS n FROM unlocked_fixes WHERE repo_id = $1 GROUP BY audit_mode`, [repoId])
       : await many(`SELECT audit_mode, count(*)::int AS n FROM unlocked_fixes GROUP BY audit_mode`);
     return rows.reduce((acc, r) => {

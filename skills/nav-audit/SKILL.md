@@ -108,6 +108,50 @@ detects an EMPTY visible nav container** (`emptyNavShells`, e.g. `#primary-nav` 
 0 items) — that fires even WITH `--storage-state`, so an expired/invalid token is caught too.
 The drafted `navLayers` is always a hypothesis to review before committing, never trusted.
 
+#### Declare an `authSentinel` so `--verify` can prove the session is live
+
+`--storage-state` alone does **not** prove you captured an authenticated app. A
+committed `auth.json` expires, and an expired token yields a perfectly plausible
+scorecard of the **logged-out shell** — which was the normal failure mode before
+v1.5. Declare in `nav-contract.json` something that must be observable when a
+session is genuinely live:
+
+```json
+{
+  "version": 1,
+  "_comment": "authSentinel: proves --storage-state actually authenticated. Optional.",
+  "authSentinel": { "selector": "[data-testid=\"account-menu\"]", "expectText": "sign out" }
+}
+```
+
+- `selector` (required) — any CSS selector. `expectText` (optional) — a
+  substring, compared whitespace-collapsed and case-insensitively.
+- **A match only counts if it is actually RENDERED** — the same predicate
+  `/click-test` uses (`scripts/lib/browser/perceivable.mjs`). A `<template>`-resident,
+  `display:none`, `visibility:hidden`, `opacity:0` or `[inert]` match does **not**
+  qualify, so a stale account-menu left in the DOM cannot certify a dead session.
+- Observed in **every** captured state and after the activation pass — `live` if
+  it qualifies in any. That matters: the default breakpoints start with `mobile`,
+  where an account menu usually sits inside a collapsed drawer.
+- Pick something **only an authenticated user sees** (account menu, sign-out
+  control). A nav item that also renders logged-out proves nothing.
+
+Resulting `authLiveness`, and what it does:
+
+| `--storage-state` | `authSentinel` | Observed | `authLiveness` | Effect |
+|---|---|---|---|---|
+| no | any | — | `n/a` | Normal unauthenticated run — **no degradation** |
+| yes | absent | — | `unverified` | Cannot confirm ⇒ degraded to `unverified` |
+| yes | declared | yes | `live` | Full authoritative verdicts |
+| yes | declared | no | `dead` | Degraded; refresh the token and re-run |
+| yes | declared | selector error | `unverified` | Authoring bug — never reported as `dead` |
+
+**Degradation** replaces authoritative `misplaced`/`missing` verdicts with
+`unverified` (reusing the v1.4 `unverifiableLayers` path) — the run reports that
+it could not tell, rather than asserting a scorecard for the wrong surface.
+Adding or changing `authSentinel` changes the contract digest, so a previously
+persisted verify result correctly reads stale and must be re-run.
+
 ### Phase 1 — Extract the nav surface (automatic)
 `node scripts/nav-audit.mjs [--scope diff|full]` detects nav affordances by
 **behaviour, not framework** — `<a href>`/`<Link to>`/`<NavLink>`/Next

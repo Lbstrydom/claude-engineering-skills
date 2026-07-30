@@ -31,6 +31,30 @@
     {
       "line": "becomes at most `Incomplete` (never `Clean`) when any route is",
       "reason": "This is the same claim already covered by the 'verdict-precedence' document-only gate above — the surrounding paragraph was rewritten to add the auth-bootstrap cross-link, which shifted this sentence onto a new diff line without changing its meaning. 'verdict-precedence' already explains why no cli-exit/unit-seam oracle applies (no click-test CLI entry point)."
+    },
+    {
+      "line": "declaredSeverity: enum(\"P0\",\"P1\",\"P2\",\"P3\"),  // the kind's intrinsic severity, pre-cap",
+      "reason": "A field in the pseudo-Zod finding contract, not a gate claim. The cap it records IS mechanically enforced in push() and asserted per-kind by tests/click-test-perceivability.test.mjs against a real browser; this line only names the field that preserves the pre-cap value."
+    },
+    {
+      "line": "### Perceivability cap (2026-07-30)",
+      "reason": "A section heading. The behaviour it introduces is enforced by the single push() call site and covered by tests/click-test-perceivability.test.mjs (visible P0 stays P0; hidden file input demotes to P3; the cap applies across kinds)."
+    },
+    {
+      "line": "tag is **state-relative**: it says \"not perceivable in *this* capture\", never",
+      "reason": "Documents how a human should READ the perceivable flag — an interpretation caveat, deliberately not a mechanical claim. Nothing can assert \"the reader understood this is state-relative\"; the mechanical half (that a finding is demoted rather than dropped, so a later --with-modals scan can re-report it) is tested."
+    },
+    {
+      "line": "\"never perceivable\".",
+      "reason": "The continuation line of the state-relative caveat above; same disposition — an interpretation rule for the reader, not an enforceable gate."
+    },
+    {
+      "line": "> **Scope note — this is NOT a release-gate fix.** `/ship` does **not** gate on",
+      "reason": "A NEGATIVE claim recording that no /ship gate consumes click-test P0s (persistence is deferred in Phase 7; no record-click-test subcommand, table or read path exists). It exists precisely to stop a future reader re-asserting the false release-gate premise a prior audit round disproved. There is no mechanism to contract — the honest gate would be the absence of one."
+    },
+    {
+      "line": "> cannot turn a cosmetic wrong into a real false gate.",
+      "reason": "Continuation of the scope note above — states why the severity fix is preventive ahead of the deferred v2 persistence. Same disposition: a rationale for sequencing, not an enforceable claim."
     }
   ]
 }

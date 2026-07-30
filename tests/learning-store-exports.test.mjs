@@ -96,6 +96,11 @@ const EXPECTED_EXPORTS = [
   'getExistingCorrelationHashesForSession', // WS1 — first-hit-wins existence check
   'countUnlockedFixes', // denominator for the /ship lock nudge — rows are LIMIT-capped (2026-07-29)
   'getUnlockedFixes',
+  // Repo-scoped single-finding lookup. Exists because the LIMIT-20 sampler
+  // above must never be used to find ONE finding: unscoped it returned an
+  // arbitrary 20 cross-repo rows, so a real finding usually was not among
+  // them AND its foreign repo_id could be written into a regression spec.
+  'findUnlockedFixInRepo',
   'getUnremediatedAcceptances', // accepted-but-never-remediated /ship nudge (2026-07-27)
   'insertRunRowWithPolicyFallback', // selector-policy 42703 write seam (plan: ux-lock-selector-policy)
   'listConsistencyCandidates',
@@ -338,6 +343,7 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // backlog was 232 — and 113 of those were plan-mode findings that can
     // never carry a regression spec. The nudge needed a denominator it could
     // not compute from a capped row list.
-    assert.equal(EXPECTED_EXPORTS.length, 181);
+    // 181 → 182: findUnlockedFixInRepo added 2026-07-30 (cross-tenant write fence).
+    assert.equal(EXPECTED_EXPORTS.length, 182);
   });
 });

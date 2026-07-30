@@ -42,6 +42,18 @@
     {
       "line": "/nav-audit --gate                  — exit non-zero on a declared-intent regression on the changed surface",
       "reason": "Usage/description documentation line surfaced by the 2026-07-21 Copilot-cap description trim (Usage relocated to the SKILL body). Not a new gate claim — it documents an existing flag; the real gate (where one exists, e.g. nav-audit --gate) is contracted separately in this file."
+    },
+    {
+      "line": "v1.5. Declare in `nav-contract.json` something that must be observable when a",
+      "reason": "Authoring guidance for the optional authSentinel field. Its schema is enforced by NavContractSchema (scripts/lib/nav/schema.mjs, .strict()), and the liveness truth table it introduces is covered by tests/nav-verify.test.mjs (composeCaptureVerdict across all states). This line instructs the AUTHOR what to declare; it is not itself a gate."
+    },
+    {
+      "line": "| yes | declared | selector error | `unverified` | Authoring bug — never reported as `dead` |",
+      "reason": "One row of the authLiveness truth table. The invariant it states (a selector that fails to evaluate degrades to `unverified`, never `dead`, so an authoring bug cannot masquerade as an expired token) is implemented in runVerify (sentinelError branch) and asserted in tests/nav-verify.test.mjs."
+    },
+    {
+      "line": "persisted verify result correctly reads stale and must be re-run.",
+      "reason": "Describes an existing, already-contracted freshness mechanism: authSentinel joins computeContractDigest, and NAV_VERIFY_TOOL_VERSION was bumped 2→3, so readVerifyResult rejects a pre-bump envelope. Covered by tests/nav-verify-store.test.mjs; this line restates that consequence for the operator."
     }
   ]
 }

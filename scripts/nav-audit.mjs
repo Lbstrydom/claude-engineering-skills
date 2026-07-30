@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { writeOutput } from './lib/file-io.mjs';
 import { readSources, extractEdges } from './lib/nav/extract.mjs';
 import { readContract, parseNavMeta, bootstrapContract, writeContract, contractExists } from './lib/nav/contract.mjs';
-import { draftContractFromLive, buildDraftCaptureWarning } from './lib/nav/bootstrap-draft.mjs';
+import { draftContractFromLive, buildDraftCaptureWarning, composeCaptureVerdict } from './lib/nav/bootstrap-draft.mjs';
 import { buildModel } from './lib/nav/model.mjs';
 import { runTaxonomy, runLiveTaxonomy, personaScorecard } from './lib/nav/findings.mjs';
 import { partitionFindings, scopeToChanged, divergenceKey } from './lib/nav/drift.mjs';
@@ -95,7 +95,7 @@ async function main() {
       // expired token); otherwise a generic "no auth state" warning. Draft is always a
       // HYPOTHESIS to review, never trusted.
       emptyNavShells = report.emptyNavShells || [];
-      const warn = buildDraftCaptureWarning({ emptyNavShells, hasStorageState: Boolean(args.storageState) });
+      const warn = buildDraftCaptureWarning({ emptyNavShells, hasStorageState: Boolean(args.storageState), mode: 'bootstrap' });
       if (warn) process.stderr.write(`[nav-audit] ⚠ ${warn}\n`);
     }
     // Seed personaIntents from REAL reachability evidence (the path personas walked
@@ -128,12 +128,32 @@ async function main() {
       }
       process.exit(2);
     }
+    // v1.5 capture honesty: compose the ONE capture verdict before anything
+    // authoritative is derived. `emptyNavShells` was computed by runVerify all
+    // along (verify.mjs) but only the BOOTSTRAP path ever read it — the verify
+    // path dropped it, so an expired token produced output byte-identical to a
+    // healthy run. `degrade` (never `status !== 'live'`) gates suppression.
+    const capture = composeCaptureVerdict({
+      authLiveness: report.authLiveness,
+      emptyNavShells: report.emptyNavShells ?? [],
+      hasStorageState: Boolean(args.storageState),
+    });
+    for (const w of capture.warnings) process.stderr.write(`[nav-audit] ${w}\n`);
+
+    // When the capture cannot be vouched for, every declared layer degrades to
+    // `unverified` — reusing the v1.4 unverifiableLayers path rather than adding
+    // a parallel suppression mechanism.
+    const degradedLayers = capture.degrade
+      ? Object.keys(earlyContract?.navLayers ?? {})
+      : [];
+    const unverifiableLayers = [...new Set([...(report.unverifiableLayers ?? []), ...degradedLayers])];
+
     // Merge live evidence into the per-persona scorecard — the headline.
     const scorecard = personaScorecard(model, earlyContract, {
       liveAttribution: report.liveAttribution,
       statesRequested: report.statesRequested,
       statesCollected: report.statesCollected,
-      unverifiableLayers: report.unverifiableLayers ?? [],   // v1.4 capture honesty
+      unverifiableLayers,   // v1.4 capture honesty + v1.5 auth degradation
     });
     // Run the layer-attribution-dependent finding classes over LIVE evidence
     // (v1.3 #4) — competing-models / over-exposure / sequencing finally fire on
@@ -141,7 +161,7 @@ async function main() {
     // Suppressed when a prominent layer couldn't be captured (v1.4 honesty).
     const liveFindings = runLiveTaxonomy(report.liveAttribution, earlyContract, {
       destinations: model.destinations, states: report.statesCollected,
-      unverifiableLayers: report.unverifiableLayers ?? [],
+      unverifiableLayers,
     });
     if (args.storageState) process.stderr.write('[nav-audit] authenticated run (--storage-state) — live labels may include account text (redacted on persist).\n');
     // Persist the live result (gitignored, Category-A) so the dashboard can show
@@ -157,11 +177,13 @@ async function main() {
           statesRequested: report.statesRequested, statesCollected: report.statesCollected,
           liveAttribution: report.liveAttribution,
           liveFindings,
-          unverifiableLayers: report.unverifiableLayers ?? [],
+          unverifiableLayers,
+          authLiveness: report.authLiveness,
+          captureVerdict: capture,
         });
       } catch (err) { process.stderr.write(`[nav-audit] verify-result persist skipped: ${err.message}\n`); }
     }
-    const out = { ...report, scorecard, liveFindings };
+    const out = { ...report, scorecard, liveFindings, unverifiableLayers, captureVerdict: capture };
     if (args.format === 'json') {
       writeOutput(out, args.out, `[nav-audit] verify (${report.statesCollected.join('+')}): ${report.confirmed.length} confirmed, ${report.staticOnly.length} static-only, ${report.runtimeOnly.length} runtime-only`);
     } else {

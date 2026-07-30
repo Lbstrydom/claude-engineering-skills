@@ -52,6 +52,7 @@ import {
   readPlanSatisfaction,
   readPersistentPlanFailures,
   getUnlockedFixes,
+  findUnlockedFixInRepo,
   countUnlockedFixes,
   getUnremediatedAcceptances,
   readAuditEffectiveness,
@@ -67,6 +68,7 @@ import {
   upsertRepoByUuid,
   getRepoIdByUuid,
   resolveRepoForStore,
+  getRepoIdByName,
   openRefreshRun,
   publishRefreshRun,
   abortRefreshRun,
@@ -688,18 +690,88 @@ async function cmdRecordShipEvent() {
   emit({ ok: true, cloud: true });
 }
 
+/**
+ * Resolve the repository scope for the unlocked-fix readers.
+ *
+ * **Order is the contract — it short-circuits, and explicit operator intent is
+ * evaluated BEFORE ambient inference.** Putting `--all-repos` last (the first
+ * draft) made it unreachable: ambient identity resolves inside any git repo, so
+ * the chain terminated before the flag was ever read, and the flag was silently
+ * ignored — the very defect this function exists to fix, reproduced in its fix.
+ *
+ *   1. `--all-repos`      → explicit global, self-labelled in the output
+ *   2. `--repo-id <uuid>` → scope to it
+ *   3. `--repo <slug>`    → resolve slug → repo_id; unknown slug is an ERROR
+ *   4. ambient identity   → scope to this repo (the new default)
+ *   5. unresolvable       → measured:false + reason; NEVER global
+ *
+ * @returns {Promise<{mode:'repo'|'all-repos'|'unresolved', repoId:string|null, slug:string|null, measured:boolean, reason:string|null, error?:string}>}
+ */
+async function resolveUnlockedFixScope() {
+  const allRepos = hasFlag('all-repos');
+  const repoIdArg = argOption('repo-id');
+  const slugArg = argOption('repo');
+
+  if (allRepos && (repoIdArg || slugArg)) {
+    return { mode: 'unresolved', repoId: null, slug: null, measured: false, reason: 'conflicting-scope',
+      error: '--all-repos cannot be combined with --repo/--repo-id — pick one.' };
+  }
+  if (allRepos) return { mode: 'all-repos', repoId: null, slug: null, measured: true, reason: null };
+  if (repoIdArg) return { mode: 'repo', repoId: repoIdArg, slug: null, measured: true, reason: null };
+
+  if (slugArg) {
+    // An explicitly-named repo that does not exist is an ERROR: the operator
+    // asserted something specific and it is wrong. Silently widening (or
+    // silently returning zero) is how the original bug read as plausible.
+    const rowId = await getRepoIdByName(slugArg).catch(() => null);
+    if (!rowId) {
+      return { mode: 'unresolved', repoId: null, slug: slugArg, measured: false, reason: 'unknown-repo',
+        error: `unknown repo "${slugArg}" — expected an owner/repo slug present in audit_repos.` };
+    }
+    return { mode: 'repo', repoId: rowId, slug: slugArg, measured: true, reason: null };
+  }
+
+  // Ambient identity. Unresolvable is a NON-error (nothing was asserted), but it
+  // is `measured:false` — never a zero that reads as "no obligations".
+  const ref = await resolveRepoForStore({}).catch(() => null);
+  if (ref?.repoRowId) return { mode: 'repo', repoId: ref.repoRowId, slug: ref.name ?? null, measured: true, reason: null };
+  return { mode: 'unresolved', repoId: null, slug: null, measured: false, reason: 'repo-identity-unresolvable' };
+}
+
+/** The store-scope argument for a resolved scope (D18 explicit-scope contract). */
+const storeScopeFor = (scope) => (scope.mode === 'all-repos' ? { allRepos: true } : { repoId: scope.repoId });
+
 async function cmdListUnlockedFixes() {
   await initLearningStore();
-  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, rows: [] });
-  const repoId = argOption('repo-id');
-  const rows = await getUnlockedFixes(repoId);
+  if (!await isCloudEnabled()) {
+    return emit({ ok: true, cloud: false, scope: { mode: 'unresolved', repoId: null, slug: null },
+      measured: false, reason: 'cloud-off', rows: [], shown: 0, total: 0, byMode: { total: 0, code: 0, plan: 0 } });
+  }
+  const scope = await resolveUnlockedFixScope();
+  if (scope.error) return emit({ ok: false, cloud: true, error: scope.error, reason: scope.reason });
+
+  // `measured:false` is NOT "zero obligations" — it is "nothing was measured".
+  // Collapsing the two is exactly how a foreign 207 and a local 0 both looked
+  // like ordinary numbers.
+  if (!scope.measured) {
+    return emit({ ok: true, cloud: true, scope: { mode: scope.mode, repoId: null, slug: scope.slug },
+      measured: false, reason: scope.reason, rows: [], shown: 0, total: 0, byMode: { total: 0, code: 0, plan: 0 } });
+  }
+
+  const storeScope = storeScopeFor(scope);
+  const rows = await getUnlockedFixes(storeScope);
   // `rows` is capped at 20 by the view query, so its length is NOT the
   // obligation count — reporting it as one undercounted 232 as "20" for weeks.
   // `byMode.plan` is surfaced separately because a plan finding can never carry
   // a regression spec; folding it into one total makes an unactionable half of
   // the backlog read as work.
-  const byMode = await countUnlockedFixes(repoId);
-  emit({ ok: true, cloud: true, rows, shown: rows.length, total: byMode.total, byMode });
+  const byMode = await countUnlockedFixes(storeScope);
+  emit({
+    ok: true, cloud: true,
+    scope: { mode: scope.mode, repoId: scope.repoId, slug: scope.slug },
+    measured: true, reason: null,
+    rows, shown: rows.length, total: byMode.total, byMode,
+  });
 }
 
 async function cmdListUnremediatedAcceptances() {
@@ -1777,7 +1849,7 @@ async function cmdRecommendSkills() {
     await initLearningStore();
     const ref = await resolveRepoForStore({}).catch(() => null);
     if (ref?.repoRowId) {
-      const rows = await getUnlockedFixes(ref.repoRowId);
+      const rows = await getUnlockedFixes({ repoId: ref.repoRowId });
       unlockedHighFix = Array.isArray(rows) && rows.length > 0;
     }
   } catch { /* cloud off / store error → no ux-lock signal, proceed */ }
@@ -2208,9 +2280,25 @@ async function cmdLockWithTest() {
     return emit({ ok: false, error: `refusing: test file "${testPath}" does not exist — a lock naming a missing file is a fake check` });
   }
 
-  const rows = await getUnlockedFixes(null);
-  const finding = rows.find((r) => r.audit_finding_id === findingId);
-  const repoId = finding?.repo_id || (await resolveRepoForStore({}).catch(() => null))?.repoRowId || null;
+  // CROSS-TENANT WRITE FENCE. This used to scan `getUnlockedFixes(null)` — an
+  // arbitrary 20 cross-repo rows out of hundreds — and then adopt whatever
+  // `repo_id` the matched row carried. Two defects in one line: a legitimate
+  // finding usually was NOT among those 20 (so the lookup silently missed and
+  // fell through), and a foreign row's repo_id could be written straight into a
+  // regression spec. That is a cross-tenant MUTATION, strictly worse than the
+  // cross-tenant read this change set started from.
+  //
+  // Now: resolve identity FIRST, look the finding up scoped to it, and take the
+  // repo_id from the resolved identity — never from the fetched row.
+  const ref = await resolveRepoForStore({}).catch(() => null);
+  const repoId = ref?.repoRowId || null;
+  if (!repoId) {
+    return emit({ ok: false, error: 'refusing: repo identity unresolvable — a regression spec must be attributed to a repo, and guessing one is how another repo\'s findings got recorded.' });
+  }
+  const finding = await findUnlockedFixInRepo({ repoId, findingId });
+  if (!finding) {
+    return emit({ ok: false, error: `refusing: no unlocked finding "${findingId}" in THIS repo. If it exists elsewhere it belongs to another repository — locking it here would attribute the fix to the wrong repo.` });
+  }
 
   const spec = await recordRegressionSpec(repoId, {
     specPath: testPath,
@@ -2240,7 +2328,16 @@ async function cmdLockWithTest() {
 async function cmdLockWithTestWorksheet() {
   const { existsSync } = await import('node:fs');
   const nodePath = await import('node:path');
-  const rows = (await getUnlockedFixes(argOption('repo-id')))
+  // Same scope chain as list-unlocked-fixes — this is the command Step 0.5b
+  // PRINTS as its own remediation, so an unscoped worksheet would hand the
+  // operator another repo's findings to "fix".
+  const scope = await resolveUnlockedFixScope();
+  if (scope.error) return emit({ ok: false, error: scope.error, reason: scope.reason });
+  if (!scope.measured) {
+    return emit({ ok: true, measured: false, reason: scope.reason, worksheet: '',
+      note: 'repo scope unresolved — nothing was measured (this is NOT "no unlocked fixes").' });
+  }
+  const rows = (await getUnlockedFixes(storeScopeFor(scope)))
     .filter((r) => r.audit_mode === 'code');
 
   const lines = ['# Unlocked code fixes — regression-lock worksheet', '',

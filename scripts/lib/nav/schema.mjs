@@ -25,7 +25,11 @@ export const NAV_TOOL_VERSION = 1;             // OBSERVED-envelope schema versi
 // Verify-RESULT tool-semantics version (separate from the observed-envelope schema
 // version, which it must not be coupled to). Bumped when the LIVE-result semantics
 // change so a stale persisted result is rejected. v1.4 capture honesty (unverifiableLayers) → 2.
-export const NAV_VERIFY_TOOL_VERSION = 2;
+// Bumped 2→3 (v1.5 auth-liveness): a run can now be degraded to `unverified`,
+// so a pre-bump persisted result carries different SEMANTICS, not just fewer
+// fields — readVerifyResult must reject it and force a re-run. Decoupled from
+// NAV_TOOL_VERSION on purpose (observed-envelope schema is unchanged).
+export const NAV_VERIFY_TOOL_VERSION = 3;
 
 export const OBSERVED_FILE = '.audit-loop/nav-graph-observed.json';
 export const DRIFT_LEDGER_FILE = '.audit-loop/nav-drift-ledger.json';
@@ -93,6 +97,20 @@ export const NavContractSchema = z.object({
   // `.sub-tabs-row` (vanilla/template apps — feedback #1).
   navLayers: z.record(z.string(), z.array(z.string().min(1))).default({}),
   personas: z.array(NavPersonaSchema).default([]),
+  // authSentinel (v1.5): something that MUST be observable when an
+  // authenticated session is genuinely live. Optional — but without it a
+  // `--storage-state` run can only report `authLiveness: 'unverified'`, never
+  // `live`, because nothing distinguishes "authed" from "silently logged out".
+  //
+  // DECLARED, not guessed: a heuristic ("is there a Sign-in link?") produces
+  // false verdicts on apps that legitimately show sign-in affordances while
+  // authenticated. An object, not a bare string, so an assertion can be added
+  // without a breaking change.
+  authSentinel: z.object({
+    selector: z.string().min(1),
+    // Optional substring assertion; compared whitespace-collapsed + case-insensitively.
+    expectText: z.string().min(1).optional(),
+  }).strict().optional(),
 }).strict();
 
 export const NavObservedSchema = z.object({
@@ -158,6 +176,17 @@ export const NavVerifyResultSchema = z.object({
   // v1.4: layers we couldn't verify (stalled/never-observable) → the dashboard
   // degrades them to `unverified` instead of a misleading verdict. Back-compat default.
   unverifiableLayers: z.array(z.string()).default([]),
+  // v1.5 auth-liveness. MUST be declared here or Zod strips them on write:
+  // writeVerifyResult() parses through this schema, so a field absent from it
+  // never reaches disk (and the dashboard would silently read a run as
+  // authoritative when it was degraded). Optional for back-compat parsing of a
+  // pre-v1.5 envelope; the toolVersion bump is what actually invalidates those.
+  authLiveness: z.enum(['live', 'dead', 'unverified', 'n/a']).optional(),
+  captureVerdict: z.object({
+    status: z.enum(['live', 'auth-dead', 'auth-unverified', 'shells-empty', 'no-auth-state', 'live-empty-shells']),
+    degrade: z.boolean(),
+    warnings: z.array(z.string()).default([]),
+  }).optional(),
 });
 
 /**
@@ -175,6 +204,11 @@ export function computeContractDigest(contract) {
     // of the freshness digest; set-semantics, so sorting is canonical (debt fix 1).
     exclude: Array.isArray(c.exclude) ? [...c.exclude].sort() : [],
     navLayers: sortRecordOfArrays(c.navLayers),
+    // authSentinel changes what --verify ASSERTS, so a persisted result produced
+    // under a different sentinel must read stale. Same reasoning as `exclude`.
+    authSentinel: c.authSentinel && typeof c.authSentinel === 'object'
+      ? { selector: c.authSentinel.selector ?? '', expectText: c.authSentinel.expectText ?? '' }
+      : null,
     personas: (Array.isArray(c.personas) ? c.personas : [])
       .map((p) => ({
         id: p?.id ?? '',

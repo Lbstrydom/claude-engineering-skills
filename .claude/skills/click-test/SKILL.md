@@ -307,7 +307,9 @@ ClickTestFinding = {
              "duplicate-aria-label", "aria-hidden-focusable",
              "empty-link", "heading-skip", "img-no-alt",
              "small-touch-target", "positive-tabindex"),  // 13 kinds
-  severity: enum("P0","P1","P2","P3"),
+  severity: enum("P0","P1","P2","P3"),   // EFFECTIVE severity — capped to P3 when !perceivable
+  declaredSeverity: enum("P0","P1","P2","P3"),  // the kind's intrinsic severity, pre-cap
+  perceivable: boolean,      // was the element RENDERED in the captured state?
   selector: string.max(500),
   snippet: string.max(200),  // outerHTML truncated; redact before persist
   detail: string.max(500),
@@ -473,7 +475,47 @@ taxonomy"). The intuition behind those assignments:
 | **P0** | Breaks core function: React reconciliation (duplicate IDs), form submission (no name on field — wait, that's P1; let me explain), screen-reader announcement (input/button with no accessible name), click-to-focus (orphan `<label for>`) |
 | **P1** | Degrades experience but flow still works: aria-hidden focusable, empty `<a href="#">`, form-field-no-name (browser still submits the form, but that field's value is dropped) |
 | **P2** | Polish / a11y suggestion: heading-skip, img-no-alt (decorative needs `alt=""`), small-touch-target, positive-tabindex, duplicate-aria-label (high FP rate) |
-| **P3** | Reserved for future suggestions (redundant ARIA, decorative-near-interactive) — none enabled in v1 |
+| **P3** | Findings whose element was **not perceivable** in the captured state (severity capped here from `declaredSeverity`), plus reserved future suggestions (redundant ARIA, decorative-near-interactive) |
+
+### Perceivability cap (2026-07-30)
+
+`push()` runs every finding through `__isPerceivable(el)` — one call site, so all
+13 kinds get it. A finding on an element that is not **rendered** in the captured
+state (`display:none`, `visibility:hidden`, `opacity:0`,
+`content-visibility:hidden`, `[inert]`, detached, or zero-size) is **demoted to
+P3** and tagged `perceivable:false`; `declaredSeverity` preserves what the kind
+would otherwise have been.
+
+**Why this matters.** A `<input type="file" hidden>` — the standard
+custom-upload-button pattern — has `type === 'file'`, so it slips past the
+`type === 'hidden'` filter and was reported **P0 `input-no-name`**. A field run
+produced 704 findings of which ~6 were real: all 31 `aria-hidden-focusable`
+findings sat inside one `visibility:hidden` subtree, and 4 of 5 P0s were hidden
+file inputs.
+
+**Demote, do not drop.** A hidden element may become visible — that is exactly
+what `--with-modals` re-scans for — so dropping the finding destroys signal. The
+tag is **state-relative**: it says "not perceivable in *this* capture", never
+"never perceivable".
+
+> **Scope note — this is NOT a release-gate fix.** `/ship` does **not** gate on
+> click-test P0s: persistence to the shared store is deferred (Phase 7 below), so
+> no `record-click-test` subcommand, table or `/ship` read path exists, and
+> `/ship --ignore-p0` refers to **persona-test** P0s only. The harm being fixed
+> is a human reading a P0 list and treating it as blocking, plus the noise ratio.
+> Correcting severity *now* is preventive: it means the deferred v2 persistence
+> cannot turn a cosmetic wrong into a real false gate.
+
+**Filter the headline on `perceivable`,** and report capped findings separately
+so the count stays honest — 704 findings with 6 perceivable is a very different
+report from 704 undifferentiated ones.
+
+The predicate's canonical source is
+[`scripts/lib/browser/perceivable.mjs`](../../scripts/lib/browser/perceivable.mjs);
+the copy inside `references/dom-scanner.md` is drift-checked by
+`tests/click-test-perceivability.test.mjs`. `/nav-audit --verify` injects the same
+function to qualify its `authSentinel`, which is why it is a module rather than
+scanner-local.
 
 Confidence is not a click-test concept — assertions are deterministic. Either
 the DOM violates the contract or it doesn't. If runs vary across same

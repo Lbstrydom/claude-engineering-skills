@@ -74,6 +74,18 @@
     {
       "line": "the weekly GH workflow, never by /ship directly.",
       "reason": "Pre-existing prose about who updates the arch-drift sticky issue; it became a candidate only because the 2026-07-26 edit reflowed the paragraph and moved 'never' onto this line. Scope statement about a GH workflow, not a /ship gate."
+    },
+    {
+      "line": "are \"not applicable\", **not** \"no obligations\". Report it as unmeasured; never",
+      "reason": "An instruction to the AGENT about how to render an unmeasured result — the measured:false vs genuine-zero distinction. The producing side is mechanical and tested (tests/cross-skill-unlocked-scope.test.mjs asserts measured:false carries a reason and never widens to global), but \"how the agent phrases the card\" has no oracle."
+    },
+    {
+      "line": "> identity → `measured:false`. Global access must be asked for explicitly, and",
+      "reason": "Documents the scope precedence chain. It IS mechanically enforced: getUnlockedFixes/countUnlockedFixes throw on an omitted or ambiguous scope (scripts/lib/store/plans-ship.mjs::resolveUnlockedScope) and tests/cross-skill-unlocked-scope.test.mjs asserts every implicit-global shape rejects, plus that --all-repos is evaluated before ambient identity. This line is the human-readable restatement."
+    },
+    {
+      "line": "> `scope.mode` is echoed in the output so a global run is never mistakable for a",
+      "reason": "Restates the self-labelling property of the result schema. The field is produced by cmdListUnlockedFixes and its presence/shape is asserted in tests/cross-skill-unlocked-scope.test.mjs; whether a reader NOTICES the label is not contractable."
     }
   ]
 }

@@ -17,6 +17,7 @@
 import { normalizeDestination, VIEW_PARAMS } from './normalize.mjs';
 import { getPreset } from '../device-presets.mjs';
 import { resolveContainer, attributeLive, computeCaptureStatus } from './live-attribution.mjs';
+import { PERCEIVABLE_SOURCE, PERCEIVABLE_FN_NAME } from '../browser/perceivable.mjs';
 
 /**
  * Normalize a live href/target to the canonical id space the static model uses.
@@ -128,6 +129,12 @@ export async function runVerify({ url, model, contract, breakpoints = ['mobile',
   // candidate children in EVERY state it appeared = the auth-gated empty shell that
   // makes the bootstrap drafter mis-pick `primary`. selector → everPopulated.
   const navShellSeen = new Map();
+  // v1.5 auth-liveness. `authSentinel` is optional in the contract; without it a
+  // --storage-state run can only ever report `unverified` (never `live`),
+  // because nothing distinguishes an authed session from a silent logout.
+  const authSentinel = contract?.authSentinel ?? null;
+  let sentinelSeen = false;
+  let sentinelError = null;
 
   let chromium;
   try { ({ chromium } = await import('playwright')); }
@@ -228,9 +235,54 @@ export async function runVerify({ url, model, contract, breakpoints = ['mobile',
             }
           } catch { /* detection is advisory — never fail the capture */ }
         };
+
+        /**
+         * Observe the declared `authSentinel` in the CURRENT state.
+         *
+         * Called after every captured state (including each activation state):
+         * the sentinel is `live` if it qualifies in ANY state, `dead` only if it
+         * qualifies in NONE. Observing the first state alone would be wrong —
+         * the default breakpoint order starts with `mobile`, where an account
+         * menu normally sits inside a collapsed drawer, so a perceivable-only
+         * check would report `dead` for a perfectly live session.
+         *
+         * "Qualifies" reuses the SAME rendered-state predicate /click-test uses
+         * (injected from lib/browser/perceivable.mjs). Playwright's
+         * `locator.isVisible()` is deliberately NOT used: it counts an
+         * `opacity:0` element as visible and ignores `[inert]`, so a stale
+         * hidden account-menu template would certify an expired session.
+         */
+        const probeSentinel = async () => {
+          if (!authSentinel || sentinelSeen) return;   // one positive is enough
+          try {
+            const hit = await page.evaluate(
+              ({ src, fnName, selector, expectText }) => {
+                // eslint-disable-next-line no-new-func
+                const fn = new Function(`${src}; return ${fnName};`)();
+                const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+                const want = norm(expectText);
+                const matches = Array.from(document.querySelectorAll(selector));
+                for (const el of matches) {
+                  if (fn(el) !== true) continue;                    // strict: null (unknown) does not qualify
+                  if (!want) return true;
+                  if (norm(el.textContent).includes(want)) return true;
+                }
+                return false;
+              },
+              { src: PERCEIVABLE_SOURCE, fnName: PERCEIVABLE_FN_NAME, selector: authSentinel.selector, expectText: authSentinel.expectText || '' },
+            );
+            if (hit) sentinelSeen = true;
+          } catch (err) {
+            // An invalid CSS selector is an AUTHORING bug and must never be
+            // reported as `dead` — that would read as "your token expired" and
+            // send the operator to refresh a perfectly good session.
+            sentinelError = err.message;
+          }
+        };
         await settle();
         await collectState(stateName);
         statesCollected.push(stateName);
+        await probeSentinel();
 
         // Bounded activation pass (v1.3 #3): open collapsible nav (hamburger /
         // collapsed sub-tab parents) so destinations behind a closed menu are
@@ -259,6 +311,9 @@ export async function runVerify({ url, model, contract, breakpoints = ['mobile',
               if (page.url() !== urlBefore) { stateWarnings.push(`activation ${evState}: navigated away — discarded`); continue; }
               await collectState(evState, false); // activation = additive placements only; no stall probe (v1.5)
               statesCollected.push(evState);
+              // Probe AFTER activation too: the canonical sentinel (an account
+              // menu) commonly lives behind the very hamburger this pass opens.
+              await probeSentinel();
             } catch (err) {
               stateWarnings.push(`activation ${evState} failed: ${err.message}`);
               if (++consecutiveFails >= ACTIVATION_FAIL_STOP) {
@@ -297,12 +352,30 @@ export async function runVerify({ url, model, contract, breakpoints = ['mobile',
   }
   for (const sel of absentDeclared) stateWarnings.push(`declared container matched no element — check the selector (${sel})`);
 
+  // Auth-liveness truth table (v1.5). The `n/a` ⟺ no-storage-state invariant is
+  // enforced downstream by composeCaptureVerdict, which THROWS on the impossible
+  // pair rather than silently defaulting to `live`.
+  let authLiveness;
+  if (!storageState) {
+    // No authentication was attempted, so there is nothing to vouch for. A
+    // sentinel may still be declared and even observed — recorded, not asserted.
+    authLiveness = 'n/a';
+  } else if (!authSentinel) {
+    authLiveness = 'unverified';        // authed run, nothing to check against
+  } else if (sentinelError) {
+    authLiveness = 'unverified';        // authoring bug — never `dead`
+    stateWarnings.push(`authSentinel selector failed to evaluate: ${sentinelError}`);
+  } else {
+    authLiveness = sentinelSeen ? 'live' : 'dead';
+  }
+
   return {
     ok: true,
     url,
     statesRequested,
     statesCollected,
     stateWarnings,
+    authLiveness,
     liveNavCount: evidence.length,
     confirmed: recon.confirmed,
     staticOnly: recon.staticOnly,
