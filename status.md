@@ -1,6 +1,67 @@
 # Project Status Log
 
-## 2026-07-30 (latest) — `--uninstall-legacy` now removes the directories it empties
+## 2026-07-30 (latest) — the sync anchored consumers to the worktree, and said "complete" after reaching none
+
+Found by watching the previous commit's own push. The pre-push sync ran from a
+linked worktree at `<main>/.claude/worktrees/<wt>`, resolved both registered
+consumers relative to **the worktree**, looked for
+`<main>/.claude/worktrees/wine-cellar-app`, found neither — and printed a green
+`Sync complete  Created: 0 Updated: 0 Unchanged: 0 Errors: 0`. The push reported
+success having propagated to zero consumers.
+
+**Defect 1 — the wrong anchor.** `consumer-repos.mjs` derived its root from
+`import.meta.dirname`, whose doc-comment promise ("works regardless of cwd") is
+true and was never the exposure: it is immune to cwd but not to *which checkout
+loaded the module*. The anchor is now the MAIN checkout, read from disk — a
+linked worktree's `.git` is a file containing
+`gitdir: <main>/.git/worktrees/<name>`, the whole answer, so no subprocess is
+needed in a module this widely imported. Unrecognised layouts return the
+starting root rather than guessing; a submodule's `.git` points at
+`.git/modules/<name>`, whose grandparent is not a checkout root.
+
+That splits two values which used to be one — the **sibling anchor** (main) and
+the **containment anchor** (the running checkout) — so `assertNotSourceRepo` now
+refuses both via `sourceRepoRoots()`. Otherwise a registry entry naming the main
+checkout would walk past a guard that only knew about the worktree. Widening the
+set beats repointing `sourceRepoRoot()`: a rewrite-in-place into either checkout
+is equally destructive.
+
+**Defect 2 — the false green that hid defect 1.** A run reaching no target at
+all printed the same line as a successful one. The summary now reports
+`Targets: n/N reached` and names a zero-reach run as such. Exit stays 0: a
+machine that has not checked out the maintainer's consumers is a legitimate
+state, and nagging every public cloner on every push would be worse than the bug.
+
+**Changed**
+- [`scripts/lib/consumer-repos.mjs`](scripts/lib/consumer-repos.mjs) —
+  `mainCheckoutRoot()` + `SIBLING_ANCHOR`; `BASE_REPOS` and relative
+  `consumer-repos.local.json` entries anchor to it; new `sourceRepoRoots()`.
+- [`scripts/sync-to-repos.mjs`](scripts/sync-to-repos.mjs) — skip counter +
+  coverage-reporting summary.
+- [`tests/consumer-repos-worktree-anchor.test.mjs`](tests/consumer-repos-worktree-anchor.test.mjs)
+  — 13 cases over fixture layouts (main / worktree / relative gitdir / worktree
+  outside main / submodule / no `.git` / malformed / odd common dir), plus the
+  regression pin that no consumer path lands inside a `worktrees` directory, plus
+  the widened containment contract.
+- [`tests/consumer-repos-adhoc-target.test.mjs`](tests/consumer-repos-adhoc-target.test.mjs)
+  — the prefix-sibling containment test built its fixture off `SOURCE_REPO_ROOT`;
+  from a nested worktree `<worktree>-other` now lives inside the main checkout and
+  is correctly refused, which masked the property under test. Rebuilt off the
+  outermost source root so it is ambient-independent.
+
+**Verified**: from this worktree both consumers now resolve
+(`C:\GIT\wine-cellar-app`, `C:\GIT\ai-organiser`) and `--dry-run` reaches 2/2.
+`npm run check` exits 0 (9,576 tests).
+
+**Not done — and why.** This branch is NOT merged to main. Merging `origin/main`
+in turned `npm run check` red on a gate that is not this work's: main carries new
+enforcement-verb prose in `skills/ship/SKILL.md` whose matching
+`skills/ship/gate-contract.json` disposition is still **uncommitted in a
+concurrent session's working tree**, so main is red under changed-scope on its
+own. The merge was dropped rather than papered over — landing that disposition
+here would duplicate and conflict with in-flight work. Merge once it lands.
+
+## 2026-07-30 — `--uninstall-legacy` now removes the directories it empties
 
 Field follow-up to the retirement below. A successful `complete` run against
 `~/.claude/skills/` removed all 56 managed files and the global receipt, and left
