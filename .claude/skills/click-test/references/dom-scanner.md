@@ -330,8 +330,22 @@ Paste this into `browser_evaluate` as the function body. Returns a single
   for (const el of document.querySelectorAll('form input, form textarea, form select')) {
     if (el.type === 'submit' || el.type === 'button' || el.type === 'reset') continue;
     if (!el.hasAttribute('name') || !el.getAttribute('name')) {
-      push('form-field-no-name', 'P1', el,
-        `<${el.localName}> in <form> has no name attribute — value won't be submitted`);
+      // The stated consequence — "value won't be submitted" — only holds when
+      // NATIVE submission is the form's submission path. A form with no `action`
+      // has nowhere to natively submit to: in a SPA the handler reads values by
+      // id/FormData and calls preventDefault(), and the missing `name` is often
+      // deliberate (an action-less credentials form that falls back to a native
+      // submit would GET credentials into the URL — the absent name is the
+      // accidental guard, and P1-ing it pressures someone to remove it).
+      // Measured on a real app (2026-07-30): a correct JS-driven login form drew
+      // 2 false P1s; the app-side fix was method="post", NOT adding names.
+      // A form WITH a real action keeps full P1 — there the value genuinely
+      // vanishes from the submission.
+      const actionless = !el.form || !el.form.getAttribute('action');
+      push('form-field-no-name', actionless ? 'P3' : 'P1', el,
+        actionless
+          ? `<${el.localName}> in an action-less <form> has no name attribute — advisory only: no native submission path exists, so no value is lost; if a native fallback is ever added, prefer method="post" before adding name`
+          : `<${el.localName}> in <form> has no name attribute — value won't be submitted`);
     }
   }
 

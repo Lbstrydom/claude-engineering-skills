@@ -311,6 +311,36 @@ describe('click-test perceivability — behaviour (real browser)', () => {
       'aria-hidden WITHOUT inert is the genuine defect and must still fire');
   });
 
+  it('form-field-no-name is ADVISORY (P3) in an action-less form — no native submission path', async (t) => {
+    if (!available) return t.skip('chromium unavailable');
+    // Live-run finding (2026-07-30): a correct JS-driven login form (no action,
+    // preventDefault handler, values read by id) drew 2 false P1s. Worse, the
+    // "fix" the P1 pressures — adding name attributes — would ARM a credential
+    // leak: an action-less form falling back to native submit GETs every named
+    // field into the URL. The absent name is the accidental guard.
+    const f = byKind(
+      await scan('<form><label for="e">Email</label><input type="email" id="e"></form>'),
+      'form-field-no-name',
+    );
+    assert.ok(f, 'still emitted — advisory, not dropped');
+    assert.equal(f.severity, 'P3');
+    assert.equal(f.declaredSeverity, 'P3', 'P3 is the DECLARED severity here, not a perceivability cap');
+    assert.match(f.detail, /no native submission path/);
+  });
+
+  it('form-field-no-name stays P1 when the form has a real action', async (t) => {
+    if (!available) return t.skip('chromium unavailable');
+    // The genuine defect must not be weakened: with a real action the value
+    // truly vanishes from the native submission.
+    const f = byKind(
+      await scan('<form action="/subscribe" method="post"><input type="email" id="e"></form>'),
+      'form-field-no-name',
+    );
+    assert.ok(f);
+    assert.equal(f.severity, 'P1');
+    assert.match(f.detail, /value won't be submitted/);
+  });
+
   it('the cap applies across kinds, not just inputs', async (t) => {
     if (!available) return t.skip('chromium unavailable');
     const f = byKind(await scan('<div hidden><button></button></div>'), 'button-no-name');

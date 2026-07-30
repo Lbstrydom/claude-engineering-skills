@@ -373,7 +373,7 @@ already truncates to 200 chars; redaction is the second layer.
 | `input-no-name` | P0 | — | ✓ | ✓ |
 | `button-no-name` | P0 | — | — | ✓ |
 | `link-no-name` | P1 | — | — | ✓ |
-| `form-field-no-name` | P1 | ✓ | ✓ | — |
+| `form-field-no-name` | P1 / **P3 when the form has no `action`** | ✓ | ✓ | — |
 | `duplicate-aria-label` | P2 *(see note)* | — | — | ✓ |
 | `aria-hidden-focusable` | P1 | — | — | ✓ |
 | `empty-link` | P1 | — | — | ✓ |
@@ -473,7 +473,7 @@ taxonomy"). The intuition behind those assignments:
 | Code | Rule |
 |---|---|
 | **P0** | Breaks core function: React reconciliation (duplicate IDs), form submission (no name on field — wait, that's P1; let me explain), screen-reader announcement (input/button with no accessible name), click-to-focus (orphan `<label for>`) |
-| **P1** | Degrades experience but flow still works: aria-hidden focusable, empty `<a href="#">`, form-field-no-name (browser still submits the form, but that field's value is dropped) |
+| **P1** | Degrades experience but flow still works: aria-hidden focusable (non-`inert` subtrees only), empty `<a href="#">`, form-field-no-name — **only when the form has an `action`** (the browser natively submits and that field's value is dropped). An action-less form has no native submission path, so the same finding is **P3 advisory**: in a JS-driven form the missing `name` is often deliberate, and pressing to add one without `method="post"` would arm a credentials-in-URL leak on native fallback (found live 2026-07-30). |
 | **P2** | Polish / a11y suggestion: heading-skip, img-no-alt (decorative needs `alt=""`), small-touch-target, positive-tabindex, duplicate-aria-label (high FP rate) |
 | **P3** | Findings whose element was **not perceivable** in the captured state (severity capped here from `declaredSeverity`), plus reserved future suggestions (redundant ARIA, decorative-near-interactive) |
 
