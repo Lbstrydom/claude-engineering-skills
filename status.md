@@ -1,6 +1,55 @@
 # Project Status Log
 
-## 2026-07-31 (latest) — the deferred findings, censused as classes
+## 2026-07-31 (latest) — `last_audited_at`, the half-fix completed
+
+Picked up the item the previous entry recorded rather than half-fixed: `upsertRepo`'s
+INSERT branch stamped `last_audited_at` on a read-only lookup while its UPDATE sibling
+was guarded.
+
+**The reason the code-only fix was refused is the reason it needed a migration.** The
+column was `NOT NULL DEFAULT NOW()`, so omitting it on INSERT wrote *exactly* the value
+the guard was trying to withhold. `20260731130000_audit_repos_last_audited_at_nullable.sql`
+drops **both** the NOT NULL and the DEFAULT — dropping only the NOT NULL leaves the
+default in place and changes nothing observable, which is the same half-fix one layer
+down.
+
+**Existing rows are left alone, and the migration says why.** A backfill cannot separate
+a genuinely-audited row from a read-vivified one: both carry a plausible timestamp and
+no evidence of which write produced it survives. Nulling everything destroys real history
+to remove unreal history; nulling a heuristic subset guesses. Only forward behaviour
+changes, so the column's meaning is exact only for rows created after the migration.
+
+**Scope widened by one function, on impact rather than authorship.** `upsertRepoByUuid`
+carried the same unconditional stamp and is *always* wrong — none of its callers
+(`arch:refresh`, `security:refresh`, azure-doctor, cross-skill plan registration) run an
+audit. Left in, it would have kept writing the value the migration exists to prevent.
+
+**The structural fix is that there is now one writer.** `auditStampCols(profile)` is the
+single `last_audited_at` write site; both branches of `resolveRepoForStore` route through
+it. The defect class here was never "the wrong value" — it was two siblings that could
+drift, which is what a source guard now pins (exactly one `last_audited_at:` in the file).
+
+**Reader audit before making it nullable**: `check-sync.mjs:90` already printed
+`last_audited_at || 'never'`; `phase7-check.mjs:53` selects the column but reads only
+`name`. No view, RPC, dashboard, memory-health or weekly-review query touches it.
+
+**Verified against a real database, not just the suite.** `npm run db:local:regen`
+produced a clean 2-field fixture diff; the DB lane passes 7/7 against a live container;
+and a negative control confirmed the test bites — the old shape returns `STAMPED` (test
+fails), the new shape returns `NULL`, which is only reachable because the DEFAULT is gone.
+A code-only change would have gone green having fixed nothing.
+
+`npm run check` exits 0 apart from pre-existing failures: five `install-bootstrap-e2e`
+subtests (`Cannot find package 'zod'` in the cloned bundle — reproduced at HEAD in a
+scratch worktree) and one flaky wall-clock boundary test in `maintenance-checks` that
+passes in isolation.
+
+**Noted, not fixed**: `npm run test:db` files run in no gate — the container suite lists
+are pinned in lockstep with `postgres-parity.yml`, and `tests/repo-identity-store.test.mjs`
+has the same status. Pre-existing; the no-DB source-guard lane is what covers the drift
+class in `npm test`.
+
+## 2026-07-31 — the deferred findings, censused as classes
 
 Follow-up on the 14 findings deferred from the layering cluster. The instruction was
 to fix classes, not instances — and the census kept finding more than the audit reported.

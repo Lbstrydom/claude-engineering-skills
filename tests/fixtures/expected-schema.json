@@ -984,8 +984,8 @@
         {
           "column_name": "last_audited_at",
           "data_type": "timestamp with time zone",
-          "is_nullable": "NO",
-          "column_default": "now()",
+          "is_nullable": "YES",
+          "column_default": null,
           "ordinal_position": 8
         },
         {

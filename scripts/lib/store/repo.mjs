@@ -85,6 +85,29 @@ export async function isCloudEnabled() {
 // ── audit_repos CRUD ───────────────────────────────────────────────────────
 
 /**
+ * The `last_audited_at` write, in ONE place.
+ *
+ * Only a profile-bearing call is a real audit. A profile-less call is a pure id
+ * lookup (cross-skill reads, /ship, persona-test) and must not touch the
+ * column, or "last audited" degrades into "last touched" on every read
+ * (Gemini-r2 finding). Spreading `{}` omits the column entirely.
+ *
+ * It is a helper rather than an inline ternary because the guard was applied to
+ * `resolveRepoForStore`'s UPDATE branch and MISSED on its INSERT sibling — the
+ * miss was invisible for as long as the column was `NOT NULL DEFAULT NOW()`,
+ * since omitting it stamped the identical value. Migration
+ * 20260731130000_audit_repos_last_audited_at_nullable.sql dropped both, so
+ * omission now means NULL = "never audited"; routing every write through here
+ * is what stops the two branches drifting apart again.
+ *
+ * @param {object|null|undefined} profile - generateRepoProfile() output, if any
+ * @returns {{last_audited_at?: string}} column patch to spread into a write
+ */
+function auditStampCols(profile) {
+  return profile ? { last_audited_at: new Date().toISOString() } : {};
+}
+
+/**
  * @deprecated Cluster A (§2.1): keys `audit_repos` on the VOLATILE content
  * `fingerprint`, which is what fragmented B1 (a new row per evolving-repo
  * audit). All live callers were migrated to `resolveRepoForStore()` (stable
@@ -158,12 +181,12 @@ export async function resolveRepoForStore({ cwd, profile } = {}) {
       // Only WRITE when a profile was supplied (a real audit). A profile-less
       // call is a pure id lookup (e.g. cross-skill reads) — it must NOT bump
       // last_audited_at or it would corrupt "last audited" into "last touched"
-      // on every read (Gemini-r2 finding).
+      // on every read (Gemini-r2 finding). See `auditStampCols`.
       if (profile) {
         try {
           await updateWhere(
             'audit_repos',
-            { ...profileCols, name, last_audited_at: new Date().toISOString() },
+            { ...profileCols, name, ...auditStampCols(profile) },
             { id: existing.id },
           );
         } catch (e) {
@@ -175,6 +198,8 @@ export async function resolveRepoForStore({ cwd, profile } = {}) {
       return { repoRowId: existing.id, repoUuid, name };
     }
     // 2. No canonical row yet → plain INSERT (fingerprint no longer unique).
+    //    Same guard as the UPDATE branch above: a profile-less call vivifying
+    //    the row is still a read, so it leaves last_audited_at NULL.
     try {
       const row = await insertReturning(
         'audit_repos',
@@ -182,7 +207,7 @@ export async function resolveRepoForStore({ cwd, profile } = {}) {
           repo_uuid:       repoUuid,
           name,
           ...profileCols,
-          last_audited_at: new Date().toISOString(),
+          ...auditStampCols(profile),
         },
         { returning: ['id'] },
       );
@@ -263,10 +288,16 @@ export async function upsertRepoByUuid({ repoUuid, name, fingerprint }) {
     // Step 2 — plain INSERT. The fingerprint UNIQUE constraint was dropped by
     // the unify migration, so the old `onConflict: 'fingerprint'` upsert would
     // now throw. `fingerprint` is written as a plain attribute (nullable).
+    //
+    // `last_audited_at` is deliberately absent: NO caller of this function runs
+    // an audit (arch:refresh, security:refresh, azure-doctor, cross-skill
+    // plan-registration all just need a repo row), so there is no profile-
+    // bearing case here and `auditStampCols` would always return `{}`. The row
+    // is left NULL = "never audited" until a real audit resolves it.
     try {
       const row = await insertReturning(
         'audit_repos',
-        { repo_uuid: repoUuid, name, fingerprint: fingerprint ?? null, last_audited_at: new Date().toISOString() },
+        { repo_uuid: repoUuid, name, fingerprint: fingerprint ?? null },
         { returning: ['id'] },
       );
       if (row?.id) return { id: row.id };

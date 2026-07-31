@@ -15,7 +15,7 @@
   },
   "scripts": {
     "test": "node scripts/run-tests.mjs",
-    "test:db": "node --test tests/repo-identity-store.test.mjs",
+    "test:db": "node --test tests/repo-identity-store.test.mjs tests/repo-last-audited-at.test.mjs",
     "audit": "node scripts/audit-loop.mjs",
     "audit:full": "node scripts/audit-full.mjs",
     "audit:plan": "node scripts/openai-audit.mjs plan",
