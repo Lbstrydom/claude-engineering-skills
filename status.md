@@ -1,5 +1,28 @@
 # Project Status Log
 
+## 2026-07-31 — shadow tail labelled + overlap measured: the economics reversed a same-day call
+
+Research addendum: [`final-review-tail-labelling-2026-07-31.md`](docs/research/final-review-tail-labelling-2026-07-31.md).
+Two probes, one labelling pass, no repo code changed (labels live in the store).
+
+- **`both:0` is a mechanism artifact, but the inflation isn't real.** The bucket
+  hashes finding PROSE, so cross-model overlap is unmeasurable by construction —
+  yet the file-normalised probe found actual overlap of ~2% (1 confirmed
+  duplicate in 92). The marginal counts stand. Also found: `finding_embeddings`
+  covers 0/92 shadow findings (`recordFinalReviewFindings` bypasses the hook).
+- **52/61 tail findings labelled** from the session's blind adjudication,
+  tiered by evidence (13 accepted+fixed with in-code shadow credit; 13 accepted,
+  defect confirmed in code; 26 dismissed — LLM-only tier, calibration 44%,
+  spot-check that one; 9 left honestly open).
+- **Result**: 92 shadow-only → 49 accepted (33 HIGH/MED, all 3 HIGH), 34
+  dismissed. **~1.1 accepted HIGH/MED per run at ~$1.07 each.** The same-day
+  "tail is noise → drop Opus" recommendation is withdrawn in writing; on this
+  data Gemini+Opus is defensible at ~$1.21/run added.
+- Still unmeasured, named in the addendum: pipeline-level uniqueness (a shadow
+  catch may duplicate a GPT pass finding), Gemini's own unlabelled 16
+  primary-only findings, and Kimi's marginal value (n=2, needs same-snapshot
+  data — alternating shadows measures diff difficulty, not the model).
+
 ## 2026-07-31 (latest) — the upstream bug channel, built end-to-end
 
 `/cycle --autonomous` over `upstream-issue-reports.md` Phases 2-4. Consumers can
