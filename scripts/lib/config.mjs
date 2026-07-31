@@ -128,7 +128,10 @@ export const openaiConfig = Object.freeze({
 
 export const geminiConfig = Object.freeze({
   model: resolveModel(process.env.GEMINI_REVIEW_MODEL || 'latest-pro'),
-  timeoutMs: safeInt(process.env.GEMINI_REVIEW_TIMEOUT_MS, 120000),
+  // 180s: field runs measured 78–101s with three consecutive timeouts under
+  // load at the old 120s default — and a timeout is a hard single-shot failure
+  // (only JSON truncation retries), so headroom matters more than latency here.
+  timeoutMs: safeInt(process.env.GEMINI_REVIEW_TIMEOUT_MS, 180000),
   maxOutputTokens: safeInt(process.env.GEMINI_REVIEW_MAX_TOKENS, 32000),
 });
 

@@ -528,7 +528,7 @@ lifecycle, Phase-3 replay framework + promotion recipe, outbox detail):
 | `OPENAI_AUDIT_MODEL` | No | `latest-gpt` | Model sentinel or concrete ID (see "Model Resolution" below) |
 | `OPENAI_AUDIT_REASONING` | No | `high` | Reasoning effort |
 | `GEMINI_REVIEW_MODEL` | No | `latest-pro` | Gemini model sentinel or concrete ID |
-| `GEMINI_REVIEW_TIMEOUT_MS` | No | `120000` | Gemini timeout |
+| `GEMINI_REVIEW_TIMEOUT_MS` | No | `180000` | Gemini timeout (raised from 120s 2026-07-31 — observed 78–101s runs left too little headroom; a timeout is single-shot, never retried) |
 | `ANTHROPIC_API_KEY` | No | — | Claude Haiku fallback for brief generation (sdk backend only) |
 | `CLAUDE_BACKEND` | No | `sdk` | Routing for Claude calls: `sdk` (raw API) or `cli` (`claude -p` headless — draws from Max 20x Agent SDK $200/mo credit from 2026-06-15). See "Anthropic Backend Routing" below. |
 | `CLAUDE_BIN` | No | `claude` | Path/name of the `claude` CLI (cli backend only) |

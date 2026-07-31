@@ -1,6 +1,55 @@
 # Project Status Log
 
-## 2026-07-31 (latest) — a touch target is the label, not the input; and one "still open" was the fix working
+## 2026-07-31 (latest) — the upstream report that was already fixed, and the null stamp that made it unknowable
+
+A consumer filed a two-part upstream report. Investigating it cost more than
+fixing it, which is itself the finding.
+
+**Part 1 was fixed the day before it was reported.** The claim — `install.mjs`
+copies SKILL.md verbatim into `~/.claude/skills/` without the path rewriting
+`sync-to-repos.mjs` does — was accurate against the pre-`0965d546` tree and
+obsolete against `main`. (It also named `scripts/install.mjs`; the file is root
+`install.mjs`.) The 2026-07-30 fix took the option the report ranked second:
+the global surface was *retired*, not taught to rewrite, because a SKILL.md's
+runner paths are a function of deployment layout and `~/.claude/skills/` is one
+directory shared by every repo — rewriting it only flips which repo is broken.
+
+**Part 2 was real.** `gemini-review.mjs` ran a 120s timeout against observed
+78-101s runs, single-shot (only JSON truncation retries; a timeout is a hard
+attempt failure). Default raised to **180s**; the hard-deadline floor moves
+300s -> 420s, still under the 600s default. Confirmed live within the same
+session: the two Gemini plan-gate runs took **139s and 145s** — both would have
+tripped the old ceiling.
+
+**The expensive part was that the report could not answer itself.** Nothing in
+it said which bundle version it was filed against, so "already fixed?" needed a
+human archaeology pass. Tracing why found the root cause: consumer manifests
+carried **`commitSha: null`**, hardcoded in the consumer write path of
+`sync-to-repos.mjs` while the source-side manifest carried a real sha. Measured
+that day: source `bfcb419a...`, wine-cellar-app `null`, ai-organiser `null`.
+
+**Fixed.** `getGitMeta` is now exported and the consumer manifest stamps the
+source repo's HEAD. The obvious implementation is wrong in a way worth
+recording: reusing the sha off `writeManifest`'s return value would have
+stamped a **stale but plausible** commit, because that function returns the
+existing on-disk manifest on its idempotency-skip path — so any sync in which
+no managed file's hash changed (the common case) would ship a confident wrong
+answer. A stale sha is worse than a null one. Pinned by a test asserting the
+skip path still returns the stale value, so the code and its justification
+cannot silently diverge. Both consumers verified live: `null` -> `f2c666e9...`.
+
+Also shipped: `docs/plans/upstream-issue-reports.md`, the audited design for a
+structured consumer->source bug channel (this fix is its Phase 1). Five audit
+rounds, 24 findings, all accepted. Three changed the design rather than the
+prose: an inverted git ancestry direction that would have flipped every
+verdict; treating a file path as a bug identity, which would have labelled a
+new bug in a previously-fixed file "already solved"; and a fingerprint built by
+bare concatenation, which lets field boundaries shift and silently overwrite one
+real report with another.
+
+`npm test` 9599 pass / 0 fail. `npm run check` clean.
+
+## 2026-07-31 — a touch target is the label, not the input; and one "still open" was the fix working
 
 Consumer follow-up report on the 2026-07-30 upstream issues: 3 of 5 confirmed
 resolved, 2 still open. One of the two was real. The other was the fix

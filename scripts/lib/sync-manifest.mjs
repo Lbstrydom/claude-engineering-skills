@@ -124,7 +124,19 @@ export function computeFileHashes(rootDir, files) {
   return { hashes, errors };
 }
 
-function getGitMeta(rootDir) {
+/**
+ * HEAD sha + branch for `rootDir`, or `{commitSha: null, branch: null}` when git
+ * is unavailable / not a checkout (tarball install).
+ *
+ * Exported because the consumer-manifest writer in `sync-to-repos.mjs` needs the
+ * SOURCE repo's HEAD at sync time and **must not** reuse the sha off
+ * `writeManifest`'s return value: on the idempotency-skip path that function
+ * returns the *existing on-disk* manifest, whose `commitSha` is stale by design
+ * (see the comment there). A stale-but-plausible version stamp is worse than
+ * none — it is the failure mode `docs/plans/upstream-issue-reports.md` exists to
+ * remove.
+ */
+export function getGitMeta(rootDir) {
   const exec = (cmd) => {
     try {
       return execSync(cmd, { cwd: rootDir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();

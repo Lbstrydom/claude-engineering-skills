@@ -21,7 +21,7 @@ import { execSync } from 'node:child_process';
 import { enumerateSkillFiles, listSkillNames } from './lib/skill-packaging.mjs';
 import { ensureAuditDeps } from './lib/install/deps.mjs';
 import { CONSUMER_REPOS, resolveAdHocTarget, canonicaliseRegistryTarget } from './lib/consumer-repos.mjs';
-import { writeManifest, detectOwnershipRegression } from './lib/sync-manifest.mjs';
+import { writeManifest, detectOwnershipRegression, getGitMeta } from './lib/sync-manifest.mjs';
 import { collectImportClosure } from './lib/module-graph.mjs';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';
 import { sourceRelToDestRel, LAYOUT_CONSTANTS } from './lib/sync-path-map.mjs';
@@ -1045,6 +1045,16 @@ async function main() {
     console.log('');
   }
 
+  // The SOURCE repo's HEAD at sync time — stamped into every consumer manifest
+  // below so a consumer can answer "which upstream commit is my bundle from?".
+  // Read once (two `git` execs), not per-repo.
+  //
+  // Deliberately NOT taken off `writeManifest`'s return value above: on its
+  // idempotency-skip path that returns the EXISTING on-disk manifest, whose
+  // commitSha is stale by design — so a docs-only sync would stamp consumers
+  // with a plausible but wrong sha. Plan: docs/plans/upstream-issue-reports.md §Phase 1.
+  const sourceGitMeta = getGitMeta(SOURCE_ROOT);
+
   for (const rawRepo of targetRepos) {
     // Canonicalise + containment-check EVERY target, not just `--target-path`.
     // The registry is not automatically trustworthy — its local half
@@ -1651,11 +1661,17 @@ async function main() {
           const buf = fs.readFileSync(abs);
           consumerFileMap[dstRel] = 'sha256:' + crypto.createHash('sha256').update(buf).digest('hex');
         }
+        // `generatedAt`, `files` and `layout` describe the CONSUMER (when this
+        // sync ran, what landed on its disk, in which shape). `repo`, `branch`
+        // and `commitSha` describe the SOURCE it came from — that is the pair a
+        // consumer needs to report "my bundle is from upstream commit X", and
+        // the reason commitSha is no longer the hardcoded `null` it was until
+        // 2026-07-31. Null remains legal (tarball install / no git).
         const consumerManifest = {
           generatedAt: new Date().toISOString(),
           repo: 'Lbstrydom/claude-engineering-skills',
-          branch: 'main',
-          commitSha: null,
+          branch: sourceGitMeta.branch || 'main',
+          commitSha: sourceGitMeta.commitSha,
           files: consumerFileMap,
           layout: 'isolated',
         };
