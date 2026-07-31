@@ -20,7 +20,7 @@
 
 import { one, upsert } from '../../db/query.mjs';
 import { isCloudEnabled } from '../repo.mjs';
-import { CoverageSchema } from '../../observed-deps.mjs';
+import { CoverageSchema } from '../../coverage-schema.mjs';
 
 /**
  * Persist the coverage record for a refresh.

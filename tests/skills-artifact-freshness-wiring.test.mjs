@@ -26,7 +26,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { buildManifest, canonicaliseForHash } from '../scripts/build-manifest.mjs';
+import { buildManifest } from '../scripts/build-manifest.mjs';
+import { canonicaliseForHash } from '../scripts/lib/canonical-hash.mjs';
 
 const pkg = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf-8'));
 const regenerate = pkg.scripts['skills:regenerate'];

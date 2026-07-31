@@ -49,31 +49,10 @@ const MANIFEST_SCHEMA_VERSION = 2;   // Phase B.2: flipped from 1 to 2
 const REPO_URL = 'https://github.com/Lbstrydom/claude-engineering-skills';
 const RAW_URL_BASE = 'https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main';
 
-/**
- * Canonicalise text content for hashing: CRLF → LF.
- *
- * WHY (found 2026-07-20 by the pre-push sandbox, which computes this manifest
- * in a clean checkout): `.gitattributes` pins `* text=auto eol=lf`, so the
- * COMMITTED bytes are always LF — but an editor or tool can still leave CRLF
- * in the working tree, and git reports those files as CLEAN because it
- * normalises on comparison. Hashing raw working-tree bytes therefore made
- * `bundleVersion` a function of LOCAL LINE ENDINGS, not of committed source.
- *
- * That silently broke the artifact's own contract twice over: the AGENTS.md
- * generated-artifact policy requires a committed artifact to be a pure,
- * byte-identical function of committed source, and the comment below this
- * claimed exactly that. In practice 16 skill reference files carried CRLF
- * locally, so the committed manifest was generated from contaminated input —
- * a fresh clone computes a different `bundleVersion` and reads as STALE.
- * `size` is normalised for the same reason (CRLF inflates it by one byte
- * per line).
- *
- * @param {Buffer} buf
- * @returns {Buffer} LF-normalised content
- */
-export function canonicaliseForHash(buf) {
-  return Buffer.from(buf.toString('utf-8').replace(/\r\n/g, '\n'), 'utf-8');
-}
+// `canonicaliseForHash` moved to lib/canonical-hash.mjs (shared-lib) on 2026-07-31:
+// it is a contract shared with audit-orchestration, and keeping it here made that an
+// undeclared audit-orchestration -> install edge. Imported, not re-exported (plan L3).
+import { canonicaliseForHash } from './lib/canonical-hash.mjs';
 
 /**
  * Compute SHA-256 hex of LF-normalised file content. 12-char short form.

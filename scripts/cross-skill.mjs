@@ -115,6 +115,9 @@ import { semanticId } from './lib/findings.mjs';
 import { isControlMarkerDetail } from './lib/audit/control-markers.mjs';
 import { getLearningStats } from './lib/learning/stats.mjs';
 import { emit, assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
+import { classifyReadPath, classifyTestPath } from './lib/path-validation.mjs';
+import { validateCountFields } from './lib/command-input.mjs';
+import { resolveRepoScope } from './lib/repo-scope.mjs';
 import {
   classifyFinalReviewOutcome, summariseCounts, orderItems, isActionable, renderFinalReviewCard,
 } from './lib/final-review-credit.mjs';
@@ -376,21 +379,25 @@ async function cmdUpdatePlanStatus() {
   // human deciding a plan is done, and nobody knows a plan by its UUID.
   let planId = p.planId;
   let resolvedPath = null;
+  // Resolve tenant scope on BOTH entry paths. It used to be resolved only inside the
+  // `!planId` branch, so supplying an explicit `planId` skipped scoping entirely and the
+  // UPDATE could land on another repo's plan row.
+  const repoId = await resolveRepoId(p);
   if (!planId) {
-    const repoId = await resolveRepoId(p);
     const found = await getPlanIdByPath(repoId, p.path);
     if (!found.ok) return emitError('PLAN_NOT_RESOLVED', found.message, {}, 1);
     planId = found.planId;
     resolvedPath = found.path;
   }
 
-  // Report the STORE's answer, not a blanket ok. `updatePlanStatus` returns
-  // rowCount 0 for a stale id, an RLS-filtered row, or an invalid status —
-  // emitting `{ok:true}` regardless would report a phantom write.
-  const res = await updatePlanStatus(planId, p.status);
+  // Report the STORE's answer, not a blanket ok. `updatePlanStatus` returns rowCount 0
+  // for a stale id, an invalid status, or — now that repo_id is a SQL predicate — a plan
+  // owned by a different repo. Emitting `{ok:true}` regardless would be a phantom write.
+  const res = await updatePlanStatus({ repoId, planId, status: p.status });
   if (!res.ok) {
     return emitError('STATUS_NOT_UPDATED',
-      `no row updated for planId=${planId} — stale id, invalid status, or RLS`, {}, 1);
+      `no row updated for planId=${planId} — stale id, invalid status, or the plan belongs to another repo`,
+      { reason: res.reason ?? null }, 1);
   }
   emit({ ok: true, cloud: true, planId, path: resolvedPath, status: p.status });
 }
@@ -586,9 +593,13 @@ async function cmdRecordCorrelation() {
 
 async function cmdRecordPlanVerifyRun() {
   const p = parsePayload();
-  if (!p.planId || typeof p.totalCriteria !== 'number') {
-    return emitError('BAD_INPUT', 'planId and totalCriteria (number) are required');
-  }
+  if (!p.planId) return emitError('BAD_INPUT', 'planId is required');
+  // `typeof n === 'number'` admitted NaN, negatives and fractions straight into the
+  // database — and a NaN peer is worse than a NaN total, because a satisfaction
+  // percentage derived from it renders as a plausible number. Validate the whole count
+  // set (and their sum) BEFORE repo resolution or any store call.
+  const counts = validateCountFields(p);
+  if (!counts.ok) return emitError('BAD_INPUT', counts.reason);
   await initLearningStore();
   if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, runId: null });
   const runId = await recordPlanVerificationRun({
@@ -867,11 +878,17 @@ function groundingNoteFor(f) {
       detail: f.detail_snapshot || '',
       primaryFile: f.primary_file || '',
       readFile: (rel) => {
-        const p = path.resolve(root, rel);
-        // Containment: `primary_file` is model-authored text, so it is not a
-        // trusted path source.
-        if (!p.startsWith(path.resolve(root))) return null;
-        return readFileSync(p, 'utf8');
+        // `primary_file` is model-authored text — an untrusted path source that we
+        // then READ and feed into an audit prompt bound for a third-party LLM.
+        //
+        // The previous check was `p.startsWith(path.resolve(root))`, which is wrong
+        // twice: no separator, so `/repo-evil/x` passes containment for `/repo`
+        // (demonstrated 2026-07-31); and no symlink resolution, so an in-repo symlink
+        // pointing at `~/.ssh/id_rsa` passed and was read. That is the INC-001
+        // symlink-bypass class landing on the sensitive-egress seam.
+        const verdict = classifyReadPath({ repoRoot: root, candidate: rel });
+        if (!verdict.ok) return null;
+        return readFileSync(verdict.canonical, 'utf8');
       },
     });
     return formatGroundingNote(res);
@@ -1280,7 +1297,9 @@ async function cmdArmEvalExport() {
       return emit({ ok: r.written, ...r });
     }
     if (!hasFlag('all')) return emitError('BAD_INPUT', '--session-id <id> or --all required');
-    const repoId = argOption('repo-id') || (await resolveRepoIdentityQuiet());
+    const _scope = await resolveScopedRepoId();
+        if (!_scope.ok) return emitError(_scope.code, _scope.message);
+        const repoId = _scope.repoId;
     const { ids } = await store.listSessionIds({ repoId, allRepos: hasFlag('all-repos') });
     const results = [];
     for (const sid of ids) results.push(await exportSession(sid));
@@ -1337,7 +1356,9 @@ async function cmdArmEvalMaybeCapture() {
   await initLearningStore();
   const { armEvalConfig } = await import('./lib/config.mjs');
   const budgetCapEur = t.budgetEur ?? armEvalConfig.budgetEur;
-  const repoId = argOption('repo-id') || (await resolveRepoIdentityQuiet());
+  const _scope = await resolveScopedRepoId();
+        if (!_scope.ok) return emitError(_scope.code, _scope.message);
+        const repoId = _scope.repoId;
   try {
     const { runArmEvalSession } = await import('./lib/arm-eval/run.mjs');
     const r = await runArmEvalSession({ experimentType, task, repoId, phase: 'prospective', seed: null, budgetCapEur });
@@ -1346,7 +1367,47 @@ async function cmdArmEvalMaybeCapture() {
 }
 
 /** Best-effort repo UUID for capture attribution; null when unresolvable. */
-async function resolveRepoIdentityQuiet() {
+/**
+ * The ambient repo **UUID** (v5) — NOT `audit_repos.id` (v4).
+ *
+ * Renamed 2026-07-31: it was called `resolveRepoIdentityQuiet` and three call sites
+ * bound its result to a variable named `repoId` and queried on it. Those queries match
+ * nothing and report an authoritative empty result for a repo that was never queried.
+ * Callers must translate via `resolveRepoScope` — the name now says which id it is.
+ */
+/**
+ * Resolve a v4 `audit_repos.id` for a command, from `--repo-id` or ambient identity.
+ *
+ * Every call site that previously did `argOption('repo-id') || await resolveRepoUuidQuiet()`
+ * was mixing the two id spaces — the fallback returned a v5 uuid that then went into a
+ * query keyed on the v4 id. Five sites did this, and each one reported a clean empty
+ * result for a repo it never actually queried.
+ *
+ * @returns {Promise<{ok: true, repoId: string|null} | {ok: false, code: string, message: string}>}
+ *   `repoId: null` means "no ambient identity" — callers proceed unscoped exactly as
+ *   before. `ok:false` distinguishes unknown-repo and lookup-failure, which must NEVER
+ *   render as an empty-but-clean result.
+ */
+async function resolveScopedRepoId() {
+  const scope = await resolveRepoScope({
+    explicitRepoId: argOption('repo-id') || null,
+    resolveRepoUuid: resolveRepoUuidQuiet,
+    getRepoIdByUuid: (uuid, opts) => getRepoIdByUuid(uuid, opts),
+  });
+  switch (scope.kind) {
+    case 'scoped':        return { ok: true, repoId: scope.repoId };
+    case 'no-identity':   return { ok: true, repoId: null };
+    case 'unknown-repo':
+      return { ok: false, code: 'UNKNOWN_REPO',
+        message: `no audit_repos row for this checkout (repo_uuid ${scope.repoUuid}) — `
+          + 'run `cross-skill.mjs resolve-repo-identity --persist`, or pass --repo-id' };
+    default:
+      return { ok: false, code: 'REPO_RESOLVE_FAILED',
+        message: `repo lookup failed (${scope.error}) — refusing an unscoped query` };
+  }
+}
+
+async function resolveRepoUuidQuiet() {
   try {
     const { resolveRepoIdentity } = await import('./lib/repo-identity.mjs');
     const r = await resolveRepoIdentity();
@@ -1693,7 +1754,9 @@ async function cmdPersonaOutcomes() {
     // elsewhere in this file) so session selection can't land on a
     // different repo that happens to share the name. --repo-id overrides
     // when supplied; otherwise best-effort from the current git remote.
-    const repoId = argOption('repo-id') || (await resolveRepoIdentityQuiet());
+    const _scope = await resolveScopedRepoId();
+        if (!_scope.ok) return emitError(_scope.code, _scope.message);
+        const repoId = _scope.repoId;
     const res = await getActionablePersonaOutcomeItems({ repoName, repoId });
     if (!res.ok) return emitError('STORE_ERROR', res.error || 'worksheet query failed');
     if (!res.cloud) return emit({ ok: true, cloud: false, count: 0 });
@@ -1731,7 +1794,9 @@ async function cmdPersonaOutcomes() {
     const repoName = argOption('repo') || process.env.PERSONA_TEST_REPO_NAME;
     if (!repoName) return emitError('BAD_INPUT', '--repo <name> is required (or set PERSONA_TEST_REPO_NAME)');
     // 88bc75e1/8993b96f: same repoId-primary resolution as --worksheet above.
-    const repoId = argOption('repo-id') || (await resolveRepoIdentityQuiet());
+    const _scope = await resolveScopedRepoId();
+        if (!_scope.ok) return emitError(_scope.code, _scope.message);
+        const repoId = _scope.repoId;
     const res = await getPersonaOutcomesSummary({ repoName, repoId });
     return emit(res);
   }
@@ -1765,7 +1830,9 @@ async function cmdPersonaOutcomes() {
   if (sub === 'backfill-hash') {
     const repoName = argOption('repo');
     if (!repoName) return emitError('BAD_INPUT', '--repo <name> is required for backfill-hash');
-    const repoId = argOption('repo-id') || (await resolveRepoIdentityQuiet());
+    const _scope = await resolveScopedRepoId();
+        if (!_scope.ok) return emitError(_scope.code, _scope.message);
+        const repoId = _scope.repoId;
     if (!repoId) return emitError('BAD_INPUT', 'could not resolve a repoId — pass --repo-id explicitly');
     const dryRun = process.argv.includes('--dry-run');
     const reportPath = argOption('report-path');
@@ -2456,18 +2523,26 @@ async function cmdLockWithTest() {
       + 'Run --worksheet for the reviewed queue.' });
   }
 
-  const { existsSync, realpathSync } = await import('node:fs');
-  const nodePath = await import('node:path');
+  const { realpathSync } = await import('node:fs');
   const repoRoot = realpathSync(process.cwd());
-  const abs = nodePath.resolve(repoRoot, testPath);
-  // Contained-path check mirrors resolveContainedPath's intent: a lock naming
-  // a file outside the repo is not evidence about this repo.
-  if (!abs.startsWith(repoRoot + nodePath.sep)) {
-    return emit({ ok: false, error: `refusing: "${testPath}" resolves outside the repo` });
+  // Delegate to the one canonical realpath+containment oracle. The previous check was
+  // boundary-safe (it appended the separator) but never RESOLVED the target, so a
+  // symlink at an in-repo path pointing outside was accepted; and `existsSync` accepts
+  // a DIRECTORY, so a lock could name a directory and read as evidence.
+  // Reason strings map 1:1 to the policy table in the plan (§2 dec. 3).
+  const verdict = classifyTestPath({ repoRoot, testPath });
+  if (!verdict.ok) {
+    const why = {
+      'path-escapes-repo': `"${testPath}" resolves outside the repo`,
+      'not-a-file': `"${testPath}" is not a regular file`,
+      'test-file-not-found': `test file "${testPath}" does not exist — a lock naming a missing file is a fake check`,
+      'path-unresolvable': `"${testPath}" could not be resolved (broken symlink or permission error)`,
+      'sensitive-path': `"${testPath}" is a sensitive path`,
+      'empty-path': 'a test path is required',
+    }[verdict.reason] ?? verdict.reason;
+    return emit({ ok: false, error: `refusing: ${why}`, reason: verdict.reason });
   }
-  if (!existsSync(abs)) {
-    return emit({ ok: false, error: `refusing: test file "${testPath}" does not exist — a lock naming a missing file is a fake check` });
-  }
+  const abs = verdict.canonical;
 
   // CROSS-TENANT WRITE FENCE. This used to scan `getUnlockedFixes(null)` — an
   // arbitrary 20 cross-repo rows out of hundreds — and then adopt whatever

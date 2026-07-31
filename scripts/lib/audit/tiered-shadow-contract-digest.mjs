@@ -61,7 +61,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { parseSource, walk } from '../ast.mjs';
-import { canonicaliseForHash } from '../../build-manifest.mjs';
+import { canonicaliseForHash } from '../canonical-hash.mjs';
 
 export const COMPARE_FILE = 'scripts/lib/audit/tiered-shadow-compare.mjs';
 export const SUMMARY_FILE = 'scripts/lib/audit/tiered-shadow-summary.mjs';

@@ -1,5 +1,59 @@
 # Project Status Log
 
+## 2026-07-31 (latest) — the deferred cross-domain findings, closed
+
+`/cycle --autonomous` over `layering-and-mutation-contracts.md`. Two finding classes had
+been deferred as "independent" across three audits. Deferring was right each time, but
+"independent of that change" is not "not a problem" — this was the pass those deferrals
+were promising.
+
+**Layering (4 edges).** `CoverageSchema` and `canonicaliseForHash` moved to `shared-lib`
+with all four importers migrated and **the old exports removed**, so nothing can silently
+recreate the edge. `install.mjs` re-tagged `root-scripts` -> `install` rather than
+declaring a broad `tests -> root-scripts` edge that would have granted every test module
+the whole domain. `cross-skill-bridge -> model-eval` declared, with the rationale recorded
+in an `_adjudication_2026_07_31` key (JSON has no comments; the file already uses that
+convention). Verified after `arch:refresh`: both refactored edges are **gone from the
+observed graph**, violations 0.
+
+**Mutation contracts (5).** The sharpest was **C2**: `groundingNoteFor` `readFileSync`s a
+**model-authored** path behind a separator-less `startsWith`, then feeds the contents into
+an audit prompt bound for a third-party LLM. An in-repo symlink to `~/.ssh/id_rsa` passed
+that check. That is INC-001's symlink-bypass class landing on the Tier-3 sensitive-egress
+seam, and the Gemini plan gate is what caught that my own plan had specified a *pure*
+string check there. Also: **C1** the repo_uuid-as-repoId confusion, **C3** lock-with-test
+never realpathing its target and accepting directories, **C4** `updatePlanStatus` now
+predicating the UPDATE on `repo_id` (resolving a repoId in the CLI constrains nothing),
+**C5** every count validated rather than only `totalCriteria`.
+
+**Five things the build found that the plan had not:**
+
+1. **C1 had FIVE call sites, not three.** The finding said three; my confirming grep was
+   truncated by `head`. The rename surfaced all five. A partial migration would have left
+   the identical false zero in the two missed sites.
+2. **`resolveAndClassify` fails CLOSED** — a *missing* file comes back
+   `category: 'sensitive'`, so the obvious check order reported a typo'd filename as a
+   sensitive path. Reordered lexical -> existence -> resolve, with `lstat` so a dangling
+   symlink reads as unresolvable rather than missing.
+3. **`isPathContained` falsely rejected on Windows drive-letter case** (`path.resolve`
+   preserves the case it is handed). Reproduced on win32; folds on win32 only now.
+4. **`updatePlanStatus` had exactly one caller**, so the signature changed instead of
+   gaining a safer sibling that would leave the unsafe API reachable.
+5. **A hand-rolled glob resolver in the new layering test was wrong** — caught by the
+   self-check assert placed above it, then replaced with the repo's real `tagDomain`.
+
+One consolidated-gate HIGH was **verified false**: `z.iso.datetime()` does exist in zod
+4.4.3, the schema imports and parses, and the block was a byte-identical move of running
+code. Both moves were proven byte-identical before anything was concluded — which is what
+let Cluster A's 14 other findings be deferred honestly rather than by assertion.
+
+Consolidated gate APPROVE, 0 findings. `npm run check` exits 0; 9669 tests pass.
+
+**Left open deliberately** (pre-existing, surfaced in touched files, none depended on by
+this change): non-atomic `skills.manifest.json` write, `--check` comparing only
+`bundleVersion`, copy-forward concurrency, coverage cross-field validation, digest
+whitespace canonicalisation.
+
 ## 2026-07-31 — shadow tail labelled + overlap measured: the economics reversed a same-day call
 
 Research addendum: [`final-review-tail-labelling-2026-07-31.md`](docs/research/final-review-tail-labelling-2026-07-31.md).
@@ -23,7 +77,7 @@ Two probes, one labelling pass, no repo code changed (labels live in the store).
   primary-only findings, and Kimi's marginal value (n=2, needs same-snapshot
   data — alternating shadows measures diff difficulty, not the model).
 
-## 2026-07-31 (latest) — the upstream bug channel, built end-to-end
+## 2026-07-31 — the upstream bug channel, built end-to-end
 
 `/cycle --autonomous` over `upstream-issue-reports.md` Phases 2-4. Consumers can
 now file a structured upstream bug report; this repo triages it from one place.

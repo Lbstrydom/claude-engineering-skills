@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**10 active · 163 terminal · 25 audit summaries · 1 parked · 4 reference docs**
+**10 active · 164 terminal · 25 audit summaries · 1 parked · 4 reference docs**
 
 ---
 
@@ -61,7 +61,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 160 completed plans</summary>
+<summary>Show all 161 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -135,6 +135,7 @@ source comments that no docs linter sees — stays valid.
 | [Close the GIT_DIR/GIT_WORK_TREE Env-Leak Class (full blast radius)](./git-env-leak-sustainability.md) | `Complete` |  |
 | [Closing the "GREEN ≠ REALIZED" gap](./green-not-realized.md) | `Complete` | all three clusters shipped (2026-06-28). A: efficacy-lints (AST, Gemini APPROVE). B: runtime-truth audit ru… |
 | [Harden `scripts/lib/install/transaction.mjs`'s WAL Crash-Safety Contract](./install-transaction-wal-hardening.md) | `Complete` |  |
+| [Cross-Domain Layering + Mutation-Contract Cleanup](./layering-and-mutation-contracts.md) | `Complete` | shipped 2026-07-31 — see Implementation Log |
 | [Learning-Store Signal Recovery — Identity, Outcomes, Dead Loops](./learning-store-signal-recovery.md) | `Complete` | Clusters A–D landed 2026-06-03/04 with their own |
 | [Learning System v2 — Adaptive Prompt Evolution & Contextual Bandits](./learning-system-v2.md) | `Complete` | shipped — Supabase tables `learning_decisions`, `recurring_finding_clusters`, `bandit_arms`, `false_positiv… |
 | [Pipeline liveness + canonical-path enforcement (WS3 follow-up)](./liveness-and-canonical-paths.md) | `Complete` |  |

@@ -180,7 +180,7 @@ export async function getPlanIdByPath(repoId, rawPath) {
 }
 
 /** Update a plan's status. Returns { ok, rowCount }. */
-export async function updatePlanStatus(planId, status) {
+export async function updatePlanStatus({ repoId, planId, status }) {
   if (!planId || !await isCloudEnabled()) return { ok: false, rowCount: 0 };
   // Accept the MARKDOWN spelling of the same token, not just the DB one.
   // `skills/plan/SKILL.md` instructs `Draft | Approved | In Progress |
@@ -200,17 +200,28 @@ export async function updatePlanStatus(planId, status) {
     return { ok: false, rowCount: 0 };
   }
   try {
+    // TENANT SCOPE IS A SQL PREDICATE, NOT A CALLER VARIABLE. Resolving a repoId
+    // in the CLI constrains nothing — the mutation itself must carry both keys, or an
+    // explicit `planId` can update a row owned by another repo. Required, because an
+    // undefined would silently widen the WHERE clause.
+    if (!repoId) {
+      process.stderr.write('  [learning] updatePlanStatus: repoId is required (refusing an unscoped update)\n');
+      return { ok: false, rowCount: 0, reason: 'repo-scope-required' };
+    }
     const { rowCount } = await updateWhere('plans',
       { status: normalised, updated_at: new Date().toISOString() },
-      { id: planId }
+      { id: planId, repo_id: repoId }
     );
-    // A 0-row update means the planId matched nothing (stale id, or an RLS
-    // policy silently filtered the row) — surface it rather than reporting a
-    // phantom success the caller can't distinguish from a real write.
+    // 0 rows means EITHER a stale planId OR a plan owned by a DIFFERENT repo — both
+    // are refusals, never phantom successes. The cross-tenant case is new: before the
+    // repo_id predicate, that update would have succeeded against another repo's row.
     if (rowCount === 0) {
-      process.stderr.write(`  [learning] updatePlanStatus: no row updated for planId=${planId} (stale id or RLS)\n`);
+      process.stderr.write(
+        `  [learning] updatePlanStatus: no row updated for planId=${planId} in repo ${repoId} `
+        + '(stale id, or the plan belongs to another repo)\n',
+      );
     }
-    return { ok: rowCount > 0, rowCount };
+    return { ok: rowCount > 0, rowCount, reason: rowCount === 0 ? 'plan-not-in-repo' : undefined };
   } catch (err) {
     process.stderr.write(`  [learning] updatePlanStatus failed: ${err.message}\n`);
     return { ok: false, rowCount: 0 };

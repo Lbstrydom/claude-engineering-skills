@@ -12,7 +12,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { CoverageSchema, computeObservedDomainDepsWithCoverage } from '../scripts/lib/observed-deps.mjs';
+import { CoverageSchema } from '../scripts/lib/coverage-schema.mjs';
+import { computeObservedDomainDepsWithCoverage } from '../scripts/lib/observed-deps.mjs';
 
 function baseRecord(overrides = {}) {
   return {
