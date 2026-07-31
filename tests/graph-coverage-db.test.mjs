@@ -129,6 +129,24 @@ describe('coverage.mjs — recordGraphCoverage/getGraphCoverage/copyForwardCover
     }
   });
 
+  it('copyForwardCoverage REFUSES to clobber a destination that already holds a FRESH measurement', async () => {
+    // The guard is an `ON CONFLICT … WHERE stale IS TRUE` predicate, not a
+    // read-then-write check: an earlier version read the destination first, which
+    // leaves a window where a concurrent writer lands a real measurement between
+    // the read and the upsert. Downgrading genuine evidence to "we don't know" is
+    // the overclaim-in-reverse this whole module exists to prevent.
+    await recordGraphCoverage(refreshIdA, verifiedCoverageRecord(refreshIdA));
+    await recordGraphCoverage(refreshIdB, verifiedCoverageRecord(refreshIdB));
+
+    const refused = await copyForwardCoverage({ fromRefreshId: refreshIdA, toRefreshId: refreshIdB });
+    assert.equal(refused.copied, false);
+    assert.equal(refused.reason, 'destination-has-fresh-measurement');
+
+    const dest = await getGraphCoverage(refreshIdB);
+    assert.notEqual(dest.stale, true, 'the fresh destination measurement must survive');
+    assert.equal(dest.refreshId, refreshIdB, 'and must still be its OWN measurement');
+  });
+
   it('copyForwardCoverage copies the prior payload onto a new refresh, forced stale + unknown', async () => {
     // Arrange this test's own prior row rather than depending on execution
     // order (item 6 round-1 audit M15) — refreshIdA is seeded here, not

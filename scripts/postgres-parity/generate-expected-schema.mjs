@@ -36,6 +36,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertRepoRoot } from '../lib/assert-repo-root.mjs';
+import { atomicWriteFileSync } from '../lib/file-io.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
@@ -246,7 +247,7 @@ async function main() {
   await closePool();
 
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
-  fs.writeFileSync(outPath, JSON.stringify(out, null, 2) + '\n', 'utf-8');
+  atomicWriteFileSync(outPath, JSON.stringify(out, null, 2) + '\n');
   process.stderr.write(`  [expected-schema] wrote ${outPath}\n`);
 }
 

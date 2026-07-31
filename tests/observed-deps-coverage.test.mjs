@@ -134,7 +134,12 @@ describe('ObservedDepsSchema — envelope back-compat', () => {
           samples: { uncruised: ['src/x.ts'] },
         },
         attribution: {
-          candidates: 10, attributed: 8, attributable: 9, ratio: 0.888,
+          // `8 / 9`, not a typed-out `0.888`. The producer computes this as exact
+          // unrounded division (graph-coverage.mjs), and the real persisted
+          // envelope on disk matches its own counts to full float precision — so a
+          // hand-rounded fixture was asserting a shape no producer emits, and the
+          // schema's coherence rule correctly rejects it.
+          candidates: 10, attributed: 8, attributable: 9, ratio: 8 / 9,
           edges: { malformed: 0, untaggedFrom: 1, untaggedTo: 0, untaggedBoth: 0, sameDomain: 1, attributed: 8 },
           samples: { untagged: ['vendor/y.ts'] },
         },

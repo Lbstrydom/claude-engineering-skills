@@ -82,6 +82,78 @@ export const CoverageSchema = z.object({
     samples: z.object({ untagged: z.array(z.string()) }),
   }).nullable(),
 }).superRefine((val, ctx) => {
+  // ── Arithmetic coherence — runs BEFORE the precedence chain below ──────────
+  //
+  // Placement is load-bearing: the chain below is FIRST-MATCH-WINS and `return`s,
+  // so a check placed inside it would be skipped for every record that matches an
+  // earlier row. These are unconditional invariants about the numbers themselves,
+  // orthogonal to which verdict they justify, so they run first and never return.
+  //
+  // They codify what the producer already guarantees rather than inventing a new
+  // rule — `graph-coverage.mjs` only counts a file as `cruised` if it is in the
+  // eligible set, and computes `ratio` as exact unrounded division — so no real
+  // record can fail them. What they catch is a future producer regression or a
+  // hand-crafted payload, which is exactly what a write-boundary schema is for.
+  {
+    const ex = val?.extraction;
+    if (ex && ex.eligible != null && ex.cruised != null && ex.cruised > ex.eligible) {
+      ctx.addIssue({
+        code: 'custom', path: ['extraction', 'cruised'],
+        message: `extraction.cruised (${ex.cruised}) cannot exceed extraction.eligible (${ex.eligible}) — a file is only counted as cruised when it is in the eligible set`,
+      });
+    }
+    // Tolerance, not equality: `ratio` is a float division, so an exact `===`
+    // would reject records over a rounding artefact rather than a real defect.
+    const EPS = 1e-9;
+    // `ex.eligible` truthiness would SKIP the check when eligible is 0 — letting
+    // `{eligible:0, cruised:0, ratio:0.99}` through, a mathematically impossible
+    // payload. Zero is a real, reachable state (empty universe), and the producer
+    // emits `ratio: null` for it, so the rule is: no denominator ⇒ no ratio.
+    // `!(eligible > 0)` covers BOTH zero and null in one predicate. Writing it
+    // as `=== 0` left `eligible: null` falling through both branches — the
+    // nullable case exists precisely for a failed/timed-out extraction, which by
+    // definition has NO measurement, so a non-null ratio there is the most
+    // contradictory payload of all: a coverage figure from a run that never
+    // measured anything.
+    if (ex && ex.ratio != null && !(ex.eligible > 0)) {
+      ctx.addIssue({
+        code: 'custom', path: ['extraction', 'ratio'],
+        message: `extraction.ratio must be null when eligible is ${ex.eligible === null ? 'null (no measurement)' : '0 (no denominator)'} — got ${ex.ratio}`,
+      });
+    }
+    if (ex && ex.ratio != null && ex.eligible > 0) {
+      const expected = ex.cruised / ex.eligible;
+      if (Math.abs(ex.ratio - expected) > EPS) {
+        ctx.addIssue({
+          code: 'custom', path: ['extraction', 'ratio'],
+          message: `extraction.ratio (${ex.ratio}) disagrees with cruised/eligible (${expected}) — a ratio that does not follow from its own counts is not evidence`,
+        });
+      }
+    }
+    const at = val?.attribution;
+    if (at && at.attributed > at.attributable) {
+      ctx.addIssue({
+        code: 'custom', path: ['attribution', 'attributed'],
+        message: `attribution.attributed (${at.attributed}) cannot exceed attribution.attributable (${at.attributable}) — attributable is defined as attributed plus the untagged buckets`,
+      });
+    }
+    if (at && at.ratio != null && !(at.attributable > 0)) {
+      ctx.addIssue({
+        code: 'custom', path: ['attribution', 'ratio'],
+        message: `attribution.ratio must be null when attributable is ${at.attributable} — no denominator, got ${at.ratio}`,
+      });
+    }
+    if (at && at.ratio != null && at.attributable > 0) {
+      const expected = at.attributed / at.attributable;
+      if (Math.abs(at.ratio - expected) > EPS) {
+        ctx.addIssue({
+          code: 'custom', path: ['attribution', 'ratio'],
+          message: `attribution.ratio (${at.ratio}) disagrees with attributed/attributable (${expected})`,
+        });
+      }
+    }
+  }
+
   // Cross-field trust-precedence check, mirroring graph-verdict.mjs's
   // rows 1-4 (the config-INDEPENDENT precedence rows only — rows 8-10
   // depend on the per-repo floor/budget config and are deliberately NOT

@@ -85,6 +85,19 @@ export const EVIDENCE_TRIAGE_FILE = 'scripts/lib/audit/evidence-triage.mjs';
  * NAME, so editing one changes real correlation behaviour while leaving
  * `findingsCorrelate`'s own source text byte-identical.
  */
+/**
+ * ⚠ Whitespace inside STRING, TEMPLATE and REGEX literals is collapsed along with
+ * formatting whitespace (see `extractNamedRegions`). That coarseness is deliberate —
+ * a digest that fires on reformatting gets `--no-verify`'d — and it is safe for the
+ * regions below because every one is a PREDICATE or comparison function whose
+ * semantics do not live in literal spacing.
+ *
+ * **Before adding a region, check that property still holds.** A region whose
+ * behaviour depends on whitespace inside a literal (a formatter, a template that
+ * emits significant newlines, a regex matching literal runs of spaces) can be
+ * changed WITHOUT moving this digest — the guard would go quiet exactly where it
+ * is needed. Such a region needs literal-preserving canonicalisation first.
+ */
 export const SEMANTICS_REGIONS = Object.freeze({
   [COMPARE_FILE]: Object.freeze([
     'OVERLAP_LINE_WINDOW', 'findingFile', 'findingLine',
@@ -167,6 +180,18 @@ function extractNamedRegions(source, names) {
     // Collapse ALL whitespace runs (including the original line breaks) to a
     // single space: this is what makes the digest insensitive to reformatting
     // and to the comment-blanking above leaving behind blank lines.
+    // A duplicate name (e.g. a nested function shadowing a targeted top-level
+    // one) would otherwise make the digest depend on TRAVERSAL ORDER: the last
+    // match silently wins and the pinned region is whichever the walker reached
+    // second. For a guard whose whole job is detecting semantic change, quietly
+    // digesting the wrong region is the worst available outcome — fail loudly.
+    if (out.has(name)) {
+      throw new Error(
+        `tiered-shadow-contract-digest: "${name}" matched more than once — the digested `
+        + 'region would depend on traversal order. Rename the inner declaration, or narrow '
+        + 'SEMANTICS_REGIONS to an unambiguous target.',
+      );
+    }
     out.set(name, slice.replace(/\s+/g, ' ').trim());
   }
   return out;

@@ -1,6 +1,60 @@
 # Project Status Log
 
-## 2026-07-31 (latest) — the deferred cross-domain findings, closed
+## 2026-07-31 (latest) — the deferred findings, censused as classes
+
+Follow-up on the 14 findings deferred from the layering cluster. The instruction was
+to fix classes, not instances — and the census kept finding more than the audit reported.
+
+**Atomic Category-B writes.** The audit reported ONE non-atomic writer. The census found
+**four** — `build-manifest`, `generate-plans-index`, `generate-expected-schema`, and
+`regenerate-skill-copies` (which writes 57 files) — against a fifth, `requirements.mjs`,
+that had always been correct. A torn write there leaves a TRACKED, gate-checked file
+corrupt. All five now atomic, locked by `tests/category-b-atomic-writes.test.mjs`, which
+enumerates the writer->artifact pairs so a sixth cannot appear unnoticed.
+
+**I dismissed a real finding and had to reverse it.** I called the `build-manifest
+--check` finding a false positive after reading the code and finding a byte comparison.
+That comparison was in the WRITE path. `--check` is a separate branch and compared only
+`bundleVersion` + `schemaVersion` — so a hand-edited per-file sha passed the gate while
+the artifact's own contents were wrong. Now compares the full serialized body; verified
+by tampering a copy and watching it fail. Verifying the wrong branch is indistinguishable
+from not verifying.
+
+**My own first fix was the shape I'd just criticised.** The copy-forward guard I wrote
+was read-then-write — the same "check in code, not in SQL" mistake as resolving a repoId
+in the CLI. Replaced with `ON CONFLICT … WHERE stale IS TRUE` plus an `xmax = 0` test to
+tell insert from update, and verified against a real Postgres across all three cases:
+refuses onto a fresh row (and the fresh row survives), succeeds onto stale, succeeds onto
+empty.
+
+**Also fixed**: `flattenMergedDeps` missing the `DANGEROUS_KEYS` guard its two siblings
+apply; `recordGraphCoverage` persisting the RAW input rather than `validation.data` (Zod
+strips unknown keys, so unvalidated fields reached the jsonb payload); `getGraphCoverage`
+now validating on READ too, so a self-contradicting historical row degrades to `unknown`
+instead of presenting as a verdict; `CoverageSchema` gained arithmetic coherence
+(cruised<=eligible, ratio agrees with its counts, and no ratio without a denominator —
+that last one took three passes: `eligible` truthiness skipped zero, then `=== 0` skipped
+null); `extractSkillSummary` accepting the folded `>` scalar AND respecting block
+indentation, which stopped an empty `description: |` from swallowing the next sibling key
+as the skill's advertised summary; `extractNamedRegions` throwing on a duplicate name
+rather than letting traversal order pick the digested region.
+
+**Verified false**: `observed-deps -> domain-tagger` is INTRA-domain (both `arch-memory`),
+not a boundary crossing.
+
+**Deferred with the reason stated**: whitespace-collapse inside literals in the shadow
+digest is a documented deliberate trade-off, and every pinned region is a predicate — so
+it is theoretical for the current set. A warning now sits at `SEMANTICS_REGIONS`, where a
+future literal-sensitive region would be added.
+
+**Recorded, not half-fixed**: `upsertRepo`'s INSERT branch stamps `last_audited_at` even
+for a read-only lookup, while its UPDATE sibling was already guarded. Omitting the column
+changes nothing — it is `NOT NULL DEFAULT NOW()` — so the real fix is a migration making
+it nullable. Spun out as its own task rather than pretending a code-only change fixed it.
+
+`npm run check` exits 0; 9691 tests pass.
+
+## 2026-07-31 — the deferred cross-domain findings, closed
 
 `/cycle --autonomous` over `layering-and-mutation-contracts.md`. Two finding classes had
 been deferred as "independent" across three audits. Deferring was right each time, but

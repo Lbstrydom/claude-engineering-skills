@@ -226,3 +226,95 @@ describe('computeObservedDomainDepsWithCoverage — DANGEROUS_KEYS guard in the 
     assert.deepEqual(deps, { source: ['target'] });
   });
 });
+
+describe('CoverageSchema — arithmetic coherence (runs before the precedence chain)', () => {
+  // Reuses the file's own valid fixture so these tests exercise the coherence
+  // rules rather than an incomplete hand-built record.
+  const coherent = (ex = {}, at = null) => baseRecord({
+    extraction: { ...baseRecord().extraction, ...ex },
+    attribution: at,
+  });
+
+  it('accepts a coherent record — the guard must not reject real data', () => {
+    const r = CoverageSchema.safeParse(coherent({ eligible: 10, cruised: 8, ratio: 0.8 }));
+    assert.equal(r.success, true, r.success ? '' : JSON.stringify(r.error.issues));
+  });
+
+  it('rejects cruised > eligible', () => {
+    const r = CoverageSchema.safeParse(coherent({ eligible: 10, cruised: 11, ratio: 11 / 10 }));
+    assert.equal(r.success, false);
+    assert.match(JSON.stringify(r.error.issues), /cannot exceed extraction.eligible/);
+  });
+
+  it('rejects a ratio that does not follow from its own counts', () => {
+    const r = CoverageSchema.safeParse(coherent({ eligible: 10, cruised: 8, ratio: 0.99 }));
+    assert.equal(r.success, false);
+    assert.match(JSON.stringify(r.error.issues), /disagrees with cruised/);
+  });
+
+  it('float division does not trip the tolerance', () => {
+    // An exact `===` here would reject a real record over a rounding artefact.
+    const r = CoverageSchema.safeParse(coherent({ eligible: 3, cruised: 1, ratio: 1 / 3 }));
+    assert.equal(r.success, true, r.success ? '' : JSON.stringify(r.error.issues));
+  });
+
+  it('rejects attributed > attributable', () => {
+    const r = CoverageSchema.safeParse(coherent({}, {
+      candidates: 4, attributed: 5, attributable: 4, ratio: 5 / 4,
+      edges: { malformed: 0, untaggedFrom: 1, untaggedTo: 0, untaggedBoth: 0, sameDomain: 0, attributed: 5 },
+      samples: { untagged: [] },
+    }));
+    assert.equal(r.success, false);
+    assert.match(JSON.stringify(r.error.issues), /cannot exceed attribution.attributable/);
+  });
+});
+
+describe('CoverageSchema — zero denominators', () => {
+  it('rejects a ratio when eligible is 0 — no denominator, no ratio', () => {
+    // A truthiness guard (`if (ex.eligible)`) skipped the ratio check entirely at
+    // zero, letting `{eligible:0, cruised:0, ratio:0.99}` — mathematically
+    // impossible — reach persistence.
+    const r = CoverageSchema.safeParse(baseRecord({
+      verdict: { status: 'unverified', reason: 'empty_universe' },
+      extraction: { ...baseRecord().extraction, eligible: 0, cruised: 0, ratio: 0.99 },
+    }));
+    assert.equal(r.success, false);
+    assert.match(JSON.stringify(r.error.issues), /must be null when eligible is 0/);
+  });
+
+  it('accepts eligible 0 with a null ratio — what the producer actually emits', () => {
+    const r = CoverageSchema.safeParse(baseRecord({
+      verdict: { status: 'unverified', reason: 'empty_universe' },
+      extraction: { ...baseRecord().extraction, eligible: 0, cruised: 0, ratio: null },
+    }));
+    assert.equal(r.success, true, r.success ? '' : JSON.stringify(r.error.issues));
+  });
+});
+
+describe('CoverageSchema — a NULL denominator is not a denominator', () => {
+  it('rejects a ratio when eligible is null (a failed extraction measured nothing)', () => {
+    // `eligible === 0` alone let the nullable case — the one that exists FOR
+    // failed/timed-out extractions — slip through both branches, so a run that
+    // never measured anything could carry a coverage figure.
+    const r = CoverageSchema.safeParse(baseRecord({
+      verdict: { status: 'unverified', reason: 'extraction_failed' },
+      extraction: {
+        ...baseRecord().extraction,
+        outcome: 'failed', eligible: null, cruised: null, ratio: 0.99, edges: null,
+      },
+    }));
+    assert.equal(r.success, false);
+    assert.match(JSON.stringify(r.error.issues), /no measurement/);
+  });
+
+  it('accepts a failed extraction with a null ratio — the real shape', () => {
+    const r = CoverageSchema.safeParse(baseRecord({
+      verdict: { status: 'unverified', reason: 'extraction_failed' },
+      extraction: {
+        ...baseRecord().extraction,
+        outcome: 'failed', eligible: null, cruised: null, ratio: null, edges: null,
+      },
+    }));
+    assert.equal(r.success, true, r.success ? '' : JSON.stringify(r.error.issues));
+  });
+});

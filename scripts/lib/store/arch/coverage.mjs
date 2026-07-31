@@ -52,24 +52,28 @@ export async function recordGraphCoverage(refreshId, coverage) {
     return { recorded: false, reason: 'schema-invalid' };
   }
 
-  // `status` is guaranteed present by CoverageSchema's required, enum-typed
-  // `verdict.status` field — a separate missing-verdict check here would be
-  // unreachable dead code now that validation runs first.
-  const status = coverage.verdict.status;
-  const reason = coverage.verdict.reason ?? null;
+  // Read from `validation.data`, NOT the raw input. Zod object schemas STRIP
+  // unknown keys, so the parsed value and the caller's object are not the same
+  // thing — persisting the raw one would write unvalidated extra fields into
+  // the jsonb payload and make the schema's output not the source of truth for
+  // what lands in the row. Validating and then using the unvalidated object is
+  // the subtler half of "the write boundary must ENFORCE the schema".
+  const validated = validation.data;
+  const status = validated.verdict.status;
+  const reason = validated.verdict.reason ?? null;
 
   try {
     const res = await upsert('symbol_refresh_coverage', [{
       refresh_id: refreshId,
       status,
       reason,
-      stale: coverage.stale === true,
-      measured_at: coverage.measuredAt,
+      stale: validated.stale === true,
+      measured_at: validated.measuredAt,
       // When copied forward, the measuring run is NOT this refresh. Preserving
       // it is what lets the dashboard say "measured 3 refreshes ago" rather
       // than implying this run measured anything.
-      measured_refresh_id: coverage.refreshId || refreshId,
-      payload: coverage,
+      measured_refresh_id: validated.refreshId || refreshId,
+      payload: validated,
     }], { onConflict: ['refresh_id'], update: 'all' });
     // A non-throwing upsert is NOT proof of persistence — an RLS policy or a
     // no-op conflict resolution can return zero rows without error. Claiming
@@ -107,7 +111,28 @@ export async function getGraphCoverage(refreshId) {
       `SELECT payload FROM symbol_refresh_coverage WHERE refresh_id = $1`,
       [refreshId]
     );
-    return row?.payload ?? null;
+    if (!row?.payload) return null;
+
+    // VALIDATE ON READ TOO, not only on write. Rows predating a schema
+    // tightening — or inserted by hand — bypass every cross-field invariant the
+    // write boundary enforces, and this function's callers render its result as
+    // a coverage VERDICT. Returning a structurally invalid payload would let a
+    // record that contradicts itself present as evidence, which is the exact
+    // failure this module exists to prevent.
+    //
+    // An invalid payload maps to `null`, deliberately identical to "no row" and
+    // "read failed": the doc above states callers must map null to
+    // `unknown`/`not_measured`, so an untrustworthy record degrades to "we do
+    // not know" rather than to a clean verdict.
+    const parsed = CoverageSchema.safeParse(row.payload);
+    if (!parsed.success) {
+      process.stderr.write(
+        `  [coverage] stored payload for ${refreshId} fails the schema — treating as unknown: `
+        + `${parsed.error.issues.map((i) => i.message).join('; ')}\n`,
+      );
+      return null;
+    }
+    return parsed.data;
   } catch (err) {
     process.stderr.write(`  [coverage] read failed: ${err.message}\n`);
     return null;
@@ -159,6 +184,48 @@ export async function copyForwardCoverage({ fromRefreshId, toRefreshId } = {}) {
     // that is the whole point of copying forward rather than re-stamping.
     verdict: neverSucceeded ? prior.verdict : { status: 'unknown', reason: 'stale_measurement' },
   };
-  const res = await recordGraphCoverage(toRefreshId, stale);
-  return { copied: res.recorded, reason: res.reason };
+  // Never overwrite a FRESH measurement with a copied-forward stale one — and
+  // enforce that IN THE STATEMENT, not as a read-then-write check.
+  //
+  // `recordGraphCoverage` upserts with `update: 'all'`, i.e. last-one-wins, so a
+  // copy-forward could replace a real measurement with older numbers marked
+  // `stale` — downgrading genuine evidence to "we don't know", the exact
+  // overclaim-in-reverse this module exists to prevent. A read-then-write guard
+  // was written first and was wrong for the same reason a CLI-resolved repoId is
+  // not a tenant boundary: between the read and the write, the row can change.
+  // The `WHERE` below closes that window; Postgres evaluates it as part of the
+  // conflict resolution, so there is no interleaving to lose.
+  //
+  // `xmax = 0` distinguishes a fresh INSERT from an UPDATE, so a genuinely new
+  // row is reported as copied while a refused overwrite is not.
+  try {
+    const row = await one(
+      `INSERT INTO symbol_refresh_coverage
+         (refresh_id, status, reason, stale, measured_at, measured_refresh_id, payload)
+       VALUES ($1, $2, $3, TRUE, $4, $5, $6)
+       ON CONFLICT (refresh_id) DO UPDATE
+         SET status = EXCLUDED.status, reason = EXCLUDED.reason, stale = EXCLUDED.stale,
+             measured_at = EXCLUDED.measured_at,
+             measured_refresh_id = EXCLUDED.measured_refresh_id,
+             payload = EXCLUDED.payload
+         WHERE symbol_refresh_coverage.stale IS TRUE
+       RETURNING (xmax = 0) AS inserted`,
+      [
+        toRefreshId,
+        stale.verdict.status,
+        stale.verdict.reason ?? null,
+        stale.measuredAt,
+        stale.refreshId || toRefreshId,
+        JSON.stringify(stale),
+      ],
+    );
+    // No row returned = the ON CONFLICT WHERE refused: the destination already
+    // holds a NON-stale (real) measurement. That is a correct refusal, not a
+    // failure, and it must not be reported as a successful copy.
+    if (!row) return { copied: false, reason: 'destination-has-fresh-measurement' };
+    return { copied: true };
+  } catch (err) {
+    process.stderr.write(`  [coverage] copy-forward failed: ${err.message}\n`);
+    return { copied: false, reason: `db-error: ${err.message}` };
+  }
 }

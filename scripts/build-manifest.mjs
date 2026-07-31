@@ -33,10 +33,31 @@ import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
  * `--chek` would rewrite the artifact while the operator believed they were
  * only verifying it.
  */
-const KNOWN_FLAGS = ['--check'];
+const KNOWN_FLAGS = ['--check', '--manifest'];
 
 const SKILLS_DIR = path.resolve('skills');
-const MANIFEST_PATH = path.resolve('skills.manifest.json');
+/**
+ * Where the manifest is read from and written to.
+ *
+ * `--manifest <path>` exists so a test can exercise the tamper-and-repair path
+ * against a THROWAWAY copy. Without it the only way to test that path was to
+ * mutate the repo's own committed `skills.manifest.json` and restore it in a
+ * `finally` — and `node --test` runs files in parallel, so a killed runner or a
+ * concurrent reader inside that window sees (or leaves) a mangled TRACKED file.
+ * This file's own comments already warned "never mutate a tracked file to test a
+ * pure function"; the flag is what makes that possible for the impure path too.
+ */
+function resolveManifestPath(argv = process.argv) {
+  const i = argv.indexOf('--manifest');
+  if (i >= 0) {
+    const v = argv[i + 1];
+    if (!v || v.startsWith('--')) throw new ArgvError('--manifest requires a file path');
+    return path.resolve(v);
+  }
+  return path.resolve('skills.manifest.json');
+}
+
+const MANIFEST_PATH = resolveManifestPath();
 const BOOTSTRAP_TEMPLATE = path.resolve('scripts/lib/bootstrap-template.mjs');
 // COPILOT_BLOCK_TEMPLATE ('scripts/lib/install/copilot-block.txt') removed
 // 2026-07-30: the file has never existed, so its existsSync branch never fired
@@ -53,6 +74,7 @@ const RAW_URL_BASE = 'https://raw.githubusercontent.com/Lbstrydom/claude-enginee
 // it is a contract shared with audit-orchestration, and keeping it here made that an
 // undeclared audit-orchestration -> install edge. Imported, not re-exported (plan L3).
 import { canonicaliseForHash } from './lib/canonical-hash.mjs';
+import { atomicWriteFileSync } from './lib/file-io.mjs';
 
 /**
  * Compute SHA-256 hex of LF-normalised file content. 12-char short form.
@@ -87,16 +109,33 @@ export function extractSkillSummary(content) {
 
   const lines = fm.split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
-    const m = /^\s*description\s*:\s*(\|[-+]?\s*)?\s*(.*)$/.exec(lines[i]);
+    // `[|>]`, not just `|`: YAML has TWO block-scalar indicators — literal (`|`)
+    // and folded (`>`) — and both may carry a chomping suffix (`-`/`+`). Matching
+    // only `|` meant `description: >` fell through to the INLINE branch, where
+    // `rest` is the bare indicator character, so the summary became ">" instead
+    // of the text below it. No skill uses `>` today, which is precisely why this
+    // was latent rather than caught: the first one to use it would have shipped a
+    // one-character description into the manifest and the Copilot surface.
+    const m = /^\s*description\s*:\s*([|>][-+]?\s*)?\s*(.*)$/.exec(lines[i]);
     if (!m) continue;
     const [, blockMarker, rest] = m;
 
-    // Block-scalar form: `description: |` → first indented line is the summary
+    // Block-scalar form: `description: |` / `description: >` → the first
+    // non-empty line of the block is the summary.
+    //
+    // INDENTATION IS THE BLOCK BOUNDARY, and ignoring it was the deeper half of
+    // this bug: a bare `description: |` with an EMPTY body followed by a sibling
+    // key (`version: 1`) previously returned "version: 1" as the description,
+    // because the loop took the first non-empty line and trimmed it. A block
+    // scalar's content must be indented MORE than its own key, so a line at or
+    // below the key's indent has ended the block and is a different field.
     if (blockMarker !== undefined) {
+      const keyIndent = /^\s*/.exec(lines[i])[0].length;
       for (let j = i + 1; j < lines.length; j++) {
         if (lines[j].trim() === '') continue;
-        const body = lines[j].trim();
-        if (body) return body.slice(0, 100);
+        const indent = /^\s*/.exec(lines[j])[0].length;
+        if (indent <= keyIndent) return null;   // block ended; description is empty
+        return lines[j].trim().slice(0, 100);
       }
       return null;
     }
@@ -200,15 +239,33 @@ function main() {
       console.error('FAIL: skills.manifest.json does not exist. Run: node scripts/build-manifest.mjs');
       process.exit(1);
     }
-    const existing = JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf-8'));
-    if (existing.bundleVersion === manifest.bundleVersion && existing.schemaVersion === manifest.schemaVersion) {
+    // Compare the WHOLE serialized body — the same bytes the write path would
+    // produce — not just `bundleVersion` + `schemaVersion`.
+    //
+    // Those two fields do not authenticate the rest of the artifact: a
+    // hand-edited (or half-written) per-file `sha`, a dropped skill, or a
+    // reordered key leaves both intact, so the gate reported FRESH on a manifest
+    // whose own contents were wrong. That is a gate returning green having
+    // checked almost nothing — and this artifact is Category B precisely because
+    // a fresh clone must regenerate it byte-identically. The write path below
+    // already compared full bytes for its skip decision; only the gate did not.
+    const existingText = readManifestTextOrNull();
+    const nextText = JSON.stringify(manifest, null, 2) + '\n';
+    if (existingText === nextText) {
       console.log(`OK: manifest is fresh (schema v${manifest.schemaVersion}, bundle ${manifest.bundleVersion})`);
       process.exit(0);
     }
-    console.error(`STALE: manifest bundleVersion mismatch`);
+    const existing = existingText ? JSON.parse(existingText) : {};
+    const versionsMatch = existing.bundleVersion === manifest.bundleVersion
+      && existing.schemaVersion === manifest.schemaVersion;
+    console.error('STALE: skills.manifest.json does not match a fresh regeneration');
     console.error(`  committed: v${existing.schemaVersion} / ${existing.bundleVersion}`);
     console.error(`  computed:  v${manifest.schemaVersion} / ${manifest.bundleVersion}`);
-    console.error(`Run: node scripts/build-manifest.mjs`);
+    if (versionsMatch) {
+      console.error('  (versions match — the CONTENT differs: an edited sha/size, a dropped');
+      console.error('   skill, or a reordered key. A version-only check would have passed this.)');
+    }
+    console.error('Run: node scripts/build-manifest.mjs');
     process.exit(1);
   }
 
@@ -238,7 +295,7 @@ function main() {
     return;
   }
 
-  fs.writeFileSync(MANIFEST_PATH, nextText);
+  atomicWriteFileSync(MANIFEST_PATH, nextText);
   const totalFiles = Object.values(manifest.skills).reduce((sum, s) => sum + (s.files?.length ?? 1), 0);
   console.log(`skills.manifest.json updated: v${manifest.schemaVersion}, ${Object.keys(manifest.skills).length} skills, ${totalFiles} files, bundle ${manifest.bundleVersion}`);
 }

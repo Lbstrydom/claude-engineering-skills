@@ -39,6 +39,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { parsePlanStatus, isAuditSummary } from './lib/plan-status.mjs';
 import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
+import { atomicWriteFileSync } from './lib/file-io.mjs';
 
 /**
  * Every flag this CLI accepts. None take a value.
@@ -255,7 +256,7 @@ function main() {
     process.exit(1);
   }
 
-  fs.writeFileSync(target, rendered, 'utf8');
+  atomicWriteFileSync(target, rendered);
   console.log(`${G}✓${X} plans:index — wrote ${PLANS_DIR}/${INDEX_NAME}`);
 }
 

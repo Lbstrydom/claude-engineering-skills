@@ -24,9 +24,10 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { spawnSync, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { buildManifest } from '../scripts/build-manifest.mjs';
+import { buildManifest, extractSkillSummary } from '../scripts/build-manifest.mjs';
 import { canonicaliseForHash } from '../scripts/lib/canonical-hash.mjs';
 
 const pkg = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf-8'));
@@ -118,25 +119,28 @@ describe('build-manifest is deterministic — a true Category-B artifact', () =>
     // on a `bundleVersion` match alone let a hand-edited per-file `sha` (with
     // bundleVersion left intact) pass --check AND survive the rebuild. That
     // would break the one command every error message tells you to run.
-    const manifestPath = path.join(process.cwd(), 'skills.manifest.json');
-    const pristine = fs.readFileSync(manifestPath, 'utf-8');
+    //
+    // Runs against a THROWAWAY COPY via `--manifest`. This test used to tamper
+    // with the repo's own committed manifest and restore it in `finally` — the
+    // very thing the comment two tests above forbids. `node --test` runs files
+    // in parallel, so that window was visible to concurrent readers, and a
+    // killed runner left a TRACKED file mangled.
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ces-manifest-'));
+    const scratch = path.join(tmpDir, 'skills.manifest.json');
     try {
+      const pristine = fs.readFileSync(path.join(process.cwd(), 'skills.manifest.json'), 'utf-8');
       const tampered = JSON.parse(pristine);
       const firstSkill = Object.keys(tampered.skills)[0];
       tampered.skills[firstSkill].sha = 'deadbeefcafe'; // bundleVersion untouched
-      fs.writeFileSync(manifestPath, JSON.stringify(tampered, null, 2) + '\n');
+      fs.writeFileSync(scratch, JSON.stringify(tampered, null, 2) + '\n');
 
-      const r = spawnSync(process.execPath, ['scripts/build-manifest.mjs'], {
+      const r = spawnSync(process.execPath, ['scripts/build-manifest.mjs', '--manifest', scratch], {
         cwd: process.cwd(), encoding: 'utf-8', timeout: 60_000,
       });
 
       assert.equal(r.status, 0, `rebuild must succeed: ${r.stderr}`);
 
-      // With no volatile field, the repaired manifest must equal the pristine
-      // one EXACTLY — the strongest available assertion. (This used to have to
-      // null out `updatedAt` before comparing, because a rewrite refreshed the
-      // timestamp; removing the field made byte-identity the right test.)
-      const after = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+      const after = JSON.parse(fs.readFileSync(scratch, 'utf-8'));
       const expected = JSON.parse(pristine);
       assert.equal(
         after.skills[firstSkill].sha, expected.skills[firstSkill].sha,
@@ -144,9 +148,14 @@ describe('build-manifest is deterministic — a true Category-B artifact', () =>
       );
       assert.deepEqual(after, expected, 'and restore the rest of the manifest exactly');
       assert.doesNotMatch(r.stdout, /unchanged/, 'a tampered manifest is NOT unchanged');
+
+      // The committed file must be untouched by this test, by construction.
+      assert.equal(
+        fs.readFileSync(path.join(process.cwd(), 'skills.manifest.json'), 'utf-8'), pristine,
+        'the tracked manifest must never be written by a test',
+      );
     } finally {
-      // Never leave the repo's committed manifest mangled by a test.
-      fs.writeFileSync(manifestPath, pristine);
+      fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 });
@@ -196,5 +205,58 @@ describe('the manifest hashes committed source, not working-tree bytes', () => {
         );
       }
     }
+  });
+});
+
+describe('build-manifest --check compares CONTENT, not just versions', () => {
+  it('flags a manifest whose per-file sha was edited while bundleVersion stayed intact', () => {
+    // The gate hole: `--check` compared only `bundleVersion` + `schemaVersion`,
+    // which do not authenticate the rest of the artifact — so a hand-edited sha,
+    // a dropped skill or a reordered key reported FRESH. A Category-B artifact's
+    // whole contract is that a fresh clone regenerates it byte-identically, and
+    // this is the gate that is supposed to prove it.
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ces-check-'));
+    const scratch = path.join(tmpDir, 'skills.manifest.json');
+    try {
+      const pristine = fs.readFileSync(path.join(process.cwd(), 'skills.manifest.json'), 'utf-8');
+      const tampered = JSON.parse(pristine);
+      tampered.skills[Object.keys(tampered.skills)[0]].sha = 'deadbeefcafe';
+      fs.writeFileSync(scratch, JSON.stringify(tampered, null, 2) + '\n');
+
+      const r = spawnSync(
+        process.execPath, ['scripts/build-manifest.mjs', '--check', '--manifest', scratch],
+        { cwd: process.cwd(), encoding: 'utf-8', timeout: 60_000 },
+      );
+      assert.equal(r.status, 1, 'a content-tampered manifest must FAIL --check');
+      assert.match(r.stderr, /versions match/, 'and must say the versions matched but content differs');
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+
+  it('passes --check on the real, fresh manifest', () => {
+    const r = spawnSync(process.execPath, ['scripts/build-manifest.mjs', '--check'], {
+      cwd: process.cwd(), encoding: 'utf-8', timeout: 60_000,
+    });
+    assert.equal(r.status, 0, `the committed manifest must be fresh: ${r.stderr}`);
+  });
+});
+
+describe('extractSkillSummary respects YAML block boundaries', () => {
+  const mk = (d) => `---\nname: x\n${d}\n---\nbody\n`;
+
+  it('an EMPTY block scalar does not swallow the next sibling key', () => {
+    // Ignoring indentation made `description: |` followed by `version: 1` return
+    // "version: 1" as the description — a neighbouring field silently becoming
+    // the skill's advertised summary.
+    assert.equal(extractSkillSummary(mk('description: |\nversion: 1')), null);
+  });
+
+  it('handles literal (|) and folded (>) block scalars and inline forms', () => {
+    assert.equal(extractSkillSummary(mk('description: |\n  Literal.')), 'Literal.');
+    assert.equal(extractSkillSummary(mk('description: >\n  Folded.')), 'Folded.');
+    assert.equal(extractSkillSummary(mk('description: >-\n  Chomped.')), 'Chomped.');
+    assert.equal(extractSkillSummary(mk('description: Inline.')), 'Inline.');
+    assert.equal(extractSkillSummary(mk('description: "Quoted."')), 'Quoted.');
   });
 });

@@ -38,6 +38,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { enumerateSkillFiles, listSkillNames } from './lib/skill-packaging.mjs';
 import { sha, assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
+import { atomicWriteFileSync } from './lib/file-io.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const SRC_ROOT = path.join(ROOT, 'skills');
@@ -170,7 +171,7 @@ function copyFileIfChanged(srcAbs, dstAbs, opts) {
     // the head of this function, so `--dry-run` created directories — see the
     // note on the `syncSkillToDests` mkdir for what that cost.
     fs.mkdirSync(path.dirname(dstAbs), { recursive: true });
-    fs.writeFileSync(dstAbs, srcBuf);
+    atomicWriteFileSync(dstAbs, srcBuf);
   }
   return 'wrote';
 }

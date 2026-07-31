@@ -212,6 +212,13 @@ export function mergeDomainDeps(observed, manual) {
 export function flattenMergedDeps(merged) {
   const result = {};
   for (const [from, list] of Object.entries(merged || {})) {
+    // Same DANGEROUS_KEYS guard its two siblings in this file already apply.
+    // `merged`'s keys come from domain-map.json via JSON.parse, where
+    // `{"__proto__": …}` becomes an OWN key — and `result[from] = …` with
+    // `from === '__proto__'` adds no key at all, it reassigns the prototype.
+    // Skipping the guard HERE and not there is the inconsistency an audit
+    // flagged: one unguarded accumulator makes the other two decorative.
+    if (DANGEROUS_KEYS.has(from)) continue;
     result[from] = (Array.isArray(list) ? list : [])
       .map((e) => e.to)
       .filter((t) => typeof t === 'string')
