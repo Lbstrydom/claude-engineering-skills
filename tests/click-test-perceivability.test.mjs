@@ -349,4 +349,69 @@ describe('click-test perceivability — behaviour (real browser)', () => {
     assert.equal(f.severity, 'P3');
     assert.equal(f.declaredSeverity, 'P0', 'one push() call site ⇒ every kind is tagged uniformly');
   });
+
+  // ── small-touch-target: the label IS the tap target ────────────────────────
+  // Consumer field report (2026-07-31). The perceivability cap cannot reach
+  // this class: these inputs are `visibility: visible` and genuinely painted at
+  // 1×1 — they are simply not the thing the user touches. Two real examples,
+  // both `el.closest('label') !== null`: 1×1 inside a 74×44 label, and 13×13
+  // inside a 75×24 label.
+
+  it('a visually-hidden input inside a styled label is NOT undersized — the reported defect', async (t) => {
+    if (!available) return t.skip('chromium unavailable');
+    const f = byKind(await scan(
+      '<label style="display:inline-block;width:74px;height:44px">' +
+      '<input type="checkbox" style="width:1px;height:1px">Reduce now</label>',
+    ), 'small-touch-target');
+    assert.equal(f, undefined,
+      'clicking the 74×44 label activates the checkbox — measuring only the 1×1 input is a guaranteed false positive');
+  });
+
+  it('a label associated by for= counts too, not just a wrapping one', async (t) => {
+    if (!available) return t.skip('chromium unavailable');
+    // `el.labels` covers both association forms; the earlier rule used neither.
+    const f = byKind(await scan(
+      '<label for="c" style="display:inline-block;width:75px;height:24px">Select all</label>' +
+      '<input type="checkbox" id="c" style="width:13px;height:13px">',
+    ), 'small-touch-target');
+    assert.equal(f, undefined, 'a for=-associated label is an activating region wherever it sits');
+  });
+
+  it('a genuinely small control with a genuinely small label is STILL flagged', async (t) => {
+    if (!available) return t.skip('chromium unavailable');
+    // The fix must not become a blanket "has a label ⇒ exempt" escape hatch —
+    // that would trade the false positive for a silent false negative.
+    const f = byKind(await scan(
+      '<label style="display:inline-block;width:16px;height:16px">' +
+      '<input type="checkbox" style="width:10px;height:10px"></label>',
+    ), 'small-touch-target');
+    assert.ok(f, 'every activating region is undersized, so the finding is real');
+    assert.equal(f.severity, 'P2');
+    assert.match(f.detail, /16×16/, 'the LARGEST region is reported — that is what a verifier measures');
+    assert.match(f.detail, /including its label/);
+  });
+
+  it('a label the user cannot see does not rescue an undersized control', async (t) => {
+    if (!available) return t.skip('chromium unavailable');
+    const f = byKind(await scan(
+      '<label for="c" style="display:none">Pick</label>' +
+      '<input type="checkbox" id="c" style="width:10px;height:10px">',
+    ), 'small-touch-target');
+    assert.ok(f, 'an unpaintable label is not something the user can tap');
+    assert.match(f.detail, /10×10/);
+  });
+
+  it('an unlabelled small control is unchanged — no label wording, same finding', async (t) => {
+    if (!available) return t.skip('chromium unavailable');
+    // padding/border zeroed so the rendered box is exactly the declared size —
+    // a UA-default button is 16×10 here, which would test the fixture, not the rule.
+    const f = byKind(await scan(
+      '<button style="width:10px;height:10px;padding:0;border:0;box-sizing:border-box"></button>',
+    ), 'small-touch-target');
+    assert.ok(f);
+    assert.equal(f.severity, 'P2');
+    assert.match(f.detail, /10×10/);
+    assert.ok(!/including its label/.test(f.detail),
+      'no associated label ⇒ the message must not imply one was measured');
+  });
 });

@@ -517,6 +517,39 @@ the copy inside `references/dom-scanner.md` is drift-checked by
 function to qualify its `authSentinel`, which is why it is a module rather than
 scanner-local.
 
+### Touch targets are measured over activating regions (2026-07-31)
+
+`small-touch-target` measures **every region that activates the control**, not
+just the control's own border box. A wrapping `<label>` — or one associated via
+`label[for=…]`, both covered by the spec's `el.labels` — is part of the tap
+target, because clicking it activates the control.
+
+**Why this matters.** The visually-hidden-input + styled-label pattern is
+ubiquitous, and measuring only the input reports a *guaranteed* false positive.
+Field data from a consumer run (2026-07-31):
+
+| Element | Input's own box | Real tap target (its `<label>`) |
+|---|---|---|
+| `#filter-reduce-now` | 1×1 | **74×44** |
+| `#wine-grouped-select-all` | 13×13 | **75×24** |
+
+The perceivability cap above cannot reach this class: these inputs are
+`visibility: visible` and genuinely **painted** at 1×1 — they are simply not the
+thing the user touches. Without this rule, any codebase using the standard
+styled-checkbox pattern carries a permanent floor of false positives that each
+need manual DOM verification to dismiss.
+
+**Contiguous regions, not a bounding-box union.** A `label[for]` may sit anywhere
+in the document, so a union spanning the gap between two far-apart boxes would
+describe an activating region that does not exist — trading the false positive
+for a false *negative*. WCAG 2.5.8 is satisfied when **some single** activating
+region is ≥24×24, so the rule passes on the first adequate region and reports the
+largest one (that is the number a verifier will measure).
+
+**Not a "has a label ⇒ exempt" escape hatch.** A control whose every activating
+region is undersized still fires, and a label that is not perceivable does not
+rescue one. Both are pinned in `tests/click-test-perceivability.test.mjs`.
+
 Confidence is not a click-test concept — assertions are deterministic. Either
 the DOM violates the contract or it doesn't. If runs vary across same
 URL + commit, something non-deterministic (A/B test, random ID generator,

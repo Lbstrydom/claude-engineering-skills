@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "b0f6edfaaa8a710c",
+  "bundleVersion": "0a8d8c96273ea032",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -118,19 +118,19 @@
     },
     "click-test": {
       "path": "skills/click-test/SKILL.md",
-      "sha": "c8df5a0f2548",
-      "size": 39511,
+      "sha": "0931933e4a68",
+      "size": 41304,
       "summary": "Structural DOM audit of a live app — walk every interactive element and",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "c8df5a0f2548",
-          "size": 39511
+          "sha": "0931933e4a68",
+          "size": 41304
         },
         {
           "relPath": "references/dom-scanner.md",
-          "sha": "b3f9c6e5bffc",
-          "size": 22401
+          "sha": "b35eb201072e",
+          "size": 24975
         }
       ]
     },

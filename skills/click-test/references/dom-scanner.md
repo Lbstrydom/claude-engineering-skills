@@ -153,6 +153,37 @@ Paste this into `browser_evaluate` as the function body. Returns a single
   };
 
   // ---------------------------------------------------------------------
+  // activating regions for a control (WCAG 2.5.8 target size)
+  // ---------------------------------------------------------------------
+  // A label is PART of the tap target: clicking a wrapping <label>, or one
+  // associated via label[for], activates the control. Measuring only the
+  // control's own border box therefore mis-reports the ubiquitous
+  // visually-hidden-input + styled-label pattern. Measured on a real app
+  // (2026-07-31): a 1×1 input inside a 74×44 label, and a 13×13 inside a
+  // 75×24 — both guaranteed false positives, both genuinely painted, so the
+  // perceivability cap cannot reach them.
+  //
+  // Returns CONTIGUOUS candidate regions, deliberately NOT their bounding-box
+  // union. A label[for] may sit anywhere in the document, and a union spanning
+  // the gap between two far-apart boxes would describe an activating region
+  // that does not exist — trading this false positive for a false NEGATIVE.
+  // WCAG 2.5.8 is satisfied when SOME single activating region is big enough.
+  const activatingRects = (el) => {
+    const rects = [el.getBoundingClientRect()];
+    // `el.labels` is the spec-defined association (it already covers both the
+    // wrapping and the for= forms) but exists only on labelable elements —
+    // a[href] and [role=button] fall back to the ancestor lookup.
+    const labels = el.labels ? Array.from(el.labels) : [el.closest('label')].filter(Boolean);
+    for (const label of labels) {
+      // A label the user cannot see is not something they can tap either.
+      // `=== false`, not falsy: UNKNOWN must not silently discard the region.
+      if (__isPerceivable(label) === false) continue;
+      rects.push(label.getBoundingClientRect());
+    }
+    return rects;
+  };
+
+  // ---------------------------------------------------------------------
   // 1. duplicate IDs (P0) — breaks form association + React reconciliation
   // ---------------------------------------------------------------------
   const idMap = new Map();
@@ -312,16 +343,25 @@ Paste this into `browser_evaluate` as the function body. Returns a single
   // 9. small touch targets (P2) — interactive < 24x24 CSS px (WCAG 2.5.8)
   // ---------------------------------------------------------------------
   for (const el of document.querySelectorAll('button, a[href], input:not([type="hidden"]), [role="button"], [role="link"]')) {
-    const rect = el.getBoundingClientRect();
+    // Every region that activates this control, not just its own box — a
+    // visually-hidden input inside a styled label is tapped via the label.
+    const rects = activatingRects(el);
     // Zero-size is handled by __isPerceivable (which push() applies to every
     // finding), but it is still skipped HERE rather than emitted-and-capped:
     // a 0×0 element is not a *small* touch target, it is an absent one, so the
-    // finding would be wrong rather than merely low-severity.
-    if (rect.width === 0 || rect.height === 0) continue;
-    if (rect.width < 24 || rect.height < 24) {
-      push('small-touch-target', 'P2', el,
-        `Interactive element is ${Math.round(rect.width)}×${Math.round(rect.height)}px — WCAG 2.5.8 minimum is 24×24`);
-    }
+    // finding would be wrong rather than merely low-severity. Judged over ALL
+    // regions: a 1×1 input inside a painted label is not an absent target.
+    if (rects.every(r => r.width === 0 || r.height === 0)) continue;
+    // Passes on the FIRST adequate region; a control is only undersized when
+    // EVERY way of hitting it is undersized.
+    if (rects.some(r => r.width >= 24 && r.height >= 24)) continue;
+    // Report the largest region — that is the one the user actually aims at,
+    // so it is the number someone verifying this finding will measure.
+    const worst = rects.reduce((a, b) =>
+      (b.width * b.height > a.width * a.height ? b : a));
+    const viaLabel = rects.length > 1 ? ' (largest activating region, including its label)' : '';
+    push('small-touch-target', 'P2', el,
+      `Interactive element is ${Math.round(worst.width)}×${Math.round(worst.height)}px${viaLabel} — WCAG 2.5.8 minimum is 24×24`);
   }
 
   // ---------------------------------------------------------------------

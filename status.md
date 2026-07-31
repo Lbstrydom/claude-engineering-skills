@@ -1,6 +1,69 @@
 # Project Status Log
 
-## 2026-07-30 (latest) — the sync anchored consumers to the worktree, and said "complete" after reaching none
+## 2026-07-31 (latest) — a touch target is the label, not the input; and one "still open" was the fix working
+
+Consumer follow-up report on the 2026-07-30 upstream issues: 3 of 5 confirmed
+resolved, 2 still open. One of the two was real. The other was the fix
+reporting correctly and being misread — worth recording, because the misreading
+is the *second* instance of a class that has now cost two mis-triages.
+
+**`small-touch-target` measured the wrong box.** Rule 9 measured
+`el.getBoundingClientRect()` alone, so the ubiquitous visually-hidden-input +
+styled-label pattern reported a **guaranteed** false positive: measured live on
+a consumer's prod, `#filter-reduce-now` is a 1×1 input inside a 74×44 label, and
+`#wine-grouped-select-all` a 13×13 inside 75×24. The perceivability cap shipped
+the day before cannot reach this class — these inputs are `visibility: visible`
+and genuinely **painted** at 1×1; they are simply not the thing the user
+touches. The label lookups were already sitting in `accessibleName()`, unused by
+rule 9.
+
+Fixed with an `activatingRects(el)` helper over the spec's `el.labels` (which
+covers the wrapping *and* the `for=` association in one property), falling back
+to `closest('label')` for the non-labelable `a[href]` / `[role=button]` cases.
+
+**Contiguous regions, deliberately not a bounding-box union** — the one place
+the reported ask was declined. A `label[for]` may sit anywhere in the document,
+so a union spanning the gap between two distant boxes describes an activating
+region that does not exist; that trades a false positive for a false *negative*.
+WCAG 2.5.8 is satisfied when SOME single region is ≥24×24, so the rule passes on
+the first adequate region and reports the largest.
+
+Guarded against becoming a "has a label ⇒ exempt" escape hatch, which is the
+obvious way this fix rots: a control whose every region is undersized still
+fires, and a non-perceivable label does not rescue one. Both pinned, plus both
+field fixtures, in `tests/click-test-perceivability.test.mjs` (24/24).
+
+**The other "still open" was the fix working.** `list-unlocked-fixes` was
+reported as still returning a foreign repo and still ignoring `--repo`. It was
+fixed on 2026-07-30 and the consumer's own re-verification proves it: their
+2026-07-31 run returned rows carrying `22865de8-…`, which they compared against
+`.audit-loop/repo-id`'s `25aa2cdf-…`, saw no match, and read as foreign. Those
+are `audit_repos.id` and `repo_uuid` — **two columns of the same row**, both
+naming wine-cellar-app. Verified against the store rather than argued:
+
+```
+6461a693-… id        Lbstrydom/claude-engineering-skills
+22865de8-… id        Lbstrydom/wine-cellar-app
+25aa2cdf-… repo_uuid Lbstrydom/wine-cellar-app   ← same row
+```
+
+Their 2026-07-29 reading (`6461a693-…`, 207 rows — this repo, seen from the
+consumer) *was* the genuine pre-fix bug, which is exactly what made the sequel
+look like a continuation of it. Dogfooded again during this ship: both 0.5b and
+0.5e reported `scope.mode: repo`, slug `Lbstrydom/claude-engineering-skills`.
+
+**The generalisable rule, now written into memory: never identify a repo by
+comparing a row's `repo_id` against `.audit-loop/repo-id`.** They are different
+columns and can never match, so the comparison fails the same way whether the
+scoping is broken or perfect — it produced a false zero on 2026-07-30 and a
+false *non*-zero on 2026-07-31. Read the emitted `scope.slug` instead; the
+scoped commands print it precisely so this question never needs an id.
+
+**A shared-tree note.** A concurrent session's Gemini-timeout raise (120s→180s,
+`.env.example` + `AGENTS.md` + `config.mjs`) appeared in the working tree
+mid-session. Left untouched and committed by `--path`.
+
+## 2026-07-30 — the sync anchored consumers to the worktree, and said "complete" after reaching none
 
 Found by watching a push's own output. The pre-push sync ran from a linked
 worktree at `<main>/.claude/worktrees/<wt>`, resolved both registered consumers
