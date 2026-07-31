@@ -1,6 +1,55 @@
 # Project Status Log
 
-## 2026-07-31 (latest) — the upstream report that was already fixed, and the null stamp that made it unknowable
+## 2026-07-31 (latest) — the upstream bug channel, built end-to-end
+
+`/cycle --autonomous` over `upstream-issue-reports.md` Phases 2-4. Consumers can
+now file a structured upstream bug report; this repo triages it from one place.
+
+**What shipped.** `upstream_issues` + an append-only `upstream_issue_events`
+(migration `20260731120000`), `store/upstream-issues.mjs`,
+`lib/upstream/commands.mjs`, a `cross-skill.mjs upstream
+<report|list|ack|fix|wont-fix|drain>` verb, `npm run upstream:issues`, and one
+banner line so the agent hitting the bug is told the command at the moment it
+has the context.
+
+**Verified live, not just unit-tested.** Two real reports filed from
+wine-cellar-app. The one naming the motivating wrong path (`scripts/install.mjs`)
+came back `path_recognised: false` — the original report's exact defect, caught
+locally with no network call. Both carried `bundleSha: d9879e26` from the Phase 1
+stamp. Worksheet rendered, `fix --commit` applied, terminal-state and
+unresolvable-commit guards both refused. Ancestry checked against real history in
+both directions: 28-commits-behind bundle -> `bundle-predates-fix`; post-fix
+bundle -> `bundle-contains-fix`.
+
+**Four things the build found that review had not.**
+
+1. **The append-only trigger broke the FK cascade.** A `BEFORE DELETE` row
+   trigger fires for rows removed by a referential action, so blocking UPDATE
+   *and* DELETE made issues undeletable. Caught by testing against a live
+   Postgres instead of reasoning about it. Corrected to UPDATE-only - history
+   cannot be rewritten, which is the property that matters - with the residual
+   written into the migration rather than glossed.
+2. **`rev-parse --verify` was the wrong ancestry test.** It proves an object
+   exists locally, not that it is in HEAD's history; and a git *failure* also
+   exits non-zero, which would have surfaced as the confident claim "that sha is
+   not ours". `merge-base --is-ancestor` distinguishes all three by exit code.
+3. **The Phase 1 test asserted on a hand-built literal**, so the real writer
+   could have gone on returning `commitSha: null` with the suite green. Extracted
+   `buildConsumerManifest` so the assertion lands on production code.
+4. **`updateWhere({returning: 'id'})` is invalid** - the API takes an array.
+   Found by the live round-trip; no static pass saw it.
+
+**Three audit findings claimed a file was absent** (`secret-patterns.mjs`,
+`sync-to-repos.mjs`) **or that the SQL migration opens with a `//` comment.** All
+false on disk, and the migration had already applied to two live databases.
+Worth logging: it is the third session where a confident, specific, checkable
+claim about untouched code did not survive being executed.
+
+Consolidated final review: **APPROVE, 0 new findings**. `npm run check` exits 0;
+9635 tests pass. AGENTS.md hit its own 1200-line cap - condensed the arch-memory
+hook detail to a stub rather than raising it.
+
+## 2026-07-31 — the upstream report that was already fixed, and the null stamp that made it unknowable
 
 A consumer filed a two-part upstream report. Investigating it cost more than
 fixing it, which is itself the finding.

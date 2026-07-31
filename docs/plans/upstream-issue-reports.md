@@ -1,7 +1,7 @@
 # Plan: Upstream Issue Reports (consumer → source bug channel)
 
 - **Date**: 2026-07-31
-- **Status**: In Progress (Phase 1 shipped 2026-07-31; Phases 2–4 pending — see Audit Trail + Implementation Log)
+- **Status**: Complete (all 4 phases shipped 2026-07-31 — see Audit Trail + Implementation Log)
 - **Author**: Claude + Louis
 - **Scope**: backend (CLI + migration + store module + banner edit — no UI)
 
@@ -531,15 +531,15 @@ manifests now carry the real source `commitSha`. Files: `scripts/sync-to-repos.m
 > **Verified live** (not just unit-tested): synced both consumers; wine-cellar-app and
 > ai-organiser went `commitSha: null` → `f2c666e9…`, byte-matching this repo's HEAD.
 
-**Phase 2 — Store + schema**: the table pair and its writer.
+**Phase 2 — Store + schema** — ✅ **SHIPPED 2026-07-31**. The table pair and its writer.
 Files: `supabase/migrations/20260731120000_upstream_issues.sql` (create),
 `scripts/lib/store/upstream-issues.mjs` (create).
 
-**Phase 3 — Capture + triage CLI**: report from consumers, review here.
+**Phase 3 — Capture + triage CLI** — ✅ **SHIPPED 2026-07-31**. Report from consumers, review here.
 Files: `scripts/lib/upstream/commands.mjs` (create), `scripts/cross-skill.mjs` (modify),
 `package.json` (modify), `tests/upstream-issue-triage.test.mjs` (create).
 
-**Phase 4 — Discovery + docs**: point agents at the command.
+**Phase 4 — Discovery + docs** — ✅ **SHIPPED 2026-07-31**. Point agents at the command.
 Files: `scripts/lib/sync-banner.mjs` (modify), `AGENTS.md` (modify).
 
 **Close-out (not a phase)**: `npm run skills:regenerate` (only if a SKILL.md changes),
@@ -671,3 +671,57 @@ in this same session — incidental live confirmation that the old ceiling was t
   `maxRetries`/`retryDelay` for Windows EPERM/EBUSY). The gate did its job on
   brand-new code.
 - **Remaining**: Phases 2–4 (store + schema, capture/triage CLI, banner + docs).
+
+### 2026-07-31 — Phases 2–4 (`/cycle --autonomous`, clustered)
+
+Cluster A (Phases 1–2) converged; Cluster B (Phases 3–4) gated by the
+consolidated review: **APPROVE, 0 new findings**. 47 findings across 4 GPT rounds.
+
+**Deviations from the plan, all found by building or by empirical test:**
+
+1. **The append-only trigger initially broke the FK cascade.** A `BEFORE DELETE`
+   row trigger *does* fire for rows removed by a referential action, so blocking
+   both UPDATE and DELETE made `DELETE FROM upstream_issues` — and by extension
+   removing an `audit_repos` row — fail outright. Verified against a live
+   Postgres rather than reasoned about; corrected to UPDATE-only, which is the
+   property that actually matters (history cannot be *rewritten*), with the
+   residual stated in the migration.
+2. **`rev-parse --verify` was the wrong ancestry test.** It proves an object
+   exists locally, not that it is in HEAD's history — and any git failure also
+   returns non-zero, which would have been reported as the confident claim "that
+   sha is not ours". Replaced with `merge-base --is-ancestor`, which
+   distinguishes in-history / genuinely-not / cannot-tell by exit code.
+3. **The consumer-manifest builder had to be extracted** (`buildConsumerManifest`)
+   because the Phase 1 test asserted on a hand-built literal — the audit
+   correctly flagged that the real writer could have gone on returning
+   `commitSha: null` forever with the suite still green.
+4. **`updateWhere({returning: 'id'})` is invalid** — the API takes an array. Found
+   by the live round-trip, not by any static pass.
+5. **Two repo invariants caught brand-new code**: the `rmSync` Windows-hardening
+   guard and the CLI-catalog completeness gate.
+6. **AGENTS.md hit its own 1200-line sprawl cap.** Condensed the arch-memory
+   hook's operational detail to a stub rather than raising the cap, per the rule
+   in this repo's own preamble.
+
+**Verified live** (pre-ship empirical rule — a browser-less but equally
+runtime-dependent surface): two real reports filed from wine-cellar-app against
+the shared store. The one naming the motivating wrong path (`scripts/install.mjs`)
+came back `path_recognised: false`; both carried `bundleSha: d9879e26` from the
+Phase 1 stamp. Worksheet rendered, `fix --commit` transition applied, and the
+terminal-state and unresolvable-commit guards both refused. Ancestry checked
+against real history in both directions: a pre-fix bundle 28 commits behind
+reported `bundle-predates-fix`; a post-fix bundle reported `bundle-contains-fix`.
+
+**Three findings across the rounds asserted a file was absent**
+(`scripts/lib/secret-patterns.mjs`, `scripts/sync-to-repos.mjs`) **or that the
+SQL migration opens with a `//` comment.** All three were verified false on disk;
+the migration had already applied cleanly to two live databases. Recorded because
+the pattern — a confident, specific, checkable claim about untouched code — is
+the one the repo's "an audit finding about untouched code is a hypothesis" rule
+exists for.
+
+**Deferred as independent**: cross-domain import findings (`stores → arch-memory`,
+`cross-skill-bridge → model-eval`, `audit → install`) and mutation-contract
+findings in untouched `cross-skill.mjs` handlers (`cmdAbortRefreshRun`,
+`cmdUpdatePlanStatus`, `lock-with-test`, `persona-outcomes`). The `upstream`
+handler calls none of them.

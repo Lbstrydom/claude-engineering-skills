@@ -538,6 +538,10 @@
     "test:db": {
       "description": "Gated DB-integration tests (repo-identity stability + fragmentation guardrail). Requires a disposable AUDIT_DB_TEST_URL; skipped when unset. Never touches the live store.",
       "category": "test"
+    },
+    "upstream:issues": {
+      "description": "Triage worksheet for upstream bug reports filed from consumer repos (bundle staleness + prior fixes).",
+      "category": "sync"
     }
   }
 }

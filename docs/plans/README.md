@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**11 active · 162 terminal · 25 audit summaries · 1 parked · 4 reference docs**
+**10 active · 163 terminal · 25 audit summaries · 1 parked · 4 reference docs**
 
 ---
 
@@ -31,7 +31,6 @@ This is the list to read when asking "what is in flight?".
 | [vcs-protocol Tech-Debt Cluster — Verification & Ledger Reconciliation](./refactor-vcs-protocol.md) | `Approved` | audited, not yet implemented (3 GPT + 1 Gemini |
 | [Visual-Audit Contract Validation Debt (2026-07-26 triage)](./refactor-visual-audit-contract-2026-07.md) | `Draft` |  |
 | [Tiered Recall-Weighted Audit Pipeline](./tiered-recall-audit-pipeline.md) | `In Progress` | implementation complete (Clusters A-F implemented |
-| [Upstream Issue Reports (consumer → source bug channel)](./upstream-issue-reports.md) | `In Progress` | Phase 1 shipped 2026-07-31; Phases 2–4 pending — see Audit Trail + Implementation Log |
 
 ## Parked
 
@@ -62,7 +61,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 159 completed plans</summary>
+<summary>Show all 160 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -218,6 +217,7 @@ source comments that no docs linter sees — stays valid.
 | [Decompose `tiered-pipeline.mjs` and `refresh.mjs::main()` God-Modules](./tiered-pipeline-refresh-god-module-decomposition.md) | `Complete` | implemented autonomously via `/cycle --autonomous` |
 | [Tiered-shadow cloud persistence + report CLI cross-repo aggregation](./tiered-shadow-cloud-persistence.md) | `Complete` |  |
 | [Distinguish "nothing to clean up" from "cleanup failed" in the install WAL](./transaction-wal-cleanup-failure-distinction.md) | `Complete` |  |
+| [Upstream Issue Reports (consumer → source bug channel)](./upstream-issue-reports.md) | `Complete` | all 4 phases shipped 2026-07-31 — see Audit Trail + Implementation Log |
 | [/ux-lock selector policy — locate semantically, lint the drift](./ux-lock-selector-policy.md) | `Complete` | implemented + code-audited 2026-07-04; consolidated |
 | [Harden vcs.mjs's git-output parsing and find-rmsync-sites.mjs's scope resolution](./vcs-parsing-and-rmsync-scope-hardening.md) | `Complete` |  |
 | [`visual-audit` — the visual/paint inspection skill (4th UX lens)](./visual-audit-skill.md) | `Complete` | built autonomously via /cycle across 3 clusters; see Implementation Log |

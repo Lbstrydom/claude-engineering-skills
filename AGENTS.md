@@ -210,6 +210,14 @@ consumer instead of the named one. Verified 2026-07-20.)
 > at the consumer/upstream seam — the local edit is the band-aid; the upstream
 > fix is the root. Repo-specific **push gates** have a sanctioned home — the committed, never-rewritten `.githooks/pre-push.local` ([recipe](docs/runbooks/consumer-adoption.md)), never an edit to the managed hook.
 >
+> **File the report, don't paste it (2026-07-31).** Consumer: `cross-skill.mjs upstream
+> report --title … --affected-path <synced path>` (body on **stdin**) — auto-captures repo,
+> **bundle sha**, and whether the path is really upstream-owned. Here: `npm run
+> upstream:issues` → `upstream ack|fix --commit <sha>|wont-fix --id <id>`. Prose reports
+> arrived with a non-existent path against an unknowable version for a bug fixed the day
+> before; the worksheet answers "already fixed?" mechanically. Report bodies are readable by
+> every repo sharing the DSN. [Plan](docs/plans/upstream-issue-reports.md).
+
 > **Upstream bug, but you're blocked? Source patch = forbidden; a labelled
 > runtime/env workaround is OK and must reconcile.** Editing upstream-owned
 > *source* in a fork/consumer is never allowed (above). But a **runtime/env/DB**
@@ -921,22 +929,12 @@ tooling is stale.
 - Doc-only or test-only changes (unless adding new test helpers).
 - When the cloud store is offline (`{"cloud": false}`) — log a hint that `npm run arch:refresh` would enable consultation, then proceed.
 
-**Auto-fired via Claude Code hook**: `.claude/hooks/arch-memory-check.sh`
-runs on `UserPromptSubmit` whenever the user's prompt contains an intent
-verb (`fix`, `add`, `implement`, `create`, `build`, `write`, `refactor`,
-`make`, `wire`, `hook`, `introduce`, `replace`, `extend`). If the
-consultation fired, you'll see a `> **Architectural-memory consultation**`
-callout prepended to the prompt — treat it as authoritative and follow
-the recommendation column. If it didn't fire (e.g., the user asked a
-question that turned into a fix mid-conversation), run the command
-manually as described above.
-
-**Disable per-session** (rare — debugging the hook, or working on the
-hook's own tests): set `ARCH_MEMORY_HOOK_DISABLE=1` in env.
-
-**Cost**: each consultation = 1 Gemini embed (~$0.0003) + 1 Postgres
-RPC (~50–200ms). Cached on disk by `(intentDescription, model, dim)`
-so repeats within 24h are free.
+**Auto-fired** by `.claude/hooks/arch-memory-check.sh` on `UserPromptSubmit` when the
+prompt carries an intent verb (`fix`/`add`/`implement`/`refactor`/… — the list lives in
+the hook). A `> **Architectural-memory consultation**` callout means it fired: treat it as
+authoritative. It didn't fire (a question that became a fix mid-conversation)? Run the
+command above by hand. Disable with `ARCH_MEMORY_HOOK_DISABLE=1`. Cost is ~$0.0003 + one
+RPC, disk-cached 24h by `(intentDescription, model, dim)`.
 
 ## Security incident memory — Mandatory consultation
 

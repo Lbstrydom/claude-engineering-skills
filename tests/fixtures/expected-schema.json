@@ -6226,6 +6226,156 @@
           "ordinal_position": 13
         }
       ]
+    },
+    {
+      "table_name": "upstream_issue_events",
+      "columns": [
+        {
+          "column_name": "id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": "gen_random_uuid()",
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "issue_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "event",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 3
+        },
+        {
+          "column_name": "note",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 4
+        },
+        {
+          "column_name": "actor",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 5
+        },
+        {
+          "column_name": "created_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "NO",
+          "column_default": "now()",
+          "ordinal_position": 6
+        }
+      ]
+    },
+    {
+      "table_name": "upstream_issues",
+      "columns": [
+        {
+          "column_name": "id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": "gen_random_uuid()",
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "repo_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "title",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 3
+        },
+        {
+          "column_name": "body",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 4
+        },
+        {
+          "column_name": "severity",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 5
+        },
+        {
+          "column_name": "affected_path",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 6
+        },
+        {
+          "column_name": "reported_bundle_sha",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 7
+        },
+        {
+          "column_name": "reported_bundle_generated_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 8
+        },
+        {
+          "column_name": "path_recognised",
+          "data_type": "boolean",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 9
+        },
+        {
+          "column_name": "state",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": "'open'::text",
+          "ordinal_position": 10
+        },
+        {
+          "column_name": "fixed_in_commit",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 11
+        },
+        {
+          "column_name": "fingerprint",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 12
+        },
+        {
+          "column_name": "created_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "NO",
+          "column_default": "now()",
+          "ordinal_position": 13
+        },
+        {
+          "column_name": "updated_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "NO",
+          "column_default": "now()",
+          "ordinal_position": 14
+        }
+      ]
     }
   ],
   "functions": [
@@ -7397,6 +7547,13 @@
       "return_type": "trigger",
       "security_definer": false,
       "config": "search_path=public, pg_temp"
+    },
+    {
+      "function_name": "upstream_issue_events_append_only",
+      "args": "",
+      "return_type": "trigger",
+      "security_definer": false,
+      "config": null
     },
     {
       "function_name": "vector",
@@ -8958,6 +9115,84 @@
       "constraint_name": "tiered_shadow_observations_pkey",
       "constraint_type": "PRIMARY KEY",
       "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "table_name": "upstream_issue_events",
+      "constraint_name": "upstream_issue_events_event_check",
+      "constraint_type": "CHECK",
+      "definition": "CHECK ((event = ANY (ARRAY['reported'::text, 'acknowledged'::text, 'fixed'::text, 'wont_fix'::text])))"
+    },
+    {
+      "table_name": "upstream_issue_events",
+      "constraint_name": "upstream_issue_events_issue_id_fkey",
+      "constraint_type": "FOREIGN KEY",
+      "definition": "FOREIGN KEY (issue_id) REFERENCES upstream_issues(id) ON DELETE CASCADE"
+    },
+    {
+      "table_name": "upstream_issue_events",
+      "constraint_name": "upstream_issue_events_pkey",
+      "constraint_type": "PRIMARY KEY",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "table_name": "upstream_issues",
+      "constraint_name": "chk_upstream_fixed_commit_shape",
+      "constraint_type": "CHECK",
+      "definition": "CHECK (((fixed_in_commit IS NULL) OR (fixed_in_commit ~ '^[0-9a-f]{7,40}$'::text)))"
+    },
+    {
+      "table_name": "upstream_issues",
+      "constraint_name": "chk_upstream_fixed_has_commit",
+      "constraint_type": "CHECK",
+      "definition": "CHECK (((state = 'fixed'::text) = (fixed_in_commit IS NOT NULL)))"
+    },
+    {
+      "table_name": "upstream_issues",
+      "constraint_name": "upstream_issues_affected_path_check",
+      "constraint_type": "CHECK",
+      "definition": "CHECK (((char_length(affected_path) >= 1) AND (char_length(affected_path) <= 512)))"
+    },
+    {
+      "table_name": "upstream_issues",
+      "constraint_name": "upstream_issues_body_check",
+      "constraint_type": "CHECK",
+      "definition": "CHECK (((char_length(body) >= 1) AND (char_length(body) <= 65536)))"
+    },
+    {
+      "table_name": "upstream_issues",
+      "constraint_name": "upstream_issues_fingerprint_key",
+      "constraint_type": "UNIQUE",
+      "definition": "UNIQUE (fingerprint)"
+    },
+    {
+      "table_name": "upstream_issues",
+      "constraint_name": "upstream_issues_pkey",
+      "constraint_type": "PRIMARY KEY",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "table_name": "upstream_issues",
+      "constraint_name": "upstream_issues_repo_id_fkey",
+      "constraint_type": "FOREIGN KEY",
+      "definition": "FOREIGN KEY (repo_id) REFERENCES audit_repos(id) ON DELETE CASCADE"
+    },
+    {
+      "table_name": "upstream_issues",
+      "constraint_name": "upstream_issues_severity_check",
+      "constraint_type": "CHECK",
+      "definition": "CHECK ((severity = ANY (ARRAY['BLOCKER'::text, 'HIGH'::text, 'MEDIUM'::text, 'LOW'::text])))"
+    },
+    {
+      "table_name": "upstream_issues",
+      "constraint_name": "upstream_issues_state_check",
+      "constraint_type": "CHECK",
+      "definition": "CHECK ((state = ANY (ARRAY['open'::text, 'acknowledged'::text, 'fixed'::text, 'wont_fix'::text])))"
+    },
+    {
+      "table_name": "upstream_issues",
+      "constraint_name": "upstream_issues_title_check",
+      "constraint_type": "CHECK",
+      "definition": "CHECK (((char_length(title) >= 1) AND (char_length(title) <= 200)))"
     }
   ],
   "indexes": [
@@ -10020,6 +10255,41 @@
       "tablename": "tiered_shadow_observations",
       "indexname": "tiered_shadow_observations_pkey",
       "indexdef": "CREATE UNIQUE INDEX tiered_shadow_observations_pkey ON public.tiered_shadow_observations USING btree (id)"
+    },
+    {
+      "tablename": "upstream_issue_events",
+      "indexname": "upstream_issue_events_issue_idx",
+      "indexdef": "CREATE INDEX upstream_issue_events_issue_idx ON public.upstream_issue_events USING btree (issue_id, created_at)"
+    },
+    {
+      "tablename": "upstream_issue_events",
+      "indexname": "upstream_issue_events_pkey",
+      "indexdef": "CREATE UNIQUE INDEX upstream_issue_events_pkey ON public.upstream_issue_events USING btree (id)"
+    },
+    {
+      "tablename": "upstream_issues",
+      "indexname": "upstream_issues_fingerprint_key",
+      "indexdef": "CREATE UNIQUE INDEX upstream_issues_fingerprint_key ON public.upstream_issues USING btree (fingerprint)"
+    },
+    {
+      "tablename": "upstream_issues",
+      "indexname": "upstream_issues_path_state_idx",
+      "indexdef": "CREATE INDEX upstream_issues_path_state_idx ON public.upstream_issues USING btree (affected_path, state)"
+    },
+    {
+      "tablename": "upstream_issues",
+      "indexname": "upstream_issues_pkey",
+      "indexdef": "CREATE UNIQUE INDEX upstream_issues_pkey ON public.upstream_issues USING btree (id)"
+    },
+    {
+      "tablename": "upstream_issues",
+      "indexname": "upstream_issues_repo_created_idx",
+      "indexdef": "CREATE INDEX upstream_issues_repo_created_idx ON public.upstream_issues USING btree (repo_id, created_at DESC)"
+    },
+    {
+      "tablename": "upstream_issues",
+      "indexname": "upstream_issues_state_created_idx",
+      "indexdef": "CREATE INDEX upstream_issues_state_created_idx ON public.upstream_issues USING btree (state, created_at DESC, id DESC)"
     }
   ],
   "triggers": [
@@ -10043,6 +10313,13 @@
       "action_timing": "BEFORE",
       "events": "UPDATE",
       "action_statement": "EXECUTE FUNCTION touch_security_incidents_updated_at()"
+    },
+    {
+      "table_name": "upstream_issue_events",
+      "trigger_name": "upstream_issue_events_no_update",
+      "action_timing": "BEFORE",
+      "events": "UPDATE",
+      "action_statement": "EXECUTE FUNCTION upstream_issue_events_append_only()"
     }
   ],
   "sequences": [
@@ -10441,6 +10718,16 @@
       "grantee": "postgres",
       "object": "public.unremediated_acceptances",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "postgres",
+      "object": "public.upstream_issue_events",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "postgres",
+      "object": "public.upstream_issues",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     }
   ],
   "owners": [
@@ -10731,6 +11018,16 @@
     },
     {
       "object_name": "tiered_shadow_observations",
+      "object_kind": "r",
+      "owner": "postgres"
+    },
+    {
+      "object_name": "upstream_issue_events",
+      "object_kind": "r",
+      "owner": "postgres"
+    },
+    {
+      "object_name": "upstream_issues",
       "object_kind": "r",
       "owner": "postgres"
     },

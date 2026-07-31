@@ -22,9 +22,19 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
-import { getGitMeta, SyncManifestSchema, writeManifest } from '../scripts/lib/sync-manifest.mjs';
+import {
+  getGitMeta, SyncManifestSchema, writeManifest, buildConsumerManifest,
+} from '../scripts/lib/sync-manifest.mjs';
 
 const SOURCE_ROOT = path.resolve(import.meta.dirname, '..');
+
+/**
+ * `getGitMeta` deliberately supports non-git source trees (it returns nulls),
+ * so any test asserting a real sha must not run in a source archive, vendored
+ * copy, or a CI/container checkout built without `.git` — it would fail there
+ * while indicating nothing about the code.
+ */
+const HAS_GIT = fs.existsSync(path.join(SOURCE_ROOT, '.git'));
 
 function mkTempGitRepo(commitCount = 1) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ces-stamp-'));
@@ -62,34 +72,69 @@ test('getGitMeta degrades to nulls outside a git checkout rather than throwing',
   }
 });
 
-test('this repo resolves a real HEAD sha — the value the sync stamps into consumers', () => {
-  const meta = getGitMeta(SOURCE_ROOT);
-  assert.match(
-    meta.commitSha,
-    /^[0-9a-f]{40}$/,
-    'the source repo must resolve a HEAD sha, else every consumer stamp is null',
-  );
-});
+test('this repo resolves a real HEAD sha — the value the sync stamps into consumers',
+  { skip: HAS_GIT ? false : 'no .git in this checkout' }, () => {
+    const meta = getGitMeta(SOURCE_ROOT);
+    assert.match(
+      meta.commitSha,
+      /^[0-9a-f]{40}$/,
+      'the source repo must resolve a HEAD sha, else every consumer stamp is null',
+    );
+  });
 
 /**
- * The regression that motivated this file: the consumer manifest is hand-built
- * in `sync-to-repos.mjs`, so it cannot be covered by asserting on
- * `generateManifest`. Assert the SHAPE contract that writer must satisfy, and
- * that a null sha is not silently acceptable when git IS available.
+ * The regression this file exists for, tested through the FUNCTION THE SYNC
+ * ACTUALLY CALLS.
+ *
+ * An earlier version of this test hand-built its own manifest literal and
+ * asserted on that — which an audit correctly flagged as testing nothing: the
+ * real writer in `sync-to-repos.mjs` could have gone on returning
+ * `commitSha: null` forever and this file would still have passed. The builder
+ * was extracted specifically so the assertion lands on production code.
  */
-test('a consumer-shaped manifest carrying a source sha validates against the schema', () => {
-  const meta = getGitMeta(SOURCE_ROOT);
-  const consumerManifest = {
-    generatedAt: new Date().toISOString(),
+test('buildConsumerManifest stamps the SOURCE sha and marks the layout isolated', () => {
+  const manifest = buildConsumerManifest({
+    generatedAt: '2026-07-31T08:05:44.915Z',
     repo: 'Lbstrydom/claude-engineering-skills',
-    branch: meta.branch || 'main',
-    commitSha: meta.commitSha,
+    sourceGitMeta: { commitSha: 'd'.repeat(40), branch: 'main' },
     files: { 'scripts/.claude-skills/cross-skill.mjs': 'sha256:' + 'a'.repeat(64) },
-    layout: 'isolated',
-  };
-  const parsed = SyncManifestSchema.parse(consumerManifest);
-  assert.equal(parsed.layout, 'isolated');
-  assert.match(parsed.commitSha, /^[0-9a-f]{40}$/);
+  });
+
+  assert.equal(manifest.commitSha, 'd'.repeat(40), 'the source sha must reach the manifest');
+  assert.equal(manifest.branch, 'main');
+  assert.equal(manifest.layout, 'isolated');
+  assert.equal(manifest.generatedAt, '2026-07-31T08:05:44.915Z', 'consumer-owned field preserved');
+  SyncManifestSchema.parse(manifest);          // shape contract holds
+});
+
+test('buildConsumerManifest keeps a null sha legal (tarball install / no git)', () => {
+  const manifest = buildConsumerManifest({
+    generatedAt: new Date().toISOString(),
+    sourceGitMeta: { commitSha: null, branch: null },
+    files: {},
+  });
+  assert.equal(manifest.commitSha, null, 'null means UNKNOWN — never coerced to a fake sha');
+  assert.equal(manifest.branch, 'main', 'branch falls back; the sha deliberately does not');
+  SyncManifestSchema.parse(manifest);
+});
+
+test('buildConsumerManifest is what sync-to-repos.mjs actually calls', () => {
+  // Guards the extraction itself: if the writer is ever re-inlined, the tests
+  // above silently stop covering production again — the exact failure the
+  // extraction fixed.
+  const raw = fs.readFileSync(path.join(SOURCE_ROOT, 'scripts', 'sync-to-repos.mjs'), 'utf-8');
+  assert.ok(
+    /const consumerManifest = buildConsumerManifest\(/.test(raw),
+    'sync-to-repos.mjs must build the consumer manifest via the tested builder',
+  );
+  // Strip line comments first: the call site's own comment *narrates* the
+  // removed `commitSha: null`, so scanning raw source flags the explanation
+  // rather than a regression.
+  const code = raw.replace(/^\s*\/\/.*$/gm, '');
+  assert.ok(
+    !/commitSha:\s*null/.test(code),
+    'a hardcoded `commitSha: null` must never return to the consumer write path',
+  );
 });
 
 /**

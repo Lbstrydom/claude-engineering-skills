@@ -202,6 +202,10 @@ const KNOWN_FLAGS = [
   '--memory', '--kind', '--ref', '--window-hours',
   // ── get-friction-neighbourhood / get-incident-neighbourhood ───────────────
   '--prompt', '--k',
+  // ── upstream <report|list|ack|fix|wont-fix|drain> ─────────────────────────
+  // (--title, --body, --severity, --commit, --state, --limit, --out, --worksheet
+  //  are already declared above and shared with other subcommands)
+  '--affected-path', '--id', '--note', '--before',
   // `--paths` is deliberately NOT here. An older acceptance criterion
   // (docs/plans/security/PLAN.md) shows `get-incident-neighbourhood --paths a,b`,
   // but `arch-memory-planning-anchor.md` R3-M1 later fixed the interface as
@@ -2179,6 +2183,130 @@ async function cmdQuality() {
   if (result && result.ok === false) process.exit(2);
 }
 
+// ── Upstream issue reports (plan: upstream-issue-reports.md) ────────────────
+// `upstream` sub-dispatches to report/list/ack/fix/wont-fix/drain; the
+// implementations live in lib/upstream/commands.mjs (thin-dispatcher
+// discipline, same shape as `quality`).
+
+/** Read the report body from stdin — multiline prose must never be an argv string. */
+async function readStdinBody() {
+  if (process.stdin.isTTY) return '';
+  const chunks = [];
+  for await (const c of process.stdin) chunks.push(c);
+  return Buffer.concat(chunks).toString('utf-8');
+}
+
+async function cmdUpstream() {
+  const sub = rest[0];
+  const VERBS = ['report', 'list', 'ack', 'fix', 'wont-fix', 'drain'];
+  if (!sub || !VERBS.includes(sub)) {
+    return emitError('BAD_INPUT', `usage: upstream <${VERBS.join('|')}> [flags]`);
+  }
+
+  const m = await import('./lib/upstream/commands.mjs');
+  const store = await import('./lib/store/upstream-issues.mjs');
+  await initLearningStore();
+  const cloud = await isCloudEnabled();
+  const repoRoot = process.cwd();
+
+  // Best-effort drain on EVERY verb: gated on the directory existing, so a run
+  // with nothing pending costs one stat. Triggering only on report/list would
+  // mean the outbox never drains on a consumer — `list` is a source-side
+  // command consumers never run, and `report` is by definition rare.
+  // Returns `{error}` rather than swallowing: an explicit `upstream drain` must
+  // never report a success shape when the drain actually failed — that is the
+  // "green having done nothing" class this repo audits its success paths for.
+  // A failure on the piggybacked path is still non-fatal (it is housekeeping),
+  // but it is always *reported*.
+  const drainIfPending = async () => {
+    if (!cloud) return { drained: 0, rejected: 0, failed: 0, skipped: 'cloud-off' };
+    try {
+      return await m.drainOutbox({
+        repoRoot,
+        recordFn: async (p) => store.recordUpstreamIssue({
+          ...p, repoId: p.repoId ?? await resolveRepoId({}),
+        }),
+      });
+    } catch (err) {
+      process.stderr.write(`  [upstream] outbox drain failed: ${err.message}\n`);
+      return { drained: 0, rejected: 0, failed: 0, error: err.message };
+    }
+  };
+
+  try {
+    if (sub === 'drain') {
+      const r = await drainIfPending();
+      // An explicit drain that hit an error is NOT ok — the caller asked for
+      // this work specifically, so a failure is the answer, not a footnote.
+      if (r.error) return emitError('DRAIN_FAILED', r.error, { cloud, ...r });
+      return emit({ ok: true, cloud, ...r });
+    }
+
+    const drain = await drainIfPending();
+
+    if (sub === 'report') {
+      const body = argOption('body') ?? await readStdinBody();
+      const res = await m.upstreamReport({
+        repoRoot,
+        repoUuid: resolveRepoIdentity(repoRoot).repoUuid,
+        repoId: cloud ? await resolveRepoId({}) : null,
+        title: argOption('title'),
+        body,
+        severity: (argOption('severity') || 'MEDIUM').toUpperCase(),
+        affectedPath: argOption('affected-path'),
+        actor: argOption('actor') || null,
+        cloudEnabled: cloud,
+        recordFn: (p) => store.recordUpstreamIssue(p),
+      });
+      if (!res.ok) return emitError(res.code || 'BAD_INPUT', res.errors.join('; '), { errors: res.errors });
+      return emit({ ...res, drain });
+    }
+
+    if (sub === 'list') {
+      const state = argOption('state') || 'open';
+      const before = argOption('before')
+        ? JSON.parse(Buffer.from(argOption('before'), 'base64url').toString('utf-8'))
+        : null;
+      const res = await m.upstreamList({
+        repoRoot, state, before,
+        limit: argOption('limit') ? Number(argOption('limit')) : undefined,
+        repoId: argOption('repo-id') || null,
+        listFn: (o) => store.listUpstreamIssues(o),
+        priorFixesFn: (p, id) => store.findPriorFixes(p, id),
+      });
+      if (process.argv.includes('--worksheet')) {
+        process.stdout.write(m.renderWorksheet(res.items || [], { state }) + '\n');
+        return;
+      }
+      // The cursor is opaque + base64url so an operator can paste it back
+      // without shell-quoting a JSON object.
+      const nextCursor = res.nextCursor
+        ? Buffer.from(JSON.stringify(res.nextCursor), 'utf-8').toString('base64url')
+        : null;
+      return emit({ ...res, nextCursor, drain });
+    }
+
+    // ack | fix | wont-fix
+    const to = sub === 'ack' ? 'acknowledged' : sub === 'fix' ? 'fixed' : 'wont_fix';
+    const res = await m.upstreamTransition({
+      repoRoot, to,
+      id: argOption('id'),
+      note: argOption('note'),
+      commit: argOption('commit'),
+      actor: argOption('actor') || null,
+      transitionFn: (a) => store.transitionUpstreamIssue(a),
+    });
+    if (!res.ok) {
+      const code = res.code || (res.illegal ? 'ILLEGAL_TRANSITION'
+        : res.notFound ? 'NOT_FOUND' : res.conflict ? 'CONFLICT' : 'EXCEPTION');
+      return emitError(code, res.errors ? res.errors.join('; ') : res.error, res);
+    }
+    return emit(res);
+  } catch (err) {
+    return emitError('EXCEPTION', err.message);
+  }
+}
+
 async function cmdGetFrictionNeighbourhood() {
   const p = parsePayload();
   await initLearningStore();
@@ -2902,6 +3030,8 @@ const commands = {
   // Friction-feedback loop (plan: friction-feedback-loop.md)
   'quality':                          cmdQuality,
   'get-friction-neighbourhood':       cmdGetFrictionNeighbourhood,
+  // Upstream issue reports (plan: upstream-issue-reports.md)
+  'upstream':                         cmdUpstream,
 };
 
 async function main() {

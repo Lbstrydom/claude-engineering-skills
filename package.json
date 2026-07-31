@@ -146,7 +146,8 @@
     "knip": "node scripts/knip-gate.mjs --report",
     "knip:gate": "node scripts/knip-gate.mjs",
     "knip:baseline": "node scripts/knip-gate.mjs --update-baseline",
-    "knip:exports": "npx knip --include exports,types,enumMembers"
+    "knip:exports": "npx knip --include exports,types,enumMembers",
+    "upstream:issues": "node scripts/cross-skill.mjs upstream list --worksheet"
   },
   "keywords": [
     "claude",

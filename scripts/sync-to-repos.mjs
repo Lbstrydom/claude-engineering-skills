@@ -21,7 +21,9 @@ import { execSync } from 'node:child_process';
 import { enumerateSkillFiles, listSkillNames } from './lib/skill-packaging.mjs';
 import { ensureAuditDeps } from './lib/install/deps.mjs';
 import { CONSUMER_REPOS, resolveAdHocTarget, canonicaliseRegistryTarget } from './lib/consumer-repos.mjs';
-import { writeManifest, detectOwnershipRegression, getGitMeta } from './lib/sync-manifest.mjs';
+import {
+  writeManifest, detectOwnershipRegression, getGitMeta, buildConsumerManifest,
+} from './lib/sync-manifest.mjs';
 import { collectImportClosure } from './lib/module-graph.mjs';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';
 import { sourceRelToDestRel, LAYOUT_CONSTANTS } from './lib/sync-path-map.mjs';
@@ -1661,20 +1663,16 @@ async function main() {
           const buf = fs.readFileSync(abs);
           consumerFileMap[dstRel] = 'sha256:' + crypto.createHash('sha256').update(buf).digest('hex');
         }
-        // `generatedAt`, `files` and `layout` describe the CONSUMER (when this
-        // sync ran, what landed on its disk, in which shape). `repo`, `branch`
-        // and `commitSha` describe the SOURCE it came from — that is the pair a
-        // consumer needs to report "my bundle is from upstream commit X", and
-        // the reason commitSha is no longer the hardcoded `null` it was until
-        // 2026-07-31. Null remains legal (tarball install / no git).
-        const consumerManifest = {
+        // Field-ownership contract (which fields describe the consumer vs the
+        // source) lives in `buildConsumerManifest` — extracted so it is
+        // testable; the inline literal this replaced could not be exercised by
+        // any test, which is how `commitSha: null` survived unguarded.
+        const consumerManifest = buildConsumerManifest({
           generatedAt: new Date().toISOString(),
           repo: 'Lbstrydom/claude-engineering-skills',
-          branch: sourceGitMeta.branch || 'main',
-          commitSha: sourceGitMeta.commitSha,
+          sourceGitMeta,
           files: consumerFileMap,
-          layout: 'isolated',
-        };
+        });
         atomicWriteFileSync(priorManifestPath, JSON.stringify(consumerManifest, null, 2) + '\n');
         manifestWritten = true;
         // High-water mark for rollback detection (see the check at read time).

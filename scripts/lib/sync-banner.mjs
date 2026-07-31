@@ -33,6 +33,10 @@ export const BANNER_BODY = [
   '  and OVERWRITTEN on the next sync. A bug here is an UPSTREAM bug: fix it in',
   '  claude-engineering-skills + re-sync. Editing the synced copy = silent drift,',
   '  lost on the next sync. (see docs/runbooks/consumer-adoption.md)',
+  // Naming the POLICY without naming the COMMAND is what left reports arriving
+  // as ad-hoc prose — wrong paths, no bundle version, no way to tell whether the
+  // bug was already fixed upstream. The command auto-captures all three.
+  '  Report it: node scripts/.claude-skills/cross-skill.mjs upstream report --help',
 ];
 
 /**

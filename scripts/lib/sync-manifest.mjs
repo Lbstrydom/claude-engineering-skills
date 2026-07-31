@@ -196,6 +196,41 @@ export function generateManifest(rootDir, files, opts = {}) {
   };
 }
 
+/**
+ * Build the CONSUMER-side manifest record.
+ *
+ * Extracted from `sync-to-repos.mjs`'s inline literal so the field-ownership
+ * contract is testable: an audit found the original hand-built object could not
+ * be exercised by any test, so the `commitSha: null` regression it replaced had
+ * no guard at all.
+ *
+ * Field ownership is the whole point and is NOT symmetric:
+ *   - `generatedAt`, `files`, `layout` describe the CONSUMER — when this sync
+ *     ran, what landed on its disk (destination paths, post-rewrite hashes),
+ *     in which shape.
+ *   - `repo`, `branch`, `commitSha` describe the SOURCE it came from. That is
+ *     the pair a consumer needs to answer "which upstream commit is my bundle
+ *     from?", which is what makes an upstream bug report triageable.
+ *
+ * `sourceGitMeta` MUST come from `getGitMeta()` at sync time, never off
+ * `writeManifest`'s return value — see that function's note.
+ *
+ * @param {{generatedAt: string, repo?: string, sourceGitMeta: {commitSha: string|null, branch: string|null}, files: Record<string,string>}} args
+ * @returns {{generatedAt: string, repo: string, branch: string, commitSha: string|null, files: Record<string,string>, layout: 'isolated'}}
+ */
+export function buildConsumerManifest({ generatedAt, repo, sourceGitMeta, files }) {
+  return {
+    generatedAt,
+    repo: repo || 'Lbstrydom/claude-engineering-skills',
+    branch: sourceGitMeta?.branch || 'main',
+    // Null stays legal (tarball install / no git) and means "unknown" — which
+    // downstream triage must never read as "current".
+    commitSha: sourceGitMeta?.commitSha ?? null,
+    files,
+    layout: 'isolated',
+  };
+}
+
 export function writeManifest(rootDir, files, opts = {}) {
   const manifest = generateManifest(rootDir, files, opts);
   const manifestPath = path.join(rootDir, MANIFEST_RELATIVE_PATH);
