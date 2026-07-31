@@ -55,6 +55,10 @@
     {
       "line": "> cannot turn a cosmetic wrong into a real false gate.",
       "reason": "Continuation of the scope note above — states why the severity fix is preventive ahead of the deferred v2 persistence. Same disposition: a rationale for sequencing, not an enforceable claim."
+    },
+    {
+      "line": "The perceivability cap above cannot reach this class: these inputs are",
+      "reason": "A NEGATIVE claim about a DIFFERENT mechanism — it records why the perceivability cap (the section immediately above) does not cover undersized-but-painted controls, so a future reader does not assume the 2026-07-30 cap already fixed the touch-target false positives. 'cannot reach' describes the scope of the cap, not an enforcement this skill performs. The positive half IS mechanically enforced and tested: activatingRects() measures every label-activated region in rule 9, and tests/click-test-perceivability.test.mjs pins both field fixtures (1x1 inside 74x44, 13x13 inside 75x24) plus the two anti-regression cases (all-regions-undersized still fires; a non-perceivable label does not rescue). Those run the REAL fence in a real browser, which is not one of the closed registry's cli-exit/unit-seam oracles — the same reason every other click-test gate above is document-only (click-test has no CLI entry point)."
     }
   ]
 }
