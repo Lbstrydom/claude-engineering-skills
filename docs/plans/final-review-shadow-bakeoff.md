@@ -167,7 +167,7 @@ defect.** Asking "how do we know when we reach 15?" exposed two things:
 Fixed by making collection itself write the count:
 
 ```bash
-node scripts/bakeoff-collect.mjs --transcript .audit/bakeoff/t.json --plan docs/plans/some-plan.md --mode plan
+node scripts/bakeoff-collect.mjs --transcript .audit/bakeoff/t.json --plan docs/plans/final-review-shadow-bakeoff.md --mode plan
 node scripts/bakeoff-collect.mjs --progress
 ```
 
