@@ -52,6 +52,11 @@ import path from 'node:path';
 import { log } from './lib/cli-io.mjs';
 import { GIT_LOCK_RETRY_DELAYS_MS, withGitLockRetry } from './lib/git-lock-retry.mjs';
 import { sanitizeGitEnv } from './lib/git-env-sanitize.mjs';
+import {
+  STALE_SANDBOX_AGE_MS,
+  removeSandboxDir,
+  sweepStaleSandboxes,
+} from './lib/prepush-sandbox-cleanup.mjs';
 
 const IS_WIN = process.platform === 'win32';
 const NPM = IS_WIN ? 'npm.cmd' : 'npm';
@@ -210,18 +215,52 @@ function provisionArtifacts(sandbox, repoRoot) {
   return { missing, carried };
 }
 
+/**
+ * Remove the sandbox worktree AND verify its directory is actually gone.
+ *
+ * The exit code of `git worktree remove` is not evidence of removal. Measured
+ * 2026-08-01: with a `node_modules` inside — which provisionNodeModules() puts
+ * there on EVERY run, as a junction on the linked path or a real tree on the
+ * installed one, and both reproduce — git deregisters the worktree, deletes
+ * the tracked files, EXITS 0, and leaves the directory standing. So the
+ * pre-2026-08-01
+ * fallback `rmSync` never ran: it sat in the `catch` of a call that always
+ * succeeded, and 21 husks accumulated in %TEMP% in three days with zero signal.
+ * Only the `stat` inside removeSandboxDir() can close that gap.
+ *
+ * Ordering also changed. `git worktree prune` now runs AFTER the directory is
+ * removed, and only when git's own removal failed. Pruning first (the old
+ * order) deregisters the worktree while the directory may still be there,
+ * converting a visible husk into an invisible one — `git worktree list`, the
+ * one command that would have surfaced it, then reports clean.
+ */
 function removeWorktree(sandbox, repoRoot) {
+  let gitRemoveFailed = false;
   try {
     gitWithLockRetry(repoRoot, ['worktree', 'remove', '--force', sandbox]);
   } catch {
-    // The worktree metadata may already be gone, a file may be locked on
-    // Windows, or lock contention outlasted the retry budget. Prune so
-    // `git worktree list` doesn't accumulate corpses, and best-effort rm the
-    // directory.
+    // Metadata already gone, a file locked on Windows, or lock contention that
+    // outlasted the retry budget. Not decisive either way — the stat below is.
+    gitRemoveFailed = true;
+  }
+
+  const { removed, error } = removeSandboxDir(sandbox);
+  if (!removed) {
+    // Do NOT swallow. An unbounded silent leak teaches nobody anything until
+    // the temp volume fills; the path on stderr costs one line and makes the
+    // next occurrence self-diagnosing.
+    log(`  ⚠ pre-push sandbox could not be removed: ${sandbox}`);
+    log(`    ${error?.code ? `${error.code}: ` : ''}${error?.message ?? 'unknown error'}`);
+    log('    Delete it by hand to reclaim the space; a later push sweeps husks over '
+      + `${STALE_SANDBOX_AGE_MS / 3_600_000}h old.`);
+  }
+
+  // Only touch shared worktree metadata when git's own removal didn't already
+  // do it — every write here contends with concurrent sessions on the same
+  // .git locks (the #34645/#55724 class), so an unconditional prune would add
+  // a shared-metadata write to every push to fix a path that rarely runs.
+  if (gitRemoveFailed) {
     try { gitWithLockRetry(repoRoot, ['worktree', 'prune']); } catch { /* noop */ }
-    // Windows holds handles briefly after a process exits — retry rather than
-    // leak the directory (repo-wide rmSync hardening contract).
-    try { fs.rmSync(sandbox, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* noop */ }
   }
 }
 
@@ -237,6 +276,26 @@ function main() {
   const sandbox = path.join(os.tmpdir(), `ces-prepush-${shortSha}-${process.pid}`);
 
   log(`→ Pre-push checks in a clean checkout of ${shortSha} (not the working tree)`);
+
+  // Self-heal before building a new one. Single-run cleanup cannot be made
+  // total on Windows — a SIGKILL, a held handle, or a lost race with an AV
+  // scanner all defeat it — so a later run removes what an earlier one could
+  // not. Deliberately advisory: an uncleanable temp directory is MACHINE
+  // state, and machine state may warn but must never block a push.
+  try {
+    const { swept, failed } = sweepStaleSandboxes(os.tmpdir());
+    if (swept.length) log(`  swept ${swept.length} stale sandbox husk(s) from ${os.tmpdir()}`);
+    if (failed.length) log(`  ⚠ ${failed.length} stale sandbox husk(s) still un-removable, e.g. ${failed[0]}`);
+    // Metadata written only when there was something to reconcile: a husk from
+    // an interrupted run can still be REGISTERED, so its directory disappearing
+    // is exactly when `git worktree list` needs pruning to stop showing a
+    // corpse pointing into temp.
+    if (swept.length) {
+      try { gitWithLockRetry(repoRoot, ['worktree', 'prune']); } catch { /* noop */ }
+    }
+  } catch (err) {
+    log(`  ⚠ stale-sandbox sweep failed (continuing): ${err.message}`);
+  }
 
   let cleanedUp = false;
   const cleanup = () => {

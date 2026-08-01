@@ -140,8 +140,40 @@ in `PROVISIONED_ARTIFACTS` is absent from the main checkout. Run
 
 **`could not create sandbox worktree`** — usually a leftover worktree from a
 hard-killed run. `git worktree prune` clears it. The runner removes its own
-worktree in a `finally` and on `SIGINT`/`SIGTERM`/`SIGHUP`, so leaks need a
-`SIGKILL` to happen.
+worktree in a `finally` and on `SIGINT`/`SIGTERM`/`SIGHUP`.
+
+**`pre-push sandbox could not be removed: <path>`** — the husk named on that
+line is still on disk. A later push sweeps husks older than 6h automatically
+(`swept N stale sandbox husk(s)`), so this is informational; delete it by hand
+only if you want the space back now.
+
+### Why husks leaked silently before 2026-08-01
+
+`git worktree remove --force` **exits 0 while leaving the directory standing**
+when the worktree holds an entry it declines to delete — and the sandbox always
+holds one, because `provisionNodeModules()` puts `node_modules` there on every
+run. The runner's fallback `rmSync` sat in that call's `catch`, so it never
+ran: 21 husks accumulated in `%TEMP%` in three days, each containing exactly
+`node_modules`, with no warning at any point. The only thing that ever looked
+was git's exit code.
+
+The fix is the repo's own doctrine turned on its own tooling: **a subprocess's
+success signal is not evidence of the postcondition — `stat` is.**
+`removeSandboxDir()` ([`scripts/lib/prepush-sandbox-cleanup.mjs`](../../scripts/lib/prepush-sandbox-cleanup.mjs))
+re-checks the path afterwards and warns with it when it survives, and a
+startup sweep removes what an earlier run could not. Two ordering rules go
+with it:
+
+- **Prune metadata *after* removing the directory, never before.** The reverse
+  turns a visible husk into an invisible one — `git worktree list`, the one
+  command that would have surfaced it, then reads clean.
+- **Age, not liveness, gates the sweep.** Two sessions share this working tree,
+  so a concurrent push can have a live sandbox on disk right now; a live
+  sandbox is always young, and 6h clears a minutes-long `npm run check` by
+  orders of magnitude.
+
+A failed sweep or removal **warns and never blocks** — temp-directory state is
+machine state, not repo state.
 
 **A check passes in-tree but fails in the sandbox** — that is the feature
 working. The commit is missing something your working tree has; most often a

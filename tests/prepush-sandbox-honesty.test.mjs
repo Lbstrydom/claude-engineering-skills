@@ -68,6 +68,52 @@ describe('the sandbox forbids the silent-skip paths', () => {
     assert.match(runnerSrc, /finally\s*\{\s*cleanup\(\);/);
   });
 
+  it('verifies the sandbox directory is GONE rather than trusting git\'s exit code (2026-08-01)', () => {
+    // Measured: `git worktree remove --force` exits 0 while leaving the
+    // directory, because the sandbox always holds a node_modules entry git
+    // declines to delete. The pre-fix code put its fallback rmSync in the
+    // CATCH of that call, so it never ran, and one husk leaked per push with
+    // no signal whatsoever. The behavioural proof lives in
+    // tests/prepush-sandbox-cleanup.test.mjs; this pins the wiring.
+    assert.match(runnerSrc, /from '\.\/lib\/prepush-sandbox-cleanup\.mjs'/);
+    assert.match(runnerSrc, /removeSandboxDir\(sandbox\)/,
+      'removal must be stat-verified, not inferred from a subprocess exit code');
+    assert.doesNotMatch(
+      runnerSrc, /catch\s*\{\s*\/\* noop \*\/\s*\}\s*\n\s*\/\/ Windows holds handles/,
+      'the pre-2026-08-01 swallow-and-leak shape must not return',
+    );
+  });
+
+  it('reports an un-removable sandbox instead of leaking it silently', () => {
+    // A silent unbounded leak teaches nobody anything until the temp volume
+    // fills. The path on stderr makes the next occurrence self-diagnosing.
+    const idx = runnerSrc.indexOf('could not be removed');
+    assert.ok(idx !== -1, 'a failed sandbox removal must warn with the leaked path');
+    assert.match(runnerSrc.slice(idx - 200, idx + 200), /\$\{sandbox\}/);
+  });
+
+  it('prunes worktree metadata AFTER removing the directory, never before', () => {
+    // Pruning first deregisters the worktree while its directory may still be
+    // present, turning a visible husk into an invisible one — `git worktree
+    // list`, the one command that would have surfaced it, then reads clean.
+    const removeIdx = runnerSrc.indexOf('removeSandboxDir(sandbox)');
+    const pruneIdx = runnerSrc.indexOf("'worktree', 'prune'", removeIdx);
+    assert.ok(removeIdx !== -1 && pruneIdx !== -1);
+    assert.ok(pruneIdx > removeIdx,
+      'the fallback prune must follow the directory removal, not precede it');
+  });
+
+  it('sweeps stale husks from earlier runs, and never lets that block a push', () => {
+    // Single-run cleanup cannot be total on Windows (SIGKILL, held handles,
+    // AV races), so a later run removes what an earlier one could not.
+    // Temp-dir state is MACHINE state: it may warn, never block.
+    assert.match(runnerSrc, /sweepStaleSandboxes\(os\.tmpdir\(\)\)/);
+    const idx = runnerSrc.indexOf('sweepStaleSandboxes(os.tmpdir())');
+    const region = runnerSrc.slice(Math.max(0, idx - 400), idx + 900);
+    assert.match(region, /catch \(err\)/, 'the sweep must not be able to throw out of main()');
+    assert.doesNotMatch(region, /return 1;/, 'a sweep failure must never fail the push');
+  });
+
   it('pins a worktree-scoped core.bare=false on the sandbox, right after creating it (2026-07-23)', () => {
     // Live-tested fix for a concurrent process (another Claude Code session's
     // own git activity — anthropics/claude-code #34645/#55724 describe the
