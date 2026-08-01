@@ -118,7 +118,11 @@ const PINNED_DOCUMENT_ONLY = {
   // zero-count ready, and unrecognised shapes), but "exits 0 therefore cannot
   // stop the ship" is a claim about agent flow, and EVERY cross-skill subcommand
   // exits 0 unconditionally — so a cli-exit oracle would be true but vacuous.
-  ship: ['gate-passed-refused-without-evidence', 'category-a-never-staged', 'step-0-5-gates-non-blocking', 'unremediated-acceptances-never-blocks', 'unit-test-lock-refuses-unverifiable-claims', 'final-review-credit-advisory-exit-zero'],
+  // `upstream-queue-never-blocks` added 2026-08-01 with /ship Step 0.5h. Third
+  // instance of the same shape, and the one that names WHY the level is fixed:
+  // the upstream queue is CLOUD state, so the commit being pushed cannot change
+  // it — blocking on it would be cried-wolf by construction, not by choice.
+  ship: ['gate-passed-refused-without-evidence', 'category-a-never-staged', 'step-0-5-gates-non-blocking', 'unremediated-acceptances-never-blocks', 'unit-test-lock-refuses-unverifiable-claims', 'final-review-credit-advisory-exit-zero', 'upstream-queue-never-blocks'],
   cycle: ['preview-gate-halt-blocks-ship', 'fix-gate-convergence-before-next-cluster', 'author-tier-never-routes', 'consolidated-gemini-gate-mandatory'],
   plan: ['gate-1-phase-triggers', 'never-a-lone-phase-1', 'warnings-never-block-plan-generation', 'section-10-graded-by-ux-lock-verify'],
 };
@@ -183,7 +187,8 @@ describe('gate-honesty — real skills/', () => {
     // 36 → 37: +1 ship (unit-test-lock-refuses-unverifiable-claims, 2026-07-29).
     // 37 → 38: +1 ship (final-review-credit-advisory-exit-zero, 2026-07-29).
     // 38 → 39: +1 audit-code (detector-blocks-convergence, /audit-code Step 5.0b, 2026-08-01).
-    assert.equal(totalDocOnly, 39);   // +2 ux-lock, +4 ship, +4 cycle, +4 plan (Phase C final — ALL 15 contracted)
+    // 39 → 40: +1 ship (upstream-queue-never-blocks, /ship Step 0.5h, 2026-08-01).
+    assert.equal(totalDocOnly, 40);   // +2 ux-lock, +5 ship, +4 cycle, +4 plan (Phase C final — ALL 15 contracted)
 
     const allSkillNames = listSkillNames(skillsRoot);
     const expectedUncontracted = allSkillNames.filter((n) => !PINNED_CONTRACTED_SKILLS.includes(n));
