@@ -6,6 +6,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -429,5 +430,55 @@ describe('createLifecycle — injectable-exec state machine (regen-schema mode)'
     const code = await lifecycle.run('regen-schema', { port: 5433 });
     assert.equal(code, 2);
     assert.equal(exec.calls.length, 1);
+  });
+});
+
+describe('scratch-dir lifetime is not bound to the container\'s (2026-08-01)', () => {
+  /** Count ces-db-test-* directories currently in the real temp dir. */
+  function huskCount() {
+    return fs.readdirSync(os.tmpdir(), { withFileTypes: true })
+      .filter((e) => e.isDirectory() && e.name.startsWith('ces-db-test-')).length;
+  }
+
+  it('`up` mode creates NO scratch dir — it never tears down, so one would leak forever', async () => {
+    // The measured defect: the mkdtempSync used to run for every mode, but
+    // `up` returns early by design ("'up' never tears down — that's the
+    // point"), and only `suites` ever writes into the dir. So every
+    // `npm run db:local up` left an EMPTY husk in %TEMP%. 22 of the 23 husks
+    // found on 2026-08-01 were empty — that emptiness IS the signature.
+    const before = huskCount();
+    const exec = createFakeExec({
+      version: ok('25.0.0'),
+      pull: ok(),
+      inspect: fail('No such object', 1),
+      run: ok('deadbeef0002\n'),
+      node: ok(),
+    });
+    const lifecycle = createLifecycle({ exec, waitForReady: async () => ({ ok: true }) });
+    const code = await lifecycle.run('up', { port: 5433 });
+
+    assert.equal(code, 0);
+    assert.equal(
+      exec.calls.filter((c) => c.cmd === 'docker' && c.args[0] === 'rm').length, 0,
+      'up must still keep the container — this test must not pass by making up tear down',
+    );
+    assert.equal(huskCount(), before, '`up` must not create a scratch dir it will never remove');
+  });
+
+  it('`regen-schema` leaves no scratch dir behind either', async () => {
+    // regen-schema writes to tests/fixtures/expected-schema.json, not the
+    // scratch dir, so it has no reason to create one.
+    const before = huskCount();
+    const exec = createFakeExec({
+      version: ok('25.0.0'),
+      pull: ok(),
+      inspect: fail('No such object', 1),
+      run: ok('deadbeef0003\n'),
+      node: ok(),
+      rm: ok(),
+    });
+    const lifecycle = createLifecycle({ exec, waitForReady: async () => ({ ok: true }) });
+    await lifecycle.run('regen-schema', { port: 5433 });
+    assert.equal(huskCount(), before);
   });
 });

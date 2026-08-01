@@ -272,6 +272,20 @@ export function createLifecycle(deps = {}) {
     return { ok };
   }
 
+  /**
+   * Announce a scratch dir that `--keep` deliberately leaves on disk.
+   *
+   * `--keep` skips teardown() — which is where the scratch dir is removed —
+   * so its live-schema.json survives for debugging. That retention is
+   * intentional; its SILENCE was not. An unannounced survivor is
+   * indistinguishable from a leak, which is exactly how 23 husks accumulated
+   * unnoticed (2026-08-01). If we choose to leave something behind, say so
+   * and name the path.
+   */
+  function writeKeptScratchNotice() {
+    if (runTmpDir) stderr.write(`  scratch artifacts kept: ${runTmpDir}\n`);
+  }
+
   /** Best-effort kill of the active inherited-stdio child, then teardown. Used by signal handling. */
   async function abort() {
     if (_activeChild) { try { _activeChild.kill('SIGTERM'); } catch { /* already dead */ } }
@@ -398,7 +412,12 @@ export function createLifecycle(deps = {}) {
     }
 
     // ── workload ──
-    runTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ces-db-test-'));
+    // NOTE: the scratch dir is created LAZILY, inside the one branch that
+    // writes to it (see 'suites' below). It used to be created here, for every
+    // mode — but only 'suites' ever uses it, and 'up' returns without calling
+    // teardown() by design, so every `db:local up` left an EMPTY
+    // ces-db-test-* directory in %TEMP% forever. Measured 2026-08-01: 23 husks
+    // spanning Jul 16 – Aug 1, 22 of them empty. Don't hoist this back up.
     let workloadOk = true;
 
     if (mode === 'up') {
@@ -420,7 +439,9 @@ export function createLifecycle(deps = {}) {
         workloadOk = await runSchemaDiffStep(dsn, path.join(repoRoot, 'tests', 'fixtures', 'expected-schema.json'));
       }
     } else {
-      // mode === 'suites'
+      // mode === 'suites' — the only mode that writes a scratch artifact
+      // (live-schema.json), so the only one that needs a temp dir at all.
+      runTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ces-db-test-'));
       workloadOk = await runStep('migrate', 'node', ['scripts/setup-postgres.mjs', '--migrate'], buildStepEnv('migrate', dsn));
       if (workloadOk) {
         workloadOk = await runSchemaDiffStep(dsn, path.join(runTmpDir, 'live-schema.json'));
@@ -449,6 +470,7 @@ export function createLifecycle(deps = {}) {
     if (!workloadOk) {
       if (opts.keep) {
         stderr.write('[db-test-container] --keep set — leaving container up despite workload failure.\n');
+        writeKeptScratchNotice();
       } else {
         await teardown();
       }
@@ -456,6 +478,7 @@ export function createLifecycle(deps = {}) {
     }
     if (opts.keep) {
       stderr.write(`[db-test-container] --keep set — container ${ownedContainerId.slice(0, 12)} left running. Tear down with: npm run db:local down\n`);
+      writeKeptScratchNotice();
       return 0;
     }
     const td = await teardown();
