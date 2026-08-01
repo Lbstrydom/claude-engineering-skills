@@ -59,7 +59,7 @@ describe('findTestFilesFor — layout independence (the reported defect)', () =>
     mk('node_modules/pkg/tests/state.test.js');
   });
 
-  after(() => { fs.rmSync(root, { recursive: true, force: true }); });
+  after(() => { fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 
   it('finds a nested .test.js the old tests/<base>.test.mjs formula missed', () => {
     assert.deepEqual(
@@ -95,7 +95,7 @@ describe('findTestFilesFor — layout independence (the reported defect)', () =>
     try {
       assert.deepEqual(findTestFilesFor('src/foo.js', bare), []);
     } finally {
-      fs.rmSync(bare, { recursive: true, force: true });
+      fs.rmSync(bare, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
