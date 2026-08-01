@@ -110,10 +110,27 @@ while reporting success is the exact defect class this module was built to end.
 
 `node_modules` is gitignored, so the sandbox provisions it:
 
-- **linked** (default, ~instant) — a junction/symlink to the main checkout,
-  used whenever `package-lock.json` is byte-identical.
-- **installed** — `npm ci --ignore-scripts` when the lockfile differs, because
-  testing new code against the old dependency tree proves nothing.
+- **linked** (~instant) — a junction/symlink to the main checkout. Used only
+  when **both** `package-lock.json` **and `package.json`** are byte-identical
+  between the main checkout and the sandbox, *and* the main checkout actually
+  has a `node_modules`.
+- **installed** — `npm ci --ignore-scripts --no-audit --no-fund` otherwise,
+  because testing new code against the old dependency tree proves nothing.
+
+`package.json` is compared as well as the lockfile because a pushed commit can
+hand-edit a dependency declaration without regenerating the lock; a
+lockfile-only comparison would then link the main checkout's stale tree and
+silently check the commit against dependencies it does not declare. Anything
+that cannot be *proved* identical counts as changed — an unreadable file on
+either side, a missing main `node_modules`, or a failed `symlinkSync` all fall
+through to the install path. The bias is deliberate: a needless install costs
+seconds, a wrong link costs a false green.
+
+> **In a linked worktree, expect `installed` every time.** `repoRoot` resolves
+> to the worktree, and a `.claude/worktrees/*` checkout has no `node_modules`
+> of its own, so the `existsSync` test fails and the sandbox installs (~180
+> packages, a few seconds). Not a bug — just why a push from a worktree is
+> slower than one from the main checkout.
 
 `--ignore-scripts` is load-bearing: the `prepare` lifecycle runs
 `install-git-hooks.mjs`, which writes `core.hooksPath` — config shared with the
