@@ -276,8 +276,8 @@ node scripts/cross-skill.mjs upstream list 2>/dev/null
 ```
 
 **Never blocks, and there is no override flag** — the queue is CLOUD state, not
-repo state, so it can only advise (a check that blocks on state the commit
-cannot fix is the cried-wolf shape that earns `--no-verify`). Cloud off or
+repo state, so it can only advise; a check firing on something the commit
+cannot change is the cried-wolf shape that earns `--no-verify`. Cloud off or
 unreachable ⇒ silently skipped. If `rows` is non-empty, print at most 3, HIGH first:
 
 ```

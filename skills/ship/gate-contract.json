@@ -36,6 +36,13 @@
       "statedIn": "skills/ship/SKILL.md",
       "stated": "the reader always exits 0",
       "reason": "Step 6.7's nudge-not-gate guarantee for the final-review credit card. The READ half is mechanically honest and unit-covered: cmdFinalReviewPending maps every failure to one of a closed diagnostic enum and returns a discriminated {ready|disabled|unavailable} result rather than throwing, and renderFinalReviewCard returns '' for disabled, for a zero-count ready, and for any unrecognised shape (tests/final-review-card.test.mjs pins all three empty-output paths plus the no-leak case; tests/final-review-pending.test.mjs pins the classifier and counts). Document-only for the same reason as step-0-5-gates-non-blocking and unremediated-acceptances-never-blocks directly above: 'exits 0 and therefore cannot stop the ship' is ultimately a claim about what the AGENT does with the output, and cross-skill.mjs's uniform contract is JSON-on-stdout with exit 0 for every subcommand, so a cli-exit oracle would assert an exit code the command produces unconditionally — true but vacuous, which is the fake-check class this suite exists to catch."
+    },
+    {
+      "id": "upstream-queue-never-blocks",
+      "kind": "document-only",
+      "statedIn": "skills/ship/SKILL.md",
+      "stated": "Never blocks, and there is no override flag",
+      "reason": "Step 0.5h's nudge-not-gate guarantee for the upstream issue queue. The READ half is mechanically honest: `upstream list` is a cross-skill.mjs subcommand, so it returns {ok:true, cloud:false} on cloud-off and a JSON error payload on a store failure rather than throwing, and the step is instructed to skip silently in both cases -- a query failure can make it neither stricter nor blind. But 'never BLOCKS the ship' is a claim about what the AGENT does with a non-empty row set, and there is deliberately no override flag to assert against (the absence of one is the point: an override implies something to override). Same shape and same document-only rationale as step-0-5-gates-non-blocking and unremediated-acceptances-never-blocks above. The deeper reason it can only ever advise is the gate-level rule this repo already applies elsewhere: the queue is CLOUD state, and the commit being pushed cannot change it, so blocking on it would be the cried-wolf shape that earns --no-verify."
     }
   ],
   "ignoredCandidates": [
