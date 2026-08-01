@@ -55,6 +55,7 @@ import {
   findUnlockedFixInRepo,
   countUnlockedFixes,
   getUnremediatedAcceptances,
+  countUnremediatedAcceptances,
   readAuditEffectiveness,
   listPersonasForApp,
   upsertPersona,
@@ -840,13 +841,20 @@ async function cmdListUnremediatedAcceptances() {
   if (scope.error) return emit({ ok: false, cloud: true, error: scope.error, reason: scope.reason });
   if (!scope.measured) {
     return emit({ ok: true, cloud: true, scope: { mode: scope.mode, repoId: null, slug: scope.slug },
-      measured: false, reason: scope.reason, rows: [] });
+      measured: false, reason: scope.reason, rows: [], shown: 0, total: 0, byMode: { total: 0, code: 0, plan: 0 } });
   }
-  const rows = await getUnremediatedAcceptances(storeScopeFor(scope));
+  const storeScope = storeScopeFor(scope);
+  const rows = await getUnremediatedAcceptances(storeScope);
+  // `rows` is LIMIT 20. Emitting only it let /ship report "20" against a real
+  // 129 (2026-07-31) — the same undercount `countUnlockedFixes` fixed for the
+  // sibling view two days earlier. `shown` vs `total` makes the cap explicit
+  // instead of letting a saturated array masquerade as a complete count.
+  const byMode = await countUnremediatedAcceptances(storeScope);
   emit({
     ok: true, cloud: true,
     scope: { mode: scope.mode, repoId: scope.repoId, slug: scope.slug },
-    measured: true, reason: null, rows,
+    measured: true, reason: null,
+    rows, shown: rows.length, total: byMode.total, byMode,
   });
 }
 
