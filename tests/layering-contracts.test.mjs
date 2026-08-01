@@ -89,9 +89,72 @@ test('every new shared module resolves to shared-lib', () => {
     'scripts/lib/path-validation.mjs',
     'scripts/lib/command-input.mjs',
     'scripts/lib/repo-scope.mjs',
+    'scripts/lib/skills-index.mjs',
   ]) {
     assert.equal(domainFor(f), 'shared-lib', `${f} landed in the wrong domain`);
   }
+});
+
+// ── Property 5: the adjudicated refactor-away (L5, 2026-08-01) ──────────────
+//
+// docs/plans/dashboard-skills-index-layering.md. Unlike L4 (which declined a
+// PROPOSED over-broad declaration), L5 REMOVES one that was already standing:
+// `scripts` was the whole root-CLI domain granted to express a single import.
+
+test('L5: the moved symbols are unreachable through any skills-help.mjs export', async () => {
+  const old = await import('../scripts/skills-help.mjs');
+
+  for (const sym of ['parseSkill', 'loadAllSkills']) {
+    assert.ok(!(sym in old),
+      `a re-export of ${sym} here lets a consumer silently recreate the dashboard -> scripts edge`);
+    // __test__ is itself an export, so it is an equivalent backdoor.
+    assert.ok(!(sym in (old.__test__ ?? {})),
+      `${sym} leaked through the __test__ hook — same edge, different door`);
+  }
+
+  const moved = await import('../scripts/lib/skills-index.mjs');
+  assert.equal(typeof moved.loadAllSkills, 'function', 'the contract must exist in its new home');
+  assert.equal(typeof moved.parseSkill, 'function', 'the contract must exist in its new home');
+});
+
+test('L5: no dashboard module imports into the scripts domain', () => {
+  // The assertion above guards a PROXY (skills-help.mjs stops re-exporting).
+  // This guards the property the plan actually claims — trace #4 established it
+  // by manual grep, which leaves it unguarded the moment a new collector lands.
+  // A future `import x from '../../foo.mjs'` would silently recreate the edge.
+  const DASH = path.join(REPO_ROOT, 'scripts', 'lib', 'dashboard');
+  const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => {
+    const p = path.join(d, e.name);
+    return e.isDirectory() ? walk(p) : (e.name.endsWith('.mjs') ? [p] : []);
+  });
+
+  const files = walk(DASH);
+  assert.ok(files.length > 0, 'guard is vacuous — no dashboard modules found');
+
+  const offenders = [];
+  for (const file of files) {
+    const src = fs.readFileSync(file, 'utf-8');
+    for (const m of src.matchAll(/(?:from|import)\s+['"](\.[^'"]+)['"]/g)) {
+      const target = path.relative(REPO_ROOT, path.resolve(path.dirname(file), m[1])).replace(/\\/g, '/');
+      if (domainFor(target) === 'scripts') {
+        offenders.push(`${path.relative(REPO_ROOT, file).replace(/\\/g, '/')} -> ${target}`);
+      }
+    }
+  }
+
+  assert.deepEqual(offenders, [],
+    'a dashboard collector imports a root CLI entry point again. Either import from a '
+    + 'scripts/lib/ module instead (the L5 fix), or — if the edge is genuinely wanted — '
+    + 're-declare it in allowedDeps.dashboard WITH an adjudication, not silently.');
+});
+
+test('L5: allowedDeps.dashboard no longer grants the whole scripts domain', () => {
+  assert.ok(!domainMap.allowedDeps.dashboard.includes('scripts'),
+    'the grant existed solely to cover collect-reference.mjs -> skills-help.mjs; that import is gone. '
+    + 'Nothing else catches a stale allowedDeps EDGE — computeDeadIntent only finds dead DOMAINS.');
+  // The replacement edge must already be declared, or this traded one grant for another.
+  assert.ok(domainMap.allowedDeps.dashboard.includes('shared-lib'),
+    'dashboard -> shared-lib is where the dependency moved; it must be declared');
 });
 
 test('the adjudication is recorded in the domain map', () => {
@@ -101,4 +164,8 @@ test('the adjudication is recorded in the domain map', () => {
   assert.ok(domainMap._adjudication_2026_07_31, 'the 2026-07-31 adjudication must be recorded');
   assert.match(domainMap._adjudication_2026_07_31, /model-eval/);
   assert.match(domainMap._adjudication_2026_07_31, /install\.mjs/);
+
+  assert.ok(domainMap._adjudication_2026_08_01, 'the 2026-08-01 (L5) adjudication must be recorded');
+  assert.match(domainMap._adjudication_2026_08_01, /skills-index\.mjs/);
+  assert.match(domainMap._adjudication_2026_08_01, /dashboard -> scripts/);
 });

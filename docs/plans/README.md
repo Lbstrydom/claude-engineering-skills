@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**11 active · 166 terminal · 25 audit summaries · 4 reference docs**
+**11 active · 167 terminal · 25 audit summaries · 4 reference docs**
 
 ---
 
@@ -26,7 +26,7 @@ This is the list to read when asking "what is in flight?".
 | [Closing the Green-but-Unrealized Gap](./green-but-unrealized.md) | `Approved` | 3 GPT rounds + 2 Gemini rounds; 29 findings, all fixed — see Audit Trail |
 | [Honest failure across the learning / brainstorm / persona-promote seams](./learning-persona-quickfix-honest-failure.md) | `Draft` |  |
 | [Arch-Memory / Symbol-Index Pipeline Debt (2026-07-26 triage)](./refactor-arch-memory-symbol-index-2026-07.md) | `Draft` |  |
-| [Architecture-Debt Backlog Remainder (2026-07-26 triage)](./refactor-architecture-debt-remainder-2026-07.md) | `Draft` | 1 of 3 items shipped (§2, via a sibling plan); |
+| [Architecture-Debt Backlog Remainder (2026-07-26 triage)](./refactor-architecture-debt-remainder-2026-07.md) | `Draft` | 2 of 3 items shipped (§2 via a sibling plan; §1 via |
 | [Learning / Persona / Quickfix Reliability Debt (2026-07-26 triage)](./refactor-learning-persona-quickfix-2026-07.md) | `Draft` | re-scoped to the 7 entries that are still real. |
 | [Miscellaneous Small-Cluster Debt (2026-07-26 triage)](./refactor-misc-small-items-2026-07.md) | `Draft` | items resolved individually as picked up (see per-item status below), not implemented as one batch |
 | [Model-Eval / Pricing Debt (2026-07-26 triage)](./refactor-model-eval-pricing-2026-07.md) | `Draft` |  |
@@ -51,7 +51,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 163 completed plans</summary>
+<summary>Show all 164 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -98,6 +98,7 @@ source comments that no docs linter sees — stays valid.
 | [Dashboard "Purpose" view — v2 (coverage, reverse-link, live health)](./dashboard-purpose-view-v2.md) | `Complete` |  |
 | [Dashboard "Purpose" view — v3 (per-domain health + outcome×domain matrix)](./dashboard-purpose-view-v3.md) | `Complete` |  |
 | [Dashboard "Purpose" view — outcome/requirement map](./dashboard-purpose-view.md) | `Complete` | v1 shipped — `purpose.mjs` renders the Purpose tab; extended by `dashboard-purpose-view-v2.md` + `-v3.md`, … |
+| [Resolve the `dashboard → scripts` layering edge (skills-help extraction)](./dashboard-skills-index-layering.md) | `Complete` |  |
 | [Dashboard UX — category/workflow clusters, new-user orientation, tiered-shadow panel](./dashboard-ux-clusters-and-shadow-panel.md) | `Complete` |  |
 | [Dead-Code Detection — Phase 1 (Orphan-Introduced Check)](./dead-code-phase-1-orphan-introduced.md) | `Complete` |  |
 | [Debt Burndown — Workstreams A–E (master)](./debt-burndown-workstreams.md) | `Complete` | 2026-07-19) — all workstreams closed and traced against the code, not against their labels. WS-D and WS-E/E… |

@@ -1,10 +1,11 @@
 # Plan: Architecture-Debt Backlog Remainder (2026-07-26 triage)
 
 - **Date**: 2026-07-26
-- **Status**: Draft — **1 of 3 items shipped** (§2, via a sibling plan);
-  §1 and §3 remain genuinely open, re-verified against source 2026-08-01.
-  This plan has been *reported complete* at least once and is not; see the
-  per-item status markers below.
+- **Status**: Draft — **2 of 3 items shipped** (§2 via a sibling plan; §1 via
+  [`dashboard-skills-index-layering.md`](dashboard-skills-index-layering.md),
+  2026-08-01). **§3 remains genuinely open**, re-verified against source
+  2026-08-01. This plan has been *reported complete* at least once while items
+  were still open; trust the per-item status markers below, not this line alone.
 - **Author**: Claude (tech-debt backlog triage session)
 - **Scope**: backend (mechanical, no product behavior change)
 
@@ -21,17 +22,23 @@
 
 ## 1. Dashboard collector imports a root CLI script (layering inversion)
 
-> **STATUS 2026-08-01: OPEN — but re-scoped, and moved out of this plan.**
-> The import is unchanged (`collect-reference.mjs:15`). What the original
-> triage missed: `.audit-loop/domain-map.json`'s `allowedDeps.dashboard`
-> already contains `"scripts"`, so this edge is **declared intent, not an
-> undeclared violation** — the arch check never fires on it. That changes
-> the question from "how do I extract this" to "should I extract it, or
-> record it as accepted-by-declaration", and the `_adjudication_2026_07_31`
-> L4 precedent (re-tag rather than declare, to avoid granting a domain
-> access to a whole future domain to express one narrow relationship) is
-> directly on point. Given its own decision to make, this item gets its own
-> plan rather than riding along here.
+> **STATUS 2026-08-01: RESOLVED — shipped as
+> [`dashboard-skills-index-layering.md`](dashboard-skills-index-layering.md) (L5).**
+> Re-scoped out of this plan first, because the original triage missed that
+> `.audit-loop/domain-map.json`'s `allowedDeps.dashboard` already contained
+> `"scripts"` — making the question "*should* I extract it" rather than "how".
+> Answered **extract**, on the decisive fact that the declaration was never an
+> adjudication: it entered on 2026-07-17 via the Phase-C baseline that set
+> `allowedDeps` to the observed graph wholesale ("BASELINE, NOT ENDORSEMENT"),
+> *after* the three debt findings were raised. The `_adjudication_2026_07_31`
+> L4 precedent applied and pointed at extraction — `skills-help.mjs` was the
+> **sole** producer of the edge, so the grant was **deleted**, not narrowed.
+>
+> Shipped: `parseSkill`/`loadAllSkills` → `scripts/lib/skills-index.mjs`
+> (`shared-lib`, already declared ⇒ zero new edges); `"scripts"` removed from
+> `allowedDeps.dashboard`; `_adjudication_2026_08_01` recorded; L5 guards in
+> `tests/layering-contracts.test.mjs` + first-ever coverage of `collectReference`.
+> Tech-debt topicIds `7cd98d98` / `dafaf6c8` / `1f6dd42d` resolved.
 
 `scripts/lib/dashboard/collect-reference.mjs:15` imports `loadAllSkills` from
 `../../skills-help.mjs` — a top-level CLI entrypoint, not a library module.

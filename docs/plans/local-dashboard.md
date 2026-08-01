@@ -20,9 +20,12 @@
   telemetry — lives in scattered `.md` / `.json`. There is no single
   navigable surface.
 - **What exists today** (reused, not rebuilt):
-  - `scripts/skills-help.mjs` — exports `loadAllSkills()` / `parseSkill()`;
+  - `scripts/lib/skills-index.mjs` — exports `loadAllSkills()` / `parseSkill()`;
     already parses every `skills/*/SKILL.md` frontmatter into
     `{name, oneLiner, triggers, usage, ...}`. **Reference collector reuses this.**
+    (Lived in `scripts/skills-help.mjs` until 2026-08-01; extracted to `shared-lib`
+    so the collector stopped importing a root CLI entry point — see
+    `dashboard-skills-index-layering.md`.)
   - `scripts/audit-metrics.mjs` — has `fetchCloudMetrics()` (Supabase audit
     runs/passes/findings) + `computeLocalMetrics()` (`.audit/outcomes.jsonl`).
     Currently module-private. **Telemetry collector reuses these after a
@@ -44,7 +47,7 @@
   `review` band** (top similarity 0.67, well under the 0.75 `justify-divergence`
   floor). No near-duplicate generator exists — greenfield is correct. The
   closest *relatives* (and how this plan relates to them):
-  - `scripts/skills-help.mjs` → **reuse** its exports (data source).
+  - `scripts/lib/skills-index.mjs` → **reuse** its exports (data source).
   - `scripts/audit-metrics.mjs` → **reuse** its fetchers (data source).
   - `scripts/lib/arch-render.mjs` `renderArchitectureMap` / `render-mermaid.mjs`
     → *markdown* renderers for a different consumer; the dashboard renders
@@ -124,9 +127,12 @@ artefacts*, not two builds:
               ┌─────────┴──────────┐                 │
               ▼                    ▼                 ▼
    dashboard/index.html   dashboard/telemetry.html   serves dashboard/
-   COMMITTED              GITIGNORED                 over http://
-   (release artefact)     (per-user, per-machine)
+   GITIGNORED             GITIGNORED                 over http://
+   (per-user, local-only) (per-user, per-machine)
 ```
+
+> Diagram updated per the **2026-06 addendum above** — `index.html` was
+> originally COMMITTED; both pages are now Category-A local artifacts.
 
 ### 2.3 Data flow
 
@@ -158,7 +164,7 @@ holds the keys (read via `dotenv/config`, same as `audit-metrics.mjs`).
 | CSS/JS live in `assets/*.css` / `*.js`, read + inlined at build. | Modularity #3 — avoids 1000-line template literals; assets are lint-able/testable. |
 | Server binds `127.0.0.1`, path-contained to `dashboard/`. | Validation #12; least privilege — no LAN exposure, no traversal. |
 | Every hook (`/ship`, `/audit-code`) is **advisory, never blocking**. | Graceful degradation #16 — mirrors the arch-map refresh step. |
-| Asymmetric commit: `index.html` committed, `telemetry.html` gitignored. | Avoids per-user/per-machine data in git history + cross-sync merge conflicts (brainstorm round 4). |
+| ~~Asymmetric commit: `index.html` committed, `telemetry.html` gitignored.~~ **RETIRED 2026-06** — both pages are gitignored (see addendum §2.2). | Avoids per-user/per-machine data in git history + cross-sync merge conflicts (brainstorm round 4). |
 
 ### 2.5 Telemetry data sources + source-status model
 
@@ -246,7 +252,8 @@ Every other "present but malformed" source (corrupt `flows.json`,
   cannot occur after any build).
 - **Stale-data banner** — provenance is *truthful at generation time* and
   differs by page so the committed artefact stays deterministic (§8 / M3):
-  - `index.html` (committed) → *"built from `<base-HEAD short sha>`<+local
+  - `index.html` (gitignored since the 2026-06 addendum; the determinism
+    rationale below was written when it was committed) → *"built from `<base-HEAD short sha>`<+local
     if working tree dirty> · source `<8-char data hash>`"* — **no human
     timestamp and no claimed artefact-commit SHA** (the generator runs
     *before* the commit that will contain it exists; it can only honestly
@@ -388,7 +395,7 @@ Every other "present but malformed" source (corrupt `flows.json`,
 | `scripts/lib/dashboard/serve.mjs` | Localhost static server, `127.0.0.1`, path-contained to `dashboard/`; opens browser. **Host-header allowlist** (Gemini-G(v2)-2 — DNS-rebinding defence): every request whose `Host` header is not `127.0.0.1:<port>` or `localhost:<port>` is rejected `403`, so a malicious page rebinding its domain to `127.0.0.1` cannot read local telemetry. Sends `Cache-Control: no-store, must-revalidate` + `Expires: 0` on every response (Gemini-G4 — a re-run of `npm run dashboard` never serves a browser-cached stale page). | `serve({port, dir})` | `node:http`, `node:path` |
 | `scripts/lib/dashboard/assets/dashboard.css` | Dashboard styles (tokens, layout, responsive). | — | — |
 | `scripts/lib/dashboard/assets/dashboard.js` | Browser controller (tabs, search, collapse, telemetry check). | — | — |
-| `dashboard/index.html` | **Committed** generated reference dashboard (release artefact). | — | generated |
+| `dashboard/index.html` | Generated reference dashboard. ~~Committed release artefact~~ → **gitignored, local-only** (Category A) per the 2026-06 addendum. | — | generated |
 | `tests/dashboard.test.mjs` | Unit tests (see §9). | — | `node:test` |
 
 ### Modified files
@@ -397,7 +404,7 @@ Every other "present but malformed" source (corrupt `flows.json`,
 |---|---|---|
 | `scripts/audit-metrics.mjs` | Add `export` to `fetchCloudMetrics` + `computeLocalMetrics` (take `sb`/`DAYS` as args, not module globals). **Also fix the silent-failure bug** (Gemini-G1): Supabase `.select()` returns `{data, error}` and does **not** throw — `fetchCloudMetrics` currently does `runsRes.data || []`, swallowing network/credential errors as an empty result. The exported version must check `runsRes.error` / `passRes.error` / `findingsRes.error` and throw (or return a failure wrapper) so `collect-telemetry.mjs` can classify the source as `unexpected-error` rather than a false-empty `ok`. CLI behaviour otherwise unchanged. | DRY #1 — telemetry collector reuses them. Validation #12 — errors must not be silently swallowed. Backward compat #18 — `main()` still works. |
 | `package.json` | Add scripts: `"dashboard": "node scripts/build-dashboard.mjs serve"`, `"dashboard:build": "node scripts/build-dashboard.mjs all"`. | Entry points. |
-| `.gitignore` | Add a single line `dashboard/telemetry.html`. `dashboard/index.html` stays tracked. (No `telemetry-data.json` — the design inlines data into the HTML; there is no separate data file.) | Asymmetric commit policy. |
+| `.gitignore` | ~~Add a single line `dashboard/telemetry.html`; `dashboard/index.html` stays tracked.~~ **Superseded 2026-06**: BOTH pages are gitignored. (No `telemetry-data.json` — the design inlines data into the HTML; there is no separate data file.) | ~~Asymmetric commit policy~~ → Category-A generated artifacts. |
 | `scripts/sync-to-repos.mjs` | Add to `CORE_SCRIPTS`: `scripts/build-dashboard.mjs`, **the entire `scripts/lib/dashboard/**` subtree** (6 `.mjs` + `flows.json` + 2 `assets/` files), and `scripts/lib/learning/stats.mjs`. NOT `dashboard/index.html` (per-repo generated artefact). A test (§9) asserts every transitive import of `build-dashboard.mjs` under `scripts/` is in `CORE_SCRIPTS`, so the list cannot silently drift. | `feedback_new_lib_modules_need_core_scripts` — a synced script importing an un-synced module breaks consumer repos. |
 | `scripts/cross-skill.mjs` | `cmdLearningStats` becomes a thin wrapper over the new `lib/learning/stats.mjs` `getLearningStats()` — same CLI output, logic extracted for reuse. | M2 — a lib collector must not depend on a CLI's stdout contract. |
 | `skills/ship/SKILL.md` | New advisory step (after Step 0.5c), **source-repo-gated** (`package.json.name === "claude-engineering-skills"` — same gate as Step 6.0): run `build-dashboard.mjs reference`; on a non-degraded build `git add dashboard/index.html`; also build telemetry locally (not staged). Non-blocking; skipped entirely in consumer repos (§7.3). | "commits update reference automatically" — in the bundle repo. |

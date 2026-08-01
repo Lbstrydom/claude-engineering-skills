@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sha } from '../cli-io.mjs';
-import { loadAllSkills } from '../../skills-help.mjs';
+import { loadAllSkills } from '../skills-index.mjs';
 import { collectCli } from './collect-cli.mjs';
 import { collectNav } from './collect-nav.mjs';
 import { collectVisual } from './collect-visual.mjs';
@@ -438,7 +438,10 @@ export async function collectReference(opts = {}) {
   // Skills
   let skills = [];
   try {
-    skills = loadAllSkills().map((s) => ({
+    // Thread the root like every sibling collector below (discoverPlans,
+    // collectArchitecture, collectCli, collectNav) — this was the lone
+    // implicit-cwd call. Arg is a skills DIRECTORY, not a repo root.
+    skills = loadAllSkills(path.join(root, 'skills')).map((s) => ({
       name: s.name, oneLiner: s.oneLiner, triggers: s.triggers,
       usage: s.usage, disableModelInvocation: s.disableModelInvocation, path: s.path,
     }));
