@@ -1,9 +1,9 @@
 # Plan: vcs-protocol Tech-Debt Cluster — Verification & Ledger Reconciliation
 
 - **Date**: 2026-07-27
-- **Status**: Approved — audited, not yet implemented (3 GPT + 1 Gemini
-  plan-audit rounds; see Audit Trail). The §4 ledger reconciliation is the
-  only outstanding action; no code change is proposed.
+- **Status**: Complete — §4 ledger reconciliation executed 2026-08-01; no
+  code change was ever proposed (3 GPT + 1 Gemini plan-audit rounds; see
+  Audit Trail). See Closure below.
 - **Author**: Claude + Lbstrydom
 - **Scope**: backend
 - **Target domain(s)**: `shared-lib`
@@ -586,3 +586,25 @@ sequencing).
 - **No code change proposed or implemented.** This plan's only action is
   ledger reconciliation (§4), left for a future session/operator to execute
   per this task's explicit "plan + audit only" instruction.
+
+## Closure (2026-08-01)
+
+**CLOSED — the §4 reconciliation is done, and it was already done before
+this session looked.** A staleness-triage pass re-read `.audit/tech-debt.json`
+per §4's own pre-execution precondition and found **all 10 topicIds already
+absent** (`087d6ca8`, `1aa272b5`, `1f40ab08`, `bc3095ea`, `bd92cfe5`,
+`ebbbc2ad`, `1337d6e1`, `904c0d36`, `913d3a00`, `c2cca428`) — plus the
+out-of-scope 11th (`78e4d7aa`). That is exactly the "legitimate,
+already-resolved state, not a failure of this plan" case §4's precondition
+was written to anticipate: a concurrent debt-review session executed the
+reconciliation between this plan's approval and this check. Nothing was
+re-run; no entry was re-resolved.
+
+The residual `b093444897a3` (RETRYABLE_VCS_ERRORS prototype-borrowing
+bypass) **remains open by design** — §7 carved it out deliberately as its
+own follow-up, and this closure does not touch it. Do not read this plan's
+`Complete` status as covering it.
+
+The status line sat at `Approved — not yet implemented` for the whole
+interval, which is the plan-status staleness this repo's own doctrine warns
+about; corrected here.

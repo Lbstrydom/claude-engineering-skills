@@ -1,7 +1,10 @@
 # Plan: Architecture-Debt Backlog Remainder (2026-07-26 triage)
 
 - **Date**: 2026-07-26
-- **Status**: Draft
+- **Status**: Draft — **1 of 3 items shipped** (§2, via a sibling plan);
+  §1 and §3 remain genuinely open, re-verified against source 2026-08-01.
+  This plan has been *reported complete* at least once and is not; see the
+  per-item status markers below.
 - **Author**: Claude (tech-debt backlog triage session)
 - **Scope**: backend (mechanical, no product behavior change)
 
@@ -18,7 +21,17 @@
 
 ## 1. Dashboard collector imports a root CLI script (layering inversion)
 
-**Debt entries**: `7cd98d98`, `dafaf6c8`, `1f6dd42d`
+> **STATUS 2026-08-01: OPEN — but re-scoped, and moved out of this plan.**
+> The import is unchanged (`collect-reference.mjs:15`). What the original
+> triage missed: `.audit-loop/domain-map.json`'s `allowedDeps.dashboard`
+> already contains `"scripts"`, so this edge is **declared intent, not an
+> undeclared violation** — the arch check never fires on it. That changes
+> the question from "how do I extract this" to "should I extract it, or
+> record it as accepted-by-declaration", and the `_adjudication_2026_07_31`
+> L4 precedent (re-tag rather than declare, to avoid granting a domain
+> access to a whole future domain to express one narrow relationship) is
+> directly on point. Given its own decision to make, this item gets its own
+> plan rather than riding along here.
 
 `scripts/lib/dashboard/collect-reference.mjs:15` imports `loadAllSkills` from
 `../../skills-help.mjs` — a top-level CLI entrypoint, not a library module.
@@ -40,7 +53,16 @@ skills-content-adjacent) or a new `scripts/lib/skills-index.mjs`. Have both
 
 ## 2. `stores` domain imports `arch-memory`'s `observed-deps.mjs` (undeclared)
 
-**Debt entry**: `bfb06662`
+> **STATUS 2026-08-01: SHIPPED — option (a), as recommended.** Landed
+> 2026-07-31 in commit `d1d8097c` (`refactor(layering): close the deferred
+> cross-domain and mutation-contract findings`) as workstream L1 of
+> [`layering-and-mutation-contracts.md`](./layering-and-mutation-contracts.md),
+> not via this plan. `CoverageSchema` now lives in the neutral shared-lib
+> module `scripts/lib/coverage-schema.mjs`, the old `observed-deps.mjs`
+> export was **removed** (not left as a re-export, so the edge cannot creep
+> back), and `store/arch/coverage.mjs:23` imports from the new home. The
+> edge is gone rather than declared. Debt entry `bfb06662` was stale-open
+> until reconciled 2026-08-01 against `d1d8097c`.
 
 `scripts/lib/store/arch/coverage.mjs:23` imports `CoverageSchema` from
 `scripts/lib/observed-deps.mjs` (arch-memory domain). This edge is real and
@@ -71,7 +93,14 @@ implementation; moving it removes the smell instead of just declaring it.
 
 ## 3. `docs/architecture-intent.md` is stale relative to `domain-map.json`
 
-**Debt entries**: `01c442ec`, `0dda0192`, `2181558f`, `68e1845c`, `aa7172a9`, `e50c245b`
+> **STATUS 2026-08-01: OPEN, and drifting further.** All six debt entries
+> still open. The doc is still `Version 0.1.0`, still `Last reviewed:
+> 2026-05-11`; its last commit is `8bbbe082` (2026-07-18), a repo-wide
+> mermaid-label quoting sweep, not a content refresh. Meanwhile
+> `domain-map.json` has gained a second dated adjudication block
+> (`_adjudication_2026_07_31`) since this item was written, so the doc's
+> empty "Known known-violations (debt)" section is now missing *two* blocks
+> of named debt, not one.
 
 `docs/architecture-intent.md` is v0.1.0, last reviewed 2026-05-11. It
 enumerates ~13 domains and hand-written boundary rationale. The live

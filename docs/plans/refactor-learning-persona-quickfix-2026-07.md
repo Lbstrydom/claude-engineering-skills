@@ -1,7 +1,9 @@
 # Plan: Learning / Persona / Quickfix Reliability Debt (2026-07-26 triage)
 
-- **Date**: 2026-07-26
-- **Status**: Draft
+- **Date**: 2026-07-26 (re-scoped 2026-08-01)
+- **Status**: Draft — **re-scoped to the 7 entries that are still real.**
+  14 of the original 21 shipped between 2026-07-26 and 2026-08-01, all under
+  *other* plans. See §0.
 - **Author**: Claude (tech-debt backlog triage session)
 - **Scope**: backend
 
@@ -12,6 +14,59 @@
 > files, but a recurring shared bug shape: **cloud/DB read or write failure
 > is indistinguishable from "genuinely empty" or "success."** Verified
 > against current source 2026-07-26.
+
+---
+
+## 0. Staleness triage (2026-08-01) — read this before Themes 1–6
+
+Every entry below was re-traced against current source. The theme text that
+follows §0 is the **2026-07-26 snapshot** and is deliberately left intact as
+the historical record — where §0 and a theme disagree, **§0 is current.**
+
+### Already shipped — 14 of 21, none of them via this plan
+
+| Entries | Theme | Landed in | What's in the code now |
+|---|---|---|---|
+| `328dbf9d`, `4294a043`, `5c716982`, `6b6263b8`, `97bd6987`, `d3f514c0` | 1 | [`refactor-failure-contract.md`](./refactor-failure-contract.md) (Cluster B) | The `!parsed.ok && !parsed.cloud` guard is gone. Three pure interpreters — `interpretCandidateListResult`, `interpretShipEventResult`, `interpretPromoteRegressionSpecResult` — plus `isWellFormedCliResponse` and a new `EXIT.DEPENDENCY_FAILURE` (3). A failed candidate-list check now exits 3 with *"treating this as unknown, not zero"*, and cloud-off is a separate, typed `{ok:true, cloud:false}`. |
+| `3a02107d`, `a502a7e1`, `ac1dd0c3` | 2 | same | `readQuickfixDecisions` returns `{ok:true,decisions}` / `{ok:false,error}`; `rebuildFromCloud` returns early on `!readResult.ok` so `writeAtomic` is unreachable on a read failure and a good cache can no longer be clobbered by a transient error. A bonus guard was added beyond what the entries asked: a non-empty decision set that aggregates to zero patterns is treated as a data-shape regression, not an empty result. |
+| `7ec90282`, `8db9393b` | 2 | same (round-1 finding H3) | Both env vars now parse through [`scripts/lib/quickfix-policy.mjs`](../../scripts/lib/quickfix-policy.mjs) — `parseValidatedThreshold` (finite, `[0,1]`) and `parseValidatedMinHits` (finite integer `>= 1`), each emitting one stderr line on rejection. `'0.2junk'` no longer silently reads as `0.2`. Consolidated into one module because the *same* two vars were parsed independently by the hot-path matcher too. |
+| `88bc75e1`, `8993b96f` | 4 | commit `a86a5ca7` | `repoId` is the PRIMARY session-selection key in both `getPersonaOutcomesSummary` and `getActionablePersonaOutcomeItems`; `repo_name` survives only as a fallback for when identity resolution genuinely fails. **Verified non-inert**: both production callers (`cross-skill.mjs:1760`, `:1800`) supply `repoId` from `resolveScopedRepoId()`. |
+| `c6b3df92` | 5 | [`persona-finding-hash-versioning.md`](./persona-finding-hash-versioning.md) | `PERSONA_FINDING_HASH_VERSION = 2`; the hash payload is now a fixed-order 5-key `{element, code, route, expected, observed}` over a full 64-hex SHA-256, with `route` resolved per-step from the click-path lookup. Two findings on the same element in different journey steps no longer collide. |
+
+`88bc75e1`/`8993b96f` were **stale-open in the ledger** (fix landed
+2026-07-27, entries never reconciled) — resolved 2026-08-01 against
+`a86a5ca7`. The other nine were already reconciled.
+
+### Still open — 7 entries, this plan's actual remaining scope
+
+| topicId | Sev | File | One-line statement |
+|---|---|---|---|
+| `222b036e` | HIGH | `learning/decision-logger.mjs` | Cap-breach eviction drops a decision with only a counter bump — never spilled to the outbox. |
+| `191fca35` / `f1a716cf` | MED ×2 | `learning/quickfix-stats.mjs` | `rebuildFromBootstrap` is a stub that labels every hit `no_action`, yet returns `{ok:true}`. |
+| `e0623c0a` | MED | `brainstorm/session-store.mjs` | A non-numeric `schemaVersion` silently downcasts a future record to V1. **Reproduced** — see below. |
+| `e51bacd2` / `fa86b341` | MED ×2 | `brainstorm/session-store.mjs` | `appendQuarantine`'s read→combine→trim is unlocked; `loadSession` takes no lock at all. |
+| `bbd58a09` | MED | `persona-consistency-promote.mjs` | `limit: 100` with no pagination loop — candidate 101+ is never promoted, silently. |
+
+**`e0623c0a` is not a hypothesis — it was executed.** A real, schema-valid
+session record from `.brainstorm/sessions/` was replayed through
+`loadSession` with only `schemaVersion` varied:
+
+```
+schemaVersion="3"    -> rounds=1 synth=1 invalid=0 storedVersion=2   silently downcast
+schemaVersion=null   -> rounds=1 synth=1 invalid=0 storedVersion=2   silently downcast
+schemaVersion=false  -> rounds=1 synth=1 invalid=0 storedVersion=2   silently downcast
+schemaVersion=3      -> rounds=0 invalid=1  reason=unsupported-future-schema-version-3
+```
+
+One detail the original triage did not catch, and which makes this worse
+than "falls through to legacy V1 synthesis": the downcast record is also
+stamped `_synthesised: {fields: [...'schemaVersion'...]}` — so a *future*
+record is affirmatively mislabelled as a *legacy* one. The guard at
+`session-store.mjs:188` is `typeof parsed.schemaVersion === 'number' &&
+parsed.schemaVersion > 2`; the numeric branch is correct, everything
+non-numeric routes to the V1 promotion path where `schemaVersion: 2` is
+overwritten onto the record before validation, so the schema can never
+object.
 
 ---
 
