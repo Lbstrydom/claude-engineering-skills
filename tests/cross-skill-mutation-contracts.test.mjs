@@ -145,6 +145,37 @@ test('C1 scoped: a resolvable uuid translates to the v4 repoId', async () => {
   assert.deepEqual(r, { kind: 'scoped', repoId: 'id-v4' });
 });
 
+// The REAL `getRepoIdByUuid` returns the audit_repos ROW, not a bare id. The
+// stub above returns a string the implementation never produces, so it passed
+// while `scope.repoId` was an OBJECT in production — callers bound it into
+// `WHERE repo_id = $1` and Postgres rejected it:
+//   invalid input syntax for type uuid: "{"id":"22865de8-…","name":"…"}"
+// which killed `persona-outcomes summary` and /ship's Step 0.5a UX gate.
+// Pin the real shape so the fixture cannot be more generous than reality again.
+test('C1 scoped: unwraps the audit_repos ROW the real resolver returns', async () => {
+  const r = await resolveRepoScope({
+    resolveRepoUuid: async () => 'uuid-v5',
+    getRepoIdByUuid: async () => ({
+      id: '22865de8-3b15-484e-83c2-e1cb59c7ce41',
+      name: 'Lbstrydom/wine-cellar-app',
+      repo_uuid: 'uuid-v5',
+      activeRefreshId: '327a1ca8-95a4-41b1-ad43-c974969a726d',
+      activeEmbeddingModel: 'gemini-embedding-001',
+      activeEmbeddingDim: 768,
+    }),
+  });
+  assert.deepEqual(r, { kind: 'scoped', repoId: '22865de8-3b15-484e-83c2-e1cb59c7ce41' });
+  assert.equal(typeof r.repoId, 'string', 'repoId must be bindable as a uuid, never the row object');
+});
+
+test('C1 scoped: a row without an id is unknown-repo, not a null-bound query', async () => {
+  const r = await resolveRepoScope({
+    resolveRepoUuid: async () => 'uuid-v5',
+    getRepoIdByUuid: async () => ({ name: 'no-id-row' }),
+  });
+  assert.equal(r.kind, 'unknown-repo');
+});
+
 test('C1 no-identity: outside a checkout the caller proceeds unscoped, as before', async () => {
   const r = await resolveRepoScope({
     resolveRepoUuid: async () => null,

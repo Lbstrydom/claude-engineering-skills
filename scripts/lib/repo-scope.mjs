@@ -57,12 +57,30 @@ export async function resolveRepoScope({ resolveRepoUuid, getRepoIdByUuid, expli
   try { repoUuid = await resolveRepoUuid(); } catch { repoUuid = null; }
   if (!repoUuid) return { kind: 'no-identity' };
 
-  let repoId;
+  let resolved;
   try {
-    repoId = await getRepoIdByUuid(repoUuid, { strict: true });
+    resolved = await getRepoIdByUuid(repoUuid, { strict: true });
   } catch (err) {
     return { kind: 'lookup-failed', repoUuid, error: err?.message ?? String(err) };
   }
+  if (!resolved) return { kind: 'unknown-repo', repoUuid };
+
+  // `getRepoIdByUuid` returns the audit_repos ROW — `{id, name, repo_uuid,
+  // activeRefreshId, activeEmbeddingModel, activeEmbeddingDim}` — not a bare
+  // id, despite the name. Returning it whole made `scope.repoId` an OBJECT,
+  // which callers bind straight into `WHERE repo_id = $1`:
+  //
+  //   invalid input syntax for type uuid: "{"id":"22865de8-…","name":"…"}"
+  //
+  // That killed `persona-outcomes summary` (and with it /ship's Step 0.5a UX
+  // gate) in a consumer repo on 2026-08-01. It survived because the unit test
+  // stubbed this resolver as `async () => 'id-v4'` — a bare string the real
+  // implementation never returns, so the fixture was more generous than
+  // reality and certified a shape that could not occur.
+  //
+  // A string is still accepted: injected/test resolvers legitimately return
+  // one, and narrowing to objects only would break them.
+  const repoId = typeof resolved === 'string' ? resolved : (resolved.id ?? null);
   if (!repoId) return { kind: 'unknown-repo', repoUuid };
   return { kind: 'scoped', repoId };
 }
