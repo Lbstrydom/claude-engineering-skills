@@ -221,6 +221,33 @@ describe('matchPatterns — pattern-by-pattern coverage', () => {
     const m = matchPatterns('const url = process.env.API || "http://example.com"', { filePath: 'a.js' });
     assert.ok(m.some(x => x.name === 'hardcoded-http-url'));
   });
+
+  it('literal temp root fires for every shell-ambiguous spelling', () => {
+    // Each of these names a DIFFERENT directory depending on whether the path
+    // is interpreted by git-bash/MSYS, by Node on Windows, or on Linux.
+    for (const src of [
+      "const p = '/tmp/foo.json';",
+      'const p = "C:/tmp/x";',
+      'const p = `C:\\\\tmp\\\\x`;',
+      "path.join(process.env.TEMP || '/tmp', f)",
+      "const p = '/var/tmp/y';",
+    ]) {
+      const m = matchPatterns(src, { filePath: 'a.mjs' });
+      assert.ok(m.some(x => x.name === 'literal-temp-root'), `expected a hit for: ${src}`);
+    }
+  });
+
+  it('literal temp root does NOT fire on the two blessed forms or on lookalikes', () => {
+    for (const src of [
+      "fs.mkdtempSync(path.join(os.tmpdir(), 'prefix-'))", // blessed: disposable
+      "scratchPath('eval', 'report.json')",                // blessed: inspectable
+      "const s = '/tmpfs/notatemp';",                      // longer path segment
+      'fetch("https://example.dev/tmpl")',                 // /tmpl inside a URL
+    ]) {
+      const m = matchPatterns(src, { filePath: 'a.mjs' });
+      assert.ok(!m.some(x => x.name === 'literal-temp-root'), `unexpected hit for: ${src}`);
+    }
+  });
 });
 
 describe('matchPatterns — opt-outs and bails', () => {

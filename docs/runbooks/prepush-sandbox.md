@@ -60,6 +60,23 @@ leniency on an absent envelope is deliberate — it protects first-time consumer
 who have never run `arch:render` — and that default is itself pinned by a test.
 Only a caller that *promised* the evidence gets the strict reading.
 
+### 2.1 Hashing working-tree bytes ≠ hashing committed source
+
+The first thing the sandbox caught was `skills.manifest.json` breaking its own
+Category-B contract (a committed artifact must be a byte-identical function of
+committed source — see the generated-artifact policy in AGENTS.md).
+
+16 skill files carried CRLF in the local working tree while `.gitattributes`
+pins `eol=lf`. Git reports such files as **CLEAN**, so nothing locally looked
+wrong — but `bundleVersion` was hashing the working-tree bytes, which meant it
+tracked local line endings. A fresh clone (LF on disk) therefore computed a
+different hash and read **STALE**, and only the clean-checkout sandbox could
+see it: the working tree never disagrees with itself.
+
+> **Invariant.** A generator that hashes files to produce a *committed*
+> artifact must canonicalise CRLF→LF first. Hash the bytes git stores, not the
+> bytes your filesystem happens to hold.
+
 ## 3. The push range
 
 The hook reads git's stdin (`<local_ref> <local_sha> <remote_ref> <remote_sha>`)

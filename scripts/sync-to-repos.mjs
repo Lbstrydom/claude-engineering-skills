@@ -68,6 +68,12 @@ const MANAGED_IGNORE_PATTERNS = [
   'dashboard/telemetry.html',
   '.brainstorm/',
   '.skills-fit-check.json',
+  // Repo-local scratch for class-2 temp artifacts (`scratchPath()` in
+  // lib/temp-paths.mjs — see the temp-file rule in AGENTS.md "Code Style").
+  // Self-provisioning: the synced tooling writes here in EVERY consumer, so the
+  // ignore has to travel with it rather than rely on each consumer having
+  // thought to add it. Precise dir, not `.claude/` — consumers own that tree.
+  '.claude/tmp/',
   'logs/mcp-*.log',
   'logs/mcp-*.log.gz',
   '.audit/',                          // ALL audit-loop runtime output (see above)

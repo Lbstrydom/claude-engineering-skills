@@ -1,7 +1,10 @@
 import { writeLedgerEntry, generateTopicId, populateFindingMetadata } from './shared.mjs';
+import { scratchPath } from './lib/temp-paths.mjs';
 
 const SID = 'audit-1776354886';
-const ledgerPath = '/tmp/' + SID + '-ledger.json';
+// Repo-local: the ledger is written for a LATER reader, and a literal '/tmp/'
+// names a different directory under git-bash, Node-on-Windows and Linux.
+const ledgerPath = scratchPath('ledger', `${SID}-ledger.json`);
 
 function addEntry(finding, outcome, remState, severity, origSeverity, ruling, rationale, resolvedRound) {
   populateFindingMetadata(finding, finding._pass);

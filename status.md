@@ -1,6 +1,51 @@
 # Project Status Log
 
-## 2026-07-31 (latest) — the acceptance backlog was never closable
+## 2026-08-01 (latest) — temp paths standardised by audience, not by literal
+
+Agents kept losing artifacts because "it wrote to /tmp" names no single directory: on
+Windows, git-bash/MSYS rewrites a `/tmp` **argv** to `%LOCALAPPDATA%\Temp`, Node resolves
+a literal `'/tmp'` path to `<drive>:\tmp`, and `os.tmpdir()` returns a third. That
+ambiguity had already cost a full mis-triage.
+
+**The split that resolves it is by AUDIENCE, not lifetime.** Read later by a human, an
+agent, or a next step → `scratchPath()` (new [`scripts/lib/temp-paths.mjs`](scripts/lib/temp-paths.mjs)),
+repo-local `.claude/tmp/`. Disposable inside one run → `fs.mkdtempSync(join(os.tmpdir(),
+'prefix-'))`. Only the first half got a helper: the `mkdtemp` form is already idiomatic
+and correct in ~12 places, so wrapping it would have churned working code to gain
+nothing — and a gate banning direct `os.tmpdir()` would then cry wolf on the correct
+form. All four stragglers found were class-2 artifacts sitting in an ephemeral trash
+can, which is the actual bug rather than the spelling.
+
+Fixed here: `write-ledger-r1.mjs`, `lib/claudemd/step65-hook.mjs`. **Both sync to
+consumers**, so each was teaching `'/tmp/'` to every agent that greps the bundle — the
+reason a doc line alone was never going to hold.
+
+Enforcement is two-moment and both halves are mutation-tested (red on a planted
+violation, green when removed): the `literal-temp-root` quickfix pattern at edit time
+(reaches every consumer), and `tests/temp-path-convention.test.mjs` at push time. The
+regex matches the temp **root** only, so `/tmpfs` and a URL's `/tmpl` don't trip it;
+comment lines are exempt, because the hazard is worth documenting and no hand-maintained
+allowlist can drift.
+
+**The consumer-side hole the design nearly shipped with**: `scratchPath()` writes into
+every consumer repo, but `.claude/tmp/` was not in the sync-managed `.gitignore` block —
+synced tooling would have dirtied their trees. Added to `MANAGED_IGNORE_PATTERNS`, so the
+convention is self-provisioning.
+
+AGENTS.md was at **1197/1200** — the rule could not be added without breaching the cap.
+Rather than shave words, condensed the pre-push subsection to its three invariants and
+moved the CRLF/`bundleVersion` incident into [`prepush-sandbox.md`](docs/runbooks/prepush-sandbox.md)
+§2.1 (zero loss); now 1196. Measured the structure while there: **14 of the 16 sections
+over 30 lines already carry a `docs/` pointer**, so the file is mostly summaries that
+outgrew "stub", and the condensation runway is large. The policy already exists in the
+preamble; what is missing is that the cap only fires *at* 1200, when the cheap move is to
+shave rather than condense. Candidate follow-up (not built): warn at ~90% and name the
+sections that already have a docs pointer.
+
+Principle worth keeping: **a mechanically-enforced rule earns one line in AGENTS.md,
+because its enforcement message carries the detail.**
+
+## 2026-07-31 — the acceptance backlog was never closable
 
 Started from /ship's gate signals. The nudge said 20 unremediated acceptances and told
 you to close them with `finalize-outcomes`. Both were wrong.

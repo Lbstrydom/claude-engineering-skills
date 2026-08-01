@@ -162,6 +162,17 @@ export const PATTERNS = Object.freeze([
     suggestion: 'Hardcoded HTTP URL fallback. Move to config; prefer HTTPS.',
   },
   {
+    // A literal temp root names a DIFFERENT directory per shell: git-bash/MSYS
+    // rewrites a `/tmp` argv to %LOCALAPPDATA%\Temp, Node resolves a literal
+    // '/tmp' path to <drive>:\tmp, and os.tmpdir() returns %LOCALAPPDATA%\Temp.
+    // Matches the temp root only (quote/slash-terminated) so `/tmpfs`, a
+    // `/tmp` inside a URL, and prose in comments don't trip it.
+    name: 'literal-temp-root',
+    severity: 'medium',
+    regex: /['"`](?:\/tmp|\/var\/tmp|[A-Za-z]:[\\/]{1,2}tmp)(?:['"`]|[\\/])/,
+    suggestion: 'Literal temp root resolves to a different directory under git-bash, Node-on-Windows and Linux. If someone reads the file later use scratchPath() (repo-local .claude/tmp); if it is disposable use fs.mkdtempSync(path.join(os.tmpdir(), "prefix-")).',
+  },
+  {
     name: 'transaction-empty-catch',
     severity: 'high',
     // Fires on any catch (inside a transaction/lock nearby window) that

@@ -6,6 +6,7 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { scratchPath } from '../temp-paths.mjs';
 
 /**
  * Run the hygiene linter as a Step 6.5 hook.
@@ -14,7 +15,10 @@ import path from 'node:path';
  * @returns {{ exitCode: number, report: object|null, summary: string }}
  */
 export function runHygieneCheck(sessionId, repoRoot = process.cwd()) {
-  const outFile = path.join(process.env.TEMP || '/tmp', `${sessionId}-hygiene.json`);
+  // Repo-local, not OS temp: the report is read back below and is worth having
+  // on disk when a Step 6.5 result needs explaining. `process.env.TEMP || '/tmp'`
+  // resolved to three different directories depending on the shell.
+  const outFile = scratchPath('hygiene', `${sessionId}-hygiene.json`);
   const scriptPath = path.join(repoRoot, 'scripts', 'claudemd-lint.mjs');
 
   // Check if linter exists
