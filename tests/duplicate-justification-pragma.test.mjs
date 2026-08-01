@@ -16,6 +16,7 @@ import {
   findRepoPragmas,
   resolvePragmasToDefinitions,
   parseGitGrepPragmaRecord,
+  splitGitGrepRecords,
   PRAGMA_RESOLUTION_MAX_GAP_LINES,
 } from '../scripts/lib/duplicate-justification-pragma.mjs';
 import { gitFixtureEnv } from './helpers/fixtures.mjs';
@@ -360,5 +361,49 @@ describe('findRepoPragmas — untracked files + strict mode (round-2 M7 / H8)', 
   it('strict mode: a genuinely EMPTY (zero-match) git repo still returns [] — zero-match is not a failure', () => {
     const pragmas = findRepoPragmas(tmp, { strict: true, env: gitFixtureEnv() });
     assert.deepEqual(pragmas, []);
+  });
+});
+
+describe('splitGitGrepRecords — a filename containing a newline', () => {
+  // Raised 4x and REOPENED 2x. Every earlier attempt hardened the per-record
+  // parser (already NUL-correct) instead of the SPLIT, which is where the bug
+  // was: splitting the whole output on newlines cuts INSIDE the raw filename
+  // that `-z` deliberately does not escape.
+  const NUL = String.fromCharCode(0);
+  const P = '// @duplicate-justification: target=src/a.mjs:foo reason=intentional';
+  const weird = 'src/nor\nmal.mjs';
+
+  it('keeps the record whole and preserves the real path', () => {
+    const out = weird + NUL + '12:' + P + '\n' + 'src/plain.mjs' + NUL + '7:' + P + '\n';
+    const got = splitGitGrepRecords(out).map(parseGitGrepPragmaRecord).filter(Boolean);
+    assert.equal(got.length, 2);
+    assert.equal(got[0].pragmaFile, weird);
+    assert.equal(got[0].pragmaLine, 12);
+    assert.equal(got[1].pragmaFile, 'src/plain.mjs');
+  });
+
+  it('the OLD newline-split MISATTRIBUTED it — corruption, not loss', () => {
+    // Worth pinning: the failure was never a dropped pragma (which would merely
+    // under-suppress). The post-newline fragment BECAME the filename, so the
+    // suppression was recorded against a path that does not exist while the
+    // real file's duplicate stayed unsuppressed.
+    const out = weird + NUL + '12:' + P + '\n';
+    const old = out.split(/\r?\n/).map(parseGitGrepPragmaRecord).filter(Boolean);
+    assert.equal(old.length, 1);
+    assert.equal(old[0].pragmaFile, 'mal.mjs', 'old split invented a bogus path');
+    const now = splitGitGrepRecords(out).map(parseGitGrepPragmaRecord).filter(Boolean);
+    assert.equal(now[0].pragmaFile, weird);
+  });
+
+  it('still handles CRLF checkouts and both -z record shapes', () => {
+    const crlf = 'a.mjs' + NUL + '3:' + P + '\r\n';
+    assert.ok(parseGitGrepPragmaRecord(splitGitGrepRecords(crlf)[0]));
+    const twoNul = 'b.mjs' + NUL + '4' + NUL + P + '\n';
+    assert.ok(parseGitGrepPragmaRecord(splitGitGrepRecords(twoNul)[0]));
+  });
+
+  it('empty / NUL-less input yields no records rather than a fragment', () => {
+    assert.deepEqual(splitGitGrepRecords(''), []);
+    assert.deepEqual(splitGitGrepRecords('no nul here\n'), []);
   });
 });

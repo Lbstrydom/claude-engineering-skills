@@ -117,15 +117,55 @@ export function findRepoPragmas(repoRoot, { strict = false, env } = {}) {
     return [];
   }
   const pragmas = [];
-  // Records stay `\n`-terminated even under `-z` (only the FIELD separators
-  // become NUL) — split on /\r?\n/, NOT '\n', for the same CRLF-checkout
-  // reason as before (a consumer repo without eol=lf checks files out CRLF,
-  // so a record's trailing byte before the newline can be \r).
-  for (const record of output.split(/\r?\n/)) {
+  for (const record of splitGitGrepRecords(output)) {
     const pragma = parseGitGrepPragmaRecord(record);
     if (pragma) pragmas.push(pragma);
   }
   return pragmas;
+}
+
+/**
+ * Split `git grep -z -n` output into records WITHOUT pre-splitting on newlines.
+ *
+ * Records are `<file>\0<line>[:\0]<content>\n`, and under `-z` the filename is
+ * emitted RAW (that is what `-z` buys: no `core.quotePath` C-escaping). A POSIX
+ * filename may contain `\n`, so that raw newline lands INSIDE the filename field,
+ * before the NUL. The previous implementation split the whole output on `/\r?\n/`
+ * first, which cut such a record in half: the fragment handed to the parser had
+ * no NUL, the parser returned null, and the pragma was silently dropped — a
+ * suppression pragma vanishing is a false duplication finding, not a crash.
+ *
+ * Raised four times and REOPENED twice, because each earlier attempt hardened
+ * the per-record parser (which was already NUL-correct) rather than the split.
+ *
+ * The scan is what makes it right: find the NUL that ends the filename FIRST,
+ * then take the record's terminator as the first `\n` AFTER it. `git grep`
+ * content is a single matched line, so that newline is always the true record
+ * boundary, and any newline before the NUL is filename bytes.
+ *
+ * The trailing `\r` strip is preserved from the old regex: a consumer repo
+ * without `eol=lf` checks files out CRLF, so the content's last byte can be `\r`.
+ *
+ * @param {string} output raw stdout of `git grep -z -n`
+ * @returns {string[]} one entry per record, `\r`-trimmed, empties dropped
+ */
+export function splitGitGrepRecords(output) {
+  if (!output) return [];
+  const records = [];
+  let i = 0;
+  while (i < output.length) {
+    const nul = output.indexOf('\0', i);
+    // No NUL left → no further well-formed record. Trailing bytes are the final
+    // newline or garbage; dropping them beats emitting a fragment the parser
+    // would reject anyway.
+    if (nul === -1) break;
+    const nl = output.indexOf('\n', nul);
+    const end = nl === -1 ? output.length : nl;
+    const record = output.slice(i, end).replace(/\r$/, '');
+    if (record) records.push(record);
+    i = end + 1;
+  }
+  return records;
 }
 
 /**
