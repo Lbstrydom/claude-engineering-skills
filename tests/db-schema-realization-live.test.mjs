@@ -30,6 +30,7 @@ import { getPool, closePool, _resetForTest, assertDisposableDbUrl } from '../scr
 import { query, withTx } from '../scripts/lib/db/query.mjs';
 import {
   ERR_SCHEMA_BEHIND, resolveMigrationsDir, listBundledMigrations, REALIZATION_TTL_MS,
+  _resetRealizationCache,
 } from '../scripts/lib/db/schema-realization.mjs';
 
 const TEST_URL = process.env.AUDIT_DB_TEST_URL;
@@ -109,15 +110,15 @@ describe('schema realization is LIVE on the real write path', { skip }, () => {
     // guard passing every unit test while never refusing anything.
     const pool = await getPool();
     evicted = await evictNewestLedgerRow(pool);
-    // The verified result is cached per pool; a fresh pool is the honest way to re-ask.
-    await closePool();
-    await _resetForTest();
-    process.env.AUDIT_DB_URL = TEST_URL;
-    await getPool();
+    // The previous test's write cached a VERIFIED result for this pool. Clear it rather than
+    // cycling the pool: a cycled pool changes two things at once, and this assertion is about
+    // the guard, not about pool lifecycle. (It also exercises the reset seam, which returned
+    // `true` while clearing nothing until the consolidated gate caught it.)
+    _resetRealizationCache();
 
     await assert.rejects(
       () => query(`INSERT INTO ${TMP_TABLE} (label) VALUES ($1)`, ['must-not-land']),
-      (err) => err.code === ERR_SCHEMA_BEHIND && /not applied/.test(err.message),
+      (err) => err.code === ERR_SCHEMA_BEHIND && /--migrate/.test(err.message),
       'a database missing a bundled migration must refuse an application write',
     );
 
