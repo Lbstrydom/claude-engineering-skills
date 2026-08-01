@@ -1,7 +1,7 @@
 # Plan: Final-Review Shadow Bake-Off (marginal-value re-test)
 
 - **Date**: 2026-07-29
-- **Status**: Parked
+- **Status**: In Progress (activated 2026-07-31 — see §0 Activation Addendum)
 - **Author**: Claude + Louis
 
 > ## ⏸ PARKED 2026-07-29 — read this before implementing anything below
@@ -52,6 +52,189 @@
 > recreates the unreadable-tail failure of the closed experiment: you would pay
 > for the runs and be unable to trust the numbers. Full instrument or cheap
 > smoke — nothing in between.
+
+---
+
+## 0. ACTIVATION ADDENDUM (2026-07-31) — the trigger fired; this is what runs
+
+**Pre-registered before snapshot 2. Snapshot 1's data already existed when this
+was written and is declared below rather than discovered — the honest reading of
+"pre-registered" here is *the rule was fixed before the data that decides it*,
+with the one pre-existing point disclosed.**
+
+### 0.1 Why the trigger fired
+
+The banner's un-park condition was "a disagreement about marginal value that
+config-level evidence cannot settle." That is now exactly the state:
+
+- Tail labelling ([`final-review-tail-labelling-2026-07-31.md`](../research/final-review-tail-labelling-2026-07-31.md))
+  put Opus at **~1.1 accepted HIGH/MED per run at ~$1.07 each** — no longer the
+  "probably noise" that justified parking.
+- Kimi has **n=2, zero unique accepted**. Not bad; *unmeasured*.
+- The operator question is explicitly permutational — Gemini alone vs +Opus vs
+  +Kimi vs Kimi-primary — and no amount of config-level evidence answers it.
+
+### 0.2 What Cluster A already built, so this is now cheap
+
+The parked instrument's cost was the reason for parking. Most of it is done or
+no longer needed:
+
+| Parked Phase 0 item | Status now |
+|---|---|
+| Fix-time attribution write-back | **Built** — `/ship` Step 6.7 + `final-review-{adjudicate,record-fix}` |
+| Outcome classification over both axes | **Built** — `classifyFinalReviewOutcome` |
+| Blinded worksheet | **Built** — `final-review-stats --worksheet` |
+| Six bakeoff tables + migrations | **Not needed** — `audit_findings.bucket` + `source_model` already separate the arms per run |
+| Labelled clustering corpus, ≥0.95 recall | **Not needed** — real primary↔shadow overlap measured at **~2%** (1 of 92). Clustering was sized for a problem that does not exist at this base rate; human-glance of same-file pairs suffices |
+| Journaled run lifecycle | **Not needed** — no new tables to keep consistent |
+
+**This is the right-sizing the banner demanded, not a skipped instrument.** The
+one Phase-0 item that mattered (attribution) exists; the expensive item
+(clustering) was justified by an assumed overlap rate that measurement falsified.
+
+### 0.3 Protocol — TWO invocations per snapshot, four arms
+
+Gemini is fixed as primary. Per real final review, on the **same transcript
+file**:
+
+1. **Invocation 1 — the real gate**: Gemini primary + **Opus** shadow, with
+   `--run-id`. This is today's config; it gates nothing differently.
+2. **Invocation 2 — out-of-band**: same transcript, `FINAL_REVIEW_SHADOW=openrouter`
+   + `FINAL_REVIEW_SHADOW_MODEL=moonshotai/kimi-k2-thinking`.
+
+Four arms per snapshot: **P₁, P₂** (Gemini sampled twice — the self-shadow arm,
+for free), **Opus**, **Kimi**.
+
+The same-snapshot requirement is the whole design. Alternating shadows across
+different reviews measures diff difficulty, not models — that was the parked
+plan's §3 finding and it still binds.
+
+### 0.4 What each arm answers
+
+| Question | Read as |
+|---|---|
+| Opus marginal over Gemini | Opus-unique vs P₁, accepted |
+| Kimi marginal over Gemini | Kimi-unique vs P₂, accepted |
+| **Kimi vs Opus head-to-head** | their unique sets on identical input |
+| Gemini vs Kimi as *reviewers* | P findings vs Kimi findings — the quality evidence a Kimi-**primary** decision would need, **without risking the gate** |
+| "Is a 2nd reviewer just a reroll?" | P₁ vs P₂ divergence. High → buy a retry loop, not a model |
+
+**Kimi-as-primary is deliberately NOT an arm.** The primary gates builds; it
+faces a stricter non-inferiority bar and is a separate decision. Row 4 gives it
+evidence for free.
+
+### 0.5 Decision rule — inherited, NOT re-invented
+
+§6.3's ordered table applies unchanged: gate at `marginal ≥ 0.2 accepted
+HIGH/MED per run`, ceiling `≤$8 per accepted cluster`, cheapest qualifying arm
+wins, `INCONCLUSIVE` if N < 12 or the merged/split sensitivity flips it.
+
+Opus's measured position: **1.1/run at $1.07** — clears both. So the live
+questions are narrow: *does Kimi clear 0.2, and what fraction of Opus's 1.1 does
+it cover?*
+
+**N = 15 snapshots**, or a committed end date, whichever first. Terminates
+either way — bounded and synchronous, not a third passive collector.
+
+### 0.6 Snapshot 1 (pre-existing, declared)
+
+Transcript `audit-code-1785428132` (Cluster A code audit, 3 GPT rounds):
+
+| Arm | Result |
+|---|---|
+| P₁ (gate) | APPROVE, 0 new |
+| P₂ (invocation 2's primary) | CONCERNS, 2 |
+| Opus shadow | **4 shadow-only** |
+| Kimi shadow | **0** |
+
+Two Gemini samples disagreeing 0-vs-2 on identical input is the stochastic-recall
+effect visible at n=1. Not evidence yet — one snapshot, and P₁/P₂ divergence is
+exactly what arms 1-2 exist to quantify.
+
+### 0.6b How N is tracked — a query, never a tally
+
+**§0.7 below started as a hand-maintained markdown table, and that was a
+defect.** Asking "how do we know when we reach 15?" exposed two things:
+
+1. **It rots.** A count the stopping rule depends on, kept current by
+   remembering to type it, is the exact mechanism behind this repo's five prior
+   false "window met" reads (AGENTS.md, Model Swap-In Evaluation Harness).
+2. **The runs were not in the store at all.** A standalone `gemini-review`
+   invocation with no `--run-id` has no `audit_runs` row to attach to —
+   snapshots 2–3 persisted `final_review_shadow_model = NULL` and zero findings.
+   The table was the *only* record, checkable against nothing.
+
+Fixed by making collection itself write the count:
+
+```bash
+node scripts/bakeoff-collect.mjs --transcript .audit/bakeoff/t.json --plan docs/plans/some-plan.md --mode plan
+node scripts/bakeoff-collect.mjs --progress
+```
+
+*(Invoked directly rather than via an `npm run` alias: `package.json` was being
+edited by a concurrent session at the time, and adding a script there would have
+bundled that session's staged work into this commit. Add the aliases later if
+the direct form grates.)*
+
+[`scripts/bakeoff-collect.mjs`](../../scripts/bakeoff-collect.mjs) runs **both
+arms** on one transcript and appends one machine-written line to
+`.audit/bakeoff-log.jsonl` (Category A — gitignored accumulating run data).
+Four properties make the count trustworthy:
+
+- **Snapshot identity is the transcript's CONTENT hash**, so a copy or rename is
+  the same snapshot, and edited content is correctly a new one.
+- **Re-running a complete snapshot is a no-op** (verified), so N cannot be
+  inflated by repetition.
+- **A snapshot counts only when EVERY arm reports `shadowState: 'ran'`.** A
+  skipped or errored arm leaves it `incomplete` and excluded — so "an arm never
+  ran" can never read as "that arm found nothing". The anti-green rule applied
+  to the counter itself.
+- `--progress` prints `N/target` plus the incomplete count, and states in the
+  output that raw uniques are **not** the verdict.
+
+The three existing snapshots were **backfilled from their saved result files**,
+not re-typed from the table below, and independently reproduced it
+(opus 10 / kimi 0).
+
+### 0.7 Collection log
+
+*(Human-readable mirror. `.audit/bakeoff-log.jsonl` is authoritative — if the
+two ever disagree, believe the log.)*
+
+Appended per snapshot. `unique` = raised by that arm and no other, before
+adjudication; `accepted` is filled in at labelling time.
+
+| # | transcript | P₁ | P₂ | Opus unique | Kimi unique | notes |
+|---|---|---|---|---|---|---|
+| 1 | `audit-code-1785428132` | 0 | 2 | 4 | 0 | pre-existing; declared §0.6 |
+| 2 | `audit-plan-1785374489` | 1 | 1 | 2 | 0 | both P samples CONCERNS/1 |
+| 3 | `audit-plan-1785325355` | 3 | 4 | 4 | 0 | P₂ verdict REJECT vs P₁ CONCERNS |
+
+**N=3 running totals** — Opus unique **10**, Kimi unique **0**, P₁ 4 / P₂ 7.
+
+Three observations, all provisional at N=3 and none yet adjudicated:
+
+1. **Kimi has produced zero unique findings across three snapshots.** It is not
+   silent — it returns parseable CONCERNS/REJECT verdicts and agrees with the
+   primary's findings — but on identical input it has added nothing the primary
+   did not already have. If this holds, Kimi fails the §6.3 gate
+   (`marginal ≥ 0.2/run`) outright and the cheap-shadow hypothesis dies cheaply,
+   which is exactly what this design is for.
+2. **Opus has produced unique findings on all three (4, 2, 4).** Consistent with
+   the labelled tail's ~1.1 accepted HIGH/MED per run, though these are raw
+   uniques, not yet accepted.
+3. **P₁ vs P₂ diverge on every snapshot** (0/2, 1/1, 3/4 — and snapshot 3 gave
+   different *verdicts*, CONCERNS vs REJECT, on identical input). The
+   stochastic-recall arm is live: some of what a shadow "adds" may be
+   reproducible by sampling the primary twice at ~$0.10 rather than $1.21. This
+   is the arm most likely to change the architecture, and it costs nothing extra
+   to keep measuring.
+
+**Not yet done for these snapshots**: adjudication. Raw uniqueness is not value —
+the §6.3 gate scores *accepted* HIGH/MED clusters, and the tail-labelling pass
+showed roughly 40% of raw shadow findings get dismissed. Snapshots 2-3 findings
+persist under their own `source_model`; label them via the ordinary
+`final-review-stats --worksheet` flow before reading anything into the totals.
 
 > **Audit trail** — `/audit-plan` (SID `audit-plan-1785325355`). **GPT 3 rounds**
 > (H:6→6→4, M:3→2→2; 23 findings, **all valid, all in-scope, all fixed — zero

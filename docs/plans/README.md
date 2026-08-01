@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**9 active · 166 terminal · 25 audit summaries · 1 parked · 4 reference docs**
+**11 active · 166 terminal · 25 audit summaries · 4 reference docs**
 
 ---
 
@@ -22,6 +22,8 @@ This is the list to read when asking "what is in flight?".
 | Plan | Status | Notes |
 |---|---|---|
 | [Event-Wiring Symmetry Check](./event-wiring-symmetry.md) | `Draft` |  |
+| [Final-Review Shadow Bake-Off (marginal-value re-test)](./final-review-shadow-bakeoff.md) | `In Progress` | activated 2026-07-31 — see §0 Activation Addendum |
+| [Closing the Green-but-Unrealized Gap](./green-but-unrealized.md) | `Approved` | 3 GPT rounds + 2 Gemini rounds; 29 findings, all fixed — see Audit Trail |
 | [Honest failure across the learning / brainstorm / persona-promote seams](./learning-persona-quickfix-honest-failure.md) | `Draft` |  |
 | [Arch-Memory / Symbol-Index Pipeline Debt (2026-07-26 triage)](./refactor-arch-memory-symbol-index-2026-07.md) | `Draft` |  |
 | [Architecture-Debt Backlog Remainder (2026-07-26 triage)](./refactor-architecture-debt-remainder-2026-07.md) | `Draft` | 1 of 3 items shipped (§2, via a sibling plan); |
@@ -30,17 +32,6 @@ This is the list to read when asking "what is in flight?".
 | [Model-Eval / Pricing Debt (2026-07-26 triage)](./refactor-model-eval-pricing-2026-07.md) | `Draft` |  |
 | [Visual-Audit Contract Validation Debt (2026-07-26 triage)](./refactor-visual-audit-contract-2026-07.md) | `Draft` |  |
 | [Tiered Recall-Weighted Audit Pipeline](./tiered-recall-audit-pipeline.md) | `In Progress` | implementation complete (Clusters A-F implemented |
-
-## Parked
-
-Consciously shelved — not abandoned, not superseded, and not in flight.
-Deliberately listed SEPARATELY from Active: parked work should not be
-chased for progress, but filing it as terminal would lose that it can
-resume. Read this list when asking "what did we decide to defer?".
-
-| Plan | Status | Notes |
-|---|---|---|
-| [Final-Review Shadow Bake-Off (marginal-value re-test)](./final-review-shadow-bakeoff.md) | `Parked` |  |
 
 ## Superseded / abandoned
 
