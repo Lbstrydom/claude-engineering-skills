@@ -1,6 +1,55 @@
 # Project Status Log
 
-## 2026-08-01 (latest) — temp paths standardised by audience, not by literal
+## 2026-08-01 (latest) — one test file could only ever lock one finding
+
+Reported from a consumer: `lock-with-test` returned `{"ok":true,"locked":true}` for
+every call in a batch sweep, and the queue never drained. `regression_specs` carried
+`UNIQUE (repo_id, spec_path)` and [`recordRegressionSpec`](scripts/lib/store/plans-ship.mjs)
+upserts on exactly that target, so locking a second finding to a test file that already
+held one **reassigned** the row. The previously-locked finding silently returned to
+`unlocked_fixes` with `lock_spec_count` back to 0 — invisible at the call site, because
+the writer reported success either way. Measured in that repo before the fix: **16 rows
+across 16 distinct paths from ~31 lock invocations**; roughly half the sweep evicted the
+other half.
+
+**The constraint was correct until it wasn't.** Under /ux-lock one authored spec file
+pins one fix, so `(repo, path)` IS the row identity and a re-run must update in place.
+`source_kind = 'unit-test'` (2026-07-29) broke that assumption two days later — a
+unit/integration suite routinely covers several related findings, and one of the
+consumer's test files had been *written* to lock three of them.
+
+Fix ([20260801120000](supabase/migrations/20260801120000_regression_specs_multi_finding_lock.sql))
+scopes uniqueness by kind rather than relaxing it globally: unit-test rows key on
+`(repo_id, spec_path, source_finding_id)`, everything else keeps `(repo_id, spec_path)`.
+Both stay idempotent. The rejected alternative — reject the second lock loudly — makes
+the eviction visible but leaves any shared file's queue undrainable, and the only way to
+comply would be fragmenting coherent suites into one file per finding: **reshaping the
+repo around the store's schema.**
+
+Every arbiter is now a partial index, so each needs a matching `WHERE` or Postgres
+raises 42P10 — which `recordRegressionSpec`'s catch would swallow into "records nothing",
+the same invisible-failure shape as the original bug. Consumer-sync ordering matters in
+one direction only: updated code works against the old schema (a total index satisfies
+any predicate), but an un-resynced consumer will 42P10 on non-unit-test writes.
+
+Two smaller fixes in the same report. The worksheet fetched 20 mixed rows and filtered
+to `code` **in JS**, with no `ORDER BY` — an arbitrary subset of an arbitrary subset,
+different membership per call, which is what made a stable backlog look like it was
+refilling with fresh findings. Filter and ordering moved into SQL. And the suggested test
+path was computed as `tests/<base>.test.mjs`, this repo's own flat layout and extension;
+the consumer uses `tests/unit/**/<name>.test.js`, so every finding with a perfectly good
+existing test read "none found — write one", and following the worksheet would have
+produced duplicate suites. Now a real search ([`test-file-search.mjs`](scripts/lib/test-file-search.mjs)).
+
+One reported item was **not** a bug: `total` from `list-unlocked-fixes` is a true
+uncapped count (`countUnlockedFixes`), not a page — only `rows`/`shown` caps at 20. The
+flat count the reporter saw was the eviction, not paging.
+
+Verified by round-tripping two locks through the real arbiters on a disposable
+container, not by asserting on source shape — the defect was invisible at the call site
+precisely because the writer reported success.
+
+## 2026-08-01 — temp paths standardised by audience, not by literal
 
 Agents kept losing artifacts because "it wrote to /tmp" names no single directory: on
 Windows, git-bash/MSYS rewrites a `/tmp` **argv** to `%LOCALAPPDATA%\Temp`, Node resolves

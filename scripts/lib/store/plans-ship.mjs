@@ -268,6 +268,15 @@ export async function recordRegressionSpec(repoId, spec) {
       process.stderr.write('  [learning] recordRegressionSpec: non-candidate rows require a resolved repoId (NULL would duplicate on the (repo_id, spec_path) unique index)\n');
       return null;
     }
+    if (spec.sourceKind === 'unit-test' && !spec.sourceFindingId) {
+      // A unit-test lock's identity IS the finding it pins (see the arbiter
+      // note below): without one the row asserts nothing, and the
+      // (repo_id, spec_path, source_finding_id) index could not dedupe it.
+      // Refused here rather than left to the CHECK so the caller gets a
+      // reason instead of a raised constraint name.
+      process.stderr.write('  [learning] recordRegressionSpec: unit-test rows require sourceFindingId — a lock that names no finding pins nothing\n');
+      return null;
+    }
   }
   if (!spec.description) return null;
 
@@ -308,26 +317,46 @@ export async function recordRegressionSpec(repoId, spec) {
     redaction_count: redactionCount,
     updated_at: new Date().toISOString(),
   };
-  // WS-C3 manual review (2026-07-19) — the lint reports this target as
-  // `unresolved-conflict-target` because the ternary is not statically
-  // readable. Reviewed by hand and CORRECT on both branches:
-  //   - candidate     → (repo_id, candidate_fingerprint), arbitrated by the
-  //     partial index via the `conflictWhere` below;
-  //   - non-candidate → (repo_id, spec_path), a full unique constraint.
-  // `repo_id` is provably non-null on BOTH paths — each branch above returns
+  // WS-C3 manual review (2026-07-19, revised 2026-08-01) — the lint reports
+  // this target as `unresolved-conflict-target` because the branch is not
+  // statically readable. Reviewed by hand and CORRECT on all three:
+  //   - candidate     → (repo_id, candidate_fingerprint)
+  //   - unit-test     → (repo_id, spec_path, source_finding_id)
+  //   - everything else → (repo_id, spec_path)
+  // `repo_id` is provably non-null on every path — each branch above returns
   // early on a falsy repoId, naming the duplicate-row consequence. No scope
-  // column is stored-but-omitted. Left dynamic: collapsing it to a literal
-  // would need two upsert call sites for one logical write.
-  const onConflict = isCandidate ? ['repo_id', 'candidate_fingerprint'] : ['repo_id', 'spec_path'];
-  // The candidate arbiter is a PARTIAL unique index
-  // (idx_regression_specs_candidate_fingerprint, migration 20260520120000);
-  // Postgres can only infer it as the ON CONFLICT arbiter when the statement
-  // carries a WHERE matching the index predicate. Without this the upsert
-  // raises 42P10 on every candidate write. The (repo_id, spec_path) arbiter
-  // for non-candidate rows is a full constraint and needs no predicate.
-  const conflictWhere = isCandidate
-    ? "candidate_fingerprint IS NOT NULL AND source_kind = 'persona-consistency-candidate' AND repo_id IS NOT NULL"
-    : undefined;
+  // column is stored-but-omitted. Left dynamic: collapsing it to literals
+  // would need three upsert call sites for one logical write.
+  //
+  // WHY unit-test carries `source_finding_id` in its key (migration
+  // 20260801120000). Under /ux-lock, one spec file pins one fix, so
+  // (repo, path) IS the row identity. A unit/integration test routinely covers
+  // several findings, so keying on the path alone made each new lock REASSIGN
+  // the previous one — the finding silently returned to `unlocked_fixes` while
+  // the call still reported `locked:true`. The identity of a unit-test lock is
+  // which FINDING the file pins, not the file.
+  //
+  // Every arbiter is now a PARTIAL unique index, so each needs a `WHERE`
+  // matching the index predicate or Postgres cannot infer it (42P10 on every
+  // write). Predicates are byte-aligned with the migrations:
+  //   candidate → idx_regression_specs_candidate_fingerprint (20260520120000)
+  //   unit-test → idx_regression_specs_unit_test_lock        (20260801120000)
+  //   other     → idx_regression_specs_path_nonunit          (20260801120000)
+  // A total index trivially satisfies any predicate, so these also work
+  // against the pre-20260801120000 schema — the migration may lag the code.
+  const isUnitTest = spec.sourceKind === 'unit-test';
+  let onConflict;
+  let conflictWhere;
+  if (isCandidate) {
+    onConflict = ['repo_id', 'candidate_fingerprint'];
+    conflictWhere = "candidate_fingerprint IS NOT NULL AND source_kind = 'persona-consistency-candidate' AND repo_id IS NOT NULL";
+  } else if (isUnitTest) {
+    onConflict = ['repo_id', 'spec_path', 'source_finding_id'];
+    conflictWhere = "source_kind = 'unit-test'";
+  } else {
+    onConflict = ['repo_id', 'spec_path'];
+    conflictWhere = "source_kind <> 'unit-test' AND spec_path IS NOT NULL";
+  }
   try {
     const rows = await upsert('regression_specs', [row], {
       onConflict, conflictWhere, update: 'all', returning: ['id'],
@@ -518,19 +547,31 @@ function resolveExplicitRepoScope(scope, fnName) {
  * arbitrary 20 rows out of hundreds across every repo, so a finding that
  * genuinely exists usually will not be in them.
  *
+ * `opts.mode` filters by `audit_mode` **in SQL, before the cap**. A caller that
+ * fetched 20 mixed rows and filtered to `code` in JS got an arbitrary subset of
+ * a subset: with no ORDER BY, Postgres is free to return different 20 rows per
+ * call, so the same backlog reads as a different page each time and code rows
+ * beyond the cap are invisible. That is what made the lock worksheet look like
+ * it was refilling with "fresh" findings during a sweep. The ORDER BY makes the
+ * page a stable prefix rather than an arbitrary sample.
+ *
  * @param {{repoId?: string|null, allRepos?: boolean}} scope
+ * @param {{mode?: 'code'|'plan'|null}} [opts]
  */
-export async function getUnlockedFixes(scope) {
+export async function getUnlockedFixes(scope, opts = {}) {
   const { repoId, allRepos } = resolveExplicitRepoScope(scope, 'getUnlockedFixes');
   if (!await isCloudEnabled()) return [];
+  const mode = opts?.mode ?? null;
   try {
-    if (!allRepos) {
-      return await many(
-        `SELECT * FROM unlocked_fixes WHERE repo_id = $1 LIMIT 20`,
-        [repoId]
-      );
-    }
-    return await many(`SELECT * FROM unlocked_fixes LIMIT 20`);
+    const preds = [];
+    const params = [];
+    if (!allRepos) { params.push(repoId); preds.push(`repo_id = $${params.length}`); }
+    if (mode) { params.push(mode); preds.push(`audit_mode = $${params.length}`); }
+    const where = preds.length ? ` WHERE ${preds.join(' AND ')}` : '';
+    return await many(
+      `SELECT * FROM unlocked_fixes${where} ORDER BY fixed_at DESC, audit_finding_id LIMIT 20`,
+      params
+    );
   } catch (err) {
     process.stderr.write(`  [learning] getUnlockedFixes failed: ${err.message}\n`);
     return [];
@@ -646,51 +687,6 @@ export async function getUnremediatedAcceptances(scope) {
   } catch (err) {
     process.stderr.write(`  [learning] getUnremediatedAcceptances failed: ${err.message}\n`);
     return [];
-  }
-}
-
-/**
- * How many unremediated acceptances exist, split by run mode — the denominator
- * `getUnremediatedAcceptances` cannot report.
- *
- * The exact defect `countUnlockedFixes` was built for, in the sibling view, two
- * days later and unnoticed because only the `unlocked_fixes` half was fixed.
- * Measured 2026-07-31: `getUnremediatedAcceptances` caps at `LIMIT 20`, /ship
- * reported `rows.length`, and the real total was **129** — a 6x undercount in a
- * nudge whose entire job is to convey scale. The count was then repeated back to
- * the operator as the size of the backlog they were deciding whether to work.
- *
- * `plan` rows are counted separately for the same reason as the sibling, but the
- * meaning differs and is worth stating: a plan-mode row here is NOT a permanent
- * non-obligation (unlike an unlockable plan finding) — it is a plan section that
- * was accepted and never amended, which is real work. It is split out so the
- * caller can say which kind it is, not so it can be discarded.
- *
- * Same failure contract as its siblings — cloud-off and query failure both
- * return zeroed counts; this feeds a non-blocking nudge and must never break a
- * push.
- *
- * @param {string|null|{repoId?: string|null, allRepos?: boolean}} [scope]
- * @returns {Promise<{total:number, code:number, plan:number}>}
- */
-export async function countUnremediatedAcceptances(scope) {
-  const { repoId, allRepos } = resolveExplicitRepoScope(scope, 'countUnremediatedAcceptances');
-  const empty = { total: 0, code: 0, plan: 0 };
-  if (!await isCloudEnabled()) return empty;
-  try {
-    const rows = !allRepos
-      ? await many(`SELECT audit_mode, count(*)::int AS n FROM unremediated_acceptances WHERE repo_id = $1 GROUP BY audit_mode`, [repoId])
-      : await many(`SELECT audit_mode, count(*)::int AS n FROM unremediated_acceptances GROUP BY audit_mode`);
-    return rows.reduce((acc, r) => {
-      const n = Number(r.n) || 0;
-      acc.total += n;
-      if (r.audit_mode === 'code') acc.code += n;
-      else if (r.audit_mode === 'plan') acc.plan += n;
-      return acc;
-    }, { ...empty });
-  } catch (err) {
-    process.stderr.write(`  [learning] countUnremediatedAcceptances failed: ${err.message}\n`);
-    return empty;
   }
 }
 

@@ -8878,12 +8878,6 @@
     },
     {
       "table_name": "regression_specs",
-      "constraint_name": "regression_specs_repo_id_spec_path_key",
-      "constraint_type": "UNIQUE",
-      "definition": "UNIQUE (repo_id, spec_path)"
-    },
-    {
-      "table_name": "regression_specs",
       "constraint_name": "regression_specs_row_shape_check",
       "constraint_type": "CHECK",
       "definition": "CHECK ((((source_kind = ANY (ARRAY['audit-loop-fix'::text, 'persona-test-p0'::text, 'persona-test-p1'::text, 'plan-frontend-verify'::text, 'plan-backend-verify'::text, 'unit-test'::text, 'manual'::text, 'other'::text])) AND (spec_path IS NOT NULL) AND (candidate_fingerprint IS NULL) AND (witness_snapshot IS NULL) AND (contradiction_payload IS NULL) AND (journey_context IS NULL) AND (promoted_at IS NULL) AND (promoted_by IS NULL)) OR ((source_kind = 'persona-consistency-candidate'::text) AND (spec_path IS NULL) AND (candidate_fingerprint IS NOT NULL) AND (witness_snapshot IS NOT NULL) AND (contradiction_payload IS NOT NULL) AND (journey_context IS NOT NULL) AND (promoted_at IS NULL) AND (promoted_by IS NULL)) OR ((source_kind = 'persona-consistency-locked'::text) AND (spec_path IS NOT NULL) AND (candidate_fingerprint IS NOT NULL) AND (witness_snapshot IS NOT NULL) AND (contradiction_payload IS NOT NULL) AND (journey_context IS NOT NULL) AND (promoted_at IS NOT NULL))))"
@@ -8899,6 +8893,12 @@
       "constraint_name": "regression_specs_source_kind_check",
       "constraint_type": "CHECK",
       "definition": "CHECK ((source_kind = ANY (ARRAY['audit-loop-fix'::text, 'persona-test-p0'::text, 'persona-test-p1'::text, 'plan-frontend-verify'::text, 'plan-backend-verify'::text, 'persona-consistency-candidate'::text, 'persona-consistency-locked'::text, 'unit-test'::text, 'manual'::text, 'other'::text])))"
+    },
+    {
+      "table_name": "regression_specs",
+      "constraint_name": "regression_specs_unit_test_finding_check",
+      "constraint_type": "CHECK",
+      "definition": "CHECK (((source_kind <> 'unit-test'::text) OR (source_finding_id IS NOT NULL)))"
     },
     {
       "table_name": "security_incidents",
@@ -10033,6 +10033,11 @@
     },
     {
       "tablename": "regression_specs",
+      "indexname": "idx_regression_specs_path_nonunit",
+      "indexdef": "CREATE UNIQUE INDEX idx_regression_specs_path_nonunit ON public.regression_specs USING btree (repo_id, spec_path) WHERE ((source_kind <> 'unit-test'::text) AND (spec_path IS NOT NULL))"
+    },
+    {
+      "tablename": "regression_specs",
       "indexname": "idx_regression_specs_pending_candidates",
       "indexdef": "CREATE INDEX idx_regression_specs_pending_candidates ON public.regression_specs USING btree (repo_id, created_at) WHERE (source_kind = 'persona-consistency-candidate'::text)"
     },
@@ -10048,13 +10053,13 @@
     },
     {
       "tablename": "regression_specs",
-      "indexname": "regression_specs_pkey",
-      "indexdef": "CREATE UNIQUE INDEX regression_specs_pkey ON public.regression_specs USING btree (id)"
+      "indexname": "idx_regression_specs_unit_test_lock",
+      "indexdef": "CREATE UNIQUE INDEX idx_regression_specs_unit_test_lock ON public.regression_specs USING btree (repo_id, spec_path, source_finding_id) WHERE (source_kind = 'unit-test'::text)"
     },
     {
       "tablename": "regression_specs",
-      "indexname": "regression_specs_repo_id_spec_path_key",
-      "indexdef": "CREATE UNIQUE INDEX regression_specs_repo_id_spec_path_key ON public.regression_specs USING btree (repo_id, spec_path)"
+      "indexname": "regression_specs_pkey",
+      "indexdef": "CREATE UNIQUE INDEX regression_specs_pkey ON public.regression_specs USING btree (id)"
     },
     {
       "tablename": "security_incidents",

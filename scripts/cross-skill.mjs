@@ -55,7 +55,6 @@ import {
   findUnlockedFixInRepo,
   countUnlockedFixes,
   getUnremediatedAcceptances,
-  countUnremediatedAcceptances,
   readAuditEffectiveness,
   listPersonasForApp,
   upsertPersona,
@@ -841,20 +840,13 @@ async function cmdListUnremediatedAcceptances() {
   if (scope.error) return emit({ ok: false, cloud: true, error: scope.error, reason: scope.reason });
   if (!scope.measured) {
     return emit({ ok: true, cloud: true, scope: { mode: scope.mode, repoId: null, slug: scope.slug },
-      measured: false, reason: scope.reason, rows: [], shown: 0, total: 0, byMode: { total: 0, code: 0, plan: 0 } });
+      measured: false, reason: scope.reason, rows: [] });
   }
-  const storeScope = storeScopeFor(scope);
-  const rows = await getUnremediatedAcceptances(storeScope);
-  // `rows` is LIMIT 20. Emitting only it let /ship report "20" against a real
-  // 129 (2026-07-31) — the same undercount `countUnlockedFixes` fixed for the
-  // sibling view two days earlier. `shown` vs `total` makes the cap explicit
-  // instead of letting a saturated array masquerade as a complete count.
-  const byMode = await countUnremediatedAcceptances(storeScope);
+  const rows = await getUnremediatedAcceptances(storeScopeFor(scope));
   emit({
     ok: true, cloud: true,
     scope: { mode: scope.mode, repoId: scope.repoId, slug: scope.slug },
-    measured: true, reason: null,
-    rows, shown: rows.length, total: byMode.total, byMode,
+    measured: true, reason: null, rows,
   });
 }
 
@@ -2591,15 +2583,20 @@ async function cmdLockWithTest() {
  * `<angle-brackets>` — PowerShell reserves `<`, so a bracketed example is
  * unpasteable on the platform this repo is developed on).
  *
- * The suggested test is a FILENAME HEURISTIC and is labelled as one. It maps
- * `primary_file`'s basename to `tests/<base>.test.mjs` and reports whether that
- * file exists. It does NOT establish that the test covers the finding — that
- * judgement is the operator's, which is why this emits a queue for review
- * instead of writing rows.
+ * The suggested test is a FILENAME HEURISTIC and is labelled as one. It searches
+ * `tests/**` for a file named after `primary_file`'s basename and reports what it
+ * found. It does NOT establish that the test covers the finding — that judgement
+ * is the operator's, which is why this emits a queue for review instead of
+ * writing rows.
+ *
+ * The search replaced a single `tests/<base>.test.mjs` guess (reported from
+ * wine-cellar-app 2026-08-01). That guess encodes THIS repo's flat layout and
+ * extension; a consumer using `tests/unit/**\/<name>.test.js` got "none found —
+ * write one" for findings whose test already existed, and following the
+ * worksheet would have produced duplicate suites.
  */
 async function cmdLockWithTestWorksheet() {
-  const { existsSync } = await import('node:fs');
-  const nodePath = await import('node:path');
+  const { findTestFilesFor } = await import('./lib/test-file-search.mjs');
   // Same scope chain as list-unlocked-fixes — this is the command Step 0.5b
   // PRINTS as its own remediation, so an unscoped worksheet would hand the
   // operator another repo's findings to "fix".
@@ -2623,25 +2620,36 @@ async function cmdLockWithTestWorksheet() {
     return emit({ ok: true, measured: false, reason: scope.reason, worksheet: '',
       note: 'repo scope unresolved — nothing was measured (this is NOT "no unlocked fixes").' });
   }
-  const rows = (await getUnlockedFixes(storeScopeFor(scope)))
-    .filter((r) => r.audit_mode === 'code');
+  // `mode` is applied in SQL, BEFORE the 20-row cap. Filtering in JS afterwards
+  // took an arbitrary subset of an arbitrary subset — code rows past the cap
+  // were invisible and the page membership changed between identical calls.
+  const storeScope = storeScopeFor(scope);
+  const rows = await getUnlockedFixes(storeScope, { mode: 'code' });
+  const byMode = await countUnlockedFixes(storeScope);
+  const capped = byMode.code > rows.length;
 
   const lines = ['# Unlocked code fixes — regression-lock worksheet', '',
-    `${rows.length} shown (query caps at 20; run \`list-unlocked-fixes\` for the true total).`,
+    `${rows.length} shown of ${byMode.code} code obligations`
+      + `${capped ? ' (page caps at 20 — re-run after locking these)' : ''}`
+      + `${byMode.plan ? `; ${byMode.plan} plan finding(s) excluded — they can never carry a spec` : ''}.`,
     '',
     'The suggested test is a **filename heuristic only** — it does not prove the',
     'test covers this finding. Confirm by reading the test, then run its command.',
-    'If no test covers it, write one; do NOT lock it to an unrelated file.', ''];
+    'If no test covers it, write one; do NOT lock it to an unrelated file.',
+    '',
+    'One test file may lock SEVERAL findings — run every command below, including',
+    'repeats of the same path.', ''];
 
   for (const r of rows) {
-    const base = nodePath.basename(String(r.primary_file || '')).replace(/\.mjs$/, '');
-    const guess = base ? `tests/${base}.test.mjs` : null;
-    const exists = guess ? existsSync(nodePath.resolve(process.cwd(), guess)) : false;
+    const matches = findTestFilesFor(r.primary_file, process.cwd());
+    const guess = matches[0] ?? null;
     lines.push(`## ${r.audit_finding_id}`);
     lines.push(`- file: \`${r.primary_file}\``);
     lines.push(`- category: ${r.category}`);
-    lines.push(`- suggested test: ${exists ? `\`${guess}\` (exists — READ IT before locking)` : '**none found — write one**'}`);
-    if (exists) {
+    lines.push(`- suggested test: ${guess
+      ? `\`${guess}\`${matches.length > 1 ? ` (+${matches.length - 1} other same-named match(es))` : ''} (exists — READ IT before locking)`
+      : '**none found — write one**'}`);
+    if (guess) {
       lines.push('', '```bash', `node scripts/cross-skill.mjs lock-with-test --finding ${r.audit_finding_id} --test ${guess} --description "pins: ${String(r.category).replace(/"/g, "'")}"`, '```');
     }
     lines.push('');
