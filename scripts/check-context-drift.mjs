@@ -13,6 +13,9 @@
  *   ctx/oversized-claude-md     MEDIUM  CLAUDE.md exceeds maxClaudeMdLines
  *   ctx/oversized-agents-md     MEDIUM  AGENTS.md exceeds maxAgentsMdLines (sprawl
  *                                       cap — condense to stubs + docs/<topic>.md)
+ *   ctx/agents-md-headroom      ADVISORY AGENTS.md is within 10% of the cap. Names
+ *                                       the sections cheapest to condense. NEVER
+ *                                       affects the exit code, --strict included.
  *
  * Exit codes:
  *   0  No findings
@@ -274,17 +277,85 @@ function checkPair(agentsPath, claudePath, agentsContent, claudeContent, config)
  */
 function checkAgentsSize(agentsPath, agentsContent, config) {
   const agentsLines = agentsContent.split('\n');
-  if (agentsLines.length <= config.maxAgentsMdLines) return [];
-  return [{
-    ruleId: 'ctx/oversized-agents-md',
-    severity: 'warn',
-    file: agentsPath,
-    line: agentsLines.length,
-    message: `AGENTS.md is ${agentsLines.length} lines, exceeding the ${config.maxAgentsMdLines}-line sprawl cap. ` +
-             'Condense dossier-grade sections to what-it-is/when-you-need-it/pointer stubs and move the operational depth to docs/<topic>.md ' +
-             '(the progressive-disclosure pattern in AGENTS.md\'s own preamble). Raise maxAgentsMdLines in .claude-context-allowlist.json only for a deliberate, justified exception.',
-    semanticId: hashId(agentsPath, 'oversized-agents'),
-  }];
+  const total = agentsLines.length;
+  const cap = config.maxAgentsMdLines;
+
+  if (total > cap) {
+    return [{
+      ruleId: 'ctx/oversized-agents-md',
+      severity: 'warn',
+      file: agentsPath,
+      line: total,
+      message: `AGENTS.md is ${total} lines, exceeding the ${cap}-line sprawl cap. ` +
+               'Condense dossier-grade sections to what-it-is/when-you-need-it/pointer stubs and move the operational depth to docs/<topic>.md ' +
+               '(the progressive-disclosure pattern in AGENTS.md\'s own preamble). Raise maxAgentsMdLines in .claude-context-allowlist.json only for a deliberate, justified exception.' +
+               formatCandidates(agentsLines),
+      semanticId: hashId(agentsPath, 'oversized-agents'),
+    }];
+  }
+
+  // Approaching the cap. Advisory ONLY — never affects the exit code, in either
+  // mode. Fires here rather than at the cap because at the cap the cheap move is
+  // to shave words off whatever you are adding, which keeps the file at its
+  // limit forever; naming the condensable sections while there is still headroom
+  // is what makes "move a dossier to docs/" the easier option.
+  if (total >= Math.floor(cap * AGENTS_MD_ADVISORY_RATIO)) {
+    const candidates = formatCandidates(agentsLines);
+    if (!candidates) return [];
+    return [{
+      ruleId: 'ctx/agents-md-headroom',
+      severity: 'info',
+      file: agentsPath,
+      line: total,
+      message: `AGENTS.md is ${total}/${cap} lines (${cap - total} left). Not a failure — but the next invariant ` +
+               'will not fit, and shaving words to squeeze under the cap is how a file stays permanently full.' + candidates,
+      semanticId: hashId(agentsPath, 'agents-headroom'),
+    }];
+  }
+  return [];
+}
+
+/** A section is condensable when it is large AND its depth already has a home. */
+const AGENTS_MD_ADVISORY_RATIO = 0.9;
+const CONDENSE_MIN_LINES = 30;
+const DOCS_POINTER = /docs\/[A-Za-z0-9._/-]+\.md/;
+
+/**
+ * Rank H2 sections by "cheapest to condense with least loss": big, and already
+ * carrying a docs/ pointer, so the depth is duplicated rather than resident.
+ * A section with no pointer may still be condensable, but moving it means
+ * WRITING the doc — a different-sized job, so it is not suggested here.
+ *
+ * @param {string[]} lines - AGENTS.md split by newline
+ * @returns {string} formatted suffix (empty when nothing qualifies)
+ */
+function formatCandidates(lines) {
+  const sections = [];
+  let current = null;
+  for (const line of lines) {
+    if (line.startsWith('## ')) {
+      if (current) sections.push(current);
+      current = { title: line.slice(3).trim(), lines: 0, hasPointer: false };
+    }
+    if (!current) continue;
+    current.lines++;
+    if (DOCS_POINTER.test(line)) current.hasPointer = true;
+  }
+  if (current) sections.push(current);
+
+  const ranked = sections
+    .filter(s => s.lines >= CONDENSE_MIN_LINES && s.hasPointer)
+    .sort((a, b) => b.lines - a.lines)
+    .slice(0, 5);
+  if (ranked.length === 0) return '';
+
+  const reclaimable = sections
+    .filter(s => s.lines >= CONDENSE_MIN_LINES && s.hasPointer)
+    .reduce((n, s) => n + s.lines, 0);
+
+  return `\n  Condense first — large AND already pointing at docs/ (so the depth is duplicated, not resident); ` +
+         `${reclaimable} lines sit in sections of this shape:\n` +
+         ranked.map(s => `    ${String(s.lines).padStart(4)} lines  ## ${s.title}`).join('\n');
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -404,12 +475,24 @@ function emitOutput(findings, format) {
   }
   const high = findings.filter(f => f.severity === 'error');
   const med = findings.filter(f => f.severity === 'warn');
-  process.stdout.write('Context drift report\n');
-  process.stdout.write('====================\n');
-  process.stdout.write(`HIGH: ${high.length}  MEDIUM: ${med.length}\n\n`);
+  const info = findings.filter(f => f.severity === 'info');
+  // An info-only run is a clean run that has something to say. Say it without
+  // dressing it as a report, or the next reader learns to ignore the header.
+  if (high.length === 0 && med.length === 0) {
+    process.stdout.write('OK  No context drift detected.\n');
+  } else {
+    process.stdout.write('Context drift report\n');
+    process.stdout.write('====================\n');
+    process.stdout.write(`HIGH: ${high.length}  MEDIUM: ${med.length}\n\n`);
+  }
   for (const f of findings) {
+    if (f.severity === 'info') continue;
     const sev = f.severity === 'error' ? 'HIGH' : 'MEDIUM';
     process.stdout.write(`[${sev}] ${f.ruleId} — ${f.file}:${f.line ?? '?'}\n`);
+    process.stdout.write(`  ${f.message}\n\n`);
+  }
+  for (const f of info) {
+    process.stdout.write(`[ADVISORY] ${f.ruleId} — ${f.file}:${f.line ?? '?'}\n`);
     process.stdout.write(`  ${f.message}\n\n`);
   }
 }

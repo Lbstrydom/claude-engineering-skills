@@ -251,6 +251,74 @@ describe('check-context-drift', () => {
       }
     });
 
+    // ── Headroom advisory ────────────────────────────────────────────────
+    // Fires BELOW the cap, names the sections cheapest to condense, and must
+    // never affect an exit code — the whole point is that it arrives while
+    // condensing is still optional, so it cannot be allowed to block a push.
+
+    /** AGENTS.md with `n` H2 sections of `linesEach`, `withPointer` of them citing docs/. */
+    function agentsWithSections(n, linesEach, withPointer) {
+      let out = '# AGENTS.md\n';
+      for (let i = 0; i < n; i++) {
+        out += `## Section ${i}\n`;
+        if (i < withPointer) out += 'See [detail](docs/reference/topic.md).\n';
+        out += 'body\n'.repeat(linesEach);
+      }
+      return out;
+    }
+
+    function inTmpRepo(name, agents, config, fn) {
+      const tmpDir = path.join(FIXTURES, name);
+      fs.mkdirSync(tmpDir, { recursive: true });
+      try {
+        fs.writeFileSync(path.join(tmpDir, 'AGENTS.md'), agents);
+        fs.writeFileSync(path.join(tmpDir, '.claude-context-allowlist.json'), JSON.stringify(config));
+        fn(runDriftCheck(tmpDir));
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      }
+    }
+
+    it('near the cap: ADVISORY naming the condensable sections, and NO warn', () => {
+      // 4 sections x 40 lines = ~165 lines, cap 180 → 91%, inside the band.
+      inTmpRepo('_tmp-agents-headroom', agentsWithSections(4, 40, 3), { maxAgentsMdLines: 180 }, ({ findings }) => {
+        const advisory = findings.filter(f => f.ruleId === 'ctx/agents-md-headroom');
+        assert.equal(advisory.length, 1, `expected one advisory, got: ${JSON.stringify(findings)}`);
+        assert.equal(advisory[0].severity, 'info');
+        // Only the docs-pointing sections are suggested — moving a section with
+        // no doc means WRITING one, a different-sized job.
+        assert.match(advisory[0].message, /## Section 0/);
+        assert.doesNotMatch(advisory[0].message, /## Section 3/);
+        assert.equal(findings.filter(f => f.severity === 'warn').length, 0);
+      });
+    });
+
+    it('the advisory can never block: severity is outside both exit-code buckets', () => {
+      inTmpRepo('_tmp-agents-headroom-exit', agentsWithSections(4, 40, 3), { maxAgentsMdLines: 180 }, ({ findings }) => {
+        // main() exits on `error` (1) and `warn` (1 under --strict, else 2).
+        // An advisory-only run must fall through both, in strict mode too.
+        assert.equal(findings.filter(f => f.severity === 'error').length, 0);
+        assert.equal(findings.filter(f => f.severity === 'warn').length, 0);
+        assert.ok(findings.some(f => f.severity === 'info'));
+      });
+    });
+
+    it('comfortably under the cap: silent (no advisory noise on every run)', () => {
+      inTmpRepo('_tmp-agents-roomy', agentsWithSections(2, 40, 2), { maxAgentsMdLines: 1000 }, ({ findings }) => {
+        assert.equal(findings.filter(f => f.ruleId === 'ctx/agents-md-headroom').length, 0);
+      });
+    });
+
+    it('over the cap: the warn itself carries the candidates, where they matter most', () => {
+      inTmpRepo('_tmp-agents-over-with-candidates', agentsWithSections(6, 40, 4), { maxAgentsMdLines: 100 }, ({ findings }) => {
+        const oversized = findings.filter(f => f.ruleId === 'ctx/oversized-agents-md');
+        assert.equal(oversized.length, 1);
+        assert.match(oversized[0].message, /Condense first/);
+        // and the advisory does not double up alongside it
+        assert.equal(findings.filter(f => f.ruleId === 'ctx/agents-md-headroom').length, 0);
+      });
+    });
+
     it('oversized AGENTS.md fires even WITHOUT a CLAUDE.md pair (single-file repo pays the same cost)', () => {
       const bigAgents = '# AGENTS.md\n' + 'line\n'.repeat(60);
       const tmpDir = path.join(FIXTURES, '_tmp-bloated-agents-solo');
