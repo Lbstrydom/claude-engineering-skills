@@ -189,15 +189,58 @@ graph TD
 
 ### Key design decisions
 
-**Item 1 — `222b036e`: spill on eviction, reusing the module's own outbox.**
-`recordDecision` stays synchronous; `writeOutbox` already is. On cap breach,
-spill the evicted entry before dropping it, mirroring `flush()`'s
-local-runtime branch. In CI, do **not** write an outbox (the runtime is
-ephemeral and `flush()` deliberately skips it there) — count it instead.
-Replace the single `_droppedCounts` with two counters so the flush summary
-stops conflating *spilled-and-recoverable* with *gone*: `evictedOutboxed`
-and `evictedLost`. `reconcileOutbox` needs **no change** — it already
-replays whatever is in the directory. *(#15, #16, #19)*
+**Item 1 — `222b036e`: eviction becomes durable-or-reject.**
+`recordDecision` stays synchronous; `writeOutbox` already is.
+`reconcileOutbox` needs **no change** — it already replays the directory.
+
+> **R2-H4 correction — "spill, and count it if the spill fails" is still
+> silent loss.** The R1 draft spilled the evicted entry and, when
+> `writeOutbox` failed, incremented `evictedLost` and dropped it anyway.
+> Counting a loss makes it *observable*, not *prevented* — and it violates
+> the module's own established contract: `flush()` already **retains** an
+> entry in memory when its outbox write fails (`summary.retained` `:353`)
+> rather than discarding it. The draft applied a weaker rule to the same
+> data on a different code path.
+
+> **R3-H1 correction — the CI carve-out imported a precedent that does not
+> apply.** The R2 draft kept CI eviction lossy by inheriting `flush()`'s
+> `lostInCI` stance. But `flush()`'s losses are of **already-admitted**
+> entries: a receipt was issued, and only later could the write not be made.
+> Eviction happens at **admission** time, where refusing costs the caller
+> nothing but a `null` it already handles. Dropping post-receipt is a lie;
+> refusing pre-receipt is not. The two paths are not analogous, so the
+> carve-out was reasoning by surface similarity — and it also conflicts with
+> `REQ-persistence-18856855` (a decision whose telemetry cannot be persisted
+> must be outboxed or retained). Removing it makes the rule **uniform across
+> environments**, which is also strictly simpler: no CI branch, no
+> `evictedLostInCi` counter.
+
+### The eviction transition table (authoritative — §7 and §9 cite it, never restate it)
+
+Environment-independent. This table is the single source of truth for item 1;
+if any prose elsewhere in this plan disagrees with it, **this table wins**
+(R3-H2 — the R2 edit updated §2 and left §7 describing the superseded
+behaviour, which would have let an implementer rebuild the R2-H4 bug while
+following the file-level plan).
+
+| Condition | Queue action | `recordDecision` returns | Counter |
+|---|---|---|---|
+| Under cap | enqueue new | `decisionKey` | — |
+| At cap, `writeOutbox(oldest)` **succeeds** | shift oldest, enqueue new | `decisionKey` | `evictedOutboxed++` |
+| At cap, `writeOutbox(oldest)` **fails or is unavailable (incl. CI)** | **retain oldest, do not enqueue new** | **`null`** | `backpressureRejected++` |
+
+Load-bearing consequences:
+
+- **The shift is conditional on a successful spill.** Never capture-then-shift.
+- Memory stays bounded either way — the queue never grows past the cap.
+- A `decisionKey` is a **receipt**; issuing one for a decision that was never
+  admitted is the same lie this plan exists to remove. `recordDecision`
+  already returns `null` under `LEARNING_DISABLE`, so callers tolerate the
+  shape; the JSDoc `@returns` must document the second null case.
+- `dropped` retains a **single, narrow** meaning: entries that were
+  *admitted* (a receipt was issued) and later permanently lost by `flush()`.
+  Eviction never contributes to it — a rejected decision was never admitted.
+  *(#15, #16, #19)*
 
 **Items 2+3 — `191fca35`/`f1a716cf`: retire, don't reimplement.**
 `rebuildFromBootstrap` becomes a refusal that names the working command:
@@ -282,18 +325,77 @@ line. Nothing throws; nothing lies. *(#2, #14, #15, #16)*
    **not `OFFSET`**: `ORDER BY created_at DESC` + `OFFSET` is unstable under
    concurrent inserts and would re-introduce the silent-loss class being
    fixed. (b) A **new** `resolveCandidateStatesByFingerprint(repoId,
-   fingerprints[])` returning `candidate｜promoted｜absent` per fingerprint
-   from one `= ANY($2)` query, chunked only to the parameter limit. Both fix
-   `catch → []` to a typed failure (finding **C**). *(#15, #17)*
+   fingerprints[])` returning the closed union below per fingerprint from one
+   `= ANY($2)` query. Both fix `catch → []` to a typed failure (finding
+   **C**). *(#15, #17)*
+
+> **R2-M6 correction — "a handful" is an assumption, not a bound, and the
+> draft's stated protection does not protect.** The R1 draft said reconcile
+> handles "a handful, never paginated" and that the query is "chunked only to
+> the parameter limit". **An array bound to `= ANY($2)` is ONE bind
+> parameter** — the parameter limit places no bound at all on the array's
+> size. A corrupted or long-accumulated journal directory therefore reaches
+> an unbounded allocation, request payload and result map *inside the
+> recovery path* — the one path that most needs to stay robust.
+
+**Bounded and resumable — two separate bounds, and an anti-starvation rule**
+(R3-M2 sharpened this; the R2 draft conflated payload size with per-run work,
+gave the "per-run limit" no name or value, and had a test requirement that
+contradicted its own design — 201 journals would simply have made a second
+request, not an incomplete run):
+
+| Bound | Value | Bounds what |
+|---|---|---|
+| `RECONCILE_BATCH_SIZE` | 200 | fingerprints per **resolver request** (payload/query cost) |
+| `RECONCILE_MAX_BATCHES_PER_RUN` | 5 | **batches per run** ⇒ ≤1 000 journals; hitting it is `incomplete: true` |
+
+**Starvation is the non-obvious hazard.** Journals in `absent`/`unknown` are
+*retained* by the transition table, so a naive "always take the first N in a
+stable order" traversal re-processes the same stuck prefix forever and never
+reaches journal 1 001. Traversal is therefore **deterministic and advancing**:
+order journals by filename (the specId, stable), and persist a validated
+traversal checkpoint in the journal directory so the next run *starts after*
+the last fingerprint examined, wrapping to the beginning once exhausted.
+Retained journals are re-examined on a later pass, not on every pass.
+
+Fingerprints are deduplicated and shape-validated before the query, and the
+store helper is **independently defensive** — it rejects an oversized array
+rather than trusting its caller, so a future second caller cannot reintroduce
+the gap.
 2. **CLI** (`cross-skill.mjs`) — thread `cursor` through the list command;
    add a command for the batch resolver. Both propagate typed failure.
 3. **Callers** (`persona-consistency-promote.mjs`) —
    `reconcilePromotionJournal` asks the batch resolver about exactly the
-   fingerprints it holds journals for (a handful, never paginated) and acts
-   **only** on a definitive per-fingerprint answer; any typed failure or
-   `unknown` leaves that journal untouched via the existing safe path
-   `:629-633`. This closes finding **B** without depending on completeness at
+   fingerprints it holds journals for, and acts on the transition table
+   below. This closes finding **B** without depending on completeness at
    all — the bounded question has a bounded, consistent answer. *(#12, #15, #16)*
+
+> **R2-H5 correction — "act on a definitive answer" is not a specification,
+> and one reading of it rebuilds the original bug.** The R1 draft said
+> reconcile acts only on a "definitive per-fingerprint answer", listed the
+> union as `candidate｜promoted｜absent` in §2 but referred to `unknown` in
+> §9, and never said which state authorises what. Under that wording
+> **`absent` is "definitive"** — and `absent` is precisely what a
+> beyond-page-100 candidate looked like in finding **B**. An implementer
+> could therefore treat `absent` as "it must have been promoted", rename and
+> delete the journal, and reproduce the exact defect this item exists to
+> fix, while passing a test suite that only checks failure handling.
+
+**Closed resolver union**: `promoted ｜ candidate ｜ absent ｜ unknown`
+(Zod-validated at the store boundary; any other value is a typed failure).
+**Recovery transition table — the authorisation rule is positive-evidence-only:**
+
+| Resolver state | Meaning | Action |
+|---|---|---|
+| `promoted` | row exists for **this repo + fingerprint** and is `persona-consistency-locked` | **Only** state that authorises the spec rename + journal deletion |
+| `candidate` | row exists, still a candidate — the DB write never landed | Roll back the `.tmp`, delete the journal (the existing `stillCandidate` branch `:644-652`) |
+| `absent` | no row at all — deleted, wrong repo, or never written. **Not proof of promotion.** | Retain the journal, no filesystem finalisation, warn |
+| `unknown` / resolver failure / typed error | we could not tell | Retain the journal, no filesystem finalisation (existing safe path `:629-633`) |
+
+Finalisation requires **positive** evidence of the promoted state; every
+other state — including every "we couldn't tell" — retains. A journal
+retained in error costs one extra reconcile pass; a journal finalised in
+error destroys the recovery record. *(#12, #15)*
 
 **R1-H3 — a promoted prefix is a first-class outcome, not a warning.**
 The draft let `promoteCandidates` "warn and continue" on the page cap. A
@@ -304,6 +406,28 @@ in the `EXIT` enum, already meaning "some succeeded, some didn't"), an
 `incomplete: true` field plus `promoted`, `remaining` and `nextCursor` in the
 `--out` JSON, and a stderr line naming the exact resume command. `ok:true`
 with exit 0 is reserved for a genuinely exhausted list. *(#15, #19)*
+
+> **R3-H3 correction — the advertised resume command did not exist.** The R2
+> draft added `cursor` to the *list* command only, and had
+> `listConsistencyCandidatesViaCli` **start its own loop from the beginning**
+> every invocation. So `nextCursor` was emitted and then had nowhere to go:
+> the promote CLI had no input that accepted it. A resume instruction the
+> tool cannot execute is worse than none — it reads as recoverable when it
+> is not.
+
+**Resume, threaded end-to-end**: `persona-consistency-promote.mjs` gains
+`--resume <cursor>`, registered in `parseArgs` `:259` and (per the repo's CLI
+contract) in `assertKnownFlags`. It is Zod-validated with the same store-owned
+schema, passed into `promoteCandidates` → `listConsistencyCandidatesViaCli` →
+the cross-skill list command as the loop's *starting* cursor.
+
+**Filter composition is validated, not silently reinterpreted**: a cursor is
+only meaningful against the filter set that produced it, so the cursor payload
+carries a digest of `{repoId, sinceTs}` and `--resume` **rejects** (exit
+`BAD_INPUT`) when that digest disagrees with the current invocation — rather
+than resuming into a different result set and reporting success. `--resume`
+with `--auto` is the intended automation path; `--resume` with a changed
+`--since` is the error case.
 
 ---
 
@@ -398,21 +522,28 @@ before designing:
 
 ## 7. File-Level Plan
 
-**`scripts/lib/learning/decision-logger.mjs`** (modify) — spill on eviction.
-- `recordDecision` `:240-247`: before `queue.shift()`, capture the evicted
-  entry; if `!isCiEnv()` call `writeOutbox(evicted, OUTBOX_DIR_DEFAULT)`;
-  count `evictedOutboxed` on success, `evictedLost` otherwise (and always
-  in CI). Keep the throttled warn, make its text distinguish the two.
+**`scripts/lib/learning/decision-logger.mjs`** (modify) — durable-or-reject
+admission.
+- `recordDecision` `:240-247`: implement **exactly the §2 eviction transition
+  table** — attempt `writeOutbox(oldest, OUTBOX_DIR_DEFAULT)` *first*, and
+  make the `queue.shift()` **conditional on its success**. No capture-then-
+  shift; no CI branch. Keep the throttled warn, with distinct text per row.
 - Why: #15 (no swallowed loss), #16, #19. Reuses `writeOutbox` (#1).
 
-**Flush-summary contract (R1-M3)** — this is a behavioural change to a
-result shape, not a counter rename, so the semantics are pinned here:
+> This bullet deliberately **cites** the §2 table rather than restating it.
+> R3-H2 was caused by exactly that duplication: the R2 edit updated §2 and
+> left this section describing the superseded capture-then-shift behaviour,
+> so the two sections disagreed and the file-level plan — the one an
+> implementer follows — still specified the bug. One table, one owner.
+
+**Flush-summary contract (R1-M3)** — a behavioural change to a result shape,
+not a counter rename, so the semantics are pinned here:
 
 | Field | Meaning after this change |
 |---|---|
-| `dropped` | **permanently lost only** — evicted and *not* durable anywhere. Narrowed from "evicted", which conflated recoverable with gone. |
-| `evictedOutboxed` | new, additive — evicted from memory but spilled to the outbox, so recoverable by `reconcileOutbox` |
-| `evictedLost` | new, additive — eviction where the spill failed or CI skipped it. Feeds `dropped`. |
+| `dropped` | entries that were **admitted** (a receipt was issued) and later permanently lost by `flush()`. **Eviction never contributes** — a rejected decision was never admitted. Narrowed from "evicted", which conflated recoverable with gone. |
+| `evictedOutboxed` | new, additive — evicted from memory *after* a successful spill, so recoverable by `reconcileOutbox` |
+| `backpressureRejected` | new, additive — admission refused because the oldest could not be made durable. **Nothing was lost**: the oldest is still in memory and the caller got `null`. |
 
 **Consumer inventory (done, not deferred)**: `flush()`'s summary has **no
 consumer outside `decision-logger.mjs` and `tests/learning-decision-logger.test.mjs`**
@@ -425,10 +556,11 @@ is accepted, the maximal remedy is not (AGENTS.md right-sizing). The
 narrowing of `dropped` plus a summary-level regression test is the whole fix.
 
 **`tests/learning-decision-logger.test.mjs`** (modify) — Tier-1 test-first.
-- Cap breach outside CI writes exactly one outbox file whose content
-  round-trips to the evicted entry; cap breach with `CI=1` writes none and
-  increments `evictedLost`; an outbox write failure counts `evictedLost`,
-  never throws out of `recordDecision`.
+**One test per row of the §2 eviction transition table**, asserting all four
+observables together (queue length, queue *contents*, return value, counter)
+— a test that checks only the counter would pass against the R2-H4 bug.
+Environment-independent: `CI=1` must produce the **same** behaviour, since
+R3-H1 removed the carve-out.
 
 **`scripts/lib/learning/quickfix-stats.mjs`** (modify) — retire bootstrap.
 - `rebuildFromBootstrap` → refusal object above; **no `writeAtomic` call on
@@ -503,7 +635,8 @@ caller treat cursors as opaque:
 | Order | `ORDER BY created_at DESC, id DESC` — `id` breaks ties; without it equal timestamps can duplicate or skip |
 | First page | no cursor → no continuation predicate |
 | Continuation | strict lexicographic: `(created_at, id) < ($cursorTs, $cursorId)`, as a row-comparison, bound as parameters — never interpolated |
-| Encoding | versioned `base64url(JSON)` `{v:1, ts, id}`; `ts` canonical UTC ISO-8601 with the column's full precision; `id` canonical UUID string |
+| Encoding | versioned `base64url(JSON)` `{v:1, ts, id}`; `id` canonical UUID string |
+| **Timestamp precision + wire format (R2-M5, tightened by R3-M1)** | **`ts` is produced by SQL, never by JS**, in exactly **one** form — `to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_ts` — carried through the cursor unmodified and bound back as `$n::timestamptz`. **`created_at::text` is not an accepted alternative**: R2's draft offered both, but `::text` renders per the session's `TimeZone`/`DateStyle` and `to_char` without an explicit offset is likewise session-dependent, so "portable and opaque" was untrue of either as written. **Never derive `ts` from a JS `Date`**: `pg` materialises `timestamptz` as a ms-precision `Date` while Postgres stores µs, so `toISOString()` rounds *down*, producing a predicate earlier than the last row returned — repeating rows or tripping the non-advancing check. Needs a **wire-value** test (two rows differing only in sub-ms `created_at`) run under a non-UTC session `TimeZone`; a pre-normalised mock cannot see either failure. |
 | Validation | Zod-parsed on receipt; malformed / wrong-version / oversize (>512 B) → typed `{ok:false, error:'invalid-cursor'}`, never a raw DB error |
 | Page size | `CANDIDATE_PAGE_SIZE = 100` (named constant, unchanged from today's effective limit) |
 | Page cap | `CANDIDATE_MAX_PAGES = 50` (⇒ 5 000 candidates) — bounds a pathological loop; hitting it is the `incomplete:true` outcome above, never a silent stop |
@@ -603,8 +736,12 @@ same commit as its change.
 Edge cases that must be covered, because each is a way the fix could pass
 review and still be wrong:
 
-1. Eviction with `writeOutbox` **failing** — counted, never thrown.
-2. Eviction under `CI=1` — no outbox file at all.
+1. Eviction with `writeOutbox` **failing** — the oldest entry is **retained**
+   (queue length unchanged, entry still present) and `recordDecision`
+   returns **`null`**, not a `decisionKey` (R2-H4). Never throws.
+2. Eviction under `CI=1` — **identical** to non-CI (R3-H1 removed the
+   carve-out): spill attempted, and on failure the oldest is retained and
+   admission refused.
 3. Flush summary: `dropped` counts only permanently-lost, across a normal
    flush, a successful spill, a CI eviction and a failed spill (R1-M3).
 4. Retired bootstrap over an **existing populated cache** — file unchanged
@@ -613,13 +750,20 @@ review and still be wrong:
 5. `schemaVersion: {}` and `[]` — objects/arrays, not just the four probed
    scalars.
 6. A key-absent V1 record — still synthesises (backward compat, #18).
-7. **Concurrent `appendQuarantine` across real OS processes** — a same-process
-   test cannot demonstrate R1-H1's race (synchronous JS never interleaves
-   inside the critical section), so this must be a **child-process** test:
-   spawn N writers against one session, assert every line survives. A test
-   that can only pass is not evidence.
-8. Lock contention → `{recorded:false, reason:'lock-contention'}`, no throw,
-   and the warning line reflects it.
+7. **Concurrency — split into two deterministic tests** (R3-L1). The R2 draft
+   asked one test to assert *both* "every line survives" *and* a non-blocking
+   contention contract that explicitly permits `recorded:false` with no
+   retry — those cannot both hold, so that test was either flaky or forced an
+   implementation that violates the stated contract.
+   (a) **Contention**: hold the lock from a coordinating process, assert the
+   contending call returns `{recorded:false, reason:'lock-contention'}`, does
+   not throw, and leaves the file byte-intact.
+   (b) **Durability**: child-process writers with a caller-level retry until
+   each observes `recorded:true`, then assert every acknowledged line is
+   present and the capped file is structurally valid. Must be
+   **child processes** — synchronous JS never interleaves inside the critical
+   section, so a same-process test passes against the broken design and is
+   not evidence.
 9. Equal-`created_at` ties across a page boundary — neither duplicated nor
    skipped (R1-M1).
 10. Malformed / wrong-version / oversize / non-advancing cursor → typed
@@ -627,9 +771,23 @@ review and still be wrong:
 11. Store throws mid-loop → `ok:false`, never a short `ok:true`.
 12. Page cap reached → `incomplete:true`, `EXIT.PARTIAL_FAILURE`, resume
     cursor present (R1-H3).
-13. Batch resolver returns a typed failure or `unknown` for a fingerprint →
-    `reconcilePromotionJournal` performs **no** rename and **no** journal
-    deletion for it (finding **B**, R1-H2).
+13. **One case per row of the recovery transition table** (R2-H5) — most
+    importantly `absent` → journal **retained**, no rename, no deletion.
+    That is the state a beyond-page-100 candidate presented as in finding
+    **B**, so a suite that omits it cannot prove the bug is dead.
+14. Sub-millisecond `created_at` difference across a page boundary — no
+    repeat, no non-advancing trip (R2-M5). Needs a wire-value test; a
+    pre-normalised mock timestamp cannot exercise it.
+15. `RECONCILE_BATCH_SIZE + 1` journals → a **second batch**, not an
+    incomplete run; `RECONCILE_BATCH_SIZE * RECONCILE_MAX_BATCHES_PER_RUN + 1`
+    → `incomplete:true` with nothing dropped; the store helper rejects an
+    oversized array on its own (R2-M6, R3-M2).
+16. **Anti-starvation** (R3-M2): with a stuck prefix of retained `absent`
+    journals larger than one run's capacity, a later run must still reach the
+    journals behind them — assert the checkpoint advances and wraps.
+17. `--resume` with a cursor whose filter digest disagrees with the current
+    `--since` → `BAD_INPUT`, never a silent resume into a different result
+    set (R3-H3).
 
 **Not doing**: live-DB tests for Phase 5 (INC-002). **Not doing**: an
 empirical browser verify — no browser-driving skill is touched.
@@ -668,6 +826,23 @@ omitted, none duplicated. Close-out is excluded per §7b.
 
 ## Audit Trail
 
+### Plan-audit Round 2 (GPT, R2+ with ledger) — `NEEDS_REVISION`, H:2 M:2 L:0
+
+**0 suppressed, 0 reopened** — every R2 finding is genuinely new surface
+created by the R1 fixes, not a re-raise. HIGH 3 → 2 (-33%), total 7 → 4. All
+4 valid / in-scope / fix-now; no rebuttal round.
+
+| ID | Sev | Verdict | Where it landed |
+|---|---|---|---|
+| H4 | HIGH | **Real gap in the R1 fix** — "spill, and count it if the spill fails" still discards the decision. Counting a loss makes it observable, not prevented, and `flush()` already *retains* on outbox failure, so the draft applied a weaker rule to the same data on a different path | §2 item 1 rewritten to **durable-or-reject**: retain the oldest and return `null` for the new decision rather than issue a receipt for something never admitted |
+| H5 | HIGH | **Real gap** — "act on a definitive answer" is not a specification, and `absent` is *definitive* yet is exactly what finding **B**'s beyond-page-100 candidate looked like. One reading rebuilds the original bug while passing the planned tests | §2 item 7: closed resolver union + an explicit recovery transition table where **only** `promoted` authorises finalisation |
+| M5 | MED | Valid and subtle — `pg` materialises `timestamptz` as a ms-precision JS `Date` while Postgres stores µs, so a `toISOString()` cursor rounds *down* and repeats rows. Mock-only tests cannot see it | §7 cursor contract: `ts` is produced by SQL as text and carried unmodified; wire-value test required |
+| M6 | MED | Valid — and the draft's stated protection was simply wrong: an array bound to `= ANY($2)` is **one** parameter, so the parameter limit bounds nothing | §2 item 7: `RECONCILE_BATCH_MAX`, dedupe, resumable batches, store-side rejection of oversized input |
+
+Both HIGHs are the same species as R1's: a fix that *narrows* a failure mode
+and reads as if it closed it. Recorded inline as `R2-Hn correction` blocks.
+
+
 ### Plan-audit Round 1 (GPT, `--mode plan`) — `NEEDS_REVISION`, H:3 M:4 L:0
 
 All 7 triaged `valid` / `in-scope` / `fix-now`. **No rebuttal round** — none
@@ -696,3 +871,36 @@ Ledger: 7 entries written to the session ledger and **verified persisted on
 disk** — the first write attempt reported success while the schema silently
 rejected every entry, which is the same false-success shape this plan exists
 to fix.
+
+### Plan-audit Round 3 (GPT, R2+ with ledger) — `NEEDS_REVISION`, H:3 M:2 L:1
+
+**0 suppressed, 0 reopened** again. HIGH 2 → 3.
+
+| ID | Sev | Verdict | Where it landed |
+|---|---|---|---|
+| H1 | HIGH | Valid — the R2 CI carve-out reasoned by surface similarity. `flush()`'s `lostInCI` losses are of **already-admitted** entries (receipt issued, write later impossible); eviction is at **admission**, where refusing costs the caller only a `null` it already handles. Also conflicts with `REQ-persistence-18856855` | §2: carve-out removed, rule is now uniform across environments — and strictly simpler (no CI branch, no `evictedLostInCi`) |
+| H2 | HIGH | **My own inconsistency** — the R2 edit fixed §2 and left §7 still describing capture-then-shift with `evictedLost`. The two sections disagreed, and §7 is the one an implementer follows, so the file-level plan still specified the R2-H4 bug | One authoritative §2 transition table; §7 and §9 **cite** it and never restate it |
+| H3 | HIGH | **My own gap** — R2 added `cursor` to the *list* command only and had the loop always restart from the beginning, so the advertised `nextCursor` and "exact resume command" had nowhere to go | §2: `--resume <cursor>` threaded through `parseArgs` → `promoteCandidates` → the CLI, with a filter digest that rejects a mismatched resume |
+| M1 | MED | Valid — R2 offered `to_char(…)` *or* `created_at::text` as alternatives; both are session-`TimeZone`/`DateStyle` dependent as written, so "portable and opaque" was untrue | §7: exactly one format pinned; `::text` explicitly disallowed; wire test runs under a non-UTC session |
+| M2 | MED | Valid — `RECONCILE_BATCH_MAX` bounded one *request*, not the *run*; the "per-run limit" had no name or value; and the stated test contradicted the design. Plus a starvation hazard: retained `absent` journals form a stuck prefix a naive traversal never gets past | §2: `RECONCILE_BATCH_SIZE` + `RECONCILE_MAX_BATCHES_PER_RUN`, deterministic ordering, advancing/wrapping checkpoint |
+| L1 | LOW | Valid — one test was asked to assert both "every line survives" and a no-retry contention contract that permits `recorded:false`. Those cannot both hold | §9: split into a contention test and a retry-until-acknowledged durability test |
+
+### Stop decision — GPT loop closed at round 3
+
+**Stopped at the round cap with HIGH not decreasing (3 → 2 → 3).** Per the
+skill's rigor-pressure rule, the cap is exceeded only for a concrete net-new
+*design* bug; that is not the situation here, but neither is the usual
+"remaining findings are scope pressure" reading:
+
+- **None of the six is rigor pressure** — all are concrete and verifiable.
+- **Three (H2, H3, L1) exist only because of my own R2 edits** — a section
+  left contradicting another, a promised affordance never threaded, a test
+  asserting two incompatible things. That is *edit hygiene*, not unresolved
+  design uncertainty, and a fourth GPT round would most likely surface more
+  of the same rather than new design risk.
+- The remaining three (H1, M1, M2) each sharpened a bound or removed a
+  wrong-by-analogy carve-out. All are folded in.
+
+So the loop stops and the **independent Gemini gate** takes it from here —
+"is this plan internally coherent" is precisely what that reviewer is for,
+and it is the right instrument for the failure mode this round exposed.
