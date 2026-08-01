@@ -8,6 +8,7 @@ import {
   REFS_GRAMMAR_VERSION,
   extractRefs,
   classifyRef,
+  isLiveSurface,
   scanPolicy,
   isExcluded,
   EXCLUSIONS,
@@ -452,11 +453,50 @@ describe('check-docs-refs / drift-gate', () => {
     assert.equal(r.drift.length, 1);
   });
 
-  it('the real BASELINE is a set of `<file>→<target>` keys, each a docs/**.md target', () => {
+  it('the real BASELINE is a set of `<file>→<target>` keys, each a target the grammar can actually emit', () => {
     assert.ok(BASELINE.size > 0);
+    // Widened 2026-07-31 with the code-path grammar: a baseline target is now
+    // either a `docs/**.md` ref or a repo code path. Deliberately still a
+    // WHITELIST of the two shapes the extractors can produce, not `.+` — the
+    // point of this guard is that a typo'd or hand-invented key can never sit in
+    // the baseline silently suppressing nothing (it would look like coverage
+    // while matching no finding the gate can raise).
+    const DOCS = /→docs\/.+\.md$/;
+    const CODE = /→(?:scripts|tests|supabase|defaults|dashboard|\.github|\.githooks)\/.+\.(?:mjs|cjs|js|ts|json|sql|sh|ya?ml)$/;
     for (const key of BASELINE) {
-      assert.match(key, /→docs\/.+\.md$/, `baseline key must end in a docs path: ${key}`);
+      assert.ok(
+        DOCS.test(key) || CODE.test(key),
+        `baseline key must end in a docs/**.md ref or a repo code path: ${key}`,
+      );
     }
+  });
+
+  it('the code-path grammar only applies to LIVE surfaces, never to point-in-time records', () => {
+    // The scoping is the design, so it gets a test: a plan citing a since-deleted
+    // module is accurate history, and making it a finding would corrupt the
+    // record (and bury the live-surface findings under ~400 historical ones).
+    for (const live of ['AGENTS.md', 'CLAUDE.md', 'README.md',
+      'skills/ship/SKILL.md', '.claude/skills/ship/SKILL.md',
+      'docs/reference/skill-surface-ownership.md', 'docs/runbooks/consumer-adoption.md']) {
+      assert.equal(isLiveSurface(live), true, `${live} must be a live surface`);
+    }
+    for (const historical of ['docs/plans/some-plan.md', 'docs/research/experiment-4.md',
+      'docs/arm-eval/sessions/x.md', 'status.md', 'docs/experiments/y.md']) {
+      assert.equal(isLiveSurface(historical), false, `${historical} must NOT be a live surface`);
+    }
+  });
+
+  it('code-path refs are extracted only when asked, and consumer-layout paths resolve', () => {
+    const text = 'see scripts/lib/foo.mjs and scripts/.claude-skills/bar.mjs';
+    assert.equal(extractRefs(text).length, 0, 'off by default — docs-only grammar');
+    const refs = extractRefs(text, { codePaths: true });
+    assert.deepEqual(refs.map((r) => r.target),
+      ['scripts/lib/foo.mjs', 'scripts/.claude-skills/bar.mjs']);
+    // The consumer-layout path is absent from this repo BY DESIGN, so it must
+    // classify as resolved rather than as rot.
+    const cls = classifyRef(refs[1], new Set());
+    assert.equal(cls.class, 'RESOLVES');
+    assert.equal(classifyRef(refs[0], new Set()).class, 'GONE');
   });
 
   it('a STALE baseline entry (its target now resolves) is drift — the baseline self-cleans (M3)', () => {

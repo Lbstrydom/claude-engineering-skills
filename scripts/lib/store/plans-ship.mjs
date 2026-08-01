@@ -649,6 +649,51 @@ export async function getUnremediatedAcceptances(scope) {
   }
 }
 
+/**
+ * How many unremediated acceptances exist, split by run mode — the denominator
+ * `getUnremediatedAcceptances` cannot report.
+ *
+ * The exact defect `countUnlockedFixes` was built for, in the sibling view, two
+ * days later and unnoticed because only the `unlocked_fixes` half was fixed.
+ * Measured 2026-07-31: `getUnremediatedAcceptances` caps at `LIMIT 20`, /ship
+ * reported `rows.length`, and the real total was **129** — a 6x undercount in a
+ * nudge whose entire job is to convey scale. The count was then repeated back to
+ * the operator as the size of the backlog they were deciding whether to work.
+ *
+ * `plan` rows are counted separately for the same reason as the sibling, but the
+ * meaning differs and is worth stating: a plan-mode row here is NOT a permanent
+ * non-obligation (unlike an unlockable plan finding) — it is a plan section that
+ * was accepted and never amended, which is real work. It is split out so the
+ * caller can say which kind it is, not so it can be discarded.
+ *
+ * Same failure contract as its siblings — cloud-off and query failure both
+ * return zeroed counts; this feeds a non-blocking nudge and must never break a
+ * push.
+ *
+ * @param {string|null|{repoId?: string|null, allRepos?: boolean}} [scope]
+ * @returns {Promise<{total:number, code:number, plan:number}>}
+ */
+export async function countUnremediatedAcceptances(scope) {
+  const { repoId, allRepos } = resolveExplicitRepoScope(scope, 'countUnremediatedAcceptances');
+  const empty = { total: 0, code: 0, plan: 0 };
+  if (!await isCloudEnabled()) return empty;
+  try {
+    const rows = !allRepos
+      ? await many(`SELECT audit_mode, count(*)::int AS n FROM unremediated_acceptances WHERE repo_id = $1 GROUP BY audit_mode`, [repoId])
+      : await many(`SELECT audit_mode, count(*)::int AS n FROM unremediated_acceptances GROUP BY audit_mode`);
+    return rows.reduce((acc, r) => {
+      const n = Number(r.n) || 0;
+      acc.total += n;
+      if (r.audit_mode === 'code') acc.code += n;
+      else if (r.audit_mode === 'plan') acc.plan += n;
+      return acc;
+    }, { ...empty });
+  } catch (err) {
+    process.stderr.write(`  [learning] countUnremediatedAcceptances failed: ${err.message}\n`);
+    return empty;
+  }
+}
+
 // ── persona_audit_correlations ─────────────────────────────────────────────
 
 /**

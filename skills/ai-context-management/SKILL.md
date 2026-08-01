@@ -129,8 +129,10 @@ After every mode, emit a compact status card:
    CLAUDE.md.
 4. **Subdirectory AGENTS.md is fine** — for monorepos. No sibling CLAUDE.md
    required at sub-paths.
-5. **Drift detection runs on every PR** — `npm run context:check` is wired into
-   CI via `.github/workflows/context-drift.yml`.
+5. **Drift detection runs on every push** — `npm run context:check` runs from the
+   pre-push hook (as part of `npm run check`), not from CI. The
+   `.github/workflows/context-drift.yml` workflow was retired in `c12e2178`
+   along with the other push-triggered check workflows.
 
 ---
 

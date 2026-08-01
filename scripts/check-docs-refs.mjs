@@ -131,14 +131,66 @@ const REF_RE = new RegExp(`(?<![A-Za-z0-9./-])(${TOKEN})(?![A-Za-z0-9_-])(?![./]
 //                        gate G2).
 const PLANNED_RE = /^(?:[#?][^\s`)]*)?(?:[ \t]+"[^"]*")?(?:\]\([^)]+\))?(?:[`)] |[ ])?\(planned\)/;
 
+// ── Code-path citations (live operational surfaces only) ───────────────────
+//
+// The `docs/**.md` grammar above cannot see a citation to `scripts/lib/foo.mjs`,
+// `supabase/migrations/x.sql` or `.github/workflows/y.yml`. Measured 2026-07-31:
+// 8,510 such citations across tracked markdown, 49 of them dangling on LIVE
+// surfaces — including AGENTS.md pointing at a `supabase/migrations/…` timestamp
+// that never existed. A gate whose banner says it verifies "cited repository
+// paths" while 8,510 of them are structurally invisible is the success-path
+// dishonesty this repo treats as HIGH.
+//
+// SCOPED TO LIVE SURFACES ON PURPOSE — this is semantics, not convenience. A
+// plan, session transcript or research doc is a POINT-IN-TIME record: it citing a
+// file that was renamed three weeks later is accurate history, and forcing it to
+// track today's tree would corrupt the record. AGENTS.md, README, the runbooks,
+// the references and the skills are different — they are read as instructions for
+// the tree as it is NOW, so a dangling path there is a lie. (401 of the 547 raw
+// dangles live in historical docs; baselining them would have buried the 49 that
+// matter, which is how a gate gets --no-verify'd.)
+const CODE_ROOT = '(?:scripts|tests|supabase|defaults|dashboard|\\.github|\\.githooks)';
+const CODE_EXT  = '(?:mjs|cjs|js|ts|json|sql|sh|ya?ml)';
+const CODE_TOKEN = `${CODE_ROOT}/(?:${SEG}/)*(?:${PHSTEM}|${STEM})\\.${CODE_EXT}`;
+// Same boundary discipline as REF_RE: no leading `/`/alnum/`.`/`-` (so a
+// cross-repo or mid-word hit is invisible), and no trailing path-ish character
+// (so `scripts/a.mjs/b` is not read as a complete citation).
+const CODE_REF_RE = new RegExp(
+  `(?<![A-Za-z0-9./-])(${CODE_TOKEN})(?![A-Za-z0-9_-])(?![./][A-Za-z0-9._-])`, 'g',
+);
+
+/** Live operational surfaces — read as instructions for the CURRENT tree. */
+const LIVE_SURFACE_RE = /^(?:AGENTS\.md|CLAUDE\.md|README\.md|skills\/|\.claude\/skills\/|docs\/reference\/|docs\/runbooks\/)/;
+
+/** @param {string} relPath repo-relative, forward-slashed */
+export function isLiveSurface(relPath) {
+  return LIVE_SURFACE_RE.test(relPath);
+}
+
+/**
+ * Paths that correctly do not exist HERE because they describe the CONSUMER
+ * layout. `scripts/.claude-skills/**` is where this repo's tooling deploys INTO
+ * another repo (AGENTS.md "Consumer-repo layout"); citing it from a runbook is
+ * right, and its absence from this index is the whole point. Structural, not a
+ * baseline entry: a baseline says "known rot, tolerated", and this is neither.
+ */
+export const CONSUMER_LAYOUT_PREFIXES = ['scripts/.claude-skills/'];
+
+/** @param {string} target */
+export function isConsumerLayoutPath(target) {
+  return CONSUMER_LAYOUT_PREFIXES.some((p) => target.startsWith(p));
+}
+
 /**
  * Extract every citation site from a chunk of text.
  * @param {string} text
+ * @param {{codePaths?: boolean}} [opts] - `codePaths` adds the code-path grammar
+ *   (live surfaces only; see CODE_REF_RE's note on why it is not universal).
  * @returns {Array<{target:string, kind:'concrete'|'placeholder', offset:number, planned:boolean, traversal:boolean}>}
  *   `offset` is a JS string index (UTF-16 code units) locating the token in the
  *   line — for traceability only, never used as a byte position.
  */
-export function extractRefs(text) {
+export function extractRefs(text, { codePaths = false } = {}) {
   if (typeof text !== 'string') return [];
   const out = [];
   // matchAll clones the regex per spec, so it never mutates REF_RE's shared
@@ -157,6 +209,23 @@ export function extractRefs(text) {
       planned: PLANNED_RE.test(text.slice(m.index + target.length, m.index + target.length + 200)),
       traversal: target.split('/').includes('..'),
     });
+  }
+  if (codePaths) {
+    for (const m of text.matchAll(CODE_REF_RE)) {
+      const target = m[1];
+      // Strip the real extension rather than a hardcoded '.md' — the code
+      // grammar spans nine of them, and slicing a fixed length here would
+      // silently mangle the stem the placeholder test reads.
+      const last = target.split('/').pop();
+      const stem = last.slice(0, last.lastIndexOf('.'));
+      out.push({
+        target,
+        kind: (stem.includes('<') || stem.includes('*')) ? 'placeholder' : 'concrete',
+        offset: m.index,
+        planned: PLANNED_RE.test(text.slice(m.index + target.length, m.index + target.length + 200)),
+        traversal: target.split('/').includes('..'),
+      });
+    }
   }
   return out;
 }
@@ -186,7 +255,12 @@ export function classifyRef(ref, index) {
   // index this gate resolves against — but the citation is correct and must
   // stay. Resolving it here (rather than via EXCLUSIONS, which is SOURCE-side)
   // keeps every citing file still fully linted for its OTHER refs.
-  const resolved = index.has(ref.target) || GENERATED_UNTRACKED_TARGETS.has(ref.target);
+  const resolved = index.has(ref.target)
+    || GENERATED_UNTRACKED_TARGETS.has(ref.target)
+    // Absent BY DESIGN (consumer-side deploy layout), not rot — see
+    // CONSUMER_LAYOUT_PREFIXES. Resolved here rather than baselined so the
+    // citing file keeps being linted for all its other refs.
+    || isConsumerLayoutPath(ref.target);
 
   if (ref.planned) {
     // A marker cannot outlive its reason.
@@ -213,6 +287,13 @@ export function classifyRef(ref, index) {
  */
 export const GENERATED_UNTRACKED_TARGETS = new Set([
   'docs/architecture-map.md',
+  // Category A, gitignored at .gitignore:121. Regenerated by every `npm run
+  // sync` and carrying volatile provenance (a timestamp + HEAD sha), so it is
+  // never committed HERE — but the runbooks and AGENTS.md cite it correctly when
+  // explaining the sync contract. Became visible only when the code-path grammar
+  // landed; before that it was one of the artefacts this comment called
+  // "structurally invisible".
+  'scripts/.sync-manifest.json',
 ]);
 
 /** Classes that are findings (everything else is informational). */
@@ -251,6 +332,49 @@ export const BASELINE = new Set([
   'docs/plans/sast-triage-routing.md→docs/upstream-issues/claude-engineering-skills-feedback-2026-07-19.md',
   'docs/plans/provenance-trailers-and-gate-honesty.md→docs/personal/ibm-fs-breadth-evidence-claude-engineering-skills.md',
   'status.md→docs/personal/ibm-fs-breadth-evidence-claude-engineering-skills.md',
+
+  // ── code-path grammar (2026-07-31), live surfaces only ────────────────────
+  // TOMBSTONES. `skill-surface-ownership.md` §"Retired tools" is a table OF
+  // deletions: each row names a file and the date it was deleted. The citation
+  // is correct precisely BECAUSE the target is gone — the gate's vocabulary has
+  // `PLANNED` for "not yet" but nothing for "no longer", and inventing a marker
+  // to silence a correct historical record would be worse than the entry here.
+  // Removing the citations would destroy the retirement record itself.
+  // Same tombstone shape: the skill now states the workflow was RETIRED (and
+  // names the commit), so the filename must stay for the statement to be
+  // checkable. This one is the gate catching itself — the citation was a live
+  // FALSE CLAIM ("drift detection runs on every PR") until 2026-07-31.
+  'skills/ai-context-management/SKILL.md→.github/workflows/context-drift.yml',
+  '.claude/skills/ai-context-management/SKILL.md→.github/workflows/context-drift.yml',
+  'docs/runbooks/consumer-adoption.md→scripts/foo.js',
+  'docs/reference/skill-surface-ownership.md→scripts/check-skill-updates.mjs',
+  'docs/reference/skill-surface-ownership.md→scripts/lib/install/merge.mjs',
+  'docs/reference/skill-surface-ownership.md→scripts/lib/install/gitignore.mjs',
+  // Illustrative stand-ins in operator prose ("`scripts/X.mjs` here,
+  // `scripts/.claude-skills/X.mjs` in a consumer"). NOT rewritten as
+  // `<placeholder>`: these sit in runnable command examples, and this repo's
+  // operator-doc convention is real values or shell variables, never
+  // angle-brackets (PowerShell reserves `<`, making the line unpasteable).
+  'AGENTS.md→scripts/X.mjs',
+  'README.md→scripts/X.mjs',
+  'docs/reference/skill-surface-ownership.md→scripts/X.mjs',
+  'docs/runbooks/consumer-adoption.md→scripts/X.mjs',
+  'skills/ship/SKILL.md→scripts/foo.mjs',
+  'skills/ship/SKILL.md→tests/foo.test.mjs',
+  '.claude/skills/ship/SKILL.md→scripts/foo.mjs',
+  '.claude/skills/ship/SKILL.md→tests/foo.test.mjs',
+  // Consumer-side artefacts this repo describes but never contains: a transient
+  // sync lockfile, a per-machine untracked repo list, and a consumer's own test
+  // entry point. Never existed here and never will (verified via git log).
+  'docs/runbooks/consumer-adoption.md→scripts/.sync-in-progress.json',
+  'docs/runbooks/consumer-adoption.md→scripts/lib/consumer-repos.local.json',
+  'docs/runbooks/consumer-adoption.md→scripts/automated-tests.js',
+  // Spec files /ux-lock GENERATES inside a consumer repo; the reference
+  // documents the helper layout it emits, not a file that lives here.
+  'skills/ux-lock/references/scope-and-limitations.md→tests/e2e/helpers/auth.js',
+  'skills/ux-lock/references/scope-and-limitations.md→tests/e2e/helpers/axe.js',
+  '.claude/skills/ux-lock/references/scope-and-limitations.md→tests/e2e/helpers/auth.js',
+  '.claude/skills/ux-lock/references/scope-and-limitations.md→tests/e2e/helpers/axe.js',
 ]);
 
 const baselineKey = f => `${f.file}→${f.target}`;
@@ -417,8 +541,9 @@ export function lintFile(abs, { repoRoot, index, rel } = {}) {
   const text = fs.readFileSync(abs, 'utf-8');
   const lines = text.split('\n');
   const sites = [];
+  const codePaths = isLiveSurface(relPath);
   for (let i = 0; i < lines.length; i++) {
-    for (const ref of extractRefs(lines[i])) {
+    for (const ref of extractRefs(lines[i], { codePaths })) {
       sites.push({ ...classifyRef(ref, index ?? new Set()), file: relPath, line: i + 1 });
     }
   }

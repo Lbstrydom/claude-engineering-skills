@@ -112,6 +112,7 @@
 | `recordRegressionSpecRun` | `regression_spec_runs` | — | `void` | n/a |
 | `getUnlockedFixes` | — | `unlocked_fixes` (view) | `[{commitSha, ...}]` | `contract:committed_at DESC` |
 | `countUnlockedFixes` | — | `unlocked_fixes` (view) | `{total, code, plan}` | n/a (aggregate) |
+| `countUnremediatedAcceptances` | — | `unremediated_acceptances` (view) | `{total, code, plan}` | n/a (aggregate) |
 | `getUnremediatedAcceptances` | — | `unremediated_acceptances` (view) | `[{auditFindingId, ...}]` | `contract:severity, accepted_at ASC` |
 | `recordPlanVerificationRun` | `plan_verification_runs` | — | `{runId}` | n/a |
 | `recordPlanVerificationItems` | `plan_verification_items` | — | `{inserted}` | n/a |

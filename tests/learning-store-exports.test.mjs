@@ -95,6 +95,7 @@ const EXPECTED_EXPORTS = [
   'getCandidateAuditFindings', // WS1 — auto-correlator candidate read (temporally bounded)
   'getExistingCorrelationHashesForSession', // WS1 — first-hit-wins existence check
   'countUnlockedFixes', // denominator for the /ship lock nudge — rows are LIMIT-capped (2026-07-29)
+  'countUnremediatedAcceptances', // same denominator, sibling view (2026-07-31)
   'getUnlockedFixes',
   // Repo-scoped single-finding lookup. Exists because the LIMIT-20 sampler
   // above must never be used to find ONE finding: unscoped it returned an
@@ -344,6 +345,10 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // never carry a regression spec. The nudge needed a denominator it could
     // not compute from a capped row list.
     // 181 → 182: findUnlockedFixInRepo added 2026-07-30 (cross-tenant write fence).
-    assert.equal(EXPECTED_EXPORTS.length, 182);
+    // 182 → 183: countUnremediatedAcceptances added 2026-07-31 — the SAME
+    // capped-rows undercount as 180 → 181, in the sibling view, unnoticed
+    // because only the unlocked_fixes half was fixed. /ship reported "20"
+    // against a real 129 and the operator was asked to plan work off it.
+    assert.equal(EXPECTED_EXPORTS.length, 183);
   });
 });

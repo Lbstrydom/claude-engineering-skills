@@ -1,19 +1,19 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "0a8d8c96273ea032",
+  "bundleVersion": "c0babc970abf3d4b",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
     "ai-context-management": {
       "path": "skills/ai-context-management/SKILL.md",
-      "sha": "37ec010a8f26",
-      "size": 6443,
+      "sha": "f93744bb0c9d",
+      "size": 6592,
       "summary": "Manage AGENTS.md and CLAUDE.md alignment across a repo so Claude, Copilot,",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "37ec010a8f26",
-          "size": 6443
+          "sha": "f93744bb0c9d",
+          "size": 6592
         },
         {
           "relPath": "examples/monorepo-layout.md",
@@ -309,14 +309,14 @@
     },
     "ship": {
       "path": "skills/ship/SKILL.md",
-      "sha": "d58e28c6fffc",
-      "size": 36551,
+      "sha": "09fbcfe5f35d",
+      "size": 39039,
       "summary": "Sync all project documentation, optionally update a plan, then commit and push to git.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "d58e28c6fffc",
-          "size": 36551
+          "sha": "09fbcfe5f35d",
+          "size": 39039
         },
         {
           "relPath": "references/python-environment-discovery.md",

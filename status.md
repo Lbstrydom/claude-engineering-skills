@@ -1,6 +1,62 @@
 # Project Status Log
 
-## 2026-07-31 (latest) — `last_audited_at`, the half-fix completed
+## 2026-07-31 (latest) — the acceptance backlog was never closable
+
+Started from /ship's gate signals. The nudge said 20 unremediated acceptances and told
+you to close them with `finalize-outcomes`. Both were wrong.
+
+**The count was 129, not 20.** The 0.5e reader caps at `LIMIT 20` and emitted no total,
+so `rows.length` saturated and read as a complete count — a 6x undercount in a nudge
+whose whole job is conveying scale, and I repeated it back as the size of the backlog.
+`countUnlockedFixes` had fixed exactly this for the sibling view two days earlier;
+`countUnremediatedAcceptances` is the missing half. One semantic difference, now written
+down: unlike 0.5b, a plan-mode row here IS an obligation (a section accepted and never
+amended), so both numbers get reported.
+
+**The loop had no closing move.** `finalize-outcomes` takes a round's artifacts and
+labels that round's findings — it cannot address a finding accepted weeks ago whose fix
+landed later. The other writer, `markFindingsRemediation`, is reachable only from inside
+the audit orchestrator and ignores runs older than 14 days. So the gate had been printing
+an instruction that silently did nothing, which is why the backlog only ever grew.
+`final-review-record-fix` turns out to be generic despite its name — regular findings
+carry `bucket: null` and it handles them — so no new tooling, just a gate that named the
+wrong command.
+
+**20 written back, each verified against code. 105 -> 85.** Of 25 HIGH acceptances only 5
+were genuinely fixed. One — `costFromUsage(...).totalUsd` as a "null dereference" — is a
+plain false positive: the function returns `{totalUsd: null}`, never `null`. Recording it
+as fixed would have manufactured a remediation that never happened.
+
+**The reference gate was checking a fraction of what it claimed.** Its grammar only
+matched `docs/**.md`, so 8,510 citations to `scripts/`, `tests/`, `supabase/` were
+structurally invisible — its own comment said so. Extended, scoped to LIVE surfaces
+only: a plan citing a since-renamed file is accurate history, not rot, and baselining the
+401 historical dangles would have buried the 49 that matter. It immediately caught
+AGENTS.md citing a migration timestamp that never existed, and a skill telling users
+drift detection "runs on every PR" via a workflow retired in c12e2178. It also taught me
+a class the design lacks: a TOMBSTONE — a retirement table correctly naming deleted
+files. `PLANNED` exists for "not yet"; there is nothing for "no longer", so those are
+baselined with the reasoning rather than silenced with a fake marker.
+
+**Twice the repo's own records stopped me doing the wrong thing.** I was about to move
+`install/prompt.mjs` (a generic readline wrapper with no install-domain logic) until the
+2026-07-26 ADDENDUM showed the edge was already declared and named one of my finding
+fingerprints — the decision existed, only the write-back was missing. Then my adjudication
+entry refused to write because `_adjudication_2026_07_31` already existed from the
+layering pass; reading it corrected three of my own attributions (install.mjs was
+RE-TAGGED in d1d8097c, not declared in 3a2530ae).
+
+**Two findings deliberately NOT written back.** `stores -> plan` is not reproducible, but
+d1d8097c did not touch that file's imports, so the edge may have gone via a domain-map
+retag rather than a code change — an unattributed disappearance is not evidence of a fix,
+and `fix_commit_sha` would be a misattribution. `shared-lib -> audit-orchestration` is
+recorded debt, NOT intent, and must keep firing; the new adjudication entry carries an
+explicit guard against silencing it with an `allowedDeps` line.
+
+Pre-existing and unfixed: 4 `install-bootstrap-e2e` suites (`zod` missing in the cloned
+bundle, reproduced at HEAD).
+
+## 2026-07-31 — `last_audited_at`, the half-fix completed
 
 Picked up the item the previous entry recorded rather than half-fixed: `upsertRepo`'s
 INSERT branch stamped `last_audited_at` on a read-only lookup while its UPDATE sibling

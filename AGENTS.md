@@ -473,7 +473,7 @@ recover. Three triggers:
 | Recurrence rate | Fixed findings that reappear in same repo within 30 days under a new fingerprint | `> 10%` |
 
 Runtime is the `memory_health_metrics(window_days)` Postgres RPC added by
-`supabase/migrations/20260421120000_memory_health.sql` (uses `pg_trgm`).
+`supabase/migrations/20260421163525_memory_health.sql` (uses `pg_trgm`).
 
 > **Cluster density counts FINDINGS, never a wave's own control state.** A wave
 > that prints a machine-generated notice about its own execution (coverage cap

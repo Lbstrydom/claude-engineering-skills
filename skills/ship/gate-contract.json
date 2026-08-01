@@ -94,6 +94,34 @@
     {
       "line": "> backlog for a repo that was never queried. That is how the incident above",
       "reason": "Narrative. It recounts the 2026-07-30 consumer incident (a wrong-but-plausible repo id reported measured:true with a count of 0, and a `warned` ship event was corrected to `shipped` on the strength of it) to explain WHY the verification above exists. The 'never queried' verb describes the past defect, not a rule this skill enforces."
+    },
+    {
+      "line": "<byMode.total> finding(s) you accepted were never marked fixed",
+      "reason": "Template text of the nudge OUTPUT, not a claim about an enforced rule. \"never marked fixed\" describes the state of the rows being reported (remediation_state absent), not something /ship enforces. 0.5e is explicitly non-blocking and has no override flag."
+    },
+    {
+      "line": "> **Use `byMode.total`, NEVER `rows.length`** — identical rule to 0.5b, and for",
+      "reason": "An instruction to the AGENT about which field to read, mirroring the identical dispositioned line in 0.5b. Mechanically backed rather than gated: the reader now emits shown/total/byMode via countUnremediatedAcceptances, so rows.length can no longer masquerade as a total; the export is pinned by tests/learning-store-exports.test.mjs."
+    },
+    {
+      "line": "> at all, and the gate printed one that silently did nothing.",
+      "reason": "Historical narrative explaining why the backlog grew — finalize-outcomes could not address a historical acceptance. Describes a fixed DEFECT in the old instruction text, not a gate this skill enforces."
+    },
+    {
+      "line": "> false positive — the function returns `{totalUsd: null}`, never `null` — and",
+      "reason": "States a fact about costFromUsage in model-pricing.mjs: it returns an object whose totalUsd is null, never null itself. Evidence for why verification precedes recording; not a rule /ship enforces."
+    },
+    {
+      "line": "> plan section that was accepted and never amended, not a permanently unlockable",
+      "reason": "Defines what a plan-mode row MEANS in this view, distinguishing it from 0.5b where plan rows are permanently unlockable. A definition, not an enforced constraint."
+    },
+    {
+      "line": "> recording it as `fixed` would have manufactured a remediation that never",
+      "reason": "Rationale for verifying against code before recording. Advisory guidance to the agent; nothing mechanically prevents a wrong label, which is precisely why the guidance is written down."
+    },
+    {
+      "line": "> so omit `--bucket` (pass `--bucket none` only to disambiguate). It refuses a",
+      "reason": "Describes recordFinalReviewFix OWN behaviour — it rejects a dismissed finding and reports no-rows-affected rather than a phantom success. A property of the called command, guarded by its own tests, not a gate /ship owns."
     }
   ]
 }
