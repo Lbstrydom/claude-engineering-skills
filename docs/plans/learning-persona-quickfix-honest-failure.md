@@ -569,12 +569,23 @@ R3-H1 removed the carve-out.
   `:10-13` and the `--bootstrap` line.
 - Why: #9, #10, #19.
 
-**`scripts/cross-skill.mjs`** (modify) — two unrelated edits.
+**`scripts/cross-skill.mjs`** (modify) — three edits (two unrelated to each
+other, plus one new command).
 - `cmdLearningQuickfixStats` `:2999-3001`: `--bootstrap` emits the redirect
   and a non-zero-signalling `ok:false`.
 - `cmdListConsistencyCandidates` `:479-487`: accept + forward `cursor`,
   return `nextCursor` and propagate a store-layer typed failure as
   `emitError`, never as `{ok:true, candidates:[]}`.
+- **NEW command `resolve-consistency-candidate-states`** (gate finding G1 —
+  §2 mandates this bridge hop and §7 previously omitted it entirely, so an
+  implementer following §7 would have built a reconcile path with no way to
+  reach the store). Add `cmdResolveConsistencyCandidateStates`, register it
+  in the command dispatch table (near `:3029`, beside
+  `list-consistency-candidates`), accept `{repoId, fingerprints[]}`, forward
+  to `resolveCandidateStatesByFingerprint`, and emit the per-fingerprint
+  state map — propagating a typed store failure as `emitError`, never as an
+  empty map (an empty map would read as "all absent", which the transition
+  table treats as actionable).
 
 **`tests/learning-quickfix-stats.test.mjs`** (modify) — assert the retired
 path returns `ok:false` **and leaves an existing cache file byte-identical**
@@ -599,8 +610,12 @@ CLI's user-facing help/catalog text (`scripts/.cli-catalog.json:314` still
 advertises the old behaviour).
 
 **`scripts/lib/brainstorm/session-store.mjs`** (modify) — items 4, 5, 6.
-- `loadSession` `:176-215`: three-way branch; `_synthesised` only on real
-  synthesis. Signature unchanged (stays sync).
+- `loadSession` `:176-215`: implement **exactly the §2 three-way table**
+  (`=== 2` → V2; key **absent** → V1 synthesis; anything else → quarantine
+  with `reason: unsupported-schema-version-<json>`). `_synthesised` is
+  stamped **only** on genuine V1 synthesis. Signature unchanged (stays
+  sync). Cites §2 rather than restating it — same rule as the eviction
+  bullet above.
 - `appendQuarantine` `:229-263`: acquire `withFileLockSync`; append **and**
   enforce `QUARANTINE_CAP` inside that one critical section; release in
   `finally`. No unlocked write path (R1-H1). Returns
@@ -611,6 +626,30 @@ advertises the old behaviour).
 built from the existing private `tryAcquireLock` `:69` / `safeRelease` `:208`.
 Bounded non-blocking attempts (no sleep loop — this is a sync path). Why:
 #7, and it is the module that already owns this primitive (#10).
+
+**Also in this phase — a dead TOCTOU guard in the same module (gate finding
+G6, verified against source).** `forceRelease` `:173`:
+
+```js
+const mtimeMovedForward = fresh.state === 'owned' && verifyStat.mtimeMs !== (fs.statSync(lockPath).mtimeMs);
+void mtimeMovedForward;
+```
+
+`verifyStat` is a `statSync` from `:169`; the right-hand side is a **second
+`statSync` microseconds later**, so the comparison is between two
+back-to-back reads of the same value and is effectively always `false`. The
+intent was plainly to compare against the mtime observed at `fresh`-inspection
+time. The result is then discarded outright by `void`. So the guard reads as
+a TOCTOU protection and provides none.
+
+**In scope by impact, not authorship** (AGENTS.md): this plan adds a
+*synchronous* lock acquisition path to this module, and a sync caller that
+meets a stale lock lands in exactly this force-release recovery code — the
+safety of `appendQuarantine`'s never-throw contract rides on it. Fix: compare
+against the mtime captured at inspection time and actually *use* the result
+(abort the force-release when it moved), or delete the dead lines and state
+that the owner/pid check is the whole guard. Do **not** leave a comment-shaped
+guard that does nothing.
 
 **`tests/brainstorm-session-store.test.mjs`** (modify) — the empirical repro
 from §0 becomes a permanent test: `"3"`, `null`, `false`, `{}` each
@@ -635,7 +674,7 @@ caller treat cursors as opaque:
 | Order | `ORDER BY created_at DESC, id DESC` — `id` breaks ties; without it equal timestamps can duplicate or skip |
 | First page | no cursor → no continuation predicate |
 | Continuation | strict lexicographic: `(created_at, id) < ($cursorTs, $cursorId)`, as a row-comparison, bound as parameters — never interpolated |
-| Encoding | versioned `base64url(JSON)` `{v:1, ts, id}`; `id` canonical UUID string |
+| Encoding | versioned `base64url(JSON)` `{v:1, ts, id, digest}`; `id` canonical UUID string. **`digest` is required, not optional** (gate finding G3): §2's `--resume` contract rejects a cursor whose filter digest disagrees with the current invocation, and this table previously omitted the field the check reads — so the schema and the check disagreed. `digest` = a stable hash of `{repoId, sinceTs}`; a cursor without it fails validation rather than resuming unchecked. |
 | **Timestamp precision + wire format (R2-M5, tightened by R3-M1)** | **`ts` is produced by SQL, never by JS**, in exactly **one** form — `to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_ts` — carried through the cursor unmodified and bound back as `$n::timestamptz`. **`created_at::text` is not an accepted alternative**: R2's draft offered both, but `::text` renders per the session's `TimeZone`/`DateStyle` and `to_char` without an explicit offset is likewise session-dependent, so "portable and opaque" was untrue of either as written. **Never derive `ts` from a JS `Date`**: `pg` materialises `timestamptz` as a ms-precision `Date` while Postgres stores µs, so `toISOString()` rounds *down*, producing a predicate earlier than the last row returned — repeating rows or tripping the non-advancing check. Needs a **wire-value** test (two rows differing only in sub-ms `created_at`) run under a non-UTC session `TimeZone`; a pre-normalised mock cannot see either failure. |
 | Validation | Zod-parsed on receipt; malformed / wrong-version / oversize (>512 B) → typed `{ok:false, error:'invalid-cursor'}`, never a raw DB error |
 | Page size | `CANDIDATE_PAGE_SIZE = 100` (named constant, unchanged from today's effective limit) |
@@ -648,9 +687,15 @@ only). Pure store tests over a **mocked query executor** — no DSN, no live DB
 (INC-002). Assert: exact first-page vs continuation SQL and parameter
 *binding* (not interpolation); equal-timestamp ties neither duplicate nor
 skip; next-cursor derivation; malformed/oversize/wrong-version cursor →
-typed failure; a DB throw → typed failure, never `[]`; the batch resolver's
-`= ANY` chunking at the parameter limit. Caller-level fakes cannot catch a
-bad SQL predicate — that is exactly why this file exists.
+typed failure; a DB throw → typed failure, never `[]`; and the batch
+resolver **rejects an input array larger than `RECONCILE_BATCH_SIZE` with a
+typed failure** (gate finding G2 — this line previously said "asserts the
+resolver's `= ANY` chunking at the parameter limit", which contradicted §2:
+the helper does **not** chunk internally, it is independently defensive and
+refuses. That phrasing was a leftover from the pre-R2-M6 design, and a test
+written to it would have asserted behaviour the plan no longer specifies).
+Caller-level fakes cannot catch a bad SQL predicate — that is exactly why
+this file exists.
 
 **`scripts/persona-consistency-promote.mjs`** (modify) —
 `listConsistencyCandidatesViaCli` `:221-230` loops on the cursor to
@@ -658,10 +703,33 @@ bad SQL predicate — that is exactly why this file exists.
 `interpretCandidateListResult` `:131` accepts and validates `nextCursor`.
 `promoteCandidates` `:343` promotes the prefix but exits
 `EXIT.PARTIAL_FAILURE` with `incomplete:true` + resume command when
-`complete:false` (R1-H3). `reconcilePromotionJournal` `:590` **stops using
-this list entirely** — it calls the batch fingerprint resolver for the
-journals it holds and acts only on definitive answers (finding **B**,
-R1-H2).
+`complete:false` (R1-H3). `parseArgs` `:259` gains `--resume <cursor>`,
+also registered in `assertKnownFlags` (repo CLI contract), Zod-validated,
+and rejected with `BAD_INPUT` on a filter-digest mismatch (R3-H3).
+
+`reconcilePromotionJournal` `:590` **stops using the candidate list
+entirely** and is rebuilt around the batch resolver (finding **B**, R1-H2).
+Gate finding G4 — §7 previously compressed this to "calls the batch
+resolver and acts only on definitive answers", silently dropping every
+bound and the whole anti-starvation mechanism §2 specifies. Spelled out:
+
+1. Enumerate journals and **sort by filename** (the specId — stable,
+   deterministic).
+2. Read the traversal checkpoint from the journal directory; **start after**
+   the last fingerprint examined, wrapping to the beginning when exhausted.
+   Validate it on read; a corrupt checkpoint restarts from the beginning
+   rather than throwing.
+3. Resolve in chunks of `RECONCILE_BATCH_SIZE` (200), at most
+   `RECONCILE_MAX_BATCHES_PER_RUN` (5) chunks per run.
+4. Act **only** per the §2 recovery transition table — `promoted`
+   finalises; `candidate` rolls back; `absent`, `unknown` and every typed
+   failure retain.
+5. Write the advanced checkpoint; report `incomplete:true` when the run cap
+   was reached, never a silent stop.
+
+Without step 2 the retained `absent`/`unknown` journals form a stuck prefix
+that a fixed-order traversal re-processes forever, so journals behind it are
+never reached — the starvation R3-M2 identified.
 
 **`tests/persona-consistency-promote.test.mjs`** (modify) — a 250-candidate
 fake returns all 250 with `complete:true`; a mid-loop page failure yields
@@ -683,7 +751,8 @@ bootstrap retirement + its replacement command.
   `scripts/lib/learning/quickfix-stats.mjs` (modify),
   `scripts/cross-skill.mjs` (modify),
   `tests/learning-quickfix-stats.test.mjs` (modify).
-- **Phase 3 — Sync lock primitive**: enabling work for Phase 4. Files:
+- **Phase 3 — Sync lock primitive + the dead TOCTOU guard**: enabling work
+  for Phase 4, plus gate finding G6 in the same module. Files:
   `scripts/lib/file-lock.mjs` (modify), `tests/file-lock.test.mjs` (create
   — verified absent; `withFileLock` currently has no direct unit test, only
   incidental coverage in `tests/maintenance-checks.test.mjs`, so this phase
@@ -702,10 +771,15 @@ bootstrap retirement + its replacement command.
   for all 7 topicIds — **one attributable commit sha per entry, no
   unattributed resolutions**.
 
-> `scripts/cross-skill.mjs` appears in Phases 2 and 5. The two edits are in
-> unrelated command handlers (`cmdLearningQuickfixStats` vs
-> `cmdListConsistencyCandidates`) with no shared state; if the clusters are
-> executed non-contiguously, land Phase 2's edit first.
+> `scripts/cross-skill.mjs` appears in Phases 2 and 5, with **three** edits
+> total. Phase 2 owns one (`cmdLearningQuickfixStats`); Phase 5 owns two
+> (`cmdListConsistencyCandidates` **and the new
+> `resolve-consistency-candidate-states` handler + its dispatch-table
+> registration**). All three are in unrelated command handlers with no
+> shared state; if the clusters are executed non-contiguously, land Phase
+> 2's edit first. (This note previously said "two edits" and named only the
+> first two — the same §2-updated/§7-stale class as gate findings G1–G4,
+> caught in the follow-up sweep rather than by a reviewer.)
 
 ---
 
@@ -904,3 +978,81 @@ skill's rigor-pressure rule, the cap is exceeded only for a concrete net-new
 So the loop stops and the **independent Gemini gate** takes it from here —
 "is this plan internally coherent" is precisely what that reviewer is for,
 and it is the right instrument for the failure mode this round exposed.
+
+### Final gate, attempt 1 — INVALID (category error, operator misconfiguration)
+
+`gemini-review.mjs review <plan> <transcript>` was run **without
+`--mode plan`**. The skill's Step 2 states the requirement plainly — *"always
+pass `--mode plan`. Without it, Gemini in Step 6 can flag absent
+implementations"* — but its Step 6 example command omits the flag, and the
+example was followed. Operator error, recorded rather than quietly re-rolled.
+
+Result: `REJECT`, coherence `Weak`, 6 findings — and the `overall_reasoning`
+gives the error away: *"the submitted code implementation fails completely to
+adhere to the plan."* **No code has been submitted.** Four findings (G1, G2,
+G3, G5) are categorised "Plan Violation" and describe the **current source** —
+i.e. the exact bugs this plan proposes to fix — as though they were this
+change's output. G1 reports the `typeof === 'number'` guard; that guard *is*
+`e0623c0a`. A REJECT premised on unwritten code is not a verdict on the plan.
+
+**The two findings that made checkable claims about real code were both
+checked** (this repo's rule: a finding about code you did not just write is a
+hypothesis):
+
+| ID | Claim | Verified? |
+|---|---|---|
+| G4 | `writeAtomic` is undefined in `quickfix-stats.mjs` → `ReferenceError` on the rebuild success path | **FALSE.** It is defined at `:317` and called at `:141`/`:207`. Discarded. |
+| G6 | `file-lock.mjs:173`'s TOCTOU mtime guard compares two back-to-back `statSync` calls and discards the result | **TRUE.** Confirmed by reading `:169-174`. Kept — folded into Phase 3 above as in-scope-by-impact, since this plan adds a sync acquisition path that lands in this same force-release recovery code. |
+
+So attempt 1 yielded exactly one real finding out of six, and it was
+incidental to the misconfiguration. **It is not counted against the 2-round
+Gemini cap** — it never reviewed the plan *as a plan*. Attempt 2 re-runs with
+`--mode plan`; the cap applies from there.
+
+### Final gate, attempt 2 (`--mode plan`) — `CONCERNS`, coherence **Strong**, 4 findings
+
+A real review this time. `deliberation_was_fair: true`,
+`claude_bias_detected: false`, `wrongly_dismissed: []`,
+`over_engineering_flags: []`.
+
+**All four findings are one class**, and the reviewer named it exactly:
+*"the iterative audit rounds caused the author to update the high-level
+conceptual design in Section 2 … but they failed to propagate those changes
+down to the prescriptive, file-by-file instructions in Section 7."*
+
+| ID | Sev | The §2/§7 divergence |
+|---|---|---|
+| G1 | HIGH | §2 mandates a cross-skill bridge command for the batch resolver; §7 listed only the two pre-existing handlers, so an implementer would have built a reconcile path with no way to reach the store |
+| G2 | HIGH | §7's test asked to assert `= ANY` **chunking at the parameter limit** — but §2 says the helper does *not* chunk, it **rejects** oversized input. Leftover phrasing from the pre-R2-M6 design; a test written to it would assert behaviour the plan no longer specifies |
+| G3 | MED | §2's `--resume` rejects a cursor whose filter digest mismatches; §7's cursor schema `{v:1, ts, id}` omitted `digest` — the schema and the check disagreed |
+| G4 | HIGH | §2's anti-starvation mechanism (deterministic ordering, traversal checkpoint, run cap) was compressed in §7 to "acts only on definitive answers", dropping every bound |
+
+**This is the same class R3-H2 raised, and I had fixed only the one instance
+GPT named** (the eviction table) rather than sweeping for the class — the
+"census before calling a class small" failure. Two reviewers found it
+independently before it was taken seriously as a class.
+
+**Follow-up sweep (mine, not the reviewer's) found three more instances**,
+now also fixed: §7's `loadSession` bullet compressed the three-way table to
+the phrase "three-way branch"; Phase 3's title didn't cover the G6 TOCTOU
+fix added to its scope; and the §7b cross-skill note still said "two edits"
+naming the wrong two, after G1 made it three.
+
+**Structural fix, not just instance fixes**: §7 now **cites** §2's
+authoritative tables (eviction, schemaVersion, recovery transitions) instead
+of paraphrasing them. A paraphrase is what drifts.
+
+### Gate closed — round 2 of 2, stopping per the skill's own rule
+
+All four findings are `Missing Implementation Step` / `Logical
+Contradiction` / `Contract Inconsistency` — squarely the
+**implementation-completeness** row of the Gemini-cap table, whose
+prescribed action is *"STOP — fold into the plan as captured items; hand off
+to `/cycle`'s code audit, which verifies them against real code (the right
+artifact)."* Not a concrete design defect, and coherence is already
+`Strong`. Folded in; gate closed at round 2.
+
+**Audit totals**: GPT 3 rounds (17 findings, all accepted, 0 rebuttals,
+0 suppressed, 0 reopened) + 1 invalid gate attempt (operator error, 1 real
+finding salvaged, 1 disproved) + 1 valid gate round (4 findings) + 1
+self-sweep (3 findings). **Plan is ready for `/cycle --autonomous`.**
