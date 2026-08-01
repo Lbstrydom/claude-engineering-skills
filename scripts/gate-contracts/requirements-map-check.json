@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "gate": "requirements:map:check",
+  "guards": "docs/requirements-map.md (Category B)",
+  "gates": [
+    {
+      "id": "requirements-map-check-compares-rendered-content",
+      "kind": "executable",
+      "statedIn": "AGENTS.md",
+      "stated": "`docs/requirements-map.md` (`requirements:map` / `requirements:map:check`)",
+      "implementation": "scripts/requirements.mjs",
+      "tests": ["tests/gate-poison-pills.test.mjs"],
+      "proof": "process",
+      "oracle": "poison-pill",
+      "poisonPill": {
+        "isolation": "tmpdir",
+        "argv": ["scripts/requirements.mjs", "render", "--check"],
+        "overlay": {
+          "docs/requirements-map.md": "tests/fixtures/poison/requirements-map-tampered.md"
+        },
+        "expectExit": 1,
+        "expectStderr": "stale",
+        "why": "A truncated map — the tail of the invariant ledger silently missing. The dangerous shape is a check that reads only the header or a count, which a truncation leaves intact.",
+        "needsGit": true
+      }
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "gate": "plans:index:check",
+  "guards": "docs/plans/README.md (Category B)",
+  "gates": [
+    {
+      "id": "plans-index-check-compares-rendered-content",
+      "kind": "executable",
+      "statedIn": "AGENTS.md",
+      "stated": "status-bucketed plans index (`plans:index` / `plans:index:check`)",
+      "implementation": "scripts/generate-plans-index.mjs",
+      "tests": ["tests/gate-poison-pills.test.mjs"],
+      "proof": "process",
+      "oracle": "poison-pill",
+      "poisonPill": {
+        "isolation": "tmpdir",
+        "argv": ["scripts/generate-plans-index.mjs", "--check"],
+        "overlay": {
+          "docs/plans/README.md": "tests/fixtures/poison/plans-index-tampered.md"
+        },
+        "expectExit": 1,
+        "expectStderr": "stale",
+        "why": "A committed index carrying a row no plan produced. If --check ever narrowed to a header or a count, this content edit would pass and the index would drift from the plans it claims to list.",
+        "needsGit": true
+      }
+    }
+  ]
+}

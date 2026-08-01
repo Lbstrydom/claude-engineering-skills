@@ -21,6 +21,7 @@
  */
 
 import { _txStore, getActiveTxClient, getPool } from './client.mjs';
+import { assertSchemaRealized, isMigrationContext } from './schema-realization.mjs';
 import { normalizePostgresError } from './errors.mjs';
 
 // ── jsonb-safe value binding (the seam fix) ────────────────────────────────
@@ -417,8 +418,71 @@ function buildDelete(table, where, { returning } = {}) {
  * @param {unknown[]} [params]
  * @returns {Promise<import('pg').QueryResult<T>>}
  */
+/**
+ * Is this statement guaranteed NOT to write application rows?
+ *
+ * **Allow-list, not a mutation black-list — and unknown is guarded.** A leading-verb match
+ * for INSERT/UPDATE/DELETE misses PostgreSQL's data-modifying CTEs: `WITH d AS (DELETE …
+ * RETURNING *) SELECT …` begins with `WITH` and mutates. Enumerating every mutating shape
+ * is the losing side of that arms race, so this recognises the shapes that are provably
+ * safe and treats everything else as a write. A shape nobody anticipated gets CHECKED
+ * rather than waved through.
+ *
+ * Two allowed groups:
+ *  (a) reads — SELECT, WITH *without* any INSERT/UPDATE/DELETE token, SHOW, EXPLAIN
+ *      (but not EXPLAIN ANALYZE, which executes the statement);
+ *  (b) session/transaction control — BEGIN, COMMIT, ROLLBACK, SAVEPOINT, RELEASE, SET,
+ *      RESET, DISCARD. Group (b) is load-bearing: `withTx` issues BEGIN/COMMIT through
+ *      this very seam, so classifying them as writes would make a purely READ-ONLY
+ *      transaction fail on a behind schema — breaking the fail-open read guarantee via
+ *      the write guard.
+ *
+ * @param {string} sql
+ * @returns {boolean}
+ */
+export function isReadOnlyStatement(sql) {
+  if (typeof sql !== 'string') return false;
+  // Strip line and block comments so a leading comment cannot disguise the verb.
+  const stripped = sql
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/--[^\n]*/g, ' ')
+    .trim();
+  if (!stripped) return true;
+
+  const first = (/^[a-zA-Z]+/.exec(stripped) || [''])[0].toUpperCase();
+
+  if (SESSION_CONTROL.has(first)) return true;
+  if (first === 'SHOW') return true;
+  if (first === 'EXPLAIN') return !/\bANALYZE\b/i.test(stripped);
+  if (first === 'SELECT' || first === 'WITH' || first === 'TABLE' || first === 'VALUES') {
+    // A CTE (or a SELECT with a sub-CTE) can carry a writing branch.
+    return !/\b(INSERT|UPDATE|DELETE|MERGE)\b/i.test(stripped);
+  }
+  return false;
+}
+
+const SESSION_CONTROL = new Set([
+  'BEGIN', 'START', 'COMMIT', 'END', 'ROLLBACK', 'SAVEPOINT', 'RELEASE',
+  'SET', 'RESET', 'DISCARD', 'PREPARE', 'DEALLOCATE', 'LISTEN', 'UNLISTEN', 'NOTIFY',
+]);
+
 async function _exec(sql, params = []) {
+  // Refuse an application WRITE against a database missing migrations we ship. Reads are
+  // untouched — the store's fail-open read posture (`cloud:false` is a normal state) is
+  // deliberate, and writing into a schema that lacks the table is the actual hazard.
+  // `isMigrationContext()` exempts the migrator itself: migrations carry seed DML and must
+  // INSERT their own ledger row, both of which this guard would otherwise refuse precisely
+  // while the schema is behind — deadlocking the only command that can fix it.
   const txClient = getActiveTxClient();
+  if (!isReadOnlyStatement(sql) && !isMigrationContext()) {
+    // Run the ledger read on the ACTIVE TRANSACTION's client when there is one. Asking the
+    // pool for a second connection deadlocks a `max: 1` pool against the transaction holding
+    // the only one — and the resulting timeout is swallowed as "indeterminate", so the guard
+    // allows the write having checked nothing. `pool` stays the cache identity so a result
+    // verified inside a transaction is still trusted outside it.
+    const pool = await getPool();
+    await assertSchemaRealized({ pool, executor: txClient ?? pool });
+  }
   if (txClient) {
     try {
       return await txClient.query(sql, params);

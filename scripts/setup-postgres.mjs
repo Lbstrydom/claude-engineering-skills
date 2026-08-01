@@ -34,6 +34,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { findRepoRootFromScript } from './lib/assert-repo-root.mjs';
+import { withMigrationContext } from './lib/db/schema-realization.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1323,11 +1324,19 @@ async function main() {
       return;
     }
 
+    // `withMigrationContext` exempts this path from the write-path realization guard
+    // (`db/query.mjs`). Realizing a behind schema MEANS writing while behind: migrations
+    // carry seed/backfill DML and the applier INSERTs its own `audit_loop_migrations` row.
+    // Without the bypass the guard would refuse the only command that can fix the state.
+    // This module talks to `pool` directly today and never enters `_exec`, so the wrap is
+    // belt-and-braces — but a design that works only because the migrator happens to skip
+    // the seam is one refactor from locking the operator out.
     if (args.mode === 'migrate') {
       // Serialize against a concurrent --repair-eol (shared advisory lock).
-      await withMigrationLock(pool, () => runMigrate(pool, { dryRun: args.dryRun }));
+      await withMigrationContext(() =>
+        withMigrationLock(pool, () => runMigrate(pool, { dryRun: args.dryRun })));
     } else if (args.mode === 'adopt') {
-      await runAdopt(pool, { adoptOnly: args.adoptOnly });
+      await withMigrationContext(() => runAdopt(pool, { adoptOnly: args.adoptOnly }));
     }
   } catch (err) {
     process.stderr.write(`\n${R}setup failed${X}: ${err.message}\n`);

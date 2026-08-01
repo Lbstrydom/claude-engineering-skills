@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "gate": "parity:check-coupling",
+  "guards": "supabase/migrations/**.sql schema portability",
+  "gates": [
+    {
+      "id": "parity-coupling-rejects-new-schema-qualification",
+      "kind": "executable",
+      "statedIn": "AGENTS.md",
+      "stated": "`parity:check-coupling` fails on any `<schema>.`",
+      "implementation": "scripts/postgres-parity/check-non-core-references.mjs",
+      "tests": ["tests/gate-poison-pills.test.mjs"],
+      "proof": "process",
+      "oracle": "poison-pill",
+      "poisonPill": {
+        "isolation": "tmpdir",
+        "argv": [
+          "scripts/postgres-parity/check-non-core-references.mjs",
+          "--schema-coupling",
+          "--strict"
+        ],
+        "overlay": {
+          "supabase/migrations/20260403083809_learning_v2_stage4_constraints.sql": "tests/fixtures/poison/parity-coupling-migration-tampered.sql"
+        },
+        "expectExit": 1,
+        "expectStderr": "newPublicQualification",
+        "why": "A `public.` qualification added to an existing migration, outside SCHEMA_COUPLING_BASELINE. Three of these reached main unnoticed in June 2026 while this lint existed but was absent from the check chain — a gate that could not go green wrongly because nothing ever ran it."
+      }
+    }
+  ]
+}

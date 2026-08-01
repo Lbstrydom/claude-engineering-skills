@@ -225,52 +225,12 @@ backlog:
 
 ```
 ⚠ UNREMEDIATED ACCEPTANCES (non-blocking)
-  <byMode.total> finding(s) you accepted were never marked fixed
-  (<byMode.code> code, <byMode.plan> plan; showing <=5 of <shown>):
+  <n> finding(s) you accepted were never marked fixed (showing <=5):
     • [<severity>] <primary_file> — accepted <days_open>d ago
-  Either remediate them, or close the loop honestly — verify against the code first,
-  then record the fix WITH the commit that made it:
-    node scripts/cross-skill.mjs final-review-record-fix \
-      --run-id <audit_run_id> --fingerprint <fp> --commit <sha> --state fixed
+  Either remediate them, or close the loop honestly:
+    node scripts/cross-skill.mjs finalize-outcomes    # transition to fixed/verified
   Leaving them open is fine — leaving them open SILENTLY is what this catches.
 ```
-
-> **Use `byMode.total`, NEVER `rows.length`** — identical rule to 0.5b, and for
-> an identical reason. `rows` is capped at `LIMIT 20`, so counting it printed
-> "20" against a real **129** on 2026-07-31, and that number was handed to the
-> operator as the size of the backlog they were deciding whether to work. The
-> reader now carries `shown` / `total` / `byMode` (added the same day; 0.5b got
-> the same fix two days earlier and this sibling view was missed).
->
-> Unlike 0.5b, **`byMode.plan` here IS an obligation** — a plan-mode row is a
-> plan section that was accepted and never amended, not a permanently unlockable
-> finding. Report both numbers; do not subtract the plan half.
->
-> **`finalize-outcomes` is NOT the command for this** (it was named here until
-> 2026-07-31, which is why the backlog only ever grew). It takes
-> `--result <audit-result.json> --ledger --round` and labels the findings of one
-> audit ROUND from that round's artifacts — it has no way to address a finding
-> accepted weeks ago whose fix landed later. The other writer,
-> `markFindingsRemediation`, is reachable only from inside
-> `legacy-production-audit.mjs` (ledger-projected) and additionally ignores runs
-> older than 14 days. So for a historical acceptance there was no advertised path
-> at all, and the gate printed one that silently did nothing.
->
-> **`final-review-record-fix` is generic despite its name** — it updates
-> `audit_findings` by `(run_id, finding_fingerprint, bucket)` and sets
-> `remediation_state` + `fix_commit_sha`. Regular audit findings carry
-> `bucket = NULL`, which `resolveFindingBucket` handles as the single candidate,
-> so omit `--bucket` (pass `--bucket none` only to disambiguate). It refuses a
-> `dismissed` finding and reports `no-rows-affected` rather than a phantom
-> success.
->
-> **Verify before recording — the label is evidence, not bookkeeping.** An
-> accepted finding about code you did not write is a hypothesis. In the
-> 2026-07-31 sweep, of 25 HIGH acceptances only 5 were genuinely fixed; one
-> (`costFromUsage(...).totalUsd` "null dereference") turned out to be a plain
-> false positive — the function returns `{totalUsd: null}`, never `null` — and
-> recording it as `fixed` would have manufactured a remediation that never
-> happened.
 
 Judge the list before echoing it — two rows look identical but are not:
 
@@ -281,6 +241,27 @@ Judge the list before echoing it — two rows look identical but are not:
   plan was never amended), but say so rather than printing it as a code path.
 - `remediation_state = 'planned'` with a live plan is genuinely in-flight, not
   forgotten — drop it from the printed list.
+
+### 0.5g — Migration realization gate (ENFORCED by the binary)
+
+A commit that ships a migration is only half-shipped until the migration is APPLIED. On
+2026-07-31 exactly that happened here: migration + dependent code committed, tests green,
+pushed — and the fix was byte-for-byte inert because nobody ran `--migrate`. The drift
+checker existed and was wired to nothing.
+
+**You do not need to run anything for this step.** `ship-commit.mjs` performs the check
+itself (Step 6.3) and exits 2 with an `AGENT FIX:` line naming the unapplied migrations and
+the exact remedy. It is documented here so the block is not a surprise — the binary
+enforces, this text explains.
+
+- **Unconditional when the cloud store is on.** Deliberately NOT gated on "the push range
+  touches `supabase/migrations/`": a code-only commit can depend on a migration left
+  unapplied by an *earlier* push or a branch switch, which is the more dangerous version of
+  the same bug.
+- **Cloud off / unreachable / no ledger ⇒ silently skipped**, never a block. Blocking on an
+  unmeasurable condition is the cried-wolf shape that earns `--no-verify`.
+- **On a block**: run `node scripts/setup-postgres.mjs --migrate`, then re-invoke
+  `ship-commit.mjs`. Do NOT work around it by dropping the migration from the commit.
 
 ### 0.5f — Override flags
 

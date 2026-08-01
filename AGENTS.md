@@ -330,19 +330,28 @@ sync/relocation contract, and more.
 The hook runs `check` in a throwaway worktree at the **commit being pushed**
 ([`prepush-check.mjs`](scripts/prepush-check.mjs)). Two sessions share one tree
 here, so tree-checking gave false blocks (a cried-wolf gate gets `--no-verify`'d)
-and false passes (a fix in the tree but not the commit read green). Three
-invariants; the reasoning, incidents and escape hatches are in
-[`docs/runbooks/prepush-sandbox.md`](docs/runbooks/prepush-sandbox.md):
+and false passes (a fix in the tree but not the commit read green). Not `git
+stash` — that yanks the other session's files mid-edit. Detail + escape hatches:
+[`docs/runbooks/prepush-sandbox.md`](docs/runbooks/prepush-sandbox.md).
 
-- **Sandbox-honesty.** **Adding a check? Ask whether it can go green in a clean
-  checkout having checked nothing — if so it needs a strictness flag, not a
-  tolerated skip.** A sandbox setup failure is a push failure, never a pass.
+- **Sandbox-honesty rule.** A fresh worktree has no gitignored inputs, so a check
+  that *skips* on a missing input passes having read nothing. Known skips are
+  forced to hard errors (`AUDIT_PUSH_RANGE_REQUIRED`, `ARCH_COVERAGE_REQUIRE_ENVELOPE`).
+  **Adding a check? Ask whether it can go green in a clean checkout having
+  checked nothing — if so it needs a strictness flag, not a tolerated skip.** A
+  sandbox setup failure is a push failure, never a pass.
 - **One range, one resolver** — [`push-range.mjs`](scripts/lib/push-range.mjs).
-  Gates must never re-infer a base from working-tree state; an unresolvable
-  explicit base fails hard rather than demoting to inference.
-- **Hashing working-tree bytes ≠ hashing committed source.** A generator
-  hashing files for a *committed* artifact must canonicalise CRLF→LF first, or
-  a fresh clone reads STALE while your tree looks clean.
+  Gates must not re-infer a base from working-tree state (`@{u}`, dirty→`HEAD`/
+  `HEAD~1`): that scoped multi-commit pushes to their tip and collapsed to
+  `HEAD~1` always in a detached tree. Results carry `source`/`trusted` and
+  summaries print them; an unresolvable explicit base fails hard, never demotes
+  to inference.
+- **Hashing working-tree bytes ≠ hashing committed source.** The sandbox caught
+  `skills.manifest.json` breaking its own Category-B contract: 16 skill files
+  carried CRLF locally while `.gitattributes` pins `eol=lf`, and git calls such
+  files CLEAN — so `bundleVersion` tracked local line endings and a fresh clone
+  read STALE. Generators hashing files for a committed artifact must
+  canonicalise CRLF→LF first.
 
 #### Testing doctrine — which seam gets which kind of test
 
@@ -589,6 +598,8 @@ connection string. **Load-bearing invariants** (the rest is in the docs below):
   [`tests/store-jsonb-array-serialization.test.mjs`](tests/store-jsonb-array-serialization.test.mjs);
   the `/audit-code` backend pass also flags raw-array-to-jsonb + silent DB-write
   error-swallow + unverified-write-success (RLS/0-row) as HIGH.
+- **Migrations stay schema-portable**: `parity:check-coupling` fails on any `<schema>.`
+  qualification or non-core reference outside the recorded baseline.
 - **`AUDIT_DB_TEST_URL` must be disposable — enforced, not documented-only.**
   `assertDisposableDbUrl` (`scripts/lib/db/client.mjs`) runs before any pool reset
   in the `db-setup`/`db-withtx` integration suites, rejecting a Supabase-hosted or
@@ -1166,14 +1177,6 @@ contract: [`docs/reference/commit-provenance.md`](docs/reference/commit-provenan
 - `--out <file>` pattern: JSON to file, 1-line summary to stdout
 - Zod schemas define structured output contracts for all LLM calls
 - Functions follow `{result, usage, latencyMs}` return contract
-- **Temp files split by AUDIENCE, never by a literal path.** Read later by a
-  human/agent/next step → `scratchPath()` ([`temp-paths.mjs`](scripts/lib/temp-paths.mjs)),
-  repo-local `.claude/tmp/`. Disposable inside one run → `fs.mkdtempSync(path.join(os.tmpdir(), 'x-'))`.
-  A literal `'/tmp'`/`'C:/tmp'` names a *different* directory per shell (MSYS
-  rewrites the argv, Node resolves `<drive>:\tmp`, `os.tmpdir()` a third) — one
-  cost a full mis-triage. Still echo the resolved absolute path when another
-  **process** reads the file: argv crossing git-bash is rewritten regardless.
-  Enforced by the `literal-temp-root` quickfix pattern + `tests/temp-path-convention.test.mjs`.
 
 ## Do NOT
 

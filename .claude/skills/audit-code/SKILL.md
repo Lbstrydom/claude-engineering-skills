@@ -307,6 +307,36 @@ regardless of convergence — except when both `GEMINI_API_KEY` and
 
 ---
 
+### Step 3.7 — Detector-first census (cross-cutting findings)
+
+**An audit's instance count is a floor, not a scope.** Measured 2026-07-31: a finding
+reported 1 non-atomic writer (there were 4) and 3 misnamed call sites (there were 5). An
+LLM enumerating a class by reading is doing exhaustive search with a next-token predictor;
+it stops early. So the *tool* enumerates, not you.
+
+**Trigger is mechanical**: `affectedFiles.length > 1` (or an explicit `crossCutting: true`
+you set at triage). Single-file findings are exempt — this is not ceremony for every bug.
+
+For each cross-cutting finding, record a detector on its ledger entry:
+
+```json
+{ "detector": { "kind": "regex",
+                "pattern": "fs\.writeFileSync\(",
+                "globs": ["scripts/**/*.mjs"],
+                "baseline": 4,
+                "disposition": { "scripts/<file>.mjs::const t = fs.writeFileSync(p)": "exempt — temp file" } } }
+```
+
+- **Structured, never a shell command.** `pattern`/`globs` reach ripgrep as argv. The
+  ledger is LLM-authored and merge-edited; an executable string there is an injection
+  surface.
+- **Dispositions key on `<path>::<trimmed matched line>`**, never a line number — a line
+  number orphans the moment anything above it shifts. Identical text repeated in one file
+  gets `::#1`, `::#2`, … after the first, so exempting one copy does not exempt the rest
+  (`matchKey` prints the key; copy it from the run's output rather than typing it).
+- **The detector's output IS the fix scope.** Run it, fix what it found, or disposition it
+  with a reason. Do not fix the instances the audit happened to name and stop.
+
 ## Step 3.5 — Update Adjudication Ledger
 
 After each deliberation round, write ledger entries for every finding before
@@ -417,6 +447,30 @@ Track finding churn using `_hash` fields: resolved / recurring / new.
   Stable: 1/2
 ═══════════════════════════════════════
 ```
+
+### Step 5.0b — Re-run every detector at FULL scope (blocks convergence)
+
+```bash
+node -e "import('./scripts/lib/audit/detector.mjs').then(async m=>{
+  const fs=await import('node:fs');
+  const r=m.checkDetectors(JSON.parse(fs.readFileSync(process.argv[1],'utf8')));
+  console.log(JSON.stringify(r,null,2)); process.exit(r.blocked?1:0);})" /tmp/$SID-ledger.json
+```
+
+**At each detector's own `globs`, NOT the round's changed files.** Restricting to the diff
+defeats the census: fix 1 of 4 occurrences and the other 3 are absent from the diff, so the
+detector returns 0 and the round converges clean — the audit's undercount faithfully
+reproduced by the tool built to prevent it.
+
+Full scope closes both gaps in one run:
+- a class member left **unfixed** still matches (the census);
+- an occurrence the fix itself **just wrote** also matches (author mimicry — twice on
+  2026-07-31 a fix reproduced the class it was fixing, because the buggy shape was in the
+  context window).
+
+`evaluateConvergenceWithDetectors` (`scripts/lib/audit/convergence.mjs`) enforces this —
+convergence requires `blocked === false`. `baseline` reports progress; it is never the pass
+condition.
 
 ### Step 5.1 — Debt Resolution Prompt
 

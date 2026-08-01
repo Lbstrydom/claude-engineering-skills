@@ -22,7 +22,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { loadGateContracts, formatSummaryLines } from './lib/gate-honesty/loader.mjs';
+import { loadGateContracts, loadCliGateContracts, formatSummaryLines } from './lib/gate-honesty/loader.mjs';
 import { resolvePushRange, PUSH_RANGE_ENV } from './lib/push-range.mjs';
 import {
   isCandidateLine, normalizeCandidateLine, findUndispositionedCandidates,
@@ -225,7 +225,19 @@ function main() {
   // exemption. Runs regardless of loader divergences (it is keyed on file
   // presence, so a broken contract is not double-reported).
   const ratchet = checkRatchet({ repoRoot, skillsRoot, skillNames, uncontracted, contractedByDir });
-  const structural = [...divergences, ...ratchet];
+
+  // Second SOURCE, same validator (plan green-but-unrealized.md §2 dec. 3). CLI gates
+  // declare their contracts in `scripts/gate-contracts/<gate>.json` with the same
+  // id/statedIn/stated/implementation/tests/proof vocabulary. Validating them here rather
+  // than in their runner is the whole point: the rejected design was a parallel registry
+  // with its own checker "extending" this protocol in name only, which is how the first
+  // one rots. The runner (check-gate-poison-pills.mjs) executes the pills; it does not
+  // define what a valid contract is.
+  const cliGates = loadCliGateContracts({
+    contractsRoot: path.join(repoRoot, 'scripts', 'gate-contracts'), repoRoot,
+  });
+
+  const structural = [...divergences, ...cliGates.divergences, ...ratchet];
 
   // D6 candidate-coverage — only meaningful once contracts validate AND the
   // structural ratchet is clean, so run it last and fold its findings in.
@@ -242,6 +254,9 @@ function main() {
   }
 
   const lines = formatSummaryLines({ contracted, uncontracted });
+  const cliGateCount = cliGates.contracted.reduce((n, c) => n + c.gates.length, 0);
+  lines.push(`  CLI gates: ${cliGateCount} contracted across ${cliGates.contracted.length} gate(s), `
+    + `${Object.keys(cliGates.exemptions).length} exempt (pills run by \`npm run gates:poison\`)`);
   process.stdout.write(`${lines.join('\n')}\n`);
 }
 

@@ -274,6 +274,10 @@
       "description": "Validate every skill's gate-contract.json against its declared oracle + statedIn policy.",
       "category": "skills"
     },
+    "gates:poison": {
+      "description": "Prove every check-chain gate can FAIL — control + poison run per contracted gate, in an isolated copy.",
+      "category": "test"
+    },
     "hooks:install": {
       "description": "Install local pre-push hooks (skill-driven checks before push).",
       "category": "hooks"

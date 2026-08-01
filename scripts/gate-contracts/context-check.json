@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "gate": "context:check",
+  "guards": "AGENTS.md + CLAUDE.md topology (the @-import, the heading allowlist, the sprawl caps)",
+  "gates": [
+    {
+      "id": "context-check-rejects-missing-agents-import",
+      "kind": "executable",
+      "statedIn": "AGENTS.md",
+      "stated": "`npm run context:check` (run by",
+      "implementation": "scripts/check-context-drift.mjs",
+      "tests": ["tests/gate-poison-pills.test.mjs"],
+      "proof": "process",
+      "oracle": "poison-pill",
+      "poisonPill": {
+        "isolation": "tmpdir",
+        "argv": ["scripts/check-context-drift.mjs", "--strict"],
+        "overlay": { "CLAUDE.md": "tests/fixtures/poison/context-claude-md-tampered.md" },
+        "expectExit": 1,
+        "expectStderr": "ctx/missing-import",
+        "why": "CLAUDE.md with its `@./AGENTS.md` line removed — every other structural property still correct. This is the silent variant: nothing breaks, no test fails, and Claude Code simply stops reading every shared invariant in AGENTS.md."
+      }
+    }
+  ]
+}

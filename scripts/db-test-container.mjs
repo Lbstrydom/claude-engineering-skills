@@ -48,6 +48,7 @@ export const DESTRUCTIVE_SUITE_FILES = Object.freeze([
   'tests/db-setup.test.mjs',
 ]);
 export const ISOLATED_SUITE_FILES = Object.freeze([
+  'tests/db-schema-realization-live.test.mjs',
   'tests/symbol-index-drift-justification.test.mjs',
 ]);
 export const CONTRACT_SUITE_FILES = Object.freeze([

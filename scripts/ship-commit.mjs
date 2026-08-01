@@ -395,6 +395,40 @@ async function main() {
     pathspecRollback = rollback;
   }
 
+  // ---- migration realization gate ----------------------------------------
+  //
+  // A commit that ships a migration is only half-shipped until the migration is APPLIED.
+  // On 2026-07-31 exactly that happened: migration + dependent code committed, tests green,
+  // pushed — and the fix was byte-for-byte inert because nobody ran `--migrate`. The drift
+  // checker existed and was wired to nothing.
+  //
+  // Enforced HERE, in the binary, not in `/ship`'s SKILL.md: a SKILL step is an instruction
+  // to an agent and cannot block. This is the same place an unevidenced `AI-Gate: passed`
+  // is refused.
+  //
+  // UNCONDITIONAL when cloud is on — deliberately not gated on "the push range touches
+  // supabase/migrations/". A code-only commit can depend on a migration left unapplied by
+  // an EARLIER push or a branch switch, which is the more dangerous version of the same
+  // bug; and the check is one indexed SELECT against a connection the ship flow needs
+  // anyway. Cloud off / unreachable ⇒ skip silently: blocking on an unmeasurable condition
+  // is the cried-wolf shape that earns `--no-verify`.
+  {
+    const realization = await checkMigrationRealization(repoRoot);
+    if (realization.behind) {
+      if (pathspecRollback) pathspecRollback();
+      err(
+        `AGENT FIX: ${realization.db ? `database ${realization.db}` : 'the database'} is missing `
+        + `${realization.missing.length} migration(s) this commit's bundle ships `
+        + `(${realization.missing.slice(0, 3).join(', ')}`
+        + `${realization.missing.length > 3 ? `, +${realization.missing.length - 3} more` : ''}) `
+        + `— compared ${realization.dir} against public.audit_loop_migrations. `
+        + 'Shipping now would push code whose schema does not exist yet. '
+        + `Run: ${realization.command}`,
+      );
+      process.exit(2);
+    }
+  }
+
   // ---- compose + commit (input file stays immutable — Gemini G2) ----------
   const finalMessage = composeFinalMessage(messageText, values);
   const tmpDir = path.join(repoRoot, '.claude', 'tmp');
@@ -455,3 +489,49 @@ async function main() {
 }
 
 await main();
+
+/**
+ * Is the database missing migrations this checkout bundles?
+ *
+ * Fail-OPEN by construction: every uncertainty (cloud off, no pool, no migrations
+ * directory, unreadable ledger) returns `{behind: false}`. Only a definite set difference
+ * blocks the commit. A ship gate that fires on an unmeasurable condition gets
+ * `--no-verify`'d, and then it protects nothing at all.
+ *
+ * Uses the same filename-set comparison the runtime write guard uses, so ship time and
+ * runtime cannot disagree about what "realized" means.
+ */
+async function checkMigrationRealization(repoRoot) {
+  try {
+    const { getPool } = await import('./lib/db/client.mjs');
+    const pool = await getPool();
+    if (!pool) return { behind: false, reason: 'cloud-off' };
+
+    const {
+      resolveMigrationsDir, listBundledMigrations, readAppliedMigrations, findUnappliedMigrations,
+      setupPostgresCommand, describeDatabase,
+    } = await import('./lib/db/schema-realization.mjs');
+
+    // No layout argument: the module reads its own install path. Passing `repoRoot` alone
+    // used to leave the directory chosen by first-existing-wins, which in a consumer picked
+    // that repo's OWN `supabase/migrations` and compared an app schema against the
+    // audit-loop ledger — every app migration permanently "missing", every commit refused.
+    const dir = resolveMigrationsDir(repoRoot);
+    if (!dir) return { behind: false, reason: 'no-migrations-dir' };
+    const bundled = listBundledMigrations(dir);
+    // null = unreadable, not empty. Both fail open, but only one of them means "we looked".
+    if (bundled === null) return { behind: false, reason: 'bundle-unreadable' };
+    if (bundled.length === 0) return { behind: false, reason: 'no-migrations-dir' };
+
+    const applied = await readAppliedMigrations(pool);
+    if (applied === null) return { behind: false, reason: 'no-ledger' };
+
+    const missing = findUnappliedMigrations(bundled, applied);
+    return missing.length > 0
+      ? { behind: true, missing, dir, db: describeDatabase(pool), command: setupPostgresCommand() }
+      : { behind: false, reason: 'realized' };
+  } catch {
+    // Unreachable database, missing pg, bad DSN — all unmeasurable, none block.
+    return { behind: false, reason: 'unmeasurable' };
+  }
+}

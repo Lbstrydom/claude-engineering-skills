@@ -10,7 +10,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { listSkillNames } from '../skill-packaging.mjs';
-import { validateGateContract } from './schema.mjs';
+import { validateGateContract, validateCliGateContract } from './schema.mjs';
 
 /**
  * @param {object} opts
@@ -56,6 +56,62 @@ export function loadGateContracts({ skillsRoot, repoRoot }) {
   }
 
   return { contracted, uncontracted, divergences, skillNames, contractedByDir };
+}
+
+/** The exemption registry filename inside `contractsRoot` — never itself a contract. */
+export const CLI_GATE_EXEMPTIONS_FILE = '_exemptions.json';
+
+/**
+ * Enumerate `scripts/gate-contracts/<gate>.json` — the CLI-gate half of the same protocol.
+ *
+ * Discovery is pure file enumeration, exactly as above; validation is
+ * `validateCliGateContract`, which shares its per-gate loop with the skill contracts.
+ * The filename must match the contract's own `gate` field with `:` written as `-`, so a
+ * contract cannot claim to be for a gate other than the one its filename advertises —
+ * the CLI-gate form of the contract↔directory identity the ratchet enforces for skills.
+ *
+ * @returns {{contracted: object[], divergences: string[], exemptions: Record<string,string>}}
+ */
+export function loadCliGateContracts({ contractsRoot, repoRoot }) {
+  const contracted = [];
+  const divergences = [];
+  let exemptions = {};
+
+  if (!fs.existsSync(contractsRoot)) return { contracted, divergences, exemptions };
+
+  for (const entry of fs.readdirSync(contractsRoot).sort()) {
+    if (!entry.endsWith('.json')) continue;
+    const abs = path.join(contractsRoot, entry);
+    let raw;
+    try {
+      raw = JSON.parse(fs.readFileSync(abs, 'utf-8'));
+    } catch (e) {
+      divergences.push(`[${entry}] invalid JSON: ${e.message}`);
+      continue;
+    }
+    if (entry === CLI_GATE_EXEMPTIONS_FILE) {
+      exemptions = raw?.exempt && typeof raw.exempt === 'object' ? raw.exempt : {};
+      const bad = Object.entries(exemptions).filter(([, r]) => typeof r !== 'string' || r.trim().length === 0);
+      for (const [gate] of bad) {
+        divergences.push(`[${entry}][${gate}] exemption without a reason — silence is what this registry exists to remove`);
+      }
+      continue;
+    }
+    const result = validateCliGateContract(raw, repoRoot);
+    if (!result.ok) {
+      divergences.push(...result.errors.map((e) => (e.startsWith('[') ? e : `[${entry}] ${e}`)));
+      continue;
+    }
+    const expected = `${result.contract.gate.replace(/:/g, '-')}.json`;
+    if (entry !== expected) {
+      divergences.push(`[${entry}] declares gate "${result.contract.gate}", which belongs in ${expected} — `
+        + 'a contract must not be filed under a name other than its own gate');
+      continue;
+    }
+    contracted.push({ ...result.contract, file: `${path.basename(contractsRoot)}/${entry}` });
+  }
+
+  return { contracted, divergences, exemptions };
 }
 
 /**

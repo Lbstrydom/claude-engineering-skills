@@ -1,0 +1,67 @@
+{
+  "version": 1,
+  "gate": "skills:check",
+  "guards": "skills.manifest.json + .claude/skills/** + the shared audit references (all Category B)",
+  "gates": [
+    {
+      "id": "skills-check-authenticates-manifest-content",
+      "kind": "executable",
+      "statedIn": "AGENTS.md",
+      "stated": "`skills:regenerate`, enforced by `skills:check`",
+      "implementation": "scripts/build-manifest.mjs",
+      "tests": ["tests/gate-poison-pills.test.mjs"],
+      "proof": "process",
+      "oracle": "poison-pill",
+      "poisonPill": {
+        "isolation": "tmpdir",
+        "argv": ["scripts/build-manifest.mjs", "--check"],
+        "mutate": {
+          "skills.manifest.json": { "path": "skills.plan.sha", "value": "000000000000" }
+        },
+        "expectExit": 1,
+        "expectStderr": "versions match",
+        "why": "One per-file sha edited while bundleVersion and schemaVersion are left intact, so a version-only comparison sees a fresh manifest. Until 2026-07-31 --check did exactly that and reported such a manifest FRESH — green having authenticated almost nothing. `mutate` rather than a snapshot fixture: bundleVersion changes on every skill edit, so a committed fixture would stop reproducing the versions-match condition and the pill would go red for reasons unrelated to the gate."
+      }
+    },
+    {
+      "id": "skills-check-detects-hand-edited-generated-copy",
+      "kind": "executable",
+      "statedIn": "AGENTS.md",
+      "stated": "generated copy — run `npm run skills:regenerate`",
+      "implementation": "scripts/regenerate-skill-copies.mjs",
+      "tests": ["tests/gate-poison-pills.test.mjs"],
+      "proof": "process",
+      "oracle": "poison-pill",
+      "poisonPill": {
+        "isolation": "tmpdir",
+        "argv": ["scripts/regenerate-skill-copies.mjs", "--check"],
+        "overlay": {
+          ".claude/skills/plan/SKILL.md": "tests/fixtures/poison/claude-skills-plan-drifted.md"
+        },
+        "expectExit": 1,
+        "expectStderr": "Destinations differ from source",
+        "why": "A hand-edit to the GENERATED copy rather than to skills/**. That copy is what every agent actually loads, so the edit takes effect immediately and then vanishes at the next regeneration — a change that works until it silently doesn't."
+      }
+    },
+    {
+      "id": "skills-check-detects-shared-reference-drift",
+      "kind": "executable",
+      "statedIn": "AGENTS.md",
+      "stated": "Every reference file has `summary:` YAML frontmatter that must byte-match",
+      "implementation": "scripts/sync-shared-audit-refs.mjs",
+      "tests": ["tests/gate-poison-pills.test.mjs"],
+      "proof": "process",
+      "oracle": "poison-pill",
+      "poisonPill": {
+        "isolation": "tmpdir",
+        "argv": ["scripts/sync-shared-audit-refs.mjs", "--check"],
+        "overlay": {
+          "skills/audit-code/references/ledger-format.md": "tests/fixtures/poison/ledger-format-drifted.md"
+        },
+        "expectExit": 1,
+        "expectStderr": "drifted from canonical",
+        "why": "One consumer copy of a shared reference edited away from its canonical source. Two files required to stay byte-identical, and a human editing whichever one they happened to open, is exactly how they diverge."
+      }
+    }
+  ]
+}

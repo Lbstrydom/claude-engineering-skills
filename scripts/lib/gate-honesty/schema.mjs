@@ -31,6 +31,7 @@ export const ORACLE_IDS = Object.freeze([
   'tiered-shadow-window',
   'visual-gate-unverified',
   'cli-exit',
+  'poison-pill',
 ]);
 
 /** Closed v1 cli-exit scenario registry (§F2.3 — right-sized to what's contracted). */
@@ -90,11 +91,46 @@ const TieredShadowRow = z.object({
   ).nullable(),
 }).strict();
 
+/**
+ * A `poison-pill` gate's proof: the gate must REJECT a deliberately broken copy of the
+ * artifact it guards, and accept the pristine one.
+ *
+ * `isolation` is a one-value enum rather than a free string because the alternative that
+ * was considered — redirecting a single path argument — says nothing about where else the
+ * gate writes. Outputs must be isolated, not just inputs, so the only legal answer is a
+ * temp copy. A gate that cannot be run that way is exempt with a reason, never
+ * `isolation: "none"`.
+ *
+ * The tamper is `overlay` (a committed snapshot lands at a destination) and/or `mutate`
+ * (one JSON field of the live artifact is changed in place). At least one is required: a
+ * pill with nothing to tamper with hands the gate a pristine artifact and reports a pass.
+ * `expectStderr` is required for the same reason `expectExit` alone is not enough — a
+ * non-zero exit cannot distinguish "detected the tampering" from "crashed before reading
+ * anything".
+ */
+const PoisonPillSchema = z.object({
+  isolation: z.literal('tmpdir'),
+  argv: z.array(z.string().min(1)).min(1),
+  overlay: z.record(z.string().min(1), z.string().min(1)).optional(),
+  mutate: z.record(z.string().min(1), z.object({
+    path: z.string().min(1),
+    value: z.unknown(),
+  }).strict()).optional(),
+  expectExit: z.number().int().optional(),
+  expectStderr: z.string().min(1),
+  why: z.string().min(1),
+  needsGit: z.boolean().optional(),
+}).strict().refine(
+  (p) => Object.keys(p.overlay ?? {}).length + Object.keys(p.mutate ?? {}).length > 0,
+  { message: 'a poison pill needs an overlay or a mutate — otherwise the gate is handed a pristine artifact and "passes" having detected nothing' },
+);
+
 const ExecutableGateSchema = z.discriminatedUnion('oracle', [
   z.object({ ...CommonExecutableFields, oracle: z.literal('convergence-threshold'), params: ConvergenceThresholdParams }).strict(),
   z.object({ ...CommonExecutableFields, oracle: z.literal('tiered-shadow-window'), fixture: z.object({ rows: z.array(TieredShadowRow).min(1) }).strict() }).strict(),
   z.object({ ...CommonExecutableFields, oracle: z.literal('visual-gate-unverified') }).strict(),
   z.object({ ...CommonExecutableFields, oracle: z.literal('cli-exit'), scenario: z.enum(CLI_EXIT_SCENARIOS) }).strict(),
+  z.object({ ...CommonExecutableFields, oracle: z.literal('poison-pill'), poisonPill: PoisonPillSchema }).strict(),
 ]);
 
 const DocumentOnlyGateSchema = z.object({
@@ -211,51 +247,105 @@ export function validateGateContract(raw, repoRoot) {
     return { ok: false, errors: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`) };
   }
   const contract = parsed.data;
+  const errors = validateGates(contract.gates, {
+    owner: contract.skill,
+    approvedStatedIn: `skills/${contract.skill}/SKILL.md or AGENTS.md`,
+    isApproved: (s) => isApprovedStatedInSource(s, contract.skill),
+    repoRoot,
+  });
+  return errors.length === 0 ? { ok: true, contract } : { ok: false, errors };
+}
+
+/**
+ * The per-gate checks, shared verbatim by skill contracts and CLI-gate contracts.
+ *
+ * Extracted rather than copied (plan §2 dec. 3): the rejected design was a second registry
+ * with its own checker "extending" this protocol in name only, which is how the first one
+ * rots. One loop means a rule added here — a new path containment check, a new drift test —
+ * cannot apply to half the contracts, which is this plan's own defect class.
+ */
+function validateGates(gates, { owner, approvedStatedIn, isApproved, repoRoot }) {
   const errors = [];
   const seenIds = new Set();
 
-  for (const gate of contract.gates) {
+  for (const gate of gates) {
     if (seenIds.has(gate.id)) errors.push(`duplicate gate id: ${gate.id}`);
     seenIds.add(gate.id);
 
     if (gate.kind !== 'executable') continue;
 
-    if (!isApprovedStatedInSource(gate.statedIn, contract.skill)) {
-      errors.push(`[${contract.skill}][${gate.id}] statedIn "${gate.statedIn}" is not an approved source (must be skills/${contract.skill}/SKILL.md or AGENTS.md)`);
+    if (!isApproved(gate.statedIn)) {
+      errors.push(`[${owner}][${gate.id}] statedIn "${gate.statedIn}" is not an approved source (must be ${approvedStatedIn})`);
       continue;
     }
 
     const implCheck = resolveContainedPath(gate.implementation, repoRoot);
     if (!implCheck.ok) {
-      errors.push(`[${contract.skill}][${gate.id}] implementation path invalid (${implCheck.reason}): ${gate.implementation}`);
+      errors.push(`[${owner}][${gate.id}] implementation path invalid (${implCheck.reason}): ${gate.implementation}`);
     } else if (!existsFile(path.resolve(repoRoot, gate.implementation))) {
-      errors.push(`[${contract.skill}][${gate.id}] implementation file does not exist: ${gate.implementation}`);
+      errors.push(`[${owner}][${gate.id}] implementation file does not exist: ${gate.implementation}`);
     }
 
     for (const t of gate.tests) {
       const testCheck = resolveContainedPath(t, repoRoot);
       if (!testCheck.ok) {
-        errors.push(`[${contract.skill}][${gate.id}] tests[] path invalid (${testCheck.reason}): ${t}`);
+        errors.push(`[${owner}][${gate.id}] tests[] path invalid (${testCheck.reason}): ${t}`);
         continue;
       }
       const abs = path.resolve(repoRoot, t);
       if (!existsFile(abs)) {
-        errors.push(`[${contract.skill}][${gate.id}] tests[] file does not exist: ${t}`);
+        errors.push(`[${owner}][${gate.id}] tests[] file does not exist: ${t}`);
         continue;
       }
       if (!fileTextReferencesId(abs, gate.id)) {
-        errors.push(`[${contract.skill}][${gate.id}] tests[] file "${t}" does not reference gate id "${gate.id}" — a contract cannot claim a test that doesn't know about it`);
+        errors.push(`[${owner}][${gate.id}] tests[] file "${t}" does not reference gate id "${gate.id}" — a contract cannot claim a test that doesn't know about it`);
       }
     }
 
     const statedAbs = path.resolve(repoRoot, gate.statedIn);
     if (!existsFile(statedAbs)) {
-      errors.push(`[${contract.skill}][${gate.id}] statedIn file does not exist: ${gate.statedIn}`);
+      errors.push(`[${owner}][${gate.id}] statedIn file does not exist: ${gate.statedIn}`);
     } else if (!fileTextContains(statedAbs, gate.stated)) {
-      errors.push(`[${contract.skill}][${gate.id}] stated "${gate.stated}" (${gate.statedIn}); not found verbatim — prose/contract have drifted`);
+      errors.push(`[${owner}][${gate.id}] stated "${gate.stated}" (${gate.statedIn}); not found verbatim — prose/contract have drifted`);
     }
   }
 
+  return errors;
+}
+
+/**
+ * A CLI gate's contract — `scripts/gate-contracts/<gate>.json`.
+ *
+ * Same file layout idea as `skills/<name>/gate-contract.json` (contract beside its
+ * subject), same `id`/`statedIn`/`stated`/`implementation`/`tests`/`proof` vocabulary, and
+ * the SAME validator. The only differences are structural rather than stylistic: the owner
+ * is an npm script name (`skills:check`) rather than a kebab-case skill directory, and
+ * because no SKILL.md owns it, the single approved source for its claim is `AGENTS.md`.
+ */
+export const CliGateContractSchema = z.object({
+  version: z.literal(1),
+  // npm script names carry a colon; the grammar stays an identifier (no slashes, no dots,
+  // no traversal) for the same reason `skill` does — it is interpolated into messages and
+  // must never be a path fragment.
+  gate: z.string().regex(/^[a-z0-9]+([:-][a-z0-9]+)*$/, 'gate must be an npm script identifier, not a path'),
+  guards: z.string().min(1),
+  gates: z.array(GateSchema).min(1),
+  ignoredCandidates: z.array(IgnoredCandidateSchema).optional(),
+}).strict();
+
+/** @returns {{ok: true, contract: object} | {ok: false, errors: string[]}} */
+export function validateCliGateContract(raw, repoRoot) {
+  const parsed = CliGateContractSchema.safeParse(raw);
+  if (!parsed.success) {
+    return { ok: false, errors: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`) };
+  }
+  const contract = parsed.data;
+  const errors = validateGates(contract.gates, {
+    owner: contract.gate,
+    approvedStatedIn: 'AGENTS.md',
+    isApproved: (s) => String(s).replace(/\\/g, '/') === 'AGENTS.md',
+    repoRoot,
+  });
   return errors.length === 0 ? { ok: true, contract } : { ok: false, errors };
 }
 
