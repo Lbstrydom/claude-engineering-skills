@@ -163,10 +163,10 @@
   "author": "Louis Strydom",
   "license": "MIT",
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.109.0",
+    "@anthropic-ai/sdk": "^0.115.0",
     "@babel/parser": "^8.0.0",
     "@babel/traverse": "^8.0.0",
-    "@google/genai": "^2.10.0",
+    "@google/genai": "^2.13.0",
     "codeowners-utils": "^1.0.2",
     "dotenv": "17.4.2",
     "micromatch": "^4.0.8",
