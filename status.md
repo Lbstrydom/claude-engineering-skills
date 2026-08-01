@@ -1,6 +1,62 @@
 # Project Status Log
 
-## 2026-08-01 (latest) — one test file could only ever lock one finding
+## 2026-08-01 (latest) — three consumer-reported defects, and a file that had no room left
+
+Three items arrived from wine-cellar-app. All three were real; each was reproduced
+before being touched.
+
+**`install-bootstrap-e2e` was red in every git worktree.** 8 fail / 0 pass, all
+`ERR_MODULE_NOT_FOUND` on zod — reproduced in `.claude/worktrees/`, and the harness
+creates worktrees by default. `linkDepsBesideCache` junctioned `<REPO_ROOT>/node_modules`
+into the OS-temp cache, but a worktree has no `node_modules`: its imports resolve by Node
+walking UP into the checkout it is nested in. The symlink of a non-existent path threw,
+a bare `catch` swallowed it, and the comment claiming resolution "falls back to the
+ambient chain" was false — a cache in temp has no chain to fall back to. It now asks the
+resolver where `zod` actually is, which is right in both layouts, and the `catch` is
+gone: a failure there guarantees eight failures several frames away, so it should fail
+where the cause is. It passed in the main checkout AND in the pre-push sandbox, which is
+exactly why nobody noticed.
+
+**`lock-with-test --worksheet` offered basename twins from unrelated modules**
+(upstream `08b4f5fc`) — `tests/unit/agentChat/state.test.js` proposed as the lock for
+`public/js/restaurantpairing/state.js`. Searching every test root at any depth (34db8802)
+fixed the misses and created this: a bare stem like `state` collides across modules. Prose
+caveats could not stop it because the row *also renders a pasteable command*, and the
+writer only refuses a MISSING path — a present-but-wrong one is accepted, the finding
+leaves `unlocked_fixes`, and it can never resurface. A false lock is worse than the open
+obligation it clears. `classifyTestMatch` is three-valued on purpose: a flat layout (this
+repo's own) has nothing to compare and returns `unknown`; only a genuine contradiction —
+the test filed under module directories, none of which appear in the source's path —
+suppresses the command. Ranking is not filtering: an `unrelated` candidate is still
+listed, because a cross-module integration test can be the right lock. The writer keeps
+accepting a deliberately-typed path; `--description` is the accountability there.
+
+**Nothing prompted anyone to read the upstream queue.** Two reports sat unread, one
+already fixed ~45 minutes earlier and still `open`. `/ship` Step 0.5h now prints the open
+count — source-repo gated, capped at 3, silently skipped when cloud is off. It advises
+and never blocks: the queue is CLOUD state, and a gate that blocks on something the
+commit cannot fix is the cried-wolf shape that earns `--no-verify`.
+
+One open thread: the report's `reported_bundle_sha` predates 34db8802, and that older
+code could only ever emit `tests/<base>.test.mjs` — it could not have produced the nested
+path in the report. Either the sync manifest's sha lagged the synced files or the example
+was paraphrased. Not chased; noted in case the freshness verdict misleads again.
+
+**AGENTS.md condensation.** The 0.5h note pushed the file to 1203 lines, over its own
+1200 cap — it had been sitting at 1199 with zero headroom, which is the state its own
+rule warns about ("shaving words to squeeze under the cap is how a file stays permanently
+full"). Condensed 1199 → 1078, clearing the 10%-headroom advisory. Three dossiers moved
+to `docs/reference/`: the testing doctrine's three tiers, the cross-skill table/column/view
+catalogue, and the sensitive-paths + VCS module internals. In each case the *obligation*
+stayed resident and the *mechanism* left — Tier-3's same-commit rule, `formatSkipLog`,
+fail-closed classification, the closed error enums.
+
+Worth recording separately: the cap is line-based, and the two largest per-session token
+costs in that file (the `nav-audit` and `visual-audit` bullets, ~2.5K chars each) are ONE
+line apiece — completely invisible to it. Both were condensed ~45% anyway, which the gate
+did not notice in either direction. The proxy and the cost are not the same thing.
+
+## 2026-08-01 — one test file could only ever lock one finding
 
 Reported from a consumer: `lock-with-test` returned `{"ok":true,"locked":true}` for
 every call in a batch sweep, and the queue never drained. `regression_specs` carried

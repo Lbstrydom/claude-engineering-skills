@@ -2604,7 +2604,7 @@ async function cmdLockWithTest() {
  * worksheet would have produced duplicate suites.
  */
 async function cmdLockWithTestWorksheet() {
-  const { findTestFilesFor } = await import('./lib/test-file-search.mjs');
+  const { findTestFilesFor, classifyTestMatch } = await import('./lib/test-file-search.mjs');
   // Same scope chain as list-unlocked-fixes — this is the command Step 0.5b
   // PRINTS as its own remediation, so an unscoped worksheet would hand the
   // operator another repo's findings to "fix".
@@ -2651,13 +2651,24 @@ async function cmdLockWithTestWorksheet() {
   for (const r of rows) {
     const matches = findTestFilesFor(r.primary_file, process.cwd());
     const guess = matches[0] ?? null;
+    // A rendered command is READ AS EVIDENCE that the lock is sound — that is
+    // the whole reason it saves the operator typing. So it is withheld when the
+    // only candidate's own directories contradict the source's: the operator
+    // must then name the path deliberately, which is the accountability the
+    // mandatory --description already assumes.
+    const verdict = guess ? classifyTestMatch(r.primary_file, guess) : null;
+    const others = matches.length > 1 ? ` (+${matches.length - 1} other same-named match(es))` : '';
     lines.push(`## ${r.audit_finding_id}`);
     lines.push(`- file: \`${r.primary_file}\``);
     lines.push(`- category: ${r.category}`);
-    lines.push(`- suggested test: ${guess
-      ? `\`${guess}\`${matches.length > 1 ? ` (+${matches.length - 1} other same-named match(es))` : ''} (exists — READ IT before locking)`
-      : '**none found — write one**'}`);
-    if (guess) {
+    if (!guess) {
+      lines.push('- suggested test: **none found — write one**');
+    } else if (verdict === 'unrelated') {
+      lines.push(`- suggested test: **none confident**. Closest basename match is \`${guess}\`${others}, `
+        + 'but it lives under a different module — a same-named file from elsewhere is not coverage. '
+        + 'Read it, or write a test; then run `lock-with-test` with the path spelled out.');
+    } else {
+      lines.push(`- suggested test: \`${guess}\`${others} (exists — READ IT before locking)`);
       lines.push('', '```bash', `node scripts/cross-skill.mjs lock-with-test --finding ${r.audit_finding_id} --test ${guess} --description "pins: ${String(r.category).replace(/"/g, "'")}"`, '```');
     }
     lines.push('');

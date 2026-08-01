@@ -31,11 +31,36 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 import { bootstrap, bundleSource } from '../install.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+/**
+ * The `node_modules` directory that actually serves THIS file — which is not
+ * necessarily `<REPO_ROOT>/node_modules`.
+ *
+ * A git worktree has no `node_modules` of its own; its imports resolve by Node
+ * walking UP into the checkout it is nested in. Linking `<REPO_ROOT>/node_modules`
+ * from a worktree therefore linked a path that does not exist, the `catch` below
+ * swallowed the ENOENT, and the cache — sitting in OS temp, where no upward walk
+ * can reach the repo — got no `zod`. Every test in this file then died with
+ * ERR_MODULE_NOT_FOUND: 8 failures, 0 passes, `npm test` red for anyone working
+ * in a worktree (which the agent harness creates by default). It passed in the
+ * main checkout and in the pre-push sandbox, which is why it went unnoticed.
+ * Reported from a consumer 2026-08-01 and reproduced here before this fix.
+ *
+ * Asking the resolver where a real dependency lives is correct in both layouts.
+ */
+function hostNodeModules() {
+  const entry = createRequire(import.meta.url).resolve('zod/package.json');
+  const parts = entry.split(path.sep);
+  const i = parts.lastIndexOf('node_modules');
+  if (i === -1) throw new Error(`cannot locate node_modules from resolved zod path: ${entry}`);
+  return parts.slice(0, i + 1).join(path.sep);
+}
 
 let tmp, remote, fixturePkg, headSha, prevCache;
 
@@ -175,9 +200,11 @@ function linkDepsBesideCache(cache) {
   fs.mkdirSync(parent, { recursive: true });
   const link = path.join(parent, 'node_modules');
   if (fs.existsSync(link)) return;
-  try {
-    fs.symlinkSync(path.join(REPO_ROOT, 'node_modules'), link, 'junction');
-  } catch { /* resolution falls back to the ambient chain */ }
+  // Deliberately NOT swallowed. The cache lives in OS temp, so there is no
+  // ambient resolution chain to fall back to — a failure here guarantees eight
+  // ERR_MODULE_NOT_FOUND failures several frames away, which is exactly how the
+  // worktree bug presented. Fail where the cause is, not where the symptom is.
+  fs.symlinkSync(hostNodeModules(), link, 'junction');
 }
 
 /** Run the real bootstrap with deps stubbed and step order recorded. */

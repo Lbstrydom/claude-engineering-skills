@@ -18,7 +18,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { findTestFilesFor, testStemFor } from '../scripts/lib/test-file-search.mjs';
+import { findTestFilesFor, testStemFor, classifyTestMatch } from '../scripts/lib/test-file-search.mjs';
 
 describe('testStemFor', () => {
   it('drops exactly one extension', () => {
@@ -67,12 +67,15 @@ describe('findTestFilesFor — layout independence (the reported defect)', () =>
       ['tests/unit/public/cellarSwitcher.test.js']);
   });
 
-  it('matches .spec as well as .test, shallowest first for a stable suggestion', () => {
+  it('matches .spec as well as .test, agreeing module first, for a stable suggestion', () => {
     // A worksheet whose suggestion changes between identical runs is not a
     // worksheet — the ordering is the contract, not an implementation detail.
+    // Agreement outranks depth: `tests/state.spec.ts` is shallower, but the
+    // nested file sits under the source's OWN module, which is the stronger
+    // evidence and the one an operator should be shown first.
     assert.deepEqual(
       findTestFilesFor('src/restaurantPairing/state.js', root),
-      ['tests/state.spec.ts', 'tests/unit/restaurantPairing/state.test.js']);
+      ['tests/unit/restaurantPairing/state.test.js', 'tests/state.spec.ts']);
   });
 
   it('never matches a prefix — cellarSwitcherHelpers is a different module', () => {
@@ -102,6 +105,45 @@ describe('findTestFilesFor — layout independence (the reported defect)', () =>
   it('a regex-special stem is matched literally, not as a pattern', () => {
     assert.deepEqual(findTestFilesFor('src/foo.config.ts', root), [],
       'the `.` in the stem must not match any character');
+  });
+});
+
+describe('classifyTestMatch — the basename-collision defect', () => {
+  // Reported from wine-cellar-app 2026-08-01: the worksheet offered
+  // `tests/unit/agentChat/state.test.js` as the regression lock for
+  // `public/js/restaurantpairing/state.js`. Locking that would have recorded a
+  // `regression_specs` row claiming coverage that does not exist, dropped the
+  // finding out of `unlocked_fixes`, and left it unable to resurface.
+  it('calls out a basename twin filed under a different module', () => {
+    assert.equal(
+      classifyTestMatch('public/js/restaurantpairing/state.js', 'tests/unit/agentChat/state.test.js'),
+      'unrelated');
+  });
+
+  it('accepts the same stem under the source\'s own module', () => {
+    assert.equal(
+      classifyTestMatch('public/js/restaurantpairing/state.js', 'tests/unit/restaurantpairing/state.test.js'),
+      'related');
+  });
+
+  it('matches across casing — restaurantPairing and restaurantpairing are one module', () => {
+    assert.equal(
+      classifyTestMatch('src/restaurantPairing/state.js', 'tests/unit/RESTAURANTPAIRING/state.test.js'),
+      'related');
+  });
+
+  // The regression this guard could most easily cause: suppressing every
+  // correct suggestion in a repo whose tests are flat. A flat path carries no
+  // module evidence, so it cannot CONTRADICT anything.
+  it('a flat test layout is unknown, never unrelated', () => {
+    assert.equal(classifyTestMatch('scripts/lib/db/query.mjs', 'tests/query.test.mjs'), 'unknown');
+    assert.equal(classifyTestMatch('anything/at/all.js', 'test/all.spec.ts'), 'unknown');
+  });
+
+  it('harness directories alone are not module evidence', () => {
+    // `tests/unit/` says where the harness files live, not what is under test.
+    assert.equal(classifyTestMatch('src/foo.js', 'tests/unit/foo.test.js'), 'unknown');
+    assert.equal(classifyTestMatch('src/foo.js', 'tests/integration/e2e/foo.test.js'), 'unknown');
   });
 });
 

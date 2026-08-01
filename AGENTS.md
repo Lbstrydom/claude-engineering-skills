@@ -164,8 +164,8 @@ Each skill is a sibling — they share env vars and the cloud audit store but ha
   - **Pair** (`--pair "<p1>" "<p2>" <url>`): runs two opposed-expertise personas back-to-back, diffs findings into CONSENSUS / A-ONLY / B-ONLY buckets. Use when coverage matters more than speed — empirically ~92% disjoint findings.
   - **Consistency mode** (`--mode consistency --canary <name>`, code-driven Playwright): deterministic runner against a canary journey + a `surfaces.json` manifest declaring `data-engine-claim` HTML attributes. Detects cross-step UI/state contradictions (DOM-vs-network-truth, stale-projection, undeclared-engine-claim, missing-surface). Emits `regression_specs` candidates with full witness snapshots; `/ship` Step 5.6 promotes them to locked Playwright specs. See `docs/reference/consistency-contract.md` for the HTML attribute contract.
 - **click-test**: deployed app, structural DOM audit. Mechanical complement to persona-test — walks every interactive element, asserts semantic-HTML contracts (duplicate IDs, orphan labels, inputs without names, ARIA misuse, heading hierarchy, missing alt, undersized touch targets). Catches issues personas never trigger because there's no narrative reason to notice them. Optional `--with-modals` opens each modal/dropdown and re-scans the live DOM. Cache-busts service workers before scanning.
-- **nav-audit**: the **system-level** third UX lens (persona-test = journey-first, click-test = page-first, nav-audit = system-first). Static, code-derived audit of the WHOLE navigation graph — extracts every entry point × destination via `@babel/parser` AST (+ a string/template scan so vanilla template-HTML apps work), attributes anchors by render-containment, and runs a 10-class taxonomy (orphan, coverage-gap, redundancy, competing-models, anchor-regression, …) asking "is what's OFFERED what's NEEDED?" grounded in the persona registry. Two-artifact split: route-owned facts colocate in code (`navMeta`/`@nav` docblock); product intent lives in a tiny committed `nav-contract.json`; the observed graph is gitignored + regenerated. CI gate is **drift-only** (hard-fails only on a declared-intent regression on the changed surface). `--verify <url>` drives headless Chromium to reconcile static-vs-live (confirmed / static-only / runtime-only), attribute each live destination to its DOM-container layer → per-persona scorecard (pass/misplaced/missing), and ALSO run the layer-attribution finding classes over the **live** evidence ("Live findings", `source:'live'` — competing-models/over-exposure/sequencing fire on data-driven apps the static taxonomy can't model; state-scoped so responsive duplication isn't a false competing-model). A bounded **activation pass** opens collapsed menus/hamburgers and re-snapshots so behind-menu destinations aren't mislabeled "missing" (`--no-activate` to disable). The persisted verify-result is keyed on the contract digest (incl. `exclude`) + `NAV_VERIFY_TOOL_VERSION` (the live-result semantics version, decoupled from the observed-envelope `NAV_TOOL_VERSION`); the dashboard surfaces live evidence independently of the static observed envelope (live-only mode). **Capture honesty (v1.4)**: when a declared nav container is *visible-but-empty* (a stall, e.g. under a cold-init rate-limit storm) or never observable, that layer is `unverifiable` and the scorecard/live-findings degrade to `unverified` + a warning rather than emit an authoritative `misplaced`/`missing` — a `display:none` responsive container is a legitimate variant, not a stall. The activation pass adaptively aborts after 3 consecutive unactionable triggers so it can't amplify a degraded app's storm. Dashboard "Nav Audit" tab (REGISTRY.reference): Per-Persona Reachability Scorecard + Nav Drift + Live findings. Plans: `docs/plans/nav-audit-skill.md`, `nav-audit-v1.3-live-findings.md`, `nav-audit-debt-digest-decouple.md`, `nav-audit-v1.4-capture-honesty.md`.
-- **visual-audit**: the **paint-level** fourth UX lens (persona=journey, click=page, nav=system, **visual=paint**). Math-first, deterministic visual-contract auditor — drives Playwright + `getComputedStyle` + `getBoundingClientRect` + CDP `forcePseudoState` to assert what the page *paints*, with a VLM advisory-only (`--explain`, never gates). **Verify-primary** (unlike static-primary nav-audit): paint can't be asserted without rendering, so the static run only parses declared token sources → allowed-set + a source-coherence lint and emits NO paint findings (banner says so); `--verify <url>` runs the four tiers. **Tiers**: (1) declared-token reconciliation — a rendered value must be on the declared scale OR set by a token-referencing winning declaration (cascade-resolved), else `token_violation`; token-less apps get a report-only inferred-cluster fallback; (2) theme parity — MUST-MATCH in-flow geometry (only for nodes rendered in *both* themes, so a `display:none`-in-one-theme element isn't false-flagged) + may-differ-if-tokened colors (untokened literal identical across themes → `theme_unmapped_token`) + contrast over the in-browser-resolved opaque backdrop; (3) layout physics — overflow / silent clipping / overlap (ancestor-descendant containment excluded) / image distortion; (4) signifier matrix — `missing_visible_focus` (any indicator: outline/ring/border/bg), `state_has_no_visual_delta`, `disabled_not_signified`, read via CDP forced-pseudo-state after freezing transitions (no flaky actuation). Two-artifact split: committed `visual-contract.json` (surfaces + sourceGlobs + tokenSources + themes + globalStyleGlobs); gitignored `.audit-loop/visual-{observed,verify-result,drift-ledger}.json`. CI gate is **drift-only** via the canonical `ChangedScopeResolver` (changed-scope.mjs) — blocks a gate-eligible finding only when its surface's sourceGlobs, a changed token source, a contract edit, or a `globalStyleGlobs` cascade touches the change. Capture honesty: an absent/empty-skeleton surface or unresolvable backdrop degrades to `unverified`, never a false authoritative finding. The scope firewall (in SKILL.md verbatim): *"include a check only if you can assert it on a computed style without knowing what the page is FOR"* — signifiers in, affordance judgments out (those are persona-test's). Dashboard "Visual Audit" tab (REGISTRY.reference): Contracted-Surface Scorecard + Visual Findings. Plan: `docs/plans/visual-audit-skill.md`.
+- **nav-audit**: the **system-level** third UX lens (persona=journey, click=page, nav=system). Static, code-derived audit of the WHOLE navigation graph — every entry point x destination via `@babel/parser` AST (plus a string/template scan so vanilla template-HTML apps work), run through a 10-class taxonomy (orphan, coverage-gap, redundancy, competing-models, anchor-regression, ...) asking "is what's OFFERED what's NEEDED?", grounded in the persona registry. Two-artifact split: route facts colocate in code (`navMeta`/`@nav` docblock), product intent in a committed `nav-contract.json`, the observed graph gitignored + regenerated. CI gate is **drift-only** (a declared-intent regression on the changed surface). `--verify <url>` reconciles static-vs-live, attributes each live destination to its DOM-container layer for a per-persona scorecard, and runs the layer-attribution classes over LIVE evidence (`source:'live'`) that the static taxonomy cannot model. **Capture honesty (v1.4)**: a visible-but-empty or never-observable nav container is `unverifiable` and degrades to `unverified` rather than emit an authoritative `missing`/`misplaced`; the activation pass aborts after 3 unactionable triggers so it cannot amplify a degraded app's storm. Plans: `docs/plans/nav-audit-skill.md`, `nav-audit-v1.3-live-findings.md`, `nav-audit-debt-digest-decouple.md`, `nav-audit-v1.4-capture-honesty.md`.
+- **visual-audit**: the **paint-level** fourth UX lens (persona=journey, click=page, nav=system, **visual=paint**). Math-first, deterministic — drives Playwright + `getComputedStyle` + `getBoundingClientRect` + CDP `forcePseudoState` to assert what the page *paints*; the VLM (`--explain`) is advisory and never gates. **Verify-primary** (unlike static-primary nav-audit): paint cannot be asserted without rendering, so the static run parses token sources only and emits NO paint findings (the banner says so). `--verify <url>` runs four tiers: declared-token reconciliation (cascade-resolved, else `token_violation`), theme parity (geometry must match for nodes rendered in BOTH themes; untokened literals identical across themes are `theme_unmapped_token`), layout physics (overflow / clipping / overlap / image distortion), and the signifier matrix (`missing_visible_focus`, `state_has_no_visual_delta`, `disabled_not_signified`) read via forced pseudo-state after freezing transitions. Two-artifact split: committed `visual-contract.json`; gitignored `.audit-loop/visual-*.json`. CI gate is **drift-only** via the canonical `ChangedScopeResolver`. Capture honesty: an absent/empty-skeleton surface or unresolvable backdrop degrades to `unverified`, never a false authoritative finding. Scope firewall (verbatim in SKILL.md): *"include a check only if you can assert it on a computed style without knowing what the page is FOR"* — signifiers in, affordance judgments out (those are persona-test's). Plan: `docs/plans/visual-audit-skill.md`.
 - **ship**: packaging and delivery (now includes Step 5.6 candidate promotion when consistency mode is adopted)
 
 > **Skill naming convention (two families — don't "fix" by forcing a uniform prefix).**
@@ -177,13 +177,10 @@ Each skill is a sibling — they share env vars and the cloud audit store but ha
 >   **`-test` = pure live-browser walk** (`persona-test`, `click-test`); **`-audit` =
 >   static extract + `--verify` reconcile** (`nav-audit`, `visual-audit`).
 >
-> So `nav-audit`/`visual-audit` are a consistent pair, and `click-test`/`persona-test`
-> are another. Renaming the lenses to `audit-nav`/`audit-click` would *break* this:
-> "audit click" isn't a coherent object, and the `audit-` prefix would falsely imply
-> membership in the adjudication-loop family (rounds/ledger/Gemini) that the lenses
-> don't have. The grammar test: you "audit *the plan/code*" (verb+object) but you run
-> "a *nav audit*" / "a *click test*" (compound noun). Keep the names; this note is the
-> legibility fix.
+> So the pairs are already consistent. Renaming the lenses to `audit-nav`/`audit-click`
+> would *break* this: the `audit-` prefix would falsely imply membership in the
+> adjudication-loop family (rounds/ledger/Gemini) the lenses don't have. Grammar test:
+> you "audit *the plan/code*" (verb+object) but you run "a *nav audit*" (compound noun).
 
 ## Consumer-repo layout (isolation)
 
@@ -210,13 +207,13 @@ consumer instead of the named one. Verified 2026-07-20.)
 > at the consumer/upstream seam — the local edit is the band-aid; the upstream
 > fix is the root. Repo-specific **push gates** have a sanctioned home — the committed, never-rewritten `.githooks/pre-push.local` ([recipe](docs/runbooks/consumer-adoption.md)), never an edit to the managed hook.
 >
-> **File the report, don't paste it (2026-07-31).** Consumer: `cross-skill.mjs upstream
-> report --title … --affected-path <synced path>` (body on **stdin**) — auto-captures repo,
-> **bundle sha**, and whether the path is really upstream-owned. Here: `npm run
-> upstream:issues` → `upstream ack|fix --commit <sha>|wont-fix --id <id>`. Prose reports
-> arrived with a non-existent path against an unknowable version for a bug fixed the day
-> before; the worksheet answers "already fixed?" mechanically. Report bodies are readable by
-> every repo sharing the DSN. [Plan](docs/plans/upstream-issue-reports.md).
+> **File the report, don't paste it (2026-07-31).** Consumer: `cross-skill.mjs upstream report --title …
+> --affected-path <synced path>` (body on **stdin**) — auto-captures repo, **bundle sha**, and whether the
+> path is really upstream-owned. Here: `npm run upstream:issues` → `upstream ack|fix --commit <sha>|wont-fix
+> --id <id>`; **`/ship` Step 0.5h prints the open count** (advisory — cloud state nudges, never blocks; 2
+> reports sat unread 2026-08-01, one already fixed 45min earlier). Prose reports arrived with a non-existent
+> path against an unknowable version for a bug fixed the day before; the worksheet answers "already fixed?"
+> mechanically. Bodies readable by every repo sharing the DSN. [Plan](docs/plans/upstream-issue-reports.md).
 
 > **Upstream bug, but you're blocked? Source patch = forbidden; a labelled
 > runtime/env workaround is OK and must reconcile.** Editing upstream-owned
@@ -231,13 +228,12 @@ consumer instead of the named one. Verified 2026-07-20.)
 
 ### Sync mechanics — pointer
 
-The sync-behavior detail (why the isolated subdir exists, the full
-what-goes-where table, the managed-gitignore runtime-outputs block +
-self-healing untrack semantics, and the `sync-*` key-module list) lives in
-[`docs/runbooks/consumer-adoption.md`](docs/runbooks/consumer-adoption.md) §"Sync internals".
-One structural invariant stays here: **the sync layout's single source of
-truth is [`scripts/lib/sync-path-map.mjs`](scripts/lib/sync-path-map.mjs)** —
-never hand-compute a consumer path.
+Sync-behavior detail (why the isolated subdir exists, the what-goes-where table,
+the managed-gitignore runtime-outputs block + self-healing untrack semantics, the
+`sync-*` module list): [`docs/runbooks/consumer-adoption.md`](docs/runbooks/consumer-adoption.md)
+§"Sync internals". One structural invariant stays here: **the sync layout's single
+source of truth is [`scripts/lib/sync-path-map.mjs`](scripts/lib/sync-path-map.mjs)**
+— never hand-compute a consumer path.
 
 ### CLI smoke contract (`--selfcheck-relocation`)
 
@@ -299,13 +295,12 @@ Runs as part of `npm run check` (the pre-push hook). ERRORs block; WARNs are adv
 ## Architecture
 
 **Do not hand-maintain a module tree here** — [`docs/architecture-map.md`](docs/architecture-map.md)
-is the live, generated per-symbol index (see the bootstrap note at the top of
-this file); an inline tree goes stale silently (the one removed 2026-07-13
-still listed 2 test files against 100+ real ones). Layout in one line:
-`scripts/*.mjs` are CLI entry points; `scripts/lib/**` are focused modules
-(split from the former `shared.mjs` monolith — `shared.mjs` remains as a
-backwards-compatible barrel); `tests/` is the Node built-in test-runner suite;
-`.claude/skills/**` is generated from `skills/**`.
+is the live, generated per-symbol index (see the bootstrap note at the top of this
+file); an inline tree goes stale silently (the one removed 2026-07-13 still listed
+2 test files against 100+ real ones). Layout in one line: `scripts/*.mjs` are CLI
+entry points; `scripts/lib/**` are focused modules (split from the former
+`shared.mjs` monolith, which remains as a backwards-compatible barrel); `tests/` is
+the Node built-in test-runner suite; `.claude/skills/**` is generated from `skills/**`.
 
 ### Script responsibilities + key patterns — pointer
 
@@ -313,17 +308,13 @@ Per-module prose (openai-audit, gemini-review, the learning-store barrel) and th
 named patterns (adaptive sizing, semantic dedup, atomic persistence, the closed
 Gemini loop, …) live in
 [`docs/reference/audit-internals.md`](docs/reference/audit-internals.md).
-Condensed out of this file 2026-07-20 — it had already gone stale (it still
-described `learning-store.mjs` as talking to Supabase, three milestones after M3
-split it into 9 modules behind the `db/` seam), which is the rot the
-"do not hand-maintain a module tree here" rule above exists to prevent.
+Condensed out 2026-07-20 because it had already gone stale — it still described
+`learning-store.mjs` as talking to Supabase three milestones after M3 split it
+into 9 modules behind the `db/` seam, which is the rot the rule above prevents.
 
 ### Testing
 
 Run: `npm test` (Node.js built-in test runner — the suite under `tests/`).
-Covers atomic writes, schema derivation, ledger operations, finding identity,
-FP tracker, bandit posterior, reward computation, sensitive-path egress, the
-sync/relocation contract, and more.
 
 #### Pre-push runs against a clean checkout, not the working tree
 
@@ -335,89 +326,52 @@ stash` — that yanks the other session's files mid-edit. Detail + escape hatche
 [`docs/runbooks/prepush-sandbox.md`](docs/runbooks/prepush-sandbox.md).
 
 - **Sandbox-honesty rule.** A fresh worktree has no gitignored inputs, so a check
-  that *skips* on a missing input passes having read nothing. Known skips are
-  forced to hard errors (`AUDIT_PUSH_RANGE_REQUIRED`, `ARCH_COVERAGE_REQUIRE_ENVELOPE`).
+  that *skips* on a missing input passes having read nothing (known skips are
+  forced hard: `AUDIT_PUSH_RANGE_REQUIRED`, `ARCH_COVERAGE_REQUIRE_ENVELOPE`).
   **Adding a check? Ask whether it can go green in a clean checkout having
   checked nothing — if so it needs a strictness flag, not a tolerated skip.** A
   sandbox setup failure is a push failure, never a pass.
 - **One range, one resolver** — [`push-range.mjs`](scripts/lib/push-range.mjs).
-  Gates must not re-infer a base from working-tree state (`@{u}`, dirty→`HEAD`/
-  `HEAD~1`): that scoped multi-commit pushes to their tip and collapsed to
-  `HEAD~1` always in a detached tree. Results carry `source`/`trusted` and
-  summaries print them; an unresolvable explicit base fails hard, never demotes
-  to inference.
-- **Hashing working-tree bytes ≠ hashing committed source.** The sandbox caught
-  `skills.manifest.json` breaking its own Category-B contract: 16 skill files
-  carried CRLF locally while `.gitattributes` pins `eol=lf`, and git calls such
-  files CLEAN — so `bundleVersion` tracked local line endings and a fresh clone
-  read STALE. Generators hashing files for a committed artifact must
-  canonicalise CRLF→LF first.
+  Gates must not re-infer a base from working-tree state (`@{u}`, dirty→`HEAD~1`):
+  that scoped multi-commit pushes to their tip and collapsed to `HEAD~1` always
+  in a detached tree. An unresolvable explicit base fails hard, never demotes to
+  inference.
+- **Hashing working-tree bytes ≠ hashing committed source.** `skills.manifest.json`
+  broke its own Category-B contract this way: 16 skill files carried CRLF locally
+  while `.gitattributes` pins `eol=lf`, git calls such files CLEAN, so
+  `bundleVersion` tracked local line endings and a fresh clone read STALE.
+  Generators hashing files for a committed artifact must canonicalise CRLF→LF.
 
-#### Testing doctrine — which seam gets which kind of test
+#### Testing doctrine — pointer
 
-Blanket TDD is theatre at the LLM boundary (you can't red-green-refactor a
-prompt). But test-first is high-value at deterministic seams and **mandatory**
-at the two seams where a silent regression is both likely and expensive. Three
-tiers (origin: `/brainstorm --with-gemini`, 2026-06; consensus of GPT-5.5,
-Gemini-pro, Claude):
-
-- **Tier 1 — test-first / TDD for deterministic seams.** Modules with crisp
-  inputs/outputs where a regression is cheap to assert and expensive to ship:
-  `schemas`, `sensitive-paths`, `vcs`, `bandit`, `ledger`, `findings-*`,
-  `config`, `file-io`, `sync-path-map`, `sync-rewriter`. New behaviour here
-  lands with its test.
-
-- **Tier 2 — eval / fixture / invariant testing for LLM-orchestration seams.**
-  `openai-audit`, `gemini-review`, prompt builders. **Do NOT** assert on model
-  prose or mock the whole provider API to test orchestration order — that tests
-  the mock. Instead assert **invariants** ("Gemini final review always runs
-  regardless of GPT convergence"; "cloud-store failure never blocks the local
-  ledger write"; "sensitive paths never enter a provider payload") and use
-  canned-response fixtures for the parse / fallback / dedup paths.
-
-- **Tier 3 — HARD test-first (non-negotiable) for the two silent-regression-prone
-  seams.** A change here lands with its test in the **same commit**:
-  1. **Sensitive-path egress** — a leak ships credentials to a third-party LLM.
-     Guarded end-to-end by `tests/sensitive-egress.test.mjs` (the gate) +
-     `tests/audit-scope-egress.test.mjs` (the assembly path real audits use).
-  2. **Consumer sync / relocation contract** — a break ships *silently* to
-     consumer repos you can't observe. Guarded by `tests/sync-path-map.test.mjs`,
-     `tests/sync-rewriter.test.mjs`, `tests/relocation-guard.test.mjs` (the
-     `--selfcheck-relocation` string is *present*) + `tests/relocation-selfcheck-smoke.test.mjs`
-     (the handler actually *works* under a hermetic env).
-
-This is descriptive, not a new gate — it writes down where rigor already pays.
-`fast-check` property-based fuzzing and an offline LLM eval matrix are
-deliberately deferred (no new deps) — revisit if schema-boundary bugs recur.
-See the **Do NOT** list below for the companion hard rules (no `.env` to
-external APIs, etc.).
+Three tiers, because blanket TDD is theatre at the LLM boundary but rigor pays
+at deterministic seams: **Tier 1** test-first for deterministic modules
+(`schemas`, `sensitive-paths`, `vcs`, `bandit`, `ledger`, `findings-*`,
+`config`, `file-io`, `sync-*`); **Tier 2** invariants + canned fixtures for
+LLM-orchestration seams — never assertions on model prose, never a
+whole-provider mock (that tests the mock); **Tier 3 (non-negotiable)** two
+seams where a change lands with its test in the **same commit** — *(a)*
+**sensitive-path egress**, because a leak ships credentials to a third-party
+LLM, and *(b)* the **consumer sync / relocation contract**, because a break
+ships silently to repos you cannot observe. Tier list, guarding tests, and the
+deliberate deferrals: [`docs/reference/testing-doctrine.md`](docs/reference/testing-doctrine.md).
 
 #### Pre-ship empirical verify — for skills that assert on a live runtime
 
-The multi-LLM audit catches *static* error classes; it cannot catch bugs that
-only manifest when a real browser renders a real app's real data (the
-visual-audit shakedown proved this — a mid-theme-transition `getComputedStyle`
-read *fabricated* a bug that survived four review passes). Three doctrine
-rules, all load-bearing:
-
-1. **Any skill that drives a browser / asserts on a live runtime**
-   (visual-audit, nav-audit `--verify`, persona-test, persona-consistency,
-   click-test, ux-lock) **must run against ONE real app before being declared
-   done.** A field finding with a green repro routes to a regression test +
-   ONE focused review — never the multi-round adjudication loop (that
-   resolves *uncertainty*, which the repro already killed).
-2. **Two recurring browser-capture bug classes to check by name**:
-   mid-state-change capture (freeze transitions at runtime AFTER the flip +
-   `await document.fonts.ready`), and empty/failed capture must never read
-   clean (zero states captured → `unverified`/non-zero exit, never
-   "verified / 0 findings").
-3. **Audit your success paths**: any branch that can emit
-   pass/clean/0-findings/green is where to be adversarial — ask *"can this
-   return green without having actually checked anything?"* (the visual-audit
-   `--gate` alone yielded six such holes; none caught by static review).
-
-→ Full worked detail, per-skill exposure survey, and the gate-honesty case
-list: [`docs/runbooks/pre-ship-empirical-verify.md`](docs/runbooks/pre-ship-empirical-verify.md).
+Static review cannot catch what only appears when a real browser renders real
+data — a mid-theme-transition `getComputedStyle` read once *fabricated* a bug
+that survived four review passes. Three load-bearing rules: **(1)** any skill
+driving a browser (visual-audit, nav-audit `--verify`, persona-test,
+persona-consistency, click-test, ux-lock) **must run against ONE real app
+before being called done**, and a field finding with a green repro routes to a
+regression test + ONE focused review, never the adjudication loop (that
+resolves uncertainty the repro already killed); **(2)** two capture bug classes
+to check by name — mid-state-change capture (freeze transitions AFTER the flip
++ `await document.fonts.ready`) and empty/failed capture, which must degrade to
+`unverified`, never "verified / 0 findings"; **(3)** **audit your success
+paths** — ask of any green-emitting branch *"can this return green without
+having checked anything?"* (six such holes in visual-audit `--gate` alone).
+→ [`docs/runbooks/pre-ship-empirical-verify.md`](docs/runbooks/pre-ship-empirical-verify.md).
 
 ## Model Resolution
 
@@ -792,46 +746,11 @@ Migration `20260419120000_cross_skill_data_loop.sql` closes the feedback loop
 between the skills. Every skill writes to a shared learning store via
 `scripts/cross-skill.mjs` — graceful no-op when the cloud store is off.
 
-### Tables
-
-| Table | Writer | Reader | Purpose |
-|-------|--------|--------|---------|
-| `plans` | `/plan`, `openai-audit.mjs` | `/audit-plan`, `/audit-code`, `/ux-lock verify` | Register plan artefact, link audit_runs via plan_id |
-| `regression_specs` | `/ux-lock`, `/ux-lock verify` | `/ship` | Record every Playwright spec authored (lock or verify mode) |
-| `regression_spec_runs` | `/ux-lock`, CI | `meta-assess.mjs` | Per-run pass/fail history — `captured_regression=true` is a "save" |
-| `persona_audit_correlations` | `/persona-test` | `bandit.mjs` | The highest-leverage table — persona P0/P1 ↔ audit finding ground-truth labels |
-| `ship_events` | `/ship` | Dashboards | Outcome log: shipped / blocked / warned / overridden / aborted |
-| `plan_verification_runs` | `/ux-lock verify` | `/ship`, dashboards | One row per verify invocation; totals for satisfaction % |
-| `plan_verification_items` | `/ux-lock verify` | `/ship`, meta-assess | Per-criterion pass/fail with stable `criterion_hash` for time-series |
-| `nav_audit_runs` | `/nav-audit` (static path) | dashboard drift aging | Run-history for `firstSeenFromHistory` — the >14-day governance smell needed real history, not just a gitignored local cache (`docs/plans/persona-nav-feedback-recovery.md` WS2) |
-| `persona_finding_outcomes` | `cross-skill.mjs persona-outcomes label` | `/ship` UX gate, dashboard | Durable REPO-scoped (not session-scoped) fixed/dismissed/wont_fix/stale labels — `dismissed`/`wont_fix` close a finding across sessions; `fixed` that reappears re-flags as a regression (WS4) |
-
-### Added columns
-
-| Column | Table | Writer |
-|--------|-------|--------|
-| `commit_sha`, `branch`, `plan_id` | `audit_runs` | `openai-audit.mjs` in `runMultiPassCodeAudit` |
-| `commit_sha`, `deployment_id` | `persona_test_sessions` | `/persona-test` Phase 6 |
-| `click_path` (sanitized jsonb) | `persona_test_sessions` | `/persona-test` Phase 6 → `get-reachability-evidence` → `/nav-audit --bootstrap` seeds `personaIntents` (`source:persona-test-evidence`). URLs are origin-stripped + secret/PII-redacted by `sanitizeStepUrl` before storage. |
-
-### Views
-
-| View | Query for | Used by |
-|------|-----------|---------|
-| `audit_effectiveness` | User-visible precision + recall per repo | `meta-assess.mjs` (prompt evolution) |
-| `unlocked_fixes` | Recent HIGH fixes without a /ux-lock spec | `/ship` Step 0.5b |
-| `regression_saves` | Spec runs that caught a real regression | Dashboards |
-| `ship_gate_effectiveness` | How often each block reason fires + override rate | Dashboards |
-| `plan_satisfaction` | Latest verify run per plan + failing P0/P1 criteria | `/ship`, `/ux-lock verify` report |
-| `persistent_plan_failures` | Criteria that have failed ≥2 consecutive runs | Meta-assess (chronic gaps) |
-
-### Bandit reward extension
-
-`computeReward(resolution, evaluationRecord, userImpact)` — when a
-`persona_audit_correlations` row exists for a finding, the reward formula
-shifts from 40/30/30 (procedural/substantive/deliberation) to
-35/25/25/15 with the user-impact term weighted by persona severity. See
-`computeUserImpactReward()` in [scripts/bandit.mjs](scripts/bandit.mjs).
+Catalogue — 9 tables, 3 added columns, 6 views, and the bandit reward
+extension: [`docs/reference/cross-skill-data-loop.md`](docs/reference/cross-skill-data-loop.md).
+The highest-leverage row is `persona_audit_correlations`: a persona P0/P1 that
+corroborates an audit finding is ground truth about user-visible impact, and it
+re-weights `computeReward` from 40/30/30 to 35/25/25/15.
 
 **Design rule**: all cross-skill writes go through `scripts/cross-skill.mjs`.
 Never hand-write curl POSTs in a SKILL.md for these tables — the CLI handles
@@ -907,22 +826,17 @@ numbers — the cutoff is computed per repo** (see "Why no fixed numbers" below)
   This is *absence of evidence*, not a weak match. Never read it as "checked
   and rejected".
 
-**Why no fixed numbers.** The bands were `reuse ≥0.90 / extend ≥0.85 /
-justify-divergence ≥0.75` and fired **zero times in 1,763 consultations** — the
-highest similarity this pipeline can produce is ~0.83, so they were
-mathematically unreachable and the feature was silently inert for its whole
-history. The cutoff is now `μ + 3σ` over the repo's OWN symbol-embedding
-background, computed at `arch:refresh` and stored per repo. A threshold is a
-property of *corpus × summary style × embedding model × compose template ×
-normalizer*, not of the tool — and this file's tooling syncs to other repos, so
-shipping a constant would repeat the original defect elsewhere.
-
-**An uncalibrated repo bands `review` only.** That is honest rather than
-degraded: nothing has established what a meaningful score is in that codebase.
-Run `npm run arch:refresh` to calibrate it.
-
-`reuse` / `extend` / `justify-divergence` are **retired**. If you see them, the
-tooling is stale.
+**Why no fixed numbers.** The old `reuse ≥0.90 / extend ≥0.85 /
+justify-divergence ≥0.75` bands fired **zero times in 1,763 consultations** —
+this pipeline tops out near 0.83, so they were mathematically unreachable and
+the feature was silently inert for its whole history. The cutoff is now `μ + 3σ`
+over the repo's OWN symbol-embedding background, computed at `arch:refresh`. A
+threshold is a property of *corpus × summary style × embedding model × compose
+template × normalizer*, not of the tool — and this tooling syncs to other repos,
+so shipping a constant would repeat the defect elsewhere. **An uncalibrated repo
+bands `review` only**: honest, not degraded — nothing has established what a
+meaningful score is there; run `npm run arch:refresh`. The three old band names
+are **retired**; seeing them means the tooling is stale.
 
 **When NOT to consult**:
 
@@ -970,35 +884,23 @@ post-push reminders surface security-relevant commits via `/ship`.
 
 ### Secret pre-write gate + audit trail (back-port from corporate kit)
 
-`npm run security:refresh` runs every parsed incident through a hybrid
-secret/PII gate ([scripts/lib/security/secret-classifier.mjs](scripts/lib/security/secret-classifier.mjs))
-before it touches the DB: high-confidence secret shapes → **REFUSE** (not
-indexed; refresh exits non-zero — scrub `docs/security-strategy.md` and
-re-run); low-confidence PII → **auto-REDACT** into the stored row itself.
-Every write is logged to the append-only `security_strategy_events` audit
-trail (governance evidence of what was indexed and kept out); read via
-`getSecurityStats`/`getSecurityEvents` in
-[scripts/lib/store/security.mjs](scripts/lib/store/security.mjs). One
-defence-in-depth invariant: the final-pass redactor is the gentle
-`lib/secret-patterns.mjs`, deliberately NOT `sanitizer.mjs` (which
-blanket-redacts any 20+ char token and would corrupt incident prose).
-Embeddings stay Gemini here (the corporate kit's Azure modules were
-intentionally not ported — [docs/plans/security/](docs/plans/security/) has
-the full kit + rationale; the dashboard Security tab renders the trail).
+`npm run security:refresh` gates every parsed incident before it reaches the DB
+([secret-classifier.mjs](scripts/lib/security/secret-classifier.mjs)):
+high-confidence secret shapes **REFUSE** (not indexed, non-zero exit — scrub
+`docs/security-strategy.md` and re-run); low-confidence PII **auto-REDACTs**
+into the stored row. Writes append to `security_strategy_events` as governance
+evidence. One defence-in-depth invariant: the final-pass redactor is the gentle
+`lib/secret-patterns.mjs`, deliberately **NOT** `sanitizer.mjs`, which
+blanket-redacts any 20+ char token and would corrupt incident prose. Full kit +
+why the corporate Azure modules were not ported: [docs/plans/security/](docs/plans/security/).
 
 ---
 
-**Empirical effectiveness test** (run once per repo when deploying, and
-after major prompt changes — the recipe is also embedded as comments at
-the bottom of `tests/hook-arch-memory-check.test.mjs`):
-1. Pick a fix that has known near-duplicates (e.g. for ai-organiser:
-   "add a function that watches vault file renames").
-2. Two fresh Claude sessions, same prompt:
-   - Session A: `ARCH_MEMORY_HOOK_DISABLE=1` (control)
-   - Session B: hook enabled (treatment)
-3. Record per session: did Claude reuse, mention, or write blind? Token delta.
-4. Hook is "effective" if treatment reuses-or-mentions in ≥60% of cases
-   vs control's baseline. Run on 5–10 representative prompts.
+**Empirical effectiveness test** — run once per repo on deploy and after major
+prompt changes: A/B two fresh sessions on the same near-duplicate-rich prompt
+(`ARCH_MEMORY_HOOK_DISABLE=1` control vs hook enabled), over 5–10 prompts;
+"effective" is reuse-or-mention in ≥60%. Full recipe: the comment block at the
+bottom of `tests/hook-arch-memory-check.test.mjs`.
 
 ## Quick-fix detection — two-layer architecture
 
@@ -1110,54 +1012,31 @@ task — request it explicitly when you want it done.
 
 ## Sensitive paths + VCS contract (canonical locations)
 
-[scripts/lib/sensitive-paths.mjs](scripts/lib/sensitive-paths.mjs) is the
-**single source of truth** for sensitive-path classification. Two categories:
-`sensitive` (`.env*`, `secrets/`, `credentials*`, certs/keys, `.aws/`, `.ssh/`,
-`id_rsa*`, `password.*`, `tokens?.*`) and `generatedNoise` (lockfiles, `.min.js`,
-`.map`). The four legacy consumers (`quickfix-patterns.mjs`, `audit-scope.mjs`,
-`sensitive-egress-gate.mjs`, `extract.mjs`) all delegate here via
-`classifyPath` / `shouldSkipForIndexing` / `filterDiffFiles`. Skip logging
-MUST go through `formatSkipLog` — sensitive entries aggregate by default;
-`SENSITIVE_PATHS_DEBUG=1` emits `[redacted:<sha256-hex8>].<ext>` (never
-basenames, never full paths). The state-aware `filterDiffFiles` rewrites a
-modified-to-sensitive entry as `deleted:` so the indexer can tombstone prior
-rows; a deletion of a sensitive path is preserved as a tombstone for the
-same reason. See `docs/plans/sustainability-cleanup-batch.md` WS3 for the
-12-case state matrix.
+[`scripts/lib/sensitive-paths.mjs`](scripts/lib/sensitive-paths.mjs) is the
+**single source of truth** for sensitive-path classification (`sensitive` vs
+`generatedNoise`) — four consumers delegate to it; never add a fifth
+implementation. Three invariants that constrain any change here:
 
-**Canonical-path layer (WS-CANON)**: `resolveAndClassify(p, {repoRoot})`
-sits on top of `classifyPath`. It runs the lexical check first (cheap;
-no FS touch); if that's `null` it calls `fs.realpathSync` and
-re-classifies the canonical target. A symlink whose visible name is
-innocent (`repo/notes.txt`) but whose target resolves into `~/.ssh/id_rsa`
-or `secrets/` is now caught. Fail-closed on resolution errors
-(`resolutionFailed: true` → `category: 'sensitive'`) and on symlinks
-that escape `repoRoot` (`escapedRepo: true` → `category: 'sensitive'`).
-`gateSymbolForEgress({…, repoRoot})` opts in; callers without `repoRoot`
-get the pre-WS-CANON lexical-only behaviour. `redactSecrets` is fail-
-closed too — non-string payloads route through
-[`scripts/lib/redact.mjs::redactObject`](scripts/lib/redact.mjs)
-(depth/node-capped, ancestor-stack cycle detection) and any failure
-returns `[REDACTED:redaction-failed]` rather than leaking the raw
-payload. INC-001 in [docs/security-strategy.md](docs/security-strategy.md)
-records the symlink-bypass class.
+- **Skip logging goes through `formatSkipLog`.** Sensitive entries aggregate;
+  `SENSITIVE_PATHS_DEBUG=1` emits `[redacted:<sha256-hex8>].<ext>` — never
+  basenames, never full paths.
+- **Fail closed, always.** `resolveAndClassify` re-checks the realpath, so a
+  symlink named innocently but resolving into `~/.ssh/` is caught; a resolution
+  error or a repo-escaping symlink classifies as `sensitive`, and `redactSecrets`
+  returns `[REDACTED:redaction-failed]` rather than leak a payload it could not
+  process. INC-001 in [docs/security-strategy.md](docs/security-strategy.md)
+  records the symlink-bypass class this closed.
+- **Structured results, never bare throws.**
+  [`scripts/lib/vcs.mjs`](scripts/lib/vcs.mjs) returns `{ok:true,…}` or
+  `{ok:false, error:{code,…}}` over a closed `VcsErrorCode` enum, of which
+  `EXEC_FAILED` is the **only** retryable code. Likewise
+  `runJsonLinesAsyncStrict` ([subprocess.mjs](scripts/lib/subprocess.mjs))
+  hard-fails on parse errors by default — that closes the `.filter(Boolean)`
+  silent-data-loss invariant, where dropped lines let a caller read a short
+  list as a complete one.
 
-[scripts/lib/vcs.mjs](scripts/lib/vcs.mjs) is the structured VCS contract.
-`gitCommitSha` / `gitDiffWithWorkingTree` return `{ok:true, …} | {ok:false,
-error:{code,message,cause?}}` with a closed `VcsErrorCode` enum:
-`GIT_BINARY_MISSING` (exit 127), `NOT_A_GIT_REPOSITORY` (exit 5),
-`BAD_REVISION` (exit 4), `WORKING_TREE_UNREADABLE` (exit 5), `EXEC_FAILED`
-(exit 1, the only retryable code — see `RETRYABLE_VCS_ERRORS`). Map via
-`vcs.exitCodeFor(code)`. `isSafeGitRevision` is the boolean predicate;
-`runJsonLines` (generic JSON-lines subprocess helper) moved to
-[scripts/lib/subprocess.mjs](scripts/lib/subprocess.mjs) (WS-LIVE) as
-`runJsonLinesAsync` + `runJsonLinesAsyncStrict` — async streaming
-restores heartbeat liveness during the symbol-index pipeline. Closed
-`SubprocErrorCode` enum: `EXIT_NONZERO` / `SPAWN_FAILED` /
-`KILLED_BY_SIGNAL` / `PARSE_FAILED_HARD`. The strict wrapper hard-fails
-on parse errors by default (closes the `.filter(Boolean)` silent-data-
-loss invariant); pass `opts.maxParseErrors: Infinity` for legacy
-tolerant behaviour.
+Category lists, the 12-case diff-state matrix, both error enums and their exit
+codes: [`docs/reference/sensitive-paths-and-vcs.md`](docs/reference/sensitive-paths-and-vcs.md).
 
 ## Commit provenance trailers (`AI-*`)
 

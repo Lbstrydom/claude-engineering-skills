@@ -263,6 +263,36 @@ enforces, this text explains.
 - **On a block**: run `node scripts/setup-postgres.mjs --migrate`, then re-invoke
   `ship-commit.mjs`. Do NOT work around it by dropping the migration from the commit.
 
+### 0.5h — Upstream issue queue (advisory, source-repo only)
+
+**Source-repo-gated** — run ONLY when `package.json.name === "claude-engineering-skills"`.
+Consumers FILE reports (`cross-skill.mjs upstream report`); this repo is where they
+get triaged, and nothing prompted anyone to read them. Measured 2026-08-01: two
+consumer reports sat unread, one of them already fixed ~45 minutes earlier and
+still showing `open`. A queue nobody is prompted to read is a queue that decays.
+
+```bash
+node scripts/cross-skill.mjs upstream list 2>/dev/null
+```
+
+**Never blocks, and there is no override flag** — the queue is CLOUD state, not
+repo state, so it can only advise (a check that blocks on state the commit
+cannot fix is the cried-wolf shape that earns `--no-verify`). Cloud off or
+unreachable ⇒ silently skipped. If `rows` is non-empty, print at most 3, HIGH first:
+
+```
+ⓘ UPSTREAM REPORTS OPEN (non-blocking)
+  <n> consumer report(s) awaiting triage (showing <=3):
+    • [<severity>] <title> — from <repo_name>
+  node scripts/cross-skill.mjs upstream ack --id <the id>     # or fix --commit / wont-fix
+  Full worksheet with freshness + prior-fix evidence: npm run upstream:issues
+```
+
+Before triaging, check `freshness` and `priorFixes` on the row: a report can
+describe a defect that a LATER commit already fixed, so `fix --commit` may be the
+correct verb on a report you have not touched. Do not close one on the strength of
+the worksheet's evidence alone — confirm against current code.
+
 ### 0.5f — Override flags
 
 If `$ARGUMENTS` contains `--no-tests`, `--ignore-p0`, or `--skip-ux-lock`,
@@ -271,7 +301,7 @@ record which override is active — it goes into the ship_event.
 > **Numbering note**: this sub-step is `0.5f`, not `0.5d`, because two H2
 > sections below already claim `Step 0.5c` and `Step 0.5d` (a pre-existing
 > collision referenced from ~20 other files, so renumbering them is out of
-> scope here). The H3 sub-step order is `0.5a → 0.5b → 0.5e → 0.5f`.
+> scope here). The H3 sub-step order is `0.5a → 0.5b → 0.5e → 0.5g → 0.5h → 0.5f`.
 
 ---
 
