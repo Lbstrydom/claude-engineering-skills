@@ -5,12 +5,12 @@
     {
       "id": "gate-passed-refused-without-evidence",
       "kind": "document-only",
-      "reason": "'--gate passed is refused unless the run's convergence verdict is verified against the cloud store' is real (ship-commit.mjs enforces it \u2014 observed live this session), but its exit code depends on the git + .audit/last-audit-run.json evidence state (exit 1 vs 2 across setups), so a hermetic cli-exit fixture cannot bind it DETERMINISTICALLY \u2014 the trigger state is subtle and store-dependent. The refusal itself is verified by ship-commit's own provenance tests; document-only here rather than a fragile recipe."
+      "reason": "'--gate passed is refused unless the run's convergence verdict is verified against the cloud store' is real (ship-commit.mjs enforces it — observed live this session), but its exit code depends on the git + .audit/last-audit-run.json evidence state (exit 1 vs 2 across setups), so a hermetic cli-exit fixture cannot bind it DETERMINISTICALLY — the trigger state is subtle and store-dependent. The refusal itself is verified by ship-commit's own provenance tests; document-only here rather than a fragile recipe."
     },
     {
       "id": "category-a-never-staged",
       "kind": "document-only",
-      "reason": "'Do NOT git add <Category-A artifact>' (scripts/.sync-manifest.json, dashboard/index.html, dashboard/telemetry.html, docs/architecture-map.md) is an instruction to the AGENT running /ship about what NOT to stage. Still document-only as a GATE \u2014 there is no ship-CLI exit code to assert, because the rule constrains what the model chooses to stage, not what a command returns. REVISED 2026-07-26: the previous reason claimed this was 'enforced downstream by .gitignore, not by a ship CLI' and stopped there, which read as 'not mechanically checkable' and was wrong \u2014 the SKILL TEXT side is now guarded by tests/skill-staging-instructions.test.mjs, which fails when any shell-fenced `git add <literal path>` line in skills/** names a gitignored path. That guard exists because prose alone failed twice: dashboard/index.html (2026-06) got a 'do NOT stage' note, and docs/architecture-map.md then kept its `git add` line for six days sitting two steps above that very note until an agent followed it on 2026-07-26."
+      "reason": "'Do NOT git add <Category-A artifact>' (scripts/.sync-manifest.json, dashboard/index.html, dashboard/telemetry.html, docs/architecture-map.md) is an instruction to the AGENT running /ship about what NOT to stage. Still document-only as a GATE — there is no ship-CLI exit code to assert, because the rule constrains what the model chooses to stage, not what a command returns. REVISED 2026-07-26: the previous reason claimed this was 'enforced downstream by .gitignore, not by a ship CLI' and stopped there, which read as 'not mechanically checkable' and was wrong — the SKILL TEXT side is now guarded by tests/skill-staging-instructions.test.mjs, which fails when any shell-fenced `git add <literal path>` line in skills/** names a gitignored path. That guard exists because prose alone failed twice: dashboard/index.html (2026-06) got a 'do NOT stage' note, and docs/architecture-map.md then kept its `git add` line for six days sitting two steps above that very note until an agent followed it on 2026-07-26."
     },
     {
       "id": "step-0-5-gates-non-blocking",
@@ -21,26 +21,26 @@
       "id": "unremediated-acceptances-never-blocks",
       "kind": "document-only",
       "stated": "never blocks, and there is no override flag for it",
-      "reason": "Step 0.5e's nudge-not-gate guarantee. The READ half is mechanically honest and covered by the reader's own failure contract \u2014 getUnremediatedAcceptances returns [] on both cloud-off and query failure, exactly like getUnlockedFixes \u2014 so the query can never make the step stricter or blind. But 'never BLOCKS the ship' is a claim about what the agent does with a non-empty row set, and there is deliberately no override flag to assert against (the absence of one is the point: an override implies something to override). Same shape and same document-only rationale as step-0-5-gates-non-blocking above; asserting an absence-of-blocking is a judgement about agent flow, not a CLI exit code."
+      "reason": "Step 0.5e's nudge-not-gate guarantee. The READ half is mechanically honest and covered by the reader's own failure contract — getUnremediatedAcceptances returns [] on both cloud-off and query failure, exactly like getUnlockedFixes — so the query can never make the step stricter or blind. But 'never BLOCKS the ship' is a claim about what the agent does with a non-empty row set, and there is deliberately no override flag to assert against (the absence of one is the point: an override implies something to override). Same shape and same document-only rationale as step-0-5-gates-non-blocking above; asserting an absence-of-blocking is a judgement about agent flow, not a CLI exit code."
     },
     {
       "id": "unit-test-lock-refuses-unverifiable-claims",
       "kind": "document-only",
       "statedIn": "skills/ship/SKILL.md",
       "stated": "the writer refuses a missing path or empty rationale",
-      "reason": "Step 0.5b's unit-test lock path. The refusals are REAL and unit-tested (tests/unit-test-lock-kind.test.mjs pins all three: a non-existent test path, a path resolving outside the repo, and a missing --description), so this is not an unbacked claim. It is document-only because the refusal surfaces as a JSON `{ok:false, error}` payload rather than a process exit code \u2014 cross-skill.mjs's uniform contract is JSON-on-stdout with exit 0 \u2014 and `cli-exit` is the only CLI oracle available, against a CLOSED scenario registry. Claiming a cli-exit oracle here would assert an exit code the command deliberately does not produce, which is itself the fake-check class this suite exists to catch. Revisit if cross-skill ever adopts non-zero exits for refusals; the scenario would then be real."
+      "reason": "Step 0.5b's unit-test lock path. The refusals are REAL and unit-tested (tests/unit-test-lock-kind.test.mjs pins all three: a non-existent test path, a path resolving outside the repo, and a missing --description), so this is not an unbacked claim. It is document-only because the refusal surfaces as a JSON `{ok:false, error}` payload rather than a process exit code — cross-skill.mjs's uniform contract is JSON-on-stdout with exit 0 — and `cli-exit` is the only CLI oracle available, against a CLOSED scenario registry. Claiming a cli-exit oracle here would assert an exit code the command deliberately does not produce, which is itself the fake-check class this suite exists to catch. Revisit if cross-skill ever adopts non-zero exits for refusals; the scenario would then be real."
     },
     {
       "id": "final-review-credit-advisory-exit-zero",
       "kind": "document-only",
       "statedIn": "skills/ship/SKILL.md",
       "stated": "the reader always exits 0",
-      "reason": "Step 6.7's nudge-not-gate guarantee for the final-review credit card. The READ half is mechanically honest and unit-covered: cmdFinalReviewPending maps every failure to one of a closed diagnostic enum and returns a discriminated {ready|disabled|unavailable} result rather than throwing, and renderFinalReviewCard returns '' for disabled, for a zero-count ready, and for any unrecognised shape (tests/final-review-card.test.mjs pins all three empty-output paths plus the no-leak case; tests/final-review-pending.test.mjs pins the classifier and counts). Document-only for the same reason as step-0-5-gates-non-blocking and unremediated-acceptances-never-blocks directly above: 'exits 0 and therefore cannot stop the ship' is ultimately a claim about what the AGENT does with the output, and cross-skill.mjs's uniform contract is JSON-on-stdout with exit 0 for every subcommand, so a cli-exit oracle would assert an exit code the command produces unconditionally \u2014 true but vacuous, which is the fake-check class this suite exists to catch."
+      "reason": "Step 6.7's nudge-not-gate guarantee for the final-review credit card. The READ half is mechanically honest and unit-covered: cmdFinalReviewPending maps every failure to one of a closed diagnostic enum and returns a discriminated {ready|disabled|unavailable} result rather than throwing, and renderFinalReviewCard returns '' for disabled, for a zero-count ready, and for any unrecognised shape (tests/final-review-card.test.mjs pins all three empty-output paths plus the no-leak case; tests/final-review-pending.test.mjs pins the classifier and counts). Document-only for the same reason as step-0-5-gates-non-blocking and unremediated-acceptances-never-blocks directly above: 'exits 0 and therefore cannot stop the ship' is ultimately a claim about what the AGENT does with the output, and cross-skill.mjs's uniform contract is JSON-on-stdout with exit 0 for every subcommand, so a cli-exit oracle would assert an exit code the command produces unconditionally — true but vacuous, which is the fake-check class this suite exists to catch."
     }
   ],
   "ignoredCandidates": [
     {
-      "line": "what's about to ship. The map itself is **never committed** \u2014 see below.",
+      "line": "what's about to ship. The map itself is **never committed** — see below.",
       "reason": "Restates the category-a-never-staged gate for docs/architecture-map.md; not a separate claim. Its skill-text side is mechanically guarded by tests/skill-staging-instructions.test.mjs."
     },
     {
@@ -49,23 +49,23 @@
     },
     {
       "line": "> survived two steps away from that note. `git add` on a gitignored path *fails*,",
-      "reason": "Describes GIT's own behaviour (git refuses to stage an ignored path without -f), not a project gate. Included to explain why the removed instruction failed SILENTLY \u2014 it paired that failure with 2>/dev/null || true."
+      "reason": "Describes GIT's own behaviour (git refuses to stage an ignored path without -f), not a project gate. Included to explain why the removed instruction failed SILENTLY — it paired that failure with 2>/dev/null || true."
     },
     {
       "line": "> It fails the byte-identical Category B test three independent ways: the header",
-      "reason": "Explains why docs/architecture-map.md is classified Category A (timestamp+sha+refresh_id header, LLM-written summaries, renders from the cloud symbol_index). A classification rationale, not an enforced gate \u2014 the enforcement is the .gitignore entry plus GENERATED_UNTRACKED_TARGETS in check-docs-refs.mjs."
+      "reason": "Explains why docs/architecture-map.md is classified Category A (timestamp+sha+refresh_id header, LLM-written summaries, renders from the cloud symbol_index). A classification rationale, not an enforced gate — the enforcement is the .gitignore entry plus GENERATED_UNTRACKED_TARGETS in check-docs-refs.mjs."
     },
     {
-      "line": "### 0.5e \u2014 Accepted findings that were never remediated",
+      "line": "### 0.5e — Accepted findings that were never remediated",
       "reason": "Section heading. 'never remediated' names the POPULATION the step reads (findings whose remediation_state never advanced), not a guarantee the step enforces. The step's actual enforcement claim is contracted as unremediated-acceptances-never-blocks."
     },
     {
       "line": "not gate; the same philosophy as quick-fix detection). **Show at most 5 rows**,",
-      "reason": "'not gate' is the tail of the never-blocks claim contracted above, reflowed onto the next line. 'Show at most 5 rows' is a DISPLAY instruction to the agent about how much of the row set to echo \u2014 it caps output verbosity, not behaviour, and the reader's own LIMIT 20 is the only mechanical bound (asserting how many rows a model chooses to print is not a gate)."
+      "reason": "'not gate' is the tail of the never-blocks claim contracted above, reflowed onto the next line. 'Show at most 5 rows' is a DISPLAY instruction to the agent about how much of the row set to echo — it caps output verbosity, not behaviour, and the reader's own LIMIT 20 is the only mechanical bound (asserting how many rows a model chooses to print is not a gate)."
     },
     {
       "line": "<n> finding(s) you accepted were never marked fixed (showing <=5):",
-      "reason": "Line inside the fenced OUTPUT TEMPLATE the agent prints \u2014 sample text shown to the user, not a rule the skill enforces. 'never marked fixed' restates the view's own predicate (remediation_state NULL/pending/planned)."
+      "reason": "Line inside the fenced OUTPUT TEMPLATE the agent prints — sample text shown to the user, not a rule the skill enforces. 'never marked fixed' restates the view's own predicate (remediation_state NULL/pending/planned)."
     },
     {
       "line": "plan was never amended), but say so rather than printing it as a code path.",
@@ -77,10 +77,10 @@
     },
     {
       "line": "are \"not applicable\", **not** \"no obligations\". Report it as unmeasured; never",
-      "reason": "An instruction to the AGENT about how to render an unmeasured result \u2014 the measured:false vs genuine-zero distinction. The producing side is mechanical and tested (tests/cross-skill-unlocked-scope.test.mjs asserts measured:false carries a reason and never widens to global), but \"how the agent phrases the card\" has no oracle."
+      "reason": "An instruction to the AGENT about how to render an unmeasured result — the measured:false vs genuine-zero distinction. The producing side is mechanical and tested (tests/cross-skill-unlocked-scope.test.mjs asserts measured:false carries a reason and never widens to global), but \"how the agent phrases the card\" has no oracle."
     },
     {
-      "line": "> identity \u2192 `measured:false`. Global access must be asked for explicitly, and",
+      "line": "> identity → `measured:false`. Global access must be asked for explicitly, and",
       "reason": "Documents the scope precedence chain. It IS mechanically enforced: getUnlockedFixes/countUnlockedFixes/getUnremediatedAcceptances throw on an omitted or ambiguous scope (scripts/lib/store/plans-ship.mjs::resolveExplicitRepoScope) and tests/cross-skill-unlocked-scope.test.mjs asserts every implicit-global shape rejects, that --all-repos is evaluated before ambient identity, and that no reader of the /ship-nudge view family carries a repo-unfiltered statement without the fence. This line is the human-readable restatement."
     },
     {
@@ -89,7 +89,7 @@
     },
     {
       "line": "> **Never hand-derive a repo id to pass here.** There are two ids per repo and",
-      "reason": "Operator guidance whose FAILURE MODE is mechanically caught, so it is not a separate gate. audit_repos carries both `id` (v4, the key these views use) and `repo_uuid` (v5, the arch-memory identity); resolveShipNudgeScope in scripts/cross-skill.mjs verifies --repo-id against listRepoIds(), translates a repo_uuid via getRepoIdByUuid, and returns reason:unknown-repo-id + measured:false otherwise \u2014 so a hand-derived id can no longer produce an authoritative zero. tests/cross-skill-unlocked-scope.test.mjs pins all three branches. Whether an operator CHOOSES to hand-derive one is advice, not an oracle."
+      "reason": "Operator guidance whose FAILURE MODE is mechanically caught, so it is not a separate gate. audit_repos carries both `id` (v4, the key these views use) and `repo_uuid` (v5, the arch-memory identity); resolveShipNudgeScope in scripts/cross-skill.mjs verifies --repo-id against listRepoIds(), translates a repo_uuid via getRepoIdByUuid, and returns reason:unknown-repo-id + measured:false otherwise — so a hand-derived id can no longer produce an authoritative zero. tests/cross-skill-unlocked-scope.test.mjs pins all three branches. Whether an operator CHOOSES to hand-derive one is advice, not an oracle."
     },
     {
       "line": "> backlog for a repo that was never queried. That is how the incident above",
@@ -97,7 +97,27 @@
     },
     {
       "line": "the binary performs the check itself (Step 6.3) and exits 2 with an `AGENT FIX:` line naming the unapplied migrations",
-      "reason": "Step 0.5g migration-realization gate. Genuinely executable and enforced in scripts/ship-commit.mjs (exit 2), but deliberately left UNCONTRACTED rather than bound to a wrong oracle. The `cli-exit` oracle drives a CLI against a filesystem fixture (CLI_EXIT_RECIPES in scripts/lib/gate-honesty/oracles.mjs); this gate's trigger is DATABASE state \u2014 a migration ledger missing a bundled filename \u2014 which no current recipe shape can construct. Declaring `cli-exit` anyway would assert a binding that does not hold, which is the exact dishonesty this contract system exists to detect. The logic is covered by tests/schema-realization.test.mjs and tests/write-path-fail-closed.test.mjs. Contracting it needs a DB-backed oracle \u2014 a separate change with no current requirement."
+      "reason": "Step 0.5g migration-realization gate. Genuinely executable and enforced in scripts/ship-commit.mjs (exit 2), but deliberately left UNCONTRACTED rather than bound to a wrong oracle. The `cli-exit` oracle drives a CLI against a filesystem fixture (CLI_EXIT_RECIPES in scripts/lib/gate-honesty/oracles.mjs); this gate's trigger is DATABASE state — a migration ledger missing a bundled filename — which no current recipe shape can construct. Declaring `cli-exit` anyway would assert a binding that does not hold, which is the exact dishonesty this contract system exists to detect. The logic is covered by tests/schema-realization.test.mjs and tests/write-path-fail-closed.test.mjs. Contracting it needs a DB-backed oracle — a separate change with no current requirement."
+    },
+    {
+      "line": "### 0.5g — Migration realization gate (ENFORCED by the binary)",
+      "reason": "Step 0.5g, the migration-realization gate. It is genuinely ENFORCED — scripts/ship-commit.mjs refuses to compose a commit and exits 2 with an `AGENT FIX:` line when the database is missing a bundled migration — but it stays uncontracted rather than bound to a wrong oracle: the cli-exit oracle drives a CLI against a FILESYSTEM fixture, and this gate's trigger is DATABASE state (a migration ledger missing a bundled filename), which no recipe shape can construct. Declaring cli-exit anyway would assert a binding that does not hold. The logic is covered by tests/schema-realization.test.mjs and tests/write-path-fail-closed.test.mjs, and the refusal is observed END-TO-END against a real database by tests/db-schema-realization-live.test.mjs (db:suites:gate + the postgres-parity CI job), which evicts a ledger row and asserts ERR_SCHEMA_BEHIND. Contracting it needs a DB-backed oracle — a separate change with no current requirement."
+    },
+    {
+      "line": "itself (Step 6.3) and exits 2 with an `AGENT FIX:` line naming the unapplied migrations and",
+      "reason": "Step 0.5g, the migration-realization gate. It is genuinely ENFORCED — scripts/ship-commit.mjs refuses to compose a commit and exits 2 with an `AGENT FIX:` line when the database is missing a bundled migration — but it stays uncontracted rather than bound to a wrong oracle: the cli-exit oracle drives a CLI against a FILESYSTEM fixture, and this gate's trigger is DATABASE state (a migration ledger missing a bundled filename), which no recipe shape can construct. Declaring cli-exit anyway would assert a binding that does not hold. The logic is covered by tests/schema-realization.test.mjs and tests/write-path-fail-closed.test.mjs, and the refusal is observed END-TO-END against a real database by tests/db-schema-realization-live.test.mjs (db:suites:gate + the postgres-parity CI job), which evicts a ledger row and asserts ERR_SCHEMA_BEHIND. Contracting it needs a DB-backed oracle — a separate change with no current requirement."
+    },
+    {
+      "line": "the exact remedy. It is documented here so the block is not a surprise — the binary",
+      "reason": "Step 0.5g, the migration-realization gate. It is genuinely ENFORCED — scripts/ship-commit.mjs refuses to compose a commit and exits 2 with an `AGENT FIX:` line when the database is missing a bundled migration — but it stays uncontracted rather than bound to a wrong oracle: the cli-exit oracle drives a CLI against a FILESYSTEM fixture, and this gate's trigger is DATABASE state (a migration ledger missing a bundled filename), which no recipe shape can construct. Declaring cli-exit anyway would assert a binding that does not hold. The logic is covered by tests/schema-realization.test.mjs and tests/write-path-fail-closed.test.mjs, and the refusal is observed END-TO-END against a real database by tests/db-schema-realization-live.test.mjs (db:suites:gate + the postgres-parity CI job), which evicts a ledger row and asserts ERR_SCHEMA_BEHIND. Contracting it needs a DB-backed oracle — a separate change with no current requirement."
+    },
+    {
+      "line": "**Cloud off / unreachable / no ledger ⇒ silently skipped**, never a block. Blocking on an",
+      "reason": "Step 0.5g, the migration-realization gate. It is genuinely ENFORCED — scripts/ship-commit.mjs refuses to compose a commit and exits 2 with an `AGENT FIX:` line when the database is missing a bundled migration — but it stays uncontracted rather than bound to a wrong oracle: the cli-exit oracle drives a CLI against a FILESYSTEM fixture, and this gate's trigger is DATABASE state (a migration ledger missing a bundled filename), which no recipe shape can construct. Declaring cli-exit anyway would assert a binding that does not hold. The logic is covered by tests/schema-realization.test.mjs and tests/write-path-fail-closed.test.mjs, and the refusal is observed END-TO-END against a real database by tests/db-schema-realization-live.test.mjs (db:suites:gate + the postgres-parity CI job), which evicts a ledger row and asserts ERR_SCHEMA_BEHIND. Contracting it needs a DB-backed oracle — a separate change with no current requirement."
+    },
+    {
+      "line": "**On a block**: run `node scripts/setup-postgres.mjs --migrate`, then re-invoke",
+      "reason": "Step 0.5g, the migration-realization gate. It is genuinely ENFORCED — scripts/ship-commit.mjs refuses to compose a commit and exits 2 with an `AGENT FIX:` line when the database is missing a bundled migration — but it stays uncontracted rather than bound to a wrong oracle: the cli-exit oracle drives a CLI against a FILESYSTEM fixture, and this gate's trigger is DATABASE state (a migration ledger missing a bundled filename), which no recipe shape can construct. Declaring cli-exit anyway would assert a binding that does not hold. The logic is covered by tests/schema-realization.test.mjs and tests/write-path-fail-closed.test.mjs, and the refusal is observed END-TO-END against a real database by tests/db-schema-realization-live.test.mjs (db:suites:gate + the postgres-parity CI job), which evicts a ledger row and asserts ERR_SCHEMA_BEHIND. Contracting it needs a DB-backed oracle — a separate change with no current requirement."
     }
   ]
 }

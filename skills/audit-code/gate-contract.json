@@ -9,8 +9,14 @@
       "statedIn": "skills/audit-code/SKILL.md",
       "stated": "Quality threshold: `HIGH == 0 && MEDIUM <= 2 && quickFix == 0`",
       "implementation": "scripts/lib/audit/convergence.mjs",
-      "tests": ["tests/gate-honesty.test.mjs"],
-      "params": { "high": 0, "medium": 2, "quickFix": 0 },
+      "tests": [
+        "tests/gate-honesty.test.mjs"
+      ],
+      "params": {
+        "high": 0,
+        "medium": 2,
+        "quickFix": 0
+      },
       "proof": "unit-seam"
     },
     {
@@ -20,29 +26,151 @@
       "statedIn": "AGENTS.md",
       "stated": "`comparedRuns` counts only rows the collector stamped with the\n  current `TIERED_SHADOW_CONTRACT_EPOCH`",
       "implementation": "scripts/lib/audit/tiered-shadow-summary.mjs",
-      "tests": ["tests/gate-honesty.test.mjs"],
+      "tests": [
+        "tests/gate-honesty.test.mjs"
+      ],
       "fixture": {
         "rows": [
-          { "legacyOk": true, "shadowOk": false, "comparison": { "tieredRunStatus": "fallback_legacy" } },
-          { "legacyOk": true, "shadowOk": false, "comparison": { "tieredRunStatus": "fallback_legacy" } },
-          { "legacyOk": true, "shadowOk": false, "comparison": { "tieredRunStatus": "fallback_legacy" } },
-          { "legacyOk": true, "shadowOk": false, "comparison": { "tieredRunStatus": "fallback_legacy" } },
-          { "legacyOk": true, "shadowOk": false, "comparison": { "tieredRunStatus": "fallback_legacy" } },
-          { "legacyOk": true, "shadowOk": false, "comparison": { "tieredRunStatus": "fallback_legacy" } },
-          { "legacyOk": true, "shadowOk": false, "comparison": { "tieredRunStatus": "fallback_legacy" } },
-          { "legacyOk": true, "shadowOk": false, "comparison": { "tieredRunStatus": "fallback_legacy" } },
-          { "legacyOk": true, "shadowOk": false, "comparison": { "tieredRunStatus": "fallback_legacy" } },
-          { "legacyOk": true, "shadowOk": false, "comparison": { "tieredRunStatus": "fallback_legacy" } },
-          { "legacyOk": true, "shadowOk": false, "comparison": { "tieredRunStatus": "fallback_legacy" } },
-          { "legacyOk": true, "shadowOk": false, "comparison": { "tieredRunStatus": "fallback_legacy" } },
-          { "legacyOk": true, "shadowOk": false, "comparison": { "tieredRunStatus": "fallback_legacy" } },
-          { "legacyOk": true, "shadowOk": false, "comparison": { "tieredRunStatus": "fallback_legacy" } },
-          { "legacyOk": true, "shadowOk": false, "comparison": { "tieredRunStatus": "fallback_legacy" } },
-          { "legacyOk": true, "shadowOk": false, "comparison": { "tieredRunStatus": "fallback_legacy" } },
-          { "legacyOk": true, "shadowOk": false, "comparison": { "tieredRunStatus": "fallback_legacy" } },
-          { "legacyOk": true, "shadowOk": false, "comparison": { "tieredRunStatus": "fallback_legacy" } },
-          { "legacyOk": true, "shadowOk": false, "comparison": { "tieredRunStatus": "fallback_legacy" } },
-          { "legacyOk": true, "shadowOk": false, "comparison": { "tieredRunStatus": "fallback_legacy" } }
+          {
+            "legacyOk": true,
+            "shadowOk": false,
+            "comparison": {
+              "tieredRunStatus": "fallback_legacy"
+            }
+          },
+          {
+            "legacyOk": true,
+            "shadowOk": false,
+            "comparison": {
+              "tieredRunStatus": "fallback_legacy"
+            }
+          },
+          {
+            "legacyOk": true,
+            "shadowOk": false,
+            "comparison": {
+              "tieredRunStatus": "fallback_legacy"
+            }
+          },
+          {
+            "legacyOk": true,
+            "shadowOk": false,
+            "comparison": {
+              "tieredRunStatus": "fallback_legacy"
+            }
+          },
+          {
+            "legacyOk": true,
+            "shadowOk": false,
+            "comparison": {
+              "tieredRunStatus": "fallback_legacy"
+            }
+          },
+          {
+            "legacyOk": true,
+            "shadowOk": false,
+            "comparison": {
+              "tieredRunStatus": "fallback_legacy"
+            }
+          },
+          {
+            "legacyOk": true,
+            "shadowOk": false,
+            "comparison": {
+              "tieredRunStatus": "fallback_legacy"
+            }
+          },
+          {
+            "legacyOk": true,
+            "shadowOk": false,
+            "comparison": {
+              "tieredRunStatus": "fallback_legacy"
+            }
+          },
+          {
+            "legacyOk": true,
+            "shadowOk": false,
+            "comparison": {
+              "tieredRunStatus": "fallback_legacy"
+            }
+          },
+          {
+            "legacyOk": true,
+            "shadowOk": false,
+            "comparison": {
+              "tieredRunStatus": "fallback_legacy"
+            }
+          },
+          {
+            "legacyOk": true,
+            "shadowOk": false,
+            "comparison": {
+              "tieredRunStatus": "fallback_legacy"
+            }
+          },
+          {
+            "legacyOk": true,
+            "shadowOk": false,
+            "comparison": {
+              "tieredRunStatus": "fallback_legacy"
+            }
+          },
+          {
+            "legacyOk": true,
+            "shadowOk": false,
+            "comparison": {
+              "tieredRunStatus": "fallback_legacy"
+            }
+          },
+          {
+            "legacyOk": true,
+            "shadowOk": false,
+            "comparison": {
+              "tieredRunStatus": "fallback_legacy"
+            }
+          },
+          {
+            "legacyOk": true,
+            "shadowOk": false,
+            "comparison": {
+              "tieredRunStatus": "fallback_legacy"
+            }
+          },
+          {
+            "legacyOk": true,
+            "shadowOk": false,
+            "comparison": {
+              "tieredRunStatus": "fallback_legacy"
+            }
+          },
+          {
+            "legacyOk": true,
+            "shadowOk": false,
+            "comparison": {
+              "tieredRunStatus": "fallback_legacy"
+            }
+          },
+          {
+            "legacyOk": true,
+            "shadowOk": false,
+            "comparison": {
+              "tieredRunStatus": "fallback_legacy"
+            }
+          },
+          {
+            "legacyOk": true,
+            "shadowOk": false,
+            "comparison": {
+              "tieredRunStatus": "fallback_legacy"
+            }
+          },
+          {
+            "legacyOk": true,
+            "shadowOk": false,
+            "comparison": {
+              "tieredRunStatus": "fallback_legacy"
+            }
+          }
         ]
       },
       "proof": "unit-seam"
@@ -60,6 +188,13 @@
       "reason": "deciding whether a re-raised finding is 'genuinely new' vs a stability-plateau rehash is a judgement call on GPT's part; no mechanical oracle exists for the classification itself",
       "statedIn": "skills/audit-code/SKILL.md",
       "stated": "Threshold met, 0 new, 2/2 stable"
+    },
+    {
+      "id": "detector-blocks-convergence",
+      "kind": "document-only",
+      "statedIn": "skills/audit-code/SKILL.md",
+      "stated": "Re-run every detector at FULL scope (blocks convergence)",
+      "reason": "Step 5.0b's claim IS mechanically enforced — evaluateConvergenceWithDetectors (scripts/lib/audit/convergence.mjs) returns converged:false with reason 'detector-undispositioned' when any match is undispositioned, and reason 'detector-not-run' when the caller supplies no detector result at all; both are pinned in tests/audit-detector.test.mjs, along with the full-scope property and the unverifiable states (globs matching no file, ripgrep unavailable). It is document-only because the CLOSED oracle registry has no fit: convergence-threshold binds only the finding-count params, cli-exit drives a CLI against a filesystem fixture, and the detector gate's subject is a ledger-plus-repo state a recipe cannot construct. Claiming an oracle that does not bind would be the fake-check class this suite exists to catch. Revisit if a ledger-fixture oracle is ever added."
     }
   ],
   "ignoredCandidates": [
@@ -82,6 +217,22 @@
     {
       "line": "RUN_ID=$(node -e \"const fs=require('fs'); try { process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],'utf8'))._cloudRunId||''); } catch { process.stdout.write(''); }\" \"/tmp/$SID-r<N>-result.json\")",
       "reason": "The corrected extraction line itself — its correctness (argv-based path, never a literal string) is exactly what tests/skill-tmp-path-safety.test.mjs asserts across every skill markdown file. This is a code snippet a human/agent runs inline, not a CLI /audit-code itself exits on, so there is no separate cli-exit oracle to bind here beyond that regression test."
+    },
+    {
+      "line": "**Structured, never a shell command.** `pattern`/`globs` reach ripgrep as argv. The",
+      "reason": "A property of the detector SCHEMA (DetectorSchema is a closed z.literal(\"regex\") union with no field a command string fits into), not a gate the skill enforces at run time. The shape is asserted in tests/audit-detector.test.mjs; \"never a shell command\" describes what is unrepresentable, and there is no run to fail."
+    },
+    {
+      "line": "**Dispositions key on `<path>::<trimmed matched line>`**, never a line number — a line",
+      "reason": "A FORMAT statement about the disposition key, explaining why it is not a line number (a line number orphans on any insertion above the match). matchKey() is the single producer and its identity properties — survives a line shift, distinguishes identical text in one file — are pinned in tests/audit-detector.test.mjs. Not a separate gate: the enforced claim is detector-blocks-convergence above."
+    },
+    {
+      "line": "console.log(JSON.stringify(r,null,2)); process.exit(r.blocked?1:0);})\" /tmp/$SID-ledger.json",
+      "reason": "The last line of the fenced SHELL SAMPLE the operator runs. `process.exit` is the sample's own exit mapping, not a claim the skill enforces; the enforced claim is detector-blocks-convergence. A candidate only because the extractor greps code fences along with prose."
+    },
+    {
+      "line": "convergence requires `blocked === false`. `baseline` reports progress; it is never the pass",
+      "reason": "Restates detector-blocks-convergence and adds the negative half — that `baseline` is reporting only. Both are the same contracted claim, and the baseline-is-not-the-pass-condition property is pinned directly in tests/audit-detector.test.mjs."
     }
   ]
 }

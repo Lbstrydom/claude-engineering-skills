@@ -82,7 +82,11 @@ const PINNED_EXECUTABLE = {
   plan: [],
 };
 const PINNED_DOCUMENT_ONLY = {
-  'audit-code': ['mechanical-vs-architectural-label', 'rigor-pressure-stop'],
+  // `detector-blocks-convergence` (2026-08-01, green-but-unrealized Cluster B): the Step 5.0b
+  // detector gate IS enforced by evaluateConvergenceWithDetectors and unit-pinned, but the
+  // CLOSED oracle registry has no fit for a ledger-plus-repo trigger, and claiming one that
+  // does not bind is the fake-check class this suite exists to catch.
+  'audit-code': ['mechanical-vs-architectural-label', 'rigor-pressure-stop', 'detector-blocks-convergence'],
   'visual-audit': ['partial-matrix-refusal', 'vlm-advisory-only'],
   'ai-context-management': ['never-write-without-confirmation'],
   explain: [],
@@ -178,7 +182,8 @@ describe('gate-honesty — real skills/', () => {
     // 35 → 36: +1 ship (unremediated-acceptances-never-blocks, /ship Step 0.5e, 2026-07-27).
     // 36 → 37: +1 ship (unit-test-lock-refuses-unverifiable-claims, 2026-07-29).
     // 37 → 38: +1 ship (final-review-credit-advisory-exit-zero, 2026-07-29).
-    assert.equal(totalDocOnly, 38);   // +2 ux-lock, +4 ship, +4 cycle, +4 plan (Phase C final — ALL 15 contracted)
+    // 38 → 39: +1 audit-code (detector-blocks-convergence, /audit-code Step 5.0b, 2026-08-01).
+    assert.equal(totalDocOnly, 39);   // +2 ux-lock, +4 ship, +4 cycle, +4 plan (Phase C final — ALL 15 contracted)
 
     const allSkillNames = listSkillNames(skillsRoot);
     const expectedUncontracted = allSkillNames.filter((n) => !PINNED_CONTRACTED_SKILLS.includes(n));
