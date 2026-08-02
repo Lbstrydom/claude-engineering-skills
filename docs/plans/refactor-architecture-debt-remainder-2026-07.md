@@ -1,11 +1,26 @@
 # Plan: Architecture-Debt Backlog Remainder (2026-07-26 triage)
 
 - **Date**: 2026-07-26
-- **Status**: Draft — **2 of 3 items shipped** (§2 via a sibling plan; §1 via
-  [`dashboard-skills-index-layering.md`](dashboard-skills-index-layering.md),
-  2026-08-01). **§3 remains genuinely open**, re-verified against source
-  2026-08-01. This plan has been *reported complete* at least once while items
-  were still open; trust the per-item status markers below, not this line alone.
+- **Status**: Complete — **all 3 items shipped**. §2 via a sibling plan; §1 via
+  [`dashboard-skills-index-layering.md`](dashboard-skills-index-layering.md)
+  (2026-08-01); **§3 landed 2026-08-02** — `docs:architecture-intent:check` is
+  in the pre-push chain, contracted with a poison pill
+  ([`scripts/gate-contracts/docs-architecture-intent-check.json`](../../scripts/gate-contracts/docs-architecture-intent-check.json)),
+  and `docs/architecture-intent.md` refreshed to all 36 domains.
+  Audit trail: [`…-audit-summary.md`](refactor-architecture-debt-remainder-2026-07-audit-summary.md).
+  This plan was *reported complete* at least once while items were still open,
+  so the per-item markers below remain the authority — they now all read shipped.
+
+> **How §3 actually landed (2026-08-02).** It sat on
+> `claude/arch-debt-remainder-2026-07` for 110 commits. A full rebase was
+> attempted and **aborted**: tracing the nine conflicts showed main had already
+> re-landed §1 and §2 under different module names (`coverage-schema.mjs`,
+> `skills-index.mjs`), so replaying them would have fought conflicts to redo
+> finished work. Only §3 was cherry-picked, by content. The branch's
+> `check-context-drift.mjs` was deliberately NOT taken — it predated main's
+> `maxAgentsMdLines` → `maxAgentsMdChars` move and would have reverted it; only
+> the DRY fence-tracker swap was applied, after verifying the extracted module
+> was byte-identical to main's inline copy.
 - **Author**: Claude (tech-debt backlog triage session)
 - **Scope**: backend (mechanical, no product behavior change)
 
