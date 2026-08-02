@@ -242,6 +242,10 @@
       "description": "Cluster accumulated tech-debt into ranked refactor candidates (local-only, no LLM call).",
       "category": "diagnostic"
     },
+    "docs:architecture-intent:check": {
+      "description": "Gate on domain-roster drift: fails when .audit-loop/domain-map.json declares a domain docs/architecture-intent.md never documents. The reverse is never flagged — the doc may keep retired domains as rationale.",
+      "category": "diagnostic"
+    },
     "docs:check": {
       "description": "Enforce docs/ root placement: root holds only allowlisted generated artefacts + live ledgers; hand-written docs belong in a bucket (reference/, runbooks/, plans/, research/). Runs as part of `npm run check`. Decision rule: docs/README.md.",
       "category": "diagnostic"
