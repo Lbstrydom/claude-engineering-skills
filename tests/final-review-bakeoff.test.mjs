@@ -11,6 +11,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { findEligibleTranscripts, assessWindow } from '../scripts/final-review-bakeoff.mjs';
+import { zeroFindingArms } from '../scripts/bakeoff-collect.mjs';
 
 /** Build an injectable fake FS for the pure enumerator. */
 function io(files, existingPlans = []) {
@@ -92,5 +93,37 @@ describe('assessWindow', () => {
     const w = assessWindow([], 8);
     assert.equal(w.ready, false);
     assert.equal(w.count, 0);
+  });
+});
+
+describe('zeroFindingArms (bakeoff-collect)', () => {
+  const armEntry = (over) => ({ shadowState: 'ran', buckets: { shadowOnly: 0 }, ...over });
+
+  it('an arm with findings is never listed — this is about ZEROES only', () => {
+    const e = { arms: { opus: armEntry({ buckets: { shadowOnly: 4 }, shadowVerdict: 'APPROVE' }), kimi: armEntry({ shadowVerdict: 'APPROVE' }) } };
+    assert.deepEqual(zeroFindingArms(e).map((z) => z.arm), ['kimi']);
+  });
+
+  it('zero findings WITH a verdict reads as reviewed — a lenient model, not a broken arm', () => {
+    const e = { arms: { opus: armEntry({ buckets: { shadowOnly: 1 } }), kimi: armEntry({ shadowVerdict: 'APPROVE' }) } };
+    assert.deepEqual(zeroFindingArms(e), [{ arm: 'kimi', verdict: 'APPROVE', evidence: 'reviewed' }]);
+  });
+
+  it('zero findings with a RECORDED-but-empty verdict reads as no-verdict — suspect the arm', () => {
+    const e = { arms: { kimi: armEntry({ shadowVerdict: null }) } };
+    assert.deepEqual(zeroFindingArms(e), [{ arm: 'kimi', verdict: null, evidence: 'no-verdict' }]);
+  });
+
+  it('an ABSENT shadowVerdict key is `unrecorded`, NOT `no-verdict`', () => {
+    // The campaign's own first three snapshots predate the field. Collapsing
+    // absent into null would report them as broken arms and invite a re-run of
+    // three snapshots that were fine.
+    const e = { arms: { kimi: armEntry({}) } };
+    assert.deepEqual(zeroFindingArms(e), [{ arm: 'kimi', verdict: undefined, evidence: 'unrecorded' }]);
+  });
+
+  it('an arm that did not RUN is not a zero-finding arm at all', () => {
+    const e = { arms: { kimi: { shadowState: 'skipped-no-key', buckets: null } } };
+    assert.deepEqual(zeroFindingArms(e), []);
   });
 });

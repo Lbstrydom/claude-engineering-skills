@@ -72,6 +72,12 @@ export function readArmResult(outPath) {
     primaryFindings: (j.new_findings || []).length,
     shadowState: shadow.state ?? null,
     shadowModel: shadow.model ?? null,
+    // The shadow's own VERDICT, not just its finding count. Observed at N=3:
+    // both shadows APPROVE nearly everything — Kimi APPROVEd a plan the primary
+    // REJECTed. A shadow's verdict is therefore near-useless as a signal, and
+    // its whole value rides on the findings; recording it is what makes that
+    // claim checkable at N=15 instead of an impression.
+    shadowVerdict: shadow.verdict ?? null,
     // `buckets` is null when the shadow skipped — distinguish that from a real
     // zero, or a skipped arm reads as "found nothing" (the anti-green class).
     buckets: shadow.buckets ?? null,
@@ -102,6 +108,41 @@ export function isComplete(entry) {
   return ARMS.every((a) => entry?.arms?.[a.id]?.shadowState === 'ran');
 }
 
+/**
+ * Did an arm report ZERO findings while genuinely having reviewed?
+ *
+ * `shadowOnly: 0` is ambiguous on its own. Because cross-model `_hash` matching
+ * makes the `both` bucket structurally ~0, a shadow that agreed with the primary
+ * and a shadow that produced nothing at all BOTH read as `shadowOnly: 0`. The
+ * distinguishing evidence is that it returned a verdict and spent output tokens:
+ * that is a review that found nothing, not an arm that silently failed.
+ *
+ * Surfaced separately from `isComplete` because a broken arm and a lenient arm
+ * lead to opposite conclusions, and the count alone cannot tell them apart.
+ *
+ * Three-way, never two-way. Entries written before `shadowVerdict` existed have
+ * the key ABSENT, which is not the same as an arm that returned no verdict —
+ * collapsing the two would report the campaign's own first three snapshots as
+ * broken arms. `evidence` is `unrecorded` (predates the field, says nothing),
+ * `reviewed` (returned a verdict ⇒ genuinely found nothing), or `no-verdict`
+ * (recorded, and empty ⇒ suspect the arm, not the model).
+ */
+export function zeroFindingArms(entry) {
+  const out = [];
+  for (const a of ARMS) {
+    const r = entry?.arms?.[a.id];
+    if (!r || r.shadowState !== 'ran') continue;
+    if ((r.buckets?.shadowOnly ?? 0) !== 0) continue;
+    const recorded = Object.hasOwn(r, 'shadowVerdict');
+    out.push({
+      arm: a.id,
+      verdict: recorded ? (r.shadowVerdict ?? null) : undefined,
+      evidence: !recorded ? 'unrecorded' : (r.shadowVerdict ? 'reviewed' : 'no-verdict'),
+    });
+  }
+  return out;
+}
+
 export function summarise(entries, target = DEFAULT_TARGET) {
   const complete = entries.filter(isComplete);
   const totals = { opusUnique: 0, kimiUnique: 0, primaryTotal: 0 };
@@ -126,6 +167,18 @@ function printProgress(logPath, target) {
   process.stdout.write(`\nBake-off progress — ${s.complete}/${s.target} complete snapshot(s)\n`);
   if (s.incomplete > 0) process.stdout.write(`  ${s.incomplete} incomplete (an arm skipped or errored) — not counted\n`);
   process.stdout.write(`  raw uniques so far: opus=${s.totals.opusUnique} kimi=${s.totals.kimiUnique}\n`);
+  // A zero is only informative once you know the arm actually reviewed. Print the
+  // verdict beside it so "lenient reviewer" and "broken arm" are never conflated
+  // in the one number the stopping rule reads.
+  const LABEL = { unrecorded: 'verdict not recorded (pre-dates the field)', 'no-verdict': 'NO VERDICT — suspect a BROKEN arm' };
+  const zeros = entries.filter(isComplete).flatMap((e) => zeroFindingArms(e)
+    .map((z) => `${z.arm}: ${LABEL[z.evidence] ?? `reviewed, verdict ${z.verdict}`}`));
+  if (zeros.length > 0) {
+    const tally = {};
+    for (const z of zeros) tally[z] = (tally[z] || 0) + 1;
+    process.stdout.write('  zero-finding arms — a zero means nothing until you know the arm reviewed:\n');
+    for (const [k, n] of Object.entries(tally)) process.stdout.write(`    ${k} x${n}\n`);
+  }
   process.stdout.write(s.met
     ? '  TARGET MET — adjudicate, then write the verdict to docs/research/ and STOP.\n'
     : `  ${s.remaining} more to go. Raw uniques are NOT the verdict — the rule scores ACCEPTED HIGH/MED clusters.\n`);
