@@ -198,11 +198,19 @@ jobs:
         # ordering hazard to get wrong again. AUDIT_DB_TEST_URL is already
         # job-level — no step env needed.
         #
-        # db-schema-realization-live joins this step for the same reason: it needs an
-        # intact, fully migrated ledger to evict a row from.
+        # Two more files join this step for the same reason — each needs an
+        # intact, fully migrated schema BEFORE db-setup drops it:
+        #   - db-schema-realization-live: needs a fully migrated ledger to
+        #     evict a row from.
+        #   - regression-spec-multi-finding-lock: round-trips two `unit-test`
+        #     locks through the real partial-index arbiters, so it needs
+        #     `regression_specs` to exist.
+        # --test-concurrency=1 because all three share this job's single
+        # Postgres.
         run: |
           node --test --test-concurrency=1 \
             tests/db-schema-realization-live.test.mjs \
+            tests/regression-spec-multi-finding-lock.test.mjs \
             tests/symbol-index-drift-justification.test.mjs
 
       - name: Env-gated DB tests (G1 date parser + G3 withTx + setup integration)

@@ -47,8 +47,20 @@ export const DESTRUCTIVE_SUITE_FILES = Object.freeze([
   'tests/db-withtx.test.mjs',
   'tests/db-setup.test.mjs',
 ]);
+// Suites that need the migrated schema INTACT, so they must run BEFORE the
+// destructive step (db-setup.test.mjs does DROP SCHEMA PUBLIC CASCADE). Their
+// own step, never appended to a shared invocation: `node --test a b` sorts
+// files ALPHABETICALLY, so argument order is not execution order (found
+// 2026-07-15). `--test-concurrency=1` because all three share one Postgres.
+//
+// Kept in lockstep with the identical list in
+// .github/workflows/postgres-parity.yml — a file registered here but not there
+// (or vice versa) runs in one environment only, which is how
+// regression-spec-multi-finding-lock.test.mjs came to be committed and then
+// never executed by the DB job at all.
 export const ISOLATED_SUITE_FILES = Object.freeze([
   'tests/db-schema-realization-live.test.mjs',
+  'tests/regression-spec-multi-finding-lock.test.mjs',
   'tests/symbol-index-drift-justification.test.mjs',
 ]);
 export const CONTRACT_SUITE_FILES = Object.freeze([
@@ -448,7 +460,7 @@ export function createLifecycle(deps = {}) {
       }
       if (workloadOk) {
         workloadOk = await runStep(
-          'drift-justification', 'node', ['--test', ...ISOLATED_SUITE_FILES],
+          'drift-justification', 'node', ['--test', '--test-concurrency=1', ...ISOLATED_SUITE_FILES],
           buildStepEnv('drift-justification', dsn),
         );
       }
