@@ -54,7 +54,7 @@
     "models:check": "node scripts/check-model-freshness.mjs --strict",
     "maintenance:run": "node scripts/maintenance-checks.mjs",
     "maintenance:status": "node scripts/maintenance-checks.mjs --status",
-    "check": "npm run context:check && npm run docs:check && npm run docs:refs:gate && npm run plans:status && npm run plans:index:check && npm run requirements:map:check && npm run skills:check && npm run plans:lint && npm run parity:check-coupling && npm run efficacy:check && npm run on-conflict:check && npm run arch:coverage-gate && npm run db:check-rls:gate && npm run cli:flags:gate && npm run knip:gate && npm run npm-args:gate && npm run db:suites:gate && npm run gates:poison && npm test",
+    "check": "npm run context:check && npm run docs:check && npm run docs:refs:gate && npm run docs:architecture-intent:check && npm run plans:status && npm run plans:index:check && npm run requirements:map:check && npm run skills:check && npm run plans:lint && npm run parity:check-coupling && npm run efficacy:check && npm run on-conflict:check && npm run arch:coverage-gate && npm run db:check-rls:gate && npm run cli:flags:gate && npm run knip:gate && npm run npm-args:gate && npm run db:suites:gate && npm run gates:poison && npm test",
     "prepush:check": "node scripts/prepush-check.mjs",
     "docs:refs:gate": "node scripts/check-docs-refs.mjs --gating",
     "on-conflict:check": "node scripts/on-conflict-lint.mjs",
@@ -148,7 +148,8 @@
     "knip:baseline": "node scripts/knip-gate.mjs --update-baseline",
     "knip:exports": "npx knip --include exports,types,enumMembers",
     "upstream:issues": "node scripts/cross-skill.mjs upstream list --worksheet",
-    "gates:poison": "node scripts/check-gate-poison-pills.mjs"
+    "gates:poison": "node scripts/check-gate-poison-pills.mjs",
+    "docs:architecture-intent:check": "node scripts/check-architecture-intent-drift.mjs"
   },
   "keywords": [
     "claude",

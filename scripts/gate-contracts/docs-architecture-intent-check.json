@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "gate": "docs:architecture-intent:check",
+  "guards": "docs/architecture-intent.md vs .audit-loop/domain-map.json's declared domain set",
+  "gates": [
+    {
+      "id": "architecture-intent-check-detects-an-undocumented-domain",
+      "kind": "executable",
+      "statedIn": "AGENTS.md",
+      "stated": "This doc + `.audit-loop/domain-map.json` together enforce",
+      "implementation": "scripts/check-architecture-intent-drift.mjs",
+      "tests": [
+        "tests/check-architecture-intent-drift.test.mjs",
+        "tests/gate-poison-pills.test.mjs"
+      ],
+      "proof": "process",
+      "oracle": "poison-pill",
+      "poisonPill": {
+        "isolation": "tmpdir",
+        "argv": [
+          "scripts/check-architecture-intent-drift.mjs"
+        ],
+        "overlay": {
+          "docs/architecture-intent.md": "tests/fixtures/poison/architecture-intent-tampered.md"
+        },
+        "expectExit": 1,
+        "why": "A doc that silently stops documenting a domain the map still declares. The gate's whole value is catching exactly this — the doc drifted from 12 headings while the map grew to 36, and nobody noticed for months. The tamper removes ONE '### `domain`' heading rather than corrupting the file, because a parser that only checked the '## Domains' section existed, or counted headings without reading their names, would still pass a structural check while missing a real undocumented seam.",
+        "needsGit": true,
+        "expectStderr": "missing: stores"
+      }
+    }
+  ]
+}

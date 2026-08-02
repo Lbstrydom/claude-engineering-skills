@@ -299,9 +299,13 @@ const MANDATORY = {
   'requirements:map:check': ['requirements-map-check-compares-rendered-content'],
   'parity:check-coupling': ['parity-coupling-rejects-new-schema-qualification'],
   'context:check': ['context-check-rejects-missing-agents-import'],
+  // Added 2026-08-02 when the architecture-intent drift gate finally landed on main
+  // (it sat unmerged on a branch for 110 commits). A gate added after 2026-07-31 must
+  // carry a pill, never an exemption — §2 dec. 3.
+  'docs:architecture-intent:check': ['architecture-intent-check-detects-an-undocumented-domain'],
 };
 
-test('all five gates the plan made mandatory are contracted — not quietly exempted', () => {
+test('every gate the plan made mandatory is contracted — not quietly exempted', () => {
   // Exempting one of them with a plausible-sounding reason is the half-applied rule this
   // whole plan is about, performed on the plan. (I did exactly that on the first pass.)
   // `skills:check` carries three because it is an AGGREGATE of six terminal commands: the

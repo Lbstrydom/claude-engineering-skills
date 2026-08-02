@@ -150,7 +150,7 @@ support. Promoted out of `shared-lib` into its own domain since v0.1.0 (was
 shown inside the `shared-lib` box in the C4 view below, labelled "NEW — this
 PR"; that placement is now stale — see the updated diagram).
 
-### `stores`
+### (heading removed by the poison fixture — the domain is still in domain-map.json)
 `scripts/lib/store/**`, `scripts/lib/db/**` — the Postgres persistence layer
 (the `db/` seam + per-feature store modules). Owns the write/read boundary
 to the cloud learning store's tables. Distinct from `learning-store`, which

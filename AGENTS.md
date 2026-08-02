@@ -26,6 +26,14 @@
 > when you need to find an existing function, class, or component before
 > writing a new one.
 >
+> **Domain roster drift is gated.** [`docs/architecture-intent.md`](docs/architecture-intent.md)
+> documents each domain as a `### \`<domain>\`` heading; **This doc + `.audit-loop/domain-map.json` together enforce**
+> that the two agree. `npm run docs:architecture-intent:check` (in the pre-push
+> `check`) fails when the map declares a domain the doc never documents — the
+> reverse is never flagged, since the doc may retain retired domains as
+> rationale. It landed 2026-08-02 after sitting unmerged for 110 commits, during
+> which the doc drifted to 12 headings against a 36-domain map.
+>
 > **Bootstrap / refresh order** — when the map is stale, missing, or after
 > editing [`.audit-loop/domain-map.json`](.audit-loop/domain-map.json):
 > `npm run dashboard:setup` (chains `arch:refresh` → `arch:render` →

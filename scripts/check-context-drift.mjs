@@ -36,6 +36,7 @@ import { z } from 'zod';
 
 import { scanInstructionFiles } from './lib/claudemd/file-scanner.mjs';
 import { toSarif } from './lib/claudemd/sarif-formatter.mjs';
+import { makeFenceTracker } from './lib/markdown-fence-tracker.mjs';
 
 // ── Config schema ───────────────────────────────────────────────────────────
 
@@ -151,31 +152,6 @@ function loadConfig(repoRoot, { strict = false } = {}) {
  * Returns an updater that takes a line and returns whether that line is
  * either inside a fence or is a fence delimiter (i.e. not a heading).
  */
-function makeFenceTracker() {
-  let inFence = false;
-  let marker = null;
-  let openLength = 0;
-  return function update(line) {
-    const m = /^\s*(```+|~~~+)/.exec(line);
-    if (!m) return inFence;
-    const fenceStr = m[1];
-    const ch = fenceStr[0];
-    const len = fenceStr.length;
-    if (!inFence) {
-      inFence = true;
-      marker = ch;
-      openLength = len;
-      return true;
-    }
-    // Closing requires same char AND length >= open length.
-    if (ch === marker && len >= openLength) {
-      inFence = false;
-      marker = null;
-      openLength = 0;
-    }
-    return true; // line is a fence delimiter or inside a fence — not a heading
-  };
-}
 
 /**
  * Extract h2 sections from markdown content. Fence-aware: skips heading
