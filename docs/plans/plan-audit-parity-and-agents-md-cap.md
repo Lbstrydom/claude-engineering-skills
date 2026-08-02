@@ -64,6 +64,13 @@ closed alongside.
   (`maxAgentsMdLines`, default 1200, config-overridable) — fires for ANY
   AGENTS.md, paired or standalone. Previously only CLAUDE.md had a size
   check; AGENTS.md had silently grown to 1412 lines.
+  > **Superseded 2026-08-01**: the cap is now `maxAgentsMdChars`, default
+  > 92000. Lines were a broken proxy — this repo's two costliest AGENTS.md
+  > bullets were ~2.5K chars on ONE line each, so condensing them ~45% moved
+  > the line count by zero. 92K is the same strictness re-expressed: the file
+  > sitting exactly at the old 1200-line cap measured 91,201 chars. A config
+  > still setting `maxAgentsMdLines` now fails loudly rather than being
+  > silently ignored.
 - First trim (1412 → ~1150), no information deleted — dossier sections
   moved verbatim to docs with what/when/pointer stubs left behind:
   - Model Swap-In Evaluation Harness → `docs/runbooks/model-eval-harness.md` (new)

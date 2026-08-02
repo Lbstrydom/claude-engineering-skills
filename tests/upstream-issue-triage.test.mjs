@@ -59,6 +59,46 @@ test('freshness: git unavailable → unknown, NOT current', () => {
   assert.equal(r.reason, 'git-unavailable');
 });
 
+// The 2026-08-01 incident, as an executable case. A consumer report was stamped
+// 10 commits behind while running code from a commit that did not yet exist:
+// another session's uncommitted work had been synced 30 minutes earlier, and
+// the manifest stamps HEAD while the sync ships working-tree bytes. The verdict
+// said `stale/behind-head`, which reads as "re-sync and it goes away", and a
+// real report was nearly dismissed on that basis.
+test('freshness: a dirty source tree makes the distance unusable, not just imprecise', () => {
+  const r = classifyReportFreshness({
+    reportedSha: SHA, shaInHistory: true, distanceAhead: 10, ageDays: 0, sourceDirty: true,
+  });
+  assert.equal(r.verdict, 'unknown');
+  assert.equal(r.reason, 'source-tree-dirty');
+  assert.equal(r.distanceAhead, 10,
+    'the measurement is still reported — only the verdict built on it is refused');
+});
+
+test('freshness: dirty at distance 0 is NOT current — the bundle may be AHEAD of its stamp', () => {
+  // The subtle half. `distanceAhead === 0` normally means "at HEAD", but a
+  // dirty sync can put the consumer ahead of the sha it was stamped with, so
+  // there is no direction in which the verdict is safe.
+  const r = classifyReportFreshness({
+    reportedSha: SHA, shaInHistory: true, distanceAhead: 0, sourceDirty: true,
+  });
+  assert.equal(r.verdict, 'unknown');
+  assert.equal(r.reason, 'source-tree-dirty');
+});
+
+test('freshness: sourceDirty null/absent preserves the old verdicts — absence is not "clean"', () => {
+  // Every manifest published before the field existed reads null here. Those
+  // must keep behaving exactly as before rather than degrading en masse to
+  // unknown, which would make the whole signal useless overnight.
+  for (const v of [null, undefined, false]) {
+    const r = classifyReportFreshness({
+      reportedSha: SHA, shaInHistory: true, distanceAhead: 4, sourceDirty: v,
+    });
+    assert.equal(r.verdict, 'stale', `sourceDirty=${v} must not change the verdict`);
+    assert.equal(r.reason, 'behind-head');
+  }
+});
+
 test('freshness: behind HEAD → stale, carrying distance and age', () => {
   const r = classifyReportFreshness({
     reportedSha: SHA, shaInHistory: true, distanceAhead: 28, ageDays: 3,

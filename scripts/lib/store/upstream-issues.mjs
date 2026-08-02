@@ -49,9 +49,9 @@ export async function recordUpstreamIssue(report) {
       const inserted = await one(
         `INSERT INTO upstream_issues
            (repo_id, title, body, severity, affected_path,
-            reported_bundle_sha, reported_bundle_generated_at,
+            reported_bundle_sha, reported_bundle_generated_at, reported_source_dirty,
             path_recognised, fingerprint)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          ON CONFLICT (fingerprint) DO NOTHING
          RETURNING id`,
         [
@@ -62,6 +62,7 @@ export async function recordUpstreamIssue(report) {
           report.affectedPath,
           report.reportedBundleSha ?? null,
           report.reportedBundleGeneratedAt ?? null,
+          report.reportedSourceDirty ?? null,
           report.pathRecognised ?? null,
           report.fingerprint,
         ],

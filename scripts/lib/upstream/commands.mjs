@@ -52,7 +52,7 @@ export const MAX_BODY_BYTES = 65536;
  * which downstream MUST render as "version unknown" — never as "current".
  *
  * @param {string} repoRoot
- * @returns {{commitSha: string|null, generatedAt: string|null, files: Record<string,string>}|null}
+ * @returns {{commitSha: string|null, generatedAt: string|null, sourceDirty: boolean|null, files: Record<string,string>}|null}
  */
 export function readBundleStamp(repoRoot) {
   const manifestPath = path.join(repoRoot, 'scripts', '.sync-manifest.json');
@@ -62,6 +62,10 @@ export function readBundleStamp(repoRoot) {
     return {
       commitSha: typeof parsed.commitSha === 'string' ? parsed.commitSha : null,
       generatedAt: typeof parsed.generatedAt === 'string' ? parsed.generatedAt : null,
+      // Anything that is not literally `true`/`false` is "not determined" —
+      // including absence, which is what every manifest published before this
+      // field existed looks like. Absence must never read as clean.
+      sourceDirty: typeof parsed.sourceDirty === 'boolean' ? parsed.sourceDirty : null,
       files: (parsed.files && typeof parsed.files === 'object') ? parsed.files : {},
     };
   } catch {
@@ -100,9 +104,10 @@ export function validateAffectedPath(affectedPath, manifest) {
  *
  *   1. no/malformed sha           → unknown(no-stamp)
  *   2. sha not in this history    → unknown(sha-not-in-history)
- *   3. distance unavailable       → unknown(git-unavailable)
- *   4. distance > 0               → stale
- *   5. otherwise                  → current
+ *   3. source tree dirty at sync  → unknown(source-tree-dirty)
+ *   4. distance unavailable       → unknown(git-unavailable)
+ *   5. distance > 0               → stale
+ *   6. otherwise                  → current
  *
  * `ageDays` is REPORTED, never thresholded: no "stale after N days" constant
  * is invented, because no current requirement needs one.
@@ -111,6 +116,7 @@ export function validateAffectedPath(affectedPath, manifest) {
  */
 export function classifyReportFreshness({
   reportedSha = null, shaInHistory = null, distanceAhead = null, ageDays = null,
+  sourceDirty = null,
 } = {}) {
   const out = (verdict, reason) => ({ verdict, reason, distanceAhead, ageDays });
 
@@ -118,6 +124,18 @@ export function classifyReportFreshness({
     return out('unknown', 'no-stamp');
   }
   if (shaInHistory === false) return out('unknown', 'sha-not-in-history');
+  // The stamp describes HEAD; the bytes shipped came from the working TREE.
+  // When those disagreed at sync time the sha is a LOWER BOUND on what the
+  // consumer holds, so neither `stale` nor `current` is assertable.
+  // `distanceAhead` is still reported — the measurement is real, only the
+  // verdict built on it is not.
+  //
+  // Ordered ahead of the distance rules deliberately: a dirty bundle sitting at
+  // distance 0 is not `current` either, because the consumer may hold code
+  // AHEAD of its own stamp. That is the 2026-08-01 case exactly — wine ran the
+  // nested-search code for 30 minutes before the commit containing it existed,
+  // and this function called it "10 commits behind".
+  if (sourceDirty === true) return out('unknown', 'source-tree-dirty');
   if (distanceAhead === null || distanceAhead === undefined) {
     return out('unknown', 'git-unavailable');
   }
@@ -368,6 +386,7 @@ export async function upstreamReport({
     affectedPath: normalised,
     reportedBundleSha: manifest?.commitSha ?? null,
     reportedBundleGeneratedAt: manifest?.generatedAt ?? null,
+    reportedSourceDirty: manifest?.sourceDirty ?? null,
     pathRecognised: recognised,
     actor,
   });
@@ -435,6 +454,7 @@ export async function upstreamList({
         shaInHistory: facts.shaInHistory,
         distanceAhead: facts.distanceAhead,
         ageDays,
+        sourceDirty: row.reported_source_dirty ?? null,
       }),
       priorFixes: (priors.rows || []).map((p) => ({
         id: p.id, title: p.title, commit: p.fixed_in_commit,
@@ -480,7 +500,15 @@ export function renderWorksheet(items, { state = 'open' } = {}) {
     const stamp = f.verdict === 'stale'
       ? `bundle ${f.distanceAhead} commit(s) behind${f.ageDays !== null ? `, ${f.ageDays}d old` : ''}`
       : f.verdict === 'current' ? 'bundle at HEAD'
-        : `version unknown (${f.reason})`;
+        // The dirty case earns its own sentence rather than a bare reason code:
+        // "unknown" alone reads as a missing stamp, when in fact a sha IS
+        // present and its distance IS measured — it just cannot be trusted, and
+        // the consumer may be AHEAD rather than behind. Saying so is the whole
+        // point of the field.
+        : f.reason === 'source-tree-dirty'
+          ? `version unknown — synced from a dirty source tree${f.distanceAhead !== null
+            ? `; sha is ${f.distanceAhead} behind but bundle may be AHEAD of it` : ''}`
+          : `version unknown (${f.reason})`;
     lines.push(`[${it.severity}] ${it.title}`);
     lines.push(`  id        ${it.id}`);
     lines.push(`  from      ${it.repo_name || it.repo_id}`);

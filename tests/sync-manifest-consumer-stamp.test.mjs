@@ -15,7 +15,7 @@
  * fixed upstream?" unanswerable. Plan: docs/plans/upstream-issue-reports.md §Phase 1.
  */
 
-import { test } from 'node:test';
+import { test, describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -23,7 +23,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 import {
-  getGitMeta, SyncManifestSchema, writeManifest, buildConsumerManifest,
+  getGitMeta, SyncManifestSchema, writeManifest, buildConsumerManifest, listDirtyPaths,
 } from '../scripts/lib/sync-manifest.mjs';
 
 const SOURCE_ROOT = path.resolve(import.meta.dirname, '..');
@@ -173,4 +173,82 @@ test('writeManifest idempotency-skip returns the stale on-disk sha, not current 
   } finally {
     fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
+});
+
+// ── listDirtyPaths + the sourceDirty stamp ──────────────────────────────────
+//
+// Why this exists: `sync-to-repos.mjs` ships bytes read from the WORKING TREE
+// while the manifest stamps HEAD. When they disagree the consumer holds code
+// its own stamp cannot describe — measured 2026-08-01, where that produced a
+// "10 commits behind" verdict for a bundle that was actually AHEAD.
+
+describe('listDirtyPaths', () => {
+  let repo;
+
+  before(() => {
+    repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dirty-')));
+    const git = (args) => execFileSync('git', args, { cwd: repo, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });
+    git(['init', '-q', '-b', 'main']);
+    git(['config', 'user.email', 'f@example.invalid']);
+    git(['config', 'user.name', 'F']);
+    fs.mkdirSync(path.join(repo, 'scripts', 'lib'), { recursive: true });
+    fs.writeFileSync(path.join(repo, 'scripts', 'lib', 'clean.mjs'), 'export const a = 1;\n');
+    fs.writeFileSync(path.join(repo, 'scripts', 'lib', 'edited.mjs'), 'export const b = 1;\n');
+    git(['add', '-A']);
+    git(['commit', '-q', '-m', 'base']);
+    // The two shapes that ship un-stamped bytes.
+    fs.writeFileSync(path.join(repo, 'scripts', 'lib', 'edited.mjs'), 'export const b = 2;\n');
+    fs.writeFileSync(path.join(repo, 'scripts', 'lib', 'brand-new.mjs'), 'export const c = 3;\n');
+  });
+
+  after(() => { fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
+
+  it('reports modified AND untracked files, in POSIX form', () => {
+    const dirty = listDirtyPaths(repo);
+    assert.ok(dirty.has('scripts/lib/edited.mjs'), 'a modified source file must count');
+    assert.ok(dirty.has('scripts/lib/brand-new.mjs'),
+      'an untracked file counts too — a new lib module synced before its commit is the incident case');
+    assert.ok(!dirty.has('scripts/lib/clean.mjs'));
+  });
+
+  it('returns null — not an empty set — when git is unavailable', () => {
+    // The distinction is the whole point: an empty set means "checked, clean",
+    // null means "could not determine". Collapsing the second into the first is
+    // the silent false-negative this field exists to remove.
+    const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'nogit-'));
+    try {
+      assert.equal(listDirtyPaths(bare), null);
+    } finally {
+      fs.rmSync(bare, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+});
+
+describe('buildConsumerManifest — sourceDirty', () => {
+  const meta = { commitSha: 'a'.repeat(40), branch: 'main' };
+
+  it('records a boolean verdict when one was determined', () => {
+    for (const v of [true, false]) {
+      const m = buildConsumerManifest({
+        generatedAt: 'T', repo: 'r', sourceGitMeta: meta, files: {}, sourceDirty: v,
+      });
+      assert.equal(m.sourceDirty, v);
+    }
+  });
+
+  it('defaults to null, never false — "not determined" must not read as clean', () => {
+    const m = buildConsumerManifest({ generatedAt: 'T', repo: 'r', sourceGitMeta: meta, files: {} });
+    assert.equal(m.sourceDirty, null);
+    const viaNull = buildConsumerManifest({
+      generatedAt: 'T', repo: 'r', sourceGitMeta: meta, files: {}, sourceDirty: null,
+    });
+    assert.equal(viaNull.sourceDirty, null);
+  });
+
+  it('stays schema-valid', () => {
+    const m = buildConsumerManifest({
+      generatedAt: new Date(0).toISOString(), repo: 'r', sourceGitMeta: meta, files: {}, sourceDirty: true,
+    });
+    assert.doesNotThrow(() => SyncManifestSchema.parse(m));
+  });
 });

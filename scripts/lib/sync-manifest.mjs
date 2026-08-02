@@ -64,6 +64,21 @@ export const SyncManifestSchema = z.object({
   repo: z.string().min(1),
   branch: z.string().min(1),
   commitSha: z.string().nullable(),
+  // Was any SOURCE file that this bundle ships uncommitted at sync time?
+  //
+  // `commitSha` is HEAD, but the bytes shipped are read from the WORKING TREE
+  // (sync-to-repos.mjs reads them with fs.readFileSync, not `git show`). When
+  // the two disagree the consumer holds code that is NEWER than its own stamp,
+  // and every distance computed from that sha is wrong in the direction that
+  // invites "you're behind, re-sync" — measured 2026-08-01, where a report was
+  // stamped 10 commits behind while running code from a commit that did not
+  // exist yet, and the fix for it was nearly dismissed as already-shipped.
+  //
+  // Tri-state on purpose: `true` = known dirty, `false` = known clean, and
+  // null/absent = not determined (no git, or a manifest published before this
+  // field existed). Absence must read as UNKNOWN, never as clean — the same
+  // rule `commitSha: null` already carries.
+  sourceDirty: z.boolean().nullable().optional(),
   files: z.record(RelPathSchema, HashStringSchema),
   // Layout signals which on-disk shape this manifest describes:
   //  'legacy'   — files live at canonical `scripts/X` paths in the consumer (pre-isolation)
@@ -151,6 +166,54 @@ export function getGitMeta(rootDir) {
 }
 
 /**
+ * Repo-relative POSIX paths that differ from HEAD in `rootDir` — modified,
+ * staged, or untracked.
+ *
+ * Scoped intersection is the caller's job (`buildConsumerManifest` receives
+ * only its own bundle's verdict), because a whole-repo dirty flag would be
+ * useless here: this checkout is shared by concurrent sessions and is almost
+ * never clean, so every report would degrade to `unknown` and the freshness
+ * signal would be destroyed rather than made honest.
+ *
+ * Untracked (`??`) counts. A brand-new lib module that has been synced but not
+ * yet committed is precisely the case that produced the 2026-08-01 incident.
+ *
+ * @param {string} rootDir
+ * @returns {Set<string>|null} null when git is unavailable — "not determined",
+ *   which callers must not collapse to "clean"
+ */
+export function listDirtyPaths(rootDir) {
+  let out;
+  try {
+    // -z: NUL-delimited, so paths with spaces/quotes/non-ASCII need no
+    // unquoting. Without it git renders such names in a quoted C-string form
+    // and the set would silently miss exactly the files most likely to be
+    // mis-parsed.
+    out = execSync('git status --porcelain -z --untracked-files=all', {
+      cwd: rootDir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 32 * 1024 * 1024,
+    });
+  } catch {
+    return null;
+  }
+  const set = new Set();
+  const entries = out.split('\0');
+  for (let i = 0; i < entries.length; i += 1) {
+    const e = entries[i];
+    if (!e || e.length < 4) continue;
+    const xy = e.slice(0, 2);
+    set.add(e.slice(3));
+    // A rename/copy entry is followed by its ORIGIN path as a separate NUL
+    // field. Consume it so it is not parsed as a status line in its own right
+    // (its first two chars are path text, which would corrupt the next entry).
+    if (xy.includes('R') || xy.includes('C')) {
+      i += 1;
+      if (entries[i]) set.add(entries[i]);
+    }
+  }
+  return set;
+}
+
+/**
  * Resolve the git repo root from any working directory.  Falls back to
  * `cwd` when not in a git checkout (e.g. tarball install).  Used so CLI
  * invocation from a subdirectory still finds the correct manifest +
@@ -218,7 +281,7 @@ export function generateManifest(rootDir, files, opts = {}) {
  * @param {{generatedAt: string, repo?: string, sourceGitMeta: {commitSha: string|null, branch: string|null}, files: Record<string,string>}} args
  * @returns {{generatedAt: string, repo: string, branch: string, commitSha: string|null, files: Record<string,string>, layout: 'isolated'}}
  */
-export function buildConsumerManifest({ generatedAt, repo, sourceGitMeta, files }) {
+export function buildConsumerManifest({ generatedAt, repo, sourceGitMeta, files, sourceDirty = null }) {
   return {
     generatedAt,
     repo: repo || 'Lbstrydom/claude-engineering-skills',
@@ -226,6 +289,10 @@ export function buildConsumerManifest({ generatedAt, repo, sourceGitMeta, files 
     // Null stays legal (tarball install / no git) and means "unknown" — which
     // downstream triage must never read as "current".
     commitSha: sourceGitMeta?.commitSha ?? null,
+    // Qualifies commitSha rather than replacing it: the sha is still the best
+    // available base for prior-fix ancestry, but with this set it is a LOWER
+    // BOUND on what shipped, not an identity. See the schema note above.
+    sourceDirty: typeof sourceDirty === 'boolean' ? sourceDirty : null,
     files,
     layout: 'isolated',
   };

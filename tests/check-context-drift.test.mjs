@@ -240,7 +240,7 @@ describe('check-context-drift', () => {
         fs.writeFileSync(path.join(tmpDir, 'AGENTS.md'), bigAgents);
         fs.writeFileSync(path.join(tmpDir, 'CLAUDE.md'), '# CLAUDE.md\n\n@./AGENTS.md\n');
         fs.writeFileSync(path.join(tmpDir, '.claude-context-allowlist.json'),
-          JSON.stringify({ maxAgentsMdLines: 50 }));
+          JSON.stringify({ maxAgentsMdChars: 200 }));
         const { findings } = runDriftCheck(tmpDir);
         const oversized = findings.filter(f => f.ruleId === 'ctx/oversized-agents-md');
         assert.equal(oversized.length, 1, `expected exactly one oversized-agents finding, got: ${JSON.stringify(findings)}`);
@@ -256,13 +256,22 @@ describe('check-context-drift', () => {
     // never affect an exit code — the whole point is that it arrives while
     // condensing is still optional, so it cannot be allowed to block a push.
 
-    /** AGENTS.md with `n` H2 sections of `linesEach`, `withPointer` of them citing docs/. */
-    function agentsWithSections(n, linesEach, withPointer) {
+    /**
+     * AGENTS.md with `n` H2 sections of ~`charsEach`, `withPointer` of them
+     * citing docs/.
+     *
+     * Each body is ONE long line, not many short ones — deliberately. The cap
+     * measures characters (switched 2026-08-01) precisely because a single
+     * 2.5K-char bullet cost as much as 30 short lines while counting as one,
+     * so the fixture guarding the cap is built the way the old cap could be
+     * defeated.
+     */
+    function agentsWithSections(n, charsEach, withPointer) {
       let out = '# AGENTS.md\n';
       for (let i = 0; i < n; i++) {
         out += `## Section ${i}\n`;
         if (i < withPointer) out += 'See [detail](docs/reference/topic.md).\n';
-        out += 'body\n'.repeat(linesEach);
+        out += 'body '.repeat(Math.ceil(charsEach / 5)).slice(0, charsEach) + '\n';
       }
       return out;
     }
@@ -280,8 +289,8 @@ describe('check-context-drift', () => {
     }
 
     it('near the cap: ADVISORY naming the condensable sections, and NO warn', () => {
-      // 4 sections x 40 lines = ~165 lines, cap 180 → 91%, inside the band.
-      inTmpRepo('_tmp-agents-headroom', agentsWithSections(4, 40, 3), { maxAgentsMdLines: 180 }, ({ findings }) => {
+      // 4 sections x 3000 chars ≈ 12.2K, cap 13000 → ~94%, inside the band.
+      inTmpRepo('_tmp-agents-headroom', agentsWithSections(4, 3000, 3), { maxAgentsMdChars: 13000 }, ({ findings }) => {
         const advisory = findings.filter(f => f.ruleId === 'ctx/agents-md-headroom');
         assert.equal(advisory.length, 1, `expected one advisory, got: ${JSON.stringify(findings)}`);
         assert.equal(advisory[0].severity, 'info');
@@ -294,7 +303,7 @@ describe('check-context-drift', () => {
     });
 
     it('the advisory can never block: severity is outside both exit-code buckets', () => {
-      inTmpRepo('_tmp-agents-headroom-exit', agentsWithSections(4, 40, 3), { maxAgentsMdLines: 180 }, ({ findings }) => {
+      inTmpRepo('_tmp-agents-headroom-exit', agentsWithSections(4, 3000, 3), { maxAgentsMdChars: 13000 }, ({ findings }) => {
         // main() exits on `error` (1) and `warn` (1 under --strict, else 2).
         // An advisory-only run must fall through both, in strict mode too.
         assert.equal(findings.filter(f => f.severity === 'error').length, 0);
@@ -304,13 +313,13 @@ describe('check-context-drift', () => {
     });
 
     it('comfortably under the cap: silent (no advisory noise on every run)', () => {
-      inTmpRepo('_tmp-agents-roomy', agentsWithSections(2, 40, 2), { maxAgentsMdLines: 1000 }, ({ findings }) => {
+      inTmpRepo('_tmp-agents-roomy', agentsWithSections(2, 3000, 2), { maxAgentsMdChars: 100000 }, ({ findings }) => {
         assert.equal(findings.filter(f => f.ruleId === 'ctx/agents-md-headroom').length, 0);
       });
     });
 
     it('over the cap: the warn itself carries the candidates, where they matter most', () => {
-      inTmpRepo('_tmp-agents-over-with-candidates', agentsWithSections(6, 40, 4), { maxAgentsMdLines: 100 }, ({ findings }) => {
+      inTmpRepo('_tmp-agents-over-with-candidates', agentsWithSections(6, 3000, 4), { maxAgentsMdChars: 8000 }, ({ findings }) => {
         const oversized = findings.filter(f => f.ruleId === 'ctx/oversized-agents-md');
         assert.equal(oversized.length, 1);
         assert.match(oversized[0].message, /Condense first/);
@@ -326,7 +335,7 @@ describe('check-context-drift', () => {
       try {
         fs.writeFileSync(path.join(tmpDir, 'AGENTS.md'), bigAgents);
         fs.writeFileSync(path.join(tmpDir, '.claude-context-allowlist.json'),
-          JSON.stringify({ maxAgentsMdLines: 50 }));
+          JSON.stringify({ maxAgentsMdChars: 200 }));
         const { findings } = runDriftCheck(tmpDir);
         const oversized = findings.filter(f => f.ruleId === 'ctx/oversized-agents-md');
         assert.equal(oversized.length, 1);

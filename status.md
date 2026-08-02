@@ -1,6 +1,66 @@
 # Project Status Log
 
-## 2026-08-01 (latest) — three consumer-reported defects, and a file that had no room left
+## 2026-08-01 (latest) — the bundle stamp described a different tree than it shipped
+
+Chasing the one loose end from the report triage earlier today, and it had a
+concrete root cause rather than the "probably a paraphrase" I'd guessed.
+
+**The stamp and the bytes come from different places.** `sync-to-repos.mjs`
+ships files read with `fs.readFileSync` — the WORKING TREE — while
+`sync-manifest.mjs` stamps `git rev-parse HEAD`. When the source tree is dirty
+those disagree, and the consumer receives code its own stamp cannot describe.
+
+The timeline settles it. `b7db0553` landed 12:13; wine synced 12:15 and was
+stamped with it; the report was filed 12:42; the search rewrite `34db8802` was
+not committed until 12:46. So wine ran that code for half an hour **before the
+commit containing it existed** — another session's uncommitted work had been
+picked up by the sync. The freshness verdict read `stale / 10 commits behind`,
+which invites "re-sync and it goes away", and the prior-fix list made the bug
+look already-handled. A real report was nearly dismissed on that basis.
+
+This is the invariant AGENTS.md already states, running backwards: *"hashing
+working-tree bytes ≠ hashing committed source"*. `getGitMeta`'s own docstring
+even says a stale-but-plausible version stamp is worse than none — it removed
+one instance of that and left this one.
+
+Fix is `sourceDirty`, plumbed manifest → capture → store → verdict
+(migration `20260801190000`). Three choices worth keeping:
+
+- **Tri-state, and the null arm is the load-bearing one.** No `DEFAULT FALSE`
+  on the column: that would silently assert "clean" for every pre-existing row,
+  which is exactly the false confidence the field exists to remove.
+- **Scoped per-repo, not whole-repo.** This checkout is shared by concurrent
+  sessions and is almost never clean, so a whole-repo flag would degrade every
+  report to `unknown` — destroying the signal rather than making it honest.
+- **Ordered ahead of the distance rules.** A dirty bundle at distance 0 is not
+  `current` either; the consumer may be AHEAD of its stamp. `distanceAhead` is
+  still reported — the measurement is real, only the verdict built on it is not.
+
+Verified against a real sync of the (dirty) tree rather than by inspection:
+`{"commitSha":"45b640b4…","sourceDirty":true,"files":592}`.
+
+**AGENTS.md cap now measures characters (92000), not lines.** Derived, not
+invented: the file sitting exactly at the old 1200-line cap measured 91,201
+chars, so this is the same strictness in a unit that costs something. The line
+metric was blind to its own worst case — the `nav-audit` and `visual-audit`
+bullets were ~2.5K chars on ONE line each, and condensing them ~45% yesterday
+moved the count by zero.
+
+The proof is in the advisory's own output: ranked by chars, `## Skill Chain` is
+now #1 at 16,755, where lines ranked it second behind `## Architecture`. The
+suggestion list had been pointing at the wrong section. `maxAgentsMdLines` in a
+config now fails loudly instead of being silently ignored, and the test fixture
+was rebuilt to use one long line per section — the guard should be built the way
+the old cap could be defeated.
+
+Closed without building: moving the cross-skill catalogue to a subagent. It is
+4,289 chars in `docs/reference/`, costing zero resident context and ~1.1K tokens
+to read on demand; a subagent round-trip costs more than that. No observed cost,
+so no problem statement, so nothing to plan. Worth recording that architectural
+memory is already this pattern — a corpus too large to read inline, queried for
+a conclusion — implemented as a CLI rather than an agent.
+
+## 2026-08-01 — three consumer-reported defects, and a file that had no room left
 
 Three items arrived from wine-cellar-app. All three were real; each was reproduced
 before being touched.

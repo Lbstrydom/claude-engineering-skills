@@ -13,8 +13,12 @@
 > messy middle" discipline as the generated-artifact policy below, applied to this
 > file itself. **Enforced since 2026-07-13**: `npm run context:check` (run by
 > the pre-push hook and `/ship` Step 4) fails on `ctx/oversized-agents-md`
-> when this file exceeds 1200 lines — condense a dossier section to a stub +
-> `docs/<topic>.md` rather than raising the cap.
+> when this file exceeds **92000 characters** — condense a dossier section to a
+> stub + `docs/<topic>.md` rather than raising the cap. **Characters, not lines,
+> since 2026-08-01**: the two costliest bullets here were ONE line each (~2.5K
+> chars), so the old line cap was blind to its own worst case. 92K is the same
+> strictness, not a new budget — this file measured 91,201 chars sitting exactly
+> at the old 1200-line cap.
 
 <!-- arch-map-discoverability:start -->
 > **Architecture map**: [`docs/architecture-map.md`](docs/architecture-map.md)

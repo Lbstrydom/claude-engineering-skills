@@ -11,7 +11,7 @@
  *   ctx/non-allowlist-heading   HIGH    CLAUDE.md h2 not in allowlist
  *   ctx/shared-section-drift    HIGH    Same h2 in both files, bodies differ
  *   ctx/oversized-claude-md     MEDIUM  CLAUDE.md exceeds maxClaudeMdLines
- *   ctx/oversized-agents-md     MEDIUM  AGENTS.md exceeds maxAgentsMdLines (sprawl
+ *   ctx/oversized-agents-md     MEDIUM  AGENTS.md exceeds maxAgentsMdChars (sprawl
  *                                       cap — condense to stubs + docs/<topic>.md)
  *   ctx/agents-md-headroom      ADVISORY AGENTS.md is within 10% of the cap. Names
  *                                       the sections cheapest to condense. NEVER
@@ -23,7 +23,7 @@
  *   2  MEDIUM findings only (without --strict)
  *
  * Config: optional `.claude-context-allowlist.json` at repo root:
- *   { "allowlist": [...], "maxClaudeMdLines": 100, "maxAgentsMdLines": 1200 }
+ *   { "allowlist": [...], "maxClaudeMdLines": 100, "maxAgentsMdChars": 92000 }
  *
  * @module scripts/check-context-drift
  */
@@ -42,6 +42,10 @@ import { toSarif } from './lib/claudemd/sarif-formatter.mjs';
 const ConfigSchema = z.object({
   allowlist: z.array(z.string().min(1)).optional(),
   maxClaudeMdLines: z.number().int().positive().optional(),
+  maxAgentsMdChars: z.number().int().positive().optional(),
+  // Retired 2026-08-01 in favour of maxAgentsMdChars. Kept in the schema ONLY
+  // so a config still carrying it gets a rename message instead of `.strict()`'s
+  // generic "unrecognized key" — a silently-ignored cap is worse than no cap.
   maxAgentsMdLines: z.number().int().positive().optional(),
 }).strict();
 
@@ -61,12 +65,27 @@ const DEFAULT_MAX_CLAUDE_MD_LINES = 80;
 
 // AGENTS.md is loaded into EVERY session of every agent that reads it — size
 // is a per-session cost, and long dossier-grade files degrade LLM recall of
-// the load-bearing invariants buried in them. The file's own preamble sets
-// the policy (invariants + what-it-is/when/pointer stubs; operational depth
-// in docs/); this cap is the enforcement the policy previously lacked
-// (sections silently sprawled to 1400+ lines before 2026-07-13). Generous by
-// design: it catches sprawl-by-accretion, not normal growth.
-const DEFAULT_MAX_AGENTS_MD_LINES = 1200;
+// the load-bearing invariants buried in them. The file's own preamble sets the
+// policy (invariants + what-it-is/when/pointer stubs; operational depth in
+// docs/); this cap is the enforcement the policy previously lacked (sections
+// silently sprawled past 1400 lines before 2026-07-13). Generous by design: it
+// catches sprawl-by-accretion, not normal growth.
+//
+// Measured in CHARACTERS, not lines — switched 2026-08-01.
+//
+// Lines are a broken proxy for the thing this cap protects. The two largest
+// per-session costs in this repo's own AGENTS.md (the nav-audit and
+// visual-audit bullets, ~2.5K chars each) were ONE line apiece: condensing
+// them by ~45% moved the line count by zero, while a 15-line table of
+// one-word rows would have counted 15x more. The cap was blind to its own
+// worst case.
+//
+// The number preserves the previous strictness rather than inventing a new
+// budget: AGENTS.md sitting exactly AT the old 1200-line cap measured 91,201
+// characters, so ~92K is the same policy expressed in the unit that actually
+// costs something. Raise it only for a deliberate, justified exception — the
+// intended remedy is still "move a dossier to docs/<topic>.md".
+const DEFAULT_MAX_AGENTS_MD_CHARS = 92000;
 
 // ── Config loader ───────────────────────────────────────────────────────────
 
@@ -79,7 +98,7 @@ function loadConfig(repoRoot, { strict = false } = {}) {
   const defaults = {
     allowlist: DEFAULT_ALLOWLIST,
     maxClaudeMdLines: DEFAULT_MAX_CLAUDE_MD_LINES,
-    maxAgentsMdLines: DEFAULT_MAX_AGENTS_MD_LINES,
+    maxAgentsMdChars: DEFAULT_MAX_AGENTS_MD_CHARS,
   };
   const cfgPath = path.join(repoRoot, '.claude-context-allowlist.json');
   if (!fs.existsSync(cfgPath)) return defaults;
@@ -103,10 +122,20 @@ function loadConfig(repoRoot, { strict = false } = {}) {
     return defaults;
   }
 
+  if (parsed.data.maxAgentsMdLines !== undefined) {
+    // Loud, not ignored. Honouring it is impossible (the cap is no longer a
+    // line count) and dropping it silently would leave an operator believing
+    // they had configured a limit that does nothing.
+    const msg = `${cfgPath}: "maxAgentsMdLines" was retired 2026-08-01 — the AGENTS.md cap is now `
+      + `measured in characters. Use "maxAgentsMdChars" (the old 1200-line cap was ~92000 chars).`;
+    if (strict) throw new Error(msg);
+    process.stderr.write(`[check-context-drift] WARN: ${msg}\n`);
+  }
+
   return {
     allowlist: parsed.data.allowlist ?? DEFAULT_ALLOWLIST,
     maxClaudeMdLines: parsed.data.maxClaudeMdLines ?? DEFAULT_MAX_CLAUDE_MD_LINES,
-    maxAgentsMdLines: parsed.data.maxAgentsMdLines ?? DEFAULT_MAX_AGENTS_MD_LINES,
+    maxAgentsMdChars: parsed.data.maxAgentsMdChars ?? DEFAULT_MAX_AGENTS_MD_CHARS,
   };
 }
 
@@ -277,18 +306,21 @@ function checkPair(agentsPath, claudePath, agentsContent, claudeContent, config)
  */
 function checkAgentsSize(agentsPath, agentsContent, config) {
   const agentsLines = agentsContent.split('\n');
-  const total = agentsLines.length;
-  const cap = config.maxAgentsMdLines;
+  // The measured quantity is characters; the line number is carried only so the
+  // finding can anchor to the end of the file in an editor.
+  const total = agentsContent.length;
+  const lineCount = agentsLines.length;
+  const cap = config.maxAgentsMdChars;
 
   if (total > cap) {
     return [{
       ruleId: 'ctx/oversized-agents-md',
       severity: 'warn',
       file: agentsPath,
-      line: total,
-      message: `AGENTS.md is ${total} lines, exceeding the ${cap}-line sprawl cap. ` +
+      line: lineCount,
+      message: `AGENTS.md is ${total} characters (${lineCount} lines), exceeding the ${cap}-character sprawl cap. ` +
                'Condense dossier-grade sections to what-it-is/when-you-need-it/pointer stubs and move the operational depth to docs/<topic>.md ' +
-               '(the progressive-disclosure pattern in AGENTS.md\'s own preamble). Raise maxAgentsMdLines in .claude-context-allowlist.json only for a deliberate, justified exception.' +
+               '(the progressive-disclosure pattern in AGENTS.md\'s own preamble). Raise maxAgentsMdChars in .claude-context-allowlist.json only for a deliberate, justified exception.' +
                formatCandidates(agentsLines),
       semanticId: hashId(agentsPath, 'oversized-agents'),
     }];
@@ -306,8 +338,8 @@ function checkAgentsSize(agentsPath, agentsContent, config) {
       ruleId: 'ctx/agents-md-headroom',
       severity: 'info',
       file: agentsPath,
-      line: total,
-      message: `AGENTS.md is ${total}/${cap} lines (${cap - total} left). Not a failure — but the next invariant ` +
+      line: lineCount,
+      message: `AGENTS.md is ${total}/${cap} characters (${cap - total} left). Not a failure — but the next invariant ` +
                'will not fit, and shaving words to squeeze under the cap is how a file stays permanently full.' + candidates,
       semanticId: hashId(agentsPath, 'agents-headroom'),
     }];
@@ -317,7 +349,10 @@ function checkAgentsSize(agentsPath, agentsContent, config) {
 
 /** A section is condensable when it is large AND its depth already has a home. */
 const AGENTS_MD_ADVISORY_RATIO = 0.9;
-const CONDENSE_MIN_LINES = 30;
+// A section worth suggesting. Scaled from the previous 30-line floor at this
+// file's measured ~76 chars/line, so the same sections qualify — the change is
+// the unit, not the policy.
+const CONDENSE_MIN_CHARS = 2300;
 const DOCS_POINTER = /docs\/[A-Za-z0-9._/-]+\.md/;
 
 /**
@@ -335,27 +370,25 @@ function formatCandidates(lines) {
   for (const line of lines) {
     if (line.startsWith('## ')) {
       if (current) sections.push(current);
-      current = { title: line.slice(3).trim(), lines: 0, hasPointer: false };
+      current = { title: line.slice(3).trim(), chars: 0, hasPointer: false };
     }
     if (!current) continue;
-    current.lines++;
+    // +1 for the newline the split removed, so section sizes sum to the file
+    // size the cap is measured against.
+    current.chars += line.length + 1;
     if (DOCS_POINTER.test(line)) current.hasPointer = true;
   }
   if (current) sections.push(current);
 
-  const ranked = sections
-    .filter(s => s.lines >= CONDENSE_MIN_LINES && s.hasPointer)
-    .sort((a, b) => b.lines - a.lines)
-    .slice(0, 5);
+  const condensable = sections.filter(s => s.chars >= CONDENSE_MIN_CHARS && s.hasPointer);
+  const ranked = [...condensable].sort((a, b) => b.chars - a.chars).slice(0, 5);
   if (ranked.length === 0) return '';
 
-  const reclaimable = sections
-    .filter(s => s.lines >= CONDENSE_MIN_LINES && s.hasPointer)
-    .reduce((n, s) => n + s.lines, 0);
+  const reclaimable = condensable.reduce((n, s) => n + s.chars, 0);
 
   return `\n  Condense first — large AND already pointing at docs/ (so the depth is duplicated, not resident); ` +
-         `${reclaimable} lines sit in sections of this shape:\n` +
-         ranked.map(s => `    ${String(s.lines).padStart(4)} lines  ## ${s.title}`).join('\n');
+         `${reclaimable} chars sit in sections of this shape:\n` +
+         ranked.map(s => `    ${String(s.chars).padStart(6)} chars  ## ${s.title}`).join('\n');
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -446,7 +479,7 @@ Detects drift between AGENTS.md and CLAUDE.md within a repo. Enforces:
   - CLAUDE.md h2 headings only from Claude-only allowlist
   - CLAUDE.md size cap (default 80 lines)
   - Shared section bodies match between AGENTS.md and CLAUDE.md
-  - AGENTS.md sprawl cap (default 1200 lines) — condense dossier sections
+  - AGENTS.md sprawl cap (default 92000 chars) — condense dossier sections
     to stubs + docs/<topic>.md per the progressive-disclosure pattern
 
 Options:
@@ -456,7 +489,7 @@ Options:
   -h, --help         Show this help
 
 Config: .claude-context-allowlist.json (optional) at repo root:
-  { "allowlist": ["Custom Heading", ...], "maxClaudeMdLines": 100, "maxAgentsMdLines": 1200 }
+  { "allowlist": ["Custom Heading", ...], "maxClaudeMdLines": 100, "maxAgentsMdChars": 92000 }
 `);
 }
 

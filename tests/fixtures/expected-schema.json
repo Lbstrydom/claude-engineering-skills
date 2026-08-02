@@ -6374,6 +6374,13 @@
           "is_nullable": "NO",
           "column_default": "now()",
           "ordinal_position": 14
+        },
+        {
+          "column_name": "reported_source_dirty",
+          "data_type": "boolean",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 15
         }
       ]
     }

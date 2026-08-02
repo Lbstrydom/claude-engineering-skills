@@ -22,7 +22,7 @@ import { enumerateSkillFiles, listSkillNames } from './lib/skill-packaging.mjs';
 import { ensureAuditDeps } from './lib/install/deps.mjs';
 import { CONSUMER_REPOS, resolveAdHocTarget, canonicaliseRegistryTarget } from './lib/consumer-repos.mjs';
 import {
-  writeManifest, detectOwnershipRegression, getGitMeta, buildConsumerManifest,
+  writeManifest, detectOwnershipRegression, getGitMeta, buildConsumerManifest, listDirtyPaths,
 } from './lib/sync-manifest.mjs';
 import { collectImportClosure } from './lib/module-graph.mjs';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';
@@ -1062,6 +1062,13 @@ async function main() {
   // commitSha is stale by design — so a docs-only sync would stamp consumers
   // with a plausible but wrong sha. Plan: docs/plans/upstream-issue-reports.md §Phase 1.
   const sourceGitMeta = getGitMeta(SOURCE_ROOT);
+  // Which source files differ from that sha RIGHT NOW. The bytes below are read
+  // from the working tree, so a dirty file means the consumer receives code the
+  // stamp cannot describe. Computed once (one `git status`), intersected
+  // per-repo against that repo's own file set — a whole-repo flag would read
+  // dirty on nearly every sync of this shared checkout and degrade every report
+  // to `unknown`, which is noise, not honesty.
+  const sourceDirtyPaths = listDirtyPaths(SOURCE_ROOT);
 
   for (const rawRepo of targetRepos) {
     // Canonicalise + containment-check EVERY target, not just `--target-path`.
@@ -1678,6 +1685,12 @@ async function main() {
           repo: 'Lbstrydom/claude-engineering-skills',
           sourceGitMeta,
           files: consumerFileMap,
+          // null (git unavailable) propagates as "not determined" rather than
+          // collapsing to clean — `.some()` on a null set would be exactly the
+          // silent false-negative this field exists to remove.
+          sourceDirty: sourceDirtyPaths === null
+            ? null
+            : repo.files.some((srcRel) => sourceDirtyPaths.has(srcRel)),
         });
         atomicWriteFileSync(priorManifestPath, JSON.stringify(consumerManifest, null, 2) + '\n');
         manifestWritten = true;
