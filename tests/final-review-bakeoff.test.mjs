@@ -11,7 +11,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { findEligibleTranscripts, assessWindow } from '../scripts/final-review-bakeoff.mjs';
-import { zeroFindingArms, isComplete, CONTRACT_EPOCH } from '../scripts/bakeoff-collect.mjs';
+import { zeroFindingArms, isComplete, summarise, CONTRACT_EPOCH } from '../scripts/bakeoff-collect.mjs';
 
 /** Build an injectable fake FS for the pure enumerator. */
 function io(files, existingPlans = []) {
@@ -171,5 +171,39 @@ describe('contract epoch + solo arm (bakeoff-collect isComplete)', () => {
   it('the solo arm is excluded from zero-finding reporting (it has no shadow bucket)', () => {
     const z = zeroFindingArms(full({ opus: ran({ buckets: { shadowOnly: 0 }, shadowVerdict: 'APPROVE' }) }));
     assert.deepEqual(z.map((x) => x.arm), ['opus']);
+  });
+});
+
+describe('summarise surfaces every arm (bakeoff-collect)', () => {
+  const ran = (shadowOnly, primaryFindings) => ({
+    shadowState: 'ran', shadowVerdict: 'CONCERNS', buckets: { shadowOnly }, primaryVerdict: 'CONCERNS', primaryFindings,
+  });
+  const snap = (id, opusUnique, kimiUnique, p1, p2, solo) => ({
+    snapshotId: id, contractEpoch: CONTRACT_EPOCH,
+    arms: { opus: ran(opusUnique, p1), kimi: ran(kimiUnique, p2), 'solo-opus': { primaryVerdict: 'CONCERNS', primaryFindings: solo } },
+  });
+
+  it('the solo arm contributes its PRIMARY findings, never a shadow bucket it does not have', () => {
+    const s = summarise([snap('a', 7, 1, 2, 4, 7)], 12);
+    assert.equal(s.totals.soloFindings, 7);
+    assert.equal(s.totals.opusUnique, 7);
+    assert.equal(s.totals.kimiUnique, 1);
+  });
+
+  it('primary self-divergence is the per-snapshot |P1 - P2| spread', () => {
+    // Same primary model, same transcript, two runs. This is §0.4's
+    // "is a 2nd reviewer just a reroll?" question, and it is free to collect.
+    const s = summarise([snap('a', 7, 1, 2, 4, 7), snap('b', 3, 2, 5, 5, 3)], 12);
+    assert.deepEqual(s.totals.primaryDivergence, [2, 0]);
+  });
+
+  it('an INCOMPLETE snapshot contributes to no total — not even a partial one', () => {
+    const bad = snap('c', 9, 9, 9, 9, 9);
+    delete bad.contractEpoch; // stale-epoch row
+    const s = summarise([bad], 12);
+    assert.equal(s.complete, 0);
+    assert.equal(s.totals.opusUnique, 0);
+    assert.equal(s.totals.soloFindings, 0);
+    assert.deepEqual(s.totals.primaryDivergence, []);
   });
 });

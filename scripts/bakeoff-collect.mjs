@@ -197,11 +197,23 @@ export function zeroFindingArms(entry) {
 
 export function summarise(entries, target = DEFAULT_TARGET) {
   const complete = entries.filter(isComplete);
-  const totals = { opusUnique: 0, kimiUnique: 0, primaryTotal: 0 };
+  const totals = { opusUnique: 0, kimiUnique: 0, soloFindings: 0, primaryTotal: 0, primaryDivergence: [] };
   for (const e of complete) {
     totals.opusUnique += e.arms.opus?.buckets?.shadowOnly ?? 0;
     totals.kimiUnique += e.arms.kimi?.buckets?.shadowOnly ?? 0;
-    totals.primaryTotal += (e.arms.opus?.primaryFindings ?? 0) + (e.arms.kimi?.primaryFindings ?? 0);
+    // The solo arm's whole result IS its primary count — it has no shadow
+    // bucket, so omitting it here made the one arm that answers "would Opus
+    // alone have done" invisible in the only readout an operator reads.
+    totals.soloFindings += e.arms['solo-opus']?.primaryFindings ?? 0;
+    const p1 = e.arms.opus?.primaryFindings ?? 0;
+    const p2 = e.arms.kimi?.primaryFindings ?? 0;
+    totals.primaryTotal += p1 + p2;
+    // §0.4's fifth question — "is a 2nd reviewer just a reroll?" — is answered
+    // by P1-vs-P2 divergence: two runs of the SAME primary on the SAME
+    // transcript. Both numbers are already collected, so recording the spread
+    // costs nothing and is the difference between measuring it and noticing it
+    // after the cohort closes.
+    totals.primaryDivergence.push(Math.abs(p1 - p2));
   }
   return {
     complete: complete.length,
@@ -218,7 +230,14 @@ function printProgress(logPath, target) {
   const s = summarise(entries, target);
   process.stdout.write(`\nBake-off progress — ${s.complete}/${s.target} complete snapshot(s)\n`);
   if (s.incomplete > 0) process.stdout.write(`  ${s.incomplete} incomplete (an arm skipped or errored) — not counted\n`);
-  process.stdout.write(`  raw uniques so far: opus=${s.totals.opusUnique} kimi=${s.totals.kimiUnique}\n`);
+  process.stdout.write(`  raw uniques so far: opus=${s.totals.opusUnique} kimi=${s.totals.kimiUnique}`
+    + ` | solo-opus findings=${s.totals.soloFindings} (not a "unique" — no shadow to diff against)\n`);
+  const div = s.totals.primaryDivergence;
+  if (div.length > 0) {
+    const mean = (div.reduce((a, b) => a + b, 0) / div.length).toFixed(1);
+    process.stdout.write(`  primary self-divergence: mean ${mean}, max ${Math.max(...div)} findings`
+      + ' — same model, same transcript, two runs. High => buy a retry, not a model.\n');
+  }
   // A zero is only informative once you know the arm actually reviewed. Print the
   // verdict beside it so "lenient reviewer" and "broken arm" are never conflated
   // in the one number the stopping rule reads.
