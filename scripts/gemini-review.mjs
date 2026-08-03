@@ -887,7 +887,19 @@ const PROVIDERS = {
     },
     buildClient: async () => {
       process.stderr.write(`  [final-review] GEMINI_API_KEY missing; using Claude Opus fallback (${CLAUDE_OPUS_MODEL}).\n`);
-      return createAnthropicClient();
+      // `backend:'sdk'` PINNED, exactly as buildShadowClient does — the PRIMARY
+      // path was left on the ambient CLAUDE_BACKEND and is broken twice over
+      // under `cli`: that transport silently drops tools/tool_choice (so the
+      // provider-side schema enforcement this reviewer depends on vanishes,
+      // AGENTS.md "Anthropic Backend Routing"), and it passes the prompt as a
+      // process argument, which a ~50K-token review exceeds — observed
+      // 2026-08-03 as `'claude' exited 1: The command line is too long`.
+      //
+      // This is the reviewer the loop falls back to when GEMINI_API_KEY is
+      // absent, so on any machine running CLAUDE_BACKEND=cli the final gate had
+      // no working fallback at all. The shadow path was pinned on 2026-07-26;
+      // the primary was missed because it is only reached without a Gemini key.
+      return createAnthropicClient({ backend: 'sdk' });
     },
   },
   'azure-claude': {

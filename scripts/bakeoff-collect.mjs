@@ -42,7 +42,25 @@ const KNOWN_FLAGS = Object.freeze([
 
 /** Category A: accumulating run data, gitignored — never a committed artifact. */
 export const LOG_PATH = '.audit/bakeoff-log.jsonl';
-const DEFAULT_TARGET = 15;
+/**
+ * Pre-registered cohort size, lowered 15 → **12** on 2026-08-03, before any
+ * result under CONTRACT_EPOCH e2 was read — the only point §6.0b permits it
+ * ("adjusts N ... only before run 1, never mid-campaign").
+ *
+ * 12 and not lower, deliberately. §6.3 row 1 makes `N < 12` terminal
+ * INCONCLUSIVE — no keep/drop claim at any cost — so 8 would have bought a
+ * cheaper campaign that answers nothing. 12 is the smallest N that still yields
+ * a verdict, and reaching it required changing no decision rule: §0.5 states the
+ * rule is inherited, not re-invented, and it is not amended here.
+ *
+ * What the reduction is worth: per-snapshot cost rose (three arms instead of
+ * two, and matched reasoning effort made the OpenRouter arm ~5x slower), so the
+ * three snapshots saved are real spend. What it is NOT: added confidence. §6.5
+ * applies unchanged — this is an operating decision, not a statistical
+ * inference, and 12 remains the floor the rule already set, not a new claim
+ * about power.
+ */
+const DEFAULT_TARGET = 12;
 
 /**
  * Evidence counts only if produced under the contract the stopping rule

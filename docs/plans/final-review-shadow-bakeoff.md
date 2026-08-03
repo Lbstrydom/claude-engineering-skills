@@ -133,8 +133,19 @@ Opus's measured position: **1.1/run at $1.07** — clears both. So the live
 questions are narrow: *does Kimi clear 0.2, and what fraction of Opus's 1.1 does
 it cover?*
 
-**N = 15 snapshots**, or a committed end date, whichever first. Terminates
-either way — bounded and synchronous, not a third passive collector.
+**N = 12 snapshots** (lowered from 15 on 2026-08-03), or a committed end date,
+whichever first. Terminates either way — bounded and synchronous, not a third
+passive collector.
+
+> **Why 12, and why not 8** (recorded before any result under contract epoch
+> `e2` was read — the only point §6.0b permits adjusting N). Per-snapshot cost
+> rose: a third arm (`solo-opus`) was added, and matched reasoning effort made
+> the OpenRouter arm ~5x slower. 8 was considered and **rejected**: §6.3 row 1
+> makes `N < 12` terminal INCONCLUSIVE, so 8 buys a cheaper campaign that
+> answers nothing. 12 is the smallest N that still yields a verdict **without
+> amending the decision rule** — §0.5's "inherited, NOT re-invented" holds, and
+> row 1 is untouched. The reduction saves spend; it adds no confidence, and
+> §6.5 applies unchanged.
 
 ### 0.6 Snapshot 1 (pre-existing, declared)
 

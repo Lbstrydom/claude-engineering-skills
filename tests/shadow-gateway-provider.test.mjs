@@ -23,6 +23,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { _internals } from '../scripts/gemini-review.mjs';
 
 import { finalReviewConfig } from '../scripts/lib/config.mjs';
@@ -157,5 +158,30 @@ describe('reasoning-effort dial (apples-to-apples arms)', () => {
     for (const level of ['low', 'medium', 'high']) {
       assert.equal(typeof GEMINI_THINKING_BUDGET_BY_EFFORT[level], 'number', `no budget for ${level}`);
     }
+  });
+});
+
+describe('Anthropic reviewer transports pin the sdk backend', () => {
+  // Both Anthropic paths need a transport that supports tools/tool_choice AND
+  // can carry a ~50K-token prompt. The `cli` backend does neither: it silently
+  // drops tools (so provider-side schema enforcement vanishes) and passes the
+  // prompt as a process argument, which overflows the Windows command line.
+  // The shadow path was pinned 2026-07-26; the PRIMARY path was missed until
+  // 2026-08-03 because it is only reached when GEMINI_API_KEY is absent —
+  // meaning the final gate's own fallback reviewer was dead on any machine
+  // running CLAUDE_BACKEND=cli. A source assertion, because reproducing it
+  // needs a real CLI spawn and a 50K-token payload.
+  const SRC = readFileSync(new URL('../scripts/gemini-review.mjs', import.meta.url), 'utf-8');
+
+  it('the shadow builder pins backend sdk', () => {
+    const fn = SRC.slice(SRC.indexOf('async function buildShadowClient'));
+    assert.match(fn.slice(0, fn.indexOf('\n}\n')), /createAnthropicClient\(\{\s*backend:\s*'sdk'\s*\}\)/);
+  });
+
+  it('the PRIMARY claude-opus provider pins backend sdk — never the ambient env', () => {
+    const block = SRC.slice(SRC.indexOf("'claude-opus': {"));
+    const body = block.slice(0, block.indexOf("'azure-claude': {"));
+    assert.match(body, /createAnthropicClient\(\{\s*backend:\s*'sdk'\s*\}\)/);
+    assert.doesNotMatch(body, /createAnthropicClient\(\s*\)/, 'ambient-backend construction reintroduced');
   });
 });
