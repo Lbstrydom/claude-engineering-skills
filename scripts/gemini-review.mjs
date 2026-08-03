@@ -488,6 +488,20 @@ function parseReviewJson(text) {
  * No adapter re-reads files or re-assembles a prompt — it receives the single
  * egress envelope (`userPrompt`) built once in runFinalReview (C3/egress safety).
  */
+/**
+ * Map the shared `reasoningEffort` dial onto Gemini's token-budget knob.
+ *
+ * Gemini has no `effort` parameter, so the dial has to be expressed in the one
+ * unit it does accept. `high` is pinned to 16384 — the value this reviewer has
+ * always used — so adopting the shared dial leaves the Gemini arm byte-identical
+ * and changes only the arm that was actually mis-set.
+ *
+ * Approximate by construction: a token budget and an effort level are not the
+ * same quantity, and no mapping makes them one. It buys comparable DEPTH across
+ * arms, not identical compute — read a bake-off accordingly.
+ */
+const GEMINI_THINKING_BUDGET_BY_EFFORT = Object.freeze({ low: 4096, medium: 8192, high: 16384 });
+
 const REVIEW_TRANSPORTS = {
   async gemini(client, { model, maxTokens, systemPrompt, userPrompt, jsonSchema, signal }) {
     // Streaming supports maxOutputTokens > 21333 (non-streaming SDK ceiling).
@@ -499,7 +513,7 @@ const REVIEW_TRANSPORTS = {
         responseMimeType: 'application/json',
         responseSchema: jsonSchema,
         maxOutputTokens: maxTokens,
-        thinkingConfig: { thinkingBudget: 16384 },
+        thinkingConfig: { thinkingBudget: GEMINI_THINKING_BUDGET_BY_EFFORT[finalReviewConfig.reasoningEffort] },
       },
     }, { signal });
     const textParts = [];
@@ -543,6 +557,12 @@ const REVIEW_TRANSPORTS = {
     const req = {
       model,
       max_tokens: maxTokens,
+      // Explicit, not inherited. Opus 5 thinks whenever `thinking` is omitted,
+      // so this path was ALREADY reasoning at the API default — it just never
+      // said so, and the hardcoded `thinking_tokens: 0` below made it look
+      // disabled. Stating the effort puts this arm on the same dial as the
+      // others instead of on a default that can move under us.
+      output_config: { effort: finalReviewConfig.reasoningEffort },
       system: useTool
         ? `${systemPrompt}\n\nSubmit your review by calling the submit_review tool. Every field is required.`
         : `${systemPrompt}\n\nOutput strictly valid JSON. No markdown fences.`,
@@ -554,7 +574,20 @@ const REVIEW_TRANSPORTS = {
         description: 'Submit the structured final-review result. All fields are required.',
         input_schema: toolSchema,
       }];
-      req.tool_choice = { type: 'tool', name: ANTHROPIC_REVIEW_TOOL_NAME };
+      // `auto`, NOT forced — measured 2026-08-03, three runs on one prompt:
+      // no tools 127 thinking tokens, tools+auto 45, tools+FORCED 0. Forcing the
+      // call silently disables reasoning on Opus 5 (no error, no warning), so the
+      // shadow reviewer was being asked to adjudicate a whole audit with thinking
+      // off while the primary ran a 16K budget. That is not a model comparison.
+      //
+      // Forcing was introduced to stop Opus returning findings missing REQUIRED
+      // fields, which rolled back the persistence tx and lost the PRIMARY's
+      // findings too. That guarantee survives: `tool_choice` governs WHETHER the
+      // tool is called, not whether its input validates — the provider enforces
+      // input_schema on any call it makes. The case `auto` reopens is the model
+      // answering in prose instead, and that is already a loud throw below
+      // (retried by runReviewWithRetry), never a malformed write.
+      req.tool_choice = { type: 'auto' };
     }
     // Stream — non-streaming create() throws above the SDK's max_tokens ceiling.
     const r = await streamAnthropicMessage(client, req, { signal });
@@ -584,11 +617,14 @@ const REVIEW_TRANSPORTS = {
       usage: {
         input_tokens: r.usage?.input_tokens ?? 0,
         output_tokens: r.usage?.output_tokens ?? 0,
-        // This path does not request extended thinking, and Anthropic's streaming
-        // usage exposes no reasoning-token count here — so thinking_tokens is 0.
-        // (The former callClaudeOpus mislabeled cache_creation_input_tokens as
-        // thinking here; not carried forward — Gemini-gate round-2 finding.)
-        thinking_tokens: 0,
+        // READ, never assumed. This was hardcoded to 0, and the zero happened to
+        // be CORRECT for the wrong reason — not because the path declined
+        // thinking (Opus 5 thinks by default) but because forced tool_choice
+        // suppressed it. A constant that is only accidentally right cannot show
+        // you when it stops being right: the moment tool_choice moved to `auto`
+        // the same literal would have under-reported real reasoning as zero.
+        // `?? 0` is the genuine absent case (a transport reporting no count).
+        thinking_tokens: r.usage?.output_tokens_details?.thinking_tokens ?? 0,
       },
       finishReason: r.stop_reason ?? null,
     };
@@ -768,13 +804,20 @@ async function streamAnthropicMessage(client, params, { signal } = {}) {
   // A streamed tool call arrives as `content_block_start` (type:'tool_use') then
   // a run of `input_json_delta` fragments that must be concatenated and parsed.
   const toolBlocks = new Map(); // block index → { name, json }
-  const usage = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0 };
+  // `output_tokens_details` carries the reasoning-token count. It is accumulated
+  // here rather than assumed, because this reader BUILDS the usage object it
+  // returns — a field it does not copy simply does not exist downstream, which
+  // is how the caller ended up reporting a hardcoded `thinking_tokens: 0` for a
+  // model that was in fact thinking. Left null when the provider omits it, so
+  // "not reported" stays distinguishable from "measured zero".
+  const usage = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, output_tokens_details: null };
   for await (const event of resp) {
     if (event.type === 'message_start') {
       usage.input_tokens = event.message?.usage?.input_tokens ?? usage.input_tokens;
       usage.cache_creation_input_tokens =
         event.message?.usage?.cache_creation_input_tokens ?? usage.cache_creation_input_tokens;
       stopReason = event.message?.stop_reason ?? stopReason;
+      usage.output_tokens_details = event.message?.usage?.output_tokens_details ?? usage.output_tokens_details;
     } else if (event.type === 'content_block_start' && event.content_block?.type === 'tool_use') {
       toolBlocks.set(event.index, { name: event.content_block.name, json: '' });
     } else if (event.type === 'content_block_delta') {
@@ -786,6 +829,9 @@ async function streamAnthropicMessage(client, params, { signal } = {}) {
       }
     } else if (event.type === 'message_delta') {
       usage.output_tokens = event.usage?.output_tokens ?? usage.output_tokens;
+      // Later events win: message_delta carries the CUMULATIVE totals, so a
+      // details block here supersedes anything seen at message_start.
+      usage.output_tokens_details = event.usage?.output_tokens_details ?? usage.output_tokens_details;
       stopReason = event.delta?.stop_reason ?? stopReason;
     }
   }
@@ -922,15 +968,22 @@ const PROVIDERS = {
     // `sort: throughput` avoids the slow tail. Both are OpenRouter-only body
     // fields and are ignored by other OpenAI-compatible gateways.
     //
-    // `reasoning.effort: low` is the load-bearing one for REASONING models.
+    // `reasoning.effort` is the load-bearing one for REASONING models.
     // Reasoning tokens are billed and counted against `max_tokens`, so kimi-k3
     // spent 597 of a 600-token budget thinking and emitted almost no answer.
     // At MAX_OUTPUT_TOKENS (32000) on a ~39 tok/s backend that is ~830s of
     // pure reasoning before the first byte of JSON — every timeout we saw.
     // The final reviewer wants a verdict, not a visible chain of thought.
+    //
+    // But `low` was tuned against a 600-token triager, and silently became the
+    // setting under which `moonshotai/kimi-k2-thinking` was measured as a shadow
+    // final reviewer: 3 runs, 0 findings. Re-run at `high` on an identical
+    // transcript, it produced 3. A "thinking" model reviewed with thinking
+    // turned down is evidence about the flag, not the model — so the depth is
+    // now the shared `reasoningEffort` dial every provider reads.
     requestExtras: () => ({
       provider: { require_parameters: true, sort: 'throughput' },
-      reasoning: { effort: 'low' },
+      reasoning: { effort: finalReviewConfig.reasoningEffort },
     }),
   },
 };
@@ -2297,6 +2350,7 @@ export const _internals = {
   resolveModelEvalShadowOverride,
   mapRouteToShadowProvider,
   buildShadowClient,
+  GEMINI_THINKING_BUDGET_BY_EFFORT,
   runShadowAndPersist,
   callReviewer,
   REVIEW_TRANSPORTS,

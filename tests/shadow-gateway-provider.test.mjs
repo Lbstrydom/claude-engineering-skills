@@ -25,7 +25,9 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { _internals } from '../scripts/gemini-review.mjs';
 
-const { resolveShadow } = _internals;
+import { finalReviewConfig } from '../scripts/lib/config.mjs';
+
+const { resolveShadow, GEMINI_THINKING_BUDGET_BY_EFFORT } = _internals;
 const KIMI = 'moonshotai/kimi-k2-thinking';
 const shadow = (cfg, env = {}, azureActive = false) =>
   resolveShadow({ shadowConfig: cfg, env, azureActive });
@@ -135,5 +137,25 @@ describe('gateway shadow — the OpenRouter routing pins are inherited, not re-p
     assert.match(body, /sort:\s*'[a-z]+'/, 'provider sort pin missing from the inherited descriptor');
     assert.match(body, /reasoning:\s*\{\s*effort:/, 'reasoning-effort pin missing — reasoning tokens count against max_tokens');
     assert.match(body, /structuredOutput:\s*true/, 'the shadow needs the JSON schema, not prose');
+  });
+});
+
+describe('reasoning-effort dial (apples-to-apples arms)', () => {
+  it('defaults to `high` — the depth Gemini and Opus already ran at', () => {
+    assert.equal(['low', 'medium', 'high'].includes(finalReviewConfig.reasoningEffort), true);
+  });
+
+  it('the Gemini effort→budget map pins `high` to 16384, the value that arm always used', () => {
+    // Load-bearing: adopting the shared dial must leave the PRIMARY reviewer
+    // byte-identical, so the only arm that moves is the one that was mis-set.
+    assert.equal(GEMINI_THINKING_BUDGET_BY_EFFORT.high, 16384);
+    assert.ok(GEMINI_THINKING_BUDGET_BY_EFFORT.low < GEMINI_THINKING_BUDGET_BY_EFFORT.medium);
+    assert.ok(GEMINI_THINKING_BUDGET_BY_EFFORT.medium < GEMINI_THINKING_BUDGET_BY_EFFORT.high);
+  });
+
+  it('every effort level the config accepts has a Gemini budget — no undefined budget can reach the API', () => {
+    for (const level of ['low', 'medium', 'high']) {
+      assert.equal(typeof GEMINI_THINKING_BUDGET_BY_EFFORT[level], 'number', `no budget for ${level}`);
+    }
   });
 });

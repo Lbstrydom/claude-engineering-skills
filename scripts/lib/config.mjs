@@ -176,6 +176,24 @@ export const finalReviewConfig = Object.freeze({
   apiKey: (process.env.FINAL_REVIEW_API_KEY || '').trim() || null,
   model: (process.env.FINAL_REVIEW_MODEL || '').trim() || null,
   hardDeadlineMs: computeFinalReviewHardDeadline(),
+  // ONE reasoning dial for every final-review provider, so a reviewer bake-off
+  // compares models rather than settings. Before this existed the three arms ran
+  // at three different depths by accident: Gemini at an explicit 16384-token
+  // thinking budget, Opus at its API default (`high` — Opus 5 thinks whenever
+  // `thinking` is omitted), and OpenRouter at `low`, a value tuned in 2026-07
+  // for a 600-token-budget triager and never revisited for a final reviewer.
+  // Kimi measured 0 findings at `low` and 3 at `high` on one identical
+  // transcript, so the setting, not the model, was being measured.
+  //
+  // `high` is the default because it is what Gemini and Opus already ran at —
+  // adopting it changes only the OpenRouter arm, which was the outlier.
+  // Closed set; an unrecognised value falls back rather than reaching a
+  // provider, since OpenRouter's `require_parameters:true` turns a bad field
+  // into "no backend available", which reads as the model being down.
+  reasoningEffort: (() => {
+    const v = (process.env.FINAL_REVIEW_REASONING_EFFORT || '').trim().toLowerCase();
+    return ['low', 'medium', 'high'].includes(v) ? v : 'high';
+  })(),
 });
 
 // ── Shadow Final-Review Config (A/B test — observation-only) ─────────────────
