@@ -113,3 +113,69 @@ test('updateManagedBlock: preserves user content outside markers', () => {
   assert.match(r.content, /\*\.log/);
   assert.match(r.content, /# user footer/);
 });
+
+// --- EOL preservation -------------------------------------------------------
+// The sync owns a marked BLOCK inside a file the consumer owns. Rewriting the
+// whole file's line endings is a side effect beyond that ownership, and on a
+// Windows consumer (`core.autocrlf=true`, no `.gitattributes` pin) it leaves
+// the file permanently stat-dirty: `git status` reports ` M` while `git diff`
+// is empty, because the normalized blob still matches. Found in a consumer
+// repo 2026-08-03. Every pre-existing case above uses LF fixtures, which is
+// why this survived.
+
+const CRLF_HEADER = `# user header\r\nnode_modules/\r\n`;
+
+test('updateManagedBlock: CRLF file stays CRLF on replace', () => {
+  const before = `${CRLF_HEADER}${BEGIN}\r\nold/\r\n${END}\r\n*.log\r\n`;
+  const r = updateManagedBlock(before, [PATTERN]);
+  assert.equal(r.action, 'replace');
+  assert.ok(r.content.includes(PATTERN));
+  assert.equal(/(?<!\r)\n/.test(r.content), false, 'emitted a bare LF into a CRLF file');
+});
+
+test('updateManagedBlock: CRLF file with no markers appends a CRLF block', () => {
+  const r = updateManagedBlock(CRLF_HEADER, [PATTERN]);
+  assert.equal(r.action, 'create');
+  assert.ok(r.content.includes(PATTERN));
+  assert.equal(/(?<!\r)\n/.test(r.content), false, 'appended block used bare LF');
+});
+
+test('updateManagedBlock: LF file stays LF (no CR introduced)', () => {
+  const before = `# user header\n${BEGIN}\nold/\n${END}\n*.log\n`;
+  const r = updateManagedBlock(before, [PATTERN]);
+  assert.equal(r.action, 'replace');
+  assert.equal(r.content.includes('\r'), false);
+});
+
+test('updateManagedBlock: null content defaults to LF', () => {
+  const r = updateManagedBlock(null, [PATTERN]);
+  assert.equal(r.action, 'create');
+  assert.equal(r.content.includes('\r'), false);
+});
+
+test('updateManagedBlock: unchanged CRLF block reports noop, not replace', () => {
+  // The renormalizing version could never return `noop` for a CRLF file — every
+  // EOL differed — so each sync rewrote the file and re-dirtied the worktree.
+  const before = `${CRLF_HEADER}${BEGIN}\r\n${PATTERN}\r\n${END}\r\n`;
+  const r = updateManagedBlock(before, [PATTERN]);
+  assert.equal(r.action, 'noop');
+  assert.equal(r.content, before);
+});
+
+test('updateManagedBlock: idempotency holds across a CRLF round-trip', () => {
+  const before = `${CRLF_HEADER}${BEGIN}\r\nold/\r\n${END}\r\n`;
+  const r1 = updateManagedBlock(before, [PATTERN]);
+  assert.equal(r1.action, 'replace');
+  const r2 = updateManagedBlock(r1.content, [PATTERN]);
+  assert.equal(r2.action, 'noop');
+  assert.equal(r2.content, r1.content);
+});
+
+test('updateManagedBlock: mixed EOLs follow the dominant convention', () => {
+  // Majority CRLF wins; a stray LF must not flip the whole file to LF.
+  const before = `# a\r\n# b\r\n# c\r\n# stray\n${BEGIN}\r\nold/\r\n${END}\r\n`;
+  const r = updateManagedBlock(before, [PATTERN]);
+  assert.equal(r.action, 'replace');
+  assert.ok(r.content.startsWith('# a\r\n'));
+  assert.ok(r.content.includes(`${BEGIN}\r\n${PATTERN}\r\n${END}`));
+});

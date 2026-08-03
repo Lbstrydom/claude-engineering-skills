@@ -25,6 +25,27 @@ const BEGIN = LAYOUT_CONSTANTS.MARKER_BEGIN;
 const END = LAYOUT_CONSTANTS.MARKER_END;
 
 /**
+ * Detect the dominant line ending of an existing consumer file.
+ *
+ * We own a marked BLOCK inside a file the consumer owns, so rewriting the
+ * whole file's line endings is a side effect beyond that ownership. On a
+ * Windows consumer (`core.autocrlf=true`, no `.gitattributes` pin covering
+ * the path) renormalizing CRLF→LF leaves the file permanently stat-dirty:
+ * `git status` reports ` M` forever while `git diff` is empty, because the
+ * normalized blob still matches HEAD. Ties and empty input default to LF,
+ * which is git's canonical in-repo form.
+ *
+ * @param {string|null|undefined} content
+ * @returns {'\r\n'|'\n'}
+ */
+function detectEol(content) {
+  if (typeof content !== 'string' || content.length === 0) return '\n';
+  const crlf = (content.match(/\r\n/g) || []).length;
+  const bareLf = (content.match(/(?<!\r)\n/g) || []).length;
+  return crlf > bareLf ? '\r\n' : '\n';
+}
+
+/**
  * Introspect a .gitignore content string.  Pure function.
  *
  * @param {string|null} content
@@ -67,11 +88,12 @@ export function updateManagedBlock(existingContent, ignorePatterns) {
     return { content: existingContent ?? '', action: 'abort', error: 'updateManagedBlock: ignorePatterns must be a non-empty array' };
   }
 
-  const blockBody = ignorePatterns.map((p) => String(p).trim()).filter(Boolean).join('\n');
-  const blockText = `${BEGIN}\n${blockBody}\n${END}`;
+  const eol = detectEol(existingContent);
+  const blockBody = ignorePatterns.map((p) => String(p).trim()).filter(Boolean).join(eol);
+  const blockText = `${BEGIN}${eol}${blockBody}${eol}${END}`;
 
   if (existingContent === null || existingContent === undefined) {
-    return { content: blockText + '\n', action: 'create' };
+    return { content: blockText + eol, action: 'create' };
   }
 
   const state = parseGitignoreState(existingContent);
@@ -110,21 +132,21 @@ export function updateManagedBlock(existingContent, ignorePatterns) {
   }
 
   if (beginIndices.length === 0 && endIndices.length === 0) {
-    const trimmed = existingContent.endsWith('\n') ? existingContent : existingContent + '\n';
-    const separator = trimmed.endsWith('\n\n') ? '' : '\n';
-    return { content: trimmed + separator + blockText + '\n', action: 'create' };
+    const trimmed = existingContent.endsWith(eol) ? existingContent : existingContent + eol;
+    const separator = trimmed.endsWith(eol + eol) ? '' : eol;
+    return { content: trimmed + separator + blockText + eol, action: 'create' };
   }
 
   // beginIndices.length === 1 && endIndices.length === 1 && orderValid
   const lines = String(existingContent).split(/\r?\n/);
-  const before = lines.slice(0, beginIndices[0]).join('\n');
-  const after = lines.slice(endIndices[0] + 1).join('\n');
-  const next = `${before}${before ? '\n' : ''}${blockText}${after ? '\n' + after : ''}`;
+  const before = lines.slice(0, beginIndices[0]).join(eol);
+  const after = lines.slice(endIndices[0] + 1).join(eol);
+  const next = `${before}${before ? eol : ''}${blockText}${after ? eol + after : ''}`;
   // Preserve trailing newline if original had one.
-  const final = existingContent.endsWith('\n') && !next.endsWith('\n') ? next + '\n' : next;
+  const final = existingContent.endsWith(eol) && !next.endsWith(eol) ? next + eol : next;
 
   if (final === existingContent) return { content: existingContent, action: 'noop' };
   return { content: final, action: 'replace' };
 }
 
-export const _internals = { BEGIN, END };
+export const _internals = { BEGIN, END, detectEol };
