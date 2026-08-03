@@ -75,6 +75,11 @@ export async function callOpenAI({ topic, model, maxTokens, timeoutMs = 60000, r
     const usage = {
       inputTokens: response.usage?.prompt_tokens ?? 0,
       outputTokens: response.usage?.completion_tokens ?? 0,
+      // Reasoning is billed inside outputTokens, so cost is already right; this
+      // is the diagnostic half. A reasoning model that returns a thin answer
+      // under a small depth budget is indistinguishable from a model with
+      // little to say unless the split is recorded.
+      reasoningTokens: response.usage?.completion_tokens_details?.reasoning_tokens ?? 0,
     };
     const latencyMs = Date.now() - startMs;
     const estimatedCostUsd = estimateCostUsd({

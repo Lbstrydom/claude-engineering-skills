@@ -669,13 +669,30 @@ const REVIEW_TRANSPORTS = {
       delete body.response_format;
       r = await azureThrottle(() => client.chat.completions.create(body, { signal }));
     }
+    // TRUNCATION IS SILENT OTHERWISE. `finish_reason:'length'` means the model
+    // was cut off mid-answer; the JSON that survives may still parse, so the
+    // caller sees a short but well-formed review and reads it as "found little"
+    // rather than "was stopped". Reasoning tokens are billed INSIDE this budget
+    // on OpenRouter, so a high effort setting makes the cut-off likelier, not
+    // just the answer better.
+    const finish = r.choices?.[0]?.finish_reason ?? null;
+    if (finish === 'length') {
+      process.stderr.write(`  [final-review] WARNING: "${model}" hit max_tokens (finish_reason=length) — `
+        + 'the review is TRUNCATED. Findings after the cut are lost, not absent.\n');
+    }
     return {
       text: r.choices?.[0]?.message?.content?.trim() || '{}',
       usage: {
         input_tokens: r.usage?.prompt_tokens ?? 0,
         output_tokens: r.usage?.completion_tokens ?? 0,
-        thinking_tokens: 0,
+        // READ, not assumed — the same fabricated zero that hid the Anthropic
+        // arm's reasoning hid this one too. It matters more here: OpenRouter
+        // counts reasoning against `max_tokens`, so this number is the share of
+        // the output budget NOT available for findings. A shadow that looks
+        // unproductive may simply have spent its budget thinking.
+        thinking_tokens: r.usage?.completion_tokens_details?.reasoning_tokens ?? 0,
       },
+      finishReason: finish,
       finishReason: r.choices?.[0]?.finish_reason ?? null,
     };
   },

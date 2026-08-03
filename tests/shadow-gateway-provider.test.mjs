@@ -185,3 +185,36 @@ describe('Anthropic reviewer transports pin the sdk backend', () => {
     assert.doesNotMatch(body, /createAnthropicClient\(\s*\)/, 'ambient-backend construction reintroduced');
   });
 });
+
+describe('final-review transports READ reasoning tokens, never fabricate them', () => {
+  // The regression this pins: every transport builds its own usage object, so a
+  // field it does not copy simply does not exist downstream. Both Anthropic and
+  // OpenRouter shipped `thinking_tokens: 0` as a LITERAL. The Anthropic zero was
+  // accidentally correct (forced tool_choice suppressed reasoning) and the
+  // OpenRouter one was flatly wrong — Kimi was spending ~67% of its output
+  // budget reasoning while the log reported none. A fabricated zero cannot show
+  // you when it stops being true, which is the whole failure.
+  //
+  // Asserted at source because reproducing it needs three live providers.
+  const SRC = readFileSync(new URL('../scripts/gemini-review.mjs', import.meta.url), 'utf-8');
+  const transports = SRC.slice(SRC.indexOf('const REVIEW_TRANSPORTS'), SRC.indexOf('async function callReviewer'));
+
+  it('no transport assigns a literal zero to thinking_tokens', () => {
+    assert.doesNotMatch(transports, /thinking_tokens:\s*0\s*[,}]/,
+      'a literal thinking_tokens: 0 is back — read it from the provider response instead');
+  });
+
+  it('each provider shape reads its own reasoning field', () => {
+    assert.match(transports, /thoughtsTokenCount/, 'gemini');                          // Gemini
+    assert.match(transports, /output_tokens_details\?\.thinking_tokens/, 'anthropic');  // Anthropic
+    assert.match(transports, /completion_tokens_details\?\.reasoning_tokens/, 'openai'); // OpenAI/OpenRouter
+  });
+
+  it('the OpenAI-shaped transport surfaces max_tokens truncation', () => {
+    // finish_reason 'length' yields JSON that may still parse, so a truncated
+    // review reads as a short one. Silence here is indistinguishable from a
+    // model that found little.
+    assert.match(transports, /finish_reason/);
+    assert.match(transports, /TRUNCATED/);
+  });
+});
