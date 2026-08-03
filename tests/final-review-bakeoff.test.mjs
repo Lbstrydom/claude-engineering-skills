@@ -11,7 +11,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { findEligibleTranscripts, assessWindow } from '../scripts/final-review-bakeoff.mjs';
-import { zeroFindingArms } from '../scripts/bakeoff-collect.mjs';
+import { zeroFindingArms, isComplete, CONTRACT_EPOCH } from '../scripts/bakeoff-collect.mjs';
 
 /** Build an injectable fake FS for the pure enumerator. */
 function io(files, existingPlans = []) {
@@ -125,5 +125,51 @@ describe('zeroFindingArms (bakeoff-collect)', () => {
   it('an arm that did not RUN is not a zero-finding arm at all', () => {
     const e = { arms: { kimi: { shadowState: 'skipped-no-key', buckets: null } } };
     assert.deepEqual(zeroFindingArms(e), []);
+  });
+});
+
+describe('contract epoch + solo arm (bakeoff-collect isComplete)', () => {
+  const ran = (over) => ({ shadowState: 'ran', buckets: { shadowOnly: 1 }, primaryVerdict: 'CONCERNS', ...over });
+  const full = (over = {}) => ({
+    contractEpoch: CONTRACT_EPOCH,
+    arms: { opus: ran(), kimi: ran(), 'solo-opus': { primaryVerdict: 'APPROVE' }, ...over },
+  });
+
+  it('a fully-populated current-epoch snapshot counts', () => {
+    assert.equal(isComplete(full()), true);
+  });
+
+  it('an UNSTAMPED entry never counts, however complete it looks', () => {
+    // The e1 rows are exactly this shape. Counting them would compare arms that
+    // ran at three different reasoning depths and call it a model result.
+    const e = full();
+    delete e.contractEpoch;
+    assert.equal(isComplete(e), false);
+  });
+
+  it('a STALE epoch never counts — and is not silently upgraded', () => {
+    assert.equal(isComplete({ ...full(), contractEpoch: 'e1-unmatched' }), false);
+  });
+
+  it('the solo arm is judged on its primary verdict, not on shadowState', () => {
+    // It runs Opus as primary with no shadow; requiring shadowState==='ran'
+    // would make every snapshot permanently incomplete.
+    assert.equal(isComplete(full({ 'solo-opus': { primaryVerdict: 'REJECT', shadowState: null } })), true);
+    assert.equal(isComplete(full({ 'solo-opus': { primaryVerdict: null } })), false);
+  });
+
+  it('an arm that ERRORED fails the snapshot even under the right epoch', () => {
+    assert.equal(isComplete(full({ kimi: { error: 'exit 1' } })), false);
+  });
+
+  it('a missing arm fails the snapshot — absence is never treated as a pass', () => {
+    const e = full();
+    delete e.arms.kimi;
+    assert.equal(isComplete(e), false);
+  });
+
+  it('the solo arm is excluded from zero-finding reporting (it has no shadow bucket)', () => {
+    const z = zeroFindingArms(full({ opus: ran({ buckets: { shadowOnly: 0 }, shadowVerdict: 'APPROVE' }) }));
+    assert.deepEqual(z.map((x) => x.arm), ['opus']);
   });
 });

@@ -44,10 +44,36 @@ const KNOWN_FLAGS = Object.freeze([
 export const LOG_PATH = '.audit/bakeoff-log.jsonl';
 const DEFAULT_TARGET = 15;
 
-/** The arms, in run order. Arm 1 IS the ordinary gate config. */
+/**
+ * Evidence counts only if produced under the contract the stopping rule
+ * validates (AGENTS.md, Model Swap-In Evaluation Harness). Bump on any
+ * meaning-changing fix and RE-COLLECT — never backfill by date, which is the
+ * relabelling that produced five false "window met" reads on the tiered
+ * collector.
+ *
+ * e2 (2026-08-03): all three arms moved onto one reasoning dial. Under e1 the
+ * arms ran at three unchosen depths — Gemini 16384, Opus 0 (forced tool_choice
+ * silently disables reasoning), Kimi 'low'. Every e1 row therefore describes a
+ * configuration that no longer exists, so they are ineligible rather than
+ * deleted: the rows stay readable, they just cannot count.
+ */
+export const CONTRACT_EPOCH = 'e2-matched-reasoning-effort';
+
+/**
+ * The arms, in run order. Arm 1 IS the ordinary gate config.
+ *
+ * `solo-opus` answers a different question from the two shadow arms: not "what
+ * does a second reviewer ADD to Gemini" but "would Opus alone have done". A
+ * shadow arm can never answer it — it only ever reports findings measured
+ * alongside a Gemini run, so a shadow that looks additive and a reviewer that
+ * is simply better are indistinguishable from shadow buckets. It runs Opus as
+ * PRIMARY with no shadow, so `shadowState` is inapplicable and completeness is
+ * judged on the primary verdict instead (see isComplete).
+ */
 const ARMS = Object.freeze([
   { id: 'opus', env: { FINAL_REVIEW_SHADOW: 'claude-opus' } },
   { id: 'kimi', env: { FINAL_REVIEW_SHADOW: 'openrouter', FINAL_REVIEW_SHADOW_MODEL: 'moonshotai/kimi-k2-thinking' } },
+  { id: 'solo-opus', solo: true, args: ['--provider', 'claude-opus'], env: { FINAL_REVIEW_SHADOW: '' } },
 ]);
 
 /**
@@ -105,7 +131,14 @@ export function readLog(logPath = LOG_PATH) {
  * the epoch gate exists to prevent elsewhere.
  */
 export function isComplete(entry) {
-  return ARMS.every((a) => entry?.arms?.[a.id]?.shadowState === 'ran');
+  if (entry?.contractEpoch !== CONTRACT_EPOCH) return false; // unstamped or stale ⇒ ineligible
+  return ARMS.every((a) => {
+    const r = entry?.arms?.[a.id];
+    if (!r || r.error) return false;
+    // A solo arm has no shadow, so demanding shadowState==='ran' would make the
+    // snapshot permanently incomplete. Its evidence of having run is a verdict.
+    return a.solo ? Boolean(r.primaryVerdict) : r.shadowState === 'ran';
+  });
 }
 
 /**
@@ -131,6 +164,7 @@ export function zeroFindingArms(entry) {
   const out = [];
   for (const a of ARMS) {
     const r = entry?.arms?.[a.id];
+    if (a.solo) continue; // no shadow bucket exists; a zero here would be meaningless
     if (!r || r.shadowState !== 'ran') continue;
     if ((r.buckets?.shadowOnly ?? 0) !== 0) continue;
     const recorded = Object.hasOwn(r, 'shadowVerdict');
@@ -187,7 +221,7 @@ function printProgress(logPath, target) {
 
 function runArm(arm, { transcript, plan, mode, outDir, id }) {
   const out = path.join(outDir, `${id}-${arm.id}.json`);
-  const args = ['scripts/gemini-review.mjs', 'review', plan, transcript, '--out', out];
+  const args = ['scripts/gemini-review.mjs', 'review', plan, transcript, '--out', out, ...(arm.args || [])];
   if (mode) args.push('--mode', mode);
   process.stderr.write(`  [bakeoff] arm ${arm.id}…\n`);
   const r = spawnSync(process.execPath, args, {
@@ -232,6 +266,7 @@ function main() {
 
   const entry = {
     snapshotId: id,
+    contractEpoch: CONTRACT_EPOCH,
     collectedAt: new Date().toISOString(),
     transcript: path.basename(transcript),
     plan,
