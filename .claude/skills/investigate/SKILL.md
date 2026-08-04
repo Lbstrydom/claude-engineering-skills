@@ -5,21 +5,27 @@ description: |
   recollection. Use when a number, a date, or a current state is asserted and
   needs checking: verify a figure in a doc or plan, establish when a change
   actually landed, reproduce a past measurement, or confirm whether something
-  is really enabled/disabled/enforced. Enforces four things a normal answer
-  skips — say what quantity is in question before choosing a tool, cross-check
-  with a second INDEPENDENT method, prove the instrument was working (a zero
-  result and a broken search look identical), and report a negative result
-  without softening it.
-  NOT for "why is this the way it is" — that is /explain. This skill is only
-  for questions an instrument can settle.
+  is really enabled/disabled/enforced. Forces a cross-check by a second
+  INDEPENDENT method and a positive control, because a zero result and a
+  broken instrument look identical.
+  Pick by INPUT: a CLAIM to test comes here ("the cache cut cost 40%", "that
+  landed in July"); a TOPIC to survey goes to /explain --history ("have we
+  touched rate limiting?"). "Why is it this way" is /explain.
   Triggers on: "verify that", "is that number right", "is this still true",
   "when did we actually", "did that change land", "reproduce the measurement",
   "check whether X is really", "confirm the claim", "/investigate".
-  Usage: /investigate "<claim or question>"           — verify one claim
-  Usage: /investigate "<claim>" --brief               — emit a brief for a sub-agent/session
+  Full command syntax: see the Usage section in this skill.
 ---
 
 # Investigate
+
+## Usage
+
+```
+Usage:
+  /investigate "<claim or question>"    — verify one claim
+  /investigate "<claim>" --brief        — emit a brief for a sub-agent/session
+```
 
 For claims with a truth value an instrument can settle. Two investigations on
 2026-08-03 returned correct answers *despite* the method prescribed for them

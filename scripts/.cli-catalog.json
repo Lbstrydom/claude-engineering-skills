@@ -478,6 +478,10 @@
       "description": "Detect a stale .github/skills/ tree shadowing the live .claude/skills/ copies. Copilot Agent Skills reads both surfaces and .github/skills/ wins on a name collision, so a leftover copy silently intercepts the fresh one. Exits 1 on any shadowed name.",
       "category": "diagnostic"
     },
+    "skills:descriptions": {
+      "description": "Lint the SKILL.md description surface: enforce the 1024-char Copilot budget and forbid two skills advertising the same literal trigger phrase. Runs inside skills:check.",
+      "category": "skills"
+    },
     "skills:fit-check": {
       "description": "One-shot diagnostic: label each skill FITS / PARTIAL / MISMATCH for this repo's shape.",
       "category": "skills",

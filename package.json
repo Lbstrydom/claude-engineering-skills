@@ -87,7 +87,7 @@
     "sync:check": "node scripts/check-sync.mjs",
     "sync:version-check": "node scripts/check-audit-tool-version.mjs",
     "skills:regenerate": "node scripts/sync-shared-audit-refs.mjs && node scripts/regenerate-skill-copies.mjs && node scripts/build-manifest.mjs",
-    "skills:check": "node scripts/check-skill-refs.mjs && node scripts/sync-shared-audit-refs.mjs --check && node scripts/regenerate-skill-copies.mjs --check && node scripts/build-manifest.mjs --check && node scripts/check-gate-contracts.mjs && node scripts/check-stale-skill-surface.mjs --gate",
+    "skills:check": "node scripts/check-skill-refs.mjs && node scripts/check-skill-descriptions.mjs && node scripts/sync-shared-audit-refs.mjs --check && node scripts/regenerate-skill-copies.mjs --check && node scripts/build-manifest.mjs --check && node scripts/check-gate-contracts.mjs && node scripts/check-stale-skill-surface.mjs --gate",
     "gates:check": "node scripts/check-gate-contracts.mjs",
     "audit:sync-shared-refs": "node scripts/sync-shared-audit-refs.mjs",
     "skills:manifest": "node scripts/build-manifest.mjs",
@@ -149,7 +149,8 @@
     "knip:exports": "npx knip --include exports,types,enumMembers",
     "upstream:issues": "node scripts/cross-skill.mjs upstream list --worksheet",
     "gates:poison": "node scripts/check-gate-poison-pills.mjs",
-    "docs:architecture-intent:check": "node scripts/check-architecture-intent-drift.mjs"
+    "docs:architecture-intent:check": "node scripts/check-architecture-intent-drift.mjs",
+    "skills:descriptions": "node scripts/check-skill-descriptions.mjs"
   },
   "keywords": [
     "claude",

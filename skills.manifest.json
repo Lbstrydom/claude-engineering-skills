@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "d095f83b28fd0c7b",
+  "bundleVersion": "6f3829f148c73040",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -82,14 +82,14 @@
     },
     "audit-plan": {
       "path": "skills/audit-plan/SKILL.md",
-      "sha": "8a698f1f1bc6",
-      "size": 17783,
+      "sha": "77e9f0c0719f",
+      "size": 17921,
       "summary": "Iteratively audit a plan file (docs/plans/*.md) with GPT + Gemini final gate.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "8a698f1f1bc6",
-          "size": 17783
+          "sha": "77e9f0c0719f",
+          "size": 17921
         },
         {
           "relPath": "references/gemini-gate.md",
@@ -149,27 +149,27 @@
     },
     "explain": {
       "path": "skills/explain/SKILL.md",
-      "sha": "7ea51a388aef",
-      "size": 13249,
+      "sha": "4d722772658b",
+      "size": 13496,
       "summary": "Explain WHY a piece of code is structured the way it is. Synthesises",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "7ea51a388aef",
-          "size": 13249
+          "sha": "4d722772658b",
+          "size": 13496
         }
       ]
     },
     "investigate": {
       "path": "skills/investigate/SKILL.md",
-      "sha": "0c2115f6a190",
-      "size": 8903,
+      "sha": "820d776cc7d9",
+      "size": 8902,
       "summary": "Settle a factual claim about this repo with a measurement, not a",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "0c2115f6a190",
-          "size": 8903
+          "sha": "820d776cc7d9",
+          "size": 8902
         },
         {
           "relPath": "references/brief-skeleton.md",
@@ -363,14 +363,14 @@
     },
     "ux-lock": {
       "path": "skills/ux-lock/SKILL.md",
-      "sha": "77da5c33e3e6",
-      "size": 13716,
+      "sha": "23bbc488f8a8",
+      "size": 13914,
       "summary": "Generate Playwright e2e specs. Two modes:",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "77da5c33e3e6",
-          "size": 13716
+          "sha": "23bbc488f8a8",
+          "size": 13914
         },
         {
           "relPath": "references/lock-mode-spec-generation.md",

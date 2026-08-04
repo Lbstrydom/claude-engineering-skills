@@ -9,14 +9,22 @@
       "statedIn": "AGENTS.md",
       "stated": "`skills:regenerate`, enforced by `skills:check`",
       "implementation": "scripts/build-manifest.mjs",
-      "tests": ["tests/gate-poison-pills.test.mjs"],
+      "tests": [
+        "tests/gate-poison-pills.test.mjs"
+      ],
       "proof": "process",
       "oracle": "poison-pill",
       "poisonPill": {
         "isolation": "tmpdir",
-        "argv": ["scripts/build-manifest.mjs", "--check"],
+        "argv": [
+          "scripts/build-manifest.mjs",
+          "--check"
+        ],
         "mutate": {
-          "skills.manifest.json": { "path": "skills.plan.sha", "value": "000000000000" }
+          "skills.manifest.json": {
+            "path": "skills.plan.sha",
+            "value": "000000000000"
+          }
         },
         "expectExit": 1,
         "expectStderr": "versions match",
@@ -29,12 +37,17 @@
       "statedIn": "AGENTS.md",
       "stated": "generated copy — run `npm run skills:regenerate`",
       "implementation": "scripts/regenerate-skill-copies.mjs",
-      "tests": ["tests/gate-poison-pills.test.mjs"],
+      "tests": [
+        "tests/gate-poison-pills.test.mjs"
+      ],
       "proof": "process",
       "oracle": "poison-pill",
       "poisonPill": {
         "isolation": "tmpdir",
-        "argv": ["scripts/regenerate-skill-copies.mjs", "--check"],
+        "argv": [
+          "scripts/regenerate-skill-copies.mjs",
+          "--check"
+        ],
         "overlay": {
           ".claude/skills/plan/SKILL.md": "tests/fixtures/poison/claude-skills-plan-drifted.md"
         },
@@ -49,18 +62,47 @@
       "statedIn": "AGENTS.md",
       "stated": "Every reference file has `summary:` YAML frontmatter that must byte-match",
       "implementation": "scripts/sync-shared-audit-refs.mjs",
-      "tests": ["tests/gate-poison-pills.test.mjs"],
+      "tests": [
+        "tests/gate-poison-pills.test.mjs"
+      ],
       "proof": "process",
       "oracle": "poison-pill",
       "poisonPill": {
         "isolation": "tmpdir",
-        "argv": ["scripts/sync-shared-audit-refs.mjs", "--check"],
+        "argv": [
+          "scripts/sync-shared-audit-refs.mjs",
+          "--check"
+        ],
         "overlay": {
           "skills/audit-code/references/ledger-format.md": "tests/fixtures/poison/ledger-format-drifted.md"
         },
         "expectExit": 1,
         "expectStderr": "drifted from canonical",
         "why": "One consumer copy of a shared reference edited away from its canonical source. Two files required to stay byte-identical, and a human editing whichever one they happened to open, is exactly how they diverge."
+      }
+    },
+    {
+      "id": "skills-check-detects-over-budget-description",
+      "kind": "executable",
+      "statedIn": "AGENTS.md",
+      "stated": "`description` is required, **max 1024 chars**",
+      "implementation": "scripts/check-skill-descriptions.mjs",
+      "tests": [
+        "tests/gate-poison-pills.test.mjs"
+      ],
+      "proof": "process",
+      "oracle": "poison-pill",
+      "poisonPill": {
+        "isolation": "tmpdir",
+        "argv": [
+          "scripts/check-skill-descriptions.mjs"
+        ],
+        "overlay": {
+          "skills/explain/SKILL.md": "tests/fixtures/poison/skill-description-over-budget.md"
+        },
+        "expectExit": 1,
+        "expectStderr": "over the 1024-char budget",
+        "why": "AGENTS.md claimed skills:check enforced the 1024-char Copilot cap. It did not: on 2026-08-04 investigate (1257), explain (1152) and ux-lock (1062) were all over while skills:check exited 0 — a stated-but-unenforced gate. The pill overlays an over-length description so the gate must reject it; without check-skill-descriptions.mjs in the chain this exits 0 and the pill goes red. A fixture rather than a mutate: the budget is a property of the description TEXT, so an over-length file is the whole tamper and it stays reproducible as the real skills evolve."
       }
     }
   ]

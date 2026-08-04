@@ -294,6 +294,7 @@ const MANDATORY = {
     'skills-check-authenticates-manifest-content',
     'skills-check-detects-hand-edited-generated-copy',
     'skills-check-detects-shared-reference-drift',
+    'skills-check-detects-over-budget-description',
   ],
   'plans:index:check': ['plans-index-check-compares-rendered-content'],
   'requirements:map:check': ['requirements-map-check-compares-rendered-content'],

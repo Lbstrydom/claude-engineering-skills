@@ -4,8 +4,10 @@ description: |
   Iteratively audit a plan file (docs/plans/*.md) with GPT + Gemini final gate.
   Multi-round refinement with rigor-pressure early-stop (max 3 rounds for plans).
   Ledger-driven suppression on R2+ rounds prevents finding churn.
+  Judges the plan DOCUMENT before anyone builds it. "Was the plan actually
+  built?" is /ux-lock verify — that reads a live app, this reads only the file.
   Triggers on: "audit the plan", "iterate on the plan", "plan-audit",
-  "audit docs/plans/", "verify the plan", "review the plan", "is this plan good",
+  "audit docs/plans/", "review the plan", "is this plan good",
   "check the plan", "/audit-plan".
   Usage: /audit-plan <plan-file>             — Audit existing plan iteratively
   Usage: /audit-plan <task-description>      — Generate plan with /plan, then audit

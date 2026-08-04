@@ -5,21 +5,29 @@ description: |
     1. LOCK mode — pin a fix's DOM contract so it doesn't regress (default).
     2. VERIFY mode — check that a /plan plan was actually implemented
        by parsing its Acceptance Criteria section and driving the live URL.
+  VERIFY mode grades a plan against a RUNNING app. To judge the plan document
+  itself, before anything is built, that is /audit-plan.
   Triggers on: "ux lock", "lock ux", "lock in the fix", "write regression spec",
   "generate e2e test for", "regression test for commit", "lock this fix",
   "verify the plan", "verify plan implementation", "check the plan was built",
   "audit frontend implementation", "did we ship the plan".
-  Usage:
-    /ux-lock <commit-or-description> [--url <base-url>]                     — lock mode
-    /ux-lock verify <plan.md> [--url <base-url>]                            — verify mode
-  Examples:
-    /ux-lock "modal closes before retry"
-    /ux-lock abc1234
-    /ux-lock "role=list on wine grid" --url https://myapp.railway.app
-    /ux-lock verify docs/plans/<name>.md --url https://myapp.railway.app
+  Full command syntax: see the Usage section in this skill.
 ---
 
 # UX Lock — Playwright Spec Generator & Plan Verifier
+
+## Usage
+
+```
+Usage:
+  /ux-lock <commit-or-description> [--url <base-url>]                     — lock mode
+  /ux-lock verify <plan.md> [--url <base-url>]                            — verify mode
+Examples:
+  /ux-lock "modal closes before retry"
+  /ux-lock abc1234
+  /ux-lock "role=list on wine grid" --url https://myapp.railway.app
+  /ux-lock verify docs/plans/<name>.md --url https://myapp.railway.app
+```
 
 Two modes, one skill. Both drive Playwright against semantic DOM contracts.
 

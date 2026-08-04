@@ -7,16 +7,26 @@ description: |
   that mention the target. Useful for onboarding ("why is this here?"),
   debugging ("why is X structured this way and not Y?"), and refactoring
   ("can I change this safely or is there hidden context?").
+  Pick by INPUT: a TOPIC to survey comes here ("have we touched rate
+  limiting?"); a CLAIM to test goes to /investigate ("that landed in July" —
+  it uses --history as one of its instruments).
   Triggers on: "why is this", "explain this code", "why does this exist",
   "what is this for", "/explain", "give me context on".
-  Usage: /explain <file>                       — Explain the file's purpose + history
-  Usage: /explain <file>:<line>                — Explain a specific line/section
-  Usage: /explain <symbol-name>                — Find + explain a function/class by name
-  Usage: /explain <file>:<line> --depth=full   — Include full neighbourhood + all blame
-  Usage: /explain --history "<topic>"          — "Did we already solve this?" — cross-source search
+  Full command syntax: see the Usage section in this skill.
 ---
 
 # Code Explainer
+
+## Usage
+
+```
+Usage:
+  /explain <file>                       — Explain the file's purpose + history
+  /explain <file>:<line>                — Explain a specific line/section
+  /explain <symbol-name>                — Find + explain a function/class by name
+  /explain <file>:<line> --depth=full   — Include full neighbourhood + all blame
+  /explain --history "<topic>"          — "Did we already solve this?" — cross-source search
+```
 
 Multi-source synthesiser for "why is this here?" questions. Given a
 target (file, file:line, or symbol name), gathers context from four
