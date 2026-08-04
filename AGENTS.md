@@ -116,7 +116,7 @@
 
 ## Project Overview
 
-**Purpose**: A bundle of 15 AI-pair-programming skills covering the full development quality lifecycle — from planning through code audit to live UX testing and shipping.
+**Purpose**: A bundle of 16 AI-pair-programming skills covering the full development quality lifecycle — from planning through code audit to live UX testing and shipping.
 **Runtime**: Node.js (ESM modules, `"type": "module"`)
 **Deployment**: CLI scripts + skill files, invoked by AI coding assistants (Claude Code, Copilot, Cursor, Windsurf)
 **Repo**: Renamed from `claude-audit-loop` to `claude-engineering-skills` (Phase E)

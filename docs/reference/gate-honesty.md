@@ -43,7 +43,10 @@ tolerates it at a skill's root and excludes it from the returned file list;
 `enumerateSkillFiles` still rejects any OTHER non-markdown file). A skill with
 no contract file is `uncontracted` — and, since Phase D, that is a **failure**
 unless the skill is listed in the baseline (see "Net-new-skill ratchet" below).
-All 15 skills are contracted today, so the baseline is empty.
+All 16 skills are contracted today, so the baseline is empty. (`investigate`,
+added 2026-08-04, was the first net-new skill to meet the Phase-D ratchet —
+it shipped with a `gates: []` declaration rather than a baseline exemption,
+which is the intended path.)
 
 ## Gate kinds
 
@@ -223,7 +226,7 @@ in a throwaway git worktree and asserts the checker fails and names the skill.
 
 ## Explicitly out of scope (v1)
 
-All 15 skills are now contracted (Phase C) and the ratchet keeps them so
+All 16 skills are now contracted (Phase C) and the ratchet keeps them so
 (Phase D). Still out of scope: mutation testing beyond the lying fixture;
 SKILL.md generation from the contract (would touch `skills:regenerate`, the
 repo's highest-blast-radius sync seam — v2, contingent on observed
