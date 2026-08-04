@@ -5,7 +5,8 @@
  * No I/O beyond an injectable fs for evidence reads — the CLI seam
  * (scripts/ship-commit.mjs) owns process concerns (git, exit codes).
  *
- * Trailer schema (v1): AI-Skill, AI-Models, AI-Gate, conditional AI-Run-ID.
+ * Trailer schema (v1): AI-Skill, AI-Models, AI-Gate, conditional AI-Run-ID and
+ * AI-Audited-Tree (the latter only on a verified `passed`).
  * The AI-* namespace is RESERVED: agent-supplied AI-* trailers in a commit
  * message are rejected, never merged — the helper is the only writer.
  *
@@ -342,7 +343,26 @@ export function messageFileError(kind, suppliedPath) {
 
 /**
  * Format the canonical AI-* trailer block lines (fixed key order).
- * @param {{skill: string, models: string[], gate: string, runId?: string|null}} v
+ *
+ * `AI-Audited-Tree` is emitted ONLY on a verified `passed` — the caller sets it
+ * from the very value `evaluateGateVerification` compared, after that
+ * comparison returned null (accept). It therefore cannot exist on a commit
+ * whose tree identity was not checked.
+ *
+ * Why it exists: before 2026-08-04 the value the gate actually compared was
+ * never persisted anywhere. `audit_runs.audited_tree` holds the WORKTREE tree
+ * (`gitWorktreeTree` at audit time); the gate compares the INDEX tree
+ * (`gitIndexTree` at ship time). Those are different quantities, so the store
+ * could not be used to re-check a historical `passed` — an audit of the two
+ * `passed` commits in the repo's history found one whose stored tree did not
+ * match its committed tree, and the record could neither convict nor clear it
+ * because the artifact the gate reads (`.audit/last-audit-run.json`) is
+ * transient and long overwritten. Putting the compared value on the commit
+ * makes the claim self-verifying with pure git, forever:
+ *
+ *   git rev-parse <sha>^{tree}  ==  git log -1 --format='%(trailers:key=AI-Audited-Tree,valueonly)' <sha>
+ *
+ * @param {{skill: string, models: string[], gate: string, runId?: string|null, auditedTree?: string|null}} v
  * @returns {string[]}
  */
 export function formatTrailerBlock(v) {
@@ -352,6 +372,12 @@ export function formatTrailerBlock(v) {
     `AI-Gate: ${v.gate}`,
   ];
   if (v.runId) lines.push(`AI-Run-ID: ${v.runId}`);
+  // Guarded by gate AND shape: a caller that threads a value through on a
+  // non-`passed` gate, or a malformed oid, emits nothing rather than a trailer
+  // asserting an identity nobody verified.
+  if (v.gate === 'passed' && TREE_ID_RE.test(v.auditedTree ?? '')) {
+    lines.push(`AI-Audited-Tree: ${v.auditedTree}`);
+  }
   return lines;
 }
 

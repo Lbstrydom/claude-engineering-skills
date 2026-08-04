@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import {
   canonicaliseModels,
   parseMessageTrailers,
@@ -294,6 +295,67 @@ test('messageFileError: pinned formats for missing / containment (rows 6/6b)', (
 });
 
 // ------------------------------------------------------------ rendering
+
+// AI-Audited-Tree (2026-08-04). The gate compares the INDEX tree at ship time
+// against the marker's WORKTREE tree from audit time; before this trailer, that
+// compared value was persisted NOWHERE. audit_runs.audited_tree holds the
+// worktree tree, a DIFFERENT quantity (pinned in gate-evidence-tree-identity:
+// "an unstaged edit changes the worktree tree but NOT the index tree"), so a
+// historical `passed` could not be re-checked from the record. An audit of the
+// two `passed` commits in this repo's history hit exactly that wall: one had a
+// stored tree unequal to its committed tree, and the evidence could neither
+// convict nor clear it because .audit/last-audit-run.json is transient.
+// The trailer makes the claim self-verifying with pure git.
+test('formatTrailerBlock: AI-Audited-Tree is emitted on a verified passed', () => {
+  const tree = 'b'.repeat(40);
+  assert.deepEqual(
+    formatTrailerBlock({ skill: 'ship', models: ['claude'], gate: 'passed', runId: 'abc12345', auditedTree: tree }),
+    ['AI-Skill: ship', 'AI-Models: claude', 'AI-Gate: passed', 'AI-Run-ID: abc12345', `AI-Audited-Tree: ${tree}`],
+  );
+});
+
+test('formatTrailerBlock: AI-Audited-Tree is refused on any gate other than passed', () => {
+  // The trailer asserts "this tree was checked and matched". Only the accept
+  // branch of evaluateGateVerification sets it, but the renderer refuses too:
+  // a caller that threads the value through on waived/not-run would otherwise
+  // publish an identity claim nothing verified.
+  for (const gate of ['waived', 'not-run']) {
+    assert.deepEqual(
+      formatTrailerBlock({ skill: 'ship', models: ['claude'], gate, runId: 'abc12345', auditedTree: 'c'.repeat(40) }),
+      ['AI-Skill: ship', 'AI-Models: claude', `AI-Gate: ${gate}`, 'AI-Run-ID: abc12345'],
+    );
+  }
+});
+
+test('formatTrailerBlock: a malformed oid emits nothing rather than a bogus identity', () => {
+  for (const bad of ['', null, undefined, 'not-a-tree', 'A'.repeat(40), 'a'.repeat(39), 'a'.repeat(41)]) {
+    const lines = formatTrailerBlock({ skill: 'ship', models: ['claude'], gate: 'passed', runId: 'abc12345', auditedTree: bad });
+    assert.ok(
+      !lines.some((l) => l.startsWith('AI-Audited-Tree:')),
+      `expected no identity trailer for ${JSON.stringify(bad)}`,
+    );
+  }
+});
+
+test('formatTrailerBlock: the emitted value round-trips through git’s own trailer parser', () => {
+  // Capture honesty: the three assertions above only prove the STRING is built.
+  // If git does not parse it as a trailer, the whole point — re-checking a
+  // historical passed with `git log --format=%(trailers:...)` — silently fails.
+  // So assert through git itself, not through our own renderer.
+  const tree = 'd'.repeat(40);
+  const msg = composeFinalMessage('feat: x\n\nbody', {
+    skill: 'ship', models: ['claude'], gate: 'passed', runId: 'abc12345', auditedTree: tree,
+  });
+  const out = execFileSync('git', ['interpret-trailers', '--parse'], { input: msg, encoding: 'utf-8' });
+  assert.match(out, new RegExp(`^AI-Audited-Tree: ${tree}$`, 'm'));
+  // Negative control: the same parse must NOT invent the trailer when the
+  // renderer withheld it, or the assertion above proves nothing about the gate.
+  const withheld = composeFinalMessage('feat: x\n\nbody', {
+    skill: 'ship', models: ['claude'], gate: 'waived', runId: 'abc12345', auditedTree: tree,
+  });
+  const out2 = execFileSync('git', ['interpret-trailers', '--parse'], { input: withheld, encoding: 'utf-8' });
+  assert.doesNotMatch(out2, /^AI-Audited-Tree:/m);
+});
 
 test('formatTrailerBlock: fixed key order; AI-Run-ID only when present', () => {
   assert.deepEqual(

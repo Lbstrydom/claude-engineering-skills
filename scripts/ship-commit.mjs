@@ -291,6 +291,13 @@ async function main() {
       for (const line of renderAgentFixLines([ver])) err(line);
       process.exit(2);
     }
+    // Verification ACCEPTED. Persist the value that was actually compared, so
+    // the claim is re-checkable from the commit alone. Deliberately assigned
+    // only here — after the refusal branch — so the trailer cannot appear on a
+    // commit whose identity check did not run and pass. `committedTree` is the
+    // index tree, which is the tree this commit will carry; at this point it is
+    // equal to evidence.auditedTree, so one value records both halves.
+    values.auditedTree = committedTree;
   }
 
   // ---- scope check (row 11) -----------------------------------------------
@@ -478,7 +485,7 @@ async function main() {
         exitCode = 1;
       } else {
         const subject = finalMessage.split('\n', 1)[0];
-        const trailerSummary = [`AI-Skill: ${values.skill}`, `AI-Gate: ${values.gate}`, values.runId ? `AI-Run-ID: ${values.runId}` : null].filter(Boolean).join(' · ');
+        const trailerSummary = [`AI-Skill: ${values.skill}`, `AI-Gate: ${values.gate}`, values.runId ? `AI-Run-ID: ${values.runId}` : null, values.auditedTree ? `AI-Audited-Tree: ${values.auditedTree.slice(0, 12)}` : null].filter(Boolean).join(' · ');
         process.stdout.write(`ship-commit: committed "${subject}" (${trailerSummary})\n`);
       }
     }

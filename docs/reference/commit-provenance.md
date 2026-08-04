@@ -16,6 +16,7 @@ AI-Skill: ship
 AI-Models: claude,gemini,gpt
 AI-Gate: passed
 AI-Run-ID: ecae388d-c176-4182-9d27-0210b919b844
+AI-Audited-Tree: 64e894a145de26eed3c3e006c434a345015257bf
 ```
 
 | Key | Value grammar | Semantics |
@@ -23,6 +24,7 @@ AI-Run-ID: ecae388d-c176-4182-9d27-0210b919b844
 | `AI-Skill` | lowercase kebab-case, must name a `skills/` (or consumer `.claude/skills/`) directory | which skill workflow produced the commit |
 | `AI-Models` | comma-separated tokens `^[a-z][a-z0-9.-]*$`, deduplicated, sorted alphabetically | **declared** lineup of models that participated. Grammar-validated but not evidence-bound (same honesty tier as a `Co-authored-by` line) — receipt-derived binding is a v2 item |
 | `AI-Gate` | `passed` \| `waived` \| `not-run` | **evidence- and verdict-bound**: `passed`/`waived` require `.audit/last-audit-run.json` fresher than `HEAD` (an audit ran this cycle); `not-run` requires its absence. `passed` additionally requires (a) the **audited-target identity** to match — the marker's `auditedTree` must equal the tree being committed (see below), checked first and locally — and (b) the run's **convergence verdict verified against the cloud store** (`audit_runs` row via `getAuditRunConvergence`) — cloud off, run not found, run not converged, or a tree mismatch all refuse `passed`, fail-closed. Scope of the verified claim: **GPT-loop convergence only** — the Gemini final-review disposition is not yet store-verifiable per run; binding it is part of the V2 ship-evidence receipt. `waived` is the declared, unverified disposition (gate override OR verification unavailable); the accompanying `AI-Run-ID` keeps it forensically resolvable |
+| `AI-Audited-Tree` | 40-hex git oid, conditional — **`passed` only** | the tree object `ship-commit` actually compared when granting `passed`, i.e. the index tree at ship time, which at that moment equals the marker's `auditedTree`. Written only on the accept branch of `evaluateGateVerification`, and the renderer independently refuses to emit it on any other gate or for a malformed oid. **Added 2026-08-04 to make `passed` re-checkable from the commit alone** — see "Verifying a historical `passed`" below |
 | `AI-Run-ID` | `[A-Za-z0-9-]{8,64}`, conditional | injected by the helper from `.audit/last-audit-run.json` when fresh — never typed by an agent. Since E1 this is **more than a correlation hint on a `passed` commit**: `passed` additionally requires the marker's `auditedTree` to equal the tree being committed, so the id names a run whose *subject* was verified. On `waived` it remains a best-effort hint. `--no-run-id` omits it (declares the audit unrelated) and forces `--gate not-run` |
 
 ### The audited-target identity (E1)
@@ -53,6 +55,38 @@ Consequences worth knowing before they surprise you:
   unbound evidence the field exists to reject.
 - **A failed VCS capture makes the run evidence-less** — no marker is written at
   all, rather than one that cannot support its own claim.
+
+### Verifying a historical `passed` (from 2026-08-04)
+
+For any commit carrying `AI-Audited-Tree`, the identity claim is checkable with
+git alone — no cloud, no local marker:
+
+```bash
+git log -1 --format='%(trailers:key=AI-Audited-Tree,valueonly)%n%T' <sha>
+```
+
+The two lines must be identical. They are the tree the gate compared and the
+tree the commit carries.
+
+**Why this trailer exists — a gap, not a hole.** The *mechanism* is well pinned
+(29 tests across `tests/gate-evidence.test.mjs` and
+`tests/gate-evidence-tree-identity.test.mjs`, including the false-pass attack
+and controls in both directions). What was missing was the *record*. The gate
+compares the **index** tree at ship time; `audit_runs.audited_tree` stores the
+**worktree** tree from audit time. Those are different quantities — pinned by
+`"an unstaged edit changes the worktree tree but NOT the index tree"` — so the
+store can never be used to re-check a historical `passed`, and the artifact the
+gate does read (`.audit/last-audit-run.json`) is transient and overwritten.
+
+This was found by auditing the only two `passed` commits in the repo's history
+(`2825bf12`, `183810de`, both 2026-07-21). Both resolve to real converged runs.
+For `2825bf12` the stored tree also happens to equal the committed tree; for
+`183810de` it does not, and **the record cannot settle whether that is benign** —
+the marker it would need is long gone. That is the whole argument for persisting
+the compared value: not that the gate was wrong, but that nobody could tell.
+Commits before this date remain unverifiable in this respect, and no backfill is
+possible or attempted — guessing the value would recreate the unbound evidence
+the field exists to reject.
 
 The `AI-*` namespace is **reserved**: a commit-message file containing any
 `AI-*` trailer is rejected (`reserved-trailer`) — the helper is the only
