@@ -2,5 +2,35 @@
   "version": 1,
   "skill": "investigate",
   "gates": [],
-  "reason": "investigate has no mechanically-assertable gate under the closed oracle registry. Its stated constraints — state the quantity before naming a tool, cross-check with a second independent method, run a positive control, report a negative result without softening — are all agent behaviour the model enacts by following the skill. Whether two chosen methods are genuinely independent, and whether a stated positive control actually exercises the instrument, are judgement calls no exit code, threshold, or refusal a cli-exit recipe can bind; there is no oracle for 'this measurement was honest'. Declaring them executable would be the fake-check this suite exists to prevent."
+  "reason": "investigate has no mechanically-assertable gate under the closed oracle registry. Its stated constraints — state the quantity before naming a tool, cross-check with a second independent method, run a positive control, report a negative result without softening — are all agent behaviour the model enacts by following the skill. Whether two chosen methods are genuinely independent, and whether a stated positive control actually exercises the instrument, are judgement calls no exit code, threshold, or refusal a cli-exit recipe can bind; there is no oracle for 'this measurement was honest'. Declaring them executable would be the fake-check this suite exists to prevent.",
+  "ignoredCandidates": [
+    {
+      "line": "command fails **silently** on the exact question being asked — it returns a",
+      "reason": "States the failure semantics of two EXTERNAL commands (docker image inspect under the containerd snapshotter; git log -S), which is the whole subject matter of this skill. It is not a claim about anything /investigate enforces, and there is no repo seam to bind it to — the enforcement verb belongs to Docker and git, not to this skill."
+    },
+    {
+      "line": "| Prescribed | Why it fails silently |",
+      "reason": "A markdown table header introducing the two external-tool failure cases. Same category as the row entries below it; no gate claim."
+    },
+    {
+      "line": "| `git log -S 'python3 make g++'` | The commit removed the string from a `RUN` line and re-added it verbatim in a comment. Net occurrence count unchanged, so `-S` reports nothing. A reader reproducing the stated method would conclude the change never happened. |",
+      "reason": "The git-pickaxe failure case, stated as external-tool semantics. Not a gate. It is the one flagged line here that IS mechanically verified, and deliberately so — tests/explain-history.test.mjs constructs exactly this move-commit and asserts -S returns a single commit while the move is invisible to it. Contracted under /explain (whose helper owns the code), not here, because this skill has no implementation to bind."
+    },
+    {
+      "line": "treat its four sources as candidate cross-checks. For \"is this stated gate",
+      "reason": "Routes the agent to OTHER tooling for two question shapes (/explain --history for dating a change, npm run gates:check for stated-vs-enforced). The enforcement verb belongs to the referenced commands, each contracted where it lives; /investigate asserts nothing here beyond 'use the existing instrument'."
+    },
+    {
+      "line": "actually enforced\" questions, `npm run gates:check` reads the `gate-contract.json`",
+      "reason": "Second half of the same routing sentence — see the entry above. `npm run gates:check` is this repo's own gate-contract reader; its behaviour is contracted by this very suite, not restated as a gate of /investigate."
+    },
+    {
+      "line": "**Require a positive control.** A wall of zero matches, empty results or",
+      "reason": "An instruction to the AGENT conducting an investigation, and the archetypal document-only claim already covered by this contract's top-level reason: whether a stated positive control actually exercises the instrument is a judgement call with no oracle in the closed registry. Declaring it executable would be the fake-check this suite exists to catch."
+    },
+    {
+      "line": "same rule as \"can this gate return green without having checked anything?\" —",
+      "reason": "A QUOTATION of the rule in docs/runbooks/pre-ship-empirical-verify.md, cited as an analogy to explain why an investigator needs a positive control. The enforcement verb belongs to the quoted source; the two documents point at each other by design rather than forking the wording."
+    }
+  ]
 }

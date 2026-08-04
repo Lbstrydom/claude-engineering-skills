@@ -2,5 +2,11 @@
   "version": 1,
   "skill": "explain",
   "gates": [],
-  "reason": "explain has no mechanically-assertable gate under the closed oracle registry. Its stated constraints — read-only (never edits/commits/triggers workflows), cite-sources (every claim traceable to one of the four sources), and 'exit with a not-found message' in symbol mode — are all agent behaviour the model enacts by following the skill, not a CLI exit code, threshold, or refusal a cli-exit recipe can bind. No oracle fits; declaring them executable would be the fake-check this suite exists to prevent."
+  "reason": "explain has no mechanically-assertable gate under the closed oracle registry. Its stated constraints — read-only (never edits/commits/triggers workflows), cite-sources (every claim traceable to one of the four sources), and 'exit with a not-found message' in symbol mode — are all agent behaviour the model enacts by following the skill, not a CLI exit code, threshold, or refusal a cli-exit recipe can bind. No oracle fits; declaring them executable would be the fake-check this suite exists to prevent.",
+  "ignoredCandidates": [
+    {
+      "line": "never happened. Results are labelled per pass and selected round-robin so",
+      "reason": "Describes what scripts/explain-history.mjs's git search DOES (three labelled passes, round-robin selection), not a gate /explain asserts. There is no exit code, threshold or refusal here — the helper always returns a match list. The behaviour is nonetheless mechanically pinned rather than prose-only: tests/explain-history.test.mjs builds a repo whose commit MOVES the topic string (deleted from one line, re-added verbatim on another, net count unchanged) and asserts -S misses it while the -G pass surfaces it, plus a tight-limit case asserting round-robin keeps git-touched reachable. Verified those guards fail when the -G pass is removed."
+    }
+  ]
 }
