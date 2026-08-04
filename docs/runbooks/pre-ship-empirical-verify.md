@@ -62,6 +62,13 @@ exit 2) — none caught by static review; each was found by treating a green
 exit as guilty until proven to have checked something. Worked detail:
 `skills/visual-audit/references/ci-gate-and-verify.md` (*Gate honesty*).
 
+> **Same rule, other audience.** This section is written for the *author* of a
+> skill that emits green. The identical principle applied to an *investigator's
+> own measurement* — a zero result and a broken instrument are indistinguishable,
+> so state what would prove the instrument worked and capture that too — lives in
+> [`skills/investigate/SKILL.md`](../../skills/investigate/SKILL.md) §Step 2.
+> Keep them pointing at each other rather than forking the wording.
+
 No new DB/schema for any of this — it's a process convention + `tests/`
 regression guards + this checklist. Queryable persistence of "was this
 field-tested" is data nobody reads back (the over-engineering cliff).

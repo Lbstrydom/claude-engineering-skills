@@ -5,7 +5,10 @@
  * Cross-source aggregator that surfaces every past touch of a topic across
  * four independent sources, ranked chronologically:
  *
- *   1. git log search   — commit subjects/bodies (--grep) AND code introductions (-S)
+ *   1. git log search   — commit subjects/bodies (--grep), code introductions
+ *                         and removals (-S), and any commit touching a line
+ *                         that mentions the topic (-G; catches moves, which
+ *                         -S cannot see because the net count is unchanged)
  *   2. arch-memory      — neighbourhood query with the topic as intentDescription
  *   3. plan documents   — grep docs/plans/*.md for substring matches
  *   4. brainstorm ledger — scan .brainstorm/sessions/*.jsonl by topic + provider text
@@ -83,8 +86,18 @@ function parseArgs(argv) {
 //
 // Two passes:
 //   (a) commit subject/body grep — matches "fix X", "added Y", "discussed Z"
-//   (b) `git log -S` content search — matches commits that introduced/removed
-//       a string in any file. Catches code touches that the message doesn't mention.
+//   (b) `git log -S` content search — matches commits that changed the NET
+//       OCCURRENCE COUNT of a string. Catches introductions and removals.
+//   (c) `git log -G` regex search — matches any commit whose diff contains a
+//       line mentioning the string, whether or not the count changed.
+//
+// (c) exists because (b) fails silently on moves. A commit that deletes a
+// string from one line and re-adds it verbatim on another leaves the count
+// unchanged, so `-S` reports nothing and the caller concludes the change never
+// happened. Measured 2026-08-04 on this repo: `-S 'runJsonLinesAsyncStrict'`
+// → 18 commits, `-G` on the same symbol → 35. The two sources are labelled
+// distinctly (`git-content` vs `git-touched`) so a reader can tell "this
+// commit introduced/removed it" from "this commit touched a line with it in".
 //
 function gitLogSearch(topic, opts = {}) {
   const since = opts.since ? ['--since', opts.since] : [];
@@ -116,27 +129,55 @@ function gitLogSearch(topic, opts = {}) {
     });
   }
 
-  // Pass B: content search (-S). Use the topic verbatim as a literal.
-  const contentOut = tryGit([
-    'log', '--all', '-S', topic,
-    '--pretty=format:%H|%aI|%an|%s', '-n', limit, ...since,
-  ]);
-  for (const line of contentOut.split('\n').filter(Boolean)) {
-    const [sha, date, author, ...rest] = line.split('|');
-    const sub = rest.join('|');
-    // Skip duplicates — same SHA already present from pass A
-    if (!matches.some(m => m.sha === sha?.slice(0, 8))) {
-      matches.push({
-        source: 'git-content',
-        sha: sha?.slice(0, 8),
-        date,
-        author,
-        subject: sub,
-      });
+  // Passes B and C: content searches.
+  //
+  // `-S` is literal by default; `-G` is an extended regex and there is NO flag
+  // that makes it literal — `--fixed-strings` applies to `--grep` only. Checked
+  // 2026-08-04: `-G 'runJsonLines.*Strict' -F` still returns the 35 regex
+  // matches, not the 0 a literal search would. So escape the topic ourselves,
+  // or a topic containing `.`/`(`/`*` silently searches for something else.
+  const topicForGrep = topic.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  for (const [flag, needle, source] of [
+    ['-S', topic, 'git-content'],
+    ['-G', topicForGrep, 'git-touched'],
+  ]) {
+    const out = tryGit([
+      'log', '--all', flag, needle,
+      '--pretty=format:%H|%aI|%an|%s', '-n', limit, ...since,
+    ]);
+    for (const line of out.split('\n').filter(Boolean)) {
+      const [sha, date, author, ...rest] = line.split('|');
+      const sub = rest.join('|');
+      // Skip duplicates — same SHA already present from an earlier pass.
+      // Pass B runs first, so a commit that both introduced AND touched the
+      // string keeps the more specific `git-content` label.
+      if (!matches.some(m => m.sha === sha?.slice(0, 8))) {
+        matches.push({ source, sha: sha?.slice(0, 8), date, author, subject: sub });
+      }
     }
   }
 
-  return matches.slice(0, opts.limit || 10);
+  // Round-robin across the three sources rather than `slice(0, limit)`.
+  // A flat slice lets whichever pass ran first consume the whole budget: at
+  // the default limit of 10, passes A+B filled it and NO `git-touched` row
+  // ever reached the caller — the -G pass would have been dead code that
+  // looked implemented. Round-robin guarantees each source that found
+  // anything is represented.
+  const cap = opts.limit || 10;
+  const bySource = new Map();
+  for (const m of matches) {
+    if (!bySource.has(m.source)) bySource.set(m.source, []);
+    bySource.get(m.source).push(m);
+  }
+  const queues = [...bySource.values()];
+  const picked = [];
+  while (picked.length < cap && queues.some(q => q.length)) {
+    for (const q of queues) {
+      if (picked.length >= cap) break;
+      if (q.length) picked.push(q.shift());
+    }
+  }
+  return picked;
 }
 
 // ── Source 2: arch-memory neighbourhood ───────────────────────────────────

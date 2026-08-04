@@ -1,4 +1,4 @@
-# Available skills (15 total)
+# Available skills (16 total)
 
 Run `node scripts/skills-help.mjs <name>` for detail on one skill,
 or `/skills <name>` from inside Claude.
@@ -12,6 +12,7 @@ or `/skills <name>` from inside Claude.
 | `/click-test` | Structural DOM audit of a live app — walk every interactive element and assert semantic-HTML contracts (duplicate IDs, orphan labels, inputs without names, ARIA misuse, heading hierarchy, missing alt text, undersized touch targets). |
 | `/cycle` | End-to-end feature cycle orchestrator. |
 | `/explain` | Explain WHY a piece of code is structured the way it is. |
+| `/investigate` | Settle a factual claim about this repo with a measurement, not a recollection. |
 | `/nav-audit` | Static, code-derived navigation / information-architecture audit — the system-level third lens complementing /persona-test (journey-level) and /click-test (page-level). |
 | `/persona-test` | Persona-driven exploratory browser testing against a live URL. |
 | `/plan` | Unified architecture + UX planner with engineering principles. |

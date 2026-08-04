@@ -57,8 +57,13 @@ node scripts/explain-history.mjs --topic "<topic>" [--since "<git-since>"] [--pa
 
 The aggregator searches four independent sources:
 
-1. **Git log** — commit subjects + bodies (case-insensitive `--grep`) AND
-   commits that introduced/removed the topic string in any file (`-S`)
+1. **Git log** — three passes: commit subjects + bodies (case-insensitive
+   `--grep`); commits that introduced/removed the string (`-S`); and commits
+   that touched any line mentioning it (`-G`). `-S` alone misses **moves** —
+   a string deleted from one line and re-added verbatim on another leaves the
+   net count unchanged, so `-S` reports nothing and you conclude the change
+   never happened. Results are labelled per pass and selected round-robin so
+   one pass cannot consume the whole `--limit`.
 2. **Architectural memory** — `cross-skill.mjs get-neighbourhood` with
    the topic as `intentDescription` (similar symbols + recommendations)
 3. **Plan documents** — line-by-line grep over `docs/plans/**/*.md` with
@@ -95,7 +100,7 @@ If empty, write: "No prior touches found — this appears to be new ground."
 #### Git commits (`<count>`)
 | Date | SHA | Author | Subject | How matched |
 |---|---|---|---|---|
-| <date> | `<sha>` | <author> | <subject> | <git-subject \| git-content> |
+| <date> | `<sha>` | <author> | <subject> | <git-subject \| git-content \| git-touched> |
 
 #### Architectural-memory (`<count>`)
 | Sim | Symbol | Path | Recommendation | Purpose |

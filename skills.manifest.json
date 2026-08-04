@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "7c670f0ea3bf73da",
+  "bundleVersion": "d095f83b28fd0c7b",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -149,14 +149,32 @@
     },
     "explain": {
       "path": "skills/explain/SKILL.md",
-      "sha": "aa6c476599e1",
-      "size": 12870,
+      "sha": "7ea51a388aef",
+      "size": 13249,
       "summary": "Explain WHY a piece of code is structured the way it is. Synthesises",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "aa6c476599e1",
-          "size": 12870
+          "sha": "7ea51a388aef",
+          "size": 13249
+        }
+      ]
+    },
+    "investigate": {
+      "path": "skills/investigate/SKILL.md",
+      "sha": "0c2115f6a190",
+      "size": 8903,
+      "summary": "Settle a factual claim about this repo with a measurement, not a",
+      "files": [
+        {
+          "relPath": "SKILL.md",
+          "sha": "0c2115f6a190",
+          "size": 8903
+        },
+        {
+          "relPath": "references/brief-skeleton.md",
+          "sha": "268d0db1b762",
+          "size": 4185
         }
       ]
     },

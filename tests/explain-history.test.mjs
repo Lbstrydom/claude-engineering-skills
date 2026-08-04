@@ -16,8 +16,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import {
-  parseArgs, planSearch, brainstormSearch, walkMarkdown,
+  parseArgs, gitLogSearch, planSearch, brainstormSearch, walkMarkdown,
   buildChronological, buildSummary, planMtimeMap,
 } from '../scripts/explain-history.mjs';
 
@@ -346,6 +347,115 @@ describe('planMtimeMap', () => {
     try {
       const m = planMtimeMap([{ path: 'nope.md' }]);
       assert.equal(m['nope.md'], null);
+    } finally {
+      process.chdir(cwd);
+    }
+  });
+});
+
+// ── gitLogSearch: the pickaxe blind spot ─────────────────────────────────
+//
+// `git log -S` matches on a change in NET OCCURRENCE COUNT. A commit that
+// moves a string — deletes it from one line and re-adds it verbatim on
+// another — leaves the count unchanged, so `-S` reports nothing and a caller
+// concludes the change never happened. Pass C (`-G`) exists to catch exactly
+// that; these tests build the move-commit that defeats `-S` and assert the
+// aggregator still surfaces it.
+describe('gitLogSearch — -S move blind spot', () => {
+  function initRepo() {
+    const root = fs.realpathSync(mkTmp());
+    const git = (...args) => execFileSync('git', args, { cwd: root, stdio: 'pipe' });
+    git('init', '-q', '-b', 'main');
+    git('config', 'user.email', 't@example.com');
+    git('config', 'user.name', 'T');
+    git('config', 'commit.gpgsign', 'false');
+    return { root, git };
+  }
+
+  it('-G finds a move that -S cannot see, and labels it git-touched', () => {
+    const { root, git } = initRepo();
+    const cwd = process.cwd();
+    // Commit 1: introduce the string on a RUN line.
+    fs.writeFileSync(path.join(root, 'Dockerfile'), 'RUN apt-get install python3 make g++\n');
+    git('add', '-A');
+    git('commit', '-qm', 'initial image');
+    // Commit 2: THE MOVE — delete from the RUN line, re-add verbatim in a
+    // comment. Net occurrence count is unchanged.
+    fs.writeFileSync(
+      path.join(root, 'Dockerfile'),
+      '# was: python3 make g++\nRUN apt-get install curl\n',
+    );
+    git('add', '-A');
+    git('commit', '-qm', 'slim the builder stage');
+
+    process.chdir(root);
+    try {
+      // Control: raw -S sees only the introducing commit, not the move.
+      const pickaxe = execFileSync(
+        'git', ['log', '--all', '-S', 'python3 make g++', '--pretty=format:%H'],
+        { cwd: root, encoding: 'utf-8' },
+      ).split('\n').filter(Boolean);
+      assert.equal(pickaxe.length, 1, '-S must miss the move — that is the bug being guarded');
+
+      const matches = gitLogSearch('python3 make g++', { limit: 10 });
+      const touched = matches.filter(m => m.source === 'git-touched');
+      assert.ok(touched.length >= 1, 'the -G pass must surface the move commit');
+      assert.ok(
+        matches.some(m => m.subject === 'slim the builder stage'),
+        'the move commit must reach the caller',
+      );
+    } finally {
+      process.chdir(cwd);
+    }
+  });
+
+  it('escapes regex metacharacters before handing the topic to -G', () => {
+    const { root, git } = initRepo();
+    const cwd = process.cwd();
+    fs.writeFileSync(path.join(root, 'a.txt'), 'value = compute(x)\n');
+    git('add', '-A');
+    git('commit', '-qm', 'add compute call');
+    fs.writeFileSync(path.join(root, 'b.txt'), 'valueXcomputeYx\n');
+    git('add', '-A');
+    git('commit', '-qm', 'unrelated lookalike');
+
+    process.chdir(root);
+    try {
+      // Unescaped, `compute(x)` would be a regex with a capture group matching
+      // the bare text `computex`; escaped, it matches only the literal.
+      const matches = gitLogSearch('compute(x)', { limit: 10 });
+      assert.ok(
+        !matches.some(m => m.subject === 'unrelated lookalike'),
+        'an unescaped -G topic would match the lookalike line',
+      );
+      assert.ok(matches.some(m => m.subject === 'add compute call'));
+    } finally {
+      process.chdir(cwd);
+    }
+  });
+
+  it('round-robins across passes so one pass cannot consume the whole limit', () => {
+    const { root, git } = initRepo();
+    const cwd = process.cwd();
+    // Many -S-visible commits, then one move-only commit. A flat slice would
+    // let the -S pass fill the budget and drop the -G result entirely.
+    for (let i = 0; i < 6; i++) {
+      fs.writeFileSync(path.join(root, `f${i}.txt`), 'needle-token\n');
+      git('add', '-A');
+      git('commit', '-qm', `add ${i}`);
+    }
+    fs.writeFileSync(path.join(root, 'f0.txt'), 'moved: needle-token\n');
+    git('add', '-A');
+    git('commit', '-qm', 'move only');
+
+    process.chdir(root);
+    try {
+      const matches = gitLogSearch('needle-token', { limit: 4 });
+      assert.equal(matches.length, 4);
+      assert.ok(
+        matches.some(m => m.source === 'git-touched'),
+        'git-touched must survive a tight limit',
+      );
     } finally {
       process.chdir(cwd);
     }

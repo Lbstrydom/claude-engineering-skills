@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "skill": "investigate",
+  "gates": [],
+  "reason": "investigate has no mechanically-assertable gate under the closed oracle registry. Its stated constraints — state the quantity before naming a tool, cross-check with a second independent method, run a positive control, report a negative result without softening — are all agent behaviour the model enacts by following the skill. Whether two chosen methods are genuinely independent, and whether a stated positive control actually exercises the instrument, are judgement calls no exit code, threshold, or refusal a cli-exit recipe can bind; there is no oracle for 'this measurement was honest'. Declaring them executable would be the fake-check this suite exists to prevent."
+}
