@@ -66,6 +66,30 @@ either kind alone has passed while the other half was broken.
 add dependencies for a class of bug that has not recurred. Revisit if
 schema-boundary bugs start coming back.
 
+**A skill-trigger eval harness** (prompts → expected skill, scored by a model)
+— deferred on a *different* rationale to the row above, so do not read that
+one's "hasn't recurred" as covering this. The bug class HAS occurred: two
+skills claimed `"verify the plan"`, and `/investigate` overlapped
+`/explain --history` semantically. It is deferred because it **cannot be
+honestly gated**. The pre-push `check` runs in a network-less sandbox worktree,
+so the harness would skip and the gate would go green having checked nothing —
+the precise anti-pattern in
+[`pre-ship-empirical-verify.md`](../runbooks/pre-ship-empirical-verify.md)
+("can this return green without having actually checked anything?") — and Tier 2
+above forbids assertions on model prose regardless.
+
+What was built instead, after measuring:
+[`check-skill-descriptions.mjs`](../../scripts/check-skill-descriptions.mjs)
+enforces the two halves that ARE deterministic (the 1024-char description
+budget; literal trigger-phrase collisions). Fuzzy matching was measured and
+rejected — Jaccard ≥0.5 over phrase tokens produced 47 cross-skill pairs,
+essentially all noise from one shared word. Semantic overlap has no oracle, so
+it is declared by a human in both descriptions instead (*topic* →
+`/explain --history`, *claim* → `/investigate`).
+
+Revisit only if a mechanism appears that can run offline and deterministically,
+or if the pre-push gate stops being the place this would live.
+
 ## Companion rules
 
 The **Do NOT** list in AGENTS.md carries the companion hard rules (no `.env` to
