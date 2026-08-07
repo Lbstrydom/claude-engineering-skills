@@ -1,0 +1,211 @@
+name: cache-seed-check
+
+# Weekly validation that the AUDIT_CACHE_SEED default-ON flip (PR #53, 2026-07-14)
+# is paying off. Silent when the seed-ON cohort is healthy or still accumulating
+# data; opens/updates a sticky issue when the hit-rate falls below threshold.
+# See scripts/cache-hitrate-check.mjs and docs/plans/openai-prefix-cache.md §8.
+
+on:
+  schedule:
+    # Thursdays 09:00 UTC — spread from memory-health (Mondays)
+    - cron: '0 9 * * 4'
+  workflow_dispatch:
+    inputs:
+      since:
+        description: 'Override the data cutoff date (YYYY-MM-DD)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: cache-seed-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Verify Postgres DSN present
+        id: secrets-check
+        env:
+          AUDIT_DB_URL: ${{ secrets.AUDIT_DB_URL }}
+        run: |
+          if [ -z "$AUDIT_DB_URL" ]; then
+            echo "::warning::AUDIT_DB_URL not set — cannot query audit_runs; skipping check"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run cache-seed-check
+        if: steps.secrets-check.outputs.skip != 'true'
+        id: check
+        env:
+          AUDIT_DB_URL: ${{ secrets.AUDIT_DB_URL }}
+          AUDIT_DB_SSL_MODE: no-verify
+        run: |
+          SINCE_ARG=""
+          if [ -n "${{ inputs.since }}" ]; then
+            SINCE_ARG="--since ${{ inputs.since }}"
+          fi
+
+          set +e
+          node scripts/cache-hitrate-check.mjs --json $SINCE_ARG > /tmp/cache-check.json 2>&1
+          EXIT=$?
+          set -e
+
+          cat /tmp/cache-check.json
+
+          # If the script itself errored (exit 1), or the JSON says ok:false, treat as infra error
+          OK=$(jq -r '.ok' /tmp/cache-check.json 2>/dev/null || echo 'false')
+          if [ "$EXIT" != "0" ] || [ "$OK" != "true" ]; then
+            ERROR=$(jq -r '.error // "unknown error"' /tmp/cache-check.json 2>/dev/null || echo "exit code $EXIT")
+            echo "::error::cache-seed-check script failed: $ERROR"
+            echo "status=error" >> "$GITHUB_OUTPUT"
+            echo "error=$ERROR" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+          REC=$(jq -r '.recommendation' /tmp/cache-check.json)
+          SEED_ON=$(jq -r '.seedOnCount' /tmp/cache-check.json)
+          SEED_OFF=$(jq -r '.seedOffCount' /tmp/cache-check.json)
+          UNKNOWN=$(jq -r '.unknownCount' /tmp/cache-check.json)
+          MEDIAN=$(jq -r '(.medianHitRate * 100) | round' /tmp/cache-check.json)
+          MEDIAN_F=$(jq -r '(.medianHitRate * 100) | . * 10 | round | . / 10' /tmp/cache-check.json)
+          TOTAL=$(jq -r '.runCount' /tmp/cache-check.json)
+          REASON=$(jq -r '.reason' /tmp/cache-check.json)
+
+          echo "recommendation=$REC" >> "$GITHUB_OUTPUT"
+          echo "seedOnCount=$SEED_ON" >> "$GITHUB_OUTPUT"
+          echo "seedOffCount=$SEED_OFF" >> "$GITHUB_OUTPUT"
+          echo "unknownCount=$UNKNOWN" >> "$GITHUB_OUTPUT"
+          echo "medianHitRatePct=$MEDIAN_F" >> "$GITHUB_OUTPUT"
+          echo "runCount=$TOTAL" >> "$GITHUB_OUTPUT"
+          echo "reason=$REASON" >> "$GITHUB_OUTPUT"
+
+          # Map recommendation to a workflow status
+          case "$REC" in
+            FLIP_TO_ON)               echo "status=healthy" >> "$GITHUB_OUTPUT" ;;
+            INSUFFICIENT_SEED_ON_DATA) echo "status=collecting" >> "$GITHUB_OUTPUT" ;;
+            HOLD)                     echo "status=hold" >> "$GITHUB_OUTPUT" ;;
+            *)                        echo "status=error" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      # ──────────────────────────────────────────────────────────────
+      # HOLD — seed-ON hit-rate not clearing the 30% threshold.
+      # Open or update the sticky issue so the human is alerted.
+      # ──────────────────────────────────────────────────────────────
+      - name: Open / update sticky issue on HOLD
+        if: steps.check.outputs.status == 'hold'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          MARKER='<!-- audit-loop:cache-seed-check -->'
+          RUN_URL="https://github.com/$REPO/actions/runs/${{ github.run_id }}"
+          DATE=$(date -u +%Y-%m-%d)
+
+          BODY=$(cat <<ISSUEEOF
+          <!-- audit-loop:cache-seed-check -->
+          ## AUDIT_CACHE_SEED — hit-rate below threshold
+
+          The seed-ON cohort median hit-rate is not clearing the 30% threshold.
+          The default-ON flip (PR #53, 2026-07-14) may not be paying off on current evidence.
+
+          | Field | Value |
+          |---|---|
+          | Recommendation | \`HOLD\` |
+          | Seed-ON runs | ${{ steps.check.outputs.seedOnCount }} |
+          | Seed-OFF runs | ${{ steps.check.outputs.seedOffCount }} |
+          | Unknown cohort | ${{ steps.check.outputs.unknownCount }} |
+          | **Seed-ON median hit-rate** | **${{ steps.check.outputs.medianHitRatePct }}%** |
+          | Threshold | >30% across ≥5 seed-ON runs |
+          | Total R2+ runs | ${{ steps.check.outputs.runCount }} |
+
+          **Reason:** ${{ steps.check.outputs.reason }}
+
+          ### Recommended action
+
+          Consider reverting \`decideSeed\` in \`scripts/lib/audit/legacy-production-audit.mjs\`
+          back to opt-in (default OFF), or setting \`AUDIT_CACHE_SEED=0\` more broadly.
+          Do **not** revert blindly — check whether a specific run pattern (short audits,
+          small diffs) is dragging the median down before changing the default.
+
+          Check the per-run breakdown: \`npm run cache:check\` (human-readable, requires AUDIT_DB_URL).
+          ISSUEEOF
+          )
+
+          FOOTER=$'\n\n---\n_Auto-generated by `.github/workflows/cache-seed-check.yml` — [run]('"$RUN_URL"')._ '
+
+          EXISTING=$(gh api "repos/$REPO/issues?state=open&labels=cache-seed-check&per_page=50" \
+            --jq '[.[] | select(.body // "" | startswith("<!-- audit-loop:cache-seed-check -->"))][0].number' 2>/dev/null || echo '')
+
+          if [ -n "$EXISTING" ] && [ "$EXISTING" != "null" ]; then
+            echo "Updating existing issue #$EXISTING"
+            printf '%s%s' "$BODY" "$FOOTER" > /tmp/issue-body.md
+            gh issue edit "$EXISTING" --body-file /tmp/issue-body.md --repo "$REPO"
+            gh issue comment "$EXISTING" --repo "$REPO" \
+              --body "Re-triggered on $DATE (seed-ON median: ${{ steps.check.outputs.medianHitRatePct }}%). See [workflow run]($RUN_URL)."
+          else
+            echo "Creating new issue"
+            printf '%s%s' "$BODY" "$FOOTER" > /tmp/issue-body.md
+            gh label create cache-seed-check --color F9D0C4 \
+              --description 'AUDIT_CACHE_SEED hit-rate check trigger' --repo "$REPO" 2>/dev/null || true
+            gh issue create \
+              --repo "$REPO" \
+              --title "cache-seed-check: HOLD — hit-rate below threshold ($DATE)" \
+              --label cache-seed-check \
+              --body-file /tmp/issue-body.md
+          fi
+
+      # ──────────────────────────────────────────────────────────────
+      # HEALTHY or COLLECTING — close any open sticky issue.
+      # ──────────────────────────────────────────────────────────────
+      - name: Auto-close sticky issue if healthy or collecting
+        if: steps.check.outputs.status == 'healthy' || steps.check.outputs.status == 'collecting'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          EXISTING=$(gh api "repos/$REPO/issues?state=open&labels=cache-seed-check&per_page=50" \
+            --jq '[.[] | select(.body // "" | startswith("<!-- audit-loop:cache-seed-check -->"))[0].number' 2>/dev/null || echo '')
+          if [ -n "$EXISTING" ] && [ "$EXISTING" != "null" ]; then
+            STATUS="${{ steps.check.outputs.status }}"
+            if [ "$STATUS" = "healthy" ]; then
+              MSG="Seed-ON hit-rate returned above threshold (${{ steps.check.outputs.medianHitRatePct }}% on $(date -u +%Y-%m-%d)). Auto-closing."
+            else
+              MSG="Cohort has fewer than 5 seed-ON runs — switched to collecting state on $(date -u +%Y-%m-%d). Auto-closing; will reopen if HOLD recurs once data accumulates."
+            fi
+            gh issue comment "$EXISTING" --repo "$REPO" --body "$MSG"
+            gh issue close "$EXISTING" --repo "$REPO"
+          fi
+
+      - name: Summary
+        if: steps.secrets-check.outputs.skip != 'true' && steps.check.outputs.status != 'error'
+        run: |
+          REC="${{ steps.check.outputs.recommendation }}"
+          echo "## AUDIT_CACHE_SEED check — $REC" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| | |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Seed-ON median hit-rate | ${{ steps.check.outputs.medianHitRatePct }}% |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Seed-ON / OFF / unknown runs | ${{ steps.check.outputs.seedOnCount }} / ${{ steps.check.outputs.seedOffCount }} / ${{ steps.check.outputs.unknownCount }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Total R2+ runs | ${{ steps.check.outputs.runCount }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "${{ steps.check.outputs.reason }}" >> "$GITHUB_STEP_SUMMARY"

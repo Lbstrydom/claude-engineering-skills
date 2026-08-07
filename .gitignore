@@ -1,6 +1,7 @@
 node_modules/
 *.log
 /tmp/
+test-results/
 
 # API keys and secrets — .env plus any profile variant (.env.work-test, .env.local, …).
 # The negation keeps the committed annotated example visible.
@@ -105,11 +106,6 @@ docs/arm-eval/worksheets/
 # blind adjudication sheet, and its private unblind map. Derived from DB + git +
 # an LLM call (Category A); the private map must never be committed.
 .audit-loop/solo-control/
-
-# persona-outcomes-hash-backfill.mjs ambiguity reports — operator-local,
-# derived from DB state at run time (Category A); never committed.
-# docs/plans/persona-finding-hash-versioning.md
-.audit-loop/persona-hash-backfill-reports/
 
 # SOURCE-repo sync manifest — regenerated on every `npm run sync` (which the
 # pre-push hook runs), carrying volatile provenance (generatedAt timestamp +
