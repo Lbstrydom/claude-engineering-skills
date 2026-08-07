@@ -233,6 +233,30 @@
     {
       "line": "convergence requires `blocked === false`. `baseline` reports progress; it is never the pass",
       "reason": "Restates detector-blocks-convergence and adds the negative half — that `baseline` is reporting only. Both are the same contracted claim, and the baseline-is-not-the-pass-condition property is pinned directly in tests/audit-detector.test.mjs."
+    },
+    {
+      "line": "Run → **confirm RED**, and read the failure text: it must name the actual",
+      "reason": "Step 4.5 instruction to the AGENT performing the two-direction proof: run the reverted fix and READ the failure rather than accepting any red. Agent behaviour with no oracle — nothing in /audit-code can assert that the fix was actually reverted, and claiming an executable binding here would be the fake-check this suite exists to catch."
+    },
+    {
+      "line": "defect, not fail for an unrelated reason.",
+      "reason": "Continuation of the same Step 4.5 sentence. States what a VALID red looks like (fails for the defect, not a 404 or a boot error). A judgement about why a test failed; no oracle in the closed registry classifies a failure reason."
+    },
+    {
+      "line": "passing, and an always-passes probe is indistinguishable from a correct one.",
+      "reason": "An explanatory claim about probes in general — the reason a before/after observation is not a negative control. It describes epistemics, not a gate /audit-code enforces; there is no exit code for 'this probe could have failed'."
+    },
+    {
+      "line": "assertion proving the probe can find something it must find.",
+      "reason": "The vacuous-pass-guard instruction. Whether an added assertion genuinely exercises the probe is exactly the judgement the guard exists to force; a mechanical oracle for 'this assertion is non-vacuous' is precisely what does not exist."
+    },
+    {
+      "line": "**When the check itself fails, suspect the instrument first.** In one measured",
+      "reason": "Failure-triage guidance for the agent (check the instrument before the subject). Ordering advice about where to look first, not a gate — /audit-code produces no exit code that could assert an investigator followed it."
+    },
+    {
+      "line": "| `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Step 4.5 — a finding was fixed WITH a new test or guard and it must be proven red-then-green, OR authoring a contract test from a one-off check. |",
+      "reason": "A REFERENCE-TABLE row. The 'Read when' cell describes when to open a reference file; it asserts nothing this skill enforces and produces no exit code. The enforcement verb is incidental to a trigger description."
     }
   ]
 }

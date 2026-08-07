@@ -27,6 +27,10 @@
     {
       "line": "Usage: /plan <task> --no-diagram                                 — skip the architecture mermaid block",
       "reason": "Usage/description documentation line surfaced by the 2026-07-21 Copilot-cap description trim (Usage relocated to the SKILL body). Not a new gate claim — it documents an existing flag; the real gate (where one exists, e.g. nav-audit --gate) is contracted separately in this file."
+    },
+    {
+      "line": "when written). Cite append-newest-first files by section header, never by",
+      "reason": "The Code-Trace citation-form rule. /plan is an agent-driven authoring skill with no CLI; whether the trace pinned its line numbers is a property of the produced markdown, and the closed oracle registry has no lint-a-markdown-structure oracle (same rationale as this contract's existing never-a-lone-phase-1 entry)."
     }
   ]
 }

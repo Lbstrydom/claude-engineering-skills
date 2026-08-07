@@ -31,6 +31,18 @@
     {
       "line": "same rule as \"can this gate return green without having checked anything?\" —",
       "reason": "A QUOTATION of the rule in docs/runbooks/pre-ship-empirical-verify.md, cited as an analogy to explain why an investigator needs a positive control. The enforcement verb belongs to the quoted source; the two documents point at each other by design rather than forking the wording."
+    },
+    {
+      "line": "**Report two verdicts, never one**: `figure: reproduced | refuted` and",
+      "reason": "Step 2.5 reporting instruction. Whether a report separated figure from attribution is a judgement about prose the model wrote; /investigate has no exit code, and this contract's top-level reason already covers the whole class of its agent-behaviour constraints."
+    },
+    {
+      "line": "its kind requires** — for `measured`, the exact command, the working context,",
+      "reason": "The provenance-record field list. An authoring obligation the model honours while writing a report — there is no oracle for 'this measured figure really carries the command that produced it', which is why the rule is stated rather than enforced."
+    },
+    {
+      "line": "section header, never by line. A path is durable; a path plus a line is a",
+      "reason": "The citation-pinning rule in Step 3. Same class as the entry above: an authoring constraint on prose /investigate emits. The re-resolver checks pinned citations after the fact and is deliberately report-only, so nothing here gates."
     }
   ]
 }

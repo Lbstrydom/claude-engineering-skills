@@ -125,6 +125,34 @@
     {
       "line": "**On a block**: run `node scripts/setup-postgres.mjs --migrate`, then re-invoke",
       "reason": "Step 0.5g, the migration-realization gate. It is genuinely ENFORCED — scripts/ship-commit.mjs refuses to compose a commit and exits 2 with an `AGENT FIX:` line when the database is missing a bundled migration — but it stays uncontracted rather than bound to a wrong oracle: the cli-exit oracle drives a CLI against a FILESYSTEM fixture, and this gate's trigger is DATABASE state (a migration ledger missing a bundled filename), which no recipe shape can construct. Declaring cli-exit anyway would assert a binding that does not hold. The logic is covered by tests/schema-realization.test.mjs and tests/write-path-fail-closed.test.mjs, and the refusal is observed END-TO-END against a real database by tests/db-schema-realization-live.test.mjs (db:suites:gate + the postgres-parity CI job), which evicts a ledger row and asserts ERR_SCHEMA_BEHIND. Contracting it needs a DB-backed oracle — a separate change with no current requirement."
+    },
+    {
+      "line": "**`unverified` must name a concrete blocked prerequisite** — \"no network in this",
+      "reason": "Step 6.8 instruction about what the `unverified` terminal state must contain. Whether a stated prerequisite is 'concrete' is a judgement call; /ship emits no exit code for the quality of a status line it wrote into status.md."
+    },
+    {
+      "line": "environment\", \"no consumer checkout on this machine\" — never a bare \"not",
+      "reason": "Continuation of the same sentence — the prohibition on an undefined 'not applicable'. Same judgement, same absence of an oracle."
+    },
+    {
+      "line": "excuse. **Never inherit the producer-side green.**",
+      "reason": "The core Step 6.8 discipline, addressed to the agent. Asserting it would mean proving a consumer-side retrieval actually happened and was not skipped — exactly the thing the three terminal states exist to make an operator declare honestly, because no mechanical check can."
+    },
+    {
+      "line": "Advisory by construction: the push already happened, so this cannot block it —",
+      "reason": "A NEGATIVE guarantee about Step 6.8 (it advises, it never blocks) — the same shape and rationale as this contract's existing step-0-5-gates-non-blocking and unremediated-acceptances-never-blocks entries. Asserting an absence-of-blocking is a judgement about agent flow, not a CLI exit."
+    },
+    {
+      "line": "and per the gate-level rule, machine and remote state may advise where repo",
+      "reason": "A restatement of the repo-wide gate-level rule, cited to explain WHY Step 6.8 is advisory. The enforcement verb belongs to that rule as applied elsewhere; /ship asserts nothing new here."
+    },
+    {
+      "line": "state may block. → `references/verification-discipline.md` §6.",
+      "reason": "Tail of the same sentence plus the pointer to the shared reference. No claim of its own."
+    },
+    {
+      "line": "| `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Step 6.8 — the push succeeded and the artifact must be verified from the consumer side. |",
+      "reason": "A REFERENCE-TABLE row. The 'Read when' cell is a trigger description for opening a reference file, not a gate /ship enforces."
     }
   ]
 }

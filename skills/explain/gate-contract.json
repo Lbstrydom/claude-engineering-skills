@@ -7,6 +7,10 @@
     {
       "line": "never happened. Results are labelled per pass and selected round-robin so",
       "reason": "Describes what scripts/explain-history.mjs's git search DOES (three labelled passes, round-robin selection), not a gate /explain asserts. There is no exit code, threshold or refusal here — the helper always returns a match list. The behaviour is nonetheless mechanically pinned rather than prose-only: tests/explain-history.test.mjs builds a repo whose commit MOVES the topic string (deleted from one line, re-added verbatim on another, net count unchanged) and asserts -S misses it while the -G pass surfaces it, plus a tight-limit case asserting round-robin keeps git-touched reachable. Verified those guards fail when the -G pass is removed."
+    },
+    {
+      "line": "section header, never by line** — every new entry shifts every earlier line, so",
+      "reason": "The citation-form rule for append-newest-first files, addressed to the agent writing the explanation. /explain has no CLI and emits prose; whether a citation was written in the pinned form is checked after the fact, report-only, by the citation re-resolver — never by this skill."
     }
   ]
 }
