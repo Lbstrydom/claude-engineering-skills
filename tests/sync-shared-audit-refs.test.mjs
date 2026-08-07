@@ -4,7 +4,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
 
-import { findSyncTargets, EXPECTED_CONSUMERS } from '../scripts/sync-shared-audit-refs.mjs';
+import { findSyncTargets, EXPECTED_CONSUMERS, syncPairs } from '../scripts/sync-shared-audit-refs.mjs';
 
 let TMP;
 
@@ -138,6 +138,81 @@ describe('sync-shared-audit-refs', () => {
     it('EXPECTED_CONSUMERS lists audit-plan and audit-code for both shared refs', () => {
       assert.deepEqual([...EXPECTED_CONSUMERS['ledger-format.md']].sort(), ['audit-code', 'audit-plan']);
       assert.deepEqual([...EXPECTED_CONSUMERS['gemini-gate.md']].sort(), ['audit-code', 'audit-plan']);
+    });
+  });
+
+  describe('bootstrap: a registered consumer whose file does not exist yet', () => {
+    // Regression lock. `findSyncTargets` emits registry pairs "even if missing
+    // on disk" so a NEW consumer bootstraps its file — the behaviour this
+    // module's header has always promised. `main()` nonetheless read every
+    // target unconditionally, so the first missing one threw ENOENT and the
+    // documented bootstrap had never once executed (found by a plan-audit
+    // final gate, 2026-08-07, reproduced before this fix).
+    const CANONICAL = 'CANONICAL BODY';
+
+    function pair(basename, skill) {
+      const canonical = path.join(TMP, 'docs/audit/shared-references', basename);
+      return {
+        canonical,
+        target: path.join(TMP, 'skills', skill, 'references', basename),
+        skill,
+        basename,
+      };
+    }
+
+    beforeEach(() => {
+      fs.writeFileSync(path.join(TMP, 'docs/audit/shared-references/vd.md'), CANONICAL);
+    });
+
+    it('creates the file AND its references/ dir instead of throwing ENOENT', () => {
+      const p = pair('vd.md', 'brand-new-skill');
+      assert.equal(fs.existsSync(path.dirname(p.target)), false, 'precondition: dir absent');
+
+      const r = syncPairs([p]);
+
+      assert.equal(r.writes, 1);
+      assert.equal(r.bootstrapped, 1, 'a first write is reported as a bootstrap, not a re-sync');
+      assert.equal(fs.readFileSync(p.target, 'utf-8'), CANONICAL);
+      assert.match(r.lines.join(''), /\(bootstrapped\)/);
+    });
+
+    it('--check reports a missing target as DRIFT rather than crashing', () => {
+      const r = syncPairs([pair('vd.md', 'brand-new-skill')], { check: true });
+
+      assert.equal(r.drift, 1, 'missing target counts as drift — never IN SYNC');
+      assert.equal(r.writes, 0, 'check mode must not write');
+      assert.match(r.lines.join(''), /MISSING — never bootstrapped/);
+    });
+
+    it('--dry-run announces the bootstrap without writing', () => {
+      const p = pair('vd.md', 'brand-new-skill');
+      const r = syncPairs([p], { dry: true });
+
+      assert.equal(r.drift, 1);
+      assert.equal(fs.existsSync(p.target), false, 'dry-run must not create the file');
+      assert.match(r.lines.join(''), /would bootstrap/);
+    });
+
+    it('is idempotent — the second run reports unchanged, not a re-bootstrap', () => {
+      const p = pair('vd.md', 'brand-new-skill');
+      syncPairs([p]);
+      const second = syncPairs([p]);
+
+      assert.equal(second.unchanged, 1);
+      assert.equal(second.drift, 0);
+      assert.equal(second.bootstrapped, 0);
+    });
+
+    it('still reports a real post-bootstrap edit as drift (guards a vacuous pass)', () => {
+      // Without this, an implementation that reported everything "unchanged"
+      // would pass every assertion above.
+      const p = pair('vd.md', 'brand-new-skill');
+      syncPairs([p]);
+      fs.writeFileSync(p.target, 'LOCALLY EDITED');
+
+      const r = syncPairs([p], { check: true });
+      assert.equal(r.drift, 1);
+      assert.match(r.lines.join(''), /drifted from canonical/);
     });
   });
 

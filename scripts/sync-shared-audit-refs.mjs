@@ -51,6 +51,9 @@ const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', X = '\x1b[0m', B = '\x1b[1
 export const EXPECTED_CONSUMERS = Object.freeze({
   'ledger-format.md': ['audit-plan', 'audit-code'],
   'gemini-gate.md': ['audit-plan', 'audit-code'],
+  'verification-discipline.md': [
+    'investigate', 'audit-code', 'ux-lock', 'ship', 'explain', 'plan', 'audit-plan',
+  ],
 });
 
 /**
@@ -120,6 +123,62 @@ export function findSyncTargets(rootDir = ROOT) {
  */
 const KNOWN_FLAGS = ['--check', '--dry-run'];
 
+/**
+ * Apply (or report on) a set of canonical→target pairs.
+ *
+ * Split out of `main()` so the BOOTSTRAP path is directly testable against a
+ * temp repo: `main()` resolves pairs from the module-level `ROOT`, which is
+ * pinned to this checkout, so nothing could previously exercise a first-run
+ * write. That is precisely how the bug below shipped undetected.
+ *
+ * **The bug this encodes a fix for.** `findSyncTargets` emits registry-driven
+ * pairs "even if missing on disk" — that is what makes registering a new
+ * consumer bootstrap its file, exactly as this module's header promises. But
+ * the old loop called `fs.readFileSync(target)` unconditionally, so the first
+ * missing target threw ENOENT and killed the run before anything was written.
+ * The documented bootstrap had never once executed, and `--check` crashed
+ * rather than reporting DRIFT. A missing target is now an EMPTY buffer — i.e.
+ * drift, which every branch already handled correctly.
+ *
+ * @param {Array<{canonical:string,target:string,skill:string,basename:string}>} pairs
+ * @param {{check?:boolean, dry?:boolean}} [opts]
+ * @returns {{writes:number, unchanged:number, drift:number, bootstrapped:number, lines:string[]}}
+ */
+export function syncPairs(pairs, { check = false, dry = false } = {}) {
+  let writes = 0, unchanged = 0, drift = 0, bootstrapped = 0;
+  const lines = [];
+
+  for (const { canonical, target, skill, basename } of pairs) {
+    const srcBuf = fs.readFileSync(canonical);
+    const exists = fs.existsSync(target);
+    const dstBuf = exists ? fs.readFileSync(target) : Buffer.alloc(0);
+    if (exists && sha(srcBuf) === sha(dstBuf)) {
+      unchanged++;
+      continue;
+    }
+    drift++;
+    if (!exists) bootstrapped++;
+    if (check) {
+      lines.push(`${R}~${X} skills/${skill}/references/${basename} ${D}${
+        exists ? 'drifted from canonical' : 'MISSING — never bootstrapped'}${X}\n`);
+    } else if (dry) {
+      lines.push(`${Y}~${X} skills/${skill}/references/${basename} ${D}(would ${
+        exists ? 'update from canonical' : 'bootstrap'})${X}\n`);
+    } else {
+      // `skills/<skill>/references/` may not exist at all when this is a
+      // skill's FIRST shared reference (true for explain and audit-plan).
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, srcBuf);
+      writes++;
+      // A first write and a re-sync are different events; say which.
+      lines.push(`${G}+${X} skills/${skill}/references/${basename} ${D}(${
+        exists ? 'synced from canonical' : 'bootstrapped'})${X}\n`);
+    }
+  }
+
+  return { writes, unchanged, drift, bootstrapped, lines };
+}
+
 function main() {
   // The default path OVERWRITES each consumer skill's reference file from the
   // canonical, so `--check`/`--dry-run` are safety flags over a mutating
@@ -135,32 +194,8 @@ function main() {
   }
 
   const pairs = findSyncTargets(ROOT);
-  let writes = 0, unchanged = 0, drift = 0;
-
-  for (const { canonical, target, skill, basename } of pairs) {
-    const srcBuf = fs.readFileSync(canonical);
-    const dstBuf = fs.readFileSync(target);
-    if (sha(srcBuf) === sha(dstBuf)) {
-      unchanged++;
-      continue;
-    }
-    drift++;
-    if (CHECK) {
-      process.stdout.write(
-        `${R}~${X} skills/${skill}/references/${basename} ${D}drifted from canonical${X}\n`,
-      );
-    } else if (DRY) {
-      process.stdout.write(
-        `${Y}~${X} skills/${skill}/references/${basename} ${D}(would update from canonical)${X}\n`,
-      );
-    } else {
-      fs.writeFileSync(target, srcBuf);
-      writes++;
-      process.stdout.write(
-        `${G}+${X} skills/${skill}/references/${basename} ${D}(synced from canonical)${X}\n`,
-      );
-    }
-  }
+  const { writes, unchanged, drift, lines } = syncPairs(pairs, { check: CHECK, dry: DRY });
+  for (const line of lines) process.stdout.write(line);
 
   const verdict = drift === 0 ? 'IN SYNC' : (CHECK ? 'DRIFT' : 'CHANGES');
   process.stdout.write(

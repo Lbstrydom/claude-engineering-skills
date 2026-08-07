@@ -336,8 +336,29 @@ mentions), omit it rather than padding.
 
 ---
 
+## Citing what you found
+
+Every `file:line` this skill emits is a claim about a moment in history, so
+**pin it to the commit you read it at** — `scripts/explain-history.mjs:120 (a4ec98da)`. A
+path alone is durable; a path plus a line is a snapshot that decays silently
+into a *wrong-but-resolving* reference. Measured: of nine bad claims in one
+verified document, five were correct when written and rotted afterwards.
+
+Cite append-newest-first files (`status.md`, changelogs, session logs) **by
+section header, never by line** — every new entry shifts every earlier line, so
+those citations begin decaying immediately. Cite an untracked or off-disk path
+as `git show <sha>:<path>`; it resolves to nothing for any other reader.
+
+→ `references/verification-discipline.md` §1.
+
+---
+
 ## Reference files
 
-This skill is a multi-source synthesiser — there are no references. All
-data comes from the repo + architectural-memory + git, gathered fresh
-each invocation.
+This skill is a multi-source synthesiser: its evidence comes from the repo +
+architectural-memory + git, gathered fresh each invocation. The one file below
+covers a specialised situation — read it when the trigger applies.
+
+| File | Summary | Read when |
+|---|---|---|
+| `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Writing any `file:line` citation into the explanation — every one needs the commit it was read at (§1). |

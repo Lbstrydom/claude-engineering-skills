@@ -426,6 +426,39 @@ List each fix: `[ID] description → file:lines`.
 After fixing, update ledger entries to `remediationState: 'fixed'` for
 fixed items.
 
+### Step 4.5 — Prove every new guard in BOTH directions
+
+For each finding fixed **with a new test, assertion or contract**: a green suite
+does not distinguish "the fix worked" from "the check stopped looking". Only
+revert-and-watch-it-go-red does, and it costs seconds.
+
+1. Revert the fix (the fix only — not the test).
+2. Run → **confirm RED**, and read the failure text: it must name the actual
+   defect, not fail for an unrelated reason.
+3. Where the fix closes **independent** failure modes, revert them **one at a
+   time**. Two defects on one line mask each other — that is how a container
+   health check shipped broken for months, each bug making the other invisible.
+4. Restore → confirm GREEN. Record that you ran it, and what the red said.
+
+**A before/after observation is not a negative control.** Watching a
+*pre-existing* defect go red→green says nothing about whether the *repaired*
+check would go red again — the repaired probe has then only ever been observed
+passing, and an always-passes probe is indistinguishable from a correct one.
+
+**Assertions of the form "expect empty" need a vacuous-pass guard.** A silently
+broken search returns nothing, which is exactly what passing looks like. Add one
+assertion proving the probe can find something it must find.
+
+**When the check itself fails, suspect the instrument first.** In one measured
+session, six consecutive verification-script failures were all instrument
+defects — directory entries counted as files, XML entities breaking matches,
+`grep` eating leading-dash content as flags.
+
+**If the guard is worth keeping past this session, scaffold it properly** —
+`examples/contract-test-scaffold.md` carries the three-part skeleton plus the
+`disposition` and retirement fields, so a temporary guard cannot quietly become
+a permanent one. → `references/verification-discipline.md` §3, §5.
+
 ---
 
 ## Step 5 — Verify and Loop (R2+ Mode)
@@ -663,3 +696,5 @@ situations — read them only when the trigger applies.
 | `references/ledger-format.md` | Adjudication ledger schema + writer invocation example for each finding outcome. | Step 3.5 — about to write ledger entries, OR diagnosing R2+ suppression misbehaviour. |
 | `references/debt-capture.md` | Phase D debt ledger — persist out-of-scope valid findings so they don't re-surface. | Step 3.6 — candidate deferrals present, OR Step 5.1 — debt resolution prompt firing, OR periodically to cluster/resolve the accumulated backlog (see its "Periodic Debt Health" section). |
 | `references/gemini-gate.md` | Step 7 Gemini independent review protocol — transcript, verdict handling, re-review loop. | Step 7 starting, OR Gemini returned CONCERNS/REJECT and need deliberation rules. |
+| `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Step 4.5 — a finding was fixed WITH a new test or guard and it must be proven red-then-green, OR authoring a contract test from a one-off check. |
+| `examples/contract-test-scaffold.md` | Contract-test scaffold — subject probe, negative control, vacuous-pass guard, disposition, retirement. | Step 4.5 — promoting a one-off check into a permanent contract test. |

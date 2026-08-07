@@ -125,6 +125,31 @@ Use the template + fix-type assertion map in
 `references/lock-mode-spec-generation.md`. One file per fix, named
 `tests/e2e/<ticket-or-round>-<description>.spec.js`.
 
+### Step 2.5 — Prove the spec RED before you record it
+
+**A spec that has never failed is not a lock.** You have the fix and the spec in
+hand right now; this is the only moment the proof is cheap.
+
+1. Revert the fix (`git stash` the fix hunk, or restore the pre-fix file).
+2. Run the spec → **confirm RED**, and read the failure: it must fail *because
+   the fixed behaviour is absent*, not because the page 404'd, the selector was
+   wrong, or the app failed to boot.
+3. Restore the fix → confirm GREEN.
+4. Note the red output in the spec's header comment.
+
+This is not hypothetical. In one measured case a regression test for a blocked
+internal-address fetch passed **before** the fix too: nothing was listening on
+the probed port, so a raw request also returned null, and the assertion could
+not distinguish "blocked by the guard" from "connection refused". Rewritten to
+stand up a real local server serving a parseable payload, reverting the fix
+produced four red tests — red *because the old code successfully parsed the
+internal page*, which is the actual exploit.
+
+**Watch for the spec that goes red for the wrong reason** — that is the same
+failure wearing the opposite mask, and it is why step 2 says read the text.
+
+→ `references/verification-discipline.md` §3.
+
 ### Step 3 — Run + record (deterministic — ONE call)
 
 The spec is authored (Step 2). Execution and recording are now a single
@@ -305,3 +330,4 @@ situations — read them only when the trigger applies.
 | `references/lock-mode-spec-generation.md` | LOCK mode — full Playwright spec template + fix-type assertion map + persistence recipe. | Mode: LOCK, about to write the spec body OR register it. |
 | `references/verify-mode-generation.md` | VERIFY mode — criterion parser wiring, translation rules, per-criterion run+record protocol. | Mode: VERIFY, Steps V0–V6 (parsing, generating, running, recording). |
 | `references/scope-and-limitations.md` | Where /ux-lock works well, where it doesn't (Obsidian/Electron), and fallback strategies. | Target is an Obsidian plugin / Electron app / CLI / anti-bot-protected URL, OR bootstrapping Playwright harness from scratch, OR user is on Windows and Playwright MCP tools aren't appearing. |
+| `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Step 2.5 — the spec is written and must be proven RED against the un-fixed code before it is run and recorded. |

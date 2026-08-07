@@ -411,6 +411,12 @@ Structure ONE consolidated output document. Section presence depends on scope:
   and move on. An absent or hand-waved trace on a non-trivial plan means the
   design is ungrounded — go back to Phase 1. This bullet makes "trace before
   designing" leave a footprint instead of being an honour-system instruction.
+  **Pin every `file:line` to the commit you read it at** — `src/foo.js:42
+  (a4ec98da)`. The trace is read weeks later, against a moved tree: a path is
+  durable, a path plus a line is a snapshot that decays into a wrong-but-
+  resolving reference (measured: 5 of 9 bad claims in one document were correct
+  when written). Cite append-newest-first files by section header, never by
+  line. → `references/verification-discipline.md` §1.
 - Patterns reused vs new
 - Known user-visible issues (if persona data + frontend scope)
 - Neighbourhood considered (if Phase 0.5 fired with results)
@@ -675,3 +681,4 @@ in Phase 0 tells you which ones).
 | `references/python-backend-profile.md` | Python backend profile — framework-tagged principle checks + stack commands + anti-patterns. | Phase 0 detect-stack returned `python` (or mixed with Python backend files) AND scope ⊇ backend. |
 | `references/python-frontend-profile.md` | Python frontend profile — Jinja/Django/Flask template patterns + HTMX + anti-patterns. | Phase 0 detect-stack returned `python` (or mixed with Python frontend files) AND scope ⊇ frontend. |
 | `examples/mermaid-blocks.md` | Mermaid diagram templates — sequenceDiagram, graph, erDiagram, stateDiagram-v2 — one per scope. | Phase 6 §2/§5 — emitting an architecture or state diagram; need the exact fence syntax. |
+| `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Phase 6 §1 — writing the Code Trace, or any `file:line` citation, into the plan document. |

@@ -156,7 +156,12 @@ every downstream claim about "what exists today" is then unverified, and the
 falsehood won't surface until code-audit runs against an implementation (far
 too late). Where a "what exists today" assertion drives a design decision,
 spot-check that the cited path plausibly supports it; a design built on a
-mis-described existing contract is HIGH regardless of trace presence. Trivial
+mis-described existing contract is HIGH regardless of trace presence. **An
+unpinned `file:line` in the trace is a LOW finding, not a pass**: it resolves
+today and decays into a wrong-but-resolving reference by the time anyone
+re-checks it, and the spot-check above is exactly the re-check that will land on
+the wrong content. Ask for `path:line (sha)`.
+→ `references/verification-discipline.md` §1. Trivial
 single-file plans are exempt (a bare `Code Trace: <file>` is fine).
 
 **Test-premise lint (#6 — GREEN ≠ REALIZED).** A plan assertion of the form
@@ -401,3 +406,4 @@ situations — read them only when the trigger applies.
 |---|---|---|
 | `references/ledger-format.md` | Adjudication ledger schema + writer invocation example for each finding outcome. | Step 3.5 — about to write ledger entries, OR diagnosing R2+ suppression misbehaviour. |
 | `references/gemini-gate.md` | Step 7 Gemini independent review protocol — transcript, verdict handling, re-review loop. | Step 6 starting, OR Gemini returned CONCERNS/REJECT and need deliberation rules. |
+| `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Step 3 — applying the grounding rubric to a plan whose Code Trace cites `file:line`. |

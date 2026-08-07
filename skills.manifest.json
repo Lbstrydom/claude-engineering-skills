@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "6f3829f148c73040",
+  "bundleVersion": "a8f76a71f6d4ac43",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -49,14 +49,19 @@
     },
     "audit-code": {
       "path": "skills/audit-code/SKILL.md",
-      "sha": "21da2b29d99e",
-      "size": 31642,
+      "sha": "b2c3ebd8e7df",
+      "size": 34058,
       "summary": "Iteratively audit code against a plan with GPT + Gemini final gate.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "21da2b29d99e",
-          "size": 31642
+          "sha": "b2c3ebd8e7df",
+          "size": 34058
+        },
+        {
+          "relPath": "examples/contract-test-scaffold.md",
+          "sha": "ec256e97d323",
+          "size": 4932
         },
         {
           "relPath": "references/debt-capture.md",
@@ -77,19 +82,24 @@
           "relPath": "references/r2-plus-mode.md",
           "sha": "0708da436ddc",
           "size": 5472
+        },
+        {
+          "relPath": "references/verification-discipline.md",
+          "sha": "96a7c25184de",
+          "size": 13361
         }
       ]
     },
     "audit-plan": {
       "path": "skills/audit-plan/SKILL.md",
-      "sha": "77e9f0c0719f",
-      "size": 17921,
+      "sha": "8d62a745e2af",
+      "size": 18509,
       "summary": "Iteratively audit a plan file (docs/plans/*.md) with GPT + Gemini final gate.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "77e9f0c0719f",
-          "size": 17921
+          "sha": "8d62a745e2af",
+          "size": 18509
         },
         {
           "relPath": "references/gemini-gate.md",
@@ -100,6 +110,11 @@
           "relPath": "references/ledger-format.md",
           "sha": "30a0c246567e",
           "size": 8382
+        },
+        {
+          "relPath": "references/verification-discipline.md",
+          "sha": "96a7c25184de",
+          "size": 13361
         }
       ]
     },
@@ -149,32 +164,42 @@
     },
     "explain": {
       "path": "skills/explain/SKILL.md",
-      "sha": "4d722772658b",
-      "size": 13496,
+      "sha": "b96e1b5e6a2b",
+      "size": 14669,
       "summary": "Explain WHY a piece of code is structured the way it is. Synthesises",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "4d722772658b",
-          "size": 13496
+          "sha": "b96e1b5e6a2b",
+          "size": 14669
+        },
+        {
+          "relPath": "references/verification-discipline.md",
+          "sha": "96a7c25184de",
+          "size": 13361
         }
       ]
     },
     "investigate": {
       "path": "skills/investigate/SKILL.md",
-      "sha": "820d776cc7d9",
-      "size": 8902,
+      "sha": "1a0a65e48b3d",
+      "size": 11730,
       "summary": "Settle a factual claim about this repo with a measurement, not a",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "820d776cc7d9",
-          "size": 8902
+          "sha": "1a0a65e48b3d",
+          "size": 11730
         },
         {
           "relPath": "references/brief-skeleton.md",
           "sha": "268d0db1b762",
           "size": 4185
+        },
+        {
+          "relPath": "references/verification-discipline.md",
+          "sha": "96a7c25184de",
+          "size": 13361
         }
       ]
     },
@@ -271,14 +296,14 @@
     },
     "plan": {
       "path": "skills/plan/SKILL.md",
-      "sha": "81fe062d65c6",
-      "size": 32758,
+      "sha": "3f89a0525433",
+      "size": 33461,
       "summary": "Unified architecture + UX planner with engineering principles. Auto-detects",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "81fe062d65c6",
-          "size": 32758
+          "sha": "3f89a0525433",
+          "size": 33461
         },
         {
           "relPath": "examples/mermaid-blocks.md",
@@ -309,6 +334,11 @@
           "relPath": "references/ux-principles.md",
           "sha": "d65b7989e42c",
           "size": 4294
+        },
+        {
+          "relPath": "references/verification-discipline.md",
+          "sha": "96a7c25184de",
+          "size": 13361
         }
       ]
     },
@@ -327,14 +357,14 @@
     },
     "ship": {
       "path": "skills/ship/SKILL.md",
-      "sha": "519d0de1af44",
-      "size": 39367,
+      "sha": "7ab8bdc53fee",
+      "size": 41453,
       "summary": "Sync all project documentation, optionally update a plan, then commit and push to git.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "519d0de1af44",
-          "size": 39367
+          "sha": "7ab8bdc53fee",
+          "size": 41453
         },
         {
           "relPath": "references/python-environment-discovery.md",
@@ -345,6 +375,11 @@
           "relPath": "references/status-md-format.md",
           "sha": "823b3e52c5c3",
           "size": 2588
+        },
+        {
+          "relPath": "references/verification-discipline.md",
+          "sha": "96a7c25184de",
+          "size": 13361
         }
       ]
     },
@@ -363,14 +398,14 @@
     },
     "ux-lock": {
       "path": "skills/ux-lock/SKILL.md",
-      "sha": "23bbc488f8a8",
-      "size": 13914,
+      "sha": "90ae8a0c73b8",
+      "size": 15482,
       "summary": "Generate Playwright e2e specs. Two modes:",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "23bbc488f8a8",
-          "size": 13914
+          "sha": "90ae8a0c73b8",
+          "size": 15482
         },
         {
           "relPath": "references/lock-mode-spec-generation.md",
@@ -381,6 +416,11 @@
           "relPath": "references/scope-and-limitations.md",
           "sha": "582f99c2a883",
           "size": 4502
+        },
+        {
+          "relPath": "references/verification-discipline.md",
+          "sha": "96a7c25184de",
+          "size": 13361
         },
         {
           "relPath": "references/verify-mode-generation.md",

@@ -108,9 +108,51 @@ is a reconstruction. Include failures and retries, in the order issued. Name any
 evidence file using the actual capture date, determined at run time — not a date
 copied from the brief.
 
+## Step 2.5 — Verify the attribution, not just the figure
+
+Reproducing a number does not test the sentence it sits in. A recorded "22.5%
+image-size reduction" **reproduced perfectly** while its stated cause was false:
+the parent commit already had the property being credited, and the real mechanism
+accounted for **92%** of the delta. A pass that checks figures and not
+attributions clears both.
+
+So whenever the claim names a *cause* — "X made it faster / smaller / safer":
+
+- **Ask whether the parent already had the property being credited.** Inspect the
+  parent for it directly. This is the whole check, and it is usually one command.
+- **Ask the build system where one can answer.** In the source case a resolver
+  settled it independently of reading any file: one target resolved at the parent,
+  the other did not.
+- **Decompose the delta.** 92/8 is a different story from 50/50, and only
+  measurement distinguishes them.
+
+**Report two verdicts, never one**: `figure: reproduced | refuted` and
+`attribution: confirmed | refuted | untested`. Fusing them is the artefact that
+misleads — and `untested` is a legitimate result to report.
+
+The chronological trap is the sibling, in both directions: do not infer causation
+from proximity (Step 3), and check the order actually holds — in the same
+engagement a campaign credited with enabling a migration began *ninety minutes
+after* that migration merged.
+
+→ `references/verification-discipline.md` §4.
+
 ## Step 3 — Report without softening
 
-- Label any figure not traceable to a captured command as such.
+- **Label every figure `measured` / `derived` / `expected`, and carry the fields
+  its kind requires** — for `measured`, the exact command, the working context,
+  the immutable revision, the observation time; for `derived`, its sources and
+  formula; for `expected`, its basis and an explicit note that it is not a
+  measurement. A label with no evidence behind it is the same shape as a green
+  with no check. A documented test count once sat stale by 2.3x on count and
+  6.7x on wall clock, and nothing in the row said when it had last been true.
+- **Name the metric.** "Size" and "faster" name nothing: one container image
+  reported three sizes varying by **3.6x** depending on tool and storage driver.
+- **Pin any `file:line` you cite to the commit you read it at** — `path:120
+  (a4ec98da)`. Cite append-newest-first files (`status.md`, changelogs) by
+  section header, never by line. A path is durable; a path plus a line is a
+  snapshot. Five of nine bad claims in one verified document were correct when
+  written and decayed afterwards. → `references/verification-discipline.md` §1-2.
 - Where the evidence does not settle a question, say it does not settle it.
   **Absence of a recorded rationale is a finding, not a gap to fill with a
   plausible one.** Confabulating a plausible rationale is the default
@@ -174,3 +216,4 @@ situations — read them only when the trigger applies.
 | File | Summary | Read when |
 |---|---|---|
 | `references/brief-skeleton.md` | Copy-paste brief template for delegating an investigation to a sub-agent or fresh session. | Invoked with `--brief`, OR the user is writing instructions for another agent/session to run the investigation. |
+| `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Step 2.5 — the claim names a cause and the attribution needs testing, OR Step 3 — writing figures or `file:line` citations into a durable document. |

@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**10 active · 168 terminal · 26 audit summaries · 4 reference docs**
+**11 active · 168 terminal · 26 audit summaries · 4 reference docs**
 
 ---
 
@@ -31,6 +31,7 @@ This is the list to read when asking "what is in flight?".
 | [Model-Eval / Pricing Debt (2026-07-26 triage)](./refactor-model-eval-pricing-2026-07.md) | `Draft` |  |
 | [Visual-Audit Contract Validation Debt (2026-07-26 triage)](./refactor-visual-audit-contract-2026-07.md) | `Draft` |  |
 | [Tiered Recall-Weighted Audit Pipeline](./tiered-recall-audit-pipeline.md) | `In Progress` | implementation complete (Clusters A-F implemented |
+| [Verification-Discipline Cluster — close the six upstream findings of 2026-08-07](./verification-discipline-cluster.md) | `Approved` | audited — GPT x3 + rebuttal, Gemini x3 |
 
 ## Superseded / abandoned
 
