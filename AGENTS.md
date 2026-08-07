@@ -1050,6 +1050,38 @@ implementation. Three invariants that constrain any change here:
 Category lists, the 12-case diff-state matrix, both error enums and their exit
 codes: [`docs/reference/sensitive-paths-and-vcs.md`](docs/reference/sensitive-paths-and-vcs.md).
 
+## Verification discipline (cross-skill)
+
+Six rules from a 2026-08-07 field report, each led by its measurement. Canonical:
+[`docs/audit/shared-references/verification-discipline.md`](docs/audit/shared-references/verification-discipline.md),
+synced into seven skills' `references/` by `sync-shared-audit-refs.mjs` and
+byte-checked in `npm run check`. **Edit the canonical, never a copy.**
+
+- **Pin a line number to the commit you read it at** — `path:120 (a4ec98da)`.
+  *5 of 9* bad claims in one verified document were correct when written and
+  decayed into wrong-but-**resolving** references. Cite append-newest-first files
+  (`status.md`) by section header, never by line. Check with
+  `npm run docs:citations -- <doc>` (report-only, not in `check`).
+- **Label figures `measured`/`derived`/`expected` and carry the command.** This
+  file's own test row read `~5250 tests (~12s)` against a real 12,216 in 80s —
+  *2.3x* and *6.7x* stale, and it is the number you reach for when a run looks
+  wrong.
+- **A check is not trustworthy until seen to fail; when one fails, suspect the
+  instrument first.** Red-then-green, one defect at a time. A before/after
+  observation of a pre-existing defect is **not** a negative control. Six
+  consecutive verification-script failures in one session were all instrument
+  defects. `/audit-code` Step 4.5 and `/ux-lock` Step 2.5 own this.
+- **Reproducing a figure is not verifying its attribution.** A 22.5% reduction
+  reproduced perfectly while its stated cause was false — the parent already had
+  the credited property, and the real mechanism was *92%* of the delta.
+  `/investigate` Step 2.5 reports `figure` and `attribution` separately.
+- **Promote a one-off check that mattered** — subject probe + negative control +
+  vacuous-pass guard, with a disposition and a named retirement predicate:
+  [`skills/audit-code/examples/contract-test-scaffold.md`](skills/audit-code/examples/contract-test-scaffold.md).
+- **Verify what the consumer receives, not what the producer sent.** `/ship`
+  Step 6.8; `unverified` must name a concrete blocked prerequisite, never a bare
+  "not applicable".
+
 ## Commit provenance trailers (`AI-*`)
 
 `/ship` commits carry `AI-Skill`/`AI-Models`/`AI-Gate`/conditional `AI-Run-ID`
