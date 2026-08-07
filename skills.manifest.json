@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "a8f76a71f6d4ac43",
+  "bundleVersion": "c62039f5f4c9c21d",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -85,8 +85,8 @@
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "96a7c25184de",
-          "size": 13361
+          "sha": "a5cdf2c1673f",
+          "size": 13380
         }
       ]
     },
@@ -113,8 +113,8 @@
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "96a7c25184de",
-          "size": 13361
+          "sha": "a5cdf2c1673f",
+          "size": 13380
         }
       ]
     },
@@ -175,8 +175,8 @@
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "96a7c25184de",
-          "size": 13361
+          "sha": "a5cdf2c1673f",
+          "size": 13380
         }
       ]
     },
@@ -198,8 +198,8 @@
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "96a7c25184de",
-          "size": 13361
+          "sha": "a5cdf2c1673f",
+          "size": 13380
         }
       ]
     },
@@ -337,8 +337,8 @@
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "96a7c25184de",
-          "size": 13361
+          "sha": "a5cdf2c1673f",
+          "size": 13380
         }
       ]
     },
@@ -378,8 +378,8 @@
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "96a7c25184de",
-          "size": 13361
+          "sha": "a5cdf2c1673f",
+          "size": 13380
         }
       ]
     },
@@ -419,8 +419,8 @@
         },
         {
           "relPath": "references/verification-discipline.md",
-          "sha": "96a7c25184de",
-          "size": 13361
+          "sha": "a5cdf2c1673f",
+          "size": 13380
         },
         {
           "relPath": "references/verify-mode-generation.md",

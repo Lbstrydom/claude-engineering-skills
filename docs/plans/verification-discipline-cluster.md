@@ -21,7 +21,7 @@
 | `lintSkill` | `scripts/lib/skill-refs-parser.mjs:142-215` | **`precedent`** (`above-floor-cluster`, 0.715) | **Reuse as-is.** It validates that a skill's reference-table row byte-matches the reference file's `summary:` frontmatter. Every new reference file below is subject to it; nothing new is written. |
 | `computeRatchetDivergences` | `scripts/lib/gate-honesty/ratchet.mjs:35-82` | `review` | **Reuse as-is** — the net-new-skill ratchet. No new skill is added (§6 right-sizing), so it is unaffected. |
 | `main` / `checkRatchet` | `scripts/check-gate-contracts.mjs` | `review` | **Extend data, not code.** New SKILL.md prose will trip its gate-claim candidate scanner; the answer is `gate-contract.json` entries, not scanner changes (§2 D4). |
-| `main` | `scripts/sync-shared-audit-refs.mjs:123-177` | `review` | **Extend by one map entry.** This is the load-bearing reuse decision — see §2 D1. |
+| `main` | `scripts/sync-shared-audit-refs.mjs:126 (37796cff)` | `review` | **Extend by one map entry.** This is the load-bearing reuse decision — see §2 D1. |
 
 The band did not make these calls; each was made on the code.
 
@@ -60,15 +60,19 @@ the skills that need them.
 
 ### Code Trace
 
-Evidence that Phase 1 happened — the path actually followed, read at `0e2c554a`:
+Evidence that Phase 1 happened — the path actually followed. **Re-pinned to `37796cff` in
+Phase 4**: Phase 1 modified `sync-shared-audit-refs.mjs`, so the original `0e2c554a`
+pins correctly reported `moved`. Re-pinning is what the convention prescribes when you
+touch a cited file — the plan's own citations decaying *during* the plan is the
+cleanest demonstration that the instrument works.
 
 - **Shared-reference seam** (the spine of this plan):
-  `scripts/sync-shared-audit-refs.mjs:29-77` — `EXPECTED_CONSUMERS` map + auto-discovery
+  `scripts/sync-shared-audit-refs.mjs:51 (37796cff)` — the `EXPECTED_CONSUMERS` map
   → `package.json:75` `skills:check` runs it with `--check`
   → `package.json:42` `check` runs `skills:check`
   → `scripts/prepush-check.mjs` runs `check` in a clean worktree.
   So a file placed here is byte-equality-enforced at push, for free.
-- **Reference-table contract**: `scripts/lib/skill-refs-parser.mjs:142-215` (`lintSkill`)
+- **Reference-table contract**: `scripts/lib/skill-refs-parser.mjs:207 (37796cff)` — the orphan check
   → invoked by `scripts/check-skill-refs.mjs` → `package.json:75`.
   Verified against a live example: `docs/audit/shared-references/ledger-format.md:1-3`
   carries `summary:` frontmatter that byte-matches its row in
@@ -227,7 +231,7 @@ repo-relative and carry a file extension; `sha` is 7-40 lowercase hex.
 
 **A `/` is required only for UNPINNED candidates** *(Gemini gate, MEDIUM — the first
 draft required it always, matching `extractPlanPaths`. That silently excluded every
-root-level file: `AGENTS.md:105 (b08b9a84)` is the worked example in §D2a and would
+root-level file: a pinned root-level `AGENTS.md` line reference is the worked example in §D2a and would
 have been invisible to the instrument, and this plan modifies `AGENTS.md`.)* For a
 pinned citation the extension **plus** a parenthesised valid hex sha already
 identifies it unambiguously, so bare filenames are accepted there. Unpinned candidates
@@ -237,7 +241,7 @@ of the syntax, not claims).
 
 **Extraction is two-stage, because one-stage extraction fails OPEN**
 *(round 3, H1 — the first draft defined extraction as recognising already-valid
-grammar, so `docs/plans/README.md:12 (HEAD~3)`, an uppercase or non-hex sha, a missing closing
+grammar, so a citation carrying a `(HEAD~3)` suffix, an uppercase or non-hex sha, a missing closing
 paren or an inverted range fell through as ordinary prose and vanished. Silently
 ignoring a malformed pinned citation is exactly the fail-open case this instrument
 exists to close.)*
@@ -247,7 +251,7 @@ exists to close.)*
    Deliberately loose: a candidate is a *shape*, not a validity claim, and **no path
    rule is applied here** *(Gemini round 2 — the previous revision relaxed the grammar
    prose for root-level files while leaving this step requiring a slash, so
-   `AGENTS.md:105 (b08b9a84)` would still have been ignored: the same fail-open, one
+   a pinned root-level `AGENTS.md` line reference would still have been ignored: the same fail-open, one
    paragraph later)*.
 2. **Classify each candidate deterministically**, and every candidate lands in exactly
    one bucket:
@@ -578,7 +582,7 @@ instrument parses them — the deliverable that stops the acceptance criterion b
 vacuous (H2).
 
 > **Re-pin the Code Trace FIRST, and the paradox is the point** *(Gemini gate, final
-> round)*. §1's Code Trace cites `scripts/sync-shared-audit-refs.mjs:123-177 (0e2c554a)`,
+> round)*. §1's Code Trace cites `scripts/sync-shared-audit-refs.mjs:126 (37796cff)`,
 > and **Phase 1 modifies that very file** — so those citations will correctly report
 > `moved`, and the `ok === citationsParsed` criterion would fail deterministically.
 > The fix is not to weaken the criterion: re-pin the Code Trace to a post-Phase-1
@@ -684,9 +688,15 @@ byte-equality, gate contracts, generated-copy freshness), `npm run context:check
 (AGENTS.md cap), `npm run docs:refs:gate`, `npm run cli:flags:gate` (the new CLI needs
 `assertKnownFlags`), `npm run knip:gate`.
 
-**Relocation contract**: `check-doc-citations.mjs` is a top-level CLI, so it
-implements `--selfcheck-relocation` and joins `CLI_SMOKE_SET`
-(`tests/relocation-guard.test.mjs`) — Tier 3, non-negotiable, same commit.
+**Relocation contract — CORRECTED during Phase 3.** `check-doc-citations.mjs`
+implements `--selfcheck-relocation` (cheap, and it documents intent), but it must
+**NOT** join `CLI_SMOKE_SET`. That set asserts **consumer presence**, and its own
+note says so: *"an entry obliges declaring the script in sync-to-repos.mjs — and
+without that, gate 4 fails in every consumer while this repo's `npm test` stays
+green"* (`scripts/lib/sync-isolation-verify.mjs:66-70`). This CLI is repo tooling
+and is not synced, so adding it would break every consumer while looking green
+here — the same shape as the dep-contract bug already filed upstream. The plan's
+original "non-negotiable, same commit" line was written before that note was read.
 
 **Edge cases**: Windows CRLF in cited files (canonicalise before comparing — the
 `skills.manifest.json` lesson); a citation to a path that is gitignored at HEAD but

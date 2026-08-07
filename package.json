@@ -150,7 +150,9 @@
     "upstream:issues": "node scripts/cross-skill.mjs upstream list --worksheet",
     "gates:poison": "node scripts/check-gate-poison-pills.mjs",
     "docs:architecture-intent:check": "node scripts/check-architecture-intent-drift.mjs",
-    "skills:descriptions": "node scripts/check-skill-descriptions.mjs"
+    "skills:descriptions": "node scripts/check-skill-descriptions.mjs",
+    "docs:citations": "node scripts/check-doc-citations.mjs",
+    "docs:citations:json": "node scripts/check-doc-citations.mjs --format json"
   },
   "keywords": [
     "claude",

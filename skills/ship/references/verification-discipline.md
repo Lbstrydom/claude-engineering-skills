@@ -30,8 +30,12 @@ number for the same claim*.
 
 **Rules:**
 
-- **Pinned form**: `path/to/file.ext:120 (a4ec98da)` — the commit id in
-  parentheses, immediately after the line. Ranges: `:120-140`.
+- **Pinned form** — the commit id in parentheses, immediately after the line
+  (ranges use `:120-140`):
+
+  ```
+  path/to/file.ext:120 (a4ec98da)
+  ```
 - **Append-newest-first files are cited by section header, never by line.**
   `status.md`, changelogs, session logs: every new entry shifts every earlier
   line, so a line citation there begins decaying immediately. Use
@@ -41,7 +45,7 @@ number for the same claim*.
 - **A paste-slot, appendix number or section label is a citation too**, and
   drifts like any other reference.
 
-**Checking a document**: `scripts/check-doc-citations.mjs` (planned) re-resolves every
+**Checking a document**: `scripts/check-doc-citations.mjs` re-resolves every
 pinned citation in a document at its commit and reports `ok` / `moved` /
 `drifted` / `unresolvable`.
 Report-only — it is an instrument, not a gate.
@@ -51,7 +55,7 @@ Report-only — it is an instrument, not a gate.
 **Extraction is two-stage, because one-stage extraction fails open.**
 
 1. **Recognise candidates** — any `<path-like>:<digits>` prefix, **bare filenames
-   included** (`AGENTS.md:105 (b08b9a84)` is a real citation), plus any
+   included** (a root-level `AGENTS.md` line reference is a real citation), plus any
    parenthesised revision-like suffix. No path rule is applied here: a candidate
    is a *shape*, not a validity claim.
 2. **Classify** — every candidate lands in exactly one bucket:
@@ -249,10 +253,10 @@ as steps rather than principles — the same ask, filed as a principle three wee
 earlier, produced two further instances of its own failure class.
 
 This repository has form here in both directions, which is the useful part.
-`scripts/lib/skill-refs-parser.mjs:207 (0e2c554a)` raises `Orphan file: … is not
+`scripts/lib/skill-refs-parser.mjs:207 (37796cff)` raises `Orphan file: … is not
 listed in the reference table` — a real guard, doing real work, which is why the
 file you are reading must appear in its skill's reference table.
-`scripts/check-docs-refs.mjs:22 (0e2c554a)` states its own doctrine plainly —
+`scripts/check-docs-refs.mjs:22 (37796cff)` states its own doctrine plainly —
 *"it checks whether a cited path RESOLVES, not whether the citation is apt"* — and
 that honest scope limit is exactly why §1 needed a separate instrument rather than
 a wider net cast over an existing one.
