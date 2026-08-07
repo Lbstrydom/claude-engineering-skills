@@ -321,6 +321,17 @@ const CORE_ENTRY = [
   // GREEN≠REALIZED Cluster A efficacy-lints CLI — closure walker pulls lib/efficacy-lints.mjs
   // + its model-resolver / glob-match / sensitive-paths closure. Lock-step with sync-inventory.mjs.
   'scripts/efficacy-lints-check.mjs',
+  // Citation re-resolver — re-reads every pinned `path:line (sha)` in a document
+  // at the commit it was read at and reports ok/moved/drifted/unresolvable. A new
+  // top-level entry imported by nothing, so it must be declared here; the walker
+  // pulls in its scripts/lib/doc-citations.mjs + lib/cli-io.mjs closure
+  // automatically. It shells out to `git` with cwd = the repo root, which in a
+  // consumer is that consumer's own root — the citations it checks are the
+  // consumer's. Shipped 2026-08-07 AFTER the shared reference that names it had
+  // already synced without it: the reference told consumers to run a script no
+  // consumer layout had, which is the helper-path-drift class filed as
+  // wine-cellar-app 2026-07-19 §4 and caught by /ship Step 6.8's first real run.
+  'scripts/check-doc-citations.mjs',
   // Local weekly-maintenance replica of the 5 GH Actions cron workflows
   // (docs/runbooks/local-maintenance-checks.md) — opt-in, default-OFF, invoked
   // opportunistically from the pre-push hook. Spawns each replicated check

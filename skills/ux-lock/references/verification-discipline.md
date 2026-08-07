@@ -45,16 +45,17 @@ number for the same claim*.
 - **A paste-slot, appendix number or section label is a citation too**, and
   drifts like any other reference.
 
-**Checking a document** — in the claude-engineering-skills repo,
-`npm run docs:citations -- <doc>` re-resolves every pinned citation at its commit
-and reports `ok` / `moved` / `drifted` / `unresolvable`. Report-only: an
-instrument, not a gate.
+**Checking a document** re-resolves every pinned citation at the commit it was
+read at and reports `ok` / `moved` / `drifted` / `unresolvable`. Report-only:
+an instrument, not a gate, and it writes nothing.
 
-> **Consumer repos do not have this CLI yet.** It is source-repo tooling and is
-> not part of the synced bundle, so the rule above still applies to what you
-> write — the automated check simply is not available here. Caught by the very
-> step this document's §6 describes: the producer side was green while the
-> consumer received an instruction it could not follow.
+- source repo: `npm run docs:citations -- <doc>`
+- consumer repo: `node scripts/.claude-skills/check-doc-citations.mjs <doc>`
+
+It reads the repo it is run in, so a consumer checks its own citations. Add
+`--require-citations` when the run is meant to prove adoption: a clean report
+over **zero** parsed citations is not a pass, and that flag turns it into a
+non-zero exit.
 
 ### The citation contract (what the checker actually does)
 

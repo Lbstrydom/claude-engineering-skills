@@ -61,6 +61,11 @@ const CLI_SMOKE_SET = [
   'ship-commit.mjs', // deterministic /ship commit helper — AI-* provenance trailers (docs/reference/commit-provenance.md)
   'ensure-branch-protection.mjs', // strengthen-only main-branch ruleset tool — declared in sync-to-repos.mjs entries; a cloned consumer self-applies
   'maintenance-checks.mjs', // local weekly-maintenance replica — spawns sibling checks, must survive relocation
+  // Citation re-resolver. Membership is legitimate ONLY because it is now
+  // declared in sync-to-repos.mjs (see the NOTE below): it was deliberately kept
+  // OUT while it was source-only, precisely to avoid the gate-4-fails-everywhere
+  // failure that note describes.
+  'check-doc-citations.mjs',
   // NOTE: `verify-anchor-contract.mjs` is deliberately NOT here. Its plan
   // (evidence-anchor-path-contract §9a) originally demanded membership by
   // reflex and was CORRECTED: this set asserts CONSUMER PRESENCE, so an entry

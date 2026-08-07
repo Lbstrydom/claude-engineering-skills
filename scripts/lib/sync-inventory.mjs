@@ -71,6 +71,9 @@ const CORE_ENTRY = [
   // GREEN≠REALIZED Cluster A efficacy-lints CLI — walker pulls in lib/efficacy-lints.mjs +
   // its model-resolver / glob-match / sensitive-paths closure. Keep in lock-step with sync-to-repos.mjs.
   'scripts/efficacy-lints-check.mjs',
+  // Citation re-resolver (see the entry's rationale in sync-to-repos.mjs, which
+  // is authoritative for this list).
+  'scripts/check-doc-citations.mjs',
   // Local weekly-maintenance replica of the (now 7) GH Actions / opt-in
   // checks — opt-in, default-OFF, invoked opportunistically from the
   // pre-push hook. maintenance-checks.mjs spawns the other four as
