@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**11 active · 168 terminal · 26 audit summaries · 4 reference docs**
+**10 active · 169 terminal · 26 audit summaries · 4 reference docs**
 
 ---
 
@@ -31,7 +31,6 @@ This is the list to read when asking "what is in flight?".
 | [Model-Eval / Pricing Debt (2026-07-26 triage)](./refactor-model-eval-pricing-2026-07.md) | `Draft` |  |
 | [Visual-Audit Contract Validation Debt (2026-07-26 triage)](./refactor-visual-audit-contract-2026-07.md) | `Draft` |  |
 | [Tiered Recall-Weighted Audit Pipeline](./tiered-recall-audit-pipeline.md) | `In Progress` | implementation complete (Clusters A-F implemented |
-| [Verification-Discipline Cluster — close the six upstream findings of 2026-08-07](./verification-discipline-cluster.md) | `Approved` | audited — GPT x3 + rebuttal, Gemini x3 |
 
 ## Superseded / abandoned
 
@@ -51,7 +50,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 165 completed plans</summary>
+<summary>Show all 166 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -215,6 +214,7 @@ source comments that no docs linter sees — stays valid.
 | [Upstream Issue Reports (consumer → source bug channel)](./upstream-issue-reports.md) | `Complete` | all 4 phases shipped 2026-07-31 — see Audit Trail + Implementation Log |
 | [/ux-lock selector policy — locate semantically, lint the drift](./ux-lock-selector-policy.md) | `Complete` | implemented + code-audited 2026-07-04; consolidated |
 | [Harden vcs.mjs's git-output parsing and find-rmsync-sites.mjs's scope resolution](./vcs-parsing-and-rmsync-scope-hardening.md) | `Complete` |  |
+| [Verification-Discipline Cluster — close the six upstream findings of 2026-08-07](./verification-discipline-cluster.md) | `Complete` | implemented via /cycle --autonomous; union gate APPROVE |
 | [`visual-audit` — the visual/paint inspection skill (4th UX lens)](./visual-audit-skill.md) | `Complete` | built autonomously via /cycle across 3 clusters; see Implementation Log |
 | [visual-audit "theme-safety" v1 — catch "color that didn't adapt"](./visual-audit-theme-safety-v1.md) | `Complete` | implemented + shipped 2026-07-01 (via /cycle code --autonomous |
 | [visual-audit Theme-safety v2 — two-theme contrast parity-delta + full-DOM sweep](./visual-audit-theme-safety-v2.md) | `Complete` |  |

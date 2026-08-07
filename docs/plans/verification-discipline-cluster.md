@@ -1,7 +1,7 @@
 # Plan: Verification-Discipline Cluster — close the six upstream findings of 2026-08-07
 
 - **Date**: 2026-08-07
-- **Status**: Approved (audited — GPT x3 + rebuttal, Gemini x3)
+- **Status**: Complete (implemented via /cycle --autonomous; union gate APPROVE)
 - **Author**: Claude + Louis
 - **Scope**: backend (CLI scripts + skill content; no UI surface)
 - **Target domain(s)**: `skills-content`, `shared-lib`
@@ -730,6 +730,23 @@ tracked at the pinned sha; a sha that is valid but unreachable after a rebase.
   - `author-tier: economy`
 - **Final gate**: mandatory consolidated Gemini review over the union diff of
   Clusters A, B and C.
+
+---
+
+## Implementation log
+
+| Cluster | Phases | Result |
+|---|---|---|
+| A | 1-2 | Canonical reference + 7 consumers, 5 skill steps, scaffold, **sync bootstrap repair proven red-then-green**, 21 gate-honesty dispositions. `prepush-check` EXIT=0. |
+| B | 3-4 | `doc-citations.mjs` + CLI, 20 Tier-1 tests **written and proven RED before the module existed**, temp-git fixture. Dogfood: 6 parsed / 6 ok / 0 unresolvable. `prepush-check` EXIT=0. |
+| C | 5 | AGENTS.md stub, 2,130 chars into 8,554 headroom. `prepush-check` EXIT=0. |
+| Union gate | — | **Gemini APPROVE**, 33 files, 0 new findings. |
+
+**Three corrections recorded during implementation** — R1 refuted on a blind
+dirty-tree run then confirmed in the clean worktree; the CLI must not join
+`CLI_SMOKE_SET` (consumer presence, not synced); and a `git add -A` over
+directories swept another session's five files into a commit, undone by
+soft-reset and selective restage.
 
 ---
 
