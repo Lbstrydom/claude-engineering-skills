@@ -90,7 +90,7 @@ jobs:
 
       - name: Upload drift report artefact
         if: steps.secret-check.outputs.skip != 'true' && hashFiles('/tmp/migration-drift.json') != ''
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: migration-drift-report
           path: /tmp/migration-drift.json
