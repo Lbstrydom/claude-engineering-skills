@@ -78,12 +78,20 @@ jobs:
           AUDIT_DB_SSL_MODE: no-verify
         run: npm run arch:prune || true
 
+      # Do NOT re-add a hashFiles() guard here: hashFiles resolves relative to
+      # GITHUB_WORKSPACE and cannot see /tmp, so the predicate was ALWAYS empty
+      # and this step silently skipped on every run from #1 to #17 — the report
+      # has never once been uploaded. Verified 2026-08-08 against run 30806755604
+      # ("Upload report artefact | skipped" with the drift sweep green) and a
+      # zero artifact count across the sampled run history. `if-no-files-found`
+      # covers the absent-report case that guard was reaching for.
       - name: Upload report artefact
-        if: steps.secrets-check.outputs.skip != 'true' && hashFiles('/tmp/architectural-drift.md') != ''
+        if: steps.secrets-check.outputs.skip != 'true'
         uses: actions/upload-artifact@v7
         with:
           name: architectural-drift-report
           path: /tmp/architectural-drift.md
+          if-no-files-found: ignore
           retention-days: 90
 
       - name: Open / update sticky issue on trigger
