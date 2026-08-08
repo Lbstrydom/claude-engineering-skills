@@ -336,8 +336,8 @@ the headline case — a benign symlink into `~/.ssh/` — is **already blocked**
 by the boundary rather than by the classifier. The real residual is narrower:
 
 - a symlink whose realpath stays **inside the repo** but points at a
-  lexically-sensitive file (`docs/notes.md` → `.env`) passes `isSensitiveFile`,
-  because the classifier never sees `.env`;
+  lexically-sensitive file (`<any-benign-name>.md` → `.env`) passes
+  `isSensitiveFile`, because the classifier never sees `.env`;
 - `redact: true` then masks secret *values* via `redactSecrets`, so what
   survives is structure and any secret shape the patterns miss.
 
