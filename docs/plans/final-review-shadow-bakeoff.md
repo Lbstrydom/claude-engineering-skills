@@ -327,7 +327,61 @@ Three observations, all provisional at N=3 and none yet adjudicated:
 > applies to both arms. But the direction of the live question has flipped from
 > "does Kimi clear 0.2 at all" to "how much of Opus's rate does it cover".
 
-**Not yet done for these snapshots**: adjudication. Raw uniqueness is not value —
+### 0.7b Adjudication, 2026-08-08 — and why raw uniqueness misled twice
+
+21 bake-off shadow-only HIGH/MED findings adjudicated. **Blind to arm**: the
+findings were rendered into a worksheet with `source_model` withheld and ordered
+by a hash shuffle (insert order is arm-ordered — opus always runs first), and
+the key was opened only after every verdict was written. The model-A/B queue is
+already blinded for this reason (`store/model-ab.mjs`: "source_model
+deliberately NOT selected"); this queue was not, and it is the queue that
+decides an arm comparison.
+
+**Verified, not judged.** Each finding was checked against current code rather
+than re-judged — a stated defect is usually a claim an instrument can settle,
+and LLM re-judgement of historical findings is a known-confounded instrument
+here (52% agreement with a human on a prior calibration). Two findings resisted
+that treatment and are recorded as `judgement`, deliberately unlabelled.
+
+| arm | n | accepted | dismissed | judgement | accepted HIGH/MED per snapshot |
+|---|---|---|---|---|---|
+| opus | 13 | 7 | 5 | 1 | **1.75** |
+| kimi | 8 | 1 | 6 | 1 | **0.25** |
+
+Denominator is **4** snapshots, not 5: the 2026-08-03 snapshot predates the
+`--run-id` wiring, so its findings never reached the store and cannot be
+adjudicated.
+
+**Raw uniqueness pointed the wrong way, twice.** Pre-epoch it said Kimi found
+nothing (§0.7 obs. 1) — wrong, an artifact of unmatched reasoning effort. Under
+`e2` it said Kimi was productive (14 uniques to Opus's 25) — also wrong: Kimi's
+dismissal rate is **6/7 = 86%** against Opus's **5/12 = 42%**. §0.7's own
+warning ("Raw uniqueness is not value") is now measured rather than asserted.
+Opus's 42% also lands within a point of the ~40% the tail-labelling pass
+predicted, which is a small independent check on that instrument.
+
+**Do not read a verdict from this.** §6.3 row 1 makes `N < 12` terminal
+INCONCLUSIVE, and this is N=4. The arithmetic is currently perverse in a way
+that makes the stopping rule worth honouring: both arms clear the `≥0.2/run`
+gate, and per accepted cluster Kimi is *cheaper* (~$0.18 vs ~$0.69, both far
+under the $8 ceiling), so a naive application of "cheapest qualifying arm wins"
+selects the arm that found **one seventh** as many real defects. Kimi's 0.25
+rests on a single accepted finding; one more dismissal puts it at the gate edge.
+That is exactly the shape N=12 exists to protect against.
+
+**Seven distinct defects were confirmed** (F07/F09 are the same defect found on
+two snapshots), and they are now open work rather than an unlabelled queue: a
+convergence oracle with no production caller (HIGH, x2), a mandatory gate whose
+default fixture rev can never exit 0, an exclusion-bucket double-count, an
+unvalidated pass-granting exemption loader, exemptions keyed by npm script so
+appended commands inherit them silently, a second live-provider path filtering
+egress through a weaker authority than the documented one, and a mandatory-pill
+date policy that exists only as a JSON comment.
+
+**Still unadjudicated**: 10 bake-off LOW (LOW does not score) and 25 organic
+shadow-only (13 MEDIUM, 12 LOW) — a separate, older population.
+
+**Not yet done for these snapshots**: adjudication of the LOW tail. Raw uniqueness is not value —
 the §6.3 gate scores *accepted* HIGH/MED clusters, and the tail-labelling pass
 showed roughly 40% of raw shadow findings get dismissed. Snapshots 2-3 findings
 persist under their own `source_model`; label them via the ordinary

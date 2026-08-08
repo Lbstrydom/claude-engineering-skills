@@ -1,5 +1,49 @@
 # Project Status Log
 
+## 2026-08-08 (latest) — raw uniqueness misled twice; adjudication says the opposite
+
+21 bake-off shadow-only HIGH/MED findings adjudicated **blind to arm** —
+`source_model` withheld, hash-shuffled order (insert order is arm-ordered, opus
+always runs first), key opened only after every verdict was written. The
+model-A/B queue is already blinded for exactly this reason; this queue was not,
+and it is the one that decides an arm comparison.
+
+Each finding was **verified against current code**, not re-judged: a stated
+defect is usually a claim an instrument can settle, and LLM re-judgement of
+historical findings is a known-confounded instrument here (52% agreement with a
+human on a prior calibration). Two findings resisted that and are recorded as
+`judgement`, deliberately unlabelled.
+
+| arm | n | accepted | dismissed | judgement | accepted HIGH/MED per snapshot |
+|---|---|---|---|---|---|
+| opus | 13 | 7 | 5 | 1 | 1.75 |
+| kimi | 8 | 1 | 6 | 1 | 0.25 |
+
+Raw uniqueness pointed the wrong way twice. Pre-epoch it said Kimi found
+nothing — an artifact of unmatched reasoning effort. Under `e2` it said Kimi was
+productive (14 uniques to Opus's 25), which is what the interim read reported;
+adjudicated, Kimi's dismissal rate is **86%** against Opus's **42%**. Opus's 42%
+lands within a point of the ~40% tail labelling predicted — a small independent
+check on that instrument. N=4 and §6.3 makes `N < 12` terminal INCONCLUSIVE, so
+no verdict is claimed; the arithmetic is currently perverse enough to be worth
+the wait (both arms clear ≥0.2/run, and per accepted cluster Kimi is *cheaper*,
+so a naive "cheapest qualifying arm wins" selects the arm finding one seventh as
+many real defects, on the strength of one accepted finding).
+
+Seven distinct defects were confirmed and are now open work rather than an
+unlabelled queue — a convergence oracle with no production caller (HIGH, found
+on two snapshots), a mandatory gate whose default fixture rev can never exit 0,
+an exclusion-bucket double-count, an unvalidated pass-granting exemption loader,
+exemptions keyed by npm script so appended commands inherit them silently, a
+second live-provider path filtering egress through a weaker authority than its
+docblock names, and a mandatory-pill date policy that exists only as a JSON
+comment.
+
+Consumer-side verification (Step 6.8): `not applicable by construction` — this
+commit changes one plan document and this log; it ships no code, no synced
+tooling and no generated artifact, so there is no consumer-side receiver to
+check. Labels live in the cloud store, not the repo.
+
 ## 2026-08-08 (latest) — the bake-off was starving, and the fix was three defects deep
 
 The final-review bake-off counter had sat at 1/12 for five days. Asking why
