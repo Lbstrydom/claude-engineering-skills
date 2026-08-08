@@ -109,17 +109,28 @@ async function loadFromSupabase() {
   // shape; the SOURCE label stays 'supabase' since the live target is
   // still the Supabase-hosted Postgres.
   const { many } = await import('./lib/db/query.mjs');
-  const rows = await many(
+  const select = (controlCols) =>
     `SELECT id, rounds, created_at,
             cache_input_tokens, cache_cached_tokens,
-            cache_hit_rate, cache_estimated_savings_pct, cache_seed_enabled
+            cache_hit_rate, cache_estimated_savings_pct, cache_seed_enabled${controlCols}
        FROM audit_runs
       WHERE created_at >= $1
         AND rounds >= 2
         AND cache_hit_rate IS NOT NULL
-      ORDER BY created_at DESC`,
-    [new Date(SINCE_MS).toISOString()]
-  );
+      ORDER BY created_at DESC`;
+  const args = [new Date(SINCE_MS).toISOString()];
+  let rows;
+  try {
+    rows = await many(select(',\n            cache_seed_eligible, cache_seed_skip_reason'), args);
+  } catch (err) {
+    // 42703 = undefined_column. A consumer store that has not applied migration
+    // 20260808190000 still answers the legacy question correctly; it just cannot
+    // offer a control arm. Degrade to the old columns rather than fail the check
+    // — but only for THIS error, so a real query fault still surfaces.
+    if (err?.code !== '42703') throw err;
+    process.stderr.write('  [cache-check] control-arm columns absent (pre-20260808190000 store) — comparison will report as uncontrolled\n');
+    rows = await many(select(''), args);
+  }
   return rows.map((r) => ({
     sid: r.id,
     startedAt: new Date(r.created_at).getTime(),
@@ -137,6 +148,9 @@ async function loadFromSupabase() {
     estimatedSavingsPct: Number(r.cache_estimated_savings_pct ?? 0),
     // null/undefined → unknown cohort (pre-canary rows have no seed state).
     seedEnabled: r.cache_seed_enabled ?? null,
+    // null on pre-20260808190000 rows = eligibility UNKNOWN, not false.
+    seedEligible: r.cache_seed_eligible ?? null,
+    seedSkipReason: r.cache_seed_skip_reason ?? null,
   }));
 }
 
@@ -170,13 +184,61 @@ function loadFromLocal() {
  * @param {Array<{hitRate:number, seedEnabled:boolean|null}>} runs
  * @param {{ minRuns?: number, flipThreshold?: number }} [opts]
  */
-function segmentAndDecide(runs, { minRuns = MIN_RUNS, flipThreshold = FLIP_THRESHOLD } = {}) {
+function segmentAndDecide(runs, { minRuns = MIN_RUNS, flipThreshold = FLIP_THRESHOLD, minControlRuns = MIN_RUNS } = {}) {
   const seedOn = runs.filter((r) => r.seedEnabled === true);
   const seedOff = runs.filter((r) => r.seedEnabled === false);
   const unknown = runs.filter((r) => r.seedEnabled !== true && r.seedEnabled !== false);
 
   const seedOnMedian = median(seedOn.map((r) => r.hitRate));
   const seedOffMedian = median(seedOff.map((r) => r.hitRate));
+
+  // ── The control arm (migration 20260808190000) ────────────────────────────
+  // `seedOff` is NOT a control: it mixes runs that were eligible but opted out
+  // with runs that could never have seeded (single unit, prefix too small).
+  // Since ineligibility correlates with small audits, comparing seed-ON against
+  // all of seedOff measures audit size, not seeding.
+  //
+  // `seedEligible === true` is required explicitly — `null` means the row
+  // predates the migration and its eligibility is UNKNOWN. Treating null as
+  // eligible would re-admit the exact confound this arm exists to remove.
+  const control = seedOff.filter((r) => r.seedEligible === true);
+  const ineligible = seedOff.filter((r) => r.seedEligible === false);
+  const eligibilityUnknown = seedOff.filter((r) => r.seedEligible === null || r.seedEligible === undefined);
+  const controlMedian = median(control.map((r) => r.hitRate));
+
+  let controlled;
+  if (control.length < minControlRuns) {
+    controlled = {
+      available: false,
+      controlCount: control.length,
+      ineligibleCount: ineligible.length,
+      eligibilityUnknownCount: eligibilityUnknown.length,
+      controlMedian,
+      note: `Uncontrolled: ${control.length}/${minControlRuns} eligible-but-withheld runs. `
+        + `Of the ${seedOff.length} seed-OFF runs, ${ineligible.length} could never have seeded and `
+        + `${eligibilityUnknown.length} predate the control-arm migration. Any seed-ON vs seed-OFF `
+        + `gap is therefore confounded by audit size. To populate this arm, run some audits with `
+        + `AUDIT_CACHE_SEED=0 — they now record eligibility instead of short-circuiting.`,
+    };
+  } else {
+    // Ratio, not difference: hit rates are proportions, and a 2x lift off a
+    // small base is the claim worth making. Guarded against a zero denominator.
+    const lift = (seedOnMedian !== null && controlMedian !== null && controlMedian > 0)
+      ? seedOnMedian / controlMedian
+      : null;
+    controlled = {
+      available: true,
+      controlCount: control.length,
+      ineligibleCount: ineligible.length,
+      eligibilityUnknownCount: eligibilityUnknown.length,
+      controlMedian,
+      treatmentMedian: seedOnMedian,
+      lift,
+      note: `Controlled: seed-ON ${pct(seedOnMedian)} (${seedOn.length} runs) vs eligible-but-withheld `
+        + `${pct(controlMedian)} (${control.length} runs)`
+        + (lift === null ? '; lift not computable.' : `; lift ${lift.toFixed(2)}x.`),
+    };
+  }
   const baseline = `Seed-OFF baseline: ${pct(seedOffMedian)} across ${seedOff.length} run(s)` +
     (unknown.length ? `; ${unknown.length} pre-canary run(s) have unknown seed state (excluded).` : '.');
 
@@ -202,17 +264,17 @@ function segmentAndDecide(runs, { minRuns = MIN_RUNS, flipThreshold = FLIP_THRES
     recommendation = 'HOLD';
     reason = `Seed-ON median hit-rate ${pct(seedOnMedian)} does not exceed ` +
       `${(flipThreshold * 100).toFixed(0)}% across ${seedOn.length} seed-ON runs — seeding isn't paying off. ` +
-      `Consider reverting the default to OFF (decideSeed in legacy-production-audit.mjs). ${baseline}` +
-      (seedOffMedian === null
-        ? ' NOTE: the seed-OFF baseline could not be computed, so this verdict rests on the'
-          + ' absolute threshold alone — there is no comparative evidence that seeding is worse'
-          + ' than not seeding. Treat it as provisional.'
-        : '');
+      `${baseline} ${controlled.note}` +
+      (controlled.available
+        ? ' A revert is justified only if the controlled lift above is also unconvincing.'
+        : ' DO NOT revert on this alone: the threshold arm has fired, but there is no controlled'
+          + ' comparison to confirm that seeding is worse than withholding it.');
   }
   return {
     recommendation, reason,
     seedOnCount: seedOn.length, seedOffCount: seedOff.length, unknownCount: unknown.length,
     seedOnMedian, seedOffMedian,
+    controlled,
   };
 }
 
@@ -247,6 +309,7 @@ async function analyse() {
     unknownCount: decision.unknownCount,
     medianHitRate: decision.seedOnMedian, // headline = the cohort we decide on
     seedOffMedian: decision.seedOffMedian,
+    controlled: decision.controlled,
     since: SINCE,
     source: sourceLabel,
     runs: r2Plus,
@@ -266,6 +329,11 @@ function renderHuman(result) {
   console.log(`  Since:           ${result.since}`);
   console.log(`  R2+ runs:        ${result.runCount} (seed-ON ${result.seedOnCount ?? 0} / seed-OFF ${result.seedOffCount ?? 0} / unknown ${result.unknownCount ?? 0})`);
   console.log(`  Seed-ON median:  ${pct(result.medianHitRate)}   (seed-OFF baseline: ${pct(result.seedOffMedian)})`);
+  if (result.controlled) {
+    const c = result.controlled;
+    console.log(`  Control arm:     ${c.available ? `${pct(c.controlMedian)} across ${c.controlCount} eligible-but-withheld run(s)` + (c.lift === null ? '' : `  → lift ${c.lift.toFixed(2)}x`) : `NOT POPULATED (${c.controlCount} run(s))`}`);
+    if (!c.available) console.log(`  ${c.note}`);
+  }
   console.log(`  Threshold:       seed-ON median >${(FLIP_THRESHOLD * 100).toFixed(0)}% AND >= ${MIN_RUNS} seed-ON runs`);
   console.log('');
   console.log(`  ${result.reason}`);

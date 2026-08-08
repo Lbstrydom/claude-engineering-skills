@@ -336,6 +336,19 @@ export async function recordRunComplete(runId, stats) {
       && await columnExists('audit_runs', 'cache_seed_enabled', many, isCloudEnabled)) {
     update.cache_seed_enabled = stats.cacheSeedEnabled;
   }
+  // Same probe-guard, same reason (migration 20260808190000). These two carry
+  // the seed A/B's control arm: `cache_seed_eligible` says the run COULD have
+  // seeded, `cache_seed_skip_reason` says why it did not. Without them a
+  // seed-OFF row is ambiguous between "withheld" and "impossible", and the
+  // cohorts are not comparable.
+  if (stats.cacheSeedEligible != null
+      && await columnExists('audit_runs', 'cache_seed_eligible', many, isCloudEnabled)) {
+    update.cache_seed_eligible = stats.cacheSeedEligible;
+  }
+  if (stats.cacheSeedSkipReason != null
+      && await columnExists('audit_runs', 'cache_seed_skip_reason', many, isCloudEnabled)) {
+    update.cache_seed_skip_reason = stats.cacheSeedSkipReason;
+  }
   try {
     await updateWhere('audit_runs', update, { id: runId });
   } catch (err) {

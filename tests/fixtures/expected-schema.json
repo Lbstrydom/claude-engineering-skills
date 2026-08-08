@@ -1391,6 +1391,20 @@
           "is_nullable": "YES",
           "column_default": null,
           "ordinal_position": 51
+        },
+        {
+          "column_name": "cache_seed_eligible",
+          "data_type": "boolean",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 52
+        },
+        {
+          "column_name": "cache_seed_skip_reason",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 53
         }
       ]
     },

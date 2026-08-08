@@ -75,6 +75,76 @@ describe('cache-hitrate-check — segmentAndDecide', () => {
 // is false, so an even-sized seed-ON cohort always fell through to HOLD no
 // matter how good the hit rates were. The real run had 67 seed-ON (odd, so it
 // reported a true 11.3%) and 72 seed-OFF (even → the "NaN%" baseline).
+// ── The control arm (migration 20260808190000) ──────────────────────────────
+// seed-OFF is not a control: it mixes eligible-but-withheld runs with runs that
+// could never seed (units.length<=1, prefix too small). Ineligibility
+// correlates with SMALL audits, so seed-ON vs all-of-seed-OFF measures audit
+// size rather than seeding. Only `seedEligible === true` runs are comparable.
+describe('cache-hitrate-check — seed A/B control arm', () => {
+  const on = (hitRate) => ({ hitRate, seedEnabled: true });
+  const withheld = (hitRate) => ({ hitRate, seedEnabled: false, seedEligible: true });
+  const impossible = (hitRate) => ({ hitRate, seedEnabled: false, seedEligible: false });
+  const preMigration = (hitRate) => ({ hitRate, seedEnabled: false, seedEligible: null });
+
+  it('ineligible runs are excluded from the control, however many there are', () => {
+    const runs = [
+      ...Array.from({ length: 5 }, () => on(0.4)),
+      ...Array.from({ length: 5 }, () => withheld(0.2)),
+      ...Array.from({ length: 40 }, () => impossible(0.01)), // would swamp a naive baseline
+    ];
+    const d = segmentAndDecide(runs, { minRuns: 5, flipThreshold: 0.3, minControlRuns: 5 });
+    assert.equal(d.controlled.available, true);
+    assert.equal(d.controlled.controlCount, 5);
+    assert.equal(d.controlled.ineligibleCount, 40);
+    assert.equal(d.controlled.controlMedian, 0.2, 'the 40 impossible runs must not enter the control');
+    assert.equal(d.controlled.lift, 2, '0.4 / 0.2');
+  });
+
+  it('pre-migration rows are UNKNOWN eligibility, never assumed eligible', () => {
+    const runs = [
+      ...Array.from({ length: 5 }, () => on(0.4)),
+      ...Array.from({ length: 9 }, () => preMigration(0.05)),
+    ];
+    const d = segmentAndDecide(runs, { minRuns: 5, flipThreshold: 0.3, minControlRuns: 5 });
+    assert.equal(d.controlled.available, false, 'null eligibility cannot stand in for a control');
+    assert.equal(d.controlled.eligibilityUnknownCount, 9);
+    assert.equal(d.controlled.controlCount, 0);
+  });
+
+  it('an unpopulated control arm says so, and says not to revert on the threshold alone', () => {
+    const runs = [
+      ...Array.from({ length: 6 }, () => on(0.1)), // below threshold → HOLD
+      ...Array.from({ length: 6 }, () => preMigration(0.05)),
+    ];
+    const d = segmentAndDecide(runs, { minRuns: 5, flipThreshold: 0.3, minControlRuns: 5 });
+    assert.equal(d.recommendation, 'HOLD');
+    assert.match(d.reason, /DO NOT revert on this alone/);
+    assert.match(d.reason, /Uncontrolled/);
+  });
+
+  it('a populated control arm reports the lift and drops the do-not-revert warning', () => {
+    const runs = [
+      ...Array.from({ length: 6 }, () => on(0.1)),
+      ...Array.from({ length: 6 }, () => withheld(0.1)), // seeding buys nothing
+    ];
+    const d = segmentAndDecide(runs, { minRuns: 5, flipThreshold: 0.3, minControlRuns: 5 });
+    assert.equal(d.recommendation, 'HOLD');
+    assert.equal(d.controlled.lift, 1, 'no lift → a revert really is defensible');
+    assert.doesNotMatch(d.reason, /DO NOT revert on this alone/);
+    assert.match(d.reason, /Controlled:/);
+  });
+
+  it('a zero control median does not produce an Infinity lift', () => {
+    const runs = [
+      ...Array.from({ length: 5 }, () => on(0.4)),
+      ...Array.from({ length: 5 }, () => withheld(0)),
+    ];
+    const d = segmentAndDecide(runs, { minRuns: 5, flipThreshold: 0.3, minControlRuns: 5 });
+    assert.equal(d.controlled.lift, null);
+    assert.match(d.controlled.note, /lift not computable/);
+  });
+});
+
 describe('cache-hitrate-check — numeric-as-string from Postgres', () => {
   const pgRun = (hitRate, seedEnabled) => ({ hitRate: String(hitRate), seedEnabled });
 

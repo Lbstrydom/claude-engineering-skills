@@ -431,6 +431,15 @@ function throwIfConfigError(settled) {
 // per process; reset at runMultiPassCodeAudit start for any in-process re-run).
 let _runSeedUsed = false;
 
+// Companions to `_runSeedUsed`, and the reason the seed A/B has a control arm.
+// `_runSeedEligible` is true once ANY pass COULD have seeded, whether or not it
+// did; `_runSeedSkipReason` records why the first non-seeding pass declined.
+// Together they separate "seeding was withheld" (eligible + env-disabled — the
+// control) from "seeding was impossible here" (single unit / prefix too small),
+// which `cache_seed_enabled=false` alone conflates into one useless cohort.
+let _runSeedEligible = false;
+let _runSeedSkipReason = null;
+
 // Cache-seed eligibility policy (plan §7c). Returns the seed decision
 // envelope { seedEligible, seedUsed, seedSkipReason, seedUnitIdx, seedUnitTokens }
 // so the audit-pass telemetry can record which mode ran.
@@ -441,10 +450,21 @@ function decideSeed(units, passName, buildPromptForUnit) {
   const envFlag = process.env.AUDIT_CACHE_SEED !== '0';
   const minPrefix = safeInt(process.env.AUDIT_CACHE_STABLE_PREFIX_MIN, 1024);
   const decision = { seedEligible: false, seedUsed: false, seedSkipReason: null, seedUnitIdx: null, seedUnitTokens: null };
-  if (!envFlag) {
-    decision.seedSkipReason = 'env-disabled';
-    return decision;
-  }
+
+  // ELIGIBILITY IS EVALUATED BEFORE THE ENV FLAG — deliberately, and it is the
+  // whole reason the seed cohorts are comparable (2026-08-08).
+  //
+  // This function used to return immediately on `!envFlag`, so a run with
+  // AUDIT_CACHE_SEED=0 was never assessed for eligibility. Every opted-out run
+  // therefore looked identical to a run that could never have seeded anyway
+  // (single-unit, or too small a stable prefix). The seed-OFF cohort was thus a
+  // mix of two populations, and since `units.length <= 1` correlates with small
+  // audits, seed-OFF was systematically smaller than seed-ON. Comparing their
+  // hit rates measured audit size, not seeding — see docs/plans/openai-prefix-cache.md.
+  //
+  // Evaluating eligibility first costs one extra `buildPromptForUnit` probe on
+  // opted-out runs. That probe builds a prompt from an empty `_context`, so it
+  // reads no files and makes no API call — cheap enough to pay for a control group.
   if (units.length <= 1) {
     decision.seedSkipReason = 'units.length<=1';
     return decision;
@@ -474,9 +494,15 @@ function decideSeed(units, passName, buildPromptForUnit) {
       return decision;
     }
     decision.seedEligible = true;
-    decision.seedUsed = true;
     decision.seedUnitIdx = seedIdx;
     decision.seedUnitTokens = prefixTokens;
+    // The env flag gates USE, never eligibility. An eligible-but-opted-out run
+    // is the control arm: same shape as a seeded run, seeding withheld.
+    if (!envFlag) {
+      decision.seedSkipReason = 'env-disabled';
+      return decision;
+    }
+    decision.seedUsed = true;
     return decision;
   } catch (err) {
     decision.seedSkipReason = `probe-failed:${err.message?.slice(0, 60)}`;
@@ -544,6 +570,13 @@ async function runMapReducePass(openai, files, passName, buildPromptForUnit, max
   // Promise.allSettled.
   const seedDecision = decideSeed(units, passName, buildPromptForUnit);
   let results;
+  if (seedDecision.seedEligible) _runSeedEligible = true;
+  // First reason wins: passes are homogeneous enough that the first decline
+  // characterises the run, and a last-wins rule would let a late trivial pass
+  // (units.length<=1) mask an earlier, more informative 'env-disabled'.
+  if (!seedDecision.seedUsed && seedDecision.seedSkipReason && _runSeedSkipReason === null) {
+    _runSeedSkipReason = seedDecision.seedSkipReason;
+  }
   if (seedDecision.seedUsed) {
     _runSeedUsed = true; // run-level effective-seed flag for cache_seed_enabled telemetry
     const seedIdx = seedDecision.seedUnitIdx;
@@ -1351,6 +1384,8 @@ export async function runLegacyProductionAudit(ctx) {
   if (!learningWritesAllowed && bandit) bandit = bandit.nonPersistingView();
   const totalStart = Date.now();
   _runSeedUsed = false; // reset run-scoped cache-seed flag (CLI = one run/process)
+  _runSeedEligible = false;
+  _runSeedSkipReason = null;
 
   // Initialize pass result cache — survives merge crashes
   initResultCache(outFile);
@@ -3098,6 +3133,8 @@ export async function runLegacyProductionAudit(ctx) {
     // actually warmed the prefix cache (decideSeed→seedUsed), NOT just the env
     // flag. Powers the seed-ON cohort in `cache-hitrate-check`.
     seedUsed: _runSeedUsed,
+    seedEligible: _runSeedEligible,
+    seedSkipReason: _runSeedSkipReason,
     perPass: {},
   };
   cacheMetrics.estimatedSavingsPct = cacheMetrics.hitRate * 0.5; // OpenAI ~50% discount
@@ -3479,6 +3516,10 @@ export async function runLegacyProductionAudit(ctx) {
       cacheHitRate: cacheMetrics?.hitRate ?? null,
       cacheEstimatedSavingsPct: cacheMetrics?.estimatedSavingsPct ?? null,
       cacheSeedEnabled: cacheMetrics?.seedUsed ?? null,
+      // Migration 20260808190000 — the control-arm keys. `cacheSeedEnabled`
+      // alone cannot distinguish a withheld seed from an impossible one.
+      cacheSeedEligible: cacheMetrics?.seedEligible ?? null,
+      cacheSeedSkipReason: cacheMetrics?.seedSkipReason ?? null,
     }).catch(e => process.stderr.write(`  [learning] recordRunComplete: ${e.message}\n`));
 
     // Phase 1 — adaptive-learning-v1.  Backfill the pass_selection decision
@@ -3809,5 +3850,10 @@ export const __testExports = process.env.AUDIT_EXPORTS_FOR_TESTS === '1'
   ? {
       validateLedgerForR2, deriveFindingsFromReport, runMapReducePass, initResultCache, cachePassResult,
       writeLearningState, cleanupCache, classifyShadowFailureSafe, runOrphanIntroducedPass, dedupReplacementId,
+      // decideSeed: its eligibility-before-env-flag ordering is what gives the
+      // cache-seed A/B a control arm, and that ordering is invisible from the
+      // outside — an opted-out run looks the same either way until you read
+      // `seedEligible`. Pure and deterministic, so it is a Tier-1 unit.
+      decideSeed,
     }
   : undefined;
