@@ -242,4 +242,31 @@ if [ -f "$SYNC_SCRIPT" ]; then
   fi
 fi
 
+# ── 3. Opportunistic weekly local maintenance (opt-in, backgrounded) ─────
+# The local replica of the 5 weekly GH Actions cron workflows. Consumer repos
+# get this block from `scripts/install-prepush-hook.mjs`, which writes the
+# CONSUMER path (scripts/.claude-skills/). This repo's hook is installed by a
+# different script (install-git-hooks.mjs) and had no equivalent — so the
+# source repo, alone among the repos it serves, could never run its own
+# replica. `AUDIT_LOOP_WEEKLY_MAINTENANCE=1` was therefore inert here.
+#
+# That gap only started to matter once this repo's store moved off a
+# cloud-reachable Postgres: a GitHub-hosted runner cannot reach a LAN address,
+# so the scheduled workflows self-skip and the local replica is the only thing
+# left that runs memory-health and learning-weekly-review for THIS repo.
+#
+# Always invoked; maintenance-checks.mjs decides whether the opt-in flag is set
+# and whether a run is due — a silent no-op otherwise, so this costs nothing
+# for anyone who has not opted in.
+#
+# BACKGROUNDED via `( … & )`, not `|| true`: `|| true` only suppresses the exit
+# code, leaving `git push` blocked for up to ~35 min (7 checks x 5-min timeout)
+# once overdue. Output goes to a log — read it with `npm run maintenance:status`.
+MAINT_SCRIPT="$REPO_ROOT/scripts/maintenance-checks.mjs"
+if [ -f "$MAINT_SCRIPT" ]; then
+  mkdir -p "$REPO_ROOT/.audit-loop" 2>/dev/null
+  ( cd "$REPO_ROOT" && node "$MAINT_SCRIPT" --opportunistic \
+      > "$REPO_ROOT/.audit-loop/last-maintenance.log" 2>&1 < /dev/null & ) 2>/dev/null
+fi
+
 exit 0
