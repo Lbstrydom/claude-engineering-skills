@@ -256,10 +256,82 @@ function printProgress(logPath, target) {
   process.stdout.write(`  log: ${logPath}\n\n`);
 }
 
-function runArm(arm, { transcript, plan, mode, outDir, id }) {
-  const out = path.join(outDir, `${id}-${arm.id}.json`);
+/**
+ * The experiment label written to `audit_runs.experiment_tag` (migration
+ * 20260808120000). Every run this script mints is a REPLAY, never an audit of
+ * the working tree — the tag is what keeps them out of the per-run rate the
+ * campaign compares against.
+ */
+export const EXPERIMENT_TAG = 'final-review-bakeoff';
+
+/**
+ * Mint one `audit_runs` row for one arm invocation, or null when the cloud is
+ * off / unreachable.
+ *
+ * ONE ROW PER ARM, not per snapshot. The run-level final-review columns
+ * (`final_review_model`, `final_review_shadow_model`, the shadow token and
+ * latency sums, `gemini_verdict`) are single-valued, so three arms sharing a
+ * row would leave whichever finished last as the record of all three — the
+ * three-arms-one-row shape looks tidier and destroys the comparison the arms
+ * exist to make.
+ *
+ * Never throws: a bake-off snapshot with no cloud row is degraded (findings
+ * live only in the arm's `--out` JSON) but still counts, exactly as the three
+ * pre-epoch snapshots did. Refusing to collect because the store is down would
+ * make the campaign hostage to it.
+ */
+/** Is the cloud store configured? Never throws — an unreachable store is "off". */
+async function cloudIsOn() {
+  try {
+    const store = await import('./learning-store.mjs');
+    return await store.isCloudEnabled();
+  } catch { return false; }
+}
+
+async function mintArmRun(arm, { plan, mode, id }) {
+  try {
+    const store = await import('./learning-store.mjs');
+    if (!await store.isCloudEnabled()) return null;
+    await store.initLearningStore?.();
+    const { generateRepoProfile } = await import('./lib/context.mjs');
+    const ref = await store.resolveRepoForStore({ profile: generateRepoProfile() }).catch(() => null);
+    const repoId = ref?.repoRowId ?? null;
+    if (!repoId) return null;
+    return await store.recordRunStart(repoId, plan, mode === 'plan' ? 'plan' : 'code', {
+      scopeMode: mode === 'plan' ? 'plan' : 'diff',
+      experimentTag: EXPERIMENT_TAG,
+    });
+  } catch (err) {
+    process.stderr.write(`  [bakeoff] run registration failed for arm ${arm.id} (findings will be file-only): ${err.message}\n`);
+    return null;
+  }
+}
+
+/**
+ * The argv for one arm's `gemini-review` invocation. Pure, so the `--run-id`
+ * wiring is assertable without spawning a reviewer or a database.
+ *
+ * @param {{id: string, args?: string[]}} arm
+ * @param {{transcript: string, plan: string, mode?: string|null, out: string, runId?: string|null}} ctx
+ */
+export function buildArmArgs(arm, { transcript, plan, mode, out, runId }) {
   const args = ['scripts/gemini-review.mjs', 'review', plan, transcript, '--out', out, ...(arm.args || [])];
   if (mode) args.push('--mode', mode);
+  // Without this, `runShadowAndPersist` returns early at `if (!runId) return`
+  // and the ENTIRE cloud write is a silent no-op — the defect that left
+  // snapshots 2-3 with `final_review_shadow_model = NULL` and no findings to
+  // adjudicate, so §6.3's "accepted HIGH/MED clusters" had nothing to score.
+  //
+  // Omitted rather than passed as an empty string when registration failed: a
+  // blank `--run-id` would be consumed as the flag's VALUE and silently write
+  // nowhere, which is the same silence with an extra step.
+  if (runId) args.push('--run-id', runId);
+  return args;
+}
+
+function runArm(arm, { transcript, plan, mode, outDir, id, runId }) {
+  const out = path.join(outDir, `${id}-${arm.id}.json`);
+  const args = buildArmArgs(arm, { transcript, plan, mode, out, runId });
   process.stderr.write(`  [bakeoff] arm ${arm.id}…\n`);
   const r = spawnSync(process.execPath, args, {
     encoding: 'utf-8',
@@ -270,7 +342,7 @@ function runArm(arm, { transcript, plan, mode, outDir, id }) {
   try { return readArmResult(out); } catch (err) { return { error: `unreadable result: ${err.message}` }; }
 }
 
-function main() {
+async function main() {
   assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'bakeoff-collect' });
   const arg = (n) => { const i = process.argv.indexOf(`--${n}`); return i < 0 ? null : (process.argv[i + 1] ?? null); };
   if (process.argv.includes('--help') || process.argv.includes('-h')) {
@@ -299,7 +371,10 @@ function main() {
   process.stderr.write(`  [bakeoff] snapshot ${id} — ${ARMS.length} arms on ${path.basename(transcript)}\n`);
 
   const arms = {};
-  for (const a of ARMS) arms[a.id] = runArm(a, { transcript, plan, mode: arg('mode'), outDir, id });
+  for (const a of ARMS) {
+    const runId = await mintArmRun(a, { plan, mode: arg('mode'), id });
+    arms[a.id] = { ...runArm(a, { transcript, plan, mode: arg('mode'), outDir, id, runId }), runId: runId ?? null };
+  }
 
   const entry = {
     snapshotId: id,
@@ -318,6 +393,22 @@ function main() {
   for (const [k, v] of Object.entries(arms)) {
     process.stderr.write(`  [bakeoff] ${k}: ${v.error ? `ERROR ${v.error}` : `${v.shadowState} ${v.shadowModel} buckets=${JSON.stringify(v.buckets)}`}\n`);
   }
+
+  // Anti-green on the CLOUD half. Registration is best-effort by design, but
+  // "every arm ran and none of it was persisted" must never pass quietly: the
+  // findings would exist only as files, `final-review-stats` would show nothing
+  // to adjudicate, and the snapshot would still count — which is exactly the
+  // state snapshots 2-3 were left in, undetected for a week. Found the hard way
+  // on the first real run of this code path: a wrong import specifier made
+  // every mint throw, and the failure was invisible behind a buffered pipe.
+  const registered = Object.values(arms).filter((v) => v.runId).length;
+  if (registered === 0 && await cloudIsOn()) {
+    process.stderr.write('  [bakeoff] WARNING: cloud is enabled but NO arm registered an audit_runs row —\n'
+      + '  findings are file-only and will not appear in `final-review-stats --worksheet`.\n'
+      + '  Fix registration and re-collect; this snapshot cannot be adjudicated as-is.\n');
+  } else if (registered < Object.keys(arms).length && await cloudIsOn()) {
+    process.stderr.write(`  [bakeoff] NOTE: ${registered}/${Object.keys(arms).length} arms registered a cloud run — the rest are file-only.\n`);
+  }
   if (!isComplete(entry)) process.stderr.write('  [bakeoff] INCOMPLETE — an arm did not run; this snapshot does NOT count toward N\n');
   printProgress(LOG_PATH, target);
 }
@@ -331,8 +422,11 @@ const invokedDirectly = (() => {
 
 if (invokedDirectly) {
   if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
-  try { main(); } catch (err) {
+  // `main` is async since run registration talks to the store — an unawaited
+  // rejection here would exit 0 with the log unwritten, which is precisely the
+  // "an arm never ran reads as found nothing" failure the counter guards against.
+  main().catch((err) => {
     if (err instanceof ArgvError || err?.code === 'ARGV_ERROR') { process.stderr.write(`${err.message}\n`); process.exit(2); }
     process.stderr.write(`Error: ${err.message}\n`); process.exit(1);
-  }
+  });
 }

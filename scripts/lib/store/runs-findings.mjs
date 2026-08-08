@@ -229,7 +229,7 @@ async function detectPassStatsRoundColumn() {
  * Insert a new audit_runs row. Returns the new run's id, or null when
  * cloud is disabled / the insert fails.
  */
-export async function recordRunStart(repoId, planFile, mode, { scopeMode, commitSha, branch, planId, runId } = {}) {
+export async function recordRunStart(repoId, planFile, mode, { scopeMode, commitSha, branch, planId, runId, experimentTag } = {}) {
   if (!await isCloudEnabled()) return null;
   // Run-unification (WS1 §1.2/§1.3b): when the orchestrator threads an explicit
   // `runId`, REUSE the existing audit_runs row so all rounds of one audit share
@@ -273,6 +273,11 @@ export async function recordRunStart(repoId, planFile, mode, { scopeMode, commit
     ...(commitSha ? { commit_sha: commitSha } : {}),
     ...(branch ? { branch } : {}),
     ...(planId ? { plan_id: planId } : {}),
+    // Probed, not assumed: an un-migrated store would reject the whole INSERT on
+    // an unknown column, turning a descriptive label into a run-registration
+    // failure — the graceful-degradation invariant runs the other way.
+    ...(experimentTag && await columnExists('audit_runs', 'experiment_tag', many, isCloudEnabled)
+      ? { experiment_tag: experimentTag } : {}),
   };
   try {
     const out = await insertReturning('audit_runs', row, { returning: ['id'] });
@@ -984,14 +989,14 @@ export async function markRunFindingsAutoDismissed(runId, fingerprints, reason) 
  * @param {{queueLimit?: number}} [opts]
  */
 export async function getFinalReviewStats(repoName, { queueLimit = 50 } = {}) {
-  if (!await isCloudEnabled()) return { ok: true, cloud: false, repoId: null, buckets: [], shadowOnlyQueue: [], actionablePairs: [], runs: [] };
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, repoId: null, buckets: [], shadowOnlyQueue: [], actionablePairs: [], runs: [], experimentRuns: [] };
   const repoRow = await one(`SELECT id FROM audit_repos WHERE name = $1 ORDER BY created_at DESC LIMIT 1`, [repoName]);
   const repoId = repoRow?.id || null;
-  if (!repoId) return { ok: true, cloud: true, repoId: null, buckets: [], shadowOnlyQueue: [], actionablePairs: [], runs: [] };
+  if (!repoId) return { ok: true, cloud: true, repoId: null, buckets: [], shadowOnlyQueue: [], actionablePairs: [], runs: [], experimentRuns: [] };
   // Guard: bail cleanly on an un-migrated store (no source_model column).
   if (!await columnExists('audit_findings', 'source_model', many, isCloudEnabled)) {
     process.stderr.write('  [final-review-stats] source_model column absent — run migration 20260610120000\n');
-    return { ok: false, cloud: true, repoId, buckets: [], shadowOnlyQueue: [], actionablePairs: [], runs: [], error: 'NOT_MIGRATED' };
+    return { ok: false, cloud: true, repoId, buckets: [], shadowOnlyQueue: [], actionablePairs: [], runs: [], experimentRuns: [], error: 'NOT_MIGRATED' };
   }
   try {
     const buckets = await many(
@@ -1036,6 +1041,19 @@ export async function getFinalReviewStats(repoName, { queueLimit = 50 } = {}) {
         GROUP BY f.user_action, f.remediation_state`,
       [repoId]
     );
+    // `n` here is the DENOMINATOR of every per-run rate the final-review
+    // experiment quotes ("~1.1 accepted HIGH/MED per run"). Replay runs — a
+    // saved transcript pushed back through a reviewer to compare models — are
+    // not audits of anything, so counting them deflates the rate by however many
+    // replays were collected. Excluded by tag, and the count of what was
+    // excluded is returned rather than dropped: a silent filter is how a reader
+    // ends up trusting a number whose population they cannot see.
+    //
+    // The adjudication queue above deliberately does NOT filter. Judging a
+    // replay's findings is the entire point of running one, and each queue row
+    // carries its run_id, so an operator can always tell which is which.
+    const experimentFilter = await columnExists('audit_runs', 'experiment_tag', many, isCloudEnabled)
+      ? 'AND r.experiment_tag IS NULL' : '';
     const runs = await many(
       `SELECT r.final_review_model, r.final_review_shadow_model,
               COUNT(*) AS n,
@@ -1043,15 +1061,25 @@ export async function getFinalReviewStats(repoName, { queueLimit = 50 } = {}) {
               COALESCE(SUM(r.final_review_shadow_output_tokens), 0) AS shadow_output_tokens,
               COALESCE(SUM(r.final_review_shadow_latency_ms), 0)    AS shadow_latency_ms
          FROM audit_runs r
-        WHERE r.repo_id = $1 AND r.final_review_model IS NOT NULL
+        WHERE r.repo_id = $1 AND r.final_review_model IS NOT NULL ${experimentFilter}
         GROUP BY r.final_review_model, r.final_review_shadow_model
         ORDER BY n DESC`,
       [repoId]
     );
-    return { ok: true, cloud: true, repoId, buckets, shadowOnlyQueue, actionablePairs, runs };
+    const experimentRuns = experimentFilter
+      ? (await many(
+          `SELECT r.experiment_tag, COUNT(*) AS n
+             FROM audit_runs r
+            WHERE r.repo_id = $1 AND r.final_review_model IS NOT NULL
+              AND r.experiment_tag IS NOT NULL
+            GROUP BY r.experiment_tag ORDER BY n DESC`,
+          [repoId]
+        ))
+      : [];
+    return { ok: true, cloud: true, repoId, buckets, shadowOnlyQueue, actionablePairs, runs, experimentRuns };
   } catch (err) {
     process.stderr.write(`  [final-review-stats] query failed: ${err.message}\n`);
-    return { ok: false, cloud: true, repoId, buckets: [], shadowOnlyQueue: [], actionablePairs: [], runs: [], error: err.message };
+    return { ok: false, cloud: true, repoId, buckets: [], shadowOnlyQueue: [], actionablePairs: [], runs: [], experimentRuns: [], error: err.message };
   }
 }
 

@@ -11,7 +11,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { findEligibleTranscripts, assessWindow } from '../scripts/final-review-bakeoff.mjs';
-import { zeroFindingArms, isComplete, summarise, CONTRACT_EPOCH } from '../scripts/bakeoff-collect.mjs';
+import { zeroFindingArms, isComplete, summarise, CONTRACT_EPOCH, buildArmArgs, EXPERIMENT_TAG } from '../scripts/bakeoff-collect.mjs';
 
 /** Build an injectable fake FS for the pure enumerator. */
 function io(files, existingPlans = []) {
@@ -205,5 +205,44 @@ describe('summarise surfaces every arm (bakeoff-collect)', () => {
     assert.equal(s.totals.opusUnique, 0);
     assert.equal(s.totals.soloFindings, 0);
     assert.deepEqual(s.totals.primaryDivergence, []);
+  });
+});
+
+describe('cloud run wiring (bakeoff-collect buildArmArgs)', () => {
+  const arm = { id: 'kimi', args: ['--provider', 'openrouter'] };
+  const ctx = { transcript: 't.json', plan: 'p.md', mode: 'code', out: 'o.json' };
+
+  it('threads --run-id so the final-review cloud write is armed', () => {
+    // `runShadowAndPersist` bails at `if (!runId) return`, so omitting this
+    // makes the ENTIRE persist a silent no-op — snapshots 2-3 of this campaign
+    // reached the store with final_review_shadow_model NULL and zero findings
+    // for exactly this reason, leaving nothing to adjudicate.
+    const args = buildArmArgs(arm, { ...ctx, runId: 'run-abc' });
+    const i = args.indexOf('--run-id');
+    assert.notEqual(i, -1, '--run-id absent — the cloud write would be a no-op');
+    assert.equal(args[i + 1], 'run-abc');
+  });
+
+  it('OMITS --run-id when registration failed, never passing a blank', () => {
+    // A trailing `--run-id` with no value (or an empty string) is consumed as
+    // the flag's VALUE by the argv parser and writes nowhere — the same silence
+    // as omitting it, but harder to see.
+    for (const runId of [null, undefined, '']) {
+      const args = buildArmArgs(arm, { ...ctx, runId });
+      assert.equal(args.includes('--run-id'), false, `blank run-id leaked for ${JSON.stringify(runId)}`);
+    }
+  });
+
+  it('keeps the arm\u2019s own provider flags intact alongside the run id', () => {
+    const args = buildArmArgs(arm, { ...ctx, runId: 'r1' });
+    assert.ok(args.includes('--provider') && args.includes('openrouter'));
+    assert.equal(args[args.indexOf('--mode') + 1], 'code');
+  });
+
+  it('tags every minted run as an experiment, so per-run rates can exclude it', () => {
+    // The campaign quotes "~1.1 accepted HIGH/MED per RUN" — a rate whose
+    // denominator is COUNT(*) over audit_runs. Replays are not audits; an
+    // untagged replay deflates the rate it is being compared against.
+    assert.equal(EXPERIMENT_TAG, 'final-review-bakeoff');
   });
 });

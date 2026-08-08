@@ -344,7 +344,7 @@ Run Gemini 3.1 Pro as the final gate. Falls back to Claude Opus when
 `GEMINI_API_KEY` is absent.
 
 ```bash
-node scripts/gemini-review.mjs review <plan-file> /tmp/$SID-transcript.json \
+node scripts/gemini-review.mjs review <plan-file> .audit/$SID-transcript.json \
   --out /tmp/$SID-gemini-result.json 2>/tmp/$SID-gemini-stderr.log
 ```
 

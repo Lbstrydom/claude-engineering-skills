@@ -2,8 +2,13 @@
 /**
  * @fileoverview `npm run audit:clean` — age-based pruning of TRANSIENT audit
  * working files. `.audit/` accumulates per-cycle artifacts (diffs, ledgers,
- * transcripts, stderr logs, burn-in files, regenerable worksheets) that are
- * only useful while their cycle is alive; weeks later they're noise.
+ * stderr logs, burn-in files, regenerable worksheets) that are only useful
+ * while their cycle is alive; weeks later they're noise.
+ *
+ * ONE class is exempt from "useful only while its cycle is alive": final-review
+ * TRANSCRIPTS outlive their cycle as the replay input for evaluating a cheaper
+ * or newer final reviewer. They are retained through a bounded newest-N window
+ * (`keepNewest`) rather than kept forever — see the TRANSIENT entry.
  *
  * Safety model (fail-safe by construction):
  *   - ALLOWLIST-only: a file is deletable ONLY if it matches a TRANSIENT
@@ -88,14 +93,34 @@ function listStalePreimages({ warn } = { warn: () => {} }) {
   return { stale: out, scanned: true };
 }
 
-/** Transient patterns, scoped per directory. RegExp over the basename. */
+/**
+ * Transient patterns, scoped per directory. RegExp over the basename.
+ *
+ * `keepNewest: N` marks a RETAINED class: the N most recent matches survive at
+ * any age, and only what falls out the back of that window is age-gated. Use it
+ * for files that are INPUTS to a later evaluation rather than intermediates of
+ * a finished cycle — see the transcript entry.
+ */
 const TRANSIENT = [
   { dir: '.audit', re: /^cluster.*\.(json|patch|log)$/i },
   { dir: '.audit', re: /^burnin/i },
   { dir: '.audit', re: /\.patch$/i },
   { dir: '.audit', re: /-stderr\.log$/i },
   { dir: '.audit', re: /\.log$/i },
-  { dir: '.audit', re: /-transcript\.json$/i },
+  // Final-review transcripts are the ONLY replayable input for a reviewer/model
+  // comparison — a cheaper final reviewer can only be evaluated against real
+  // audit deliberations, and a synthesized one proves nothing. A 14-day sweep
+  // outlives no campaign: the closed shadow A/B spent $50.90 and left zero
+  // transcripts to replay, and the Kimi bake-off then ran on a single input.
+  // So they are retained, but BOUNDED — the newest 25 (a 12-snapshot campaign
+  // plus headroom for incompletes and replacements, ~1-3MB at observed sizes),
+  // after which the ordinary age gate applies and the tail is pruned.
+  //
+  // The suffix group is load-bearing, not cosmetic: `-transcript-v2.json` (the
+  // Step 7.1 re-review) and `-transcript-code.json` never matched the old
+  // `-transcript\.json$`, so those variants were pruned by NOTHING and grew
+  // without bound. Widening the match is what makes the cap a real ceiling.
+  { dir: '.audit', re: /-transcript(-[a-z0-9]+)?\.json$/i, keepNewest: 25 },
   { dir: '.audit', re: /-result\.json$/i },
   { dir: '.audit', re: /-ledger\.json$/i },
   { dir: '.audit', re: /^session-audit-.*\.json$/i },
@@ -194,8 +219,33 @@ export function collectCandidates(dir, re, recurse, cutoff, out, { warn }) {
       continue;
     }
     if (st.mtimeMs > cutoff) continue;
-    out.push({ p, bytes: st.size, ageDays: Math.floor((Date.now() - st.mtimeMs) / 86400000) });
+    out.push({ p, bytes: st.size, mtimeMs: st.mtimeMs, ageDays: Math.floor((Date.now() - st.mtimeMs) / 86400000) });
   }
+}
+
+/**
+ * Split a retained class into {retained, deletable} at the keep-newest window.
+ *
+ * Called on a set collected WITHOUT an age gate (cutoff `Infinity`), because the
+ * window must count every match — if it saw only the aged ones, ten fresh
+ * transcripts would each keep a slot open and the sweep would retain 25 old ones
+ * on top of them, so the ceiling would not be a ceiling.
+ *
+ * Ties in `mtimeMs` are broken by path so the split is deterministic — two files
+ * written in the same millisecond otherwise make the retained set depend on
+ * readdir order, and a sweep that keeps a different file each run is not a
+ * retention policy.
+ *
+ * @param {Array<{p: string, mtimeMs: number}>} found - every match, any age
+ * @param {number} keepNewest - window size; the N most recent survive at any age
+ * @param {number} cutoff - epoch ms; beyond the window, only older files qualify
+ */
+export function splitRetained(found, keepNewest, cutoff) {
+  const sorted = [...found].sort((a, b) => (b.mtimeMs - a.mtimeMs) || a.p.localeCompare(b.p));
+  return {
+    retained: sorted.slice(0, keepNewest),
+    deletable: sorted.slice(keepNewest).filter((c) => c.mtimeMs <= cutoff),
+  };
 }
 
 function main() {
@@ -214,7 +264,21 @@ function main() {
   const warn = (msg) => process.stderr.write(`  [audit-clean] ${msg}\n`);
 
   const candidates = [];
-  for (const t of TRANSIENT) collectCandidates(t.dir, t.re, t.recurse === true, cutoff, candidates, { warn });
+  const retained = [];
+  for (const t of TRANSIENT) {
+    if (!t.keepNewest) {
+      collectCandidates(t.dir, t.re, t.recurse === true, cutoff, candidates, { warn });
+      continue;
+    }
+    // Collect at EVERY age (Infinity never trips `mtimeMs > cutoff`), then let
+    // the window decide. Passing `Date.now()` instead would be a race with a
+    // file written in the same millisecond.
+    const found = [];
+    collectCandidates(t.dir, t.re, t.recurse === true, Number.POSITIVE_INFINITY, found, { warn });
+    const split = splitRetained(found, t.keepNewest, cutoff);
+    retained.push(...split.retained);
+    candidates.push(...split.deletable);
+  }
 
   // A path can match several patterns — dedupe.
   const seen = new Set();
@@ -232,6 +296,15 @@ function main() {
     }
   }
 
+  // Disclose retention BEFORE the verdict, and on both exit paths. "0 deleted"
+  // otherwise reads as "the sweep found nothing" when it may mean "everything
+  // matched a retained class" — the same false-clean shape `scanned:false`
+  // exists to prevent one function up.
+  if (retained.length > 0) {
+    const keptKb = Math.round(retained.reduce((s, c) => s + c.bytes, 0) / 1024);
+    process.stdout.write(`audit-clean: retained ${retained.length} replay input(s), ~${keptKb}KB — model-eval transcripts, newest-first window.\n`);
+  }
+
   if (unique.length === 0 && stalePreimages.length === 0) {
     process.stdout.write(`audit-clean: nothing transient older than ${ageDays}d — clean.\n`);
     return;
@@ -244,7 +317,7 @@ function main() {
 }
 
 /** Internal seams for tests. Underscore-prefixed per repo convention. */
-export const _internals = { collectCandidates, listStalePreimages, BENIGN_FS_CODES, TRANSIENT, KEEP };
+export const _internals = { collectCandidates, listStalePreimages, splitRetained, BENIGN_FS_CODES, TRANSIENT, KEEP };
 
 // isMain guard — importing this module (from a test) must not run a sweep.
 const isMain = import.meta.url === `file://${process.argv[1]}`

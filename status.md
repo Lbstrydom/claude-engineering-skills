@@ -1,6 +1,79 @@
 # Project Status Log
 
-## 2026-08-07 (latest) — AUDIT_CACHE_SEED validation moved to GitHub Actions
+## 2026-08-08 (latest) — the bake-off was starving, and the fix was three defects deep
+
+The final-review bake-off counter had sat at 1/12 for five days. Asking why
+surfaced a supply chain that was broken at every link.
+
+**Transcripts were written to `/tmp`.** [208eba20](https://github.com/Lbstrydom/claude-engineering-skills/commit/208eba20)
+diagnosed this on 2026-07-28 and fixed the *invocation* line in
+`audit-code/SKILL.md` — but the **build** instruction lives in the shared
+reference, which still said `/tmp`, and `/audit-plan` said `/tmp` in both
+places. Measured: 113 transcripts on this machine, **108 outside the repo**
+across `C:\tmp` and `AppData\Local\Temp` (Bash's `/tmp` and Node's `/tmp` are
+different directories on Windows), and the newest one there belonged to
+wine-cellar-app — consumer sessions share one Windows temp dir. Fixed at the
+canonical `docs/audit/shared-references/gemini-gate.md`; editing a synced copy
+is reverted by `sync-shared-audit-refs`, which is how the half-fix survived.
+
+**`audit:clean` deleted the survivors.** `.audit/*-transcript.json` matched a
+TRANSIENT pattern on a 14-day gate, so the corrected location was also the
+swept one. Transcripts are now a **retained class** (`keepNewest`): newest 25
+survive at any age, the tail is still pruned, and the sweep prints what it
+retained. The pattern also widened to `-transcript(-<suffix>)?.json` — the
+`-v2` re-review and `-code` variants never matched the old regex, so they were
+pruned by *nothing*; an exemption without the widened match would have swapped
+one unbounded class for another.
+
+**`--run-id` was never threaded, so the cloud write was a silent no-op.**
+`bakeoff-collect` now mints one `audit_runs` row **per arm** (the run-level
+final-review columns are single-valued — three arms sharing a row leaves the
+last finisher as the record of all three) and passes `--run-id`. Replay rows
+carry `experiment_tag = 'final-review-bakeoff'` (migration `20260808120000`,
+applied — 98/98, no drift). That tag is arithmetic, not tidiness: §6.3 scores
+accepted HIGH/MED **per run**, and that denominator is `COUNT(*)` over
+`audit_runs`. Measured after collection: **50** runs with a final reviewer,
+**12** tagged, organic denominator **47** — unchanged by the campaign
+measuring itself. Untagged, the same 12 would have read as a ~20% drop in
+Opus's per-run rate caused entirely by observing it.
+
+**Found the hard way**: the first real run of the new path had a wrong import
+specifier (`./lib/learning-store.mjs`; the barrel is `scripts/learning-store.mjs`),
+every mint threw into the best-effort handler, and collection proceeded with
+`runId: null` — reproducing the exact defect the change removes, invisibly
+behind a buffered pipe. Killed before it wrote a log line. The collector now
+refuses to let "every arm ran, nothing persisted" pass quietly.
+
+**Four snapshots collected — 1/12 → 5/12.** And the headline Kimi finding
+reversed: §0.7 recorded "zero unique across three snapshots... the cheap-shadow
+hypothesis dies cheaply", but that was the pre-epoch contract, where Kimi ran at
+reasoning effort `low`. Under `e2` it produced shadow-only findings on **every**
+snapshot (1, 3, 7, 1, 2) against Opus's (7, 5, 3, 5, 5). Raw and unadjudicated —
+tail labelling dismissed ~40% of shadow findings, and primary self-divergence is
+mean 1.6 on identical input — but the live question moved from *does Kimi clear
+0.2 at all* to *how much of Opus's rate does it cover*, at ~1/30th the cost.
+
+`npm run db:local:regen` regenerated `tests/fixtures/expected-schema.json`
+against the Docker container: **+12 lines, only the new column and its partial
+index**, which also confirms the container's schema matches the committed
+migration set. The generator refuses to run against a Supabase host, so the
+local container is the only correct source for it.
+
+**Consumer-side verification (Step 6.8)**: `unverified` — no consumer checkout
+of this bundle exists on this machine, and the change touches no synced tooling
+(`audit-clean.mjs` and `bakeoff-collect.mjs` are source-repo-only; the skill
+reference ships in the bundle but its sync is exercised by `skills:check`,
+which ran green). The pushed sha is recorded below.
+
+Files: `scripts/audit-clean.mjs`, `scripts/bakeoff-collect.mjs`,
+`scripts/lib/store/runs-findings.mjs`,
+`supabase/migrations/20260808120000_audit_runs_experiment_tag.sql`,
+`docs/audit/shared-references/gemini-gate.md` (+3 synced copies),
+`skills/audit-plan/SKILL.md`, `tests/audit-clean-retention.test.mjs`,
+`tests/final-review-bakeoff.test.mjs`, `tests/fixtures/expected-schema.json`,
+`docs/plans/final-review-shadow-bakeoff.md` §0.6c/§0.6d.
+
+## 2026-08-07 — AUDIT_CACHE_SEED validation moved to GitHub Actions
 
 The weekly AUDIT_CACHE_SEED flip-check routine failed in the remote execution
 sandbox because port 5432 (Postgres/Supabase) is blocked — only HTTPS egress

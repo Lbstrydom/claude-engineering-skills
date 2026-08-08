@@ -207,6 +207,71 @@ The three existing snapshots were **backfilled from their saved result files**,
 not re-typed from the table below, and independently reproduced it
 (opus 10 / kimi 0).
 
+### 0.6c Input supply — where transcripts live, and why they survive
+
+*(Added 2026-08-08, after the counter stalled at 1/12 for five days with no
+transcript to collect.)*
+
+A trustworthy counter does not help if nothing reaches it. Two defects were
+starving this campaign, both fixed:
+
+1. **Transcripts were written to `/tmp`.** [208eba20](https://github.com/Lbstrydom/claude-engineering-skills/commit/208eba20)
+   (2026-07-28) diagnosed this — `/tmp` is OS-cleaned, and on Windows Bash's
+   `/tmp` and Node's `/tmp` are different directories — but fixed only the
+   *invocation* line in `audit-code/SKILL.md`. The **build** instruction lives in
+   the shared reference, which still said `/tmp`, and `/audit-plan` said `/tmp`
+   in both places. Measured on 2026-08-07: 113 transcripts existed on this
+   machine, **108 of them outside the repo** in two temp directories nothing
+   scans, and the newest one there belonged to a *different repo* (consumer
+   sessions share one Windows temp dir). Fixed at the canonical
+   [`docs/audit/shared-references/gemini-gate.md`](../audit/shared-references/gemini-gate.md)
+   — editing a synced copy is reverted by `sync-shared-audit-refs`, which is how
+   the half-fix survived.
+2. **`audit:clean` deleted the survivors.** `.audit/*-transcript.json` matched a
+   TRANSIENT pattern with a 14-day age gate, so the correct location was also
+   the swept one. Transcripts are now a **retained class** in
+   [`scripts/audit-clean.mjs`](../../scripts/audit-clean.mjs): the newest **25**
+   survive at any age, the tail is still pruned, and the sweep prints what it
+   retained (a silent retention reads as "found nothing"). 25 = a 12-snapshot
+   campaign plus headroom for incompletes and replacements; at observed sizes
+   (5–230KB) that ceiling is ~1–3MB.
+
+The same change widened the pattern to `-transcript(-<suffix>)?.json`. The
+Step-7.1 re-review transcripts (`-transcript-v2.json`) and mode-suffixed ones
+(`-transcript-code.json`) never matched the old regex, so they were pruned by
+**nothing** — the cap only bounds what it matches, and an exemption without a
+widened match would have swapped one unbounded class for another.
+
+Guard: [`tests/audit-clean-retention.test.mjs`](../../tests/audit-clean-retention.test.mjs)
+(window split + CLI sink; the sink keeps an aged ledger of the same age as a
+negative control, so "nothing was deleted at all" cannot pass as retention).
+
+### 0.6d Cloud persistence — `--run-id`, and why replays are tagged
+
+*(2026-08-08.)* `bakeoff-collect` now mints one `audit_runs` row **per arm** and
+passes `--run-id`, so each arm's findings reach the store and surface in the
+ordinary `final-review-stats --worksheet` flow. Without it `runShadowAndPersist`
+returns at `if (!runId) return` and the entire cloud write is a silent no-op —
+the reason snapshots 2-3 hold `final_review_shadow_model = NULL`.
+
+One row per **arm**, not per snapshot: the run-level final-review columns are
+single-valued, so three arms sharing a row would leave whichever finished last
+as the record of all three.
+
+Replay rows carry `audit_runs.experiment_tag = 'final-review-bakeoff'`
+(migration `20260808120000`). This is load-bearing arithmetic, not tidiness:
+§6.3 scores **accepted HIGH/MED per RUN**, and that denominator is `COUNT(*)`
+over this repo's runs. Twelve snapshots x three arms adds 36 rows; measured
+after the first four snapshots, the organic denominator held at **47** while 12
+replay runs were excluded and reported separately. Untagged, the same 12 would
+have read as a 20% drop in Opus's per-run rate caused entirely by measuring it.
+
+**The registration failure mode is now loud.** The first real run of this path
+had a wrong import specifier, every mint threw into the best-effort handler, and
+the collection proceeded with `runId: null` — reproducing the exact defect the
+change was written to remove, invisibly. The collector now refuses to let "every
+arm ran, nothing persisted" pass quietly.
+
 ### 0.7 Collection log
 
 *(Human-readable mirror. `.audit/bakeoff-log.jsonl` is authoritative — if the
@@ -222,6 +287,15 @@ adjudication; `accepted` is filled in at labelling time.
 | 3 | `audit-plan-1785325355` | 3 | 4 | 4 | 0 | P₂ verdict REJECT vs P₁ CONCERNS |
 
 **N=3 running totals** — Opus unique **10**, Kimi unique **0**, P₁ 4 / P₂ 7.
+
+> **These three are PRE-EPOCH and no longer count** (noted 2026-08-08). They
+> were collected before `e2-matched-reasoning-effort` and carry no
+> `contractEpoch` stamp, so `isComplete()` rejects them and the campaign
+> restarted: `--progress` reads **1/12**, not 3/12. The observations below stand
+> as history — in particular "Kimi has produced zero unique across three
+> snapshots" describes the pre-`e2` contract, and under `e2` Kimi has produced
+> shadow-only findings (3, then 1) on the one snapshot collected since. Read the
+> log, not this table.
 
 Three observations, all provisional at N=3 and none yet adjudicated:
 
@@ -240,6 +314,18 @@ Three observations, all provisional at N=3 and none yet adjudicated:
    reproducible by sampling the primary twice at ~$0.10 rather than $1.21. This
    is the arm most likely to change the architecture, and it costs nothing extra
    to keep measuring.
+
+> **Update 2026-08-08 — four snapshots collected; the Kimi reading REVERSED.**
+> Counter reads **5/12** (`node scripts/bakeoff-collect.mjs --progress`; per-arm
+> numbers live in the log, deliberately not re-typed here). Kimi produced
+> shadow-only findings on **every** `e2` snapshot — 1, 3, 7, 1, 2 — against
+> Opus's 7, 5, 3, 5, 5. Observation 1 above ("Kimi has produced zero unique
+> across three snapshots... the cheap-shadow hypothesis dies cheaply") described
+> the **pre-epoch** contract only, and does not survive matched reasoning
+> effort. Nothing here is adjudicated, so this is a statement about raw
+> uniqueness and not about value; the ~40% dismissal rate from tail labelling
+> applies to both arms. But the direction of the live question has flipped from
+> "does Kimi clear 0.2 at all" to "how much of Opus's rate does it cover".
 
 **Not yet done for these snapshots**: adjudication. Raw uniqueness is not value —
 the §6.3 gate scores *accepted* HIGH/MED clusters, and the tail-labelling pass

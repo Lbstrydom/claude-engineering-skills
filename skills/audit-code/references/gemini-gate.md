@@ -24,7 +24,16 @@ Claude-GPT deliberation.
 
 ## Build the transcript
 
-Assemble `/tmp/$SID-transcript.json` with the full audit trail:
+Assemble `.audit/$SID-transcript.json` with the full audit trail:
+
+> **`.audit/`, never `/tmp/` — the transcript is an artifact, not an
+> intermediate.** It is the only replayable input for evaluating a cheaper or
+> newer final reviewer, and `/tmp` is OS-cleaned (on Windows, Bash's `/tmp` and
+> Node's `/tmp` are two different directories, so half the runs vanish into a
+> directory nothing scans). A shadow A/B spent $50.90 and left zero transcripts
+> to replay. Round results, diffs and stderr stay in `/tmp` — those genuinely
+> are intermediates. `.audit/` is gitignored and retains the newest 25
+> transcripts regardless of age (`npm run audit:clean`).
 
 - Plan content, code files list
 - **`changed_files: string[]`** — list of files modified by this PR (the
@@ -66,7 +75,7 @@ review.
 ## Run the review
 
 ```bash
-node scripts/gemini-review.mjs review <plan-file> /tmp/$SID-transcript.json \
+node scripts/gemini-review.mjs review <plan-file> .audit/$SID-transcript.json \
   --out /tmp/$SID-gemini-result.json 2>/tmp/$SID-gemini-stderr.log
 ```
 
@@ -113,7 +122,7 @@ and `wrongly_dismissed` item — same peer relationship as GPT deliberation:
 4. **Re-run Gemini review** with updated transcript:
 
 ```bash
-node scripts/gemini-review.mjs review <plan-file> /tmp/$SID-transcript-v2.json \
+node scripts/gemini-review.mjs review <plan-file> .audit/$SID-transcript-v2.json \
   --out /tmp/$SID-gemini-result-v2.json 2>/tmp/$SID-gemini-stderr-v2.log
 ```
 
