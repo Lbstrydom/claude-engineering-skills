@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**11 active · 169 terminal · 26 audit summaries · 4 reference docs**
+**12 active · 169 terminal · 26 audit summaries · 4 reference docs**
 
 ---
 
@@ -21,6 +21,7 @@ This is the list to read when asking "what is in flight?".
 
 | Plan | Status | Notes |
 |---|---|---|
+| [Cross-Model Finding Matching](./cross-model-finding-matching.md) | `Approved` | audited |
 | [Event-Wiring Symmetry Check](./event-wiring-symmetry.md) | `Draft` |  |
 | [Final-Review Shadow Bake-Off (marginal-value re-test)](./final-review-shadow-bakeoff.md) | `In Progress` | activated 2026-07-31 — see §0 Activation Addendum |
 | [Gate-honesty defects confirmed by blind adjudication](./gate-honesty-adjudicated-defects.md) | `Draft` |  |
