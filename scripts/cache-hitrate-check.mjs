@@ -71,13 +71,37 @@ const SOURCE = SOURCE_OVERRIDE ?? (HAS_SUPABASE ? 'supabase' : 'local');
 const MIN_RUNS = 5;
 const FLIP_THRESHOLD = 0.3;
 
+/**
+ * Median of a numeric series. Returns `null` when nothing usable is present —
+ * NOT 0, which would read as a measured "0% hit rate" and is indistinguishable
+ * from a real one.
+ *
+ * Coerces before averaging because Postgres `numeric` columns arrive as STRINGS
+ * over node-pg: `cache_hit_rate` reaches us as "0.1130". The previous version
+ * summed the two middle elements directly, so an even-sized series concatenated
+ * ("0.11" + "0.13" → "0.110.13") and divided to NaN, while an odd-sized one
+ * returned its middle element untouched and coerced correctly later. The result
+ * was a verdict that depended on cohort parity rather than on the data.
+ */
 function median(nums) {
-  if (nums.length === 0) return 0;
-  const sorted = [...nums].sort((a, b) => a - b);
+  // Reject empties BEFORE coercing: `Number(null)` and `Number('')` are both 0,
+  // a finite value, so a missing hit rate would otherwise survive as a measured
+  // "0%" — indistinguishable from a genuine zero and dragging the median down.
+  const sorted = (nums ?? [])
+    .filter((n) => n !== null && n !== undefined && n !== '')
+    .map(Number)
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b);
+  if (sorted.length === 0) return null;
   const mid = Math.floor(sorted.length / 2);
   return sorted.length % 2 === 0
     ? (sorted[mid - 1] + sorted[mid]) / 2
     : sorted[mid];
+}
+
+/** Render a 0..1 rate as a percentage, or `n/a` when it was never measured. */
+function pct(rate) {
+  return rate === null || rate === undefined ? 'n/a' : `${(rate * 100).toFixed(1)}%`;
 }
 
 async function loadFromSupabase() {
@@ -100,10 +124,17 @@ async function loadFromSupabase() {
     sid: r.id,
     startedAt: new Date(r.created_at).getTime(),
     round: r.rounds,
-    totalInputTokens: r.cache_input_tokens ?? 0,
-    totalCachedTokens: r.cache_cached_tokens ?? 0,
-    hitRate: r.cache_hit_rate ?? 0,
-    estimatedSavingsPct: r.cache_estimated_savings_pct ?? 0,
+    // Number(...) is load-bearing, not cosmetic: these are Postgres `numeric`
+    // columns, which node-pg hands back as strings. Left as strings they sort
+    // fine (via `a - b` coercion) but sum by CONCATENATION downstream.
+    totalInputTokens: Number(r.cache_input_tokens ?? 0),
+    totalCachedTokens: Number(r.cache_cached_tokens ?? 0),
+    // A rate is NOT a count: an absent `cache_hit_rate` means the run never
+    // measured one, which is not the same claim as "measured, and it was 0%".
+    // `?? 0` collapsed those together, and 112 of 251 R2+ rows are null — enough
+    // fabricated zeros to drag the median the revert decision rests on.
+    hitRate: r.cache_hit_rate == null ? null : Number(r.cache_hit_rate),
+    estimatedSavingsPct: Number(r.cache_estimated_savings_pct ?? 0),
     // null/undefined → unknown cohort (pre-canary rows have no seed state).
     seedEnabled: r.cache_seed_enabled ?? null,
   }));
@@ -146,7 +177,7 @@ function segmentAndDecide(runs, { minRuns = MIN_RUNS, flipThreshold = FLIP_THRES
 
   const seedOnMedian = median(seedOn.map((r) => r.hitRate));
   const seedOffMedian = median(seedOff.map((r) => r.hitRate));
-  const baseline = `Seed-OFF baseline: ${(seedOffMedian * 100).toFixed(1)}% across ${seedOff.length} run(s)` +
+  const baseline = `Seed-OFF baseline: ${pct(seedOffMedian)} across ${seedOff.length} run(s)` +
     (unknown.length ? `; ${unknown.length} pre-canary run(s) have unknown seed state (excluded).` : '.');
 
   let recommendation, reason;
@@ -155,15 +186,28 @@ function segmentAndDecide(runs, { minRuns = MIN_RUNS, flipThreshold = FLIP_THRES
     reason = `Need >= ${minRuns} seed-ON R2+ runs to decide; have ${seedOn.length}. ` +
       `Seed is default-ON since 2026-07-14, so data accumulates automatically as audits run ` +
       `(a run can opt out with AUDIT_CACHE_SEED=0). ${baseline}`;
+  } else if (seedOnMedian === null) {
+    // Enough runs, but not one carried a usable hit rate. HOLD would assert
+    // "seeding isn't paying off" on the strength of no measurement at all —
+    // the failure this whole function exists to avoid.
+    recommendation = 'INSUFFICIENT_SEED_ON_DATA';
+    reason = `${seedOn.length} seed-ON R2+ runs found, but none carried a usable cache_hit_rate ` +
+      `value — cannot compute a median, so no verdict is possible. This is a data-integrity ` +
+      `problem, not evidence against seeding. ${baseline}`;
   } else if (seedOnMedian > flipThreshold) {
     recommendation = 'FLIP_TO_ON';
-    reason = `Seed-ON median hit-rate ${(seedOnMedian * 100).toFixed(1)}% > ${(flipThreshold * 100).toFixed(0)}% ` +
+    reason = `Seed-ON median hit-rate ${pct(seedOnMedian)} > ${(flipThreshold * 100).toFixed(0)}% ` +
       `across ${seedOn.length} seed-ON runs. Default is already ON (2026-07-14 flip) — keep it. ${baseline}`;
   } else {
     recommendation = 'HOLD';
-    reason = `Seed-ON median hit-rate ${(seedOnMedian * 100).toFixed(1)}% does not exceed ` +
+    reason = `Seed-ON median hit-rate ${pct(seedOnMedian)} does not exceed ` +
       `${(flipThreshold * 100).toFixed(0)}% across ${seedOn.length} seed-ON runs — seeding isn't paying off. ` +
-      `Consider reverting the default to OFF (decideSeed in legacy-production-audit.mjs). ${baseline}`;
+      `Consider reverting the default to OFF (decideSeed in legacy-production-audit.mjs). ${baseline}` +
+      (seedOffMedian === null
+        ? ' NOTE: the seed-OFF baseline could not be computed, so this verdict rests on the'
+          + ' absolute threshold alone — there is no comparative evidence that seeding is worse'
+          + ' than not seeding. Treat it as provisional.'
+        : '');
   }
   return {
     recommendation, reason,
@@ -221,7 +265,7 @@ function renderHuman(result) {
   console.log(`  Source:          ${result.source ?? '(unknown)'}`);
   console.log(`  Since:           ${result.since}`);
   console.log(`  R2+ runs:        ${result.runCount} (seed-ON ${result.seedOnCount ?? 0} / seed-OFF ${result.seedOffCount ?? 0} / unknown ${result.unknownCount ?? 0})`);
-  console.log(`  Seed-ON median:  ${(result.medianHitRate * 100).toFixed(1)}%   (seed-OFF baseline: ${((result.seedOffMedian ?? 0) * 100).toFixed(1)}%)`);
+  console.log(`  Seed-ON median:  ${pct(result.medianHitRate)}   (seed-OFF baseline: ${pct(result.seedOffMedian)})`);
   console.log(`  Threshold:       seed-ON median >${(FLIP_THRESHOLD * 100).toFixed(0)}% AND >= ${MIN_RUNS} seed-ON runs`);
   console.log('');
   console.log(`  ${result.reason}`);
@@ -231,7 +275,7 @@ function renderHuman(result) {
     for (const r of result.runs) {
       const date = new Date(r.startedAt).toISOString().slice(0, 10);
       const seed = r.seedEnabled === true ? 'seed' : r.seedEnabled === false ? 'off ' : '????';
-      console.log(`    ${date} R${r.round} [${seed}] sid=${String(r.sid).slice(-12)}: ${(r.hitRate * 100).toFixed(1)}% (${r.totalCachedTokens}/${r.totalInputTokens})`);
+      console.log(`    ${date} R${r.round} [${seed}] sid=${String(r.sid).slice(-12)}: ${pct(r.hitRate)} (${r.totalCachedTokens}/${r.totalInputTokens})`);
     }
   }
   console.log('');
