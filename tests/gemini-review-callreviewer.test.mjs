@@ -90,6 +90,25 @@ describe('callReviewer — per-transport happy path (normalized result + usage)'
     assert.equal(result.verdict, 'REJECT');
     assert.equal(usage.input_tokens, 9);
     assert.equal(usage.thinking_tokens, 2);
+    // BILLED output = candidates + thoughts. Google excludes thoughts from
+    // candidatesTokenCount but bills them at the output rate, so reading
+    // candidates alone understated this reviewer ~2.5x on real runs — which is
+    // the arm it is compared against on cost.
+    assert.equal(usage.output_tokens, 6, 'thoughts are billed output and must be counted');
+  });
+
+  test('gemini output_tokens stays a SINGLE total — thinking is a share of it, not an addend', async () => {
+    // The invariant that keeps the shared cost oracle correct across providers:
+    // Anthropic and OpenAI already fold reasoning into output_tokens, so any
+    // consumer adding thinking_tokens on top would double-count everywhere.
+    const client = {
+      models: { generateContentStream: async () => (async function* () {
+        yield { text: '{"verdict":"APPROVE"}', usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 310, thoughtsTokenCount: 17792 } };
+      })() },
+    };
+    const { usage } = await callReviewer(client, { ...BASE, transportKind: 'gemini' });
+    assert.equal(usage.output_tokens, 18102);
+    assert.ok(usage.thinking_tokens < usage.output_tokens, 'thinking is contained in output, never beside it');
   });
 });
 

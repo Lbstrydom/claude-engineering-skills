@@ -194,6 +194,22 @@ export const finalReviewConfig = Object.freeze({
     const v = (process.env.FINAL_REVIEW_REASONING_EFFORT || '').trim().toLowerCase();
     return ['low', 'medium', 'high'].includes(v) ? v : 'high';
   })(),
+  // Anthropic prompt caching on the final-review transport. OPT-IN, and
+  // deliberately NOT default-on, because caching is not free: a 5-minute cache
+  // WRITE bills at 1.25x base input, so on the ordinary path — one review, one
+  // call, nothing to re-read — turning this on is a flat 25% input-cost
+  // PENALTY. It pays only when the SAME prompt is sent twice inside the TTL.
+  //
+  // Today exactly one caller qualifies: the bake-off, whose `opus` and
+  // `solo-opus` arms issue byte-identical Anthropic requests (the shadow is run
+  // BLIND on the same transcript as the primary — see runShadowReview — and the
+  // recorded input counts match exactly per snapshot, e.g. 81,182 / 81,182 on
+  // 21245f6aae1c). Two sends cost 1.25 + 0.1 = 1.35x instead of 2.0x: a 32.5%
+  // input saving, NOT the 90% the read discount alone suggests.
+  //
+  // Enabling it changes cost and latency, never output — cached and uncached
+  // prefixes produce the same completion — so it is not a contract-epoch bump.
+  promptCache: /^(1|true|on|yes)$/i.test((process.env.FINAL_REVIEW_PROMPT_CACHE || '').trim()),
 });
 
 // ── Shadow Final-Review Config (A/B test — observation-only) ─────────────────

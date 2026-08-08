@@ -53,6 +53,28 @@ export const OSS_PRICING = Object.freeze({
   'deepseek/deepseek-v4-flash':        { input: 0.098, output: 0.196 },
 });
 
+/**
+ * Prompt-cache multipliers against the model's BASE input price.
+ *
+ * Anthropic 5-minute ephemeral caching: a cache WRITE is 1.25x base and a cache
+ * READ is 0.10x. Both are multipliers, not separate prices, so they compose with
+ * whatever the model's input price is.
+ *
+ * The write premium is the load-bearing half. It is why caching is opt-in
+ * (finalReviewConfig.promptCache): one send that is never re-read costs 1.25x,
+ * a 25% penalty. Two identical sends cost 1.25 + 0.10 = 1.35x instead of 2.0x.
+ * Pricing the write at 1.0 — or ignoring these fields entirely — would report
+ * that as a 90% saving, which is the number the raw read discount suggests and
+ * roughly triple the real one.
+ *
+ * Only the Anthropic transport emits these usage fields today; every other
+ * provider leaves them absent, which sanitizes to 0 and leaves its cost
+ * arithmetic byte-identical to before caching existed. If a second provider
+ * starts reporting cache usage, check its multipliers before reusing these —
+ * OpenAI and Google price cache reads differently and charge no write premium.
+ */
+export const CACHE_MULTIPLIER = Object.freeze({ write: 1.25, read: 0.10 });
+
 /** Coarse fixed USD→EUR rate for the burn-in spend cap (safety ceiling, not accounting). */
 export const EUR_PER_USD = 0.92;
 
@@ -120,23 +142,42 @@ export function isPriced(modelId) {
  * ({prompt_tokens, completion_tokens}). Reasoning tokens are already counted
  * in output_tokens by the providers, so they are NOT double-charged here.
  *
+ * Cache-aware: when the provider reports `cache_creation_input_tokens` /
+ * `cache_read_input_tokens`, those tokens are NOT in `input_tokens` (Anthropic
+ * moves them out), so they are priced separately at CACHE_MULTIPLIER rather
+ * than dropped. Dropping them is not a rounding error — on a cache hit it
+ * reports a full-size review as near-free. `inputTokens` is returned as the
+ * TOTAL prompt size across all three buckets, so a caller comparing prompt
+ * sizes across runs sees the same number cached or not.
+ *
  * @param {object|null} usage
  * @param {string} modelId - resolved concrete model id
  * @returns {{ totalUsd: number|null, inputUsd: number|null, outputUsd: number|null,
- *            priced: boolean, inputTokens: number, outputTokens: number }}
+ *            priced: boolean, inputTokens: number, outputTokens: number,
+ *            cacheWriteTokens: number, cacheReadTokens: number }}
  */
 export function costFromUsage(usage, modelId) {
   // Sanitize FIRST (audit R1 H4): non-finite / negative / NaN token counts →
   // 0, floored to integers — otherwise a garbage `usage` yields a negative or
   // Infinity cost while still reporting priced:true.
-  const inputTokens = sanitizeTokens(usage?.input_tokens ?? usage?.prompt_tokens);
+  const uncachedTokens = sanitizeTokens(usage?.input_tokens ?? usage?.prompt_tokens);
+  const cacheWriteTokens = sanitizeTokens(usage?.cache_creation_input_tokens);
+  const cacheReadTokens = sanitizeTokens(usage?.cache_read_input_tokens);
+  const inputTokens = uncachedTokens + cacheWriteTokens + cacheReadTokens;
   const outputTokens = sanitizeTokens(usage?.output_tokens ?? usage?.completion_tokens);
   const px = priceFor(modelId);
   if (!px) {
     // Null-cost policy (plan decision 8): unknown price → null, NEVER 0.
-    return { totalUsd: null, inputUsd: null, outputUsd: null, priced: false, inputTokens, outputTokens };
+    return {
+      totalUsd: null, inputUsd: null, outputUsd: null, priced: false,
+      inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens,
+    };
   }
-  const inputUsd = (inputTokens * px.input) / 1_000_000;
+  const inputUsd = (
+    uncachedTokens * px.input
+    + cacheWriteTokens * px.input * CACHE_MULTIPLIER.write
+    + cacheReadTokens * px.input * CACHE_MULTIPLIER.read
+  ) / 1_000_000;
   const outputUsd = (outputTokens * px.output) / 1_000_000;
   return {
     totalUsd: inputUsd + outputUsd,
@@ -145,6 +186,8 @@ export function costFromUsage(usage, modelId) {
     priced: true,
     inputTokens,
     outputTokens,
+    cacheWriteTokens,
+    cacheReadTokens,
   };
 }
 
@@ -174,13 +217,25 @@ export function costForBudget(usage, modelId) {
   // its pre-flight reservation instead of reconciling down to this figure, so
   // an unmetered call can never zero the burn against the € ceiling.
   const unmeterable = !usage || usage.usageMissing === true || !isValidCount(rawIn) || !isValidCount(rawOut);
-  const inputTokens = sanitizeTokens(rawIn);
+  // Cached prompt tokens are billed but live OUTSIDE `input_tokens`, so omitting
+  // them UNDER-reserves against the hard € ceiling — the one direction this
+  // function exists to make impossible. Absent on every non-Anthropic provider,
+  // where they sanitize to 0 and the arithmetic is unchanged. Their absence is
+  // NOT part of the `unmeterable` test: they are optional fields, and treating a
+  // provider that never reports them as unmeterable would pin every run to its
+  // pre-flight reservation.
+  const cacheWriteTokens = sanitizeTokens(usage?.cache_creation_input_tokens);
+  const cacheReadTokens = sanitizeTokens(usage?.cache_read_input_tokens);
+  const inputTokens = sanitizeTokens(rawIn) + cacheWriteTokens + cacheReadTokens;
   const outputTokens = sanitizeTokens(rawOut);
   const px = priceFor(modelId);
   const estimated = !px;
   const rate = px || FALLBACK_PRICE_USD;
-  const totalUsd = (inputTokens * rate.input + outputTokens * rate.output) / 1_000_000;
-  return { totalUsd, estimated, unmeterable, inputTokens, outputTokens };
+  const billableInput = sanitizeTokens(rawIn)
+    + cacheWriteTokens * CACHE_MULTIPLIER.write
+    + cacheReadTokens * CACHE_MULTIPLIER.read;
+  const totalUsd = (billableInput * rate.input + outputTokens * rate.output) / 1_000_000;
+  return { totalUsd, estimated, unmeterable, inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens };
 }
 
 /** Convert a USD amount to EUR via the fixed burn-in rate. null passes through. */

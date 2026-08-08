@@ -11,7 +11,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { findEligibleTranscripts, assessWindow } from '../scripts/final-review-bakeoff.mjs';
-import { zeroFindingArms, isComplete, summarise, CONTRACT_EPOCH, buildArmArgs, EXPERIMENT_TAG } from '../scripts/bakeoff-collect.mjs';
+import {
+  zeroFindingArms, isComplete, summarise, CONTRACT_EPOCH, buildArmArgs, EXPERIMENT_TAG,
+  distinctFindingCount, shadowFindingTotal, armCostUsd,
+} from '../scripts/bakeoff-collect.mjs';
 
 /** Build an injectable fake FS for the pure enumerator. */
 function io(files, existingPlans = []) {
@@ -174,6 +177,67 @@ describe('contract epoch + solo arm (bakeoff-collect isComplete)', () => {
   });
 });
 
+describe('counting rules shared by the two Opus samples', () => {
+  it('distinctFindingCount dedups by _hash, so a primary is counted the shadow’s way', () => {
+    // The shadow is deduped before bucketing; the primary is written raw.
+    // Comparing the two un-normalised reports a dedup difference as model variance.
+    assert.equal(distinctFindingCount([{ _hash: 'a' }, { _hash: 'b' }, { _hash: 'a' }]), 2);
+  });
+
+  it('an UNHASHED finding is never collapsed away', () => {
+    // Same rule as dedupByHash's semanticId fallback: silent data loss here
+    // would understate a reviewer's output and read as agreement.
+    assert.equal(distinctFindingCount([{}, {}, {}]), 3);
+  });
+
+  it('absent / non-array findings are 0, not a throw', () => {
+    for (const v of [null, undefined, 'nope']) assert.equal(distinctFindingCount(v), 0);
+  });
+
+  it('shadowFindingTotal is both + shadowOnly — the shadow’s whole deduped set', () => {
+    assert.equal(shadowFindingTotal({ buckets: { both: 2, shadowOnly: 5, primaryOnly: 9 } }), 7);
+  });
+
+  it('a shadow that did not run is null, NEVER 0', () => {
+    // 0 would mean "reviewed and found nothing"; null means "no measurement".
+    // Collapsing them is the anti-green failure this campaign already hit.
+    for (const v of [{ buckets: null }, {}, null, undefined, { buckets: { both: 1 } }]) {
+      assert.equal(shadowFindingTotal(v), null);
+    }
+  });
+});
+
+describe('armCostUsd — spend is measured, never partially guessed', () => {
+  const opusCall = { _model: 'claude-opus-5', _usage: { input_tokens: 1_000_000, output_tokens: 0 } };
+
+  it('sums the primary and shadow calls an arm makes', () => {
+    const both = armCostUsd({
+      ...opusCall,
+      _shadow: { model: 'claude-opus-5', usage: { input_tokens: 1_000_000, output_tokens: 0 } },
+    });
+    const one = armCostUsd(opusCall);
+    assert.equal(both.usd, one.usd * 2);
+  });
+
+  it('prices cached tokens rather than reading a cache hit as free', () => {
+    const hit = armCostUsd({ _model: 'claude-opus-5', _usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 1_000_000 } });
+    assert.ok(hit.usd > 0);
+  });
+
+  it('an UNPRICED call yields null for the arm, not a partial sum', () => {
+    // A partial sum is worse than none: it reads as a complete figure, and the
+    // arm silently looks cheaper than every arm it is compared against.
+    const r = armCostUsd({ ...opusCall, _shadow: { model: 'not-a-real-model-xyz', usage: { input_tokens: 1000, output_tokens: 1 } } });
+    assert.equal(r.usd, null);
+    assert.deepEqual(r.unpricedModels, ['not-a-real-model-xyz']);
+  });
+
+  it('an arm with no usage at all is null, never 0', () => {
+    assert.equal(armCostUsd({}).usd, null);
+    assert.equal(armCostUsd({ _model: 'claude-opus-5' }).usd, null, 'a model with no usage is not a free call');
+  });
+});
+
 describe('summarise surfaces every arm (bakeoff-collect)', () => {
   const ran = (shadowOnly, primaryFindings) => ({
     shadowState: 'ran', shadowVerdict: 'CONCERNS', buckets: { shadowOnly }, primaryVerdict: 'CONCERNS', primaryFindings,
@@ -195,6 +259,83 @@ describe('summarise surfaces every arm (bakeoff-collect)', () => {
     // "is a 2nd reviewer just a reroll?" question, and it is free to collect.
     const s = summarise([snap('a', 7, 1, 2, 4, 7), snap('b', 3, 2, 5, 5, 3)], 12);
     assert.deepEqual(s.totals.primaryDivergence, [2, 0]);
+  });
+
+  it('Opus self-divergence pairs the shadow sample against the solo sample', () => {
+    // Both arms issue a byte-identical request, so the spread is Opus's own
+    // variance — the number that decides whether solo-opus buys a role
+    // comparison or a reroll.
+    const e = {
+      snapshotId: 'a', contractEpoch: CONTRACT_EPOCH,
+      arms: {
+        opus: { ...ran(5, 2), buckets: { both: 0, shadowOnly: 5 } },
+        kimi: ran(1, 2),
+        'solo-opus': { primaryVerdict: 'CONCERNS', primaryFindings: 4, primaryDistinct: 4 },
+      },
+    };
+    assert.deepEqual(summarise([e], 12).totals.opusDivergence, [1]);
+    assert.equal(summarise([e], 12).totals.opusDivergenceUnpaired, 0);
+  });
+
+  it('a missing Opus sample is UNPAIRED, never scored as zero divergence', () => {
+    // Zero would assert Opus agreed with itself perfectly — the strongest claim
+    // available, from the one state that cannot support any claim. Entries
+    // predating `primaryDistinct` land here, which is why it is counted and
+    // printed rather than silently dropped.
+    const e = {
+      snapshotId: 'a', contractEpoch: CONTRACT_EPOCH,
+      arms: {
+        opus: { ...ran(5, 2), buckets: { both: 0, shadowOnly: 5 } },
+        kimi: ran(1, 2),
+        'solo-opus': { primaryVerdict: 'CONCERNS', primaryFindings: 4 }, // no primaryDistinct
+      },
+    };
+    const s = summarise([e], 12);
+    assert.deepEqual(s.totals.opusDivergence, []);
+    assert.equal(s.totals.opusDivergenceUnpaired, 1);
+  });
+
+  it('arms sharing a request fingerprint are reported as a REROLL, not two configurations', () => {
+    // The finding this instrument exists for: `opus` and `solo-opus` issue a
+    // byte-identical Anthropic request, so a gap between them is sampling noise
+    // plus a bucketing convention. Establishing that once took reading the
+    // shadow orchestration and cross-checking token counts across five files.
+    const e = {
+      snapshotId: 'a', contractEpoch: CONTRACT_EPOCH,
+      arms: {
+        opus: { ...ran(5, 2), requestFingerprints: ['geminiFP', 'opusFP'] },
+        kimi: { ...ran(1, 2), requestFingerprints: ['geminiFP', 'kimiFP'] },
+        'solo-opus': { primaryVerdict: 'CONCERNS', primaryFindings: 4, requestFingerprints: ['opusFP'] },
+      },
+    };
+    const pairs = summarise([e], 12).totals.rerollPairs;
+    assert.ok(pairs.includes('opus=solo-opus'), 'the identical Opus request must be surfaced');
+    assert.ok(pairs.includes('opus=kimi'), 'both arms also run the same Gemini primary');
+  });
+
+  it('MISSING fingerprints read as unknown, never as "these arms differ"', () => {
+    // Entries predating the field must not silently certify that every arm is
+    // distinct — the strongest reading available from no evidence at all.
+    const e = {
+      snapshotId: 'a', contractEpoch: CONTRACT_EPOCH,
+      arms: { opus: ran(5, 2), kimi: ran(1, 2), 'solo-opus': { primaryVerdict: 'CONCERNS', primaryFindings: 4 } },
+    };
+    assert.deepEqual(summarise([e], 12).totals.rerollPairs, []);
+  });
+
+  it('an arm with an unpriced call makes that ARM null, and flags the snapshot', () => {
+    const e = {
+      snapshotId: 'a', contractEpoch: CONTRACT_EPOCH,
+      arms: {
+        opus: { ...ran(5, 2), costUsd: 2.5 },
+        kimi: { ...ran(1, 2), costUsd: null },
+        'solo-opus': { primaryVerdict: 'CONCERNS', primaryFindings: 4, costUsd: 2.3 },
+      },
+    };
+    const t = summarise([e], 12).totals;
+    assert.equal(t.costByArm.opus, 2.5);
+    assert.equal(t.costByArm.kimi, null, 'an unpriced arm shows null, not the sum of its priced snapshots');
+    assert.equal(t.costUncostedSnapshots, 1);
   });
 
   it('an INCOMPLETE snapshot contributes to no total — not even a partial one', () => {

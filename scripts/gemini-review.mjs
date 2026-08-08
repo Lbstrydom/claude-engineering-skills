@@ -27,6 +27,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { once } from 'node:events';
 import { GoogleGenAI } from '@google/genai';
+import crypto from 'node:crypto';
 import { z } from 'zod';
 import { ProducerFindingSchema, zodToGeminiSchema } from './lib/schemas.mjs';
 import { zodToOpenAiJsonSchema, sanitizeSchemaName, isResponseFormatUnsupported } from './lib/oss-structured-output.mjs';
@@ -210,6 +211,15 @@ const AnthropicReviewToolSchema = (() => {
 
 /** Tool name for the Anthropic structured-review call. Exported for tests. */
 export const ANTHROPIC_REVIEW_TOOL_NAME = 'submit_review';
+
+/**
+ * Anthropic's minimum cacheable prefix for the Opus/Sonnet tiers. A
+ * `cache_control` marker on a shorter prefix is accepted, billed at the write
+ * premium, and never read back — the "provably inert" class `efficacy-lints`
+ * exists to catch. Mirrors `DEFAULT_CONFIG.modelMinTokens` in
+ * scripts/lib/efficacy-lints.mjs; keep the two in step.
+ */
+export const ANTHROPIC_MIN_CACHEABLE_TOKENS = 1024;
 
 // ── Schema-driven truncation ──────────────────────────────────────────────────
 // Gemini verbosity regularly exceeds field maxLength constraints, causing Zod to
@@ -522,12 +532,26 @@ const REVIEW_TRANSPORTS = {
       if (chunk.text) textParts.push(chunk.text);
       if (chunk.usageMetadata) usageMetadata = chunk.usageMetadata;
     }
+    const thoughts = usageMetadata?.thoughtsTokenCount ?? 0;
     return {
       text: textParts.join(''),
       usage: {
         input_tokens: usageMetadata?.promptTokenCount ?? 0,
-        output_tokens: usageMetadata?.candidatesTokenCount ?? 0,
-        thinking_tokens: usageMetadata?.thoughtsTokenCount ?? 0,
+        // BILLED output, which for Google means candidates PLUS thoughts —
+        // `candidatesTokenCount` excludes `thoughtsTokenCount`, and Google bills
+        // both at the output rate. Reading only candidates understated this
+        // reviewer by ~2.5x on real runs (measured: 310 candidate tokens beside
+        // 17,792 thought tokens on bake-off snapshot 21245f6aae1c), which is not
+        // a rounding error when the readout exists to compare arms on cost.
+        //
+        // This makes `output_tokens` mean the same thing on all three
+        // transports: Anthropic and OpenAI already fold reasoning into their
+        // output counts, and `thinking_tokens` stays the informational share
+        // WITHIN that total rather than a separate addend. Any consumer summing
+        // the two would double-count on every provider, which is why the shared
+        // cost oracle deliberately does not.
+        output_tokens: (usageMetadata?.candidatesTokenCount ?? 0) + thoughts,
+        thinking_tokens: thoughts,
       },
       finishReason: null,
     };
@@ -554,6 +578,24 @@ const REVIEW_TRANSPORTS = {
     // primary-reviewer anthropic fallback builds via `createAnthropicClient()`
     // and is guarded by the readiness assertion below.
     const useTool = Boolean(toolSchema);
+    // PROMPT CACHING (opt-in — finalReviewConfig.promptCache; see the config
+    // comment for why it is a cost PENALTY when left on for single-shot runs).
+    //
+    // One breakpoint, on the last (only) user block. Anthropic's cacheable
+    // prefix is tools → system → messages in that order, so a breakpoint here
+    // covers the whole request, which is what the two byte-identical bake-off
+    // Opus calls need. A second breakpoint would buy nothing: there is no
+    // shorter prefix that a later request shares but this one does not.
+    //
+    // Guarded on an ESTIMATED length, never applied blind. Below Opus's 1024-
+    // token minimum cacheable prefix the marker is silently INERT — accepted by
+    // the API, billed at the 1.25x write premium, and never read back. The
+    // chars/4 estimate is the same one this file already prints at call time and
+    // it UNDER-reads for Claude (measured: a prompt Gemini tokenized at 54,288
+    // Claude tokenized at 81,182), so erring low means we occasionally skip a
+    // cacheable prompt and never mark an inert one.
+    const cacheable = finalReviewConfig.promptCache
+      && Math.floor(userPrompt.length / 4) >= ANTHROPIC_MIN_CACHEABLE_TOKENS;
     const req = {
       model,
       max_tokens: maxTokens,
@@ -566,7 +608,12 @@ const REVIEW_TRANSPORTS = {
       system: useTool
         ? `${systemPrompt}\n\nSubmit your review by calling the submit_review tool. Every field is required.`
         : `${systemPrompt}\n\nOutput strictly valid JSON. No markdown fences.`,
-      messages: [{ role: 'user', content: userPrompt }],
+      messages: [{
+        role: 'user',
+        content: cacheable
+          ? [{ type: 'text', text: userPrompt, cache_control: { type: 'ephemeral' } }]
+          : userPrompt,
+      }],
     };
     if (useTool) {
       req.tools = [{
@@ -617,6 +664,14 @@ const REVIEW_TRANSPORTS = {
       usage: {
         input_tokens: r.usage?.input_tokens ?? 0,
         output_tokens: r.usage?.output_tokens ?? 0,
+        // Anthropic reports UNCACHED input in `input_tokens` and puts cached
+        // tokens in these two fields instead. Carrying them is not optional
+        // bookkeeping: on a cache HIT `input_tokens` collapses to a few hundred,
+        // so a cost derived from it alone would read a full 81K-token review as
+        // near-free — a fabricated saving in exactly the shape of a measurement.
+        // costFromUsage prices all three at their real multipliers.
+        cache_creation_input_tokens: r.usage?.cache_creation_input_tokens ?? 0,
+        cache_read_input_tokens: r.usage?.cache_read_input_tokens ?? 0,
         // READ, never assumed. This was hardcoded to 0, and the zero happened to
         // be CORRECT for the wrong reason — not because the path declined
         // thinking (Opus 5 thinks by default) but because forced tool_choice
@@ -827,12 +882,24 @@ async function streamAnthropicMessage(client, params, { signal } = {}) {
   // is how the caller ended up reporting a hardcoded `thinking_tokens: 0` for a
   // model that was in fact thinking. Left null when the provider omits it, so
   // "not reported" stays distinguishable from "measured zero".
-  const usage = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, output_tokens_details: null };
+  const usage = {
+    input_tokens: 0, output_tokens: 0,
+    // Both halves of the cache ledger. `cache_read_input_tokens` was the missing
+    // one, and its absence is worse than a wrong number: on a cache hit the
+    // provider moves the prefix OUT of `input_tokens` into this field, so a
+    // reader that drops it reports a full-size review as a few hundred input
+    // tokens. Same class as the hardcoded `thinking_tokens: 0` below — a field
+    // this builder does not copy simply does not exist downstream.
+    cache_creation_input_tokens: 0, cache_read_input_tokens: 0,
+    output_tokens_details: null,
+  };
   for await (const event of resp) {
     if (event.type === 'message_start') {
       usage.input_tokens = event.message?.usage?.input_tokens ?? usage.input_tokens;
       usage.cache_creation_input_tokens =
         event.message?.usage?.cache_creation_input_tokens ?? usage.cache_creation_input_tokens;
+      usage.cache_read_input_tokens =
+        event.message?.usage?.cache_read_input_tokens ?? usage.cache_read_input_tokens;
       stopReason = event.message?.stop_reason ?? stopReason;
       usage.output_tokens_details = event.message?.usage?.output_tokens_details ?? usage.output_tokens_details;
     } else if (event.type === 'content_block_start' && event.content_block?.type === 'tool_use') {
@@ -1178,10 +1245,28 @@ export async function runFinalReview(provider, client, planContent, transcriptCo
     systemPrompt += PLAN_MODE_BLOCK;
   }
 
+  // REQUEST IDENTITY. Hash what actually determines the model's answer, so
+  // "are these two arms different?" is a comparison, not an investigation.
+  //
+  // It took token-count archaeology across five result files plus a read of
+  // runShadowReview to establish that the bake-off's `opus` and `solo-opus`
+  // arms issue the SAME request — a shadow runs blind on the same transcript,
+  // plan and context as the primary, and only the downstream BUCKETING differs.
+  // An arm table cannot tell you that; two equal fingerprints can.
+  //
+  // Four inputs because those are what a provider's answer is a function of:
+  // the model, both prompt halves, and the reasoning dial. Deliberately NOT
+  // max_tokens (a ceiling, not a steer) and NOT the gateway routing extras
+  // (which decide WHERE a request runs, not what it asks). Truncated to 16 hex:
+  // this distinguishes a handful of arms, it is not a security boundary.
+  const requestFingerprint = crypto.createHash('sha256')
+    .update(`${selectedModel} ${finalReviewConfig.reasoningEffort} ${systemPrompt} ${userPrompt}`)
+    .digest('hex').slice(0, 16);
+
   // `userPrompt` is the single egress envelope — assembled once above via
   // readFilesAsContext (sensitive-path filtered + secret-redacted). Every
   // transport adapter receives only this string; none re-reads files (C3).
-  return callReviewer(client, {
+  const call = await callReviewer(client, {
     transportKind: descriptor.transportKind(),
     model: selectedModel,
     systemPrompt,
@@ -1196,6 +1281,13 @@ export async function runFinalReview(provider, client, planContent, transcriptCo
     // Azure Foundry shares the openai adapter and deliberately does NOT.
     openAiJsonSchema: descriptor.structuredOutput ? OpenAiFinalReviewJsonSchema : undefined,
   });
+  // Stamped on the RESULT, not just returned, so it survives every downstream
+  // path unchanged — the primary's `--out` JSON spreads `{...result}`, and the
+  // shadow block copies it explicitly. A value only on the return object would
+  // be lost at the first hop that rebuilds its own envelope, which is exactly
+  // how the shadow's cache-token counts went missing.
+  call.result._requestFingerprint = requestFingerprint;
+  return { ...call, requestFingerprint };
 }
 
 // ── Output Formatting ──────────────────────────────────────────────────────────
@@ -1488,11 +1580,11 @@ async function runShadowReview(shadow, planContent, transcriptContent, projectCo
   const r = await runReviewWithRetry(
     shadow.provider, client, planContent, transcriptContent, projectContext, auditMode, shadow.model
   );
-  const { result, usage, latencyMs, transcriptContent: usedTranscript } = r;
+  const { result, usage, latencyMs, requestFingerprint, transcriptContent: usedTranscript } = r;
   await applyDebtSuppression(result, usedTranscript);
   await applyScopeFilter(result, usedTranscript);
   addSemanticIds(result, shadow.provider);
-  return { result, usage, latencyMs };
+  return { result, usage, latencyMs, requestFingerprint };
 }
 
 /**
@@ -1579,7 +1671,22 @@ async function runShadowAndPersist(result, primaryModel, runId, { planContent, t
       result._shadow = {
         state: 'ran', provider: shadow.provider, model: shadow.model,
         verdict: sr.result.verdict,
-        usage: { input_tokens: sr.usage.input_tokens, output_tokens: sr.usage.output_tokens, latency_ms: sr.latencyMs },
+        // Cache token counts are copied, not dropped. This envelope is rebuilt
+        // by hand rather than spread, so any field omitted here does not exist
+        // downstream however correct the adapter was — and on a cache WRITE the
+        // provider moves the whole prefix OUT of `input_tokens`, so omitting
+        // these two would have reported an 81K-token shadow review as costing
+        // almost nothing. Absent on providers that do not cache, where they
+        // sanitize to 0 and the arithmetic is unchanged.
+        usage: {
+          input_tokens: sr.usage.input_tokens,
+          output_tokens: sr.usage.output_tokens,
+          cache_creation_input_tokens: sr.usage.cache_creation_input_tokens ?? 0,
+          cache_read_input_tokens: sr.usage.cache_read_input_tokens ?? 0,
+          latency_ms: sr.latencyMs,
+        },
+        // Lets a bake-off detect that a "different arm" issued the SAME request.
+        requestFingerprint: sr.requestFingerprint ?? null,
         buckets: diff.counts,
         shadowOnlyFindings: diff.shadow
           .filter((f) => f._bucket === 'shadow-only')
