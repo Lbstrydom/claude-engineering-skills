@@ -175,3 +175,106 @@ describe('summariseCriteria', () => {
     assert.equal(s.byCategory.a11y, 1);
   });
 });
+
+describe('a criterion the parser cannot read must never be silent', () => {
+  // Round-1 audit findings M2/M4/M6/M12, all reproduced before fixing. The
+  // shared consequence: /ux-lock verify grades a plan against a live app from
+  // these criteria, so a dropped one is never checked while the run still
+  // reports on the ones that parsed — green having checked less than it says.
+
+  it('does not promote an indented bullet to a standalone criterion', () => {
+    const md = [
+      '## 10. Acceptance Criteria',
+      '- [P0] [visibility] the real criterion',
+      '  - Setup: log in',
+      '  - [P1] [a11y] nested, must NOT become its own criterion',
+    ].join('\n');
+    const r = parseAcceptanceCriteria(md);
+    assert.deepEqual(r.criteria.map(c => c.severity), ['P0']);
+    // …and it is REPORTED, not swallowed: an indented criterion is ambiguous
+    // (CommonMark allows <=3 spaces on a top-level item), so the parser refuses
+    // to guess in either direction and tells the author to fix the indentation.
+    assert.equal(r.errors.length, 1);
+    assert.match(r.errors[0], /Indented criterion-shaped bullet/);
+  });
+
+  it('terminates the section at a level-1 heading', () => {
+    const md = [
+      '## 10. Acceptance Criteria',
+      '- [P0] [visibility] in scope',
+      '# A new top-level document section',
+      '- [P1] [a11y] NOT an acceptance criterion',
+    ].join('\n');
+    const r = parseAcceptanceCriteria(md);
+    assert.deepEqual(r.criteria.map(c => c.severity), ['P0']);
+  });
+
+  it('reports a criterion-shaped bullet that does not parse, rather than dropping it', () => {
+    const md = [
+      '## 10. Acceptance Criteria',
+      '- [P0] [visibility] fine',
+      '- [P2] missing the category tag',
+    ].join('\n');
+    const r = parseAcceptanceCriteria(md);
+    assert.equal(r.criteria.length, 1);
+    assert.equal(r.errors.length, 1);
+    assert.match(r.errors[0], /Malformed criterion/);
+  });
+
+  it('still ignores ordinary prose bullets — the guard must not cry wolf', () => {
+    // Vacuous-pass guard: a rule that flags everything would pass the test
+    // above while making the parser unusable on a real plan.
+    const md = [
+      '## 10. Acceptance Criteria',
+      '- [P0] [visibility] fine',
+      'Some prose:',
+      '- an ordinary bullet, not a criterion',
+    ].join('\n');
+    const r = parseAcceptanceCriteria(md);
+    assert.deepEqual(r.errors, []);
+    assert.equal(r.criteria.length, 1);
+  });
+});
+
+describe('a malformed criterion cannot steal the previous one\'s Setup/Assert', () => {
+  // Caught by the Gemini final gate 2026-08-08, in a fix from this same audit:
+  // the malformed branch reported the error and skipped the line WITHOUT
+  // clearing `current`, so the malformed criterion's own nested bullets matched
+  // NESTED_RE and attached to the previous VALID criterion. Silent corruption —
+  // the criterion still parses, it just carries someone else's assertion.
+  it('leaves the valid criterion with its own setup and no foreign assertion', () => {
+    const md = [
+      '## 10. Acceptance Criteria',
+      '- [P0] [visibility] the valid one',
+      '  - Setup: belongs to P0',
+      '- [P2] malformed no category',
+      '  - Setup: belongs to the MALFORMED one',
+      '  - Assert: also the malformed one',
+    ].join('\n');
+    const r = parseAcceptanceCriteria(md);
+    assert.equal(r.criteria.length, 1);
+    assert.equal(r.criteria[0].severity, 'P0');
+    assert.equal(r.criteria[0].setup, 'belongs to P0');
+    assert.equal(r.criteria[0].assertion, null, 'P0 declared no assertion and must not inherit one');
+    assert.equal(r.errors.length, 1);
+  });
+
+  it('a VALID criterion still collects its own nested bullets', () => {
+    // Vacuous-pass guard: clearing `current` too eagerly would drop every
+    // Setup/Assert in the document and still satisfy the test above.
+    const md = [
+      '## 10. Acceptance Criteria',
+      '- [P0] [visibility] first',
+      '  - Setup: log in',
+      '  - Assert: grid visible',
+      '- [P1] [a11y] second',
+      '  - Assert: no violations',
+    ].join('\n');
+    const r = parseAcceptanceCriteria(md);
+    assert.deepEqual(r.criteria.map(c => [c.setup, c.assertion]), [
+      ['log in', 'grid visible'],
+      [null, 'no violations'],
+    ]);
+    assert.deepEqual(r.errors, []);
+  });
+});

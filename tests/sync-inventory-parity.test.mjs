@@ -109,3 +109,35 @@ describe('sync-inventory.mjs stays in lock-step with sync-to-repos.mjs (authorit
     assert.deepEqual(relativeForm, []);
   });
 });
+
+describe('syncMigrations distinguishes "no migrations" from "could not look"', () => {
+  // Round-1 audit H3/M7: every readdirSync failure returned [], so EACCES on an
+  // existing directory, an I/O failure, or a mis-resolved REPO_ROOT were all
+  // indistinguishable from a repo that legitimately has none — and the bundle
+  // would ship with its schema silently absent.
+  it('an unreadable migrations directory throws instead of reporting none', async () => {
+    const { _internals } = await import('../scripts/lib/sync-inventory.mjs');
+    const fsMod = await import('node:fs');
+    const real = fsMod.default.readdirSync;
+    try {
+      fsMod.default.readdirSync = () => { const e = new Error('permission denied'); e.code = 'EACCES'; throw e; };
+      assert.throws(() => _internals.syncMigrations(), /Refusing to report an empty migration set/);
+    } finally {
+      fsMod.default.readdirSync = real;
+    }
+  });
+
+  it('ENOENT still means none — the expected-absence case must stay quiet', async () => {
+    // Vacuous-pass guard: a version that threw on everything would satisfy the
+    // test above while breaking every repo without a migrations directory.
+    const { _internals } = await import('../scripts/lib/sync-inventory.mjs');
+    const fsMod = await import('node:fs');
+    const real = fsMod.default.readdirSync;
+    try {
+      fsMod.default.readdirSync = () => { const e = new Error('nope'); e.code = 'ENOENT'; throw e; };
+      assert.deepEqual(_internals.syncMigrations(), []);
+    } finally {
+      fsMod.default.readdirSync = real;
+    }
+  });
+});

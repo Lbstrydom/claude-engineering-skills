@@ -99,7 +99,11 @@ export function readRoundResult(resultPath) {
     throw new Error(`${resultPath}: not an audit result (no "findings" array)`);
   }
   const { round } = parseResultPath(resultPath);
-  return { round: parsed.round ?? round ?? null, ...parsed };
+  // Spread FIRST, then the resolved round — written the other way round, a
+  // `round` key present-but-undefined on the payload clobbered the
+  // filename-derived value that the `??` chain had just computed, so the
+  // precedence this line states was not the precedence it applied.
+  return { ...parsed, round: parsed.round ?? round ?? null };
 }
 
 /**

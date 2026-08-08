@@ -191,8 +191,19 @@ function syncMigrations() {
       .filter((f) => f.endsWith('.sql'))
       .sort()
       .map((f) => `supabase/migrations/${f}`);
-  } catch {
-    return [];
+  } catch (err) {
+    // ENOENT is the NORMAL case — a repo without migrations legitimately has no
+    // such directory. Every other errno is not: EACCES on an existing directory,
+    // an I/O failure, or a mis-resolved REPO_ROOT all previously returned `[]`,
+    // which is indistinguishable from "no migrations" and ships a bundle with
+    // the schema silently missing. Same expected-absence-vs-real-failure split
+    // as audit-clean.mjs's BENIGN_FS_CODES.
+    if (err.code === 'ENOENT') return [];
+    throw new Error(
+      `syncMigrations: cannot read ${dir} (${err.code || err.message}). Refusing to report an empty `
+      + 'migration set — that would ship a bundle whose schema is silently absent.',
+      { cause: err },
+    );
   }
 }
 

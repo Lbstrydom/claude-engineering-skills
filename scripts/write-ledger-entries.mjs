@@ -44,7 +44,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
-import { writeLedgerEntry, generateTopicId, populateFindingMetadata } from './lib/ledger.mjs';
+import { generateTopicId, populateFindingMetadata } from './lib/ledger.mjs';
+import { atomicWriteFileSync } from './lib/file-io.mjs';
+import { withFileLock } from './lib/file-lock.mjs';
+import { LedgerEntrySchema } from './lib/schemas.mjs';
 
 const KNOWN_FLAGS = [
   '--result', '--ledger', '--triage', '--pass', '--round', '--mark-fixed',
@@ -77,7 +80,138 @@ function readJson(p, label) {
   }
 }
 
-function main() {
+/**
+ * Merge entries into the ledger and persist them in ONE atomic write.
+ *
+ * `writeLedgerEntry` is read-modify-write PER ENTRY, so a batch the operator
+ * issued as one action reached disk as N separate mutations: a failure partway
+ * through left the ledger holding some of them. Validating up front (below)
+ * removed the realistic trigger but not the property — so do the merge in
+ * memory and hand the whole ledger to one `atomicWriteFileSync` (temp file +
+ * rename), which is the same durability primitive `writeLedgerEntry` itself
+ * relies on. Either every entry lands or none does.
+ *
+ * REPLACE-by-topicId semantics, matching `writeLedgerEntry` and deliberately
+ * NOT `batchWriteLedger`: that helper PRESERVES `adjudicationOutcome` /
+ * `remediationState` / `ruling` on an existing entry (correct for its
+ * pre-adjudication caller), which would silently discard the very rulings this
+ * CLI exists to record.
+ *
+ * `derive` runs INSIDE the lock and receives the freshly-read entries, so a
+ * caller whose new entries depend on the CURRENT ledger state (`--mark-fixed`
+ * merges into existing rows) computes them from what is on disk now, not from a
+ * snapshot read before the lock was held. Reading outside and writing inside
+ * looks atomic and is not: a concurrent triage decision landing in between was
+ * silently overwritten by the stale copy. Caught by the Gemini final gate
+ * 2026-08-08, as the residual of the lock added one round earlier.
+ *
+ * @param {string} ledgerPath
+ * @param {object[] | ((existing: Map<string, object>) => object[])} derive
+ *   a ready array (entries independent of ledger state), or a function
+ *   evaluated under the lock against the current entries
+ */
+async function writeLedgerAtomically(ledgerPath, derive) {
+  const abs = path.resolve(ledgerPath);
+  // The atomic rename protects the WRITE; it does not serialize the
+  // read-merge-write TRANSACTION. Two processes adjudicating the same ledger
+  // (routine here — this repo's working tree is shared by concurrent sessions)
+  // would each read the same prior state and each replace the file, so the
+  // second silently discards the first's rulings. `withFileLock` is the repo's
+  // existing answer (requirements.mjs reconcile uses it for the same shape).
+  //
+  // Nothing inside this callback may call `process.exit`: that skips the lock's
+  // `finally` release and orphans the .lock file. Failures throw and unwind;
+  // the caller sets the exit code.
+  return withFileLock(`${abs}.lock`, {}, () => {
+    let ledger = { version: 1, entries: [] };
+    if (fs.existsSync(abs)) {
+      const raw = JSON.parse(fs.readFileSync(abs, 'utf-8'));
+      if (raw && typeof raw === 'object' && Array.isArray(raw.entries)) {
+        ledger = raw;
+      } else {
+        // Parseable but structurally wrong. Do NOT silently start fresh — that
+        // REPLACES a file whose rulings may be recoverable by hand. Back it up
+        // and say so, matching writeSingleLedgerEntry, whose behaviour this
+        // write path took over and had quietly dropped.
+        const backup = `${abs}.bak`;
+        fs.copyFileSync(abs, backup);
+        process.stderr.write(
+          `  [ledger] WARNING: ${abs} is valid JSON but not a ledger (no entries[] array). `
+          + `Backed up to ${backup} and starting a fresh ledger — inspect the backup before discarding it.\n`,
+        );
+      }
+    }
+    const byTopic = new Map(ledger.entries.map(e => [e.topicId, e]));
+    const entries = typeof derive === 'function' ? derive(byTopic) : derive;
+    assertAllValid(entries, abs);
+    for (const entry of entries) byTopic.set(entry.topicId, entry);
+    ledger.entries = [...byTopic.values()];
+    atomicWriteFileSync(abs, `${JSON.stringify(ledger, null, 2)}\n`);
+    process.stderr.write(`  [ledger] wrote ${entries.length} entr(ies) → ${abs} (${ledger.entries.length} total)\n`);
+  });
+}
+
+/**
+ * Validate EVERY entry before writing ANY of them.
+ *
+ * `writeLedgerEntry` validates per call and writes per call, so a batch whose
+ * third entry is invalid persisted the first two and rejected the rest — a
+ * partially-applied operation the operator issued as one action. Validating the
+ * whole batch up front makes the realistic failure mode (a malformed entry)
+ * all-or-nothing: nothing touches disk. A mid-loop crash or I/O failure is not
+ * covered by this — that residual is caught after the fact by
+ * `unverifiedTopicIds`, which fails the run naming exactly what is missing.
+ *
+ * @param {object[]} entries
+ * @param {string} ledgerPath
+ */
+function assertAllValid(entries, ledgerPath) {
+  const bad = entries
+    .map((entry, i) => ({ i, entry, parsed: LedgerEntrySchema.safeParse(entry) }))
+    .filter(r => !r.parsed.success);
+  if (bad.length === 0) return;
+  const detail = bad
+    .map(r => `  ${r.entry.topicId ?? `#${r.i}`}: ${r.parsed.error.issues.map(is => `${is.path.join('.')} ${is.message}`).join('; ')}`)
+    .join('\n');
+  throw new ArgvError(
+    `write-ledger-entries: ${bad.length} of ${entries.length} entr(ies) would be rejected by the ledger `
+    + `schema. Nothing was written to ${ledgerPath} — a batch is one operator action, so it applies whole `
+    + `or not at all.\n${detail}`,
+  );
+}
+
+/**
+ * Confirm the ledger on disk actually contains what we just claimed to write.
+ *
+ * `writeLedgerEntry` validates against the full `LedgerEntrySchema` and, on a
+ * rejection, writes one stderr line and RETURNS — it throws nothing and returns
+ * nothing, so a caller that reports its own intent is reporting a wish. Read the
+ * file back and check, rather than trusting the call.
+ *
+ * Defence in depth behind `assertAllValid` (refuses a malformed batch before
+ * anything is written) and `writeLedgerAtomically` (one temp-file+rename for
+ * the whole batch). With both in place there is no partial-write path left to
+ * construct hermetically — this stays as the final read-back that the file on
+ * disk really says what was reported, which costs one stat and closes the
+ * "reported a write that did not happen" class for good.
+ *
+ * @param {string} ledgerPath
+ * @param {string[]} expectedTopicIds
+ * @param {(entry: object) => boolean} [predicate] — extra per-entry assertion
+ * @returns {string[]} topicIds that are absent or failed the predicate
+ */
+function unverifiedTopicIds(ledgerPath, expectedTopicIds, predicate = () => true) {
+  let onDisk;
+  try {
+    onDisk = JSON.parse(fs.readFileSync(path.resolve(ledgerPath), 'utf-8'));
+  } catch {
+    return [...expectedTopicIds];   // no file at all ⇒ nothing landed
+  }
+  const byTopic = new Map((onDisk.entries ?? []).map(e => [e.topicId, e]));
+  return expectedTopicIds.filter(id => !byTopic.has(id) || !predicate(byTopic.get(id)));
+}
+
+async function main() {
   if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
   assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'write-ledger-entries' });
   const argv = process.argv.slice(2);
@@ -99,17 +233,26 @@ function main() {
     if (fixedIds.length === 0) {
       throw new ArgvError('write-ledger-entries: --mark-fixed needs at least one topicId.');
     }
-    const ledger = readJson(ledgerPath, 'ledger');
-    const byTopic = new Map((ledger.entries ?? []).map(e => [e.topicId, e]));
-    const missing = fixedIds.filter(id => !byTopic.has(id));
-    if (missing.length > 0) {
-      throw new ArgvError(
-        `write-ledger-entries: ${missing.length} topicId(s) are not in ${ledgerPath}: ${missing.join(', ')}. `
-        + 'Mark only entries that exist — a typo would otherwise leave the real one pending.',
+    // Both the existence check and the merge happen UNDER the lock, against the
+    // entries as they are on disk at that moment — see writeLedgerAtomically.
+    await writeLedgerAtomically(ledgerPath, (byTopic) => {
+      const missing = fixedIds.filter(id => !byTopic.has(id));
+      if (missing.length > 0) {
+        throw new ArgvError(
+          `write-ledger-entries: ${missing.length} topicId(s) are not in ${ledgerPath}: ${missing.join(', ')}. `
+          + 'Mark only entries that exist — a typo would otherwise leave the real one pending.',
+        );
+      }
+      return fixedIds.map(topicId => ({ ...byTopic.get(topicId), remediationState: 'fixed' }));
+    });
+    const unmarked = unverifiedTopicIds(ledgerPath, fixedIds, e => e.remediationState === 'fixed');
+    if (unmarked.length > 0) {
+      console.error(
+        `write-ledger-entries: ${unmarked.length} of ${fixedIds.length} entr(ies) are NOT marked fixed `
+        + `on disk: ${unmarked.join(', ')}. The ledger write was rejected (see the [ledger] line above); `
+        + 'nothing was silently accepted.',
       );
-    }
-    for (const topicId of fixedIds) {
-      writeLedgerEntry(ledgerPath, { ...byTopic.get(topicId), remediationState: 'fixed' });
+      process.exit(1);
     }
     console.log(`marked ${fixedIds.length} entr(ies) fixed → ${ledgerPath}`);
     return;
@@ -136,7 +279,21 @@ function main() {
   // pass name ('Structure', 'Wiring', …). Passing a bare undefined produces a
   // topicId that joins to nothing — the invisible-entry failure above.
   const passDefault = valueOf(argv, '--pass') || 'plan';
-  const round = Number(valueOf(argv, '--round') ?? result.round ?? 1);
+
+  // Validate the round EXACTLY (a positive integer), never coerce. `Number`
+  // (not `parseInt`) also rejects trailing garbage — same contract as
+  // write-code-outcomes.mjs. Reproduced 2026-08-08: `--round nope` became NaN,
+  // LedgerEntrySchema rejected every entry, `writeLedgerEntry` returned after
+  // one stderr line, and this CLI still printed `1/1 findings ruled ·
+  // acceptance 100%` and exited 0 — with NO ledger file on disk at all. That is
+  // the success-shaped-write class this whole change set exists to close.
+  const roundRaw = valueOf(argv, '--round') ?? result.round ?? 1;
+  const round = Number(roundRaw);
+  if (!Number.isInteger(round) || round < 1) {
+    throw new ArgvError(
+      `write-ledger-entries: --round must be a positive integer (got ${JSON.stringify(roundRaw)}).`,
+    );
+  }
 
   const byId = new Map(findings.map(f => [f.id, f]));
   const unknown = Object.keys(triage).filter(id => !byId.has(id));
@@ -150,6 +307,8 @@ function main() {
   }
 
   const written = [];
+  const writtenTopicIds = [];
+  const pending = [];
   for (const [id, t] of Object.entries(triage)) {
     for (const [field, allowed] of [['outcome', OUTCOMES], ['state', STATES], ['ruling', RULINGS]]) {
       if (!allowed.has(t?.[field])) {
@@ -163,8 +322,10 @@ function main() {
     }
     const f = byId.get(id);
     populateFindingMetadata(f, f._pass || passDefault);   // idempotent; ensures _hash/_primaryFile
-    writeLedgerEntry(ledgerPath, {
-      topicId: generateTopicId(f),                 // from the REAL finding — never a stand-in
+    const topicId = generateTopicId(f);
+    writtenTopicIds.push(topicId);
+    pending.push({
+      topicId,                                     // from the REAL finding — never a stand-in
       latestFindingId: f.id,                       // second join key for outcome labeling
       semanticHash: f._hash,
       adjudicationOutcome: t.outcome,
@@ -182,6 +343,23 @@ function main() {
       pass: f._pass,                               // matches the populateFindingMetadata arg above
     });
     written.push(id);
+  }
+
+  // Validate the whole batch before a single entry reaches disk.
+  // `pending` derives from the result + triage files, never from the ledger,
+  // so it carries no stale-read hazard; assertAllValid runs inside the write.
+  await writeLedgerAtomically(ledgerPath, pending);
+
+  // Verify BEFORE reporting: the counts below are a claim about disk, and
+  // `writeLedgerEntry` fails silently on a schema rejection.
+  const unlanded = unverifiedTopicIds(ledgerPath, writtenTopicIds);
+  if (unlanded.length > 0) {
+    console.error(
+      `write-ledger-entries: ${unlanded.length} of ${writtenTopicIds.length} entr(ies) are absent from `
+      + `${ledgerPath} after writing (topicIds: ${unlanded.join(', ')}). The ledger write was rejected — `
+      + 'see the [ledger] validation line above. Refusing to report a write that did not happen.',
+    );
+    process.exit(1);
   }
 
   const unruled = findings.filter(f => !Object.hasOwn(triage, f.id)).map(f => f.id);
@@ -221,13 +399,11 @@ function main() {
   }
 }
 
-try {
-  main();
-} catch (err) {
+main().catch((err) => {
   if (err instanceof ArgvError || err?.code === 'ARGV_ERROR') {
     console.error(err.message);
     process.exit(2);
   }
   console.error(err.message);
   process.exit(1);
-}
+});

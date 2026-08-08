@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**12 active · 169 terminal · 26 audit summaries · 4 reference docs**
+**12 active · 170 terminal · 26 audit summaries · 4 reference docs**
 
 ---
 
@@ -52,7 +52,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 166 completed plans</summary>
+<summary>Show all 167 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -114,6 +114,7 @@ source comments that no docs linter sees — stays valid.
 | [Evidence-Anchor Path Contract — stop Stage 0 discarding valid findings as fabricated](./evidence-anchor-path-contract.md) | `Complete` | both clusters shipped + gate-clear (consolidated Gemini APPROVE). |
 | [Plan-Declared Execution Clustering Across the Skill Chain](./execution-clustering-skill-chain.md) | `Complete` |  |
 | [Idle-timeout the extract subprocess (stop the coverage-sized SIGKILL truncating symbol extraction)](./extract-idle-timeout.md) | `Complete` |  |
+| [Field-Reported /plan → /audit-plan Defects](./field-report-audit-plan-defects.md) | `Complete` | shipped in `cd862249`, `3a9dde1d`, `49bef636`; this |
 | [Background-safe & provider-agnostic final-review gate](./final-review-background-safe-provider-agnostic.md) | `Complete` |  |
 | [Close the final-review credit loop + admit a cheap shadow](./final-review-credit-and-cheap-shadow.md) | `Complete` |  |
 | [Shadow Final-Review Reviewer (A/B test final-gate effectiveness)](./final-review-shadow-reviewer.md) | `Complete` | verified built; status corrected from Approved during archive triage 2026-06-27 |

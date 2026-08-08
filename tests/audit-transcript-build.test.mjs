@@ -194,3 +194,74 @@ describe('build-audit-transcript CLI', () => {
     );
   });
 });
+
+describe('the transcript cannot silently lose its scope or mix two sessions', () => {
+  const run = (args) => execFileSync(process.execPath, [CLI, ...args], {
+    encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  it('refuses --sid together with --result rather than letting one win', () => {
+    // Round-1 audit M5/M9: explicit results silently REPLACED sid discovery, so
+    // a transcript could carry rounds belonging to a different audit.
+    const dir = tmpdir();
+    const p = writeResult(dir, 'audit-code-5', 1);
+    assert.throws(
+      () => run(['--sid', 'audit-code-5', '--dir', dir, '--result', p]),
+      (err) => err.status === 2 && /mutually exclusive/.test(String(err.stderr)),
+    );
+  });
+
+  it('refuses a code-mode transcript with no --changed', () => {
+    // M8: an empty changed_files makes the reviewer's scope filter a no-op, and
+    // the advertised one-flag form reached that state by construction.
+    const dir = tmpdir();
+    writeResult(dir, 'audit-code-6', 1);
+    assert.throws(
+      () => run(['--sid', 'audit-code-6', '--dir', dir]),
+      (err) => err.status === 2 && /--changed is required in code mode/.test(String(err.stderr)),
+    );
+  });
+
+  it('allows the unscoped review only when asked for explicitly', () => {
+    const dir = tmpdir();
+    writeResult(dir, 'audit-code-7', 1);
+    const out = JSON.parse(run(['--sid', 'audit-code-7', '--dir', dir, '--no-scope-filter', '--json']));
+    assert.equal(out.changedFiles, 0);
+  });
+
+  it('plan mode is exempt — its changed_files is empty by contract', () => {
+    // Vacuous-pass guard: if the new refusal fired on plan mode too, the plan
+    // gate would be unrunnable while the code tests above still passed.
+    const dir = tmpdir();
+    writeResult(dir, 'audit-plan-8', 1);
+    const out = JSON.parse(run(['--sid', 'audit-plan-8', '--dir', dir, '--json']));
+    assert.equal(out.mode, 'plan');
+    assert.equal(out.changedFiles, 0);
+  });
+});
+
+describe('readRoundResult round precedence', () => {
+  // Round-2 audit M2/M5: the resolved round was computed and then immediately
+  // clobbered by the spread that followed it, so a payload carrying an explicit
+  // `round: undefined` lost the filename-derived value the docblock promises.
+  it('falls back to the filename when the payload carries round: undefined', () => {
+    const dir = tmpdir();
+    const p = path.join(dir, 'audit-code-3-r7-result.json');
+    fs.writeFileSync(p, JSON.stringify({ round: undefined, findings: [] }));
+    // JSON drops an undefined value, so also cover the explicit-null payload.
+    assert.equal(readRoundResult(p).round, 7);
+
+    const q = path.join(dir, 'audit-code-3-r8-result.json');
+    fs.writeFileSync(q, JSON.stringify({ round: null, findings: [] }));
+    assert.equal(readRoundResult(q).round, 8, 'a null payload round must not beat the filename');
+  });
+
+  it('still lets an explicit payload round win when it is real', () => {
+    // Vacuous-pass guard: a fix that always preferred the filename would pass
+    // the test above while discarding a genuine payload round.
+    const dir = tmpdir();
+    const p = path.join(dir, 'audit-code-4-r1-result.json');
+    fs.writeFileSync(p, JSON.stringify({ round: 5, findings: [] }));
+    assert.equal(readRoundResult(p).round, 5);
+  });
+});

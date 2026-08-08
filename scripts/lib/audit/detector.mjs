@@ -104,6 +104,17 @@ export function runDetector(detector, { cwd = process.cwd(), run = spawnSync } =
       // a colon is legal in a filename on Linux and macOS, and an index-based split would
       // then land inside the path and corrupt both the file and the key derived from it.
       // The text may contain any number of colons, so only the first `:<digits>:` counts.
+      //
+      // TODO(deferred, audit 2026-08-08 M3/M6): this is anchored, not unambiguous.
+      // A path containing its own `:<digits>:` sequence wins the lazy match, and
+      // so does matched TEXT when the path itself contains a colon. Root cause:
+      // ripgrep's human-oriented output has no escaping; the real fix is
+      // `--json`, whose framing is unambiguous. Deferred as INDEPENDENT of the
+      // 2026-08-08 change set: the CLI added there only exposes `checkDetectors`
+      // at the command line and parses nothing itself, so this behaves
+      // identically with or without it. Residual risk is bounded — a colon is
+      // illegal in a Windows filename and no glob this bundle ships can reach
+      // one. Revisit if a detector is ever pointed at attacker-influenced paths.
       const m = /^(.*?):(\d+):(.*)$/.exec(raw);
       if (!m) return null;
       const file = m[1].replace(/\\/g, '/').replace(/^\.\//, '');

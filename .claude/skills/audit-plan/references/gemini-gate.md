@@ -39,18 +39,25 @@ That discovers every `.audit/$SID-r<N>-result.json`, picks up
 prefix (`audit-plan-…` / `audit-code-…`), and writes
 `.audit/$SID-transcript.json`.
 
-**Code audits: add `--changed`.** It populates `changed_files`, which is the
-reviewer's scope filter — without it the filter is a silent no-op (see "When
+**Code audits REQUIRE `--changed`** — the builder refuses without it. It
+populates `changed_files`, the reviewer's scope filter; an empty list makes the
+filter a silent no-op and every out-of-scope finding is accepted (see "When
 Gemini makes category errors"). Pass the same list you gave the R1 audit:
 
 ```bash
 node scripts/build-audit-transcript.mjs --sid $SID --changed "$CHANGED"
 ```
 
+To review corpus-wide on purpose, say so with `--no-scope-filter`; the refusal
+exists because the one-flag form hits the unscoped path by construction, and a
+warning was not enough. Plan mode is exempt — its `changed_files` is empty by
+contract.
+
 Other flags: `--mode plan|code` (required when the sid doesn't carry the
 prefix — it never guesses), `--result <path>` (repeatable; for the consolidated
-`/cycle` gate or non-standard locations), `--ledger`, `--dir` (default
-`.audit`), `--summary`, `--out`, `--json`.
+`/cycle` gate or non-standard locations — **mutually exclusive with `--sid`**,
+so a transcript can never mix two sessions' rounds), `--ledger`, `--dir`
+(default `.audit`), `--summary`, `--out`, `--json`.
 
 > **`.audit/`, never `/tmp/`.** The transcript is the only replayable input for
 > evaluating a cheaper or newer final reviewer, and `/tmp` is OS-cleaned — on

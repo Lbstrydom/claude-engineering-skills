@@ -8,8 +8,13 @@
  * `.audit/$SID-transcript.json`, which NO step produced. The gate died on
  * `File not found` and the operator hand-rolled the JSON from a reference doc.
  *
- * Usage (the documented skill flow — one flag, everything derived):
+ * Usage — PLAN audits derive everything from the session id:
  *   node scripts/build-audit-transcript.mjs --sid $SID
+ *
+ * CODE audits additionally require --changed, because it populates the
+ * reviewer's scope filter and an empty one silently accepts every out-of-scope
+ * finding (--no-scope-filter opts out deliberately):
+ *   node scripts/build-audit-transcript.mjs --sid $SID --changed "$CHANGED"
  *
  * Explicit form (consolidated /cycle gate, non-standard artifact locations):
  *   node scripts/build-audit-transcript.mjs \
@@ -20,7 +25,9 @@
  *
  * `--sid` discovers every `<sid>-r<N>-result.json` in `--dir` (default
  * `.audit`), picks up `<sid>-ledger.json` when present, infers `--mode` from
- * the sid prefix, and defaults `--out` to `<dir>/<sid>-transcript.json`.
+ * the sid prefix, and defaults `--out` to `<dir>/<sid>-transcript.json`. It is
+ * mutually exclusive with `--result`: they are alternative selection modes, and
+ * accepting both let one session's rounds leak into another's transcript.
  *
  * Fails loudly rather than emitting a thin transcript: no round results, an
  * unparseable result, or an unresolvable mode is a non-zero exit. A final gate
@@ -38,7 +45,7 @@ import {
 
 const KNOWN_FLAGS = [
   '--sid', '--dir', '--result', '--ledger', '--mode', '--changed', '--summary',
-  '--out', '--json', '--selfcheck-relocation',
+  '--out', '--json', '--no-scope-filter', '--selfcheck-relocation',
 ];
 
 /** Collect every `--result <path>` occurrence (the flag is repeatable). */
@@ -69,6 +76,18 @@ function main() {
     throw new ArgvError(
       'build-audit-transcript: pass --sid <SID> (discovers the session\'s round results '
       + `in ${dir}/) or one or more --result <path>.`,
+    );
+  }
+  // `--sid` and `--result` are alternative SELECTION modes, not a base plus an
+  // override. Accepting both let explicit paths silently replace SID discovery
+  // with artifacts from a different session, and the transcript kept them — a
+  // final gate reading rounds that never belonged to this audit. Refuse the
+  // ambiguity rather than pick a winner.
+  if (sid && explicitResults.length > 0) {
+    throw new ArgvError(
+      'build-audit-transcript: --sid and --result are mutually exclusive. --sid discovers the '
+      + 'session\'s own round results; --result names them explicitly. Passing both cannot express '
+      + 'a single coherent session — drop one.',
     );
   }
 
@@ -122,6 +141,21 @@ function main() {
 
   const changedRaw = valueOf(argv, '--changed');
   const changedFiles = changedRaw ? changedRaw.split(',').map(s => s.trim()).filter(Boolean) : [];
+
+  // A CODE transcript with no `changed_files` silently disables the reviewer's
+  // scope filter, and the symptom (out-of-scope findings accepted as in-scope)
+  // surfaces far downstream. A stderr warning was not enough: the advertised
+  // one-flag `--sid $SID` invocation hits this path by construction. Require the
+  // scope, or require the operator to say out loud that they are giving it up.
+  // Plan mode is exempt — its changed_files is empty BY CONTRACT.
+  if (auditMode === 'code' && changedFiles.length === 0 && !argv.includes('--no-scope-filter')) {
+    throw new ArgvError(
+      'build-audit-transcript: --changed is required in code mode — it populates changed_files, '
+      + 'which is the final reviewer\'s scope filter; without it every out-of-scope finding is '
+      + 'accepted. Pass the same file list you gave the R1 audit, or --no-scope-filter to '
+      + 'deliberately review corpus-wide.',
+    );
+  }
 
   const transcript = buildAuditTranscript({
     rounds,

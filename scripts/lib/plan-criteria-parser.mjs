@@ -38,7 +38,26 @@ const VALID_CATEGORIES = new Set([
 const HEADING_RE = /^#{2,4}\s*(?:\d+\.\s*)?acceptance\s+criteria/i;
 // Loose match — severity and category are validated after extraction so malformed
 // entries surface as errors rather than silently disappearing.
-const CRITERION_RE = /^\s*[-*]\s*\[([A-Za-z0-9]+)\]\s*\[([A-Za-z0-9_-]+)\]\s*(.+?)\s*$/;
+// Anchored at column 0 — a criterion is a TOP-LEVEL bullet, as the module
+// docblock states. The old `^\s*` also matched INDENTED bullets, and because
+// the criterion branch is tested before the nested Setup/Assert branch, a
+// nested `- [P1] …` line was promoted to a standalone criterion of its own.
+const CRITERION_RE = /^[-*]\s*\[([A-Za-z0-9]+)\]\s*\[([A-Za-z0-9_-]+)\]\s*(.+?)\s*$/;
+
+// A bullet that OPENS like a criterion (`- [` …) but does not parse as one.
+// Such a line is a malformed criterion, not prose, and must surface as an
+// error: silently skipping it drops a criterion from the verify run while the
+// run still reports success over the ones that parsed.
+//
+// Deliberately NOT anchored to column 0, unlike CRITERION_RE. An INDENTED
+// criterion-shaped bullet is the ambiguous case — CommonMark allows a
+// top-level list item up to 3 leading spaces, while this format uses
+// indentation for the nested Setup/Assert lines. Rather than guess which the
+// author meant, the parser refuses to promote it (that was the original bug)
+// AND refuses to swallow it: it reports the line so the author can fix the
+// indentation. Nested Setup/Assert lines never reach here — NESTED_RE consumes
+// them first.
+const CRITERION_SHAPED_RE = /^\s*[-*]\s*\[/;
 const NESTED_RE = /^\s+[-*]\s*(setup|assert)\s*:\s*(.+?)\s*$/i;
 
 /**
@@ -71,9 +90,14 @@ export function locateAcceptanceSection(markdown) {
   }
   if (start === -1) return null;
 
+  // Terminator scans levels 1-6, not 2-4. A level-1 heading is HIGHER than any
+  // supported Acceptance Criteria heading, so it must end the section — under
+  // the old `#{2,4}` it did not, and every bullet after it (a whole other
+  // document) was parsed as acceptance criteria. The `<= startLevel` test still
+  // keeps deeper subsections inside.
   let end = lines.length;
   for (let i = start + 1; i < lines.length; i++) {
-    const m = /^(#{2,4})\s+/.exec(lines[i]);
+    const m = /^(#{1,6})\s+/.exec(lines[i]);
     if (m && m[1].length <= startLevel) { end = i; break; }
   }
   return { headingIndex: start, lines: lines.slice(start + 1, end) };
@@ -143,8 +167,33 @@ export function parseAcceptanceCriteria(markdown) {
       const [, kind, text] = nestedMatch;
       if (kind.toLowerCase() === 'setup') current.setup = text.trim();
       else current.assertion = text.trim();
+      continue;
     }
-    // Lines that don't match are ignored — tolerant to prose between criteria.
+
+    // A top-level bullet that LOOKS like a criterion but did not parse is a
+    // malformed criterion, not prose. Report it — the caller stops on
+    // `errors.length > 0`, and a silently-dropped criterion is one the verify
+    // run never checks while still reporting on the ones that parsed.
+    if (CRITERION_SHAPED_RE.test(line)) {
+      const indented = /^\s/.test(line);
+      errors.push(
+        indented
+          ? `Indented criterion-shaped bullet — criteria must start at column 0 (nested bullets are `
+            + `Setup:/Assert: only). Fix the indentation in: ${line.trim()}`
+          : `Malformed criterion (expected \`- [P0] [category] description\`) in: ${line.trim()}`,
+      );
+      // Finalize and CLEAR the pending criterion, exactly as the invalid-
+      // severity/category branches do. Without the clear, the malformed
+      // criterion's own `Setup:`/`Assert:` sub-bullets match NESTED_RE on the
+      // following lines and attach to the PREVIOUS valid criterion — silently
+      // giving it another criterion's setup and assertion. Caught by the Gemini
+      // final gate 2026-08-08 and reproduced: P0's setup became "belongs to the
+      // MALFORMED one".
+      if (current) criteria.push(current);
+      current = null;
+      continue;
+    }
+    // Anything else is ignored — tolerant to prose between criteria.
   }
   if (current) criteria.push(current);
 
