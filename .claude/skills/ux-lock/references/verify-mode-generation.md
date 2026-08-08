@@ -18,14 +18,14 @@ variable first — never paste free-form values inline into the JS string
 commands can't even be pasted):
 
 ```bash
-export PLAN=docs/plans/<name>.md
-node --input-type=module -e "
-import { readFileSync } from 'node:fs';
-import { parseAcceptanceCriteria } from './scripts/lib/plan-criteria-parser.mjs';
-const md = readFileSync(process.env.PLAN, 'utf8');
-console.log(JSON.stringify(parseAcceptanceCriteria(md), null, 2));
-" # PowerShell: $env:PLAN='docs/plans/<name>.md' first
+node scripts/lib/plan-criteria-parser.mjs "$PLAN"
 ```
+
+Set `PLAN` to the plan path first (`export PLAN=…`; PowerShell:
+`$env:PLAN='…'`). Passing the path as an
+argument keeps free-form values out of a JS string — and the command form is
+what the consumer sync can relocate, which an `import '…/scripts/lib/…'`
+specifier inside `node -e` is not.
 
 Returns `{ criteria: [...], errors: [...], found: boolean }`.
 

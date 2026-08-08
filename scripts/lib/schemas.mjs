@@ -817,6 +817,13 @@ export const StageOneTriageInputSchema = z.object({
  */
 const LedgerCoreFields = {
   topicId: z.string(),
+  // The finding's own id, kept as the SECOND join key: `enrichFindings`
+  // (outcome-sync.mjs) matches `entry.latestFindingId === finding.id` when the
+  // topicId join misses. It was documented as a join key while the schema
+  // silently stripped it — a `z.object` drops unknown keys — so every entry
+  // written "with latestFindingId" persisted without one and the fallback join
+  // could never fire. Optional: entries predating this carry no id.
+  latestFindingId: z.string().optional(),
   semanticHash: z.string(),
   severity: z.enum(['HIGH', 'MEDIUM', 'LOW']),
   category: z.string(),

@@ -2,7 +2,7 @@
 name: audit-plan
 description: |
   Iteratively audit a plan file (docs/plans/*.md) with GPT + Gemini final gate.
-  Multi-round refinement with rigor-pressure early-stop (max 3 rounds for plans).
+  Multi-round refinement with an acceptance-rate early-stop (3 rounds default).
   Ledger-driven suppression on R2+ rounds prevents finding churn.
   Judges the plan DOCUMENT before anyone builds it. "Was the plan actually
   built?" is /ux-lock verify — that reads a live app, this reads only the file.
@@ -39,7 +39,7 @@ Show kickoff card:
 ```
 ═══════════════════════════════════════
   /audit-plan — [MODE] — Starting
-  Plan: <path> | Max 3 rounds | SID: $SID
+  Plan: <path> | 3 rounds default | SID: $SID
 ═══════════════════════════════════════
 ```
 
@@ -62,8 +62,8 @@ to audit (no child-plan merging like the old flow).
 
 ```bash
 node scripts/openai-audit.mjs plan <plan-file> --mode plan \
-  --out /tmp/$SID-r1-result.json \
-  2>/tmp/$SID-r1-stderr.log
+  --out .audit/$SID-r1-result.json \
+  2>.audit/$SID-r1-stderr.log
 ```
 
 **Critical**: always pass `--mode plan`. Without it, Gemini in Step 6 can flag
@@ -78,9 +78,9 @@ post-output suppression against the ledger.
 ```bash
 node scripts/openai-audit.mjs plan <plan-file> --mode plan \
   --round 2 \
-  --ledger /tmp/$SID-ledger.json \
-  --out /tmp/$SID-r2-result.json \
-  2>/tmp/$SID-r2-stderr.log
+  --ledger .audit/$SID-ledger.json \
+  --out .audit/$SID-r2-result.json \
+  2>.audit/$SID-r2-stderr.log
 ```
 
 Plan audit is single-file — no `--passes`, `--diff`, or `--changed` plumbing
@@ -207,7 +207,7 @@ Only send rebuttal if rebut HIGH or MEDIUM findings exist:
 
 ```bash
 node scripts/openai-audit.mjs rebuttal <plan-file> <rebuttal-file> \
-  --out /tmp/$SID-resolution.json 2>/tmp/$SID-rebuttal-stderr.log
+  --out .audit/$SID-resolution.json 2>.audit/$SID-rebuttal-stderr.log
 ```
 
 ### Convergence — early-stop on rigor pressure
@@ -215,14 +215,43 @@ node scripts/openai-audit.mjs rebuttal <plan-file> <rebuttal-file> \
 **Plan audits have infinite refinement surface** — after round 2-3, findings
 shift from "real design bugs" to "push for more rigor". Stop early.
 
-**Max 3 rounds** unless HIGH count is actively decreasing:
+**Key on the ACCEPTANCE RATE, not the finding count.** `write-ledger-entries`
+prints it for the round you just triaged (`acceptance 92% (accepted 11 ·
+dismissed 1 · deferred 0)`) — that number is the signal:
+
+| Acceptance rate this round | Read |
+|---|---|
+| **≥ ~⅔ accepted as fix-now** | **PRODUCTIVE** — the round bought real corrections. Continue (within the cap). |
+| **≤ ~⅓** | **STOP** — you are dismissing/deferring most of what arrives. That is rigor pressure by definition. |
+| in between | Decide on finding *character* (below), not on counts. |
+
+**A rising HIGH count is NOT a stop signal on its own.** Fixing round N's
+findings CREATES new specified surface that round N+1 legitimately audits: R2's
+findings are largely propagation debt from R1's fixes (stale cross-references in
+older sections), R3's are net-new surface from R2's. Measured 2026-08-08 on a
+large plan: H:5 → H:5 → H:6 across three rounds, with **23 of 23 findings
+accepted as fix-now — zero dismissals, zero deferrals, zero rebuttals** — and
+the independent Gemini gate scoring the deliberation "exemplary… no false
+positives". The old count rule said STOP after R2. It would have been wrong.
+A raw count cannot distinguish "the auditor is reaching" from "the plan is
+growing correct detail"; the acceptance rate can.
+
+Use the count as a **secondary backstop**, read together with the rate:
 
 | Condition | Action |
 |---|---|
-| R1 → R2 HIGH count drops >30% | Continue to R3 |
-| R2 → R3 HIGH count drops significantly | Continue to R4 (rare) |
-| HIGH count plateaus or increases | **STOP** — remaining findings are scope pressure |
+| HIGH count rising **and** acceptance rate low | **STOP** — the loop is manufacturing work |
+| HIGH count rising **and** acceptance rate high | Continue — the plan is gaining real surface |
+| HIGH count dropping | Continue (the classic converging case) |
 | R2+ findings push for v2 features, parser deps | **STOP** — record as "Out of Scope" |
+
+**Cap: 3 rounds by default, 5 absolute.** Exceed 3 only while the acceptance
+rate stays high AND the findings are concrete *design* defects; the same
+finding-character test the Gemini gate uses applies here — an
+**implementation-completeness** finding ("specify the store step", "where does
+the cooldown go") belongs to the code audit, which checks it against real code.
+Record the stop decision (round count + acceptance rate + why) in the plan's
+audit trail.
 
 When stopping with deferrals, append a `## Out of Scope (Future)` section to
 the plan listing deferred concerns with rationale.
@@ -271,10 +300,19 @@ capture** (the final converged round, or a 1-round audit):
 
 ```bash
 node scripts/write-code-outcomes.mjs \
-  --result /tmp/$SID-r<N>-result.json \
-  --ledger /tmp/$SID-ledger.json \
+  --result .audit/$SID-r<N>-result.json \
+  --ledger .audit/$SID-ledger.json \
   --round <N>
 ```
+
+> **Precondition: the ledger must already carry per-finding rulings.** This CLI
+> *records* adjudications; it does not make them. Run Step 3.5 first. With an
+> empty or all-`pending` ledger it reports `0/N findings labelled · cloud=ok`
+> and exits 0 — success-shaped, having closed nothing (reported live
+> 2026-08-08). It now prints a `WARN:` line naming which of the three causes
+> applies (no entries / all pending / ruled-but-unjoined identity mismatch) and
+> carries the same text as `warning` on its JSON. **`labelled: 0` with a
+> non-zero `total` is a failure to fix, never a pass.**
 
 (The CLI is mode-agnostic — it works off the result+ledger artifacts;
 plan findings carry `pass: 'plan'`.) Additionally, still record dismissed
@@ -283,7 +321,7 @@ suppress the recurring ones:
 
 ```bash
 node scripts/write-plan-outcomes.mjs \
-  --result /tmp/$SID-r<N>-result.json \
+  --result .audit/$SID-r<N>-result.json \
   --outcomes '[{"id":"M3","action":"dismiss"},{"id":"H1","action":"fix-now"}]'
 ```
 
@@ -331,10 +369,11 @@ fixed items.
 After edits, re-audit with R2+ mode (back to Step 2):
 
 1. Use the same plan file path.
-2. Pass `--round <N>` and `--ledger /tmp/$SID-ledger.json`.
+2. Pass `--round <N>` and `--ledger .audit/$SID-ledger.json`.
 3. Track finding churn using `_hash` fields: resolved / recurring / new.
 
-Stop per the rigor-pressure rule above (max 3 rounds unless HIGH dropping).
+Stop per the rigor-pressure rule above (acceptance rate primary; 3 rounds
+default, 5 absolute).
 
 ---
 
@@ -343,10 +382,26 @@ Stop per the rigor-pressure rule above (max 3 rounds unless HIGH dropping).
 Run Gemini 3.1 Pro as the final gate. Falls back to Claude Opus when
 `GEMINI_API_KEY` is absent.
 
+**Build the transcript first** — the reviewer reads a file no earlier step
+writes. One command; never hand-assemble the JSON:
+
+```bash
+node scripts/build-audit-transcript.mjs --sid $SID
+```
+
+It discovers every `.audit/$SID-r<N>-result.json`, folds in
+`.audit/$SID-ledger.json` as the deliberation trail, infers `mode=plan` from the
+`audit-plan-` session-id prefix, and writes `.audit/$SID-transcript.json`.
+
 ```bash
 node scripts/gemini-review.mjs review <plan-file> .audit/$SID-transcript.json \
-  --out /tmp/$SID-gemini-result.json 2>/tmp/$SID-gemini-stderr.log
+  --mode plan \
+  --out .audit/$SID-gemini-result.json 2>.audit/$SID-gemini-stderr.log
 ```
+
+**`--mode plan` is as load-bearing here as it is in Step 2.** It defaults to
+`code`; without it the final gate reviews a not-yet-built plan as if it were
+shipped code and flags the absent implementations.
 
 Verdict handling: `APPROVE` → done. `CONCERNS` → deliberate on findings, edit
 plan, re-run Gemini. `REJECT` → present to user with recommendation.
@@ -367,7 +422,8 @@ the **stop signal**, not a reason to run again.
 | **Implementation-completeness** (missing step, parameter placement, "specify X") | **STOP** — fold into the plan as captured items; hand off to `/cycle`'s **code** audit, which verifies them against real code (the right artifact) |
 | Rising **coherence/praise** + 1 nit/round | **STOP** — diminishing returns; record the nit, close the gate |
 
-This mirrors the GPT "max 3 rounds unless HIGH actively dropping" rule: cap by
+This mirrors the GPT cap (3 rounds default, 5 absolute, extended only while the
+acceptance rate stays high): cap by
 default, exceed only for a concrete net-new *design* bug — never for rigor
 pressure or implementation detail. Record the stop decision (round count +
 why) in the plan's audit trail.
@@ -389,7 +445,7 @@ category-error handling: `references/gemini-gate.md`.
 
 1. **Peer relationship** — neither model blindly defers
 2. **Three-model system** — Claude (author) + GPT (auditor) + Gemini (final arbiter)
-3. **Stop at rigor pressure** — max 3 rounds unless HIGH actively dropping
+3. **Stop at rigor pressure, measured by ACCEPTANCE RATE** — not by finding count. A round the author accepts wholesale is not rigor pressure whatever the HIGH count did (measured: H:5→5→6 with 23/23 accepted). 3 rounds default, 5 absolute
 4. **Always `--mode plan`** — without it, Gemini flags absent implementations
 5. **No self-review** — Step 6 final gate reviews Claude-GPT transcript
 6. **Audit the §11 clustering** — when present, check partition / coupling / fix-gate placement / ordering / derived scope (the first of two validation layers; `/cycle` re-validates at runtime)

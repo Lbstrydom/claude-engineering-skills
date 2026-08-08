@@ -33,30 +33,28 @@ deferred reason).
 
 ## Capture flow
 
-For each deferral candidate, write one entry:
+One command, run after Step 3.5 (ledger write) and before Step 4 (fix). It
+reads the ledger and converts every `ruling: 'defer'` entry into a debt entry,
+deriving each one from the ledger's own record:
 
 ```bash
-node -e "
-import { writeDebtEntries } from './scripts/lib/debt-ledger.mjs';
-import { buildDebtEntry } from './scripts/lib/debt-capture.mjs';
-
-const finding = { /* enriched finding with _hash, _primaryFile, _pass, affectedFiles, classification */ };
-const { entry, sensitivity, redactions } = buildDebtEntry(finding, {
-  deferredReason: 'out-of-scope',
-  deferredRationale: 'pre-existing god-module concern, not in this phase scope — tracked for refactor pass',
-  deferredRun: '\$SID',
-});
-
-const result = await writeDebtEntries([entry]);
-console.log(JSON.stringify({
-  inserted: result.inserted,
-  updated: result.updated,
-  rejected: result.rejected.length,
-  sensitive: sensitivity.sensitive,
-  redactions: redactions.length,
-}));
-" --input-type=module
+node scripts/debt-auto-capture.mjs --ledger .audit/$SID-ledger.json --run $SID
 ```
+
+`--dry-run` previews without writing. `--reason` overrides the default
+`out-of-scope`, paired with its required field — e.g.
+`--reason blocked-by --blocked-by "owner/repo#123"`. Exit 0 covers the
+"0 deferred entries found" case; exit 1 is a missing arg, an unreadable
+ledger, or a write failure.
+
+> **Do not hand-roll this with `node -e` + `buildDebtEntry`/`writeDebtEntries`.**
+> An earlier revision of this page documented exactly that loop, importing
+> `./scripts/lib/debt-ledger.mjs` — a module specifier the consumer sync's
+> command rewriter cannot relocate (it only rewrites `node scripts/<path>`), so
+> the documented step could not run at all in a consumer repo, where the bundle
+> lives under `scripts/.claude-skills/`. `debt-auto-capture.mjs` had already
+> replaced it; the snippet just outlived it. Guarded by
+> `tests/skill-command-portability.test.mjs`.
 
 ## Automatic protections
 

@@ -22,34 +22,51 @@ Claude-GPT deliberation.
 4. **only** when neither a key nor an independent agent is available → output
    `FINAL_GATE_SKIPPED` and do not claim full final-gate validation.
 
-## Build the transcript
+## Build the transcript — a REAL step, run it
 
-Assemble `.audit/$SID-transcript.json` with the full audit trail:
+`gemini-review.mjs review` reads a transcript file; nothing else in the flow
+writes one. Build it first — **do not hand-assemble the JSON.** A consumer
+following the skill literally hit `File not found` here and hand-rolled a shape
+inferred from this document (reported 2026-08-08); the builder exists so the
+MANDATORY gate is never blocked on invented state.
 
-> **`.audit/`, never `/tmp/` — the transcript is an artifact, not an
-> intermediate.** It is the only replayable input for evaluating a cheaper or
-> newer final reviewer, and `/tmp` is OS-cleaned (on Windows, Bash's `/tmp` and
-> Node's `/tmp` are two different directories, so half the runs vanish into a
-> directory nothing scans). A shadow A/B spent $50.90 and left zero transcripts
-> to replay. Round results, diffs and stderr stay in `/tmp` — those genuinely
-> are intermediates. `.audit/` is gitignored and retains the newest 25
-> transcripts regardless of age (`npm run audit:clean`).
+```bash
+node scripts/build-audit-transcript.mjs --sid $SID
+```
 
-- Plan content, code files list
-- **`changed_files: string[]`** — list of files modified by this PR (the
-  `--changed` arg from your /audit-code R1 invocation). REQUIRED for
-  scope-error prevention; see "When Gemini makes category errors" below.
-- All rounds: GPT findings, Claude positions, GPT rulings, fixes applied
-- Final state: remaining findings, dismissed findings
-- Suppression data: kept / suppressed / reopened counts per round
+That discovers every `.audit/$SID-r<N>-result.json`, picks up
+`.audit/$SID-ledger.json` when present, infers the mode from the session-id
+prefix (`audit-plan-…` / `audit-code-…`), and writes
+`.audit/$SID-transcript.json`.
 
-### Standalone / consolidated transcript shape (concrete contract)
+**Code audits: add `--changed`.** It populates `changed_files`, which is the
+reviewer's scope filter — without it the filter is a silent no-op (see "When
+Gemini makes category errors"). Pass the same list you gave the R1 audit:
 
-`runFinalReview()` parses the transcript as JSON; the only structurally-load-bearing
-fields are **`code_files`** (paths it reads from the working tree and inlines as
-"Code Files") and **`changed_files`** (the scope filter). Everything else is dumped
-verbatim into the prompt under "Audit Transcript", so a hand-assembled object works
-for a consolidated `/cycle` gate or any standalone call. Minimum viable shape:
+```bash
+node scripts/build-audit-transcript.mjs --sid $SID --changed "$CHANGED"
+```
+
+Other flags: `--mode plan|code` (required when the sid doesn't carry the
+prefix — it never guesses), `--result <path>` (repeatable; for the consolidated
+`/cycle` gate or non-standard locations), `--ledger`, `--dir` (default
+`.audit`), `--summary`, `--out`, `--json`.
+
+> **`.audit/`, never `/tmp/`.** The transcript is the only replayable input for
+> evaluating a cheaper or newer final reviewer, and `/tmp` is OS-cleaned — on
+> Windows, Bash's `/tmp` and Node's `/tmp` are two *different* directories, so
+> half the runs vanish into a directory nothing scans. A shadow A/B spent $50.90
+> and left zero transcripts to replay. `.audit/` is gitignored (in this repo and,
+> via the managed block, in every consumer) and retains the newest 25 transcripts
+> regardless of age (`npm run audit:clean`).
+
+### The shape it produces (concrete contract)
+
+`runFinalReview()` parses the transcript as JSON. Only two fields are
+structurally load-bearing — **`code_files`** (paths it re-reads from the working
+tree and inlines as "Code Files", so they always reflect the post-fix tree) and
+**`changed_files`** (the scope filter). Everything else is dumped verbatim into
+the prompt under "Audit Transcript".
 
 ```json
 {
@@ -60,24 +77,33 @@ for a consolidated `/cycle` gate or any standalone call. Minimum viable shape:
   "rounds": [
     { "round": 1, "findings": [ {"id":"H1","severity":"HIGH","file":"src/a.mjs","detail":"…"} ] }
   ],
-  "claude_resolutions": ["H1 FIXED: …", "M2 DEFER (independent): …"]
+  "claude_resolutions": ["R1 H1 [HIGH] accepted/fixed (sustain) — …"]
 }
 ```
 
-To assemble from per-cluster `/audit-code` outputs: union the clusters'
-`--changed` file sets into `changed_files`/`code_files`, and concatenate each
-cluster's `--out` `findings` into the `rounds[]` trail (one entry per cluster or
-round). `code_files` is re-read from disk on every call, so it always reflects the
-post-fix tree — no manual content inlining. A `claude_resolutions` array (how each
-finding was fixed/deferred/dismissed) is non-structural but materially improves the
-review.
+**A plan transcript carries NO code files.** The reviewer's prompt keys "this is
+a plan audit" off their absence, so one stray path flips the gate into judging
+unbuilt work as missing implementation. The builder forces both lists empty in
+plan mode rather than trusting the caller.
+
+`claude_resolutions` (how each finding was ruled and remediated) is
+non-structural but materially improves the review — the builder derives it from
+the adjudication ledger, which is why passing `--ledger` (or letting `--sid`
+find it) is worth the keystroke.
 
 ## Run the review
 
 ```bash
 node scripts/gemini-review.mjs review <plan-file> .audit/$SID-transcript.json \
-  --out /tmp/$SID-gemini-result.json 2>/tmp/$SID-gemini-stderr.log
+  --mode $AUDIT_MODE \
+  --out .audit/$SID-gemini-result.json 2>.audit/$SID-gemini-stderr.log
 ```
+
+**`--mode` is not optional for a plan audit.** It defaults to `code`, and in
+`plan` mode it appends the plan-review block that stops the reviewer judging
+absent implementations — the same category error `openai-audit --mode plan`
+prevents upstream. Set `AUDIT_MODE=plan` in `/audit-plan`, `code` in
+`/audit-code`.
 
 `--out` writes a durable artifact + a one-line stdout summary; use it for a
 readable result. Termination is guaranteed **with or without** it (idempotent
@@ -113,17 +139,20 @@ and `wrongly_dismissed` item — same peer relationship as GPT deliberation:
    - CHALLENGE must cite evidence (file paths, code, conventions)
    - Gemini catches things GPT missed — give extra weight to Gemini findings
 2. **Fix accepted findings** — track which files changed
-3. **Update transcript** with Gemini findings, Claude positions, fixes applied.
-   **Append any files modified during Step 7.1 to both `transcript.changed_files`
-   and `transcript.code_files`.** `changed_files` accumulates across rounds (PR
-   diff ∪ Step-7.1 fix-touched files); the scope filter uses the union.
+3. **Rebuild the transcript** so it carries the Step-7.1 state — rerun the
+   builder with `--out .audit/$SID-transcript-v2.json`, `--summary` describing
+   the Gemini round, and a `--changed` list that is the **union** of the PR diff
+   and every file the Step-7.1 fixes touched. `changed_files` accumulates across
+   rounds; the scope filter uses the union, so a file fixed in 7.1 that is
+   missing from the list makes its own follow-up finding look out-of-scope.
    `runFinalReview()` re-reads file contents from the working tree on every
    call, so no manual content re-inlining is needed.
 4. **Re-run Gemini review** with updated transcript:
 
 ```bash
 node scripts/gemini-review.mjs review <plan-file> .audit/$SID-transcript-v2.json \
-  --out /tmp/$SID-gemini-result-v2.json 2>/tmp/$SID-gemini-stderr-v2.log
+  --mode $AUDIT_MODE \
+  --out .audit/$SID-gemini-result-v2.json 2>.audit/$SID-gemini-stderr-v2.log
 ```
 
 **CRITICAL**: Do NOT use GPT to verify Gemini's findings — GPT already
@@ -177,11 +206,12 @@ This is now mitigated by two layers:
    recorded on the result envelope as `_scopeFilteredCount` +
    `_scopeFilteredFindings[]` so they're auditable.
 
-For this to work you MUST populate `transcript.changed_files` (see
-"Build the transcript" above). If the list is empty, the filter is a
-no-op (Gemini auto-falls-back to corpus-wide review, which is the
-pre-existing behaviour — at least the issue is visible in the result
-envelope).
+For this to work you MUST populate `transcript.changed_files` — pass
+`--changed` to the builder (see "Build the transcript" above; it warns on
+stderr when a code-mode transcript ends up with an empty list). If the list is
+empty, the filter is a no-op (Gemini auto-falls-back to corpus-wide review,
+which is the pre-existing behaviour — at least the issue is visible in the
+result envelope).
 
 `wrongly_dismissed[]` is intentionally NOT scope-filtered: a finding
 the GPT deliberation dismissed may live anywhere in the codebase

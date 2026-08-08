@@ -39,6 +39,13 @@ const CORE_ENTRY = [
   'scripts/requirements.mjs',
   'scripts/audit-metrics.mjs',
   'scripts/write-code-outcomes.mjs',
+  // Final-review transcript builder for the two MANDATORY gates, the ledger
+  // writer both Step 3.5s run, and Step 5.0b's detector census (an entry point
+  // nothing imports, so the walker never finds it). Authoritative list is
+  // sync-to-repos.mjs; keep in lock-step.
+  'scripts/build-audit-transcript.mjs',
+  'scripts/write-ledger-entries.mjs',
+  'scripts/lib/audit/detector.mjs',
   'scripts/build-dashboard.mjs',
   'scripts/setup-postgres.mjs',
   // Companion RLS-exposure diagnostic — same lib/db/ closure as

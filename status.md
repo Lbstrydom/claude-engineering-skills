@@ -1,6 +1,103 @@
 # Project Status Log
 
-## 2026-08-08 (latest) — the plan for the adjudicated defects, and a wrong label it found
+## 2026-08-08 (latest) — five field-reported defects, and the two the fixes found
+
+A real `/plan` → `/audit-plan` session in a consumer reported five defects, all
+reproduced. Two blocked documented flows. Fixing them turned up two more of the
+same family, and a class census turned up three more instances of one of them.
+
+**The MANDATORY gate consumed an artifact no step produced.** `/audit-plan`
+Step 6 and `/audit-code` Step 7 both opened with `gemini-review.mjs review
+<plan> .audit/$SID-transcript.json`; nothing wrote that file. Followed
+literally the gate died on `File not found`, and the operator hand-assembled
+JSON from a shape inferred out of `references/gemini-gate.md`. New
+[`build-audit-transcript.mjs`](scripts/build-audit-transcript.mjs) +
+[`lib/audit/transcript.mjs`](scripts/lib/audit/transcript.mjs) — the logic
+`audit-loop.mjs` had inline all along, lifted out so the orchestrator and the
+skill-driven path emit one artifact. `--sid $SID` discovers the round results,
+folds the ledger in as `claude_resolutions`, infers the mode from the sid
+prefix. Plan mode forces `code_files`/`changed_files` empty: the reviewer keys
+"this is a plan audit" off their absence, so one stray path flips the gate into
+judging unbuilt work.
+
+**Second defect in the same step: `/audit-plan` never passed `--mode plan` to
+the final gate.** It defaults to `code`. Every plan gate has been running
+without `PLAN_MODE_BLOCK` — the exact category error Step 2's own "Critical:
+always pass `--mode plan`" warns about, one step later.
+
+**`node -e "import('./scripts/lib/X.mjs')"` cannot survive the sync.** The
+rewriter's `COMMAND_REGEX` matches `node scripts/<path>` only, so a module
+specifier ships unrewritten and resolves to nothing in a consumer, where the
+bundle lives under `scripts/.claude-skills/`. The reported instance was
+`/plan`'s Gate-1 self-check — *the check guarding the fuzzy-discovery trap that
+the twenty lines around it explain at length*. A census found four more: the
+`/audit-code` detector snippet, `ledger-format.md`'s triage heredoc importing
+`../../scripts/shared.mjs`, `debt-capture.md`'s manual loop, and
+`verify-mode-generation.md`'s criteria parser. All five now run through real
+CLI entry points; [`tests/skill-command-portability.test.mjs`](tests/skill-command-portability.test.mjs)
+holds the line.
+
+**Two of those recipes had never worked, silently.** `ledger-format.md`'s
+post-fix step wrote a bare `{topicId, remediationState:'fixed'}` — but
+`writeLedgerEntry` REPLACES the entry at a topicId rather than merging, and
+validates the whole schema, so the partial entry failed validation and returned
+without writing. Exit 0, one stderr line, nothing marked fixed, for however
+long. `debt-capture.md`'s loop had been superseded by `debt-auto-capture.mjs`
+and outlived it. New [`write-ledger-entries.mjs`](scripts/write-ledger-entries.mjs)
+does the read-modify-write and derives every identity field from the round's
+own findings — the operator supplies only outcome/state/ruling/why. It also
+refuses an unknown finding id and warns on un-ruled ones. `latestFindingId`,
+documented as the second join key, was being stripped by `LedgerEntrySchema`
+(a `z.object` drops unknown keys), so the fallback join could never fire; it
+now persists.
+
+**`0/N labelled · cloud=ok` is success-shaped and closed nothing.**
+`write-code-outcomes.mjs` reports what it WROTE, and it writes nothing when no
+ledger entry carries a ruling. It now names which of three causes applies — no
+entries / all pending / ruled-but-unjoined identity mismatch — on stderr and as
+`warning` on the JSON. The precondition is documented in both Step 3.5b's.
+
+**Convergence keyed on the wrong number.** "HIGH count plateaus or increases →
+STOP" told the reporter to stop a loop where they accepted **23 of 23 findings
+as fix-now** — zero dismissals, zero deferrals — with Gemini independently
+scoring the deliberation "exemplary… no false positives". On a large plan,
+fixing round N's findings creates new specified surface round N+1 legitimately
+audits; a raw count cannot tell "the auditor is reaching" from "the plan is
+growing correct detail". Acceptance rate is now primary (`write-ledger-entries`
+prints it, so it is counted rather than recalled), count is a secondary
+backstop read together with it, cap 3 default / 5 absolute.
+
+**`/tmp` → `.audit/` across both audit skills.** `audit-loop.mjs` already wrote
+everything there; only the skills said `/tmp`, which on git-bash resolves to a
+different directory than Node's — a split that already cost this repo a
+mis-triage and a consumer 30 days of lost final-review persistence. `.audit/`
+is gitignored in source and consumers and already swept by `audit:clean`'s
+TRANSIENT patterns. Deliberately not a `<scratch>` placeholder: PowerShell
+reserves `<`.
+
+**The guard found what the fix missed.** Asserting only "the path exists here"
+would have passed while `lib/audit/detector.mjs` was in **no consumer at all** —
+nothing imports it (convergence.mjs takes its RESULT as a parameter), so the
+closure walker never reached it, while Step 5.0b told every consumer to run it.
+`write-ledger-entries.mjs` had the same gap. The test now asserts against the
+sync inventory, with a two-entry `SOURCE_REPO_ONLY` allowlist carrying reasons
+rather than a silent baseline.
+
+Consumer-side verification (Step 6.8): **verified**. Synced to
+`wine-cellar-app` (created 2, updated 15, 0 errors), then run IN the consumer:
+`node scripts/.claude-skills/lib/sync-isolation-verify.mjs --consumer-root .
+--gates 2A,2B,3,9` → all four gates pass; both new CLIs answer
+`--selfcheck-relocation`; and the originally-reported command —
+`node scripts/.claude-skills/lib/plan-paths.mjs "$P"` — now runs there and
+immediately reports `regex-resolvable : 1  (fuzzy fires below 5), fuzzy added:
+14` on a real wine plan. Producer-side green was not inherited.
+
+`npm test`: 10,088 pass / 1 fail — `skills-artifact-freshness-wiring` compares
+the manifest against `HEAD:skills/**`. All 10 mismatches classified
+`worktree-edited-uncommitted`, zero manifest-vs-worktree disagreement, so it
+clears on this commit (which is the state the pre-push sandbox evaluates).
+
+## 2026-08-08 — the plan for the adjudicated defects, and a wrong label it found
 
 `/plan` + `/audit-plan` over the defects the blind adjudication confirmed →
 [`gate-honesty-adjudicated-defects.md`](docs/plans/gate-honesty-adjudicated-defects.md),

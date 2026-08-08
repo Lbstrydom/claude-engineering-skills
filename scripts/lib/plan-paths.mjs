@@ -8,9 +8,20 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { ALL_EXTENSIONS_PATTERN } from './language-profiles.mjs';
 import { normalizePath } from './file-io.mjs';
 import { isSensitiveFile, isAuditInfraFile } from './audit-scope.mjs';
+
+/**
+ * Below this many REGEX-resolvable paths, Phase 2 fuzzy keyword discovery
+ * fires and fills the scope from plan *words*. Measured 2026-07-19: a plan
+ * with 4 resolvable paths pulled in 21 unrelated files matched on words like
+ * "findings", and the resulting audit returned 17 findings, 16 of them citing
+ * files the change never touched. Named (not inlined) so the `plan-paths`
+ * self-check CLI reports the same number the branch below tests.
+ */
+export const FUZZY_DISCOVERY_THRESHOLD = 5;
 
 // ── Plan Path Extraction ──────────────────────────────────────────────────
 
@@ -27,7 +38,13 @@ import { isSensitiveFile, isAuditInfraFile } from './audit-scope.mjs';
  *   audit tool's own infrastructure needs the opposite: those files must be
  *   readable as the subject. Opt in explicitly (CLI: `--allow-infra-scope`);
  *   default stays false so ordinary audits are unaffected.
- * @returns {{found: string[], missing: string[], allPaths: Set<string>}}
+ * @returns {{found: string[], missing: string[], allPaths: Set<string>,
+ *   regexFoundCount: number, fuzzyAdded: number}}
+ *   `regexFoundCount` is the Phase-1 (regex) resolvable count BEFORE fuzzy
+ *   discovery, and `fuzzyAdded` how many files Phase 2 added. Both are reported
+ *   because `found.length` alone cannot tell you whether you crossed the
+ *   fuzzy threshold — fuzzy results are already folded into it, which is
+ *   exactly the state the /plan self-check needs to warn about.
  */
 export function extractPlanPaths(planContent, { allowInfraFiles = false } = {}) {
   const paths = new Set();
@@ -71,7 +88,8 @@ export function extractPlanPaths(planContent, { allowInfraFiles = false } = {}) 
 
   // Phase 2: Fuzzy keyword discovery — only when Phase 1 found very few files.
   const regexFoundCount = [...paths].filter(p => fs.existsSync(path.resolve(p))).length;
-  if (regexFoundCount < 5) {
+  let fuzzyAdded = 0;
+  if (regexFoundCount < FUZZY_DISCOVERY_THRESHOLD) {
     const keywords = _extractPlanKeywords(planContent);
     if (keywords.length > 0) {
       const repoFiles = _scanRepoFiles({ allowInfraFiles });
@@ -87,6 +105,7 @@ export function extractPlanPaths(planContent, { allowInfraFiles = false } = {}) 
         }
       }
       const added = paths.size - beforeCount;
+      fuzzyAdded = added;
       if (added > 0) {
         process.stderr.write(`  [plan-paths] Fuzzy discovery: +${added} files from ${keywords.length} plan keywords\n`);
       }
@@ -104,7 +123,7 @@ export function extractPlanPaths(planContent, { allowInfraFiles = false } = {}) 
   for (const p of [...resolved.values()].sort((a, b) => a.localeCompare(b))) {
     (fs.existsSync(path.resolve(p)) ? found : missing).push(p);
   }
-  return { found, missing, allPaths: new Set(resolved.values()) };
+  return { found, missing, allPaths: new Set(resolved.values()), regexFoundCount, fuzzyAdded };
 }
 
 // ── Internal Helpers ──────────────────────────────────────────────────────
@@ -179,4 +198,53 @@ function _scanRepoFiles({ allowInfraFiles = false } = {}) {
 
   walk(process.cwd(), 0);
   return results;
+}
+
+// ── CLI: the /plan Gate-1 self-check ──────────────────────────────────────
+//
+// Exists as a real CLI (not a `node -e "import('./scripts/lib/…')"` snippet in
+// SKILL.md) because that snippet form is invisible to the consumer sync's
+// command rewriter — it only rewrites `node scripts/<path>` — so the pasted
+// self-check died with ERR_MODULE_NOT_FOUND in every consumer repo, where the
+// module lives under `scripts/.claude-skills/lib/`. Reported 2026-08-08. The
+// check that guards against the fuzzy-discovery trap must not itself be the
+// thing that is broken.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const planFile = process.argv[2];
+  if (!planFile) {
+    process.stderr.write('Usage: node scripts/lib/plan-paths.mjs <plan-file.md>\n');
+    process.exit(1);
+  }
+  let content;
+  try {
+    content = fs.readFileSync(path.resolve(planFile), 'utf-8');
+  } catch (err) {
+    process.stderr.write(`Error: cannot read ${planFile} — ${err.message}\n`);
+    process.exit(1);
+  }
+  // allowInfraFiles mirrors what a meta-plan audit would see; it only widens
+  // what counts as resolvable, so it never hides a threshold problem.
+  const r = extractPlanPaths(content, { allowInfraFiles: true });
+  process.stdout.write(
+    `plan-paths: ${planFile}\n`
+    + `  regex-resolvable : ${r.regexFoundCount}   (fuzzy fires below ${FUZZY_DISCOVERY_THRESHOLD})\n`
+    + `  fuzzy added      : ${r.fuzzyAdded}\n`
+    + `  found (total)    : ${r.found.length}\n`
+    + `  missing          : ${r.missing.length}\n`,
+  );
+  if (r.missing.length > 0) {
+    process.stdout.write(`  unresolved       : ${r.missing.slice(0, 10).join(', ')}${r.missing.length > 10 ? ', …' : ''}\n`);
+  }
+  if (r.regexFoundCount < FUZZY_DISCOVERY_THRESHOLD) {
+    process.stdout.write(
+      `\n  WARNING: only ${r.regexFoundCount} path(s) resolved by regex, so fuzzy keyword\n`
+      + '  discovery ran and filled the scope from plan WORDS. Check that every path is\n'
+      + '  written repo-relative (scripts/foo.mjs, never foo.mjs) — a bare basename is\n'
+      + '  invisible to the extractor. A small plan may legitimately sit under the\n'
+      + '  threshold: the point is to KNOW it, never to invent paths to clear it.\n',
+    );
+  }
+  // Report-only: a low count can be correct. Exit 0 so this can be pasted into
+  // any flow without becoming a gate it was never designed to be.
+  process.exit(0);
 }

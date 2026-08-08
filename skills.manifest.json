@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "55f1223c168c2c9b",
+  "bundleVersion": "f67c32cff5eb9766",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -49,14 +49,14 @@
     },
     "audit-code": {
       "path": "skills/audit-code/SKILL.md",
-      "sha": "b2c3ebd8e7df",
-      "size": 34058,
+      "sha": "a5f2b0d3580b",
+      "size": 35131,
       "summary": "Iteratively audit code against a plan with GPT + Gemini final gate.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "b2c3ebd8e7df",
-          "size": 34058
+          "sha": "a5f2b0d3580b",
+          "size": 35131
         },
         {
           "relPath": "examples/contract-test-scaffold.md",
@@ -65,23 +65,23 @@
         },
         {
           "relPath": "references/debt-capture.md",
-          "sha": "50fc89248fc6",
-          "size": 6261
+          "sha": "4ccca3fa60b8",
+          "size": 6612
         },
         {
           "relPath": "references/gemini-gate.md",
-          "sha": "eb2ba82f77f7",
-          "size": 9520
+          "sha": "156f9b8bd2c2",
+          "size": 10812
         },
         {
           "relPath": "references/ledger-format.md",
-          "sha": "30a0c246567e",
-          "size": 8382
+          "sha": "f0118568cb2e",
+          "size": 6936
         },
         {
           "relPath": "references/r2-plus-mode.md",
-          "sha": "0708da436ddc",
-          "size": 5472
+          "sha": "84472f97d437",
+          "size": 5547
         },
         {
           "relPath": "references/verification-discipline.md",
@@ -92,24 +92,24 @@
     },
     "audit-plan": {
       "path": "skills/audit-plan/SKILL.md",
-      "sha": "57be02440e25",
-      "size": 18511,
+      "sha": "0ce3560a6beb",
+      "size": 21843,
       "summary": "Iteratively audit a plan file (docs/plans/*.md) with GPT + Gemini final gate.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "57be02440e25",
-          "size": 18511
+          "sha": "0ce3560a6beb",
+          "size": 21843
         },
         {
           "relPath": "references/gemini-gate.md",
-          "sha": "eb2ba82f77f7",
-          "size": 9520
+          "sha": "156f9b8bd2c2",
+          "size": 10812
         },
         {
           "relPath": "references/ledger-format.md",
-          "sha": "30a0c246567e",
-          "size": 8382
+          "sha": "f0118568cb2e",
+          "size": 6936
         },
         {
           "relPath": "references/verification-discipline.md",
@@ -296,14 +296,14 @@
     },
     "plan": {
       "path": "skills/plan/SKILL.md",
-      "sha": "3f89a0525433",
-      "size": 33461,
+      "sha": "c7da5fc0d142",
+      "size": 33627,
       "summary": "Unified architecture + UX planner with engineering principles. Auto-detects",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "3f89a0525433",
-          "size": 33461
+          "sha": "c7da5fc0d142",
+          "size": 33627
         },
         {
           "relPath": "examples/mermaid-blocks.md",
@@ -424,8 +424,8 @@
         },
         {
           "relPath": "references/verify-mode-generation.md",
-          "sha": "7f7bca1b7853",
-          "size": 9252
+          "sha": "060dcbfe6923",
+          "size": 9245
         }
       ]
     },

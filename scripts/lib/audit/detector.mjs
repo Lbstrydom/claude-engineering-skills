@@ -27,6 +27,9 @@
  */
 
 import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
 
 /** Closed set — `regex` is the only kind v1 needs; adding one is a schema change, not a string. */
@@ -221,4 +224,35 @@ export function collectDetectorEntries(ledger) {
 export function isCrossCutting(finding) {
   if (finding?.crossCutting === true) return true;
   return Array.isArray(finding?.affectedFiles) && finding.affectedFiles.length > 1;
+}
+
+// ── CLI: Step 5.0b — re-run every detector at FULL scope ───────────────────
+//
+// A real CLI rather than a `node -e "import('./scripts/lib/audit/detector.mjs')"`
+// snippet in SKILL.md: that form is invisible to the consumer sync's command
+// rewriter (it only rewrites `node scripts/<path>`), so the pasted snippet died
+// with ERR_MODULE_NOT_FOUND in every consumer, where this module lives under
+// `scripts/.claude-skills/lib/`. Same defect class reported for /plan's Gate-1
+// self-check on 2026-08-08.
+//
+// Exit 1 when blocked — convergence requires exit 0.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const ledgerPath = process.argv[2];
+  if (!ledgerPath) {
+    process.stderr.write('Usage: node scripts/lib/audit/detector.mjs <ledger.json>\n');
+    process.exit(2);
+  }
+  let ledger;
+  try {
+    ledger = JSON.parse(fs.readFileSync(path.resolve(ledgerPath), 'utf-8'));
+  } catch (err) {
+    // Never exit 0 here: an unreadable ledger is "no census happened", which
+    // must not read as a clean class — the same rule checkDetectors applies to
+    // an unverifiable detector.
+    process.stderr.write(`Error: cannot read ledger ${ledgerPath} — ${err.message}\n`);
+    process.exit(2);
+  }
+  const r = checkDetectors(ledger);
+  process.stdout.write(`${JSON.stringify(r, null, 2)}\n`);
+  process.exit(r.blocked ? 1 : 0);
 }

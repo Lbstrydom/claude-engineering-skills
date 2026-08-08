@@ -26,6 +26,9 @@
  */
 
 import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const VALID_SEVERITIES = new Set(['P0', 'P1', 'P2', 'P3']);
 const VALID_CATEGORIES = new Set([
@@ -163,4 +166,32 @@ export function summariseCriteria(criteria) {
     byCat[c.category] = (byCat[c.category] || 0) + 1;
   }
   return { total: criteria.length, bySeverity: bySev, byCategory: byCat };
+}
+
+// ── CLI: /ux-lock verify Step 1 — parse a plan's Acceptance Criteria ───────
+//
+// A real CLI rather than a `node --input-type=module -e "import { … } from
+// './scripts/lib/plan-criteria-parser.mjs'"` snippet: that module specifier is
+// invisible to the consumer sync's command rewriter (which only relocates
+// `node scripts/<path>`), so the documented step could not run in a consumer
+// repo, where the bundle lives under `scripts/.claude-skills/`. Same class
+// reported 2026-08-08 for /plan's Gate-1 self-check; guarded by
+// tests/skill-command-portability.test.mjs.
+//
+// Exit 0 = parsed (read `found`/`errors` from the JSON, which is the real
+// verdict); exit 1 = the plan file could not be read.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const planFile = process.argv[2];
+  if (!planFile) {
+    process.stderr.write('Usage: node scripts/lib/plan-criteria-parser.mjs <plan-file.md>\n');
+    process.exit(1);
+  }
+  let markdown;
+  try {
+    markdown = fs.readFileSync(path.resolve(planFile), 'utf-8');
+  } catch (err) {
+    process.stderr.write(`Error: cannot read ${planFile} — ${err.message}\n`);
+    process.exit(1);
+  }
+  process.stdout.write(`${JSON.stringify(parseAcceptanceCriteria(markdown), null, 2)}\n`);
 }

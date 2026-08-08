@@ -257,6 +257,23 @@ const CORE_ENTRY = [
   'scripts/requirements.mjs',
   'scripts/audit-metrics.mjs',
   'scripts/write-code-outcomes.mjs',
+  // Assembles the final-review transcript both MANDATORY gates consume
+  // (/audit-plan Step 6, /audit-code Step 7). Ships because the SKILL.md step
+  // that runs it ships: a consumer reported (2026-08-08) that following the
+  // skill literally died on `File not found` for a transcript no step produced,
+  // and hand-assembled one instead. Walker pulls in lib/audit/transcript.mjs.
+  'scripts/build-audit-transcript.mjs',
+  // Writes adjudication-ledger entries from a triage map (/audit-plan and
+  // /audit-code Step 3.5). Replaced a heredoc recipe that imported
+  // `../../scripts/shared.mjs` — a specifier the command rewriter cannot
+  // relocate, so the documented step could not run in a consumer at all.
+  'scripts/write-ledger-entries.mjs',
+  // Step 5.0b's full-scope detector census. An ENTRY POINT nothing imports:
+  // convergence.mjs takes the detector RESULT as a parameter, so the import
+  // walker never reaches this file and it was absent from every consumer while
+  // /audit-code told them to run it. Authoritative list here; keep
+  // sync-inventory.mjs in lock-step.
+  'scripts/lib/audit/detector.mjs',
   'scripts/build-dashboard.mjs',
   // postgres-parity M4 — setup CLI ships to consumer repos so downstream
   // users can apply the schema to their own DB without cloning this repo.

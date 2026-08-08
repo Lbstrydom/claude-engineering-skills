@@ -497,9 +497,9 @@ separately as `**Close-out (not a phase)**: <commands>`, excluded from the
 
 > **Write every path REPO-RELATIVE — `scripts/setup-postgres.mjs`, never
 > `setup-postgres.mjs`.** This is not style. `extractPlanPaths`
-> (`scripts/lib/plan-paths.mjs`) matches on `(?:[\w.-]+\/)+[\w.-]+\.ext` — it
-> requires **at least one `/`**, so a bare basename is invisible to it *anywhere
-> in the plan*, including in `Files:` lines and prose.
+> (the bundle's `lib/plan-paths.mjs`) matches on `(?:[\w.-]+\/)+[\w.-]+\.ext` —
+> it requires **at least one `/`**, so a bare basename is invisible to it
+> *anywhere in the plan*, including in `Files:` lines and prose.
 >
 > The failure is silent and actively misleading, which is why it earns a callout.
 > Too few resolvable paths and `/audit-code --scope diff` finds an empty
@@ -508,7 +508,7 @@ separately as `**Close-out (not a phase)**: <commands>`, excluded from the
 > discovery** fills the scope from plan *words* instead.
 >
 > **The threshold is exact: fewer than 5 resolvable paths and fuzzy fires**
-> (`plan-paths.mjs` — `if (regexFoundCount < 5)`). Measured 2026-07-19 across this
+> (`plan-paths.mjs` — `FUZZY_DISCOVERY_THRESHOLD`). Measured 2026-07-19 across this
 > repo's plans: `debt-burndown` 31 → clean, `egress-secret-coverage-gap` 6 →
 > clean, `migration-bootstrap-coupling` **4 → fuzzy fired**, adding **21 unrelated
 > files** matched on words like "findings" and "provenance". The audit returned 17
@@ -520,13 +520,15 @@ separately as `**Close-out (not a phase)**: <commands>`, excluded from the
 > threshold**; a fabricated path is worse than fuzzy noise. Qualify the paths you
 > genuinely touch, then read the audit's scope line before trusting its findings.
 >
-> Cheap self-check before persisting — if `found` is small or `missing` is large,
-> your paths are basenames:
+> Cheap self-check before persisting — it prints the REGEX-resolvable count (the
+> number the threshold actually tests), what fuzzy added, and how many paths
+> don't resolve. A large `missing` means your paths are basenames:
 > ```bash
-> node -e "import('./scripts/lib/plan-paths.mjs').then(async m=>{const fs=await import('node:fs');
->   const r=m.extractPlanPaths(fs.readFileSync(process.argv[1],'utf8'),{allowInfraFiles:true});
->   console.log('found',r.found.length,'missing',r.missing.length);})" docs/plans/<name>.md
+> node scripts/lib/plan-paths.mjs "$PLAN"   # $PLAN = the plan file you are about to persist
 > ```
+> Report-only, exit 0 — a small plan may legitimately sit under the threshold.
+> Read `found`/`missing` alone at your peril: fuzzy results are already folded
+> into `found`, so only the `regex-resolvable` line answers "did fuzzy fire?".
 
 #### 8. Risk & Trade-off Register
 - Trade-offs made + why

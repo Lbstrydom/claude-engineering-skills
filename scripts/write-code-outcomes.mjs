@@ -131,10 +131,38 @@ async function main() {
     `  [write-code-outcomes] round ${round}: ${status.labelled}/${status.total} `
     + `findings labelled · cloud=${cloudState}${status.skippedLocal ? ' · local skipped' : ''}\n`,
   );
+
+  // `0/N labelled · cloud=ok` reads as success and is not one: the CLI reports
+  // what it WROTE, and it writes nothing when no ledger entry carries a ruling.
+  // Reported live 2026-08-08 — "closes the adaptive-learning loop" closed
+  // nothing while exiting 0. Say WHY, with the numbers that distinguish the
+  // three causes: an un-adjudicated ledger, an identity mismatch, or an empty
+  // ledger entirely.
+  let diagnosis = null;
+  if (status.labelled === 0 && status.total > 0) {
+    const entries = Array.isArray(ledger?.entries) ? ledger.entries : [];
+    const ruled = entries.filter(e => e?.adjudicationOutcome && e.adjudicationOutcome !== 'pending').length;
+    const matched = status.enriched.filter(f => f._ruling !== undefined
+      || (f.adjudicationOutcome && f.adjudicationOutcome !== 'pending')).length;
+    diagnosis = entries.length === 0
+      ? 'the ledger has no entries — write it (Step 3.5) before recording outcomes'
+      : ruled === 0
+        ? `the ledger's ${entries.length} entr(ies) are all still 'pending' — adjudicate them (Step 3.5) first; `
+          + 'this CLI records rulings, it does not make them'
+        : `${ruled} ledger entr(ies) carry a ruling but none joined this round's findings (${matched} matched). `
+          + 'That is the identity-mismatch failure: entries must be derived FROM the result JSON\'s findings '
+          + '(topicId via generateTopicId, latestFindingId = finding.id) — use '
+          + '`node scripts/write-ledger-entries.mjs` rather than hand-writing them';
+    process.stderr.write(`  [write-code-outcomes] WARN: nothing was labelled — ${diagnosis}\n`);
+  }
   // Compact stdout — keep the operation status scalars; never emit the full
   // `enriched` payload (status/payload separation, M8).
   const { enriched: _enriched, ...compact } = status;
-  process.stdout.write(`${JSON.stringify({ ok: true, runId, cloud, cloudState, ...compact })}\n`);
+  // `warning` travels on the JSON too: a caller that only reads stdout must not
+  // see `{ok:true, labelled:0}` and conclude the loop was closed.
+  process.stdout.write(`${JSON.stringify({
+    ok: true, runId, cloud, cloudState, ...compact, ...(diagnosis ? { warning: diagnosis } : {}),
+  })}\n`);
 }
 
 main().catch((err) => { console.error(err.message); process.exit(1); });

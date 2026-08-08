@@ -19,6 +19,7 @@ import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { buildAuditTranscript, readRoundResult } from './lib/audit/transcript.mjs';
 
 const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', D = '\x1b[2m', B = '\x1b[1m', X = '\x1b[0m';
 
@@ -450,15 +451,18 @@ async function main() {
       banner('STEP 7 — Final Review (Gemini/Claude Opus)');
 
       // Build transcript from all rounds — AFTER fixes are on disk so Gemini
-      // reads current code state (not pre-fix). Include code_files list so
-      // gemini-review.mjs knows exactly which files to read.
+      // reads current code state (not pre-fix). Shared with the skill-driven
+      // CLI (`scripts/build-audit-transcript.mjs`) so both paths emit the same
+      // artifact; a second assembler drifts from the reviewer's contract.
       const transcriptFile = path.join(outDir, `${sid}-transcript.json`);
       const roundData = roundResults.map(r => {
-        try { return JSON.parse(fs.readFileSync(r.file, 'utf-8')); } catch { return null; }
+        // A dropped round makes the transcript LOOK complete while hiding a
+        // round's findings from the final reviewer — never drop it silently.
+        try { return readRoundResult(r.file); } catch (err) {
+          process.stderr.write(`${Y}  [transcript] WARN: round ${r.round ?? '?'} excluded — ${err.message}${X}\n`);
+          return null;
+        }
       }).filter(Boolean);
-
-      // Collect all code_files from round results (GPT tells us what it audited)
-      const allCodeFiles = [...new Set(roundData.flatMap(r => r.code_files || []))];
 
       // Collect changed files from git (what was fixed since audit started)
       let changedSinceStart = [];
@@ -469,12 +473,11 @@ async function main() {
         }).trim().split('\n').filter(Boolean);
       } catch { /* git not available or no changes */ }
 
-      const transcript = {
+      const transcript = buildAuditTranscript({
         rounds: roundData,
-        code_files: allCodeFiles,
-        changed_files: changedSinceStart,
-        _note: 'Transcript built AFTER fixes applied. code_files from GPT audit scope; Gemini reads these from current disk state.',
-      };
+        auditMode: 'code',
+        changedFiles: changedSinceStart,
+      });
       fs.writeFileSync(transcriptFile, JSON.stringify(transcript, null, 2));
 
       const geminiOutFile = path.join(outDir, `${sid}-gemini-result.json`);

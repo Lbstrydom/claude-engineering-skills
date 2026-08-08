@@ -215,7 +215,7 @@
       "reason": "Continuation of the same comment block — describes the try/catch already visible on the snippet's own next line, not a separate enforceable claim."
     },
     {
-      "line": "RUN_ID=$(node -e \"const fs=require('fs'); try { process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],'utf8'))._cloudRunId||''); } catch { process.stdout.write(''); }\" \"/tmp/$SID-r<N>-result.json\")",
+      "line": "RUN_ID=$(node -e \"const fs=require('fs'); try { process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],'utf8'))._cloudRunId||''); } catch { process.stdout.write(''); }\" \".audit/$SID-r<N>-result.json\")",
       "reason": "The corrected extraction line itself — its correctness (argv-based path, never a literal string) is exactly what tests/skill-tmp-path-safety.test.mjs asserts across every skill markdown file. This is a code snippet a human/agent runs inline, not a CLI /audit-code itself exits on, so there is no separate cli-exit oracle to bind here beyond that regression test."
     },
     {
@@ -227,8 +227,8 @@
       "reason": "A FORMAT statement about the disposition key, explaining why it is not a line number (a line number orphans on any insertion above the match). matchKey() is the single producer and its identity properties — survives a line shift, distinguishes identical text in one file — are pinned in tests/audit-detector.test.mjs. Not a separate gate: the enforced claim is detector-blocks-convergence above."
     },
     {
-      "line": "console.log(JSON.stringify(r,null,2)); process.exit(r.blocked?1:0);})\" /tmp/$SID-ledger.json",
-      "reason": "The last line of the fenced SHELL SAMPLE the operator runs. `process.exit` is the sample's own exit mapping, not a claim the skill enforces; the enforced claim is detector-blocks-convergence. A candidate only because the extractor greps code fences along with prose."
+      "line": "blocked; exit 2 = the ledger could not be read, which is \"no census happened\"",
+      "reason": "Documents the exit mapping of the `scripts/lib/audit/detector.mjs` CLI the operator runs (it replaced an inline `node -e` snippet on 2026-08-08, which the consumer sync's command rewriter could not relocate). The exit codes are the CLI's own, asserted in tests/audit-detector.test.mjs; the claim /audit-code itself enforces is detector-blocks-convergence above, not this line."
     },
     {
       "line": "convergence requires `blocked === false`. `baseline` reports progress; it is never the pass",

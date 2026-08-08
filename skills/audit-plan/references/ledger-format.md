@@ -37,84 +37,65 @@ Typical flows:
 > `0/N labelled · needs_triage`. Derive every entry FROM the result JSON's
 > actual finding object.
 
-Iterate the round's `--out` result findings and write entries from them.
-
-> **Write this to a FILE and run it — never inline as `node -e "…"`.** The
-> payload is `rulingRationale`: free-form English, which contains apostrophes
-> ("the plan's constraint", "718ca90's fix"). Embedded in a shell string those
-> are landmines — the command dies with `unexpected EOF while looking for
-> matching '`, and the workaround people reach for is stripping the apostrophes
-> out of their own rationale, corrupting the audit record to satisfy a quoting
-> rule. Observed live 2026-07-17. A file has no shell in the loop, so prose stays
-> prose. (Same reason the adjudication queues are `--worksheet`-first rather than
-> raw JSON.) **Import paths in a file resolve against the FILE, not cwd** — hence
-> `../../scripts/shared.mjs` below; `node -e` resolved `./scripts/…` and copying
-> that verbatim into a file silently breaks every import.
->
-> **Pass the result/ledger PATHS as arguments — never rebuild them from a bare
-> SID inside the script (2026-07-26 incident).** `` `/tmp/${SID}-r1-result.json` ``
-> reconstructed inside the `.mjs` file is resolved by NODE's own path logic,
-> which on Windows disagrees with what BASH resolved when `--out /tmp/$SID-r1-
-> result.json` was originally passed to the audit CLI (confirmed live: Bash's
-> `/tmp` lands in `AppData/Local/Temp`; Node's own resolution of the identical
-> string lands in `C:\tmp` — two different, unrelated directories). The script
-> then throws on a file that genuinely exists. This exact class — reconstructing
-> an ambiguous `/tmp/...` path instead of threading through the one BASH already
-> resolved — cost a consumer repo 30 days of silently-lost final-review
-> persistence (101 real runs, traced 2026-07-26); fixed there by passing paths
-> as `process.argv[N]`, never rebuilding them.
+Write them with the bundled CLI — it derives every identity field from the
+round's own findings, so you supply only the judgement:
 
 ```bash
-# 1. Write the triage script. The quoted 'EOF' means the shell expands nothing.
-cat > .claude/tmp/ledger-r1.mjs <<'EOF'
-import { writeLedgerEntry, generateTopicId, populateFindingMetadata } from '../../scripts/shared.mjs';
-import fs from 'node:fs';
-const [resultPath, ledgerPath] = process.argv.slice(2);
-const r = JSON.parse(fs.readFileSync(resultPath, 'utf8'));
-// Your triage decisions, keyed by the round's finding ids. Apostrophes are safe
-// here — this is a file, not a shell string.
-const triage = {
-  H1: { outcome: 'accepted',  state: 'planned', ruling: 'sustain',  why: "valid — the plan's fix is scheduled" },
-  M3: { outcome: 'dismissed', state: 'pending', ruling: 'overrule', why: '300-line file, 2 consumers, acceptable' },
-};
-for (const f of r.findings) {
-  const t = triage[f.id]; if (!t) continue;
-  // `f._pass || 'plan'` — NOT a bare `f._pass`. A CODE audit's findings carry
-  // `_pass` ('Structure', 'Wiring', …); a PLAN audit's findings DO NOT have the
-  // field at all (verified against a real plan-audit result JSON). Passing the
-  // bare value there produces a topicId that joins to nothing, so the entry is
-  // INVISIBLE to suppression and outcome labeling — precisely the failure the
-  // warning block above describes. Reproduced: the two forms yield different
-  // topicIds for the same finding. This mirrors the auto-writers, which already
-  // get it right: openai-audit.mjs:925/943 + plan-audit-cloud.mjs:96 pass the
-  // literal 'plan'; legacy-production-audit.mjs:2369 passes `f._pass`.
-  populateFindingMetadata(f, f._pass || 'plan');  // idempotent; ensures _hash/_primaryFile
-  writeLedgerEntry(ledgerPath, {
-    topicId: generateTopicId(f),                // from the REAL finding — never a stand-in
-    latestFindingId: f.id,                      // second join key for outcome labeling
-    semanticHash: f._hash,
-    adjudicationOutcome: t.outcome,
-    remediationState: t.state,
-    severity: f.severity, originalSeverity: f.severity,
-    category: f.category,                       // verbatim from the finding
-    section: f.section,                         // verbatim
-    detailSnapshot: (f.detail || '').slice(0, 400),  // the finding's text, not your summary
-    affectedFiles: f.affectedFiles,             // verbatim — drives suppression file-scope
-    affectedPrinciples: f.principle ? [f.principle] : [],
-    ruling: t.ruling,
-    rulingRationale: t.why,                     // rationale is YOURS; identity is the finding's
-    resolvedRound: r.round || 1,
-    pass: f._pass || 'plan',                    // MUST match the populateFindingMetadata arg above
-  });
-}
-console.log('ledger entries written');
-EOF
-
-# 2. Run it — paths are ARGUMENTS resolved by THIS shell, never rebuilt inside
-# the script from a bare SID (that would let Node re-resolve /tmp/ itself and
-# disagree with what this line just resolved — the 2026-07-26 incident above).
-node .claude/tmp/ledger-r1.mjs "/tmp/$SID-r1-result.json" "/tmp/$SID-ledger.json"
+node scripts/write-ledger-entries.mjs \
+  --result .audit/$SID-r1-result.json \
+  --ledger .audit/$SID-ledger.json \
+  --triage .claude/tmp/triage-r1.json
 ```
+
+`--triage` is a JSON file keyed by the round's finding ids. **Write it with an
+editor (the `Write` tool), never as a shell string.** The payload is
+`rulingRationale`: free-form English containing apostrophes ("the plan's
+constraint", "718ca90's fix"), which are landmines inside a shell string — the
+command dies with `unexpected EOF while looking for matching '`, and the
+workaround people reach for is stripping apostrophes out of their own rationale,
+corrupting the audit record to satisfy a quoting rule (observed live
+2026-07-17). A file has no shell in the loop, so prose stays prose. Same reason
+the adjudication queues are `--worksheet`-first rather than raw JSON.
+
+```json
+{
+  "H1": { "outcome": "accepted",  "state": "planned", "ruling": "sustain",
+          "why": "valid — the plan's fix is scheduled" },
+  "M3": { "outcome": "dismissed", "state": "pending", "ruling": "overrule",
+          "why": "300-line file, 2 consumers, acceptable" }
+}
+```
+
+`outcome` ∈ `accepted|dismissed|severity_adjusted`, `state` ∈
+`pending|planned|fixed|verified|regressed`, `ruling` ∈
+`sustain|overrule|compromise|defer`; all four fields are required and an
+unknown finding id is refused (a typo'd id would otherwise leave a finding
+silently un-adjudicated). Findings you don't rule on stay `pending` and are
+reported on stderr — that is the silent half of a `0/N labelled` outcome
+report.
+
+Add `--pass <name>` only for a CODE audit whose findings somehow lack `_pass`;
+the default is `plan`, and a real finding's own `_pass` always wins.
+
+> **Why a CLI and not a hand-written script.** The previous recipe wrote a
+> `.mjs` file importing `../../scripts/shared.mjs`. That import is invisible to
+> the consumer sync's command rewriter — which only relocates `node
+> scripts/<path>` — so in a consumer repo, where the bundle lives under
+> `scripts/.claude-skills/`, the snippet could not run at all. Same class a
+> consumer reported 2026-08-08 for /plan's Gate-1 self-check. The CLI form is
+> rewritten correctly for both layouts.
+
+> **Session artifacts live in `.audit/`, never `/tmp/` (2026-07-26 incident).**
+> A `` `/tmp/${SID}-r1-result.json` `` reconstructed inside a script is resolved
+> by NODE's own path logic, which on Windows disagrees with what BASH resolved
+> when the same literal was passed to the audit CLI (confirmed live: Bash's
+> `/tmp` lands in `AppData/Local/Temp`; Node's resolution of the identical
+> string lands in `C:\tmp` — two different, unrelated directories). The script
+> then throws on a file that genuinely exists. That cost a consumer repo 30 days
+> of silently-lost final-review persistence (101 real runs, traced 2026-07-26).
+> A repo-relative `.audit/…` path has no such split: every reader resolves it
+> against the same cwd, and it is gitignored + swept by `npm run audit:clean` in
+> this repo and in every consumer.
 
 The split to remember: **identity fields come from the finding verbatim;
 only `adjudicationOutcome`/`remediationState`/`ruling`/`rulingRationale`
@@ -130,24 +111,23 @@ of truth.
 After Step 4 completes, update ledger entries for the fixed items:
 
 ```bash
-# A file again, and topicIds as ARGUMENTS: an `<angle-bracket>` placeholder
-# cannot be pasted into PowerShell, which reserves `<` — this repo's operator-doc
-# convention forbids them for that reason.
-cat > .claude/tmp/ledger-fixed.mjs <<'EOF'
-import { writeLedgerEntry } from '../../scripts/shared.mjs';
-const [SID, ...topicIds] = process.argv.slice(2);
-for (const topicId of topicIds) {
-  writeLedgerEntry(`/tmp/${SID}-ledger.json`, {
-    topicId,
-    remediationState: 'fixed',
-    // other fields unchanged — writeLedgerEntry merges on topicId
-  });
-}
-console.log(`marked ${topicIds.length} entr(ies) fixed`);
-EOF
-
-node .claude/tmp/ledger-fixed.mjs "$SID" 42fe8eb796e8 6373587e8fe1
+node scripts/write-ledger-entries.mjs \
+  --ledger .audit/$SID-ledger.json \
+  --mark-fixed 42fe8eb796e8 6373587e8fe1
 ```
+
+topicIds are ARGUMENTS, and there is no `<angle-bracket>` placeholder anywhere:
+PowerShell reserves `<`, so a bracketed command cannot be pasted — this repo's
+operator-doc convention forbids them for that reason. A topicId not present in
+the ledger is refused, not quietly skipped.
+
+> **This replaced a recipe that silently did nothing (found 2026-08-08).** The
+> old snippet wrote a bare `{topicId, remediationState: 'fixed'}` entry, but
+> `writeLedgerEntry` REPLACES the entry at a topicId — it does not merge — and
+> validates the whole `LedgerEntrySchema`, so a partial entry failed validation
+> and returned without writing. Exit 0, one stderr line, no `fixed` state
+> anywhere: reopen detection and remediation labelling both ran on a ledger
+> where nothing had ever been marked. The CLI does the read-modify-write.
 
 ## What the ledger enables
 

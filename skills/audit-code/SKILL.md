@@ -106,8 +106,8 @@ default to separate audited-from-unaudited across a commit boundary.
 ```bash
 node scripts/openai-audit.mjs code <plan-file> \
   --scope diff \
-  --out /tmp/$SID-r1-result.json \
-  2>/tmp/$SID-r1-stderr.log
+  --out .audit/$SID-r1-result.json \
+  2>.audit/$SID-r1-stderr.log
 ```
 
 ### Round 2+
@@ -124,19 +124,19 @@ tool pre-pass rules: `references/r2-plus-mode.md`.
 # truth. Pass --base/clusterStartRef instead when separating audited-from-
 # unaudited across a commit boundary.
 BASE=$([ -n "$(git status --porcelain)" ] && echo HEAD || echo HEAD~1)
-git diff "$BASE" -- . > /tmp/$SID-diff.patch
+git diff "$BASE" -- . > .audit/$SID-diff.patch
 # Include UNTRACKED new files — `git diff` omits them, so without this a brand-new file
 # reaches the auditor with NO [CHANGED] annotation (it's still read in full via --files, but
 # loses the diff focus markers). Append each as a /dev/null→file "new file" diff.
 git ls-files --others --exclude-standard -z \
-  | xargs -0 -r -I{} git diff --no-index --no-color -- /dev/null "{}" >> /tmp/$SID-diff.patch 2>/dev/null || true
+  | xargs -0 -r -I{} git diff --no-index --no-color -- /dev/null "{}" >> .audit/$SID-diff.patch 2>/dev/null || true
 node scripts/openai-audit.mjs code <plan-file> \
   --round 2 \
-  --ledger /tmp/$SID-ledger.json \
-  --diff /tmp/$SID-diff.patch \
+  --ledger .audit/$SID-ledger.json \
+  --diff .audit/$SID-diff.patch \
   --changed <csv> --files <csv> --passes <csv> \
-  --out /tmp/$SID-r2-result.json \
-  2>/tmp/$SID-r2-stderr.log
+  --out .audit/$SID-r2-result.json \
+  2>.audit/$SID-r2-stderr.log
 ```
 
 ### Requirements rubric (automatic)
@@ -280,7 +280,7 @@ Only send rebuttal if rebut HIGH or MEDIUM findings exist:
 
 ```bash
 node scripts/openai-audit.mjs rebuttal <plan-file> <rebuttal-file> \
-  --out /tmp/$SID-resolution.json 2>/tmp/$SID-rebuttal-stderr.log
+  --out .audit/$SID-resolution.json 2>.audit/$SID-rebuttal-stderr.log
 ```
 
 ### Convergence
@@ -366,8 +366,8 @@ the **final converged round** of a standalone audit, a **1-round** audit, or
 
 ```bash
 node scripts/write-code-outcomes.mjs \
-  --result /tmp/$SID-r<N>-result.json \
-  --ledger /tmp/$SID-ledger.json \
+  --result .audit/$SID-r<N>-result.json \
+  --ledger .audit/$SID-ledger.json \
   --round <N>
 ```
 
@@ -375,6 +375,15 @@ Both the automatic path and this CLI delegate to the same shared
 `finalizeRoundOutcomes`, so they are idempotent — running the manual step after an
 automatic capture re-labels (cloud) and skips the local append (marker-guarded),
 never double-counting.
+
+> **Precondition: the ledger must already carry per-finding rulings.** This CLI
+> *records* adjudications; it does not make them. Run Step 3.5 first. With an
+> empty or all-`pending` ledger it reports `0/N findings labelled · cloud=ok`
+> and exits 0 — success-shaped, having closed nothing (reported live
+> 2026-08-08). It now prints a `WARN:` line naming which of the three causes
+> applies (no entries / all pending / ruled-but-unjoined identity mismatch) and
+> carries the same text as `warning` on its JSON. **`labelled: 0` with a
+> non-zero `total` is a failure to fix, never a pass.**
 
 ---
 
@@ -467,7 +476,7 @@ After fixes, re-audit using R2+ mode (back to Step 2):
 
 1. Collect files modified during Step 4 → `--changed`
 2. Compute scope: changed + importers → `--files`
-3. Generate diff (dirty-aware base, matching R1 — untracked counts): `BASE=$([ -n "$(git status --porcelain)" ] && echo HEAD || echo HEAD~1); git diff "$BASE" -- . > /tmp/$SID-diff.patch` — then append UNTRACKED new files (`git diff` omits them): `git ls-files --others --exclude-standard -z | xargs -0 -r -I{} git diff --no-index --no-color -- /dev/null "{}" >> /tmp/$SID-diff.patch 2>/dev/null || true`
+3. Generate diff (dirty-aware base, matching R1 — untracked counts): `BASE=$([ -n "$(git status --porcelain)" ] && echo HEAD || echo HEAD~1); git diff "$BASE" -- . > .audit/$SID-diff.patch` — then append UNTRACKED new files (`git diff` omits them): `git ls-files --others --exclude-standard -z | xargs -0 -r -I{} git diff --no-index --no-color -- /dev/null "{}" >> .audit/$SID-diff.patch 2>/dev/null || true`
 4. Build `--passes` from file types
 5. Run R2+ audit with `--round <N> --ledger --diff --changed --files`
 
@@ -484,11 +493,12 @@ Track finding churn using `_hash` fields: resolved / recurring / new.
 ### Step 5.0b — Re-run every detector at FULL scope (blocks convergence)
 
 ```bash
-node -e "import('./scripts/lib/audit/detector.mjs').then(async m=>{
-  const fs=await import('node:fs');
-  const r=m.checkDetectors(JSON.parse(fs.readFileSync(process.argv[1],'utf8')));
-  console.log(JSON.stringify(r,null,2)); process.exit(r.blocked?1:0);})" /tmp/$SID-ledger.json
+node scripts/lib/audit/detector.mjs .audit/$SID-ledger.json
 ```
+
+Exit 0 = every detector reached zero and every match is dispositioned; exit 1 =
+blocked; exit 2 = the ledger could not be read, which is "no census happened"
+and never a pass.
 
 **At each detector's own `globs`, NOT the round's changed files.** Restricting to the diff
 defeats the census: fix 1 of 4 occurrences and the other 3 are absent from the diff, so the
@@ -587,7 +597,7 @@ the audit actually found:
 
 ```bash
 node scripts/cross-skill.mjs recommend-skills \
-  --findings /tmp/$SID-r<final>-result.json --just-ran audit-code --format human
+  --findings .audit/$SID-r<final>-result.json --just-ran audit-code --format human
 ```
 
 Print the card verbatim if non-empty; **if it's empty, say nothing** (a backend-only
@@ -619,18 +629,30 @@ the "two surfaces must show the same number" check.
 Run Gemini 3.1 Pro as the final gate. Falls back to Claude Opus when
 `GEMINI_API_KEY` is absent.
 
+**Build the transcript first** — the reviewer reads a file no earlier step
+writes. Never hand-assemble the JSON:
+
+```bash
+node scripts/build-audit-transcript.mjs --sid $SID --changed "$CHANGED"
+```
+
+It discovers every `.audit/$SID-r<N>-result.json`, folds in
+`.audit/$SID-ledger.json` as the deliberation trail, and writes
+`.audit/$SID-transcript.json`. **`--changed` is the reviewer's scope filter** —
+pass the same list you gave the R1 audit; without it out-of-scope findings stop
+being dropped and the builder warns on stderr.
+
 ```bash
 # Pass --run-id <_cloudRunId> when the audit --out JSON carries one, so the
 # final-review (and the optional shadow A/B reviewer) persist their per-finding
 # results keyed to this audit_run. Read it from the audit result — pass the path
 # as an ARGUMENT (process.argv[1]), never embed it as a literal string inside
-# the -e source. On Windows, Bash and Node resolve a bare `/tmp/...` path
-# DIFFERENTLY (confirmed live 2026-07-26: Bash's /tmp lands in
-# AppData/Local/Temp; Node's own resolution of the same literal string lands in
-# C:\tmp — two different, unrelated locations). Embedding the path as a string
-# makes Node re-resolve it itself and throw MODULE_NOT_FOUND on a file that
-# genuinely exists; passing it as argv lets the SAME shell that resolved the
-# audit's --out path resolve this one identically. This was found by tracing
+# the -e source, so the SAME shell that resolved the audit's --out path resolves
+# this one identically. (Artifacts now live in repo-relative `.audit/`, which
+# every reader resolves the same way; under the old `/tmp/` layout Bash and Node
+# disagreed outright — confirmed live 2026-07-26: Bash's /tmp landed in
+# AppData/Local/Temp, Node's resolution of the same literal in C:\tmp, and the
+# snippet threw MODULE_NOT_FOUND on a file that genuinely existed.) Found by tracing
 # WHY a consumer repo's 101 real audit runs, over 30 days, all had a genuine
 # Gemini verdict computed (visible in that session's own logs) but NEVER
 # persisted to audit_runs — this exact snippet was silently throwing inside
@@ -639,13 +661,13 @@ Run Gemini 3.1 Pro as the final gate. Falls back to Claude Opus when
 # module) with a try/catch fails safe to an empty RUN_ID rather than crashing.
 # <N> = the last round actually run (matches the `-r<N>-result.json` convention
 # Step 2/Step 3.5b/Step 6.6 already use — NOT a bare `-result.json`).
-RUN_ID=$(node -e "const fs=require('fs'); try { process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],'utf8'))._cloudRunId||''); } catch { process.stdout.write(''); }" "/tmp/$SID-r<N>-result.json")
+RUN_ID=$(node -e "const fs=require('fs'); try { process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],'utf8'))._cloudRunId||''); } catch { process.stdout.write(''); }" ".audit/$SID-r<N>-result.json")
 # gemini-review.mjs itself now warns loudly (2026-07-26) when cloud is enabled
 # but --run-id is absent — if you see that warning, the extraction above
 # failed; don't ignore it. Omit --run-id only when cloud is genuinely off.
 node scripts/gemini-review.mjs review <plan-file> .audit/$SID-transcript.json \
-  --out /tmp/$SID-gemini-result.json \
-  ${RUN_ID:+--run-id "$RUN_ID"} 2>/tmp/$SID-gemini-stderr.log
+  --out .audit/$SID-gemini-result.json \
+  ${RUN_ID:+--run-id "$RUN_ID"} 2>.audit/$SID-gemini-stderr.log
 ```
 
 Verdict handling: `APPROVE` → done. `CONCERNS` → deliberate, fix, re-run
