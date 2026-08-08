@@ -1,6 +1,83 @@
 # Project Status Log
 
-## 2026-08-08 (latest) — five field-reported defects, and the two the fixes found
+## 2026-08-08 (latest) — the ledger writer discarded what its callers passed, and the R2 log called it corruption
+
+A consumer reported "R2+ ledger suppression never engages — every round logged
+`0 valid, N invalid`; the ledger writer omits `semanticHash` and the validator
+requires it." Reproduced, but the mechanism and the consequence were both
+different from the report, in opposite directions.
+
+**The writer does not omit `semanticHash` — it strips it.** Both auto-write
+call sites ([openai-audit.mjs](scripts/openai-audit.mjs) `main`,
+[legacy-production-audit.mjs](scripts/lib/audit/legacy-production-audit.mjs)
+`runLegacyProductionAudit`) pass it explicitly. `upsertEntry` persisted
+`validated.data`, and a Zod `z.object` strips unknown keys;
+`BatchLedgerEntrySchema` declares only the 9 fields a pre-adjudication entry
+needs. Measured: six fields dropped (`semanticHash`, `pass`, `affectedFiles`,
+`affectedPrinciples`, `detailSnapshot`, `_hash`), ten required by
+`LedgerEntrySchema` then missing. `validateLedgerForR2` already keeps the raw
+entry for exactly this reason; the write path is now symmetric with it.
+
+**But the strip does not break suppression, and my first diagnosis said it
+did.** I reasoned that a stripped entry would fail `suppressReRaises`'s
+`pass`/`affectedFiles` narrowing instead of executing it. Running the real R1 →
+adjudicate → R2 lifecycle against `HEAD` and against the fix gives identical
+results — `kept 0, suppressed 1` both ways. `writeLedgerEntry` fully *replaces*
+the entry at a `topicId`, so adjudication overwrites the stripped row; and
+`suppressReRaises` resolves only `dismissed`/`fixed`/`verified`, so stripped
+`pending` rows never participate. The strip's live consumer is
+`debt-auto-capture`'s `ledgerEntryToFinding`, which reads all six — `_hash`
+silently falling back to a *different* hash (`topicId`).
+
+**The reported symptom was a diagnostic defect, not a suppression defect.** A
+`pending` entry cannot satisfy `LedgerEntrySchema` by design — no `ruling`,
+`originalSeverity` or `resolvedRound` yet — and every round auto-writes one per
+finding. Counting that as `invalid` made a normal un-adjudicated run read as a
+corrupt ledger, which is what generated the report. Now:
+
+```
+BEFORE: [ledger] R2 ledger valid — 2 prior entries (0 valid, 2 invalid)
+AFTER:  [ledger] R2 ledger valid — 2 prior entries (0 adjudicated, 2 awaiting adjudication)
+        [ledger] NOTE: no entry carries a ruling yet, so R2+ suppression has nothing
+        to match against. Write rulings with `write-ledger-entries` (Step 3.5).
+```
+
+`validEntries` is unchanged, so the suppression input is untouched — only the
+diagnosis changes. The consumer's actual `0 valid` cause was that no
+adjudication entry ever landed: the heredoc writer fixed hours earlier the same
+day in `cd862249`/`bc6f578f`.
+
+**Tests: 6 added, verified red-then-green.** Against `HEAD` source they fail
+6/134; with the fix, 134/134. Full suite **10,149 tests, 0 fail, 24 skipped**
+(measured `npm test`, 147s). The three `validateLedgerForR2` cases carry a
+negative control — a malformed entry claiming `adjudicationOutcome: 'pending'`
+must still count invalid — so the new classification cannot launder corruption.
+The pre-existing `batchWriteLedger` tests missed this class because all three
+wrote minimal entries: the tests and the bug shared a blind spot.
+
+Also refreshed `detailSnapshot` alongside `detail` on update. That divergence
+was unreachable before (the field never persisted) and becomes constructable
+the moment the fix lands — `ledgerFindingSimilarity` scores
+`detailSnapshot || detail`, so a stale snapshot would become the text every
+later round is compared against.
+
+**Consumer-side verification (Step 6.8): `verified`.** Synced to
+wine-cellar-app (3 updated, 0 created, 0 deleted, 606 unchanged) at source
+`bc6f578f` + these changes. Retrieval: imported the *relocated* module from
+`C:\GIT\wine-cellar-app\scripts\.claude-skills\lib\audit\legacy-production-audit.mjs`
+and ran `validateLedgerForR2` on the all-pending ledger shape. Result
+`{pending:2, invalid:0, adjudicated:0}` with the corrected log lines — so the
+new `BatchLedgerEntrySchema` import resolves through `../schemas.mjs` in the
+isolated layout. Not inherited from the sync's own report: `npm run sync:dry`
+was the pre-check, the in-consumer load was the verdict.
+
+Dry-run first was load-bearing here: the sync tooling had uncommitted
+mid-implementation edits from a concurrent session adding a GC pass that
+deletes on-disk files absent from the manifest. Confirmed `selectDiskOrphans`
+runs *before* the `DRY_RUN` guard, so the preview is faithful; it reported 0
+deletions and the real run deleted nothing.
+
+## 2026-08-08 — five field-reported defects, and the two the fixes found
 
 A real `/plan` → `/audit-plan` session in a consumer reported five defects, all
 reproduced. Two blocked documented flows. Fixing them turned up two more of the

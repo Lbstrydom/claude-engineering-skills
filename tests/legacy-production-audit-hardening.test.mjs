@@ -172,6 +172,55 @@ describe('Phase 2 — validateLedgerForR2 per-entry schema validation', () => {
     } finally { fs.rmSync(path.dirname(ledgerPath), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
+  // Regression: a pre-adjudication entry (auto-written every round by
+  // `batchWriteLedger`, and left that way for any finding the operator did not
+  // triage) cannot satisfy LedgerEntrySchema by design — it has no ruling,
+  // originalSeverity or resolvedRound yet. Counting it as `invalid` made a
+  // normal run log `0 valid, N invalid`, which reads as a corrupt ledger and
+  // was reported from a consumer as "R2+ suppression never engages".
+  const PENDING_ENTRY = {
+    topicId: 'p1', findingId: 'H1', severity: 'HIGH', category: 'cat',
+    section: 'a.mjs:1', detailSnapshot: 'd', detail: 'd',
+    affectedFiles: ['a.mjs'], affectedPrinciples: [], pass: 'backend',
+    semanticHash: 'h9', adjudicationOutcome: 'pending', remediationState: 'pending', round: 1,
+  };
+
+  it('a pre-adjudication (pending) entry counts as pending, NOT invalid', () => {
+    const ledgerPath = mkTmpLedger([VALID_ENTRY, PENDING_ENTRY]);
+    try {
+      const result = validateLedgerForR2(ledgerPath, 2);
+      assert.equal(result.entryCount, 2);
+      assert.equal(result.pendingEntryCount, 1, 'a pending entry is expected residue, not damage');
+      assert.equal(result.invalidEntryCount, 0, 'nothing here is malformed');
+      // Unchanged where it matters: suppression still only ever sees adjudicated entries.
+      assert.equal(result.validEntries.length, 1);
+      assert.equal(result.validEntries[0].topicId, 't1');
+    } finally { fs.rmSync(path.dirname(ledgerPath), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+  });
+
+  it('a malformed entry is still invalid even when it claims adjudicationOutcome pending', () => {
+    // The pending classification must not become a way to launder corruption:
+    // this one is missing `severity`, so it fails BatchLedgerEntrySchema too.
+    const ledgerPath = mkTmpLedger([{ topicId: 'bad', adjudicationOutcome: 'pending' }]);
+    try {
+      const result = validateLedgerForR2(ledgerPath, 2);
+      assert.equal(result.invalidEntryCount, 1);
+      assert.equal(result.pendingEntryCount, 0);
+      assert.equal(result.validEntries.length, 0);
+    } finally { fs.rmSync(path.dirname(ledgerPath), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+  });
+
+  it('an all-pending ledger reports zero adjudicated without reporting corruption', () => {
+    const ledgerPath = mkTmpLedger([PENDING_ENTRY, { ...PENDING_ENTRY, topicId: 'p2' }]);
+    try {
+      const result = validateLedgerForR2(ledgerPath, 2);
+      assert.equal(result.valid, true);
+      assert.equal(result.validEntries.length, 0);
+      assert.equal(result.pendingEntryCount, 2);
+      assert.equal(result.invalidEntryCount, 0);
+    } finally { fs.rmSync(path.dirname(ledgerPath), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+  });
+
   it('a missing entries array is UNCHANGED behavior — {valid:false, suppressionUnavailable:true}', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lpa-ledger-'));
     const ledgerPath = path.join(dir, 'ledger.json');

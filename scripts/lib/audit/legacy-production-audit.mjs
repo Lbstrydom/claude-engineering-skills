@@ -41,7 +41,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { z } from 'zod';
-import { FindingSchema, ProducerFindingSchema, WiringIssueSchema, LedgerEntrySchema, ReduceStatus, ExecutionMetaSchema, DuplicationBouncerResponseSchema, AdjacencyBouncerResponseSchema } from '../schemas.mjs';
+import { FindingSchema, ProducerFindingSchema, WiringIssueSchema, LedgerEntrySchema, BatchLedgerEntrySchema, ReduceStatus, ExecutionMetaSchema, DuplicationBouncerResponseSchema, AdjacencyBouncerResponseSchema } from '../schemas.mjs';
 import { gitDiffWithWorkingTree } from '../vcs.mjs';
 import { runDuplicationAnalysis } from './duplication-detector.mjs';
 import { classifyProviderReadiness } from './provider-readiness.mjs';
@@ -303,7 +303,8 @@ function normalizeFindingsForOutput(findings) {
 
 /**
  * Validate the R2+ ledger before running suppression.
- * Returns { valid, suppressionUnavailable?, entryCount?, validEntries?, invalidEntryCount? }.
+ * Returns { valid, suppressionUnavailable?, entryCount?, validEntries?, invalidEntryCount?,
+ *           pendingEntryCount? }.
  * A missing or corrupt ledger sets suppressionUnavailable=true so the caller
  * can propagate the flag into _executionMeta without crashing.
  *
@@ -316,6 +317,26 @@ function normalizeFindingsForOutput(findings) {
  * this preserves any extra bookkeeping fields (`_hash`, `findingId`, …)
  * downstream consumers may read); a failing entry is logged (its index +
  * first Zod issue) and skipped — never thrown.
+ *
+ * A failing entry is then split into two OUTCOMES, because they mean opposite
+ * things to an operator:
+ *
+ *   - **pending** — a well-formed PRE-adjudication entry (passes
+ *     `BatchLedgerEntrySchema`, `adjudicationOutcome === 'pending'`). Every
+ *     round auto-writes one of these per finding via `batchWriteLedger`, and
+ *     any finding the operator did not triage stays that way. It cannot
+ *     satisfy `LedgerEntrySchema` — it has no `ruling`/`originalSeverity`/
+ *     `resolvedRound` yet, by design — and `suppressReRaises` would ignore it
+ *     regardless (it resolves only `dismissed`/`fixed`/`verified`). So it is
+ *     EXPECTED, not damage.
+ *   - **invalid** — anything else: genuinely malformed, worth investigating.
+ *
+ * Collapsing the two is what made this misleading: a normal run with nothing
+ * yet adjudicated logged `0 valid, N invalid`, which reads as a corrupt
+ * ledger and was reported from a consumer 2026-08-08 as "R2+ suppression
+ * never engages". Suppression was fine; the ledger held nothing to suppress
+ * WITH, and the line could not say so. Both still stay out of `validEntries`
+ * — only the diagnosis changes, never the suppression input.
  */
 function validateLedgerForR2(ledgerPath, round) {
   if (round < 2) return { valid: true };
@@ -332,19 +353,38 @@ function validateLedgerForR2(ledgerPath, round) {
     if (!raw.entries || !Array.isArray(raw.entries)) throw new Error('missing entries array');
     const validEntries = [];
     let invalidEntryCount = 0;
+    let pendingEntryCount = 0;
     for (let i = 0; i < raw.entries.length; i++) {
       const parsed = LedgerEntrySchema.safeParse(raw.entries[i]);
       if (parsed.success) {
         validEntries.push(raw.entries[i]);
-      } else {
-        invalidEntryCount++;
-        const firstIssue = parsed.error.issues?.[0];
-        const issueDesc = firstIssue ? `${firstIssue.path.join('.')}: ${firstIssue.message}` : 'unknown validation issue';
-        process.stderr.write(`  [ledger] WARNING: entry ${i} failed schema validation (${issueDesc}) — skipped\n`);
+        continue;
       }
+      // Pre-adjudication residue, not corruption — see the doc comment above.
+      const entry = raw.entries[i];
+      if (entry?.adjudicationOutcome === 'pending' && BatchLedgerEntrySchema.safeParse(entry).success) {
+        pendingEntryCount++;
+        continue;
+      }
+      invalidEntryCount++;
+      const firstIssue = parsed.error.issues?.[0];
+      const issueDesc = firstIssue ? `${firstIssue.path.join('.')}: ${firstIssue.message}` : 'unknown validation issue';
+      process.stderr.write(`  [ledger] WARNING: entry ${i} failed schema validation (${issueDesc}) — skipped\n`);
     }
-    process.stderr.write(`  [ledger] R2 ledger valid — ${raw.entries.length} prior entries (${validEntries.length} valid${invalidEntryCount > 0 ? `, ${invalidEntryCount} invalid` : ''})\n`);
-    return { valid: true, entryCount: raw.entries.length, validEntries, invalidEntryCount };
+    const parts = [`${validEntries.length} adjudicated`];
+    if (pendingEntryCount > 0) parts.push(`${pendingEntryCount} awaiting adjudication`);
+    if (invalidEntryCount > 0) parts.push(`${invalidEntryCount} invalid`);
+    process.stderr.write(`  [ledger] R2 ledger valid — ${raw.entries.length} prior entries (${parts.join(', ')})\n`);
+    if (validEntries.length === 0 && pendingEntryCount > 0) {
+      // Say the actionable thing rather than leave the operator to infer it
+      // from a count of zero: suppression has nothing to suppress WITH until
+      // rulings are written, and the absence of rulings is the fixable part.
+      process.stderr.write(
+        '  [ledger] NOTE: no entry carries a ruling yet, so R2+ suppression has nothing to match against. '
+        + 'Write rulings with `write-ledger-entries` (audit-code Step 3.5) before the next round.\n',
+      );
+    }
+    return { valid: true, entryCount: raw.entries.length, validEntries, invalidEntryCount, pendingEntryCount };
   } catch (err) {
     process.stderr.write(`  [ledger] WARNING: Ledger corrupted (${err.message}) — running without suppression\n`);
     return { valid: false, suppressionUnavailable: true };

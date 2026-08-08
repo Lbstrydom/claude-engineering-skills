@@ -186,7 +186,25 @@ function upsertEntry(byTopic, entry) {
   if (!validated.success) {
     return { status: 'rejected', reason: validated.error.message.slice(0, 200) };
   }
-  const validEntry = validated.data;
+  // Validate against the MINIMAL batch schema, but persist the RAW entry — a
+  // `z.object` strips unknown keys, and `BatchLedgerEntrySchema` deliberately
+  // declares only the 9 fields a pre-adjudication entry must have. Storing
+  // `validated.data` therefore silently discarded the six identity/matching
+  // fields both auto-write call sites explicitly supply (`semanticHash`,
+  // `pass`, `affectedFiles`, `affectedPrinciples`, `detailSnapshot`, `_hash`),
+  // and the stripped entry could never satisfy the full `LedgerEntrySchema`
+  // that `validateLedgerForR2` applies on the next round — every prior entry
+  // logged as invalid, dropped from the ledger handed to `suppressReRaises`,
+  // so R2+ suppression never engaged (reported from a consumer 2026-08-08).
+  // Even had it validated, `suppressReRaises` narrows candidates on
+  // `d.pass` + `d.affectedFiles`, so a stripped entry matches nothing.
+  //
+  // `validateLedgerForR2` already keeps the raw entry for exactly this reason
+  // ("the raw entry, not the Zod-transformed result — this preserves any extra
+  // bookkeeping fields"); the write path is now symmetric with the read path.
+  // `validated.data` still wins on the fields it owns, so any Zod coercion or
+  // default the schema applies is not lost.
+  const validEntry = { ...entry, ...validated.data };
   if (byTopic.has(validEntry.topicId)) {
     const existing = byTopic.get(validEntry.topicId);
     byTopic.set(validEntry.topicId, {
@@ -194,6 +212,13 @@ function upsertEntry(byTopic, entry) {
       lastSeenRound: validEntry.round,
       latestFindingId: validEntry.findingId,
       detail: validEntry.detail,
+      // Refreshed with `detail`, from the same source, so the pair cannot
+      // diverge: `ledgerFindingSimilarity` scores `detailSnapshot || detail`,
+      // so a snapshot left stale beside a refreshed `detail` would silently
+      // become the text every later round is compared against. Before the
+      // fix above `detailSnapshot` never reached disk, so the divergence was
+      // unreachable — it becomes constructable the moment the field persists.
+      detailSnapshot: validEntry.detailSnapshot ?? existing.detailSnapshot,
       severity: validEntry.severity,
       adjudicationOutcome: existing.adjudicationOutcome,
       remediationState: existing.remediationState,

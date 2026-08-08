@@ -839,6 +839,85 @@ describe('batchWriteLedger', () => {
     assert.equal(ledger.entries.length, 1);
   });
 
+  // Regression: `upsertEntry` persisted `validated.data`, and a Zod `z.object`
+  // strips unknown keys. `BatchLedgerEntrySchema` declares only the 9 fields a
+  // pre-adjudication entry must have, so the six identity/matching fields BOTH
+  // auto-write call sites explicitly supply were silently dropped on the way to
+  // disk. Nothing caught it because every test above writes minimal entries —
+  // the tests and the bug shared the same blind spot.
+  //
+  // These field names are not incidental: `semanticHash` is what
+  // `LedgerEntrySchema` (and so `validateLedgerForR2`) requires, `pass` +
+  // `affectedFiles` are what `suppressReRaises` narrows candidates on, and
+  // `debt-auto-capture`'s `ledgerEntryToFinding` reads all six.
+  const AUTO_WRITE_ENTRY = {
+    topicId: 'plan:foo.mjs:abc123',
+    findingId: 'H1',
+    severity: 'HIGH',
+    category: 'Correctness',
+    section: 'scripts/foo.mjs:12',
+    detailSnapshot: 'the retry loop swallows the error',
+    detail: 'the retry loop swallows the error',
+    pass: 'Wiring',
+    _hash: 'deadbeef',
+    semanticHash: 'deadbeef',
+    affectedFiles: ['scripts/foo.mjs'],
+    affectedPrinciples: ['error-handling'],
+    adjudicationOutcome: 'pending',
+    remediationState: 'pending',
+    round: 1,
+  };
+
+  it('persists fields the batch schema does not declare (openai-audit / legacy-production-audit supply six of them)', () => {
+    const ledgerPath = path.join(tmpDir, 'ledger.json');
+    batchWriteLedger(ledgerPath, [AUTO_WRITE_ENTRY]);
+
+    const [onDisk] = JSON.parse(fs.readFileSync(ledgerPath, 'utf-8')).entries;
+    for (const field of ['semanticHash', 'pass', 'affectedFiles', 'affectedPrinciples', 'detailSnapshot', '_hash']) {
+      assert.ok(field in onDisk, `${field} must survive the write — it is undeclared in BatchLedgerEntrySchema, not unwanted`);
+    }
+    assert.equal(onDisk.semanticHash, 'deadbeef');
+    assert.equal(onDisk.pass, 'Wiring');
+    assert.deepEqual(onDisk.affectedFiles, ['scripts/foo.mjs']);
+    assert.deepEqual(onDisk.affectedPrinciples, ['error-handling']);
+  });
+
+  it('an entry that round-trips then gets adjudicated satisfies LedgerEntrySchema — the R2 validator can read it', () => {
+    const ledgerPath = path.join(tmpDir, 'ledger.json');
+    batchWriteLedger(ledgerPath, [AUTO_WRITE_ENTRY]);
+    const [onDisk] = JSON.parse(fs.readFileSync(ledgerPath, 'utf-8')).entries;
+
+    // Adding ONLY the adjudication fields must be enough. If the write dropped
+    // an identity field, this fails naming exactly which one — the assertion
+    // that would have caught the consumer report directly.
+    const adjudicated = {
+      ...onDisk,
+      adjudicationOutcome: 'dismissed', originalSeverity: 'HIGH',
+      ruling: 'overrule', rulingRationale: 'pre-existing, out of scope', resolvedRound: 1,
+    };
+    const parsed = LedgerEntrySchema.safeParse(adjudicated);
+    assert.ok(
+      parsed.success,
+      `adjudicated entry must satisfy LedgerEntrySchema; missing: ${parsed.success ? '' : parsed.error.issues.map(i => i.path.join('.')).join(', ')}`,
+    );
+  });
+
+  it('re-observing an entry keeps detailSnapshot in step with detail', () => {
+    const ledgerPath = path.join(tmpDir, 'ledger.json');
+    batchWriteLedger(ledgerPath, [AUTO_WRITE_ENTRY]);
+    batchWriteLedger(ledgerPath, [{
+      ...AUTO_WRITE_ENTRY, round: 2,
+      detail: 'reworded by the model on round 2',
+      detailSnapshot: 'reworded by the model on round 2',
+    }]);
+
+    const [onDisk] = JSON.parse(fs.readFileSync(ledgerPath, 'utf-8')).entries;
+    // `ledgerFindingSimilarity` scores `detailSnapshot || detail`, so a snapshot
+    // left stale beside a refreshed `detail` silently becomes the text every
+    // later round is compared against.
+    assert.equal(onDisk.detailSnapshot, onDisk.detail);
+  });
+
   it('skips entries without topicId or severity', () => {
     const ledgerPath = path.join(tmpDir, 'ledger.json');
     const { inserted } = batchWriteLedger(ledgerPath, [
