@@ -77,7 +77,8 @@ import { detectRepoStack } from '../repo-stack.mjs';
 import { listRepoFiles } from '../repo-inventory.mjs';
 import { verifyExistenceFindings } from './finding-verification.mjs';
 import { getRepoContext } from '../repo-context.mjs';
-import { evaluateConvergence } from './convergence.mjs';
+import { evaluateConvergence, evaluateConvergenceWithDetectors, resolveDetectorResultForRound } from './convergence.mjs';
+import { checkDetectors } from './detector.mjs';
 import { getRequirementsContext } from '../requirements/context.mjs';
 import { ArchIntentPassSchema } from '../schemas.mjs';
 import { detectOrphansIntroduced } from './orphan-introduced.mjs';
@@ -3460,11 +3461,44 @@ export async function runLegacyProductionAudit(ctx) {
       // a tool finding under advisory mode), silently letting this gate
       // license `passed`/`converged` on a stricter or looser count than the
       // verdict actually reported.
-      const convergedNow = evaluateConvergence({
-        high,
-        medium,
-        quickFix: allFindings.filter((f) => f.is_quick_fix).length,
-      });
+      // The DETECTOR gate, not the count threshold alone (docs/plans/
+      // gate-honesty-adjudicated-defects.md D1). `evaluateConvergenceWithDetectors`
+      // and `checkDetectors` existed, were hardened against a silent pass, and had
+      // NO production caller — so `skills/audit-code/SKILL.md` §5.0b's "blocks
+      // convergence" was enforced only by a human remembering to run it, while THIS
+      // value is what licenses `AI-Gate: passed`.
+      //
+      // The mapping lives in `resolveDetectorResultForRound` (convergence.mjs) so
+      // "ledger present" can never be mistaken for "detectors absent": an R2+ round
+      // whose ledger is missing or corrupt yields `undefined` here, which the oracle
+      // reads as `detector-not-run` — NOT converged. That is the point of the fix.
+      const detectorVerdict = evaluateConvergenceWithDetectors(
+        {
+          high,
+          medium,
+          quickFix: allFindings.filter((f) => f.is_quick_fix).length,
+        },
+        // `suppressionUnavailable` (function-scoped, :1644) is the signal, NOT
+        // `ledgerValidation` — that one is `const` inside `if (isR2Plus)` and is
+        // not in scope here. Same fact, correct binding.
+        resolveDetectorResultForRound({
+          // Normalised HERE, not in the resolver: the orchestrator knows an absent
+          // round means the first one (the same `round || 1` this file uses
+          // throughout), while the resolver must treat an unknown round as unknown
+          // detectors. Both halves fail closed on their own terms.
+          round: round || 1,
+          suppressionUnavailable,
+          ledger,
+          cwd: process.cwd(),
+          checkDetectorsFn: checkDetectors,
+        }),
+      );
+      const convergedNow = detectorVerdict.converged;
+      if (!convergedNow && detectorVerdict.reason !== 'finding-thresholds') {
+        // Say WHY, or a round that passed the counts and failed the detector gate
+        // is indistinguishable from one that simply had findings left.
+        process.stderr.write(`  [gate-evidence] not converged: ${detectorVerdict.reason}\n`);
+      }
       // The SUBJECT is recorded whether or not the run converged (E1 hop 2):
       // "what was audited" is a fact of the run, independent of its verdict, and
       // binding it here is what lets the store contradict a forged local marker.

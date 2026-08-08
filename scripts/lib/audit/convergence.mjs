@@ -56,11 +56,72 @@ export function evaluateConvergenceWithDetectors(counts, detectorResult) {
   if (!evaluateConvergence(counts)) {
     return { converged: false, reason: 'finding-thresholds' };
   }
-  if (detectorResult === undefined || detectorResult === null || typeof detectorResult.blocked !== 'boolean') {
+  // BOTH fields are required, not just `blocked` (audit clusterA-H6). `checkDetectors`
+  // always returns `checked: entries.length` (detector.mjs), so a result carrying
+  // `blocked` without it did not come from a real census — it is a hand-built or
+  // truncated object, and treating it as a completed run is how "the detectors ran
+  // and found nothing" becomes indistinguishable from "something fabricated a pass".
+  // An intentionally empty run says so explicitly with `checked: 0`.
+  // `checked` must be a COUNT — a non-negative integer. `typeof x === 'number'`
+  // admits NaN, Infinity and -1, each of which would sail through as a completed
+  // census (audit clusterA-H5). A census that counted NaN entries did not happen.
+  if (detectorResult === undefined || detectorResult === null
+    || typeof detectorResult.blocked !== 'boolean'
+    || !Number.isInteger(detectorResult.checked) || detectorResult.checked < 0) {
     return { converged: false, reason: 'detector-not-run' };
   }
   if (detectorResult.blocked) {
     return { converged: false, reason: 'detector-undispositioned' };
   }
   return { converged: true, reason: 'converged' };
+}
+
+/**
+ * Map a round's ledger state to the `detectorResult` the oracle above expects.
+ *
+ * **Ledger PRESENCE is the wrong predicate**, and this function exists so that
+ * mistake has one place to not be made. Two states look alike and must diverge:
+ * a legitimate R1 run (no ledger can exist yet) and an R2+ run whose ledger was
+ * omitted, corrupt, or lost — where the detectors are *unknown*, not *absent*.
+ * Handing the second an explicit empty result would let a round that lost its
+ * ledger converge on counts alone and license `AI-Gate: passed`, which is the
+ * failure this whole wiring exists to close.
+ *
+ * | round | ledger state                    | returns                        |
+ * |-------|---------------------------------|--------------------------------|
+ * | R1    | none (expected)                 | `{blocked:false, checked:0}`   |
+ * | R2+   | valid                           | `checkDetectors(ledger, {cwd})` |
+ * | R2+   | missing/corrupt                 | `undefined` ⇒ `detector-not-run` |
+ *
+ * `undefined` is returned deliberately rather than throwing: the caller is a
+ * best-effort telemetry/evidence block, and the honest verdict for "we could
+ * not check" is non-convergence, not a crashed audit.
+ *
+ * @param {{round?: number, suppressionUnavailable?: boolean, ledger?: object|null,
+ *          cwd?: string,
+ *          checkDetectorsFn?: (ledger: object, opts: object) => {blocked: boolean}}} args
+ *   `suppressionUnavailable` is the orchestrator's own function-scoped flag, set
+ *   when `validateLedgerForR2` reports a missing or corrupt R2+ ledger. It is
+ *   the input rather than the richer validation object because that object is
+ *   `const`-scoped inside the `isR2Plus` block and is not visible at the verdict
+ *   site — a binding this signature makes impossible to get wrong.
+ *
+ *   `checkDetectorsFn` is injected — production passes the real `checkDetectors`,
+ *   which keeps this module free of a static dependency on `detector.mjs` (the
+ *   threshold does not own the ripgrep call) and lets the three rows below be
+ *   asserted without a filesystem.
+ * @returns {{blocked: boolean, checked?: number}|undefined}
+ */
+export function resolveDetectorResultForRound({ round, suppressionUnavailable, ledger, cwd, checkDetectorsFn } = {}) {
+  // The round must be KNOWN before "this is R1, no detectors can exist" is a safe
+  // conclusion (audit clusterA-H4). `!(round >= 2)` is true for `undefined`, `null`,
+  // `NaN`, `'2'` and negatives alike, so a lost or mistyped round would have taken
+  // the converges-clean branch — fail-open, in the resolver written to be fail-closed.
+  // An unknown round is unknown detectors: same verdict as a lost ledger.
+  if (!Number.isInteger(round) || round < 1) return undefined;
+  if (round < 2) return { blocked: false, checked: 0 };
+  // Unknown, not absent — the caller must NOT converge on counts alone.
+  if (suppressionUnavailable) return undefined;
+  if (!ledger || typeof checkDetectorsFn !== 'function') return undefined;
+  return checkDetectorsFn(ledger, { cwd: cwd ?? process.cwd() });
 }

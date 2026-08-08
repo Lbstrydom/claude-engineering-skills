@@ -16,7 +16,7 @@ import {
   DetectorSchema, runDetector, checkDetectors, collectDetectorEntries,
   isCrossCutting, matchKey,
 } from '../scripts/lib/audit/detector.mjs';
-import { evaluateConvergenceWithDetectors } from '../scripts/lib/audit/convergence.mjs';
+import { evaluateConvergenceWithDetectors, resolveDetectorResultForRound } from '../scripts/lib/audit/convergence.mjs';
 
 const DET = { kind: 'regex', pattern: 'fs\\.writeFileSync\\(', globs: ['scripts/**/*.mjs'] };
 
@@ -214,8 +214,8 @@ test('cross-cutting is affectedFiles>1 — never a scan of model prose', () => {
 
 test('convergence requires the detector gate, not just the finding counts', () => {
   const met = { high: 0, medium: 1, quickFix: 0 };
-  assert.equal(evaluateConvergenceWithDetectors(met, { blocked: false }).converged, true);
-  const blocked = evaluateConvergenceWithDetectors(met, { blocked: true });
+  assert.equal(evaluateConvergenceWithDetectors(met, { blocked: false, checked: 2 }).converged, true);
+  const blocked = evaluateConvergenceWithDetectors(met, { blocked: true, checked: 2 });
   assert.equal(blocked.converged, false);
   assert.equal(blocked.reason, 'detector-undispositioned',
     'the reason must name WHICH gate refused, or the operator cannot act on it');
@@ -237,7 +237,7 @@ test('an OMITTED detector result is not clean — it is `detector-not-run`', () 
 });
 
 test('the finding-count threshold still fails first, and reports itself', () => {
-  const r = evaluateConvergenceWithDetectors({ high: 1, medium: 0, quickFix: 0 }, { blocked: false });
+  const r = evaluateConvergenceWithDetectors({ high: 1, medium: 0, quickFix: 0 }, { blocked: false, checked: 2 });
   assert.equal(r.converged, false);
   assert.equal(r.reason, 'finding-thresholds');
 });
@@ -285,4 +285,111 @@ test('the detector CLI maps its three outcomes onto distinct exit codes', async 
   assert.equal(run(path.join(dir, 'absent.json')).status, 2);
   // No argument at all: usage, still non-zero.
   assert.equal(run(null).status, 2);
+});
+
+// ── D1: the oracle is WIRED, not merely present ───────────────────────────
+// `evaluateConvergenceWithDetectors` and `checkDetectors` were hardened against
+// a silent pass and had NO production caller, while SKILL.md §5.0b claimed the
+// detector "blocks convergence". These pin the mapping and the call site.
+
+test('resolveDetectorResultForRound: R1 has no ledger, and that is not a failure', () => {
+  // R1 legitimately has no ledger — no detectors can exist yet. An explicit
+  // empty result (never `undefined`) is what keeps R1 converging as before.
+  assert.deepEqual(resolveDetectorResultForRound({ round: 1 }), { blocked: false, checked: 0 });
+  // An UNKNOWN round is not R1 (audit clusterA-H4): undefined/NaN/0/negative all
+  // mean 'we cannot tell', which must not take the converges-clean branch. The
+  // orchestrator normalises `round || 1` before calling, so production never
+  // lands here — this pins the resolver's own fail-closed direction.
+  for (const bad of [undefined, null, NaN, 0, -1, '2']) {
+    assert.equal(resolveDetectorResultForRound({ round: bad }), undefined, `round=${String(bad)} must be unknown, not R1`);
+  }
+});
+
+test('resolveDetectorResultForRound: R2+ with a valid ledger runs the real gate', () => {
+  let sawLedger = null;
+  const r = resolveDetectorResultForRound({
+    round: 2,
+    ledger: { entries: [{ id: 'H1' }] },
+    cwd: '/somewhere',
+    checkDetectorsFn: (ledger) => { sawLedger = ledger; return { blocked: true, checked: 1 }; },
+  });
+  assert.equal(sawLedger.entries[0].id, 'H1', 'the ledger must reach checkDetectors');
+  assert.deepEqual(r, { blocked: true, checked: 1 });
+});
+
+test('resolveDetectorResultForRound: an R2+ round that LOST its ledger does not converge', () => {
+  // The substance of the finding. Detectors are UNKNOWN, not absent — handing
+  // back an explicit empty result here would let a round that lost its ledger
+  // converge on counts alone and license `AI-Gate: passed`.
+  const detectorResult = resolveDetectorResultForRound({
+    round: 2,
+    suppressionUnavailable: true,
+    ledger: { entries: [] },
+    checkDetectorsFn: () => ({ blocked: false, checked: 0 }),
+  });
+  assert.equal(detectorResult, undefined);
+  assert.deepEqual(
+    evaluateConvergenceWithDetectors({ high: 0, medium: 0, quickFix: 0 }, detectorResult),
+    { converged: false, reason: 'detector-not-run' },
+    'clean counts + a lost ledger must NOT converge',
+  );
+});
+
+test('the production verdict site calls the oracle with the resolver, not the count-only predicate', async () => {
+  // A call-SHAPE assertion, deliberately: unit tests of the two pure functions
+  // both pass while nothing calls them, which is exactly the defect being
+  // fixed. Falsifiable — delete the argument and this fails. It proves the
+  // shape, not the runtime flow; the runtime half is verified empirically by
+  // running /audit-code with the ledger withheld (plan §9, D1).
+  const { readFile } = await import('node:fs/promises');
+  const src = await readFile(new URL('../scripts/lib/audit/legacy-production-audit.mjs', import.meta.url), 'utf8');
+
+  assert.match(src, /evaluateConvergenceWithDetectors\(/,
+    'the verdict site must call the detector-aware oracle');
+  // The resolver must be the SECOND argument of that call — an import that is
+  // never passed through is the unused-import shape a reference check misses.
+  // Index + fixed window, NOT a closing-paren anchor: the first version keyed on
+  // exact indentation and broke the moment a comment was added inside the call.
+  // A test that fails on reformatting is a test people learn to delete.
+  const at = src.indexOf('evaluateConvergenceWithDetectors(');
+  assert.notEqual(at, -1, 'could not locate the evaluateConvergenceWithDetectors call');
+  const call = [null, src.slice(at, at + 1200)];
+  assert.match(call[1], /resolveDetectorResultForRound\(/,
+    'the detector result must come from resolveDetectorResultForRound');
+  assert.match(call[1], /checkDetectorsFn:\s*checkDetectors/,
+    'the resolver must be given the real checkDetectors in production');
+  assert.match(call[1], /suppressionUnavailable/,
+    'the lost-ledger signal must reach the resolver');
+});
+
+test('evaluateConvergenceWithDetectors requires a real census, not just blocked:false', () => {
+  // `checkDetectors` always returns `checked: entries.length`, so a result with
+  // `blocked` and no `checked` never came from one (audit clusterA-H6).
+  assert.deepEqual(
+    evaluateConvergenceWithDetectors({ high: 0, medium: 0, quickFix: 0 }, { blocked: false }),
+    { converged: false, reason: 'detector-not-run' },
+  );
+  // An intentionally empty run says so, and converges.
+  assert.deepEqual(
+    evaluateConvergenceWithDetectors({ high: 0, medium: 0, quickFix: 0 }, { blocked: false, checked: 0 }),
+    { converged: true, reason: 'converged' },
+  );
+});
+
+test('the detector contract rejects non-count `checked` and non-integer rounds', () => {
+  // Both from the Cluster A audit (H4/H5): `typeof === "number"` admits NaN,
+  // Infinity and negatives, and `>= 1` admits 1.5. A census cannot have counted
+  // NaN entries, and there is no round 1.5 — each would have been a green.
+  const met = { high: 0, medium: 0, quickFix: 0 };
+  for (const bad of [NaN, Infinity, -1, 1.5, '0']) {
+    assert.equal(
+      evaluateConvergenceWithDetectors(met, { blocked: false, checked: bad }).reason,
+      'detector-not-run',
+      `checked=${String(bad)} is not a count`,
+    );
+  }
+  for (const bad of [1.5, 2.5, Infinity]) {
+    assert.equal(resolveDetectorResultForRound({ round: bad }), undefined,
+      `round=${String(bad)} is not a round`);
+  }
 });
