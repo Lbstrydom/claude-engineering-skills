@@ -127,25 +127,71 @@ function renderMarkdownViaShared(drift, threshold, status, identity, clusters) {
   return markdown + '\n';
 }
 
+/**
+ * Decide the exit code for the two "the store did not give us anything to
+ * compare against" states.
+ *
+ * These MUST NOT be 0. The callers (.github/workflows/architectural-drift.yml
+ * here and in every consumer) map this process's exit code as
+ * `0 = green, 1 = drift triggered, 2 = infra error`, and the green branch
+ * auto-CLOSES the sticky drift issue. Returning 0 here therefore made
+ * "I could not check" indistinguishable from "I checked and it is clean" —
+ * and actively closed drift issues while blind.
+ *
+ * Observed live 2026-08-08 (run 31224329241): an invalid AUDIT_DB_URL made the
+ * connection fail, `getRepoIdByUuid` returned null, this path exited 0, and the
+ * workflow reported success having audited nothing. Same failure class as the
+ * sandbox-honesty rule in AGENTS.md — a check that skips on a missing input
+ * passes having read nothing.
+ *
+ * Note both states are ALSO reached when the DB is simply unreachable: the
+ * store swallows the connection error and yields null, so the message names
+ * both causes rather than asserting the repo is unindexed.
+ *
+ * @param {{repo: unknown, snap: {refreshId?: string} | null | undefined}} state
+ * @returns {{code: 0 | 2, message: string} | null} null when the state is fine
+ */
+function resolveStoreGateExit({ repo, snap }) {
+  if (!repo) {
+    return {
+      code: 2,
+      message:
+        'arch:drift: repo not found in store — the database is unreachable, or this repo '
+        + 'has never been indexed. Check AUDIT_DB_URL, then run `npm run arch:refresh`. '
+        + 'Exiting 2 (cannot verify) rather than 0, which would read as a clean sweep.\n',
+    };
+  }
+  if (!snap?.refreshId) {
+    return {
+      code: 2,
+      message:
+        'arch:drift: no active snapshot for repo — nothing to compare against. '
+        + 'Run `npm run arch:refresh`. Exiting 2 (cannot verify) rather than 0, '
+        + 'which would read as a clean sweep.\n',
+    };
+  }
+  return null;
+}
+
 async function main() {
   if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
   assertRepoRoot(import.meta.url);
   const args = parseArgs(process.argv);
   await initLearningStore();
+  // Deliberately still 0: cloud-disabled is an explicit local opt-out (no
+  // AUDIT_DB_URL configured at all), not a failed verification. Both CI paths
+  // gate on the DSN before reaching this, so it cannot produce a CI false green.
   if (!await isCloudEnabled()) {
     process.stderr.write('arch:drift: cloud disabled — skipping\n');
     process.exit(0);
   }
   const identity = resolveRepoIdentity(process.cwd());
   const repo = await getRepoIdByUuid(identity.repoUuid);
-  if (!repo) {
-    process.stderr.write(`arch:drift: repo not found in store — run \`npm run arch:refresh\` first\n`);
-    process.exit(0);
-  }
-  const snap = await getActiveSnapshot(repo.id);
-  if (!snap?.refreshId) {
-    process.stderr.write(`arch:drift: no active snapshot for repo\n`);
-    process.exit(0);
+  const snap = repo ? await getActiveSnapshot(repo.id) : null;
+  const gate = resolveStoreGateExit({ repo, snap });
+  if (gate) {
+    process.stderr.write(gate.message);
+    process.exit(gate.code);
   }
   let drift;
   try {
@@ -286,7 +332,7 @@ async function main() {
   process.exitCode = outWriteFailed ? 2 : (status === DRIFT_STATUS.RED ? 1 : 0);
 }
 
-export const _internals = { atomicWrite, parseArgs, PRAGMA_CANDIDATE_POOL_CAP, isPragmaPoolCapped };
+export const _internals = { atomicWrite, parseArgs, PRAGMA_CANDIDATE_POOL_CAP, isPragmaPoolCapped, resolveStoreGateExit };
 
 const isMain = (() => {
   try {

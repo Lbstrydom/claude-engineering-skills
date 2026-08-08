@@ -72,3 +72,46 @@ describe('symbol-index/drift.mjs — parseArgs (symbol-index-pipeline-reliabilit
     assert.equal(args.out, 'my-report.md');
   });
 });
+
+describe('symbol-index/drift.mjs — resolveStoreGateExit (false-green regression)', () => {
+  const { resolveStoreGateExit } = _internals;
+
+  // The callers (.github/workflows/architectural-drift.yml, here and in every
+  // consumer) map this process's exit code as 0=green / 1=triggered / 2=infra
+  // error, and the green branch auto-CLOSES the sticky drift issue. So a 0 for
+  // either "cannot verify" state is not a cosmetic wrong number — it silently
+  // certifies a clean sweep that never ran. Observed live 2026-08-08 in run
+  // 31224329241, where an invalid AUDIT_DB_URL produced conclusion:success.
+  it('a missing repo row exits 2, NEVER 0 — the workflow reads 0 as a clean sweep', () => {
+    const gate = resolveStoreGateExit({ repo: null, snap: null });
+    assert.ok(gate, 'a missing repo row must produce a gate decision, not null');
+    assert.equal(gate.code, 2);
+    assert.notEqual(gate.code, 0);
+  });
+
+  it('a missing active snapshot exits 2, NEVER 0', () => {
+    const gate = resolveStoreGateExit({ repo: { id: 'repo-1' }, snap: null });
+    assert.ok(gate);
+    assert.equal(gate.code, 2);
+    assert.notEqual(gate.code, 0);
+  });
+
+  it('a snapshot lacking refreshId is treated as absent (not a truthy-object pass)', () => {
+    const gate = resolveStoreGateExit({ repo: { id: 'repo-1' }, snap: {} });
+    assert.ok(gate, 'an object without refreshId must still gate');
+    assert.equal(gate.code, 2);
+  });
+
+  it('names the unreachable-database cause too — this path is reached on a bad DSN, not only on an unindexed repo', () => {
+    const gate = resolveStoreGateExit({ repo: null, snap: null });
+    assert.match(gate.message, /unreachable/i);
+    assert.match(gate.message, /AUDIT_DB_URL/);
+  });
+
+  it('returns null when the store yielded a repo and a real snapshot, so the sweep proceeds', () => {
+    assert.equal(
+      resolveStoreGateExit({ repo: { id: 'repo-1' }, snap: { refreshId: 'abc-123' } }),
+      null,
+    );
+  });
+});
