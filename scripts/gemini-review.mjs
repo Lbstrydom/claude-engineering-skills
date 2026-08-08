@@ -34,6 +34,7 @@ import { zodToOpenAiJsonSchema, sanitizeSchemaName, isResponseFormatUnsupported 
 import { buildClassificationRubric } from './lib/prompt-seeds.mjs';
 import { readFileOrDie, readFilesAsContext, extractPlanPaths, writeOutput, isAuditInfraFile, atomicWriteFileSync } from './lib/file-io.mjs';
 import { semanticId, formatFindings, appendOutcome, FalsePositiveTracker } from './lib/findings.mjs';
+import { affectedFilesOf, primaryFileOf, matchFindings } from './lib/finding-match.mjs';
 import { readProjectContext, initAuditBrief, generateRepoProfile } from './lib/context.mjs';
 import { applyEnvSetting } from './lib/env-setting.mjs';
 import { geminiConfig, claudeConfig, azureConfig, shadowReviewConfig, finalReviewConfig, auditShadowConfig } from './lib/config.mjs';
@@ -2105,6 +2106,13 @@ function addSemanticIds(result, provider) {
     f.id = `${provider === 'gemini' ? 'G' : 'C'}${i + 1}`;
     f._hash = semanticId(f);
     f._source = provider;
+    // Stamp the MATCHING keys. Their absence is why cross-model bucketing was
+    // reduced to an exact hash over model-authored prose (0/48 matches on real
+    // data while 9/48 named the same file). `affectedFiles` is the set matching
+    // uses; `_primaryFile` is the reporting key and may be null, which is
+    // honest — a finding naming no file is unmatchable, not unique.
+    f.affectedFiles = affectedFilesOf(f);
+    f._primaryFile = primaryFileOf(f);
   }
 }
 

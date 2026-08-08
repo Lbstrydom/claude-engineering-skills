@@ -13,13 +13,13 @@ import lockfile from 'proper-lockfile';
 import { normalizePath, atomicWriteFileSync } from './file-io.mjs';
 import { LedgerEntrySchema, BatchLedgerEntrySchema, Stage1MechanicalLedgerEntrySchema } from './schemas.mjs';
 import { semanticId } from './findings.mjs';
-import { buildFileReferenceRegex } from './language-profiles.mjs';
 // The rulings block is an outbound provider payload and the GPT audit pass path
 // has no egress gate of its own — `buildRulingsBlock` redacts at its render
 // point. Import is shared-lib → shared-lib (no cycle: sensitive-egress-gate
 // pulls only sensitive-paths/secret-patterns/redact).
 import { redactSecrets } from './sensitive-egress-gate.mjs';
 import { jaccardSimilarity } from './text-similarity.mjs';
+import { extractFileRefs } from './finding-match.mjs';
 
 // Re-exported for backward compatibility — existing consumers import
 // jaccardSimilarity from here (and via shared.mjs's barrel). The
@@ -28,10 +28,10 @@ import { jaccardSimilarity } from './text-similarity.mjs';
 // pulling in this file's shared-cloud-config env read at module-load time.
 export { jaccardSimilarity };
 
-// Factory — creates a fresh regex per call to avoid .lastIndex state bugs.
-// The global regex pattern is stateful; sharing one instance across calls
-// required manual .lastIndex = 0 resets, which is a latent-bug magnet.
-function getFileRegex() { return buildFileReferenceRegex(); }
+// The fresh-regex-per-call factory that used to live here moved into
+// finding-match.mjs::extractFileRefs along with the extraction loop it served —
+// same reason it existed (the global regex is stateful, so a shared instance
+// needs manual .lastIndex resets), now owned by the single extractor.
 
 // ── Topic ID & Ledger Write ─────────────────────────────────────────────────
 
@@ -289,15 +289,19 @@ export function batchWriteLedger(ledgerPath, entries, { meta = null, targetMetaP
  * @returns {object} Enriched finding (mutated in place)
  */
 export function populateFindingMetadata(finding, passName) {
-  // Extract file paths from GPT's free-text section field using the shared
-  // registry-derived regex (handles .py, .pyi, relative/absolute paths).
+  // Extract file paths from GPT's free-text section field via the SHARED
+  // extractor (finding-match.mjs) — one oracle, so the ledger, the final-review
+  // bucketing and semantic-suppression can never drift apart on what "the same
+  // file" means. `dedupe:false` preserves this function's exact prior output
+  // (its loop pushed repeats); the matching callers use the de-duplicated view.
+  //
+  // The prose fallback below stays HERE and is deliberately NOT in the shared
+  // extractor: `_primaryFile` is a reporting/topicId key, where "§0.3" is an
+  // acceptable last resort, whereas a matching key must be null rather than a
+  // heading — grouping two unrelated §-referenced findings would be the very
+  // defect the matcher exists to fix. Two representations, one extractor.
   const section = finding.section || '';
-  const files = [];
-  const fileRegex = getFileRegex();
-  let match;
-  while ((match = fileRegex.exec(section)) !== null) {
-    files.push(normalizePath(match[1]));
-  }
+  const files = extractFileRefs(section, { dedupe: false });
 
   finding._primaryFile = files[0] || normalizePath(section.split(':')[0].split('(')[0].trim());
   finding.affectedFiles = files.length > 0 ? files : [finding._primaryFile];

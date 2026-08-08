@@ -209,7 +209,7 @@ otherwise "fix" them: a path that no longer exists on disk is a **valid** key
 (historical snapshots must stay re-computable, so a existence filter would be a
 bug); the module needs no repository file registry and no revision scoping —
 `buildFileReferenceRegex` derives from the frozen **extension** list at
-`scripts/lib/language-profiles.mjs:294`, not from a listing of the repo; and the
+`scripts/lib/language-profiles.mjs:313 (513be841)`, not from a listing of the repo; and the
 module therefore stays pure and offline, which is what makes Tier-1 testing and
 offline re-derivation possible at all.
 
@@ -397,7 +397,7 @@ Run **before** the rule is wired to anything, and recorded here on completion.
   split leaves the status quo. Precision is bought first.
 - **Tie handling**: if several thresholds satisfy the constraint, take the
   **lowest** (highest recall). If none does, the file-gate is insufficient on
-  its own and the deferral trigger in §3 fires immediately rather than shipping
+  its own and the deferral trigger in §6 fires immediately rather than shipping
   a threshold that merges wrongly.
 - **Score before redact, so the corpus matches runtime (R3/M1).** Redaction
   changes the token set, and Jaccard is a function of tokens — a threshold
@@ -545,7 +545,7 @@ against `.audit/bakeoff/**` — gitignored, never committed.
 
 ---
 
-## 3. Sustainability Notes
+## 6. Sustainability Notes
 
 - **Assumption that could change**: reviewers keep naming files in `section`. If
   a future reviewer stops, coverage drops and the metric reads `unknown` rather
@@ -562,7 +562,7 @@ against `.audit/bakeoff/**` — gitignored, never committed.
 
 ---
 
-## 4. File-Level Plan
+## 7. File-Level Plan
 
 | File | Intent | Purpose |
 |---|---|---|
@@ -583,7 +583,7 @@ against `.audit/bakeoff/**` — gitignored, never committed.
 | `tests/cross-model-buckets.test.mjs` | create | Tier 1 — both bucket sets coexist; strict set preserved per D3 (counts + `_hash` sets + order); determinism. |
 | `tests/gemini-billed-output.test.mjs` | create | Tier 1 — **discovery-based** census over `scripts/**`, so a fifth adapter reading candidates-only fails without a list edit. |
 
-### 4b. Implementation Phases
+### 7b. Implementation Phases
 
 - **Phase 1 — Extraction seam.** Build the shared oracle and prove it is a pure
   refactor of existing behaviour. Files: `scripts/lib/finding-match.mjs` (create),
@@ -602,17 +602,18 @@ against `.audit/bakeoff/**` — gitignored, never committed.
   coverage and the `unknown` state. Files: `scripts/bakeoff-collect.mjs` (modify).
 - **Phase 5 — One Gemini billed-output oracle.** Extract the normaliser, swap the
   five call sites, lock it with the behavioural test + structural census. Files:
-  `scripts/lib/gemini-usage.mjs` (create), `scripts/lib/audit-shadow.mjs`,
-  `scripts/lib/arm-eval/producers/model-call.mjs`,
-  `scripts/lib/brainstorm/gemini-adapter.mjs`,
-  `scripts/lib/model-eval/provider-adapter.mjs`, `scripts/gemini-review.mjs` (modify),
+  `scripts/lib/gemini-usage.mjs` (create), `scripts/lib/audit-shadow.mjs` (modify),
+  `scripts/lib/arm-eval/producers/model-call.mjs` (modify),
+  `scripts/lib/brainstorm/gemini-adapter.mjs` (modify),
+  `scripts/lib/model-eval/provider-adapter.mjs` (modify),
+  `scripts/gemini-review.mjs` (modify),
   `tests/gemini-billed-output.test.mjs` (create).
 
 **Close-out (not a phase)**: `npm run check`.
 
 ---
 
-## 5. Risk & Trade-off Register
+## 8. Risk & Trade-off Register
 
 | Risk | Mitigation |
 |---|---|
@@ -637,7 +638,7 @@ against `.audit/bakeoff/**` — gitignored, never committed.
 
 ---
 
-## 6. Testing Strategy
+## 9. Testing Strategy
 
 **Tier 1 (test-first)** — `finding-match.mjs` is deterministic and pure, so
 extraction, the conjunction rule, `unmatchable`, and the coverage `unknown`
@@ -806,7 +807,7 @@ the existing `usageMissing`/`unmeterable` path rather than invented here).
 
 ---
 
-## 7. Execution Clustering
+## 11. Execution Clustering
 
 - **Cluster A** — Phases 1–2 — fix-gate: `yes`
   - Coupling: both halves of one seam. Phase 2's call sites are the proof that

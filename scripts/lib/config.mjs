@@ -212,6 +212,33 @@ export const finalReviewConfig = Object.freeze({
   promptCache: /^(1|true|on|yes)$/i.test((process.env.FINAL_REVIEW_PROMPT_CACHE || '').trim()),
 });
 
+// ── Cross-Model Finding Matching ────────────────────────────────────────────
+//
+// Plan: docs/plans/cross-model-finding-matching.md §2.5d. Governs how two
+// reviewers' findings are matched into buckets. Every numeric key goes through
+// clampConfigNumber (clamp-and-warn, never NaN-through) — a bound a typo can
+// disable is not a bound.
+export const findingMatchConfig = Object.freeze({
+  // Jaccard floor for the text half of the file-AND-similarity conjunction.
+  // Calibrated per §2.5c against the 48 labelled real pairs; the default is the
+  // recorded result, not a guess.
+  threshold: clampConfigNumber(process.env.AUDIT_FINDING_MATCH_THRESHOLD, {
+    fallback: 0.3, min: 0, max: 1, parser: Number.parseFloat, envVar: 'AUDIT_FINDING_MATCH_THRESHOLD',
+  }),
+  // Below this share of findings carrying an extractable file, the matched
+  // verdict is `unknown` rather than a number — a low-coverage reading is not a
+  // measurement (same posture as memory-health's embedding coverage).
+  coverageFloor: clampConfigNumber(process.env.AUDIT_FINDING_MATCH_COVERAGE_FLOOR, {
+    fallback: 0.6, min: 0, max: 1, parser: Number.parseFloat, envVar: 'AUDIT_FINDING_MATCH_COVERAGE_FLOOR',
+  }),
+  // Opt-OUT. Disabled emits `bucketsMatched: null` (the honest "not computed"),
+  // never an empty bucket set that reads as a measured zero.
+  enabled: process.env.AUDIT_FINDING_MATCH_ENABLED !== 'false',
+});
+
+/** Schema version stamped on persisted matched buckets — bump on a meaning change. */
+export const FINDING_MATCH_SCHEMA_VERSION = 1;
+
 // ── Shadow Final-Review Config (A/B test — observation-only) ─────────────────
 //
 // Opt-in second reviewer that runs blind-parallel with the primary final
