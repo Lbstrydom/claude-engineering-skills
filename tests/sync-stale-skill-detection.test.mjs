@@ -119,10 +119,85 @@ describe('inspectTargetSkillSurfaces (round-1 H2, round-2 H1/M1/M2, round-3 H1/M
     const result = inspectTargetSkillSurfaces({ targetRoot: tmp, desiredLiveNames: ['plan'], logger });
 
     assert.deepEqual(result.shadowed, []);
-    // Orphans are SURFACE-PREFIXED now: with two shadowing roots, a bare name
-    // could not tell the operator which directory to look in.
-    assert.deepEqual(result.orphans, ['.github/skills/plan-backend']);
-    assert.ok(warnings.some((w) => w.includes('plan-backend') && w.includes('no live counterpart')));
+    // Orphans carry their surface STRUCTURALLY (not a pre-joined string), so
+    // the renderer can group by directory without re-parsing a path.
+    assert.deepEqual(result.orphans, [{ surface: '.github/skills', name: 'plan-backend' }]);
+    assert.ok(warnings.some((w) => w.includes('plan-backend') && w.includes('.github/skills/')));
+  });
+
+  // Regression: the orphan warning hardcoded STALE_SURFACE as the containing
+  // directory while each orphan already carried its own surface prefix, so an
+  // orphan found in `.agents/skills/` was announced as living in
+  // `.github/skills/` — a directory that, in the consumer this fired on, did
+  // not exist at all. `decideShadowFailure` had already fixed exactly this for
+  // the shadowed message ("the remedy differs by directory"); the orphan
+  // message never got the same treatment.
+  it('names the surface each orphan was actually read from, never a different one', () => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sync-stale-'));
+    fs.mkdirSync(path.join(tmp, '.agents', 'skills', 'use-railway'), { recursive: true });
+    // `.github/skills/` deliberately does NOT exist — the live shape.
+    assert.equal(fs.existsSync(path.join(tmp, '.github', 'skills')), false);
+
+    const { logger, warnings } = makeLogger();
+    const result = inspectTargetSkillSurfaces({ targetRoot: tmp, desiredLiveNames: ['plan'], logger });
+
+    assert.deepEqual(result.orphans, [{ surface: '.agents/skills', name: 'use-railway' }]);
+    const orphanWarn = warnings.find((w) => w.includes('use-railway'));
+    assert.ok(orphanWarn, 'the orphan must still be reported');
+    assert.ok(
+      orphanWarn.includes('.agents/skills/'),
+      `must name the surface it was read from; got: ${orphanWarn}`,
+    );
+    assert.ok(
+      !orphanWarn.includes('.github/skills'),
+      `must NOT name a surface the orphan is not in (and which does not exist here); got: ${orphanWarn}`,
+    );
+    // `.agents/skills/use-railway` is not double-qualified inside another path.
+    assert.ok(
+      !orphanWarn.includes('.agents/skills/.agents/skills'),
+      `must not nest the surface inside itself; got: ${orphanWarn}`,
+    );
+  });
+
+  it('groups orphans by surface — one warning per directory, each listing only its own', () => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sync-stale-'));
+    fs.mkdirSync(path.join(tmp, '.github', 'skills', 'gh-only'), { recursive: true });
+    fs.mkdirSync(path.join(tmp, '.agents', 'skills', 'agents-only'), { recursive: true });
+
+    const { logger, warnings } = makeLogger();
+    inspectTargetSkillSurfaces({ targetRoot: tmp, desiredLiveNames: ['plan'], logger });
+
+    const gh = warnings.find((w) => w.includes('gh-only'));
+    const ag = warnings.find((w) => w.includes('agents-only'));
+    assert.ok(gh && ag, 'both surfaces must be reported');
+    assert.notEqual(gh, ag, 'a shared warning cannot name the right directory for both');
+    assert.ok(gh.includes('.github/skills/') && !gh.includes('agents-only'));
+    assert.ok(ag.includes('.agents/skills/') && !ag.includes('gh-only'));
+  });
+
+  // The wording, not just the path. `cmp.orphans` means "not a name THIS
+  // BUNDLE deploys" — it says nothing about the consumer's own
+  // `.claude/skills/`. The old text claimed "with no live counterpart today",
+  // which was false in the live case (both orphans DID have one there) and hid
+  // the actual hazard: one name in two discovered roots, precedence undefined.
+  it('does not claim there is no live counterpart — it cannot know that', () => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sync-stale-'));
+    fs.mkdirSync(path.join(tmp, '.agents', 'skills', 'use-railway'), { recursive: true });
+    // The consumer's OWN copy — exactly the case the old wording denied.
+    fs.mkdirSync(path.join(tmp, '.claude', 'skills', 'use-railway'), { recursive: true });
+
+    const { logger, warnings } = makeLogger();
+    inspectTargetSkillSurfaces({ targetRoot: tmp, desiredLiveNames: ['plan'], logger });
+
+    const orphanWarn = warnings.find((w) => w.includes('use-railway'));
+    assert.ok(
+      !orphanWarn.includes('no live counterpart'),
+      `a counterpart exists in .claude/skills/; got: ${orphanWarn}`,
+    );
+    assert.ok(
+      orphanWarn.includes('precedence'),
+      `the real hazard is undefined precedence between roots; got: ${orphanWarn}`,
+    );
   });
 
   it('round-2 M1 / round-3 M2 — an injected unreadable listSurfaceNamesFn produces inspectionError, never a false-clean shadowed:[]', () => {

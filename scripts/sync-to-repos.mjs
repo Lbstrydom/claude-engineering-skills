@@ -37,7 +37,7 @@ import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { assertContainedDestination } from './lib/install/safe-destination.mjs';
 import { inspectLegacySurfaces, describeLegacySurfaces } from './lib/install/legacy-surfaces.mjs';
 import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
-import { compareSkillSurfaces, listSurfaceNames, STALE_SURFACE, SHADOWING_SURFACES } from './check-stale-skill-surface.mjs';
+import { compareSkillSurfaces, listSurfaceNames, LIVE_SURFACE, SHADOWING_SURFACES } from './check-stale-skill-surface.mjs';
 // Reused rather than re-parsed: env-setting owns .env key resolution (dotenv's
 // last-wins semantics included), and it is pure — the caller supplies the text.
 import { resolveEnvValue } from './lib/env-setting.mjs';
@@ -745,7 +745,10 @@ function inspectTargetSkillSurfaces({
       staleNames: read.names, liveNames: desiredLiveNames, contentOf: () => null,
     });
     for (const s of cmp.shadowed) shadowed.push({ ...s, surface });
-    for (const o of cmp.orphans) orphans.push(`${surface}/${o}`);
+    // Structured, not pre-joined: the renderer groups by surface, and a
+    // pre-formatted `<surface>/<name>` string cannot be grouped without
+    // re-parsing it. Mirrors how `shadowed` already carries its surface.
+    for (const o of cmp.orphans) orphans.push({ surface, name: o });
   }
   if (shadowed.length > 0) {
     logger.warn(
@@ -758,11 +761,40 @@ function inspectTargetSkillSurfaces({
   // exact deprecated debt install-skills.mjs already warns about
   // unconditionally — surface it too (round-3 M1) so this check-site isn't
   // silently narrower than the installer's.
+  //
+  // Group by the surface the names were actually READ from. This message used
+  // to hardcode `STALE_SURFACE` as the containing directory while `orphans`
+  // already carried its own `<surface>/` prefix from the loop above, so with
+  // two shadowing roots it rendered a path inside the wrong path:
+  //
+  //   deprecated .github/skills/ contains .agents/skills/use-railway
+  //
+  // — naming a directory that, in the consumer it fired on, did not exist at
+  // all. That is the SAME defect `decideShadowFailure` fixed for the shadowed
+  // message forty lines below ("the remedy differs by directory, and with two
+  // shadowing roots `shadowed by .github/skills` would have been a wrong
+  // instruction half the time"); the orphan message never got the same fix.
+  //
+  // The wording is corrected too. `cmp.orphans` is "not a name THIS BUNDLE
+  // deploys" — it says nothing about whether the consumer's own
+  // `.claude/skills/` provides it, and in the live case both orphans DID have
+  // a counterpart there. "with no live counterpart today" therefore asserted
+  // the opposite of the truth, and hid the real hazard: the same name in two
+  // discovered roots, with undefined precedence. Say what the standalone
+  // reader's note says instead — it was correct all along.
   if (orphans.length > 0) {
-    logger.warn(
-      `[stale-skill-surface] ${targetRoot}: deprecated ${STALE_SURFACE}/ contains ${orphans.join(', ')} ` +
-      `with no live counterpart today — consider removing (see check-stale-skill-surface.mjs --repo ${targetRoot})`,
-    );
+    const bySurface = new Map();
+    for (const { surface, name } of orphans) {
+      if (!bySurface.has(surface)) bySurface.set(surface, []);
+      bySurface.get(surface).push(name);
+    }
+    for (const [surface, names] of bySurface) {
+      logger.warn(
+        `[stale-skill-surface] ${targetRoot}: ${surface}/ holds ${names.length} skill(s) this bundle does not ` +
+        `deploy (${names.join(', ')}) — not gated here; if any also exists in ${LIVE_SURFACE}/, its precedence ` +
+        `is undefined and that is yours to resolve (see check-stale-skill-surface.mjs --repo ${targetRoot})`,
+      );
+    }
   }
   return { shadowed, orphans, inspectionError: null };
 }
