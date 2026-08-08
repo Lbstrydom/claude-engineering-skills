@@ -1,6 +1,78 @@
 # Project Status Log
 
-## 2026-08-08 (latest) — the ledger writer discarded what its callers passed, and the R2 log called it corruption
+## 2026-08-08 (latest) — the disposable-DB guards were a denylist of a vendor we no longer use
+
+Follow-up to the memory-health entry below, which closed noting `refresh_runs`
+ordinal drift as "worth a look on its own". It was — not for the drift, which
+is benign, but for what it proved was no longer working.
+
+**The drift itself is not a schema disagreement.** Both databases carry the
+same 14 `refresh_runs` columns, same names, types and order; only the
+`attnum`/`ordinal_position` numbering differs. Migration `20260721150000` drops
+six columns that `20260501120000` created, and `DROP COLUMN` leaves attnum
+tombstones — so a fresh replay has a gap at 6–11 while a `pg_dump`/restore,
+which emits only live columns, renumbers contiguously. The committed fixture is
+the correct one, established two independent ways: a rollback-only temp-table
+probe (create the six, drop them) reproduced `walk_start_commit:5,
+llm_calls:12, embed_calls:13` exactly, and `db:suites:gate` diffed a fresh
+containerised replay against the committed fixture and passed. The production
+store is the outlier because it was restored rather than replayed — its
+`audit_loop_migrations.applied_at` values span 2026-07-14→08-08 (inherited from
+the source DB, not generated at the cutover) and there are zero `attisdropped`
+tombstones anywhere in it. `refresh_runs` is the only table in the repo touched
+by a `DROP COLUMN` migration, which is why the drift was nine lines in one
+table and nothing else.
+
+**The guard that should have refused it did not fire.**
+[`generate-expected-schema.mjs`](scripts/postgres-parity/generate-expected-schema.mjs)
+carries a check written to "refuse outright rather than relying on
+commit-message discipline a third time", after 808beb8 (2026-07-14, reverted
+same day by 35a737e) and 154fb57 (2026-07-22, which undid that fix). It tested
+`isHostedSupabaseHost(hostname)` against `/(\.supabase\.co|\.supabase\.com)$/`
+— a denylist standing in for "not disposable", valid only while the sentence in
+its own docstring held: *"this repo has exactly one Supabase project, and it is
+always production"*. The 2026-08-08 NAS cutover falsified that sentence. The
+fixture was regenerated straight from the new production store with no warning:
+the third occurrence of exactly the class the guard exists to refuse, through a
+hole the cutover opened the same day. It was caught by reading an unexpected
+diff, which is not a control.
+
+**Same predicate, second caller, worse blast radius.**
+[`assertDisposableDbUrl`](scripts/lib/db/client.mjs) — the guard added after the
+2026-07-14 production wipe — used the same test before letting the destructive
+suites run `DROP SCHEMA public CASCADE`. For a self-hosted production DSN it now
+passed, leaving only exact-string equality against `AUDIT_DB_URL`. Latent rather
+than live (`AUDIT_DB_TEST_URL` is unset, and `buildStepEnv` deletes
+`AUDIT_DB_URL` and points the destructive steps at the container), but the
+exposure was a human setting that variable by hand — which is the mistake that
+happened in July.
+
+**Fix: invert the predicate and stop comparing strings.** `isDisposableDbHost`
+is an allowlist of loopback hosts that fails closed — an unrecognised host is
+assumed to be a real database. A denylist of production hosts is only as current
+as the last infrastructure change; an allowlist is a property of what
+"disposable" means. The production comparison now uses host+port+database
+identity instead of DSN equality, which missed every ordinary alias (an appended
+`?sslmode=disable`, different credentials, `localhost` vs `127.0.0.1`, an
+implicit `:5432`). No env escape hatch, deliberately.
+
+**Measured, old logic vs new, on the dangerous inputs** — production NAS DSN
+with no comparison / production vs itself plus a query param / a loopback alias
+of production: `ALLOWED, ALLOWED, ALLOWED` before, `refused, refused, refused`
+after, with the legitimate container DSN allowed by both as the vacuous-pass
+control. The first negative control attempted was discarded as worthless:
+stashing the implementation made the test file fail at *import*, which
+demonstrates nothing about the logic. Live check — the exact command that
+produced the bad fixture now exits 2 naming the host.
+
+**Verified**: 10,150 tests / 0 fail in the pre-push sandbox's clean checkout of
+`00036478`, five of them new (including the 2026-08-08 regression itself and the
+four same-database aliases). `db:suites:gate` still ran its full container
+replay and schema diff in that sandbox, so `npm run db:local:regen` and the CI
+parity job are unaffected by the tightening. `knip:gate` clean after the export
+rename; the only surviving `isHostedSupabaseHost` mentions are historical prose.
+
+## 2026-08-08 — the ledger writer discarded what its callers passed, and the R2 log called it corruption
 
 A consumer reported "R2+ ledger suppression never engages — every round logged
 `0 valid, N invalid`; the ledger writer omits `semanticHash` and the validator
