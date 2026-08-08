@@ -59,11 +59,25 @@ index**, which also confirms the container's schema matches the committed
 migration set. The generator refuses to run against a Supabase host, so the
 local container is the only correct source for it.
 
-**Consumer-side verification (Step 6.8)**: `unverified` — no consumer checkout
-of this bundle exists on this machine, and the change touches no synced tooling
-(`audit-clean.mjs` and `bakeoff-collect.mjs` are source-repo-only; the skill
-reference ships in the bundle but its sync is exercised by `skills:check`,
-which ran green). The pushed sha is recorded below.
+**Consumer-side verification (Step 6.8)**: `verified` at `392aec4b`. The first
+draft of this line claimed `unverified` on the grounds that no consumer checkout
+existed — wrong, and contradicted by evidence already on screen: the pre-push
+sync had reported `Targets: 2/2 reached · Updated: 2 · Errors: 0`. Retrieval
+actually run, in each consumer rather than from here:
+
+```
+grep -c '\.audit/\$SID-transcript' <consumer>/.claude/skills/audit-code/references/gemini-gate.md
+```
+
+Both `wine-cellar-app` and `ai-organiser` return **3** occurrences with the
+build instruction reading `.audit/$SID-transcript.json` at line 27 — the
+producer-side fix is present in what the consumers hold. Not run: the
+consumer-side `sync-isolation-verify` bundle check, because a concurrent
+session has `sync-isolation-verify.mjs`, `sync-path-map.mjs` and
+`sync-to-repos.mjs` uncommitted in this shared tree, so a bundle-level verdict
+right now would describe their in-flight state, not this commit. That is a
+named blocked prerequisite for the bundle check only; the artifact this commit
+ships is verified.
 
 Files: `scripts/audit-clean.mjs`, `scripts/bakeoff-collect.mjs`,
 `scripts/lib/store/runs-findings.mjs`,
