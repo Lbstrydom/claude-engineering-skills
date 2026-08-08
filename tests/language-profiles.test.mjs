@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { extractPlanPaths, PLAN_REFERENCE_EXTENSIONS } from '../scripts/lib/plan-paths.mjs';
 import {
   getAllProfiles,
   getProfile,
@@ -10,6 +11,7 @@ import {
   detectPythonPackageRoots,
   pythonBoundaryScanner,
   buildFileReferenceRegex,
+  toExtensionAlternation,
   ALL_SUPPORTED_EXTENSIONS,
   ALL_EXTENSIONS_PATTERN
 } from '../scripts/lib/language-profiles.mjs';
@@ -538,5 +540,59 @@ describe('buildFileReferenceRegex', () => {
     const re = buildFileReferenceRegex();
     const m = [...' .claude/skills/foo.md '.matchAll(re)];
     assert.equal(m[0][1], '.claude/skills/foo.md');
+  });
+});
+
+describe('toExtensionAlternation — the ordering is a correctness property', () => {
+  // Found live 2026-08-08 in a consumer's plan: plan-paths.mjs hand-maintained
+  // its own `js|mjs|ts|tsx|…|json` alternation. JS alternation is
+  // first-match-wins, so `personas.json` matched as `personas.js` — a file that
+  // does not exist. Inside a fenced block (where the backtick-anchored regex
+  // does not apply) the truncated form was the ONLY match, so the real path was
+  // never found, deflating the resolvable-path count that decides whether fuzzy
+  // keyword discovery fires.
+
+  it('puts longer extensions before any extension that prefixes them', () => {
+    const alt = toExtensionAlternation(['js', 'json', 'ts', 'tsx', 'mjs']);
+    const order = alt.split('|');
+    for (const [short, long] of [['js', 'json'], ['ts', 'tsx'], ['js', 'mjs']]) {
+      assert.ok(
+        order.indexOf(long) < order.indexOf(short),
+        `${long} must be tried before ${short} (got ${alt})`,
+      );
+    }
+  });
+
+  it('NEGATIVE CONTROL: the naive insertion order really does truncate', () => {
+    // Without this, the test above could pass against a regex that never had
+    // the bug — proving the ordering matters, not just that it is applied.
+    const naive = new RegExp(`([\\w.-]+\\.(?:${['js', 'json'].join('|')}))`);
+    assert.equal('a/conf.json'.match(naive)[1], 'conf.js');
+
+    const fixed = new RegExp(`([\\w.-]+\\.(?:${toExtensionAlternation(['js', 'json'])}))`);
+    assert.equal('a/conf.json'.match(fixed)[1], 'conf.json');
+  });
+
+  it('is stable for a list with no shared prefixes', () => {
+    assert.deepEqual(toExtensionAlternation(['py', 'rb', 'go']).split('|').sort(), ['go', 'py', 'rb']);
+  });
+});
+
+describe('extractPlanPaths resolves every extension it claims to support', () => {
+  it('extracts .json/.tsx/.mjs from a fenced block, with no truncated twin', () => {
+    // A fenced block is the case that has no backtick anchor to fall back on.
+    const md = [
+      '```', 'scripts/harness/personas.json   # persona definitions',
+      'src/ui/Deck.tsx', 'scripts/harness/driver.mjs', '```',
+    ].join('\n');
+    const got = [...extractPlanPaths(md, { allowInfraFiles: true }).allPaths].sort();
+    assert.deepEqual(got, ['scripts/harness/driver.mjs', 'scripts/harness/personas.json', 'src/ui/Deck.tsx']);
+  });
+
+  it('covers every declared plan-reference extension', () => {
+    for (const ext of PLAN_REFERENCE_EXTENSIONS) {
+      const got = [...extractPlanPaths(`see a/b/file.${ext} here`, { allowInfraFiles: true }).allPaths];
+      assert.deepEqual(got, [`a/b/file.${ext}`], `extension ${ext} did not round-trip`);
+    }
   });
 });

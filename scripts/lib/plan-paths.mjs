@@ -9,7 +9,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { ALL_EXTENSIONS_PATTERN } from './language-profiles.mjs';
+import { ALL_EXTENSIONS_PATTERN, toExtensionAlternation } from './language-profiles.mjs';
 import { normalizePath } from './file-io.mjs';
 import { isSensitiveFile, isAuditInfraFile } from './audit-scope.mjs';
 
@@ -22,6 +22,19 @@ import { isSensitiveFile, isAuditInfraFile } from './audit-scope.mjs';
  * self-check CLI reports the same number the branch below tests.
  */
 export const FUZZY_DISCOVERY_THRESHOLD = 5;
+
+/**
+ * Extensions a PLAN may reference. Deliberately WIDER than
+ * `ALL_SUPPORTED_EXTENSIONS` (which drives code parsing): a plan is prose about
+ * a change and legitimately names Rust/Go/Java/Ruby/shell files in repos whose
+ * code-analysis profile does not cover them. Kept as an array, never a
+ * pre-joined string — the alternation ORDER is a correctness property and
+ * belongs to `toExtensionAlternation`, not to whoever edits this list.
+ */
+export const PLAN_REFERENCE_EXTENSIONS = Object.freeze([
+  'js', 'mjs', 'ts', 'tsx', 'jsx', 'sql', 'css', 'html', 'json', 'md',
+  'py', 'rs', 'go', 'java', 'rb', 'sh',
+]);
 
 // ── Plan Path Extraction ──────────────────────────────────────────────────
 
@@ -51,7 +64,9 @@ export function extractPlanPaths(planContent, { allowInfraFiles = false } = {}) 
   let match;
   const infraExcluded = (p) => !allowInfraFiles && isAuditInfraFile(p);
 
-  const EXT = 'js|mjs|ts|tsx|jsx|sql|css|html|json|md|py|rs|go|java|rb|sh';
+  // Longest-first via the shared builder — a hand-written `js|…|json` order
+  // matches `config.json` as `config.js` (see toExtensionAlternation).
+  const EXT = toExtensionAlternation(PLAN_REFERENCE_EXTENSIONS);
 
   // Phase 1: Exact path regex extraction (backtick paths, inline paths, heading filenames)
   const genericPathRegex = new RegExp(`(?:^|\\s|\\\`|\\()((?:\\.?[\\w.-]+\\/)+[\\w.-]+\\.(?:${EXT}))`, 'gm');

@@ -287,13 +287,30 @@ export const ALL_SUPPORTED_EXTENSIONS = Object.freeze(
 );
 
 /**
- * Pipe-joined regex-ready extension alternation.
- * Sorted LONGEST-FIRST so multi-char extensions match before prefixes
- * (e.g. 'tsx' must try before 'ts', 'mjs' before 'js').
+ * Build a pipe-joined, regex-ready extension alternation, LONGEST-FIRST.
+ *
+ * The ordering is load-bearing, not cosmetic: JS regex alternation is
+ * first-match-wins, so a `js|…|json` list matches `config.json` as `config.js`
+ * and leaves `on` behind. The caller then looks up a file that does not exist,
+ * reports it MISSING, and — where the truncated form is the only match — never
+ * finds the real one at all. Found live 2026-08-08 in a consumer's plan, where
+ * every `.json` and `.tsx` reference inside a fenced block was mis-extracted,
+ * deflating the resolvable-path count that decides whether fuzzy keyword
+ * discovery fires.
+ *
+ * Exported so every extension list in the bundle gets the ordering from ONE
+ * place rather than each hand-sorting it (plan-paths.mjs hand-maintained its
+ * own and got it wrong).
+ *
+ * @param {Iterable<string>} extensions
+ * @returns {string}
  */
-export const ALL_EXTENSIONS_PATTERN = [...ALL_SUPPORTED_EXTENSIONS]
-  .sort((a, b) => b.length - a.length)
-  .join('|');
+export function toExtensionAlternation(extensions) {
+  return [...extensions].sort((a, b) => b.length - a.length).join('|');
+}
+
+/** Pipe-joined regex-ready extension alternation (longest-first). */
+export const ALL_EXTENSIONS_PATTERN = toExtensionAlternation(ALL_SUPPORTED_EXTENSIONS);
 
 /**
  * Build a file-reference regex for path extraction from free text.
