@@ -1,5 +1,50 @@
 # Project Status Log
 
+## 2026-08-08 (latest) — the plan for the adjudicated defects, and a wrong label it found
+
+`/plan` + `/audit-plan` over the defects the blind adjudication confirmed →
+[`gate-honesty-adjudicated-defects.md`](docs/plans/gate-honesty-adjudicated-defects.md),
+status Approved. GPT 3 rounds (H4/M2 → H2/M3 → H2/M3, stopped at the cap with
+HIGH plateaued), Gemini 3 rounds (REJECT → CONCERNS → CONCERNS; the cap is 2 and
+each extension was earned by a concrete design defect). 17 findings raised, 17
+resolved.
+
+**Seven defects became six, and the correction came from the plan's own Phase 1.**
+F14 — "a script-keyed exemption silently covers a newly appended command" — was
+accepted in yesterday's adjudication and is **false**:
+`check-gate-poison-pills.mjs:168` (`561c18f0`) guards it with
+`commandCount.get(g.script) === 1`, so a script-level exemption stops applying
+to every command the moment a second appears. Loud failure, not silent
+inheritance; all 17 current exemptions key single-command scripts. The
+mis-adjudication came from reading the exemption *keys* without reading the
+*consumer* — the exact failure "verify, don't judge" exists to prevent,
+committed while applying that rule. Label corrected in the store; opus's rate
+drops **1.75 → 1.50** per snapshot. The earlier entry below carries the
+superseded figures and is annotated rather than rewritten.
+
+**Three of the five design defects the audit caught were introduced by an
+earlier round's own fix**: a rule fixed in §2 and left stale in three other
+sections (an implementer following any of them would have reinstated the
+defect); a `#` provenance comment proposed for a `JSON.parse`d file; and a
+"committed fixture" that claimed immutability it had not earned, because
+`readFilesAsContext` reads the live worktree — pinning the diff freezes the
+changes while the analysed code still drifts. Every one was the same class the
+plan is about: a claim made slightly ahead of what the mechanism delivers.
+
+Two reviewer findings were not taken at face value. Gemini's poison-pill
+proposal for the wiring guard was **accepted and retracted** — a pill breaks an
+artifact and asserts the gate fails, so mutating the orchestrator's own
+enforcement makes it converge, inverting the pill and permanently reddening
+`gates:poison`. Its egress finding was **real but overstated**: `safeReadFile`
+already realpaths and rejects outside the cwd boundary, so the headline
+`~/.ssh` case is already blocked; the genuine residual is an in-repo symlink at
+a benign path, folded in as D5b with the out-of-repo case kept as a negative
+control on the instrument.
+
+Consumer-side verification (Step 6.8): `not applicable by construction` — plan
+documents and this log only; no code, no synced tooling, no generated artifact,
+so there is no consumer-side receiver.
+
 ## 2026-08-08 (latest) — raw uniqueness misled twice; adjudication says the opposite
 
 21 bake-off shadow-only HIGH/MED findings adjudicated **blind to arm** —
@@ -17,6 +62,11 @@ human on a prior calibration). Two findings resisted that and are recorded as
 | arm | n | accepted | dismissed | judgement | accepted HIGH/MED per snapshot |
 |---|---|---|---|---|---|
 | opus | 13 | 7 | 5 | 1 | 1.75 |
+
+> **Superseded same day** — F14 was a false positive (see the 2026-08-08 entry
+> above). Corrected: opus 6 accepted / 6 dismissed / **1.50** per snapshot, and
+> six distinct defects, not seven. Left in place rather than rewritten: this is
+> a log, and the wrong number is part of what happened.
 | kimi | 8 | 1 | 6 | 1 | 0.25 |
 
 Raw uniqueness pointed the wrong way twice. Pre-epoch it said Kimi found

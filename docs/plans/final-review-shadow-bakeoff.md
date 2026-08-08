@@ -345,7 +345,7 @@ that treatment and are recorded as `judgement`, deliberately unlabelled.
 
 | arm | n | accepted | dismissed | judgement | accepted HIGH/MED per snapshot |
 |---|---|---|---|---|---|
-| opus | 13 | 7 | 5 | 1 | **1.75** |
+| opus | 13 | 6 | 6 | 1 | **1.50** |
 | kimi | 8 | 1 | 6 | 1 | **0.25** |
 
 Denominator is **4** snapshots, not 5: the 2026-08-03 snapshot predates the
@@ -369,14 +369,33 @@ selects the arm that found **one seventh** as many real defects. Kimi's 0.25
 rests on a single accepted finding; one more dismissal puts it at the gate edge.
 That is exactly the shape N=12 exists to protect against.
 
-**Seven distinct defects were confirmed** (F07/F09 are the same defect found on
+**Six distinct defects were confirmed** (F07/F09 are the same defect found on
 two snapshots), and they are now open work rather than an unlabelled queue: a
 convergence oracle with no production caller (HIGH, x2), a mandatory gate whose
 default fixture rev can never exit 0, an exclusion-bucket double-count, an
-unvalidated pass-granting exemption loader, exemptions keyed by npm script so
-appended commands inherit them silently, a second live-provider path filtering
-egress through a weaker authority than the documented one, and a mandatory-pill
-date policy that exists only as a JSON comment.
+unvalidated pass-granting exemption loader, a second live-provider path
+filtering egress through a weaker authority than the documented one, and a
+mandatory-pill date policy that exists only as a JSON comment. Plan:
+[`gate-honesty-adjudicated-defects.md`](gate-honesty-adjudicated-defects.md).
+
+> **Corrected 2026-08-08, same day — seven was wrong, and so was the rate.**
+> F14 ("a script-keyed exemption silently covers a newly appended command") was
+> **accepted here and is false**. `check-gate-poison-pills.mjs:168` (`561c18f0`)
+> guards it with `commandCount.get(g.script) === 1`: a script-level exemption
+> stops applying to *every* command the moment a second appears, so the result
+> is a loud failure, not a silent inheritance. Measured: all 17 current
+> exemptions key single-command scripts.
+>
+> It was caught by Phase 1 of the plan that would have implemented the fix —
+> reading the *consumer* rather than the exemption *keys*. The mis-adjudication
+> is the precise failure "verify against current code, don't judge" exists to
+> prevent, committed while applying that rule. Label corrected in the store;
+> the table above carries the corrected figures (opus 6 accepted / **1.50** per
+> snapshot, was 7 / 1.75). Kimi is unaffected.
+>
+> Worth keeping rather than quietly restating: an adjudication pass that
+> verified 20 of 21 findings correctly still shipped one wrong label, and only a
+> *second* pass over the same code found it. One reading is not a measurement.
 
 **Still unadjudicated**: 10 bake-off LOW (LOW does not score) and 25 organic
 shadow-only (13 MEDIUM, 12 LOW) — a separate, older population.
