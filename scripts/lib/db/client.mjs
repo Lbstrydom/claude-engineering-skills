@@ -79,24 +79,82 @@ export function assertSafeDsn(url) {
   }
 }
 
-/** Hostname suffixes that indicate a Supabase-hosted (never disposable) database. */
-const HOSTED_SUPABASE_SUFFIXES = /(\.supabase\.co|\.supabase\.com)$/i;
+/**
+ * Loopback hostnames — the only place a throwaway Postgres lives in this
+ * repo's design. `db-test-container.mjs` builds
+ * `postgresql://postgres:postgres@127.0.0.1:<port>/postgres`, and
+ * postgres-parity CI's service container is reached at `127.0.0.1:5432`.
+ * Anything else is assumed to be somebody's real database.
+ */
+const LOOPBACK_DB_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
 
 /**
- * Is `hostname` the shared Supabase-hosted project (this repo's one and only
- * production database)? Shared predicate — reused by `assertDisposableDbUrl`
- * below (destructive-test-DB safety) and
- * `scripts/postgres-parity/generate-expected-schema.mjs` (fixture-ground-truth
- * safety: the committed schema fixture must reflect a vanilla self-hosted
- * Postgres — what postgres-parity CI actually verifies against — never the
- * Supabase platform layer's extra extensions/grants). Two independent
- * incidents needed the exact same "is this the shared prod host" check; this
- * is the single place it's defined.
- * @param {string} hostname
- * @returns {boolean}
+ * Is `hostname` a disposable, throwaway database host?
+ *
+ * **This predicate is an ALLOWLIST and it fails CLOSED**: an unrecognised host
+ * is treated as production. That direction is the whole point — it was an
+ * allowlist's opposite that broke.
+ *
+ * History (2026-08-08). This started life as `isHostedSupabaseHost()`, a
+ * DENYLIST matching `/(\.supabase\.co|\.supabase\.com)$/`, used by both callers
+ * as a proxy for "not disposable". The proxy held only while the sentence in
+ * its own docstring was true — *"this repo has exactly one Supabase project,
+ * and it is always production"*. On 2026-08-08 the audit-loop store moved to a
+ * self-hosted Postgres on a LAN address, and that sentence stopped being true:
+ * production became a plain self-hosted Postgres, indistinguishable by hostname
+ * from a local container. Both guards silently went inert against the very
+ * database they exist to protect, on the same day the store moved.
+ *
+ * It bit immediately. The schema fixture was regenerated straight from the new
+ * production store with no warning — the third occurrence of exactly the class
+ * `generate-expected-schema.mjs`'s guard was written to refuse "rather than
+ * relying on commit-message discipline a third time". It encoded 9
+ * `ordinal_position` values that a fresh migration replay does not produce
+ * (production had been provisioned by dump/restore, which renumbers `attnum`
+ * past `DROP COLUMN` tombstones), and would have turned `db:suites:gate` red.
+ * It was caught by reading an unexpected diff, which is not a control.
+ *
+ * A denylist of production hosts can only ever be as current as the last
+ * infrastructure change. An allowlist of loopback hosts is a property of what
+ * "disposable" MEANS, so it does not rot when the store moves again.
+ *
+ * Deliberately NO env-var escape hatch: a bypass on a guard whose whole job is
+ * to stop `DROP SCHEMA public CASCADE` reaching production is the bypass that
+ * gets used at 2am. A genuinely non-loopback disposable DB should be reached
+ * through a port-forward, or this allowlist should be edited on purpose.
+ *
+ * @param {string} hostname - a parsed `URL.hostname` (IPv6 may carry brackets)
+ * @returns {boolean} true only for known-throwaway hosts
  */
-export function isHostedSupabaseHost(hostname) {
-  return HOSTED_SUPABASE_SUFFIXES.test(hostname);
+export function isDisposableDbHost(hostname) {
+  if (typeof hostname !== 'string' || hostname === '') return false;
+  const h = hostname.trim().toLowerCase();
+  if (LOOPBACK_DB_HOSTS.has(h)) return true;
+  // 127.0.0.0/8 is entirely loopback, not just 127.0.0.1.
+  return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h);
+}
+
+/**
+ * Identity of the database a DSN addresses: host, port, database name — the
+ * three things that decide WHICH database gets written to. Compared instead of
+ * the raw DSN string because two different strings routinely name one database
+ * (`?sslmode=disable` appended, a different user, `localhost` vs `127.0.0.1`,
+ * an implicit vs explicit `:5432`). The old exact-string comparison missed
+ * every one of those, which mattered the moment production stopped being
+ * catchable by hostname.
+ *
+ * @param {string} dsn
+ * @returns {string|null} canonical `host:port/database`, or null if unparseable
+ */
+function dbIdentity(dsn) {
+  let u;
+  try { u = new URL(dsn); } catch { return null; }
+  const host = u.hostname.trim().toLowerCase();
+  // localhost and 127.0.0.1 are the same server for this purpose.
+  const canonHost = LOOPBACK_DB_HOSTS.has(host) || /^127\./.test(host) ? 'localhost' : host;
+  const port = u.port || '5432';
+  const database = decodeURIComponent(u.pathname.replace(/^\//, ''));
+  return `${canonHost}:${port}/${database}`;
 }
 
 /**
@@ -111,16 +169,19 @@ export function isHostedSupabaseHost(hostname) {
  * was set to (or resolved to the same database as) the real production
  * `AUDIT_DB_URL`, the suite wiped the shared Supabase learning store with
  * no warning. This closes that gap at the one place both suites' `before()`
- * hooks already call before touching the pool: reject a hosted Supabase URL
- * outright (a genuine disposable test DB is never Supabase-hosted in this
- * repo's design — it's a local/container Postgres), and reject a test URL
- * that's identical to the real `AUDIT_DB_URL` even if it isn't Supabase
- * (e.g. a self-hosted production instance).
+ * hooks already call before touching the pool.
+ *
+ * Two independent checks, both fail-closed (2026-08-08 rewrite — see
+ * `isDisposableDbHost`): the host must be on the loopback ALLOWLIST, and the
+ * test URL must not name the same database as the real `AUDIT_DB_URL`. The
+ * first used to be a Supabase denylist, which went inert when production moved
+ * to self-hosted Postgres; the second used to be exact string equality, which
+ * one appended `?sslmode=disable` defeats.
  *
  * @param {string} testUrl - the candidate `AUDIT_DB_TEST_URL` value
  * @param {{productionUrl?: string|null}} [opts] - the real `AUDIT_DB_URL`
  *   (read BEFORE any swap), so an accidental copy-paste is caught even when
- *   it isn't Supabase-hosted.
+ *   the host itself looks disposable.
  */
 export function assertDisposableDbUrl(testUrl, { productionUrl = null } = {}) {
   let parsed;
@@ -129,18 +190,22 @@ export function assertDisposableDbUrl(testUrl, { productionUrl = null } = {}) {
   } catch {
     throw new Error('AUDIT_DB_TEST_URL is not a valid URL — expected a postgresql:// connection string.');
   }
-  if (isHostedSupabaseHost(parsed.hostname)) {
+  if (!isDisposableDbHost(parsed.hostname)) {
     throw new Error(
-      `AUDIT_DB_TEST_URL points at a Supabase-hosted database (host "${parsed.hostname}") — ` +
-      'refusing to run destructive integration tests against it. AUDIT_DB_TEST_URL must be a ' +
-      'disposable local/container Postgres instance (e.g. 127.0.0.1), never a hosted Supabase ' +
-      'project (this repo has exactly one Supabase project, and it is always production).',
+      `AUDIT_DB_TEST_URL points at host "${parsed.hostname}", which is not a recognised disposable ` +
+      'database host — refusing to run destructive integration tests (they DROP SCHEMA public CASCADE) ' +
+      'against it. AUDIT_DB_TEST_URL must be a throwaway local/container Postgres on loopback ' +
+      '(127.0.0.0/8, localhost or ::1); `npm run db:local up` provisions one. This check is an ' +
+      'allowlist and fails closed on purpose: an unrecognised host is assumed to be a real database.',
     );
   }
-  if (productionUrl && testUrl === productionUrl) {
+  const testId = dbIdentity(testUrl);
+  const prodId = productionUrl ? dbIdentity(productionUrl) : null;
+  if (testId && prodId && testId === prodId) {
     throw new Error(
-      'AUDIT_DB_TEST_URL is identical to AUDIT_DB_URL — refusing to run destructive integration ' +
-      'tests against what would be the same database as production.',
+      `AUDIT_DB_TEST_URL names the same database as AUDIT_DB_URL (${testId}) — refusing to run ` +
+      'destructive integration tests against what would be production. Host, port and database name ' +
+      'are compared, so differing credentials or query parameters do not make it a different database.',
     );
   }
 }

@@ -589,10 +589,23 @@ connection string. **Load-bearing invariants** (the rest is in the docs below):
   error-swallow + unverified-write-success (RLS/0-row) as HIGH.
 - **Migrations stay schema-portable**: `parity:check-coupling` fails on any `<schema>.`
   qualification or non-core reference outside the recorded baseline.
-- **`AUDIT_DB_TEST_URL` must be disposable — enforced, not documented-only.**
-  `assertDisposableDbUrl` (`scripts/lib/db/client.mjs`) runs before any pool reset
-  in the `db-setup`/`db-withtx` integration suites, rejecting a Supabase-hosted or
-  production-identical test URL — closes a 2026-07-14 wipe incident. Detail: [postgres-parity-runbook.md](docs/runbooks/postgres-parity.md) §Incident.
+- **"Disposable" is an ALLOWLIST of loopback hosts, and it fails CLOSED.**
+  `isDisposableDbHost` / `assertDisposableDbUrl` (`scripts/lib/db/client.mjs`)
+  guard the `db-setup`/`db-withtx` suites (they `DROP SCHEMA public CASCADE`) and
+  the `generate-expected-schema.mjs` fixture — closing the 2026-07-14 wipe
+  incident. Both were a **denylist** of `*.supabase.*` until 2026-08-08, resting
+  on their own docstring's *"this repo has exactly one Supabase project, and it is
+  always production"* — which the NAS cutover falsified the same day, leaving both
+  guards inert against the new production store. It bit within hours: the schema
+  fixture was regenerated from production with no warning (9 wrong
+  `ordinal_position` values — a restored DB renumbers `attnum` past `DROP COLUMN`
+  tombstones, a fresh replay does not). **Never re-express this as "not
+  $VENDOR"** — a denylist of production hosts is only as current as the last infra
+  change; an allowlist is a property of what disposable *means*. Same reason
+  production identity is compared as host+port+database, not as a DSN string
+  (`?sslmode=disable` defeats string equality). No env escape hatch, deliberately.
+  Detail: [postgres-parity-runbook.md](docs/runbooks/postgres-parity.md) §Incident.
+  **Regenerate the fixture only from a fresh replay** — `npm run db:local:regen`.
 
 → **Design** (no-adapter `pg`-direct decision, schema scope, privilege model, file plan): [`docs/plans/postgres-parity.md`](docs/plans/postgres-parity.md) + [`postgres-parity-schema-coupling.md`](docs/plans/postgres-parity-schema-coupling.md). **Operations** (setup recipe, migration-drift CLI + exit codes, pre-push snippet, break-glass atomic-apply, shared-cloud-config, prerequisites): [`docs/runbooks/postgres-parity.md`](docs/runbooks/postgres-parity.md).
 
