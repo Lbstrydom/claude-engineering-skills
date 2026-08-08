@@ -601,3 +601,108 @@ This /cycle bundles three logical commits into ONE ship:
 3. **Status + plan archive** (handled by /ship): status.md entry, plan status flip to Complete, archive move to `docs/completed/`.
 
 Commit message: `feat(audit): prompt prefix-cache restructure + telemetry + held gemini-gate scope fix`. Two intent-tags in one commit because the work is small and the audit cycle is bundled.
+
+---
+
+## 11.  Addendum — 2026-08-08: the seed A/B had no control arm
+
+The 2026-07-14 PR-6 flip made `AUDIT_CACHE_SEED` default-ON and left
+`cache-hitrate-check` to validate it from the seed-ON cohort. That validation
+was not decidable as designed. Two independent defects, both fixed.
+
+### 11.1  The verdict turned on cohort parity, not on the data
+
+`cache_hit_rate` is a Postgres `numeric`, which node-pg returns as a **string**.
+`median()` summed the two middle elements directly, so an EVEN-sized cohort
+concatenated (`"0.11" + "0.13"` → `"0.110.13"`) and divided to `NaN`, while an
+ODD-sized one returned its middle element untouched and coerced correctly on a
+later `* 100`.
+
+`NaN > flipThreshold` is false, so **an even-sized seed-ON cohort always fell
+through to HOLD** regardless of its hit rates. The live reading escaped this
+only by luck: 67 seed-ON runs (odd) reported a true 11.3%, while 72 seed-OFF
+(even) produced the `Seed-OFF baseline: NaN%` that made the comparison
+unreadable. One more seed-ON run would have silently inverted the verdict.
+
+Fixed in `d98cc3c4`. `median()` now coerces, filters non-finite values, and
+returns `null` — not `0` — when nothing usable is present, because `0` reads as
+a measured "0% hit rate" and is indistinguishable from a real one. Empties are
+rejected BEFORE coercion, since `Number(null)` is `0` and would survive a
+`Number.isFinite` filter. The Supabase boundary likewise keeps a null
+`cache_hit_rate` as null rather than `?? 0`: a rate is not a count, and 112 of
+251 R2+ rows were null — enough fabricated zeros to move the median.
+
+### 11.2  seed-OFF was never a control (the load-bearing defect)
+
+`decideSeed` returned on `!envFlag` **before** assessing eligibility, so an
+opted-out run was never evaluated and was indistinguishable from one that could
+never have seeded. The seed-OFF cohort therefore mixed two populations:
+
+| Population | Comparable to seed-ON? |
+|---|---|
+| eligible, seeding withheld (`AUDIT_CACHE_SEED=0`) | yes — this is the control |
+| ineligible: `units.length <= 1`, or prefix below `AUDIT_CACHE_STABLE_PREFIX_MIN` | no |
+
+Ineligibility is not random. `units.length <= 1` skips seeding, and single-unit
+audits are *small* ones — so seed-OFF skewed systematically small and the
+cohort comparison **measured audit size, not seeding**. This is why the
+2026-08-08 reading could not settle the revert question: the median said seeding
+was 2.2x better (11.3% vs 5.2%) while the mean said the cohorts were identical
+(19.4% vs 20.8%), and both arms were confounded.
+
+Fixed in `ce2a0213`:
+
+- `decideSeed` assesses eligibility FIRST; the env flag gates USE only. An
+  eligible-but-withheld run records `seedEligible: true` +
+  `seedSkipReason: 'env-disabled'`. Costs one extra `buildPromptForUnit` probe
+  on opted-out runs — it builds from an empty `_context`, so no file reads and
+  no API call.
+- Migration `20260808190000` adds `cache_seed_eligible` +
+  `cache_seed_skip_reason`, **nullable with no default**. The 583 pre-existing
+  rows genuinely do not know their eligibility; `NOT NULL DEFAULT false` would
+  assert "was not eligible" for every one and re-contaminate the cohort the
+  migration exists to clean.
+- `cache-hitrate-check` segments on `seedEligible === true` — never
+  `!== false`, since null means pre-migration UNKNOWN — and reports the lift.
+  Below 5 control runs it reports `Uncontrolled` and states plainly: do not
+  revert on the threshold alone.
+
+### 11.3  Status: the revert question is OPEN
+
+```
+Seed-ON median:  11.3%   (seed-OFF baseline: 5.2%)
+Control arm:     NOT POPULATED (0 run(s))
+Recommendation:  HOLD — "DO NOT revert on this alone"
+```
+
+A **control-arm collection period** started 2026-08-08: `AUDIT_CACHE_SEED=0` is
+set in the shared `~/.audit-loop.env`, so organic audits from every repo
+populate the control. Check progress with `npm run cache:check` → the
+`Control arm` line, and **remove that setting once the arm has >= 5 runs** or
+seeding stays off indefinitely.
+
+### 11.4  Do not try to manufacture control runs
+
+This was attempted and does not work. `decideSeed` is only reached inside
+`runMapReducePass`, so a run is only eligible if a pass actually map-reduces
+(>8 files or >25K chars for the high-reasoning passes). An audit's effective
+file set is intersected with the PLAN's referenced files, so a narrow plan caps
+the count well below that — three attempted runs all recorded
+`eligible=false`, and a fourth aborted on the "0 implementation files reached
+the prompt" guard.
+
+The deeper reason to stop: every knob available to force eligibility (a broader
+plan, `--scope full`, a longer file list) makes the run *less* like the organic
+seed-ON cohort. Manufacturing five synthetic controls to match 67 organic
+treatments re-creates the exact size confound §11.2 removes — and worse, it
+would carry an authoritative `Controlled:` label while doing so. Let the arm
+fill from normal work.
+
+### 11.5  Two lessons that generalise beyond this plan
+
+- **Postgres `numeric`/`bigint` arrive as strings over node-pg.** Sorting
+  coerces, so the bug stays invisible until the first `+`. Coerce at the DB
+  boundary where rows are mapped, not at each use site.
+- **An aggregate over an empty set must not return 0.** Return `null`. A zero
+  is a measurement claim, and here it was indistinguishable from a real 0% hit
+  rate — the same false-zero class as a hardcoded telemetry default.
