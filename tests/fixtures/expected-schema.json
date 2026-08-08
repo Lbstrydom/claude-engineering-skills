@@ -9287,6 +9287,11 @@
     },
     {
       "tablename": "audit_findings",
+      "indexname": "audit_findings_detail500_trgm_idx",
+      "indexdef": "CREATE INDEX audit_findings_detail500_trgm_idx ON public.audit_findings USING gin (\"left\"(detail_snapshot, 500) gin_trgm_ops)"
+    },
+    {
+      "tablename": "audit_findings",
       "indexname": "audit_findings_detail_trgm_idx",
       "indexdef": "CREATE INDEX audit_findings_detail_trgm_idx ON public.audit_findings USING gin (detail_snapshot gin_trgm_ops)"
     },

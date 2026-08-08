@@ -25,7 +25,7 @@
  * @module scripts/lib/db/rpc
  */
 
-import { many, one, query } from './query.mjs';
+import { many, one, query, withTx } from './query.mjs';
 
 // ── vector helpers ─────────────────────────────────────────────────────────
 
@@ -161,26 +161,52 @@ export async function driftScore({ repoId, refreshId, simDup, simName }) {
  * `supabase/migrations/20260421163657_memory_health_perf.sql` §17 —
  * `window_days=30, similarity_reraise=0.6, similarity_cluster=0.5, max_pairs_per_repo=1000`.
  *
+ * TIMEOUT LIVES HERE, NOT ON THE FUNCTION (2026-08-08). All three
+ * memory-health migrations declare `SET statement_timeout = '120s'` on the
+ * function; that clause is DECORATIVE. Postgres arms the statement timer when
+ * the top-level statement starts, and a `SET` taking effect inside the
+ * function body does not re-arm it. Verified with a negative control: a
+ * function declaring `SET statement_timeout='2s'` slept 5s and returned
+ * normally, while the identical sleep under a session-level 2s timeout was
+ * cancelled. So the RPC was effectively unbounded — against the self-hosted
+ * NAS store it ran past 15 minutes and the weekly gate's 5-minute per-check
+ * spawn budget killed it with a bare `spawn ETIMEDOUT`, which reads as a
+ * broken runner rather than a slow query. A `SET LOCAL` inside `withTx` binds
+ * for real (it is the same connection, released at COMMIT), so a runaway now
+ * surfaces as a loud `57014 statement_timeout` that memory-health.mjs reports
+ * as an infra error (exit 2) instead of a silent kill.
+ *
  * @param {{
  *   windowDays?: number,
  *   similarityReraise?: number,
  *   similarityCluster?: number,
  *   maxPairsPerRepo?: number,
+ *   statementTimeoutMs?: number,
  * }} [args]
  * @returns {Promise<object | null>}
  */
 export async function memoryHealthMetrics({
   windowDays, similarityReraise, similarityCluster, maxPairsPerRepo,
+  statementTimeoutMs,
 } = {}) {
-  const row = await one(
-    'SELECT memory_health_metrics($1::integer, $2::numeric, $3::numeric, $4::integer) AS result',
-    [
-      windowDays ?? 30,
-      similarityReraise ?? 0.6,
-      similarityCluster ?? 0.5,
-      maxPairsPerRepo ?? 1000,
-    ]
-  );
+  const timeoutMs = Number.isFinite(statementTimeoutMs) && statementTimeoutMs > 0
+    ? Math.floor(statementTimeoutMs)
+    : 120_000;
+  const row = await withTx(async (client) => {
+    // Integer-only interpolation (validated above) — statement_timeout is a
+    // GUC name, not a value slot, so it cannot be a bound parameter.
+    await client.query(`SET LOCAL statement_timeout = ${timeoutMs}`);
+    const res = await client.query(
+      'SELECT memory_health_metrics($1::integer, $2::numeric, $3::numeric, $4::integer) AS result',
+      [
+        windowDays ?? 30,
+        similarityReraise ?? 0.6,
+        similarityCluster ?? 0.5,
+        maxPairsPerRepo ?? 1000,
+      ]
+    );
+    return res.rows[0] ?? null;
+  });
   return row?.result ?? null;
 }
 

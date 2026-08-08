@@ -441,6 +441,28 @@ recover. Three triggers:
 Runtime is the `memory_health_metrics(window_days)` Postgres RPC added by
 `supabase/migrations/20260421163525_memory_health.sql` (uses `pg_trgm`).
 
+> **Metrics 1 and 3 are SAMPLED, and two Postgres traps live here (2026-08-08).**
+> The gate had measured nothing for months: the 2026-04-21 perf patch added a `%`
+> prefilter *and* truncated both operands to `LEFT(detail_snapshot,500)` in one
+> edit, which disabled the bare-column GIN index `%` was added to use — 3.7M
+> filter-evaluated pairs, >15 min, killed by the runner's 5-min spawn budget as a
+> bare `spawn ETIMEDOUT`. Fixed by `20260808160000_memory_health_trgm_index.sql`:
+> a GIN index on `left(detail_snapshot,500)`, LATERAL probes behind an
+> **`OFFSET 0` fence** (without it the planner still picks the `created_at`
+> btree — it costs `%` at 1 unit against a measured ~65us), and a `per_repo_cap`
+> on the **driving** set. Cap the driving set, NEVER the searched set — the
+> latter drops real matches and biases the rate down into a false GREEN. So
+> `fuzzy_reraise.rate` / `recurrence.rate` are sample estimates over the N most
+> recent per repo; read `new_fingerprints_total` / `fixed_findings_total` /
+> `per_repo_cap` beside them. **Trap 1: `SET statement_timeout` on a function is
+> DECORATIVE** — Postgres arms the timer at statement start and a `SET` inside
+> the body never re-arms it (negative-controlled); bound these RPCs at the
+> caller, as `db/rpc.mjs` now does via `withTx` + `SET LOCAL`. **Trap 2:
+> `CREATE OR REPLACE FUNCTION` replaces the whole proconfig array and resets the
+> ACL**, so any redefinition silently reverts `20260721130000`'s `search_path`
+> pin + EXECUTE revoke unless it re-states both — verify with `pg_proc.proconfig`
+> / `proacl`, not review.
+
 > **Cluster density counts FINDINGS, never a wave's own control state.** A wave
 > that prints a machine-generated notice about its own execution (coverage cap
 > hit, aborted enumeration) emits byte-identical text every time, so those rows
@@ -524,6 +546,7 @@ lifecycle, Phase-3 replay framework + promotion recipe, outbox detail):
 | `MEMORY_HEALTH_CLUSTER_MEDIAN` | No | `5` | Cluster density trigger threshold (median similar pairs/repo) |
 | `MEMORY_HEALTH_RECURRENCE_RATE` | No | `0.10` | Fixed-finding recurrence rate trigger threshold |
 | `MEMORY_HEALTH_MIN_FINDINGS` | No | `50` | Minimum findings in window to report a trigger (below → INSUFFICIENT_DATA) |
+| `MEMORY_HEALTH_RPC_TIMEOUT_MS` | No | `240000` | Caller-side bound on `memory_health_metrics` (the function's own `SET statement_timeout` is inert). Sized under the maintenance runner's 300s spawn budget so a runaway is a loud `57014`, not a silent kill. |
 | ~~`SUPABASE_AUDIT_*`~~ | — | — | **Sunset in M4** (postgres-parity). The audit-loop now uses `AUDIT_DB_URL` exclusively; the legacy URL + anon-key + service-role-key triplet was tied to the old `@supabase/supabase-js` PostgREST path which has been removed. The runtime DSN's password IS the secret — no separate write-role key. |
 | `LEARNING_DISABLE` | No | — | Set to `1` to disable all adaptive-learning live behaviour and telemetry recording (single env-var kill switch). |
 | `LEARNING_REPO_NAME` | Required for weekly-review | — | Per-repo gate for `weekly-review.mjs`. Aborts if missing — prevents cross-tenant data leakage in the digest issue body. **Must be the `owner/repo` slug** (matches `audit_repos.name`, derived from the git origin URL via `resolveRepoIdentity()`) — the bare repo name silently misses the lookup (`{posted:false, reason:'unknown-repo'}`), which is exactly how this sat broken for weeks in every consumer before 2026-07-22. `install.mjs`/`setup.mjs` now derive it automatically; don't hand-type it. |
