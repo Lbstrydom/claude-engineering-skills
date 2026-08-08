@@ -80,14 +80,24 @@ a post-apply header edit first, which is the gate working). Recurrence numbers
 moved with the cap (4/635 → 3/285, 0.63% → 1.05%) — disclosed, and the rate
 moved *away* from a false green.
 
-**Consumer-side verification: `unverified`** — blocked prerequisite: this
-change ships no consumer bundle artifact and no skill-manifest change (four
-files: one new migration, two scripts, one test fixture), and the migration's
-only consumer is the audit-loop store itself, which WAS verified directly
-against the NAS DSN at the applied sha via `setup-postgres.mjs --check-drift`
-(`no drift`, ledger 99/99). The clone-and-run-battery row was not performed:
-no second checkout on this machine that is free of the concurrent session
-occupying the main worktree.
+**Consumer-side verification: `verified`.** Clean-checkout row — the pre-push
+sandbox (`prepush-check.mjs`) built a throwaway worktree at the pushed sha
+`257d89f9` and ran the full battery there, not against this working tree:
+`10,120 tests, 10,096 pass, 0 fail, 24 skipped`, every gate green including
+`skills:check`. Store row — the migration's only consumer is the audit-loop
+store itself, checked directly against the NAS DSN at the applied sha with
+`setup-postgres.mjs --check-drift` (`no drift`, ledger 99/99), and the pushed
+blob confirmed reachable from `origin/main` after a re-fetch. No consumer
+bundle artifact or skill-manifest change ships here, so those rows do not apply.
+
+*(Corrected in the follow-up commit: this paragraph first read `unverified`,
+citing "no second checkout free of the concurrent session" as the blocked
+prerequisite. That was wrong — `prepush-check.mjs` constructs exactly that
+checkout on every push, and it had already run green. An `unverified` must name
+a genuinely blocked prerequisite; naming one that the tooling already satisfies
+is the excuse the rule forbids. Two test failures reported in the same entry
+were likewise environmental — `DOTENV_CONFIG_PATH` re-supplied a DSN to tests
+that assert "no env", which the sandbox run at 0 failures settles.)*
 
 Left alone deliberately: `refresh_runs` ordinal drift between the committed
 schema fixture (gaps 5→12) and the NAS store (contiguous 1→14) — pre-existing,
