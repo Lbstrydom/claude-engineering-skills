@@ -235,8 +235,21 @@ SYNC_SCRIPT="$REPO_ROOT/scripts/sync-to-repos.mjs"
 if [ -f "$SYNC_SCRIPT" ]; then
   echo "→ Syncing skills to consumer repos..."
   node "$SYNC_SCRIPT" 2>&1
-  if [ $? -ne 0 ]; then
-    echo "⚠  Sync completed with warnings — push continues"
+  SYNC_STATUS=$?
+  if [ $SYNC_STATUS -ne 0 ]; then
+    # NOT "completed with warnings". The script exits non-zero for two very
+    # different reasons — per-file errors after a real sync, and aborting
+    # before copying anything (a failed cwd/root guard, a missing target) — and
+    # the old wording claimed completion for both. On 2026-08-08 a push from a
+    # git worktree hit the second case: consumers were never updated and the
+    # hook said "Sync completed with warnings".
+    #
+    # Still non-blocking, deliberately: consumer repos are OTHER-MACHINE state,
+    # and machine state may advise but must not block a push of this repo's own
+    # verified commit. The fix is honesty about what happened, not a new gate.
+    echo "✗  Sync FAILED (exit $SYNC_STATUS) — consumer repos were NOT updated."
+    echo "   Your push continues; re-run from the repo root to sync them:"
+    echo "     cd \"$REPO_ROOT\" && node scripts/sync-to-repos.mjs"
   else
     echo "✓  Sync complete"
   fi
