@@ -257,6 +257,30 @@
     {
       "line": "| `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Step 4.5 — a finding was fixed WITH a new test or guard and it must be proven red-then-green, OR authoring a contract test from a one-off check. |",
       "reason": "A REFERENCE-TABLE row. The 'Read when' cell describes when to open a reference file; it asserts nothing this skill enforces and produces no exit code. The enforcement verb is incidental to a trigger description."
+    },
+    {
+      "line": "> **Precondition: the ledger must already carry per-finding rulings.** This CLI",
+      "reason": "Step 3.5b documents an INPUT precondition of write-code-outcomes.mjs, not a gate the skill enforces. The CLI records rulings and cannot make them; with an un-adjudicated ledger it labels nothing and exits 0 deliberately (telemetry must never fail a run). What it now does — name which of three causes applies, on stderr and as `warning` on the JSON — is advisory output, with no exit code for a cli-exit recipe to bind. All three diagnosis branches were exercised live on 2026-08-08 (empty ledger / all-pending / ruled-but-unjoined)."
+    },
+    {
+      "line": "> and exits 0 — success-shaped, having closed nothing (reported live",
+      "reason": "Continuation of the same precondition block: the narrative of the reported defect (0/N labelled reading as success). Not a separate claim, and deliberately not a new exit code — a telemetry CLI that fails a run is worse than one that warns."
+    },
+    {
+      "line": "> non-zero `total` is a failure to fix, never a pass.**",
+      "reason": "An instruction to the AGENT reading the CLI output: do not treat labelled:0 as a closed loop. Agent judgement about a reported number, with no mechanical seam — the CLI cannot know whether the operator intended to adjudicate this round."
+    },
+    {
+      "line": "Exit 0 = every detector reached zero and every match is dispositioned; exit 1 =",
+      "reason": "Documents the exit mapping of the scripts/lib/audit/detector.mjs CLI that replaced Step 5.0b's inline node -e snippet on 2026-08-08 (the snippet form could not be relocated by the consumer sync, so it ran in no consumer). The mapping is the CLI's own and is asserted directly in tests/audit-detector.test.mjs ('the detector CLI maps its three outcomes onto distinct exit codes': clean→0, unverifiable→1, unreadable/no-arg→2). The claim /audit-code itself enforces remains detector-blocks-convergence above; this line describes the tool it calls."
+    },
+    {
+      "line": "and never a pass.",
+      "reason": "Tail of the same exit-mapping sentence — exit 2 (unreadable ledger) is \"no census happened\", which must not read as clean. Same single claim, same test."
+    },
+    {
+      "line": "writes. Never hand-assemble the JSON:",
+      "reason": "Step 7 instruction to run build-audit-transcript.mjs rather than hand-rolling the transcript. It constrains what the AGENT does before invoking the gate; nothing in /audit-code exits non-zero on a hand-written transcript (gemini-review accepts any JSON by design, which is why the builder exists). The builder's own refusals — no rounds → exit 1, unresolvable mode → exit 2 — are asserted in tests/audit-transcript-build.test.mjs."
     }
   ]
 }

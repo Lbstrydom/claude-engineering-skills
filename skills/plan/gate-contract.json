@@ -31,6 +31,18 @@
     {
       "line": "when written). Cite append-newest-first files by section header, never by",
       "reason": "The Code-Trace citation-form rule. /plan is an agent-driven authoring skill with no CLI; whether the trace pinned its line numbers is a property of the produced markdown, and the closed oracle registry has no lint-a-markdown-structure oracle (same rationale as this contract's existing never-a-lone-phase-1 entry)."
+    },
+    {
+      "line": "> it requires **at least one `/`**, so a bare basename is invisible to it",
+      "reason": "States a property of extractPlanPaths's regex (it requires at least one path separator), which is why plan paths must be written repo-relative. A fact about a parser, not a gate: nothing in /plan refuses a plan containing basenames — the consequence is fuzzy discovery downstream, which the self-check below reports. The threshold constant it depends on is now named (FUZZY_DISCOVERY_THRESHOLD) so the doc and the branch cannot drift."
+    },
+    {
+      "line": "> number the threshold actually tests), what fuzzy added, and how many paths",
+      "reason": "Describes what the plan-paths self-check CLI prints. It exists because found/missing alone cannot answer \"did fuzzy fire?\" — fuzzy results are already folded into found — so the CLI reports regexFoundCount separately. Output description, not an enforced rule."
+    },
+    {
+      "line": "> Report-only, exit 0 — a small plan may legitimately sit under the threshold.",
+      "reason": "Explicitly declares the self-check a NON-gate: a small plan under the threshold is legitimate, so the CLI exits 0 always and the warning is advisory. Contracting this as a gate would assert a refusal the tool deliberately does not make — and \"never invent file references to clear the threshold\" is the reason it must not become one."
     }
   ]
 }

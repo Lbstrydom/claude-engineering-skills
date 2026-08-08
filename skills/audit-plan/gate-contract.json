@@ -17,5 +17,51 @@
       "kind": "document-only",
       "reason": "The Gemini final review being MANDATORY after the last round, with the FINAL_GATE_SKIPPED sentinel + Opus/independent-agent fallback ladder when no key is present, is an orchestration invariant the model enacts by following Step 6 — not a CLI exit. A cli-exit recipe cannot assert 'the agent ran the final gate'; the sentinel is agent OUTPUT, not a script's exit code."
     }
+  ],
+  "ignoredCandidates": [
+    {
+      "line": "> **Precondition: the ledger must already carry per-finding rulings.** This CLI",
+      "reason": "Step 3.5b documents an INPUT precondition of write-code-outcomes.mjs, not a gate the skill enforces. The CLI records rulings and cannot make them; with an un-adjudicated ledger it labels nothing and exits 0 deliberately (telemetry must never fail a run). What it now does — name which of three causes applies, on stderr and as `warning` on the JSON — is advisory output, with no exit code for a cli-exit recipe to bind. All three diagnosis branches were exercised live on 2026-08-08 (empty ledger / all-pending / ruled-but-unjoined)."
+    },
+    {
+      "line": "> and exits 0 — success-shaped, having closed nothing (reported live",
+      "reason": "Continuation of the same precondition block: the narrative of the reported defect (0/N labelled reading as success). Not a separate claim, and deliberately not a new exit code — a telemetry CLI that fails a run is worse than one that warns."
+    },
+    {
+      "line": "> non-zero `total` is a failure to fix, never a pass.**",
+      "reason": "An instruction to the AGENT reading the CLI output: do not treat labelled:0 as a closed loop. Agent judgement about a reported number, with no mechanical seam — the CLI cannot know whether the operator intended to adjudicate this round."
+    },
+    {
+      "line": "| **≥ ~⅔ accepted as fix-now** | **PRODUCTIVE** — the round bought real corrections. Continue (within the cap). |",
+      "reason": "A row of the convergence rubric the MODEL applies — the same document-only disposition as the round-caps gate, whose rule this replaces as the PRIMARY signal (2026-08-08: the count rule told a reporter to stop a loop in which they accepted 23 of 23 findings). write-ledger-entries.mjs computes and prints the rate so the input is measured rather than recalled, but the stop DECISION is agent judgement with no exit code to bind."
+    },
+    {
+      "line": "the independent Gemini gate scoring the deliberation \"exemplary… no false",
+      "reason": "Field evidence for why the count rule was wrong (the reported session's H:5→5→6 with 23/23 accepted). A citation, not a rule."
+    },
+    {
+      "line": "**Cap: 3 rounds by default, 5 absolute.** Exceed 3 only while the acceptance",
+      "reason": "The round cap itself — already contracted as the document-only round-caps gate; this is its restated numeric form after the acceptance-rate rework. Still enforced by the model round-by-round, still no counter a cli-exit recipe can read."
+    },
+    {
+      "line": "finding-character test the Gemini gate uses applies here — an",
+      "reason": "Imports the Gemini gate's design-defect-vs-implementation-completeness test into the GPT loop. A judgement rubric about what a finding IS; there is no oracle for classifying a finding's character."
+    },
+    {
+      "line": "writes. One command; never hand-assemble the JSON:",
+      "reason": "Step 6 instruction to run build-audit-transcript.mjs — the audit-plan twin of the audit-code entry above. Agent behaviour before the gate; the builder's own refusals are tested in tests/audit-transcript-build.test.mjs."
+    },
+    {
+      "line": "`code`; without it the final gate reviews a not-yet-built plan as if it were",
+      "reason": "Step 6's --mode plan requirement, discovered missing 2026-08-08 (the skill demanded it of openai-audit in Step 2 and then omitted it from its own gemini-review invocation). Same disposition as the existing mode-plan-required gate: gemini-review.mjs does not REJECT a missing --mode, it defaults to code and reviews differently, so this is an agent flag-passing instruction with no refusal to assert."
+    },
+    {
+      "line": "This mirrors the GPT cap (3 rounds default, 5 absolute, extended only while the",
+      "reason": "Restates the symmetry between the GPT and Gemini caps — both already covered by the round-caps gate, both model-enacted."
+    },
+    {
+      "line": "acceptance rate stays high): cap by",
+      "reason": "Continuation of the same sentence; no separate claim."
+    }
   ]
 }

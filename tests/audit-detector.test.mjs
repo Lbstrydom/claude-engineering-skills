@@ -241,3 +241,48 @@ test('the finding-count threshold still fails first, and reports itself', () => 
   assert.equal(r.converged, false);
   assert.equal(r.reason, 'finding-thresholds');
 });
+
+// ── The CLI wrapper (Step 5.0b) ────────────────────────────────────────────
+//
+// Step 5.0b used to be a `node -e "import('./scripts/lib/audit/detector.mjs')"`
+// snippet, which the consumer sync's command rewriter cannot relocate — so it
+// could not run in any consumer repo (reported 2026-08-08, same class as
+// /plan's Gate-1 self-check). It is now a CLI entry point, and its exit mapping
+// is what /audit-code's SKILL.md tells the operator to read.
+
+test('the detector CLI maps its three outcomes onto distinct exit codes', async () => {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { spawnSync } = await import('node:child_process');
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'detector-cli-'));
+  const CLI = 'scripts/lib/audit/detector.mjs';
+  const run = (arg) => spawnSync(process.execPath, arg === null ? [CLI] : [CLI, arg], { encoding: 'utf-8' });
+
+  // Clean: no detectors to run ⇒ nothing blocks.
+  const clean = path.join(dir, 'clean.json');
+  fs.writeFileSync(clean, JSON.stringify({ version: 1, entries: [] }));
+  const ok = run(clean);
+  assert.equal(ok.status, 0);
+  assert.equal(JSON.parse(ok.stdout).blocked, false);
+
+  // Blocked: a detector whose globs reach nothing is UNVERIFIABLE — "no census
+  // happened" must never read as a clean class, so it blocks.
+  const blocked = path.join(dir, 'blocked.json');
+  fs.writeFileSync(blocked, JSON.stringify({
+    version: 1,
+    entries: [{
+      topicId: 'x', id: 'H1',
+      detector: { kind: 'regex', pattern: 'nothing-matches-this', globs: ['no/such/dir/**'] },
+    }],
+  }));
+  const bad = run(blocked);
+  assert.equal(bad.status, 1, 'an unverifiable detector must block, not pass');
+  assert.equal(JSON.parse(bad.stdout).blocked, true);
+
+  // Unreadable ledger: also "no census happened" — never exit 0.
+  assert.equal(run(path.join(dir, 'absent.json')).status, 2);
+  // No argument at all: usage, still non-zero.
+  assert.equal(run(null).status, 2);
+});
