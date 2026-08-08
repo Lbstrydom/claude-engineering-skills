@@ -62,6 +62,46 @@ export function atomicWriteFileSync(filePath, data, { mode } = {}) {
 
 export const _internals = { atomicWriteFileSyncImpl };
 
+// ── Line-ending canonicalization ────────────────────────────────────────────
+
+/**
+ * Fold CRLF to LF for hashing and byte comparison. Replaces ONLY the byte
+ * sequence `0x0D 0x0A` with `0x0A`.
+ *
+ * **Use this before hashing or comparing any file whose committed form is
+ * LF-pinned.** `.gitattributes` pins `* text=auto eol=lf`, so line endings are
+ * git's business, not content — but a working tree can still hold CRLF (a
+ * checkout that raced its own `.gitattributes`, an editor, a tool that wrote
+ * `os.EOL`). Git reports such a file CLEAN because it normalizes on compare, so
+ * a raw-byte hash disagrees with git about whether two files are the same. That
+ * has now broken two generators: `skills.manifest.json`'s `bundleVersion`
+ * tracked local line endings until it was canonicalized, and
+ * `regenerate-skill-copies.mjs` reported all 67 destination files as differing
+ * from identical sources.
+ *
+ * Byte-level by contract. Every other byte passes through untouched — a lone
+ * `CR`, a BOM, UTF-8 multibyte sequences, even non-UTF-8 bytes. We do NOT
+ * decode to a string first: decoding would silently rewrite malformed UTF-8,
+ * widening a comparison helper into a normalizer.
+ *
+ * NOT for raw-byte integrity checks where the exact bytes on the wire are the
+ * contract (transfer-corruption detection) — canonicalizing there would mask
+ * the very corruption being looked for.
+ *
+ * @param {Buffer} buf
+ * @returns {Buffer} a new Buffer (never the input) with CRLF folded to LF
+ */
+export function canonicalizeEol(buf) {
+  const out = Buffer.allocUnsafe(buf.length);
+  let w = 0;
+  for (let r = 0; r < buf.length; r++) {
+    // Fold CR only when it is immediately followed by LF; a lone CR survives.
+    if (buf[r] === 0x0d && r + 1 < buf.length && buf[r + 1] === 0x0a) continue;
+    out[w++] = buf[r];
+  }
+  return out.subarray(0, w);
+}
+
 // ── Path Normalization ──────────────────────────────────────────────────────
 
 /**

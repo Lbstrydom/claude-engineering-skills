@@ -1,6 +1,67 @@
 # Project Status Log
 
-## 2026-08-08 (latest) — the disposable-DB guards were a denylist of a vendor we no longer use
+## 2026-08-08 (latest) — `skills:check` disagreed with git about what "the same file" means
+
+Reported at the end of the previous session as "worktrees check out CRLF".
+**That diagnosis was wrong**, and the measurement that killed it is the useful
+part: a fresh `git worktree add --detach` produces LF for the same files, the
+committed blob is LF at every commit checked, and `git check-attr` reports
+`eol: lf`. So checkout is not the culprit.
+
+What is true: in ONE worktree, 75 tracked files landed as CRLF, 73 of them
+sorting alphabetically before `.gitattributes` (`.claude/…` sorts before
+`.gitattributes`; `skills/…` sorts after) — an attribute-availability ordering
+artifact during that worktree's creation, not reproducible on demand. Same
+mtime as every other checked-out file, so it happened at creation.
+
+**The bug worth fixing is not the CRLF — it is that a gate disagreed with git
+about it.** `copyFileIfChanged` in
+[`regenerate-skill-copies.mjs`](scripts/regenerate-skill-copies.mjs) hashed RAW
+working-tree bytes to decide whether a destination matched its source.
+`.gitattributes` pins `* text=auto eol=lf`, so git treats line endings as its
+own business and reported both trees clean — while the gate reported all 67
+destinations as differing. The instruction it prints ("Run:
+regenerate-skill-copies.mjs") would then have committed an EOL flip as if it
+were content. AGENTS.md has recorded this exact class since `skills.manifest.json`'s
+`bundleVersion` hit it: *"Hashing working-tree bytes ≠ hashing committed
+source."* The invariant existed; this generator was never brought under it.
+
+**Reused rather than re-implemented.** The architectural-memory consultation
+returned `precedent` on `canonicalizeMigrationBytes` plus two `normaliseEol`
+helpers — three hand-rolled folds already. Writing a fourth was the wrong
+answer. The byte-level implementation moved to `canonicalizeEol` in
+[`lib/file-io.mjs`](scripts/lib/file-io.mjs) (this call site works on Buffers,
+so the string-level helpers would have forced a decode — and decoding while
+hashing silently rewrites malformed UTF-8); `canonicalizeMigrationBytes` is now
+a thin migration-domain alias over it, keeping its name because the ledger's
+hash contract is expressed in those terms throughout. The two string-level
+`normaliseEol` copies were left alone — different context, unrelated risk.
+
+**Red-then-green, on the live subject.** The CRLF condition was still present
+(686 CRLF in `.claude/skills/plan/SKILL.md`) when `skills:check` was re-run, so
+this is a subject test, not a repaired-input one: it now passes. Injecting a
+REAL content difference into a destination still fails it (exit 1), and the file
+was restored byte-identically afterwards. The four new
+`copyFileIfChanged` cases were run against the OLD comparison: the two EOL cases
+fail there and the two real-difference cases pass, which is the shape that
+proves the tests pin the bug rather than the fix.
+
+**One self-inflicted red, named because it looked like a regression.** The suite
+first came back with `gate-poison-pills` failing on `Cannot find package 'zod'`,
+which plausibly implicated the new `file-io` import widening
+`setup-postgres.mjs`'s dependency footprint. It did not: the failure reproduced
+with all three source changes stashed. Cause was the previous session's cleanup
+removing the worktree's `node_modules` junction — `copyTracked` copies only
+TRACKED files into the isolated copy, so the gate has no dependencies to resolve
+without one. Restored, 26/26. **A worktree needs its own `node_modules` for
+`gates:poison` to mean anything**; without it the harness fails the CONTROL run,
+which at least reports honestly rather than passing vacuously.
+
+**Verified**: 10,163 tests / 0 fail (13 new — 9 pinning `canonicalizeEol`'s byte
+contract including lone-CR, BOM and non-UTF-8 preservation). `knip:gate`,
+`context:check`, `docs:refs:gate` clean.
+
+## 2026-08-08 — the disposable-DB guards were a denylist of a vendor we no longer use
 
 Follow-up to the memory-health entry below, which closed noting `refresh_runs`
 ordinal drift as "worth a look on its own". It was — not for the drift, which

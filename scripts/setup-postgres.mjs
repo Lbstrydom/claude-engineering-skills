@@ -34,6 +34,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { findRepoRootFromScript } from './lib/assert-repo-root.mjs';
+import { canonicalizeEol } from './lib/file-io.mjs';
 import { withMigrationContext } from './lib/db/schema-realization.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -322,23 +323,19 @@ async function listMigrations(dir = MIGRATIONS_DIR) {
  * Canonicalize migration bytes for hashing: replace ONLY the byte sequence
  * `0x0D 0x0A` (CRLF) with `0x0A` (LF).
  *
- * Byte-level by contract. Every other byte passes through untouched — a lone
- * `CR`, a BOM, UTF-8 multibyte sequences, and even non-UTF-8 bytes. We do NOT
- * decode to a string first: `Buffer` has no `.replace`, and decoding would
- * silently rewrite malformed UTF-8, widening a tamper guard into a normalizer.
+ * Thin migration-domain alias over `canonicalizeEol` (`lib/file-io.mjs`), which
+ * holds the implementation and the byte-level rationale. Lifted there
+ * 2026-08-08 when `regenerate-skill-copies.mjs` needed the identical fold and
+ * would otherwise have become the repo's FOURTH hand-rolled EOL normalizer.
+ * The name is kept because the migration ledger's hash contract is expressed in
+ * these terms throughout (`hashCanonicalMigrationBytes`, `legacyCrlfBytes`,
+ * `--repair-eol`), and callers/tests import it by this name.
  *
  * @param {Buffer} buf
  * @returns {Buffer} a new Buffer (never the input) with CRLF folded to LF
  */
 export function canonicalizeMigrationBytes(buf) {
-  const out = Buffer.allocUnsafe(buf.length);
-  let w = 0;
-  for (let r = 0; r < buf.length; r++) {
-    // Fold CR only when it is immediately followed by LF; a lone CR survives.
-    if (buf[r] === 0x0d && r + 1 < buf.length && buf[r + 1] === 0x0a) continue;
-    out[w++] = buf[r];
-  }
-  return out.subarray(0, w);
+  return canonicalizeEol(buf);
 }
 
 /**

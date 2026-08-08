@@ -5,7 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 
 // readFilesAsAnnotatedContext requires a CWD with files — import after setup
-import { readFilesAsAnnotatedContext, isAuditInfraFile, isSensitiveFile, readFilesAsContext } from '../scripts/lib/file-io.mjs';
+import { readFilesAsAnnotatedContext, isAuditInfraFile, isSensitiveFile, readFilesAsContext, canonicalizeEol } from '../scripts/lib/file-io.mjs';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -202,6 +202,53 @@ describe('readFilesAsAnnotatedContext — budget limits', () => {
 });
 
 // ── isAuditInfraFile ──────────────────────────────────────────────────────
+
+describe('canonicalizeEol — byte-level CRLF fold', () => {
+  const B = (...bytes) => Buffer.from(bytes);
+
+  it('folds CRLF to LF', () => {
+    assert.deepEqual(canonicalizeEol(Buffer.from('a\r\nb\r\n')), Buffer.from('a\nb\n'));
+  });
+
+  it('leaves a LONE CR alone — it is content, not a line ending git normalizes', () => {
+    assert.deepEqual(canonicalizeEol(B(0x61, 0x0d, 0x62)), B(0x61, 0x0d, 0x62));
+  });
+
+  it('leaves a trailing CR at EOF alone (no LF follows it)', () => {
+    assert.deepEqual(canonicalizeEol(B(0x61, 0x0d)), B(0x61, 0x0d));
+  });
+
+  it('is idempotent — already-LF input passes through unchanged', () => {
+    const lf = Buffer.from('a\nb\n');
+    assert.deepEqual(canonicalizeEol(lf), lf);
+    assert.deepEqual(canonicalizeEol(canonicalizeEol(lf)), lf);
+  });
+
+  it('never returns the input buffer (callers may mutate the result)', () => {
+    const input = Buffer.from('a\nb\n');
+    assert.notEqual(canonicalizeEol(input), input);
+  });
+
+  it('preserves non-UTF-8 bytes rather than decoding them', () => {
+    // 0xFF is invalid UTF-8; a decode-then-replace implementation would
+    // turn it into U+FFFD and silently corrupt the content it is hashing.
+    const raw = B(0xff, 0x0d, 0x0a, 0xfe);
+    assert.deepEqual(canonicalizeEol(raw), B(0xff, 0x0a, 0xfe));
+  });
+
+  it('preserves a UTF-8 BOM', () => {
+    const bom = B(0xef, 0xbb, 0xbf, 0x61, 0x0d, 0x0a);
+    assert.deepEqual(canonicalizeEol(bom), B(0xef, 0xbb, 0xbf, 0x61, 0x0a));
+  });
+
+  it('handles an empty buffer', () => {
+    assert.deepEqual(canonicalizeEol(Buffer.alloc(0)), Buffer.alloc(0));
+  });
+
+  it('collapses CRLF regardless of run length (CRCRLF keeps the lone CR)', () => {
+    assert.deepEqual(canonicalizeEol(B(0x0d, 0x0d, 0x0a)), B(0x0d, 0x0a));
+  });
+});
 
 describe('isAuditInfraFile', () => {
   it('identifies top-level audit scripts', () => {

@@ -352,7 +352,17 @@ stash` — that yanks the other session's files mid-edit. Detail + escape hatche
   broke its own Category-B contract this way: 16 skill files carried CRLF locally
   while `.gitattributes` pins `eol=lf`, git calls such files CLEAN, so
   `bundleVersion` tracked local line endings and a fresh clone read STALE.
-  Generators hashing files for a committed artifact must canonicalise CRLF→LF.
+  Generators hashing files for a committed artifact must canonicalise CRLF→LF —
+  **with `canonicalizeEol` from [`lib/file-io.mjs`](scripts/lib/file-io.mjs)**, the
+  one byte-level fold (it leaves a lone `CR` alone and never decodes, so it cannot
+  corrupt non-UTF-8 bytes while hashing them). It bit a SECOND generator on
+  2026-08-08: `regenerate-skill-copies.mjs` compared raw bytes, so a worktree
+  whose `.claude/skills/**` landed CRLF while `skills/**` landed LF reported all
+  67 destinations as differing — sending the operator to regenerate, which
+  commits an EOL flip as if it were content. The tell is a diff where git says
+  clean and your tool says changed: **git is right, the tool is comparing the
+  wrong thing.** Do NOT canonicalise where the exact bytes ARE the contract
+  (transfer-corruption checks) — that masks the corruption being looked for.
 
 #### Testing doctrine — pointer
 

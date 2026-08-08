@@ -38,7 +38,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { enumerateSkillFiles, listSkillNames } from './lib/skill-packaging.mjs';
 import { sha, assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
-import { atomicWriteFileSync } from './lib/file-io.mjs';
+import { atomicWriteFileSync, canonicalizeEol } from './lib/file-io.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const SRC_ROOT = path.join(ROOT, 'skills');
@@ -163,7 +163,17 @@ function copyFileIfChanged(srcAbs, dstAbs, opts) {
   const srcBuf = fs.readFileSync(srcAbs);
   const dstExists = fs.existsSync(dstAbs);
   const dstBuf = dstExists ? fs.readFileSync(dstAbs) : null;
-  if (dstBuf && sha(srcBuf) === sha(dstBuf)) return 'unchanged';
+  // Compare CANONICALIZED bytes, not raw ones. `.gitattributes` pins
+  // `* text=auto eol=lf`, so line endings are git's business and two files
+  // differing only in EOL are the same committed content — git itself reports
+  // both trees clean. A raw-byte hash disagrees with git about that, and it
+  // did: a worktree whose `.claude/skills/**` landed as CRLF while
+  // `skills/**` landed as LF made this check report all 67 destinations as
+  // "differ from source" with nothing actually wrong, sending the operator to
+  // regenerate — which would have committed an EOL flip as if it were content.
+  // Same class as the `skills.manifest.json` bundleVersion bug (see AGENTS.md
+  // "Hashing working-tree bytes ≠ hashing committed source").
+  if (dstBuf && sha(canonicalizeEol(srcBuf)) === sha(canonicalizeEol(dstBuf))) return 'unchanged';
   if (opts.dryOrCheck) {
     process.stdout.write(`${Y}~${X} ${path.relative(ROOT, dstAbs)} ${D}(${dstExists ? 'update' : 'create'})${X}\n`);
   } else {

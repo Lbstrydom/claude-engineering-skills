@@ -68,6 +68,50 @@ describe('copyFileIfChanged — --dry-run creates nothing', () => {
   });
 });
 
+/**
+ * The bug this guards (2026-08-08): `copyFileIfChanged` hashed RAW working-tree
+ * bytes, so a destination differing from its source only by line endings read
+ * as changed. `.gitattributes` pins `* text=auto eol=lf`, so git reports both
+ * trees clean and considers them identical content — the check disagreed with
+ * git. Observed live in a worktree whose `.claude/skills/**` landed as CRLF
+ * while `skills/**` landed as LF: all 67 destinations reported "differ from
+ * source", which fails `skills:check` and sends the operator to regenerate,
+ * committing an EOL flip as if it were content. Same class as the
+ * `skills.manifest.json` bundleVersion bug that AGENTS.md already records.
+ *
+ * Both directions are pinned: EOL-only must be `unchanged`, and a real content
+ * difference must still be `wrote`. Without the second case the fix could pass
+ * by comparing nothing at all.
+ */
+describe('copyFileIfChanged — line endings are git\'s business, not content', () => {
+  const write = (p, s) => { fs.writeFileSync(p, s); return p; };
+
+  it('treats a CRLF destination as UNCHANGED against an LF source', () => {
+    const src = write(path.join(tmp, 'src.md'), 'alpha\nbeta\ngamma\n');
+    const dst = write(path.join(tmp, 'dst.md'), 'alpha\r\nbeta\r\ngamma\r\n');
+    assert.equal(copyFileIfChanged(src, dst, { dryOrCheck: true }), 'unchanged');
+  });
+
+  it('treats an LF destination as UNCHANGED against a CRLF source (both directions)', () => {
+    const src = write(path.join(tmp, 'src.md'), 'alpha\r\nbeta\r\n');
+    const dst = write(path.join(tmp, 'dst.md'), 'alpha\nbeta\n');
+    assert.equal(copyFileIfChanged(src, dst, { dryOrCheck: true }), 'unchanged');
+  });
+
+  it('still reports a REAL content difference (not blinded by the fold)', () => {
+    const src = write(path.join(tmp, 'src.md'), 'alpha\nbeta\n');
+    const dst = write(path.join(tmp, 'dst.md'), 'alpha\r\nbeta\r\nEXTRA\r\n');
+    assert.equal(copyFileIfChanged(src, dst, { dryOrCheck: true }), 'wrote');
+  });
+
+  it('still reports a difference that is ONLY a lone CR (not part of a CRLF)', () => {
+    // A bare CR is not a line ending git normalizes, so it is real content.
+    const src = write(path.join(tmp, 'src.md'), 'alpha\nbeta\n');
+    const dst = write(path.join(tmp, 'dst.md'), 'alpha\n\rbeta\n');
+    assert.equal(copyFileIfChanged(src, dst, { dryOrCheck: true }), 'wrote');
+  });
+});
+
 describe('importing the module is side-effect free', () => {
   it('exposes _internals without having run main()', () => {
     // If main() ran on import it would regenerate the real .claude/skills tree
