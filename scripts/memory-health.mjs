@@ -57,6 +57,18 @@ const THRESHOLDS = {
   clusterMinCoverage: numEnv('MEMORY_HEALTH_CLUSTER_MIN_COVERAGE', 0.5),
 };
 
+// Server-side bound on the metrics RPC. Sized against the constraint that
+// actually kills this check: maintenance-checks.mjs spawns it with a 5-minute
+// per-check budget, and a spawn kill surfaces as a bare `spawn ETIMEDOUT` with
+// no measurement and no diagnosis — which is how this gate sat silently
+// degraded (the RPC ran past 15 minutes on the NAS store). 240s leaves ~60s of
+// that budget for the semantic RPC, the friction section and rendering, so a
+// runaway is reported as a loud `57014 statement_timeout` (exit 2, infra
+// error) while still using the time the check really has. The migrations'
+// own `SET statement_timeout` clause is decorative and cannot do this — see
+// the note in scripts/lib/db/rpc.mjs.
+const RPC_TIMEOUT_MS = numEnv('MEMORY_HEALTH_RPC_TIMEOUT_MS', 240_000);
+
 function parseArgs(argv) {
   const args = { out: null, json: false };
   for (let i = 2; i < argv.length; i++) {
@@ -85,7 +97,9 @@ async function callRpc() {
     throw new Error('AUDIT_DB_URL not set — cannot run health check (legacy SUPABASE_AUDIT_* keys were sunset in postgres-parity M4)');
   }
   const { memoryHealthMetrics, memoryHealthSemanticCluster } = await import('./lib/db/rpc.mjs');
-  const data = await memoryHealthMetrics({ windowDays: WINDOW_DAYS });
+  const data = await memoryHealthMetrics({
+    windowDays: WINDOW_DAYS, statementTimeoutMs: RPC_TIMEOUT_MS,
+  });
   if (!data) throw new Error('memory_health_metrics returned null');
   // Semantic cluster density (migration 20260721140000) — the primary cluster
   // signal, replacing the trigram one. Null on a pre-migration store, in which
@@ -221,6 +235,27 @@ function evaluateClusterDensity(metrics, insufficient) {
   };
 }
 
+/**
+ * Render the "this was measured over a bounded sample" clause for metrics 1
+ * and 3, whose driving population is capped per repo (migration
+ * 20260808160000 — the uncapped form never returned). No silent caps: a
+ * truncated population must never read as full coverage. Returns '' when the
+ * cap did not bite, and '' on a pre-migration store that has no `_total`
+ * companion (rather than inventing a coverage claim from a missing field).
+ *
+ * @param {number|string|null|undefined} considered
+ * @param {number|string|null|undefined} total
+ * @param {number|string|null|undefined} cap
+ * @returns {string}
+ */
+function capNote(considered, total, cap) {
+  const c = Number(considered);
+  const t = Number(total);
+  if (!Number.isFinite(c) || !Number.isFinite(t) || t <= c) return '';
+  const capTxt = Number.isFinite(Number(cap)) ? ` (cap ${Number(cap)}/repo)` : '';
+  return ` — measured over the ${c} most recent of ${t}${capTxt}; the rate is a sample, not a census`;
+}
+
 function evaluateTriggers(metrics) {
   const { total_findings_in_window, fuzzy_reraise, cluster_density, recurrence } = metrics;
 
@@ -232,6 +267,7 @@ function evaluateTriggers(metrics) {
       actual: Number(fuzzy_reraise.rate),
       threshold: THRESHOLDS.fuzzyReraiseRate,
       reading: `${fuzzy_reraise.fuzzy_matched}/${fuzzy_reraise.new_fingerprints} new-fingerprint findings matched a prior finding by text similarity`
+        + capNote(fuzzy_reraise.new_fingerprints, fuzzy_reraise.new_fingerprints_total, metrics.per_repo_cap)
     },
     cluster_density: evaluateClusterDensity(metrics, insufficient),
     recurrence: {
@@ -239,6 +275,7 @@ function evaluateTriggers(metrics) {
       actual: Number(recurrence.rate),
       threshold: THRESHOLDS.recurrenceRate,
       reading: `${recurrence.recurred}/${recurrence.fixed_findings} fixed findings recurred with a different fingerprint`
+        + capNote(recurrence.fixed_findings, recurrence.fixed_findings_total, metrics.per_repo_cap)
     }
   };
 
@@ -388,7 +425,7 @@ async function main() {
   process.exit((evaluation.firedCount > 0 || friction.hardFail || friction.errored) ? 1 : 0);
 }
 
-export const _internals = { atomicWrite, evaluateClusterDensity, THRESHOLDS };
+export const _internals = { atomicWrite, evaluateClusterDensity, capNote, THRESHOLDS };
 
 const isMain = (() => {
   try {

@@ -76,6 +76,113 @@ mid-implementation edits from a concurrent session adding a GC pass that
 deletes on-disk files absent from the manifest. Confirmed `selectDiskOrphans`
 runs *before* the `DRY_RUN` guard, so the preview is faithful; it reported 0
 deletions and the real run deleted nothing.
+## 2026-08-08 — the weekly memory-health gate had not measured anything for months
+
+`npm run memory:health` died at 121s against Supabase; against the NAS store
+(no server-side cap) `memory_health_metrics(30)` ran past 15 minutes, so the
+local maintenance replica's 5-minute per-check spawn budget killed it with a
+bare `spawn ETIMEDOUT`. Pre-existing on both hosts — not a migration
+regression. The gate has been reporting a runner error in place of a
+measurement.
+
+**The trigram prefilter was never indexed.** The 2026-04-21 perf patch added
+`%` to all three metrics, commented it `-- indexed trigram filter`, and in the
+same edit truncated both operands to `LEFT(detail_snapshot, 500)`. That
+truncation disabled the index the operator was added to use:
+`audit_findings_detail_trgm_idx` is a GIN index on the *bare* column and
+cannot serve `left(detail_snapshot,500) % left(...,500)`. `EXPLAIN` showed the
+predicate sitting in a Join Filter over every pair. Measured on the NAS store
+(3,609 findings / 585 runs / 4 repos, `select memory_health_metrics(30)`):
+metric 1 = 3,695,111 candidate pairs, cancelled at 672s without completing;
+metric 2 = 79,924 pairs / 10.8s (measured alone, `EXPLAIN ANALYZE`); metric 3 =
+709,852 pairs / 208.8s (measured under contention with metric 1, so an upper
+bound). ~135 us/pair is *derived* from metric 2. Metric 2 survived only because
+the same 2026-04-21 patch capped it at 200 findings/repo; 1 and 3 were
+uncapped — that is the whole asymmetry.
+
+**Three parts, each kept because a measurement killed the previous one.** The
+planner picked a different wrong plan at every step, so
+[`20260808160000_memory_health_trgm_index.sql`](supabase/migrations/20260808160000_memory_health_trgm_index.sql)
+carries all three: a GIN index on `left(detail_snapshot, 500)` (preserving
+truncation semantics — 25% of rows exceed 500 chars, so reusing the
+bare-column index would have moved a quarter of the measurements); LATERAL
+best-match probes behind an `OFFSET 0` fence (with the index but no fence the
+planner still chose the `created_at` btree, 477 ms/probe → 55 ms/probe fenced);
+and a per-repo cap on the DRIVING set, because a GIN `%` probe costs ~55ms
+almost independently of threshold (0.5 → 0.6 cut candidates 29 → 5 but the
+index scan only 56.5 → 55.4ms — the cost is merging posting lists for the ~350
+trigrams of the search key). Which side is capped is the correctness question:
+capping the *searched* set would drop real matches and bias `fuzzy_matched`
+down, a false GREEN. `new_fingerprints_total` / `fixed_findings_total` /
+`per_repo_cap` are published so a truncated population cannot read as full
+coverage.
+
+**Equivalence measured, not assumed.** Both formulations over an identical
+400-row sample, the exhaustive side carrying *no* prefilter at all: 22 vs 22
+matched, identical finding set, identical best-similarity to 9dp.
+`matched_finding_id` differed on some rows — exact ties, 7 of the 22 hits have
+multiple priors tied at max similarity (widest 37), which `DISTINCT ON` broke
+arbitrarily too. Added `, cand.id` as a deterministic tiebreak. The same run
+confirms the `%` prefilter is loss-free at 0.5 against a 0.6 cutoff.
+
+**`SET statement_timeout` inside a function body is decorative.** Postgres arms
+the statement timer at statement start; a `SET` taking effect inside the body
+never re-arms it. Negative control on this server: a function declaring
+`statement_timeout='2s'` slept 5s and returned normally, while the identical
+sleep under a session-level 2s timeout was cancelled. All three memory-health
+migrations carry that clause. Supabase's 121s cancel came from the server-side
+default, never from it. The bound now lives at the caller —
+[`rpc.mjs`](scripts/lib/db/rpc.mjs) wraps the RPC in `withTx` + `SET LOCAL`,
+verified failing correctly (cancelled at 1553ms, SQLSTATE 57014);
+`memory-health.mjs` passes 240s, sized against the runner's 300s spawn budget
+so a runaway is a loud `57014` rather than a silent kill.
+
+**The first draft of the fix silently reverted a security migration.**
+`CREATE OR REPLACE FUNCTION` replaces the whole proconfig array and resets the
+ACL, so copying the old migration's `GRANT ... TO anon, authenticated` tail
+undid 20260721130000's `search_path` pin *and* its EXECUTE revoke. Caught by
+diffing the live catalog (`pg_proc.proconfig` / `proacl`), not by review — the
+regenerated schema fixture surfaced it as a one-line `config` change. Restored
+to the exact prior state and documented in the migration so the next
+redefinition of this function does not repeat it.
+
+**Verified**: `npm run memory:health` → 56s, `status=AMBER triggers=1/3
+fuzzy=7.2% cluster=25.5 recurrence=1.1%` (exit 1 is the gate firing on real
+data, not a failure). Through `maintenance-checks.mjs runCheck` → 56.1s against
+the 300s budget, `status: attention` instead of `spawn ETIMEDOUT`. Suite:
+10,120 tests, 2 failures both caused by injecting a DSN into tests that assert
+"no env" — that file passes 11/11 without it. `--check-drift` clean (it caught
+a post-apply header edit first, which is the gate working). Recurrence numbers
+moved with the cap (4/635 → 3/285, 0.63% → 1.05%) — disclosed, and the rate
+moved *away* from a false green.
+
+**Consumer-side verification: `verified`.** Clean-checkout row — the pre-push
+sandbox (`prepush-check.mjs`) built a throwaway worktree at the pushed sha
+`257d89f9` and ran the full battery there, not against this working tree:
+`10,120 tests, 10,096 pass, 0 fail, 24 skipped`, every gate green including
+`skills:check`. Store row — the migration's only consumer is the audit-loop
+store itself, checked directly against the NAS DSN at the applied sha with
+`setup-postgres.mjs --check-drift` (`no drift`, ledger 99/99), and the pushed
+blob confirmed reachable from `origin/main` after a re-fetch. No consumer
+bundle artifact or skill-manifest change ships here, so those rows do not apply.
+
+*(Corrected in the follow-up commit: this paragraph first read `unverified`,
+citing "no second checkout free of the concurrent session" as the blocked
+prerequisite. That was wrong — `prepush-check.mjs` constructs exactly that
+checkout on every push, and it had already run green. An `unverified` must name
+a genuinely blocked prerequisite; naming one that the tooling already satisfies
+is the excuse the rule forbids. Two test failures reported in the same entry
+were likewise environmental — `DOTENV_CONFIG_PATH` re-supplied a DSN to tests
+that assert "no env", which the sandbox run at 0 failures settles.)*
+
+Left alone deliberately: `refresh_runs` ordinal drift between the committed
+schema fixture (gaps 5→12) and the NAS store (contiguous 1→14) — pre-existing,
+from how the NAS was provisioned at the 2026-08-08 cutover, and unrelated to
+this change; the regenerated fixture was hand-reverted to the committed values
+so only the new index landed. Also unrelated: `skills:check` fails in a git
+worktree because `.claude/skills/**` checks out CRLF there while
+`.gitattributes` pins LF, so the generator sees all 67 files as differing; it
+passes in the main checkout.
 
 ## 2026-08-08 — five field-reported defects, and the two the fixes found
 
