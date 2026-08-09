@@ -13,7 +13,7 @@
  * per-run zero that flakes on expected single-field variance.
  */
 
-import { test } from 'node:test';
+import { test, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -336,4 +336,55 @@ test('--out writes an evidence file even when the fixture could not load', () =>
   } finally {
     fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
+});
+
+// ── D2: the default input can actually reach exit 0 ────────────────────────
+
+describe('the default fixture bundle', () => {
+  const DIR = new URL('../tests/fixtures/anchor-contract/', import.meta.url);
+
+  it('resolves and parses — the check that would have caught the original defect', async () => {
+    // Cheap, offline, and the exact class of failure `cee4448` was: a default
+    // pointing at something the probe cannot turn into a usable run.
+    const fs = await import('node:fs');
+    const manifest = JSON.parse(fs.readFileSync(new URL('MANIFEST.json', DIR), 'utf-8'));
+    const diff = fs.readFileSync(new URL('known-defects.diff', DIR), 'utf-8');
+
+    assert.match(diff, /^diff --git /m, 'the pinned diff must be a unified diff');
+    assert.ok(manifest.files.length > 0, 'the manifest must list the snapshot files');
+    for (const f of manifest.files) {
+      assert.ok(fs.existsSync(new URL(`files/${f.path}`, DIR)),
+        `${f.path} is listed in MANIFEST.json but its snapshot is missing`);
+    }
+  });
+
+  it('is SELF-CONTAINED — both halves of the model input are committed', async () => {
+    // The immutability the plan claimed and a bare committed diff does not
+    // deliver: `readFilesAsContext` reads the live worktree, so pinning only the
+    // diff freezes the changes while the analysed code drifts underneath.
+    const fs = await import('node:fs');
+    const manifest = JSON.parse(fs.readFileSync(new URL('MANIFEST.json', DIR), 'utf-8'));
+    const diff = fs.readFileSync(new URL('known-defects.diff', DIR), 'utf-8');
+    const referenced = [...diff.matchAll(/^\+\+\+ b\/(.+)$/gm)].map((m) => m[1]).filter((p) => p !== '/dev/null');
+    for (const p of referenced) {
+      assert.ok(manifest.files.some((f) => f.path === p),
+        `${p} is referenced by the diff but has no committed snapshot — the bundle is not self-contained`);
+    }
+  });
+
+  it('carries no sensitive path and no secret shape (Tier 3, same commit)', async () => {
+    // The bundle is committed AND sent to a live provider on every run, and
+    // deleted content is where credentials survive. The extraction was gated;
+    // this is what stops a later edit regressing it.
+    const fs = await import('node:fs');
+    const { shouldSkipForIndexing } = await import('../scripts/lib/sensitive-paths.mjs');
+    const manifest = JSON.parse(fs.readFileSync(new URL('MANIFEST.json', DIR), 'utf-8'));
+    for (const f of manifest.files) {
+      assert.equal(shouldSkipForIndexing(f.path, ['sensitive']).skip, false,
+        `${f.path} classifies as sensitive and must not be in a committed fixture`);
+    }
+    const bodies = manifest.files.map((f) => fs.readFileSync(new URL(`files/${f.path}`, DIR), 'utf-8')).join('\n');
+    assert.doesNotMatch(bodies, /-----BEGIN [A-Z ]*PRIVATE KEY-----/, 'a private key survived extraction');
+    assert.doesNotMatch(bodies, /\bsk-[A-Za-z0-9]{20,}/, 'an API-key shape survived extraction');
+  });
 });

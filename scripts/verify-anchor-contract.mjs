@@ -64,8 +64,10 @@
  * @module scripts/verify-anchor-contract
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 import { runTieredAuditPipeline } from './lib/audit/tiered-pipeline.mjs';
 import { TieredUnavailableError } from './lib/audit/discovery-fallback.mjs';
 import { filterDiffFiles, formatSkipLog } from './lib/sensitive-paths.mjs';
@@ -94,6 +96,78 @@ import { argOption } from './lib/cli-io.mjs';
  * rather than weakening the acceptance criteria.
  */
 const DEFAULT_FIXTURE_REV = 'cee4448';
+
+/**
+ * The DEFAULT input: a committed, self-contained fixture bundle.
+ *
+ * `cee4448` above stayed the default for months and **could never exit 0**. Both
+ * generators return 0 findings on it (recorded in
+ * `docs/plans/evidence-anchor-path-contract.md`), 0 findings maps to
+ * `contract_not_exercised` → `could_not_run` → **exit 2**, so the no-flag
+ * invocation of this mandatory probe was structurally incapable of passing.
+ * Acceptance had been demonstrated against `d3c6269`, which was never pinned.
+ *
+ * Repinning to another sha would have fixed the symptom and kept every property
+ * that caused it: a git object a shallow clone may lack, reachable only via
+ * history, and free to drift clean exactly as `cee4448` did. Worse, the diff is
+ * only half the model's input — `readFilesAsContext` reads the LIVE worktree, so
+ * pinning a rev freezes the changes while the analysed code moves underneath.
+ *
+ * So the default is a BUNDLE: the diff plus HEAD-side snapshots of every file it
+ * references plus a manifest. Both halves are committed, so the same bytes reach
+ * the provider on every run, in every clone, forever. `--rev <sha>` still runs
+ * against real history for ad-hoc use.
+ *
+ * Resolved from THIS MODULE's location, never `process.cwd()`: the probe must
+ * behave identically run from a subdirectory.
+ */
+const DEFAULT_FIXTURE_PATH = path.join(
+  path.dirname(fileURLToPath(import.meta.url)), '..', 'tests', 'fixtures', 'anchor-contract',
+);
+
+/**
+ * Load the committed fixture bundle. Returns the SAME shape as
+ * `loadCommittedFixture` so every downstream consumer is mode-agnostic.
+ *
+ * A bundle that is missing, unreadable, or unparseable is `could_not_run` +
+ * exit 2 — the same honest bucket as 0 findings. Never a crash, and never a
+ * pass: an input the probe could not read is not evidence that the contract
+ * holds.
+ */
+function loadBundleFixture(dir = DEFAULT_FIXTURE_PATH) {
+  try {
+    const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'MANIFEST.json'), 'utf-8'));
+    const diffText = fs.readFileSync(path.join(dir, 'known-defects.diff'), 'utf-8');
+    if (!diffText.trim()) {
+      return { ok: false, error: { code: 'BAD_FIXTURE', message: `${dir}: known-defects.diff is empty` } };
+    }
+    if (!/^diff --git /m.test(diffText)) {
+      return { ok: false, error: { code: 'BAD_FIXTURE', message: `${dir}: known-defects.diff has no 'diff --git' header — not a unified diff` } };
+    }
+    const changedFiles = (manifest.files ?? []).map((f) => path.join(dir, 'files', f.path));
+    if (changedFiles.length === 0) {
+      return { ok: false, error: { code: 'BAD_FIXTURE', message: `${dir}: MANIFEST.json lists no files` } };
+    }
+    for (const f of changedFiles) {
+      if (!fs.existsSync(f)) {
+        return { ok: false, error: { code: 'BAD_FIXTURE', message: `${dir}: manifest lists ${f} but the snapshot is absent` } };
+      }
+    }
+    return {
+      ok: true,
+      fixture: {
+        rev: manifest.sourceRev, headSha: manifest.headSha, baseSha: manifest.baseSha,
+        diffText,
+        // The SNAPSHOTS, not the worktree — that is what makes the input immutable.
+        changedFiles,
+        planContent: manifest.planContent ?? '',
+        skipped: [],
+      },
+    };
+  } catch (err) {
+    return { ok: false, error: { code: 'BAD_FIXTURE', message: `${dir}: ${err.message}` } };
+  }
+}
 
 /** The generators §9a's acceptance must cover. A sonnet-only pass is NOT acceptance (R1/H4). */
 const GENERATORS = Object.freeze(['sonnet', 'glm']);
@@ -633,7 +707,13 @@ async function main() {
 
   const jsonMode = process.argv.includes('--json');
   const outFile = argOption('out', null);
-  const rev = argOption('rev', DEFAULT_FIXTURE_REV);
+  // INPUT RESOLUTION — precedence, and the two modes are mutually exclusive.
+  // `--rev <sha>` wins and takes the historical path; otherwise the committed
+  // bundle. The mode is reported in the output so a run's provenance is visible
+  // in its own result rather than inferred from which flags someone recalls.
+  const revArg = argOption('rev', null);
+  const useBundle = revArg === null;
+  const rev = revArg ?? DEFAULT_FIXTURE_REV;
 
   const generatorArg = parseGeneratorArg(argOption('generator', 'all'));
   if (!generatorArg.ok) {
@@ -654,7 +734,8 @@ async function main() {
   }
 
   const repoRoot = findRepoRootFromScript(import.meta.url);
-  const fixtureResult = loadCommittedFixture(repoRoot, rev);
+  const fixtureResult = useBundle ? loadBundleFixture() : loadCommittedFixture(repoRoot, rev);
+  const inputMode = useBundle ? { mode: 'fixture', ref: DEFAULT_FIXTURE_PATH } : { mode: 'rev', ref: rev };
   if (!fixtureResult.ok) {
     // Every VCS failure is COULD-NOT-RUN (exit 2), NOT `vcs.exitCodeFor`'s
     // code: that map (1/4/5/127) predates and collides with this script's
@@ -662,10 +743,12 @@ async function main() {
     // counters present", which is a lie. The VcsErrorCode and its
     // `exitCodeFor` value are recorded in the evidence for diagnosis instead.
     const { code, message } = fixtureResult.error;
-    process.stderr.write(`could not load fixture ${rev}: [${code}] ${message}\n`);
+    // Name the input the run ACTUALLY tried to read. `rev` is the legacy default
+    // and is unused in bundle mode, so printing it named a fixture nobody loaded.
+    process.stderr.write(`could not load fixture (${inputMode.mode}=${inputMode.ref}): [${code}] ${message}\n`);
     if (outFile) {
       atomicWriteFileSync(outFile, JSON.stringify({
-        schemaVersion: 2, generatedAt: new Date().toISOString(), rev,
+        schemaVersion: 2, generatedAt: new Date().toISOString(), rev, input: inputMode,
         runsPerGenerator,
         verdict: 'could_not_run', exitCode: 2,
         fixtureError: { code, message, vcsExitCodeFor: exitCodeFor(code) },
@@ -677,7 +760,9 @@ async function main() {
 
   const { fixture } = fixtureResult;
   for (const line of formatSkipLog(fixture.skipped, { logger: 'anchor-probe-fixture' })) process.stderr.write(`  ${line}\n`);
-  process.stderr.write(`  [anchor-probe] fixture ${rev} → ${fixture.headSha.slice(0, 8)} (base ${fixture.baseSha.slice(0, 8)}), `
+  // Report the MODE and its ref, not `rev` — in bundle mode `rev` is the unused
+  // legacy default and printing it claimed an input the run never read.
+  process.stderr.write(`  [anchor-probe] ${inputMode.mode === 'fixture' ? 'bundle' : 'rev'} ${inputMode.mode === 'fixture' ? 'tests/fixtures/anchor-contract' : rev} (source ${fixture.rev}) → ${fixture.headSha.slice(0, 8)} (base ${fixture.baseSha.slice(0, 8)}), `
     + `${fixture.changedFiles.length} changed file(s), generators: ${generatorArg.generators.join(', ')}, ${runsPerGenerator} run(s) each\n`);
 
   // Grouped by generator: §9a's malformed criterion is an AGGREGATE across a

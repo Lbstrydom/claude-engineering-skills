@@ -1,7 +1,7 @@
 # Plan: Gate-honesty defects confirmed by blind adjudication
 
 - **Date**: 2026-08-08
-- **Status**: In Progress
+- **Status**: Complete
 - **Author**: Claude + Louis
 - **Scope**: backend
 
@@ -873,6 +873,48 @@ rather than `filterDiffFiles`; then the file snapshots plus `MANIFEST.json`.
 Gemini's immutability argument (R3-G1) still stands and still decides the
 shape: a committed diff alone does not deliver immutability, because
 `readFilesAsContext` reads the live worktree.
+
+### 2026-08-09 — D2 done; plan Complete
+
+`DEFAULT_FIXTURE_REV = 'cee4448'` is replaced by a committed, self-contained
+**bundle** at `tests/fixtures/anchor-contract/` (diff + HEAD-side snapshots +
+`MANIFEST.json`). `--rev <sha>` still runs against real history; the two modes
+are mutually exclusive and the mode is reported in both the banner and the
+evidence artefact.
+
+**Demonstrated, not asserted.** `node scripts/verify-anchor-contract.mjs
+--generator sonnet --runs 1` → **`accepted`, exit 0** (raw=6, stage0Verified=3,
+malformedRate 0.000, tripwire=0). The defect was that the no-flag default was
+*structurally incapable* of exit 0; the fix is only real once a live run reaches
+it, so it was run.
+
+Three things the build corrected, each found by doing it rather than planning it:
+
+- **§D2's gating recipe named the wrong function.** `filterDiffFiles(diff,
+  ['sensitive'])` takes a diff STATE OBJECT, not unified-diff text, and returns
+  an empty result when handed text — 876,103 bytes in, 89 bytes out, which reads
+  as "everything was filtered". The extraction gates per-path with
+  `shouldSkipForIndexing` **and** `resolveAndClassify` instead, then
+  `redactSecrets` over every byte written, then a human read. Measured on the
+  shipped bundle: 5 files cleared, 0 needed redaction, 0 secret shapes.
+- **The first subset was too clean to exercise the contract.** Three lib files
+  from `d3c6269` produced `end_turn` with no tool call — `could_not_run`, the
+  same bucket `cee4448` was in. The 16 verified findings §D2 cites came from the
+  WHOLE 29-file commit, not any 3 files of it. Widened to the commit's core new
+  logic (5 files, 52KB diff, 136K bundle) and it accepts.
+- **The probe reported an input it never read.** In bundle mode the banner and
+  the load-failure message both printed `rev` — the unused legacy default — so a
+  run against the bundle announced `fixture cee4448`. Both now name the actual
+  mode and ref. A probe that misreports its own input is the same class of defect
+  as a gate that cannot fail.
+
+Negative control: with `MANIFEST.json` removed the probe exits `BAD_FIXTURE` /
+could-not-run rather than passing — an input it cannot read is never evidence
+that the contract holds.
+
+**Plan status → Complete.** All six adjudicated defects shipped across three
+clusters. Close-out run: `skills:regenerate` (in sync), `gates:poison` (26
+commands, 9 pilled, 17 exempt), `plans:index`, full suite 10,301 pass / 0 fail.
 
 ## Audit trail
 

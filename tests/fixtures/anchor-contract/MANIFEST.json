@@ -1,0 +1,41 @@
+{
+  "sourceRev": "d3c6269",
+  "headSha": "d3c6269e7df0d4f36515181b6d51f6543756f680",
+  "baseSha": "c830e9599cbc8549c396b54b21f522a67957a288",
+  "extractedAt": "2026-07-18",
+  "planContent": "feat(audit): containment-adjacency wave — ask \"what else is in this branch?\"",
+  "files": [
+    {
+      "path": "scripts/lib/audit/adjacency-detector.mjs",
+      "bytes": 25421,
+      "redacted": false
+    },
+    {
+      "path": "scripts/lib/audit/adjacency-compose.mjs",
+      "bytes": 5500,
+      "redacted": false
+    },
+    {
+      "path": "scripts/lib/audit/adjacency-state.mjs",
+      "bytes": 8929,
+      "redacted": false
+    },
+    {
+      "path": "scripts/lib/ast.mjs",
+      "bytes": 6147,
+      "redacted": false
+    },
+    {
+      "path": "scripts/lib/vcs.mjs",
+      "bytes": 18865,
+      "redacted": false
+    }
+  ],
+  "gate": [
+    "shouldSkipForIndexing",
+    "resolveAndClassify",
+    "redactSecrets",
+    "human-read"
+  ],
+  "note": "Both halves of the model input are committed, so the probe is reproducible forever. Refresh only if a generator stops finding defects here; never loosen the grader instead."
+}

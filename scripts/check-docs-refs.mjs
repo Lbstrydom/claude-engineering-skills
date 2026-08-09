@@ -394,6 +394,12 @@ const baselineKey = f => `${f.file}→${f.target}`;
 const TEXT_EXT = new Set([
   '.md', '.mjs', '.js', '.cjs', '.jsx', '.ts', '.tsx', '.json', '.sql', '.sh',
   '.yml', '.yaml', '.html', '.css', '.txt', '.py', '.toml', '.example',
+  // .diff — text, and classified TEXT for the same reason as .sarif below: the
+  // anchor-contract fixture diff carries real repo paths in its  headers,
+  // so treating it as binary would skip a file whose contents genuinely ARE
+  // references. Scanning it also means a fixture that drifts to name a deleted
+  // path fails loudly instead of quietly citing nothing.
+  '.diff',
   // .sarif is JSON (static-analysis interchange format), so it is scannable
   // text, not an opaque blob. Classified deliberately: the SARIF corpus fixture
   // carries tool-reported file paths, and treating it as binary would skip a

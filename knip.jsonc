@@ -37,7 +37,14 @@
   // from where it sits. Being outside "project" is not enough: knip's test-file
   // globbing reaches `**/*.test.mjs` anywhere in the repo, so without this the
   // snapshot contributes 3 permanent phantom "unresolved import" findings.
+  // tests/fixtures/anchor-contract/files/** is the same class: HEAD-side
+  // snapshots of source, committed so the anchor-contract probe's model input is
+  // immutable (a pinned diff alone is only half of it — readFilesAsContext reads
+  // the live worktree). Nothing imports them and nothing should; they are data
+  // that happens to be .mjs. Ignored rather than baselined, because a baseline
+  // entry says "known unused code we tolerate" and these are not code at all.
   "ignore": [
-    "docs/plans/security/files/**"
+    "docs/plans/security/files/**",
+    "tests/fixtures/anchor-contract/files/**"
   ]
 }
