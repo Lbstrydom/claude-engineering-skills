@@ -7,6 +7,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import url from 'node:url';
+import { spawnSync } from 'node:child_process';
 import { appendSession, loadSession, pruneOldSessions, summariseRound, __test__ } from '../scripts/lib/brainstorm/session-store.mjs';
 
 function mkTmp() {
@@ -389,4 +391,120 @@ describe('appendQuarantine — typed, non-throwing contention contract', () => {
       'silently dropping the quarantine line is exactly the lie this plan removes',
     );
   });
+});
+
+// ── §9 case 7(b) — DURABILITY, split from the contention test (R3-L1) ───────
+//
+// The R2 draft asked ONE test to assert both "every line survives" and a
+// non-blocking contention contract that explicitly permits {recorded:false}
+// with no retry. Those cannot both hold, so that test was either flaky or
+// forced an implementation violating the stated contract. Split: 7(a) above
+// pins contention; this pins durability with a CALLER-LEVEL retry, which is
+// exactly where the contract says retrying belongs.
+//
+// Child processes are mandatory, not stylistic: synchronous JS never
+// interleaves inside a critical section, so a same-process test passes against
+// the broken (unlocked append + separate trim) design and is not evidence.
+
+describe('appendQuarantine — durability under real concurrent writers', () => {
+  it('every acknowledged line is present, and the capped file stays structurally valid', () => {
+    const root = mkTmp();
+    const sid = 'durable';
+    fs.mkdirSync(path.dirname(__test__.sessionPath(sid, root)), { recursive: true });
+
+    const storePath = url.pathToFileURL(
+      path.resolve('scripts/lib/brainstorm/session-store.mjs'),
+    ).href;
+    const worker = path.join(root, 'worker.mjs');
+    fs.writeFileSync(worker, [
+      "import { __test__ } from " + JSON.stringify(storePath) + ";",
+      "const [root, sid, tag, countRaw] = process.argv.slice(2);",
+      "const count = Number(countRaw);",
+      "let acked = 0;",
+      "for (let i = 0; i < count; i++) {",
+      "  // Caller-level retry until the write is ACKNOWLEDGED — the contract",
+      "  // says contention is the caller's to retry, and only an acknowledged",
+      "  // line may be asserted present.",
+      "  for (let attempt = 0; attempt < 200; attempt++) {",
+      "    const r = __test__.appendQuarantine(sid, [{ lineIdx: i, raw: tag + ':' + i, reason: 'dur' }], root);",
+      "    if (r.recorded) { acked++; break; }",
+      "  }",
+      "}",
+      "process.stdout.write(String(acked));",
+    ].join('\n'));
+
+    // MUST exceed QUARANTINE_CAP in total, or the trim never fires and the
+    // test cannot see the race it exists to catch. Verified by negative
+    // control: at 2x12 (under the cap of 100) this test passed even with the
+    // lock removed, because with no trim there was nothing for an append to
+    // race. At 2x80 the trim runs repeatedly and an unlocked writer's
+    // whole-file rename clobbers the other's appends.
+    const PER_WORKER = 80;
+    const originalWrite = process.stderr.write;
+    process.stderr.write = () => true;
+    let runs;
+    try {
+      runs = ['a', 'b'].map(tag => spawnSync(
+        process.execPath, [worker, root, sid, tag, String(PER_WORKER)],
+        { encoding: 'utf-8', timeout: 60_000 },
+      ));
+    } finally {
+      process.stderr.write = originalWrite;
+    }
+    for (const r of runs) assert.equal(r.status, 0, r.stderr);
+
+    const acked = runs.reduce((sum, r) => sum + Number(r.stdout.trim() || 0), 0);
+    assert.ok(acked > 0, 'vacuous-pass guard: the workers must have acknowledged at least one write');
+
+    const raw = fs.readFileSync(__test__.quarantinePath(sid, root), 'utf-8');
+    const lines = raw.split('\n').filter(Boolean);
+
+    // Structural validity: an interleaved append racing a trim is exactly how
+    // a torn line appears, so every surviving line must still parse.
+    for (const line of lines) {
+      assert.doesNotThrow(() => JSON.parse(line), 'a torn line means a write raced the trim');
+    }
+    assert.ok(lines.length <= __test__.QUARANTINE_CAP, 'the cap must hold under concurrency');
+
+    assert.ok(acked > __test__.QUARANTINE_CAP, 'test setup: writes must exceed the cap');
+    assert.equal(
+      lines.length, __test__.QUARANTINE_CAP,
+      'the file must settle exactly full — each append lands, the trim drops only the oldest',
+    );
+  });
+
+  // ── Honest limitation of the test above, recorded rather than implied ──
+  //
+  // It asserts REAL properties (structural validity and cap-holding under two
+  // genuine OS processes) but it is NOT a proven regression lock for the lock
+  // itself. Negative-controlled twice: with `withFileLockSync` removed from
+  // `appendQuarantine` it stayed GREEN at 2x12 writes (under the cap, so the
+  // trim never fires and there is nothing to race) and again at 2x80 (once the
+  // file reaches the cap, lost updates leave it AT the cap, so the count cannot
+  // distinguish them).
+  //
+  // What DOES discriminate is the contention pair above — removing the lock
+  // turns "declines with lock-contention" and the loadSession warning red,
+  // because an unlocked implementation can never report contention. Those are
+  // the regression lock; this one is a load/validity check standing beside it.
+  //
+  // Constructing a truly discriminating durability probe needs a controllable
+  // interleaving (a writer paused between the trim's read and its rename),
+  // which `atomicWriteFileSync` gives no seam for.
+  //
+  // The gap is CLOSED, but by decomposition rather than by a better race. The
+  // durability property is the conjunction of two claims, and each half is
+  // reliably testable even though their product is not:
+  //
+  //   1. withFileLockSync provides mutual exclusion
+  //      -> tests/file-lock.test.mjs, two real OS processes, fails on overlap.
+  //   2. appendQuarantine mutates ONLY inside that lock
+  //      -> tests/quarantine-lock-containment.test.mjs, an AST guard that
+  //         resolves the import binding and carries its OWN negative controls
+  //         (it is run against a lock-removed and a shadowed copy of this very
+  //         module, and must report an escape for both).
+  //
+  // (2) is the half a refactor silently breaks — and did, historically. So the
+  // regression lock lives there, and this test is a load/validity check
+  // standing beside it rather than pretending to be the proof.
 });

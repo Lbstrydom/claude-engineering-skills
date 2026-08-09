@@ -484,3 +484,192 @@ describe('reconcilePromotionJournal — positive-evidence-only recovery', () => 
 function tmpDirForReconcile() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'reconcile-c-'));
 }
+
+// ── §9 case 13 — ONE CASE PER ROW of the §2 recovery transition table ───────
+//
+// The earlier coverage here was a SOURCE SCAN: it asserted the branch was
+// spelled correctly and nothing about what it does. "absent" being
+// non-actionable IS finding B, so a suite that cannot drive the branch cannot
+// prove the bug is dead. These drive it through the injected resolver.
+//
+//   promoted   -> the ONLY state that renames + deletes the journal
+//   candidate  -> roll back the .tmp, delete the journal
+//   absent     -> RETAIN. Not proof of promotion.
+//   unknown    -> RETAIN. We could not tell.
+
+describe('reconcilePromotionJournal — the recovery transition table, driven', () => {
+  let dir, jdir, e2e;
+
+  function seedPendingJournal(specId, fingerprint) {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'recovery-'));
+    jdir = path.join(dir, _internals.JOURNAL_DIR);
+    e2e = path.join(dir, _internals.E2E_DIR);
+    fs.mkdirSync(jdir, { recursive: true });
+    fs.mkdirSync(e2e, { recursive: true });
+    const tmpPath = path.join(e2e, specId + '.spec.js.tmp');
+    const intendedPath = path.join(e2e, specId + '.spec.js');
+    fs.writeFileSync(tmpPath, '// staged spec body\n');
+    fs.writeFileSync(path.join(jdir, specId + '.json'), JSON.stringify({
+      stage: 'pending', specId, candidateFingerprint: fingerprint, tmpPath, intendedPath,
+    }));
+    return { tmpPath, intendedPath, journalPath: path.join(jdir, specId + '.json') };
+  }
+
+  function runWith(state) {
+    const originalWrite = process.stderr.write;
+    process.stderr.write = () => true;
+    try {
+      return reconcilePromotionJournal(dir, {
+        repoId: 'repo-under-test',
+        resolveStates: (_root, _repoId, fps) => ({
+          ok: true, states: Object.fromEntries(fps.map(f => [f, state])),
+        }),
+      });
+    } finally {
+      process.stderr.write = originalWrite;
+    }
+  }
+
+  it('promoted -> completes the rename and deletes the journal', async () => {
+    const { tmpPath, intendedPath, journalPath } = seedPendingJournal('spec-p', 'fp-p');
+    const r = await runWith('promoted');
+    assert.equal(fs.existsSync(intendedPath), true, 'the spec must be finalised');
+    assert.equal(fs.existsSync(tmpPath), false);
+    assert.equal(fs.existsSync(journalPath), false, 'the journal is consumed');
+    assert.equal(r.recovered, 1);
+    assert.equal(r.retained, 0);
+  });
+
+  it('candidate -> rolls back the .tmp and deletes the journal', async () => {
+    const { tmpPath, intendedPath, journalPath } = seedPendingJournal('spec-c', 'fp-c');
+    const r = await runWith('candidate');
+    assert.equal(fs.existsSync(intendedPath), false, 'the DB write never landed — nothing to finalise');
+    assert.equal(fs.existsSync(tmpPath), false, 'the staged body is rolled back');
+    assert.equal(fs.existsSync(journalPath), false);
+    assert.equal(r.rolledBack, 1);
+  });
+
+  // THE regression test for finding B. A beyond-page-100 candidate presented
+  // as exactly this, and the old code renamed and deleted on the strength of it.
+  it('absent -> RETAINS: no rename, no journal deletion (finding B)', async () => {
+    const { tmpPath, intendedPath, journalPath } = seedPendingJournal('spec-a', 'fp-a');
+    const r = await runWith('absent');
+    assert.equal(
+      fs.existsSync(intendedPath), false,
+      'absent is NOT proof of promotion — finalising here destroys the recovery record',
+    );
+    assert.equal(fs.existsSync(tmpPath), true, 'the staged body must survive for a later pass');
+    assert.equal(fs.existsSync(journalPath), true, 'the journal must survive');
+    assert.equal(r.retained, 1);
+    assert.equal(r.recovered, 0);
+    assert.equal(r.rolledBack, 0);
+  });
+
+  it('unknown -> RETAINS, same as absent', async () => {
+    const { intendedPath, journalPath } = seedPendingJournal('spec-u', 'fp-u');
+    const r = await runWith('unknown');
+    assert.equal(fs.existsSync(intendedPath), false);
+    assert.equal(fs.existsSync(journalPath), true);
+    assert.equal(r.retained, 1);
+  });
+
+  it('a resolver FAILURE retains — it is never read as absent (an empty map would be)', async () => {
+    const { intendedPath, journalPath } = seedPendingJournal('spec-f', 'fp-f');
+    const originalWrite = process.stderr.write;
+    process.stderr.write = () => true;
+    let r;
+    try {
+      r = await reconcilePromotionJournal(dir, {
+        repoId: 'repo-under-test',
+        resolveStates: () => ({ ok: false, message: 'store unreachable' }),
+      });
+    } finally {
+      process.stderr.write = originalWrite;
+    }
+    assert.equal(fs.existsSync(intendedPath), false, 'a failure must never finalise');
+    assert.equal(fs.existsSync(journalPath), true);
+    assert.equal(r.incomplete, true, 'the run must report that it did not finish');
+  });
+
+  // §9 case 15 — the run cap is per-BATCH, and one over the batch size is a
+  // SECOND request, not an incomplete run. The R2 draft's own test
+  // contradicted its design on exactly this point.
+  it('BATCH_SIZE + 1 journals produce a SECOND batch, not an incomplete run', async () => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'recovery-batch-'));
+    jdir = path.join(dir, _internals.JOURNAL_DIR);
+    e2e = path.join(dir, _internals.E2E_DIR);
+    fs.mkdirSync(jdir, { recursive: true });
+    fs.mkdirSync(e2e, { recursive: true });
+    const n = RECONCILE_BATCH_SIZE + 1;
+    for (let i = 0; i < n; i += 1) {
+      const id = 'spec-' + String(i).padStart(4, '0');
+      fs.writeFileSync(path.join(jdir, id + '.json'), JSON.stringify({
+        stage: 'pending', specId: id, candidateFingerprint: 'fp-' + i,
+        tmpPath: path.join(e2e, id + '.spec.js.tmp'),
+        intendedPath: path.join(e2e, id + '.spec.js'),
+      }));
+    }
+
+    const batchSizes = [];
+    const originalWrite = process.stderr.write;
+    process.stderr.write = () => true;
+    let r;
+    try {
+      r = await reconcilePromotionJournal(dir, {
+        repoId: 'repo-under-test',
+        resolveStates: (_root, _repoId, fps) => {
+          batchSizes.push(fps.length);
+          return { ok: true, states: Object.fromEntries(fps.map(f => [f, 'unknown'])) };
+        },
+      });
+    } finally {
+      process.stderr.write = originalWrite;
+    }
+
+    assert.equal(batchSizes.length, 2, 'one over the batch size must make a second request');
+    assert.deepEqual(batchSizes, [RECONCILE_BATCH_SIZE, 1]);
+    assert.equal(r.incomplete, false, 'two batches is well within the per-run cap — not incomplete');
+    assert.ok(
+      batchSizes.every(sz => sz <= RECONCILE_BATCH_SIZE),
+      'no request may exceed the payload bound the store independently enforces',
+    );
+  });
+
+  it('exceeding the per-RUN cap reports incomplete rather than stopping silently', async () => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'recovery-cap-'));
+    jdir = path.join(dir, _internals.JOURNAL_DIR);
+    e2e = path.join(dir, _internals.E2E_DIR);
+    fs.mkdirSync(jdir, { recursive: true });
+    fs.mkdirSync(e2e, { recursive: true });
+    const n = RECONCILE_BATCH_SIZE * RECONCILE_MAX_BATCHES_PER_RUN + 1;
+    for (let i = 0; i < n; i += 1) {
+      const id = 'spec-' + String(i).padStart(5, '0');
+      fs.writeFileSync(path.join(jdir, id + '.json'), JSON.stringify({
+        stage: 'pending', specId: id, candidateFingerprint: 'fp-' + i,
+        tmpPath: path.join(e2e, id + '.spec.js.tmp'),
+        intendedPath: path.join(e2e, id + '.spec.js'),
+      }));
+    }
+    let calls = 0;
+    const originalWrite = process.stderr.write;
+    process.stderr.write = () => true;
+    let r;
+    try {
+      r = await reconcilePromotionJournal(dir, {
+        repoId: 'repo-under-test',
+        resolveStates: (_root, _repoId, fps) => {
+          calls += 1;
+          return { ok: true, states: Object.fromEntries(fps.map(f => [f, 'unknown'])) };
+        },
+      });
+    } finally {
+      process.stderr.write = originalWrite;
+    }
+    assert.equal(calls, RECONCILE_MAX_BATCHES_PER_RUN, 'the per-run cap bounds requests');
+    assert.equal(r.incomplete, true, 'hitting the cap is reported, never a silent stop');
+    assert.ok(
+      fs.readdirSync(jdir).filter(f => f.endsWith('.json')).length >= n,
+      'nothing may be dropped: every unreached journal is still on disk',
+    );
+  });
+});

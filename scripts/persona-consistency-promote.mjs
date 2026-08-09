@@ -651,7 +651,18 @@ async function promoteOne(repoRoot, repoId, cand, promotedBy) {
 // Journal reconciliation (crash recovery)
 // ────────────────────────────────────────────────────────────────────────────
 
-export async function reconcilePromotionJournal(repoRoot) {
+/**
+ * @param {string} repoRoot
+ * @param {object} [deps] - test seam, mirroring `promoteCandidates(args, deps)`.
+ *   `resolveStates(repoRoot, repoId, fingerprints)` stands in for the
+ *   cross-skill resolver so each row of the §2 recovery transition table can be
+ *   exercised as BEHAVIOUR. Without it these tests could only scan the source
+ *   for the right string, which proves the branch is spelled correctly and
+ *   nothing about what it does — and `absent` being non-actionable is the whole
+ *   defect (finding B), so a suite that cannot drive it cannot prove the bug is
+ *   dead.
+ */
+export async function reconcilePromotionJournal(repoRoot, deps = {}) {
   const dir = path.join(repoRoot, JOURNAL_DIR);
   if (!fs.existsSync(dir)) return { recovered: 0, rolledBack: 0, retained: 0, incomplete: false };
 
@@ -676,7 +687,7 @@ export async function reconcilePromotionJournal(repoRoot) {
   // without DB; only `pending` disambiguation needs the live candidate
   // set.
   await initLearningStore();
-  let repoId = null;
+  let repoId = deps.repoId ?? null;
   if (await isCloudEnabled()) {
     try {
       const uuid = readLocalRepoUuid(repoRoot);
@@ -684,6 +695,8 @@ export async function reconcilePromotionJournal(repoRoot) {
     } catch { /* fall through */ }
   }
   const canQueryDb = !!repoId;
+  // Injectable for tests; defaults to the real cross-skill bridge.
+  const resolveStates = deps.resolveStates ?? resolveCandidateStatesViaCli;
 
   // Read the traversal checkpoint and start AFTER the last fingerprint
   // examined, wrapping once exhausted. A corrupt checkpoint restarts from the
@@ -718,7 +731,7 @@ export async function reconcilePromotionJournal(repoRoot) {
         break;
       }
       const chunk = journalFingerprints.slice(i, i + RECONCILE_BATCH_SIZE);
-      const r = resolveCandidateStatesViaCli(repoRoot, repoId, chunk.map(c => c.fp));
+      const r = resolveStates(repoRoot, repoId, chunk.map(c => c.fp));
       batches += 1;
       if (!r.ok) {
         // A resolver failure is `unknown`, which RETAINS. It must never be
