@@ -29,7 +29,13 @@ function readSource(absPath) {
 
 const SHAPE_A_TARGETS = [
   { file: 'scripts/learning/backfill-outcomes.mjs', fn: 'drainFrictionFallback' },
-  { file: 'scripts/lib/brainstorm/session-store.mjs', fn: 'appendQuarantine' },
+  // Was `appendQuarantine` until the quarantine write moved under a lock
+  // (docs/plans/learning-persona-quickfix-honest-failure.md §2 items 5+6).
+  // The write now lives in the named critical section `appendQuarantine`
+  // delegates to; this guard's own rule is to stop at nested-function
+  // boundaries, so it must target the function that OWNS the write rather
+  // than the one that wraps it in a lock.
+  { file: 'scripts/lib/brainstorm/session-store.mjs', fn: 'writeQuarantineLocked' },
   { file: 'scripts/lib/claudemd/autofix.mjs', fn: 'applyFixes' },
   { file: 'scripts/lib/learning/decision-logger.mjs', fn: 'writeOutbox' },
   { file: 'scripts/lib/learning/quickfix-stats.mjs', fn: 'writeAtomic' },

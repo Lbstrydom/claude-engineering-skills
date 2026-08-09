@@ -205,3 +205,188 @@ describe('appendQuarantine — failure contract', () => {
     assert.match(warned, /cannot read quarantine/);
   });
 });
+
+// ── Phase 4: the §2 three-way schemaVersion table ──────────────────────────
+//
+// docs/plans/learning-persona-quickfix-honest-failure.md §2 item 4. The old
+// branch was two-way in effect: `=== 2` -> V2, numeric `> 2` -> quarantine,
+// EVERYTHING ELSE -> V1 synthesis. So `"3"`, `null`, `false`, `{}` and `[]`
+// were routed down the V1 path and stamped `_synthesised` — a record the
+// loader could not interpret was accepted AND affirmatively mislabelled as a
+// legacy record it is not. Key-absence is the correct V1 test: across the 43
+// live records in .brainstorm/sessions/, 0 lack the key and 43 carry exactly
+// 2, and a V1 writer never wrote the field at all.
+
+function mkBaseLine(extra) {
+  return JSON.stringify({
+    topic: 'x', redactionCount: 0, resolvedModels: {}, providers: [],
+    totalCostUsd: 0, sid: 'sv', round: 0, capturedAt: new Date().toISOString(),
+    ...extra,
+  });
+}
+
+function quietLoad(line, sid = 'sv') {
+  const root = mkTmp();
+  const file = __test__.sessionPath(sid, root);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, line + '\n');
+  const originalWrite = process.stderr.write;
+  process.stderr.write = () => true;
+  try {
+    return { loaded: loadSession(sid, { root }), root };
+  } finally {
+    process.stderr.write = originalWrite;
+  }
+}
+
+describe('loadSession — schemaVersion three-way table (plan section 2, item 4)', () => {
+  const UNSUPPORTED = [
+    ['numeric 3', 3],
+    ['string "3"', '3'],
+    ['null', null],
+    ['false', false],
+    ['an object', {}],
+    ['an array', []],
+  ];
+
+  for (const [label, value] of UNSUPPORTED) {
+    it(`quarantines ${label} instead of mislabelling it as a synthesised V1`, () => {
+      const { loaded, root } = quietLoad(mkBaseLine({ schemaVersion: value }));
+      assert.equal(loaded.rounds.length, 0, `${label} must not be interpreted`);
+      assert.equal(loaded.invalidCount, 1);
+      assert.equal(
+        loaded.synthesisedCount, 0,
+        'a record the loader cannot interpret must NOT be counted as a synthesised V1',
+      );
+      const q = fs.readFileSync(__test__.quarantinePath('sv', root), 'utf-8');
+      assert.match(
+        q, /unsupported-schema-version/,
+        'the reason must name the unsupported version, not blame the JSON',
+      );
+    });
+  }
+
+  it('a key-absent record is still synthesised as V1 (backward compat)', () => {
+    const { loaded } = quietLoad(mkBaseLine({}));
+    assert.equal(loaded.rounds.length, 1);
+    assert.equal(loaded.synthesisedCount, 1);
+    assert.deepEqual(
+      loaded.rounds[0]._synthesised.fields,
+      ['sid', 'round', 'schemaVersion', 'capturedAt'],
+    );
+  });
+
+  it('schemaVersion 2 is validated as V2 and never stamped _synthesised', () => {
+    const { loaded } = quietLoad(mkBaseLine({ schemaVersion: 2 }));
+    assert.equal(loaded.rounds.length, 1);
+    assert.equal(loaded.synthesisedCount, 0);
+    assert.equal(
+      loaded.rounds[0]._synthesised, undefined,
+      '_synthesised must be stamped ONLY on records genuinely synthesised from V1',
+    );
+  });
+});
+
+// ── Phase 4: appendQuarantine is locked and never lies ─────────────────────
+//
+// R1-H1: an append-only design does NOT close this race. O_APPEND serialises
+// appends against other APPENDS to the same inode; it gives no protection
+// against the trim, which reads a snapshot then rename()s a replacement over
+// the file. An append landing after the trim's read but before its rename
+// goes to the OLD inode and vanishes. So every mutation participates in ONE
+// lock, and a caller that cannot acquire it is TOLD so rather than being let
+// believe it recorded something.
+
+function holdQuarantineLock(sid, root) {
+  fs.mkdirSync(path.dirname(__test__.sessionPath(sid, root)), { recursive: true });
+  // A live holder — our own pid, so the stale-recovery path cannot fire and
+  // this is genuine contention rather than an abandoned lock.
+  fs.writeFileSync(__test__.quarantineLockPath(sid, root), JSON.stringify({
+    pid: process.pid, token: 'held-by-someone-else', acquiredAt: new Date().toISOString(),
+  }));
+}
+
+function quietly(fn) {
+  const originalWrite = process.stderr.write;
+  process.stderr.write = () => true;
+  try { return fn(); } finally { process.stderr.write = originalWrite; }
+}
+
+describe('appendQuarantine — typed, non-throwing contention contract', () => {
+  it('returns {recorded:true, count} on the uncontended path', () => {
+    const root = mkTmp();
+    const r = quietly(() => __test__.appendQuarantine(
+      'lock-ok', [{ lineIdx: 0, raw: 'x', reason: 'test' }], root,
+    ));
+    assert.equal(r.recorded, true);
+    assert.equal(typeof r.count, 'number');
+  });
+
+  it('declines with {recorded:false, reason:"lock-contention"} while the lock is held', () => {
+    const root = mkTmp();
+    const sid = 'lock-contended';
+    holdQuarantineLock(sid, root);
+    const qPath = __test__.quarantinePath(sid, root);
+    const before = JSON.stringify({ lineIdx: 0, raw: 'pre-existing', reason: 'earlier' }) + '\n';
+    fs.writeFileSync(qPath, before);
+
+    const r = quietly(() => __test__.appendQuarantine(
+      sid, [{ lineIdx: 1, raw: 'y', reason: 'test' }], root,
+    ));
+
+    assert.equal(r.recorded, false, 'it must not claim to have recorded a line it did not write');
+    assert.equal(r.reason, 'lock-contention');
+    assert.equal(
+      fs.readFileSync(qPath, 'utf-8'), before,
+      'a declined append must leave the file byte-intact',
+    );
+  });
+
+  it('never throws on contention (the caller contract is never-throw)', () => {
+    const root = mkTmp();
+    const sid = 'lock-nothrow';
+    holdQuarantineLock(sid, root);
+    quietly(() => assert.doesNotThrow(
+      () => __test__.appendQuarantine(sid, [{ lineIdx: 0, raw: 'z', reason: 'r' }], root),
+    ));
+  });
+
+  it('enforces the cap inside the same critical section as the append', () => {
+    const root = mkTmp();
+    const sid = 'cap';
+    const cap = __test__.QUARANTINE_CAP;
+    quietly(() => {
+      for (let i = 0; i < cap + 10; i += 1) {
+        __test__.appendQuarantine(sid, [{ lineIdx: i, raw: 'x', reason: 'r' }], root);
+      }
+    });
+    const lines = fs.readFileSync(__test__.quarantinePath(sid, root), 'utf-8')
+      .split('\n').filter(Boolean);
+    assert.equal(lines.length, cap, 'the cap must hold — trim is not a separate unlocked pass');
+    // Survivors must be the NEWEST, proving the trim kept the tail.
+    assert.equal(JSON.parse(lines[lines.length - 1]).lineIdx, cap + 9);
+  });
+
+  it('loadSession surfaces a declined quarantine write in its warning line', () => {
+    const root = mkTmp();
+    const sid = 'q-declined';
+    const file = __test__.sessionPath(sid, root);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, '{not-valid-json\n');
+    holdQuarantineLock(sid, root);
+
+    let warned = '';
+    const originalWrite = process.stderr.write;
+    process.stderr.write = (chunk) => { warned += chunk; return true; };
+    try {
+      loadSession(sid, { root });
+    } finally {
+      process.stderr.write = originalWrite;
+    }
+
+    assert.match(
+      warned, /lock-contention|not recorded/,
+      'silently dropping the quarantine line is exactly the lie this plan removes',
+    );
+  });
+});

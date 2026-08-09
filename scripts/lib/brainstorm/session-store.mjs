@@ -13,7 +13,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { withFileLock } from '../file-lock.mjs';
+import { withFileLock, withFileLockSync } from '../file-lock.mjs';
 import { BrainstormEnvelopeV2Schema, BrainstormEnvelopeWriteSchema } from './schemas.mjs';
 import { validateSid } from './id-validator.mjs';
 import { ensureDir } from '../cli-io.mjs';
@@ -39,6 +39,15 @@ function lockPath(sid, rootOverride = null) {
 
 function quarantinePath(sid, rootOverride = null) {
   return path.join(sessionDir(rootOverride), `${sid}.quarantine.jsonl`);
+}
+
+/**
+ * Lock guarding EVERY mutation of the quarantine file. Distinct from
+ * `lockPath` (which guards the session jsonl) so a quarantine write never
+ * contends with an append to the session itself.
+ */
+function quarantineLockPath(sid, rootOverride = null) {
+  return path.join(sessionDir(rootOverride), `${sid}.quarantine.jsonl.lock`);
 }
 
 
@@ -86,6 +95,17 @@ export async function appendSession({ sid, envelope, root = null }) {
     // corrupt persisted line cannot poison the next-round computation.
     // Quarantined lines stay on disk for forensics but are excluded
     // from the sequence the writer sees.
+    //
+    // DELIBERATE, and wider since the §2 three-way table: `_invalid` here
+    // marks only JSON PARSE failures, while `loadSession` additionally
+    // quarantines structurally-invalid and unsupported-schemaVersion records.
+    // So a record loadSession rejects can still contribute its round here.
+    // That is harmless and was verified rather than assumed: such a line
+    // physically occupies a file position, so counting its round only pushes
+    // `nextRound` further forward — it can never collide with a VALID
+    // record's round, which is the whole contract. Running full schema
+    // validation inside the append lock to close the cosmetic gap would add
+    // per-append cost for no correctness gain.
     const existing = readLinesUnvalidated(sid, root).filter(e => !e._invalid);
     const nextRound = existing.length === 0
       ? 0
@@ -185,12 +205,25 @@ export function loadSession(sid, { root = null } = {}) {
         continue;
       }
       rounds.push(normalizeArchFields(v.data));
-    } else if (typeof parsed.schemaVersion === 'number' && parsed.schemaVersion > 2) {
-      // Audit R2-M8: future-version records should NOT be silently
-      // downcast through the V1 synthesis path. Quarantine and warn so
-      // operators see a forward-incompatibility explicitly.
+    } else if (Object.hasOwn(parsed, 'schemaVersion')) {
+      // Present but not 2 — neither V2 nor V1, so the loader cannot interpret
+      // it. Implements row 3 of the §2 three-way table in
+      // docs/plans/learning-persona-quickfix-honest-failure.md.
+      //
+      // The previous branch only caught NUMERIC versions above 2, so `"3"`,
+      // `null`, `false`, `{}` and `[]` all fell through to V1 synthesis and
+      // were stamped `_synthesised` — accepting a record it could not read AND
+      // affirmatively mislabelling it as a legacy record it is not. Key
+      // ABSENCE is the correct V1 test: a V1 writer never wrote the field, and
+      // across the 43 live records in .brainstorm/sessions/ zero lack the key
+      // while all 43 carry exactly 2, so no legitimate V1 record can be
+      // misrouted here.
       invalidCount++;
-      invalidLines.push({ lineIdx: idx, raw: line, reason: `unsupported-future-schema-version-${parsed.schemaVersion}` });
+      invalidLines.push({
+        lineIdx: idx,
+        raw: line,
+        reason: `unsupported-schema-version-${JSON.stringify(parsed.schemaVersion)}`,
+      });
       continue;
     } else {
       // V1 — synthesise V2 fields
@@ -219,13 +252,38 @@ export function loadSession(sid, { root = null } = {}) {
     process.stderr.write(`  [session-store] WARN: session ${sid} uses pre-v2 schema; auto-synthesising sid/round/capturedAt for ${synthesisedCount} line(s)\n`);
   }
   if (invalidCount > 0) {
-    process.stderr.write(`  [session-store] WARN: session ${sid} ${invalidCount} invalid line(s) quarantined\n`);
-    appendQuarantine(sid, invalidLines, root);
+    const q = appendQuarantine(sid, invalidLines, root);
+    // Reflect a declined write in the SAME line that claims the quarantine
+    // happened — otherwise the operator reads "quarantined" about lines that
+    // were never written anywhere.
+    const suffix = q.recorded ? 'quarantined' : `NOT recorded (${q.reason})`;
+    process.stderr.write(`  [session-store] WARN: session ${sid} ${invalidCount} invalid line(s) ${suffix}\n`);
   }
 
   return { sid, rounds, synthesisedCount, invalidCount };
 }
 
+/**
+ * Append quarantined lines, enforcing the cap in the SAME critical section.
+ *
+ * **Why one lock over both operations (R1-H1).** The first draft of this fix
+ * proposed `fs.appendFileSync` (O_APPEND) plus a separately-locked
+ * opportunistic trim, and claimed that removed the race at the root. It does
+ * not. O_APPEND serialises appends against OTHER APPENDS to the same inode; it
+ * gives no protection at all against the trim, which reads a snapshot and then
+ * `rename()`s a replacement file over it. An append landing after the trim's
+ * read but before its rename goes to the OLD inode and vanishes when the new
+ * file replaces it. That design narrowed the window and called it closed.
+ * So: there is no unlocked write path here.
+ *
+ * **Why it returns a result instead of throwing.** This function's callers are
+ * on a best-effort diagnostic path and must never crash — but "never throw"
+ * must not become "silently pretend". A caller that cannot acquire the bounded
+ * lock has NOT recorded the line, and says so with a typed result the caller
+ * can surface. Nothing throws; nothing lies.
+ *
+ * @returns {{recorded: true, count: number} | {recorded: false, reason: string}}
+ */
 function appendQuarantine(sid, invalidLines, root = null) {
   const qPath = quarantinePath(sid, root);
   try {
@@ -234,32 +292,58 @@ function appendQuarantine(sid, invalidLines, root = null) {
     // atomic-write-adoption plan: ensureDir sat unprotected right above the
     // write it exists to serve — a failure here (e.g. a transient Windows
     // lock) escaped uncaught, breaking this function's own best-effort,
-    // never-crash-the-caller contract. Folded into the same swallow-and-warn
-    // pattern as the read/write failures below.
+    // never-crash-the-caller contract.
     process.stderr.write(`  [session-store] WARN: cannot prepare quarantine dir for ${qPath}: ${err.code || err.message}\n`);
-    return;
+    return { recorded: false, reason: 'dir-unavailable' };
   }
-  // Audit R2-M5: best-effort write. Quarantine is diagnostic — missing
-  // writes don't corrupt active state. Use a brief synchronous swap via
-  // tmp+rename to avoid torn writes; concurrent loadSession invocations
-  // will each see the union eventually since this is append-then-trim.
+
+  const outcome = withFileLockSync(
+    quarantineLockPath(sid, root), {},
+    () => writeQuarantineLocked(qPath, invalidLines),
+  );
+
+  if (!outcome.ok) return { recorded: false, reason: outcome.reason };
+  return outcome.value;
+}
+
+/**
+ * The quarantine critical section: read, append, trim, write — all of it.
+ *
+ * A NAMED top-level function rather than an inline callback so the
+ * atomic-write-adoption guard can still prove this write path delegates to
+ * `atomicWriteFileSync`. That guard deliberately refuses to descend into
+ * nested closures (a call inside one is not provably on the executable path),
+ * so burying the write in an anonymous arrow would have silently turned its
+ * verdict to `absent` — a gate reporting "not wired" about code that is.
+ *
+ * MUST be called only under the quarantine lock. The trim lives here, with
+ * the append, because splitting them is precisely the race R1-H1 identified:
+ * a trim reads a snapshot and renames a replacement over the file, so any
+ * append outside this section can land on the old inode and vanish.
+ *
+ * @returns {{recorded: true, count: number} | {recorded: false, reason: string}}
+ */
+function writeQuarantineLocked(qPath, invalidLines) {
   let existing = [];
   if (fs.existsSync(qPath)) {
     try { existing = fs.readFileSync(qPath, 'utf-8').split('\n').filter(Boolean); }
     catch (err) {
       process.stderr.write(`  [session-store] WARN: cannot read quarantine ${qPath}: ${err.code || err.message}\n`);
-      return;
+      return { recorded: false, reason: 'read-failed' };
     }
   }
-  const combined = [...existing, ...invalidLines.map(l => JSON.stringify({ ...l, quarantinedAt: new Date().toISOString() }))];
+  const combined = [
+    ...existing,
+    ...invalidLines.map(l => JSON.stringify({ ...l, quarantinedAt: new Date().toISOString() })),
+  ];
   const trimmed = combined.slice(-QUARANTINE_CAP);
-  // Atomic-rename for crash-safety; if two loaders write concurrently the
-  // last writer wins on the ENTIRE file but neither leaves a torn artefact.
   try {
     atomicWriteFileSync(qPath, trimmed.join('\n') + '\n');
   } catch (err) {
     process.stderr.write(`  [session-store] WARN: quarantine write failed: ${err.code || err.message}\n`);
+    return { recorded: false, reason: 'write-failed' };
   }
+  return { recorded: true, count: trimmed.length };
 }
 
 /**
@@ -337,4 +421,4 @@ export async function pruneOldSessions(maxAgeDays = PRUNE_DEFAULT_DAYS, { root =
 }
 
 // Internal — exported for tests
-export const __test__ = { readLinesUnvalidated, sessionPath, lockPath, quarantinePath, appendQuarantine };
+export const __test__ = { readLinesUnvalidated, sessionPath, lockPath, quarantinePath, quarantineLockPath, appendQuarantine, QUARANTINE_CAP };
