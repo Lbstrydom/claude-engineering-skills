@@ -136,7 +136,14 @@ export function interpretCandidateListResult(parsed) {
     if (!Array.isArray(parsed.candidates)) {
       return { ok: false, message: `list-consistency-candidates returned ok:true without a candidates array (got ${typeof parsed.candidates}) — protocol violation` };
     }
-    return { ok: true, candidates: parsed.candidates };
+    // `nextCursor` is opaque to this layer (the store owns the format) but its
+    // TYPE is still a protocol obligation: anything other than a string or
+    // null would make the loop's termination condition unreadable.
+    const nextCursor = parsed.nextCursor ?? null;
+    if (nextCursor !== null && typeof nextCursor !== 'string') {
+      return { ok: false, message: `list-consistency-candidates returned a non-string nextCursor (got ${typeof nextCursor}) — protocol violation` };
+    }
+    return { ok: true, candidates: parsed.candidates, nextCursor };
   }
   return { ok: false, message: parsed.error || parsed.code || 'list-consistency-candidates failed' };
 }
@@ -218,15 +225,68 @@ export function interpretPromoteRegressionSpecResult(parsed) {
   return { ok: false, rowsAffected: 0, error: parsed.error || parsed.code || 'promote-regression-spec failed' };
 }
 
-function listConsistencyCandidatesViaCli(repoRoot, repoId, sinceTs) {
-  const parsed = callCrossSkill(repoRoot, 'list-consistency-candidates', {
-    repoId, sinceTs, limit: 100,
-  });
-  const result = interpretCandidateListResult(parsed);
-  if (!result.ok) {
-    process.stderr.write(`  [promote] list-consistency-candidates failed: ${result.message}\n`);
+/** Bounds a pathological loop. Mirrors the store's own CANDIDATE_MAX_PAGES. */
+export const CANDIDATE_MAX_PAGES = 50;
+
+/** Fingerprints per resolver request — mirrors the store bound. */
+export const RECONCILE_BATCH_SIZE = 200;
+/** Resolver requests per RUN => <=1000 journals; hitting it is incomplete:true. */
+export const RECONCILE_MAX_BATCHES_PER_RUN = 5;
+
+/**
+ * Enumerate candidates by following the keyset cursor.
+ *
+ * Returns `complete:false` with a resume cursor when the page cap is hit —
+ * never a silently short list. `promoteCandidates` turns that into a
+ * machine-readable partial outcome rather than a warning (R1-H3): a warning
+ * is not a terminal state, which contradicts this plan's own invariant.
+ *
+ * @returns {{ok:true, candidates:Array, complete:boolean, nextCursor:string|null}|{ok:false, message:string}}
+ */
+function listConsistencyCandidatesViaCli(repoRoot, repoId, sinceTs, startCursor = null) {
+  const candidates = [];
+  let cursor = startCursor;
+  for (let page = 0; page < CANDIDATE_MAX_PAGES; page += 1) {
+    const parsed = callCrossSkill(repoRoot, 'list-consistency-candidates', {
+      repoId, sinceTs, limit: 100, cursor,
+    });
+    const result = interpretCandidateListResult(parsed);
+    if (!result.ok) {
+      // A mid-loop failure must NOT degrade to a short ok:true — that is the
+      // silent-truncation class this whole item exists to remove.
+      process.stderr.write(`  [promote] list-consistency-candidates failed: ${result.message}\n`);
+      return result;
+    }
+    candidates.push(...result.candidates);
+    cursor = result.nextCursor;
+    if (!cursor) return { ok: true, candidates, complete: true, nextCursor: null };
   }
-  return result;
+  return { ok: true, candidates, complete: false, nextCursor: cursor };
+}
+
+/**
+ * Ask the store for the CURRENT state of specific fingerprints.
+ *
+ * Deliberately NOT the candidate list: reconcile makes an irreversible
+ * rename-and-journal-delete decision, and a sequence of pages is not a
+ * snapshot (R1-H2). A bounded question gets a bounded, consistent answer.
+ *
+ * @returns {{ok:true, states:Record<string,string>}|{ok:false, message:string}}
+ */
+function resolveCandidateStatesViaCli(repoRoot, repoId, fingerprints) {
+  const parsed = callCrossSkill(repoRoot, 'resolve-consistency-candidate-states', {
+    repoId, fingerprints,
+  });
+  if (!isWellFormedCliResponse(parsed)) {
+    return { ok: false, message: 'resolve-consistency-candidate-states returned an invalid response envelope' };
+  }
+  if (parsed.ok !== true) {
+    return { ok: false, message: parsed.error || parsed.code || 'resolve-consistency-candidate-states failed' };
+  }
+  if (!parsed.states || typeof parsed.states !== 'object' || Array.isArray(parsed.states)) {
+    return { ok: false, message: 'resolve-consistency-candidate-states returned ok:true without a states map — protocol violation' };
+  }
+  return { ok: true, states: parsed.states };
 }
 
 async function promoteRegressionSpecViaCli(repoRoot, args) {
@@ -262,6 +322,7 @@ export function parseArgs(argv) {
     since: null,
     repoRoot: process.cwd(),
     out: null,
+    resume: null,
     help: false,
   };
   for (let i = 0; i < argv.length; i++) {
@@ -270,6 +331,11 @@ export function parseArgs(argv) {
     else if (a === '--since')     args.since = argv[++i];
     else if (a === '--repo-root') args.repoRoot = argv[++i];
     else if (a === '--out')       args.out = argv[++i];
+    // R3-H3: the R2 draft emitted a nextCursor and advertised a resume
+    // command that did not exist — the promote CLI had no input that
+    // accepted it. A resume instruction the tool cannot execute reads as
+    // recoverable when it is not.
+    else if (a === '--resume')    args.resume = argv[++i];
     else if (a === '--help' || a === '-h') args.help = true;
   }
   return args;
@@ -287,6 +353,7 @@ function usage() {
     '  --since <iso>       Only candidates created at/after this ISO timestamp',
     '  --repo-root <dir>   Override repo root (defaults to cwd)',
     '  --out <path>        Emit a JSON result summary to <path>',
+    '  --resume <cursor>   Resume enumeration from a cursor emitted by a prior incomplete run',
   ].join('\n');
 }
 
@@ -310,7 +377,7 @@ function usage() {
  * @returns {Promise<PromoteResult>}
  */
 export async function promoteCandidates(args, deps = {}) {
-  const result = { exitCode: EXIT.OK, promoted: 0, declined: 0, failed: 0, details: [] };
+  const result = { exitCode: EXIT.OK, promoted: 0, declined: 0, failed: 0, details: [], incomplete: false };
   if (args.help) {
     process.stdout.write(usage() + '\n');
     return result;
@@ -340,7 +407,22 @@ export async function promoteCandidates(args, deps = {}) {
     return result;
   }
 
-  const listResult = listConsistencyCandidatesViaCli(args.repoRoot, repoId, args.since || null);
+  const listResult = listConsistencyCandidatesViaCli(
+    args.repoRoot, repoId, args.since || null, args.resume || null,
+  );
+  // A cursor is only meaningful against the filters that produced it, so a
+  // digest mismatch is BAD_INPUT — resuming into a different result set and
+  // reporting success is the failure this rejects (R3-H3). `--resume` with
+  // `--auto` is the intended automation path; `--resume` with a changed
+  // `--since` is the error case.
+  if (!listResult.ok && /cursor-filter-mismatch|invalid-cursor/.test(listResult.message || '')) {
+    process.stderr.write(
+      `--resume cursor does not match the current filters (${listResult.message}). ` +
+      'Re-run without --resume, or repeat the exact --since it was issued under.\n',
+    );
+    result.exitCode = EXIT.BAD_INPUT;
+    return result;
+  }
   const outcome = evaluateCandidateListOutcome(listResult);
   if (!outcome.shouldContinue) {
     (outcome.exitCode === EXIT.OK ? process.stdout : process.stderr).write(outcome.message + '\n');
@@ -384,11 +466,28 @@ export async function promoteCandidates(args, deps = {}) {
     }
   }
 
+  // R1-H3: a promoted PREFIX is a first-class outcome, not a warning. A
+  // warning is not a machine-readable terminal state, which contradicts this
+  // plan's own invariant. `ok:true` with exit 0 is reserved for a genuinely
+  // exhausted list.
+  if (listResult.complete === false) {
+    result.incomplete = true;
+    result.remaining = 'unknown — page cap reached before the list was exhausted';
+    result.nextCursor = listResult.nextCursor;
+    const resumeCmd =
+      `node scripts/persona-consistency-promote.mjs --auto --resume ${listResult.nextCursor}` +
+      (args.since ? ` --since ${args.since}` : '');
+    process.stderr.write(
+      `\nIncomplete: the candidate list hit the ${CANDIDATE_MAX_PAGES}-page cap, so only a bounded ` +
+      `prefix was considered. Resume with:\n  ${resumeCmd}\n`,
+    );
+  }
+
   if (args.out) {
     try { atomicWriteFileSync(args.out, JSON.stringify(result, null, 2)); } catch { /* swallow */ }
   }
 
-  if (result.failed > 0) result.exitCode = EXIT.PARTIAL_FAILURE;
+  if (result.failed > 0 || result.incomplete) result.exitCode = EXIT.PARTIAL_FAILURE;
   process.stdout.write(
     `\nPromoted: ${result.promoted}   Declined: ${result.declined}   Failed: ${result.failed}\n`,
   );
@@ -554,13 +653,19 @@ async function promoteOne(repoRoot, repoId, cand, promotedBy) {
 
 export async function reconcilePromotionJournal(repoRoot) {
   const dir = path.join(repoRoot, JOURNAL_DIR);
-  if (!fs.existsSync(dir)) return { recovered: 0, rolledBack: 0 };
+  if (!fs.existsSync(dir)) return { recovered: 0, rolledBack: 0, retained: 0, incomplete: false };
 
-  const files = fs.readdirSync(dir).filter((f) => f.endsWith('.json'));
-  if (files.length === 0) return { recovered: 0, rolledBack: 0 };
+  // Deterministic, advancing traversal. Ordering by filename (the specId —
+  // stable) plus a persisted checkpoint is what stops STARVATION: journals in
+  // `absent`/`unknown` are RETAINED by the transition table, so a naive
+  // "always take the first N in a stable order" pass re-processes the same
+  // stuck prefix forever and never reaches journal 1 001.
+  const files = fs.readdirSync(dir).filter((f) => f.endsWith('.json')).sort();
+  if (files.length === 0) return { recovered: 0, rolledBack: 0, retained: 0, incomplete: false };
 
   let recovered = 0;
   let rolledBack = 0;
+  let retained = 0;
 
   // Resolves Gemini-final-G1: a `pending` entry can mean (a) DB never
   // committed (the journal is honest) OR (b) we crashed between
@@ -579,21 +684,55 @@ export async function reconcilePromotionJournal(repoRoot) {
     } catch { /* fall through */ }
   }
   const canQueryDb = !!repoId;
-  const candidateByFingerprint = new Map();
+
+  // Read the traversal checkpoint and start AFTER the last fingerprint
+  // examined, wrapping once exhausted. A corrupt checkpoint restarts from the
+  // beginning rather than throwing — losing a position is recoverable; a
+  // crash in the recovery path is not.
+  const startAfter = readTraversalCheckpoint(dir);
+  const ordered = rotateAfter(files, startAfter);
+
+  // Resolve the states of exactly the fingerprints we hold journals for —
+  // NOT the candidate list. Bounded batches, bounded batches-per-run.
+  const states = Object.create(null);
+  let incomplete = false;
+  let lastExamined = null;
   if (canQueryDb) {
-    // Pre-fetch the current candidate set so we can probe individual
-    // fingerprints below. (Listing via the CLI honours the cross-skill
-    // facade per the plan.) A dependency failure here degrades to "can't
-    // disambiguate any pending entry this run" (same as !canQueryDb below)
-    // rather than throwing — reconcile is a best-effort recovery pass, and
-    // a stale journal entry is safely picked up again on the NEXT run.
-    const listResult = listConsistencyCandidatesViaCli(repoRoot, repoId, null);
-    for (const c of (listResult.ok ? listResult.candidates : [])) {
-      if (c.candidate_fingerprint) candidateByFingerprint.set(c.candidate_fingerprint, c);
+    const journalFingerprints = [];
+    for (const f of ordered) {
+      const e = safeReadJournal(path.join(dir, f));
+      if (e?.stage === 'pending' && e.candidateFingerprint) {
+        journalFingerprints.push({ file: f, fp: e.candidateFingerprint });
+      }
+    }
+    let batches = 0;
+    for (let i = 0; i < journalFingerprints.length; i += RECONCILE_BATCH_SIZE) {
+      if (batches >= RECONCILE_MAX_BATCHES_PER_RUN) {
+        // Report it; never a silent stop. The retained journals are picked up
+        // by a later run, which starts after `lastExamined`.
+        incomplete = true;
+        process.stderr.write(
+          `[reconcile] run cap reached (${RECONCILE_MAX_BATCHES_PER_RUN} batches x ${RECONCILE_BATCH_SIZE}); ` +
+          `${journalFingerprints.length - i} journal(s) deferred to the next run\n`,
+        );
+        break;
+      }
+      const chunk = journalFingerprints.slice(i, i + RECONCILE_BATCH_SIZE);
+      const r = resolveCandidateStatesViaCli(repoRoot, repoId, chunk.map(c => c.fp));
+      batches += 1;
+      if (!r.ok) {
+        // A resolver failure is `unknown`, which RETAINS. It must never be
+        // read as `absent`, which is what an empty map would have meant.
+        process.stderr.write(`[reconcile] state resolution failed: ${r.message} — retaining these journals\n`);
+        incomplete = true;
+        break;
+      }
+      for (const c of chunk) states[c.fp] = r.states[c.fp] ?? 'unknown';
+      lastExamined = chunk[chunk.length - 1].fp;
     }
   }
 
-  for (const f of files) {
+  for (const f of ordered) {
     const journalPath = path.join(dir, f);
     let entry;
     try { entry = JSON.parse(fs.readFileSync(journalPath, 'utf-8')); }
@@ -632,16 +771,23 @@ export async function reconcilePromotionJournal(repoRoot) {
         );
         continue;
       }
-      // Disambiguate via DB query. If the candidate row STILL exists as
-      // a candidate, the DB UPDATE didn't land — safe to roll back the
-      // .tmp. If the row is missing from the candidate list, the UPDATE
-      // landed (it's now locked) — we crashed before writing the
-      // 'db-committed' journal entry. Treat as db-committed and complete
-      // the rename.
-      const stillCandidate = entry.candidateFingerprint
-        && candidateByFingerprint.has(entry.candidateFingerprint);
+      // The §2 recovery transition table. The authorisation rule is
+      // POSITIVE-EVIDENCE-ONLY:
+      //
+      //   promoted  -> the ONLY state that authorises rename + journal delete
+      //   candidate -> the DB write never landed; roll back the .tmp
+      //   absent    -> no row at all. NOT proof of promotion. Retain.
+      //   unknown   -> we could not tell. Retain.
+      //
+      // The previous code asked "is this fingerprint missing from the
+      // candidate list?" and treated missing as committed. A candidate beyond
+      // page 100 was missing for a reason that had nothing to do with
+      // promotion — that is finding B, and it destroyed the recovery record.
+      // A journal retained in error costs one extra reconcile pass; a journal
+      // finalised in error destroys the evidence.
+      const state = entry.candidateFingerprint ? (states[entry.candidateFingerprint] ?? 'unknown') : 'unknown';
 
-      if (stillCandidate) {
+      if (state === 'candidate') {
         try {
           if (entry.tmpPath && fs.existsSync(entry.tmpPath)) retrySync(() => fs.unlinkSync(entry.tmpPath));
           retrySync(() => fs.unlinkSync(journalPath));
@@ -650,7 +796,7 @@ export async function reconcilePromotionJournal(repoRoot) {
         } catch (err) {
           process.stderr.write(`[reconcile] Failed rollback ${entry.specId}: ${err.message}\n`);
         }
-      } else {
+      } else if (state === 'promoted') {
         // DB committed silently between our journal write and crash.
         // Complete the rename.
         try {
@@ -659,10 +805,16 @@ export async function reconcilePromotionJournal(repoRoot) {
           }
           retrySync(() => fs.unlinkSync(journalPath));
           recovered += 1;
-          process.stderr.write(`[reconcile] DB query reveals ${entry.specId} was committed despite stale journal; completed rename\n`);
+          process.stderr.write(`[reconcile] DB confirms ${entry.specId} is promoted despite stale journal; completed rename\n`);
         } catch (err) {
           process.stderr.write(`[reconcile] Failed to complete ${entry.specId}: ${err.message}\n`);
         }
+      } else {
+        // absent | unknown — no filesystem finalisation, no journal delete.
+        retained += 1;
+        process.stderr.write(
+          `[reconcile] retaining ${entry.specId} — state "${state}" is not positive evidence of promotion\n`,
+        );
       }
       continue;
     }
@@ -671,7 +823,45 @@ export async function reconcilePromotionJournal(repoRoot) {
     process.stderr.write(`[reconcile] Unknown journal stage "${entry.stage}" for ${entry.specId}; left untouched\n`);
   }
 
-  return { recovered, rolledBack };
+  // Advance the checkpoint so the NEXT run starts after what we examined.
+  // Without this, retained absent/unknown journals form a stuck prefix that a
+  // fixed-order traversal re-processes forever, and journals behind it are
+  // never reached (R3-M2).
+  if (lastExamined) writeTraversalCheckpoint(dir, lastExamined);
+
+  return { recovered, rolledBack, retained, incomplete };
+}
+
+const CHECKPOINT_FILE = '.reconcile-checkpoint.json';
+
+/** Read the traversal checkpoint. A corrupt one restarts from the beginning. */
+function readTraversalCheckpoint(dir) {
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(dir, CHECKPOINT_FILE), 'utf-8'));
+    return typeof raw?.after === 'string' && raw.after.length > 0 ? raw.after : null;
+  } catch { return null; }
+}
+
+function writeTraversalCheckpoint(dir, after) {
+  try { atomicWriteFileSync(path.join(dir, CHECKPOINT_FILE), JSON.stringify({ after })); }
+  catch { /* best effort — losing a position costs one repeated pass, never correctness */ }
+}
+
+/**
+ * Rotate a sorted list so traversal RESUMES after `afterFingerprint`, wrapping
+ * to the beginning once exhausted. Exported for tests: the wrap is the part
+ * that makes the traversal advancing rather than merely ordered.
+ */
+export function rotateAfter(files, afterFingerprint) {
+  if (!afterFingerprint) return files;
+  const idx = files.findIndex(f => f.includes(afterFingerprint));
+  if (idx < 0) return files;                    // checkpoint no longer present — start over
+  return [...files.slice(idx + 1), ...files.slice(0, idx + 1)];
+}
+
+function safeReadJournal(journalPath) {
+  try { return JSON.parse(fs.readFileSync(journalPath, 'utf-8')); }
+  catch { return null; }
 }
 
 // ────────────────────────────────────────────────────────────────────────────

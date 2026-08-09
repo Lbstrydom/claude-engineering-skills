@@ -42,6 +42,7 @@ import {
   recordRegressionSpec,
   recordRegressionSpecRun,
   listConsistencyCandidates,
+  resolveCandidateStatesByFingerprint,
   promoteRegressionSpec,
   recordPersonaAuditCorrelation,
   getCandidateAuditFindings,
@@ -481,11 +482,51 @@ async function cmdListConsistencyCandidates() {
   if (!repoId) {
     return emitError('BAD_INPUT', 'repoId could not be resolved; pass repoId or repoUuid');
   }
-  const rows = await listConsistencyCandidates(repoId, {
+  const result = await listConsistencyCandidates(repoId, {
     sinceTs: p.sinceTs,
     limit: p.limit,
+    cursor: p.cursor,
   });
-  emit({ ok: true, cloud: true, candidates: rows });
+  if (!result.ok) {
+    // A store-layer failure must NEVER surface as {ok:true, candidates:[]}.
+    // That conflation is finding C, and it is what made finding B
+    // destructive: reconcile read "not in the list" as "already promoted"
+    // and deleted the recovery journal.
+    return emitError('STORE_FAILURE', `list-consistency-candidates failed: ${result.error}`, {
+      storeError: result.error,
+    });
+  }
+  emit({ ok: true, cloud: true, candidates: result.candidates, nextCursor: result.nextCursor });
+}
+
+/**
+ * Resolve the CURRENT state of specific candidate fingerprints.
+ *
+ * The bridge hop `reconcilePromotionJournal` needs (gate finding G1). §2
+ * mandated it and §7 originally omitted it entirely, so an implementer
+ * following §7 would have built a reconcile path with no way to reach the
+ * store.
+ */
+async function cmdResolveConsistencyCandidateStates() {
+  const p = parsePayload();
+  if (!Array.isArray(p.fingerprints)) {
+    return emitError('BAD_INPUT', 'fingerprints must be an array');
+  }
+  await initLearningStore();
+  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, states: {} });
+  const repoId = await resolveRepoId(p);
+  if (!repoId) {
+    return emitError('BAD_INPUT', 'repoId could not be resolved; pass repoId or repoUuid');
+  }
+  const result = await resolveCandidateStatesByFingerprint(repoId, p.fingerprints);
+  if (!result.ok) {
+    // Never an empty map on failure: `{}` reads as "every fingerprint absent",
+    // and `absent` is a state the recovery transition table acts on.
+    return emitError('STORE_FAILURE', `resolve-consistency-candidate-states failed: ${result.error}`, {
+      storeError: result.error,
+    });
+  }
+  emit({ ok: true, cloud: true, states: result.states });
 }
 
 async function cmdPromoteRegressionSpec() {
@@ -3097,6 +3138,7 @@ const commands = {
   'record-regression-spec': cmdRecordRegressionSpec,
   'record-regression-spec-run': cmdRecordRegressionSpecRun,
   'list-consistency-candidates': cmdListConsistencyCandidates,
+  'resolve-consistency-candidate-states': cmdResolveConsistencyCandidateStates,
   'promote-regression-spec':     cmdPromoteRegressionSpec,
   // Phase 3 WS-PIPE1 — persona_test_candidates aggregation table.
   'upsert-persona-test-candidate':       cmdUpsertPersonaTestCandidate,

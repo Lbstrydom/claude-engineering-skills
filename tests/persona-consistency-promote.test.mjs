@@ -27,6 +27,10 @@ import {
   evaluateCandidateListOutcome,
   interpretShipEventResult,
   interpretPromoteRegressionSpecResult,
+  rotateAfter,
+  CANDIDATE_MAX_PAGES,
+  RECONCILE_BATCH_SIZE,
+  RECONCILE_MAX_BATCHES_PER_RUN,
 } from '../scripts/persona-consistency-promote.mjs';
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -38,14 +42,14 @@ describe('interpretCandidateListResult', () => {
   it('a genuine success with candidates passes through', () => {
     assert.deepEqual(
       interpretCandidateListResult({ ok: true, candidates: [{ id: 'a' }] }),
-      { ok: true, candidates: [{ id: 'a' }] },
+      { ok: true, candidates: [{ id: 'a' }], nextCursor: null },
     );
   });
 
   it('a genuine cloud-off empty result is legitimate, not a failure', () => {
     assert.deepEqual(
       interpretCandidateListResult({ ok: true, cloud: false, candidates: [] }),
-      { ok: true, candidates: [] },
+      { ok: true, candidates: [], nextCursor: null },
     );
   });
 
@@ -217,19 +221,19 @@ function journalExists(specId) {
 describe('reconcilePromotionJournal', () => {
   it('returns counts of 0/0 when the journal dir is missing', async () => {
     const r = await reconcilePromotionJournal(tmpDir);
-    assert.deepEqual(r, { recovered: 0, rolledBack: 0 });
+    assert.deepEqual(r, { recovered: 0, rolledBack: 0, retained: 0, incomplete: false });
   });
 
   it('returns 0/0 when the journal dir is empty', async () => {
     fs.mkdirSync(path.join(tmpDir, _internals.JOURNAL_DIR), { recursive: true });
     const r = await reconcilePromotionJournal(tmpDir);
-    assert.deepEqual(r, { recovered: 0, rolledBack: 0 });
+    assert.deepEqual(r, { recovered: 0, rolledBack: 0, retained: 0, incomplete: false });
   });
 
   it('deletes "finalised" stage entries (already committed; janitor work)', async () => {
     writeJournalEntry('spec-1', { stage: 'finalised', specId: 'spec-1' });
     const r = await reconcilePromotionJournal(tmpDir);
-    assert.deepEqual(r, { recovered: 0, rolledBack: 0 });
+    assert.deepEqual(r, { recovered: 0, rolledBack: 0, retained: 0, incomplete: false });
     assert.equal(journalExists('spec-1'), false);
   });
 
@@ -316,7 +320,7 @@ describe('reconcilePromotionJournal', () => {
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, 'malformed.json'), '{ not json');
     const r = await reconcilePromotionJournal(tmpDir);
-    assert.deepEqual(r, { recovered: 0, rolledBack: 0 });
+    assert.deepEqual(r, { recovered: 0, rolledBack: 0, retained: 0, incomplete: false });
     assert.equal(fs.existsSync(path.join(dir, 'malformed.json')), false);
   });
 });
@@ -346,3 +350,137 @@ describe('_internals.writeJournal', () => {
     assert.equal(parsed.specId, 'spec-x');
   });
 });
+
+
+// ────────────────────────────────────────────────────────────────────────────
+// Phase 5 — candidate enumeration + targeted reconcile
+// docs/plans/learning-persona-quickfix-honest-failure.md section 2, item 7
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('interpretCandidateListResult — nextCursor is part of the protocol', () => {
+  it('carries a string cursor through', () => {
+    const r = interpretCandidateListResult({ ok: true, candidates: [], nextCursor: 'abc' });
+    assert.equal(r.ok, true);
+    assert.equal(r.nextCursor, 'abc');
+  });
+
+  it('defaults a missing cursor to null (end of enumeration)', () => {
+    assert.equal(interpretCandidateListResult({ ok: true, candidates: [] }).nextCursor, null);
+  });
+
+  it('rejects a non-string cursor as a protocol violation', () => {
+    const r = interpretCandidateListResult({ ok: true, candidates: [], nextCursor: 42 });
+    assert.equal(r.ok, false, 'an unreadable termination condition must not be silently tolerated');
+    assert.match(r.message, /nextCursor/);
+  });
+});
+
+describe('parseArgs — --resume is a real input, not just advertised', () => {
+  // R3-H3: the earlier draft emitted a nextCursor and printed a resume
+  // command the CLI had no input for. A resume instruction the tool cannot
+  // execute reads as recoverable when it is not.
+  it('accepts --resume <cursor>', () => {
+    assert.equal(parseArgs(['--resume', 'CURSOR123']).resume, 'CURSOR123');
+  });
+
+  it('defaults resume to null', () => {
+    assert.equal(parseArgs([]).resume, null);
+  });
+
+  it('composes with --auto and --since', () => {
+    const a = parseArgs(['--auto', '--resume', 'C', '--since', '2026-01-01T00:00:00Z']);
+    assert.equal(a.auto, true);
+    assert.equal(a.resume, 'C');
+    assert.equal(a.since, '2026-01-01T00:00:00Z');
+  });
+
+  it('advertises --resume in the usage text it prints', () => {
+    const src = fs.readFileSync('scripts/persona-consistency-promote.mjs', 'utf-8');
+    assert.match(src, /--resume <cursor>/, 'an undocumented resume flag is an unusable one');
+  });
+});
+
+describe('rotateAfter — deterministic, ADVANCING traversal (anti-starvation)', () => {
+  // R3-M2. Journals in absent/unknown are RETAINED by the transition table,
+  // so a naive "always take the first N in a stable order" pass re-processes
+  // the same stuck prefix forever and never reaches the journals behind it.
+  const files = ['a.json', 'b.json', 'c.json', 'd.json'];
+
+  it('starts from the beginning with no checkpoint', () => {
+    assert.deepEqual(rotateAfter(files, null), files);
+  });
+
+  it('resumes AFTER the checkpointed entry', () => {
+    assert.deepEqual(rotateAfter(files, 'b'), ['c.json', 'd.json', 'a.json', 'b.json']);
+  });
+
+  it('wraps so earlier entries are still reached eventually', () => {
+    const r = rotateAfter(files, 'd');
+    assert.deepEqual(r, ['a.json', 'b.json', 'c.json', 'd.json']);
+  });
+
+  it('every entry is still present exactly once after rotation (nothing is skipped)', () => {
+    for (const cp of [null, 'a', 'b', 'c', 'd', 'missing']) {
+      assert.deepEqual([...rotateAfter(files, cp)].sort(), [...files].sort(), `checkpoint ${cp}`);
+    }
+  });
+
+  it('a checkpoint that no longer exists restarts from the beginning', () => {
+    assert.deepEqual(rotateAfter(files, 'zzz'), files);
+  });
+});
+
+describe('reconcile bounds are declared and mirrored from the store', () => {
+  it('batch size and per-run cap are explicit numbers, not magic', () => {
+    assert.equal(RECONCILE_BATCH_SIZE, 200);
+    assert.equal(RECONCILE_MAX_BATCHES_PER_RUN, 5);
+    assert.equal(CANDIDATE_MAX_PAGES, 50);
+  });
+
+  it('the run cap bounds journals per run to a stated number', () => {
+    assert.equal(
+      RECONCILE_BATCH_SIZE * RECONCILE_MAX_BATCHES_PER_RUN, 1000,
+      'hitting this is incomplete:true, never a silent stop',
+    );
+  });
+});
+
+describe('reconcilePromotionJournal — positive-evidence-only recovery', () => {
+  // The whole point of finding B: "not in the candidate list" was read as
+  // "already promoted", and a beyond-page-100 candidate looked exactly like
+  // that. Recovery now requires POSITIVE evidence.
+  it('reports the retained count as a first-class outcome, not a silent skip', async () => {
+    const r = await reconcilePromotionJournal(tmpDirForReconcile());
+    assert.ok(Object.hasOwn(r, 'retained'), 'retention must be observable');
+    assert.ok(Object.hasOwn(r, 'incomplete'), 'a capped run must be observable');
+  });
+
+  it('leaves a pending journal untouched when the DB cannot be reached', async () => {
+    const dir = tmpDirForReconcile();
+    const jdir = path.join(dir, _internals.JOURNAL_DIR);
+    fs.mkdirSync(jdir, { recursive: true });
+    fs.writeFileSync(path.join(jdir, 'spec-keep.json'), JSON.stringify({
+      stage: 'pending', specId: 'spec-keep', candidateFingerprint: 'fp-1',
+      tmpPath: path.join(dir, 'x.tmp'), intendedPath: path.join(dir, 'x.spec.js'),
+    }));
+    await reconcilePromotionJournal(dir);
+    assert.equal(
+      fs.existsSync(path.join(jdir, 'spec-keep.json')), true,
+      'a journal finalised in error destroys the recovery record; retained in error costs one pass',
+    );
+  });
+
+  it('the source encodes the transition table, and absent is NOT actionable', () => {
+    const src = fs.readFileSync('scripts/persona-consistency-promote.mjs', 'utf-8');
+    assert.match(src, /state === 'promoted'/, 'promoted must be the only finalising state');
+    assert.match(src, /state === 'candidate'/);
+    assert.ok(
+      !/state !== 'candidate'/.test(src),
+      'a negated candidate check is the finding-B shape: everything-not-candidate treated as promoted',
+    );
+  });
+});
+
+function tmpDirForReconcile() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'reconcile-c-'));
+}

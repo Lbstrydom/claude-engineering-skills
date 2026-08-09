@@ -48,8 +48,16 @@ with `npm run learning:weekly-review -- --repo <name>`.
 - `npm run learning:record` — generic decision logger (mostly for tools)
 - `npm run learning:quickfix-stats` — Phase 2; print Beta posteriors per pattern
 - `npm run learning:quickfix-rebuild` — Phase 2; rebuild stats cache from cloud
-- `npm run learning:quickfix-bootstrap` — Phase 2; rebuild from local
-  `.audit/quickfix-hits.jsonl` (for repos without cloud history yet)
+- `npm run learning:quickfix-bootstrap` — **RETIRED (2026-08-09).** Refuses with
+  `error:'bootstrap-retired'` and exits non-zero; it writes nothing. Use
+  `npm run learning:backfill-outcomes -- --rebuild-stats` instead, which owns
+  outcome detection and already runs weekly. It was retired because it was a
+  *second* implementation of that detector, free to diverge from the real one,
+  and because it had no outcome data — it synthesised every hit as `no_action`
+  and wrote those inert weights over whatever was in the cache, including a
+  good cloud-built one. It exits non-zero rather than returning a quiet
+  `ok:false` so an automation consumer that only checks the exit code cannot
+  read "did nothing" as "rebuilt".
 - `npm run learning:backfill-outcomes` — Phase 2; drain hits JSONL into
   `learning_decisions`, then resolve unresolved outcomes from file state
 - `npm run learning:replay -- <decision_type> [--policy <path>] [--since 30d] [--format markdown]`
@@ -132,6 +140,37 @@ write, atomic via temp+rename) for replay on next audit start. In CI runtimes
 (`process.env.CI` or `GITHUB_ACTIONS` truthy), the disk outbox is disabled in favour of
 synchronous retry with exponential backoff (3 attempts: 200ms/600ms/1.8s); failures are
 counted as `lostInCI` and logged but never crash the run.
+
+### The outbox is also the EVICTION path (2026-08-09)
+
+`flush()` is no longer the only producer. When a per-type queue is at
+`LEARNING_QUEUE_CAP_PER_TYPE`, `recordDecision` spills the **oldest** entry to the same
+outbox *before* removing it from memory, and the removal is conditional on that spill
+succeeding:
+
+| Condition | Queue action | `recordDecision` returns | Counter |
+|---|---|---|---|
+| Under cap | enqueue new | `decisionKey` | — |
+| At cap, spill **succeeds** | shift oldest, enqueue new | `decisionKey` | `evictedOutboxed++` |
+| At cap, spill **fails** | **retain oldest, do not enqueue** | **`null`** | `backpressureRejected++` |
+
+Two operational consequences:
+
+- **`recordDecision` can return `null` for a second reason.** Previously only
+  `LEARNING_DISABLE=1`; now also back-pressure. A returned key is a *receipt*, and one is
+  never issued for a decision that was not admitted. Callers already tolerate `null`.
+- **This is environment-independent.** There is no CI carve-out, deliberately: `flush()`
+  may lose an *already-admitted* entry in CI because a receipt was issued and only later
+  could the write not be made, whereas eviction happens at *admission*, where refusing
+  costs the caller nothing. Dropping post-receipt is a lie; refusing pre-receipt is not.
+
+`reconcileOutbox` needs no change — it already replays the whole directory, so an evicted
+decision is recovered on the next audit start.
+
+**Reading the flush summary**: `dropped` now counts only entries that were admitted and
+then *permanently* lost (today: the CI-loss path). `evictedOutboxed` entries are
+recoverable from disk, and `backpressureRejected` decisions were never admitted — neither
+is a loss, and neither contributes to `dropped`.
 
 ## Opt-outs
 

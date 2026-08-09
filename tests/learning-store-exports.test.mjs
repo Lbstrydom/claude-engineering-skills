@@ -105,6 +105,7 @@ const EXPECTED_EXPORTS = [
   'getUnremediatedAcceptances', // accepted-but-never-remediated /ship nudge (2026-07-27)
   'insertRunRowWithPolicyFallback', // selector-policy 42703 write seam (plan: ux-lock-selector-policy)
   'listConsistencyCandidates',
+  'resolveCandidateStatesByFingerprint',
   'promoteRegressionSpec',
   'readAuditEffectiveness',
   'readCorrelationCountsByType', // WS3 — persona-tests dashboard correlation-loop-health line
@@ -349,6 +350,17 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // capped-rows undercount as 180 → 181, in the sibling view, unnoticed
     // because only the unlocked_fixes half was fixed. /ship reported "20"
     // against a real 129 and the operator was asked to plan work off it.
-    assert.equal(EXPECTED_EXPORTS.length, 183);
+    // 183 → 184: resolveCandidateStatesByFingerprint added 2026-08-09
+    // (docs/plans/learning-persona-quickfix-honest-failure.md item 7). It is the
+    // ONE new public store operation: reconcile asks it for the state of the
+    // specific fingerprints it holds journals for, instead of membership-testing
+    // a paginated candidate list. A sequence of pages is not a snapshot, and
+    // treating "not in the list" as "already promoted" destroyed recovery
+    // journals for any candidate past page 100. The cursor codec, query builder,
+    // bounds and state projection that landed alongside it are deliberately NOT
+    // here — they live in candidate-pagination.mjs, which the barrel does not
+    // re-export, because this surface is store OPERATIONS and constants are
+    // excluded by design.
+    assert.equal(EXPECTED_EXPORTS.length, 184);
   });
 });

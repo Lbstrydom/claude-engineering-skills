@@ -10,6 +10,7 @@
  */
 
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { many, one, insertReturning, upsert, updateWhere, deleteWhere, withTx } from '../db/query.mjs';
 import { getPool } from '../db/client.mjs';
 import { isCloudEnabled } from './repo.mjs';
@@ -371,37 +372,68 @@ export async function recordRegressionSpec(repoId, spec) {
 /**
  * List pending consistency candidates for a repo. Used by /ship at promotion.
  */
+// Candidate pagination + batch resolution. The PURE parts (cursor codec,
+// keyset query construction, bounds, state projection) live in
+// candidate-pagination.mjs — see that module's header for why they are not
+// on this file's barrel-exported surface.
+import {
+  CANDIDATE_PAGE_SIZE, RECONCILE_BATCH_SIZE,
+  buildCandidatePageQuery, derivePageResult,
+  decodeCandidateCursor, validateFingerprintBatch, mapFingerprintRowsToStates,
+} from './candidate-pagination.mjs';
+
 export async function listConsistencyCandidates(repoId, opts = {}) {
-  if (!repoId || !await isCloudEnabled()) return [];
-  const limit = Number.isInteger(opts.limit) && opts.limit > 0 ? opts.limit : 100;
+  const built = buildCandidatePageQuery({
+    repoId, sinceTs: opts.sinceTs ?? null, cursor: opts.cursor ?? null, limit: opts.limit,
+  });
+  if (!built.ok) return built;
+  if (!await isCloudEnabled()) return { ok: false, error: 'cloud-disabled' };
+
+  let rows;
   try {
-    if (opts.sinceTs) {
-      return await many(
-        `SELECT id, candidate_fingerprint, witness_snapshot, contradiction_payload,
-                journey_context, redaction_count, description, commit_sha, created_at
-           FROM regression_specs
-          WHERE repo_id = $1
-            AND source_kind = 'persona-consistency-candidate'
-            AND created_at >= $2
-          ORDER BY created_at DESC
-          LIMIT $3`,
-        [repoId, opts.sinceTs, limit]
-      );
-    }
-    return await many(
-      `SELECT id, candidate_fingerprint, witness_snapshot, contradiction_payload,
-              journey_context, redaction_count, description, commit_sha, created_at
-         FROM regression_specs
-        WHERE repo_id = $1
-          AND source_kind = 'persona-consistency-candidate'
-        ORDER BY created_at DESC
-        LIMIT $2`,
-      [repoId, limit]
-    );
+    rows = await many(built.sql, built.params);
   } catch (err) {
     process.stderr.write(`  [learning] listConsistencyCandidates failed: ${err.message}\n`);
-    return [];
+    return { ok: false, error: `query-failed: ${err.message}` };
   }
+  // `built` already proved the cursor decodes (an undecodable one returned a
+  // typed failure above), so re-decoding here cannot fail — but read it from
+  // the SAME null/undefined test the builder used, not a truthiness one, so
+  // the two cannot disagree about whether a cursor was supplied.
+  const priorCursor = (opts.cursor !== null && opts.cursor !== undefined)
+    ? decodeCandidateCursor(opts.cursor).cursor
+    : null;
+  return derivePageResult(rows, built, priorCursor);
+}
+
+export async function resolveCandidateStatesByFingerprint(repoId, fingerprints) {
+  if (!repoId) return { ok: false, error: 'repo-id-required' };
+  const validated = validateFingerprintBatch(fingerprints);
+  if (!validated.ok) return validated;
+  const clean = validated.clean;
+  if (clean.length === 0) return { ok: true, states: {} };
+  if (!await isCloudEnabled()) return { ok: false, error: 'cloud-disabled' };
+
+  let rows;
+  try {
+    rows = await many(
+      `SELECT candidate_fingerprint, source_kind
+         FROM regression_specs
+        WHERE repo_id = $1
+          AND candidate_fingerprint = ANY($2)`,
+      // Plain array, deliberately NOT pgArray(). `many()` passes params
+      // straight to the driver — serializeWriteParam is the WRITE-side seam
+      // (INSERT / UPSERT / UPDATE SET), and this is a read. The ANY(...)
+      // predicate needs node-pg to build the array literal from a raw JS
+      // array, so pgArray() here would bind its wrapper object instead.
+      [repoId, clean],
+    );
+  } catch (err) {
+    process.stderr.write(`  [learning] resolveCandidateStatesByFingerprint failed: ${err.message}\n`);
+    return { ok: false, error: `query-failed: ${err.message}` };
+  }
+
+  return { ok: true, states: mapFingerprintRowsToStates(clean, rows) };
 }
 
 /**
@@ -1169,3 +1201,4 @@ export async function readShipEvents(repoId, { limit = 10 } = {}) {
     return null;
   }
 }
+
