@@ -1,6 +1,53 @@
 # Project Status Log
 
-## 2026-08-08 (latest) — the consumer queue was four reports of three shapes
+## 2026-08-09 (latest) — the six adjudicated defects shipped, and the repo reconciled
+
+All six gate-honesty defects from the 2026-08-08 blind adjudication are on main
+across four commits: `845d6341` (D1, the detector oracle nothing called),
+`42ad6a8d` (D3+D6, the pass-granting registry that was never validated),
+`9afa151d` (D4+D5/D5b, one classifier over one population and one egress
+authority), `5ddadc4c` (D2, a mandatory gate whose default could never exit 0).
+Plan `gate-honesty-adjudicated-defects.md` → Complete.
+
+**The audits found more defects in the fixes than in the original code.** Cluster
+A's own audit caught four in its implementation, including a `const`-scoped
+binding that would have thrown a ReferenceError on every R2+ run. Cluster B's
+caught that `gateAddedAtSource: "git-log-S"` was a label asserting provenance
+nothing verified — a stated-but-unenforced claim inside the fix for
+stated-but-unenforced claims; it is now re-derived from git and negative-controlled
+against a backdated entry. Cluster C's Gemini gate flagged a missing `fallback`
+bucket and was right that it must stay distinguishable, but placing it inside the
+ordered classifier was wrong (a `fallback_legacy` row is not in
+`historicalComplete` and cannot be in its partition) — the pre-existing tests
+caught that.
+
+**`/cycle` had a fix-gate no cluster but the last could pass.** `/audit-code`
+grades a cluster's diff against the whole plan, so a later cluster's unwritten
+file returns HIGH. Measured: total HIGH 6 → 5 → 3 while in-cluster went 2 → 2 →
+0. Fixed in `skills/cycle/SKILL.md` §4a with a bounded deferral (settled at
+3C.2), plus §11.1 in the plan.
+
+**Reconciliation.** The branch had diverged across repeated rebase/force-push
+from parallel sessions — 9 local commits, 17 behind. Verified by cherry-picking
+onto origin rather than by patch-id alone: 5 patch-duplicates, 2 content-duplicates,
+and the two "unpushed" commits already present (their only conflict was the
+generated plans index). One thing was genuinely new and rescued: a 15-line R7
+verification-pass note stranded in a staged file (`8e75cf67`). The abandoned
+`gate 9` orphan work alongside it was superseded upstream by the blocking `gate
+2C`, whose symbol the stranded test does not even export.
+
+**Consumers were 62 files behind** — every push ran the sync from a throwaway
+worktree, so the tooling never reached them. Applied; all 10 isolation gates now
+pass in both. That surfaced a real defect in code shipped hours earlier: gate 2C
+reported the ownership watermark — declared never-in-the-manifest — as an orphan,
+so it failed on every correctly-synced consumer. Fixed in `301cb80a` with a
+negative control proving a genuine stowaway still fails.
+
+Close-out: `npm run check` green (10,305 pass / 0 fail), migrations 101/101 no
+drift, hooks already current in both consumers, stale worktrees and branches
+removed, backup refs deleted after verification.
+
+## 2026-08-08 — the consumer queue was four reports of three shapes
 
 Triaged all four open upstream reports, reproduced every one against current
 source, then fixed them. Each fix ships with the test that would have caught it,
