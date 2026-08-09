@@ -114,6 +114,7 @@ import { evaluateDecision, DECISION_CONSTANTS } from './lib/model-ab-decision.mj
 import { auditShadowConfig } from './lib/config.mjs';
 import { finalizeRoundOutcomes } from './lib/finalize-outcomes.mjs';
 import { semanticId } from './lib/findings.mjs';
+import { shellQuoteSingle, shellQuoteLabel } from './lib/shell-quote.mjs';
 import { isControlMarkerDetail } from './lib/audit/control-markers.mjs';
 import { getLearningStats } from './lib/learning/stats.mjs';
 import { emit, assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
@@ -2710,7 +2711,19 @@ async function cmdLockWithTestWorksheet() {
         + 'Read it, or write a test; then run `lock-with-test` with the path spelled out.');
     } else {
       lines.push(`- suggested test: \`${guess}\`${others} (exists — READ IT before locking)`);
-      lines.push('', '```bash', `node scripts/cross-skill.mjs lock-with-test --finding ${r.audit_finding_id} --test ${guess} --description "pins: ${String(r.category).replace(/"/g, "'")}"`, '```');
+      // Every interpolated value is shell-quoted. `guess` is discovered by
+      // globbing the repo's test tree and `category` is model-generated text,
+      // and the previous rendering put the latter inside DOUBLE quotes with
+      // only `"` escaped — which still expands `$(...)`, backticks and `$VAR`.
+      // Nothing is exec'd here, so the hazard is the operator pasting it; that
+      // is precisely what a rendered command is FOR, which is what made it
+      // worth closing rather than noting.
+      lines.push('', '```bash',
+        'node scripts/cross-skill.mjs lock-with-test'
+        + ` --finding ${shellQuoteSingle(r.audit_finding_id)}`
+        + ` --test ${shellQuoteSingle(guess)}`
+        + ` --description ${shellQuoteLabel(`pins: ${r.category}`)}`,
+        '```');
     }
     lines.push('');
   }
