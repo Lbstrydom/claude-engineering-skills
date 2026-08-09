@@ -40,7 +40,7 @@ import { embedText } from './lib/embed-text.mjs';
 import { symbolIndexConfig } from './lib/config.mjs';
 
 export const KNOWN_FLAGS = Object.freeze([
-  '--selfcheck-relocation', '--repo', '--thresholds', '--window-days', '--cap', '--no-embed', '--concurrency',
+  '--selfcheck-relocation', '--repo', '--thresholds', '--window-days', '--cap', '--no-embed', '--concurrency', '--clusters',
 ]);
 
 const G = '\x1b[32m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0m', B = '\x1b[1m';
@@ -198,7 +198,99 @@ async function main() {
   }
 
   console.log(`\n${D}Read: a high "sem∧¬trg" count with genuine re-raise examples ⇒ pgvector recovers churn signal trigram misses ⇒ worth promoting. Near-zero ⇒ trigram is sufficient.${X}`);
+
+  if (argv.includes('--clusters')) await reportClusters(pool, ids, midT);
+
   await pool.end();
+}
+
+/**
+ * CLUSTERING pass — the question pairwise similarity cannot answer.
+ *
+ * The 2026-07-21 prototype measured PAIRS and shipped pairwise suppression. But
+ * "are there many similar pairs?" and "do those pairs form COMMUNITIES?" are
+ * different questions with different answers, and only the second one decides
+ * whether a graph-shaped memory earns its keep. If the pairs are disjoint duos,
+ * pairwise suppression already captures everything and a cluster layer adds
+ * nothing. If they collapse into a few multi-finding communities, then N
+ * findings are really one recurring issue and a cluster-aware memory can say so.
+ *
+ * Connected components over the similarity graph, deliberately — it is the
+ * cheapest clustering that can answer the question, and its failure mode is
+ * known and measurable rather than hidden: components CHAIN (A~B, B~C, A≁C all
+ * at once), so a single component can span unrelated findings. That is why
+ * cohesion is reported per component: `minCos` is the weakest pair inside it.
+ * A component whose minCos sits far below the edge threshold is chained, not
+ * coherent, and must not be read as one issue. Reporting it is the difference
+ * between a prototype and a plausible-looking number.
+ *
+ * Measures, never writes — a prototype that mutates the store is a promotion.
+ */
+async function reportClusters(pool, ids, tau) {
+  const { rows: edges } = await pool.query(`
+    WITH pop AS (
+      SELECT f.id, f.finding_fingerprint AS fp, e.embedding
+      FROM audit_findings f JOIN finding_embeddings e ON e.finding_id = f.id
+      WHERE f.id = ANY($1::uuid[]) AND e.embedding IS NOT NULL)
+    SELECT a.id AS a, b.id AS b, (1 - (a.embedding <=> b.embedding)) AS cos
+    FROM pop a JOIN pop b ON a.id < b.id AND a.fp <> b.fp
+    WHERE (1 - (a.embedding <=> b.embedding)) > $2`, [ids, tau]);
+
+  // Union-find over the edge list.
+  const parent = new Map();
+  const find = (x) => { while (parent.get(x) !== x) { parent.set(x, parent.get(parent.get(x))); x = parent.get(x); } return x; };
+  const union = (x, y) => { for (const v of [x, y]) if (!parent.has(v)) parent.set(v, v); const rx = find(x), ry = find(y); if (rx !== ry) parent.set(rx, ry); };
+  for (const e of edges) union(e.a, e.b);
+
+  const members = new Map();
+  for (const v of parent.keys()) {
+    const r = find(v);
+    if (!members.has(r)) members.set(r, []);
+    members.get(r).push(v);
+  }
+  const comps = [...members.values()].filter((m) => m.length > 1).sort((p, q) => q.length - p.length);
+
+  const clustered = comps.reduce((n, c) => n + c.length, 0);
+  console.log(`\n${B}Clustering (connected components, cos > ${tau})${X}`);
+  console.log(`  edges: ${edges.length}   components (size>1): ${comps.length}   findings in a component: ${clustered}`);
+  if (comps.length === 0) {
+    console.log(`  ${D}no multi-finding communities — pairwise suppression already covers this; a cluster layer would add nothing${X}`);
+    return;
+  }
+  // Collapse ratio: what a cluster-aware memory would reduce these to.
+  console.log(`  collapse: ${clustered} findings → ${comps.length} canonical issue(s)  ` +
+    `${D}(${(clustered / comps.length).toFixed(2)} findings per issue)${X}`);
+  const hist = new Map();
+  for (const c of comps) hist.set(c.length, (hist.get(c.length) ?? 0) + 1);
+  console.log(`  size histogram: ${[...hist.entries()].sort((p, q) => p[0] - q[0]).map(([s, n]) => `${s}x${n}`).join('  ')}`);
+
+  // Cohesion + exemplars for the largest components.
+  const edgeCos = new Map();
+  for (const e of edges) edgeCos.set(`${e.a}|${e.b}`, Number(e.cos));
+  console.log(`\n${B}Largest communities${X} ${D}(minCos = weakest pair inside; far below ${tau} ⇒ CHAINED, not one issue)${X}`);
+  for (const c of comps.slice(0, 4)) {
+    const { rows: snips } = await pool.query(
+      'SELECT id, left(detail_snapshot, 88) AS s, primary_file FROM audit_findings WHERE id = ANY($1::uuid[])', [c]);
+    let minCos = 1, present = 0;
+    for (let i = 0; i < c.length; i++) {
+      for (let j = i + 1; j < c.length; j++) {
+        const v = edgeCos.get(`${c[i]}|${c[j]}`) ?? edgeCos.get(`${c[j]}|${c[i]}`);
+        if (v === undefined) continue;
+        present++; minCos = Math.min(minCos, v);
+      }
+    }
+    const possible = (c.length * (c.length - 1)) / 2;
+    const density = possible ? present / possible : 1;
+    const chained = density < 1;
+    console.log(`\n  ${B}${c.length} findings${X}  density ${(density * 100).toFixed(0)}% of pairs linked  ` +
+      `minCos ${minCos.toFixed(3)}  ${chained ? `${Y}CHAINED — not all members are pairwise similar${X}` : `${G}fully connected${X}`}`);
+    const files = new Set(snips.map((r) => r.primary_file).filter(Boolean));
+    console.log(`    files: ${files.size === 1 ? [...files][0] : `${files.size} distinct`}`);
+    for (const r of snips.slice(0, 4)) console.log(`    · ${r.s}`);
+  }
+
+  console.log(`\n${D}Read: high collapse ratio + fully-connected components ⇒ real recurring issues a cluster layer would name. ` +
+    `Mostly 2-member components ⇒ pairwise suppression is already the whole win.${X}`);
 }
 
 main().catch((err) => {

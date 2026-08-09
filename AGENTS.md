@@ -337,6 +337,21 @@ and false passes (a fix in the tree but not the commit read green). Not `git
 stash` — that yanks the other session's files mid-edit. Detail + escape hatches:
 [`docs/runbooks/prepush-sandbox.md`](docs/runbooks/prepush-sandbox.md).
 
+- **A worktree has no `node_modules`, and tools must RESOLVE that, not assume it.**
+  Everything in a nested worktree works because Node walks up and finds the main
+  checkout's copy — so any tool that hard-codes `<repoRoot>/node_modules` breaks
+  there and nowhere else. Two tools provision it into an isolated copy;
+  `prepush-check.mjs` guards with `existsSync` + falls back to `npm ci`, while
+  `check-gate-poison-pills.mjs` did not, and on Windows **a junction to a missing
+  target succeeds and leaves a dangling link** (verified 2026-08-08), so its
+  try/catch never fired and the only symptom was the CONTROL run dying on
+  `Cannot find package 'zod'` — a message pointing at the gate under test rather
+  than the harness. It now resolves upward like Node does and asserts the link
+  RESOLVES, not merely that creating it threw nothing. (`prepush-check.mjs` was
+  already correct — in a worktree it just falls back to a slower `npm ci`, which
+  is safe, so it was deliberately left alone.) Do not "fix" a worktree by
+  hand-linking `node_modules` into it: that hides the tool bug from the next
+  person and is the ritual this removes.
 - **Sandbox-honesty rule.** A fresh worktree has no gitignored inputs, so a check
   that *skips* on a missing input passes having read nothing (known skips are
   forced hard: `AUDIT_PUSH_RANGE_REQUIRED`, `ARCH_COVERAGE_REQUIRE_ENVELOPE`).

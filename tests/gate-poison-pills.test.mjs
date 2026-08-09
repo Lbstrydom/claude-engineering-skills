@@ -354,3 +354,53 @@ test('gates:poison is wired into the check chain — an uninvoked gate protects 
     'the manifest gate was correct and simply never called; that is the precedent here');
   assert.ok(pkg.scripts['gates:poison'], 'the script must exist');
 });
+
+// ── findNodeModules — the worktree dependency-resolution fix (2026-08-08) ────
+//
+// The harness used to link `path.join(repoRoot, 'node_modules')` unconditionally.
+// A git worktree has no node_modules of its own, so that path did not exist —
+// and on Windows a junction to a MISSING target succeeds, leaving a dangling
+// link. The try/catch therefore never fired; the only symptom was the CONTROL
+// run failing with a bare `Cannot find package 'zod'`, which reads as a defect
+// in the gate under test rather than in the harness feeding it.
+//
+// Resolving upward mirrors Node's own algorithm, so the isolated copy resolves
+// dependencies exactly as the checkout it was copied from — no hand-linking
+// node_modules into every worktree.
+
+test('findNodeModules — finds an ANCESTOR node_modules (the worktree case)', () => {
+  const root = tmpDir();
+  fs.mkdirSync(path.join(root, 'node_modules'), { recursive: true });
+  const nested = path.join(root, 'sub', 'worktree');
+  fs.mkdirSync(nested, { recursive: true });
+
+  assert.equal(_internals.findNodeModules(nested), path.join(root, 'node_modules'));
+});
+
+test('findNodeModules — prefers the NEAREST node_modules, not the farthest', () => {
+  const root = tmpDir();
+  fs.mkdirSync(path.join(root, 'node_modules'), { recursive: true });
+  const near = path.join(root, 'inner');
+  fs.mkdirSync(path.join(near, 'node_modules'), { recursive: true });
+
+  assert.equal(_internals.findNodeModules(near), path.join(near, 'node_modules'));
+});
+
+test('findNodeModules — a DANGLING node_modules link reads as absent and the walk continues', () => {
+  // The precise shape of the bug: a link that exists as a directory entry but
+  // resolves to nothing. It must not be accepted as a usable node_modules.
+  const root = tmpDir();
+  fs.mkdirSync(path.join(root, 'node_modules'), { recursive: true });
+  const inner = path.join(root, 'inner');
+  fs.mkdirSync(inner, { recursive: true });
+  try {
+    fs.symlinkSync(path.join(root, 'no-such-target'), path.join(inner, 'node_modules'),
+      process.platform === 'win32' ? 'junction' : 'dir');
+  } catch {
+    return; // platform refuses dangling links — nothing to prove here
+  }
+  assert.equal(fs.existsSync(path.join(inner, 'node_modules')), false, 'precondition: link is dangling');
+
+  assert.equal(_internals.findNodeModules(inner), path.join(root, 'node_modules'),
+    'must skip the dangling link and keep walking up');
+});

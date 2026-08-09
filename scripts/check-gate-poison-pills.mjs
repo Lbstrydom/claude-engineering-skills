@@ -196,6 +196,38 @@ function listTracked(repoRoot) {
   return String(r.stdout || '').split('\0').filter(Boolean);
 }
 
+/**
+ * Nearest real `node_modules` at or above `startDir`, mirroring Node's own
+ * upward resolution.
+ *
+ * Why walk instead of `path.join(repoRoot, 'node_modules')` (2026-08-08): a git
+ * WORKTREE has no `node_modules` of its own. Everything else in a worktree still
+ * works, because Node walks up and — for a worktree nested inside the main
+ * checkout, which is how this repo's are created — finds the main checkout's
+ * copy. This harness was the one thing that bypassed that, hard-coding the
+ * worktree root and linking a path that did not exist. Resolving the way Node
+ * does makes the isolated copy behave like the checkout it was copied FROM,
+ * which is the property the harness actually needs, and removes the operator
+ * ritual of hand-linking `node_modules` into every worktree.
+ *
+ * Returns null when nothing is found anywhere up the chain — a real "you have
+ * not installed dependencies" state, which the caller reports as such.
+ *
+ * @param {string} startDir
+ * @returns {string|null} absolute path to a node_modules directory, or null
+ */
+function findNodeModules(startDir) {
+  let dir = path.resolve(startDir);
+  for (;;) {
+    const candidate = path.join(dir, 'node_modules');
+    // existsSync follows links, so a dangling junction correctly reads as absent.
+    if (fs.existsSync(candidate)) return candidate;
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
 function copyTracked(repoRoot, files, dest) {
   for (const rel of files) {
     const s = path.join(repoRoot, rel), d = path.join(dest, rel);
@@ -263,7 +295,7 @@ const serialize = (doc) => `${JSON.stringify(doc, null, 2)}\n`;
 const normaliseEol = (text) => text.replace(/\r\n/g, '\n');
 
 /** Private helpers exposed for direct test coverage (mirrors `file-io.mjs`, `shared.mjs`). */
-export const _internals = { applyMutation, listTracked, copyTracked };
+export const _internals = { applyMutation, listTracked, copyTracked, findNodeModules };
 
 /**
  * Run one contract's control + poison pair inside an isolated copy.
@@ -296,14 +328,32 @@ export function runPill(contract, { repoRoot = REPO_ROOT, tmpRoot } = {}) {
     // that on the first execution of this file: a crash that, without a control, would have
     // read as "the poison pill passed". Junction on Windows, symlink elsewhere; a copy is
     // the fallback nobody should need.
+    const modulesDir = findNodeModules(repoRoot);
+    if (!modulesDir) {
+      problems.push(`${contract.script}: no node_modules found at or above ${repoRoot} — the isolated `
+        + 'copy would have no dependencies, so every gate dies on ERR_MODULE_NOT_FOUND before it reads '
+        + 'its artifact. Run `npm install` in this checkout.');
+      return { ok: false, problems };
+    }
+    const linkPath = path.join(work, 'node_modules');
     try {
-      fs.symlinkSync(
-        path.join(repoRoot, 'node_modules'), path.join(work, 'node_modules'),
-        process.platform === 'win32' ? 'junction' : 'dir',
-      );
+      fs.symlinkSync(modulesDir, linkPath, process.platform === 'win32' ? 'junction' : 'dir');
     } catch (err) {
       problems.push(`${contract.script}: could not link node_modules into the isolated copy (${err.code}) — `
         + 'the gate would fail on a missing dependency rather than on its artifact');
+      return { ok: false, problems };
+    }
+    // A junction to a MISSING target succeeds on Windows and leaves a dangling link, so the
+    // catch above is not proof the link works. Verified 2026-08-08:
+    // `fs.symlinkSync(missing, link, 'junction')` returns normally and `existsSync(link)` is
+    // false. Without this the only symptom was the control run failing with a bare
+    // `Cannot find package 'zod'` — a message that points at the gate under test rather than
+    // at the harness that fed it. Assert the link RESOLVES, not merely that creating it threw
+    // nothing.
+    if (!fs.existsSync(linkPath)) {
+      problems.push(`${contract.script}: the node_modules link at ${linkPath} does not resolve `
+        + `(dangling link to ${modulesDir}) — the gate would die on a missing dependency and the `
+        + 'failure would read as a defect in the gate rather than in this harness');
       return { ok: false, problems };
     }
 

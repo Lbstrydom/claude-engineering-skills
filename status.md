@@ -1,6 +1,65 @@
 # Project Status Log
 
-## 2026-08-08 (latest) — `skills:check` disagreed with git about what "the same file" means
+## 2026-08-08 (latest) — the pairs form communities, and the harness stopped needing a ritual
+
+Two things, both following from the memory-health gate becoming measurable again.
+
+**Clustering prototype — PROMOTE, with a cohesion guard.** The July pgvector
+prototype measured PAIRS and promoted pairwise re-raise suppression (shipped,
+default-on). It never answered whether those pairs form COMMUNITIES, which is
+the question that decides whether a graph-shaped memory earns anything: disjoint
+duos mean pairwise suppression is already the whole win. Added
+`memory-pgvector-prototype.mjs --clusters` (read-only; a prototype that writes to
+the store is a promotion) — connected components over the cos > 0.85 graph.
+
+Community structure is real: **2.47 findings per canonical issue here, 3.90 in a
+private consumer repo**. Unambiguous examples — four findings describing one
+duplicated sync inventory, three describing `parseSkill` doing too much, ten
+describing one oversized `app.js` across separate runs. A 10-member re-raise
+cluster is not visible as "some pairs", which is exactly the gap.
+
+**The cohesion check earned its keep on the first run.** Connected components
+chain by construction (A~B, B~C, A≁C), so every component reports the fraction
+of its internal pairs actually linked plus `minCos`. Without that the consumer's
+largest component reads as one issue; it is **21 findings at 22% density across
+21 distinct files**, chained through "the planned file X is absent". A second
+failure mode surfaced too: **template-worded findings cluster on the template,
+not the content** — a 3-member component here is entirely the adjacency wave's
+formulaic "X sits inside the `if` at Y" across three unrelated files. Same family
+as the control-marker defect migration `20260720210000` fixed, one level
+subtler: there the text was byte-identical machine output, here real findings
+wear a uniform. The gate is already immune (its RPC requires same-`primary_file`);
+the prototype dropped that constraint, which is how the mode became visible.
+Necessary but not sufficient — a same-file cluster at 40% density was a TRUE
+issue, so density alone does not decide.
+
+**Not promoted, deliberately.** The rule is 1 trigger → prototype (done), 2+ →
+build the pipeline. One is firing and this is its first *measurable* week; the
+earlier readings were a timing-out RPC, not evidence. Second reading next Monday
+before anything is built on a single data point. Write-up appended to
+[`pgvector-clustering-prototype.md`](docs/research/pgvector-clustering-prototype.md).
+
+**A worktree needs no `node_modules` ritual any more.** Last session's note said
+one was required for `gates:poison`; that was treating the symptom. The harness
+hard-coded `<repoRoot>/node_modules` when linking dependencies into its isolated
+copy — a path that does not exist in a worktree, where everything else works
+because Node walks UP and finds the main checkout's copy. **On Windows a junction
+to a missing target succeeds and leaves a dangling link** (measured:
+`symlinkSync` returns normally, `existsSync` is false), so the try/catch never
+fired and the only symptom was the CONTROL run dying on `Cannot find package
+'zod'` — a message pointing at the gate under test rather than at the harness
+feeding it. `findNodeModules` now resolves upward the way Node does, and the link
+is asserted to RESOLVE rather than merely to have been created without throwing.
+`prepush-check.mjs` was already correct (guarded, falls back to `npm ci`) and was
+left alone rather than refactored for speed.
+
+**Verified**: `gates:poison` 26/26 with the worktree's `node_modules` junction
+REMOVED — the condition that broke it before. Full suite 10,213 / 0 fail, also
+with no worktree `node_modules`. Three new `findNodeModules` cases pin ancestor
+resolution, nearest-wins, and that a dangling link reads as absent so the walk
+continues.
+
+## 2026-08-08 — `skills:check` disagreed with git about what "the same file" means
 
 Reported at the end of the previous session as "worktrees check out CRLF".
 **That diagnosis was wrong**, and the measurement that killed it is the useful
