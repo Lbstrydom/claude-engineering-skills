@@ -109,3 +109,30 @@ describe('gate 2C — disk → manifest orphan detection', () => {
     assert.equal(gate2C(root, { files: {} }).pass, true);
   });
 });
+
+describe('gate 2C — declared non-manifest files', () => {
+  it('does not report the ownership watermark as an orphan', () => {
+  // The watermark is DECLARED never-in-the-manifest (sync-path-map.mjs). Without
+  // a carve-out, 2C fails on every correctly-synced consumer — measured on both
+  // on 2026-08-09, one orphan each, this file. A gate that cannot be satisfied by
+  // doing the work correctly is the shape that earns --no-verify.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gate2c-watermark-'));
+  const toolDir = path.join(root, LAYOUT_CONSTANTS.CONSUMER_TOOLING_DIR);
+  fs.mkdirSync(toolDir, { recursive: true });
+  fs.writeFileSync(path.join(root, LAYOUT_CONSTANTS.OWNERSHIP_WATERMARK), '{"owner":"x"}');
+  fs.writeFileSync(path.join(toolDir, 'claimed.mjs'), '// claimed');
+
+  const manifest = { files: { [`${LAYOUT_CONSTANTS.CONSUMER_TOOLING_DIR}/claimed.mjs`]: { sha256: 'x' } } };
+  const r = _internals.gate2C(root, manifest);
+  assert.equal(r.pass, true, `watermark reported as an orphan: ${JSON.stringify(r)}`);
+
+  // Negative control: a genuine orphan IS still caught, so the carve-out did not
+  // blunt the gate.
+  fs.writeFileSync(path.join(toolDir, 'stowaway.mjs'), '// not in the manifest');
+  const r2 = _internals.gate2C(root, manifest);
+  assert.equal(r2.pass, false, 'a real orphan must still fail the gate');
+  assert.ok(JSON.stringify(r2).includes('stowaway.mjs'));
+
+  fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+});
+});

@@ -330,6 +330,13 @@ function gate2C(consumerRoot, manifest) {
   for (const fileAbs of walkDir(abs)) {
     const rel = relativize(consumerRoot, fileAbs);
     if (rel === LAYOUT_CONSTANTS.MANIFEST_PATH) continue;  // same self-entry carve-out as 2B
+    // The ownership watermark is DECLARED never-in-the-manifest (sync-path-map.mjs:
+    // "Never appears in the manifest, so the GC pass … cannot delete it"). Without
+    // this carve-out gate 2C reports it on EVERY correctly-synced consumer, so the
+    // gate could not be satisfied by doing the work right — the cried-wolf shape
+    // that earns --no-verify, in the gate written to catch invisible drift.
+    // Measured 2026-08-09: both consumers, freshly rehydrated, 1 orphan each — this file.
+    if (rel === LAYOUT_CONSTANTS.OWNERSHIP_WATERMARK) continue;
     if (!claimed.has(rel)) orphans.push(rel);
   }
   if (orphans.length === 0) return { gate: '2C', pass: true };
