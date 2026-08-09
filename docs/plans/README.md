@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**8 active · 175 terminal · 27 audit summaries · 4 reference docs**
+**7 active · 176 terminal · 27 audit summaries · 4 reference docs**
 
 ---
 
@@ -23,7 +23,6 @@ This is the list to read when asking "what is in flight?".
 |---|---|---|
 | [Event-Wiring Symmetry Check](./event-wiring-symmetry.md) | `Draft` |  |
 | [Final-Review Shadow Bake-Off (marginal-value re-test)](./final-review-shadow-bakeoff.md) | `In Progress` | activated 2026-07-31 — see §0 Activation Addendum |
-| [Honest failure across the learning / brainstorm / persona-promote seams](./learning-persona-quickfix-honest-failure.md) | `Draft` |  |
 | [Learning / Persona / Quickfix Reliability Debt (2026-07-26 triage)](./refactor-learning-persona-quickfix-2026-07.md) | `Draft` | re-scoped to the 7 entries that are still real. |
 | [Miscellaneous Small-Cluster Debt (2026-07-26 triage)](./refactor-misc-small-items-2026-07.md) | `Draft` | items resolved individually as picked up (see per-item status below), not implemented as one batch |
 | [Model-Eval / Pricing Debt (2026-07-26 triage)](./refactor-model-eval-pricing-2026-07.md) | `Draft` |  |
@@ -48,7 +47,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 172 completed plans</summary>
+<summary>Show all 173 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -128,6 +127,7 @@ source comments that no docs linter sees — stays valid.
 | [Closing the "GREEN ≠ REALIZED" gap](./green-not-realized.md) | `Complete` | all three clusters shipped (2026-06-28). A: efficacy-lints (AST, Gemini APPROVE). B: runtime-truth audit ru… |
 | [Harden `scripts/lib/install/transaction.mjs`'s WAL Crash-Safety Contract](./install-transaction-wal-hardening.md) | `Complete` |  |
 | [Cross-Domain Layering + Mutation-Contract Cleanup](./layering-and-mutation-contracts.md) | `Complete` | shipped 2026-07-31 — see Implementation Log |
+| [Honest failure across the learning / brainstorm / persona-promote seams](./learning-persona-quickfix-honest-failure.md) | `Complete` | 2026-08-09) — all 5 phases shipped across 3 clusters; |
 | [Learning-Store Signal Recovery — Identity, Outcomes, Dead Loops](./learning-store-signal-recovery.md) | `Complete` | Clusters A–D landed 2026-06-03/04 with their own |
 | [Learning System v2 — Adaptive Prompt Evolution & Contextual Bandits](./learning-system-v2.md) | `Complete` | shipped — Supabase tables `learning_decisions`, `recurring_finding_clusters`, `bandit_arms`, `false_positiv… |
 | [Pipeline liveness + canonical-path enforcement (WS3 follow-up)](./liveness-and-canonical-paths.md) | `Complete` |  |

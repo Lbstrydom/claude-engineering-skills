@@ -1,6 +1,109 @@
 # Project Status Log
 
-## 2026-08-09 (latest) — the audit could not see its own blind spot
+## 2026-08-09 (latest) — an un-done job that reported success, in four places
+
+`/cycle --autonomous` over
+[`learning-persona-quickfix-honest-failure.md`](docs/plans/learning-persona-quickfix-honest-failure.md),
+the plan implementing the last 7 open entries of the 2026-07-26 triage. Three
+clusters, three commits, `Status: Complete`, all 7 topicIds resolved with
+attributable shas.
+
+| Cluster | Phases | Commit | Rounds | In-cluster HIGH at close |
+|---|---|---|---|---|
+| A — eviction spill + retire bootstrap | 1–2 | `e370eba5` | 3 | 0 |
+| B — sync lock + session-store honesty | 3–4 | `8a7a65c5` | 2 | 0 |
+| C — candidate enumeration + reconcile | 5 | `63243441` | 1 (`fix-gate: final`) | 0 |
+
+**The shared shape, stated once**: an un-done or failed job reports success.
+A decision was evicted and lost while the caller got a `decisionKey` back — and
+a `decisionKey` is a *receipt*. A rebuild that never ran its heuristic returned
+`{ok:true}` and overwrote a cloud-built cache with inert weights. A record the
+loader could not interpret was accepted *and* mislabelled `_synthesised`. A
+truncated candidate list read as the complete set, so "not in the list" meant
+"already promoted" and the recovery journal was deleted. Four sites, four
+different substrates, deliberately four fixes rather than one abstraction.
+
+**The audit earned its keep on this plan's own new code**, which is the part
+worth recording:
+
+- The eviction spill made a pre-existing validation gap load-bearing. `choice`
+  and `outcome` were never checked for JSON-serialisability (`context` was,
+  implicitly, via `contextHash`). **Reproduced with a standalone probe before
+  fixing**: a BigInt in `choice` was admitted, and once it reached the head of a
+  full queue *every* later `recordDecision` returned `null`, permanently. The
+  fix converts a benign data-quality issue back out of a denial-of-admission.
+- `_canonicalise` rebuilt objects with a plain `{}`, so an own `__proto__` key
+  reassigned the prototype instead of becoming data and two different contexts
+  hashed identically — the sibling `quickfix-stats` module had already fixed
+  exactly this.
+- A present-but-empty cursor was truthiness-tested and silently restarted at
+  page 1 — the same present-vs-absent confusion Cluster B fixed in the
+  `schemaVersion` branch, found in a different file two clusters later.
+
+**Gate finding G6 — a guard that read as protection and provided none.**
+`forceRelease` compared `statSync` against a *second* `statSync` of the same
+file microseconds later and discarded the result with `void`. In scope by
+impact, not authorship: this plan adds a synchronous acquisition path, and a
+sync caller meeting a stale lock lands in exactly that recovery code. The mtime
+is now captured at inspection time and the decision extracted as a pure
+function — which is also what made it testable, since the interleaving happens
+inside one synchronous call. Negative-controlled: reverting only the mtime half
+turns exactly the two mtime assertions red.
+
+**Three audit passes re-raised the stale-lock check-then-unlink race.** It is a
+property of the substrate, not the diff: `fs.flockSync` and
+`fs.constants.LOCK_EX` are both `undefined` in this Node, verified rather than
+assumed. Rename-to-claim was evaluated and rejected — the winner frees the lock
+path for a legitimate acquirer, and a rollback would rename back into a
+possibly-occupied path, which POSIX silently overwrites. Rather than narrow the
+window again and call it closed, the limitation is now stated in the module
+with what bounds the damage and an instruction not to do exactly that.
+
+**Consolidated Gemini gate (Step 3C.2): `CONCERNS`, round 1 of 2** — 0
+wrongly-dismissed, 0 over-engineering flags, 1 new MEDIUM. G1: `validatePlanPath`
+accepts `opts.repoRoot` but `upsertPlan`/`getPlanIdByPath` never pass one.
+**Reproduced** (from `scripts/`, a valid absolute in-repo plan path is rejected
+as `escapes-repo`) and then **deferred**, because a mechanical scan of the union
+diff found **zero** new call sites touching any of the three functions, and the
+minimal fix is inert until their callers also pass a resolved root. Captured as
+debt `0fd6bf8f`; the loop stopped at round 1 because re-running unchanged code
+would re-raise the identical finding.
+
+**Three repo gates caught real drift and were obeyed rather than edited around**:
+the rmSync retry-guard (a cleanup hook missing `maxRetries`), the
+atomic-write-adoption guard (the quarantine write moved into a lock callback,
+which that guard deliberately will not descend into — so the critical section
+became a named function and the guard now targets it), and the learning-store
+export-surface guard (13 new exports drifted a curated public API, so the pure
+logic moved to `candidate-pagination.mjs`, which the barrel does not re-export).
+
+**Deviations from §7, recorded in the plan**: `candidate-pagination.mjs` is a
+new file §7 did not anticipate (forced by the export-surface invariant);
+`--resume` was not registered in `assertKnownFlags` because
+`persona-consistency-promote.mjs` does not call it and sits in
+`check-cli-flags.mjs`'s accepted baseline.
+
+**Suite**: 10,473 pass / 0 fail / 24 skip (`npm run check`, exit 0) — *measured*.
+Two transient red readings during the run were both concurrent-session
+artefacts, not defects: another session committed twice mid-suite, so a
+manifest-vs-committed-source test read the two at different HEADs. It passes in
+isolation at each HEAD.
+
+**Consumer-side verification: `unverified`** — blocked prerequisite: no consumer
+checkout on this machine and no push performed at the time of writing this
+entry. The authoritative check is the synced `sync-isolation-verify` run *in* a
+consumer; `npm run sync:dry` from here is the pre-check, not the verdict.
+
+**Surfaced to the operator, not silently deferred** — two security-shaped
+findings in untouched code that this change provably does not reach:
+`cross-skill.mjs:2672` interpolates filesystem- and model-derived values into a
+copy-pasteable bash line in the adjudication worksheet (nothing is `exec`'d, so
+it is a copy-paste hazard rather than live injection), and
+`cmdRecordRegressionSpec` accepts `sourceKind: 'persona-consistency-locked'`
+without the evidence fields that make that state promotable.
+
+
+## 2026-08-09 — the audit could not see its own blind spot
 
 `/audit-code` ran for 15 rounds on the manifest change and converged (GPT
 `H:0 M:0 L:0`, Gemini `APPROVE` ×3). Round 1 alone returned **1 HIGH + 5 MEDIUM**

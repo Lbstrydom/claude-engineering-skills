@@ -1,7 +1,9 @@
 # Plan: Honest failure across the learning / brainstorm / persona-promote seams
 
 - **Date**: 2026-08-01
-- **Status**: Draft
+- **Status**: Complete (2026-08-09) — all 5 phases shipped across 3 clusters;
+  all 7 topicIds resolved with attributable commit shas. See the Execution
+  Record at the end of this document.
 - **Author**: Claude + Lbstrydom
 - **Scope**: backend
 - **Implements**: the 7 open entries in
@@ -1056,3 +1058,92 @@ artifact)."* Not a concrete design defect, and coherence is already
 0 suppressed, 0 reopened) + 1 invalid gate attempt (operator error, 1 real
 finding salvaged, 1 disproved) + 1 valid gate round (4 findings) + 1
 self-sweep (3 findings). **Plan is ready for `/cycle --autonomous`.**
+
+---
+
+## Execution Record (2026-08-09) — `/cycle --autonomous`
+
+| Cluster | Phases | Commit | Audit rounds | In-cluster HIGH at close |
+|---|---|---|---|---|
+| A | 1–2 | `e370eba5` | 3 | 0 |
+| B | 3–4 | `8a7a65c5` | 2 | 0 |
+| C | 5 | `63243441` | 1 (`fix-gate: final`) | 0 |
+
+**Deferred-declared debts all came due and were satisfied** before the
+consolidated gate: `tests/file-lock.test.mjs` (A→B),
+`tests/plans-ship-consistency-candidates.test.mjs` (A→C),
+`resolveCandidateStatesByFingerprint` + its `resolve-consistency-candidate-states`
+bridge (B→C). Verified by existence/type check, not by memory.
+
+### Defects the audit found in this plan's own new code — all fixed
+
+1. **The eviction spill made a pre-existing validation gap load-bearing.**
+   `choice`/`outcome` were never checked for JSON-serialisability (`context`
+   was, implicitly, via `contextHash`). Reproduced with a standalone probe: a
+   BigInt in `choice` was admitted, and once it reached the head of a full
+   queue *every* later `recordDecision` returned `null`, permanently. Refused
+   at admission now, on both doors into the queue.
+2. **`_canonicalise` rebuilt objects with a plain `{}`**, so an own `__proto__`
+   key from parsed JSON reassigned the prototype instead of becoming data and
+   two different contexts hashed identically. `Object.create(null)` — the same
+   fix the sibling `quickfix-stats` module had already made.
+3. **False-success siblings in the edited CLI handler**: an unrecognised
+   `--action` fell through to the stats reader on exit 0, and a failed cloud
+   rebuild emitted `ok:false` on exit 0.
+4. **A present-but-empty cursor** was truthiness-tested and silently restarted
+   at page 1 — the same present-vs-absent confusion Cluster B fixed in the
+   `schemaVersion` branch.
+5. **`buildCandidatePageQuery` honoured any positive limit**, defeating its own
+   bounded-work design. Clamped to a ceiling *derived* from the documented page
+   size (contrast Cluster A's queue-cap finding, deferred because any maximum
+   there would have been invented).
+
+### Deviations from §7, and why
+
+- **`scripts/lib/store/candidate-pagination.mjs` is a NEW file** §7 did not
+  anticipate. The `learning-store.mjs` barrel `export *`s `plans-ship.mjs`, and
+  its pinned public surface is store *operations* with constants excluded by
+  design; putting a cursor codec there tripped the export-surface guard.
+  Extracting the pure logic satisfies both that invariant and §7's requirement
+  that the SQL predicate be directly assertable. The one genuinely new public
+  operation, `resolveCandidateStatesByFingerprint`, is pinned deliberately.
+- **`--resume` was not registered in `assertKnownFlags`** as §7 directs,
+  because `persona-consistency-promote.mjs` does not call it — the script sits
+  in `check-cli-flags.mjs`'s accepted baseline of 65 scripts that ignore
+  unknown flags. There was no registry to add to; inventing a flag-validation
+  surface for one flag was out of proportion. `cli:flags:gate` is clean.
+- **`docs/runbooks/learning-system.md`** is declared in §7 but belongs to no
+  §7b phase, so it was done in close-out rather than inside a cluster (editing
+  it mid-cluster would have tripped the out-of-scope reconciliation).
+
+### Consolidated gate (Step 3C.2) — Gemini, round 1 of 2: `CONCERNS`
+
+0 wrongly-dismissed, 0 over-engineering flags, **1 new MEDIUM (G1)**.
+
+G1: `validatePlanPath` accepts `opts.repoRoot`, but its callers `upsertPlan`
+and `getPlanIdByPath` neither accept nor pass one, so both default to
+`process.cwd()`. **Reproduced rather than assumed** — from `scripts/`, a valid
+absolute in-repo plan path is rejected as `escapes-repo`; passing `repoRoot`
+explicitly returns `ok:true`. GPT raised the filesystem-root edge of the same
+check independently (Cluster C L2).
+
+**Deferred, and the loop stopped at round 1.** Independence was established
+mechanically, not argued: a scan of the union diff found **zero** new call
+sites touching `validatePlanPath`, `upsertPlan` or `getPlanIdByPath`. The
+minimal fix — threading `opts.repoRoot` through both — is *inert* until their
+callers also pass a resolved root, making it a cross-caller contract change
+that needs its own regression coverage. Re-running the gate against unchanged
+code would have re-raised the identical finding, which is ceremony rather than
+deliberation. Captured as debt **`0fd6bf8f`** so it is tracked, not dropped.
+
+### Accepted limitation, stated rather than narrowed
+
+Three audit passes re-raised the stale-lock **check-then-unlink race** in
+`file-lock.mjs`. It is a property of the substrate: `fs.flockSync` and
+`fs.constants.LOCK_EX` are both `undefined` in this Node, so no atomic
+compare-and-unlink exists. Rename-to-claim was evaluated and rejected — the
+winner frees the lock path for a legitimate acquirer, and a rollback would
+rename back into a possibly-occupied path, which POSIX silently overwrites.
+Rather than narrow the window again and call it closed, the limitation is now
+documented in the module with what bounds the damage. Closing it means changing
+the locking substrate — a different plan.
