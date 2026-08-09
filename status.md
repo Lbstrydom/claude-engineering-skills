@@ -1,6 +1,66 @@
 # Project Status Log
 
-## 2026-08-08 (latest) — the pairs form communities, and the harness stopped needing a ritual
+## 2026-08-08 (latest) — the consumer queue was four reports of three shapes
+
+Triaged all four open upstream reports, reproduced every one against current
+source, then fixed them. Each fix ships with the test that would have caught it,
+because all four are instances of shapes that had already recurred once.
+
+**Shape 1 — a read hands back a key its writer rejects** (`23544fca` HIGH,
+`da67a8c1` MEDIUM). `/ship` 0.5e reads `unremediated_acceptances` and nudges you
+to close each row; the only closer, `final-review-record-fix`, requires
+`--run-id` AND `--fingerprint`; the view projected `audit_finding_id` and no
+fingerprint. Every listed obligation was unclosable from what the read handed
+back, so the nudge grew a backlog it gave no way to clear. Confirmed against the
+LIVE view (`information_schema.columns`), not the migration file. The second
+report is the same defect from the other end — its stated mechanism was wrong
+(it called `final-review-record-fix` shadow-only; it takes an OPTIONAL
+`--bucket` and is generic) but its conclusion held. Two reports, one column:
+migration `20260808200000` appends `finding_fingerprint`.
+
+Its own premise also failed on contact: the report asserted `dd4cbae1` had
+already replaced the `finalize-outcomes` advice in 0.5e. It had not — the step
+still named a command that needs one round's `--ledger` + `--result`, which a
+finding accepted weeks ago in a since-deleted run has neither. Both halves fixed.
+
+**Shape 2 — a gate judges files the repo does not own** (`5b67666e` MEDIUM).
+`scanInstructionFiles` walked a hardcoded exclusion set and never consulted git,
+so a consumer's vendored `.agents/skills/<vendor>/CLAUDE.md` (body: the literal
+string `AGENTS.md`, gitignored) raised `[HIGH] ctx/missing-import` and
+`context:check --strict` exited 1 on a repo whose real topology was clean. Now
+filtered by `git ls-files --others --ignored --exclude-standard` — **ignored AND
+untracked**. The second half is load-bearing: `git check-ignore` calls a TRACKED
+file ignored whenever a pattern matches, so filtering on ignore-status alone
+would silently stop judging a committed instruction file.
+
+**Shape 3 — a check verifies in one direction only** (`167084b3` HIGH). Gate 2B
+iterates `manifest.files`, so a file on disk that no entry claims is invisible
+*by construction* — 531 files against 431 entries in the reporting consumer, 100
+orphans still executable on documented command paths while the bundle stamp read
+current. New **gate 2C** walks disk→manifest over `scripts/.claude-skills/`
+alone (the other manifest-governed dirs hold consumer-owned files; reverse-
+walking those would report their own work as orphaned and earn the gate a
+bypass). It fails rather than warns — every consumer sees it red once, which is
+correct, and one re-sync clears it.
+
+**What makes it sustainable rather than four patches.**
+[`view-writer-key-contract.test.mjs`](tests/view-writer-key-contract.test.mjs)
+asserts from committed source that a view whose rows a skill tells you to close
+projects every key the closer requires — adding such a nudge now means adding a
+row there. The gate-2C tests assert **2B is blind to what 2C finds**, so 2C
+cannot later be deleted as redundant. The scanner tests pin both directions at
+once. AGENTS.md records the three shapes with the forcing question for any set
+comparison: *which side am I iterating, and what is unrepresentable from it?*
+
+**Verified**: 10,231 tests, one failure — `the manifest hashes committed source,
+not working-tree bytes`, which compares each entry against `git show HEAD:…` and
+is *expected* while the SKILL.md edit is uncommitted; re-checked green after the
+commit. Schema fixture regenerated from a fresh container (`npm run
+db:local:regen`), never the production store — today's guard refuses that — and
+the diff is the view change alone with **no `refresh_runs` ordinal churn**,
+independently confirming the committed ordinals match a fresh replay.
+
+## 2026-08-08 — the pairs form communities, and the harness stopped needing a ritual
 
 Two things, both following from the memory-health gate becoming measurable again.
 

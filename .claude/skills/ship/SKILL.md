@@ -227,10 +227,35 @@ backlog:
 ⚠ UNREMEDIATED ACCEPTANCES (non-blocking)
   <n> finding(s) you accepted were never marked fixed (showing <=5):
     • [<severity>] <primary_file> — accepted <days_open>d ago
-  Either remediate them, or close the loop honestly:
-    node scripts/cross-skill.mjs finalize-outcomes    # transition to fixed/verified
+  Either remediate them, or close the loop honestly — per row:
+    node scripts/cross-skill.mjs final-review-record-fix \
+      --run-id <audit_run_id> --fingerprint <finding_fingerprint> \
+      --commit <sha that fixed it> --state fixed
   Leaving them open is fine — leaving them open SILENTLY is what this catches.
 ```
+
+> **Why not `finalize-outcomes` (it used to say that, and it was unactionable).**
+> `finalize-outcomes` needs one round's `--ledger` + `--result`; a finding
+> accepted weeks ago in a since-deleted run has neither, so the advice could
+> could not be followed for exactly the rows this step lists. Worse, a finding fixed
+> in a LATER session is unreachable by a fresh `/audit-code` too — the
+> remediation transition is driven by the finding appearing in the ledger, and
+> the defect no longer reproduces, so "fixed" was unreachable *because the fix
+> worked*. Reported from a consumer as `da67a8c1` after two HIGH findings sat
+> `pending` for 10 days having been genuinely fixed and merged.
+>
+> `final-review-record-fix` is generic despite its name — it takes `--run-id` +
+> `--fingerprint` with an OPTIONAL `--bucket`, so it is not shadow-only. It was
+> already the right command when `dd4cbae1` (2026-08-01) reworked this step; the
+> substitution simply did not happen here, and the row above kept naming a
+> command that cannot close these rows.
+>
+> **Both keys come from the row.** `audit_run_id` and `finding_fingerprint` are
+> projected by the `unremediated_acceptances` view — the fingerprint only since
+> migration `20260808200000`, which exists because this step told you to close
+> rows the read gave you no key for (upstream `23544fca`). If your store
+> predates that migration the fingerprint is absent: run
+> `node scripts/setup-postgres.mjs --migrate` rather than hand-deriving it.
 
 Judge the list before echoing it — two rows look identical but are not:
 

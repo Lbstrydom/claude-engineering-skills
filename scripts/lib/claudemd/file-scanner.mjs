@@ -4,6 +4,43 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+
+/**
+ * Paths the repo does NOT own: ignored AND untracked.
+ *
+ * Why this and not a longer `MANDATORY_EXCLUDES` (upstream 5b67666e, filed from
+ * a consumer 2026-08-04): a consumer that vendors third-party skills gets
+ * directories the checker has no business judging. There, `npx skills add`
+ * produced `.agents/skills/<vendor>/CLAUDE.md` whose entire body is the literal
+ * string "AGENTS.md" — a third-party pointer file, gitignored, not part of the
+ * consumer's context topology — and it raised `[HIGH] ctx/missing-import`, so
+ * `context:check --strict` exited 1 on a repo whose real topology was clean.
+ * That is the cried-wolf shape: a gate red on arrival for a reason the operator
+ * cannot fix stops being read. A hardcoded list would have to grow once per
+ * vendoring tool; "does this repo own the file" does not.
+ *
+ * The predicate is ignored AND UNTRACKED, deliberately — not merely ignored.
+ * `git check-ignore` reports a TRACKED file as ignored whenever a pattern
+ * matches it, so filtering on ignore-status alone would silently stop judging a
+ * committed CLAUDE.md that happens to match one (this repo tracks files under
+ * ignored patterns today). `git ls-files --others --ignored --exclude-standard`
+ * is exactly the "untracked and ignored" set and cannot make that mistake.
+ *
+ * Degrades to the empty set when git is unavailable or this is not a work tree,
+ * leaving prior behaviour untouched — a scanner that throws because it is being
+ * run outside git is a worse failure than one that scans slightly too much.
+ *
+ * @param {string} repoRoot
+ * @returns {Set<string>} repo-relative POSIX paths to skip
+ */
+function ignoredUntrackedPaths(repoRoot) {
+  const r = spawnSync('git', ['ls-files', '-z', '--others', '--ignored', '--exclude-standard'], {
+    cwd: repoRoot, encoding: 'utf-8', windowsHide: true,
+  });
+  if (r.error || r.status !== 0 || typeof r.stdout !== 'string') return new Set();
+  return new Set(r.stdout.split('\0').filter(Boolean).map((p) => p.replaceAll(/\\/g, '/')));
+}
 
 /** Globs that are always excluded (non-configurable). */
 const MANDATORY_EXCLUDES = [
@@ -114,9 +151,13 @@ export function scanInstructionFiles(repoRoot, options = {}) {
   }
 
   const found = walkDir(repoRoot, INSTRUCTION_PATTERNS, excludeDirs);
+  // Drop what the repo does not own. `options.respectGitignore === false` opts
+  // out for a caller that genuinely wants the raw walk (tests do).
+  const disowned = options.respectGitignore === false ? new Set() : ignoredUntrackedPaths(repoRoot);
   const files = [];
 
   for (const relPath of found) {
+    if (disowned.has(relPath.replaceAll(/\\/g, '/'))) continue;
     const absPath = path.join(repoRoot, relPath);
     try {
       const content = fs.readFileSync(absPath, 'utf-8');

@@ -227,6 +227,20 @@ consumer instead of the named one. Verified 2026-07-20.)
 > path against an unknowable version for a bug fixed the day before; the worksheet answers "already fixed?"
 > mechanically. Bodies readable by every repo sharing the DSN. [Plan](docs/plans/upstream-issue-reports.md).
 
+> **Three shapes consumers keep reporting — check for them when adding a gate or nudge (2026-08-08).**
+> *(1) A read handing back a key its writer rejects*: `/ship` 0.5e listed unclosable rows for weeks because
+> `unremediated_acceptances` projected `audit_finding_id` while its only closer needs `--fingerprint` — two
+> reports, one column. **A new close-this-row nudge means a new row in**
+> [`view-writer-key-contract.test.mjs`](tests/view-writer-key-contract.test.mjs). *(2) A gate judging files
+> the repo does not own*: `context:check` scanned a vendored gitignored `.agents/skills/**/CLAUDE.md` and
+> exited 1 on a clean repo — fix with `git ls-files --others --ignored` (**ignored AND untracked**; plain
+> ignore-status stops judging *tracked* files matching a pattern), never a longer exclusion list, which grows
+> per vendoring tool. *(3) A check verifying one direction only*: `sync-isolation-verify` walked
+> manifest→disk, so 100 orphaned executables were invisible *by construction*; gate **2C** now walks
+> disk→manifest over `scripts/.claude-skills/` alone (other dirs hold consumer-owned files; flagging those
+> earns a bypass). Ask of any set comparison: **which side am I iterating, and what is unrepresentable from
+> it?**
+
 > **Upstream bug, but you're blocked? Source patch = forbidden; a labelled
 > runtime/env workaround is OK and must reconcile.** Editing upstream-owned
 > *source* in a fork/consumer is never allowed (above). But a **runtime/env/DB**

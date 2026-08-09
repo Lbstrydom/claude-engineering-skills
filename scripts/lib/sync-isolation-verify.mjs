@@ -7,10 +7,12 @@
  * consumer's manifest as the source of truth and never scans the source
  * repo's filesystem (plan Gemini v2 G2 fix).
  *
- * Gates (each runnable independently via --gates 1,2A,2B,3,4,5,6,7,8):
+ * Gates (each runnable independently via --gates 1,2A,2B,2C,3,4,5,6,7,8):
  *   1   Pre-migration git status / approval contract (read-only inspection)
  *   2A  Tracked-diff whitelist
- *   2B  Hydration-on-disk manifest hash check
+ *   2B  Hydration-on-disk manifest hash check (manifest -> disk)
+ *   2C  Orphan check (disk -> manifest): files in the isolated tooling dir
+ *       that no manifest entry claims — invisible to 2B by construction
  *   3   No-stale-path verification (ownership-aware)
  *   4   Fresh-clone executable contract (CLI smoke + library import test)
  *   5   Consumer package.json npm-run reconciliation
@@ -40,7 +42,7 @@ import { enumerateNpmRunRefs } from './npm-script-enumerator.mjs';
 // `scripts/check-isolation-inventory.mjs` instead — that script is
 // source-only and never shipped to consumers.
 
-const ALL_GATES = ['1', '2A', '2B', '3', '4', '5', '6', '7', '8'];
+const ALL_GATES = ['1', '2A', '2B', '2C', '3', '4', '5', '6', '7', '8'];
 // Reuse the single source of truth from sync-rewriter — eliminates
 // parser drift between rewrite and detect surfaces (R1 M1 fix).
 const COMMAND_REGEX = SHARED_COMMAND_REGEX;
@@ -287,6 +289,61 @@ function gate2B(consumerRoot, manifest) {
     };
   }
   return { gate: '2B', pass: true };
+}
+
+/**
+ * Gate 2C — the OTHER direction: disk → manifest.
+ *
+ * THE BLIND SPOT THIS CLOSES (upstream 167084b3, filed from a consumer
+ * 2026-08-04). Gate 2B iterates `manifest.files` and asks "is each entry on
+ * disk, with the right hash?". A file on disk with NO manifest entry is never
+ * iterated, so it can be neither `missing` nor `mismatched` — it is invisible
+ * to the gate by construction. The reporting consumer had **531 files in
+ * `scripts/.claude-skills/` against 431 manifest entries: 100 orphans**, frozen
+ * at whatever version they held when they last shipped, still executable, still
+ * on documented command paths — while the bundle stamp read current. It was
+ * found only because it forced three claims in an unrelated report to be
+ * withdrawn as already-fixed-upstream, i.e. it had already cost review time
+ * twice before anyone saw the cause.
+ *
+ * Scoped to `CONSUMER_TOOLING_DIR` on purpose. The manifest also governs
+ * `.claude/skills/`, `.claude/hooks/`, `.vscode/mcp.json` and
+ * `.claude/settings.json`, but those directories legitimately hold
+ * CONSUMER-OWNED files alongside synced ones, so a reverse walk there would
+ * report the consumer's own work as orphaned — a false positive that would earn
+ * the gate a bypass. `scripts/.claude-skills/` is upstream-owned by
+ * construction (AGENTS.md "Consumer-repo layout"): everything in it came from a
+ * sync, so anything the manifest does not claim is stale by definition.
+ *
+ * This FAILS rather than warns. Every consumer will see it red once, which is
+ * correct — the condition is real, has existed for months, and is one command
+ * to clear. A stale executable on a documented command path is exactly what the
+ * isolation contract exists to prevent.
+ */
+function gate2C(consumerRoot, manifest) {
+  const toolDirRel = LAYOUT_CONSTANTS.CONSUMER_TOOLING_DIR;
+  const abs = path.join(consumerRoot, toolDirRel);
+  if (!fs.existsSync(abs)) return { gate: '2C', pass: true };
+
+  const claimed = new Set(Object.keys(manifest.files || {}));
+  const orphans = [];
+  for (const fileAbs of walkDir(abs)) {
+    const rel = relativize(consumerRoot, fileAbs);
+    if (rel === LAYOUT_CONSTANTS.MANIFEST_PATH) continue;  // same self-entry carve-out as 2B
+    if (!claimed.has(rel)) orphans.push(rel);
+  }
+  if (orphans.length === 0) return { gate: '2C', pass: true };
+
+  orphans.sort();
+  return {
+    gate: '2C',
+    pass: false,
+    error: `${orphans.length} orphaned file(s) in ${toolDirRel}/ — present on disk, absent from the manifest, `
+      + 'frozen at whatever version they last shipped while the bundle stamp reads current. '
+      + `Clear them by deleting ${toolDirRel}/ and re-running the sync from the source repo `
+      + '(`npm run sync -- --target <name>`), which rehydrates exactly what the manifest claims.',
+    details: { orphans: orphans.slice(0, 50), orphanTotal: orphans.length },
+  };
 }
 
 function gate3(consumerRoot, manifest) {
@@ -584,7 +641,7 @@ function runGates(opts) {
   const manifestRes = loadConsumerManifest(consumerRoot);
   const results = [];
 
-  const needManifest = gates.some((g) => ['2A', '2B', '3', '5', '6', '8'].includes(g));
+  const needManifest = gates.some((g) => ['2A', '2B', '2C', '3', '5', '6', '8'].includes(g));
   if (needManifest && !manifestRes.ok) {
     return [{ gate: 'preflight', pass: false, error: manifestRes.error }];
   }
@@ -595,6 +652,7 @@ function runGates(opts) {
       if (g === '1') results.push(gate1(consumerRoot));
       else if (g === '2A') results.push(gate2A(consumerRoot, manifest));
       else if (g === '2B') results.push(gate2B(consumerRoot, manifest));
+      else if (g === '2C') results.push(gate2C(consumerRoot, manifest));
       else if (g === '3') results.push(gate3(consumerRoot, manifest));
       else if (g === '4') results.push(gate4(consumerRoot));
       else if (g === '5') results.push(gate5(consumerRoot, manifest));
@@ -670,6 +728,6 @@ if (isCli) {
 
 export const _internals = {
   CLI_SMOKE_SET, LIB_IMPORT_SET, CMD_SCAN_PATHS, COMMAND_REGEX,
-  parseArgs, gate1, gate2A, gate2B, gate3, gate4, gate5, gate6, gate7,
+  parseArgs, gate1, gate2A, gate2B, gate2C, gate3, gate4, gate5, gate6, gate7,
   runGates,
 };
