@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**11 active · 171 terminal · 26 audit summaries · 4 reference docs**
+**10 active · 172 terminal · 26 audit summaries · 4 reference docs**
 
 ---
 
@@ -24,7 +24,6 @@ This is the list to read when asking "what is in flight?".
 | [Event-Wiring Symmetry Check](./event-wiring-symmetry.md) | `Draft` |  |
 | [Final-Review Shadow Bake-Off (marginal-value re-test)](./final-review-shadow-bakeoff.md) | `In Progress` | activated 2026-07-31 — see §0 Activation Addendum |
 | [Gate-honesty defects confirmed by blind adjudication](./gate-honesty-adjudicated-defects.md) | `Draft` |  |
-| [Closing the Green-but-Unrealized Gap](./green-but-unrealized.md) | `Approved` | 3 GPT rounds + 2 Gemini rounds; 29 findings, all fixed — see Audit Trail |
 | [Honest failure across the learning / brainstorm / persona-promote seams](./learning-persona-quickfix-honest-failure.md) | `Draft` |  |
 | [Arch-Memory / Symbol-Index Pipeline Debt (2026-07-26 triage)](./refactor-arch-memory-symbol-index-2026-07.md) | `Draft` |  |
 | [Learning / Persona / Quickfix Reliability Debt (2026-07-26 triage)](./refactor-learning-persona-quickfix-2026-07.md) | `Draft` | re-scoped to the 7 entries that are still real. |
@@ -51,7 +50,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 168 completed plans</summary>
+<summary>Show all 169 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -126,6 +125,7 @@ source comments that no docs linter sees — stays valid.
 | [Gemini 3.1 Pro Final Reviewer](./gemini-final-reviewer.md) | `Complete` |  |
 | [Gemini-gate scope-error fix](./gemini-gate-scope-fix.md) | `Complete` | applied 2026-05-11 |
 | [Close the GIT_DIR/GIT_WORK_TREE Env-Leak Class (full blast radius)](./git-env-leak-sustainability.md) | `Complete` |  |
+| [Closing the Green-but-Unrealized Gap](./green-but-unrealized.md) | `Complete` | implemented 2026-08-01; both clusters shipped, consolidated Gemini gate APPROVE — see Implementation Log. A… |
 | [Closing the "GREEN ≠ REALIZED" gap](./green-not-realized.md) | `Complete` | all three clusters shipped (2026-06-28). A: efficacy-lints (AST, Gemini APPROVE). B: runtime-truth audit ru… |
 | [Harden `scripts/lib/install/transaction.mjs`'s WAL Crash-Safety Contract](./install-transaction-wal-hardening.md) | `Complete` |  |
 | [Cross-Domain Layering + Mutation-Contract Cleanup](./layering-and-mutation-contracts.md) | `Complete` | shipped 2026-07-31 — see Implementation Log |
