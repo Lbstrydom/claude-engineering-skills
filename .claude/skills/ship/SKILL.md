@@ -184,8 +184,23 @@ block reason. Cloud off → it still runs + prints; Playwright missing → exit 
 node scripts/cross-skill.mjs list-unremediated-acceptances
 ```
 
-Returns `{ok, cloud, scope:{mode,repoId,slug}, measured, reason, rows: [...]}`.
-Count the rows as `unremediated_count`.
+Returns `{ok, cloud, scope:{mode,repoId,slug}, measured, reason, rows, shown,
+total, byMode:{total,code,plan}}`.
+
+**Use `byMode.total` as `unremediated_count` — NEVER `rows.length`.** `rows` is
+capped at 20 by the query, and `shown` vs `total` exists to make that cap
+visible. This step told you to count the rows until 2026-08-09, three days after
+the CLI started reporting the real total: measured live, the instruction
+produced **20** against an actual **201** for this repo. A nudge whose entire
+job is to convey scale reported a tenth of it, and the figure was repeated back
+to the operator as the size of the backlog they were deciding whether to work.
+Identical defect to 0.5b's `rows.length` undercount — fixed in the tool for both
+views, fixed in the prose for only one.
+
+`byMode.plan` rows are counted separately but are **not** discardable: unlike an
+unlockable plan finding in 0.5b, a plan-mode row here is a plan section that was
+accepted and never amended, which is real work. Split it out to say which kind
+it is, not to drop it.
 
 **Check `measured` BEFORE reading the count** — identical contract to 0.5b.
 `measured:false` (`reason: repo-identity-unresolvable` / `cloud-off`) means
