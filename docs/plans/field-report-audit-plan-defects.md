@@ -96,6 +96,21 @@ parse is ambiguous for a filename containing `:<digits>:`. Independent of this
 change set (the CLI added here parses nothing); a colon is illegal in a Windows
 filename and no shipped glob reaches one; the real fix is `--json` framing.
 
+**R7 — the post-gate verification pass (2026-08-08).** The three fixes made
+AFTER the last audited round (R6's corrupt-ledger backup, and both Gemini
+findings: the malformed-criterion `current` clear and the `--mark-fixed`
+read-outside-the-lock) shipped in `bc6f578f` as `AI-Gate: waived`, because
+`passed` binds to WHAT was audited and those fixes were not. Re-audited over
+`49bef636..HEAD` scoped to the two files that carried them: **PASS, H:0 M:0
+L:0**.
+
+That is what makes `passed` reachable, and only in a specific order: the
+evidence records `gitIndexTree` at audit START, and `ship-commit` compares it to
+`git write-tree` at commit time, so the tree must be staged BEFORE the
+converging round and untouched afterwards. A partial `--path` commit of an
+audited worktree is refused for the same reason — a whole-tree audit does not
+cover a subset.
+
 **Two guards were deleted rather than kept**: a two-process race test for
 `--mark-fixed` passed against both implementations (the processes serialize on
 the lock), and a mutation probe for batch atomicity could not be driven red. A
