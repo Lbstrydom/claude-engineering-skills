@@ -226,7 +226,7 @@ describe('refresh.mjs wiring (source inspection)', () => {
 describe('extract.mjs --files-from (ENAMETOOLONG fix)', () => {
   const EXTRACT_SRC = path.join(REPO_ROOT, 'scripts/symbol-index/extract.mjs');
 
-  it('reads the file list from a newline-delimited manifest and extracts only those files', () => {
+  it('reads the file list from a NUL-delimited manifest and extracts only those files', () => {
     const dir = mkdtemp();
     try {
       fs.mkdirSync(path.join(dir, 'src'));
@@ -234,7 +234,7 @@ describe('extract.mjs --files-from (ENAMETOOLONG fix)', () => {
       fs.writeFileSync(path.join(dir, 'src', 'beta.ts'), 'export function betaFn() { return 2; }\n');
       // Manifest lists only alpha.ts — beta.ts must NOT be extracted.
       const manifest = path.join(dir, 'files.txt');
-      fs.writeFileSync(manifest, 'src/alpha.ts\n');
+      fs.writeFileSync(manifest, 'src/alpha.ts\0');
 
       const res = spawnSync('node', [
         EXTRACT_SRC, '--root', dir, '--mode', 'incremental', '--files-from', manifest,

@@ -11,6 +11,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
 import { runJsonLinesAsyncStrict, SUBPROC_ERROR_CODES } from '../lib/subprocess.mjs';
+import { formatFilesManifest } from '../lib/symbol-index/files-manifest.mjs';
 import { getActiveSnapshot } from '../learning-store.mjs';
 
 // Resolve sibling pipeline scripts (extract/summarise/embed) relative to THIS
@@ -99,10 +100,17 @@ export function buildTimeoutRecovery({ priorForRecovery, finalSymbols }) {
 }
 
 /**
- * Write the newline-delimited `--files-from` manifest for a resolved
- * `restrictFiles` scope, or return `null` when there is no restriction at
- * all. Factored out so the two fixes below are directly unit-testable
- * without spawning the real extract/summarise/embed subprocess chain.
+ * Write the `--files-from` manifest for a resolved `restrictFiles` scope, or
+ * return `null` when there is no restriction at all. Factored out so the
+ * fixes below are directly unit-testable without spawning the real
+ * extract/summarise/embed subprocess chain.
+ *
+ * c191e74d781b/395e92881aa4: the record framing is NUL-delimited and owned by
+ * `files-manifest.mjs`, shared with `extract.mjs`'s reader and the
+ * duplication-detector's producer — the retired newline+`.trim()` format was
+ * the one lossy hop in a chain that is NUL-clean from `git diff -z` onward,
+ * and a mangled path here is a file silently left unindexed. Do not
+ * hand-format this content; the three call sites must not drift.
  *
  * b021576b: `restrictFiles === null` means "no restriction, full walk";
  * `restrictFiles === []` means "a valid incremental scope of ZERO files"
@@ -134,7 +142,7 @@ export function writeFilesManifestIfRestricted(restrictFiles) {
   if (restrictFiles === null) return null;
   const suffix = `${process.pid}-${Date.now()}-${Math.floor(Math.random() * 0xFFFFFF).toString(16)}`;
   const manifestPath = path.join(os.tmpdir(), `arch-refresh-files-${suffix}.txt`);
-  fs.writeFileSync(manifestPath, restrictFiles.join('\n') + '\n', { encoding: 'utf-8', flag: 'wx' });
+  fs.writeFileSync(manifestPath, formatFilesManifest(restrictFiles), { encoding: 'utf-8', flag: 'wx' });
   return manifestPath;
 }
 

@@ -1,6 +1,62 @@
 # Project Status Log
 
-## 2026-08-09 (latest) — the six adjudicated defects shipped, and the repo reconciled
+## 2026-08-09 (latest) — a Draft plan that was 21/25 done, and the one hop that wasn't
+
+Closed `refactor-arch-memory-symbol-index-2026-07.md` (Status: Draft → Complete).
+Of its 25 tracked topicIds, **21 were already fixed** — closed incidentally by six
+commits that touched the same code for their own reasons and never cited the plan
+(`164b722b`, `fa77cba4`, `a86a5ca7`, `39dbd4b3`, `54719e2b`, `d1d8097c`). Each was
+re-verified against current source, not against the ledger's own text.
+
+**The backlog agreed with the document, not the code.** Three entries (`1b95d1e7`,
+`bde4d5ec36e7`, `45d75ad9`) had been fixed in source for weeks and were still being
+re-triaged as open debt every cycle.
+
+**The one real defect: the `--files-from` manifest was the only lossy hop in a
+NUL-clean chain** (`c191e74d781b` HIGH / `395e92881aa4`, one defect, two ids). Both
+the plan and the code comment recorded this as *accepted* debt on the grounds it was
+"harmless for this tool". That rationale did not survive checking one layer up:
+`vcs.mjs` runs `git diff --name-status -z` and `git ls-files -z`, parses on NUL, and
+hard-fails on a malformed stream — so a path with an embedded newline or leading/
+trailing whitespace reaches the manifest fully intact, where `join('\n')` +
+`.trim()` split or mangled it. This manifest decides which files an incremental
+refresh extracts, so a mangled path is a file silently left unindexed. The comment
+claimed newline framing made "any filename safe", the inverse of what it did.
+
+**The plan missed a second producer.** `duplication-detector.mjs::extractViaSubprocess`
+writes its own manifest for `/audit-code`'s duplication wave; a format flip touching
+only `refresh-subprocess.mjs` would have silently broken it. The format now lives in
+one module, `scripts/lib/symbol-index/files-manifest.mjs`, mirroring `vcs.mjs`'s
+`parseUntrackedPathsZ` framing contract verbatim. No legacy-newline fallback,
+deliberately: a path containing a newline is indistinguishable from a separator, so
+sniffing reopens the bug.
+
+**`e058e7df` closed by measurement, not assertion.** The entry describes a heartbeat
+that fired only above `MAX_FILE_BYTES/2`; that mechanism is gone (two unconditional
+beats per file, against an *idle* timer). Measured: the largest source file in the
+repo (199KB, `scripts/lib/audit/legacy-production-audit.mjs`) parses and classifies
+through ts-morph in **57ms** — extrapolated to the 500KB cap, ~150ms against a
+300,000ms window, ~2000x of margin.
+
+**`d6d8267b1fd9` was decided, not deferred — and the ledger could not say so.**
+`refresh.mjs main()` is still ~500 lines, but
+`tiered-pipeline-refresh-god-module-decomposition.md` (Complete, audited,
+Gemini-approved) weighed this exact residual split in its Risk Register and
+Out-of-Scope section, declined it on the merits, and named a revisit trigger that
+has not fired. `tech-debt.json` has no state for "declined on the merits", so the
+entry was byte-indistinguishable from unstarted work and read as a ~400-line
+refactor someone owed — one that would move the publish/abort atomicity path with no
+bug attached. Resolved with the decision and the trigger as its rationale.
+
+Verification: red-then-green (all 6 new tests failed first, including a vacuous-pass
+guard proving they would pass under the old format, plus negative controls for
+truncation and interior-empty tokens). Measured `npm test` 10,337 pass / 0 fail /
+24 skipped; `npm run check` exit 0 after a `plans:index` regen. The second producer's
+exact format was also driven through a **real subprocess spawn** end-to-end, because
+the duplication wave is skipped in the pipeline test and would otherwise have shipped
+unverified.
+
+## 2026-08-09 — the six adjudicated defects shipped, and the repo reconciled
 
 All six gate-honesty defects from the 2026-08-08 blind adjudication are on main
 across four commits: `845d6341` (D1, the detector oracle nothing called),

@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**8 active · 174 terminal · 26 audit summaries · 4 reference docs**
+**7 active · 175 terminal · 26 audit summaries · 4 reference docs**
 
 ---
 
@@ -24,7 +24,6 @@ This is the list to read when asking "what is in flight?".
 | [Event-Wiring Symmetry Check](./event-wiring-symmetry.md) | `Draft` |  |
 | [Final-Review Shadow Bake-Off (marginal-value re-test)](./final-review-shadow-bakeoff.md) | `In Progress` | activated 2026-07-31 — see §0 Activation Addendum |
 | [Honest failure across the learning / brainstorm / persona-promote seams](./learning-persona-quickfix-honest-failure.md) | `Draft` |  |
-| [Arch-Memory / Symbol-Index Pipeline Debt (2026-07-26 triage)](./refactor-arch-memory-symbol-index-2026-07.md) | `Draft` |  |
 | [Learning / Persona / Quickfix Reliability Debt (2026-07-26 triage)](./refactor-learning-persona-quickfix-2026-07.md) | `Draft` | re-scoped to the 7 entries that are still real. |
 | [Miscellaneous Small-Cluster Debt (2026-07-26 triage)](./refactor-misc-small-items-2026-07.md) | `Draft` | items resolved individually as picked up (see per-item status below), not implemented as one batch |
 | [Model-Eval / Pricing Debt (2026-07-26 triage)](./refactor-model-eval-pricing-2026-07.md) | `Draft` |  |
@@ -48,7 +47,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 171 completed plans</summary>
+<summary>Show all 172 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -173,6 +172,7 @@ source comments that no docs linter sees — stays valid.
 | [Quickfix Mechanical Blind-Spot Patterns](./quickfix-blindspot-patterns.md) | `Complete` | plan-audit (3 GPT rounds + 4 Gemini rounds) converged as documented below; implemented (`scripts/lib/quickf… |
 | [Adaptive Audit Intelligence — Efficiency, Learning, and Continuous Improvement](./r2-efficiency.md) | `Complete` | shipped — R2+ mode is the canonical audit re-run path: `R2_ROUND_MODIFIER` + `buildRulingsBlock` in `script… |
 | [Fix `redactSecrets` Positional-Collision Bug](./redact-secrets-positional-collision-fix.md) | `Complete` |  |
+| [Arch-Memory / Symbol-Index Pipeline Debt (2026-07-26 triage)](./refactor-arch-memory-symbol-index-2026-07.md) | `Complete` | closed 2026-08-09) — 22 items fixed, 1 closed by |
 | [Architecture-Debt Backlog Remainder (2026-07-26 triage)](./refactor-architecture-debt-remainder-2026-07.md) | `Complete` | all 3 items shipped. §2 via a sibling plan; §1 via |
 | [Audit-Pipeline Reliability Debt (2026-07-26 triage)](./refactor-audit-pipeline-reliability-2026-07.md) | `Complete` | code-audited (3 GPT rounds + Gemini gate, APPROVE), shipped |
 | [Refactor autofix-security — containment, dedup, and silent-failure fixes in `scripts/lib/claudemd/autofix.mjs`](./refactor-autofix-security.md) | `Complete` | implemented + audited (3 GPT + 3 Gemini plan-audit |

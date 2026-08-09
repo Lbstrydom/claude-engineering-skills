@@ -41,6 +41,7 @@ import {
   assertExtractionExhaustive,
 } from '../lib/symbol-index/graph-coverage.mjs';
 import { COVERAGE_DEFAULTS } from '../lib/symbol-index/graph-verdict.mjs';
+import { parseFilesManifest } from '../lib/symbol-index/files-manifest.mjs';
 import { emit } from '../lib/cli-io.mjs';
 
 /**
@@ -66,19 +67,19 @@ function parseArgs(argv) {
     const a = argv[i];
     if (a === '--root') args.root = requireFlagValue(argv, i++, '--root');
     else if (a === '--files') args.files = requireFlagValue(argv, i++, '--files').split(',').filter(Boolean);
-    // --files-from <path>: read a newline-delimited manifest of files. Used by
+    // --files-from <path>: read a NUL-delimited manifest of files. Used by
     // refresh.mjs for incremental runs so a large touched-file list never hits
-    // the OS argv length limit (Windows ENAMETOOLONG at ~1600+ files). Newline-
-    // delimited (not comma) so any filename is safe. Takes precedence over --files.
-    // ACCEPTED DEBT (code-audit 2026-07-21, H1/M4 — pre-existing, independent of
-    // the idle-timeout change): the newline-delimited format + `.trim()` cannot
-    // faithfully carry a POSIX filename with an embedded newline or leading/
-    // trailing whitespace. Harmless for this tool (it indexes source files, whose
-    // names never contain those); a real fix is a NUL-delimited manifest (git -z
-    // style). Deferred, not fixed here — see .audit/tech-debt.json.
+    // the OS argv length limit (Windows ENAMETOOLONG at ~1600+ files). Takes
+    // precedence over --files.
+    //
+    // The framing is NUL (git -z style), not newline, and the format lives in
+    // ONE module shared with both producers — see files-manifest.mjs for why
+    // (topicIds c191e74d781b/395e92881aa4: the retired newline + `.trim()`
+    // format was the only lossy hop in an otherwise NUL-clean chain, and it
+    // silently dropped files from the extraction scope).
     else if (a === '--files-from') {
       const manifestPath = requireFlagValue(argv, i++, '--files-from');
-      args.files = fs.readFileSync(manifestPath, 'utf-8').split('\n').map(s => s.trim()).filter(Boolean);
+      args.files = parseFilesManifest(fs.readFileSync(manifestPath, 'utf-8'), manifestPath);
     }
     else if (a === '--mode') args.mode = requireFlagValue(argv, i++, '--mode');
     else if (a === '--since-commit') args.sinceCommit = requireFlagValue(argv, i++, '--since-commit');

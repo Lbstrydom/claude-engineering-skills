@@ -1,7 +1,10 @@
 # Plan: Arch-Memory / Symbol-Index Pipeline Debt (2026-07-26 triage)
 
 - **Date**: 2026-07-26
-- **Status**: Draft
+- **Status**: **Complete** (closed 2026-08-09) — 22 items fixed, 1 closed by
+  measurement, 2 duplicate ids folded into their originals, 1 decided-declined
+  with a named revisit trigger. Zero open items; all six surviving
+  `.audit/tech-debt.json` entries retired via `debt-resolve.mjs`.
 - **Author**: Claude (tech-debt backlog triage session)
 - **Scope**: backend
 
@@ -10,6 +13,100 @@
 > `scripts/lib/store/arch/**` pipeline that populates architectural memory
 > (the same system `AGENTS.md`'s "Architectural Memory" section documents).
 > All verified against current source on 2026-07-26.
+
+---
+
+## Closure status (verified against source 2026-08-09)
+
+This plan was written as a Draft and never worked as a unit. Most of it was
+then closed **incidentally**, by five unrelated commits that happened to fix
+the same code for their own reasons — so the document read as 25 open items
+while 21 were already dead. The backlog agreed with the document, not the
+code: three entries (`1b95d1e7`, `bde4d5ec36e7`, `45d75ad9`) had been fixed
+in source for weeks and were still being re-triaged as open debt every cycle.
+
+**Commits that closed items without citing this plan**: `164b722b`
+(heartbeat surfacing), `fa77cba4` (param limit + rowCount), `a86a5ca7`
+(empty-scope/symlink), `39dbd4b3` (5-cluster reliability hardening),
+`54719e2b` (progress-channel filenames), `d1d8097c` (cross-domain +
+mutation contract).
+
+| Disposition | Count | topicIds |
+|---|---|---|
+| Already fixed when re-verified | 21 | `43c77e0c` `45dcee69` `59a36988` `6327e5d8` `a46ddb5a` `0b72a3da` `3cac922a` `688c866f` `e74dbba2` `fca2fde3` `41bf7af6` `812d9d83` `b021576b` `e86a9cbb` `1b95d1e7` `aba921ff` `c5b28713` `bde4d5ec36e7` `0aa2b07f` `db707fba` `45d75ad9` |
+| Fixed 2026-08-09 (this session) | 2 (one defect) | `c191e74d781b` `395e92881aa4` |
+| Closed by measurement | 1 | `e058e7df` |
+| Decided-declined, trigger named | 1 | `d6d8267b1fd9` |
+
+### `c191e74d781b` / `395e92881aa4` — lossy `--files-from` manifest — FIXED
+
+The two topicIds are one defect. The plan (and the code comment) recorded
+this as accepted debt on the grounds that it was "harmless for this tool
+(it indexes source files, whose names never contain those)". That rationale
+did not survive checking the layer above: `vcs.mjs` runs `git diff
+--name-status -z` and `git ls-files -z`, parses on NUL, and **hard-fails on
+a malformed stream** — so a path with an embedded newline or leading/
+trailing whitespace arrives at the manifest fully intact. The manifest was
+the single lossy hop in an otherwise faithful chain, and it is the handoff
+that decides which files get extracted, so a mangled path is a file silently
+left unindexed. The comment also claimed newline framing made "any filename
+safe", which was the inverse of what it did.
+
+Fixed by moving the wire format into one module,
+[`scripts/lib/symbol-index/files-manifest.mjs`](../../scripts/lib/symbol-index/files-manifest.mjs)
+(`formatFilesManifest` / `parseFilesManifest`), mirroring `vcs.mjs`'s
+`parseUntrackedPathsZ` framing contract verbatim. One module rather than
+three hand-rolled format decisions because there are **two** producers, not
+one — the plan missed `duplication-detector.mjs::extractViaSubprocess`,
+which writes its own manifest for the `/audit-code` duplication wave. A
+format flip that updated only `refresh-subprocess.mjs` would have silently
+broken that wave.
+
+No legacy-newline fallback, deliberately: a path containing a newline is
+indistinguishable from a separator, so format sniffing reopens the bug.
+Both producers and the reader ship in one tree and spawn as a matched pair,
+so there is no version-skew window to bridge.
+
+### `e058e7df` — interior heartbeat — CLOSED BY MEASUREMENT
+
+The entry describes a heartbeat that fired only for files over
+`MAX_FILE_BYTES/2`, leaving a near-cap file with no interior beat. That
+mechanism no longer exists: `extractSymbols` now emits an unconditional
+`progress` beat at the top of every iteration plus a second named beat once
+`admitFile` clears the path, and the parent bound is an **idle** timer
+(`hardTimeoutMs`, 300,000ms) that any record resets.
+
+Measured rather than asserted: the largest source file in the repo (199KB,
+`scripts/lib/audit/legacy-production-audit.mjs`) parses and classifies
+through ts-morph in **57ms**. Extrapolated to the 500KB cap that is ~150ms
+against a 300,000ms window — roughly 2000x of margin. The stated failure
+mode is unreachable.
+
+### `d6d8267b1fd9` — `refresh.mjs` god orchestrator — DECIDED, NOT DEFERRED
+
+`main()` is still ~500 lines (216-715) and steps 8-14 are still inline.
+This is **not** an open item: it was weighed on the merits and declined by
+[`tiered-pipeline-refresh-god-module-decomposition.md`](tiered-pipeline-refresh-god-module-decomposition.md)
+— a Complete, audited, Gemini-approved plan — in both its Risk & Trade-off
+Register and its Out of Scope section. That plan DID extract steps 1-7
+(`refresh-args`, `refresh-lock`, `refresh-mode`, `refresh-file-scope`,
+`refresh-subprocess`, `refresh-repo-setup`); it declined the residual
+`persistRefreshArtifacts`/`finalizeRefreshRun` split because each remaining
+call is already a thin single-purpose store call and the sequence itself is
+this file's orchestration job.
+
+Its **revisit trigger, which has not fired**: a future change that needs to
+independently test or reuse that logic — extract it then, scoped to that
+change's actual requirement, not speculatively. Re-raising it here without
+new evidence would re-litigate a settled right-sizing call and would move
+the publish/abort atomicity path, the highest-risk code in this pipeline,
+with no bug attached.
+
+**The lesson worth keeping** is about the ledger, not the code: an entry
+whose real state is "decided against, with a trigger" is indistinguishable
+in `tech-debt.json` from one that is merely unstarted, so it re-surfaces as
+untriaged debt every triage cycle and each cycle re-pays the cost of
+rediscovering the decision. It is now resolved with that rationale recorded.
 
 ---
 
@@ -59,7 +156,9 @@ raw numeric TS compiler-option literals instead of named enum constants.
 `--files-from` manifest parsing is still lossy on newlines/whitespace
 (accepted debt per the file's own comment — these two topicIds are
 duplicates of the same acknowledged gap, safe to track as one item going
-forward). **Priority**: fix `59a36988` (the progress/classification
+forward). *[2026-08-09: the acceptance rationale was wrong — the layer
+above is NUL-clean, so the loss is real. Fixed; see the closure section.]*
+**Priority**: fix `59a36988` (the progress/classification
 ordering + extension-gate-on-lexical-name pair) first — it's the one with
 a real security-adjacent angle, matching a class this repo already treats
 as a security incident elsewhere.
@@ -103,6 +202,11 @@ empirical-verify doctrine calls out by name.
 ---
 
 ## Full entry table
+
+> **All 25 rows below are the 2026-07-26 snapshot and are now closed** — see
+> the closure status section at the top for each topicId's disposition. Line
+> numbers in the `evidence` column are pinned to that date and have since
+> decayed; do not follow them without re-checking.
 
 
 **`scripts/symbol-index/extract.mjs`**

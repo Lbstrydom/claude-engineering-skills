@@ -65,13 +65,15 @@ describe('writeFilesManifestIfRestricted (b021576b/e86a9cbb)', () => {
     assert.ok(result, 'must write a manifest even for a zero-file scope');
     written.push(result);
     assert.ok(fs.existsSync(result));
-    assert.equal(fs.readFileSync(result, 'utf-8').trim(), '');
+    // Empty content, not a bare NUL: each path is NUL-TERMINATED, so a
+    // zero-file scope has zero records (files-manifest.mjs).
+    assert.equal(fs.readFileSync(result, 'utf-8'), '');
   });
 
-  it('a non-empty array writes the newline-delimited file list', () => {
+  it('a non-empty array writes the NUL-delimited file list (c191e74d781b)', () => {
     const result = writeFilesManifestIfRestricted(['a.mjs', 'b/c.mjs']);
     written.push(result);
-    assert.equal(fs.readFileSync(result, 'utf-8'), 'a.mjs\nb/c.mjs\n');
+    assert.equal(fs.readFileSync(result, 'utf-8'), 'a.mjs\0b/c.mjs\0');
   });
 
   it('refuses to write through a pre-existing symlink at the (randomized) manifest path (e86a9cbb)', () => {

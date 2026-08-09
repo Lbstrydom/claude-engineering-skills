@@ -27,6 +27,7 @@ import crypto from 'node:crypto';
 
 import { gitShowFileAtRevision, isSafeGitRevision } from '../vcs.mjs';
 import { runJsonLinesAsyncStrict } from '../subprocess.mjs';
+import { formatFilesManifest } from '../symbol-index/files-manifest.mjs';
 import { symbolIndexConfig } from '../config.mjs';
 import { resolveRepoIdentity } from '../repo-identity.mjs';
 import { resolveAndClassify } from '../sensitive-paths.mjs';
@@ -103,7 +104,9 @@ function defaultAdapters() {
 async function extractViaSubprocess(root, files) {
   if (files.length === 0) return [];
   const manifestPath = path.join(os.tmpdir(), `duplication-extract-${process.pid}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.txt`);
-  fs.writeFileSync(manifestPath, files.join('\n') + '\n', 'utf-8');
+  // NUL-framed via the shared formatter, never hand-joined — extract.mjs's
+  // reader parses exactly this format (files-manifest.mjs).
+  fs.writeFileSync(manifestPath, formatFilesManifest(files), 'utf-8');
   try {
     const extracted = await runJsonLinesAsyncStrict('node', [
       EXTRACT_MJS, '--root', root, '--mode', 'full', '--files-from', manifestPath,
