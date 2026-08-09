@@ -3030,12 +3030,47 @@ async function cmdLearningQuickfixStats() {
   const mod = await import('./lib/learning/quickfix-stats.mjs');
   const action = argOption('action') || 'stats';
   const repoId = argOption('repo-id') || null;
+  // An unrecognised --action used to fall through to the stats reader, so a
+  // typo'd `--action rebuidl` printed a successful stats card and exited 0 —
+  // reporting success for a command that never ran. Reject it by name.
+  if (action !== 'rebuild' && action !== 'stats') {
+    emitError(
+      'BAD_INPUT',
+      `unknown --action "${action}" for learning-quickfix-stats; expected "rebuild" or "stats"`,
+      { action },
+    );
+    return; // unreachable — emitError exits.
+  }
   if (action === 'rebuild') {
     const bootstrap = rest.includes('--bootstrap');
-    const result = bootstrap
-      ? await mod.rebuildFromBootstrap()
-      : await mod.rebuildFromCloud({ repoId });
-    emit({ ok: result.ok, action: 'rebuild', mode: bootstrap ? 'bootstrap' : 'cloud', ...result });
+    if (bootstrap) {
+      // The bootstrap rebuild is RETIRED (plan §2 items 2+3). Surface the
+      // refusal as a typed error with a non-zero exit rather than an
+      // `{ok:false}` on exit 0 — an automation consumer that only checks the
+      // exit code must not read "did nothing" as "rebuilt".
+      const result = await mod.rebuildFromBootstrap();
+      emitError(
+        'BOOTSTRAP_RETIRED',
+        'the bootstrap rebuild is retired and writes nothing; outcome detection is owned by backfill-outcomes',
+        { action: 'rebuild', mode: 'bootstrap', hint: result.hint, retiredError: result.error },
+      );
+      return; // unreachable — emitError exits.
+    }
+    const result = await mod.rebuildFromCloud({ repoId });
+    if (!result.ok) {
+      // Same failure contract as the retired path above: a rebuild that did
+      // not happen must not exit 0. `rebuildFromCloud` already declines to
+      // overwrite a good cache on a read failure, so exiting 0 here told an
+      // automation consumer "rebuilt" about a run that deliberately wrote
+      // nothing.
+      emitError(
+        'REBUILD_FAILED',
+        `quickfix stats rebuild did not complete: ${result.error}`,
+        { action: 'rebuild', mode: 'cloud', ...result },
+      );
+      return; // unreachable — emitError exits.
+    }
+    emit({ ok: true, action: 'rebuild', mode: 'cloud', ...result });
     return;
   }
   // Default: read the cache and emit the stats summary.

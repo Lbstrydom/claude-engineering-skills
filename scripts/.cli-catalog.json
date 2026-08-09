@@ -319,7 +319,7 @@
       "category": "learning"
     },
     "learning:quickfix-bootstrap": {
-      "description": "Rebuild quickfix stats from .audit/quickfix-hits.jsonl (for repos without cloud history).",
+      "description": "RETIRED. Refuses with exit 2 and writes nothing; run `learning:backfill-outcomes -- --rebuild-stats` instead, which owns outcome detection. Kept as a loud refusal so automation cannot read 'did nothing' as 'rebuilt'.",
       "category": "learning"
     },
     "learning:quickfix-rebuild": {

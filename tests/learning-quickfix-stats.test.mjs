@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import url from 'node:url';
+import { spawnSync } from 'node:child_process';
 
 import {
   loadStats,
@@ -187,9 +189,17 @@ describe('quickfix-stats / loadStats', () => {
   });
 });
 
-// ── rebuildFromBootstrap ──────────────────────────────────────────────────
+// ── rebuildFromBootstrap — RETIRED ────────────────────────────────────────
+//
+// The bootstrap path is retired (plan §2 items 2+3): it re-implemented a
+// second, divergeable copy of the outcome detector that
+// `backfill-outcomes.mjs --rebuild-stats` already owns, and its worst
+// behaviour was overwriting a cloud-built cache with inert `no_action`
+// weights. These three tests previously asserted the `{ok:true}` contract;
+// per R1-M4 they are rewritten rather than deleted, because "the retired
+// path does not write" is the regression that matters most.
 
-describe('quickfix-stats / rebuildFromBootstrap', () => {
+describe('quickfix-stats / rebuildFromBootstrap (retired)', () => {
   let tmpDir;
   let prevCwd;
 
@@ -205,42 +215,114 @@ describe('quickfix-stats / rebuildFromBootstrap', () => {
     try { fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* ignore */ }
   });
 
-  it('returns error when JSONL is missing', async () => {
+  it('refuses with a stable typed error naming the replacement command', async () => {
     const r = await rebuildFromBootstrap();
     assert.equal(r.ok, false);
-    assert.equal(r.error, 'jsonl-missing');
+    assert.equal(r.error, 'bootstrap-retired');
+    assert.equal(r.totalHits, 0);
+    assert.equal(r.patternCount, 0);
+    assert.match(
+      r.hint, /backfill-outcomes/,
+      'the refusal must name the working command, not just decline',
+    );
   });
 
-  it('builds stats from synthetic JSONL', async () => {
+  it('refuses even when the JSONL it used to read is present', async () => {
     fs.writeFileSync('.audit/quickfix-hits.jsonl', [
       JSON.stringify({ ts: '2026-01-01T00:00:00Z', tool: 'Edit', file: 'a.js',
         matches: [{ name: 'p1', severity: 'medium', snippet: 'x', hit_id: 'h1' }] }),
       JSON.stringify({ ts: '2026-01-01T00:01:00Z', tool: 'Edit', file: 'b.js',
         matches: [{ name: 'p1', severity: 'medium', snippet: 'y', hit_id: 'h2' }] }),
-      JSON.stringify({ ts: '2026-01-01T00:02:00Z', tool: 'Edit', file: 'c.js',
-        matches: [{ name: 'p2', severity: 'low', snippet: 'z', hit_id: 'h3' }] }),
     ].join('\n') + '\n');
 
     const r = await rebuildFromBootstrap();
-    assert.equal(r.ok, true);
-    assert.equal(r.totalHits, 3);
-    assert.equal(r.patternCount, 2);
-
-    const cache = JSON.parse(fs.readFileSync('.audit/quickfix-pattern-stats.json', 'utf-8'));
-    assert.equal(cache._bootstrap, true);
-    assert.ok(cache.patterns.p1);
-    assert.equal(cache.patterns.p1.totalHits, 2);
+    assert.equal(r.ok, false, 'presence of input must not resurrect the retired path');
+    assert.equal(r.error, 'bootstrap-retired');
+    assert.equal(
+      fs.existsSync('.audit/quickfix-pattern-stats.json'), false,
+      'the retired path must not create a cache file',
+    );
   });
 
-  it('skips malformed lines gracefully', async () => {
-    fs.writeFileSync('.audit/quickfix-hits.jsonl', [
-      '{not json',
+  // The regression that matters most: the old path clobbered a good,
+  // cloud-built cache with inert bootstrap weights.
+  it('leaves an existing populated cache byte-identical', async () => {
+    const cachePath = '.audit/quickfix-pattern-stats.json';
+    const original = JSON.stringify({
+      _version: 1,
+      _generatedAt: '2026-01-01T00:00:00.000Z',
+      _repoScope: 'owner/repo',
+      patterns: { p1: { alpha: 9, beta: 2, acceptanceRate: 0.818, totalHits: 11 } },
+    }, null, 2);
+    fs.writeFileSync(cachePath, original);
+    fs.writeFileSync('.audit/quickfix-hits.jsonl',
       JSON.stringify({ ts: '2026-01-01T00:00:00Z', tool: 'Edit', file: 'a.js',
-        matches: [{ name: 'p1', severity: 'medium', snippet: 'x', hit_id: 'h1' }] }),
-    ].join('\n') + '\n');
+        matches: [{ name: 'p1', severity: 'medium', snippet: 'x', hit_id: 'h1' }] }) + '\n');
+
     const r = await rebuildFromBootstrap();
-    assert.equal(r.ok, true);
-    assert.equal(r.totalHits, 1);
+    assert.equal(r.ok, false);
+    assert.equal(
+      fs.readFileSync(cachePath, 'utf-8'), original,
+      'a retired path must not overwrite a cloud-built cache with inert weights',
+    );
+  });
+
+  it('no longer exposes the JSONL path it used to read', () => {
+    assert.equal(
+      _internals.HITS_JSONL_PATH, undefined,
+      'HITS_JSONL_PATH is deleted with the parse body it served',
+    );
+  });
+});
+
+// R1-M4 retirement migration contract: an automation consumer must fail
+// LOUDLY rather than believe a rebuild happened. Driving the real CLI is the
+// point — a unit test on rebuildFromBootstrap cannot prove the bridge
+// propagates the refusal or that the process exits non-zero.
+describe('quickfix-stats / retired bootstrap — end-to-end via cross-skill CLI', () => {
+  let tmpDir;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'qfs-e2e-'));
+    fs.mkdirSync(path.join(tmpDir, '.audit'), { recursive: true });
+  });
+
+  afterEach(() => {
+    try { fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* ignore */ }
+  });
+
+  it('exits non-zero, reports ok:false, names the replacement, and leaves the cache byte-identical', () => {
+    const cachePath = path.join(tmpDir, '.audit', 'quickfix-pattern-stats.json');
+    const original = JSON.stringify({
+      _version: 1,
+      _generatedAt: '2026-01-01T00:00:00.000Z',
+      patterns: { p1: { alpha: 9, beta: 2, acceptanceRate: 0.818, totalHits: 11 } },
+    }, null, 2);
+    fs.writeFileSync(cachePath, original);
+
+    const cli = path.resolve(
+      path.dirname(url.fileURLToPath(import.meta.url)), '..', 'scripts', 'cross-skill.mjs',
+    );
+    const res = spawnSync(
+      process.execPath,
+      [cli, 'learning-quickfix-stats', '--action', 'rebuild', '--bootstrap'],
+      { cwd: tmpDir, encoding: 'utf-8' },
+    );
+
+    assert.notEqual(res.status, 0, 'a retired path must exit non-zero so automation fails loudly');
+
+    const payload = JSON.parse(
+      res.stdout.trim().split('\n').filter(Boolean).pop(),
+    );
+    assert.equal(payload.ok, false);
+    assert.match(
+      JSON.stringify(payload), /backfill-outcomes/,
+      'the CLI response must carry the replacement command through the bridge',
+    );
+    assert.equal(
+      fs.readFileSync(cachePath, 'utf-8'), original,
+      'the CLI path must not write the cache either',
+    );
   });
 });
 

@@ -7,10 +7,12 @@
  * synchronously on the hot path.
  *
  * Two rebuild modes:
- *   --rebuild              (default): cloud-canonical — reads learning_decisions
- *   --rebuild --bootstrap : git-archeology — reads .audit/quickfix-hits.jsonl + git log
- *                           for repos that adopted the hook before the cloud
- *                           decision pattern shipped (Phase 2 only).
+ *   --rebuild              cloud-canonical — reads learning_decisions
+ *   --rebuild --bootstrap  RETIRED. Refuses and redirects to
+ *                          "npm run learning:backfill-outcomes -- --rebuild-stats",
+ *                          which owns outcome detection. It writes nothing:
+ *                          the old path synthesised inert weights and
+ *                          overwrote cloud-built caches with them.
  *
  * Skip rule: a pattern is skipped when `acceptance_rate < SKIP_THRESHOLD
  * AND total_hits >= MIN_HITS` — both gates required to avoid disabling on
@@ -36,7 +38,6 @@ import {
 // ── Constants ──────────────────────────────────────────────────────────────
 
 const CACHE_PATH        = '.audit/quickfix-pattern-stats.json';
-const HITS_JSONL_PATH   = '.audit/quickfix-hits.jsonl';
 const SKIP_THRESHOLD    = parseValidatedThreshold(process.env.LEARNING_QUICKFIX_SKIP_THRESHOLD, QUICKFIX_SKIP_THRESHOLD_DEFAULT);
 const MIN_HITS          = parseValidatedMinHits(process.env.LEARNING_QUICKFIX_MIN_HITS, QUICKFIX_MIN_HITS_DEFAULT);
 const CACHE_VERSION     = 1;
@@ -148,64 +149,34 @@ export async function rebuildFromCloud({ repoId = null, cachePath = CACHE_PATH, 
 }
 
 /**
- * Bootstrap rebuild from local JSONL telemetry — for repos that adopted
- * the quickfix hook BEFORE the cloud decision pattern shipped.
- * Heuristic: file changed within 30 min of hit AND line removed/altered
- * → accept; line gained `// quickfix-hook:ignore` → suppress; line still
- * present after timeout → ignore.
+ * RETIRED — the bootstrap rebuild no longer runs. It is kept as a typed
+ * refusal, not deleted outright, so an automation consumer that still calls
+ * it fails loudly and is told what to run instead.
  *
- * NOTE: this path uses ONLY local data (jsonl + git log), so it is safe
- * to run without service-role.  The result is written to the same cache.
+ * Why retired (plan §2 items 2+3,
+ * docs/plans/learning-persona-quickfix-honest-failure.md):
  *
- * @param {object} [opts]
- * @param {string} [opts.jsonlPath]
- * @param {string} [opts.cachePath]
- * @returns {Promise<{ok: boolean, totalHits: number, patternCount: number, written?: string}>}
+ *  - It was a SECOND implementation of outcome detection, able to diverge
+ *    from the one `backfill-outcomes.mjs --rebuild-stats` already owns and
+ *    already runs weekly. The capability is not lost by retiring this copy.
+ *  - It had no outcome data, so it synthesised every hit as `no_action` and
+ *    wrote the resulting inert weights over whatever was in the cache —
+ *    including a good, cloud-built one. A path that cannot compute an answer
+ *    must not overwrite a better one.
+ *
+ * It therefore writes NOTHING. The refusal is stable and typed so callers can
+ * branch on it rather than parse prose.
+ *
+ * @returns {Promise<{ok: false, totalHits: 0, patternCount: 0, error: string, hint: string}>}
  */
-export async function rebuildFromBootstrap({
-  jsonlPath = HITS_JSONL_PATH,
-  cachePath = CACHE_PATH,
-} = {}) {
-  if (!fs.existsSync(jsonlPath)) {
-    return { ok: false, totalHits: 0, patternCount: 0, error: 'jsonl-missing' };
-  }
-  const lines = fs.readFileSync(jsonlPath, 'utf-8').split(/\r?\n/).filter(Boolean);
-  const hits = [];
-  for (const line of lines) {
-    try {
-      const obj = JSON.parse(line);
-      if (!obj || !Array.isArray(obj.matches)) continue;
-      for (const m of obj.matches) {
-        hits.push({
-          ts: obj.ts,
-          file: obj.file,
-          pattern: m.name,
-          severity: m.severity,
-          snippet: m.snippet,
-          // Bootstrap path doesn't have outcome data — synthesise as
-          // 'no_action' (neutral).  That means bootstrap-only weights are
-          // permissive; once cloud rebuilds run, they overwrite this.
-          outcome: 'no_action',
-        });
-      }
-    } catch { /* skip malformed line */ }
-  }
-
-  const decisions = hits.map(h => ({
-    context: { pattern: h.pattern },
-    outcome: { action: h.outcome },
-  }));
-  const stats = aggregateDecisions(decisions);
-  const cacheBody = {
-    _version: CACHE_VERSION,
-    _generatedAt: new Date().toISOString(),
-    _watermark: { maxOutcomeAt: null, totalRowCount: hits.length },
-    _repoScope: 'bootstrap',
-    _bootstrap: true,
-    patterns: stats,
+export async function rebuildFromBootstrap() {
+  return {
+    ok: false,
+    totalHits: 0,
+    patternCount: 0,
+    error: 'bootstrap-retired',
+    hint: 'run: npm run learning:backfill-outcomes -- --rebuild-stats',
   };
-  writeAtomic(cachePath, JSON.stringify(cacheBody, null, 2));
-  return { ok: true, totalHits: hits.length, patternCount: Object.keys(stats).length, written: cachePath };
 }
 
 // ── Internal helpers ───────────────────────────────────────────────────────
@@ -390,7 +361,6 @@ if (isMain) {
 
 export const _internals = Object.freeze({
   CACHE_PATH,
-  HITS_JSONL_PATH,
   SKIP_THRESHOLD,
   MIN_HITS,
   CACHE_VERSION,

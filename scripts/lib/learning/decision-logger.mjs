@@ -80,6 +80,20 @@ const _lastWarnAt = new Map();
 
 const _queues = new Map();
 const _droppedCounts = new Map();
+// Eviction counters — see the §2 transition table in
+// docs/plans/learning-persona-quickfix-honest-failure.md. Deliberately NOT
+// folded into `_droppedCounts`: an evicted-but-spilled entry is recoverable
+// and a back-pressure-rejected one was never admitted, so neither is a loss.
+const _evictedOutboxedCounts = new Map();
+const _backpressureRejectedCounts = new Map();
+
+// Overridden only by tests, so the eviction spill can be pointed at a
+// writable (or deliberately unwritable) temp dir. Production always uses
+// OUTBOX_DIR_DEFAULT — the same directory `flush()` spills to.
+let _outboxDirOverride = null;
+function evictionOutboxDir() {
+  return _outboxDirOverride ?? OUTBOX_DIR_DEFAULT;
+}
 
 function getQueue(decisionType) {
   let q = _queues.get(decisionType);
@@ -87,8 +101,20 @@ function getQueue(decisionType) {
   return q;
 }
 
-function bumpDropped(decisionType) {
-  _droppedCounts.set(decisionType, (_droppedCounts.get(decisionType) || 0) + 1);
+function bumpCount(map, decisionType) {
+  map.set(decisionType, (map.get(decisionType) || 0) + 1);
+}
+
+/**
+ * Reset the counters whose scope is one flush window. All three are summary
+ * counters read at the top of `flush()`, so they must be cleared together —
+ * clearing only `_droppedCounts` would let eviction counts accumulate across
+ * flushes and double-report.
+ */
+function clearFlushWindowCounters() {
+  _droppedCounts.clear();
+  _evictedOutboxedCounts.clear();
+  _backpressureRejectedCounts.clear();
 }
 
 function throttledWarn(key, msg) {
@@ -110,6 +136,43 @@ class DecisionLoggerError extends Error {
   constructor(message, code) { super(message); this.code = code; this.name = 'DecisionLoggerError'; }
 }
 
+/**
+ * Refuse a payload JSON cannot represent (BigInt, circular reference, …).
+ * Every persistence path this module has — the cloud insert, the flush
+ * outbox, and now the eviction spill — serialises the entry, so a value that
+ * survives admission but not `JSON.stringify` is a decision that can never be
+ * stored. Checked once, at the boundary.
+ *
+ * **Contract, stated precisely because the two are easy to conflate.** This
+ * gate answers "can this be serialised AT ALL", not "is it serialised
+ * faithfully". `JSON.stringify` silently drops functions and `undefined`
+ * members rather than throwing, so a payload carrying them is accepted and
+ * persisted without them. That is deliberate and not a hole: lossy-but-
+ * successful serialisation cannot wedge the queue, which is the failure this
+ * gate exists to prevent. Telemetry `choice`/`outcome` are audit metadata, and
+ * dropping a function from them was already the behaviour of the cloud insert
+ * long before the eviction spill existed.
+ *
+ * **Known residual (documented, not fixed — right-sizing).** Entries hold the
+ * caller's object by reference, so a caller that mutates `choice` into
+ * something unserialisable AFTER admission can still produce an unspillable
+ * head, and the §2 table will then correctly refuse admissions until it
+ * clears. The alternative — snapshotting the serialised form for every
+ * decision at admission — doubles the stringify cost and memory on a
+ * fire-and-forget hot path to defend against a caller bug that the throttled
+ * `cap-reject:` warning already names on stderr.
+ */
+function assertJsonSerialisable(value, fieldName) {
+  try {
+    JSON.stringify(value);
+  } catch (err) {
+    throw new DecisionLoggerError(
+      `${fieldName} must be JSON-serialisable (${err.message})`,
+      'BAD_INPUT',
+    );
+  }
+}
+
 function validateInput(input) {
   if (!input || typeof input !== 'object') {
     throw new DecisionLoggerError('input must be an object', 'BAD_INPUT');
@@ -127,6 +190,17 @@ function validateInput(input) {
   }
   if (!choice || typeof choice !== 'object') {
     throw new DecisionLoggerError('choice must be an object', 'BAD_INPUT');
+  }
+  // `context` is implicitly covered — contextHash() stringifies it below and
+  // throws on anything JSON cannot represent. `choice` and `outcome` were not,
+  // and since the eviction spill they must be: an entry that cannot be
+  // serialised can never be written to the outbox, so once it reaches the head
+  // of a full queue the §2 transition table refuses every later admission of
+  // that type, permanently. Refuse here, where refusing costs the caller only
+  // an exception it can see.
+  assertJsonSerialisable(choice, 'choice');
+  if (input.outcome !== undefined && input.outcome !== null) {
+    assertJsonSerialisable(input.outcome, 'outcome');
   }
 
   // Schema CHECK: either fully audit-bound OR has external_id.  Mirror of the
@@ -184,7 +258,13 @@ function _canonicalise(value) {
   if (value === null || typeof value !== 'object') return value;
   if (Array.isArray(value)) return value.map(_canonicalise);
   const sortedKeys = Object.keys(value).sort();
-  const out = {};
+  // Null-prototype container: `context` is caller-supplied and may be parsed
+  // JSON, so it can carry an OWN `__proto__` property. On a plain `{}`,
+  // `out['__proto__'] = v` reassigns the prototype instead of creating an own
+  // property — the key then vanishes from the canonical form and two
+  // different contexts hash identically. Same fix, same reason, as
+  // aggregateDecisions() in the sibling quickfix-stats module.
+  const out = Object.create(null);
   for (const k of sortedKeys) out[k] = _canonicalise(value[k]);
   return out;
 }
@@ -213,7 +293,13 @@ function contextHash(context) {
  * @param {object} input.context
  * @param {object} input.choice
  * @param {object|null} [input.outcome]
- * @returns {string} the derived decision_key (caller may use it for backfill)
+ * @returns {string|null} the derived decision_key (caller may use it for
+ *   backfill), or `null` when the decision was NOT admitted. There are two
+ *   null cases: `LEARNING_DISABLE=1`, and back-pressure — the per-type queue
+ *   is at cap and the oldest entry could not be made durable in the outbox,
+ *   so the oldest is retained and this decision is refused (§2 transition
+ *   table, row 3). A returned key is a receipt: it is never issued for a
+ *   decision that was not admitted.
  */
 export function recordDecision(input) {
   if (process.env.LEARNING_DISABLE === '1') return null;
@@ -239,12 +325,39 @@ export function recordDecision(input) {
 
   const queue = getQueue(input.decisionType);
   if (queue.length >= PER_TYPE_QUEUE_CAP) {
-    // Drop the OLDEST entry of THIS type only.  Other types are not affected.
+    // Durable-or-reject admission — implements the §2 eviction transition
+    // table in docs/plans/learning-persona-quickfix-honest-failure.md, which
+    // is the authoritative spec for this block.
+    //
+    // The spill is attempted FIRST and the shift is CONDITIONAL on it. Never
+    // capture-then-shift: if the oldest is removed before its outbox write is
+    // known to have succeeded, a failed write loses it permanently while the
+    // caller still receives a decisionKey — a receipt for a decision nobody
+    // kept. There is deliberately no CI branch (R3-H1): eviction happens at
+    // ADMISSION time, where refusing costs the caller only a `null` it already
+    // handles under LEARNING_DISABLE, so the lossy carve-out `flush()` applies
+    // to already-admitted entries has no counterpart here.
+    const oldest = queue[0];
+    if (!writeOutbox(oldest, evictionOutboxDir())) {
+      // Row 3 — retain the oldest, refuse the new decision. Nothing is lost:
+      // the oldest is still in memory and the caller is told, via `null`, that
+      // its decision was not admitted.
+      bumpCount(_backpressureRejectedCounts, input.decisionType);
+      throttledWarn(
+        `cap-reject:${input.decisionType}`,
+        `queue cap reached for ${input.decisionType} (cap=${PER_TYPE_QUEUE_CAP}); ` +
+        'oldest could not be spilled to the outbox — retaining it and REFUSING this decision'
+      );
+      return null;
+    }
+    // Row 2 — the oldest is durable in the outbox, so dropping it from memory
+    // is recoverable rather than lossy. reconcileOutbox() replays it.
     queue.shift();
-    bumpDropped(input.decisionType);
+    bumpCount(_evictedOutboxedCounts, input.decisionType);
     throttledWarn(
-      `cap:${input.decisionType}`,
-      `queue cap reached for ${input.decisionType} (cap=${PER_TYPE_QUEUE_CAP}); dropped oldest`
+      `cap-spill:${input.decisionType}`,
+      `queue cap reached for ${input.decisionType} (cap=${PER_TYPE_QUEUE_CAP}); ` +
+      'oldest spilled to the outbox and evicted from memory'
     );
   }
   queue.push(entry);
@@ -268,6 +381,10 @@ export function backfillOutcome({ decisionKey, outcome }) {
   if (!outcome || typeof outcome !== 'object') {
     throw new DecisionLoggerError('outcome must be an object', 'BAD_INPUT');
   }
+  // Second door into the same queue: this mutates an ALREADY-ADMITTED entry,
+  // so an unserialisable outcome here wedges the queue exactly as one passed
+  // to recordDecision would. Same gate, same reason.
+  assertJsonSerialisable(outcome, 'outcome');
 
   // Find the entry in the queue and mutate; if already flushed, enqueue an
   // outcome-only update (the store layer translates this into an UPDATE).
@@ -303,11 +420,22 @@ export function backfillOutcome({ decisionKey, outcome }) {
  * @param {object} [opts]
  * @param {object} [opts.store] - learning-store-like {insertLearningDecision, backfillLearningOutcome, isCloudEnabled}
  * @param {string} [opts.outboxDir]
- * @returns {Promise<{flushed:number, dropped:number, outboxed:number, lostInCI:number}>}
+ * @returns {Promise<{flushed:number, dropped:number, outboxed:number, lostInCI:number, retained:number, evictedOutboxed:number, backpressureRejected:number}>}
+ *   `dropped` counts only entries that were **admitted** (a receipt was
+ *   issued) and later permanently lost — today that is exactly the CI-loss
+ *   path. Eviction never contributes to it: `evictedOutboxed` entries are
+ *   recoverable from the outbox, and `backpressureRejected` decisions were
+ *   never admitted at all. See the flush-summary contract table in
+ *   docs/plans/learning-persona-quickfix-honest-failure.md §7.
  */
 export async function flush({ store = null, outboxDir = OUTBOX_DIR_DEFAULT } = {}) {
-  const summary = { flushed: 0, dropped: 0, outboxed: 0, lostInCI: 0, retained: 0 };
+  const summary = {
+    flushed: 0, dropped: 0, outboxed: 0, lostInCI: 0, retained: 0,
+    evictedOutboxed: 0, backpressureRejected: 0,
+  };
   for (const [, count] of _droppedCounts) summary.dropped += count;
+  for (const [, count] of _evictedOutboxedCounts) summary.evictedOutboxed += count;
+  for (const [, count] of _backpressureRejectedCounts) summary.backpressureRejected += count;
 
   // Two-phase drain (H9 fix): stage entries WITHOUT clearing the queues, try
   // each write, then remove only the entries that succeeded (cloud or
@@ -320,7 +448,7 @@ export async function flush({ store = null, outboxDir = OUTBOX_DIR_DEFAULT } = {
     }
   }
   if (staged.length === 0) {
-    _droppedCounts.clear();
+    clearFlushWindowCounters();
     return summary;
   }
 
@@ -341,6 +469,12 @@ export async function flush({ store = null, outboxDir = OUTBOX_DIR_DEFAULT } = {
       // Per the v1 design (graceful degradation), lost-in-CI is acceptable telemetry
       // loss — the alternative (failing the audit on telemetry write failure) is worse.
       summary.lostInCI += 1;
+      // This IS the permanent-loss case `dropped` now names: the entry was
+      // admitted (a receipt was issued) and can no longer be recovered.
+      // `lostInCI` stays as the narrower breakdown of *why*. Without this,
+      // `dropped` would have no producer at all and would report a structural
+      // zero that reads as a measurement.
+      summary.dropped += 1;
       throttledWarn('ci-loss', `flush failed for ${entry.decisionKey} in CI; telemetry lost`);
       continue;
     }
@@ -372,7 +506,7 @@ export async function flush({ store = null, outboxDir = OUTBOX_DIR_DEFAULT } = {
     }
   }
 
-  _droppedCounts.clear();
+  clearFlushWindowCounters();
   return summary;
 }
 
@@ -521,9 +655,17 @@ export function installLifecycleHooks(store) {
 export function _resetForTest() {
   _queues.clear();
   _droppedCounts.clear();
+  _evictedOutboxedCounts.clear();
+  _backpressureRejectedCounts.clear();
   _lastWarnAt.clear();
   _hooksInstalled = false;
   _resolvedStore = null;
+  _outboxDirOverride = null;
+}
+
+/** Test-only: redirect the eviction spill to a temp dir. */
+export function _setOutboxDirForTest(dir) {
+  _outboxDirOverride = dir;
 }
 
 // Exposed for unit tests (queue-cap validation) — see audit R3-M config finding.
@@ -534,7 +676,15 @@ export function _getStateForTest() {
     queueSizes: Object.fromEntries(
       [..._queues.entries()].map(([k, v]) => [k, v.length])
     ),
+    // Queue CONTENTS, not just sizes: the eviction transition table's rows 2
+    // and 3 differ in *which* entry is present at an identical length, so a
+    // size-only assertion cannot tell a retained oldest from a shifted one.
+    queueKeys: Object.fromEntries(
+      [..._queues.entries()].map(([k, v]) => [k, v.map(e => e.decisionKey)])
+    ),
     droppedCounts: Object.fromEntries(_droppedCounts),
+    evictedOutboxedCounts: Object.fromEntries(_evictedOutboxedCounts),
+    backpressureRejectedCounts: Object.fromEntries(_backpressureRejectedCounts),
   };
 }
 

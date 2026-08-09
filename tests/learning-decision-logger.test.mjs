@@ -1,4 +1,4 @@
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -12,6 +12,7 @@ import {
   buildDecisionKey,
   _resetForTest,
   _getStateForTest,
+  _setOutboxDirForTest,
   _internals,
   _resolveQueueCap,
 } from '../scripts/lib/learning/decision-logger.mjs';
@@ -162,31 +163,321 @@ describe('decision-logger / recordDecision validation', () => {
   });
 });
 
-describe('decision-logger / per-type sub-queue caps', () => {
-  beforeEach(() => _resetForTest());
+// ── Eviction: the §2 transition table ──────────────────────────────────────
+// docs/plans/learning-persona-quickfix-honest-failure.md §2 "The eviction
+// transition table" is the authoritative spec; there is ONE test per row.
+//
+// Every test asserts all four observables TOGETHER — queue length, queue
+// CONTENTS, the return value, and the counter. That combination is the point:
+// a test that checks only the counter passes against the superseded
+// "spill, count the failure, drop it anyway" design (R2-H4), and a test that
+// checks only the length passes against a capture-then-shift implementation
+// that loses the oldest entry.
 
-  it('drops oldest of SAME type when cap exceeded; other types untouched', () => {
-    const cap = _internals.PER_TYPE_QUEUE_CAP;
-    // Fill auto_deferral past cap.
-    for (let i = 0; i < cap + 5; i += 1) {
-      recordDecision({
-        decisionType: 'auto_deferral',
-        externalId: `auto_deferral_${i}`,
-        context: { i }, choice: { class: 'style' },
-      });
+const OUTBOX_FIXTURES = [];
+
+/** A writable temp outbox dir — the spill SUCCEEDS here. */
+function makeWorkingOutboxDir() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'evict-ok-'));
+  OUTBOX_FIXTURES.push(dir);
+  return path.join(dir, 'outbox');
+}
+
+/**
+ * An outbox dir whose ancestor is a FILE, so atomicWriteFileSync's internal
+ * mkdirSync throws ENOTDIR — deterministic on every platform, no OS
+ * permissions involved. Same fault the writeOutbox contract test below uses.
+ */
+function makeFailingOutboxDir() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'evict-fail-'));
+  OUTBOX_FIXTURES.push(dir);
+  const blocker = path.join(dir, 'blocker');
+  fs.writeFileSync(blocker, 'not a directory');
+  return path.join(blocker, 'nested', 'outbox');
+}
+
+/** Silence the throttled cap warning so test output stays readable. */
+function quietly(fn) {
+  const original = process.stderr.write;
+  process.stderr.write = () => true;
+  try { return fn(); } finally { process.stderr.write = original; }
+}
+
+function fillToCap(cap) {
+  const keys = [];
+  for (let i = 0; i < cap; i += 1) {
+    keys.push(recordDecision({
+      decisionType: 'auto_deferral',
+      externalId: `auto_deferral_${i}`,
+      context: { i }, choice: { class: 'style' },
+    }));
+  }
+  return keys;
+}
+
+describe('decision-logger / eviction transition table (§2)', () => {
+  beforeEach(() => _resetForTest());
+  after(() => {
+    for (const d of OUTBOX_FIXTURES.splice(0)) {
+      try {
+        fs.rmSync(d, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      } catch { /* best effort */ }
     }
-    // Insert one pass_selection — must NOT be evicted by auto_deferral overflow.
-    recordDecision({
+  });
+
+  // Row 1 — under cap: enqueue new, return decisionKey, no counter movement.
+  it('row 1: under cap — enqueues and returns a decisionKey', () => {
+    _setOutboxDirForTest(makeWorkingOutboxDir());
+    const key = recordDecision({
+      decisionType: 'auto_deferral',
+      externalId: 'only', context: { i: 0 }, choice: { class: 'style' },
+    });
+
+    const state = _getStateForTest();
+    assert.equal(typeof key, 'string');
+    assert.equal(state.queueSizes.auto_deferral, 1);
+    assert.deepEqual(state.queueKeys.auto_deferral, [key]);
+    assert.ok(!state.evictedOutboxedCounts.auto_deferral);
+    assert.ok(!state.backpressureRejectedCounts.auto_deferral);
+  });
+
+  // Row 2 — at cap, spill SUCCEEDS: shift oldest, enqueue new, return key.
+  it('row 2: at cap and the spill succeeds — shifts oldest, admits new, returns a decisionKey', () => {
+    const outboxDir = makeWorkingOutboxDir();
+    _setOutboxDirForTest(outboxDir);
+    const cap = _internals.PER_TYPE_QUEUE_CAP;
+    const keys = fillToCap(cap);
+
+    const newKey = quietly(() => recordDecision({
+      decisionType: 'auto_deferral',
+      externalId: 'overflow', context: { i: cap }, choice: { class: 'style' },
+    }));
+
+    const state = _getStateForTest();
+    assert.equal(typeof newKey, 'string', 'a successful spill admits the new decision');
+    assert.equal(state.queueSizes.auto_deferral, cap, 'queue stays bounded at the cap');
+    assert.ok(
+      !state.queueKeys.auto_deferral.includes(keys[0]),
+      'the oldest entry must have been shifted out',
+    );
+    assert.ok(
+      state.queueKeys.auto_deferral.includes(newKey),
+      'the new entry must be present in the queue',
+    );
+    assert.equal(state.evictedOutboxedCounts.auto_deferral, 1);
+    assert.ok(!state.backpressureRejectedCounts.auto_deferral);
+
+    // The shifted entry is recoverable — that is what makes the shift honest.
+    const spilled = fs.readdirSync(outboxDir).filter(f => f.endsWith('.json'));
+    assert.equal(spilled.length, 1, 'the evicted entry must be on disk in the outbox');
+    const written = JSON.parse(fs.readFileSync(path.join(outboxDir, spilled[0]), 'utf-8'));
+    assert.equal(written.decisionKey, keys[0], 'the spilled file must be the evicted oldest entry');
+  });
+
+  // Row 3 — at cap, spill FAILS: retain oldest, refuse admission, return null.
+  it('row 3: at cap and the spill fails — retains oldest, refuses the new decision, returns null', () => {
+    _setOutboxDirForTest(makeFailingOutboxDir());
+    const cap = _internals.PER_TYPE_QUEUE_CAP;
+    const keys = fillToCap(cap);
+
+    const result = quietly(() => recordDecision({
+      decisionType: 'auto_deferral',
+      externalId: 'overflow', context: { i: cap }, choice: { class: 'style' },
+    }));
+
+    const state = _getStateForTest();
+    assert.equal(result, null, 'a receipt must NOT be issued for a decision that was never admitted');
+    assert.equal(state.queueSizes.auto_deferral, cap, 'queue stays bounded at the cap');
+    assert.ok(
+      state.queueKeys.auto_deferral.includes(keys[0]),
+      'the oldest entry must be RETAINED — nothing is lost when the spill fails',
+    );
+    assert.deepEqual(
+      state.queueKeys.auto_deferral, keys,
+      'queue contents must be byte-identical to before the refused call',
+    );
+    assert.equal(state.backpressureRejectedCounts.auto_deferral, 1);
+    assert.ok(!state.evictedOutboxedCounts.auto_deferral);
+  });
+
+  // R3-H1 removed the CI carve-out: eviction is environment-independent.
+  for (const row of ['row 2', 'row 3']) {
+    it(`${row} is identical under CI=1 (R3-H1 removed the carve-out)`, () => {
+      const oldCi = process.env.CI;
+      const oldGha = process.env.GITHUB_ACTIONS;
+      process.env.CI = '1';
+      delete process.env.GITHUB_ACTIONS;
+      try {
+        const succeeds = row === 'row 2';
+        _setOutboxDirForTest(succeeds ? makeWorkingOutboxDir() : makeFailingOutboxDir());
+        const cap = _internals.PER_TYPE_QUEUE_CAP;
+        const keys = fillToCap(cap);
+
+        const result = quietly(() => recordDecision({
+          decisionType: 'auto_deferral',
+          externalId: 'overflow', context: { i: cap }, choice: { class: 'style' },
+        }));
+
+        const state = _getStateForTest();
+        assert.equal(state.queueSizes.auto_deferral, cap);
+        if (succeeds) {
+          assert.equal(typeof result, 'string');
+          assert.ok(!state.queueKeys.auto_deferral.includes(keys[0]));
+          assert.equal(state.evictedOutboxedCounts.auto_deferral, 1);
+        } else {
+          assert.equal(result, null, 'CI must NOT get a lossy carve-out');
+          assert.deepEqual(state.queueKeys.auto_deferral, keys);
+          assert.equal(state.backpressureRejectedCounts.auto_deferral, 1);
+        }
+      } finally {
+        if (oldCi === undefined) delete process.env.CI; else process.env.CI = oldCi;
+        if (oldGha !== undefined) process.env.GITHUB_ACTIONS = oldGha;
+      }
+    });
+  }
+
+  // Other types are still unaffected by one type's overflow (pre-existing
+  // guarantee — kept, because the eviction rewrite could plausibly break it).
+  it('one type reaching the cap does not evict another type', () => {
+    _setOutboxDirForTest(makeWorkingOutboxDir());
+    const cap = _internals.PER_TYPE_QUEUE_CAP;
+    fillToCap(cap);
+    quietly(() => {
+      for (let i = 0; i < 5; i += 1) {
+        recordDecision({
+          decisionType: 'auto_deferral',
+          externalId: `overflow_${i}`, context: { i }, choice: { class: 'style' },
+        });
+      }
+    });
+    const passKey = recordDecision({
       decisionType: 'pass_selection',
       auditRunId: 'r1', round: 0, sequence: 0,
       context: { critical: true }, choice: { chose: 'all' },
     });
 
     const state = _getStateForTest();
-    assert.equal(state.queueSizes.auto_deferral, cap, 'auto_deferral must be capped');
-    assert.equal(state.queueSizes.pass_selection, 1, 'pass_selection must not be evicted by other type overflow');
-    assert.equal(state.droppedCounts.auto_deferral, 5);
-    assert.ok(!state.droppedCounts.pass_selection);
+    assert.equal(state.queueSizes.auto_deferral, cap);
+    assert.equal(state.queueSizes.pass_selection, 1);
+    assert.deepEqual(state.queueKeys.pass_selection, [passKey]);
+    assert.equal(state.evictedOutboxedCounts.auto_deferral, 5);
+    assert.ok(!state.evictedOutboxedCounts.pass_selection);
+  });
+});
+
+// The eviction spill made a pre-existing validation gap load-bearing: the
+// oldest entry is now spilled with JSON.stringify BEFORE the queue may shift,
+// so an entry that cannot be serialised can never be spilled — and the §2
+// table then (correctly) refuses every subsequent admission. One poison entry
+// at the head of a full queue therefore wedges that decision type forever.
+//
+// `context` was already implicitly protected (contextHash stringifies it at
+// admission), but `choice` and `outcome` were not. Refusing at admission is
+// free; refusing forever afterwards is not.
+describe('decision-logger / non-serialisable payloads are refused at admission', () => {
+  beforeEach(() => _resetForTest());
+
+  for (const [label, payload] of [
+    ['a BigInt', { n: 10n }],
+    ['a circular reference', (() => { const o = { a: 1 }; o.self = o; return o; })()],
+  ]) {
+    it(`rejects ${label} in choice, rather than admitting an unspillable entry`, () => {
+      assert.throws(
+        () => recordDecision({
+          decisionType: 'auto_deferral', externalId: 'poison',
+          context: { ok: 1 }, choice: payload,
+        }),
+        (err) => err.code === 'BAD_INPUT',
+        'must refuse at the boundary where refusing costs the caller nothing',
+      );
+      assert.ok(
+        !_getStateForTest().queueKeys.auto_deferral?.length,
+        'a refused decision must not be enqueued',
+      );
+    });
+
+    it(`rejects ${label} in outcome via backfillOutcome`, () => {
+      const key = recordDecision({
+        decisionType: 'auto_deferral', externalId: 'ok',
+        context: { ok: 1 }, choice: { fine: true },
+      });
+      assert.throws(
+        () => backfillOutcome({ decisionKey: key, outcome: payload }),
+        (err) => err.code === 'BAD_INPUT',
+        'backfillOutcome is a second door into the same queue and needs the same gate',
+      );
+    });
+  }
+
+  // The wedge itself: with the gate in place, a full queue keeps admitting.
+  it('a full queue keeps admitting — no poison entry can wedge it', () => {
+    _setOutboxDirForTest(makeWorkingOutboxDir());
+    const cap = _internals.PER_TYPE_QUEUE_CAP;
+    try {
+      recordDecision({
+        decisionType: 'auto_deferral', externalId: 'poison',
+        context: { ok: 1 }, choice: { n: 10n },
+      });
+    } catch { /* expected — that is the point */ }
+    fillToCap(cap);
+    const admitted = quietly(() => recordDecision({
+      decisionType: 'auto_deferral', externalId: 'after',
+      context: {}, choice: { ok: 1 },
+    }));
+    assert.equal(typeof admitted, 'string', 'the queue must not be wedged by a refused payload');
+  });
+});
+
+// §9 case 3 — the flush-summary contract (R1-M3). `dropped` was previously
+// seeded from the eviction counter, which conflated "recoverable" with "gone".
+describe('decision-logger / flush summary: dropped counts only permanent loss', () => {
+  beforeEach(() => _resetForTest());
+
+  it('a successful spill reports evictedOutboxed, never dropped', async () => {
+    _setOutboxDirForTest(makeWorkingOutboxDir());
+    const cap = _internals.PER_TYPE_QUEUE_CAP;
+    fillToCap(cap);
+    quietly(() => recordDecision({
+      decisionType: 'auto_deferral',
+      externalId: 'overflow', context: {}, choice: { class: 'style' },
+    }));
+
+    const summary = await flush({ store: makeMockStore() });
+    assert.equal(summary.evictedOutboxed, 1);
+    assert.equal(summary.backpressureRejected, 0);
+    assert.equal(summary.dropped, 0, 'a spilled entry is recoverable — not dropped');
+  });
+
+  it('a failed spill reports backpressureRejected, never dropped', async () => {
+    _setOutboxDirForTest(makeFailingOutboxDir());
+    const cap = _internals.PER_TYPE_QUEUE_CAP;
+    fillToCap(cap);
+    quietly(() => recordDecision({
+      decisionType: 'auto_deferral',
+      externalId: 'overflow', context: {}, choice: { class: 'style' },
+    }));
+
+    const summary = await flush({ store: makeMockStore() });
+    assert.equal(summary.backpressureRejected, 1);
+    assert.equal(summary.evictedOutboxed, 0);
+    assert.equal(
+      summary.dropped, 0,
+      'a refused decision was never admitted — it cannot have been dropped',
+    );
+  });
+
+  it('a normal flush with no eviction reports dropped: 0', async () => {
+    _setOutboxDirForTest(makeWorkingOutboxDir());
+    recordDecision({
+      decisionType: 'pass_selection',
+      auditRunId: 'r1', round: 0, sequence: 0,
+      context: {}, choice: { chose: 'all' },
+    });
+    const summary = await flush({ store: makeMockStore() });
+    assert.equal(summary.flushed, 1);
+    assert.equal(summary.dropped, 0);
+    assert.equal(summary.evictedOutboxed, 0);
+    assert.equal(summary.backpressureRejected, 0);
   });
 });
 
