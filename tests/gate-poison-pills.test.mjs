@@ -129,7 +129,11 @@ test('the exemption list may shrink, never grow — a new gate must be pilled', 
 });
 
 test('every exemption carries a non-trivial written reason', () => {
-  for (const [gate, reason] of Object.entries(loadExemptions())) {
+  // The entry is `{reason, gateAddedAt, gateAddedAtSource}` since 2026-08-09
+  // (adjudicated D3/D6) — the bare string became an object so the ratchet has a
+  // date to key on. The property under test is unchanged: a real justification.
+  for (const [gate, entry] of Object.entries(loadExemptions())) {
+    const { reason } = entry;
     assert.equal(typeof reason, 'string', `${gate}: reason must be a string`);
     assert.ok(reason.length > 60, `${gate}: "${reason}" is too short to be a real justification`);
   }

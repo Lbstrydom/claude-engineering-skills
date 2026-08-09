@@ -118,9 +118,139 @@ export function loadContracts(dir = CONTRACTS_DIR, repoRoot = REPO_ROOT) {
     })));
 }
 
+/**
+ * The date on and after which a gate must carry a PILL rather than an exemption.
+ * Policy source: docs/plans/green-but-unrealized.md §2 decision 3, previously
+ * stated only in `_exemptions.json`'s `_comment` — i.e. enforced by nobody.
+ *
+ * Compared as an ISO-8601 STRING, never through `Date`: `YYYY-MM-DD` sorts
+ * correctly lexicographically, which removes timezone and DST from a gate whose
+ * whole job is to be unambiguous.
+ */
+export const POLICY_CUTOFF = '2026-07-31';
+
+/** `YYYY-MM-DD`, and a real calendar day — `2026-02-30` must not normalise to March 2. */
+function isCalendarDate(s) {
+  if (typeof s !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = new Date(`${s}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+}
+
+/** How an entry's `gateAddedAt` was established. Closed set — unknown is a failure. */
+const ADDED_AT_SOURCES = new Set(['git-log-S', 'unknown']);
+
+/**
+ * Validate + load the exemption registry.
+ *
+ * **Why this is not a bare `JSON.parse`.** The half of this registry that PROVES a
+ * gate can fail (`loadContracts`, above) is schema-validated through the shared
+ * loader and THROWS on divergence. The half that GRANTS A PASS was
+ * `JSON.parse(...).exempt ?? {}` — so `""`, `true`, `null` or `{}` was accepted
+ * as a reason and silently exempted a gate with no written justification. An
+ * asymmetry in that direction is the fake-check class this file exists to catch,
+ * in this file's own bookkeeping (adjudicated finding D3).
+ *
+ * Throws with EVERY divergence listed, mirroring `loadContracts` — a loader that
+ * reports one problem per run turns a 17-entry migration into 17 runs.
+ */
 export function loadExemptions(file = EXEMPTIONS) {
   if (!fs.existsSync(file)) return {};
-  return JSON.parse(fs.readFileSync(file, 'utf-8')).exempt ?? {};
+  const raw = JSON.parse(fs.readFileSync(file, 'utf-8')).exempt ?? {};
+  const bad = [];
+  const out = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+      bad.push(`${key}: expected {reason, gateAddedAt, gateAddedAtSource}, got ${Array.isArray(value) ? 'array' : JSON.stringify(value)}`);
+      continue;
+    }
+    if (typeof value.reason !== 'string' || value.reason.trim() === '') {
+      bad.push(`${key}: "reason" must be a non-empty string — an exemption without a written reason is an unexplained pass`);
+    }
+    if (!isCalendarDate(value.gateAddedAt)) {
+      // NOT defaulted to "old": treating a missing date as grandfathered is the
+      // fail-open direction, and the ratchet's only predicate is this field.
+      bad.push(`${key}: "gateAddedAt" must be a real calendar date YYYY-MM-DD, got ${JSON.stringify(value.gateAddedAt)}`);
+    }
+    if (!ADDED_AT_SOURCES.has(value.gateAddedAtSource)) {
+      bad.push(`${key}: "gateAddedAtSource" must be one of ${[...ADDED_AT_SOURCES].join('|')}, got ${JSON.stringify(value.gateAddedAtSource)}`);
+    }
+    if (value.policyOverride !== undefined
+      && (typeof value.policyOverride !== 'string' || value.policyOverride.trim() === '')) {
+      bad.push(`${key}: "policyOverride", when present, must be a non-empty reason`);
+    }
+    out[key] = value;
+  }
+  if (bad.length) {
+    throw new Error(`invalid gate exemption(s) in ${file}:\n  ${bad.join('\n  ')}`);
+  }
+  return out;
+}
+
+/**
+ * Exemptions the mandatory-pill policy forbids: the GATE was added on or after the
+ * cutoff (so the policy requires a pill) and no `policyOverride` justifies the
+ * exception. Returns `[{key, gateAddedAt}]`.
+ *
+ * **`gateAddedAt` is when the GATE entered `package.json`, not when its exemption
+ * was written** — a distinction the data forced. Deriving from the exemption
+ * registry's own history dated all 17 entries `2026-08-01` (the day the file was
+ * created), which is after the cutoff, so every grandfathered entry would have
+ * been "forbidden" and the ratchet would have failed on its own migration. The
+ * policy's subject is the gate's age; the registry's age is an artifact of when
+ * someone wrote it down.
+ *
+ * Deliberately NOT tamper-proof. `gateAddedAt` is self-reported and could be
+ * backdated; this is a speed bump against *accident* — appending an entry without
+ * realising the policy applies — and the real control is that the field sits in a
+ * reviewed diff. A ratchet advertised as unbypassable would be one more
+ * stated-but-unenforced mechanism, inside the fix for stated-but-unenforced
+ * mechanisms.
+ */
+/**
+ * Re-derive each exemption's `gateAddedAt` from git and compare it to what the
+ * registry claims. Returns `{divergences, unverified}`.
+ *
+ * **Why this exists (audit clusterB-H2/H3).** Without it, `gateAddedAtSource:
+ * "git-log-S"` is a LABEL asserting a provenance nothing checks — a
+ * stated-but-unenforced claim, inside the change whose entire subject is
+ * stated-but-unenforced claims. A new gate could be entered with an old date and
+ * an authoritative-looking source string and sail past the ratchet.
+ *
+ * The derivation is the same command the migration used: the OLDEST commit that
+ * changed the number of occurrences of `"<key>":` in `package.json` — i.e. when
+ * the gate entered the script table.
+ *
+ * **A failed derivation is `unverified`, never a pass.** No git, a shallow clone
+ * with no history, or a key that never appears in `package.json` all mean "we did
+ * not check", which the caller must report rather than silently treat as agreement
+ * — the anti-green rule this file exists to enforce, applied to its own evidence.
+ *
+ * @param {Record<string, object>} exemptions
+ * @param {{repoRoot?: string, run?: typeof spawnSync}} [deps]
+ */
+export function verifyExemptionProvenance(exemptions, { repoRoot = REPO_ROOT, run = spawnSync } = {}) {
+  const divergences = [];
+  const unverified = [];
+  for (const [key, v] of Object.entries(exemptions)) {
+    if (v?.gateAddedAtSource !== 'git-log-S') { unverified.push({ key, why: `source is ${v?.gateAddedAtSource}` }); continue; }
+    const r = run('git', ['log', '--format=%ad', '--date=short', '-S', `"${key}":`, '--', 'package.json'],
+      { cwd: repoRoot, encoding: 'utf-8', windowsHide: true });
+    if (r.error || r.status !== 0) { unverified.push({ key, why: `git failed: ${r.error?.message ?? `exit ${r.status}`}` }); continue; }
+    const dates = String(r.stdout || '').trim().split('\n').map((s) => s.trim()).filter(Boolean);
+    const derived = dates[dates.length - 1];
+    if (!derived) { unverified.push({ key, why: 'no commit in package.json history changed this key' }); continue; }
+    if (derived !== v.gateAddedAt) {
+      divergences.push({ key, claimed: v.gateAddedAt, derived });
+    }
+  }
+  return { divergences, unverified };
+}
+
+export function forbiddenNewExemptions(exemptions, cutoff = POLICY_CUTOFF) {
+  return Object.entries(exemptions)
+    .filter(([, v]) => typeof v?.gateAddedAt === 'string' && v.gateAddedAt >= cutoff)
+    .filter(([, v]) => !(typeof v?.policyOverride === 'string' && v.policyOverride.trim() !== ''))
+    .map(([key, v]) => ({ key, gateAddedAt: v.gateAddedAt }));
 }
 
 /**
@@ -460,6 +590,36 @@ async function main() {
   const { undeclared, orphaned } = reconcile(gates, contracts, exemptions);
 
   const problems = [];
+  // The mandatory-pill ratchet (D6). Previously the policy lived only in this
+  // file's `_comment` — prose enforced by nobody, so a new gate could append a
+  // plausible exemption and evade it silently.
+  // The ratchet's predicate is `gateAddedAt`, so the claim must be checked, not
+  // trusted (audit clusterB-H2/H3): a `git-log-S` label is otherwise provenance
+  // asserted by the same file that benefits from it.
+  const { divergences: provDiv, unverified: provUnv } = verifyExemptionProvenance(exemptions);
+  if (provDiv.length) {
+    problems.push(
+      `${provDiv.length} exemption(s) claim a gateAddedAt that git does not support:\n      `
+      + `${provDiv.map((d) => `${d.key}: claims ${d.claimed}, package.json history says ${d.derived}`).join('\n      ')}\n    `
+      + 'Correct the date (re-derive with: git log --format=%ad --date=short -S \'"<key>":\' -- package.json | tail -1), '
+      + 'or set gateAddedAtSource to "unknown" if it genuinely cannot be derived.',
+    );
+  }
+  if (provUnv.length) {
+    // Reported, never silent: "we could not check" must not read as "it agrees".
+    process.stderr.write(`  ${Y}note${X} provenance unverified for ${provUnv.length} exemption(s): `
+      + `${provUnv.slice(0, 3).map((u) => `${u.key} (${u.why})`).join('; ')}${provUnv.length > 3 ? ' …' : ''}\n`);
+  }
+  const forbidden = forbiddenNewExemptions(exemptions);
+  if (forbidden.length) {
+    problems.push(
+      `${forbidden.length} exemption(s) for gate(s) added on/after ${POLICY_CUTOFF}, `
+      + `which the mandatory-pill policy forbids:\n      `
+      + `${forbidden.map((f) => `${f.key} (gate added ${f.gateAddedAt})`).join('\n      ')}\n    `
+      + 'Give the gate a poison pill, or — if a pill is genuinely impossible — add a '
+      + '"policyOverride" reason to its exemption entry so the exception is deliberate and reviewable.',
+    );
+  }
   if (undeclared.length) {
     problems.push(
       `${undeclared.length} check-chain command(s) neither pilled nor exempt:\n      `

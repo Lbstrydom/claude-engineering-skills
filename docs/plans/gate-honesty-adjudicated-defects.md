@@ -463,6 +463,28 @@ can re-derive any entry rather than trust it. This is derived provenance, not
 proof: a date recovered from history is still a claim about history, but it is
 one anyone can check, which the hand-assigned version is not.
 
+> **DEVIATION, forced by the data (2026-08-09, Cluster B).** This section says
+> `addedAt` — *when the exemption entry was written*. Implementation proved that
+> wrong: deriving it from the registry's own history dated **all 17 entries
+> `2026-08-01`**, the day the file was created, which is AFTER the cutoff — so the
+> ratchet would have declared every grandfathered entry forbidden and failed on
+> its own migration. The policy's subject is the GATE's age, not the registry's.
+> Shipped as **`gateAddedAt`**, derived from `package.json` history
+> (`git log -S '"<key>":' -- package.json | tail -1`), with `gateAddedAtSource`
+> in `{git-log-S, unknown}` and an optional `policyOverride`.
+>
+> The ratchet immediately found one real case: **`gates:poison` itself** entered on
+> `2026-08-01`, post-cutoff. A pill for the pill-runner is circular, so it carries
+> an explicit `policyOverride` — visible in the diff, which is the point.
+>
+> **And the source label is now VERIFIED, not asserted** (audit clusterB-H2/H3):
+> `verifyExemptionProvenance` re-derives every `git-log-S` date at check time and
+> reports a divergence. Without it, `gateAddedAtSource` was a label claiming a
+> provenance nothing checked — a stated-but-unenforced claim inside the fix for
+> stated-but-unenforced claims. A failed derivation is `unverified` and reported,
+> never silent agreement (14 of 17 verify; 3 exact-command keys legitimately
+> cannot and say so).
+
 **Date contract** (audit R1-M2): `addedAt` is a **calendar date string,
 `YYYY-MM-DD`, UTC, no time component**, validated by regex *and* by a
 round-trip (`new Date(s).toISOString().slice(0,10) === s`) so `2026-02-30`
@@ -485,7 +507,7 @@ transformation, so no codemod.
 | [`scripts/verify-anchor-contract.mjs`](../../scripts/verify-anchor-contract.mjs) | modify | Replace `DEFAULT_FIXTURE_REV` with a **committed fixture diff** (below). `--rev <sha>` stays as an opt-in override. |
 | `tests/fixtures/anchor-contract/known-defects.diff` | create | The pinned input: a unified diff carrying defects both generators found at `d3c6269`. Committed, so a shallow clone works and the input cannot drift. |
 | [`scripts/check-gate-poison-pills.mjs`](../../scripts/check-gate-poison-pills.mjs) | modify | Schema-validate `loadExemptions` (non-empty `reason`, `addedAt` date); add the post-2026-07-31 ratchet to `reconcile`. |
-| [`scripts/gate-contracts/_exemptions.json`](../../scripts/gate-contracts/_exemptions.json) | modify | Migrate the 17 entries from bare strings to `{reason, addedAt}`; move the policy out of `_comment` into enforced data. |
+| [`scripts/gate-contracts/_exemptions.json`](../../scripts/gate-contracts/_exemptions.json) | modify | Migrate the 17 entries from bare strings to `{reason, gateAddedAt, gateAddedAtSource}`; move the policy out of `_comment` into enforced data. |
 | [`scripts/lib/audit/detector.mjs`](../../scripts/lib/audit/detector.mjs) | modify | `disposition` values must be non-empty (`z.string().min(1)`). |
 | [`scripts/lib/audit/tiered-shadow-summary.mjs`](../../scripts/lib/audit/tiered-shadow-summary.mjs) | modify | Single ordered classifier over `historicalComplete`; add `excludedUnclassified`. |
 | [`scripts/tiered-shadow-report.mjs`](../../scripts/tiered-shadow-report.mjs) | modify | Include the new bucket in the printed exclusion sum (D4 consumer). |

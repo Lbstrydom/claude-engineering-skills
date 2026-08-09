@@ -44,7 +44,11 @@ export const DetectorSchema = z.object({
    * for a reason unrelated to the defect. The matched text survives insertions while still
    * forcing a fresh decision if the line itself changes.
    */
-  disposition: z.record(z.string(), z.string()).default({}),
+  // `.min(1)`, not bare `z.string()` (adjudicated finding D3): an empty-string
+  // justification dispositioned a match while saying nothing — the pass-granting
+  // half of a registry accepting a blank reason, the same asymmetry the exemption
+  // loader carried. A disposition IS the written reason; there is no null form.
+  disposition: z.record(z.string(), z.string().regex(/\S/, 'a disposition must contain a written reason, not whitespace')).default({}),
 });
 
 /**

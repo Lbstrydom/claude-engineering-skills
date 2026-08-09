@@ -91,7 +91,17 @@ export function loadCliGateContracts({ contractsRoot, repoRoot }) {
     }
     if (entry === CLI_GATE_EXEMPTIONS_FILE) {
       exemptions = raw?.exempt && typeof raw.exempt === 'object' ? raw.exempt : {};
-      const bad = Object.entries(exemptions).filter(([, r]) => typeof r !== 'string' || r.trim().length === 0);
+      // An exemption is `{reason, gateAddedAt, gateAddedAtSource}` since 2026-08-09
+      // (adjudicated finding D3/D6). The bare-string form is still read so a
+      // consumer repo mid-migration is not hard-failed by a shape change alone —
+      // but either way the REASON must be a non-empty string, which is the whole
+      // point of this check. `check-gate-poison-pills.mjs::loadExemptions` is the
+      // strict validator that additionally requires the provenance fields; this
+      // loader deliberately stays the looser of the two so one registry never has
+      // two schemas that can disagree about what is loadable.
+      const reasonOf = (r) => (typeof r === 'string' ? r : r?.reason);
+      const bad = Object.entries(exemptions)
+        .filter(([, r]) => typeof reasonOf(r) !== 'string' || reasonOf(r).trim().length === 0);
       for (const [gate] of bad) {
         divergences.push(`[${entry}][${gate}] exemption without a reason — silence is what this registry exists to remove`);
       }
