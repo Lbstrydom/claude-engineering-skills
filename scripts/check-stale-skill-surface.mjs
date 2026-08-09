@@ -48,6 +48,26 @@ export const LIVE_SURFACE = '.claude/skills';
 export const AGENTS_SURFACE = '.agents/skills';
 
 /**
+ * Skill names the `skills` CLI (skills.sh) manages in this repo, read from its
+ * own `skills-lock.json`.
+ *
+ * That tool treats `.agents/skills/` as CANONICAL and fans copies out to every
+ * agent root a skill was added for, so a name in both `.agents/skills/` and
+ * `.claude/skills/` is it working correctly — not an ambiguity to resolve.
+ *
+ * Absent / unreadable / malformed → empty set, so a repo without the tool
+ * behaves exactly as before and every name still gets the precedence warning.
+ * Fail-open is right here: this only ever *downgrades* an advisory note, never
+ * suppresses a gated finding (those are `shadowed`, handled above).
+ */
+function readSkillsLockNames(repoRoot) {
+  try {
+    const raw = fs.readFileSync(path.join(repoRoot, 'skills-lock.json'), 'utf-8');
+    return new Set(Object.keys(JSON.parse(raw).skills || {}));
+  } catch { return new Set(); }
+}
+
+/**
  * Every workspace root that can shadow `LIVE_SURFACE`.
  *
  * Both are read by VS Code Copilot's Agent Skills alongside `.claude/skills/`,
@@ -406,13 +426,39 @@ function main() {
         `  ${s.orphans.join(', ')}\n`,
       );
     } else if (s.orphans.length > 0 && s.surface === AGENTS_SURFACE) {
-      // Names we do NOT deploy. Not our gate, but the consumer may still have a
-      // real two-root ambiguity of their own, so say so without failing them.
-      process.stderr.write(
-        `${D}note: ${s.surface}/ holds ${s.total} skill(s) this bundle does not deploy ` +
-        `(${s.orphans.join(', ')}) — not gated here; if any also exists in ` +
-        `${LIVE_SURFACE}/, its precedence is undefined and that is yours to resolve.${X}\n`,
-      );
+      // Names we do NOT deploy. Not our gate — but the advice depends on WHO put
+      // them there, and the old wording assumed a mistake.
+      //
+      // `skills-lock.json` is the `skills` CLI's own record (skills.sh). That tool
+      // treats `.agents/skills/` as CANONICAL and fans copies out to every agent
+      // root the skill was added for — Claude Code, Codex, Gemini CLI, Copilot,
+      // Kiro. So a name in BOTH `.agents/skills/` and `.claude/skills/` is that
+      // tool working correctly, kept in sync by `skills update`, not an ambiguity
+      // anyone should "resolve". Telling an operator to delete one copy sends them
+      // to remove multi-agent access; measured 2026-08-09 — deleted, and the tool
+      // restored it, because the lockfile is the source of truth.
+      //
+      // Only names ABSENT from that lockfile are unexplained, and only those get
+      // the precedence warning.
+      const managed = readSkillsLockNames(root);
+      const toolManaged = s.orphans.filter((n) => managed.has(n));
+      const unexplained = s.orphans.filter((n) => !managed.has(n));
+      if (toolManaged.length > 0) {
+        process.stderr.write(
+          `${D}note: ${s.surface}/ holds ${toolManaged.length} skill(s) managed by the ` +
+          `\`skills\` CLI (${toolManaged.join(', ')}) — canonical there, copied per agent ` +
+          `root by design. Expected; change the agent set with \`skills add … --agent …\`, ` +
+          `never by deleting a copy.${X}\n`,
+        );
+      }
+      if (unexplained.length > 0) {
+        process.stderr.write(
+          `${D}note: ${s.surface}/ holds ${unexplained.length} skill(s) this bundle does not ` +
+          `deploy and no skills-lock.json claims (${unexplained.join(', ')}) — not gated here; ` +
+          `if any also exists in ${LIVE_SURFACE}/, its precedence is undefined and that is ` +
+          `yours to resolve.${X}\n`,
+        );
+      }
     }
   }
   process.exit(exitCode);
