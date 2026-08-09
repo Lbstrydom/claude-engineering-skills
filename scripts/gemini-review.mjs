@@ -37,7 +37,7 @@ import { semanticId, formatFindings, appendOutcome, FalsePositiveTracker } from 
 import { affectedFilesOf, primaryFileOf, matchFindings } from './lib/finding-match.mjs';
 import { readProjectContext, initAuditBrief, generateRepoProfile } from './lib/context.mjs';
 import { applyEnvSetting } from './lib/env-setting.mjs';
-import { geminiConfig, claudeConfig, azureConfig, shadowReviewConfig, finalReviewConfig, auditShadowConfig } from './lib/config.mjs';
+import { geminiConfig, claudeConfig, azureConfig, shadowReviewConfig, finalReviewConfig, auditShadowConfig, findingMatchConfig, FINDING_MATCH_SCHEMA_VERSION } from './lib/config.mjs';
 import { recordFinalReviewFindings } from './learning-store.mjs';
 import { refreshModelCatalog, resolveModel } from './lib/model-resolver.mjs';
 import { createOpenAIClient } from './lib/openai-client.mjs';
@@ -1628,6 +1628,38 @@ function diffFindingBuckets(primaryResult, shadowResult) {
   };
 }
 
+/**
+ * The file+similarity view of the same two finding sets (plan §2.5b-i).
+ *
+ * Returns `null` — not an empty bucket set — when matching is disabled, so a
+ * consumer can tell "not computed" from "computed, found nothing". An empty
+ * bucket set here would read as a measured zero, which is the exact failure
+ * this whole change is fixing.
+ */
+function buildMatchedBuckets(primaryResult, shadowResult) {
+  if (!findingMatchConfig.enabled) return null;
+  const p = dedupByHash(primaryResult?.new_findings);
+  const s = dedupByHash(shadowResult?.new_findings);
+  const r = matchFindings(p, s, {
+    threshold: findingMatchConfig.threshold,
+    coverageFloor: findingMatchConfig.coverageFloor,
+  });
+  return {
+    both: r.both,
+    primaryOnly: r.primaryOnly,
+    shadowOnly: r.shadowOnly,
+    unmatchablePrimary: r.unmatchablePrimary,
+    unmatchableShadow: r.unmatchableShadow,
+    coverage: r.coverage,
+    verdict: r.verdict,
+    // Evidence for every merge: both hashes and the score that joined them.
+    // A `both` count without this is an unauditable assertion — you could not
+    // answer "which two findings did it merge, and how close were they?", which
+    // is the only way to catch a false merge after the fact.
+    pairs: r.pairs,
+  };
+}
+
 /** The empty/skip `_shadow` block for a given skip state. */
 function shadowSkipBlock(shadow) {
   return {
@@ -1689,6 +1721,31 @@ async function runShadowAndPersist(result, primaryModel, runId, { planContent, t
         // Lets a bake-off detect that a "different arm" issued the SAME request.
         requestFingerprint: sr.requestFingerprint ?? null,
         buckets: diff.counts,
+        // BOTH views, side by side. `buckets` keeps its exact prior meaning
+        // (exact-hash), so the pre-registered metric is untouched and no
+        // collected snapshot is invalidated — that is what keeps this off a
+        // CONTRACT_EPOCH bump. `bucketsMatched` is additive evidence.
+        bucketsMatched: buildMatchedBuckets(result, sr.result),
+        matchSchemaVersion: FINDING_MATCH_SCHEMA_VERSION,
+        matchConfig: {
+          threshold: findingMatchConfig.threshold,
+          coverageFloor: findingMatchConfig.coverageFloor,
+          enabled: findingMatchConfig.enabled,
+        },
+        // The shadow's FULL deduped list, under a NEW field. `shadowOnlyFindings`
+        // keeps meaning only the shadow-only subset — widening a field named
+        // `shadowOnly…` would silently change what every existing reader gets,
+        // the same defect class this plan exists to fix. Without the full list
+        // no future matching rule can be re-derived from a collected snapshot,
+        // which is why each instrument change used to shrink the cohort.
+        allFindings: dedupByHash(sr.result?.new_findings).map((f) => ({
+          fingerprint: f._hash,
+          severity: f.severity,
+          category: f.category,
+          section: f.section,
+          affectedFiles: f.affectedFiles ?? [],
+          detail: (f.detail || '').slice(0, 600),
+        })),
         shadowOnlyFindings: diff.shadow
           .filter((f) => f._bucket === 'shadow-only')
           .map((f) => ({ fingerprint: f._hash, severity: f.severity, category: f.category, section: f.section, detail: (f.detail || '').slice(0, 600) })),

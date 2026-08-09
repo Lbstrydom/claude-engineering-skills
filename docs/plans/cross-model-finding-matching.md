@@ -183,7 +183,7 @@ the two roles apart:
 | | `extractFileRefs(section)` — **new, shared** | `_primaryFile` / `affectedFiles` — **ledger, unchanged** |
 |---|---|---|
 | Returns | only regex-extracted, `normalizePath`'d **paths**; `[]` when none | `files[0]` **or the prose fallback** when `files` is empty |
-| Used by | matching (`affectedFilesOf`), suppression (`primaryFileOf`) | `generateTopicId`, ledger reporting |
+| Used by | matching AND suppression, both via `affectedFilesOf` membership | `generateTopicId`, ledger reporting |
 | On `§0.3 …` | `[]` → **unmatchable** | `§0.3` → unchanged |
 
 `populateFindingMetadata` becomes `extractFileRefs(...)` **plus its existing
@@ -410,10 +410,39 @@ Run **before** the rule is wired to anything, and recorded here on completion.
   time in all three places. A pair whose raw text **refuses** the secret gate is
   excluded from the corpus entirely and the exclusion is counted in this section
   — never silently dropped, and never scored from a redacted substitute.
-- **Recorded result**: `threshold = <TBD — filled in by Phase 3 before wiring>`,
-  with the labelled-set recall, the confusion matrix, and the excluded-pair count
-  written into this section. A plan that ships with `TBD` still here has not
-  completed Phase 3.
+- **Recorded result (2026-08-09)**: **`threshold = 0.14`**.
+
+  | | merged | not merged |
+  |---|---|---|
+  | **same-defect** (3) | 3 | 0 |
+  | **different-defect** (6) | **0** | 6 |
+
+  Recall 3/3, **zero false merges**. Excluded by the secret gate: **0** of 48.
+  39 of the 48 pairs share no file and are structurally unmergeable — they can
+  only bound the recall ceiling, never cause a false merge.
+
+  The labelled set separates perfectly: same-defect scored 0.1667–0.1868,
+  different-defect 0.0614–0.1190. The constraint therefore binds just **above
+  0.1190**, not at 0.1667. §2.5c says take the lowest satisfying threshold, and
+  0.1667 is merely the lowest *observed* same-defect score — pinning there is a
+  knife edge that would miss a future same-defect pair at 0.166. `0.14` is the
+  gap midpoint: same recall, same zero-false-merge guarantee, margin on both
+  sides. (The value shipped as a placeholder default in Cluster A was `0.3`,
+  which would have merged **nothing** — calibrating before wiring is what caught
+  it.)
+
+- **Two caveats that bound what this result licenses.** *(a)* The labels are
+  **model-generated, not operator-generated** — the plan called for an
+  independent operator and the run was directed to proceed without one. They
+  were produced blind (from finding text, before the score file was opened), so
+  there is no direct leakage, but the matcher and the labels share an author and
+  self-agreement bias cannot be excluded. *(b)* Perfect separation on **9
+  points** is consistent both with a genuinely strong signal and with labels
+  that unconsciously tracked textual similarity; 9 points cannot distinguish
+  those. Treat `0.14` as **provisional**: it is safe (it cannot merge anything
+  the labelled set says is distinct) but it is not validated. Re-label with an
+  independent operator, or accumulate the 7 held-out snapshots, before claiming
+  the rule is verified. The held-out set must never be used to retune.
 - **Held-out honesty**: the 48 pairs are the *calibration* set. The 7
   not-yet-collected snapshots are the *held-out* set, reported separately and
   **never** used to retune — the floor-vs-ratio lesson, applied before the fact.
@@ -569,7 +598,7 @@ against `.audit/bakeoff/**` — gitignored, never committed.
 | `scripts/lib/finding-match.mjs` | create | `primaryFileOf`, `affectedFilesOf`, `matchFindings`, `matchCoverage`. Pure, zero-I/O — the single matching oracle (#5). |
 | `scripts/lib/ledger.mjs` | modify | `populateFindingMetadata` delegates extraction to the new module; behaviour byte-identical (regression-locked). |
 | `scripts/gemini-review.mjs` | modify | `addSemanticIds` stamps `_primaryFile`/`affectedFiles`; `diffFindingBuckets` emits `bucketsMatched` + `unmatchable`; `runShadowAndPersist` persists the full shadow list (D5). |
-| `scripts/lib/semantic-suppression.mjs` | modify | `decideReRaise` resolves the file via `primaryFileOf`, closing the inert guard. |
+| `scripts/lib/semantic-suppression.mjs` | modify | `decideReRaise` resolves the candidate via `affectedFilesOf` membership (not positional `primaryFileOf` — R2/M1), closing the inert guard; `nearestOpenReRaise` gains the same-file SQL filter. |
 | `scripts/bakeoff-collect.mjs` | modify | `readArmResult` reads both bucket sets; `summarise`/`printProgress` report strict vs matched, coverage, and `unknown`. |
 | `scripts/lib/config.mjs` | modify | `findingMatchConfig` — threshold + coverage floor, `clampConfigNumber`-validated. |
 | `scripts/lib/gemini-usage.mjs` | create | `normalizeGeminiUsage` — the single billed-output oracle (#5). |

@@ -1,0 +1,699 @@
+{
+  "$schema": "cross-model calibration corpus (plan docs/plans/cross-model-finding-matching.md §2.5c)",
+  "generatedFrom": ".audit/bakeoff/** (Category A, gitignored) — regenerate with the Category-A extractor; this OUTPUT is Category B",
+  "calibratedThreshold": 0.14,
+  "labelProvenance": {
+    "by": "model (Claude)",
+    "not": "independent operator",
+    "method": "labelled from finding text only, before the score file was opened",
+    "caveat": "The matcher was designed by the same author as these labels, so a residual self-agreement bias cannot be excluded. Treat the calibrated threshold as provisional and re-label with an independent operator before any claim that the rule was validated."
+  },
+  "pairs": [
+    {
+      "id": "21245f6aae1c:5c7a2d51:0cfeb004",
+      "snapshot": "21245f6aae1c",
+      "sharedFiles": [],
+      "primaryHash": "5c7a2d51",
+      "shadowHash": "0cfeb004",
+      "label": "unmergeable-no-shared-file",
+      "similarity": 0.048077,
+      "primarySig": "Incorrect String Parsing scripts/check-gate-poison-pills.mjs The `commandArgv` function splits commands by whitespace (`split(/\\s+/)`) before attempting to strip quotes. This breaks quoted arguments containing spaces (e.g., `--msg \"hello world\"` splits into `'\"hello'` and `'world\"'`), preventing the regex from matching and removing the quotes. Consequently, a package.json command with spaced arguments can never correctly match its contract's unquoted `argv` array (which the comments explicitly c",
+      "shadowSig": "Stated-but-Unwired Enforcement scripts/lib/audit/convergence.mjs + scripts/lib/audit/detector.mjs + package.json The PR adds `checkDetectors()` and `evaluateConvergenceWithDetectors()` and hardens the latter to refuse an absent detector result — but the diff contains no production consumer for either. No orchestrator file (`legacy-production-audit.mjs`, `findings-pipeline.mjs`, `audit-loop.mjs`) is in the changed-file list, no CLI entrypoint wraps `checkDetectors`, and `package.json` gains only "
+    },
+    {
+      "id": "21245f6aae1c:5c7a2d51:3efff05d",
+      "snapshot": "21245f6aae1c",
+      "sharedFiles": [],
+      "primaryHash": "5c7a2d51",
+      "shadowHash": "3efff05d",
+      "label": "unmergeable-no-shared-file",
+      "similarity": 0.058824,
+      "primarySig": "Incorrect String Parsing scripts/check-gate-poison-pills.mjs The `commandArgv` function splits commands by whitespace (`split(/\\s+/)`) before attempting to strip quotes. This breaks quoted arguments containing spaces (e.g., `--msg \"hello world\"` splits into `'\"hello'` and `'world\"'`), preventing the regex from matching and removing the quotes. Consequently, a package.json command with spaced arguments can never correctly match its contract's unquoted `argv` array (which the comments explicitly c",
+      "shadowSig": "Silent Truncation / Undercount scripts/lib/audit/detector.mjs — runDetector() `runDetector` calls `spawnSync('rg', args, { cwd, encoding: 'utf-8', windowsHide: true })` with no `maxBuffer`. Node's default is 1 MiB of stdout; beyond that the child is terminated and output is truncated. The parser then splits whatever arrived, drops the malformed tail line via the `/^(.*?):(\\d+):(.*)$/` filter, and returns a SHORT match list. A broad detector pattern (`fs\\.writeFileSync\\(`, `catch\\s*\\(`) over `scr"
+    },
+    {
+      "id": "21245f6aae1c:5c7a2d51:8b0c8dee",
+      "snapshot": "21245f6aae1c",
+      "sharedFiles": [
+        "scripts/check-gate-poison-pills.mjs"
+      ],
+      "primaryHash": "5c7a2d51",
+      "shadowHash": "8b0c8dee",
+      "label": "different-defect",
+      "similarity": 0.081081,
+      "primarySig": "Incorrect String Parsing scripts/check-gate-poison-pills.mjs The `commandArgv` function splits commands by whitespace (`split(/\\s+/)`) before attempting to strip quotes. This breaks quoted arguments containing spaces (e.g., `--msg \"hello world\"` splits into `'\"hello'` and `'world\"'`), preventing the regex from matching and removing the quotes. Consequently, a package.json command with spaced arguments can never correctly match its contract's unquoted `argv` array (which the comments explicitly c",
+      "shadowSig": "Ratchet Bypass / Granularity Mismatch scripts/gate-contracts/_exemptions.json + scripts/check-gate-poison-pills.mjs (reconcile) The remediation correctly moved CONTRACT identity to the terminal command ('a gate is one terminal command, not one npm script'). Exemptions, however, remain dual-keyed: `_exemptions.json`'s own comment states an exemption 'may be keyed by script name (covering that script's commands) or by an exact command', and thirteen entries (`docs:check`, `plans:lint`, `knip:gate`"
+    },
+    {
+      "id": "21245f6aae1c:5c7a2d51:ceeaf59f",
+      "snapshot": "21245f6aae1c",
+      "sharedFiles": [],
+      "primaryHash": "5c7a2d51",
+      "shadowHash": "ceeaf59f",
+      "label": "unmergeable-no-shared-file",
+      "similarity": 0.067227,
+      "primarySig": "Incorrect String Parsing scripts/check-gate-poison-pills.mjs The `commandArgv` function splits commands by whitespace (`split(/\\s+/)`) before attempting to strip quotes. This breaks quoted arguments containing spaces (e.g., `--msg \"hello world\"` splits into `'\"hello'` and `'world\"'`), preventing the regex from matching and removing the quotes. Consequently, a package.json command with spaced arguments can never correctly match its contract's unquoted `argv` array (which the comments explicitly c",
+      "shadowSig": "Brittle Contract Anchor scripts/gate-contracts/context-check.json The contract's `stated` value is `\"`npm run context:check` (run by\"` — a mid-sentence fragment cut at an open parenthesis. Every other contract in the PR anchors on a complete, semantically self-contained claim (`\"`description` is required, **max 1024 chars**\"`, `\"Every reference file has `summary:` YAML frontmatter that must byte-match\"`). A fragment ending in a preposition is not the claim being contracted; it is whatever substr"
+    },
+    {
+      "id": "4e01ff8f78a7:0a007113:ecd56484",
+      "snapshot": "4e01ff8f78a7",
+      "sharedFiles": [],
+      "primaryHash": "0a007113",
+      "shadowHash": "ecd56484",
+      "label": "unmergeable-no-shared-file",
+      "similarity": 0.036036,
+      "primarySig": "Logic Error scripts/check-gate-poison-pills.mjs The `commandArgv` function unconditionally strips the `node ` prefix from commands (e.g., `node scripts/check-skill-refs.mjs` becomes `scripts/check-skill-refs.mjs`). However, the exemption registry `scripts/gate-contracts/_exemptions.json` manually includes the `node ` prefix in its keys. When `reconcile()` looks up `exemptions.exempt[commandKey]`, it uses the stripped version, which evaluates to `undefined`. This causes explicitly exempted comman",
+      "shadowSig": "Unenforced Gate / Inert Mechanism scripts/lib/audit/convergence.mjs (+ scripts/lib/audit/detector.mjs, skills/audit-code/gate-contract.json) The plan states convergence 'additionally requires checkDetectors(...).blocked === false' because 'prose cannot block'. The implementation instead adds a SIBLING function, `evaluateConvergenceWithDetectors`, and leaves `evaluateConvergence` — the function the gate-contract binds and that existing callers use — untouched and still exported. No orchestration "
+    },
+    {
+      "id": "4e01ff8f78a7:0a007113:a692e50b",
+      "snapshot": "4e01ff8f78a7",
+      "sharedFiles": [
+        "scripts/check-gate-poison-pills.mjs"
+      ],
+      "primaryHash": "0a007113",
+      "shadowHash": "a692e50b",
+      "label": "different-defect",
+      "similarity": 0.068376,
+      "primarySig": "Logic Error scripts/check-gate-poison-pills.mjs The `commandArgv` function unconditionally strips the `node ` prefix from commands (e.g., `node scripts/check-skill-refs.mjs` becomes `scripts/check-skill-refs.mjs`). However, the exemption registry `scripts/gate-contracts/_exemptions.json` manually includes the `node ` prefix in its keys. When `reconcile()` looks up `exemptions.exempt[commandKey]`, it uses the stripped version, which evaluates to `undefined`. This causes explicitly exempted comman",
+      "shadowSig": "Scope-completeness / silent gate undercount scripts/check-gate-poison-pills.mjs — extractCheckGates() `extractCheckGates` walks only the literal body of each named npm script. npm additionally runs `pre<name>` and `post<name>` lifecycle scripts automatically for every `npm run <name>` (and for `npm test`). A `precheck`, `pretest` or `postskills:check` entry in package.json would therefore execute as part of the `check` chain while being completely invisible to the extractor: it is neither reconc"
+    },
+    {
+      "id": "4e01ff8f78a7:0a007113:ce88705d",
+      "snapshot": "4e01ff8f78a7",
+      "sharedFiles": [],
+      "primaryHash": "0a007113",
+      "shadowHash": "ce88705d",
+      "label": "unmergeable-no-shared-file",
+      "similarity": 0.067797,
+      "primarySig": "Logic Error scripts/check-gate-poison-pills.mjs The `commandArgv` function unconditionally strips the `node ` prefix from commands (e.g., `node scripts/check-skill-refs.mjs` becomes `scripts/check-skill-refs.mjs`). However, the exemption registry `scripts/gate-contracts/_exemptions.json` manually includes the `node ` prefix in its keys. When `reconcile()` looks up `exemptions.exempt[commandKey]`, it uses the stripped version, which evaluates to `undefined`. This causes explicitly exempted comman",
+      "shadowSig": "Missing Error Handling / misclassified failure scripts/lib/audit/detector.mjs — runDetector() and countFilesInScope() `spawnSync('rg', args, …)` is called with no `maxBuffer`, so Node's 1 MiB default applies. When ripgrep's stdout exceeds it, spawnSync kills the child and sets `res.error` (ENOBUFS) — which this code reports as `detector: ripgrep unavailable (…)`. After the round-5 change that turns any ripgrep failure into `unverifiable`, a broad detector over a large glob (`scripts/**/*.mjs` wi"
+    },
+    {
+      "id": "4e01ff8f78a7:df8e8ad9:ecd56484",
+      "snapshot": "4e01ff8f78a7",
+      "sharedFiles": [],
+      "primaryHash": "df8e8ad9",
+      "shadowHash": "ecd56484",
+      "label": "unmergeable-no-shared-file",
+      "similarity": 0.06383,
+      "primarySig": "Scope Gap scripts/check-gate-contracts.mjs The `checkCandidateCoverage` function hardcodes the search scope to `skills/*/SKILL.md` in its `git diff` arguments and its regex parser (`/^\\+\\+\\+ b\\/skills\\/([^/]+)\\/SKILL\\.md$/`). This completely ignores consumer-installed skills located in `.claude/skills/`, despite the repo explicitly supporting and containing this layout (as seen in `ship-commit.mjs` and `schema-realization.mjs`).",
+      "shadowSig": "Unenforced Gate / Inert Mechanism scripts/lib/audit/convergence.mjs (+ scripts/lib/audit/detector.mjs, skills/audit-code/gate-contract.json) The plan states convergence 'additionally requires checkDetectors(...).blocked === false' because 'prose cannot block'. The implementation instead adds a SIBLING function, `evaluateConvergenceWithDetectors`, and leaves `evaluateConvergence` — the function the gate-contract binds and that existing callers use — untouched and still exported. No orchestration "
+    },
+    {
+      "id": "4e01ff8f78a7:df8e8ad9:a692e50b",
+      "snapshot": "4e01ff8f78a7",
+      "sharedFiles": [],
+      "primaryHash": "df8e8ad9",
+      "shadowHash": "a692e50b",
+      "label": "unmergeable-no-shared-file",
+      "similarity": 0.057692,
+      "primarySig": "Scope Gap scripts/check-gate-contracts.mjs The `checkCandidateCoverage` function hardcodes the search scope to `skills/*/SKILL.md` in its `git diff` arguments and its regex parser (`/^\\+\\+\\+ b\\/skills\\/([^/]+)\\/SKILL\\.md$/`). This completely ignores consumer-installed skills located in `.claude/skills/`, despite the repo explicitly supporting and containing this layout (as seen in `ship-commit.mjs` and `schema-realization.mjs`).",
+      "shadowSig": "Scope-completeness / silent gate undercount scripts/check-gate-poison-pills.mjs — extractCheckGates() `extractCheckGates` walks only the literal body of each named npm script. npm additionally runs `pre<name>` and `post<name>` lifecycle scripts automatically for every `npm run <name>` (and for `npm test`). A `precheck`, `pretest` or `postskills:check` entry in package.json would therefore execute as part of the `check` chain while being completely invisible to the extractor: it is neither reconc"
+    },
+    {
+      "id": "4e01ff8f78a7:df8e8ad9:ce88705d",
+      "snapshot": "4e01ff8f78a7",
+      "sharedFiles": [],
+      "primaryHash": "df8e8ad9",
+      "shadowHash": "ce88705d",
+      "label": "unmergeable-no-shared-file",
+      "similarity": 0.037383,
+      "primarySig": "Scope Gap scripts/check-gate-contracts.mjs The `checkCandidateCoverage` function hardcodes the search scope to `skills/*/SKILL.md` in its `git diff` arguments and its regex parser (`/^\\+\\+\\+ b\\/skills\\/([^/]+)\\/SKILL\\.md$/`). This completely ignores consumer-installed skills located in `.claude/skills/`, despite the repo explicitly supporting and containing this layout (as seen in `ship-commit.mjs` and `schema-realization.mjs`).",
+      "shadowSig": "Missing Error Handling / misclassified failure scripts/lib/audit/detector.mjs — runDetector() and countFilesInScope() `spawnSync('rg', args, …)` is called with no `maxBuffer`, so Node's 1 MiB default applies. When ripgrep's stdout exceeds it, spawnSync kills the child and sets `res.error` (ENOBUFS) — which this code reports as `detector: ripgrep unavailable (…)`. After the round-5 change that turns any ripgrep failure into `unverifiable`, a broad detector over a large glob (`scripts/**/*.mjs` wi"
+    },
+    {
+      "id": "4e01ff8f78a7:80d3e251:ecd56484",
+      "snapshot": "4e01ff8f78a7",
+      "sharedFiles": [],
+      "primaryHash": "80d3e251",
+      "shadowHash": "ecd56484",
+      "label": "unmergeable-no-shared-file",
+      "similarity": 0.09,
+      "primarySig": "CLI UX scripts/ship-commit.mjs When resolving a relative path for the `--message-file` flag, `ship-commit.mjs` resolves it against `repoRoot` (`path.resolve(repoRoot, mf)`) instead of `process.cwd()`. If an agent or operator invokes the command from a subdirectory within the repository, standard CLI semantics are broken and the script will look for the file in the wrong location.",
+      "shadowSig": "Unenforced Gate / Inert Mechanism scripts/lib/audit/convergence.mjs (+ scripts/lib/audit/detector.mjs, skills/audit-code/gate-contract.json) The plan states convergence 'additionally requires checkDetectors(...).blocked === false' because 'prose cannot block'. The implementation instead adds a SIBLING function, `evaluateConvergenceWithDetectors`, and leaves `evaluateConvergence` — the function the gate-contract binds and that existing callers use — untouched and still exported. No orchestration "
+    },
+    {
+      "id": "4e01ff8f78a7:80d3e251:a692e50b",
+      "snapshot": "4e01ff8f78a7",
+      "sharedFiles": [],
+      "primaryHash": "80d3e251",
+      "shadowHash": "a692e50b",
+      "label": "unmergeable-no-shared-file",
+      "similarity": 0.101852,
+      "primarySig": "CLI UX scripts/ship-commit.mjs When resolving a relative path for the `--message-file` flag, `ship-commit.mjs` resolves it against `repoRoot` (`path.resolve(repoRoot, mf)`) instead of `process.cwd()`. If an agent or operator invokes the command from a subdirectory within the repository, standard CLI semantics are broken and the script will look for the file in the wrong location.",
+      "shadowSig": "Scope-completeness / silent gate undercount scripts/check-gate-poison-pills.mjs — extractCheckGates() `extractCheckGates` walks only the literal body of each named npm script. npm additionally runs `pre<name>` and `post<name>` lifecycle scripts automatically for every `npm run <name>` (and for `npm test`). A `precheck`, `pretest` or `postskills:check` entry in package.json would therefore execute as part of the `check` chain while being completely invisible to the extractor: it is neither reconc"
+    },
+    {
+      "id": "4e01ff8f78a7:80d3e251:ce88705d",
+      "snapshot": "4e01ff8f78a7",
+      "sharedFiles": [],
+      "primaryHash": "80d3e251",
+      "shadowHash": "ce88705d",
+      "label": "unmergeable-no-shared-file",
+      "similarity": 0.043478,
+      "primarySig": "CLI UX scripts/ship-commit.mjs When resolving a relative path for the `--message-file` flag, `ship-commit.mjs` resolves it against `repoRoot` (`path.resolve(repoRoot, mf)`) instead of `process.cwd()`. If an agent or operator invokes the command from a subdirectory within the repository, standard CLI semantics are broken and the script will look for the file in the wrong location.",
+      "shadowSig": "Missing Error Handling / misclassified failure scripts/lib/audit/detector.mjs — runDetector() and countFilesInScope() `spawnSync('rg', args, …)` is called with no `maxBuffer`, so Node's 1 MiB default applies. When ripgrep's stdout exceeds it, spawnSync kills the child and sets `res.error` (ENOBUFS) — which this code reports as `detector: ripgrep unavailable (…)`. After the round-5 change that turns any ripgrep failure into `unverifiable`, a broad detector over a large glob (`scripts/**/*.mjs` wi"
+    },
+    {
+      "id": "66913ccf3bd7:f09753bb:7824490f",
+      "snapshot": "66913ccf3bd7",
+      "sharedFiles": [],
+      "primaryHash": "f09753bb",
+      "shadowHash": "7824490f",
+      "label": "unmergeable-no-shared-file",
+      "similarity": 0.08209,
+      "primarySig": "Process Logic Flaw / Workflow Contradiction §0.3 (Activation Addendum) vs §6.1 (Per run) The execution workflow contains a temporal impossibility. §0.3 defines Invocation 2 (Kimi + P2) as \"out-of-band\" (asynchronous), while Invocation 1 (Gemini + Opus) acts as \"the real gate\" that blocks the developer's PR/commit. However, §6.1 Step 3 requires the maintainer to \"Adjudicate before fixing — same sitting, blinded worksheet\" for ALL arms simultaneously. A developer blocked by Invocation 1 cannot wai",
+      "shadowSig": "Internal Contradiction / Unexecutable Step docs/plans/final-review-shadow-bakeoff.md §0.6b vs §0.7 §0.6b states the standalone invocations had no `--run-id`, so \"snapshots 2–3 persisted `final_review_shadow_model = NULL` and zero findings\" and \"the table was the only record, checkable against nothing.\" §0.7 then instructs: \"Snapshots 2-3 findings persist under their own `source_model`; label them via the ordinary `final-review-stats --worksheet` flow before reading anything into the totals.\" Bot"
+    },
+    {
+      "id": "66913ccf3bd7:f09753bb:4a5ef7f9",
+      "snapshot": "66913ccf3bd7",
+      "sharedFiles": [],
+      "primaryHash": "f09753bb",
+      "shadowHash": "4a5ef7f9",
+      "label": "unmergeable-no-shared-file",
+      "similarity": 0.041958,
+      "primarySig": "Process Logic Flaw / Workflow Contradiction §0.3 (Activation Addendum) vs §6.1 (Per run) The execution workflow contains a temporal impossibility. §0.3 defines Invocation 2 (Kimi + P2) as \"out-of-band\" (asynchronous), while Invocation 1 (Gemini + Opus) acts as \"the real gate\" that blocks the developer's PR/commit. However, §6.1 Step 3 requires the maintainer to \"Adjudicate before fixing — same sitting, blinded worksheet\" for ALL arms simultaneously. A developer blocked by Invocation 1 cannot wai",
+      "shadowSig": "Decision Rule With Deleted Input docs/plans/final-review-shadow-bakeoff.md §0.2 vs §0.5 / §6.3 row 2 / §9.1 V7,V10,V12 §0.5 declares §6.3's ordered table applies \"unchanged\", explicitly retaining `INCONCLUSIVE if … the merged/split sensitivity flips it`. But §0.2 deletes the machinery that rule reads: the labelled clustering corpus is 'Not needed', and the six bakeoff tables — including `bakeoff_candidate_pairs`, the sole durable home for `uncertain` pairs (§5.5, 'the identity evidence') — are '"
+    },
+    {
+      "id": "66913ccf3bd7:f09753bb:0f55c2db",
+      "snapshot": "66913ccf3bd7",
+      "sharedFiles": [],
+      "primaryHash": "f09753bb",
+      "shadowHash": "0f55c2db",
+      "label": "unmergeable-no-shared-file",
+      "similarity": 0.103704,
+      "primarySig": "Process Logic Flaw / Workflow Contradiction §0.3 (Activation Addendum) vs §6.1 (Per run) The execution workflow contains a temporal impossibility. §0.3 defines Invocation 2 (Kimi + P2) as \"out-of-band\" (asynchronous), while Invocation 1 (Gemini + Opus) acts as \"the real gate\" that blocks the developer's PR/commit. However, §6.1 Step 3 requires the maintainer to \"Adjudicate before fixing — same sitting, blinded worksheet\" for ALL arms simultaneously. A developer blocked by Invocation 1 cannot wai",
+      "shadowSig": "Unscored Arm / Metric Undefined scripts/bakeoff-collect.mjs (ARMS) vs plan §0.3, §0.4, §6.3 The collector runs THREE arms — `opus`, `kimi`, and `solo-opus` (`solo: true`, Opus as PRIMARY with no shadow) — and `isComplete()` gates N on all three. The plan's §0.3 still says \"TWO invocations per snapshot, four arms\", §0.4's arm-answer table has no row for `solo-opus`, and §6.3's gate/selector is defined only over `marginal(X)` = clusters raised by X but not by P. For a primary-role arm there is no "
+    },
+    {
+      "id": "66913ccf3bd7:f09753bb:a852a285",
+      "snapshot": "66913ccf3bd7",
+      "sharedFiles": [],
+      "primaryHash": "f09753bb",
+      "shadowHash": "a852a285",
+      "label": "unmergeable-no-shared-file",
+      "similarity": 0.059259,
+      "primarySig": "Process Logic Flaw / Workflow Contradiction §0.3 (Activation Addendum) vs §6.1 (Per run) The execution workflow contains a temporal impossibility. §0.3 defines Invocation 2 (Kimi + P2) as \"out-of-band\" (asynchronous), while Invocation 1 (Gemini + Opus) acts as \"the real gate\" that blocks the developer's PR/commit. However, §6.1 Step 3 requires the maintainer to \"Adjudicate before fixing — same sitting, blinded worksheet\" for ALL arms simultaneously. A developer blocked by Invocation 1 cannot wai",
+      "shadowSig": "Weakened Identity Contract docs/plans/final-review-shadow-bakeoff.md §3.2 / V1 vs §0.3 and scripts/bakeoff-collect.mjs (snapshotId) §3.2 makes the snapshot the sha256 of the fully-assembled review payload, requires each arm to assert `payloadHash` before sending (mismatch voids the run, V1), and states the payload is \"assembled ONCE per run, never re-derived per arm — re-derivation is how 'identical input' silently stops being identical.\" The activated protocol does the opposite: two independent"
+    },
+    {
+      "id": "66913ccf3bd7:f09753bb:c4f0cf1b",
+      "snapshot": "66913ccf3bd7",
+      "sharedFiles": [],
+      "primaryHash": "f09753bb",
+      "shadowHash": "c4f0cf1b",
+      "label": "unmergeable-no-shared-file",
+      "similarity": 0.067164,
+      "primarySig": "Process Logic Flaw / Workflow Contradiction §0.3 (Activation Addendum) vs §6.1 (Per run) The execution workflow contains a temporal impossibility. §0.3 defines Invocation 2 (Kimi + P2) as \"out-of-band\" (asynchronous), while Invocation 1 (Gemini + Opus) acts as \"the real gate\" that blocks the developer's PR/commit. However, §6.1 Step 3 requires the maintainer to \"Adjudicate before fixing — same sitting, blinded worksheet\" for ALL arms simultaneously. A developer blocked by Invocation 1 cannot wai",
+      "shadowSig": "Ineligible Evidence Presented As Provisional Result docs/plans/final-review-shadow-bakeoff.md §0.7 vs scripts/bakeoff-collect.mjs (CONTRACT_EPOCH e2) `CONTRACT_EPOCH = 'e2-matched-reasoning-effort'` and `isComplete()` make every pre-e2 row ineligible: \"Every e1 row therefore describes a configuration that no longer exists, so they are ineligible rather than deleted.\" §0.7's table nonetheless carries snapshots 1–3 with 'N=3 running totals' and draws three substantive observations from them — Kimi"
+    },
+    {
+      "id": "66913ccf3bd7:f09753bb:84070bfb",
+      "snapshot": "66913ccf3bd7",
+      "sharedFiles": [],
+      "primaryHash": "f09753bb",
+      "shadowHash": "84070bfb",
+      "label": "unmergeable-no-shared-file",
+      "similarity": 0.058824,
+      "primarySig": "Process Logic Flaw / Workflow Contradiction §0.3 (Activation Addendum) vs §6.1 (Per run) The execution workflow contains a temporal impossibility. §0.3 defines Invocation 2 (Kimi + P2) as \"out-of-band\" (asynchronous), while Invocation 1 (Gemini + Opus) acts as \"the real gate\" that blocks the developer's PR/commit. However, §6.1 Step 3 requires the maintainer to \"Adjudicate before fixing — same sitting, blinded worksheet\" for ALL arms simultaneously. A developer blocked by Invocation 1 cannot wai",
+      "shadowSig": "Sampling Discipline Regression docs/plans/final-review-shadow-bakeoff.md §6.0b vs §0.3 / §0.5 / §0.6b §6.0b pre-registers enrolment: the population is every eligible final-review invocation in both repos after a committed start timestamp, taken in store-assigned `arrivalSeq` order, with objective exclusions and a shipped skip list ('an unrecorded skip invalidates the cohort'). The activated flow enrols by operator-named transcript (`--transcript <path>`), records no `arrivalSeq`, `repoId` or ski"
+    },
+    {
+      "id": "66913ccf3bd7:f09753bb:38faaead",
+      "snapshot": "66913ccf3bd7",
+      "sharedFiles": [],
+      "primaryHash": "f09753bb",
+      "shadowHash": "38faaead",
+      "label": "unmergeable-no-shared-file",
+      "similarity": 0.166667,
+      "primarySig": "Process Logic Flaw / Workflow Contradiction §0.3 (Activation Addendum) vs §6.1 (Per run) The execution workflow contains a temporal impossibility. §0.3 defines Invocation 2 (Kimi + P2) as \"out-of-band\" (asynchronous), while Invocation 1 (Gemini + Opus) acts as \"the real gate\" that blocks the developer's PR/commit. However, §6.1 Step 3 requires the maintainer to \"Adjudicate before fixing — same sitting, blinded worksheet\" for ALL arms simultaneously. A developer blocked by Invocation 1 cannot wai",
+      "shadowSig": "Blinding / Ordering Contract Violated In Practice docs/plans/final-review-shadow-bakeoff.md §5.4, §6.1 step 3 vs §0.7 §6.1 step 3 requires adjudication BEFORE fixing, in the same sitting, on a blinded worksheet, and §5.4 requires that the arm↔finding mapping live in a separate artifact the adjudicator payload never references. §0.7 records the opposite as the current state: 'Not yet done for these snapshots: adjudication', with findings persisting 'under their own `source_model`' — i.e. arm iden"
+    },
+    {
+      "id": "66913ccf3bd7:f057fb5a:7824490f",
+      "snapshot": "66913ccf3bd7",
+      "sharedFiles": [],
+      "primaryHash": "f057fb5a",
+      "shadowHash": "7824490f",
+      "label": "unmergeable-no-shared-file",
+      "similarity": 0.052239,
+      "primarySig": "Missing Metrics Definition / Undefined Arm §0.3 / §0.5 / §3 / §6.3 The plan explicitly introduces `solo-opus` as a cost driver and active participant in §0.5 (\"Per-snapshot cost rose: a third arm (`solo-opus`) was added\"), and the implemented collector script executes it as a primary replacement. However, `solo-opus` is completely missing from the formal protocol (§0.3), the arms table (§3), the metric definitions (§4), and the decision table (§6.3). The core metric `marginal(X)` is defined as \"",
+      "shadowSig": "Internal Contradiction / Unexecutable Step docs/plans/final-review-shadow-bakeoff.md §0.6b vs §0.7 §0.6b states the standalone invocations had no `--run-id`, so \"snapshots 2–3 persisted `final_review_shadow_model = NULL` and zero findings\" and \"the table was the only record, checkable against nothing.\" §0.7 then instructs: \"Snapshots 2-3 findings persist under their own `source_model`; label them via the ordinary `final-review-stats --worksheet` flow before reading anything into the totals.\" Bot"
+    },
+    {
+      "id": "66913ccf3bd7:f057fb5a:4a5ef7f9",
+      "snapshot": "66913ccf3bd7",
+      "sharedFiles": [],
+      "primaryHash": "f057fb5a",
+      "shadowHash": "4a5ef7f9",
+      "label": "unmergeable-no-shared-file",
+      "similarity": 0.098485,
+      "primarySig": "Missing Metrics Definition / Undefined Arm §0.3 / §0.5 / §3 / §6.3 The plan explicitly introduces `solo-opus` as a cost driver and active participant in §0.5 (\"Per-snapshot cost rose: a third arm (`solo-opus`) was added\"), and the implemented collector script executes it as a primary replacement. However, `solo-opus` is completely missing from the formal protocol (§0.3), the arms table (§3), the metric definitions (§4), and the decision table (§6.3). The core metric `marginal(X)` is defined as \"",
+      "shadowSig": "Decision Rule With Deleted Input docs/plans/final-review-shadow-bakeoff.md §0.2 vs §0.5 / §6.3 row 2 / §9.1 V7,V10,V12 §0.5 declares §6.3's ordered table applies \"unchanged\", explicitly retaining `INCONCLUSIVE if … the merged/split sensitivity flips it`. But §0.2 deletes the machinery that rule reads: the labelled clustering corpus is 'Not needed', and the six bakeoff tables — including `bakeoff_candidate_pairs`, the sole durable home for `uncertain` pairs (§5.5, 'the identity evidence') — are '"
+    },
+    {
+      "id": "66913ccf3bd7:f057fb5a:0f55c2db",
+      "snapshot": "66913ccf3bd7",
+      "sharedFiles": [],
+      "primaryHash": "f057fb5a",
+      "shadowHash": "0f55c2db",
+      "label": "unmergeable-no-shared-file",
+      "similarity": 0.25,
+      "primarySig": "Missing Metrics Definition / Undefined Arm §0.3 / §0.5 / §3 / §6.3 The plan explicitly introduces `solo-opus` as a cost driver and active participant in §0.5 (\"Per-snapshot cost rose: a third arm (`solo-opus`) was added\"), and the implemented collector script executes it as a primary replacement. However, `solo-opus` is completely missing from the formal protocol (§0.3), the arms table (§3), the metric definitions (§4), and the decision table (§6.3). The core metric `marginal(X)` is defined as \"",
+      "shadowSig": "Unscored Arm / Metric Undefined scripts/bakeoff-collect.mjs (ARMS) vs plan §0.3, §0.4, §6.3 The collector runs THREE arms — `opus`, `kimi`, and `solo-opus` (`solo: true`, Opus as PRIMARY with no shadow) — and `isComplete()` gates N on all three. The plan's §0.3 still says \"TWO invocations per snapshot, four arms\", §0.4's arm-answer table has no row for `solo-opus`, and §6.3's gate/selector is defined only over `marginal(X)` = clusters raised by X but not by P. For a primary-role arm there is no "
+    },
+    {
+      "id": "66913ccf3bd7:f057fb5a:a852a285",
+      "snapshot": "66913ccf3bd7",
+      "sharedFiles": [],
+      "primaryHash": "f057fb5a",
+      "shadowHash": "a852a285",
+      "label": "unmergeable-no-shared-file",
+      "similarity": 0.05303,
+      "primarySig": "Missing Metrics Definition / Undefined Arm §0.3 / §0.5 / §3 / §6.3 The plan explicitly introduces `solo-opus` as a cost driver and active participant in §0.5 (\"Per-snapshot cost rose: a third arm (`solo-opus`) was added\"), and the implemented collector script executes it as a primary replacement. However, `solo-opus` is completely missing from the formal protocol (§0.3), the arms table (§3), the metric definitions (§4), and the decision table (§6.3). The core metric `marginal(X)` is defined as \"",
+      "shadowSig": "Weakened Identity Contract docs/plans/final-review-shadow-bakeoff.md §3.2 / V1 vs §0.3 and scripts/bakeoff-collect.mjs (snapshotId) §3.2 makes the snapshot the sha256 of the fully-assembled review payload, requires each arm to assert `payloadHash` before sending (mismatch voids the run, V1), and states the payload is \"assembled ONCE per run, never re-derived per arm — re-derivation is how 'identical input' silently stops being identical.\" The activated protocol does the opposite: two independent"
+    },
+    {
+      "id": "66913ccf3bd7:f057fb5a:c4f0cf1b",
+      "snapshot": "66913ccf3bd7",
+      "sharedFiles": [],
+      "primaryHash": "f057fb5a",
+      "shadowHash": "c4f0cf1b",
+      "label": "unmergeable-no-shared-file",
+      "similarity": 0.069231,
+      "primarySig": "Missing Metrics Definition / Undefined Arm §0.3 / §0.5 / §3 / §6.3 The plan explicitly introduces `solo-opus` as a cost driver and active participant in §0.5 (\"Per-snapshot cost rose: a third arm (`solo-opus`) was added\"), and the implemented collector script executes it as a primary replacement. However, `solo-opus` is completely missing from the formal protocol (§0.3), the arms table (§3), the metric definitions (§4), and the decision table (§6.3). The core metric `marginal(X)` is defined as \"",
+      "shadowSig": "Ineligible Evidence Presented As Provisional Result docs/plans/final-review-shadow-bakeoff.md §0.7 vs scripts/bakeoff-collect.mjs (CONTRACT_EPOCH e2) `CONTRACT_EPOCH = 'e2-matched-reasoning-effort'` and `isComplete()` make every pre-e2 row ineligible: \"Every e1 row therefore describes a configuration that no longer exists, so they are ineligible rather than deleted.\" §0.7's table nonetheless carries snapshots 1–3 with 'N=3 running totals' and draws three substantive observations from them — Kimi"
+    },
+    {
+      "id": "66913ccf3bd7:f057fb5a:84070bfb",
+      "snapshot": "66913ccf3bd7",
+      "sharedFiles": [],
+      "primaryHash": "f057fb5a",
+      "shadowHash": "84070bfb",
+      "label": "unmergeable-no-shared-file",
+      "similarity": 0.076923,
+      "primarySig": "Missing Metrics Definition / Undefined Arm §0.3 / §0.5 / §3 / §6.3 The plan explicitly introduces `solo-opus` as a cost driver and active participant in §0.5 (\"Per-snapshot cost rose: a third arm (`solo-opus`) was added\"), and the implemented collector script executes it as a primary replacement. However, `solo-opus` is completely missing from the formal protocol (§0.3), the arms table (§3), the metric definitions (§4), and the decision table (§6.3). The core metric `marginal(X)` is defined as \"",
+      "shadowSig": "Sampling Discipline Regression docs/plans/final-review-shadow-bakeoff.md §6.0b vs §0.3 / §0.5 / §0.6b §6.0b pre-registers enrolment: the population is every eligible final-review invocation in both repos after a committed start timestamp, taken in store-assigned `arrivalSeq` order, with objective exclusions and a shipped skip list ('an unrecorded skip invalidates the cohort'). The activated flow enrols by operator-named transcript (`--transcript <path>`), records no `arrivalSeq`, `repoId` or ski"
+    },
+    {
+      "id": "66913ccf3bd7:f057fb5a:38faaead",
+      "snapshot": "66913ccf3bd7",
+      "sharedFiles": [],
+      "primaryHash": "f057fb5a",
+      "shadowHash": "38faaead",
+      "label": "unmergeable-no-shared-file",
+      "similarity": 0.083333,
+      "primarySig": "Missing Metrics Definition / Undefined Arm §0.3 / §0.5 / §3 / §6.3 The plan explicitly introduces `solo-opus` as a cost driver and active participant in §0.5 (\"Per-snapshot cost rose: a third arm (`solo-opus`) was added\"), and the implemented collector script executes it as a primary replacement. However, `solo-opus` is completely missing from the formal protocol (§0.3), the arms table (§3), the metric definitions (§4), and the decision table (§6.3). The core metric `marginal(X)` is defined as \"",
+      "shadowSig": "Blinding / Ordering Contract Violated In Practice docs/plans/final-review-shadow-bakeoff.md §5.4, §6.1 step 3 vs §0.7 §6.1 step 3 requires adjudication BEFORE fixing, in the same sitting, on a blinded worksheet, and §5.4 requires that the arm↔finding mapping live in a separate artifact the adjudicator payload never references. §0.7 records the opposite as the current state: 'Not yet done for these snapshots: adjudication', with findings persisting 'under their own `source_model`' — i.e. arm iden"
+    },
+    {
+      "id": "c63035cbe740:7e2f9c09:ab242473",
+      "snapshot": "c63035cbe740",
+      "sharedFiles": [],
+      "primaryHash": "7e2f9c09",
+      "shadowHash": "ab242473",
+      "label": "unmergeable-no-shared-file",
+      "similarity": 0.098214,
+      "primarySig": "Logic Error / Anti-Green Rule Defeated scripts/lib/audit/tiered-shadow-summary.mjs & scripts/lib/audit/tiered-shadow-compare.mjs The Gemini G2 fix separated malformed candidates into two counters: `discoveryMalformedRaw` (DTO rejections caught before Stage 0) and `stage0MalformedTripwire` (Gate A rejections inside Stage 0). However, the anti-green rule (`isContractFailure`) in `tiered-shadow-summary.mjs` was only updated to check `tieredStage0MalformedTripwire > 0`. Because all schema validation",
+      "shadowSig": "Undeclared Behaviour Change / Evidence Gate Weakening scripts/lib/audit/evidence-triage.mjs — resolveWithFallback alternatives loop The alternatives loop's promotion condition changed from an explicit allowlist (`altResult.status === 'in_hunk' || altResult.status === 'outside_hunk_in_head'`) to a denylist (`!ANCHOR_FAILURE_STATUSES.includes(altResult.status)`). `unverifiable` is deliberately NOT in ANCHOR_FAILURE_STATUSES, so an alternative anchor that resolves `unverifiable` (its file is not in"
+    },
+    {
+      "id": "c63035cbe740:7e2f9c09:d3bda2b7",
+      "snapshot": "c63035cbe740",
+      "sharedFiles": [],
+      "primaryHash": "7e2f9c09",
+      "shadowHash": "d3bda2b7",
+      "label": "unmergeable-no-shared-file",
+      "similarity": 0.066667,
+      "primarySig": "Logic Error / Anti-Green Rule Defeated scripts/lib/audit/tiered-shadow-summary.mjs & scripts/lib/audit/tiered-shadow-compare.mjs The Gemini G2 fix separated malformed candidates into two counters: `discoveryMalformedRaw` (DTO rejections caught before Stage 0) and `stage0MalformedTripwire` (Gate A rejections inside Stage 0). However, the anti-green rule (`isContractFailure`) in `tiered-shadow-summary.mjs` was only updated to check `tieredStage0MalformedTripwire > 0`. Because all schema validation",
+      "shadowSig": "Data Loss at New Seam / Silent Metadata Stripping scripts/lib/audit/diff-path-map.mjs (prepareCandidates) + scripts/lib/audit/tiered-pipeline.mjs (readyFindings → taggedF `prepareCandidates` returns `{ ...parsed.data, [field]: hydratedAnchor }` where `parsed.data` is the output of `producerSchema.safeParse(raw)`. Zod 4 objects strip unknown keys by default, so every non-schema key the pipeline attaches to a raw discovery finding is dropped at this new seam — notably `_sourceModel` (and any `_pas"
+    },
+    {
+      "id": "c63035cbe740:7e2f9c09:012004ff",
+      "snapshot": "c63035cbe740",
+      "sharedFiles": [
+        "scripts/lib/audit/tiered-shadow-summary.mjs",
+        "scripts/lib/audit/tiered-shadow-compare.mjs"
+      ],
+      "primaryHash": "7e2f9c09",
+      "shadowHash": "012004ff",
+      "label": "same-defect",
+      "similarity": 0.176471,
+      "primarySig": "Logic Error / Anti-Green Rule Defeated scripts/lib/audit/tiered-shadow-summary.mjs & scripts/lib/audit/tiered-shadow-compare.mjs The Gemini G2 fix separated malformed candidates into two counters: `discoveryMalformedRaw` (DTO rejections caught before Stage 0) and `stage0MalformedTripwire` (Gate A rejections inside Stage 0). However, the anti-green rule (`isContractFailure`) in `tiered-shadow-summary.mjs` was only updated to check `tieredStage0MalformedTripwire > 0`. Because all schema validation",
+      "shadowSig": "Observability Gap / Half-Implemented Telemetry Contract scripts/lib/audit/tiered-shadow-compare.mjs + scripts/lib/audit/tiered-shadow-summary.mjs Only `tieredStage0MalformedTripwire` is copied into the persisted `comparison` jsonb, and `summarize()`'s `isContractFailure` predicate reads only that field. But §7a defines the tripwire as the class that is UNREACHABLE post-Cluster-B (its acceptance criterion is `sum(stage0MalformedTripwire) === 0`); the primary, live malformed counter after this PR "
+    },
+    {
+      "id": "c63035cbe740:7e2f9c09:21161350",
+      "snapshot": "c63035cbe740",
+      "sharedFiles": [
+        "scripts/lib/audit/tiered-shadow-summary.mjs"
+      ],
+      "primaryHash": "7e2f9c09",
+      "shadowHash": "21161350",
+      "label": "different-defect",
+      "similarity": 0.073394,
+      "primarySig": "Logic Error / Anti-Green Rule Defeated scripts/lib/audit/tiered-shadow-summary.mjs & scripts/lib/audit/tiered-shadow-compare.mjs The Gemini G2 fix separated malformed candidates into two counters: `discoveryMalformedRaw` (DTO rejections caught before Stage 0) and `stage0MalformedTripwire` (Gate A rejections inside Stage 0). However, the anti-green rule (`isContractFailure`) in `tiered-shadow-summary.mjs` was only updated to check `tieredStage0MalformedTripwire > 0`. Because all schema validation",
+      "shadowSig": "Accounting Inconsistency scripts/lib/audit/tiered-shadow-summary.mjs — summarize() exclusion reasons `compared` gained a new pre-filter (`!isContractFailure`) but the exclusion-reason population did not: `excludedNoStage0Evidence`/`excludedDegenerateComparison` are still derived from the pre-existing `notCompared` set (rows failing `hasComparablePopulation`), while `excludedMalformedAnchors` is computed independently over `withComparison`. A contract-failure row that DOES have a comparable popul"
+    },
+    {
+      "id": "c63035cbe740:41b946bb:ab242473",
+      "snapshot": "c63035cbe740",
+      "sharedFiles": [],
+      "primaryHash": "41b946bb",
+      "shadowHash": "ab242473",
+      "label": "unmergeable-no-shared-file",
+      "similarity": 0.105691,
+      "primarySig": "Missing Error Handling scripts/lib/audit/tiered-pipeline.mjs (Sonnet Path) The implementation log explicitly claims that the Sonnet path was fixed to avoid discarding 60-77% of genuine findings due to verbose `detail` fields (>600 chars). It claims a 'New pure `stripMaxLengthFor` strips only that cap, so an over-long quote lands in malformed'. However, this code is entirely missing from the PR diff. The Sonnet response is still passed raw to `prepareCandidates` with the strict `producerFindingSc",
+      "shadowSig": "Undeclared Behaviour Change / Evidence Gate Weakening scripts/lib/audit/evidence-triage.mjs — resolveWithFallback alternatives loop The alternatives loop's promotion condition changed from an explicit allowlist (`altResult.status === 'in_hunk' || altResult.status === 'outside_hunk_in_head'`) to a denylist (`!ANCHOR_FAILURE_STATUSES.includes(altResult.status)`). `unverifiable` is deliberately NOT in ANCHOR_FAILURE_STATUSES, so an alternative anchor that resolves `unverifiable` (its file is not in"
+    },
+    {
+      "id": "c63035cbe740:41b946bb:d3bda2b7",
+      "snapshot": "c63035cbe740",
+      "sharedFiles": [
+        "scripts/lib/audit/tiered-pipeline.mjs"
+      ],
+      "primaryHash": "41b946bb",
+      "shadowHash": "d3bda2b7",
+      "label": "different-defect",
+      "similarity": 0.119048,
+      "primarySig": "Missing Error Handling scripts/lib/audit/tiered-pipeline.mjs (Sonnet Path) The implementation log explicitly claims that the Sonnet path was fixed to avoid discarding 60-77% of genuine findings due to verbose `detail` fields (>600 chars). It claims a 'New pure `stripMaxLengthFor` strips only that cap, so an over-long quote lands in malformed'. However, this code is entirely missing from the PR diff. The Sonnet response is still passed raw to `prepareCandidates` with the strict `producerFindingSc",
+      "shadowSig": "Data Loss at New Seam / Silent Metadata Stripping scripts/lib/audit/diff-path-map.mjs (prepareCandidates) + scripts/lib/audit/tiered-pipeline.mjs (readyFindings → taggedF `prepareCandidates` returns `{ ...parsed.data, [field]: hydratedAnchor }` where `parsed.data` is the output of `producerSchema.safeParse(raw)`. Zod 4 objects strip unknown keys by default, so every non-schema key the pipeline attaches to a raw discovery finding is dropped at this new seam — notably `_sourceModel` (and any `_pas"
+    },
+    {
+      "id": "c63035cbe740:41b946bb:012004ff",
+      "snapshot": "c63035cbe740",
+      "sharedFiles": [],
+      "primaryHash": "41b946bb",
+      "shadowHash": "012004ff",
+      "label": "unmergeable-no-shared-file",
+      "similarity": 0.081301,
+      "primarySig": "Missing Error Handling scripts/lib/audit/tiered-pipeline.mjs (Sonnet Path) The implementation log explicitly claims that the Sonnet path was fixed to avoid discarding 60-77% of genuine findings due to verbose `detail` fields (>600 chars). It claims a 'New pure `stripMaxLengthFor` strips only that cap, so an over-long quote lands in malformed'. However, this code is entirely missing from the PR diff. The Sonnet response is still passed raw to `prepareCandidates` with the strict `producerFindingSc",
+      "shadowSig": "Observability Gap / Half-Implemented Telemetry Contract scripts/lib/audit/tiered-shadow-compare.mjs + scripts/lib/audit/tiered-shadow-summary.mjs Only `tieredStage0MalformedTripwire` is copied into the persisted `comparison` jsonb, and `summarize()`'s `isContractFailure` predicate reads only that field. But §7a defines the tripwire as the class that is UNREACHABLE post-Cluster-B (its acceptance criterion is `sum(stage0MalformedTripwire) === 0`); the primary, live malformed counter after this PR "
+    },
+    {
+      "id": "c63035cbe740:41b946bb:21161350",
+      "snapshot": "c63035cbe740",
+      "sharedFiles": [],
+      "primaryHash": "41b946bb",
+      "shadowHash": "21161350",
+      "label": "unmergeable-no-shared-file",
+      "similarity": 0.065574,
+      "primarySig": "Missing Error Handling scripts/lib/audit/tiered-pipeline.mjs (Sonnet Path) The implementation log explicitly claims that the Sonnet path was fixed to avoid discarding 60-77% of genuine findings due to verbose `detail` fields (>600 chars). It claims a 'New pure `stripMaxLengthFor` strips only that cap, so an over-long quote lands in malformed'. However, this code is entirely missing from the PR diff. The Sonnet response is still passed raw to `prepareCandidates` with the strict `producerFindingSc",
+      "shadowSig": "Accounting Inconsistency scripts/lib/audit/tiered-shadow-summary.mjs — summarize() exclusion reasons `compared` gained a new pre-filter (`!isContractFailure`) but the exclusion-reason population did not: `excludedNoStage0Evidence`/`excludedDegenerateComparison` are still derived from the pre-existing `notCompared` set (rows failing `hasComparablePopulation`), while `excludedMalformedAnchors` is computed independently over `withComparison`. A contract-failure row that DOES have a comparable popul"
+    },
+    {
+      "id": "c63035cbe740:97584634:ab242473",
+      "snapshot": "c63035cbe740",
+      "sharedFiles": [],
+      "primaryHash": "97584634",
+      "shadowHash": "ab242473",
+      "label": "unmergeable-no-shared-file",
+      "similarity": 0.126214,
+      "primarySig": "Logic Error scripts/lib/audit/tiered-pipeline.mjs In `buildDiffPathMap`, an `undecodable_diff_header` is explicitly documented as a condition that `tiered-pipeline.mjs` must treat 'the same as `discovery_map_exceeds_budget`: fall back to legacy, which CAN audit the file'. However, `tiered-pipeline.mjs` only checks for `discovery_map_exceeds_budget` when deciding to call `failRequiredGenerator`. As a result, an undecodable diff header falls through to `skippedNoGeneratorResult`, which skips the g",
+      "shadowSig": "Undeclared Behaviour Change / Evidence Gate Weakening scripts/lib/audit/evidence-triage.mjs — resolveWithFallback alternatives loop The alternatives loop's promotion condition changed from an explicit allowlist (`altResult.status === 'in_hunk' || altResult.status === 'outside_hunk_in_head'`) to a denylist (`!ANCHOR_FAILURE_STATUSES.includes(altResult.status)`). `unverifiable` is deliberately NOT in ANCHOR_FAILURE_STATUSES, so an alternative anchor that resolves `unverifiable` (its file is not in"
+    },
+    {
+      "id": "c63035cbe740:97584634:d3bda2b7",
+      "snapshot": "c63035cbe740",
+      "sharedFiles": [
+        "scripts/lib/audit/tiered-pipeline.mjs"
+      ],
+      "primaryHash": "97584634",
+      "shadowHash": "d3bda2b7",
+      "label": "different-defect",
+      "similarity": 0.061404,
+      "primarySig": "Logic Error scripts/lib/audit/tiered-pipeline.mjs In `buildDiffPathMap`, an `undecodable_diff_header` is explicitly documented as a condition that `tiered-pipeline.mjs` must treat 'the same as `discovery_map_exceeds_budget`: fall back to legacy, which CAN audit the file'. However, `tiered-pipeline.mjs` only checks for `discovery_map_exceeds_budget` when deciding to call `failRequiredGenerator`. As a result, an undecodable diff header falls through to `skippedNoGeneratorResult`, which skips the g",
+      "shadowSig": "Data Loss at New Seam / Silent Metadata Stripping scripts/lib/audit/diff-path-map.mjs (prepareCandidates) + scripts/lib/audit/tiered-pipeline.mjs (readyFindings → taggedF `prepareCandidates` returns `{ ...parsed.data, [field]: hydratedAnchor }` where `parsed.data` is the output of `producerSchema.safeParse(raw)`. Zod 4 objects strip unknown keys by default, so every non-schema key the pipeline attaches to a raw discovery finding is dropped at this new seam — notably `_sourceModel` (and any `_pas"
+    },
+    {
+      "id": "c63035cbe740:97584634:012004ff",
+      "snapshot": "c63035cbe740",
+      "sharedFiles": [],
+      "primaryHash": "97584634",
+      "shadowHash": "012004ff",
+      "label": "unmergeable-no-shared-file",
+      "similarity": 0.056075,
+      "primarySig": "Logic Error scripts/lib/audit/tiered-pipeline.mjs In `buildDiffPathMap`, an `undecodable_diff_header` is explicitly documented as a condition that `tiered-pipeline.mjs` must treat 'the same as `discovery_map_exceeds_budget`: fall back to legacy, which CAN audit the file'. However, `tiered-pipeline.mjs` only checks for `discovery_map_exceeds_budget` when deciding to call `failRequiredGenerator`. As a result, an undecodable diff header falls through to `skippedNoGeneratorResult`, which skips the g",
+      "shadowSig": "Observability Gap / Half-Implemented Telemetry Contract scripts/lib/audit/tiered-shadow-compare.mjs + scripts/lib/audit/tiered-shadow-summary.mjs Only `tieredStage0MalformedTripwire` is copied into the persisted `comparison` jsonb, and `summarize()`'s `isContractFailure` predicate reads only that field. But §7a defines the tripwire as the class that is UNREACHABLE post-Cluster-B (its acceptance criterion is `sum(stage0MalformedTripwire) === 0`); the primary, live malformed counter after this PR "
+    },
+    {
+      "id": "c63035cbe740:97584634:21161350",
+      "snapshot": "c63035cbe740",
+      "sharedFiles": [],
+      "primaryHash": "97584634",
+      "shadowHash": "21161350",
+      "label": "unmergeable-no-shared-file",
+      "similarity": 0.067961,
+      "primarySig": "Logic Error scripts/lib/audit/tiered-pipeline.mjs In `buildDiffPathMap`, an `undecodable_diff_header` is explicitly documented as a condition that `tiered-pipeline.mjs` must treat 'the same as `discovery_map_exceeds_budget`: fall back to legacy, which CAN audit the file'. However, `tiered-pipeline.mjs` only checks for `discovery_map_exceeds_budget` when deciding to call `failRequiredGenerator`. As a result, an undecodable diff header falls through to `skippedNoGeneratorResult`, which skips the g",
+      "shadowSig": "Accounting Inconsistency scripts/lib/audit/tiered-shadow-summary.mjs — summarize() exclusion reasons `compared` gained a new pre-filter (`!isContractFailure`) but the exclusion-reason population did not: `excludedNoStage0Evidence`/`excludedDegenerateComparison` are still derived from the pre-existing `notCompared` set (rows failing `hasComparablePopulation`), while `excludedMalformedAnchors` is computed independently over `withComparison`. A contract-failure row that DOES have a comparable popul"
+    },
+    {
+      "id": "e9b3860c5acf:823b1173:f48baf02",
+      "snapshot": "e9b3860c5acf",
+      "sharedFiles": [
+        "scripts/lib/audit/diff-path-map.mjs"
+      ],
+      "primaryHash": "823b1173",
+      "shadowHash": "f48baf02",
+      "label": "same-defect",
+      "similarity": 0.166667,
+      "primarySig": "Security / Data Leak scripts/lib/audit/diff-path-map.mjs The implementation of `buildDiffPathMap` explicitly deviates from the plan by applying sensitive-path filtering on its output map (`resolveEligibleDiffPathMap`) instead of pre-filtering the `diffText` input string. Because `ctx.diffText` is passed to the LLM unmodified and is not pre-filtered (as the docblock warns), sensitive file paths (inside the `diff --git` headers) will still leak to the provider in the raw diff payload. This complet",
+      "shadowSig": "Security Control Placed Outside the Choke Point scripts/lib/audit/diff-path-map.mjs (buildDiffPathMap) + scripts/model-eval-discovery.mjs The plan's Security Considerations constraint 1 is explicit: 'Filter before mapping, not after ... The prompt table and the enum are constructed exclusively from that filtered set.' The implementation inverts this and says so in the docblock: 'Sensitive-path exclusion happens on the OUTPUT — resolveEligibleDiffPathMap (tiered-pipeline.mjs) drops sensitive entr"
+    },
+    {
+      "id": "e9b3860c5acf:823b1173:29de89e6",
+      "snapshot": "e9b3860c5acf",
+      "sharedFiles": [],
+      "primaryHash": "823b1173",
+      "shadowHash": "29de89e6",
+      "label": "unmergeable-no-shared-file",
+      "similarity": 0.084615,
+      "primarySig": "Security / Data Leak scripts/lib/audit/diff-path-map.mjs The implementation of `buildDiffPathMap` explicitly deviates from the plan by applying sensitive-path filtering on its output map (`resolveEligibleDiffPathMap`) instead of pre-filtering the `diffText` input string. Because `ctx.diffText` is passed to the LLM unmodified and is not pre-filtered (as the docblock warns), sensitive file paths (inside the `diff --git` headers) will still leak to the provider in the raw diff payload. This complet",
+      "shadowSig": "Gate Misattribution / Fixture Rot scripts/verify-anchor-contract.mjs — DEFAULT_FIXTURE_REV and acceptance grading The probe pins DEFAULT_FIXTURE_REV = 'cee4448' but, as its own docblock admits, production assembles the payload from the CURRENT working-tree content of those files while the diff-path table comes from the pinned rev. There is no drift detector. When those three files eventually diverge far enough that the generator can no longer produce a verifiable quote, the run yields stage0Veri"
+    },
+    {
+      "id": "e9b3860c5acf:823b1173:ad069100",
+      "snapshot": "e9b3860c5acf",
+      "sharedFiles": [],
+      "primaryHash": "823b1173",
+      "shadowHash": "ad069100",
+      "label": "unmergeable-no-shared-file",
+      "similarity": 0.056452,
+      "primarySig": "Security / Data Leak scripts/lib/audit/diff-path-map.mjs The implementation of `buildDiffPathMap` explicitly deviates from the plan by applying sensitive-path filtering on its output map (`resolveEligibleDiffPathMap`) instead of pre-filtering the `diffText` input string. Because `ctx.diffText` is passed to the LLM unmodified and is not pre-filtered (as the docblock warns), sensitive file paths (inside the `diff --git` headers) will still leak to the provider in the raw diff payload. This complet",
+      "shadowSig": "Performance — repeated full parse per lookup scripts/lib/audit/evidence-triage.mjs — extractFileDiffSection after the §7i refactor extractFileDiffSection is now a thin filter over parseAllDiffSections(diffText) and is called once per anchor resolution (verifyAnchor and resolveAnchorLocation both depend on it, and resolveAnchorLocation runs per candidate). Every call re-parses the ENTIRE diff, rebuilds every per-file section string, and runs the new full C-style path decoder (unquoteGitPath: byte"
+    },
+    {
+      "id": "e9b3860c5acf:43bc1b5b:f48baf02",
+      "snapshot": "e9b3860c5acf",
+      "sharedFiles": [
+        "scripts/lib/audit/diff-path-map.mjs"
+      ],
+      "primaryHash": "43bc1b5b",
+      "shadowHash": "f48baf02",
+      "label": "different-defect",
+      "similarity": 0.09375,
+      "primarySig": "Logic / Pipeline Reliability scripts/lib/audit/diff-path-map.mjs The `maxMapEntries` budget check evaluates `sections.length > max` immediately after parsing the raw diff, *before* any noise files (like `package-lock.json` or `.map` files) or sensitive files are filtered out by `resolveEligibleDiffPathMap`. This subjects high-noise, benign diffs to the hard entry limit.",
+      "shadowSig": "Security Control Placed Outside the Choke Point scripts/lib/audit/diff-path-map.mjs (buildDiffPathMap) + scripts/model-eval-discovery.mjs The plan's Security Considerations constraint 1 is explicit: 'Filter before mapping, not after ... The prompt table and the enum are constructed exclusively from that filtered set.' The implementation inverts this and says so in the docblock: 'Sensitive-path exclusion happens on the OUTPUT — resolveEligibleDiffPathMap (tiered-pipeline.mjs) drops sensitive entr"
+    },
+    {
+      "id": "e9b3860c5acf:43bc1b5b:29de89e6",
+      "snapshot": "e9b3860c5acf",
+      "sharedFiles": [],
+      "primaryHash": "43bc1b5b",
+      "shadowHash": "29de89e6",
+      "label": "unmergeable-no-shared-file",
+      "similarity": 0.034483,
+      "primarySig": "Logic / Pipeline Reliability scripts/lib/audit/diff-path-map.mjs The `maxMapEntries` budget check evaluates `sections.length > max` immediately after parsing the raw diff, *before* any noise files (like `package-lock.json` or `.map` files) or sensitive files are filtered out by `resolveEligibleDiffPathMap`. This subjects high-noise, benign diffs to the hard entry limit.",
+      "shadowSig": "Gate Misattribution / Fixture Rot scripts/verify-anchor-contract.mjs — DEFAULT_FIXTURE_REV and acceptance grading The probe pins DEFAULT_FIXTURE_REV = 'cee4448' but, as its own docblock admits, production assembles the payload from the CURRENT working-tree content of those files while the diff-path table comes from the pinned rev. There is no drift detector. When those three files eventually diverge far enough that the generator can no longer produce a verifiable quote, the run yields stage0Veri"
+    },
+    {
+      "id": "e9b3860c5acf:43bc1b5b:ad069100",
+      "snapshot": "e9b3860c5acf",
+      "sharedFiles": [],
+      "primaryHash": "43bc1b5b",
+      "shadowHash": "ad069100",
+      "label": "unmergeable-no-shared-file",
+      "similarity": 0.037736,
+      "primarySig": "Logic / Pipeline Reliability scripts/lib/audit/diff-path-map.mjs The `maxMapEntries` budget check evaluates `sections.length > max` immediately after parsing the raw diff, *before* any noise files (like `package-lock.json` or `.map` files) or sensitive files are filtered out by `resolveEligibleDiffPathMap`. This subjects high-noise, benign diffs to the hard entry limit.",
+      "shadowSig": "Performance — repeated full parse per lookup scripts/lib/audit/evidence-triage.mjs — extractFileDiffSection after the §7i refactor extractFileDiffSection is now a thin filter over parseAllDiffSections(diffText) and is called once per anchor resolution (verifyAnchor and resolveAnchorLocation both depend on it, and resolveAnchorLocation runs per candidate). Every call re-parses the ENTIRE diff, rebuilds every per-file section string, and runs the new full C-style path decoder (unquoteGitPath: byte"
+    },
+    {
+      "id": "e9b3860c5acf:9308aa11:f48baf02",
+      "snapshot": "e9b3860c5acf",
+      "sharedFiles": [],
+      "primaryHash": "9308aa11",
+      "shadowHash": "f48baf02",
+      "label": "unmergeable-no-shared-file",
+      "similarity": 0.05102,
+      "primarySig": "Performance / Unbounded Re-computation scripts/lib/audit/evidence-triage.mjs `extractFileDiffSection` parses the entire `diffText` via `parseAllDiffSections(diffText)` on every call. Because it is called per-finding during Stage 0 triage, a run with $N$ findings will fully re-parse and decode the $M$-size diff string $N$ times.",
+      "shadowSig": "Security Control Placed Outside the Choke Point scripts/lib/audit/diff-path-map.mjs (buildDiffPathMap) + scripts/model-eval-discovery.mjs The plan's Security Considerations constraint 1 is explicit: 'Filter before mapping, not after ... The prompt table and the enum are constructed exclusively from that filtered set.' The implementation inverts this and says so in the docblock: 'Sensitive-path exclusion happens on the OUTPUT — resolveEligibleDiffPathMap (tiered-pipeline.mjs) drops sensitive entr"
+    },
+    {
+      "id": "e9b3860c5acf:9308aa11:29de89e6",
+      "snapshot": "e9b3860c5acf",
+      "sharedFiles": [],
+      "primaryHash": "9308aa11",
+      "shadowHash": "29de89e6",
+      "label": "unmergeable-no-shared-file",
+      "similarity": 0.053571,
+      "primarySig": "Performance / Unbounded Re-computation scripts/lib/audit/evidence-triage.mjs `extractFileDiffSection` parses the entire `diffText` via `parseAllDiffSections(diffText)` on every call. Because it is called per-finding during Stage 0 triage, a run with $N$ findings will fully re-parse and decode the $M$-size diff string $N$ times.",
+      "shadowSig": "Gate Misattribution / Fixture Rot scripts/verify-anchor-contract.mjs — DEFAULT_FIXTURE_REV and acceptance grading The probe pins DEFAULT_FIXTURE_REV = 'cee4448' but, as its own docblock admits, production assembles the payload from the CURRENT working-tree content of those files while the diff-path table comes from the pinned rev. There is no drift detector. When those three files eventually diverge far enough that the generator can no longer produce a verifiable quote, the run yields stage0Veri"
+    },
+    {
+      "id": "e9b3860c5acf:9308aa11:ad069100",
+      "snapshot": "e9b3860c5acf",
+      "sharedFiles": [
+        "scripts/lib/audit/evidence-triage.mjs"
+      ],
+      "primaryHash": "9308aa11",
+      "shadowHash": "ad069100",
+      "label": "same-defect",
+      "similarity": 0.186813,
+      "primarySig": "Performance / Unbounded Re-computation scripts/lib/audit/evidence-triage.mjs `extractFileDiffSection` parses the entire `diffText` via `parseAllDiffSections(diffText)` on every call. Because it is called per-finding during Stage 0 triage, a run with $N$ findings will fully re-parse and decode the $M$-size diff string $N$ times.",
+      "shadowSig": "Performance — repeated full parse per lookup scripts/lib/audit/evidence-triage.mjs — extractFileDiffSection after the §7i refactor extractFileDiffSection is now a thin filter over parseAllDiffSections(diffText) and is called once per anchor resolution (verifyAnchor and resolveAnchorLocation both depend on it, and resolveAnchorLocation runs per candidate). Every call re-parses the ENTIRE diff, rebuilds every per-file section string, and runs the new full C-style path decoder (unquoteGitPath: byte"
+    }
+  ],
+  "snapshots": [
+    {
+      "snapshotId": "21245f6aae1c",
+      "strict": {
+        "both": [],
+        "primaryOnly": [
+          "5c7a2d51"
+        ],
+        "shadowOnly": [
+          "348b8e78",
+          "411d8fb2",
+          "974d9462",
+          "f85b02f6",
+          "fb963cdc"
+        ]
+      }
+    },
+    {
+      "snapshotId": "4e01ff8f78a7",
+      "strict": {
+        "both": [],
+        "primaryOnly": [
+          "0a007113",
+          "df8e8ad9",
+          "80d3e251"
+        ],
+        "shadowOnly": [
+          "726037de",
+          "8697465c",
+          "ba168005"
+        ]
+      }
+    },
+    {
+      "snapshotId": "66913ccf3bd7",
+      "strict": {
+        "both": [],
+        "primaryOnly": [
+          "f09753bb",
+          "f057fb5a"
+        ],
+        "shadowOnly": [
+          "cb1b0a27",
+          "81c121c9",
+          "66ea4f04",
+          "b84952e9",
+          "56157263",
+          "e30034d2",
+          "cd52ef0e"
+        ]
+      }
+    },
+    {
+      "snapshotId": "c63035cbe740",
+      "strict": {
+        "both": [],
+        "primaryOnly": [
+          "7e2f9c09",
+          "41b946bb",
+          "97584634"
+        ],
+        "shadowOnly": [
+          "157a9fe1",
+          "fd2b7b62",
+          "eebf7ec0",
+          "4261b80b",
+          "48bb1123"
+        ]
+      }
+    },
+    {
+      "snapshotId": "e9b3860c5acf",
+      "strict": {
+        "both": [],
+        "primaryOnly": [
+          "823b1173",
+          "43bc1b5b",
+          "9308aa11"
+        ],
+        "shadowOnly": [
+          "c4e097c0",
+          "d1618ce8",
+          "0087666f",
+          "ea3cbcdb",
+          "02692eb0"
+        ]
+      }
+    }
+  ],
+  "sourceManifest": {
+    "note": "The Category-A inputs this Category-B corpus is a pure function of. Regeneration is CHECKABLE against these digests; without them the fixture would only assert its own provenance.",
+    "generator": "scratchpad extract-pairs.mjs (Category A, throwaway)",
+    "generatedAt": "2026-08-09",
+    "scoredFrom": "RAW signatures, before redaction — redaction shifts Jaccard tokens (R3/M1)",
+    "inputs": [
+      {
+        "path": ".audit/bakeoff/21245f6aae1c/21245f6aae1c-opus.json",
+        "sha256": "1bb75cb850918965"
+      },
+      {
+        "path": ".audit/bakeoff/21245f6aae1c/21245f6aae1c-solo-opus.json",
+        "sha256": "d4f6c179218da8f4"
+      },
+      {
+        "path": ".audit/bakeoff/4e01ff8f78a7/4e01ff8f78a7-opus.json",
+        "sha256": "1319b2112e6e2bd8"
+      },
+      {
+        "path": ".audit/bakeoff/4e01ff8f78a7/4e01ff8f78a7-solo-opus.json",
+        "sha256": "4855cb2cee6b8574"
+      },
+      {
+        "path": ".audit/bakeoff/66913ccf3bd7/66913ccf3bd7-opus.json",
+        "sha256": "e6f1b04595d8e625"
+      },
+      {
+        "path": ".audit/bakeoff/66913ccf3bd7/66913ccf3bd7-solo-opus.json",
+        "sha256": "1339ea2fe74847df"
+      },
+      {
+        "path": ".audit/bakeoff/c63035cbe740/c63035cbe740-opus.json",
+        "sha256": "a1c94cd667f1f97b"
+      },
+      {
+        "path": ".audit/bakeoff/c63035cbe740/c63035cbe740-solo-opus.json",
+        "sha256": "2a678f051f14e3fa"
+      },
+      {
+        "path": ".audit/bakeoff/e9b3860c5acf/e9b3860c5acf-opus.json",
+        "sha256": "e2b92654431aa3cd"
+      },
+      {
+        "path": ".audit/bakeoff/e9b3860c5acf/e9b3860c5acf-solo-opus.json",
+        "sha256": "37658c6b51c421d3"
+      }
+    ],
+    "inputSetDigest": "3dc9d7c4f69de038"
+  },
+  "status": "PROVISIONAL — labels are model-generated; see labelProvenance.caveat. Not a validated calibration."
+}

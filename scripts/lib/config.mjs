@@ -220,10 +220,20 @@ export const finalReviewConfig = Object.freeze({
 // disable is not a bound.
 export const findingMatchConfig = Object.freeze({
   // Jaccard floor for the text half of the file-AND-similarity conjunction.
-  // Calibrated per §2.5c against the 48 labelled real pairs; the default is the
-  // recorded result, not a guess.
+  //
+  // 0.14 is the CALIBRATED result (§2.5c, 2026-08-09), not a guess: on the 48
+  // real labelled pairs, same-defect scored 0.1667-0.1868 and different-defect
+  // 0.0614-0.1190, so the zero-false-merge constraint binds just above 0.1190
+  // and 0.14 is the gap midpoint — recall 3/3 with margin on both sides rather
+  // than pinned to the lowest observed same-defect score.
+  //
+  // Real reviewer prose overlaps far less than intuition suggests: two findings
+  // describing the SAME defect share only ~17% of their signature tokens,
+  // because each model writes its own category label and its own section
+  // phrasing. The placeholder 0.3 this shipped with in Cluster A would have
+  // merged NOTHING — every genuine pair sits below it.
   threshold: clampConfigNumber(process.env.AUDIT_FINDING_MATCH_THRESHOLD, {
-    fallback: 0.3, min: 0, max: 1, parser: Number.parseFloat, envVar: 'AUDIT_FINDING_MATCH_THRESHOLD',
+    fallback: 0.14, min: 0, max: 1, parser: Number.parseFloat, envVar: 'AUDIT_FINDING_MATCH_THRESHOLD',
   }),
   // Below this share of findings carrying an extractable file, the matched
   // verdict is `unknown` rather than a number — a low-coverage reading is not a

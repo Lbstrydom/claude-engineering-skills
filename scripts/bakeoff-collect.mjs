@@ -230,7 +230,41 @@ export function readArmResult(outPath) {
     // `buckets` is null when the shadow skipped — distinguish that from a real
     // zero, or a skipped arm reads as "found nothing" (the anti-green class).
     buckets: shadow.buckets ?? null,
+    // The matched view + the cohort identity it was computed under. Null when
+    // matching was disabled, or the arm predates the field — never coerced into
+    // a bucket set, which would read as a measured zero.
+    bucketsMatched: shadow.bucketsMatched ?? null,
+    matchCohort: cohortDigest(shadow.matchSchemaVersion, shadow.matchConfig),
   };
+}
+
+/**
+ * Identity of the configuration a matched result was computed under (plan §2.5d).
+ *
+ * Canonical: sha256 over `{matchSchemaVersion, threshold, coverageFloor, enabled}`
+ * in that FIXED key order, numbers to 4dp, first 8 hex. Fixed order and fixed
+ * precision because `JSON.stringify` of an object literal is insertion-ordered
+ * and a float can render differently across producers — either would split one
+ * cohort into two and silently shrink the aggregate.
+ *
+ * `matchSchemaVersion` IS part of the identity: a schema change with an
+ * unchanged threshold still changes what the buckets MEAN. `enabled` is in it
+ * too, though the aggregator drops disabled rows before grouping — the digest
+ * records what happened, the filter keeps the arithmetic safe.
+ *
+ * Returns `'v0-unstamped'` for a record written before the fields existed, so
+ * those group together and report as not-re-derivable rather than silently
+ * joining a real cohort.
+ */
+export function cohortDigest(schemaVersion, cfg) {
+  if (schemaVersion == null || !cfg) return 'v0-unstamped';
+  const canonical = JSON.stringify({
+    matchSchemaVersion: schemaVersion,
+    threshold: Number(cfg.threshold).toFixed(4),
+    coverageFloor: Number(cfg.coverageFloor).toFixed(4),
+    enabled: cfg.enabled !== false,
+  });
+  return crypto.createHash('sha256').update(canonical).digest('hex').slice(0, 8);
 }
 
 /** Every distinct snapshot in the log, newest entry wins per id. */
@@ -298,6 +332,61 @@ export function zeroFindingArms(entry) {
     });
   }
   return out;
+}
+
+/**
+ * Aggregate the MATCHED view across snapshots, refusing to mix cohorts (§2.5d).
+ *
+ * Three rules, each closing a way the number could lie:
+ *  1. Drop `bucketsMatched === null` FIRST. Those arms did not compute a
+ *     matched view; grouping them would dereference `.both` on null, and
+ *     counting them as zeros would invent measurements.
+ *  2. Group by cohort digest and aggregate only the LARGEST group, naming the
+ *     excluded ones. A mean across two thresholds is not a measurement of
+ *     either — but refusing to report anything would push an operator to
+ *     eyeball it, which is worse.
+ *  3. Never let a `null` coverage reach an arithmetic operator. JS coerces it
+ *     to 0, so a single `not-applicable` snapshot would silently drag the
+ *     campaign's coverage down. Divide by the count of non-null coverages.
+ */
+export function aggregateMatched(complete) {
+  const rows = [];
+  let notComputed = 0;
+  for (const e of complete) {
+    for (const a of ARMS) {
+      if (a.solo) continue;                       // no shadow ⇒ no matched view
+      const r = e.arms?.[a.id];
+      if (!r) continue;
+      if (!r.bucketsMatched) { notComputed++; continue; }
+      rows.push({ arm: a.id, cohort: r.matchCohort ?? 'v0-unstamped', m: r.bucketsMatched });
+    }
+  }
+  if (rows.length === 0) {
+    return { matchedCohort: null, matchedRows: 0, matchedNotComputed: notComputed, matchedExcluded: [], matchedCoverage: null, matchedTotals: null };
+  }
+  const groups = new Map();
+  for (const r of rows) groups.set(r.cohort, [...(groups.get(r.cohort) || []), r]);
+  // Largest group wins; ties break on the LOWEST digest so two runs over one
+  // log always pick the same cohort (never input order).
+  const ranked = [...groups.entries()].sort((a, b) => (b[1].length - a[1].length) || a[0].localeCompare(b[0]));
+  const [cohort, chosen] = ranked[0];
+
+  const covs = chosen.map((r) => r.m.coverage).filter((c) => typeof c === 'number');
+  return {
+    matchedCohort: cohort,
+    matchedRows: chosen.length,
+    matchedNotComputed: notComputed,
+    matchedExcluded: ranked.slice(1).map(([c, rs]) => ({ cohort: c, rows: rs.length })),
+    // null, not 0, when every row was `not-applicable`.
+    matchedCoverage: covs.length ? covs.reduce((s, c) => s + c, 0) / covs.length : null,
+    matchedTotals: {
+      both: chosen.reduce((s, r) => s + r.m.both, 0),
+      shadowOnly: chosen.reduce((s, r) => s + r.m.shadowOnly, 0),
+      unmatchable: chosen.reduce((s, r) => s + r.m.unmatchablePrimary + r.m.unmatchableShadow, 0),
+      unknownVerdicts: chosen.filter((r) => r.m.verdict === 'unknown').length,
+      notApplicable: chosen.filter((r) => r.m.verdict === 'not-applicable').length,
+    },
+  };
 }
 
 export function summarise(entries, target = DEFAULT_TARGET) {
@@ -377,6 +466,7 @@ export function summarise(entries, target = DEFAULT_TARGET) {
     }
   }
   for (const [id, s] of armCostState) totals.costByArm[id] = s.costable ? s.usd : null;
+  Object.assign(totals, aggregateMatched(complete));
   return {
     complete: complete.length,
     incomplete: entries.length - complete.length,
@@ -439,6 +529,30 @@ function printProgress(logPath, target) {
       process.stdout.write(`    (${s.totals.costUncostedSnapshots} snapshot(s) had an unpriced call —`
         + ' those arms show `unpriced` rather than a partial sum that reads complete)\n');
     }
+  }
+
+  // The MATCHED view, beside the strict one. The strict `opus unique` above is
+  // the pre-registered metric and counts VOLUME (cross-model exact-hash never
+  // matches); this is the one that can distinguish "Opus added something" from
+  // "Opus said N things".
+  if (s.totals.matchedRows > 0) {
+    const t = s.totals.matchedTotals;
+    const cov = s.totals.matchedCoverage;
+    process.stdout.write(`  matched view [cohort ${s.totals.matchedCohort}, ${s.totals.matchedRows} arm-run(s)]:`
+      + ` both=${t.both} shadowOnly=${t.shadowOnly} unmatchable=${t.unmatchable}`
+      + ` | coverage ${cov === null ? 'n/a' : (cov * 100).toFixed(0) + '%'}\n`);
+    if (t.unknownVerdicts > 0) {
+      process.stdout.write(`    ${t.unknownVerdicts} run(s) below the coverage floor — read as UNKNOWN, not as a number\n`);
+    }
+    if (t.notApplicable > 0) {
+      process.stdout.write(`    ${t.notApplicable} run(s) had no findings on either side — not-applicable, excluded from the coverage mean\n`);
+    }
+    for (const x of s.totals.matchedExcluded) {
+      process.stdout.write(`    EXCLUDED cohort ${x.cohort} (${x.rows} run(s)) — different match config; re-run or read separately, never averaged in\n`);
+    }
+  }
+  if (s.totals.matchedNotComputed > 0) {
+    process.stdout.write(`    ${s.totals.matchedNotComputed} arm-run(s) have no matched view (disabled, or collected before the field existed)\n`);
   }
 
   // Two arms that sent the same request are not two configurations.
