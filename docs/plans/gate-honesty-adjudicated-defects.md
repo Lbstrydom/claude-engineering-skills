@@ -1,7 +1,7 @@
 # Plan: Gate-honesty defects confirmed by blind adjudication
 
 - **Date**: 2026-08-08
-- **Status**: Draft
+- **Status**: In Progress
 - **Author**: Claude + Louis
 - **Scope**: backend
 
@@ -155,11 +155,24 @@ lot. The mapping in the table above is therefore extracted as a pure exported
 function in `convergence.mjs`, beside the oracle it feeds:
 
 ```js
-resolveDetectorResultForRound({ round, ledgerValidation, ledger, cwd })
-//  round < 2                            -> { blocked: false, checked: 0 }
-//  ledgerValidation.suppressionUnavailable -> undefined      (=> detector-not-run)
-//  otherwise                            -> checkDetectors(ledger, { cwd })
+resolveDetectorResultForRound({ round, suppressionUnavailable, ledger, cwd, checkDetectorsFn })
+//  round not a positive integer  -> undefined                  (=> detector-not-run)
+//  round === 1                   -> { blocked: false, checked: 0 }
+//  suppressionUnavailable        -> undefined                  (=> detector-not-run)
+//  otherwise                     -> checkDetectorsFn(ledger, { cwd })
 ```
+
+**As shipped, and two of those lines are corrections the build earned.** The
+draft took `ledgerValidation` — which is `const`-scoped inside `if (isR2Plus)`
+and **not visible** at the verdict site, so it would have thrown on every R2+
+run. The function-scoped `suppressionUnavailable` (`:1644`) carries the same
+fact and is the binding the signature now forces. The draft also had no
+round-shape guard: `!(round >= 2)` is true for `undefined`, `NaN`, `0` and
+negatives, so a lost round took the converges-clean branch — fail-open inside
+the resolver written to fail closed. The orchestrator normalises `round || 1`,
+so R1 behaviour is unchanged and the resolver stays strict. `checkDetectorsFn`
+is injected rather than imported, which keeps the threshold free of a dependency
+on the ripgrep call and lets all four rows be asserted without a filesystem.
 
 The three rows are then unit-assertable without touching the orchestrator, and
 `:3386` becomes a one-line call.
@@ -467,7 +480,7 @@ transformation, so no codemod.
 | File | Intent | Purpose |
 |---|---|---|
 | [`scripts/lib/audit/legacy-production-audit.mjs`](../../scripts/lib/audit/legacy-production-audit.mjs) | modify | Wire `evaluateConvergenceWithDetectors` at the `:3386` verdict site, feeding it `resolveDetectorResultForRound(...)` (below). **Never branch on ledger presence** — see §2's three-row table, which is the single statement of this rule. |
-| [`scripts/lib/audit/convergence.mjs`](../../scripts/lib/audit/convergence.mjs) | modify | Add `resolveDetectorResultForRound({round, ledgerValidation, ledger, cwd})` — the pure, exported seam that maps §2's table to a `detectorResult` (or `undefined`). Docblock names the production call site so the next reader can tell wired from stated. |
+| [`scripts/lib/audit/convergence.mjs`](../../scripts/lib/audit/convergence.mjs) | modify | Add `resolveDetectorResultForRound({round, suppressionUnavailable, ledger, cwd, checkDetectorsFn})` — the pure, exported seam that maps §2's table to a `detectorResult` (or `undefined`). Docblock names the production call site so the next reader can tell wired from stated. |
 | [`skills/audit-code/gate-contract.json`](../../skills/audit-code/gate-contract.json) | modify | Bind the detector-convergence claim to its enforcing code + test. |
 | [`scripts/verify-anchor-contract.mjs`](../../scripts/verify-anchor-contract.mjs) | modify | Replace `DEFAULT_FIXTURE_REV` with a **committed fixture diff** (below). `--rev <sha>` stays as an opt-in override. |
 | `tests/fixtures/anchor-contract/known-defects.diff` | create | The pinned input: a unified diff carrying defects both generators found at `d3c6269`. Committed, so a shallow clone works and the input cannot drift. |
@@ -684,7 +697,118 @@ verification-script failures in one prior session were all instrument defects.
     gate for each.
 - **Final gate**: consolidated Gemini review over the union diff of A+B+C.
 
+### 11.1 A cluster's fix-gate is judged on IN-CLUSTER findings only
+
+*(Added 2026-08-08 after Cluster A hit this for real.)*
+
+`/cycle` Step 3C states the fix-gate as "reach `/audit-code` convergence
+(`HIGH == 0 && MEDIUM <= 2 && quickFix == 0`) before the next cluster builds on
+it". Taken literally that is **unreachable for every cluster but the last**, and
+this plan is the proof: `/audit-code` grades one cluster's *diff* against the
+*whole plan*, so an unimplemented phase belonging to a later cluster is reported
+as `[Structure] Missing planned file` — HIGH.
+
+Measured on Cluster A (`audit-code-clusterA-1786227147`):
+
+| Round | HIGH | of which in-cluster | of which later-cluster phases |
+|---|---|---|---|
+| R1 | 6 | 2 | 1 (+3 pre-existing, independent) |
+| R2 | 5 | 2 | 2 (+1 pre-existing) |
+| R3 | 3 | **0** | 2 (+1 truncated/unactionable) |
+
+At R3 Cluster A's own work was clean, and the gate would still have refused —
+forever, because the two remaining HIGHs were *"`tests/fixtures/anchor-contract/
+known-defects.diff` is absent"* and *"`_exemptions.json` still declares bare
+strings"*: Cluster C's Phase 4 and Cluster B's Phase 3, both correctly
+unimplemented at that point. A gate that cannot be satisfied by doing the work
+correctly is not a gate; it is the cried-wolf shape that earns `--no-verify`.
+
+**The rule.** A cluster's fix-gate is evaluated over the findings whose cited
+file lies in **that cluster's derived scope**. Every other finding is recorded
+and carried forward, never silently dropped. Precisely, each finding is one of:
+
+| Cited file is… | Classification | Effect on this cluster's gate |
+|---|---|---|
+| in **this** cluster's derived scope | **in-cluster** | **gates** — fix it, including if pre-existing (impact, not authorship) |
+| in a **later** cluster's derived scope | **deferred-declared** | does not gate; must be zero at the final gate |
+| in an **earlier** cluster's scope | **regression** | **gates** — an earlier cluster went `stale`; stop per Step 3C.5 |
+| in **no** cluster's scope | **out-of-scope** | unchanged: fail closed, stop and ask |
+
+**Three properties keep this from becoming an escape hatch:**
+
+1. **Deferral is bounded, not permanent.** `deferred-declared` is defined by
+   membership of a *later* cluster's declared scope. The final cluster has no
+   later cluster, so the bucket is empty by construction there — every
+   completeness finding the earlier gates deferred must be satisfied before the
+   consolidated gate. The finding is postponed to the point where it is
+   actionable, not forgiven.
+2. **"Pre-existing" is still not a defer reason.** The middle two rows are about
+   *plan schedule*, never about authorship. A finding citing a file in this
+   cluster's scope gates it even if the line predates the change — AGENTS.md's
+   impact test is untouched, and Cluster A honoured it (the two in-cluster HIGHs
+   it fixed at R2 were both in code written that hour, but the three it deferred
+   were deferred for **independence**, each with the reason written down).
+3. **The classification is mechanical.** Derived scope is already computed from
+   the member phases' `Files:` lines; no judgement call decides which bucket a
+   finding lands in, so the rule cannot be argued into covering an inconvenient
+   result.
+
+**Recording requirement.** Every `deferred-declared` finding is listed in the
+cluster's hand-back summary with the cluster that owns it. A deferral nobody can
+see is indistinguishable from a dismissal.
+
+> **This is a `/cycle` skill defect, surfaced here.** The plan can only state the
+> rule for its own execution; `skills/cycle/SKILL.md` Step 3C carries the
+> unreachable wording for every clustered plan. Fixing it there is out of this
+> plan's declared scope (no §7 file entry) and is filed as follow-up rather than
+> smuggled in — but any clustered plan run before that lands will hit the same
+> wall, so the rule belongs upstream.
+
 ---
+
+## Implementation Log
+
+### 2026-08-08 — Cluster A (D1) shipped
+
+Commit `fix(convergence): the detector gate was enforced by a function nothing
+called` · `AI-Gate: waived` (an audit ran but did not converge to a verified
+verdict, so `passed` is unavailable by design) · full suite 10,197 pass / 0 fail.
+
+Audit `audit-code-clusterA-1786227147`, 3 rounds, in-cluster HIGH 2 → 0. The
+audit found **four defects in the implementation of the fix**, which is the
+result worth recording:
+
+- `ledgerValidation` is `const`-scoped inside `if (isR2Plus)` and is **not
+  visible** at the verdict site — the first draft would have thrown a
+  `ReferenceError` on every R2+ run. `suppressionUnavailable` (function-scoped,
+  `:1644`) is the correct binding, and §2's table now names it so the mistake is
+  not re-makeable.
+- `!(round >= 2)` treated `undefined`/`NaN`/`0`/negative as "this is R1" —
+  fail-open inside the resolver written to fail closed. Now `Number.isInteger`
+  + `>= 1`, with the orchestrator normalising `round || 1` so R1 is unchanged.
+- `typeof checked === 'number'` admitted `NaN`, `Infinity`, `-1` as a completed
+  census.
+- The call-shape guard anchored on exact indentation and broke when a comment
+  was added inside the call. Re-anchored on index + window: a test that fails on
+  reformatting is one people learn to delete.
+
+Both wiring mutants (count-only predicate; hardcoded empty detector result) were
+verified to fail the guard and the control to pass it, so the guard is known to
+do work rather than assumed to.
+
+**Deferred-declared at hand-back** (per §11.1): `tests/fixtures/anchor-contract/
+known-defects.diff` absent (Cluster C, Phase 4) and `_exemptions.json` still
+bare strings (Cluster B, Phase 3). **Deferred-independent**: fire-and-forget
+`recordFindings`/`recordPassStats`, silent `.catch(() => null)` on cloud
+bootstrap, and a truncated `noCloudRecording` finding — none of which the
+convergence verdict rides on; `recordConvergenceState` is awaited, and a lost
+write can only make `AI-Gate` stricter.
+
+**Not started**: Clusters B and C. The run halted before B because a concurrent
+session held `detector.mjs` (Cluster B scope) and the branch is diverged after
+their rebase — local `9905abff` and remote `a1a8028f` are patch-identical, and
+`git merge origin/main` is blocked by *their* staged file. Cluster A is
+committed locally; nothing ships until that is reconciled.
 
 ## Audit trail
 
