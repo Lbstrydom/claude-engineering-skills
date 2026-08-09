@@ -45,9 +45,39 @@ export function ageDivergences(findings, { firstSeenLookup, headCommitDate }) {
   return (findings || []).map((finding) => {
     const key = divergenceKey(finding);
     const firstSeen = (firstSeenLookup && firstSeenLookup(key)) || headCommitDate;
-    const ageDays = Number.isFinite(head) ? Math.max(0, Math.floor((head - Date.parse(firstSeen)) / 86400000)) : 0;
-    return { key, finding, firstSeen, ageDays };
+    return { key, finding, firstSeen, ageDays: computeAgeDays(head, firstSeen) };
   });
+}
+
+/**
+ * Age in whole days, or `null` when either endpoint is not a parseable date.
+ *
+ * Two failure modes, both previously silent (tech-debt `fa6e120c`):
+ *  - an unparseable `firstSeen` made `head - NaN` → `NaN`, which survives
+ *    `Math.max`/`Math.floor` and only becomes `null` later by accident, when
+ *    `JSON.stringify` refuses to serialise it;
+ *  - an unparseable `headCommitDate` returned **0**, reporting every finding as
+ *    brand new — the more dangerous of the two, because 0 is a plausible value
+ *    that reads as "just appeared" rather than "we don't know".
+ *
+ * `null` distinguishes both from a genuine 0, which means the finding was first
+ * seen AT head and is a real measurement. This is the same
+ * unknown-is-not-zero rule the coverage-gate honesty work applies
+ * (`docs/plans/observed-graph-coverage-honesty.md`).
+ *
+ * NOTE: `scripts/lib/nav/drift.mjs` carries a byte-identical copy of this
+ * function — the two lenses are deliberately separate modules, so the guard is
+ * duplicated rather than abstracted, and `tests/visual-drift.test.mjs` asserts
+ * BOTH copies agree so they cannot drift apart again.
+ *
+ * @param {number} head - `Date.parse` of the head commit date
+ * @param {string} firstSeen
+ * @returns {number|null}
+ */
+function computeAgeDays(head, firstSeen) {
+  const seen = Date.parse(firstSeen);
+  if (!Number.isFinite(head) || !Number.isFinite(seen)) return null;
+  return Math.max(0, Math.floor((head - seen) / 86400000));
 }
 
 /**

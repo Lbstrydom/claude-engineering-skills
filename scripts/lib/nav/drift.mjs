@@ -62,9 +62,34 @@ export function ageDivergences(findings, { firstSeenLookup, headCommitDate }) {
   return findings.map((finding) => {
     const key = divergenceKey(finding);
     const firstSeen = (firstSeenLookup && firstSeenLookup(key)) || headCommitDate;
-    const ageDays = Number.isFinite(head) ? Math.max(0, Math.floor((head - Date.parse(firstSeen)) / 86400000)) : 0;
-    return { key, finding, firstSeen, ageDays };
+    return { key, finding, firstSeen, ageDays: computeAgeDays(head, firstSeen) };
   });
+}
+
+/**
+ * Age in whole days, or `null` when either endpoint is not a parseable date.
+ *
+ * The tech-debt entry (`fa6e120c`) named only the visual copy of this function,
+ * but the defect is in BOTH — and it is this one that has a live consumer
+ * (`scripts/lib/dashboard/collect-nav.mjs` renders `ageDays` into the drift
+ * panel). Fixing only the file the ticket named would have left the reachable
+ * instance broken.
+ *
+ * An unparseable `firstSeen` gave `NaN`; an unparseable `headCommitDate` gave
+ * **0**, reporting every finding as brand new. `null` says "unknown" and keeps a
+ * genuine 0 — first seen AT head — meaning what it says.
+ *
+ * NOTE: byte-identical to `scripts/lib/visual/drift.mjs`'s copy by design (two
+ * separate lenses); `tests/visual-drift.test.mjs` asserts both agree.
+ *
+ * @param {number} head - `Date.parse` of the head commit date
+ * @param {string} firstSeen
+ * @returns {number|null}
+ */
+function computeAgeDays(head, firstSeen) {
+  const seen = Date.parse(firstSeen);
+  if (!Number.isFinite(head) || !Number.isFinite(seen)) return null;
+  return Math.max(0, Math.floor((head - seen) / 86400000));
 }
 
 /** Read the local drift-ledger cache (convenience only; never source of truth). */

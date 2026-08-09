@@ -97,3 +97,34 @@ test('firstSeenFromHistory ignores invalid timestamps and keeps the earliest', (
   assert.equal(lookup('k1'), '2026-06-01T00:00:00+00:00');
   assert.equal(lookup('missing'), null);
 });
+
+test('ageDivergences: an unparseable date is UNKNOWN (null), never NaN and never 0', async () => {
+  // tech-debt fa6e120c. Two silent failures, both worse than they look:
+  //   - unparseable firstSeen -> NaN, which survives Math.max/Math.floor and
+  //     only turns into null downstream when JSON.stringify refuses it;
+  //   - unparseable headCommitDate -> 0, i.e. "brand new", a plausible value
+  //     that hides the failure completely.
+  const f = { class: 'token_violation', surfaceId: 's', nodeKey: 'k', property: 'color' };
+  const HEAD = '2026-06-11T00:00:00+00:00';
+
+  const badSeen = ageDivergences([f], { firstSeenLookup: () => 'not-a-date', headCommitDate: HEAD });
+  assert.equal(badSeen[0].ageDays, null, 'unparseable firstSeen must be unknown');
+  assert.ok(!Number.isNaN(badSeen[0].ageDays), 'and specifically not NaN');
+
+  const badHead = ageDivergences([f], { firstSeenLookup: () => '2026-06-01T00:00:00+00:00', headCommitDate: 'garbage' });
+  assert.equal(badHead[0].ageDays, null, 'unparseable head must be unknown, not 0');
+
+  // A REAL zero still means what it says: first seen at head.
+  const atHead = ageDivergences([f], { firstSeenLookup: () => HEAD, headCommitDate: HEAD });
+  assert.equal(atHead[0].ageDays, 0, 'a genuine same-day age must stay 0, distinct from unknown');
+
+  // ...and the nav lens carries a byte-identical copy of this function. The
+  // ticket named only the visual one; the nav one is the copy with a live
+  // consumer (dashboard/collect-nav.mjs). Pin them together so a future fix to
+  // one cannot silently leave the other behind.
+  const nav = await import('../scripts/lib/nav/drift.mjs');
+  const navFinding = { class: 'orphan', destination: 'd', severity: 'MEDIUM' };
+  assert.equal(nav.ageDivergences([navFinding], { firstSeenLookup: () => 'not-a-date', headCommitDate: HEAD })[0].ageDays, null);
+  assert.equal(nav.ageDivergences([navFinding], { firstSeenLookup: () => '2026-06-01T00:00:00+00:00', headCommitDate: 'garbage' })[0].ageDays, null);
+  assert.equal(nav.ageDivergences([navFinding], { firstSeenLookup: () => '2026-06-01T00:00:00+00:00', headCommitDate: HEAD })[0].ageDays, 10);
+});
