@@ -27,6 +27,7 @@ import { azureConfig, auditShadowConfig } from '../config.mjs';
 import { assertEgressSafe } from '../sensitive-egress-gate.mjs';
 import { findSensitivePathMentions, EgressGateError } from './egress-path-scan.mjs';
 import { zodToGeminiSchema } from '../schemas.mjs';
+import { normalizeGeminiUsage } from '../gemini-usage.mjs';
 
 export class MalformedProviderOutputError extends Error {
   constructor(message) { super(message); this.name = 'MalformedProviderOutputError'; }
@@ -193,9 +194,15 @@ async function invokeNativeGemini({ route, messages, schema, signal }) {
   // to the canonical snake_case shape HERE, at the provider boundary, so
   // the generic cost layer stays provider-agnostic rather than needing to
   // learn every SDK's field-naming quirks.
-  const usage = resp.usageMetadata
-    ? { input_tokens: resp.usageMetadata.promptTokenCount, output_tokens: resp.usageMetadata.candidatesTokenCount }
-    : null;
+  // Billed output now comes from the shared oracle (gemini-usage.mjs): the
+  // normalisation above was right about the FIELD NAMES but still read
+  // candidates alone, so it kept under-reporting thinking tokens that Google
+  // bills at the output rate. `null` is preserved for the no-metadata case so
+  // the cost layer's `usageStatus:'missing'` path is unchanged.
+  const g = normalizeGeminiUsage(resp.usageMetadata);
+  const usage = g.usageMissing
+    ? null
+    : { input_tokens: g.input_tokens, output_tokens: g.output_tokens, thinking_tokens: g.thinking_tokens, usageMissing: false };
   return { data, raw: resp, usage };
 }
 

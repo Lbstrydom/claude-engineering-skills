@@ -286,3 +286,98 @@ describe('matchFindings — determinism and one-to-one', () => {
     assert.equal(signatureOf({ category: 'A', section: 'B', detail: 'C' }), 'A B C');
   });
 });
+
+describe('decideReRaise resolves without double-parsing a stored path (Gemini gate)', () => {
+  const OPT = { threshold: 0.9, requireSameFile: true };
+  const nb = (file) => ({ finding_id: 'n1', cosine: 0.95, primary_file: file });
+
+  it('a BACKSLASH primaryFile resolves — the prose round-trip used to drop it', async () => {
+    // String.raw is load-bearing: written with ordinary escapes this literal is
+    // `scriptswinc.mjs` (JS has no `\w`/`\c` escape), a different string that
+    // would test nothing. That artifact is also what made a first pass at this
+    // test report the wrong failure mechanism.
+    //
+    // The real defect: the prose regex matches forward-slash paths but not
+    // backslash ones, so feeding an already-stored path back through it
+    // extracted NOTHING and the suppression was silently skipped. normalizePath
+    // handles the separator fine — it was the round-trip in front of it that lost.
+    const { decideReRaise } = await import('../scripts/lib/semantic-suppression.mjs');
+    const stored = String.raw`scripts\win\c.mjs`;
+    assert.deepEqual(extractFileRefs(stored), [], 'precondition: the prose parser cannot read this path');
+    assert.equal(decideReRaise({ primaryFile: stored }, nb('scripts/win/c.mjs'), OPT).suppress, true,
+      'a stored path must resolve regardless of separator');
+  });
+
+  it('an explicit affectedFiles array still wins over primaryFile', async () => {
+    const { decideReRaise } = await import('../scripts/lib/semantic-suppression.mjs');
+    const cand = { affectedFiles: ['scripts/a.mjs', 'scripts/b.mjs'], primaryFile: 'scripts/zzz.mjs' };
+    assert.equal(decideReRaise(cand, nb('scripts/b.mjs'), OPT).suppress, true);
+  });
+
+  it('prose section is still parsed when no structured field exists', async () => {
+    const { decideReRaise } = await import('../scripts/lib/semantic-suppression.mjs');
+    assert.equal(decideReRaise({ section: OPUS_SECTION }, nb('scripts/check-gate-poison-pills.mjs'), OPT).suppress, true);
+  });
+});
+
+describe('greedyReRaiseClusters passes file fields through (Gemini union R2)', () => {
+  it('a multi-file finding clusters on its file SET, not just files[0]', async () => {
+    // The seam hand-built `{primaryFile: f.primaryFile}`, re-creating §2.6's
+    // invariant 1 (positional comparison) and invariant 3 (fields dropped at a
+    // rebuilt envelope) in a single line — silently narrowing the very match
+    // decideReRaise had just been widened to make.
+    const { greedyReRaiseClusters } = await import('../scripts/lib/semantic-suppression.mjs');
+    const emb = [1, 0, 0];
+    const findings = [
+      { id: 'a', createdAt: '2026-01-01', primaryFile: 'scripts/x.mjs', affectedFiles: ['scripts/x.mjs', 'scripts/shared.mjs'], embedding: emb },
+      // Its files[0] differs, but the SET intersects on scripts/shared.mjs.
+      { id: 'b', createdAt: '2026-01-02', primaryFile: 'scripts/shared.mjs', affectedFiles: ['scripts/shared.mjs'], embedding: emb },
+    ];
+    const clusters = greedyReRaiseClusters(findings, { threshold: 0.9, requireSameFile: true });
+    assert.equal(clusters.length, 1, 'the reword should join the canonical, not start its own cluster');
+    assert.equal(clusters[0].duplicates.length, 1);
+  });
+
+  it('genuinely disjoint files still form separate clusters', async () => {
+    const { greedyReRaiseClusters } = await import('../scripts/lib/semantic-suppression.mjs');
+    const emb = [1, 0, 0];
+    const clusters = greedyReRaiseClusters([
+      { id: 'a', createdAt: '2026-01-01', primaryFile: 'scripts/one.mjs', affectedFiles: ['scripts/one.mjs'], embedding: emb },
+      { id: 'b', createdAt: '2026-01-02', primaryFile: 'scripts/two.mjs', affectedFiles: ['scripts/two.mjs'], embedding: emb },
+    ], { threshold: 0.9, requireSameFile: true });
+    assert.equal(clusters.length, 2, 'widening the key must not merge unrelated files');
+  });
+});
+
+describe('affectedFilesOf is a UNION — the class fix, not another instance', () => {
+  it('unions every source instead of picking one', () => {
+    // Four review rounds each found the same shape: some caller chose ONE
+    // source and narrowed the key. A union has nothing to choose.
+    const r = affectedFilesOf({
+      affectedFiles: ['scripts/a.mjs'],
+      primaryFile: 'scripts/b.mjs',
+      _primaryFile: 'scripts/c.mjs',
+      section: 'also scripts/d.mjs',
+    });
+    assert.deepEqual(r, ['scripts/a.mjs', 'scripts/b.mjs', 'scripts/c.mjs', 'scripts/d.mjs']);
+  });
+
+  it('a stored BACKSLASH path resolves from any field', () => {
+    const stored = String.raw`scripts\win\c.mjs`;
+    assert.deepEqual(affectedFilesOf({ primaryFile: stored }), ['scripts/win/c.mjs']);
+    assert.deepEqual(affectedFilesOf({ affectedFiles: [stored] }), ['scripts/win/c.mjs']);
+  });
+
+  it('still refuses a prose fragment as a key', () => {
+    assert.deepEqual(affectedFilesOf({ _primaryFile: '§0.3', section: PROSE_SECTION }), []);
+    assert.equal(primaryFileOf({ _primaryFile: '§0.3', section: PROSE_SECTION }), null);
+  });
+
+  it('a candidate with BOTH a primary and a multi-file section keeps both', () => {
+    // The precedence chain that used to live in decideReRaise dropped the
+    // section's files whenever a primary existed.
+    const r = affectedFilesOf({ primaryFile: 'scripts/x.mjs', section: MULTI_A });
+    assert.ok(r.includes('scripts/x.mjs'));
+    assert.ok(r.includes('scripts/lib/audit/tiered-shadow-compare.mjs'));
+  });
+});

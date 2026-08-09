@@ -43,6 +43,7 @@ import {
 } from './store/model-ab.mjs';
 import { recordFindings, recordPassStats, updateRunMeta } from './store/runs-findings.mjs';
 import { mulberry32 } from './rng.mjs';
+import { normalizeGeminiUsage } from './gemini-usage.mjs';
 
 // ── Deterministic seeded RNG for arm-order randomization (D10/M5) ─────────────
 // The order of the INDEPENDENT generation units is shuffled per assignment
@@ -650,11 +651,15 @@ async function callGeminiDefault({ collectedFindings, redactedContext, planConte
   });
   let parsed = null;
   try { parsed = JSON.parse(resp.text); } catch { /* conformance miss */ }
+  // BILLED output via the shared oracle — candidates alone excludes thoughts,
+  // which Google also bills at the output rate (~2.5x understatement measured).
+  const g = normalizeGeminiUsage(resp.usageMetadata);
   const usage = {
-    input_tokens: resp.usageMetadata?.promptTokenCount ?? 0,
-    output_tokens: resp.usageMetadata?.candidatesTokenCount ?? 0,
+    input_tokens: g.input_tokens,
+    output_tokens: g.output_tokens,
+    thinking_tokens: g.thinking_tokens,
     latency_ms: Date.now() - start,
-    usageMissing: !resp.usageMetadata,
+    usageMissing: g.usageMissing,
   };
   return {
     findings: parsed?.findings || [],

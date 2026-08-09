@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**12 active · 170 terminal · 26 audit summaries · 4 reference docs**
+**11 active · 171 terminal · 26 audit summaries · 4 reference docs**
 
 ---
 
@@ -21,7 +21,6 @@ This is the list to read when asking "what is in flight?".
 
 | Plan | Status | Notes |
 |---|---|---|
-| [Cross-Model Finding Matching](./cross-model-finding-matching.md) | `Approved` | audited |
 | [Event-Wiring Symmetry Check](./event-wiring-symmetry.md) | `Draft` |  |
 | [Final-Review Shadow Bake-Off (marginal-value re-test)](./final-review-shadow-bakeoff.md) | `In Progress` | activated 2026-07-31 — see §0 Activation Addendum |
 | [Gate-honesty defects confirmed by blind adjudication](./gate-honesty-adjudicated-defects.md) | `Draft` |  |
@@ -52,7 +51,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 167 completed plans</summary>
+<summary>Show all 168 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -95,6 +94,7 @@ source comments that no docs linter sees — stays valid.
 | [Harden consumer deployment — prevent silent local-patching of synced tooling](./consumer-deployment-hardening.md) | `Complete` | all three phases built, tested, and deployed (the |
 | [Audit Context Brief Generator](./context-brief.md) | `Complete` | shipped — `scripts/lib/context.mjs` (`readProjectContextForPass`, `readRepoProfile`, `generateBriefViaGemin… |
 | [VS Code GitHub Copilot compatibility audit + fixes](./copilot-compat-audit.md) | `Complete` |  |
+| [Cross-Model Finding Matching](./cross-model-finding-matching.md) | `Complete` | implemented + audited |
 | [Read-only Audit-Run Findings Viewer (dashboard module)](./dashboard-audit-run-viewer.md) | `Complete` | implemented + audited — see Implementation Log |
 | [Dashboard "Purpose" view — v2 (coverage, reverse-link, live health)](./dashboard-purpose-view-v2.md) | `Complete` |  |
 | [Dashboard "Purpose" view — v3 (per-domain health + outcome×domain matrix)](./dashboard-purpose-view-v3.md) | `Complete` |  |

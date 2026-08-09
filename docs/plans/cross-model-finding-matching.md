@@ -1,7 +1,7 @@
 # Plan: Cross-Model Finding Matching
 
 - **Date**: 2026-08-08
-- **Status**: Approved (audited)
+- **Status**: Complete (implemented + audited)
 - **Author**: Claude + Louis
 - **Scope**: backend
 
@@ -12,7 +12,41 @@
 | GPT (`/audit-plan`) | 3 (cap) | H 5 → 2 → 3, M 4 → 4 → 2. 18 of 20 findings accepted and fixed; **2 rebutted and upheld** — H2 (the "repository registry" premise is false: `ALL_EXTENSIONS_PATTERN` is a frozen *extension* list) and M3 (INC-001 governs read/egress decisions; this path makes none). GPT conceded both. |
 | Gemini (final) | 2 (cap) | CONCERNS → CONCERNS. All 5 findings accepted; both R1 findings verified against source before acceptance (`gemini-adapter.mjs:38` camelCase, `model-call.mjs:45` `reasoning_tokens` — both confirmed). |
 
-**Stop decision.** Halted at both caps. The GPT HIGH count stopped falling at R3
+## Implementation trail (2026-08-09)
+
+All three clusters implemented and `gate-clear`; 6 per-cluster GPT rounds + 3
+consolidated Gemini rounds over the union diff.
+
+| What the review found that the plan did not | Where |
+|---|---|
+| `nearestOpenReRaise` took `LIMIT 1` repo-wide **before** the same-file test, so one high-cosine different-file row shadowed every eligible duplicate. Latent while the guard was inert; **live** once repaired, so fixed here rather than deferred as pre-existing. | Cluster A |
+| The census found **seven** `usageMetadata` sites where the plan named four — including `llm-wrappers.mjs` passing Google's raw object through, and `embed-text.mjs`, legitimately different (embeddings have no billed output). | Cluster C |
+| Two files **called** `normalizeGeminiUsage` without importing it. Invisible to a module-load check (the reference is inside a function body) and to a symbol-presence check. Caused by an automated wiring pass matching the literal `gemini-usage.mjs` inside a comment it had just written. | Cluster C |
+| A costed `estimatedCostUsd` derived from unmeterable usage — a fake €0 in the shape of a measurement. | Cluster C |
+
+**The same defect class recurred in four consecutive rounds** — a caller picking
+ONE file source, or `files[0]`, and silently narrowing the match key, always one
+hop downstream of the last fix (candidate side → canonical side → `primaryFileOf`
+→ the local precedence chain). §2.6 stated the invariant but nothing *enforced*
+it. The fix is structural: `affectedFilesOf` is now a **union** of every source
+(`affectedFiles ∪ primaryFile ∪ _primaryFile ∪ section`), so there is no choice
+left to get wrong, and `asPath` normalises before parsing so an already-stored
+path is never round-tripped through the prose regex. Patching a fifth instance
+would not have produced that.
+
+**Deferred as independent** (the plan's design does not call or depend on
+either): `AbortSignal` forwarding on the Gemini transports, and
+`STRUCTURED_OUTPUT_MAX_TOKENS` applying only to Anthropic in
+`provider-adapter.mjs`.
+
+**Consolidated-gate stop decision.** Three rounds, one past the cap — justified
+once by round 2's concrete HIGH (data loss at the clustering seam), then stopped.
+Round 3's findings were two more instances of the recurring class; the union fix
+addresses the class, and a fourth round would be hunting a fifth instance, which
+is the rigor-pressure shape the cap exists to prevent. Verdict at stop:
+`CONCERNS`, coherence `Strong`, deliberation assessed fair with no Claude bias.
+
+**Stop decision (plan audit).** Halted at both caps. The GPT HIGH count stopped falling at R3
 (5 → 2 → 3), and the rise was **not** new scope — it was contradictions my own
 R1/R2 edits introduced. Gemini R2's three findings were concrete design defects,
 which normally earns another round, but they were all instances of *three

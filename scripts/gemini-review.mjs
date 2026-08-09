@@ -35,6 +35,7 @@ import { buildClassificationRubric } from './lib/prompt-seeds.mjs';
 import { readFileOrDie, readFilesAsContext, extractPlanPaths, writeOutput, isAuditInfraFile, atomicWriteFileSync } from './lib/file-io.mjs';
 import { semanticId, formatFindings, appendOutcome, FalsePositiveTracker } from './lib/findings.mjs';
 import { affectedFilesOf, primaryFileOf, matchFindings } from './lib/finding-match.mjs';
+import { normalizeGeminiUsage } from './lib/gemini-usage.mjs';
 import { readProjectContext, initAuditBrief, generateRepoProfile } from './lib/context.mjs';
 import { applyEnvSetting } from './lib/env-setting.mjs';
 import { geminiConfig, claudeConfig, azureConfig, shadowReviewConfig, finalReviewConfig, auditShadowConfig, findingMatchConfig, FINDING_MATCH_SCHEMA_VERSION } from './lib/config.mjs';
@@ -533,11 +534,14 @@ const REVIEW_TRANSPORTS = {
       if (chunk.text) textParts.push(chunk.text);
       if (chunk.usageMetadata) usageMetadata = chunk.usageMetadata;
     }
-    const thoughts = usageMetadata?.thoughtsTokenCount ?? 0;
+    // Delegated to the shared oracle (gemini-usage.mjs). The inline fix that
+    // landed in 1a89c1ac was correct but was a SECOND place that knew what
+    // "billed output" means; folding it in leaves exactly one.
+    const g = normalizeGeminiUsage(usageMetadata);
     return {
       text: textParts.join(''),
       usage: {
-        input_tokens: usageMetadata?.promptTokenCount ?? 0,
+        input_tokens: g.input_tokens,
         // BILLED output, which for Google means candidates PLUS thoughts —
         // `candidatesTokenCount` excludes `thoughtsTokenCount`, and Google bills
         // both at the output rate. Reading only candidates understated this
@@ -551,8 +555,9 @@ const REVIEW_TRANSPORTS = {
         // WITHIN that total rather than a separate addend. Any consumer summing
         // the two would double-count on every provider, which is why the shared
         // cost oracle deliberately does not.
-        output_tokens: (usageMetadata?.candidatesTokenCount ?? 0) + thoughts,
-        thinking_tokens: thoughts,
+        output_tokens: g.output_tokens,
+        thinking_tokens: g.thinking_tokens,
+        usageMissing: g.usageMissing,
       },
       finishReason: null,
     };

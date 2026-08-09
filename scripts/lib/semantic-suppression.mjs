@@ -69,16 +69,35 @@ export function decideReRaise(candidate, neighbour, { threshold, requireSameFile
     // oracle); the candidate is resolved through the shared extractor. A
     // multi-file candidate whose `files[0]` differs from the neighbour's stored
     // primary must still match, which equality cannot express.
-    const candidateFiles = affectedFilesOf({
-      affectedFiles: candidate?.affectedFiles,
-      section: candidate?.primaryFile || candidate?._primaryFile || candidate?.section || '',
-    });
-    const b = normalizePath(neighbour.primary_file || '');
+    // Resolve from the MOST structured field available, and never feed an
+    // already-resolved path back through the prose parser (Gemini gate).
+    //
+    // The earlier form passed `primaryFile` in as `section`, so a stored path
+    // was re-parsed by a regex built for free text. Measured: that regex matches
+    // forward-slash paths but NOT backslash-separated ones, so a stored
+    // `scripts\win\c.mjs` extracted to `[]` — no key at all. `normalizePath`
+    // handles the separator perfectly well; it was the prose round-trip in front
+    // of it that lost the path. It failed OPEN, so nothing was mis-suppressed,
+    // but it silently skipped suppressions it should have made.
+    // ONE call, no local fallback chain. The chain that used to live here
+    // (`affectedFiles` else `primaryFile` else `section`) was itself a
+    // narrowing: a candidate carrying BOTH a primary and a multi-file section
+    // lost the section's files. `affectedFilesOf` now unions every source, so
+    // there is nothing left here to get wrong.
+    const candidateFiles = affectedFilesOf(candidate);
+    // The neighbour is usually a DB row carrying ONE `primary_file` column. The
+    // in-memory clustering path has the whole finding, though, so it may supply
+    // `affected_files` — and must, or the canonical side reintroduces exactly
+    // the positional narrowing just removed from the candidate side.
+    const neighbourFiles = (Array.isArray(neighbour.affected_files) && neighbour.affected_files.length > 0)
+      ? neighbour.affected_files.map((x) => normalizePath(x)).filter(Boolean)
+      : [normalizePath(neighbour.primary_file || '')].filter(Boolean);
     // Fail OPEN (no suppression) when either side is unresolvable — including
     // legacy rows with a null `primary_file`. A false suppression hides a
     // possibly-new finding; a false keep costs one duplicate store row. That
     // asymmetry is the same one this module already argues for its threshold.
-    if (!b || candidateFiles.length === 0 || !candidateFiles.includes(b)) {
+    if (neighbourFiles.length === 0 || candidateFiles.length === 0
+      || !candidateFiles.some((p) => neighbourFiles.includes(p))) {
       return { suppress: false, reason: 'different-file', cosine: neighbour.cosine };
     }
   }
@@ -122,9 +141,23 @@ export function greedyReRaiseClusters(findings, { threshold, requireSameFile }) 
     let joined = null;
     for (const c of clusters) {
       const cos = cosine(f.embedding, c.canonical.embedding);
+      // Pass the finding's FILE FIELDS through, not just its positional
+      // primary (Gemini gate, union round 2). Hand-building
+      // `{ primaryFile: f.primaryFile }` re-created §2.6's invariants 1 and 3
+      // in one line: it reduced a multi-file finding to `files[0]` (positional
+      // comparison) and dropped `affectedFiles`/`_primaryFile` at a rebuilt
+      // envelope. `decideReRaise` prefers the richest field it is given, so
+      // starving it here silently narrowed the match that was just widened.
       const d = decideReRaise(
-        { primaryFile: f.primaryFile },
-        { finding_id: c.canonical.id, cosine: cos, primary_file: c.canonical.primaryFile },
+        { primaryFile: f.primaryFile, _primaryFile: f._primaryFile, affectedFiles: f.affectedFiles, section: f.section },
+        {
+          finding_id: c.canonical.id,
+          cosine: cos,
+          primary_file: c.canonical.primaryFile,
+          // Symmetric to the candidate side: this path holds the whole finding,
+          // so give the canonical its full file set rather than files[0].
+          affected_files: c.canonical.affectedFiles,
+        },
         { threshold, requireSameFile },
       );
       if (d.suppress) { joined = c; break; }

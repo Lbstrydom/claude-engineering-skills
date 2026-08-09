@@ -1,6 +1,7 @@
 import { GoogleGenAI } from '@google/genai';
 import { BRAINSTORM_SYSTEM_PROMPT } from './prompt.mjs';
 import { estimateCostUsd } from './pricing.mjs';
+import { normalizeGeminiUsage } from '../gemini-usage.mjs';
 
 let _client = null;
 function client() {
@@ -34,11 +35,25 @@ export async function callGemini({ topic, model, maxTokens, timeoutMs = 60000, s
     const latencyMs = Date.now() - startMs;
 
     const text = response?.text ?? null;
+    // camelCase is this adapter's ESTABLISHED contract — its consumers read
+    // `inputTokens`/`outputTokens`, so the oracle's snake_case result is MAPPED
+    // rather than passed through (converging the shapes would trade an
+    // under-metering bug for a zeroed-field one). `usageMissing` is added, not
+    // optional: it is what stops an unmeterable call reconciling to a fake €0.
+    const g = normalizeGeminiUsage(response?.usageMetadata);
     const usage = {
-      inputTokens: response?.usageMetadata?.promptTokenCount ?? 0,
-      outputTokens: response?.usageMetadata?.candidatesTokenCount ?? 0,
+      inputTokens: g.input_tokens,
+      outputTokens: g.output_tokens,      // BILLED: candidates + thoughts
+      thinkingTokens: g.thinking_tokens,  // the reasoning share WITHIN the above
+      usageMissing: g.usageMissing,
     };
-    const estimatedCostUsd = estimateCostUsd({
+    // NULL cost when the usage is unmeterable (audit H1). Costing the zeros
+    // that absent metadata sanitizes to would report a successful call as
+    // costing $0.00 — a fabricated measurement in the shape of a real one, and
+    // the precise failure `usageMissing` was added to prevent. `null` is
+    // already this field's contract for the error paths below, so consumers
+    // handle it.
+    const estimatedCostUsd = usage.usageMissing ? null : estimateCostUsd({
       modelId: model,
       inputTokens: usage.inputTokens,
       outputTokens: usage.outputTokens,

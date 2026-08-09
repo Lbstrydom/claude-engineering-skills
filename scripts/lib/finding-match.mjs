@@ -90,24 +90,47 @@ export function extractFileRefs(section, { dedupe = true } = {}) {
 }
 
 /**
- * The MATCHING key: every file a finding refers to.
- * Prefers a pre-stamped `affectedFiles` (the final-review path stamps it), else
- * derives from `section`.
- * @param {{affectedFiles?: string[], section?: string}|null|undefined} finding
- * @returns {string[]}
+ * Coerce ONE value that may already be a resolved path into path form.
+ *
+ * `normalizePath` FIRST, then the extractor. That ordering is the whole trick
+ * and it fixes two bugs at once: a stored `scripts\win\c.mjs` becomes
+ * `scripts/win/c.mjs` before the prose regex sees it (the regex matches
+ * forward slashes only, so the raw form extracted to nothing), while a prose
+ * fragment like `§0.3` still yields `[]` because it has no file extension. One
+ * mechanism, no "is this already a path?" guesswork.
+ */
+function asPath(value) {
+  if (typeof value !== 'string' || value === '') return [];
+  return extractFileRefs(normalizePath(value));
+}
+
+/**
+ * The MATCHING key: every file a finding refers to, from EVERY source it has.
+ *
+ * A UNION, deliberately — not a precedence chain. Four consecutive review
+ * rounds found the same defect in different places, always the same shape: some
+ * caller picked ONE source (or `files[0]`) and silently narrowed the key,
+ * re-creating §2.6 invariant 1 one hop downstream of wherever it was last
+ * fixed. `affectedFiles ∪ primaryFile ∪ _primaryFile ∪ section` cannot narrow,
+ * because there is nothing to choose between: every path the finding mentions
+ * is a path it is about.
+ *
+ * @param {{affectedFiles?: string[], primaryFile?: string, _primaryFile?: string,
+ *          section?: string}|null|undefined} finding
+ * @returns {string[]} normalised, de-duplicated, first-appearance order
  */
 export function affectedFilesOf(finding) {
-  const pre = finding?.affectedFiles;
-  if (Array.isArray(pre) && pre.length > 0) {
-    const seen = new Set();
-    const out = [];
-    for (const p of pre) {
-      const n = typeof p === 'string' ? normalizePath(p) : '';
-      if (n && !seen.has(n)) { seen.add(n); out.push(n); }
-    }
-    if (out.length > 0) return out;
+  const out = [];
+  const seen = new Set();
+  const add = (p) => { if (p && !seen.has(p)) { seen.add(p); out.push(p); } };
+
+  for (const p of (Array.isArray(finding?.affectedFiles) ? finding.affectedFiles : [])) {
+    for (const q of asPath(p)) add(q);
   }
-  return extractFileRefs(finding?.section);
+  for (const q of asPath(finding?.primaryFile)) add(q);
+  for (const q of asPath(finding?._primaryFile)) add(q);
+  for (const q of extractFileRefs(finding?.section)) add(q);
+  return out;
 }
 
 /**
@@ -121,11 +144,10 @@ export function affectedFilesOf(finding) {
  * @returns {string|null}
  */
 export function primaryFileOf(finding) {
-  const pre = finding?._primaryFile;
-  if (typeof pre === 'string') {
-    const refs = extractFileRefs(pre);
-    if (refs.length > 0) return refs[0];
-  }
+  // Just the head of the union. The old form special-cased `_primaryFile`
+  // through the prose parser first, which both duplicated the resolution logic
+  // and dropped backslash paths — the same double-parse defect the union's
+  // `asPath` now handles in one place.
   return affectedFilesOf(finding)[0] ?? null;
 }
 

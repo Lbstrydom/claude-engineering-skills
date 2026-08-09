@@ -8,6 +8,7 @@
 import { z } from 'zod';
 import { zodTextFormat } from 'openai/helpers/zod';
 import { openaiConfig, briefConfig } from './config.mjs';
+import { normalizeGeminiUsage } from './gemini-usage.mjs';
 
 /**
  * Lazily construct + cache a single Gemini (`GoogleGenAI`) client for the
@@ -91,7 +92,14 @@ export async function callGemini(ai, systemPrompt, userPrompt, jsonSchema, optio
       }
     }
 
-    const usage = response.usageMetadata || {};
+    // Normalised, not passed through raw. This used to hand callers Google's
+    // own `{promptTokenCount, candidatesTokenCount, …}` object, so any consumer
+    // costing it would hit the same candidates-excludes-thoughts understatement
+    // as the five adapters. No caller exists today (the `callGemini` imports
+    // elsewhere resolve to brainstorm/gemini-adapter.mjs's same-named export),
+    // which is precisely why it is converted rather than allowlisted: a latent
+    // under-metering site is one wiring-up away from being a live one.
+    const usage = normalizeGeminiUsage(response.usageMetadata);
     return { result: parsed, usage, latencyMs: Date.now() - start };
   } catch (err) {
     process.stderr.write(`  [llm-wrapper] Gemini call failed: ${err.message}\n`);
