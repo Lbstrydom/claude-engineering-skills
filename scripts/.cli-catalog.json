@@ -562,6 +562,14 @@
     "docs:citations:json": {
       "description": "JSON form of docs:citations — {summary, findings}. Writes nothing; redirect stdout if you want a file (the CLI has no --out on purpose, so `writes nothing` stays true).",
       "category": "diagnostic"
+    },
+    "mutation": {
+      "description": "Mutation testing (Stryker) over a declared registry of seams. --list shows which modules have had their tests PROVEN to detect defects; --target <name> runs one. Floors are a ratchet (fail on a DROP), not an aspiration. Deliberately not in the pre-push check: slow, and scores drift with unrelated refactors.",
+      "category": "testing"
+    },
+    "mutation:all": {
+      "description": "Run every mutation-guarded seam in sequence. Exit 1 when any score falls below its recorded floor — i.e. a test was weakened.",
+      "category": "testing"
     }
   }
 }

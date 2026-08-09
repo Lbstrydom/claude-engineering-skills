@@ -46,5 +46,18 @@
   "ignore": [
     "docs/plans/security/files/**",
     "tests/fixtures/anchor-contract/files/**"
+  ],
+
+  // @stryker-mutator/core is SPAWNED, never imported: scripts/mutation-test.mjs
+  // shells out to `npx stryker run <generated-config>`, because Stryker is a
+  // process-level instrument that re-runs the test command per mutant. Knip
+  // resolves usage statically, so a spawned binary is invisible to it.
+  //
+  // Ignored rather than baselined, deliberately. A baseline entry means "known
+  // unused, tolerated" — which would be a false statement here and would go
+  // stale silently the day someone deleted the runner. This says the true
+  // thing: it IS used, just not through an import graph.
+  "ignoreDependencies": [
+    "@stryker-mutator/core"
   ]
 }

@@ -53,11 +53,20 @@ describe('shellQuoteSingle — POSIX quoting is total, not a denylist', () => {
     // Vacuous-pass guard AND the real oracle: ask a POSIX shell what the token
     // actually expands to. A quoting bug that my regex reasoning missed shows
     // up here as a mismatch.
+    // Skip ONLY for a genuinely absent interpreter, and say so. A bare
+    // `catch { return }` also swallows a broken invocation or a real oracle
+    // failure, turning "the probe could not run" into a silent pass — the
+    // vacuous-green shape these tests exist to prevent.
     let sh;
     try {
       sh = execFileSync('sh', ['-c', 'echo ok'], { encoding: 'utf-8' }).trim();
-    } catch {
-      return; // no POSIX sh on this box — the structural assertions above still ran
+    } catch (err) {
+      if (err.code === 'ENOENT') {
+        process.stderr.write('  [shell-quote] SKIP: no POSIX `sh` on this platform; '
+          + 'the structural assertions above still ran, the round-trip oracle did not\n');
+        return;
+      }
+      throw err; // a present-but-failing shell is a real failure, not a skip
     }
     assert.equal(sh, 'ok', 'sanity: the probe shell works');
 
@@ -69,7 +78,12 @@ describe('shellQuoteSingle — POSIX quoting is total, not a denylist', () => {
   });
 
   it('proves the probe can FAIL — an unquoted payload does expand (negative control)', function () {
-    try { execFileSync('sh', ['-c', 'echo ok'], { encoding: 'utf-8' }); } catch { return; }
+    try {
+      execFileSync('sh', ['-c', 'echo ok'], { encoding: 'utf-8' });
+    } catch (err) {
+      if (err.code === 'ENOENT') return;
+      throw err;
+    }
     const out = execFileSync('sh', ['-c', 'printf %s $HOME'], { encoding: 'utf-8' });
     assert.notEqual(
       out, '$HOME',
@@ -110,5 +124,41 @@ describe('shellQuoteLabel — free text, one line, both shells', () => {
 
   it('collapses tabs and trims, so a padded category renders cleanly', () => {
     assert.equal(shellQuoteLabel('  a\tb  '), "'a b'");
+  });
+
+  // ── Gaps found by mutation testing, not by review ───────────────────────
+  //
+  // `npm run mutation -- --target shell-quote` scored 77.78% on the first run
+  // with SIX survivors, on tests written deliberately an hour earlier. Both
+  // gaps below are real: every assertion above passed against a mutant that
+  // broke the behaviour. This is the concrete argument for the instrument.
+
+  // 5 of the 6 survivors were the null/undefined guard: nothing exercised
+  // shellQuoteLabel's coercion at all, so Stryker could delete the whole
+  // condition, invert its operator, or replace the empty string with
+  // "Stryker was here!" and every test still passed.
+  it('coerces null and undefined to an empty quoted token', () => {
+    assert.equal(shellQuoteLabel(null), "''");
+    assert.equal(shellQuoteLabel(undefined), "''");
+  });
+
+  it('does not stringify null into the literal text "null"', () => {
+    assert.ok(
+      !shellQuoteLabel(null).includes('null'),
+      'String(null) is "null" — a description reading "null" is a silent data bug',
+    );
+  });
+
+  it('coerces a non-string value rather than dropping it', () => {
+    assert.equal(shellQuoteLabel(42), "'42'");
+    assert.equal(shellQuoteLabel(0), "'0'", '0 is falsy but is NOT absent — it must survive');
+  });
+
+  // The 6th survivor: /[\r\n\t]+/ mutated to /[\r\n\t]/ and nothing noticed,
+  // because every input had only SINGLE separators. A CRLF is two characters,
+  // so this is the common case, not an exotic one.
+  it('collapses a RUN of whitespace to one space, not one space per character', () => {
+    assert.equal(shellQuoteLabel('a\r\n\r\nb'), "'a b'");
+    assert.equal(shellQuoteLabel('a\t\t\tb'), "'a b'");
   });
 });

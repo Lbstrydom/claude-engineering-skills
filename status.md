@@ -1,6 +1,95 @@
 # Project Status Log
 
-## 2026-08-09 (latest) — an un-done job that reported success, in four places
+## 2026-08-09 (latest) — the tests passed; that turned out not to be the same as working
+
+Added mutation testing (Stryker 9.6.1) after a durability property resisted
+every attempt to build a negative control for it. The instrument justified
+itself on the first run.
+
+**`shell-quote` scored 77.78% with 6 survivors** — on a module written
+deliberately that same session, with tests written alongside it to close a
+security finding, reviewed carefully. Two genuine gaps: `shellQuoteLabel`'s
+null/undefined coercion had *no test at all* (5 of the 6 survivors — Stryker
+could delete the condition, invert its operator, or swap the empty string for
+`"Stryker was here!"` and everything still passed), and `/[\r\n\t]+/` mutated to
+`/[\r\n\t]/` unnoticed because no input ever had two separators in a row. A CRLF
+is two characters, so that is the common case. Closed both; now 100%.
+
+**First census** (`npm run mutation:all`, *measured*):
+
+| Seam | Score | Survivors | Goal |
+|---|---|---|---|
+| `shell-quote` | 100% *(after fix)* | 0 | 100 |
+| `candidate-pagination` | 83.2% | 35 | 90 |
+| `quickfix-policy` | 67.9% | 18 | 90 |
+| `sensitive-paths` — Tier-3 egress | **67.5%** | **120** | 85 |
+| `file-lock` | **31.7%** | **270** | 70 |
+
+`file-lock` at 31.7% confirms what the failed race suggested: its tests pass but
+detect little. `sensitive-paths` is the Tier-3 non-negotiable seam where a miss
+ships credentials to a third-party LLM.
+
+**Three design choices keep it from becoming shelfware**, all recorded in
+`scripts/mutation-test.mjs`:
+
+- **A registry, not "mutate everything."** One module ↔ one covering test file,
+  so a run is seconds. Whole-tree mutation over ~10,500 tests takes days, and a
+  gate nobody runs reads as coverage while providing none.
+- **A ratchet, not a cliff.** `floor` is the score measured *today*; the run
+  fails only on a DROP. `goal` is recorded separately so the floor is visibly a
+  waypoint. A floor set to the wished-for number is red on day one and gets
+  ignored. Same shape this repo already uses for knip / docs-refs / cli-flags.
+- **Absence is a statement.** A module not in the registry has not had its tests
+  proven to detect defects. `scripts/lib/ledger.mjs` is the standing example —
+  907 lines, 12 exports, Tier-1 by our own doctrine, **no dedicated suite**
+  (debt `bb15049a`).
+
+**The audit found four real defects in this work**, three of them in the
+instrument itself, which is the appropriate irony:
+
+- The guard written to prevent a vacuous mutation run **accepted an empty
+  mutate/tests list** — Stryker with nothing to mutate reports 100%. Emptiness
+  is now rejected before existence is even consulted.
+- Both shell probes did `catch { return; }`, so a broken invocation was
+  indistinguishable from "no POSIX `sh` here". Only `ENOENT` skips now, and it
+  says so; anything else rethrows.
+- A private `assertKnownFlags` duplicated the shared one at 0.87. Reused
+  instead — and adopting it surfaced a second bug the copy had masked:
+  `--target=name` passed validation but the value parser only read the space
+  form, so a valid invocation died with "unknown target null".
+- The ratchet **claim** was overstated: floors are the measured score floored to
+  an integer, so 83.17 → 83 tolerates a drop to 83.0. Corrected the claim rather
+  than the number, with the reason (timeouts count as kills; `file-lock`
+  produced 3, so an exact floor would flap on machine load) and the condition
+  that makes the deadband safe (each seam has few enough mutants that one lost
+  kill moves the score by more than a point).
+
+**A `bb15049a`-shaped trap avoided.** The registry test originally asserted
+"`tests/ledger.test.mjs` is still missing" — which would encode known debt as a
+permanent contract, failing the day someone did the right thing. It now carries
+a **retirement predicate**: absent, it pins the guard; present, it flips to
+demanding a registry entry and prints the exact next actions.
+
+Also corrected: **AGENTS.md's dependency table was stale** (`openai` 7.1.0 →
+7.4.0, `@google/genai` ^2.16.0 → ^2.13.0, `dotenv` 17.0.0 → 17.4.2). That file
+is loaded into every session, so a wrong version table misleads every agent that
+reads it. Cost 0 characters against the 92,000 cap.
+
+The reasoning — including what to do when a negative control genuinely cannot be
+built — is in the canonical
+[`verification-discipline.md`](docs/audit/shared-references/verification-discipline.md)
+§3a–3b, synced into 7 skills, with the tier itself in
+[`testing-doctrine.md`](docs/reference/testing-doctrine.md) "Tier 0".
+
+**Not a push gate**: slow, and scores drift with unrelated refactors. On-demand
+or nightly CI. **Suite**: 10,542 pass / 0 fail (`npm run check`) — *measured*.
+**Consumer-side verification**: `unverified` — blocked prerequisite: the
+mutation runner and its registry are source-repo tooling that the sync bundle
+does not carry, so there is no consumer-side artifact to retrieve for this
+change.
+
+
+## 2026-08-09 — an un-done job that reported success, in four places
 
 `/cycle --autonomous` over
 [`learning-persona-quickfix-honest-failure.md`](docs/plans/learning-persona-quickfix-honest-failure.md),

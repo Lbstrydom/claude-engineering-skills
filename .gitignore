@@ -203,3 +203,9 @@ dashboard/audit-runs/
 # commit message: `git add -f docs/upstream-issues/<name>.md`
 docs/upstream-issues/
 docs/personal/
+
+# Mutation testing (Stryker) — sandbox + per-target configs are generated per run.
+# Category A: derived from a run, never a function of committed source.
+.stryker-tmp/
+.stryker-*.conf.json
+reports/mutation/

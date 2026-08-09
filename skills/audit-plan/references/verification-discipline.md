@@ -163,6 +163,65 @@ visible. **A check that wrongly passes is invisible, and it spends the trust
 budget a real check would need.** Ask of any green-emitting branch: *can this
 return green without having checked anything?*
 
+### 3a. When the negative control cannot be built, DECOMPOSE — do not shrug
+
+> **Measured 2026-08-09**: a lock-durability property resisted direct testing.
+> With the lock removed the race stayed invisible at 2×12 concurrent writes
+> (under the cap, so the trim never fired and there was nothing to race) and
+> again at 2×80 (at the cap, lost updates leave the file *at* the cap, so a
+> count cannot tell them apart). Two honest attempts, both non-discriminating.
+
+"I could not make it fail" is a finding about the *instrument*, not a licence to
+ship the test as if it proved something. The move is to split the property into
+claims that are each provable:
+
+> *"acknowledged appends are never lost"* = **(1)** the lock provides mutual
+> exclusion **AND** **(2)** all mutation happens inside it.
+
+(1) is behavioural and testable with real OS processes. (2) is **structural** —
+an AST check on lexical containment, which cannot be flaky and cannot be raced.
+Their conjunction is the property; neither half alone is. And (2) is the half a
+refactor silently breaks, so that is where the regression lock belongs.
+
+**Prefer a structural assertion wherever behaviour is unobservable.**
+Concurrency, ordering and "nothing else may do X" invariants are usually
+lexical. Resolve the *binding*, not the spelling — a local shadow named like the
+real thing must not satisfy the guard.
+
+**Build the negative control INTO the guard.** A checker that has never
+demonstrated it can say NO is indistinguishable from one that always says YES.
+Run it against a deliberately-broken copy of the real subject, in the same test
+file, and assert it reports the violation.
+
+### 3b. Mechanise it — mutation testing is this rule at scale
+
+Red-then-green is per-check and manual, so it verifies the checks you thought to
+doubt. Mutation testing does it exhaustively: mutate the source, re-run the
+tests, and any mutant that survives is a place the suite would not have noticed
+a real regression.
+
+> **Measured on first run**: a pure string module written *deliberately*, with
+> tests written in the same sitting to close a security finding, scored
+> **77.78% with 6 survivors**. Two genuine gaps — a null-coercion path with no
+> test at all, and a `[\r\n\t]+` quantifier no input exercised twice. Review had
+> missed both. A wider census then measured the Tier-3 egress seam at **67.5%
+> (120 survivors)** and a lock module at **31.7% (270)**.
+
+Three things make it sustainable rather than shelfware:
+
+- **A registry, not "mutate everything."** Pair one module with the one test
+  file covering it, so a run is seconds. Whole-tree mutation on a large suite
+  takes days, and a gate nobody runs reads as coverage while providing none.
+- **A ratchet, not a cliff.** Set the floor to the score measured *today* and
+  fail only on a DROP; record the goal separately. A floor set to the number you
+  wish for is red on day one and gets ignored — the cried-wolf shape. The floor
+  may only ever be raised.
+- **Absence is a statement.** A module missing from the registry has not had its
+  tests proven to detect defects, only to pass. Say so where the registry lives.
+
+Not a push gate: it is slow and drifts with unrelated refactors. On-demand, or
+nightly CI.
+
 ---
 
 ## 4. Reproducing a figure is not verifying its attribution

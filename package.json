@@ -152,7 +152,9 @@
     "docs:architecture-intent:check": "node scripts/check-architecture-intent-drift.mjs",
     "skills:descriptions": "node scripts/check-skill-descriptions.mjs",
     "docs:citations": "node scripts/check-doc-citations.mjs",
-    "docs:citations:json": "node scripts/check-doc-citations.mjs --format json"
+    "docs:citations:json": "node scripts/check-doc-citations.mjs --format json",
+    "mutation": "node scripts/mutation-test.mjs",
+    "mutation:all": "node scripts/mutation-test.mjs --all"
   },
   "keywords": [
     "claude",
@@ -184,6 +186,7 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
+    "@stryker-mutator/core": "^9.6.1",
     "dependency-cruiser": "^18.1.0",
     "knip": "^6.32.0",
     "ts-morph": "^28.0.0"

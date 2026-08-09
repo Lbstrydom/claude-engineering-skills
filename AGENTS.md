@@ -314,9 +314,9 @@ Runs as part of `npm run check` (the pre-push hook). ERRORs block; WARNs are adv
 | Package | Version | Notes |
 |---------|---------|-------|
 | `zod` | **4.4.3** | Zod 4 API — NOT Zod 3. `_def.type` is a string (`'object'`, `'array'`, `'enum'`), NOT `_def.typeName` (`'ZodObject'`). `shape` is a direct property on object schemas, NOT `_def.shape()`. `_def.entries` for enums, NOT `_def.values`. |
-| `openai` | **7.1.0** | v7 since 2026-08-09; `responses.parse()` + `zodTextFormat()` unchanged and live-verified on the bump |
-| `@google/genai` | ^2.16.0 | Google Generative AI SDK. Uses `responseMimeType: 'application/json'` + `responseSchema` for structured output |
-| `dotenv` | 17.0.0 | Auto-loads `.env` via `import 'dotenv/config'` |
+| `openai` | **7.4.0** | v7 since 2026-08-09; `responses.parse()` + `zodTextFormat()` unchanged and live-verified on the bump |
+| `@google/genai` | ^2.13.0 | Google Generative AI SDK. Uses `responseMimeType: 'application/json'` + `responseSchema` for structured output |
+| `dotenv` | 17.4.2 | Auto-loads `.env` via `import 'dotenv/config'` |
 
 ## Architecture
 

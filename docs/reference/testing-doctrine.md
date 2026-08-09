@@ -90,9 +90,59 @@ it is declared by a human in both descriptions instead (*topic* →
 Revisit only if a mechanism appears that can run offline and deterministically,
 or if the pre-push gate stops being the place this would live.
 
+## Tier 0 — is the tier working? (mutation testing)
+
+The three tiers above say which *kind* of test a seam gets. None of them answers
+the prior question: **do the tests we have actually detect defects, or do they
+merely pass?** A test written to a spec and never seen to fail is
+indistinguishable from one that asserts nothing.
+
+`npm run mutation -- --target <seam>` ([`scripts/mutation-test.mjs`](../../scripts/mutation-test.mjs))
+runs Stryker over a declared registry: it mutates the source (flips comparisons,
+drops calls, empties blocks) and re-runs that seam's tests. **A surviving mutant
+is a test-suite defect** — the behaviour is asserted loosely enough that a real
+regression could land green.
+
+First census, **measured 2026-08-09** — `node scripts/mutation-test.mjs --all`:
+
+| Seam | Score | Survivors | Goal |
+|---|---|---|---|
+| `shell-quote` | 100% | 0 | 100 |
+| `candidate-pagination` | 83.2% | 35 | 90 |
+| `quickfix-policy` | 67.9% | 18 | 90 |
+| `sensitive-paths` (Tier 3) | 67.5% | 120 | 85 |
+| `file-lock` | 31.7% | 270 | 70 |
+
+`shell-quote` scored **77.78% on its first run** — on tests written deliberately,
+in the same sitting, to close a security finding. Both gaps it exposed (an
+untested null-coercion path; a `[\r\n\t]+` quantifier no input exercised twice)
+had passed review. That is the argument for the instrument in one line.
+
+Three design rules keep it from becoming shelfware:
+
+- **Registry, not whole-tree.** One module ↔ one covering test file, so a run is
+  seconds. Mutating everything here would take days, and a gate nobody runs
+  reads as coverage while providing none.
+- **Ratchet, not cliff.** `floor` is the score measured *today*; the run fails
+  only on a DROP. `goal` records the target separately. A floor set to the
+  wished-for number is red on day one and gets ignored — the cried-wolf shape
+  this repo already avoids for knip / docs-refs / cli-flags. **The floor may
+  only ever be raised.**
+- **Absence is a statement.** A module not in the registry has not had its tests
+  proven to detect defects. `scripts/lib/ledger.mjs` is the standing example —
+  907 lines, 12 exports, Tier-1 by this doc's own list, and **no dedicated test
+  file** (debt `bb15049a`). `tests/mutation-registry.test.mjs` pins that absence
+  so it cannot quietly disappear.
+
+**Not a push gate**: slow, and scores drift with unrelated refactors. On-demand,
+or nightly CI.
+
 ## Companion rules
 
 The **Do NOT** list in AGENTS.md carries the companion hard rules (no `.env` to
 external APIs, ESM-only, no per-call client construction). Live-runtime skills
 have their own doctrine in
 [`docs/runbooks/pre-ship-empirical-verify.md`](../runbooks/pre-ship-empirical-verify.md).
+The reasoning behind Tier 0 — including what to do when a negative control
+genuinely cannot be built — is in
+[`docs/audit/shared-references/verification-discipline.md`](../audit/shared-references/verification-discipline.md) §3a–3b.
