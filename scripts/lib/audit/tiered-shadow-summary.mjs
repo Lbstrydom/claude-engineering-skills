@@ -186,7 +186,7 @@ export function readRecords(logPath) {
  * @param {object[]} records
  * @returns {{totalRuns:number, historicalCompleteRuns:number, comparedRuns:number,
  *   legacyFailures:number, shadowFailures:number, excludedNoStage0Evidence:number,
- *   excludedDegenerateComparison:number, excludedFallback:number,
+ *   excludedDegenerateComparison:number, excludedFallback:number, excludedUnclassified:number,
  *   excludedMalformedAnchors:number, excludedStaleEpoch:number,
  *   costDeltaUsd:object, latencyDeltaSec:object, findingOverlapRate:object,
  *   tieredRunStatusCounts:object, tieredFallbackReasons:object,
@@ -314,29 +314,59 @@ export function summarize(records) {
     .filter((r) => !isContractFailure(r.comparison))
     .filter((r) => hasComparablePopulation(r.comparison));
 
-  // Exclusion reasons — computed over the same record sets, reported
-  // separately (round-3 plan-audit M1's "not collapsed into one count").
+  // ── Exclusion reasons: ONE ordered classifier over ONE population ────────
+  //
+  // The buckets used to be computed over THREE different sets — `excludedFallback`
+  // and `excludedMalformedAnchors` over `withComparison`, the other two over
+  // `notCompared` — so a row matching several predicates was counted several
+  // times and `comparedRuns + Σ(reasons) !== historicalCompleteRuns`. This
+  // module's own standing rule ("every excluded row lands in exactly one printed
+  // bucket … never double-counted") was violated by its own newest bucket
+  // (adjudicated finding D4).
+  //
+  // Precedence, first match wins. The order encodes what we can HONESTLY say:
+  //   1. staleEpoch  — superseded contract; no other judgement is meaningful.
+  //   2. fallback    — the pipeline never produced a side because it FELL BACK.
+  //                    Above malformed, because a run that fell back never
+  //                    reached the producer boundary, so a malformed-anchor
+  //                    verdict on it would be a false diagnosis — the same
+  //                    reasoning the epoch rule already applies.
+  //   3. malformed   — our schema ate the candidates: empty because of US, so
+  //                    it cannot be called degenerate.
+  //   4. noStage0    — Stage 0 verified zero (and, under the `||` predicate,
+  //                    the legacy side was also empty).
+  //   5. degenerate  — everything else failing `hasComparablePopulation`.
+  //   6. (compared)  — not excluded at all.
+  // `fallback` is deliberately NOT in this list. A `fallback_legacy` row has
+  // `tieredRunStatus !== 'complete'`, so it is not in `historicalComplete` and
+  // cannot be a member of ITS partition — including it counted zero rows and
+  // silently zeroed the statistic. `excludedFallback` stays a separate figure
+  // over `withComparison` (below), reported alongside rather than summed in.
+  // The consolidated Gemini gate flagged the omission of fallback from the
+  // taxonomy and was right that it must stay distinguishable; putting it inside
+  // this classifier was the wrong remedy, and the existing tests caught it.
+  const EXCLUSION_ORDER = [
+    ['staleEpoch', (c) => !isCurrentEpoch(c)],
+    ['malformedAnchors', (c) => isContractFailure(c)],
+    ['noStage0Evidence', (c) => !hasComparablePopulation(c) && c.tieredStage0Verified === 0],
+    ['degenerateComparison', (c) => !hasComparablePopulation(c)],
+  ];
+  const tally = { staleEpoch: 0, malformedAnchors: 0, noStage0Evidence: 0, degenerateComparison: 0, unclassified: 0 };
+  for (const r of historicalComplete) {
+    const hit = EXCLUSION_ORDER.find(([, pred]) => pred(r.comparison));
+    if (hit) { tally[hit[0]] += 1; continue; }
+    // Not excluded by any reason, yet not in `compared` either — a classifier
+    // defect, and it gets a NAME rather than vanishing. A silently dropped row
+    // is what makes the sum look right while the taxonomy is wrong.
+    if (!compared.includes(r)) tally.unclassified += 1;
+  }
+  const excludedStaleEpoch = tally.staleEpoch;
+  // Separate population by construction (see above): runs that never completed.
   const excludedFallback = withComparison.filter((r) => r.comparison.tieredRunStatus === 'fallback_legacy').length;
-  // Epoch takes PRECEDENCE over the defect-specific reasons so every excluded
-  // row lands in exactly one printed bucket (this module's standing rule:
-  // reasons are reported separately, never collapsed — and never double-counted,
-  // or the printed total exceeds the rows that actually exist). Saying a
-  // superseded-contract row was "degenerate" would also be a false diagnosis:
-  // we cannot judge its population under a contract we no longer claim.
-  const excludedStaleEpoch = historicalComplete.filter((r) => !isCurrentEpoch(r.comparison)).length;
-  const notCompared = historicalComplete
-    .filter((r) => isCurrentEpoch(r.comparison))
-    .filter((r) => !hasComparablePopulation(r.comparison));
-  // "Tiered found nothing verifiable at all" — Stage 0 verified zero
-  // candidates. Distinct from a degenerate-but-nonzero-evidence run. Under
-  // the `||` predicate this class only lands here when the LEGACY side was
-  // ALSO empty (a one-sided tiered-zero run with legacy findings now
-  // correctly COUNTS as a comparison — a 0% overlap is recall signal, not a
-  // measurement artifact).
-  const excludedNoStage0Evidence = notCompared.filter((r) => r.comparison.tieredStage0Verified === 0).length;
-  const excludedDegenerateComparison = notCompared.length - excludedNoStage0Evidence;
-
-  const excludedMalformedAnchors = withComparison.filter((r) => isContractFailure(r.comparison)).length;
+  const excludedMalformedAnchors = tally.malformedAnchors;
+  const excludedNoStage0Evidence = tally.noStage0Evidence;
+  const excludedDegenerateComparison = tally.degenerateComparison;
+  const excludedUnclassified = tally.unclassified;
 
   const costDeltas = compared.map((r) => (r.comparison.legacyCostUsd != null && r.comparison.tieredCostUsd != null) ? r.comparison.tieredCostUsd - r.comparison.legacyCostUsd : null).filter((v) => v != null);
   const latencyDeltas = compared.map((r) => (r.comparison.legacyLatencySec != null && r.comparison.tieredLatencySec != null) ? r.comparison.tieredLatencySec - r.comparison.legacyLatencySec : null).filter((v) => v != null);
@@ -354,6 +384,10 @@ export function summarize(records) {
     excludedNoStage0Evidence,
     excludedDegenerateComparison,
     excludedFallback,
+    // A row that matched NO reason and is not compared: a classifier defect, named
+    // rather than dropped. Must be 0; a non-zero value means the taxonomy missed a
+    // case, and the partition assertion below would otherwise silently absorb it.
+    excludedUnclassified,
     // Rows measured under a superseded measurement contract. Its own named
     // reason for the same reason every other exclusion has one: "we changed
     // how this is measured" and "the pipeline underperformed" look identical

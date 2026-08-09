@@ -90,3 +90,46 @@ describe('discovery-eval payload egress', () => {
     assert.doesNotMatch(call[0], /redact\s*:\s*false/, 'the discovery eval must never opt out of body redaction');
   });
 });
+
+// ── D5/D5b: ONE authority for both egress paths ────────────────────────────
+
+describe('D5/D5b — one authority for both egress paths', () => {
+  it('routes BOTH egress paths through the documented authority', async () => {
+  // The defect (adjudicated D5/D5b): this script built its enum with
+  // `buildDiffPathMap` + a lexical `shouldSkipForIndexing` filter, and read its
+  // file bodies from a SECOND `git diff-tree` list. `diff-path-map.mjs`'s own
+  // docblock names `resolveEligibleDiffPathMap` as the authority that must run
+  // "before any id can reach a tool schema" — and unlike the lexical filter it
+  // also resolves symlinks (`resolveAndClassify`), which is the INC-001 class.
+  const { readFile } = await import('node:fs/promises');
+  const src = await readFile(new URL('../scripts/model-eval-discovery.mjs', import.meta.url), 'utf8');
+
+  assert.match(src, /resolveEligibleDiffPathMap\(\s*diffText/,
+    'the enum must come from the egress authority');
+  // USAGE, not mention: the comment above the fix names the old filter to explain
+  // why it went, and an assertion that forbids the word would forbid the
+  // explanation. Import and call are what matter.
+  assert.doesNotMatch(src, /^import[^\n]*shouldSkipForIndexing/m,
+    'the symlink-blind lexical filter must no longer be imported — one authority, not two');
+  assert.doesNotMatch(src, /shouldSkipForIndexing\(/,
+    'and it must not be called');
+  assert.doesNotMatch(src, /execFileSync\([^)]*diff-tree/,
+    'the content path must derive from map.entries, not a second git listing');
+  // Both halves fed from the same set is the property that makes "fixed 1 of 2"
+  // impossible here.
+  assert.match(src, /map\.entries\.flatMap\(\(e\) => \[e\.newPath, e\.oldPath\]\)/,
+    'the file bodies must be derived from the authorised entries');
+});
+
+  it('reports a COUNT of withheld paths, never the paths', async () => {
+  // Printing what was withheld to prove the filter worked would be the exact
+  // disclosure the filter exists to prevent — the repo's standing skip-logging
+  // rule (`formatSkipLog`: sensitive entries aggregate; no basenames, no paths).
+  const { readFile } = await import('node:fs/promises');
+  const src = await readFile(new URL('../scripts/model-eval-discovery.mjs', import.meta.url), 'utf8');
+  const line = /\[discovery\][^\n]*withheld[^\n]*/.exec(src);
+  assert.ok(line, 'the gate should say when it withheld something');
+  assert.match(line[0], /\$\{skipped\.length\}/, 'a count');
+  assert.doesNotMatch(line[0], /skipped\.map|\.path|join\(/, 'never the paths themselves');
+});
+});

@@ -437,6 +437,9 @@ export const TelemetryDataSchema = z.object({
     historicalCompleteRuns: count.default(0),
     excludedNoStage0Evidence: count.default(0),
     excludedDegenerateComparison: count.default(0),
+    // .default(0) keeps envelopes stored before this bucket existed valid — a
+    // required field would fail validation and take the whole telemetry panel down.
+    excludedUnclassified: count.default(0),
     excludedFallback: count.default(0),
     costDeltaUsd: z.object({ mean: z.number().nullable(), median: z.number().nullable() }),
     latencyDeltaSec: z.object({ mean: z.number().nullable(), median: z.number().nullable() }),

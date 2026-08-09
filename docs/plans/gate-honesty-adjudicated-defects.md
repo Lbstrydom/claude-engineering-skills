@@ -832,6 +832,48 @@ their rebase — local `9905abff` and remote `a1a8028f` are patch-identical, and
 `git merge origin/main` is blocked by *their* staged file. Cluster A is
 committed locally; nothing ships until that is reconciled.
 
+### 2026-08-09 — Cluster C: D4 + D5/D5b shipped; D2 NOT done
+
+**Shipped.** D4 (one ordered classifier over one population, plus
+`excludedUnclassified` and three output-contract consumers) and D5/D5b (both
+discovery egress paths routed through `resolveEligibleDiffPathMap`, with the
+content file list derived from `map.entries` so the enum and the bodies are
+provably one set). Full suite green.
+
+Two corrections the build forced:
+
+- **`fallback` does NOT belong in the ordered classifier.** The consolidated
+  Gemini gate flagged its omission from the taxonomy and was right that it must
+  stay distinguishable — but a `fallback_legacy` row has `tieredRunStatus`
+  other than `complete`, so it is not in `historicalComplete` and cannot be a
+  member of *its* partition. Putting it inside the classifier counted zero rows
+  and silently zeroed the statistic; the pre-existing tests caught it.
+  `excludedFallback` stays a separate figure over `withComparison`, reported
+  alongside the partition rather than summed into it.
+- **A partition fixture must use `tieredRunStatus: 'complete'`.** An `ok`
+  fixture asserts against an EMPTY population, so every count reads 0 and the
+  sum check passes having measured nothing — the vacuous-pass shape, in the
+  test written to prove a sum.
+
+**D2 is NOT done, and two of its premises are wrong.**
+
+1. §D2 says to gate the extraction with `filterDiffFiles(diff, ['sensitive'])`.
+   That function takes a diff **state object** (`{added, modified, deleted}`),
+   not unified-diff text, so the call returns an empty result — which reads as
+   "everything was filtered". Measured: 876,103 bytes in, 89 bytes out.
+2. The fixture source rev `d3c6269` is an **876KB** diff, not the "~200 lines,
+   ~50KB" §D2 estimated, so "a handful of source files, ~50KB" does not
+   describe the bundle either. The cost check in §D2 was made against a figure
+   nobody measured.
+
+What a correct D2 needs: a right-sized **subset** of that rev (the files
+carrying the 16 verified findings, not the whole commit); per-path
+classification with `shouldSkipForIndexing` **and** `resolveAndClassify`
+rather than `filterDiffFiles`; then the file snapshots plus `MANIFEST.json`.
+Gemini's immutability argument (R3-G1) still stands and still decides the
+shape: a committed diff alone does not deliver immutability, because
+`readFilesAsContext` reads the live worktree.
+
 ## Audit trail
 
 **GPT (`/audit-plan`, SID `audit-plan-1786179073`) — 3 rounds, stopped at the cap.**

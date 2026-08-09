@@ -679,7 +679,7 @@ async function collectTieredShadow(root) {
     windowMin: WINDOW_MIN, windowMax: WINDOW_MAX, legacyFailures: 0, shadowFailures: 0,
     comparedRuns: 0,
     historicalCompleteRuns: 0, excludedNoStage0Evidence: 0,
-    excludedDegenerateComparison: 0, excludedFallback: 0,
+    excludedDegenerateComparison: 0, excludedFallback: 0, excludedUnclassified: 0,
     costDeltaUsd: { mean: null, median: null },
     latencyDeltaSec: { mean: null, median: null },
     findingOverlapRate: { mean: null, median: null },

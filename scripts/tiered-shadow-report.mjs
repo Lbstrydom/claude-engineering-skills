@@ -143,7 +143,8 @@ function reportRows(records, jsonMode, { source, logPath, repoLabels, repoCount,
   // cannot tell "our schema ate the candidates" or "we changed the contract"
   // from "the pipeline is quiet".
   const excluded = summary.excludedNoStage0Evidence + summary.excludedDegenerateComparison
-    + summary.excludedFallback + (summary.excludedMalformedAnchors || 0) + (summary.excludedStaleEpoch || 0);
+    + summary.excludedFallback + (summary.excludedMalformedAnchors || 0) + (summary.excludedStaleEpoch || 0)
+    + (summary.excludedUnclassified || 0);
   if (excluded > 0) {
     console.log(`  excluded from the decision window (${excluded}):`);
     if (summary.excludedStaleEpoch > 0) {

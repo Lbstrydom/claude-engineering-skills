@@ -54,10 +54,10 @@ import { ossStructuredCall } from './lib/oss-structured-output.mjs';
 import { createOpenAIClient } from './lib/openai-client.mjs';
 import { auditShadowConfig } from './lib/config.mjs';
 import { makeProducerFindingV3Schema, clampToJsonSchemaLimits } from './lib/schemas.mjs';
-import { buildDiffPathMap, renderDiffPathTable, prepareCandidates } from './lib/audit/diff-path-map.mjs';
+import { renderDiffPathTable, prepareCandidates } from './lib/audit/diff-path-map.mjs';
+import { resolveEligibleDiffPathMap } from './lib/audit/discovery-diff-scope.mjs';
 import { readFilesAsContext } from './lib/file-io.mjs';
 import { redactSecrets } from './lib/sensitive-egress-gate.mjs';
-import { shouldSkipForIndexing } from './lib/sensitive-paths.mjs';
 import { boundMalformedDetails } from './lib/audit/malformed-details.mjs';
 import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 
@@ -132,8 +132,6 @@ const FIXTURE_REV = 'a183c3f';
 /** The exact discovery payload production assembles (tiered-pipeline.mjs), against a real recent commit. */
 function buildPayload() {
   const commit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-  const files = execFileSync('git', ['diff-tree', '--no-commit-id', '--name-only', '-r', FIXTURE_REV], { encoding: 'utf8' })
-    .trim().split('\n').filter((f) => f && fs.existsSync(f));
   // Egress: `readFilesAsContext` (audit-scope.mjs) is the guarantee for the
   // CODE bodies — it skips sensitive paths AND redacts each body by default
   // (`redact = true`), redacting BEFORE truncating so a cut cannot leave an
@@ -146,7 +144,6 @@ function buildPayload() {
   // /audit-code (R1-H1, 2026-07-19), so it is pinned by
   // tests/model-eval-discovery-egress.test.mjs rather than left to be
   // re-litigated.
-  const discoveryCode = readFilesAsContext(files, { maxPerFile: 8000, maxTotal: 100000 });
   const discoveryPlan = redactSecrets(fs.readFileSync('docs/plans/shadow-no-legacy-fallback.md', 'utf8'));
 
   // ONE integration, not two (evidence-anchor-path-contract §7h): this screen
@@ -155,17 +152,37 @@ function buildPayload() {
   // non-hydrated path — a research fork of the contract would make this
   // instrument measure a contract production doesn't use.
   const diffText = execFileSync('git', ['show', '--no-color', '--format=', FIXTURE_REV], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
-  const rawMap = buildDiffPathMap(diffText);
-  if (rawMap.kind !== 'ready') {
-    throw new Error(`diff-path map for ${FIXTURE_REV} is '${rawMap.kind}' (${rawMap.reason}) — the screen cannot build a producer enum without one`);
+  // THE documented egress authority, not a second lexical filter (adjudicated
+  // finding D5). `diff-path-map.mjs`'s own docblock names
+  // `resolveEligibleDiffPathMap` as what runs "before any id can reach a tool
+  // schema"; this script was calling `buildDiffPathMap` and then filtering with
+  // `shouldSkipForIndexing`, which classifies a path STRING and cannot see a
+  // symlink — the INC-001 bypass class, on a path that ships to a third-party
+  // provider. The authority applies the lexical check AND, for anything that
+  // exists on disk, `resolveAndClassify` against the realpath.
+  const { map, skipped } = resolveEligibleDiffPathMap(diffText, { repoRoot: process.cwd() });
+  if (map.kind !== 'ready') {
+    throw new Error(`diff-path map for ${FIXTURE_REV} is '${map.kind}' (${map.reason}) — the screen cannot build a producer enum without one`);
   }
-  // Same egress rule as production: a sensitive path must never appear as a
-  // citable id in the tool schema (redactSecrets masks secret VALUES, it does
-  // not exclude sensitive PATHS).
-  const entries = rawMap.entries.filter((e) =>
-    !shouldSkipForIndexing(e.newPath, ['sensitive']).skip && !shouldSkipForIndexing(e.oldPath, ['sensitive']).skip);
-  if (entries.length === 0) throw new Error(`every file in ${FIXTURE_REV} was filtered as sensitive — no id set to cite`);
-  const map = { kind: 'ready', entries };
+  if (map.entries.length === 0) throw new Error(`every file in ${FIXTURE_REV} was filtered as sensitive — no id set to cite`);
+  if (skipped.length > 0) {
+    // COUNT ONLY, never the paths — the repo's skip-logging rule (`formatSkipLog`:
+    // sensitive entries aggregate, basenames and full paths are never emitted).
+    // Printing what was withheld to prove the filter worked would be the
+    // disclosure the filter exists to prevent.
+    process.stderr.write(`  [discovery] ${skipped.length} path(s) withheld by the egress gate\n`);
+  }
+
+  // D5b — the CONTENT path, derived from the SAME authorised set rather than a
+  // second `git diff-tree` plus a second filter. `readFilesAsContext` screens
+  // with `isSensitiveFile` (lexical) and `safeReadFile`'s cwd-boundary realpath
+  // check, which blocks an OUT-of-repo symlink but not an in-repo one pointing
+  // at a lexically-sensitive file. Deriving the list from `map.entries` makes
+  // the enum and the bodies provably the same set; the two-filter version could
+  // not guarantee that, and fixing only the enum would have been "fixed 1 of 2".
+  const files = [...new Set(map.entries.flatMap((e) => [e.newPath, e.oldPath]))]
+    .filter((f) => f && fs.existsSync(f));
+  const discoveryCode = readFilesAsContext(files, { maxPerFile: 8000, maxTotal: 100000 });
 
   // System prompt: same shape as tiered-pipeline.mjs's GLM generator (the
   // anchor contract + diff-path table) — a research copy; production's stays
@@ -182,7 +199,7 @@ function buildPayload() {
     '- commission findings need `anchor`; omission findings need `triggerAnchor` AND `causalChain`.',
     '',
     'DIFF-PATH TABLE — the only files you may cite:',
-    renderDiffPathTable(entries),
+    renderDiffPathTable(map.entries),
   ].join('\n');
   const userPrompt = `## Plan\n${discoveryPlan}\n\n## Changed Files (code)\n${discoveryCode}`;
 
@@ -191,7 +208,7 @@ function buildPayload() {
   // compose here is RETIRED — paths are derived from the map now, so there is
   // nothing left to repair (omitting the clamp would still re-penalize a quirk
   // production absorbs).
-  const producerFindingSchema = makeProducerFindingV3Schema(entries.map((e) => e.id));
+  const producerFindingSchema = makeProducerFindingV3Schema(map.entries.map((e) => e.id));
   const strict = z.object({ findings: z.array(producerFindingSchema).max(15) });
   const jsonSchema = z.toJSONSchema(strict);
   const schema = z.preprocess((v) => clampToJsonSchemaLimits(v, jsonSchema), strict);

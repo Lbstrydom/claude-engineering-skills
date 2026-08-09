@@ -587,3 +587,56 @@ describe('shadowFailureReasons (no-legacy-fallback plan, decision #4)', () => {
     assert.equal(s.totalRuns, 2);
   });
 });
+
+// ── D4: one ordered classifier, one population, a partition that sums ──────
+
+test('every excluded row lands in exactly ONE bucket, and the partition sums', () => {
+  // The defect: `excludedMalformedAnchors`/`excludedFallback` were computed over
+  // `withComparison` while the other buckets used `notCompared`, so a row matching
+  // several predicates was counted several times and the printed total exceeded
+  // the rows that exist. This module's own rule, broken by its own newest bucket.
+  const epoch = TIERED_SHADOW_CONTRACT_EPOCH;
+  const row = (over) => ({
+    legacyOk: true, shadowOk: true, shadowError: null,
+    comparison: {
+      // 'complete' is load-bearing: historicalComplete filters on it, so an 'ok'
+      // fixture asserts against an EMPTY population and every count reads 0.
+      contractEpoch: epoch, tieredRunStatus: 'complete',
+      tieredStage0Verified: 1, tieredStage0MalformedTripwire: 0, tieredDiscoveryMalformedRaw: 0,
+      legacyFindingCount: 1, onlyTieredCount: 0, overlapCount: 1,
+      ...over,
+    },
+  });
+
+  const records = [
+    // THE regression fixture: contract-failure AND stale-epoch at once. Under the
+    // old code this single row incremented both excludedStaleEpoch and
+    // excludedMalformedAnchors.
+    row({ contractEpoch: 'v0-superseded', tieredStage0Verified: 0, tieredStage0MalformedTripwire: 2 }),
+    row({ tieredStage0Verified: 0, tieredStage0MalformedTripwire: 3 }),   // malformed
+    row({ tieredStage0Verified: 0, legacyFindingCount: 0 }),              // no stage-0 evidence
+    row({}),                                                             // compared
+  ];
+
+  const s = summarize(records);
+  // excludedFallback is NOT summed: a fallback row never reached tieredRunStatus
+  // 'complete', so it is not in historicalComplete and cannot be part of its
+  // partition. It is reported alongside, over its own population.
+  const exclusions = s.excludedStaleEpoch + s.excludedMalformedAnchors
+    + s.excludedNoStage0Evidence + s.excludedDegenerateComparison + s.excludedUnclassified;
+
+  assert.equal(s.comparedRuns + exclusions, s.historicalCompleteRuns,
+    'comparedRuns + Σ(exclusion reasons) must equal historicalCompleteRuns');
+  assert.equal(s.excludedUnclassified, 0,
+    'a row matching no reason is a classifier defect — it must not be silently dropped');
+  // Precedence: the both-predicates row is stale-epoch, NOT malformed.
+  assert.equal(s.excludedStaleEpoch, 1);
+  // A fallback row is counted, but over its own population — never inside the partition.
+  assert.equal(s.excludedFallback, 0, 'no fallback rows in this fixture');
+});
+
+test('an empty input partitions trivially rather than dividing by zero', () => {
+  const s = summarize([]);
+  assert.equal(s.historicalCompleteRuns, 0);
+  assert.equal(s.excludedUnclassified, 0);
+});
