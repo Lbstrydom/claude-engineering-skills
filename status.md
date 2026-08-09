@@ -1,6 +1,59 @@
 # Project Status Log
 
-## 2026-08-09 (latest) — a Draft plan that was 21/25 done, and the one hop that wasn't
+## 2026-08-09 (latest) — the self-hosting runbook, and three traps that only a live box teaches
+
+Added [`docs/runbooks/self-hosted-store.md`](docs/runbooks/self-hosted-store.md): a
+worked Docker recipe for running the audit-loop store on a machine you own. It
+deliberately owns only what is specific to hosting the server — the container, the
+secret, the backup sidecar, the traps — and points at `postgres-parity.md` for
+connection strings, privileges, migrations and drift rather than restating them.
+
+**The framing matters more than the recipe.** The store is plain Postgres 13+ with
+pgvector and `AUDIT_DB_URL` is the entire abstraction, so the compose file is *a*
+reference implementation, not *the* supported topology. Resisting a host-abstraction
+layer is the right-sizing call: the DSN already is the abstraction.
+
+Three traps in §9 came out of live investigation against the NAS, not from reading
+the compose file:
+
+- **`POSTGRES_PASSWORD` is consumed only by `initdb`, on first boot.** On an
+  initialised volume the server ignores it and `pg_isready` does not authenticate —
+  so a wrong value yields a *healthy-looking* container while the backup sidecar,
+  which genuinely needs it for `pg_dump`, silently fails. Any change to it must be
+  verified by a fresh dump passing `pg_restore --list`, never by "containers are up".
+  Corollary: re-provisioning with a new password rotates nothing; that needs
+  `ALTER ROLE`.
+- **Directory mode matters as much as file mode.** `/volume1/docker/audit-pg/` is
+  `0777` with no sticky bit. `db.env` at `600 root:root` cannot be *read*, but POSIX
+  delete/rename permission comes from the directory, so `backup.sh` — the root
+  entrypoint of the sidecar — can be *replaced*. Verified by writing and removing a
+  probe file as a non-privileged account, because reading the mode bits alone cannot
+  distinguish this from Synology ACL masking. Accepted as-is: personal NAS.
+- **`env_file` hides nothing from a management GUI.** Docker copies the values into
+  `Config.Env`, so `docker inspect` and Container Manager display them. Moving the
+  password between env files changes nothing; only `secrets:` + `POSTGRES_PASSWORD_FILE`
+  does, and an administrator can read the secret file anyway.
+
+**AGENTS.md was deliberately left untouched.** It sits at 91,593/92,000 characters
+and its own gate advises against squeezing; an optional self-hosting guide is not a
+load-bearing invariant, so the cross-link lives in the sibling runbook at zero cost
+to the context budget. Also fixed a broken relative link in `postgres-parity.md`
+(`../completed/postgres-parity.md` → `../plans/`) — `docs/completed/` was folded into
+`docs/plans/` by `d732df13` and this reference outlived it.
+
+**Session provenance, since it cost three wrong diagnoses.** NAS SSH had stopped
+working. Two hypotheses fit every symptom and were both false — "the account lost
+`administrators`" (it never did) and "2FA is failing the OTP stage" (impossible: SFTP
+completed a full authenticated session on the same password, and plink logged
+`Started a shell/command` plus an exit status, which cannot happen before userauth
+finishes). The cause was that DSM's SSH moved to 43022 **and port 22 stayed open**,
+served by the same sshd with the same host key, authenticating fine and refusing
+every command with sshd's generic `Permission denied, please try again.` A
+post-auth exec refusal and a stage-two auth failure emit the same string; the
+discriminator is whether a channel opened and returned an exit status, not the
+message text. Fixed outside this repo, in the gitignored toolkit.
+
+## 2026-08-09 — a Draft plan that was 21/25 done, and the one hop that wasn't
 
 Closed `refactor-arch-memory-symbol-index-2026-07.md` (Status: Draft → Complete).
 Of its 25 tracked topicIds, **21 were already fixed** — closed incidentally by six

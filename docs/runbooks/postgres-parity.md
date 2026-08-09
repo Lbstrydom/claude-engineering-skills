@@ -2,9 +2,14 @@
 
 > Operational detail for the `pg`-direct cloud learning store. The **design**
 > rationale (the no-adapter decision, schema scope, privilege model, file plan)
-> lives in [`docs/plans/postgres-parity.md`](../completed/postgres-parity.md);
+> lives in [`docs/plans/postgres-parity.md`](../plans/postgres-parity.md);
 > this file is the how-to. Stubbed from AGENTS.md to keep that file an invariant
 > ledger, not a runbook.
+>
+> **Running the server yourself?** This file still owns connection strings,
+> privileges, migrations and drift. For the container, the secret, the backup
+> sidecar and the self-hosting traps, see
+> [`self-hosted-store.md`](self-hosted-store.md).
 
 The store talks to **Postgres directly via the `pg` driver** — no
 `@supabase/supabase-js` / PostgREST layer. "Supabase-hosted vs self-hosted" is just
