@@ -265,12 +265,11 @@ describe('enumerateFiles — tri-state restrictFiles contract (extract.mjs:560 f
 describe('parseArgs — flag-value-swallow guard (round-1 L1)', () => {
   const argv = (...rest) => ['node', 'extract.mjs', ...rest];
 
-  it('parses --root/--files/--mode/--since-commit normally', () => {
-    const args = parseArgs(argv('--root', '/repo', '--files', 'a.mjs,b.mjs', '--mode', 'incremental', '--since-commit', 'abc123'));
+  it('parses --root/--files/--mode normally', () => {
+    const args = parseArgs(argv('--root', '/repo', '--files', 'a.mjs,b.mjs', '--mode', 'incremental'));
     assert.equal(args.root, '/repo');
     assert.deepEqual(args.files, ['a.mjs', 'b.mjs']);
     assert.equal(args.mode, 'incremental');
-    assert.equal(args.sinceCommit, 'abc123');
   });
 
   it('--files followed immediately by another flag throws instead of silently consuming it (the exact bug)', () => {
@@ -284,10 +283,15 @@ describe('parseArgs — flag-value-swallow guard (round-1 L1)', () => {
     assert.throws(() => parseArgs(argv('--mode')), /--mode requires a non-empty value/);
   });
 
-  it('--since-commit followed by another flag throws', () => {
+  it('--since-commit is REJECTED — it was accepted and then read by nothing', () => {
+    // It used to parse into `args.sinceCommit`, which no code path ever read
+    // and no caller ever passed. Silently accepting a flag that does nothing is
+    // the accepted-then-ignored bug refresh-args.mjs documents, so it is gone
+    // from KNOWN_FLAGS rather than listed inertly. Rejecting tells an operator
+    // with muscle memory that the flag has no effect; ignoring it did not.
     assert.throws(
-      () => parseArgs(argv('--since-commit', '--include-delegates')),
-      /--since-commit requires a non-empty value/,
+      () => parseArgs(argv('--since-commit', 'abc123')),
+      /unknown flag "--since-commit"/,
     );
   });
 

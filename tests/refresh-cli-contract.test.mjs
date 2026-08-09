@@ -217,7 +217,13 @@ describe('refresh.mjs wiring (source inspection)', () => {
     assert.match(subprocessSrc, /--files-from/, 'extract must be invoked with --files-from');
     assert.doesNotMatch(subprocessSrc, /extractArgs\.push\('--files',/,
       'refresh-subprocess.mjs must not pass the file list as a --files argv (ENAMETOOLONG risk)');
-    assert.match(subprocessSrc, /unlinkSync\(filesManifest\)/, 'manifest must be cleaned up');
+    // Cleanup must go through removeFilesManifest, not a bare unlink: the
+    // manifest now lives inside a private mkdtemp directory (M3), so unlinking
+    // only the file would leak one empty directory per refresh.
+    assert.match(subprocessSrc, /removeFilesManifest\(filesManifest\)/,
+      'manifest + its private directory must be cleaned up via removeFilesManifest');
+    assert.doesNotMatch(subprocessSrc, /unlinkSync\(filesManifest\)/,
+      'a bare unlink leaves the private temp directory behind');
   });
 });
 

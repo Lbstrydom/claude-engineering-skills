@@ -54,7 +54,7 @@ import {
 } from './duplication-report.mjs';
 import {
   safeInt, readFileOrDie, readFilesAsContext, readFilesAsAnnotatedContext,
-  writeOutput, normalizePath, parseDiffFile, extractPlanPaths, classifyFiles,
+  writeOutput, normalizePath, parseDiffFile, extractPlanPaths, mergeScopeFiles, classifyFiles,
   isAuditInfraFile, auditSubjectFileGuard, atomicWriteFileSync
 } from '../file-io.mjs';
 import {
@@ -1434,7 +1434,30 @@ export async function runLegacyProductionAudit(ctx) {
   const EMPTY_SUSTAIN = { pass_name: 'sustainability', findings: [], dead_code: [], quick_fix_warnings: [], summary: 'Pass skipped.' };
 
   // 1. Gather and classify files
-  const { found, missing, allPaths } = extractPlanPaths(planContent, { allowInfraFiles: allowInfraScope });
+  // `planFound` is what the PLAN references (and is what `missing`/`allPaths`
+  // continue to describe — plan-accounting must keep meaning the plan).
+  // `found` is what this audit will actually READ: the plan's files UNION any
+  // scope-supplied file the plan never mentioned. Before this union, `--files`
+  // and `--scope diff` were filters only, so a changed file absent from the
+  // plan was intersected away and read by no pass — see mergeScopeFiles.
+  const { found: planFound, missing, allPaths } = extractPlanPaths(planContent, { allowInfraFiles: allowInfraScope });
+  const { files: found, addedFromScope, rejected: scopeRejected } = mergeScopeFiles(
+    planFound, fileFilter, { allowInfraFiles: allowInfraScope },
+  );
+  if (addedFromScope.length > 0) {
+    process.stderr.write(
+      `  [scope] +${addedFromScope.length} changed file(s) not referenced by the plan, now in scope: `
+      + `${addedFromScope.slice(0, 5).join(', ')}${addedFromScope.length > 5 ? ` (+${addedFromScope.length - 5} more)` : ''}\n`,
+    );
+  }
+  if (scopeRejected.length > 0) {
+    // Never silent: a scope file dropped by the admission guards (infra,
+    // non-source extension, absent on disk) is information, not noise.
+    process.stderr.write(
+      `  [scope] ${scopeRejected.length} scope file(s) not admitted (infra/extension/not-on-disk): `
+      + `${scopeRejected.slice(0, 5).join(', ')}${scopeRejected.length > 5 ? ` (+${scopeRejected.length - 5} more)` : ''}\n`,
+    );
+  }
   // Build LanguageContext from RAW found files BEFORE category-based classification.
   // classifyFiles() has JS-centric patterns (lacks Python test/frontend detection),
   // so Python files may end up in "backend" bucket silently — but langContext
@@ -1699,7 +1722,7 @@ export async function runLegacyProductionAudit(ctx) {
     }
   }
 
-  process.stderr.write(`\nMulti-pass code audit: ${found.length} files found, ${missing.length} missing, ${allPaths.size} referenced\n`);
+  process.stderr.write(`\nMulti-pass code audit: ${found.length} files in scope (${planFound.length} from the plan + ${addedFromScope.length} changed-not-planned), ${missing.length} missing, ${allPaths.size} referenced\n`);
   process.stderr.write(`  Backend: ${backend.length} files (${backendRoutes.length} routes, ${backendServices.length} services) + ${shared.length} shared\n`);
   process.stderr.write(`  Frontend: ${frontend.length} files + ${shared.length} shared\n`);
   if (splitBackend) process.stderr.write(`  Backend split: YES (>${BACKEND_SPLIT_THRESHOLD} files → separate route + service passes)\n`);
@@ -1707,9 +1730,15 @@ export async function runLegacyProductionAudit(ctx) {
   // History context for round 2+ (prevents re-raising resolved findings)
   const historyBlock = historyContext ? `\n${historyContext}\n` : '';
 
-  let fileListContext = `## Files Referenced in Plan (${found.length} found, ${missing.length} missing)\n\n`
+  // Heading names both sources: conflating "the plan referenced this" with
+  // "this changed and is in scope" is what let a changed file look reviewed.
+  let fileListContext = `## Files In Scope (${planFound.length} referenced by the plan, ${missing.length} missing`
+    + (addedFromScope.length ? `, ${addedFromScope.length} changed but not plan-referenced` : '') + `)\n\n`
     + (missing.length ? `**Missing:** ${missing.join(', ')}\n\n` : '')
-    + `**Found:** ${found.join(', ')}\n`;
+    + `**Found:** ${found.join(', ')}\n`
+    + (addedFromScope.length
+      ? `\n**Changed but NOT referenced by the plan** (in scope because they changed; the plan may need updating): ${addedFromScope.join(', ')}\n`
+      : '');
 
   // Adaptive repo-context block (Phase 3 — adaptive-context-blast-radius):
   // give the auditor the file inventory + import adjacency so it cannot

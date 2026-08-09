@@ -7,11 +7,12 @@
  * @module scripts/symbol-index/refresh-subprocess
  */
 
+// `fs`/`os` were dropped when manifest creation moved to files-manifest.mjs —
+// this module no longer touches the filesystem directly. `path` stays for the
+// sibling-script resolution below.
 import path from 'node:path';
-import fs from 'node:fs';
-import os from 'node:os';
 import { runJsonLinesAsyncStrict, SUBPROC_ERROR_CODES } from '../lib/subprocess.mjs';
-import { formatFilesManifest } from '../lib/symbol-index/files-manifest.mjs';
+import { writeFilesManifest, removeFilesManifest } from '../lib/symbol-index/files-manifest.mjs';
 import { getActiveSnapshot } from '../learning-store.mjs';
 
 // Resolve sibling pipeline scripts (extract/summarise/embed) relative to THIS
@@ -127,12 +128,43 @@ export function buildTimeoutRecovery({ priorForRecovery, finalSymbols }) {
  * measurement at all.
  *
  * e86a9cbb: the prior PID+timestamp path was predictable, and a plain 'w'
- * write follows a pre-existing symlink — a local attacker able to
- * pre-stage one at the guessable path could redirect this write. Adds a
- * random suffix (matching this repo's own `tmpSuffix()` convention in
- * transaction.mjs) AND `flag: 'wx'` (`O_CREAT|O_EXCL` — atomically refuses
- * to write if ANYTHING already exists at the path, symlink or not), which
- * closes the race regardless of predictability.
+ * write follows a pre-existing symlink — a local attacker able to pre-stage
+ * one at the guessable path could redirect this write. `flag: 'wx'`
+ * (`O_CREAT|O_EXCL`) closed the PRE-creation half of that.
+ *
+ * It did not close the POST-creation half (M3, audit-code-manifest round 1):
+ * `wx` refuses to open an existing path, but says nothing about the window
+ * between this write closing and the extract subprocess opening the same
+ * pathname in the shared temp root.
+ *
+ * `fs.mkdtempSync` — the class-1 form this repo's own `lib/temp-paths.mjs`
+ * already prescribes for a disposable, private-to-one-run artifact — narrows
+ * that window. `removeFilesManifest` tears the directory down.
+ *
+ * **Trust boundary, stated precisely** (R3 H1 → adjudicated `compromise`,
+ * severity LOW). What this closes:
+ *   - cross-UID access: the directory is `0700`, so no OTHER user can read,
+ *     substitute, or symlink the manifest;
+ *   - name predictability: `mkdtemp` mints an unguessable name per call, so
+ *     nothing can be pre-staged at a derivable path (the old
+ *     `arch-refresh-files-<pid>-<ts>-<rand>.txt` in the world-writable temp
+ *     root could be, given the right clock and PID).
+ *
+ * What it does NOT close, deliberately: a process running as the SAME UID can
+ * still enter the directory and substitute the manifest in that window. No
+ * pathname scheme can prevent that, and defending it here would be incoherent
+ * — such a process can equally rewrite `extract.mjs` (the reader), rewrite
+ * `files-manifest.mjs` (the parser both transports share), modify the working
+ * tree about to be indexed, or simply read `.env` for the API keys and DSN,
+ * which are worth more than perturbing one refresh's file scope. A same-UID
+ * attacker owns the toolchain; a lock on this one door buys nothing.
+ *
+ * A `--files-from-stdin` transport WAS considered and rejected on those
+ * grounds: it removes this race but adds a second IPC mode and bidirectional
+ * stream lifecycle (partial writes, EPIPE, drain-order deadlock) to a shared
+ * subprocess helper that today owns stdio purely for JSONL results. Revisit
+ * only if this boundary later crosses trust domains, or the toolchain becomes
+ * immutable relative to the invoking user.
  *
  * @param {string[]|null} restrictFiles
  * @returns {string|null} the manifest's absolute path, or null if no
@@ -140,11 +172,13 @@ export function buildTimeoutRecovery({ priorForRecovery, finalSymbols }) {
  */
 export function writeFilesManifestIfRestricted(restrictFiles) {
   if (restrictFiles === null) return null;
-  const suffix = `${process.pid}-${Date.now()}-${Math.floor(Math.random() * 0xFFFFFF).toString(16)}`;
-  const manifestPath = path.join(os.tmpdir(), `arch-refresh-files-${suffix}.txt`);
-  fs.writeFileSync(manifestPath, formatFilesManifest(restrictFiles), { encoding: 'utf-8', flag: 'wx' });
-  return manifestPath;
+  return writeFilesManifest(restrictFiles, 'arch-refresh-files-');
 }
+
+// Re-exported so this module's callers and tests keep one import site for the
+// write/remove pair. The implementation lives in files-manifest.mjs, which owns
+// the whole transport — see its docblock for the trust boundary.
+export { removeFilesManifest };
 
 /**
  * Run the extract → summarise → embed subprocess pipeline (steps 6-8 + 8b).
@@ -158,8 +192,8 @@ export async function runExtractSummariseEmbed({ repoRoot, repoId, mode, restric
   // Hand the touched-file list to extract via a temp manifest (--files-from)
   // rather than a `--files <comma-joined>` argv. A large incremental
   // changeset (1600+ files on Windows) overflows the OS command-line limit
-  // → `spawn ENAMETOOLONG`. The manifest is newline-delimited (safe for any
-  // filename) and removed in the finally below.
+  // → `spawn ENAMETOOLONG`. The manifest is NUL-framed (lossless for any
+  // filename — files-manifest.mjs) and removed in the finally below.
   const filesManifest = writeFilesManifestIfRestricted(restrictFiles);
   if (filesManifest) {
     extractArgs.push('--files-from', filesManifest);
@@ -199,9 +233,8 @@ export async function runExtractSummariseEmbed({ repoRoot, repoId, mode, restric
       throw err;
     }
   } finally {
-    if (filesManifest) {
-      try { fs.unlinkSync(filesManifest); } catch { /* best-effort cleanup */ }
-    }
+    // Removes the manifest AND its private directory — see removeFilesManifest.
+    removeFilesManifest(filesManifest);
   }
   const symbolsRaw = extracted.filter(r => r.type === 'symbol');
   const violations = extracted.filter(r => r.type === 'violation');

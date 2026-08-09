@@ -42,49 +42,211 @@ import {
 } from '../lib/symbol-index/graph-coverage.mjs';
 import { COVERAGE_DEFAULTS } from '../lib/symbol-index/graph-verdict.mjs';
 import { parseFilesManifest } from '../lib/symbol-index/files-manifest.mjs';
-import { emit } from '../lib/cli-io.mjs';
+import { emit, assertKnownFlags } from '../lib/cli-io.mjs';
 
 /**
- * Consume argv[i+1] as a value for the flag at argv[i], rejecting a missing
- * value or one that looks like another flag (round-1 L1, symbol-index-
- * pipeline-reliability-hardening) — same idiom as refresh-args.mjs's
- * --since-commit guard and drift.mjs's --out guard. Without this, `node
- * extract.mjs --files --mode incremental` silently consumed `--mode` as the
- * files value and left mode at its default, never processing the requested
- * mode.
+ * Every flag this CLI accepts. `assertKnownFlags` rejects anything else.
+ *
+ * **An entry here is a claim that the parser below does something with it** —
+ * the lesson refresh-args.mjs records verbatim. `--since-commit` used to be
+ * parsed into `args.sinceCommit` and then read by nothing at all; it is
+ * removed rather than listed, because a flag that is accepted and ignored is
+ * the exact bug this allowlist exists to prevent. No caller passed it (the
+ * only two production callers, refresh-subprocess.mjs and
+ * duplication-detector.mjs, spawn this script with `--root`/`--mode`/
+ * `--files-from`/`--include-delegates`).
  */
-function requireFlagValue(argv, i, flagName) {
+export const KNOWN_FLAGS = Object.freeze([
+  '--root', '--files', '--files-from', '--mode', '--include-delegates',
+]);
+
+/** `--mode` is validated against this, not accepted free-form. */
+const KNOWN_MODES = Object.freeze(['full', 'incremental']);
+
+/**
+ * Resolve a flag's value from either the inline (`--flag=value`) or the
+ * space-separated (`--flag value`) form.
+ *
+ * The space-separated form still rejects a value that looks like another flag
+ * (round-1 L1, symbol-index-pipeline-reliability-hardening): without it,
+ * `extract.mjs --files --mode incremental` silently consumed `--mode` as the
+ * files value and left mode at its default. That guard cannot distinguish a
+ * missing value from a legitimate path that begins with `--`, so the inline
+ * form is the escape hatch for one (`--files-from=--weird-name.txt`), exactly
+ * as refresh-args.mjs resolves the same tension.
+ *
+ * @returns {{value: string, consumedNext: boolean}}
+ */
+function takeFlagValue(argv, i, flagName, inlineValue) {
+  if (inlineValue !== null) {
+    if (inlineValue === '') {
+      throw new Error(`${flagName} requires a non-empty value (got ${flagName}=)`);
+    }
+    return { value: inlineValue, consumedNext: false };
+  }
   const value = argv[i + 1];
   if (!value || value.startsWith('--')) {
-    throw new Error(`${flagName} requires a non-empty value (got ${JSON.stringify(value ?? null)})`);
+    throw new Error(
+      `${flagName} requires a non-empty value (got ${JSON.stringify(value ?? null)}). `
+      + `If the value legitimately begins with "--", use the inline form: ${flagName}=<value>.`,
+    );
   }
-  return value;
+  return { value, consumedNext: true };
 }
 
+/**
+ * Parse argv into the extraction scope.
+ *
+ * **Scope is resolved ONCE, after the loop, never by assignment order** (H1/M1,
+ * audit-code-manifest round 1). `--files` and `--files-from` both used to write
+ * the same `args.files` field as they were encountered, so the documented
+ * "--files-from takes precedence" was actually whichever appeared LAST:
+ * `extract.mjs --files-from intended.manifest --files stale.js` silently
+ * indexed the wrong subset. They now parse into separate fields and supplying
+ * both is a hard error — there is no precedence rule left to get wrong, and no
+ * production caller passes both.
+ *
+ * The `files` contract downstream is three-valued and must stay that way:
+ * `null` = no restriction (full walk), `[]` = a real zero-file scope,
+ * non-empty = that exact list. See `isFullRunFromFiles`/`b021576b`.
+ */
 function parseArgs(argv) {
-  const args = { root: process.cwd(), files: null, mode: 'full', sinceCommit: null, includeDelegates: false };
-  for (let i = 2; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === '--root') args.root = requireFlagValue(argv, i++, '--root');
-    else if (a === '--files') args.files = requireFlagValue(argv, i++, '--files').split(',').filter(Boolean);
-    // --files-from <path>: read a NUL-delimited manifest of files. Used by
-    // refresh.mjs for incremental runs so a large touched-file list never hits
-    // the OS argv length limit (Windows ENAMETOOLONG at ~1600+ files). Takes
-    // precedence over --files.
-    //
-    // The framing is NUL (git -z style), not newline, and the format lives in
-    // ONE module shared with both producers — see files-manifest.mjs for why
-    // (topicIds c191e74d781b/395e92881aa4: the retired newline + `.trim()`
-    // format was the only lossy hop in an otherwise NUL-clean chain, and it
-    // silently dropped files from the extraction scope).
-    else if (a === '--files-from') {
-      const manifestPath = requireFlagValue(argv, i++, '--files-from');
-      args.files = parseFilesManifest(fs.readFileSync(manifestPath, 'utf-8'), manifestPath);
+  // Reject unknown flags BEFORE any work. Without this the if/else chain had no
+  // `else`, so a misspelled scope flag (`--files-form <manifest>`) was dropped
+  // whole and `files` stayed `null` — silently promoting a restricted
+  // incremental run to an unrestricted full walk (M2).
+  assertKnownFlags(argv, KNOWN_FLAGS, { cli: 'extract' });
+
+  const args = { root: process.cwd(), files: null, mode: 'full', includeDelegates: false };
+  let filesInline = null;     // from --files
+  let filesFromPath = null;   // from --files-from; read AFTER the loop, not during
+
+  // Repeating one flag was still last-wins after the cross-flag fix (shadow
+  // `a9ff15b5`) — `--files-from intended --files-from stale` silently used
+  // `stale`. That is the same defect as the two-flag case, one scope narrower,
+  // so it gets the same answer: refuse rather than pick. No precedence rule
+  // means no precedence rule to get wrong.
+  const seen = new Set();
+  const claimOnce = (flag) => {
+    if (seen.has(flag)) {
+      throw new Error(`${flag} was supplied more than once — the effective value would depend on argument order. Pass it exactly once.`);
     }
-    else if (a === '--mode') args.mode = requireFlagValue(argv, i++, '--mode');
-    else if (a === '--since-commit') args.sinceCommit = requireFlagValue(argv, i++, '--since-commit');
-    else if (a === '--include-delegates') args.includeDelegates = true;
+    seen.add(flag);
+  };
+
+  for (let i = 2; i < argv.length; i++) {
+    let a = argv[i], inlineValue = null;
+    // POSIX `--` terminator: assertKnownFlags stops validating here, so this
+    // parser must honour the same boundary or a positional `--files` after it
+    // would be matched as a real flag.
+    //
+    // But this CLI accepts NO positional operands, so everything after `--`
+    // would then be neither validated nor consumed — silently discarded, which
+    // is the same fail-open shape as the unknown-flag bug above (shadow
+    // eec32c6e). Refuse instead: the terminator is honoured (a following
+    // `--files` is not treated as a flag) AND nothing is silently dropped.
+    if (a === '--') {
+      const trailing = argv.slice(i + 1);
+      if (trailing.length > 0) {
+        throw new Error(
+          `extract: no positional operands are accepted, but ${trailing.length} token(s) follow "--" `
+          + `(${JSON.stringify(trailing.slice(0, 3))}${trailing.length > 3 ? ', …' : ''}). `
+          + 'Pass files via --files or --files-from.',
+        );
+      }
+      break;
+    }
+    const eq = a.indexOf('=');
+    if (eq !== -1) { inlineValue = a.slice(eq + 1); a = a.slice(0, eq); }
+
+    switch (a) {
+      case '--root': {
+        claimOnce('--root');
+        const { value, consumedNext } = takeFlagValue(argv, i, '--root', inlineValue);
+        if (consumedNext) i++;
+        args.root = value;
+        break;
+      }
+      case '--files': {
+        claimOnce('--files');
+        // Comma-separated, and comma is legal in a POSIX filename — so this
+        // route CANNOT represent every valid path (M4). It is kept as the
+        // convenience form for hand invocation; `--files-from` is the lossless
+        // one and the only route any production caller uses. An empty record is
+        // now an error rather than being dropped by `.filter(Boolean)`, so a
+        // malformed list is diagnosed instead of silently shortened.
+        const { value, consumedNext } = takeFlagValue(argv, i, '--files', inlineValue);
+        if (consumedNext) i++;
+        const parts = value.split(',');
+        if (parts.some((p) => p === '')) {
+          throw new Error(
+            `--files contains an empty entry (got ${JSON.stringify(value)}). `
+            + 'A path containing a comma cannot be expressed here — use --files-from <manifest>, '
+            + 'which is NUL-framed and lossless.',
+          );
+        }
+        filesInline = parts;
+        break;
+      }
+      case '--files-from': {
+        claimOnce('--files-from');
+        // NUL-delimited manifest of files. Used by refresh.mjs for incremental
+        // runs so a large touched-file list never hits the OS argv length limit
+        // (Windows ENAMETOOLONG at ~1600+ files).
+        //
+        // The framing is NUL (git -z style), not newline, and the format lives
+        // in ONE module shared with both producers — see files-manifest.mjs for
+        // why (topicIds c191e74d781b/395e92881aa4: the retired newline +
+        // `.trim()` format was the only lossy hop in an otherwise NUL-clean
+        // chain, and it silently dropped files from the extraction scope).
+        const { value, consumedNext } = takeFlagValue(argv, i, '--files-from', inlineValue);
+        if (consumedNext) i++;
+        // Record the PATH only — the read happens after the loop. Doing I/O
+        // here made a missing/unreadable manifest surface as a raw ENOENT
+        // stack before the both-supplied check had run, so an invocation wrong
+        // in two ways reported the less informative of the two.
+        filesFromPath = value;
+        break;
+      }
+      case '--mode': {
+        claimOnce('--mode');
+        const { value, consumedNext } = takeFlagValue(argv, i, '--mode', inlineValue);
+        if (consumedNext) i++;
+        if (!KNOWN_MODES.includes(value)) {
+          throw new Error(`--mode must be one of ${KNOWN_MODES.join('|')} (got ${JSON.stringify(value)})`);
+        }
+        args.mode = value;
+        break;
+      }
+      case '--include-delegates':
+        claimOnce('--include-delegates');
+        if (inlineValue !== null) throw new Error(`--include-delegates does not take a value; got --include-delegates=${inlineValue}`);
+        args.includeDelegates = true;
+        break;
+    }
   }
+
+  // Argument-shape validation runs BEFORE any filesystem access, so a usage
+  // error is always reported as a usage error.
+  if (filesFromPath !== null && filesInline !== null) {
+    throw new Error(
+      '--files and --files-from are mutually exclusive — supplying both made the effective '
+      + 'scope depend on argument order. Pass only one (--files-from is the lossless route).',
+    );
+  }
+  if (filesFromPath === null) {
+    args.files = filesInline;
+    return args;
+  }
+  // Wrap the read so a missing/unreadable manifest is a CLI diagnostic naming
+  // the flag and path, not a bare Node stack from inside a child process.
+  let raw;
+  try {
+    raw = fs.readFileSync(filesFromPath, 'utf-8');
+  } catch (err) {
+    throw new Error(`--files-from: cannot read manifest ${filesFromPath} (${err.code || err.message})`, { cause: err });
+  }
+  args.files = parseFilesManifest(raw, filesFromPath);
   return args;
 }
 

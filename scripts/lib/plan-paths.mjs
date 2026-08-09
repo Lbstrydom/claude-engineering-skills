@@ -59,6 +59,70 @@ export const PLAN_REFERENCE_EXTENSIONS = Object.freeze([
  *   fuzzy threshold — fuzzy results are already folded into it, which is
  *   exactly the state the /plan self-check needs to warn about.
  */
+/**
+ * Union scope-supplied files (from `--files`, or `--scope diff`'s changed-file
+ * detection) into the plan-derived subject list.
+ *
+ * **Why this exists.** `--files`/`--scope diff` were only ever a FILTER: the
+ * subject list came from `extractPlanPaths`, and every pass then intersected it
+ * with the filter (`found.filter(f => fileFilter.some(...))`). A changed file
+ * the plan document never mentions could therefore be passed in `--changed`
+ * AND `--files` and still be read by nobody — the intersection silently
+ * dropped it. Measured 2026-08-09: `scripts/lib/audit/duplication-detector.mjs`
+ * was changed and in-scope for 15 consecutive rounds of its own audit, and
+ * appeared in zero rounds' `code_files`; the structure pass only ever confirmed
+ * it "exists in the repository inventory". Found by the shadow reviewer, not by
+ * the audit — the tool could not see its own blind spot.
+ *
+ * The degenerate case is worse than the partial one: a plan that references
+ * none of the files you changed yields an EMPTY intersection, so every pass
+ * runs on nothing and the audit still returns a verdict. That is precisely the
+ * "can this return green without having checked anything" shape AGENTS.md's
+ * pre-ship doctrine names.
+ *
+ * Applies the same admission guards as `extractPlanPaths`, so a scope-supplied
+ * path can never widen the audit past what a plan-referenced one could reach:
+ * infra-file exclusion (unless `allowInfraFiles`), no `node_modules`/URLs, the
+ * `PLAN_REFERENCE_EXTENSIONS` allowlist, and it must exist on disk.
+ *
+ * Pure and order-stable: plan files keep their position, scope-added files are
+ * appended in the order given. Returns them separately so callers can report
+ * "N from the plan + M from the changed set" honestly rather than conflating
+ * the two — the plan-accounting numbers (`missing`, `allPaths`) must keep
+ * describing the PLAN.
+ *
+ * @param {string[]} planFound - `extractPlanPaths(...).found`
+ * @param {string[]|null|undefined} scopeFiles - the effective file filter
+ * @param {{allowInfraFiles?: boolean}} [opts]
+ * @returns {{files: string[], addedFromScope: string[], rejected: string[]}}
+ */
+export function mergeScopeFiles(planFound, scopeFiles, { allowInfraFiles = false } = {}) {
+  const base = Array.isArray(planFound) ? planFound : [];
+  if (!Array.isArray(scopeFiles) || scopeFiles.length === 0) {
+    return { files: [...base], addedFromScope: [], rejected: [] };
+  }
+  const allowedExt = new Set(PLAN_REFERENCE_EXTENSIONS);
+  const already = new Set(base.map(p => normalizePath(p)));
+  const addedFromScope = [];
+  const rejected = [];
+  const seen = new Set();
+
+  for (const raw of scopeFiles) {
+    if (typeof raw !== 'string' || raw === '') continue;
+    const p = raw.replace(/^\.\//, '');
+    const key = normalizePath(p);
+    if (already.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    if (p.startsWith('http') || p.startsWith('node_modules')) { rejected.push(p); continue; }
+    if (!allowInfraFiles && isAuditInfraFile(p)) { rejected.push(p); continue; }
+    const ext = p.includes('.') ? p.slice(p.lastIndexOf('.') + 1).toLowerCase() : '';
+    if (!allowedExt.has(ext)) { rejected.push(p); continue; }
+    if (!fs.existsSync(path.resolve(p))) { rejected.push(p); continue; }
+    addedFromScope.push(p);
+  }
+  return { files: [...base, ...addedFromScope], addedFromScope, rejected };
+}
+
 export function extractPlanPaths(planContent, { allowInfraFiles = false } = {}) {
   const paths = new Set();
   let match;

@@ -160,4 +160,4 @@ export function writeOutput(data, outPath, summaryLine) {
 
 export { isSensitiveFile, isAuditInfraFile, readFilesAsContext, classifyFiles, safeReadFile, auditSubjectFileGuard, AUDIT_INFRA_BASENAMES, MAX_FILE_SIZE } from './audit-scope.mjs';
 export { parseDiffFile, readFilesAsAnnotatedContext, getCommentStyle } from './diff-annotation.mjs';
-export { extractPlanPaths } from './plan-paths.mjs';
+export { extractPlanPaths, mergeScopeFiles } from './plan-paths.mjs';

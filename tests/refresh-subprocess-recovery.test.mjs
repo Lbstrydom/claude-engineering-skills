@@ -38,7 +38,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { shouldAttemptTimeoutRecovery, buildTimeoutRecovery, writeFilesManifestIfRestricted } from '../scripts/symbol-index/refresh-subprocess.mjs';
+import { shouldAttemptTimeoutRecovery, buildTimeoutRecovery, writeFilesManifestIfRestricted, removeFilesManifest } from '../scripts/symbol-index/refresh-subprocess.mjs';
 
 const SYMLINK_UNSUPPORTED = new Set(['EPERM', 'EACCES']);
 function trySymlink(target, linkPath, type = 'file') {
@@ -51,7 +51,12 @@ describe('writeFilesManifestIfRestricted (b021576b/e86a9cbb)', () => {
   after(() => {
     while (written.length) {
       const p = written.pop();
-      try { fs.unlinkSync(p); } catch { /* best-effort */ }
+      // Manifests live inside a private mkdtemp dir; unlinking the file alone
+      // would leave the directory behind and slowly litter the temp root.
+      try {
+        if (path.basename(p) === 'files.manifest') fs.rmSync(path.dirname(p), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+        else fs.unlinkSync(p);
+      } catch { /* best-effort */ }
     }
   });
 
@@ -76,41 +81,111 @@ describe('writeFilesManifestIfRestricted (b021576b/e86a9cbb)', () => {
     assert.equal(fs.readFileSync(result, 'utf-8'), 'a.mjs\0b/c.mjs\0');
   });
 
-  it('refuses to write through a pre-existing symlink at the (randomized) manifest path (e86a9cbb)', () => {
-    // Simulate an attacker having pre-staged a symlink at the exact path this
-    // function is about to compute — not generally possible in practice given
-    // the random suffix, but this proves the `wx` flag itself closes the race
-    // regardless of predictability: writeFileSync must refuse, never follow it.
-    const outsideTarget = path.join(os.tmpdir(), `e86a9cbb-outside-target-${process.pid}.txt`);
+  // ── M3: the manifest is defended by its DIRECTORY, not by its filename ──
+  //
+  // Supersedes the old e86a9cbb test, which pinned Math.random/Date.now to
+  // pre-stage a symlink at the exact computed filename. That test proved `wx`
+  // refuses a pre-existing path — true, but only the PRE-creation half of the
+  // race. It said nothing about the window between the write closing and the
+  // extract child opening the same pathname in a world-writable directory.
+  // The manifest now lives inside an owner-only mkdtemp directory whose name
+  // no other process can predict, which is what actually closes it, so the
+  // assertions below target that property instead of the old filename scheme.
+
+  it('writes into a private directory, never directly into the shared temp root', () => {
+    const manifestPath = writeFilesManifestIfRestricted(['a.mjs']);
+    written.push(manifestPath);
+    const dir = path.dirname(manifestPath);
+    assert.notEqual(
+      path.resolve(dir), path.resolve(os.tmpdir()),
+      'the manifest must not sit directly in the shared temp root — a same-UID process could '
+      + 'unlink and substitute it between the write and the child opening it',
+    );
+    assert.equal(
+      path.resolve(path.dirname(dir)), path.resolve(os.tmpdir()),
+      'the private directory itself is expected one level under the temp root',
+    );
+    assert.deepEqual(
+      fs.readdirSync(dir), ['files.manifest'],
+      'the private directory must contain only the manifest — anything else means it was not fresh',
+    );
+    // Owner-only is the cross-UID half of the trust boundary (R3 H1). Asserted
+    // on POSIX only: Windows does not model these mode bits, so checking them
+    // there would assert on a value the OS does not maintain.
+    if (process.platform !== 'win32') {
+      assert.equal(
+        fs.statSync(dir).mode & 0o777, 0o700,
+        'the manifest directory must be owner-only — this is what excludes other UIDs',
+      );
+    }
+  });
+
+  it('never reuses a directory across calls (an attacker cannot pre-stage inside it)', () => {
+    const a = writeFilesManifestIfRestricted(['a.mjs']);
+    const b = writeFilesManifestIfRestricted(['b.mjs']);
+    written.push(a, b);
+    assert.notEqual(
+      path.dirname(a), path.dirname(b),
+      'mkdtemp must mint a fresh unpredictable directory per call; a reused or derivable '
+      + 'name reopens the substitution window',
+    );
+    // Vacuous-pass guard: both really were written, so the inequality above is
+    // about directory naming and not about one call having silently no-opped.
+    assert.equal(fs.readFileSync(a, 'utf-8'), 'a.mjs\0');
+    assert.equal(fs.readFileSync(b, 'utf-8'), 'b.mjs\0');
+  });
+
+  it('removeFilesManifest deletes the private directory, not just the file', () => {
+    const manifestPath = writeFilesManifestIfRestricted(['a.mjs']);
+    const dir = path.dirname(manifestPath);
+    assert.ok(fs.existsSync(dir), 'precondition: the directory exists before cleanup');
+    removeFilesManifest(manifestPath);
+    assert.equal(fs.existsSync(manifestPath), false, 'the manifest must be gone');
+    assert.equal(
+      fs.existsSync(dir), false,
+      'the private directory must be gone too — otherwise every refresh leaks one empty dir',
+    );
+  });
+
+  it('removeFilesManifest tolerates null so the caller needs no branch', () => {
+    assert.doesNotThrow(() => removeFilesManifest(null));
+  });
+
+  it('leaks no temp directory when the file list is rejected (Gemini final-gate LOW)', () => {
+    // formatFilesManifest validates and throws. If that ran AFTER mkdtempSync,
+    // every rejected input would abandon a directory in the temp root — and the
+    // caller never gets a path, so its finally block cannot clean up.
+    const before = fs.readdirSync(os.tmpdir()).filter(n => n.startsWith('arch-refresh-files-')).length;
+    assert.throws(() => writeFilesManifestIfRestricted(['ok.mjs', { from: 'x', to: 'y' }]), /expected a string/);
+    assert.throws(() => writeFilesManifestIfRestricted(['']), /empty string/);
+    const after = fs.readdirSync(os.tmpdir()).filter(n => n.startsWith('arch-refresh-files-')).length;
+    assert.equal(after, before, 'a rejected file list must leave no temp directory behind');
+  });
+
+  it('still refuses to write through anything pre-existing at the manifest path (wx retained)', () => {
+    // Defence in depth. The private directory makes pre-staging impractical,
+    // but `wx` must remain: it is the assertion that this function never
+    // follows a symlink or truncates an existing file, whatever the directory.
+    const manifestPath = writeFilesManifestIfRestricted(['a.mjs']);
+    written.push(manifestPath);
+    const outsideTarget = path.join(os.tmpdir(), `m3-outside-target-${process.pid}.txt`);
     fs.writeFileSync(outsideTarget, 'pre-existing content that must survive untouched');
     written.push(outsideTarget);
 
-    const originalRandom = Math.random;
-    const originalNow = Date.now;
-    let plantedLink = null;
-    try {
-      // Force a deterministic suffix so we can pre-stage the exact path.
-      Math.random = () => 0.5;
-      Date.now = () => 1234567890;
-      const suffix = `${process.pid}-1234567890-${Math.floor(0.5 * 0xFFFFFF).toString(16)}`;
-      plantedLink = path.join(os.tmpdir(), `arch-refresh-files-${suffix}.txt`);
-      if (!trySymlink(outsideTarget, plantedLink, 'file')) return; // host can't create symlinks — skip
-
-      assert.throws(
-        () => writeFilesManifestIfRestricted(['x.mjs']),
-        /EEXIST/,
-        'wx must refuse to write through a pre-existing path, symlink or not',
-      );
-      assert.equal(
-        fs.readFileSync(outsideTarget, 'utf-8'),
-        'pre-existing content that must survive untouched',
-        'the symlink target must never be overwritten',
-      );
-    } finally {
-      Math.random = originalRandom;
-      Date.now = originalNow;
-      if (plantedLink) { try { fs.unlinkSync(plantedLink); } catch { /* best-effort */ } }
-    }
+    // Re-plant a symlink at the (now known) manifest path inside the private
+    // dir and prove a second write refuses rather than following it.
+    fs.unlinkSync(manifestPath);
+    if (!trySymlink(outsideTarget, manifestPath, 'file')) return; // host can't create symlinks — skip
+    assert.throws(
+      () => fs.writeFileSync(manifestPath, 'x', { encoding: 'utf-8', flag: 'wx' }),
+      /EEXIST/,
+      'wx must refuse a pre-existing path, symlink or not',
+    );
+    assert.equal(
+      fs.readFileSync(outsideTarget, 'utf-8'),
+      'pre-existing content that must survive untouched',
+      'the symlink target must never be overwritten',
+    );
   });
 });
 

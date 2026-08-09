@@ -1,6 +1,68 @@
 # Project Status Log
 
-## 2026-08-09 (latest) — the self-hosting runbook, and three traps that only a live box teaches
+## 2026-08-09 (latest) — the audit could not see its own blind spot
+
+`/audit-code` ran for 15 rounds on the manifest change and converged (GPT
+`H:0 M:0 L:0`, Gemini `APPROVE` ×3). Round 1 alone returned **1 HIGH + 5 MEDIUM**
+against code shipped hours earlier — the strongest argument for running it that
+this repo has produced. Full write-up:
+[`refactor-arch-memory-symbol-index-2026-07-audit-summary.md`](docs/plans/refactor-arch-memory-symbol-index-2026-07-audit-summary.md).
+
+**The finding that outlived the audit: `--files` was a filter, never a source.**
+The subject list came from `extractPlanPaths(planContent)`, and every pass
+intersected it with the scope filter (`found.filter(f => fileFilter.some(…))`).
+So a changed file the **plan document never mentions** could be passed in
+`--changed` AND `--files` and be read by no pass at all. Measured:
+`scripts/lib/audit/duplication-detector.mjs` was changed and in scope for **15
+consecutive rounds** of its own audit and appeared in **zero** rounds'
+`code_files`; the structure pass only ever confirmed it "exists in the
+repository inventory". The shadow reviewer found it three rounds running. The
+audit could not see its own blind spot, which is why the second gate exists.
+
+The degenerate case is the dangerous one: a plan referencing none of the changed
+files yields an **empty** intersection — every pass runs on nothing and the run
+still returns a verdict. That is the "can this return green without having
+checked anything" shape by construction.
+
+Fixed with `mergeScopeFiles` in `plan-paths.mjs` (the module that already owns
+subject-file selection): `found` is now the plan's files UNION any scope-supplied
+file the plan omitted, applying the same admission guards a plan-referenced path
+gets — infra exclusion, no `node_modules`/URLs, the extension allowlist,
+must-exist-on-disk. Plan-accounting stays plan-accounting: `missing`/`allPaths`
+still describe the plan, and the prompt heading now names both sources instead of
+calling everything "Files Referenced in Plan". Rejections are logged, never
+silent — an unaudited file must not look like an unrequested one.
+
+Proven end-to-end, not just by unit test: re-running the structure pass with the
+same arguments that failed 15 times now logs `+1 changed file(s) not referenced
+by the plan, now in scope` and puts `duplication-detector.mjs` in `code_files`
+(15 files: 14 from the plan + 1 changed-not-planned). `scripts/lib/plan-paths.mjs`
+was correctly refused as audit infra — the guard working, and now visibly.
+
+Also from the audit: the `--files-from`/`--files` precedence was order-dependent
+despite the docblock claiming otherwise; unknown flags were silently dropped
+(a `--files-form` typo promoted a restricted run to a full walk);
+`formatFilesManifest` coerced a `{from,to}` rename object into the literal path
+`[object Object]` which then *passed* the parser and vanished from scope. All
+closed by adopting the contract `refresh-args.mjs` already established, and by
+consolidating the whole parent→child transport into `files-manifest.mjs` so the
+private-temp-dir half cannot be hand-rolled per producer either.
+
+Two proposed fixes were rejected on the merits and adjudicated: a
+`--files-from-stdin` transport (a same-UID attacker owns the reader, the parser
+and `.env` — the pathname is not an independent boundary; GPT `compromise`,
+Gemini's `over_engineering_flags` agreed independently) and an atomic tmp+rename
+(no concurrent reader, no previous version to preserve; GPT `overrule` →
+dismissed). One deferred with independence proven by `git diff`:
+`buildTimeoutRecovery` misses zero-symbol files, captured to the debt ledger.
+
+Heads-up: four files from another session (`learning/decision-logger.mjs`,
+`learning/quickfix-stats.mjs` + their tests) are uncommitted in the shared tree
+and left untouched. Their new `fs.rmSync` call is missing the repo's
+Windows-hardening options, so `npm test` shows 1 failure that is not in this
+commit — the pre-push hook checks out the commit, where it does not exist.
+
+## 2026-08-09 — the self-hosting runbook, and three traps that only a live box teaches
 
 Added [`docs/runbooks/self-hosted-store.md`](docs/runbooks/self-hosted-store.md): a
 worked Docker recipe for running the audit-loop store on a machine you own. It

@@ -27,7 +27,7 @@ import crypto from 'node:crypto';
 
 import { gitShowFileAtRevision, isSafeGitRevision } from '../vcs.mjs';
 import { runJsonLinesAsyncStrict } from '../subprocess.mjs';
-import { formatFilesManifest } from '../symbol-index/files-manifest.mjs';
+import { writeFilesManifest, removeFilesManifest } from '../symbol-index/files-manifest.mjs';
 import { symbolIndexConfig } from '../config.mjs';
 import { resolveRepoIdentity } from '../repo-identity.mjs';
 import { resolveAndClassify } from '../sensitive-paths.mjs';
@@ -103,17 +103,19 @@ function defaultAdapters() {
  */
 async function extractViaSubprocess(root, files) {
   if (files.length === 0) return [];
-  const manifestPath = path.join(os.tmpdir(), `duplication-extract-${process.pid}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.txt`);
-  // NUL-framed via the shared formatter, never hand-joined — extract.mjs's
-  // reader parses exactly this format (files-manifest.mjs).
-  fs.writeFileSync(manifestPath, formatFilesManifest(files), 'utf-8');
+  // Both the NUL framing AND the private-temp-directory handling come from
+  // files-manifest.mjs, which owns the whole parent→child transport. This file
+  // is the SECOND manifest producer; hand-rolling either half here is the
+  // drift risk that centralising the format existed to prevent (shadow
+  // 11c7e605 — it was hand-rolled twice before this).
+  const manifestPath = writeFilesManifest(files, 'duplication-extract-');
   try {
     const extracted = await runJsonLinesAsyncStrict('node', [
       EXTRACT_MJS, '--root', root, '--mode', 'full', '--files-from', manifestPath,
     ], { stage: 'duplication-extract' });
     return extracted.filter((r) => r.type === 'symbol');
   } finally {
-    try { fs.unlinkSync(manifestPath); } catch { /* best-effort cleanup */ }
+    removeFilesManifest(manifestPath);
   }
 }
 

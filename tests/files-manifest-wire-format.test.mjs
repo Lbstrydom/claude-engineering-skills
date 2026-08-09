@@ -25,6 +25,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { writeFilesManifestIfRestricted } from '../scripts/symbol-index/refresh-subprocess.mjs';
+import { formatFilesManifest } from '../scripts/lib/symbol-index/files-manifest.mjs';
 import { _internals as extractInternals } from '../scripts/symbol-index/extract.mjs';
 
 const { parseArgs } = extractInternals;
@@ -100,6 +101,47 @@ describe('--files-from manifest wire format (c191e74d781b/395e92881aa4)', () => 
       /empty path token/,
       'an empty record means a malformed stream; .filter(Boolean) would hide it',
     );
+  });
+
+  // ── Producer validates symmetrically with the parser (shadow 3339be19) ──
+  //
+  // The parser was strict while the producer coerced anything via template
+  // interpolation. The dangerous direction was silence: a non-string became a
+  // literal path that matched no file, so the entry vanished from the
+  // extraction scope with no error anywhere.
+
+  it('refuses a non-string entry instead of coercing it to a literal path', () => {
+    // The concrete shape that can reach here: refresh-file-scope.mjs builds its
+    // list partly from `diff.renamed.map(r => r.to)`, so a mapping slip passes
+    // the {from,to} object itself.
+    assert.throws(() => formatFilesManifest(['a.mjs', { from: 'x', to: 'y' }]), /entry 1 is object/);
+    assert.throws(() => formatFilesManifest(['a.mjs', undefined]), /entry 1 is undefined/);
+    assert.throws(() => formatFilesManifest(['a.mjs', null]), /entry 1 is null/);
+  });
+
+  it('names the coercion consequence, so the reader knows why it matters', () => {
+    assert.throws(() => formatFilesManifest([{ to: 'y' }]), /\[object Object\]/);
+  });
+
+  it('refuses an empty entry at the producer, not in the child', () => {
+    // Previously this produced a manifest the parser rejected with an error
+    // blaming a truncated write or the retired newline format — the wrong layer.
+    assert.throws(() => formatFilesManifest(['a.mjs', '']), /entry 1 is an empty string/);
+  });
+
+  it('refuses already-framed content rather than double-framing it', () => {
+    assert.throws(() => formatFilesManifest(['a.mjs\0b.mjs']), /contains a NUL byte/);
+  });
+
+  it('refuses a non-array argument', () => {
+    assert.throws(() => formatFilesManifest('a.mjs'), /expected an array/);
+  });
+
+  it('still accepts every legitimate path shape (vacuous-pass guard)', () => {
+    // Proves the validation above rejects on the stated grounds and has not
+    // simply become reject-everything.
+    assert.equal(formatFilesManifest(HOSTILE), HOSTILE.map(p => `${p}\0`).join(''));
+    assert.equal(formatFilesManifest([]), '');
   });
 
   // ── Vacuous-pass guard ──────────────────────────────────────────────────
