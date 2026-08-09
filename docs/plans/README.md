@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**8 active · 175 terminal · 26 audit summaries · 4 reference docs**
+**8 active · 175 terminal · 27 audit summaries · 4 reference docs**
 
 ---
 
@@ -233,7 +233,7 @@ Companion `*-audit-summary.md` records. Exempt from the status vocabulary
 (they carry a free-text convergence sentence by convention).
 
 <details>
-<summary>Show all 26 audit summaries</summary>
+<summary>Show all 27 audit summaries</summary>
 
 | Plan | Notes |
 |---|---|
@@ -258,6 +258,7 @@ Companion `*-audit-summary.md` records. Exempt from the status vocabulary
 | [Phase I Plan Audit Summary](./phase-i-claudemd-hygiene-audit-summary.md) |  |
 | [Postgres-Parity M1 — `/audit-code` Summary](./postgres-parity-m1-audit-summary.md) |  |
 | [Postgres-Parity M3 + M4 — `/audit-code` Summary](./postgres-parity-m3m4-audit-summary.md) |  |
+| [Audit summary — arch-memory / symbol-index manifest transport](./refactor-arch-memory-symbol-index-2026-07-audit-summary.md) |  |
 | [Audit Summary — refactor-architecture-debt-remainder-2026-07](./refactor-architecture-debt-remainder-2026-07-audit-summary.md) |  |
 | [Audit Summary — Requirements Layer](./requirements-layer-audit-summary.md) |  |
 | [Audit Summary — symbol-index-bugs](./symbol-index-bugs-audit-summary.md) |  |
