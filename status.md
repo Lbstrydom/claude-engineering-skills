@@ -56,6 +56,18 @@ exact format was also driven through a **real subprocess spawn** end-to-end, bec
 the duplication wave is skipped in the pipeline test and would otherwise have shipped
 unverified.
 
+**Consumer-side verification: `verified`** (not inherited from the push's exit code).
+Pushed commit `ba231fbb65db9109b9a749a90725b962e8f58899`. Retrieved by
+`git clone --depth 1 https://github.com/Lbstrydom/claude-engineering-skills.git` into
+a temp dir — both new files are tracked in the clone (the tracked-vs-ignored fault a
+local check cannot see), and `node --test tests/files-manifest-wire-format.test.mjs
+tests/refresh-subprocess-recovery.test.mjs tests/refresh-cli-contract.test.mjs` ran
+**28 pass / 0 fail** *in the clone*. Synced bundle checked where it is authoritative —
+`node scripts/.claude-skills/lib/sync-isolation-verify.mjs` in each consumer: all 10
+gates pass in both wine-cellar-app and ai-organiser, and the new
+`lib/symbol-index/files-manifest.mjs` reached both as a transitive dep (the failure
+that would have broken `extract.mjs` there with MODULE_NOT_FOUND).
+
 ## 2026-08-09 — the six adjudicated defects shipped, and the repo reconciled
 
 All six gate-honesty defects from the 2026-08-08 blind adjudication are on main
