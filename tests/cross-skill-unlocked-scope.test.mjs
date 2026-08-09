@@ -266,3 +266,55 @@ describe('lock worksheet — cross-tenant WRITE fence', () => {
       'a bare argOption() is the pre-fix shape: it reads --repo-id only and ignores --repo');
   });
 });
+
+describe('a capped nudge reader must ship a counter, and the CLI must emit it', () => {
+  // A `LIMIT`ed read whose caller reports `rows.length` states a floor as a
+  // total. Twice in this family: `unlocked_fixes` reported 20 against 232
+  // (2026-07-29), `unremediated_acceptances` 20 against 129 (2026-07-31). Both
+  // were fixed in the store AND the CLI — but the /ship prose was corrected for
+  // only one, so on 2026-08-09 the surviving "count the rows" instruction
+  // produced 20 against a real 201 and that number was reported back as the
+  // size of the backlog being triaged.
+  //
+  // Pinned as an explicit pair rather than by scanning function bodies: an
+  // enumeration clever enough to find these is also clever enough to find
+  // nothing and pass. Adding a third nudge view means adding a row here.
+  const PAIRS = [
+    { reader: 'getUnlockedFixes', counter: 'countUnlockedFixes' },
+    { reader: 'getUnremediatedAcceptances', counter: 'countUnremediatedAcceptances' },
+  ];
+  const storeSrc = fs.readFileSync(
+    path.join(repoRoot, 'scripts', 'lib', 'store', 'plans-ship.mjs'), 'utf-8');
+  const cliSrc = fs.readFileSync(path.join(repoRoot, 'scripts', 'cross-skill.mjs'), 'utf-8');
+
+  for (const { reader, counter } of PAIRS) {
+    it(`${reader} exists and caps its rows (vacuous-pass guard)`, () => {
+      // If the reader were renamed or stopped capping, the assertions below
+      // would be pinning a contract nothing needs any more.
+      assert.match(storeSrc, new RegExp(`function\\s+${reader}\\b`), `${reader} not found in the store`);
+      const body = storeSrc.slice(storeSrc.search(new RegExp(`function\\s+${reader}\\b`)));
+      assert.match(body.slice(0, 1200), /\bLIMIT\s+\d+/,
+        `${reader} no longer caps its rows — re-check whether a counter is still required`);
+    });
+
+    it(`${counter} exists — ${reader}'s caller cannot otherwise report a real total`, () => {
+      assert.match(storeSrc, new RegExp(`function\\s+${counter}\\b`),
+        `${reader} caps its rows but ${counter}() is missing`);
+    });
+
+    it(`cross-skill.mjs calls ${counter} wherever it calls ${reader}`, () => {
+      assert.match(cliSrc, new RegExp(`\\b${reader}\\s*\\(`), `CLI must call ${reader} (else vacuous)`);
+      assert.match(cliSrc, new RegExp(`\\b${counter}\\s*\\(`),
+        `the CLI calls ${reader} without ${counter} — the payload would carry capped rows and no total`);
+    });
+  }
+
+  it('/ship never tells the operator to count the capped rows', () => {
+    // The prose half of the same contract — the half that survived both tool
+    // fixes and produced the 20-vs-201 report.
+    const shipSkill = fs.readFileSync(path.join(repoRoot, 'skills', 'ship', 'SKILL.md'), 'utf-8');
+    assert.doesNotMatch(shipSkill, /Count the rows as `unremediated_count`/,
+      'Step 0.5e must read byMode.total, not rows.length');
+    assert.match(shipSkill, /byMode\.total/, 'Step 0.5e must name the field that carries the real total');
+  });
+});

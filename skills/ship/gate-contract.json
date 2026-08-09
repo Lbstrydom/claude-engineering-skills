@@ -153,6 +153,18 @@
     {
       "line": "| `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Step 6.8 — the push succeeded and the artifact must be verified from the consumer side. |",
       "reason": "A REFERENCE-TABLE row. The 'Read when' cell is a trigger description for opening a reference file, not a gate /ship enforces."
+    },
+    {
+      "line": "**Use `byMode.total` as `unremediated_count` — NEVER `rows.length`.** `rows` is",
+      "reason": "Instruction to the reading agent about which emitted field to use, not a claim that /ship blocks on anything. It IS mechanically guarded, which is why it is dispositioned here rather than as document-only: tests/cross-skill-unlocked-scope.test.mjs asserts that every capped nudge reader has a count* sibling, that cross-skill.mjs calls the counter wherever it calls the reader, and that this SKILL never reverts to \"Count the rows as unremediated_count\". That prose assertion exists because the tool was fixed for both nudge views on 2026-07-31 while the prose was fixed for only one, and the survivor produced a 20-vs-201 report on 2026-08-09."
+    },
+    {
+      "line": "capped at 20 by the query, and `shown` vs `total` exists to make that cap",
+      "reason": "Describes the query's own LIMIT and the payload fields that surface it — a statement of fact about the reader, not a project gate. The cap itself is asserted in tests/cross-skill-unlocked-scope.test.mjs (the vacuous-pass guard checks the reader still caps)."
+    },
+    {
+      "line": "accepted and never amended, which is real work. Split it out to say which kind",
+      "reason": "Explains why byMode.plan must not be discarded here (unlike 0.5b, where a plan finding can never carry a spec). Guidance on interpreting a count, with no enforcement claim and nothing to assert an exit code against."
     }
   ]
 }
