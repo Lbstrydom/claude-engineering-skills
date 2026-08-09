@@ -89,10 +89,25 @@ artefacts, not defects: another session committed twice mid-suite, so a
 manifest-vs-committed-source test read the two at different HEADs. It passes in
 isolation at each HEAD.
 
-**Consumer-side verification: `unverified`** — blocked prerequisite: no consumer
-checkout on this machine and no push performed at the time of writing this
-entry. The authoritative check is the synced `sync-isolation-verify` run *in* a
-consumer; `npm run sync:dry` from here is the pre-check, not the verdict.
+**Consumer-side verification: `verified`.** The first draft of this entry said
+`unverified` and named "no consumer checkout on this machine" as the blocked
+prerequisite. That was false — the push's own sync reported `Targets: 2/2
+reached`, so the checkout existed and the claim was an assumption dressed as a
+fact. Corrected by actually running it.
+
+Retrieved: `/c/GIT/ai-organiser/scripts/.claude-skills/` after the push of
+`7e0b205e`. All 8 files this cycle changed are present, each exactly +5 lines
+(the injected ownership banner). Subject check run against the CONSUMER's copy
+rather than inheriting the producer-side green — the two defects the audit found
+in this cluster's new code both behave correctly there (an empty cursor is
+refused as `invalid-cursor`; an oversized limit clamps to `CANDIDATE_PAGE_SIZE`),
+as do finding B's `absent`-by-default projection and the batch bound.
+
+One thing this did NOT verify, stated rather than glossed: the consumer's
+`sync-isolation-verify` is not present under that name in that checkout
+(`check-sync.mjs` is a setup checker and reports `NOT_REGISTERED`, which is a
+repo-registration state, not a sync verdict). So the manifest-vs-disk hash
+reconciliation was not run — file presence and functional behaviour were.
 
 **Surfaced to the operator, not silently deferred** — two security-shaped
 findings in untouched code that this change provably does not reach:
