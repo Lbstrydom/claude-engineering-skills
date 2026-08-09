@@ -218,7 +218,17 @@ For each remaining cluster in declared order:
 2. **Budget**: no runtime splitting in v1 — invoke `/audit-code` on the cluster's derived scope and let its internal map-reduce handle large diffs. `/cycle` only enforces **never merge** across a declared boundary.
    - **Optional author-tier observation**: if the cluster carries an advisory `author-tier:` hint (§11 grammar), you MAY export `AUDIT_AUTHOR_TIER_HINT=<concrete model id or logical tier>` before invoking `/audit-code` so the audit's observation-only recorder captures actual-vs-suggested tier. This **does NOT change which model runs** — it is pure telemetry (`docs/plans/model-tier-observation.md`). Prefer a concrete model id (e.g. `claude-sonnet-4-6`) so the ladder partition key populates.
 3. **Audit envelope**: capture `clusterStartRef` (`vcs.gitCommitSha`) when implementation begins; invoke `/audit-code --scope=diff` with `--changed`=the derived scope and a `clusterStartRef..WORKTREE` `--diff`. Reconcile changed-files: a changed file belonging to **no** cluster's derived scope is an out-of-scope edit → **fail closed** (stop, summarize, ask to amend or take the union fallback). On a resume with no recorded `clusterStartRef`, require `--baseline-ref <sha>` or fall back to union-diff — **never** default `--diff` to HEAD (empty diff = silent skip). Round policy is `/audit-code`'s own cap — no new policy here.
-4. **Fix-gate**: `fix-gate: yes` → reach `/audit-code` convergence (`HIGH==0 && MEDIUM<=2 && quickFix==0`) before the next cluster; `none` skips; `final` defers to the consolidated gate. Within-cluster fixing is authorized; a fix needing files **outside** the cluster's scope → **stop** for confirmation (mark any touched `gate-clear` cluster `stale`). Persistent non-convergence → hand back with a summary.
+4. **Fix-gate**: `fix-gate: yes` → reach `/audit-code` convergence (`HIGH==0 && MEDIUM<=2 && quickFix==0`) **over this cluster's IN-CLUSTER findings** (see 4a) before the next cluster; `none` skips; `final` defers to the consolidated gate. Within-cluster fixing is authorized; a fix needing files **outside** the cluster's scope → **stop** for confirmation (mark any touched `gate-clear` cluster `stale`). Persistent non-convergence → hand back with a summary.
+   - **4a. The gate scores IN-CLUSTER findings only — otherwise no cluster but the last can ever pass.** `/audit-code` grades the cluster's *diff* against the *whole plan*, so a later cluster's not-yet-written file comes back as `[Structure] Missing planned file` — **HIGH**. Measured 2026-08-08 (`gate-honesty-adjudicated-defects.md` §11.1): a cluster's total HIGH went 6 → 5 → 3 while its in-cluster HIGH went 2 → 2 → **0**; at that point its own work was clean and the gate would have refused *forever*, on two files belonging to clusters correctly not yet implemented. A gate that cannot be satisfied by doing the work correctly is the cried-wolf shape that earns `--no-verify`. Classify every finding by the cluster owning its cited file — the derived scopes are already computed, so this is mechanical, not a judgement call:
+
+     | Cited file is in… | Class | Effect on THIS gate |
+     |---|---|---|
+     | this cluster's derived scope | `in-cluster` | **gates** — fix it, pre-existing or not |
+     | a **later** cluster's derived scope | `deferred-declared` | does not gate; **must be zero at the final gate** |
+     | an **earlier** cluster's derived scope | `regression` | **gates** — that cluster is now `stale`; go to step 5 |
+     | **no** cluster's derived scope | `out-of-scope` | unchanged: fail closed per step 3 |
+
+     Three properties stop this becoming an escape hatch, and all three are load-bearing: **(1)** deferral is *bounded* — `deferred-declared` means "owned by a LATER cluster", and the final cluster has none, so the bucket is empty there by construction and every deferred completeness finding must be satisfied before Step 3C.2; **(2)** *"pre-existing" is still not a defer reason* — these buckets are about plan SCHEDULE, never authorship, so AGENTS.md's impact test applies unchanged to anything in-cluster; **(3)** the classification is *derived*, never argued — a finding cannot be talked into a friendlier bucket. **Every `deferred-declared` finding is listed in the cluster's hand-back summary with the cluster that owns it** — a deferral nobody can see is indistinguishable from a dismissal.
    - **Convergence test scope — run the BROADEST suite, not unit-only (load-bearing for destructive clusters).** When "iterate to green" runs the project's tests at the cluster boundary, use the widest command the repo defines (`test:all` / `test:integration` / `test:e2e` — fall back to plain `test` / the full `node --test`), **never `test:unit` alone**. Unit isolation structurally *cannot* catch the failure modes a delete/refactor cluster introduces: a stale `vi.mock`/`jest.mock` of a now-deleted module path only errors when something actually resolves it (i.e. in integration), and cross-module integration breaks are invisible to per-module unit suites. A cluster is "green" only when the integration tier passes; a `test:unit`-only green on a destructive cluster is a false-green and does **not** clear the fix-gate.
 4.5. **Finalize outcomes (deterministic capture — WS1)**: once the cluster's audit has converged AND its findings are triaged (the adjudication ledger carries terminal `accepted`/`dismissed`/`severity_adjusted` outcomes), call **once** per converged audit:
    ```bash
@@ -237,6 +247,16 @@ consolidated gate, parse and execute the plan's close-out step(s),
 surfacing failures. (Human path leaves close-out to the operator.)
 
 ### Step 3C.2 — Consolidated Gemini gate (closed loop, mandatory)
+
+**First, the deferrals come due.** Step 4a lets a cluster defer a finding that
+belongs to a *later* cluster; this is where that debt is settled, because there
+is no later cluster left. Before invoking the reviewer, re-check every
+`deferred-declared` finding accumulated across the run: each must now be
+satisfied (the file exists, the migration ran, the phase landed). **Any that
+remain are the plan's own §7b work, unimplemented** — halt and summarize rather
+than asking Gemini to bless an incomplete change set. This check is what makes
+4a a deferral instead of a dismissal, so it is not optional and not
+Gemini's job.
 
 After all clusters (+ close-out), run **one** Gemini review over the
 **union diff** — mandatory regardless of per-cluster GPT convergence, and a
@@ -363,7 +383,7 @@ changed). No additional action needed here.
   /cycle complete — <PLAN-NAME>
   Plan:        docs/plans/<name>.md
   Audit-plan:  3 rounds, APPROVE
-  Clusters:    A converged H:0; B converged H:0 (autonomous)   ← only if hasClustering
+  Clusters:    A in-cluster H:0 (2 deferred→C); B in-cluster H:0 (autonomous)  ← only if hasClustering
   Audit-code:  4 rounds, CONVERGED, H:0 M:1 L:2                 ← classic path (no §11)
   Final gate:  Gemini APPROVE over union diff                  ← only if hasClustering
   Persona:    0 P0, 1 P1 (deferred)
@@ -390,7 +410,8 @@ gate result and the preflight outcome.
 - **Never skip `/audit-code`** unless explicitly in SKIP_TO_SHIP mode (not currently exposed; reserved).
 - **Default is human-orchestrated** — `/cycle` pauses at the implementation gate (Step 3); only the **opt-in `--autonomous`** flag implements code, and it never activates silently.
 - **`/cycle` reads the §11 block; it never authors or merges clusters** — it may split-equivalent (defer oversized diffs to `/audit-code`'s map-reduce) but never merges across a declared boundary. Clustering is the plan's job.
-- **The consolidated Gemini gate is mandatory** after clustered execution, regardless of per-cluster convergence.
+- **The consolidated Gemini gate is mandatory** after clustered execution, regardless of per-cluster convergence — and Step 3C.2's deferral re-check runs *before* it, so no `deferred-declared` finding survives the run.
+- **A per-cluster fix-gate scores IN-CLUSTER findings only** (Step 4a). Scoring the whole plan against one cluster's diff makes every gate but the last unpassable; deferral is bounded to *later*-cluster scopes and settled at 3C.2. Never widen it to "pre-existing" — that is authorship, not schedule.
 - **Cost cap awareness**: estimate total cost upfront from input size and surface it in the kickoff card. A typical full cycle costs $1–3; autonomous clustered runs cost more (one audit per cluster + the final gate).
 
 ---
