@@ -290,6 +290,38 @@ test('a sweep whose decision FLIPS blocks the verdict and names the calibration'
   assert.ok(r.watermark.failing.some((g) => g.id === 'threshold-invariance'));
 });
 
+test('the eligibility conjunction widened exactly ONE gate — every other gate already blocks via the state', () => {
+  // Making `decisionEligible` a conjunction could silently start blocking
+  // campaigns that previously emitted verdicts. It does not, and this pins why:
+  // every other gate has a `deriveState` branch that returns a non-READY state
+  // first, so the conjunction can only ever be decided by the gate deriveState
+  // does not know about.
+  const { snapshots, clusters } = buildCohort({ n: 12, accepted: { opus: 18, kimi: 3 }, spendUsd: { opus: 35.64, kimi: 1.74, 'solo-opus': 0 } });
+  const base = { config: REAL_CONFIG, snapshots, clusters, ...CLEAN_GATES };
+
+  for (const [label, over] of [
+    ['n-complete', { snapshots: snapshots.slice(0, 3) }],
+    ['adjudication-coverage', { adjudication: { unadjudicatedFindings: 2, humanQueuePending: 0 } }],
+    ['human-queue-cleared', { adjudication: { unadjudicatedFindings: 0, humanQueuePending: 1 } }],
+    ['calibration-sample', { calibration: { perArm: { opus: { agentVerdicts: 9, assigned: 5, dispositioned: 1 } } } }],
+    ['attribution', { clustering: { snapshotsMissingClusters: ['snap03'], matcherVersion: '1' } }],
+    ['cohort-live', { cohortSuperseded: true }],
+    ['target-n-floor', { config: { ...REAL_CONFIG, targetN: 4 } }],
+  ]) {
+    const r = evaluateCampaign({ ...base, ...over });
+    assert.notEqual(r.state, 'DECISION_READY',
+      `gate "${label}" must be blocked by the STATE, not only by the conjunction`);
+  }
+
+  // …and the new gate is the one that is NOT reflected in the state.
+  const flip = evaluateCampaign({
+    ...base,
+    sensitivity: { assessed: true, invariant: false, outcomes: [], distinctOutcomes: 2, reason: 'flips' },
+  });
+  assert.equal(flip.state, 'DECISION_READY', 'the lifecycle genuinely is complete');
+  assert.equal(flip.decisionEligible, false, 'and the conjunction is what withholds the verdict');
+});
+
 test('a flip in the COST WINNER alone is caught — the signature is the decision, not just the floor', () => {
   // The earlier flip case changed which arms CLEARED, so `cleared` alone
   // distinguished the variants and the winner field was never exercised. Here
