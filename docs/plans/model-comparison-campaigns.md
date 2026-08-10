@@ -11,8 +11,15 @@
   Coherence `Strong`, over-engineering flags 0, `claude_bias_detected: false`
   in every round.
 
-  **Two corrections this plan owes its reader**, because implementation
-  falsified them:
+  **Ran end-to-end on real data 2026-08-10** — one snapshot (`d49d421591de`),
+  3 arms, $6.55 collect + $1.10 adjudication: promoted → auto-clustered →
+  9 blind agent verdicts (5 accepted/verified, 1 dismissed, 4 `unverifiable`
+  routed to the human queue) → 1 human override. The evidence-downgrade rule
+  fired for real on a verdict that claimed `verified` without a sha, and
+  `self_family` correctly read 100% for the Opus arms against 0% for kimi.
+
+  **Three corrections this plan owes its reader**, because implementation and
+  measurement falsified them:
 
   1. §7 assigns four dashboard integration points to `scripts/build-dashboard.mjs`.
      They live one layer down — `render.mjs` (nav entry, renderer call),
@@ -21,12 +28,30 @@
      wrapper and was not modified. §4's "the existing copy-to-clipboard helper"
      also did not exist; a delegated handler was added.
   2. §7b's close-out expects the live readout to show "the real 5/12 state".
-     It shows **0/12**, and that is correct: the seven collected snapshots
-     predate the campaign declaration, carry no `lockDigest`, and `reconcile`
-     refuses to promote them. Adopting evidence collected under an unknown
+     It reads **1/12** — the one snapshot collected after the campaign was
+     declared. The seven that predate it are **permanently ineligible**: they
+     carry no `lockDigest`, and adopting evidence gathered under an unknown
      contract is precisely the relabelling that produced five false "window met"
-     reads — the rule the lock exists to enforce, applied to this plan's own
-     history.
+     reads. The close-out was written before that rule had a producer. (This
+     line read `0/12` until the first real run exposed that `mintArmRun` never
+     passed `commitSha`, so `audit_runs.commit_sha` was NULL on every bake-off
+     run ever recorded and `reconcile` correctly refused to promote anything at
+     all — see §2.5b-i, which makes `audited_sha` part of snapshot identity.)
+  3. §2.5c.6's retirement path is **superseded** — its premise was measurably
+     false. See that section for the sweep, the controlled probe, and what
+     replaced it.
+
+  **Five guarantees the plan stated that the code did not enforce** were closed
+  after the clusters were gate-clear. Each was an *absence of wiring*, which is
+  why 6 GPT rounds and 2 Gemini rounds saw none of them — an audit compares the
+  diff to the plan, and a missing writer is not in the diff:
+  `rule_changed` had a reader and no writer (so pre-registration was
+  unprotected); `--force` did not exist (so the `attempt` column, the partial
+  unique index and the receipt protocol were unreachable); clustering did not
+  auto-run (so the ordinary path always watermarked on attribution); `role` was
+  an open string rather than D7's one-value enum; and within-arm dedup — the
+  anti-inflation rule in §2.5c-i — was prose beside a loop that iterated over
+  *distinct* arms only.
 - **Author**: Claude + Louis
 - **Scope**: full-stack (CLI + store + generated dashboard page)
 
@@ -1309,3 +1334,54 @@ already covered). Key cases, each with its negative control:
     both are read-side consumers of everything upstream and cannot regress it.
   - `author-tier: standard`
 - **Final gate**: consolidated Gemini review over the union diff of Clusters A–C.
+
+---
+
+## Implementation Log
+
+### 2026-08-10
+
+**Completed** — all six §7b phases, all three §11 clusters gate-clear.
+
+| Cluster | Phases | Gate | Commits |
+|---|---|---|---|
+| A | 1–2 | fix-gate yes (audited before this run) | `62364a64`, `3fe39096` |
+| B | 3–4 | 6 GPT rounds → in-cluster H0/M0 · Gemini APPROVE | `5604bc46`, `579acfb0`, `bdbc0aa2` |
+| C | 5–6 | fix-gate `final` → consolidated review | `488b1c6f`, `918548ad` |
+| Final | — | Gemini over the union diff of A–C, 2-round cap: R1 `CONCERNS_REMAINING` (3 findings, all fixed), R2 `CONCERNS` (1, disproved by execution). Coherence `Strong`, over-engineering 0 | — |
+
+Post-completion (same day): five stated-but-unwired guarantees closed
+(`f7d4799a`), one real end-to-end run, and the §2.5c.6 supersession plus its
+replacement (`df40b943`, `65a7ad93`, `fe9682dd`).
+
+**Remaining** — nothing blocking. Two open, both deliberate:
+
+- Blind re-labelling of the 9 PROVISIONAL calibration pairs is now **optional**
+  (§2.5c.6). Worth doing before quoting the co-detection figure externally; not
+  a prerequisite for a verdict.
+- `withinArmThreshold` is **uncalibrated** by construction — no labelled
+  within-arm corpus exists. The sensitivity gate is what makes shipping it
+  acceptable; a within-arm corpus would let it be calibrated rather than
+  reasoned.
+
+**Deviations** — five, each recorded where it bites rather than only here:
+
+1. **`build-dashboard.mjs` was never modified.** §7's four integration points
+   live one layer down (`render.mjs`, `collect-reference.mjs`, `schema.mjs`).
+   §7 row corrected.
+2. **`schema.mjs` and `assets/dashboard.js` were modified, though §7 lists
+   neither.** The first because Zod strips undeclared payloads and
+   `renderDocument` builds sections from the parsed object — without a
+   declaration the section is fed nothing (this also fixed `navAudit` and
+   `visualAudit`, undeclared and therefore blind since they shipped). The
+   second because §4's "existing copy-to-clipboard helper" did not exist.
+3. **`loadCohortEvidence` was extracted into the store seam**, so the CLI and
+   the dashboard collector share one reader instead of duplicating ~60 lines of
+   assembly. Touches a Cluster B file; the consolidated gate covered it.
+4. **Four migrations, not one.** Corrections cannot edit an applied migration —
+   `setup-postgres --migrate` classifies a changed sha as tampering — so
+   `needs_triage`, its NULL-safe re-tightening (`FALSE OR NULL` is NULL, and a
+   Postgres CHECK passes on NULL), and the arm-run/snapshot composite FK are
+   each their own file.
+5. **§2.5c.6 superseded**, and the close-out's expected `5/12` is `1/12`. Both
+   recorded in the Status block with the measurements that falsified them.

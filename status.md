@@ -1,6 +1,98 @@
 # Project Status Log
 
-## 2026-08-10 (latest) — 7 characters of headroom, and what shaving them cost
+## 2026-08-10 (latest) — the campaign shipped, then ran, and running it is what found the rest
+
+`fe9682dd`. Model-comparison campaigns went from Cluster B through Cluster C,
+the consolidated gate, a first real end-to-end run, and a brainstorm that
+ended by deleting a step the plan had specified.
+
+Clusters B and C: the adjudication store, the campaign CLI, the verdict engine,
+the decision-console dashboard, its Playwright acceptance spec and the consumer
+runbook. Cluster B took 6 GPT rounds to in-cluster HIGH 0 / MEDIUM 0 plus a
+Gemini APPROVE; Cluster C's `fix-gate: final` deferred to the consolidated
+review over the union diff of A–C, which ran its 2-round cap — 3 findings in
+round 1, all fixed, 1 in round 2 disproved by execution. Coherence `Strong`,
+over-engineering flags 0, `claude_bias_detected: false` every round.
+
+**Wiring the dashboard found a defect in two shipped tabs.** Zod strips unknown
+keys and `renderDocument` builds every section from the PARSED object, so an
+undeclared payload is not passed through unvalidated — it is DELETED, and the
+section renders its empty state with no error anywhere. `navAudit` and
+`visualAudit` were both undeclared: neither could ever display data. It hid
+because both collectors are `missing-optional` here, and a missing-optional pane
+and a silently-emptied one look identical.
+
+**Then the plan was declared complete, and five of its guarantees turned out to
+have no enforcement.** `rule_changed` had a reader and no writer, so
+pre-registration — the thing protecting the decision rule from being retuned
+mid-flight — was inert. `--force` did not exist, leaving the `attempt` column,
+the partial unique index and the receipt protocol unreachable by any operator
+action. Clustering did not auto-run. `role` was an open string. Each is an
+*absence of wiring*, which is exactly why 6 GPT rounds and 2 Gemini rounds saw
+none of them: an audit compares the diff to the plan, and a missing writer is
+not in the diff.
+
+**The first real end-to-end run found the sixth.** One snapshot, 3 arms, $6.55
+collect + $1.10 adjudication: `mintArmRun` never passed `commitSha`, so
+`audit_runs.commit_sha` was NULL on every bake-off run ever recorded and
+`reconcile` correctly refused to promote anything at all — §2.5b-i makes
+`audited_sha` part of snapshot identity. Unit tests mint no runs; the refusal
+only appears when a real collection is promoted. Fixed at the cause; the three
+already-minted runs repaired once with a sha verified to contain the campaign
+files and to descend from the audited commit. After that: promoted →
+auto-clustered → 9 blind agent verdicts (5 accepted/verified, 1 dismissed, 4
+`unverifiable` routed to the human queue) → 1 human override. The
+evidence-downgrade rule fired for real on a verdict claiming `verified` without
+a sha, and `self_family` read 100% for the Opus arms against 0% for kimi.
+
+**A brainstorm about retiring the PROVISIONAL matcher fixture ended by deleting
+the step.** Measured on the live cohort: the floor metric took ONE distinct value
+across thresholds 0.00–0.90, because §2.5c-i credits each arm on its OWN
+member's terminal event — a cross-arm merge cannot move any arm's count, and the
+denominator is complete snapshots, not clusters. A controlled probe confirmed
+the mechanism, and its positive control (within-arm merging DOES move it) is
+what makes the sweep non-vacuous. Labelling the 9 pairs would have validated a
+number no decision depends on.
+
+What it found instead: within-arm dedup — the one thing the threshold IS
+load-bearing for — was never implemented. Clustering iterated `i < k` over
+*distinct* arms, so two byte-identical findings from one arm produced 2 clusters
+at every threshold from 0.00 to 0.50. §2.5c-i's anti-inflation rule was prose
+beside a loop that could not enforce it. Now implemented with its own
+(uncalibrated, and labelled so) threshold, plus a sensitivity gate that
+re-clusters across six variants — including *no clustering at all* — and refuses
+when the decision moves. Live: INVARIANT. "This verdict did not depend on the
+calibration" is a stronger claim than "the calibration was validated", and it
+costs no human labelling. §2.5c.6 superseded with the falsified premise recorded.
+
+Wiring that gate exposed a trap worth keeping fixed: `decisionEligible` came
+from the lifecycle state alone and the watermark only renders when ineligible,
+so a gate `deriveState` did not know about rendered NOWHERE. Eligibility is now
+the conjunction of state and every gate.
+
+One focused audit round over the matcher work returned 5 real findings, all
+mine, and Gemini APPROVE'd the fixes with `gpt_false_positive_count: 0`. Best
+catch was in the row added to fix a provenance problem: the dashboard labelled
+displayed clusters with the CURRENT process config rather than the thresholds
+recorded on them — the two agree until someone retunes.
+
+Also raised `GEMINI_REVIEW_TIMEOUT_MS` 180s → 270s after a union-diff gate timed
+out at 180s and then completed at 142s and 130s. Not the 600s the incident was
+resolved with: the watchdog floor is `2×timeout + 60000`, so 600s would drag a
+background-termination guard to 21 minutes. 270s is the most the existing
+watchdog admits.
+
+Verification: 10,958 pass / 0 fail / 24 skipped. 39 surgical mutations across
+the session, 39 red — twice the harness caught me having fixed things and
+tested none of them (0/4 and 3/6 binding on first pass); both times the fix was
+real and the confidence was not earned until the tests bound.
+
+Consumer-side (Step 6.8): **unverified** — no consumer checkout exists on this
+machine to run `scripts/.claude-skills/lib/sync-isolation-verify.mjs` in, and
+the pre-push sync reported `Targets: 2/2 reached · Errors: 0` from the
+*producer* side only. The producer-side green is not inherited.
+
+## 2026-08-10 — 7 characters of headroom, and what shaving them cost
 
 `53358742`. AGENTS.md measured **91,993 of its 92,000-char cap**. Not a failure
 — the gate is a cap, and the file was under it — but the ADVISORY that fires in
