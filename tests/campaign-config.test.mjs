@@ -154,7 +154,12 @@ describe('campaign config — configDigest scope (§2.5b)', () => {
       // orphans a replicate and trips the semantic rule first.
       (c) => { c.arms[2].model = 'moonshotai/kimi-k2-0905'; },
       (c) => { c.arms.push({ id: 'extra', model: 'claude-sonnet', mode: 'shadow' }); },
-      (c) => { c.role = 'something_else'; },
+      // `role` WAS mutated here. It still belongs to the digest subset, but D7's
+      // one-value enum makes a legal role change unrepresentable in v1, so the
+      // case can no longer be constructed — a mutation to an invalid value tests
+      // the schema, not the digest. RESTORE this line the moment the enum gains
+      // a second value; that is exactly when the digest's coverage of `role`
+      // stops being untested-because-impossible.
       (c) => { c.decision.incumbent = 'moonshotai/kimi-k2-thinking'; },
     ]) {
       const cfg = base(); mutate(cfg);
@@ -234,4 +239,18 @@ describe('campaign config — selection (§807)', () => {
     assert.equal(r.code, 'unknown-id');
     assert.deepEqual(r.available, ['final-review-2026q3']);
   });
+});
+
+// ── D7: role is a ONE-VALUE enum ──────────────────────────────────────────
+
+test('role is a closed enum, not an open string (D7)', () => {
+  // v1 generalises role 3 only. An open string let a typo'd or invented role
+  // parse into a campaign that collects happily under a role nothing
+  // dispatches on — the seam exists to be widened deliberately, not by
+  // accident.
+  const base = JSON.parse(fs.readFileSync('.campaigns/final-review-2026q3.json', 'utf-8'));
+  assert.doesNotThrow(() => parseCampaignConfig(base));
+  for (const bogus of ['final_review', 'auditor', 'FINAL_REVIEW_SHADOW', '']) {
+    assert.throws(() => parseCampaignConfig({ ...base, role: bogus }), `role "${bogus}" must be rejected`);
+  }
 });

@@ -40,7 +40,7 @@ import { computeLockDigest } from './lib/campaign/lock.mjs';
 
 const KNOWN_FLAGS = Object.freeze([
   '--transcript', '--plan', '--mode', '--progress', '--target', '--campaign',
-  '--selfcheck-relocation', '--help', '-h',
+  '--force', '--selfcheck-relocation', '--help', '-h',
 ]);
 
 /** Category A: accumulating run data, gitignored — never a committed artifact. */
@@ -875,9 +875,25 @@ async function mintArmRun(arm, { plan, mode, id }) {
     const ref = await store.resolveRepoForStore({ profile: generateRepoProfile() }).catch(() => null);
     const repoId = ref?.repoRowId ?? null;
     if (!repoId) return null;
+    // `commitSha` is LOAD-BEARING, not decoration. §2.5b-i makes `audited_sha`
+    // part of snapshot identity, and §2.5c verifies every adjudicated finding
+    // against the tree at that revision — so a run without one makes its whole
+    // snapshot unadjudicatable, and `campaign.mjs reconcile` correctly refuses
+    // to promote it.
+    //
+    // It was omitted here, so `audit_runs.commit_sha` was NULL on every bake-off
+    // run ever recorded and no snapshot could reach the campaign spine. Nothing
+    // caught it: unit tests mint no runs, and the refusal only appears the first
+    // time a real collection is promoted. Found on exactly that run, 2026-08-10.
+    const { gitCommitSha } = await import('./lib/vcs.mjs');
+    const head = gitCommitSha(process.cwd());
     return await store.recordRunStart(repoId, plan, mode === 'plan' ? 'plan' : 'code', {
       scopeMode: mode === 'plan' ? 'plan' : 'diff',
       experimentTag: EXPERIMENT_TAG,
+      // Structured result, never a throw — an unreadable HEAD degrades to a
+      // run with no sha (unpromotable, and visibly so) rather than losing the
+      // whole registration and with it the findings.
+      ...(head.ok ? { commitSha: head.sha } : {}),
     });
   } catch (err) {
     process.stderr.write(`  [bakeoff] run registration failed for arm ${arm.id} (findings will be file-only): ${err.message}\n`);
@@ -937,11 +953,23 @@ async function main() {
   for (const p of [transcript, plan]) if (!fs.existsSync(p)) throw new ArgvError(`not found: ${p}`);
 
   const id = snapshotId(transcript);
+  const force = process.argv.includes('--force');
   const existing = readLog().find((e) => e.snapshotId === id);
-  if (existing && isComplete(existing)) {
-    process.stderr.write(`  [bakeoff] snapshot ${id} already collected and complete — skipping (re-runs would double-count)\n`);
+  if (existing && isComplete(existing) && !force) {
+    process.stderr.write(`  [bakeoff] snapshot ${id} already collected and complete — skipping (re-runs would double-count)\n`
+      + '  Pass --force to re-collect: it SUPERSEDES rather than overwrites, so the prior attempt stays readable and its spend still counts.\n');
     printProgress(LOG_PATH, target);
     return;
+  }
+  if (force && existing) {
+    // §5's resume table: `--force` APPENDS a retry, it never overwrites. The
+    // supersede itself happens at promotion time (`campaign.mjs reconcile`),
+    // where the store can stamp the prior row `superseded_at` and insert
+    // attempt N+1 in one transaction. Marking the log entry is what carries the
+    // intent across that boundary — without it reconcile cannot tell a
+    // deliberate re-collection from a replay of the same one, and correctly
+    // refuses to double-count.
+    process.stderr.write(`  [bakeoff] --force: re-collecting ${id}; the prior attempt will be superseded, never deleted\n`);
   }
 
   // Arms + D4 collision classification resolve BEFORE the output directory is
@@ -981,6 +1009,9 @@ async function main() {
       replicateArmIds: ARMS.filter((a) => a.replicate).map((a) => a.id),
     } : {}),
     collectedAt: new Date().toISOString(),
+    // Read by `campaign.mjs reconcile` to promote this entry as a SUPERSEDING
+    // attempt rather than skipping it as already-recorded.
+    ...(force && existing ? { forced: true } : {}),
     transcript: path.basename(transcript),
     plan,
     arms,

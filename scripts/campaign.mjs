@@ -41,7 +41,7 @@ import process from 'node:process';
 import { z } from 'zod';
 
 import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
-import { selectCampaignConfig, ANALYSIS_TIME_FIELDS } from './lib/campaign/config.mjs';
+import { selectCampaignConfig, ANALYSIS_TIME_FIELDS, canonicalJson } from './lib/campaign/config.mjs';
 import {
   receiptPath, resolveNextAttempt, claimReceipt, completeReceipt, markReceiptRecorded, scanReceipts,
 } from './lib/campaign/lock.mjs';
@@ -609,7 +609,22 @@ async function verbCluster(campaignId, { recluster }) {
   const { config, lock } = loadCampaign(campaignId);
   const ev = await readCohortEvidence({ config, lock });
   if (!ev.ok) { process.stdout.write(`campaign ${config.id}: ${ev.reason}\n`); return 3; }
+  const { written, refused } = await clusterCohort(ev, { recluster });
+  process.stdout.write(`campaign ${config.id}: wrote ${written} cluster(s) under matcher v${FINDING_MATCH_SCHEMA_VERSION} @ ${findingMatchConfig.threshold}\n`);
+  for (const r of refused) process.stdout.write(`  REFUSED ${r.snapshotId}: ${r.reason}\n`);
+  // A refusal is reported, not fatal: the snapshot keeps its evidence and
+  // `verdict.mjs` watermarks on the missing attribution rather than guessing.
+  return 0;
+}
 
+/**
+ * Cluster every snapshot that needs it. Extracted so `reconcile` can run it
+ * automatically after promotion — §7a/R3-H4 specifies clustering happens "at the
+ * end of a collect that completes a snapshot", and `reconcile` IS the
+ * collect→store step. Left as its own verb too, because re-clustering at a new
+ * matcher threshold is a deliberate analysis-time act, not a side effect.
+ */
+async function clusterCohort(ev, { recluster = false } = {}) {
   const bySnapshot = new Map();
   for (const f of ev.findings) {
     if (!bySnapshot.has(f.snapshot_id)) bySnapshot.set(f.snapshot_id, []);
@@ -633,11 +648,7 @@ async function verbCluster(campaignId, { recluster }) {
     if (!w.ok) { refused.push({ snapshotId, reason: w.error }); continue; }
     written += w.written;
   }
-  process.stdout.write(`campaign ${config.id}: wrote ${written} cluster(s) under matcher v${FINDING_MATCH_SCHEMA_VERSION} @ ${findingMatchConfig.threshold}\n`);
-  for (const r of refused) process.stdout.write(`  REFUSED ${r.snapshotId}: ${r.reason}\n`);
-  // A refusal is reported, not fatal: the snapshot keeps its evidence and
-  // `verdict.mjs` watermarks on the missing attribution rather than guessing.
-  return 0;
+  return { written, refused };
 }
 
 async function verbAdjudicate(campaignId, { limit, dryRun }) {
@@ -906,6 +917,32 @@ export function classifyLogEntry(entry, { campaignId, lockDigest, shaByRunId }) 
  * separate, idempotent, re-runnable step: the same file-before-database
  * ordering the receipt protocol already prescribes, one level up.
  */
+/**
+ * PURE. What promotion should do with one arm, given what the store already
+ * holds and whether the collection was forced.
+ *
+ * Three outcomes, and the middle one is the whole of `--force`:
+ *   - nothing recorded          → attempt 1, no supersede
+ *   - recorded, not forced      → SKIP. Promotion is idempotent; re-running
+ *                                 reconcile must never append a second attempt,
+ *                                 which would double-count the arm's spend.
+ *   - recorded, forced          → attempt N+1, supersede the prior live row.
+ *                                 Never an overwrite: the earlier attempt stays
+ *                                 readable and its spend still counts, which is
+ *                                 exactly why `armSpend` sums superseded rows.
+ *
+ * Extracted so the rule is assertable without a database. Before `--force`
+ * existed, the third branch was unreachable — and with it the `attempt` column,
+ * the partial unique index and the receipt-attempt protocol were all machinery
+ * no operator action could trigger.
+ */
+export function resolvePromotionAttempt({ existingAttempt = 0, forced = false } = {}) {
+  const n = Number.isInteger(existingAttempt) && existingAttempt > 0 ? existingAttempt : 0;
+  if (n === 0) return { skip: false, attempt: 1, supersedePrior: false };
+  if (!forced) return { skip: true, attempt: n, supersedePrior: false };
+  return { skip: false, attempt: n + 1, supersedePrior: true };
+}
+
 async function promoteFromLog({ config, lock, configDigest }) {
   const entries = readLog();
   const runIds = entries.flatMap((e) => Object.values(e.arms ?? {}).map((a) => a?.runId).filter(Boolean));
@@ -933,12 +970,12 @@ async function promoteFromLog({ config, lock, configDigest }) {
     if (!snap.ok) { refused.push({ snapshotId: entry.snapshotId, reason: snap.error }); continue; }
     for (const arm of cls.armRuns) {
       const existing = await store.maxArmRunAttempt({ cohortId: cohort.id, snapshotId: entry.snapshotId, armId: arm.armId });
-      // Already recorded: promotion is idempotent and must never append a
-      // second attempt, which would double-count the arm's spend.
-      if (existing.attempt > 0) continue;
+      const plan = resolvePromotionAttempt({ existingAttempt: existing.attempt, forced: entry.forced === true });
+      if (plan.skip) continue;
       const res = await store.recordArmRun({
-        cohortId: cohort.id, snapshotRowId: snap.id, snapshotId: entry.snapshotId, armId: arm.armId, attempt: 1,
+        cohortId: cohort.id, snapshotRowId: snap.id, snapshotId: entry.snapshotId, armId: arm.armId, attempt: plan.attempt,
         auditRunId: arm.auditRunId, costUsd: arm.costUsd, costStatus: arm.costStatus, error: arm.error,
+        supersedePrior: plan.supersedePrior,
       });
       if (res.ok) promoted += 1;
       else refused.push({ snapshotId: entry.snapshotId, reason: `${arm.armId}: ${res.error}` });
@@ -959,9 +996,80 @@ async function promoteFromLog({ config, lock, configDigest }) {
  * because silently re-calling is exactly the double-charge this protocol exists
  * to prevent. That is the honest boundary, not a gap in the design.
  */
-async function verbReconcile(campaignId) {
+/**
+ * Record the ANALYSIS-TIME rule, and append `rule_changed` when it moved.
+ *
+ * §2.5b removes `targetN` / `calibration` / `decisionRule` from every digest on
+ * purpose: hashing them would mean editing a cost ceiling destroyed every
+ * snapshot ever collected. The stated substitute is that each change appends a
+ * `rule_changed` event with before/after and the operator, and `verdict.mjs`
+ * watermarks standings whose rule moved after the first arm-run.
+ *
+ * That substitute had a READER and no WRITER. `verdict.mjs` watermarked on an
+ * event nothing ever wrote, and `loadCohortEvidence` read a kind that never
+ * appeared — so editing a cost ceiling recorded nothing, the watermark could not
+ * fire, and the only protection pre-registration had was inert. A guarantee
+ * whose enforcement does not exist is the shape this repo's gate-honesty work
+ * exists to catch, and it survived six GPT rounds and two Gemini rounds because
+ * an audit compares the diff to the plan and an ABSENCE OF WIRING is not in the
+ * diff.
+ *
+ * It lives on `reconcile` — a write-path verb — deliberately. `status` and
+ * `verdict` are reads, and a read that appends events is a read nobody can run
+ * twice safely.
+ *
+ * The FIRST recording is `rule_registered`, not `rule_changed`: declaring a rule
+ * is not moving one, and watermarking a campaign for having a rule at all would
+ * make the signal meaningless.
+ */
+async function recordRuleState({ config, campaignId, actor }) {
+  if (!campaignId) return { ok: true, recorded: false };
+  const current = Object.fromEntries(ANALYSIS_TIME_FIELDS.map((f) => [f, config[f]]));
+  const log = await store.listCampaignEvents(campaignId);
+  if (log.cloud === false) return { ok: true, recorded: false };
+
+  const prior = [...log.rows]
+    .filter((e) => e.kind === 'rule_registered' || e.kind === 'rule_changed')
+    .pop();
+  if (!prior) {
+    await store.appendCampaignEvent({ campaignId, kind: 'rule_registered', actor: actor ?? null, detail: { rule: current } });
+    return { ok: true, recorded: true, kind: 'rule_registered' };
+  }
+  const before = prior.detail?.rule ?? prior.detail?.after ?? null;
+  // Canonical JSON so key order can never masquerade as a rule change.
+  if (canonicalJson(before) === canonicalJson(current)) return { ok: true, recorded: false, kind: 'unchanged' };
+
+  await store.appendCampaignEvent({
+    campaignId, kind: 'rule_changed', actor: actor ?? null,
+    detail: { before, after: current },
+  });
+  return { ok: true, recorded: true, kind: 'rule_changed', before, after: current };
+}
+
+async function verbReconcile(campaignId, { actor = null } = {}) {
   const { config, lock, configDigest } = loadCampaign(campaignId);
-  await promoteFromLog({ config, lock, configDigest });
+  const promoted = await promoteFromLog({ config, lock, configDigest });
+
+  if (promoted.cloud !== false) {
+    const ev = await readCohortEvidence({ config, lock });
+    if (ev.ok) {
+      const ruled = await recordRuleState({ config, campaignId: ev.campaignId, actor });
+      if (ruled.kind === 'rule_changed') {
+        process.stdout.write('  RULE CHANGED — recorded in campaign_events. Standings collected before this edit are watermarked;\n'
+          + '  the evidence survives, and the fact that the goalposts moved is now recorded beside the number.\n');
+      } else if (ruled.kind === 'rule_registered') {
+        process.stdout.write('  rule registered (baseline) — later edits will append a rule_changed event\n');
+      }
+      // §7a/R3-H4: clustering runs at the end of the collect→store step, so a
+      // completed snapshot is attributable without a second manual command.
+      // verdict.mjs refuses attribution on an unclustered complete snapshot, so
+      // leaving this to the operator meant the ordinary path watermarked.
+      const { written, refused } = await clusterCohort(ev, { recluster: false });
+      if (written) process.stdout.write(`  clustered ${written} new cluster(s) under matcher v${FINDING_MATCH_SCHEMA_VERSION}\n`);
+      for (const r of refused) process.stdout.write(`  cluster REFUSED ${r.snapshotId}: ${r.reason}\n`);
+    }
+  }
+
   const receipts = scanReceipts(config.id);
   const byState = { intent: [], complete: [], recorded: [], unreadable: [] };
   for (const r of receipts) (byState[r.state] ?? (byState[r.state] = [])).push(r);
@@ -1042,7 +1150,7 @@ async function main() {
       outcome: assertOutcome(requireArg('verdict')),
       note: arg('note'), actor: arg('actor'),
     });
-    case 'reconcile':   return verbReconcile(arg('campaign'));
+    case 'reconcile':   return verbReconcile(arg('campaign'), { actor: arg('actor') });
     case 'declare-inconclusive': return verbDeclareInconclusive(arg('campaign'), { reason: requireArg('reason'), actor: arg('actor') });
     default:            throw new ArgvError(`unhandled verb "${verb}"`);
   }
@@ -1074,3 +1182,7 @@ if (invokedDirectly) {
 }
 
 export const _internals = Object.freeze({ callAdjudicator, adjudicationCohortDir, assertOutcome });
+
+/** Exported for the live-schema suite: the rule recorder is store-coupled, so
+ *  its contract is only assertable against a real campaign_events table. */
+export { recordRuleState };

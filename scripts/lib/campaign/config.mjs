@@ -69,7 +69,11 @@ const DecisionRuleSchema = z.object({
 export const CampaignConfigSchema = z.object({
   schemaVersion: z.literal(1),
   id: z.string().regex(CAMPAIGN_ID_PATTERN, 'campaign id must match ^[a-z0-9][a-z0-9-]{0,63}$ — it is interpolated into lock and receipt paths'),
-  role: z.string().min(1),
+  // D7: v1 generalises role 3 only, so the enum has exactly ONE value. An open
+  // string let a typo'd or invented role parse into a campaign that collects
+  // happily under a role nothing dispatches on — the seam exists to be widened
+  // deliberately, not to be widened by accident.
+  role: z.enum(['final_review_shadow']),
   decision: z.object({
     type: z.literal('select_default'),
     incumbent: z.string().min(1),

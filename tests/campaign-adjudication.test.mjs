@@ -29,7 +29,7 @@ import {
 import {
   centredWindow, citedLineOf, resolveCitedSources, clusterSnapshotFindings,
   normaliseVerdict, routesToHumanQueue, ADJUDICATION_TOOL, AdjudicationVerdictSchema,
-  classifyLogEntry, detailAnchors, anchorLine,
+  classifyLogEntry, detailAnchors, anchorLine, resolvePromotionAttempt,
 } from '../scripts/campaign.mjs';
 import { parseCampaignConfig } from '../scripts/lib/campaign/config.mjs';
 
@@ -663,6 +663,39 @@ describe('bake-off log promotion', () => {
   });
 });
 
+// ── --force promotion (gap 2) ───────────────────────────────────────────────
+
+describe('promotion attempt resolution (--force)', () => {
+  it('first promotion is attempt 1 and supersedes nothing', () => {
+    assert.deepEqual(resolvePromotionAttempt({ existingAttempt: 0, forced: false }),
+      { skip: false, attempt: 1, supersedePrior: false });
+  });
+
+  it('re-running reconcile on an already-promoted arm SKIPS — idempotence, not a second charge', () => {
+    assert.deepEqual(resolvePromotionAttempt({ existingAttempt: 1, forced: false }),
+      { skip: true, attempt: 1, supersedePrior: false });
+  });
+
+  it('a FORCED re-collection appends attempt N+1 and supersedes the prior live row', () => {
+    // Never an overwrite: the earlier attempt stays readable and its spend still
+    // counts, which is exactly why armSpend sums superseded rows. Before --force
+    // existed this branch was unreachable, so the attempt column, the partial
+    // unique index and the receipt-attempt protocol were machinery no operator
+    // action could trigger.
+    assert.deepEqual(resolvePromotionAttempt({ existingAttempt: 1, forced: true }),
+      { skip: false, attempt: 2, supersedePrior: true });
+    assert.deepEqual(resolvePromotionAttempt({ existingAttempt: 4, forced: true }),
+      { skip: false, attempt: 5, supersedePrior: true });
+  });
+
+  it('a garbage attempt count is treated as none, never as a negative attempt', () => {
+    for (const bogus of [null, undefined, -3, NaN, 'two']) {
+      assert.deepEqual(resolvePromotionAttempt({ existingAttempt: bogus, forced: true }),
+        { skip: false, attempt: 1, supersedePrior: false });
+    }
+  });
+});
+
 // ── LIVE: the claims only a real schema can settle ──────────────────────────
 
 const TEST_URL = process.env.AUDIT_DB_TEST_URL;
@@ -930,6 +963,40 @@ describe('campaign store against a live schema', { skip }, () => {
     assert.equal(overhead.spendUsd, null, 'one unpriced attempt makes the total unknown, not smaller');
     assert.equal(overhead.costEvidence, 'unknown');
     assert.equal(overhead.attempts, 2, 'both attempts are counted — a superseded attempt was paid for');
+  });
+
+  it('the rule recorder writes a baseline, stays silent when unchanged, and appends before/after on a real edit', async () => {
+    // §2.5b removes the analysis-time fields from every digest and names
+    // `rule_changed` as the substitute protection. That substitute shipped with
+    // a READER and no WRITER: verdict.mjs watermarked on an event nothing ever
+    // wrote, so editing a cost ceiling recorded nothing.
+    const { recordRuleState } = await import('../scripts/campaign.mjs');
+    const cfg = { targetN: 12, calibration: { sampleRate: 0.2 }, decisionRule: { floorMargin: 0.5, costCeilingUsdPerAccepted: 8 } };
+
+    // Its OWN campaign, not the suite's shared one. An earlier test appends a
+    // `rule_changed` event to prove the append-only trigger, which would make
+    // this recorder see a prior rule and take the `changed` branch on its first
+    // call — a pass/fail decided by test ORDER rather than by the behaviour
+    // under test.
+    const own = await store.ensureCampaign({ repoId: ids.repoId, campaignKey: 'rule-recorder-isolated', configDigest: 'd0' });
+    const campaignId = own.id;
+
+    const first = await recordRuleState({ config: cfg, campaignId, actor: 'tester' });
+    assert.equal(first.kind, 'rule_registered', 'declaring a rule is not moving one');
+
+    const again = await recordRuleState({ config: cfg, campaignId, actor: 'tester' });
+    assert.equal(again.kind, 'unchanged', 'an unchanged rule must not append noise');
+
+    const edited = { ...cfg, decisionRule: { ...cfg.decisionRule, costCeilingUsdPerAccepted: 6 } };
+    const moved = await recordRuleState({ config: edited, campaignId, actor: 'tester' });
+    assert.equal(moved.kind, 'rule_changed');
+    assert.equal(moved.before.decisionRule.costCeilingUsdPerAccepted, 8);
+    assert.equal(moved.after.decisionRule.costCeilingUsdPerAccepted, 6);
+
+    const rows = (await client.query(
+      "SELECT kind FROM campaign_events WHERE campaign_id = $1 AND kind LIKE 'rule%' ORDER BY created_at", [campaignId],
+    )).rows.map((r) => r.kind);
+    assert.deepEqual(rows, ['rule_registered', 'rule_changed'], 'append-only, and the unchanged call added nothing');
   });
 
   it('an arm-run with zero findings still appears — a silent arm is not an absent one', async () => {
