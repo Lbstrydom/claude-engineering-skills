@@ -144,12 +144,77 @@ const KNOWN_FLAGS = ['--check', '--dry-run'];
  * @param {{check?:boolean, dry?:boolean}} [opts]
  * @returns {{writes:number, unchanged:number, drift:number, bootstrapped:number, lines:string[]}}
  */
+/**
+ * Re-express a canonical document for ONE target location.
+ *
+ * PURE, and the reason the sync is no longer a byte copy. Two defects came
+ * from copying bytes verbatim (raised by the consolidated audit as M1/M3 and
+ * pre-existing across all 11 pairs):
+ *
+ *  1. **Relative links resolved only from the canonical's own directory.**
+ *     `](../../plans/foo.md)` is correct from `docs/audit/shared-references/`
+ *     and points at a non-existent `skills/plans/` from a skill's
+ *     `references/`. No single byte string can be right in both places, so the
+ *     link has to be RECOMPUTED per target rather than copied.
+ *  2. **Every copy asserted it was the canonical**, including the instruction
+ *     "Edit this file, never a copy" — advice that is exactly backwards when
+ *     read in the copy it is telling you to edit.
+ *
+ * Both are fixed here rather than by editing the canonical, because the
+ * canonical is CORRECT about itself; it is the copy that needs different text.
+ *
+ * Only `./`- and `../`-prefixed link targets are touched. Absolute paths,
+ * URLs, anchors and reference-style links are left exactly as written.
+ *
+ * @param {string} srcText - canonical file contents
+ * @param {string} canonicalPath - absolute path of the canonical
+ * @param {string} targetPath - absolute path this copy will be written to
+ * @param {string} repoRoot - absolute repo root, for the banner's pointer
+ * @returns {string}
+ */
+export function renderForTarget(srcText, canonicalPath, targetPath, repoRoot) {
+  const fromDir = path.dirname(canonicalPath);
+  const toDir = path.dirname(targetPath);
+  const canonRel = path.relative(repoRoot, canonicalPath).replaceAll('\\', '/');
+
+  // Markdown inline links: `](target)` — the `(` group stops at the first
+  // whitespace so an optional `"title"` survives untouched.
+  const rewritten = srcText.replaceAll(
+    /\]\((\.\.?\/[^)\s]+)([^)]*)\)/g,
+    (whole, link, rest) => {
+      const abs = path.resolve(fromDir, link);
+      const rel = path.relative(toDir, abs).replaceAll('\\', '/');
+      // path.relative drops the leading `./` for a sibling; markdown is happier
+      // with it present and it keeps the link visibly relative.
+      const prefixed = rel.startsWith('.') ? rel : `./${rel}`;
+      return `](${prefixed}${rest})`;
+    },
+  );
+
+  // Replace the canonical's self-description with a provenance banner. Matched
+  // on the sentence, not a line number, so an edit to the surrounding prose
+  // does not silently stop the substitution — it would show up as drift.
+  const SELF_DESC = /This is the canonical copy\.[\s\S]*?\*\*Edit this file, never a copy\.\*\*/;
+  const banner = `> **GENERATED COPY — do not edit.** The canonical is\n`
+    + `> [\`${canonRel}\`](${path.relative(toDir, canonicalPath).replaceAll('\\', '/')}).\n`
+    + `> Regenerate with \`node scripts/sync-shared-audit-refs.mjs\`; \`npm run check\`\n`
+    + `> fails on drift. Relative links above were rewritten for this location,\n`
+    + `> so this file is NOT byte-identical to the canonical by design.`;
+
+  return SELF_DESC.test(rewritten) ? rewritten.replace(SELF_DESC, banner) : rewritten;
+}
+
 export function syncPairs(pairs, { check = false, dry = false } = {}) {
   let writes = 0, unchanged = 0, drift = 0, bootstrapped = 0;
   const lines = [];
 
   for (const { canonical, target, skill, basename } of pairs) {
-    const srcBuf = fs.readFileSync(canonical);
+    // Rendered per target, not copied: relative links must resolve from the
+    // COPY's directory, and the copy must not claim to be the canonical.
+    const srcBuf = Buffer.from(
+      renderForTarget(fs.readFileSync(canonical, 'utf-8'), canonical, target, ROOT),
+      'utf-8',
+    );
     const exists = fs.existsSync(target);
     const dstBuf = exists ? fs.readFileSync(target) : Buffer.alloc(0);
     if (exists && sha(srcBuf) === sha(dstBuf)) {

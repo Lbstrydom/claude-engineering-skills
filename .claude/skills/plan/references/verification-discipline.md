@@ -7,12 +7,13 @@ summary: Verification discipline — pinned citations, figure provenance, two-di
 Six rules that outlived the engagement that produced them. Each is led by its
 measurement, because the measurement is the argument. Field report:
 `wine-cellar-app/docs/upstream-issues/claude-engineering-skills-feedback-2026-08-07.md`; design + audit trail:
-[`docs/plans/verification-discipline-cluster.md`](../../plans/verification-discipline-cluster.md).
+[`docs/plans/verification-discipline-cluster.md`](../../../docs/plans/verification-discipline-cluster.md).
 
-This is the canonical copy. Consuming skills carry a byte-identical
-`references/verification-discipline.md`, synced by
-`node scripts/sync-shared-audit-refs.mjs` and drift-checked in `npm run check`.
-**Edit this file, never a copy.**
+> **GENERATED COPY — do not edit.** The canonical is
+> [`docs/audit/shared-references/verification-discipline.md`](../../../docs/audit/shared-references/verification-discipline.md).
+> Regenerate with `node scripts/sync-shared-audit-refs.mjs`; `npm run check`
+> fails on drift. Relative links above were rewritten for this location,
+> so this file is NOT byte-identical to the canonical by design.
 
 ---
 
@@ -262,7 +263,7 @@ live: in the same engagement a campaign credited with enabling a migration began
 Every engagement produces throwaway verification, and a fraction of it guards
 something that will regress. That promotion is craft; the scaffold makes it
 mechanical. Template + worked example:
-[`skills/audit-code/examples/contract-test-scaffold.md`](../../../skills/audit-code/examples/contract-test-scaffold.md).
+[`skills/audit-code/examples/contract-test-scaffold.md`](../../audit-code/examples/contract-test-scaffold.md).
 
 Three parts, and **the first alone is the fail-open trap of §3**:
 
