@@ -40,6 +40,19 @@ spawn and a no-push assertion over seven scenarios' recorded argv), plus the
 `package.json` script, the catalogue entry, the runbook section, and this note.
 Nothing about the downstream's private topology is recorded here.
 
+**Consumer-side verification: `verified`** (`d269aa3f9529a5aa950f42f7a8c6b6cf42a61c13`).
+Retrieved the way a teammate gets it —
+`git clone https://github.com/Lbstrydom/claude-engineering-skills.git` into a temp
+dir, then `git fetch --depth 50` to reach the commit. Both new files are tracked
+in the clone (`git ls-files --error-unmatch` resolves them, so neither landed
+gitignored), and `git show d269aa3f:<path> | sha256sum` matches the local object
+for each. In the clone: `npm ci`, then `node --test tests/update-auditloop.test.mjs`
+→ 16/16, and `node scripts/update-auditloop.mjs --selfcheck-relocation` → `OK`.
+Then the real thing — `npm run update-auditloop` **inside that clone**, against its
+real `origin`: pulled (already up to date), found the tree healthy, ran
+`skills:check` green, exited 0, pushed nothing. The producer-side green was not
+inherited; every figure above was observed in the clone.
+
 ## 2026-08-10 — the page was ordered, but nothing said so
 
 Upstream report `96a829f8` (HIGH, from wine-cellar-app): `list-unremediated-acceptances`
