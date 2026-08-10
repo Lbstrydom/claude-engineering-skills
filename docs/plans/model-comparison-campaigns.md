@@ -1,10 +1,32 @@
 # Plan: Model-Comparison Campaigns — declarative arms, AI-first adjudication, decision-grade dashboard
 
 - **Date**: 2026-08-10
-- **Status**: Draft — audited, ready for `/cycle`
+- **Status**: Complete — shipped 2026-08-10 via `/cycle --autonomous`
 
-  Both gates ran and closed at their caps (see Audit trail below); no code
-  exists yet.
+  All three §11 clusters implemented and gate-clear. Cluster A audited before
+  this run; Cluster B took 6 GPT rounds to convergence (in-cluster HIGH 0,
+  MEDIUM 0) plus a Gemini APPROVE; Cluster C's `fix-gate: final` deferred to the
+  consolidated Gemini review over the union diff of A–C, which ran its 2-round
+  cap — 3 findings in round 1, all fixed; 1 in round 2, disproved by execution.
+  Coherence `Strong`, over-engineering flags 0, `claude_bias_detected: false`
+  in every round.
+
+  **Two corrections this plan owes its reader**, because implementation
+  falsified them:
+
+  1. §7 assigns four dashboard integration points to `scripts/build-dashboard.mjs`.
+     They live one layer down — `render.mjs` (nav entry, renderer call),
+     `collect-reference.mjs` (collector invocation, degraded-status propagation)
+     and `schema.mjs` (payload survival). `build-dashboard.mjs` is the CLI
+     wrapper and was not modified. §4's "the existing copy-to-clipboard helper"
+     also did not exist; a delegated handler was added.
+  2. §7b's close-out expects the live readout to show "the real 5/12 state".
+     It shows **0/12**, and that is correct: the seven collected snapshots
+     predate the campaign declaration, carry no `lockDigest`, and `reconcile`
+     refuses to promote them. Adopting evidence collected under an unknown
+     contract is precisely the relabelling that produced five false "window met"
+     reads — the rule the lock exists to enforce, applied to this plan's own
+     history.
 - **Author**: Claude + Louis
 - **Scope**: full-stack (CLI + store + generated dashboard page)
 

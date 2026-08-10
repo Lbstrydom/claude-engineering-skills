@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**8 active · 177 terminal · 27 audit summaries · 4 reference docs**
+**7 active · 178 terminal · 27 audit summaries · 4 reference docs**
 
 ---
 
@@ -23,7 +23,6 @@ This is the list to read when asking "what is in flight?".
 |---|---|---|
 | [Event-Wiring Symmetry Check](./event-wiring-symmetry.md) | `Draft` |  |
 | [Final-Review Shadow Bake-Off (marginal-value re-test)](./final-review-shadow-bakeoff.md) | `In Progress` | activated 2026-07-31 — see §0 Activation Addendum |
-| [Model-Comparison Campaigns — declarative arms, AI-first adjudication, decision-grade dashboard](./model-comparison-campaigns.md) | `Draft` | audited, ready for `/cycle` |
 | [Learning / Persona / Quickfix Reliability Debt (2026-07-26 triage)](./refactor-learning-persona-quickfix-2026-07.md) | `Draft` | re-scoped to the 7 entries that are still real. |
 | [Miscellaneous Small-Cluster Debt (2026-07-26 triage)](./refactor-misc-small-items-2026-07.md) | `Draft` | items resolved individually as picked up (see per-item status below), not implemented as one batch |
 | [Standing Queue Burndown — the three gates that fire on every ship](./standing-queue-burndown.md) | `In Progress` | Q1 38 code rows, Q2 unknown (reader reports no total), Q3 68 actionable; measured 2026-08-09 |
@@ -48,7 +47,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 174 completed plans</summary>
+<summary>Show all 175 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -140,6 +139,7 @@ source comments that no docs linter sees — stays valid.
 | [Migration-drift detector for the audit-loop store](./migration-drift-detector.md) | `Complete` | code shipped (edffa19), operator bootstrap done via Supabase CLI, expected-schema regenerated (b13552d), --… |
 | [Model A/B/C effectiveness experiment harness (auditor-model selection from real data)](./model-ab-experiment-harness.md) | `Complete` | built + audited 2026-07-01; see Implementation Log |
 | [Model-A/B/C auditor harness — v2 (composition arms + outcome-based scoring)](./model-ab-harness-v2.md) | `Complete` | built 2026-07-01 via `/cycle code --autonomous` (2 clusters). Audit-plan: GPT R1–R3 H:7→4→4 plateau; Gemini… |
+| [Model-Comparison Campaigns — declarative arms, AI-first adjudication, decision-grade dashboard](./model-comparison-campaigns.md) | `Complete` | shipped 2026-08-10 via `/cycle --autonomous` |
 | [Model Swap-In Evaluation Harness](./model-swap-eval-harness.md) | `Complete` |  |
 | [Provider-Agnostic Model-Tier — Observation + Abstraction (instrument before routing)](./model-tier-observation.md) | `Complete` | verified built; status corrected from Approved during archive triage 2026-06-27 |
 | [Multi-Language Audit Support + Linter Pre-Pass + SonarQube Taxonomy](./multi-language-and-linter-integration.md) | `Complete` | master — all three sub-phases shipped: see `phase-a-language-aware-analysis.md`, `phase-b-sonarqube-classif… |
