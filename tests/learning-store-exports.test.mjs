@@ -103,6 +103,10 @@ const EXPECTED_EXPORTS = [
   // them AND its foreign repo_id could be written into a regression spec.
   'findUnlockedFixInRepo',
   'getUnremediatedAcceptances', // accepted-but-never-remediated /ship nudge (2026-07-27)
+  // The page clamp for BOTH nudge readers above. Public because the CLI must
+  // echo the RESOLVED limit/offset back to the caller, and one owner of the
+  // bounds beats the CLI re-deriving them and drifting (2026-08-10).
+  'resolveNudgePage',
   'insertRunRowWithPolicyFallback', // selector-policy 42703 write seam (plan: ux-lock-selector-policy)
   'listConsistencyCandidates',
   'resolveCandidateStatesByFingerprint',
@@ -361,6 +365,13 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // here — they live in candidate-pagination.mjs, which the barrel does not
     // re-export, because this surface is store OPERATIONS and constants are
     // excluded by design.
-    assert.equal(EXPECTED_EXPORTS.length, 184);
+    // 184 → 185: resolveNudgePage added 2026-08-10 (upstream report 96a829f8).
+    // Both /ship nudge readers now take `limit`/`offset` so their tail is
+    // reachable — a consumer measured 44 obligations of which 24 could not be
+    // enumerated by ANY invocation, because `--limit` was a registered flag no
+    // handler read. The clamp is exported rather than duplicated in the CLI so
+    // the payload can echo what it actually resolved: a caller who cannot tell
+    // a clamped page from an exhausted one reads a short page as "no tail".
+    assert.equal(EXPECTED_EXPORTS.length, 185);
   });
 });

@@ -57,6 +57,7 @@ import {
   countUnlockedFixes,
   getUnremediatedAcceptances,
   countUnremediatedAcceptances,
+  resolveNudgePage,
   readAuditEffectiveness,
   listPersonasForApp,
   upsertPersona,
@@ -165,7 +166,7 @@ const KNOWN_FLAGS = [
   // ── Global / payload ──────────────────────────────────────────────────────
   '--json', '--stdin', '--help', '--selfcheck-relocation',
   // ── Shared identity / scoping flags (many subcommands) ────────────────────
-  '--repo', '--repo-id', '--repo-uuid', '--limit', '--format', '--out', '--cwd',
+  '--repo', '--repo-id', '--repo-uuid', '--limit', '--offset', '--format', '--out', '--cwd',
   // ── plan-satisfaction ─────────────────────────────────────────────────────
   '--plan-id',
   // ── final-review-stats / final-review-adjudicate / final-review-record-fix ─
@@ -836,6 +837,18 @@ async function resolveShipNudgeScope() {
 /** The store-scope argument for a resolved scope (D18 explicit-scope contract). */
 const storeScopeFor = (scope) => (scope.mode === 'all-repos' ? { allRepos: true } : { repoId: scope.repoId });
 
+/**
+ * `--limit` / `--offset` for the capped /ship-nudge readers.
+ *
+ * `--limit` is a globally-registered flag, so `assertKnownFlags` accepted it on
+ * these subcommands long before any handler read it: it parsed, it validated, and
+ * it did nothing. That is the accepted-and-inert shape this CLI has now been bitten
+ * by three times (`--repo` ignored in favour of `--repo-id`, `--report-path`
+ * unregistered, and this). The store clamps the values; passing them through
+ * unparsed keeps one owner for the bounds.
+ */
+const pageArgsFromFlags = () => ({ limit: argOption('limit'), offset: argOption('offset') });
+
 async function cmdListUnlockedFixes() {
   await initLearningStore();
   if (!await isCloudEnabled()) {
@@ -854,18 +867,24 @@ async function cmdListUnlockedFixes() {
   }
 
   const storeScope = storeScopeFor(scope);
-  const rows = await getUnlockedFixes(storeScope);
-  // `rows` is capped at 20 by the view query, so its length is NOT the
-  // obligation count — reporting it as one undercounted 232 as "20" for weeks.
+  const page = pageArgsFromFlags();
+  const rows = await getUnlockedFixes(storeScope, page);
+  // `rows` is ONE PAGE, so its length is NOT the obligation count — reporting it
+  // as one undercounted 232 as "20" for weeks.
   // `byMode.plan` is surfaced separately because a plan finding can never carry
   // a regression spec; folding it into one total makes an unactionable half of
   // the backlog read as work.
   const byMode = await countUnlockedFixes(storeScope);
+  const { limit, offset } = resolveNudgePage(page);
   emit({
     ok: true, cloud: true,
     scope: { mode: scope.mode, repoId: scope.repoId, slug: scope.slug },
     measured: true, reason: null,
     rows, shown: rows.length, total: byMode.total, byMode,
+    // Echo the RESOLVED page, not the raw flags: the store clamps, so a caller
+    // that asked for 10_000 and a caller that asked for nothing must be able to
+    // tell what they actually received before concluding the tail is empty.
+    limit, offset,
   });
 }
 
@@ -886,17 +905,22 @@ async function cmdListUnremediatedAcceptances() {
       measured: false, reason: scope.reason, rows: [], shown: 0, total: 0, byMode: { total: 0, code: 0, plan: 0 } });
   }
   const storeScope = storeScopeFor(scope);
-  const rows = await getUnremediatedAcceptances(storeScope);
-  // `rows` is LIMIT 20. Emitting only it let /ship report "20" against a real
+  const page = pageArgsFromFlags();
+  const rows = await getUnremediatedAcceptances(storeScope, page);
+  // `rows` is ONE PAGE. Emitting only it let /ship report "20" against a real
   // 129 (2026-07-31) — the same undercount `countUnlockedFixes` fixed for the
   // sibling view two days earlier. `shown` vs `total` makes the cap explicit
-  // instead of letting a saturated array masquerade as a complete count.
+  // instead of letting a saturated array masquerade as a complete count, and
+  // `--limit`/`--offset` make the rows past `shown` reachable at all: a consumer
+  // measured 44 total / 20 shown with 24 rows no CLI invocation could reach.
   const byMode = await countUnremediatedAcceptances(storeScope);
+  const { limit, offset } = resolveNudgePage(page);
   emit({
     ok: true, cloud: true,
     scope: { mode: scope.mode, repoId: scope.repoId, slug: scope.slug },
     measured: true, reason: null,
     rows, shown: rows.length, total: byMode.total, byMode,
+    limit, offset,
   });
 }
 

@@ -67,8 +67,16 @@
       "reason": "Section heading. 'never remediated' names the POPULATION the step reads (findings whose remediation_state never advanced), not a guarantee the step enforces. The step's actual enforcement claim is contracted as unremediated-acceptances-never-blocks."
     },
     {
-      "line": "not gate; the same philosophy as quick-fix detection). **Show at most 5 rows**,",
-      "reason": "'not gate' is the tail of the never-blocks claim contracted above, reflowed onto the next line. 'Show at most 5 rows' is a DISPLAY instruction to the agent about how much of the row set to echo — it caps output verbosity, not behaviour, and the reader's own LIMIT 20 is the only mechanical bound (asserting how many rows a model chooses to print is not a gate)."
+      "line": "not gate; the same philosophy as quick-fix detection). **Show the first 5 rows",
+      "reason": "'not gate' is the tail of the never-blocks claim contracted above, reflowed onto the next line. 'Show the first 5 rows' is a DISPLAY instruction to the agent about how much of the row set to echo — it caps output verbosity, not behaviour, and the reader's own page limit is the only mechanical bound (asserting how many rows a model chooses to print is not a gate). Reworded 2026-08-10 from 'Show at most 5 rows' once the reader gained its own ORDER BY: the instruction now says take them AS RETURNED rather than re-sort, which is what makes 'HIGH first' deliverable — see the two entries below."
+    },
+    {
+      "line": "> cap, and all 15 HIGH rows of 44 landed on page 1. That was a property of the",
+      "reason": "Narrative inside the 2026-08-10 blockquote explaining upstream report 96a829f8. It recounts a MEASUREMENT — EXPLAIN showed the planner keeping the view's inner Sort under the outer LIMIT, so all 15 HIGH rows of 44 really were on page 1 — in order to explain why the defect looked correct in production. A statement about what was observed before the fix, not a rule /ship enforces. The property it describes is now genuinely asserted; see the entry below."
+    },
+    {
+      "line": "> signal. The order is now asserted where the cap is applied, so today's output",
+      "reason": "The resolution sentence of the same blockquote. Unlike the narrative above it, this line describes something MECHANICALLY guarded rather than merely claimed, which is why it is dispositioned here instead of contracted as document-only: getUnremediatedAcceptances spells its ORDER BY out at the query that applies the LIMIT (scripts/lib/store/plans-ship.mjs), and tests/cross-skill-unlocked-scope.test.mjs scans every paged nudge-view statement for ORDER BY preceding LIMIT, for a unique final tiebreaker (audit_finding_id), and for OFFSET — confirmed red against the pre-fix shape. What has no oracle is the half this sentence is really about: whether the AGENT then prints the rows in the order it received them. Same shape as the display-instruction entry above."
     },
     {
       "line": "<n> finding(s) you accepted were never marked fixed (showing <=5):",

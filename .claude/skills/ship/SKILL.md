@@ -234,9 +234,35 @@ suppresses only `dismissed` or `fixed`/`verified`), so an unremediated
 acceptance is an open obligation, not a closed one.
 
 If > 0, print — **never blocks, and there is no override flag for it** (nudge,
-not gate; the same philosophy as quick-fix detection). **Show at most 5 rows**,
-HIGH first; the reader is capped at 20 and the point is the signal, not the
-backlog:
+not gate; the same philosophy as quick-fix detection). **Show the first 5 rows
+as returned** — the reader now orders HIGH first, then oldest first, so the top
+of the page *is* the top of the backlog. Take them in order; do not re-sort.
+
+> **"HIGH first" was unsatisfiable until 2026-08-10** (upstream report 96a829f8,
+> filed HIGH from a consumer). The reader capped its page with **no ORDER BY of
+> its own**, so this step was asking you to show the highest-severity rows out
+> of a page that carried no guarantee of containing any. It *looked* right —
+> measured on the live store, `unremediated_acceptances` happens to define an
+> inner `ORDER BY CASE severity …`, the planner keeps that sort under the outer
+> cap, and all 15 HIGH rows of 44 landed on page 1. That was a property of the
+> view's text, not of the read: Postgres does not guarantee a subquery's ORDER BY
+> survives into an outer query, and the sibling `unlocked_fixes` view carries no
+> inner sort at all. A `CREATE OR REPLACE VIEW` dropping the inner clause — a
+> pure formatting change — would have silently started hiding HIGH rows with no
+> signal. The order is now asserted where the cap is applied, so today's output
+> is unchanged and the instruction is deliverable rather than lucky.
+
+The page is capped (default 20) and the point is the signal, not the backlog. To
+read past it — the consumer measured 44 obligations of which 24 were unreachable
+by any invocation — page with `--limit` / `--offset`; the order is total, so
+pages neither repeat nor skip a row:
+
+```bash
+node scripts/cross-skill.mjs list-unremediated-acceptances --limit 20 --offset 20
+```
+
+The payload echoes the **resolved** `limit`/`offset` (the store clamps to 200),
+so a short page can be told from an exhausted one.
 
 ```
 ⚠ UNREMEDIATED ACCEPTANCES (non-blocking)

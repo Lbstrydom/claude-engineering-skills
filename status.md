@@ -1,6 +1,58 @@
 # Project Status Log
 
-## 2026-08-10 (latest) — a plan whose fixes kept breaking each other
+## 2026-08-10 (latest) — the page was ordered, but nothing said so
+
+Upstream report `96a829f8` (HIGH, from wine-cellar-app): `list-unremediated-acceptances`
+returns a 20-row page with no `ORDER BY`, so /ship Step 0.5e's own instruction —
+"show at most 5 rows, HIGH first" — could not be honoured, and 24 of 44
+obligations were unreachable by any invocation. All three figures reproduced
+exactly against the live store.
+
+**The stated mechanism was half wrong, and the correction is the interesting
+part.** The rows were not arbitrary. `unremediated_acceptances` defines its own
+inner `ORDER BY CASE severity WHEN 'HIGH' THEN 0 ELSE 1 END, created_at ASC`,
+and `EXPLAIN` shows the planner keeping that Sort node under the outer `LIMIT` —
+so HIGH really did come first, all 15 of them on page 1 of 44. The consumer read
+that as luck; it was a property, just not one this code owned. Postgres does not
+guarantee a subquery's `ORDER BY` reaches an outer query, and the sibling
+`unlocked_fixes` view carries no inner sort at all — so the two readers disagreed
+about *where ordering lives*, and a `CREATE OR REPLACE VIEW` dropping the inner
+clause, a pure formatting change, would have silently started hiding HIGH rows.
+Reproducing a figure is not verifying its attribution: the numbers were right,
+the causal story was not, and the fix is the same either way.
+
+The reader now spells the clause out where the cap is applied, reproducing the
+view's intent exactly — so today's output is byte-identical — plus
+`audit_finding_id` to make the order **total**. That last term is not decoration:
+`accepted_at` ties freely at day granularity, and a non-total order permutes
+across pages, which shows one row twice and skips another. Paged at 7 (which does
+not divide 44): 44 rows, 44 distinct, full coverage.
+
+`--limit`/`--offset` are threaded through **both** siblings, not just the reported
+one. This is the third one-sibling-only divergence the file records in its own
+docblocks, and fixing one half again is the whole failure mode. `--limit` had been
+in `KNOWN_FLAGS` the entire time — accepted, validated, and read by no handler;
+`--offset` was not registered at all. The store owns the clamp and the CLI echoes
+the **resolved** page, because a caller who cannot tell a clamped page from an
+exhausted one reads a short page as "no tail".
+
+`tests/cross-skill-unlocked-scope.test.mjs` now scans the view family for
+`ORDER BY` before `LIMIT`, a unique final tiebreaker, and `OFFSET` — confirmed red
+against the pre-fix shape before being trusted. It caught two things while being
+written, both worth keeping. Hoisting the clause into a `const order` made it
+invisible to a static scan, which would have gone green reading `${order}`; the
+SQL stays inline for that reason. And the neighbouring cap assertion was pinned to
+`LIMIT \d+` — the literal, not the property — so it failed on a reader that still
+capped, via a bound parameter.
+
+Two honest notes. A one-off `relocation-selfcheck-smoke` failure during this
+session was a **concurrent session** mid-edit on the `FINAL_REVIEW_HARD_DEADLINE_MS`
+floor in `config.mjs`; it passes 3/3 and the hermetic repro is clean in both trees.
+And the first control run was confounded — a worktree at HEAD lacks the gitignored
+`.env`, so it differed in two ways at once and proved nothing until the `.env` was
+copied in.
+
+## 2026-08-10 — a plan whose fixes kept breaking each other
 
 `docs/plans/model-comparison-campaigns.md` — the design for turning the
 one-off Opus-vs-Kimi bake-off into a declarable model-comparison capability

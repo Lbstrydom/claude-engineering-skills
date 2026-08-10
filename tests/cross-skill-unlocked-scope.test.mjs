@@ -238,6 +238,97 @@ describe('the fence covers the whole view family, not just the reported one', ()
   }
 });
 
+describe('a capped nudge reader must impose its OWN total order', () => {
+  // THE DEFECT (upstream 96a829f8, HIGH, filed from a consumer 2026-08-10).
+  // `getUnremediatedAcceptances` capped its page with no ORDER BY of its own
+  // while the sibling `getUnlockedFixes` had carried one since the
+  // arbitrary-page fix — the THIRD one-sibling-only divergence in this family,
+  // after the LIMIT-counter and the repo-scope fence. Enumerating readers by
+  // hand is what missed the first two, so this scans mechanically like the
+  // scope block above.
+  //
+  // Why it is a real defect even though the output looked right: measured on
+  // the live store, `unremediated_acceptances` defines its own inner
+  // `ORDER BY CASE severity … , created_at ASC`, the planner keeps that Sort
+  // under the outer LIMIT, and all 15 HIGH rows of 44 landed inside the page.
+  // But Postgres does not guarantee a subquery's ORDER BY reaches an outer
+  // query, and the sibling view carries no inner sort at all — so /ship's
+  // "show at most 5 rows, HIGH first" was resting on an accident of one view's
+  // text. The order has to be asserted where the LIMIT is applied.
+  // Adjacent concatenated template literals are joined before scanning: a SQL
+  // string long enough to need wrapping is written as `…` + `…`, and matching
+  // each literal separately would see a FROM with no LIMIT and a LIMIT with no
+  // FROM, so every statement would drop out of the filter and the suite would
+  // pass having examined nothing. (The vacuous-pass guard below caught exactly
+  // that while this test was being written.) Interpolating the clause into a
+  // `const` is still invisible here, and that is intended — the source must
+  // keep its SQL literal for a static scan to mean anything.
+  const storeSrc = fs.readFileSync(
+    path.join(repoRoot, 'scripts', 'lib', 'store', 'plans-ship.mjs'), 'utf-8')
+    .replace(/`\s*\+\s*`/g, '');
+  const NUDGE_VIEWS = ['unlocked_fixes', 'unremediated_acceptances'];
+
+  // Only SELECTs that actually take a page. A `count(*) … GROUP BY` needs no
+  // order (it returns a set the caller reduces), and demanding one there would
+  // be cargo-culting the rule rather than enforcing it.
+  const pagedStatements = [...storeSrc.matchAll(/`([^`]*)`/g)].map((m) => m[1])
+    .filter((sql) => NUDGE_VIEWS.some((v) => new RegExp(`FROM\\s+${v}\\b`).test(sql)))
+    .filter((sql) => /\bLIMIT\b/.test(sql))
+    // A single-row lookup by primary key (`findUnlockedFixInRepo`) is already
+    // deterministic: the predicate selects at most one row, so LIMIT 1 cannot
+    // choose between candidates.
+    .filter((sql) => !/audit_finding_id\s*=\s*\$\d/.test(sql));
+
+  it('finds paged statements at all (vacuous-pass guard)', () => {
+    assert.ok(pagedStatements.length >= 2,
+      `expected >=2 paged nudge-view reads, found ${pagedStatements.length} — if this dropped to ` +
+      'zero the assertions below would all pass having checked nothing');
+  });
+
+  for (const sql of pagedStatements) {
+    const label = sql.replace(/\s+/g, ' ').trim().slice(0, 80);
+    it(`orders before it caps: ${label}`, () => {
+      assert.match(sql, /ORDER BY/i,
+        'a LIMITed read of a nudge view with no ORDER BY returns an arbitrary page. Inheriting ' +
+        'the view\'s inner ORDER BY does not count — Postgres does not guarantee it survives ' +
+        `into an outer query:\n  ${sql}`);
+      assert.ok(sql.search(/ORDER BY/i) < sql.search(/\bLIMIT\b/),
+        `ORDER BY must precede LIMIT to select the page, not reorder it:\n  ${sql}`);
+    });
+
+    it(`its order is TOTAL, not merely a sort key: ${label}`, () => {
+      // A non-total order permutes freely among ties, so paging it shows one
+      // row twice and skips another — which is worse than an arbitrary single
+      // page, because it looks like a complete enumeration.
+      const order = sql.slice(sql.search(/ORDER BY/i));
+      assert.match(order, /audit_finding_id/,
+        'the final tiebreaker must be a unique column (audit_finding_id) or rows can reorder ' +
+        `between pages:\n  ${sql}`);
+    });
+  }
+
+  it('every paged reader threads limit/offset — a page you cannot advance hides its tail', () => {
+    // Measured on the consumer: total 44, shown 20, and no CLI invocation could
+    // reach the other 24. `--limit` was a globally-registered flag the handler
+    // never read, so it was accepted, validated, and inert.
+    for (const sql of pagedStatements) {
+      assert.match(sql, /OFFSET/i, `paged read cannot advance past its first page:\n  ${sql}`);
+    }
+    assert.match(cliSrc, /pageArgsFromFlags/,
+      'the CLI must pass --limit/--offset to the readers, not merely accept the flags');
+    assert.match(cliSrc, /argOption\('offset'\)/);
+    assert.match(cliSrc, /'--offset'/,
+      '--offset must be in KNOWN_FLAGS or assertKnownFlags rejects it before any handler runs');
+  });
+
+  it('the CLI echoes the RESOLVED page, so a clamp is visible to the caller', () => {
+    // The store clamps (0, -5, NaN, 10_000). A caller who cannot see what it
+    // actually received will read a short page as "the tail is empty".
+    assert.match(cliSrc, /resolveNudgePage\(page\)/);
+    assert.match(cliSrc, /rows, shown: rows\.length, total: byMode\.total, byMode,/);
+  });
+});
+
 describe('lock worksheet — cross-tenant WRITE fence', () => {
   it('resolves repo identity FIRST and never adopts the fetched row\'s repo_id', () => {
     assert.ok(!/const repoId = finding\?\.repo_id/.test(cliSrc),
@@ -293,7 +384,11 @@ describe('a capped nudge reader must ship a counter, and the CLI must emit it', 
       // would be pinning a contract nothing needs any more.
       assert.match(storeSrc, new RegExp(`function\\s+${reader}\\b`), `${reader} not found in the store`);
       const body = storeSrc.slice(storeSrc.search(new RegExp(`function\\s+${reader}\\b`)));
-      assert.match(body.slice(0, 1200), /\bLIMIT\s+\d+/,
+      // `LIMIT $n` counts as a cap as much as `LIMIT 20` does. This read
+      // `/\bLIMIT\s+\d+/` until the readers took a bound page parameter
+      // (2026-08-10), at which point it failed on a reader that still capped —
+      // the assertion was pinned to the literal rather than to the property.
+      assert.match(body.slice(0, 1600), /\bLIMIT\s+(?:\d+|\$)/,
         `${reader} no longer caps its rows — re-check whether a counter is still required`);
     });
 

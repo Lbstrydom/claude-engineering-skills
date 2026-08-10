@@ -582,13 +582,43 @@ function resolveExplicitRepoScope(scope, fnName) {
 }
 
 /**
+ * Default page size for the /ship-nudge readers below. Unchanged from the bare
+ * `LIMIT 20` these carried before pagination existed, deliberately: the default
+ * output of every caller stays byte-identical, so threading `limit`/`offset`
+ * cannot quietly change what an operator sees.
+ */
+const NUDGE_PAGE_DEFAULT = 20;
+/** Upper bound on one page. These feed a nudge; the counters report scale. */
+const NUDGE_PAGE_MAX = 200;
+
+/**
+ * Clamp caller-supplied paging for a nudge reader.
+ *
+ * Nonsense in (0, -5, NaN, 10_000) must not become nonsense in SQL, and must
+ * not silently mean "everything" either — an unbounded read of a view that has
+ * run to 232 rows is not what any of these call sites wants.
+ *
+ * @param {{limit?: number|string|null, offset?: number|string|null}} [opts]
+ * @returns {{limit: number, offset: number}}
+ */
+export function resolveNudgePage(opts = {}) {
+  const rawLimit = Number(opts?.limit);
+  const rawOffset = Number(opts?.offset);
+  const limit = Number.isFinite(rawLimit) && rawLimit > 0
+    ? Math.min(Math.floor(rawLimit), NUDGE_PAGE_MAX)
+    : NUDGE_PAGE_DEFAULT;
+  const offset = Number.isFinite(rawOffset) && rawOffset > 0 ? Math.floor(rawOffset) : 0;
+  return { limit, offset };
+}
+
+/**
  * Recent fixes lacking a regression spec (from the `unlocked_fixes` view).
  *
  * **Scope is mandatory and explicit** — see `resolveExplicitRepoScope`. Note the
- * `LIMIT 20`: this is a nudge sampler, not an exhaustive reader. Never use it
- * to look up ONE finding by id — under `{allRepos:true}` it returns an
- * arbitrary 20 rows out of hundreds across every repo, so a finding that
- * genuinely exists usually will not be in them.
+ * page cap: this is a nudge sampler, not an exhaustive reader. Never use it
+ * to look up ONE finding by id — under `{allRepos:true}` it returns one page
+ * out of hundreds of rows across every repo, so a finding that genuinely exists
+ * usually will not be in them.
  *
  * `opts.mode` filters by `audit_mode` **in SQL, before the cap**. A caller that
  * fetched 20 mixed rows and filtered to `code` in JS got an arbitrary subset of
@@ -598,21 +628,28 @@ function resolveExplicitRepoScope(scope, fnName) {
  * it was refilling with "fresh" findings during a sweep. The ORDER BY makes the
  * page a stable prefix rather than an arbitrary sample.
  *
+ * `opts.limit`/`opts.offset` page that stable prefix, so the tail past the first
+ * page is reachable at all. Without them a caller shown `shown 20 / total 232`
+ * can see that rows are missing but has no way to ever read one of them.
+ *
  * @param {{repoId?: string|null, allRepos?: boolean}} scope
- * @param {{mode?: 'code'|'plan'|null}} [opts]
+ * @param {{mode?: 'code'|'plan'|null, limit?: number|null, offset?: number|null}} [opts]
  */
 export async function getUnlockedFixes(scope, opts = {}) {
   const { repoId, allRepos } = resolveExplicitRepoScope(scope, 'getUnlockedFixes');
   if (!await isCloudEnabled()) return [];
   const mode = opts?.mode ?? null;
+  const { limit, offset } = resolveNudgePage(opts);
   try {
     const preds = [];
     const params = [];
     if (!allRepos) { params.push(repoId); preds.push(`repo_id = $${params.length}`); }
     if (mode) { params.push(mode); preds.push(`audit_mode = $${params.length}`); }
     const where = preds.length ? ` WHERE ${preds.join(' AND ')}` : '';
+    params.push(limit, offset);
     return await many(
-      `SELECT * FROM unlocked_fixes${where} ORDER BY fixed_at DESC, audit_finding_id LIMIT 20`,
+      `SELECT * FROM unlocked_fixes${where} ORDER BY fixed_at DESC, audit_finding_id ` +
+      `LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params
     );
   } catch (err) {
@@ -714,19 +751,57 @@ export async function countUnlockedFixes(scope) {
  * Note that an INVALID SCOPE still throws: a programming error must not be
  * laundered into an empty nudge, which is what "no obligations" would read as.
  *
+ * **The ORDER BY is load-bearing, and borrowing the view's was not enough.**
+ * This capped its page with no ordering of its own until 2026-08-10, while the
+ * sibling above had carried `ORDER BY fixed_at DESC, audit_finding_id` since the
+ * arbitrary-page fix — the third one-sibling-only divergence this file records.
+ * It LOOKED correct because `unremediated_acceptances` happens to define an
+ * inner `ORDER BY CASE severity … , r.created_at ASC`, and measured on the live
+ * store the planner does keep that Sort node under the outer LIMIT, so /ship
+ * really was getting HIGH rows first (15 HIGH of 44 total, all inside the page).
+ * That is a property of the VIEW TEXT, not of this read: Postgres does not
+ * guarantee a subquery's ORDER BY survives into an outer query, and the sibling
+ * view deliberately carries no inner sort at all — so the two readers disagreed
+ * about where ordering lives, and this one asserted nothing. The skill telling
+ * the operator "show at most 5, HIGH first" was relying on that unasserted
+ * accident; a `CREATE OR REPLACE VIEW` dropping the inner sort is a pure
+ * formatting change that would have silently started hiding HIGH rows.
+ *
+ * The clause below reproduces the view's intent exactly (so today's output is
+ * unchanged by construction) and adds `audit_finding_id` to make the order
+ * TOTAL — `accepted_at` alone ties freely, and a non-total order still permutes
+ * across pages, which is how a paged reader shows one row twice and skips
+ * another.
+ *
  * @param {{repoId?: string|null, allRepos?: boolean}} scope
+ * @param {{limit?: number|null, offset?: number|null}} [opts]
  */
-export async function getUnremediatedAcceptances(scope) {
+export async function getUnremediatedAcceptances(scope, opts = {}) {
   const { repoId, allRepos } = resolveExplicitRepoScope(scope, 'getUnremediatedAcceptances');
   if (!await isCloudEnabled()) return [];
+  const { limit, offset } = resolveNudgePage(opts);
+  // The ORDER BY is spelled out in BOTH branches rather than hoisted into a
+  // `const order` and interpolated. That is deliberate: the guard in
+  // `tests/cross-skill-unlocked-scope.test.mjs` is a static scan of the SQL
+  // literals in this file, and an interpolated clause is invisible to it — the
+  // scan would go green while reading `${order}`, which is the vacuous pass the
+  // whole harness exists to prevent. Verified by trying it: the hoisted version
+  // failed the guard, and that failure is the guard working.
   try {
     if (!allRepos) {
       return await many(
-        `SELECT * FROM unremediated_acceptances WHERE repo_id = $1 LIMIT 20`,
-        [repoId]
+        `SELECT * FROM unremediated_acceptances WHERE repo_id = $1 ` +
+        `ORDER BY CASE severity WHEN 'HIGH' THEN 0 ELSE 1 END, accepted_at ASC, audit_finding_id ` +
+        `LIMIT $2 OFFSET $3`,
+        [repoId, limit, offset]
       );
     }
-    return await many(`SELECT * FROM unremediated_acceptances LIMIT 20`);
+    return await many(
+      `SELECT * FROM unremediated_acceptances ` +
+      `ORDER BY CASE severity WHEN 'HIGH' THEN 0 ELSE 1 END, accepted_at ASC, audit_finding_id ` +
+      `LIMIT $1 OFFSET $2`,
+      [limit, offset]
+    );
   } catch (err) {
     process.stderr.write(`  [learning] getUnremediatedAcceptances failed: ${err.message}\n`);
     return [];
