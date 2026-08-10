@@ -24,6 +24,7 @@ import sectionCli from './sections/cli.mjs';
 import sectionFlows from './sections/flows.mjs';
 import sectionArchitecture from './sections/architecture.mjs';
 import sectionNavAudit from './sections/nav-audit.mjs';
+import sectionCampaigns from './sections/campaigns.mjs';
 import sectionVisualAudit from './sections/visual-audit.mjs';
 import sectionPlans from './sections/plans.mjs';
 import sectionAuditRuns from './sections/audit-runs.mjs';
@@ -56,6 +57,7 @@ const SLICERS = {
   flows:        (d) => ({ src: d.sources.flows || { status: 'ok', detail: '' }, flows: d.flows }),
   architecture: (d) => ({ src: d.sources.architecture || { status: 'ok', detail: '' }, architecture: d.architecture }),
   navAudit:     (d) => ({ src: d.sources.navAudit || { status: 'missing-optional', detail: '' }, navAudit: d.navAudit || { scorecard: [], drift: [] } }),
+  campaigns:    (d) => ({ src: d.sources.campaigns || { status: 'missing-optional', detail: '' }, campaigns: d.campaigns || { campaigns: [], degraded: false, degradedReason: null, declaredIds: [] } }),
   visualAudit:  (d) => ({ src: d.sources.visualAudit || { status: 'missing-optional', detail: '' }, visualAudit: d.visualAudit || { scorecard: [], findings: [], diagnostics: [] } }),
   purpose:      (d) => ({ src: d.sources.purposes || { status: 'ok', detail: '' }, purposes: d.purposes || { status: 'missing-optional', detail: '', ledgerPresent: false, nodes: [], hygiene: { unmappedDomains: [], unattachedRequirements: [], skippedRequirements: 0, unknownDomains: [], domainsMissingArchitecture: [] } } }),
   plans:        (d) => ({ src: d.sources.plans || { status: 'ok', detail: '' }, plans: d.plans }),
@@ -103,6 +105,8 @@ const REGISTRY = {
       desc: 'Navigation audit of a target app — can every kind of user actually reach the things they need?' },
     { id: 'visualAudit',  title: 'Visual Audit',   group: 'UX quality lenses', build: sectionVisualAudit,  slice: SLICERS.visualAudit,
       desc: 'Visual audit of a target app — does what the page paints match its declared design tokens and themes?' },
+    { id: 'campaigns',    title: 'Campaigns',      group: 'Design & plans', build: sectionCampaigns,    slice: SLICERS.campaigns,
+      desc: 'Model-comparison campaigns — evidence quality first, then standings, watermarked until every gate that qualifies them passes.' },
   ],
   telemetry: [
     { id: 'audit',        title: 'Audit Runs',     group: 'Audit pipeline', build: sectionAuditRuns,    slice: SLICERS.auditRuns,

@@ -24,6 +24,8 @@ import { many, one, insertReturning, updateWhere, withTx } from '../db/query.mjs
 import { isCloudEnabled } from './repo.mjs';
 import { STATIC_POOL, OSS_POOL } from '../model-resolver.mjs';
 import { OSS_PRICING } from '../model-pricing.mjs';
+import { FINDING_MATCH_SCHEMA_VERSION } from '../config.mjs';
+import { terminalEvent } from '../campaign/verdict.mjs';
 
 // ── The blind DTO ───────────────────────────────────────────────────────────
 
@@ -1071,4 +1073,105 @@ export async function resolveCohort({ repoId, campaignKey, lockDigest = null }) 
     process.stderr.write(`  [campaign] resolveCohort failed: ${err.message}\n`);
     return { ok: false, cloud: true, campaignId: null, cohortId: null, error: err.message };
   }
+}
+
+// ── The one cohort reader ───────────────────────────────────────────────────
+
+/**
+ * Assemble everything `evaluateCampaign` needs from the  One read path,
+ * shared by `status`, `verdict` and (Cluster C) the dashboard collector — so
+ * three surfaces cannot disagree about what a campaign's state is.
+ */
+export async function loadCohortEvidence({ repoId: rid, config, lock }) {
+  const resolved = await resolveCohort({ repoId: rid, campaignKey: config.id, lockDigest: lock?.lockDigest ?? null });
+  if (!resolved.cohortId) {
+    return {
+      ok: false,
+      reason: 'no cohort recorded for this campaign under the current lock',
+      campaignId: resolved.campaignId,
+      lockDigest: resolved.lockDigest ?? null,
+    };
+  }
+  const findings = await loadCohortFindings(resolved.cohortId);
+  const events = await loadAdjudicationEvents(findings.rows.map((r) => r.finding_id));
+  const clusters = await loadClusters(resolved.cohortId, FINDING_MATCH_SCHEMA_VERSION);
+  const calibration = await calibrationSummary(resolved.cohortId);
+  const overhead = await adjudicationOverhead(resolved.cohortId);
+  const eventLog = await listCampaignEvents(resolved.campaignId);
+
+  const eventsByFinding = new Map();
+  for (const e of events.rows) {
+    if (!eventsByFinding.has(e.finding_id)) eventsByFinding.set(e.finding_id, []);
+    eventsByFinding.get(e.finding_id).push({
+      id: e.id, adjudicationOutcome: e.adjudication_outcome, adjudicatorKind: e.adjudicator_kind,
+      method: e.method, supersededAt: e.superseded_at, createdAt: e.created_at,
+    });
+  }
+
+  // Snapshots + arm-runs, assembled from the finding rows' arm-run join plus a
+  // direct arm-run read (an arm-run with zero findings must still appear, or a
+  // silent arm looks like an absent one).
+  const armRunRows = await loadCohortArmRuns(resolved.cohortId);
+  const bySnapshot = new Map();
+  for (const r of armRunRows.rows) {
+    if (!bySnapshot.has(r.snapshot_id)) bySnapshot.set(r.snapshot_id, { snapshotId: r.snapshot_id, armRuns: [] });
+    bySnapshot.get(r.snapshot_id).armRuns.push({
+      armId: r.arm_id, attempt: r.attempt, error: r.error, supersededAt: r.superseded_at,
+      costUsd: r.cost_usd == null ? null : Number(r.cost_usd), costStatus: r.cost_status,
+    });
+  }
+
+  const clusterMap = new Map();
+  for (const r of clusters.rows) {
+    if (!clusterMap.has(r.cluster_id)) clusterMap.set(r.cluster_id, { clusterId: r.cluster_id, snapshotId: r.snapshot_id, members: [] });
+    clusterMap.get(r.cluster_id).members.push({
+      findingId: r.finding_id, armId: r.arm_id, severity: r.severity, events: eventsByFinding.get(r.finding_id) ?? [],
+    });
+  }
+
+  let unadjudicated = 0;
+  let humanQueuePending = 0;
+  for (const f of findings.rows) {
+    const term = terminalEvent(eventsByFinding.get(f.finding_id) ?? []);
+    if (!term) { unadjudicated += 1; continue; }
+    if (term.adjudicatorKind === 'agent' && (term.method === 'unverifiable' || term.adjudicationOutcome === 'needs_triage')) {
+      humanQueuePending += 1;
+    }
+  }
+
+  const snapshots = [...bySnapshot.values()];
+  const completeIds = new Set();
+  const nonReplicateArmIds = config.arms.filter((a) => a.type !== 'replicate').map((a) => a.id);
+  for (const s of snapshots) {
+    const ok = new Set(s.armRuns.filter((r) => r.supersededAt == null && !r.error).map((r) => r.armId));
+    if (nonReplicateArmIds.every((id) => ok.has(id))) completeIds.add(s.snapshotId);
+  }
+  const clusteredSnapshots = new Set(clusters.rows.map((r) => r.snapshot_id));
+  const snapshotsMissingClusters = [...completeIds].filter((id) => !clusteredSnapshots.has(id)).sort();
+
+  const declared = eventLog.rows.find((e) => e.kind === 'declared-inconclusive') ?? null;
+  const firstArmRunAt = armRunRows.rows.length > 0
+    ? armRunRows.rows.map((r) => r.created_at).sort()[0]
+    : null;
+  const ruleChangedAfterFirstArmRun = firstArmRunAt != null
+    && eventLog.rows.some((e) => e.kind === 'rule_changed' && String(e.created_at) > String(firstArmRunAt));
+
+  return {
+    ok: true,
+    campaignId: resolved.campaignId,
+    cohortId: resolved.cohortId,
+    // The cohort's OWN digest, so a reader sees the contract the evidence was
+    // collected under rather than one re-resolved at read time.
+    lockDigest: resolved.lockDigest ?? null,
+    cohortSuperseded: resolved.cohortSuperseded,
+    findings: findings.rows,
+    snapshots,
+    clusters: [...clusterMap.values()],
+    adjudication: { unadjudicatedFindings: unadjudicated, humanQueuePending },
+    calibration: { perArm: calibration.perArm },
+    clustering: { snapshotsMissingClusters, matcherVersion: String(FINDING_MATCH_SCHEMA_VERSION) },
+    overhead,
+    declaredInconclusive: declared ? { reason: declared.detail?.reason ?? 'declared by operator' } : null,
+    ruleChangedAfterFirstArmRun,
+  };
 }

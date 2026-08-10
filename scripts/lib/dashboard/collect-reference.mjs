@@ -15,6 +15,7 @@ import { sha } from '../cli-io.mjs';
 import { loadAllSkills } from '../skills-index.mjs';
 import { collectCli } from './collect-cli.mjs';
 import { collectNav } from './collect-nav.mjs';
+import { collectCampaigns } from './collect-campaigns.mjs';
 import { collectVisual } from './collect-visual.mjs';
 import { FlowManifestSchema } from './schema.mjs';
 import {
@@ -509,6 +510,18 @@ export async function collectReference(opts = {}) {
   }
   sources.visualAudit = visualAudit.status;
 
+  // Campaigns. Same degradation contract as collectNav/collectVisual — an
+  // unexpected throw becomes a VISIBLE unexpected-error, never a silent empty
+  // pane, because "no campaigns declared" and "we could not read them" license
+  // different actions.
+  let campaigns = { campaigns: [], degraded: false, degradedReason: null, declaredIds: [], status: { status: 'missing-optional', detail: '' } };
+  try {
+    campaigns = (await collectCampaigns(root)).campaigns;
+  } catch (err) {
+    campaigns = { campaigns: [], degraded: false, degradedReason: null, declaredIds: [], status: { status: 'unexpected-error', detail: `collectCampaigns failed: ${err.message}` } };
+  }
+  sources.campaigns = campaigns.status;
+
   // Purpose tab — join curated taxonomy + flows + architecture domains +
   // requirements ledger. Deterministic; sources.purposes mirrors its status.
   const ledger = readRequirementsLedger(root);
@@ -532,6 +545,7 @@ export async function collectReference(opts = {}) {
     kind: 'reference',
     provenance: { baseSha: git.baseSha, dirty: git.dirty, sourceHash: '' },
     sources,
+    campaigns,
     skills,
     plans,
     architecture: (() => {

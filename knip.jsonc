@@ -18,7 +18,14 @@
     // Claude Code hooks — spawned by the harness on UserPromptSubmit / PostToolUse.
     ".claude/hooks/*.mjs",
 
-    "tests/**/*.test.mjs"
+    "tests/**/*.test.mjs",
+
+    // Playwright specs are entry points for the SAME reason the CLIs are: they
+    // are run by `npx playwright test`, never imported, so knip's static import
+    // graph cannot see the caller. Declared as an entry rather than baselined —
+    // a baseline entry means "known unused code we tolerate", which would be a
+    // false statement about a spec that runs and asserts.
+    "tests/e2e/**/*.spec.mjs"
   ],
 
   "project": [

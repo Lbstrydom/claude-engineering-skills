@@ -191,6 +191,26 @@ export const ReferenceDataSchema = z.object({
     active: z.array(PlanSchema),
     completed: z.array(PlanSchema),
   }),
+
+  // ── UX-lens + campaign payloads ────────────────────────────────────────
+  //
+  // DECLARED, because Zod strips unknown keys and `renderDocument` builds every
+  // section from the PARSED object. An undeclared payload is therefore not
+  // "passed through unvalidated" — it is DELETED, and the section renders its
+  // empty state with no error anywhere. Measured 2026-08-10: `navAudit` and
+  // `visualAudit` were both undeclared, so those two shipped tabs could never
+  // display data. It went unnoticed because both collectors are
+  // `missing-optional` in this repo, and a missing-optional pane and a
+  // silently-emptied one look identical — the section reads `src.status` from
+  // `sources`, which IS declared and does survive.
+  //
+  // `.passthrough()` rather than a full mirror of each shape: the collectors
+  // own those contracts and duplicating them here would be a second source of
+  // truth that drifts. What this declaration buys is survival, not validation.
+  // Optional so a pre-feature snapshot still parses.
+  navAudit: z.object({}).passthrough().nullable().optional(),
+  visualAudit: z.object({}).passthrough().nullable().optional(),
+  campaigns: z.object({}).passthrough().nullable().optional(),
   architecture: z.object({
     domains: z.array(DomainSchema),
     // Flat domain → allowed-dependency domains. Merged from observed

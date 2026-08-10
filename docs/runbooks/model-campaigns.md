@@ -1,0 +1,288 @@
+# Runbook: model-comparison campaigns
+
+**What it is** — a declarative way to answer "is model X better than model Y for
+role Z, and is it worth the money?" with evidence you can defend. You commit a
+campaign file; the runner derives its arms from it; an agent adjudicates each
+finding **blind**; you review a sample; a two-stage rule produces a verdict.
+
+**When you need it** — a model ships and you want to know whether to switch, and
+you want the answer to survive someone asking "how do you know?".
+
+**Design + rationale**: [`docs/plans/model-comparison-campaigns.md`](../plans/model-comparison-campaigns.md).
+
+> **Every command below pastes as-is.** Real values, never `<angle-brackets>` —
+> PowerShell reserves `<`, and an unpasteable example is an example nobody runs.
+> Substitute your own campaign id and finding uuid.
+
+---
+
+## The five steps
+
+```
+declare → collect → adjudicate → review → decide
+```
+
+Each one refuses rather than guesses when its inputs are wrong. That is the
+feature: the failure this machinery exists to prevent is a confident number
+nobody can trace.
+
+---
+
+## 1. Declare
+
+Create `.campaigns/my-campaign.json` — **committed and reviewed**, like
+`.requirements/`. It is data, never code: the synced runner must never execute a
+file a consumer wrote.
+
+```json
+{
+  "schemaVersion": 1,
+  "id": "final-review-2026q3",
+  "role": "final_review_shadow",
+  "decision": { "type": "select_default", "incumbent": "claude-opus" },
+  "arms": [
+    { "id": "opus", "model": "claude-opus", "mode": "shadow" },
+    { "id": "solo-opus", "model": "claude-opus", "mode": "primary", "type": "replicate" },
+    { "id": "kimi", "model": "moonshotai/kimi-k2-thinking", "mode": "shadow" }
+  ],
+  "controls": {
+    "reasoningEffort": "high",
+    "promptTemplateId": "final-review-shadow@4",
+    "outputSchemaId": "final-review@3",
+    "maxOutputTokens": 32000,
+    "toolPolicy": "structured-output-only",
+    "temperature": 0
+  },
+  "adjudicator": {
+    "model": "latest-opus",
+    "promptTemplateId": "campaign-adjudicate@1",
+    "outputSchemaId": "adjudication-verdict@1"
+  },
+  "calibration": { "sampleRate": 0.2 },
+  "targetN": 12,
+  "decisionRule": {
+    "floorMetric": "accepted_high_med_per_snapshot",
+    "floorMargin": 0.5,
+    "tiebreak": "cost_per_accepted",
+    "costCeilingUsdPerAccepted": 8
+  }
+}
+```
+
+Validation is **strict and closed**: an unknown key rejects. A typo'd
+`reasoningEfort` fails loudly instead of silently running at a provider default —
+an unpinned control is how a comparison becomes uninterpretable *after* you have
+paid for it.
+
+**Rules that catch a config which parses but means nothing:**
+
+| Rule | Why |
+|---|---|
+| `targetN >= 12` | Below it the verdict engine emits INCONCLUSIVE anyway; a smaller N buys a cheaper campaign that answers nothing |
+| At least 2 non-replicate arms | One arm is not a comparison |
+| `decision.incumbent` names exactly one non-replicate arm's model | The baseline must be unambiguous |
+| A `replicate` shares its model with a non-replicate arm | A replicate of nothing is a mislabelled scenario |
+| At most one `mode: "primary"` | The shadow protocol has one primary |
+| `floorMargin >= 0` | A negative margin lets a strictly worse arm clear the floor |
+
+**Declare a replicate deliberately.** Two arms sending a byte-identical request
+are a *reroll*, not a comparison. The runner computes each arm's fingerprint
+**before spending** and refuses unless the duplicate is declared
+`"type": "replicate"`. Discovering it afterwards means the aggregate was already
+wrong.
+
+---
+
+## 2. Collect
+
+```bash
+node scripts/bakeoff-collect.mjs --transcript .audit/transcript.json --plan docs/plans/some-plan.md
+```
+
+Arms are derived from your config — there is no hardcoded table to fork. The
+runner stamps every snapshot with a **lock digest** computed over the resolved
+reality (models after sentinel resolution, provider routes, reasoning effort,
+prompt template, adjudicator, pricing version, eligibility rule, arm set).
+
+Change any of those and prior evidence is **orphaned into its own cohort** —
+automatically, with no string to remember to bump. That is the whole point: five
+false "window met" reads came from evidence counted under a contract it was not
+produced under.
+
+Promote what you collected into the store, and heal anything a crash left behind:
+
+```bash
+node scripts/campaign.mjs reconcile --campaign final-review-2026q3
+```
+
+`reconcile` does two things and reports both:
+
+- **Promotes** bake-off log entries into the campaign spine. Every refusal is
+  named — a snapshot that quietly fails to promote is indistinguishable from one
+  never collected, and your denominator would shrink with nobody seeing it.
+- **Scans receipts.** `complete` = paid and unrecorded, recoverable.
+  `intent` = the true crash window, where paid-or-not is genuinely **unknown**.
+  An `intent` receipt is **never auto-retried** — silently re-calling is exactly
+  the double-charge the protocol exists to prevent. Exit code 4 means operator
+  action is outstanding.
+
+---
+
+## 3. Adjudicate
+
+```bash
+node scripts/campaign.mjs adjudicate --campaign final-review-2026q3 --limit 10
+```
+
+**One-time setup.** The worksheet needs a per-campaign HMAC key in your
+gitignored `.env`:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+Add it as `CAMPAIGN_HMAC_KEY_FINAL_REVIEW_2026Q3` (the id, uppercased, non-alphanumerics
+to `_`). An absent key is a **hard refusal**, never a regenerated one: a new key
+produces different row ids and would orphan every human disposition already
+recorded. Rotation is unsupported and refused with an explanation rather than
+half-implemented.
+
+**The agent VERIFIES; it does not judge.** Each verdict records a `method`:
+
+| method | meaning | counts? |
+|---|---|---|
+| `verified` + `accepted` | the defect IS present at that revision | yes |
+| `verified` + `dismissed` | it is not present, with an absence reason | yes |
+| `unverifiable` + `needs_triage` | the instrument could not settle it | **no — routes to you** |
+
+That distinction is why these verdicts are worth recording at all: LLM
+*re-judgement* of historical findings measured 52% agreement with a human here,
+while verification against code is instrument-settleable.
+
+**The worksheet is blind**, by whitelist and redaction — not by omitting a
+column. Finding prose names its own provider ("Opus 5 thinks by default"), so
+model ids, provider names and your own arm ids are replaced with placeholders.
+Cited repo source is deliberately *not* redacted: it is identical whichever arm
+cited it, and this repo's own source legitimately contains model ids.
+
+Findings are verified against the snapshot's **own** `audited_sha`, never the
+working tree. A finding that was true when collected and has since been fixed
+would otherwise be recorded false — penalising the arm that correctly found a
+real defect, by a margin that grows the longer the campaign runs.
+
+---
+
+## 4. Review
+
+Open the dashboard's **Campaigns** tab:
+
+```bash
+npm run dashboard
+```
+
+Evidence quality comes first, standings second — deliberately. The eye must
+cross the gates before it reaches the numbers they qualify. Standings carry a
+`NOT DECISION-ELIGIBLE` watermark, in text, **naming every failing gate**, until:
+
+- `N >= targetN` complete snapshots, and
+- every finding has a terminal adjudication, and
+- every `unverifiable` finding has a human disposition, and
+- the assigned calibration sample is dispositioned per arm, and
+- every complete snapshot has a cluster set.
+
+Each finding row carries a prefilled override command and a copy button:
+
+```bash
+node scripts/campaign.mjs override --finding FINDING_UUID --verdict dismissed --note "why"
+```
+
+`--verdict` is one of `accepted`, `dismissed`, `severity_adjusted`. Overrides are
+**append-only** and name the agent verdict they override — the pair IS the
+calibration datum, and the per-arm override rate is the campaign's published
+measure of whether its AI verdicts can be trusted.
+
+**The calibration sample is chosen by the tool, not by you** — otherwise the gate
+measures which rows you felt like opening. It covers accepted *and* dismissed
+rulings: sampling only accepted rows would never catch a false dismissal, which
+is exactly how a high dismissal rate hides a real finding.
+
+---
+
+## 5. Decide
+
+```bash
+node scripts/campaign.mjs verdict --campaign final-review-2026q3
+```
+
+Two stages, in this order, and the order is the point:
+
+1. **Effectiveness floor.** An arm must be non-inferior to the incumbent
+   (`>= incumbent - floorMargin`) **and** score strictly above zero. Both halves
+   are load-bearing: without the second, whenever the incumbent scores at the
+   margin an arm that found *nothing at all* clears the floor — and it is by
+   construction the cheapest thing in the campaign, so it wins.
+2. **Cost per accepted**, over the arms that cleared. An arm with 0 accepted has
+   cost-per-accepted `null`, never `Infinity` — a computable-looking number
+   invites comparison.
+
+The rule exists because the naive one is measurably perverse: on this repo's own
+data, cost-only selects the arm that found **one-sixth** of the real defects.
+
+**Refusals that are answers, not errors:**
+
+| Outcome | Meaning |
+|---|---|
+| `INCONCLUSIVE (incumbent-floor-degenerate)` | the incumbent itself scored below the margin — the cohort did not discriminate, it failed to pose the question |
+| `cost stage not evaluated` | some arm-run is unpriced, so `cost_evidence: unknown`. Collection never halts on a pricing gap, but a comparison whose money column is partly imaginary is not a comparison |
+| `attribution unavailable` | a complete snapshot has no cluster set — run `campaign.mjs cluster` |
+
+Terminal, when the eligible pool runs dry:
+
+```bash
+node scripts/campaign.mjs declare-inconclusive --campaign final-review-2026q3 --reason "eligible pool exhausted at N=9"
+```
+
+---
+
+## Pre-registration integrity
+
+`targetN`, `calibration` and the whole `decisionRule` are **analysis-time** —
+deliberately outside every digest. Hashing them would mean editing a cost ceiling
+destroyed every snapshot ever collected.
+
+They are protected differently: every change appends a `rule_changed` event with
+before/after and the operator, and any standings whose rule changed after the
+first arm-run was collected carry an advisory saying so. The evidence survives;
+the fact that the goalposts moved is recorded next to the number.
+
+Changing a **live** campaign's rule mid-flight is the relabelling this machinery
+exists to stop. Let the running campaign finish under its original rule.
+
+---
+
+## Reading the numbers honestly
+
+- **`unknown` is a word on this page**, never `$0.00` and never a blank. A zero
+  would be a claim the call was measured and cost nothing.
+- **Spend sums every attempt, superseded ones included.** A superseded attempt
+  was still paid for; counting only the last one flatters the flakier model.
+- **Adjudication cost is campaign overhead**, on its own line — never folded into
+  an arm's cost-per-accepted, which would penalise the arm that found more.
+- **Raw counts sit beside accepted counts.** Raw-count seduction is the measured
+  failure here; the cure is adjacency, not hiding.
+- **Replicates are collected and reported, never counted** toward model-level
+  evidence.
+
+---
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `no .campaigns/ directory` | not adopted | Not an error. Create a config to start. |
+| `N campaigns found; pass --campaign` | more than one declared | Name it. The runner never picks for you on a spend-bearing path. |
+| `CAMPAIGN_HMAC_KEY_… is not set` | no worksheet key | Generate once, add to `.env`. Never regenerate. |
+| Dashboard says "store unavailable — standings withheld" | `AUDIT_DB_URL` unset | Standings are withheld on purpose: an unmeasured zero and a real zero are the same pixels. |
+| `not promoted <snapshot>: no lockDigest` | collected before the lock existed | Correct. Evidence from an unknown contract cannot be adopted without relabelling it. |
+| `arms recorded 2 different commits` | one snapshot, two revisions | One snapshot is one transcript at one revision — that revision is what adjudication verifies against. |
+| Verdict is INCONCLUSIVE with N met | read the reason | A degenerate incumbent and an unknown cost column are different problems with different fixes. |

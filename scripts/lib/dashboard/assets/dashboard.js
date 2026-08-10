@@ -70,6 +70,50 @@
       if (target.tagName === 'DETAILS') target.open = true;
       target.scrollIntoView({ block: 'center' });
     });
+
+    // ── Copy-to-clipboard, delegated ──────────────────────────────────
+    // The campaigns tab renders a prefilled `campaign.mjs override` command per
+    // finding. The command rides in `data-copy` and is read HERE, so no finding
+    // id is ever interpolated into an inline handler — the page renders
+    // model-authored prose, and an inline onclick built from that content is
+    // the injection sink the escaping discipline exists to avoid.
+    //
+    // Added by the campaigns work: the plan assumed "the existing
+    // copy-to-clipboard helper", and there was none.
+    main.addEventListener('click', function (e) {
+      var btn = e.target.closest('button[data-copy]');
+      if (!btn) return;
+      var text = btn.getAttribute('data-copy') || '';
+      var done = function (ok) {
+        var was = btn.textContent;
+        btn.textContent = ok ? 'Copied' : 'Copy failed';
+        setTimeout(function () { btn.textContent = was; }, 1200);
+      };
+      // `navigator.clipboard` is absent on a file:// origin in some browsers and
+      // rejects without a user-activation in others. The fallback keeps the
+      // affordance working rather than failing silently — a copy button that
+      // does nothing is worse than no button.
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(fallbackCopy(text)); });
+      } else {
+        done(fallbackCopy(text));
+      }
+    });
+  }
+
+  function fallbackCopy(text) {
+    try {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      var ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      return ok;
+    } catch (err) { return false; }
   }
 
   // ── Panel-scoped search (skills + CLI) ─────────────────────────
