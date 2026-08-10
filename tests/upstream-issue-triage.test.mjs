@@ -18,7 +18,7 @@ import path from 'node:path';
 import {
   classifyReportFreshness, annotatePriorFix, computeFingerprint,
   validateAffectedPath, readBundleStamp, validateReportInput,
-  parseEnvelope, writeEnvelope, drainOutbox,
+  parseEnvelope, writeEnvelope, drainOutbox, upstreamTransition,
   OUTBOX_ENVELOPE_VERSION, VALID_SEVERITIES,
 } from '../scripts/lib/upstream/commands.mjs';
 import { LEGAL_TRANSITIONS } from '../scripts/lib/store/upstream-issues.mjs';
@@ -395,4 +395,57 @@ test('git facts: a malformed sha short-circuits without touching git', () => {
   const f = resolveGitFacts({ reportedSha: 'not-a-sha', repoRoot: REPO_ROOT });
   assert.equal(f.shaInHistory, null);
   assert.equal(f.ancestry.size, 0);
+});
+
+// ── --id shape validation (upstreamTransition) ───────────────────────────────
+//
+// `upstream_issues.id` is a uuid column, so a non-uuid --id used to reach
+// Postgres and return `invalid input syntax for type uuid: "96a829f8"` wrapped
+// in code EXCEPTION — a database type error presented as an unhandled fault
+// when it was really a malformed argument. Hit live 2026-08-10 pasting a short
+// id off a rendered card, which is also why prefixes are now accepted.
+//
+// The wildcard rows are the load-bearing ones: the store resolves a prefix with
+// `id::text LIKE $1 || '%'`, and LIKE reads `%` and `_` as wildcards. They live
+// in the DATA, so parameterisation does not neutralise them — an unfiltered `%`
+// would match every issue and then "resolve" to whichever sorted first.
+// `transitionFn` throws here: reaching the store at all is the failure.
+const REJECT_ID = () => { throw new Error('store must not be reached for a malformed --id'); };
+
+for (const [label, id] of [
+  ['non-hex', 'zzz'],
+  ['a LIKE percent wildcard', '%'],
+  ['a LIKE underscore wildcard', '________'],
+  ['percent smuggled after valid hex', '96a829f8%'],
+  ['too short to disambiguate', '897aa6'],
+  ['an empty string', ''],
+]) {
+  test(`upstreamTransition rejects ${label} without touching the store`, async () => {
+    const res = await upstreamTransition({
+      id, to: 'acknowledged', transitionFn: REJECT_ID, repoRoot: REPO_ROOT,
+    });
+    assert.equal(res.ok, false);
+    assert.equal(res.code, 'BAD_INPUT');
+  });
+}
+
+test('upstreamTransition passes a valid prefix through, normalised', async () => {
+  // Vacuous-pass guard for the block above: if the regex rejected everything,
+  // those tests would all pass while the command was simply broken.
+  let seen = null;
+  const res = await upstreamTransition({
+    id: '  96A829F8  ', to: 'acknowledged', repoRoot: REPO_ROOT,
+    transitionFn: (a) => { seen = a; return { ok: true, cloud: true }; },
+  });
+  assert.equal(res.ok, true, 'a legal 8-hex prefix must reach the store');
+  assert.equal(seen.id, '96a829f8', 'trimmed + lowercased before the LIKE match');
+});
+
+test('upstreamTransition accepts a full uuid unchanged', async () => {
+  let seen = null;
+  await upstreamTransition({
+    id: '96a829f8-d2b9-457a-b5ab-530b5530dad8', to: 'acknowledged', repoRoot: REPO_ROOT,
+    transitionFn: (a) => { seen = a; return { ok: true, cloud: true }; },
+  });
+  assert.equal(seen.id, '96a829f8-d2b9-457a-b5ab-530b5530dad8');
 });

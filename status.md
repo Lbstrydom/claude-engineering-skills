@@ -62,16 +62,40 @@ entry points (same `repoId`, same total), which is the control that rules out
 reading a different population — the count moved 44 → 38 between measurements
 because the view's own 30-day window slid, not because the query changed.
 
-One gap, recorded rather than papered over: the verifier this step names as
-authoritative — the synced `sync-isolation-verify` — **is not present in
-wine-cellar-app**, and neither is `check-isolation-inventory.mjs`; both exit
-`MODULE_NOT_FOUND` on the entry file itself. That is consistent with the known
-orphaned-tooling gap in that consumer and is not caused by this push. It means the
-bundle-integrity row of the Step 6.8 table is `unverified` there, with a concrete
-blocked prerequisite (the script is absent from the consumer), while the
-artifact-behaviour row above is genuinely `verified`. `npm run sync:dry` reports
-1 file per consumer still pending — the gitignored `.sync-manifest.json`, whose
-timestamp + HEAD sha churn on every push by design.
+**Correction, same day** — the paragraph that stood here reported the
+bundle-integrity row as `unverified` because "the synced `sync-isolation-verify`
+is not present in wine-cellar-app". **That was wrong, and it was my error, not
+the consumer's.** The module is at `scripts/.claude-skills/lib/sync-isolation-verify.mjs`;
+I looked for it one directory up and read `MODULE_NOT_FOUND` on my own bad path
+as evidence about the consumer's tooling. Run at the real path it exits 0 with
+**all 10 gates passing** — including gate 2C, the disk→manifest orphan walk, which
+also means the orphaned-file gap recorded for that repo on 2026-08-04 is closed.
+So Step 6.8 for `8fecb8bf` is **`verified` on both rows**, not one of two.
+
+A `MODULE_NOT_FOUND` on the *entry file* says the path is wrong; only an error
+from *inside* a module that loaded says anything about the artifact. Treating the
+first as the second is how a clean consumer gets reported as broken — the same
+shape as the finding this session shipped, where a figure reproduced and the
+attribution did not. `npm run sync:dry` reports 1 file per consumer still
+pending: the gitignored `.sync-manifest.json`, whose timestamp + HEAD sha churn
+on every push by design.
+
+The reason it was reachable at all is that Step 6.8 named the verifier without a
+path; it now carries the command verbatim, per the operator-doc convention that
+examples be runnable rather than descriptive.
+
+**`upstream <ack|fix|wont-fix> --id` now takes a prefix**, the way git takes a
+short sha. It previously required all 36 characters and answered a short one with
+a raw `invalid input syntax for type uuid` under code `EXCEPTION` — a Postgres
+type error surfacing as an unhandled fault when it was a malformed argument the
+boundary should have named. Two halves: the boundary rejects anything but ≥8 hex
+characters, which is what makes the store's `id::text LIKE $1 || '%'` safe (`%`
+and `_` are LIKE wildcards living in the *data*, so parameterisation does not
+neutralise them — a bare `%` would have matched every issue and resolved to
+whichever sorted first); and the store selects `LIMIT 2`, so an ambiguous prefix
+is **refused**, never silently applied to an arbitrary issue. Verified against
+the live store: `96a829f8` and its full uuid now return byte-identical results,
+and a deliberately ambiguous prefix returns `AMBIGUOUS_ID` before any write.
 
 ## 2026-08-10 — a plan whose fixes kept breaking each other
 

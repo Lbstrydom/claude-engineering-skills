@@ -2439,7 +2439,8 @@ async function cmdUpstream() {
     });
     if (!res.ok) {
       const code = res.code || (res.illegal ? 'ILLEGAL_TRANSITION'
-        : res.notFound ? 'NOT_FOUND' : res.conflict ? 'CONFLICT' : 'EXCEPTION');
+        : res.notFound ? 'NOT_FOUND' : res.ambiguous ? 'AMBIGUOUS_ID'
+          : res.conflict ? 'CONFLICT' : 'EXCEPTION');
       return emitError(code, res.errors ? res.errors.join('; ') : res.error, res);
     }
     return emit(res);

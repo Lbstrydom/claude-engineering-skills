@@ -212,8 +212,34 @@ export async function transitionUpstreamIssue({ id, to, note = null, commit = nu
 
   try {
     return await withTx(async () => {
-      const current = await one('SELECT id, state FROM upstream_issues WHERE id = $1', [id]);
-      if (!current) return { ok: false, cloud: true, notFound: true };
+      // Accept a PREFIX, the way git accepts a short sha. A full uuid is 36
+      // characters an operator has to copy exactly, off a card that may have
+      // rendered it truncated — and the failure was a raw Postgres type error,
+      // so the papercut did not even explain itself. Callers must pre-validate
+      // the shape (upstreamTransition does): `%` and `_` are LIKE wildcards, and
+      // a bare `%` here would match every row and then "resolve" to whichever
+      // sorted first.
+      //
+      // LIMIT 2, not 1 — the second row is what makes ambiguity DETECTABLE. A
+      // LIMIT 1 would silently transition an arbitrary issue, which is worse
+      // than the error this replaces because it looks like it worked.
+      const matches = await many(
+        `SELECT id, state FROM upstream_issues WHERE id::text LIKE $1 || '%' ORDER BY id LIMIT 2`,
+        [id],
+      );
+      if (matches.length === 0) return { ok: false, cloud: true, notFound: true };
+      if (matches.length > 1) {
+        return {
+          ok: false, cloud: true, ambiguous: true,
+          error: `id "${id}" matches more than one issue — use more characters`,
+        };
+      }
+      const current = matches[0];
+      // Every write below keys on the RESOLVED id, never the caller's prefix:
+      // `updateWhere(..., {id})` with a prefix matches nothing (uuid equality,
+      // not LIKE), so the update would report 0 rows and be misread as the
+      // concurrent-modification conflict below.
+      const resolvedId = current.id;
 
       const legal = LEGAL_TRANSITIONS[current.state] ?? [];
       if (!legal.includes(to)) {
@@ -230,7 +256,7 @@ export async function transitionUpstreamIssue({ id, to, note = null, commit = nu
       if (to === 'fixed') patch.fixed_in_commit = commit;
 
       const res = await updateWhere(
-        'upstream_issues', patch, { id, state: current.state }, { returning: ['id'] },
+        'upstream_issues', patch, { id: resolvedId, state: current.state }, { returning: ['id'] },
       );
       const updated = Array.isArray(res) ? res.length : (res?.rowCount ?? 0);
       if (updated !== 1) {
@@ -241,9 +267,9 @@ export async function transitionUpstreamIssue({ id, to, note = null, commit = nu
       }
 
       await insertReturning('upstream_issue_events', {
-        issue_id: id, event: to, note, actor,
+        issue_id: resolvedId, event: to, note, actor,
       });
-      return { ok: true, cloud: true, from: current.state, to };
+      return { ok: true, cloud: true, id: resolvedId, from: current.state, to };
     });
   } catch (err) {
     process.stderr.write(`  [upstream] transitionUpstreamIssue failed: ${err.message}\n`);

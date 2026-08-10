@@ -477,6 +477,26 @@ export async function upstreamTransition({
   repoRoot = process.cwd(), transitionFn, id, to, note = null, commit = null, actor = null,
 }) {
   if (!id) return { ok: false, code: 'BAD_INPUT', errors: ['--id is required'] };
+  // Shape-check BEFORE the store sees it. `upstream_issues.id` is a uuid column,
+  // so anything non-uuid used to reach Postgres and come back as a raw
+  // `invalid input syntax for type uuid: "96a829f8"` wrapped in code EXCEPTION —
+  // a database type error surfacing as an unhandled fault, when it is really a
+  // malformed argument the boundary should have named. Hit live 2026-08-10
+  // pasting a short id off a rendered card.
+  //
+  // Hex-and-dashes only is also what makes the store's prefix match SAFE: that
+  // query is `id::text LIKE $1 || '%'`, and LIKE treats `%` and `_` as
+  // wildcards, so an unfiltered `%` would silently match every open issue and
+  // "resolve" to an arbitrary one. Parameterisation does not help here — the
+  // wildcards are in the DATA, not the SQL.
+  const normId = String(id).trim().toLowerCase();
+  if (!/^[0-9a-f][0-9a-f-]{7,35}$/.test(normId)) {
+    return {
+      ok: false, code: 'BAD_INPUT',
+      errors: [`--id "${id}" is not an issue id or id prefix — expected at least 8 `
+        + 'hex characters (dashes allowed). Full ids: npm run upstream:issues'],
+    };
+  }
   if (to === 'fixed') {
     if (!commit) return { ok: false, code: 'BAD_INPUT', errors: ['--commit is required for `fix`'] };
     const v = git(['rev-parse', '--verify', `${commit}^{commit}`], repoRoot);
@@ -488,7 +508,7 @@ export async function upstreamTransition({
     return { ok: false, code: 'BAD_INPUT', errors: ['--note is required for `wont-fix` (a refusal needs a reason)'] };
   }
   const safeNote = note ? redactSecrets(String(note)).text : null;
-  return transitionFn({ id, to, note: safeNote, commit, actor });
+  return transitionFn({ id: normId, to, note: safeNote, commit, actor });
 }
 
 /** Human-grade worksheet — PowerShell-safe (no angle brackets, no raw JSON). */
