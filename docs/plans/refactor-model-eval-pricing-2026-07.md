@@ -29,10 +29,45 @@ merits.** Line numbers below are pinned to `d5e66d35`.
 | `c5808479` | MED | **CONFIRMED** | `model-pricing.mjs:159-192` — no `unmeterable` guard vs. sibling `costForBudget:219` |
 | `r15m2phaseenum` | MED | **CONFIRMED** | `model-eval/cost.mjs:80` — `z.record(z.string(), …)` vs. the enum on line 17 |
 | `r15m3tokendry` | MED | **CONFIRMED** | `model-eval/cost.mjs:147` local `isValidTokenCount` ≡ `model-pricing.mjs:105` `isValidCount` |
-| `f68a6dbc` | HIGH | **REFUTED** | see §0.1 |
-| `r15m7godmodules` | MED | **DECLINED** | see §0.2 |
+| `f68a6dbc` | HIGH | ~~REFUTED~~ → **STANDS** (2026-08-10) | refutation withdrawn — answered a paraphrase, not the entry; measured headroom is 1.0x. §0.1 |
+| `r15m7godmodules` | MED | **DECLINED** (ledger entry resolved 2026-08-10) | see §0.2 |
 
-### 0.1 `f68a6dbc` — refuted, no change
+### 0.1 `f68a6dbc` — REFUTATION WITHDRAWN 2026-08-10, finding stands
+
+> **Correction (2026-08-10, after shipping).** The refutation below is wrong,
+> and was wrong when written: it answers a claim the debt entry does not make.
+> The ledger text for `f68a6dbc` reads *"the fixed fallback is presented as a
+> conservative overestimate for every unpriced model, but its import-time
+> validation only proves it exceeds prices currently present … It cannot
+> establish that the fallback safely bounds future or otherwise unpriced
+> models."* That is about the fallback's **adequacy as a bound**. What §0.1
+> refuted instead was "a silent default" — a paraphrase introduced by this
+> plan's own summary bullet, not by the entry. Refuting the paraphrase left the
+> actual claim untested.
+>
+> Tested now, and it is worse than unproven — the margin is **exactly zero**:
+>
+> ```
+> FALLBACK_PRICE_USD           = { input: 15, output: 75 }
+> max listed price (claude-opus) = { input: 15, output: 75 }   headroom 1.0x / 1.0x
+> ```
+>
+> The import-time loop throws only on `px.input > FALLBACK.input`, so a tie
+> passes. `costForBudget` on an unlisted model reserves at the fallback rate; if
+> that model is priced above Opus — the ordinary case for a new frontier
+> release, which is precisely what an unpriced id usually *is* — the
+> "conservative over-estimate" **under-reserves**, the one direction this
+> function exists to make impossible. Measured: an unlisted model at 1M/1M
+> reserves $90, while a real $20/$100 model costs $120.
+>
+> The entry is therefore **NOT closed** and is not resolvable by argument. The
+> honest fix is to stop hand-picking the constant: derive the floor from the
+> table (`max(listed) × margin`) so it cannot silently come to rest at a tie,
+> and make the invariant strict (`>=` rejected, not just `>`). Tracked as open
+> debt `f68a6dbc`; see [`model-comparison-campaigns.md`](model-comparison-campaigns.md),
+> whose cost ceilings rest on this exact premise.
+
+### 0.1a The original (withdrawn) refutation, kept for the record
 
 Claim: *"the fail-fast validation loop only iterates models that already exist
 in `OSS_PRICING`/`familyPricing` today, so it structurally cannot catch a
@@ -60,10 +95,29 @@ There is no silent default to catch. No change.
 Claim: the `model-eval/` files are "multi-concern with accreted round-N
 commentary", `verdict.mjs` cited at 404 lines / 7 round-refs.
 
-Measured (`verdict.mjs`, 2026-08-10): **405 lines, 6 functions, exactly ONE
-export** (`computeVerdict`); the other five are its private helpers. That is a
-cohesive single-purpose module, not a multi-concern one. 168 of 405 lines
-(41%) are comment — this repo's documented house style, and the round-N refs
+> **Two corrections (2026-08-10).** The figure below said verdict.mjs has
+> "exactly ONE export"; it has **three** — one exported function
+> (`computeVerdict`) plus two exported consts. The regex behind that count only
+> matched `export function`. And the entry cites **four** files, of which only
+> verdict.mjs had been measured before declining. All four measured now; the
+> conclusion is unchanged, and the evidence is no longer one file standing in
+> for four:
+>
+> | file | lines | exports | fns | comment |
+> |---|---|---|---|---|
+> | `verdict.mjs` | 405 | 3 | 6 | 41% |
+> | `route-catalog.mjs` | 377 | 4 | 9 | 44% |
+> | `structured-extractor.mjs` | 296 | 6 | 7 | 46% |
+> | `deterministic-scorer.mjs` | 339 | 3 | 6 | 51% |
+>
+> None exceeds ~400 lines or 6 exports. Note `deterministic-scorer.mjs` grew
+> 227 → 339 under *this* change, so the decline is made against the larger file,
+> not a convenient earlier one.
+
+Measured (`verdict.mjs`, 2026-08-10): **405 lines, 6 functions, 3 exports** —
+one function (`computeVerdict`) and two consts; the other five functions are its
+private helpers. That is a cohesive single-purpose module, not a multi-concern
+one. 168 of 405 lines (41%) are comment — this repo's documented house style, and the round-N refs
 are the *why* behind individual guards, i.e. the institutional memory that
 makes a later reader stop before "simplifying" a load-bearing check.
 

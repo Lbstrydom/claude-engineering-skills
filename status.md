@@ -1,6 +1,71 @@
 # Project Status Log
 
-## 2026-08-10 (latest) — a false report of successful $0 pricing
+## 2026-08-10 (latest) — a plan whose fixes kept breaking each other
+
+`docs/plans/model-comparison-campaigns.md` — the design for turning the
+one-off Opus-vs-Kimi bake-off into a declarable model-comparison capability
+consumers can run: committed config, a lock digest, AI adjudication with human
+override, and a dashboard page. Audited to both caps: GPT 3 rounds, Gemini 2,
+with an Opus shadow running alongside. **45 findings, 45 accepted, 0 dismissed,
+0 deferred, 0 rebutted.**
+
+Nothing here is implemented. The plan is `Draft`, ready for `/cycle`.
+
+The interesting result is not the acceptance rate — it is that **every gate
+finding was propagation debt from a previous fix, and twice the defect lived in
+the interaction between two individually-correct ones.** R3 put `attempt` into
+the arm-run unique key so `--force` could append a retry; the same round made
+the receipt an exclusive-create so a second runner would lose the race. Both
+right. Together they guaranteed `EEXIST` on the first retry, because the receipt
+path carried no attempt component. Fixing *that* by adding one then created a
+permanent wedge: resolve the attempt from the database alone and a crash between
+file-claim and store-write leaves an orphan receipt with no row, so every later
+run — `--force` included — collides and exits silently. Attempt resolution now
+reads `max(disk, db) + 1`; the receipt directory is the authority on what was
+claimed, the store on what was recorded, and a crash is exactly the window where
+those disagree.
+
+The same shape twice more. I argued the matcher must not be a lock input
+(re-clustering is free, so orphaning paid evidence over it is backwards), then
+left `configDigest` hashing the whole config file — which still carried
+`targetN`, `sampleRate` and the entire `decisionRule`. Right fix, applied in one
+place of two. And the calibration sample was "top `ceil(rate × n)` by HMAC" with
+a persisted boolean for stability, which is self-contradictory once `n` grows:
+recompute and you churn over completed human review, freeze it and the stored
+flag no longer means what defines it. Now a per-row filter — `HMAC(row) < rate`
+— so `n` never enters the decision.
+
+Two findings were about money, both the same lesson as the NULL-cost bug fixed
+earlier today. Superseded arm-run attempts **were paid for**, so effectiveness
+reads live rows but spend must read all of them — otherwise a flaky arm reports
+less than it cost, and the cost stage is a comparison. And adjudication is a
+paid call per finding with no table to record it in at all.
+
+One check earned its keep by refusing to answer. The cross-model matcher scored
+the Gemini-vs-shadow overlap `both: 0` but reported `coverage: 0.20, verdict:
+unknown` — and two of those findings were plainly the same defect. It was right
+to refuse: plan findings cite `§`-sections, so `affectedFilesOf()` has no paths
+to intersect and the file-set prefilter cannot fire. That is the
+`unknown`-not-zero discipline holding under its own weight, and it is now a
+stated scope limit — `campaign.mjs cluster` refuses a snapshot with no
+resolvable paths rather than emitting a cluster set that means nothing.
+
+I stopped at the Gemini cap even though round 2 was **not** rigor pressure — all
+eight gate findings were concrete design defects and the acceptance rate was
+100%, which the skill's own rule says can earn another round. The reason to stop
+anyway: three of round 2's findings were editorial damage from my own edits (a
+sentence mangled mid-clause, the renderer named two different ways, a list
+numbered 1,2,3,3,4,5), and I introduced a twelfth defect while fixing the
+eleventh. The document has passed the point where more prose-editing per round
+adds correctness. A wedged retry path is settled by `/audit-code` against code
+that runs, not by a fifth reading.
+
+Six of ten round-1 gate findings came from the second reviewer, none duplicating
+the first; round 2 repeated it at 4 and 7. That is a live datum for the exact
+question this plan builds machinery to answer — and it is **not** a result: two
+rounds, one artifact, unblinded, with me judging what counted as real.
+
+## 2026-08-10 — a false report of successful $0 pricing
 
 `costFromUsage(null, <priced model>)` returned `priced: true, totalUsd: 0`.
 `sanitizeTokens()` clamps absent counts to 0, so a call that was never metered
@@ -46,13 +111,27 @@ The other six, from the 2026-07-26 triage:
 - **A local `isValidTokenCount`** duplicating `isValidCount`, in a module that
   already imported it.
 
-**Two of the nine were not implemented.** `f68a6dbc` (the fail-fast loop
-"structurally cannot validate future models") is refuted: an unlisted model has
-no price to compare against, and there is no silent default — `costFromUsage`
-returns null, `costForBudget` returns `estimated: true`, and `audit-shadow`
-persists that flag to the spend ledger. `r15m7godmodules` is declined on the
-merits: `verdict.mjs` is 405 lines, 6 functions, ONE export — cohesive, not
-multi-concern — and 41% comment carrying the why behind each guard.
+**Two of the nine were not implemented, and one of those calls was wrong.**
+
+`r15m7godmodules` is declined on the merits, now measured across all four cited
+files (405/377/296/339 lines, 3–6 exports each, 41–51% comment) rather than the
+one I checked at the time. Ledger entry resolved.
+
+`f68a6dbc` I called refuted. **Withdrawn same day.** I refuted "there is no
+silent default" — a paraphrase this plan's own summary introduced. The ledger
+entry says something else: that the import-time loop cannot establish
+`FALLBACK_PRICE_USD` *bounds* an unpriced model. Testing the real claim instead
+of the paraphrase: `FALLBACK_PRICE_USD` is `{15, 75}` and the priciest listed
+model, claude-opus, is `{15, 75}` — **headroom 1.0x**, and the invariant throws
+only on `>`, so a tie passes. An unlisted model above Opus therefore
+*under*-reserves against the hard € ceiling, the single direction
+`costForBudget` exists to prevent. The finding stands and stays open; the fix is
+to derive the floor from `max(listed) × margin` rather than hand-picking a
+constant that has quietly come to rest at a tie.
+
+The lesson is the reusable part: **a refutation has to answer the claim as
+filed, not as summarised.** The paraphrase was mine, and refuting my own
+paraphrase read exactly like refuting the finding.
 
 **Every fix was proven red-then-green** by reverting the source and re-running
 (15 tests red at HEAD, 0 after), because a check nobody has seen fail is not
