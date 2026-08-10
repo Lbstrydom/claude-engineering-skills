@@ -13,7 +13,12 @@
  */
 
 /** The three honest topology states (NOT a boolean — "no preview" and "not configured" differ). */
-export const PREVIEW_GATE_MODES = Object.freeze(['pre_merge_required', 'post_merge_warning', 'not_applicable']);
+// Defined in shared-lib, re-exported here so existing importers are unaffected.
+// It moved because lib/config.mjs (a domain-neutral primitive) needed it, and
+// reaching into this feature module for three strings manufactured a
+// shared-lib -> audit-orchestration edge. See preview-gate-vocabulary.mjs.
+export { PREVIEW_GATE_MODES } from '../preview-gate-vocabulary.mjs';
+import { PREVIEW_GATE_MODES } from '../preview-gate-vocabulary.mjs';
 
 /**
  * Resolve what `/cycle` Step 5 must do about preview gating, from declared config.

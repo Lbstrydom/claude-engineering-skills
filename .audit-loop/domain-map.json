@@ -150,7 +150,7 @@
       "domain": "install"
     },
     {
-      "_why": "MUST precede the scripts/check-*.mjs catch-all (first-match-wins). That glob assigns every check-* CLI to `install`, which swallowed this one \u2014 a plan-status checker, not installation logic \u2014 and manufactured a recurring install -> plan violation out of a naming coincidence. The code was right; the map was wrong. Other check-* CLIs are likely miscategorised too (check-rls is security, check-stale-skill-surface is skills); retagged only the one with an observed violation rather than reshuffling the whole glob blind.",
+      "_why": "MUST precede the scripts/check-*.mjs catch-all (first-match-wins). That glob assigns every check-* CLI to `install`, which swallowed this one — a plan-status checker, not installation logic — and manufactured a recurring install -> plan violation out of a naming coincidence. The code was right; the map was wrong. Other check-* CLIs are likely miscategorised too (check-rls is security, check-stale-skill-surface is skills); retagged only the one with an observed violation rather than reshuffling the whole glob blind.",
       "pattern": "scripts/check-plan-status.mjs",
       "domain": "plan"
     },
@@ -191,7 +191,7 @@
       "domain": "brainstorm"
     },
     {
-      "_comment": "Phase A (domain-map-reconciliation): these subsystems each own a scripts/lib/<name>/ directory and a top-level CLI, and were silently pooled into the shared-lib catch-all below because no rule claimed them (70 of shared-lib's 156 files). shared-lib is the SECOND-TO-LAST rule \u2014 anything added under scripts/lib/ without a rule here lands in it and its deps get attributed to 'shared-lib', which is how shared-lib came to appear to import 9 feature domains. When you add a new scripts/lib/<subsystem>/, add a rule here too; tests/domain-map-dead-intent.test.mjs cannot catch this (the rule isn't dead \u2014 it's absent).",
+      "_comment": "Phase A (domain-map-reconciliation): these subsystems each own a scripts/lib/<name>/ directory and a top-level CLI, and were silently pooled into the shared-lib catch-all below because no rule claimed them (70 of shared-lib's 156 files). shared-lib is the SECOND-TO-LAST rule — anything added under scripts/lib/ without a rule here lands in it and its deps get attributed to 'shared-lib', which is how shared-lib came to appear to import 9 feature domains. When you add a new scripts/lib/<subsystem>/, add a rule here too; tests/domain-map-dead-intent.test.mjs cannot catch this (the rule isn't dead — it's absent).",
       "pattern": "scripts/lib/arch-intent/**",
       "domain": "arch-intent"
     },
@@ -250,6 +250,28 @@
     {
       "pattern": "scripts/lib/neighbourhood-query.mjs",
       "domain": "arch-memory"
+    },
+    {
+      "pattern": "scripts/lib/efficacy-lints.mjs",
+      "domain": "audit-orchestration",
+      "_why": "RETAG, not move (domain-map-reconciliation debt entry 1, cleared 2026-08-10). These four sit at scripts/lib/ root, so the scripts/lib/** catch-all tagged them shared-lib — but they are audit COORDINATORS, not domain-neutral primitives, and each imports a feature module (efficacy-lints -> audit/, audit-shadow -> store/, finalize-outcomes -> audit/+store/, audit-arms -> model-eval/). That manufactured shared-lib -> audit-orchestration/stores/model-eval: the base layer depending UP on features, which _comment_allowedDeps recorded as debt rather than intent. The code was right; the tag was wrong — same shape as the check-plan-status rule above. Retag rather than move because their LOCATION is fine (they are top-level audit-loop modules); it is the catch-all that mis-read them. config.mjs and repo-inventory.mjs were in the same debt note and are NOT here: repo-inventory imports only shared-lib, and config.mjs is a genuine primitive whose single feature import was a trapped vocabulary constant, moved to preview-gate-vocabulary.mjs instead (REFACTOR beats RETAG when the primitive is innocent)."
+    },
+    {
+      "pattern": "scripts/lib/audit-shadow.mjs",
+      "domain": "audit-orchestration"
+    },
+    {
+      "pattern": "scripts/lib/finalize-outcomes.mjs",
+      "domain": "audit-orchestration"
+    },
+    {
+      "pattern": "scripts/lib/audit-arms.mjs",
+      "domain": "audit-orchestration"
+    },
+    {
+      "pattern": "scripts/lib/model-ab-decision.mjs",
+      "domain": "model-eval",
+      "_why": "Same retag as the four audit coordinators above (2026-08-10). The model-A/B decision-rule evaluator (docs/plans/model-ab-harness-v2.md) is a model-eval coordinator, not a domain-neutral primitive; sitting at lib/ root it was swept into shared-lib by the catch-all, and its import of audit-arms.mjs then read as shared-lib -> audit-orchestration. Adds no new edge: model-eval -> audit-orchestration is already both declared and observed."
     },
     {
       "pattern": "scripts/lib/**",
@@ -430,13 +452,9 @@
       "shared-lib"
     ],
     "shared-lib": [
-      "audit-orchestration",
       "claude-hooks",
       "findings",
-      "model-eval",
-      "nav-audit",
-      "plan",
-      "stores"
+      "plan"
     ],
     "ship": [
       "shared-lib",
@@ -555,7 +573,7 @@
       "label": "Platform & tooling foundation",
       "kind": "curated",
       "flowNodes": [],
-      "summary": "The shared substrate every outcome rests on: utilities, CLI tooling, install, and the test suite \u2014 and the invariants that keep it sound."
+      "summary": "The shared substrate every outcome rests on: utilities, CLI tooling, install, and the test suite — and the invariants that keep it sound."
     }
   ],
   "domainPurposes": {
@@ -673,13 +691,13 @@
       "platform-foundation"
     ]
   },
-  "_comment_codeless": "Domains that are code-less BY DESIGN (markdown / SQL / SKILL.md-only) \u2014 they have no JS symbols, so they will never appear in the code-symbol architecture map. The Purpose-tab hygiene treats a mapped-but-no-arch domain in this list as INFORMATIONAL (a neutral note), not an actionable 'stale rule' warning. Only add a domain here once you've confirmed it genuinely has no indexable code (vs a dead/mis-targeted rule that should be fixed instead).",
+  "_comment_codeless": "Domains that are code-less BY DESIGN (markdown / SQL / SKILL.md-only) — they have no JS symbols, so they will never appear in the code-symbol architecture map. The Purpose-tab hygiene treats a mapped-but-no-arch domain in this list as INFORMATIONAL (a neutral note), not an actionable 'stale rule' warning. Only add a domain here once you've confirmed it genuinely has no indexable code (vs a dead/mis-targeted rule that should be fixed instead).",
   "codelessDomains": [
     "skills-content",
     "supabase",
     "docs"
   ],
-  "_comment_allowedDeps": "BASELINE, NOT ENDORSEMENT (domain-map-reconciliation Phase C, 2026-07-17). Set to the OBSERVED graph AFTER Phase A fixed rule coverage (13 orphaned lib subsystems) and the file-lock move removed the false trapped-primitive edges \u2014 so these are real edges, not measurement artifacts. This makes the violation check a RATCHET: it cannot fail on what exists today, only on NEW undeclared edges. THREE entries are recorded debt, NOT intent: (1) shared-lib -> audit-orchestration/claude-hooks/model-eval/nav-audit/stores \u2014 ~6 top-level lib files (efficacy-lints, config, repo-inventory, audit-shadow, finalize-outcomes, audit-arms) are feature coordinators, not domain-neutral primitives; retag or move them. (2) stores -> model-eval/persona-test \u2014 a LAYER INVERSION: the persistence layer reaching UP into feature domains. (3) cross-skill-bridge -> 11 domains \u2014 AGENTS.md calls this a thin facade; eleven deps is not thin. Do not grow these three without fixing the underlying coupling. ADDENDUM (tech-debt-backlog-triage, 2026-07-26): root-scripts -> install added \u2014 install.mjs/setup.mjs (repo-root entry points, caught by the *.mjs catch-all) import scripts/lib/install/prompt.mjs; same entry-point-to-implementation shape already declared for `scripts`, just never extended to the two root-level installers. Closes tech-debt topicIds 0fd83d0f/99f61113/a122a79b/d9f8c219.",
+  "_comment_allowedDeps": "BASELINE, NOT ENDORSEMENT (domain-map-reconciliation Phase C, 2026-07-17). Set to the OBSERVED graph AFTER Phase A fixed rule coverage (13 orphaned lib subsystems) and the file-lock move removed the false trapped-primitive edges — so these are real edges, not measurement artifacts. This makes the violation check a RATCHET: it cannot fail on what exists today, only on NEW undeclared edges. THREE entries were recorded debt, NOT intent. (1) shared-lib — PARTLY CLEARED 2026-08-10: audit-orchestration, model-eval, nav-audit and stores REMOVED from the grant (7 -> 3, confirmed against the observed graph after a full refresh). Method, per the preference order refactor > retag > declare: five top-level lib files were RETAGGED because they are feature coordinators whose LOCATION is fine and whose TAG was wrong (efficacy-lints/audit-shadow/finalize-outcomes/audit-arms -> audit-orchestration; model-ab-decision -> model-eval, adding no new edge since model-eval -> audit-orchestration was already declared and observed). config.mjs was NOT retagged — it is a genuine primitive, and its single feature import was a trapped vocabulary constant, so PREVIEW_GATE_MODES was REFACTORED out of lib/cycle/topology.mjs into lib/preview-gate-vocabulary.mjs (same move, same reason, as status-vocabulary.mjs), with topology re-exporting it so importers are unaffected. repo-inventory.mjs needed nothing; it imports only shared-lib. REMAINING (verified at source 2026-08-10, so the grant is a ratchet, not an endorsement): findings x5 (context/ledger/outcome-sync/suppression-policy reaching findings*.mjs — those three files are themselves lib-root and tagged findings by a specific rule, so this is the SAME retag-or-move question one layer down); claude-hooks x1 (repo-inventory -> quickfix-patterns for isSensitivePath, which duplicates the sensitive-paths.mjs primitive AGENTS.md calls the single source of truth); plan x1 (file-io -> plan-paths is a BACKWARD-COMPAT RE-EXPORT, not a use — file-io forwards it for 19+ importers, so this is a measurement artifact needing a migration, not a retag). (2) stores -> model-eval/persona-test — a LAYER INVERSION: the persistence layer reaching UP into feature domains. (3) cross-skill-bridge -> 11 domains — AGENTS.md calls this a thin facade; eleven deps is not thin. Do not grow these three without fixing the underlying coupling. ADDENDUM (tech-debt-backlog-triage, 2026-07-26): root-scripts -> install added — install.mjs/setup.mjs (repo-root entry points, caught by the *.mjs catch-all) import scripts/lib/install/prompt.mjs; same entry-point-to-implementation shape already declared for `scripts`, just never extended to the two root-level installers. Closes tech-debt topicIds 0fd83d0f/99f61113/a122a79b/d9f8c219.",
   "_adjudication_2026_07_31_acceptance_backlog": {
     "_date": "2026-07-31",
     "_context": "Companion to _adjudication_2026_07_31 (which covers the layering pass). These three edges surfaced while clearing the unremediated-acceptance backlog: 11 [Architecture] findings across 6 runs. Two verdicts are POINTERS to decisions already taken — the decision existed, only the remediation_state write-back was missing, which is exactly why the pass kept re-raising them.",
@@ -691,13 +709,13 @@
     "_date": "2026-07-20",
     "_context": "Four domain edges were reported by /audit-code's architecture pass in NINE consecutive rounds across two clusters (plan: sast-triage-routing). Adjudicated once, on the merits, so they stop consuming a finding slot every round.",
     "install -> plan": "MAP ERROR, not a code defect. check-plan-status.mjs was swallowed by the scripts/check-*.mjs catch-all and tagged `install`. Fixed by a specific rule ahead of it; the edge is now plan -> plan (same-domain, always allowed). See that rule's _why.",
-    "dashboard -> plan": "INTENT \u2014 DECLARED. collect-reference.mjs calls parsePlanStatus to bucket plans by status. A dashboard is a read-model consumer by construction (it already draws on eight domains), so this is its established role, not erosion.",
-    "brainstorm -> requirements": "INTENT \u2014 DECLARED. policy-context.mjs's own docstring records this as a REUSE decision taken under the architectural-memory protocol rather than reimplementing ledger filtering. NOTE: declaring it CLOSES A CYCLE, because requirements -> brainstorm already exists. That is recorded as debt (4) rather than hidden by the declaration.",
-    "supabase -> stores": "FABRICATED, now FIXED IN CODE (2026-07-20). The edge came from `compat-bootstrap.sql` doing `CREATE SCHEMA auth; CREATE TABLE auth.users` (a parity shim for what Supabase provides natively), so every migration's `REFERENCES auth.users(id)` resolved to that file \u2014 a `supabase \u2192 stores` edge that reflects a PLATFORM dependency, not a real one on the shim. The earlier note said 'nothing to fix in code or map', but leaving it meant the mechanical adapter re-fabricated it every run and the bouncer kept hallucinating findings off it (32 accumulated). Fixed by `PLATFORM_SCHEMAS` in adapters/postgres.mjs: a reference to `auth.*` (and the other Supabase-managed schemas) is `proven-external`, like `pg_*`, so no local edge is created even when a shim defines a copy. Verified: runArchIntentAnalysis now reports 0 violations. Guard: tests/arch-intent-adapter-postgres.test.mjs.",
-    "_debt_4": "requirements -> brainstorm exists only because requirements/{extract,gap-challenge}.mjs import callOpenAI from brainstorm/openai-adapter.mjs \u2014 a domain-NEUTRAL LLM primitive that happens to live inside the brainstorm domain. Same misplacement class as debt (1). Moving it to shared-lib breaks the cycle and touches ~5 real call sites; that is a mechanical module move deserving its own change and its own verification, not a rider on a map adjudication."
+    "dashboard -> plan": "INTENT — DECLARED. collect-reference.mjs calls parsePlanStatus to bucket plans by status. A dashboard is a read-model consumer by construction (it already draws on eight domains), so this is its established role, not erosion.",
+    "brainstorm -> requirements": "INTENT — DECLARED. policy-context.mjs's own docstring records this as a REUSE decision taken under the architectural-memory protocol rather than reimplementing ledger filtering. NOTE: declaring it CLOSES A CYCLE, because requirements -> brainstorm already exists. That is recorded as debt (4) rather than hidden by the declaration.",
+    "supabase -> stores": "FABRICATED, now FIXED IN CODE (2026-07-20). The edge came from `compat-bootstrap.sql` doing `CREATE SCHEMA auth; CREATE TABLE auth.users` (a parity shim for what Supabase provides natively), so every migration's `REFERENCES auth.users(id)` resolved to that file — a `supabase → stores` edge that reflects a PLATFORM dependency, not a real one on the shim. The earlier note said 'nothing to fix in code or map', but leaving it meant the mechanical adapter re-fabricated it every run and the bouncer kept hallucinating findings off it (32 accumulated). Fixed by `PLATFORM_SCHEMAS` in adapters/postgres.mjs: a reference to `auth.*` (and the other Supabase-managed schemas) is `proven-external`, like `pg_*`, so no local edge is created even when a shim defines a copy. Verified: runArchIntentAnalysis now reports 0 violations. Guard: tests/arch-intent-adapter-postgres.test.mjs.",
+    "_debt_4": "requirements -> brainstorm exists only because requirements/{extract,gap-challenge}.mjs import callOpenAI from brainstorm/openai-adapter.mjs — a domain-NEUTRAL LLM primitive that happens to live inside the brainstorm domain. Same misplacement class as debt (1). Moving it to shared-lib breaks the cycle and touches ~5 real call sites; that is a mechanical module move deserving its own change and its own verification, not a rider on a map adjudication."
   },
-  "_comment_tests": "tests is a VERIFICATION domain: allowed one-way into everything, with the inverse PROHIBITED \u2014 no production domain may import tests (enforced by the absence of `tests` from every other allowedDeps entry; a violation surfaces as an undeclared edge). This entry was UNVERIFIABLE until 2026-07-17: extract.mjs handed dep-cruiser a COMMON_SOURCE_DIRS allowlist with no `tests`, so the largest domain in the repo (380 files) produced zero observed edges while being fully symbol-indexed \u2014 the 12 entries here were hand-written from real knowledge but could never be corroborated. With `tests` cruised, all 12 proved real (zero over-declaration) and 17 more appeared. See docs/plans/observed-graph-discovery-unification.md \u2014 the allowlist remains a silent-blindness generator; this fixed the instance, not the class.",
-  "_comment_coverage": "Observed-graph coverage contract (docs/plans/observed-graph-coverage-honesty.md 2.1.4). floor/attributionFloor are ratios in [0,1]; maxCruiseMs is the SOFT budget (degraded), hardTimeoutMs the parent-enforced kill. enforce:false ships first \u2014 arch:coverage-gate reports the verdict without failing for one cycle of real data. attributionFloor is deliberately low: an untagged domain is a domain-map gap, not a correctness bug; the load-bearing guard is the zero_attributed vacuity check, not this ratio.",
+  "_comment_tests": "tests is a VERIFICATION domain: allowed one-way into everything, with the inverse PROHIBITED — no production domain may import tests (enforced by the absence of `tests` from every other allowedDeps entry; a violation surfaces as an undeclared edge). This entry was UNVERIFIABLE until 2026-07-17: extract.mjs handed dep-cruiser a COMMON_SOURCE_DIRS allowlist with no `tests`, so the largest domain in the repo (380 files) produced zero observed edges while being fully symbol-indexed — the 12 entries here were hand-written from real knowledge but could never be corroborated. With `tests` cruised, all 12 proved real (zero over-declaration) and 17 more appeared. See docs/plans/observed-graph-discovery-unification.md — the allowlist remains a silent-blindness generator; this fixed the instance, not the class.",
+  "_comment_coverage": "Observed-graph coverage contract (docs/plans/observed-graph-coverage-honesty.md 2.1.4). floor/attributionFloor are ratios in [0,1]; maxCruiseMs is the SOFT budget (degraded), hardTimeoutMs the parent-enforced kill. enforce:false ships first — arch:coverage-gate reports the verdict without failing for one cycle of real data. attributionFloor is deliberately low: an untagged domain is a domain-map gap, not a correctness bug; the load-bearing guard is the zero_attributed vacuity check, not this ratio.",
   "coverage": {
     "floor": 0.9,
     "attributionFloor": 0.5,

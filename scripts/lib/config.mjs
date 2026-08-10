@@ -8,7 +8,7 @@
 import { safeInt } from './file-io.mjs';
 import { resolveModel, isSentinel } from './model-resolver.mjs';
 import { loadSharedEnv } from './load-shared-env.mjs';
-import { PREVIEW_GATE_MODES } from './cycle/topology.mjs';
+import { PREVIEW_GATE_MODES } from './preview-gate-vocabulary.mjs';
 
 // ── Environment layering (worktree-safe) ────────────────────────────────────
 // All env loading now lives in ONE place: load-shared-env.mjs. It layers the
