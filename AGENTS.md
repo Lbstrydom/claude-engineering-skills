@@ -233,9 +233,11 @@ consumer instead of the named one. Verified 2026-07-20.)
 > reports, one column. **A new close-this-row nudge means a new row in**
 > [`view-writer-key-contract.test.mjs`](tests/view-writer-key-contract.test.mjs). *(2) A gate judging files
 > the repo does not own*: `context:check` scanned a vendored gitignored `.agents/skills/**/CLAUDE.md` and
-> exited 1 on a clean repo — fix with `git ls-files --others --ignored` (**ignored AND untracked**; plain
-> ignore-status stops judging *tracked* files matching a pattern), never a longer exclusion list, which grows
-> per vendoring tool. *(3) A check verifying one direction only*: `sync-isolation-verify` walked
+> exited 1 on a clean repo — predicate **ignored AND untracked**, not a longer exclusion list (grows per
+> vendoring tool). Ask it of the **candidates**, never of the repo: whole-repo `ls-files --others --ignored`
+> is MBs of `node_modules`, ENOBUFS past spawnSync's 1MiB `maxBuffer`, and a fail-open guard reads that as
+> "nothing disowned" — inert 2026-08-08→08-10, green throughout.
+> *(3) A check verifying one direction only*: `sync-isolation-verify` walked
 > manifest→disk, so 100 orphaned executables were invisible *by construction*; gate **2C** now walks
 > disk→manifest over `scripts/.claude-skills/` alone (other dirs hold consumer-owned files; flagging those
 > earns a bypass). Ask of any set comparison: **which side am I iterating, and what is unrepresentable from

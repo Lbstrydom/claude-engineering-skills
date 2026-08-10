@@ -1,6 +1,50 @@
 # Project Status Log
 
-## 2026-08-10 (latest) — three consumer reports, and the attribution was wrong in all but one
+## 2026-08-10 (latest) — a gate nobody could run, hiding a filter that never ran
+
+`df60c991`. A consumer reported `npm run context:check` broken repo-wide:
+`scripts/.claude-skills/check-context-drift.mjs` absent from disk. Correct, and
+the smallest of three defects stacked behind it.
+
+The script was never in `CORE_ENTRY`, so it reached no consumer — while `/ship`
+Step 4 and every mode of `/ai-context-management` instruct running it. The
+consumer had wired the npm script against the isolated path it *should* live at,
+which is exactly what the adoption runbook's Step 7 tells them to do, and it had
+been dead there since 2026-08-03. Third in the family after `check-cli-flags` and
+`check-npm-run-args`: the instruction ships, the tool does not.
+
+Gate 5 could not have caught it. It reconciled `npm run X` references by reading
+the **prefix** of the invocation — a `scripts/.claude-skills/` tail meant
+"already migrated", `continue`. That asks whether a path was rewritten, never
+whether the bundle ships what it points at, so the one guess the runbook invites
+is the one guess nothing verified. It now stats the target. Held the file out in
+the reporting consumer and gate 5 named both broken scripts.
+
+Then the gate ran, and emitted six HIGH findings against vendored files — the
+false positive AGENTS.md records as **fixed on 2026-08-08**. That fix decided
+ownership by enumerating `git ls-files --others --ignored` across the whole repo:
+`--ignored` includes every path under `node_modules`, measuring **1.76 MB here
+and 3.49 MB in the consumer**, both past `spawnSync`'s 1 MiB default `maxBuffer`.
+ENOBUFS arrives as `r.error`, the guard `if (r.error || r.status !== 0) return new
+Set()` turned that into "nothing is disowned", and the filter was silently off. It
+had never once worked in a repo with dependencies installed. The predicate is
+unchanged; it now asks git about the ~40 walked candidates instead of the
+universe, and warns on stderr rather than degrading in silence.
+
+Its four existing tests all passed on the broken code, because a fixture repo is
+too small to overflow a buffer — the defect lived in the gap between the unit and
+the machine. The new test asserts the overflow as a **precondition**, so it cannot
+pass vacuously, and it is the only one of the five that fails without the fix. A
+census of the other eight `git ls-files` call sites found no siblings: tracked-only
+and untracked-not-ignored measure 78–164 KB, and the two that do enumerate broadly
+already set `maxBuffer` explicitly. Class size one.
+
+Verified where the consumer receives it, both repos, all 10 isolation gates green.
+In the reporting consumer six findings drop to one, and that one is true: a
+vendored pointer file it *tracks* rather than gitignores, so the repo does own it —
+theirs to resolve, left alone. `npm run check` 10,954 pass / 0 fail / 24 skipped.
+
+## 2026-08-10 — three consumer reports, and the attribution was wrong in all but one
 
 `90cf67c6`, `3b0b495f`, `ba3a5990`. Three upstream reports triaged and fixed in
 one sitting. The through-line is worth more than any of the fixes: **every
