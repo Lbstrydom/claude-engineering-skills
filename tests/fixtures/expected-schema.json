@@ -1484,6 +1484,525 @@
       ]
     },
     {
+      "table_name": "campaign_adjudication_attempts",
+      "columns": [
+        {
+          "column_name": "id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": "gen_random_uuid()",
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "worksheet_row_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "attempt",
+          "data_type": "integer",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 3
+        },
+        {
+          "column_name": "status",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 4
+        },
+        {
+          "column_name": "usage",
+          "data_type": "jsonb",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 5
+        },
+        {
+          "column_name": "cost_usd",
+          "data_type": "numeric",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 6
+        },
+        {
+          "column_name": "cost_status",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": "'unknown'::text",
+          "ordinal_position": 7
+        },
+        {
+          "column_name": "superseded_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 8
+        },
+        {
+          "column_name": "created_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "NO",
+          "column_default": "now()",
+          "ordinal_position": 9
+        }
+      ]
+    },
+    {
+      "table_name": "campaign_arm_runs",
+      "columns": [
+        {
+          "column_name": "id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": "gen_random_uuid()",
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "cohort_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "snapshot_row_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 3
+        },
+        {
+          "column_name": "snapshot_id",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 4
+        },
+        {
+          "column_name": "arm_id",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 5
+        },
+        {
+          "column_name": "attempt",
+          "data_type": "integer",
+          "is_nullable": "NO",
+          "column_default": "1",
+          "ordinal_position": 6
+        },
+        {
+          "column_name": "superseded_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 7
+        },
+        {
+          "column_name": "audit_run_id",
+          "data_type": "uuid",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 8
+        },
+        {
+          "column_name": "usage",
+          "data_type": "jsonb",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 9
+        },
+        {
+          "column_name": "cost_usd",
+          "data_type": "numeric",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 10
+        },
+        {
+          "column_name": "cost_status",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": "'unknown'::text",
+          "ordinal_position": 11
+        },
+        {
+          "column_name": "error",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 12
+        },
+        {
+          "column_name": "created_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "NO",
+          "column_default": "now()",
+          "ordinal_position": 13
+        }
+      ]
+    },
+    {
+      "table_name": "campaign_cluster_members",
+      "columns": [
+        {
+          "column_name": "cluster_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "finding_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "arm_id",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 3
+        }
+      ]
+    },
+    {
+      "table_name": "campaign_clusters",
+      "columns": [
+        {
+          "column_name": "id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": "gen_random_uuid()",
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "cohort_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "snapshot_id",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 3
+        },
+        {
+          "column_name": "matcher_version",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 4
+        },
+        {
+          "column_name": "matcher_threshold",
+          "data_type": "numeric",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 5
+        },
+        {
+          "column_name": "canonical_finding_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 6
+        },
+        {
+          "column_name": "created_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "NO",
+          "column_default": "now()",
+          "ordinal_position": 7
+        }
+      ]
+    },
+    {
+      "table_name": "campaign_cohorts",
+      "columns": [
+        {
+          "column_name": "id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": "gen_random_uuid()",
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "campaign_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "lock_digest",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 3
+        },
+        {
+          "column_name": "resolved",
+          "data_type": "jsonb",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 4
+        },
+        {
+          "column_name": "superseded_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 5
+        },
+        {
+          "column_name": "created_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "NO",
+          "column_default": "now()",
+          "ordinal_position": 6
+        }
+      ]
+    },
+    {
+      "table_name": "campaign_events",
+      "columns": [
+        {
+          "column_name": "id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": "gen_random_uuid()",
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "campaign_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "kind",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 3
+        },
+        {
+          "column_name": "actor",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 4
+        },
+        {
+          "column_name": "detail",
+          "data_type": "jsonb",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 5
+        },
+        {
+          "column_name": "created_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "NO",
+          "column_default": "now()",
+          "ordinal_position": 6
+        }
+      ]
+    },
+    {
+      "table_name": "campaign_snapshots",
+      "columns": [
+        {
+          "column_name": "id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": "gen_random_uuid()",
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "cohort_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "snapshot_id",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 3
+        },
+        {
+          "column_name": "audited_sha",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 4
+        },
+        {
+          "column_name": "transcript_path",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 5
+        },
+        {
+          "column_name": "created_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "NO",
+          "column_default": "now()",
+          "ordinal_position": 6
+        }
+      ]
+    },
+    {
+      "table_name": "campaign_worksheet_rows",
+      "columns": [
+        {
+          "column_name": "id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": "gen_random_uuid()",
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "worksheet_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "worksheet_row_id",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 3
+        },
+        {
+          "column_name": "finding_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 4
+        },
+        {
+          "column_name": "calibration_assigned",
+          "data_type": "boolean",
+          "is_nullable": "NO",
+          "column_default": "false",
+          "ordinal_position": 5
+        },
+        {
+          "column_name": "agent_event_id",
+          "data_type": "uuid",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 6
+        },
+        {
+          "column_name": "attempt",
+          "data_type": "integer",
+          "is_nullable": "NO",
+          "column_default": "1",
+          "ordinal_position": 7
+        },
+        {
+          "column_name": "created_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "NO",
+          "column_default": "now()",
+          "ordinal_position": 8
+        }
+      ]
+    },
+    {
+      "table_name": "campaign_worksheets",
+      "columns": [
+        {
+          "column_name": "id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": "gen_random_uuid()",
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "cohort_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "hmac_key_ref",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 3
+        },
+        {
+          "column_name": "created_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "NO",
+          "column_default": "now()",
+          "ordinal_position": 4
+        }
+      ]
+    },
+    {
+      "table_name": "campaigns",
+      "columns": [
+        {
+          "column_name": "id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": "gen_random_uuid()",
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "repo_id",
+          "data_type": "uuid",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "campaign_key",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 3
+        },
+        {
+          "column_name": "config_digest",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 4
+        },
+        {
+          "column_name": "created_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "NO",
+          "column_default": "now()",
+          "ordinal_position": 5
+        }
+      ]
+    },
+    {
       "table_name": "debt_entries",
       "columns": [
         {
@@ -2105,6 +2624,62 @@
           "is_nullable": "NO",
           "column_default": "now()",
           "ordinal_position": 9
+        },
+        {
+          "column_name": "adjudicator_kind",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 10
+        },
+        {
+          "column_name": "adjudicator_model",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 11
+        },
+        {
+          "column_name": "method",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 12
+        },
+        {
+          "column_name": "self_family",
+          "data_type": "boolean",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 13
+        },
+        {
+          "column_name": "overrides_event_id",
+          "data_type": "uuid",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 14
+        },
+        {
+          "column_name": "campaign_arm_run_id",
+          "data_type": "uuid",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 15
+        },
+        {
+          "column_name": "evidence",
+          "data_type": "jsonb",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 16
+        },
+        {
+          "column_name": "superseded_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 17
         }
       ]
     },
@@ -6541,6 +7116,13 @@
       "config": null
     },
     {
+      "function_name": "campaign_events_append_only",
+      "args": "",
+      "return_type": "trigger",
+      "security_definer": false,
+      "config": "search_path=public"
+    },
+    {
       "function_name": "cosine_distance",
       "args": "halfvec, halfvec",
       "return_type": "double precision",
@@ -8210,6 +8792,234 @@
       "definition": "UNIQUE (pass_name, variant_id, context_bucket)"
     },
     {
+      "table_name": "campaign_adjudication_attempts",
+      "constraint_name": "campaign_adj_attempts_cost_coherent_chk",
+      "constraint_type": "CHECK",
+      "definition": "CHECK ((((cost_status = 'priced'::text) AND (cost_usd IS NOT NULL)) OR ((cost_status <> 'priced'::text) AND (cost_usd IS NULL))))"
+    },
+    {
+      "table_name": "campaign_adjudication_attempts",
+      "constraint_name": "campaign_adj_attempts_cost_status_chk",
+      "constraint_type": "CHECK",
+      "definition": "CHECK ((cost_status = ANY (ARRAY['priced'::text, 'unpriced'::text, 'unknown'::text])))"
+    },
+    {
+      "table_name": "campaign_adjudication_attempts",
+      "constraint_name": "campaign_adjudication_attempts_pkey",
+      "constraint_type": "PRIMARY KEY",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "table_name": "campaign_adjudication_attempts",
+      "constraint_name": "campaign_adjudication_attempts_worksheet_row_id_attempt_key",
+      "constraint_type": "UNIQUE",
+      "definition": "UNIQUE (worksheet_row_id, attempt)"
+    },
+    {
+      "table_name": "campaign_adjudication_attempts",
+      "constraint_name": "campaign_adjudication_attempts_worksheet_row_id_fkey",
+      "constraint_type": "FOREIGN KEY",
+      "definition": "FOREIGN KEY (worksheet_row_id) REFERENCES campaign_worksheet_rows(id) ON DELETE CASCADE"
+    },
+    {
+      "table_name": "campaign_arm_runs",
+      "constraint_name": "campaign_arm_runs_audit_run_id_fkey",
+      "constraint_type": "FOREIGN KEY",
+      "definition": "FOREIGN KEY (audit_run_id) REFERENCES audit_runs(id) ON DELETE SET NULL"
+    },
+    {
+      "table_name": "campaign_arm_runs",
+      "constraint_name": "campaign_arm_runs_cohort_id_fkey",
+      "constraint_type": "FOREIGN KEY",
+      "definition": "FOREIGN KEY (cohort_id) REFERENCES campaign_cohorts(id) ON DELETE CASCADE"
+    },
+    {
+      "table_name": "campaign_arm_runs",
+      "constraint_name": "campaign_arm_runs_cohort_id_snapshot_id_arm_id_attempt_key",
+      "constraint_type": "UNIQUE",
+      "definition": "UNIQUE (cohort_id, snapshot_id, arm_id, attempt)"
+    },
+    {
+      "table_name": "campaign_arm_runs",
+      "constraint_name": "campaign_arm_runs_cost_coherent_chk",
+      "constraint_type": "CHECK",
+      "definition": "CHECK ((((cost_status = 'priced'::text) AND (cost_usd IS NOT NULL)) OR ((cost_status <> 'priced'::text) AND (cost_usd IS NULL))))"
+    },
+    {
+      "table_name": "campaign_arm_runs",
+      "constraint_name": "campaign_arm_runs_cost_status_chk",
+      "constraint_type": "CHECK",
+      "definition": "CHECK ((cost_status = ANY (ARRAY['priced'::text, 'unpriced'::text, 'unknown'::text])))"
+    },
+    {
+      "table_name": "campaign_arm_runs",
+      "constraint_name": "campaign_arm_runs_pkey",
+      "constraint_type": "PRIMARY KEY",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "table_name": "campaign_arm_runs",
+      "constraint_name": "campaign_arm_runs_snapshot_row_id_fkey",
+      "constraint_type": "FOREIGN KEY",
+      "definition": "FOREIGN KEY (snapshot_row_id) REFERENCES campaign_snapshots(id) ON DELETE CASCADE"
+    },
+    {
+      "table_name": "campaign_cluster_members",
+      "constraint_name": "campaign_cluster_members_cluster_id_fkey",
+      "constraint_type": "FOREIGN KEY",
+      "definition": "FOREIGN KEY (cluster_id) REFERENCES campaign_clusters(id) ON DELETE CASCADE"
+    },
+    {
+      "table_name": "campaign_cluster_members",
+      "constraint_name": "campaign_cluster_members_finding_id_fkey",
+      "constraint_type": "FOREIGN KEY",
+      "definition": "FOREIGN KEY (finding_id) REFERENCES audit_findings(id) ON DELETE CASCADE"
+    },
+    {
+      "table_name": "campaign_cluster_members",
+      "constraint_name": "campaign_cluster_members_pkey",
+      "constraint_type": "PRIMARY KEY",
+      "definition": "PRIMARY KEY (cluster_id, finding_id)"
+    },
+    {
+      "table_name": "campaign_clusters",
+      "constraint_name": "campaign_clusters_canonical_finding_id_fkey",
+      "constraint_type": "FOREIGN KEY",
+      "definition": "FOREIGN KEY (canonical_finding_id) REFERENCES audit_findings(id) ON DELETE CASCADE"
+    },
+    {
+      "table_name": "campaign_clusters",
+      "constraint_name": "campaign_clusters_cohort_id_fkey",
+      "constraint_type": "FOREIGN KEY",
+      "definition": "FOREIGN KEY (cohort_id) REFERENCES campaign_cohorts(id) ON DELETE CASCADE"
+    },
+    {
+      "table_name": "campaign_clusters",
+      "constraint_name": "campaign_clusters_cohort_id_snapshot_id_matcher_version_can_key",
+      "constraint_type": "UNIQUE",
+      "definition": "UNIQUE (cohort_id, snapshot_id, matcher_version, canonical_finding_id)"
+    },
+    {
+      "table_name": "campaign_clusters",
+      "constraint_name": "campaign_clusters_pkey",
+      "constraint_type": "PRIMARY KEY",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "table_name": "campaign_cohorts",
+      "constraint_name": "campaign_cohorts_campaign_id_fkey",
+      "constraint_type": "FOREIGN KEY",
+      "definition": "FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE"
+    },
+    {
+      "table_name": "campaign_cohorts",
+      "constraint_name": "campaign_cohorts_campaign_id_lock_digest_key",
+      "constraint_type": "UNIQUE",
+      "definition": "UNIQUE (campaign_id, lock_digest)"
+    },
+    {
+      "table_name": "campaign_cohorts",
+      "constraint_name": "campaign_cohorts_pkey",
+      "constraint_type": "PRIMARY KEY",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "table_name": "campaign_events",
+      "constraint_name": "campaign_events_campaign_id_fkey",
+      "constraint_type": "FOREIGN KEY",
+      "definition": "FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE"
+    },
+    {
+      "table_name": "campaign_events",
+      "constraint_name": "campaign_events_pkey",
+      "constraint_type": "PRIMARY KEY",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "table_name": "campaign_snapshots",
+      "constraint_name": "campaign_snapshots_cohort_id_fkey",
+      "constraint_type": "FOREIGN KEY",
+      "definition": "FOREIGN KEY (cohort_id) REFERENCES campaign_cohorts(id) ON DELETE CASCADE"
+    },
+    {
+      "table_name": "campaign_snapshots",
+      "constraint_name": "campaign_snapshots_cohort_id_snapshot_id_key",
+      "constraint_type": "UNIQUE",
+      "definition": "UNIQUE (cohort_id, snapshot_id)"
+    },
+    {
+      "table_name": "campaign_snapshots",
+      "constraint_name": "campaign_snapshots_pkey",
+      "constraint_type": "PRIMARY KEY",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "table_name": "campaign_worksheet_rows",
+      "constraint_name": "campaign_worksheet_rows_agent_event_id_fkey",
+      "constraint_type": "FOREIGN KEY",
+      "definition": "FOREIGN KEY (agent_event_id) REFERENCES finding_adjudication_events(id) ON DELETE SET NULL"
+    },
+    {
+      "table_name": "campaign_worksheet_rows",
+      "constraint_name": "campaign_worksheet_rows_finding_id_fkey",
+      "constraint_type": "FOREIGN KEY",
+      "definition": "FOREIGN KEY (finding_id) REFERENCES audit_findings(id) ON DELETE CASCADE"
+    },
+    {
+      "table_name": "campaign_worksheet_rows",
+      "constraint_name": "campaign_worksheet_rows_pkey",
+      "constraint_type": "PRIMARY KEY",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "table_name": "campaign_worksheet_rows",
+      "constraint_name": "campaign_worksheet_rows_worksheet_id_finding_id_key",
+      "constraint_type": "UNIQUE",
+      "definition": "UNIQUE (worksheet_id, finding_id)"
+    },
+    {
+      "table_name": "campaign_worksheet_rows",
+      "constraint_name": "campaign_worksheet_rows_worksheet_id_fkey",
+      "constraint_type": "FOREIGN KEY",
+      "definition": "FOREIGN KEY (worksheet_id) REFERENCES campaign_worksheets(id) ON DELETE CASCADE"
+    },
+    {
+      "table_name": "campaign_worksheet_rows",
+      "constraint_name": "campaign_worksheet_rows_worksheet_id_worksheet_row_id_key",
+      "constraint_type": "UNIQUE",
+      "definition": "UNIQUE (worksheet_id, worksheet_row_id)"
+    },
+    {
+      "table_name": "campaign_worksheets",
+      "constraint_name": "campaign_worksheets_cohort_id_fkey",
+      "constraint_type": "FOREIGN KEY",
+      "definition": "FOREIGN KEY (cohort_id) REFERENCES campaign_cohorts(id) ON DELETE CASCADE"
+    },
+    {
+      "table_name": "campaign_worksheets",
+      "constraint_name": "campaign_worksheets_pkey",
+      "constraint_type": "PRIMARY KEY",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "table_name": "campaigns",
+      "constraint_name": "campaigns_pkey",
+      "constraint_type": "PRIMARY KEY",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "table_name": "campaigns",
+      "constraint_name": "campaigns_repo_id_campaign_key_key",
+      "constraint_type": "UNIQUE",
+      "definition": "UNIQUE (repo_id, campaign_key)"
+    },
+    {
+      "table_name": "campaigns",
+      "constraint_name": "campaigns_repo_id_fkey",
+      "constraint_type": "FOREIGN KEY",
+      "definition": "FOREIGN KEY (repo_id) REFERENCES audit_repos(id) ON DELETE CASCADE"
+    },
+    {
       "table_name": "debt_entries",
       "constraint_name": "chk_debt_reason_fields",
       "constraint_type": "CHECK",
@@ -8337,6 +9147,30 @@
     },
     {
       "table_name": "finding_adjudication_events",
+      "constraint_name": "fae_adjudicator_kind_chk",
+      "constraint_type": "CHECK",
+      "definition": "CHECK (((adjudicator_kind IS NULL) OR (adjudicator_kind = ANY (ARRAY['agent'::text, 'human'::text]))))"
+    },
+    {
+      "table_name": "finding_adjudication_events",
+      "constraint_name": "fae_campaign_arm_run_fk",
+      "constraint_type": "FOREIGN KEY",
+      "definition": "FOREIGN KEY (campaign_arm_run_id) REFERENCES campaign_arm_runs(id) ON DELETE SET NULL"
+    },
+    {
+      "table_name": "finding_adjudication_events",
+      "constraint_name": "fae_method_chk",
+      "constraint_type": "CHECK",
+      "definition": "CHECK (((method IS NULL) OR (method = ANY (ARRAY['verified'::text, 'unverifiable'::text, 'override'::text]))))"
+    },
+    {
+      "table_name": "finding_adjudication_events",
+      "constraint_name": "fae_override_names_target_chk",
+      "constraint_type": "CHECK",
+      "definition": "CHECK (((method IS DISTINCT FROM 'override'::text) OR (overrides_event_id IS NOT NULL)))"
+    },
+    {
+      "table_name": "finding_adjudication_events",
       "constraint_name": "finding_adjudication_events_adjudication_outcome_check",
       "constraint_type": "CHECK",
       "definition": "CHECK ((adjudication_outcome = ANY (ARRAY['dismissed'::text, 'accepted'::text, 'severity_adjusted'::text])))"
@@ -8346,6 +9180,12 @@
       "constraint_name": "finding_adjudication_events_finding_id_fkey",
       "constraint_type": "FOREIGN KEY",
       "definition": "FOREIGN KEY (finding_id) REFERENCES audit_findings(id) ON DELETE CASCADE"
+    },
+    {
+      "table_name": "finding_adjudication_events",
+      "constraint_name": "finding_adjudication_events_overrides_event_id_fkey",
+      "constraint_type": "FOREIGN KEY",
+      "definition": "FOREIGN KEY (overrides_event_id) REFERENCES finding_adjudication_events(id) ON DELETE SET NULL"
     },
     {
       "table_name": "finding_adjudication_events",
@@ -9477,6 +10317,116 @@
       "indexdef": "CREATE INDEX idx_bandit_arms_pass ON public.bandit_arms USING btree (pass_name, user_id)"
     },
     {
+      "tablename": "campaign_adjudication_attempts",
+      "indexname": "campaign_adjudication_attempts_pkey",
+      "indexdef": "CREATE UNIQUE INDEX campaign_adjudication_attempts_pkey ON public.campaign_adjudication_attempts USING btree (id)"
+    },
+    {
+      "tablename": "campaign_adjudication_attempts",
+      "indexname": "campaign_adjudication_attempts_worksheet_row_id_attempt_key",
+      "indexdef": "CREATE UNIQUE INDEX campaign_adjudication_attempts_worksheet_row_id_attempt_key ON public.campaign_adjudication_attempts USING btree (worksheet_row_id, attempt)"
+    },
+    {
+      "tablename": "campaign_arm_runs",
+      "indexname": "campaign_arm_runs_cohort_id_snapshot_id_arm_id_attempt_key",
+      "indexdef": "CREATE UNIQUE INDEX campaign_arm_runs_cohort_id_snapshot_id_arm_id_attempt_key ON public.campaign_arm_runs USING btree (cohort_id, snapshot_id, arm_id, attempt)"
+    },
+    {
+      "tablename": "campaign_arm_runs",
+      "indexname": "campaign_arm_runs_pkey",
+      "indexdef": "CREATE UNIQUE INDEX campaign_arm_runs_pkey ON public.campaign_arm_runs USING btree (id)"
+    },
+    {
+      "tablename": "campaign_arm_runs",
+      "indexname": "idx_campaign_arm_runs_cohort",
+      "indexdef": "CREATE INDEX idx_campaign_arm_runs_cohort ON public.campaign_arm_runs USING btree (cohort_id)"
+    },
+    {
+      "tablename": "campaign_arm_runs",
+      "indexname": "idx_campaign_arm_runs_one_live",
+      "indexdef": "CREATE UNIQUE INDEX idx_campaign_arm_runs_one_live ON public.campaign_arm_runs USING btree (cohort_id, snapshot_id, arm_id) WHERE (superseded_at IS NULL)"
+    },
+    {
+      "tablename": "campaign_cluster_members",
+      "indexname": "campaign_cluster_members_pkey",
+      "indexdef": "CREATE UNIQUE INDEX campaign_cluster_members_pkey ON public.campaign_cluster_members USING btree (cluster_id, finding_id)"
+    },
+    {
+      "tablename": "campaign_clusters",
+      "indexname": "campaign_clusters_cohort_id_snapshot_id_matcher_version_can_key",
+      "indexdef": "CREATE UNIQUE INDEX campaign_clusters_cohort_id_snapshot_id_matcher_version_can_key ON public.campaign_clusters USING btree (cohort_id, snapshot_id, matcher_version, canonical_finding_id)"
+    },
+    {
+      "tablename": "campaign_clusters",
+      "indexname": "campaign_clusters_pkey",
+      "indexdef": "CREATE UNIQUE INDEX campaign_clusters_pkey ON public.campaign_clusters USING btree (id)"
+    },
+    {
+      "tablename": "campaign_cohorts",
+      "indexname": "campaign_cohorts_campaign_id_lock_digest_key",
+      "indexdef": "CREATE UNIQUE INDEX campaign_cohorts_campaign_id_lock_digest_key ON public.campaign_cohorts USING btree (campaign_id, lock_digest)"
+    },
+    {
+      "tablename": "campaign_cohorts",
+      "indexname": "campaign_cohorts_pkey",
+      "indexdef": "CREATE UNIQUE INDEX campaign_cohorts_pkey ON public.campaign_cohorts USING btree (id)"
+    },
+    {
+      "tablename": "campaign_events",
+      "indexname": "campaign_events_pkey",
+      "indexdef": "CREATE UNIQUE INDEX campaign_events_pkey ON public.campaign_events USING btree (id)"
+    },
+    {
+      "tablename": "campaign_events",
+      "indexname": "idx_campaign_events_campaign",
+      "indexdef": "CREATE INDEX idx_campaign_events_campaign ON public.campaign_events USING btree (campaign_id, created_at)"
+    },
+    {
+      "tablename": "campaign_snapshots",
+      "indexname": "campaign_snapshots_cohort_id_snapshot_id_key",
+      "indexdef": "CREATE UNIQUE INDEX campaign_snapshots_cohort_id_snapshot_id_key ON public.campaign_snapshots USING btree (cohort_id, snapshot_id)"
+    },
+    {
+      "tablename": "campaign_snapshots",
+      "indexname": "campaign_snapshots_pkey",
+      "indexdef": "CREATE UNIQUE INDEX campaign_snapshots_pkey ON public.campaign_snapshots USING btree (id)"
+    },
+    {
+      "tablename": "campaign_snapshots",
+      "indexname": "idx_campaign_snapshots_cohort",
+      "indexdef": "CREATE INDEX idx_campaign_snapshots_cohort ON public.campaign_snapshots USING btree (cohort_id)"
+    },
+    {
+      "tablename": "campaign_worksheet_rows",
+      "indexname": "campaign_worksheet_rows_pkey",
+      "indexdef": "CREATE UNIQUE INDEX campaign_worksheet_rows_pkey ON public.campaign_worksheet_rows USING btree (id)"
+    },
+    {
+      "tablename": "campaign_worksheet_rows",
+      "indexname": "campaign_worksheet_rows_worksheet_id_finding_id_key",
+      "indexdef": "CREATE UNIQUE INDEX campaign_worksheet_rows_worksheet_id_finding_id_key ON public.campaign_worksheet_rows USING btree (worksheet_id, finding_id)"
+    },
+    {
+      "tablename": "campaign_worksheet_rows",
+      "indexname": "campaign_worksheet_rows_worksheet_id_worksheet_row_id_key",
+      "indexdef": "CREATE UNIQUE INDEX campaign_worksheet_rows_worksheet_id_worksheet_row_id_key ON public.campaign_worksheet_rows USING btree (worksheet_id, worksheet_row_id)"
+    },
+    {
+      "tablename": "campaign_worksheets",
+      "indexname": "campaign_worksheets_pkey",
+      "indexdef": "CREATE UNIQUE INDEX campaign_worksheets_pkey ON public.campaign_worksheets USING btree (id)"
+    },
+    {
+      "tablename": "campaigns",
+      "indexname": "campaigns_pkey",
+      "indexdef": "CREATE UNIQUE INDEX campaigns_pkey ON public.campaigns USING btree (id)"
+    },
+    {
+      "tablename": "campaigns",
+      "indexname": "campaigns_repo_id_campaign_key_key",
+      "indexdef": "CREATE UNIQUE INDEX campaigns_repo_id_campaign_key_key ON public.campaigns USING btree (repo_id, campaign_key)"
+    },
+    {
       "tablename": "debt_entries",
       "indexname": "debt_entries_pkey",
       "indexdef": "CREATE UNIQUE INDEX debt_entries_pkey ON public.debt_entries USING btree (id)"
@@ -9575,6 +10525,11 @@
       "tablename": "finding_adjudication_events",
       "indexname": "idx_adjudication_events_finding",
       "indexdef": "CREATE INDEX idx_adjudication_events_finding ON public.finding_adjudication_events USING btree (finding_id)"
+    },
+    {
+      "tablename": "finding_adjudication_events",
+      "indexname": "idx_fae_one_live_agent_verdict",
+      "indexdef": "CREATE UNIQUE INDEX idx_fae_one_live_agent_verdict ON public.finding_adjudication_events USING btree (finding_id) WHERE ((adjudicator_kind = 'agent'::text) AND (superseded_at IS NULL))"
     },
     {
       "tablename": "finding_embeddings",
@@ -10344,6 +11299,13 @@
   ],
   "triggers": [
     {
+      "table_name": "campaign_events",
+      "trigger_name": "campaign_events_no_update",
+      "action_timing": "BEFORE",
+      "events": "DELETE,UPDATE",
+      "action_statement": "EXECUTE FUNCTION campaign_events_append_only()"
+    },
+    {
       "table_name": "memory_friction",
       "trigger_name": "trg_memory_friction_touch",
       "action_timing": "BEFORE",
@@ -10482,6 +11444,56 @@
     {
       "grantee": "postgres",
       "object": "public.bandit_arms",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "postgres",
+      "object": "public.campaign_adjudication_attempts",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "postgres",
+      "object": "public.campaign_arm_runs",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "postgres",
+      "object": "public.campaign_cluster_members",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "postgres",
+      "object": "public.campaign_clusters",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "postgres",
+      "object": "public.campaign_cohorts",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "postgres",
+      "object": "public.campaign_events",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "postgres",
+      "object": "public.campaign_snapshots",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "postgres",
+      "object": "public.campaign_worksheet_rows",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "postgres",
+      "object": "public.campaign_worksheets",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "postgres",
+      "object": "public.campaigns",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
@@ -10863,6 +11875,56 @@
     },
     {
       "object_name": "bandit_arms",
+      "object_kind": "r",
+      "owner": "postgres"
+    },
+    {
+      "object_name": "campaign_adjudication_attempts",
+      "object_kind": "r",
+      "owner": "postgres"
+    },
+    {
+      "object_name": "campaign_arm_runs",
+      "object_kind": "r",
+      "owner": "postgres"
+    },
+    {
+      "object_name": "campaign_cluster_members",
+      "object_kind": "r",
+      "owner": "postgres"
+    },
+    {
+      "object_name": "campaign_clusters",
+      "object_kind": "r",
+      "owner": "postgres"
+    },
+    {
+      "object_name": "campaign_cohorts",
+      "object_kind": "r",
+      "owner": "postgres"
+    },
+    {
+      "object_name": "campaign_events",
+      "object_kind": "r",
+      "owner": "postgres"
+    },
+    {
+      "object_name": "campaign_snapshots",
+      "object_kind": "r",
+      "owner": "postgres"
+    },
+    {
+      "object_name": "campaign_worksheet_rows",
+      "object_kind": "r",
+      "owner": "postgres"
+    },
+    {
+      "object_name": "campaign_worksheets",
+      "object_kind": "r",
+      "owner": "postgres"
+    },
+    {
+      "object_name": "campaigns",
       "object_kind": "r",
       "owner": "postgres"
     },
