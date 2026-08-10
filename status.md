@@ -52,6 +52,27 @@ And the first control run was confounded — a worktree at HEAD lacks the gitign
 `.env`, so it differed in two ways at once and proved nothing until the `.env` was
 copied in.
 
+**Consumer-side verification (Step 6.8): `verified`** at `8fecb8bf`. Checked the
+half that matters — not that the push exited 0, but that the reporter's own entry
+point behaves. From the wine-cellar-app bundle, `node
+scripts/.claude-skills/cross-skill.mjs list-unremediated-acceptances --limit 20
+--offset {0,20,40}` returned 20 + 18 + 0 against `total` 38: HIGH-first on page 1,
+tail reachable, exhausted page empty. Scope resolution is identical from both
+entry points (same `repoId`, same total), which is the control that rules out
+reading a different population — the count moved 44 → 38 between measurements
+because the view's own 30-day window slid, not because the query changed.
+
+One gap, recorded rather than papered over: the verifier this step names as
+authoritative — the synced `sync-isolation-verify` — **is not present in
+wine-cellar-app**, and neither is `check-isolation-inventory.mjs`; both exit
+`MODULE_NOT_FOUND` on the entry file itself. That is consistent with the known
+orphaned-tooling gap in that consumer and is not caused by this push. It means the
+bundle-integrity row of the Step 6.8 table is `unverified` there, with a concrete
+blocked prerequisite (the script is absent from the consumer), while the
+artifact-behaviour row above is genuinely `verified`. `npm run sync:dry` reports
+1 file per consumer still pending — the gitignored `.sync-manifest.json`, whose
+timestamp + HEAD sha churn on every push by design.
+
 ## 2026-08-10 — a plan whose fixes kept breaking each other
 
 `docs/plans/model-comparison-campaigns.md` — the design for turning the
