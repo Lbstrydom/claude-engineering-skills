@@ -393,6 +393,13 @@ export const RigWarningKindSchema = z.enum([
   // within the timeout. Capture proceeds anyway; downstream
   // unresolved-ground-truth fires for the affected surfaces.
   'manifest-network-await-timeout',
+  // Upstream a0b58a34 (HIGH, wine-cellar-app) — a collection binding's
+  // `jsonPath` resolved to something that cannot be iterated as rows, so the
+  // surface produced ZERO claims while `surfaces.json` still read as enforced
+  // coverage. It sat that way for months: the skip was a bare `continue`, and
+  // a silently-skipped binding is indistinguishable from a passing one. This
+  // is the "green having done nothing" class, inside the rig meant to catch it.
+  'collection-binding-unusable',
 ]);
 
 export const RigWarningSchema = z.object({

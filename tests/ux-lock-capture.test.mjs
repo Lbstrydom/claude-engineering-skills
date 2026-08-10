@@ -14,6 +14,11 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 import {
   createNetworkGroundTruthStore,
   matchResponseAgainstManifest,
@@ -456,5 +461,259 @@ describe('_internals', () => {
     assert.equal(stripCollectionPrefix('wines[].vintage', 'wines'), 'vintage');
     assert.equal(stripCollectionPrefix('wines[].nested.field', 'wines'), 'nested.field');
     assert.equal(stripCollectionPrefix('no-marker', 'wines'), 'no-marker');
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// Collection binding shapes + the loud skip — upstream a0b58a34 (HIGH).
+//
+// The rig could only bind a collection when the body carried a NAMED ARRAY
+// property, and both other common REST shapes failed SILENTLY. In the reporting
+// consumer a surface declared a per-row assertion that had never executed; the
+// manifest read as enforced coverage for months, because a skipped binding and
+// a passing one both produce zero findings. That is the "green having done
+// nothing" class, inside the rig built to catch it.
+// ────────────────────────────────────────────────────────────────────────────
+
+/** COLLECTION_MANIFEST with the binding + field paths swapped out. */
+const collectionManifest = ({ jsonPath, keyField = 'id', field }) => ({
+  version: 1,
+  collections: [{ id: 'wines-grid', urlPattern: '/api/cellar', jsonPath, keyField }],
+  surfaces: [{
+    id: 'wine-row',
+    scope: 'wines-grid',
+    locator: { kind: 'css', selector: '.wine-row', warn: false },
+    severityFloor: 'P1',
+    engineFields: [{
+      field, type: 'integer', llmSafe: false, llmMaxChars: 2000,
+      networkSource: { urlPattern: '/api/cellar', jsonPath: field },
+    }],
+  }],
+});
+
+describe('collection bindings — object maps, root arrays, and a loud skip', () => {
+  it('binds an object map keyed by entity id, taking identity from the row', async () => {
+    // Shape (1) from the report: {"R1": {...}, "R2": {...}}.
+    const r = fakeResponse({
+      url: '/api/cellar',
+      body: { wines: { R1: { id: 'A', vintage: 2011 }, R2: { id: 'B', vintage: 2012 } } },
+    });
+    const out = await matchResponseAgainstManifest(
+      r, collectionManifest({ jsonPath: 'wines', field: 'wines[].vintage' }));
+    assert.equal(out.length, 2);
+    assert.deepEqual(out.map((o) => o.entry.key).sort(), ['A', 'B']);
+    assert.equal(out.find((o) => o.entry.key === 'A').entry.value, 2011);
+  });
+
+  it('keyField "$key" identifies a map row by the map own key', async () => {
+    // The case Object.values() alone cannot serve: the id is the KEY and does
+    // not appear in the value, so every row would otherwise be unkeyed.
+    const r = fakeResponse({
+      url: '/api/cellar',
+      body: { wines: { R1: { vintage: 2011 }, R2: { vintage: 2012 } } },
+    });
+    const out = await matchResponseAgainstManifest(
+      r, collectionManifest({ jsonPath: 'wines', keyField: '$key', field: 'wines[].vintage' }));
+    assert.deepEqual(out.map((o) => o.entry.key).sort(), ['R1', 'R2']);
+    assert.equal(out.find((o) => o.entry.key === 'R1').entry.value, 2011);
+  });
+
+  it('binds a TOP-LEVEL array via the "$" root sentinel', async () => {
+    // Shape (2): the document root was unaddressable from both directions —
+    // z.string().min(1) rejects "", and resolveJsonPath returned undefined for it.
+    const r = fakeResponse({
+      url: '/api/cellar',
+      body: [{ id: 'A', vintage: 2011 }, { id: 'B', vintage: 2012 }],
+    });
+    const out = await matchResponseAgainstManifest(
+      r, collectionManifest({ jsonPath: '$', field: '$[].vintage' }));
+    assert.deepEqual(out.map((o) => o.entry.key).sort(), ['A', 'B']);
+    assert.equal(out.find((o) => o.entry.key === 'B').entry.value, 2012);
+  });
+
+  it('binds a top-level object MAP via "$" too', async () => {
+    const r = fakeResponse({ url: '/api/cellar', body: { R1: { vintage: 2011 } } });
+    const out = await matchResponseAgainstManifest(
+      r, collectionManifest({ jsonPath: '$', keyField: '$key', field: '$[].vintage' }));
+    assert.equal(out.length, 1);
+    assert.equal(out[0].entry.key, 'R1');
+  });
+
+  it('a named array still binds exactly as before (no-regression control)', async () => {
+    // Guards the fix itself: if the array path had broken, every assertion
+    // above could pass while the shape everyone actually uses stopped working.
+    const r = fakeResponse({
+      url: '/api/cellar', body: { wines: [{ id: 'A', vintage: 2011 }] },
+    });
+    const out = await matchResponseAgainstManifest(r, COLLECTION_MANIFEST);
+    assert.equal(out.length, 1);
+    assert.equal(out[0].entry.key, 'A');
+  });
+
+  for (const [label, body, reason] of [
+    ['an absent path', { somethingElse: [] }, /did not resolve/],
+    ['a scalar', { wines: 7 }, /scalar/],
+    ['a null', { wines: null }, /did not resolve|scalar/],
+  ]) {
+    it(`warns instead of skipping silently when the binding resolves to ${label}`, async () => {
+      const warnings = [];
+      const r = fakeResponse({ url: '/api/cellar', body });
+      const out = await matchResponseAgainstManifest(
+        r, collectionManifest({ jsonPath: 'wines', field: 'wines[].vintage' }),
+        { warn: (w) => warnings.push(w) });
+      assert.deepEqual(out, [], 'still produces no ground truth');
+      assert.equal(warnings.length, 1, 'but says so — a silent skip is the defect');
+      assert.equal(warnings[0].kind, 'collection-binding-unusable');
+      assert.equal(warnings[0].surfaceId, 'wine-row');
+      assert.match(warnings[0].detail, reason);
+      assert.match(warnings[0].detail, /wines-grid/, 'names the binding to fix');
+    });
+  }
+
+  it('refuses "$key" on an ARRAY rather than falling back to the index', async () => {
+    // An index is positional: any reordering silently re-identifies every row.
+    // Refusing loudly beats a plausible-looking wrong key.
+    const warnings = [];
+    const r = fakeResponse({ url: '/api/cellar', body: { wines: [{ vintage: 2011 }] } });
+    const out = await matchResponseAgainstManifest(
+      r, collectionManifest({ jsonPath: 'wines', keyField: '$key', field: 'wines[].vintage' }),
+      { warn: (w) => warnings.push(w) });
+    assert.deepEqual(out, []);
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0].detail, /positional/);
+  });
+
+  it('does NOT warn on a legitimately empty collection', async () => {
+    // The boundary that keeps the new signal from becoming noise: an empty
+    // array/map is the normal quiet-page case, not a broken binding.
+    for (const body of [{ wines: [] }, { wines: {} }]) {
+      const warnings = [];
+      const out = await matchResponseAgainstManifest(
+        fakeResponse({ url: '/api/cellar', body }),
+        collectionManifest({ jsonPath: 'wines', field: 'wines[].vintage' }),
+        { warn: (w) => warnings.push(w) });
+      assert.deepEqual(out, []);
+      assert.deepEqual(warnings, [], 'an empty collection must stay silent');
+    }
+  });
+
+  it('omitting the warn sink still works (it is optional, not required)', async () => {
+    const out = await matchResponseAgainstManifest(
+      fakeResponse({ url: '/api/cellar', body: { wines: 7 } }),
+      collectionManifest({ jsonPath: 'wines', field: 'wines[].vintage' }));
+    assert.deepEqual(out, []);
+  });
+
+  it('the new warning kind is in the schema enum, or the ledger would reject it', async () => {
+    const { RigWarningSchema } = await import('../scripts/lib/persona-test/schemas.mjs');
+    const parsed = RigWarningSchema.safeParse({
+      kind: 'collection-binding-unusable', surfaceId: 'wine-row', detail: 'x',
+    });
+    assert.ok(parsed.success, 'emitting a kind the schema rejects would drop the warning downstream');
+  });
+});
+
+describe('attachNetworkListener — an unusable binding must not storm the journey', () => {
+  const unusable = {
+    version: 1,
+    collections: [{ id: 'wines-grid', urlPattern: '/api/cellar', jsonPath: 'wines', keyField: 'id' }],
+    surfaces: [{
+      id: 'wine-row',
+      scope: 'wines-grid',
+      locator: { kind: 'css', selector: '.wine-row', warn: false },
+      severityFloor: 'P1',
+      engineFields: [{
+        field: 'wines[].vintage', type: 'integer', llmSafe: false, llmMaxChars: 2000,
+        networkSource: { urlPattern: '/api/cellar', jsonPath: 'wines[].vintage' },
+      }],
+    }],
+  };
+
+  it('warns ONCE across many matching responses, not once per response', async () => {
+    // An unusable binding is a property of the MANIFEST, so it is wrong on
+    // every matching response. Emitting each time turns one manifest defect
+    // into a per-request storm and buries the signal it exists to raise —
+    // making the fix for a silent failure into a loud useless one.
+    const page = createFakePage();
+    const warnings = [];
+    attachNetworkListener(page, unusable, { warn: (w) => warnings.push(w) });
+
+    for (let i = 0; i < 5; i++) {
+      await page.fireResponse(fakeResponse({ url: `/api/cellar?page=${i}`, body: { wines: 7 } }));
+    }
+
+    assert.equal(warnings.length, 1, `expected 1 warning across 5 responses, got ${warnings.length}`);
+    assert.equal(warnings[0].kind, 'collection-binding-unusable');
+    // Dedup keys on the detail, so the detail must not carry the URL — five
+    // distinct URLs above would otherwise be five distinct "unique" warnings.
+    assert.ok(!/page=/.test(warnings[0].detail),
+      'detail must stay stable per binding, or the dedup key varies per request');
+  });
+
+  it('a throwing warn sink does not take the capture down with it', async () => {
+    // The sink is operator-supplied. Losing a warning is bad; losing the
+    // ground-truth capture because a warning handler threw is worse.
+    const page = createFakePage();
+    attachNetworkListener(page, unusable, { warn: () => { throw new Error('sink exploded'); } });
+    await page.fireResponse(fakeResponse({ url: '/api/cellar', body: { wines: 7 } }));
+
+    const good = createFakePage();
+    const { store } = attachNetworkListener(good, COLLECTION_MANIFEST, {
+      warn: () => { throw new Error('sink exploded'); },
+    });
+    await good.fireResponse(fakeResponse({ url: '/api/cellar', body: { wines: [{ id: 'A', vintage: 2011 }] } }));
+    assert.equal(store.size(), 1, 'ground truth must still be captured');
+  });
+
+  it('omitting warn keeps the listener working (opts.warn is optional)', async () => {
+    const page = createFakePage();
+    const { store } = attachNetworkListener(page, COLLECTION_MANIFEST);
+    await page.fireResponse(fakeResponse({ url: '/api/cellar', body: { wines: [{ id: 'A', vintage: 2011 }] } }));
+    assert.equal(store.size(), 1);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// WIRING — the half a unit test cannot see.
+//
+// `matchResponseAgainstManifest` can detect an unusable binding perfectly and
+// the run still say nothing, if the runner attaches the listener without a warn
+// sink or never drains the buffer. That is the exact shape recorded in
+// AGENTS.md for the gate-honesty contract: enforcement that was asserted, unit-
+// tested, and reached by nothing in production. Source-level because the drain
+// sits inside a browser-driving loop no hermetic fixture can run.
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('persona-consistency-run wires the binding warning to the ledger', () => {
+  const runnerSrc = fs.readFileSync(
+    path.join(REPO_ROOT, 'scripts', 'persona-consistency-run.mjs'), 'utf-8');
+
+  it('attaches the listener WITH a warn sink, not bare', () => {
+    const call = runnerSrc.slice(runnerSrc.indexOf('attachNetworkListener(page'));
+    assert.ok(call.length > 0, 'anchor missing — this test is stale');
+    const head = call.slice(0, 220);
+    assert.match(head, /warn:/,
+      'attachNetworkListener must receive a warn sink, or every collection-binding '
+      + 'warning is discarded and the silent skip is back');
+  });
+
+  it('drains the buffer into a step, or the warnings never reach the ledger', () => {
+    assert.match(runnerSrc, /bindingWarnings\.splice\(0\)/,
+      'the session buffer must be drained into a step warnings array');
+    // Ordering is the contract: draining must happen BEFORE stepWarnings is
+    // assembled, else the push lands in an array already copied and is lost.
+    const iDrain = runnerSrc.indexOf('bindingWarnings.splice(0)');
+    const iAssemble = runnerSrc.indexOf('const stepWarnings =');
+    assert.ok(iDrain > -1 && iAssemble > -1, 'both anchors must exist');
+    assert.ok(iDrain < iAssemble,
+      'the drain must precede stepWarnings assembly, or the warning is computed away');
+  });
+
+  it('drains with splice, not a copy — a session-deduped warning must not repeat per step', () => {
+    // The listener dedupes for the whole session, so a non-emptying read would
+    // re-emit the same warning on every subsequent step: one manifest defect
+    // rendered as N findings, which is the storm the dedup exists to prevent.
+    assert.ok(!/warnings\.push\(\.\.\.bindingWarnings\)/.test(runnerSrc),
+      'a non-emptying drain re-emits the same warning on every later step');
   });
 });

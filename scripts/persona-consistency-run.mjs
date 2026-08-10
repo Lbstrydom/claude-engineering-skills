@@ -245,7 +245,16 @@ export async function runConsistency(args, deps = {}) {
     const browser = await playwright.chromium.launch();
     const context = await newAuthedContext(browser, canary.authBootstrap);
     const page    = await context.newPage();
-    const listener = attachNetworkListener(page, manifestResult.manifest);
+    // The listener outlives any single step, so its warnings land in a
+    // session-level buffer and are drained into whichever step is open when
+    // they appear. Wiring this is the point of the whole change: without the
+    // sink the listener still detects an unusable collection binding and
+    // nothing ever hears it, which is the silent skip wearing a different
+    // hat — a detector that never reaches the ledger.
+    const bindingWarnings = [];
+    const listener = attachNetworkListener(page, manifestResult.manifest, {
+      warn: (w) => bindingWarnings.push(w),
+    });
 
     // ── 7. Execute journey steps deterministically ────────────────────────
     const allContradictions = [];
@@ -400,6 +409,13 @@ export async function runConsistency(args, deps = {}) {
       }
 
       allContradictions.push(...contradictions);
+      // Drain the listener's buffer as LATE in the step as possible — responses
+      // arrive throughout `executeStep` and the await window, so draining
+      // earlier would push a binding warning into the following step and
+      // mis-attribute which journey step exposed it. `splice(0)` because the
+      // listener already deduped for the session: each warning is drained once
+      // and must not re-appear on every subsequent step.
+      if (bindingWarnings.length) warnings.push(...bindingWarnings.splice(0));
       // First step also carries the startup warnings (manifest-quality
       // nudges) so the operator sees them once. Later steps only carry
       // their own capture/diff warnings.

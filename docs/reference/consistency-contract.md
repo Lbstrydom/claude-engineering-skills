@@ -175,6 +175,37 @@ The rig sees the network response `{wines: [{id:"abc123",vintage:2020}, {id:"def
 
 Nested scopes inherit through DOM ancestry — innermost wins.
 
+#### Response shapes a collection can bind
+
+A named array is the shape above. Two others are supported, because they are
+ordinary REST and were previously **unbindable and silently skipped** — a
+surface declaring a per-row assertion that never executed, while `surfaces.json`
+read as enforced coverage (upstream `a0b58a34`).
+
+| Response | `jsonPath` | `keyField` |
+|---|---|---|
+| `{"wines": [{"id":"A", …}]}` | `"wines"` | `"id"` |
+| `{"wines": {"R1": {"id":"A", …}}}` — object map, id inside the value | `"wines"` | `"id"` |
+| `{"wines": {"R1": {…}}}` — object map, **id is the key** | `"wines"` | `"$key"` |
+| `[{"id":"A", …}]` — top-level array | `"$"` | `"id"` |
+
+`"$"` addresses the document root; `"$key"` takes a map row's identity from the
+map's own key. Both satisfy the existing `z.string().min(1)`, so no manifest
+schema change was needed.
+
+Two deliberate refusals, so a wrong binding fails loudly rather than plausibly:
+
+- **`"$key"` on an array** is rejected rather than falling back to the array
+  index. An index is positional, so any reordering of the response silently
+  re-identifies every row.
+- **A binding that resolves to nothing, or to a scalar**, emits a
+  `collection-binding-unusable` rig warning naming the collection and the
+  `jsonPath`. It is deduped for the whole session — one manifest defect is one
+  warning, not one per HTTP response.
+
+An **empty** array or map is not a warning: a legitimately empty collection is
+the normal case, and flagging it would make the signal noise on every quiet page.
+
 ---
 
 ## Surface manifest (`surfaces.json`)

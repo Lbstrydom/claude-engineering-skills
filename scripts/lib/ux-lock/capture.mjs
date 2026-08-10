@@ -94,8 +94,28 @@ function regexMatch(pattern, subject) {
   try { return new RegExp(pattern).test(subject); } catch { return false; }
 }
 
+/**
+ * Sentinel addressing the document ROOT.
+ *
+ * Without it a top-level-array response — `[{...}, {...}]`, an ordinary REST
+ * shape — cannot be bound at all: the empty string is rejected by
+ * `z.string().min(1)` on every `jsonPath` field, and `resolveJsonPath` returns
+ * undefined for it anyway, so the root was unaddressable from both directions
+ * (upstream a0b58a34).
+ *
+ * `$` and not `.`, though the report offered both: a lone `.` splits to
+ * `['', '']` and would traverse two empty-string keys rather than reading as a
+ * sentinel, so a typo'd path would silently resolve to undefined instead of
+ * failing visibly. `$` is also the JSONPath convention for the root.
+ */
+const JSON_PATH_ROOT = '$';
+
 function resolveJsonPath(obj, path) {
   if (obj == null || typeof path !== 'string' || path.length === 0) return undefined;
+  // Whole-path sentinel only — deliberately NOT a prefix (`$.items`). Segment
+  // traversal already reaches everything below the root, so accepting both
+  // spellings would add a second way to write every path and nothing else.
+  if (path === JSON_PATH_ROOT) return obj;
   let cur = obj;
   for (const part of path.split('.')) {
     if (cur == null) return undefined;
@@ -105,14 +125,74 @@ function resolveJsonPath(obj, path) {
 }
 
 /**
+ * `keyField` sentinel selecting the MAP KEY as a row's identity.
+ *
+ * For an object-map collection — `{"R1": {...}, "R2": {...}}` — the entity id
+ * is frequently the key itself and absent from the value, so `Object.values()`
+ * alone would leave every row unkeyed. Satisfies the existing
+ * `z.string().min(1)`, so no schema relaxation is needed.
+ */
+const COLLECTION_KEY_SENTINEL = '$key';
+
+/** Operator-facing explanation per `resolveCollectionRows` failure reason. */
+const REASON_DETAIL = Object.freeze({
+  unresolved: 'did not resolve (path absent from the response body?)',
+  'not-iterable': 'resolved to a scalar, which has no rows',
+  'array-with-key-sentinel':
+    `resolved to an array, but keyField is "${COLLECTION_KEY_SENTINEL}", which only `
+    + 'means anything for an object map (an array index is positional, so it cannot identify a row)',
+});
+
+/**
+ * Resolve a collection binding's target into iterable rows.
+ *
+ * Accepts an array (the original shape) or an object map keyed by entity id.
+ * Returns a discriminated result rather than a bare list because the CALLER
+ * has to tell "iterated nothing" from "could not iterate" — collapsing those
+ * is the defect this exists to fix.
+ *
+ * An empty array or empty map is `ok` with zero rows, NOT a failure: a
+ * legitimately empty collection is the normal case, and warning on it would
+ * make the new signal noise on every quiet page.
+ *
+ * @param {unknown} container - whatever `binding.jsonPath` resolved to
+ * @param {string} keyField
+ * @returns {{ok: true, rows: Array<{row: unknown, mapKey: string|undefined}>}
+ *          |{ok: false, reason: 'unresolved'|'not-iterable'|'array-with-key-sentinel'}}
+ */
+function resolveCollectionRows(container, keyField) {
+  if (Array.isArray(container)) {
+    // `$key` means "the map's own key", which an array does not have. Falling
+    // back to the index would be worse than refusing: an index is positional,
+    // so any reordering silently re-identifies every row — the exact class of
+    // quiet wrongness this whole change is about.
+    if (keyField === COLLECTION_KEY_SENTINEL) return { ok: false, reason: 'array-with-key-sentinel' };
+    return { ok: true, rows: container.map((row) => ({ row, mapKey: undefined })) };
+  }
+  // `typeof null === 'object'`, so the null check is load-bearing. A JSON body
+  // only ever yields plain objects, arrays and scalars, so a plain-object test
+  // is sufficient here — no need to exclude Date/Map/etc.
+  if (container !== null && typeof container === 'object') {
+    return { ok: true, rows: Object.entries(container).map(([mapKey, row]) => ({ row, mapKey })) };
+  }
+  return { ok: false, reason: container === undefined ? 'unresolved' : 'not-iterable' };
+}
+
+/**
  * Match a Playwright response against the manifest's networkSources +
  * collection bindings and produce store entries.
  *
  * @param {{ url(): string, status(): number, request(): {method(): string, postData(): string|null}, json(): Promise<unknown> }} response - duck-typed Playwright Response
  * @param {import('../persona-test/schemas.mjs').SurfaceManifest} manifest
+ * @param {object} [opts]
+ * @param {(warning: {kind: string, surfaceId: string|null, detail: string}) => void} [opts.warn]
+ *   Sink for `collection-binding-unusable`. Optional, and the function stays
+ *   correct without it — but a caller that omits it re-creates the silent skip,
+ *   so `attachNetworkListener` always supplies one.
  * @returns {Promise<Array<{ key: string, entry: object }>>}
  */
-export async function matchResponseAgainstManifest(response, manifest) {
+export async function matchResponseAgainstManifest(response, manifest, opts = {}) {
+  const warn = typeof opts.warn === 'function' ? opts.warn : null;
   const status = typeof response.status === 'function' ? response.status() : response.status;
   if (typeof status !== 'number' || status < 200 || status >= 300) return [];
 
@@ -170,14 +250,34 @@ export async function matchResponseAgainstManifest(response, manifest) {
         // Collection-scoped: walk the array, emit per-row entries keyed by keyField.
         const binding = collectionsById.get(surface.scope);
         if (!binding) continue;
-        const array = resolveJsonPath(body, binding.jsonPath);
-        if (!Array.isArray(array)) continue;
+        const container = resolveJsonPath(body, binding.jsonPath);
+        const resolved = resolveCollectionRows(container, binding.keyField);
+        if (!resolved.ok) {
+          // The whole point of upstream a0b58a34: this used to be a bare
+          // `continue`. The surface then produced zero claims, and zero claims
+          // is exactly what a surface with nothing wrong also produces — so the
+          // manifest read as enforced coverage while enforcing nothing.
+          //
+          // Detail is deliberately URL-FREE so it is stable per binding: the
+          // listener dedupes on it, and a URL would make every response a
+          // distinct warning and re-create the storm in a louder form.
+          warn?.({
+            kind: 'collection-binding-unusable',
+            surfaceId: surface.id,
+            detail: `collection "${binding.id}" jsonPath "${binding.jsonPath}" `
+              + `${REASON_DETAIL[resolved.reason]} — surface "${surface.id}" field `
+              + `"${field.field}" produced no ground truth.`,
+          });
+          continue;
+        }
 
         // The field path begins with `<arrayName>[].` per the contract.
         // Strip the array prefix to get the per-entry path.
         const entryFieldPath = stripCollectionPrefix(field.field, binding.jsonPath);
-        for (const row of array) {
-          const rowKey = row?.[binding.keyField];
+        for (const { row, mapKey } of resolved.rows) {
+          // `$key` identifies a map row by its own key; otherwise identity is
+          // read out of the row, as before.
+          const rowKey = binding.keyField === COLLECTION_KEY_SENTINEL ? mapKey : row?.[binding.keyField];
           if (rowKey == null) continue;
           const value = resolveJsonPath(row, entryFieldPath);
           // Resolves Gemini-final-G2 part 1: preserve undefined → no upsert.
@@ -258,14 +358,36 @@ function stripCollectionPrefix(fieldPath, collectionPath) {
  * @param {object} [opts]
  * @param {number} [opts.cap]            - Store cap; default $PERSONA_CONSISTENCY_BUFFER_CAP or 1024
  * @param {(err: Error) => void} [opts.onError] - Optional sink for handler errors
+ * @param {(warning: {kind: string, surfaceId: string|null, detail: string}) => void} [opts.warn]
  * @returns {{ store: ReturnType<typeof createNetworkGroundTruthStore>, removeListener: () => void }}
  */
 export function attachNetworkListener(page, manifest, opts = {}) {
   const store = createNetworkGroundTruthStore(opts);
 
+  // Dedupe for the LIFETIME OF THE LISTENER, not per response. An unusable
+  // binding is a property of the manifest, so it is wrong on every matching
+  // response — emitting each time would turn one manifest defect into a
+  // per-request storm and bury the signal it exists to raise. Same reasoning
+  // the nav-audit activation pass applies when it caps unactionable triggers.
+  //
+  // Deduping HERE rather than inside matchResponseAgainstManifest keeps that
+  // function stateless and per-response — the session is the only scope that
+  // knows what has already been said.
+  const warned = new Set();
+  const warnOnce = (w) => {
+    if (typeof opts.warn !== 'function') return;
+    const dedupeKey = `${w.kind}::${w.surfaceId ?? ''}::${w.detail}`;
+    if (warned.has(dedupeKey)) return;
+    warned.add(dedupeKey);
+    // A throwing sink must not kill the response handler — it would take the
+    // ground-truth capture down with it, which is strictly worse than a lost
+    // warning.
+    try { opts.warn(w); } catch { /* swallow */ }
+  };
+
   const handler = async (response) => {
     try {
-      const matches = await matchResponseAgainstManifest(response, manifest);
+      const matches = await matchResponseAgainstManifest(response, manifest, { warn: warnOnce });
       for (const m of matches) store.upsert(m.key, m.entry);
     } catch (err) {
       if (typeof opts.onError === 'function') {
