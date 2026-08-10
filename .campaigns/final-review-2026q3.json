@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "id": "final-review-2026q3",
+  "role": "final_review_shadow",
+  "decision": { "type": "select_default", "incumbent": "claude-opus" },
+  "arms": [
+    { "id": "opus", "model": "claude-opus", "mode": "shadow" },
+    { "id": "solo-opus", "model": "claude-opus", "mode": "primary", "type": "replicate" },
+    { "id": "kimi", "model": "moonshotai/kimi-k2-thinking", "mode": "shadow" }
+  ],
+  "controls": {
+    "reasoningEffort": "high",
+    "promptTemplateId": "final-review-shadow@4",
+    "outputSchemaId": "final-review@3",
+    "maxOutputTokens": 32000,
+    "toolPolicy": "structured-output-only",
+    "temperature": 0
+  },
+  "adjudicator": {
+    "model": "latest-opus",
+    "promptTemplateId": "campaign-adjudicate@1",
+    "outputSchemaId": "adjudication-verdict@1"
+  },
+  "calibration": { "sampleRate": 0.2 },
+  "targetN": 12,
+  "decisionRule": {
+    "floorMetric": "accepted_high_med_per_snapshot",
+    "floorMargin": 0.5,
+    "tiebreak": "cost_per_accepted",
+    "costCeilingUsdPerAccepted": 8
+  }
+}
