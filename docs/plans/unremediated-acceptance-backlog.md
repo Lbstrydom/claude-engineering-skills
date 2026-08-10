@@ -24,22 +24,33 @@ accepted and never remediated. `/ship` Step 0.5e nags about them every push.
 
 ### Code Trace
 
-Read at commit `1c076eb9`:
+**Re-verified at commit `e1beb385` (2026-08-10)** — 30 commits landed while this
+plan sat in Draft, including `8fecb8bf`, which changed this exact reader. Every
+citation below was re-read at `e1beb385`; the superseded `1c076eb9` line numbers
+are gone rather than left to decay into wrong-but-resolving references.
 
-- `unremediated_acceptances` view (live definition read via
-  `pg_get_viewdef`, not the migration file — migrations are cumulative)
-  → `audit_findings f JOIN audit_runs r`, filtered on
-  `adjudication_outcome`, `remediation_state`, `severity`, and a
-  **`created_at` band of 7–30 days**.
-- `scripts/lib/store/plans-ship.mjs:676 (1c076eb9)` `getUnremediatedAcceptances`
-  → `SELECT * FROM unremediated_acceptances WHERE repo_id = $1 LIMIT 20`
-- `scripts/lib/store/plans-ship.mjs:717 (1c076eb9)` `countUnremediatedAcceptances`
-  → the real total, added 2026-07-31
-- `scripts/cross-skill.mjs:847 (1c076eb9)` → calls both, emits
-  `{rows, shown, total, byMode}`
-- `skills/ship/SKILL.md` Step 0.5e → consumes it (prose corrected in `1c076eb9`)
+- `unremediated_acceptances` view (live definition read via `pg_get_viewdef`,
+  not the migration file — migrations are cumulative). **Unchanged**: still
+  filters on `adjudication_outcome`, `remediation_state`, `severity` and the
+  **7–30 day band on `r.created_at`**, and still **never consults
+  `user_action`**. D1 and D3 both remain necessary.
+- `scripts/lib/store/plans-ship.mjs:779 (e1beb385)` `getUnremediatedAcceptances`
+  — now takes `(scope, opts)`, resolves `{limit, offset}` via `resolveNudgePage`,
+  and spells out `ORDER BY CASE severity … , accepted_at ASC, audit_finding_id`
+  inline in both branches (`8fecb8bf`).
+- `scripts/lib/store/plans-ship.mjs:835 (e1beb385)` `countUnremediatedAcceptances`
+- `scripts/cross-skill.mjs:909,916 (e1beb385)` → calls both; payload is now
+  `{ok, cloud, scope, measured, reason, rows, shown, total, byMode, limit, offset}`
+- `skills/ship/SKILL.md` Step 0.5e → consumes it (prose corrected in `1c076eb9`,
+  cite by section not line — the file is append-newest-first)
 - `audit_findings_user_action_check` → `CHECK (user_action IN ('fix-now',
   'deferred','dismissed','needs_triage','accepted-permanent','auto_dismissed'))`
+
+**Figures re-measured at `e1beb385`** (same queries as the originals):
+`in_window: 201` (unchanged), `aged_out: 0` (unchanged), `accepted-permanent: 44`
+(unchanged), `needs_triage: 6` (unchanged). Only the total moved, 231 → **261**,
+entirely in the `too_fresh` (<7d) bucket — a day's audit output, not backlog
+growth. Every load-bearing number in this plan still holds.
 
 ### What the exploration falsified
 
@@ -163,7 +174,7 @@ and changing that axis would silently re-cohort every row.
 
 | Field | Cohort | Predicate |
 |---|---|---|
-| `rows` | nag window, capped | P ∧ `user_action IS DISTINCT FROM 'accepted-permanent'` ∧ `now()-30d < r.created_at < now()-7d`, `LIMIT 20` |
+| `rows` | nag window, paged | P ∧ `user_action IS DISTINCT FROM 'accepted-permanent'` ∧ `now()-30d < r.created_at < now()-7d`, `LIMIT/OFFSET` per `resolveNudgePage` (default 20, max 200) |
 | `shown` | `rows.length` | the cap, made visible |
 | `total` / `byMode` | **unchanged meaning** — the nag window | same predicate as `rows`, uncapped count |
 | `byDisposition.open` | = `total` | a derived bucket, NOT a stored `user_action`; named so the payload is self-describing |
@@ -196,57 +207,61 @@ how a dashboard number changes under a reader that was never updated.
 
 ### D6 — The aged cohort is retrievable, not just countable (H2)
 
+> **REVISED 2026-08-10 — `8fecb8bf` shipped paging into this exact reader while
+> this plan sat in Draft.** The first draft specified keyset/cursor pagination.
+> That is now the wrong answer, and the reason is this plan's own M1 thesis:
+> `getUnremediatedAcceptances` and its `unlocked_fixes` sibling now both take
+> `{limit, offset}`, clamped in the store by `resolveNudgePage`, with the
+> resolved page echoed on the payload. Introducing a *second* paging paradigm in
+> the same file would be precisely the one-sibling-only divergence that commit
+> was fixing — it records it as "the third… divergence the file records in its
+> own docblocks, and fixing one half again is the failure mode itself".
+> Cursor encoding, versioning, `nextCursor` and stale-cursor semantics are all
+> **withdrawn**; the sections below replace them.
+
 A count you cannot act on is not an improvement over forgetting — it just moves
 the dead end. `agedOut` on the `/ship` payload stays an aggregate (that path
 must stay small), but the rows are reachable on demand:
 
 ```bash
-node scripts/cross-skill.mjs list-unremediated-acceptances --aged [--limit N] [--cursor <c>]
+node scripts/cross-skill.mjs list-unremediated-acceptances --aged [--limit N] [--offset N]
 ```
 
-Repo-scoped by the same `resolveShipNudgeScope` fence as the default mode.
+Repo-scoped by the same `resolveShipNudgeScope` fence as the default mode, and
+paged by the **existing** `resolveNudgePage` — `--limit` default 20, clamped to
+`NUDGE_PAGE_MAX` (200); `--offset` default 0. The store owns the clamp and the
+payload echoes the **resolved** `limit`/`offset`, because a caller who cannot
+tell a clamped page from a full one cannot tell a short page from the last page.
+`--limit`/`--offset` are already registered flags; only `--aged` is new and needs
+adding to `KNOWN_FLAGS`.
 
-**Cursor contract.** The sort key is `(accepted_at, audit_finding_id)` — both
-are already in the fixed 14-column projection (`accepted_at` IS `r.created_at`,
-aliased), so no projection change is needed and M1's "reproduce it verbatim"
-rule stands unbroken. Oldest first; the id is the stable tie-breaker so keyset
-pagination can neither skip nor repeat a row.
-
-- **Encoding**: `base64url(JSON.stringify({v: 1, acceptedAt, id}))` — opaque to
-  the caller. **Versioned**: an unknown `v` is rejected as `bad-cursor`, so a
-  future sort-key change cannot silently mis-page an old cursor. (The plan
-  argues elsewhere that an absent key is indistinguishable from an older
-  emitter; the same reasoning applies to an unversioned cursor, and the first
-  draft did not carry it.)
-- **Malformed cursor** → `{ok:false, reason:'bad-cursor'}`, never a silent
-  restart from page 1 (a silent restart makes a paging bug look like a duplicate
-  backlog).
-- **Stale cursor** (its row was since dispositioned) → still valid: the keyset
-  predicate is `>`, so it resumes from the position, not the row.
-- **`--limit`**: default 20, hard max 100; a non-integer or out-of-range value
-  is rejected, never clamped silently.
-- **Obtaining the next cursor (P1).** The reader fetches `limit + 1` rows,
-  returns at most `limit`, and derives `nextCursor` from the **last returned**
-  row (not the probe row). Success envelope for `--aged`:
-  `{ok, cloud, measured, reason, scope, rows, shown, nextCursor}` — the same
-  shape as the default mode plus `nextCursor`, so a caller needs no shape
-  branch. **End of list is `nextCursor: null`**, never an omitted key and never
-  an empty string: an absent key is indistinguishable from an older CLI that
-  never emitted one. `byDisposition`/`agedOut` are **absent** in `--aged` mode
-  (it is a listing, not a census) — the default mode remains the only place
+- **Ordering**: reuse the sibling's clause verbatim —
+  `ORDER BY CASE severity WHEN 'HIGH' THEN 0 ELSE 1 END, accepted_at ASC,
+  audit_finding_id`. It is **total** (the id breaks `accepted_at`'s day-
+  granularity ties), which is what makes offset paging safe against permutation
+  across pages.
+- **Spell the clause out at each call site; do NOT hoist it into a `const` and
+  interpolate.** `tests/cross-skill-unlocked-scope.test.mjs` statically scans the
+  SQL literals in this file, and an interpolated `${order}` is invisible to it —
+  the scan goes green while reading a variable. `8fecb8bf` tried the hoisted
+  version and records that the guard caught it. Duplication here is deliberate
+  and guarded; de-duplicating it is a silent regression.
+- **Success envelope for `--aged`**: identical to the default mode plus nothing —
+  `{ok, cloud, measured, reason, scope, rows, shown, limit, offset}`. No shape
+  branch for the caller. `byDisposition`/`agedOut` are **absent** in `--aged`
+  mode (it is a listing, not a census); the default mode remains the only place
   counts are reported.
-- **`measured:false` in `--aged` mode**: `rows` and `nextCursor` are **absent**,
-  exactly as the count fields are in default mode — never `[]`/`null`. An empty
-  array is a business fact ("no aged obligations") and would render as one; the
-  whole point of the availability contract is that unmeasured must not be
-  expressible as a result.
-- **Ordering is per-view, and the aged view does NOT inherit the nag view's**
-  (shadow). The nag view keeps its live `ORDER BY CASE severity … , r.created_at`
-  (severity-first, for a human reading a nudge). The aged view orders
-  `accepted_at ASC, audit_finding_id ASC` — the keyset requires it, and a
-  severity-first order would make the cursor incorrect. Where §4 step 3 says the
-  aged view is "identical", that means **projection and predicates**, never
-  `ORDER BY`.
+- **`measured:false` in `--aged` mode**: `rows` is **absent**, exactly as the
+  count fields are in default mode — never `[]`. An empty array is a business
+  fact ("no aged obligations") and would render as one; the whole point of the
+  availability contract is that unmeasured must not be expressible as a result.
+- **Offset drift, and why it does not bite here.** Offset paging is unstable
+  under concurrent mutation: disposition a row and every later row shifts left,
+  so the next page skips one. That is a real hazard *during a burn-down*, which
+  is exactly when rows are being dispositioned. The method, not the mechanism,
+  removes it — **§7b Phase 2 pages the cohort to completion first (read-only),
+  then dispositions from the collected list.** Keyset would also solve it, but
+  at the cost of the divergence above; collecting first is free.
 - `/ship` never calls `--aged`; it prints the count and the command.
 
 ### Right-sizing gate
@@ -318,10 +333,14 @@ are cumulative, so the migration must be written against the **live**
    - the qualified `r.created_at` band per D5.
 3. **`unremediated_acceptances_aged`**: identical **projection and predicates**
    (same column names, same column order, so a reader needs no shape branch),
-   with `r.created_at <= now() - '30 days'` and **no lower bound**. Its
-   `ORDER BY` is deliberately **different** — `accepted_at ASC,
-   audit_finding_id ASC`, required by D6's keyset; do not copy the nag view's
-   severity-first ordering here.
+   with `r.created_at <= now() - '30 days'` and **no lower bound**.
+   **Ordering now lives at the READ site, not in the view** (revised — see D6):
+   `8fecb8bf` moved the authoritative `ORDER BY` into `getUnremediatedAcceptances`
+   precisely because a `CREATE OR REPLACE VIEW` that dropped an inner sort would
+   silently start hiding HIGH rows. Give the aged view the same inner
+   `ORDER BY` as its sibling for consistency, but **the read must spell out its
+   own clause** — never rely on the view's inner sort surviving into an outer
+   `LIMIT`, which Postgres does not guarantee.
    **Boundary partition**: the nag view's lower edge is strict
    (`r.created_at > now()-30d`) and the aged view's is inclusive
    (`<= now()-30d`), so the two are exhaustive and disjoint at the seam. Writing
@@ -341,9 +360,11 @@ are cumulative, so the migration must be written against the **live**
   per D5's table. **One query with `FILTER` clauses**, not three round trips —
   the three cohorts share predicate P, so computing them separately invites the
   drift D5 exists to prevent.
-- `getUnremediatedAcceptances` → gains `{aged, limit, cursor}` for D6, still
-  routed through `resolveExplicitRepoScope` (the fence the whole view family
-  shares — a new mode must not become the third unscoped reader).
+- `getUnremediatedAcceptances` → gains an `aged` flag on its existing `opts`
+  (which already carries `{limit, offset}` since `8fecb8bf`), selecting the aged
+  view instead of the nag view. Still routed through `resolveExplicitRepoScope`
+  — a new mode must not become the third unscoped reader — and still paged by
+  `resolveNudgePage`, with the `ORDER BY` spelled out inline per branch.
 - **Why**: D2/D3/D6.
 
 **Availability is not a count of zero (H1, round 2).** The sibling readers
@@ -364,8 +385,11 @@ render as "no obligations". The new fields obey the same contract —
 
 **`scripts/cross-skill.mjs`** (modify)
 - `list-unremediated-acceptances` → emit `byDisposition` + `agedOut`; accept
-  `--aged`, `--limit`, `--cursor`. New flags need `assertKnownFlags` coverage
-  or `cli:flags:gate` fails.
+  `--aged`. `--limit`/`--offset` are **already registered and handled** as of
+  `8fecb8bf` — only `--aged` is new and needs adding to `KNOWN_FLAGS`, or
+  `cli:flags:gate` fails. (Note the precedent that commit records: `--limit` sat
+  in `KNOWN_FLAGS` accepted-and-validated but read by no handler — an allowlist
+  entry is a claim the parser does something with it.)
 - **Why**: D2/D3/D6.
 
 **`skills/ship/SKILL.md`** (modify)
@@ -459,15 +483,14 @@ only half the surface, and these are the halves most likely to regress silently:
 |---|---|
 | availability ≠ zero | cloud-off / query-failure / timeout → `measured:false`, correct `reason`, and the count fields **absent** (assert absence, not `=== 0` — `0` is the bug) |
 | timeout classification | a forced `statement_timeout` surfaces `reason:'timeout'`, not a generic failure |
-| invalid `--limit` | `0`, `-1`, `101`, `'abc'` all **rejected**, never silently clamped |
-| cursor rejection | malformed cursor → `bad-cursor`; **never** a silent page-1 restart |
-| pagination completeness | seed 25 aged rows, page at `--limit 10`: three pages, **no row seen twice, none missed**, `nextCursor: null` exactly on the last |
-| stale cursor | disposition the cursor's own row, then resume — the keyset `>` still advances |
+| page clamping is visible | `--limit 0/-1/'abc'` → the **resolved** `limit` on the payload is the default, and `--limit 500` echoes `200`; a caller can always tell a clamped page from a full one |
+| pagination completeness | seed 25 aged rows, page at `--limit 7` (does not divide 25): **25 rows, 25 distinct, full coverage** — the same shape `8fecb8bf` used at 44/7 |
+| total ordering | two rows sharing `accepted_at` to the day appear in a stable, id-broken order across repeated paged reads — a non-total order permutes across pages, showing one row twice and skipping another |
 | transitions (M2) | a `needs_triage` row and a `deferred` row each reach **both** terminals via the named CLI, and leave the nag view afterwards |
 | all-time disposition count | an `accepted-permanent` row **older than 30 days** still appears in `byDisposition.acceptedPermanent` (the P3 regression guard) |
 | cohort boundary | a row at **exactly** `now()-30d` lands in exactly ONE of nag/aged — never both, never neither (the `<` vs `<=` off-by-one) |
-| `--aged` unavailability | `measured:false` → `rows` and `nextCursor` **absent**, asserted as absent rather than `[]`/`null` |
-| cursor versioning | a cursor with an unknown `v` is rejected as `bad-cursor`, not silently re-interpreted |
+| `--aged` unavailability | `measured:false` → `rows` **absent**, asserted as absent rather than `[]` |
+| ORDER BY not hoisted | the SQL literals in `plans-ship.mjs` contain the clause inline in every branch — an interpolated `${order}` passes the static scan while asserting nothing |
 
 **Performance acceptance criterion (M2)** — `agedOut` has no lower time bound,
 so it grows without limit and runs on **every push**. This repo has direct scar
@@ -575,6 +598,14 @@ permanently. Every open disposition therefore has a route:
 no from-state gating exists in the writer and none is needed — the table above
 is the *policy*, and §6 asserts a `needs_triage` row reaches both terminals.
 
+**Paging method — collect first, then disposition (revised 2026-08-10).** The
+reader pages by `LIMIT/OFFSET`, which is unstable under concurrent mutation:
+dispositioning a row removes it from the view and shifts every later row left, so
+the next page skips one. Do **not** interleave. Page the cohort to completion
+read-only, hold the list, then disposition from it. The full 201 is ~11 pages at
+the default 20, or one page at `--limit 200`. This is why D6 did not need keyset
+pagination — the hazard is removed by the method, not the mechanism.
+
 Order and method:
 1. `[Sustainability]` (81) — for each, the **first** question is "has a completed
    plan already decided this?" (the `d6d8267b1fd9` shape). If yes →
@@ -646,6 +677,49 @@ genuinely new finding — the view's 30-day upper bound silently forgetting
 obligations — was in neither the brief nor the first three rounds' findings; it
 came from reading the live view definition.
 
+### Revision 2026-08-10 — re-verified against 30 intervening commits
+
+The plan sat in Draft while substantial work landed. Re-checked rather than
+assumed, because its Code Trace was pinned to `1c076eb9` and pinned citations
+decay.
+
+**One commit materially changed the design.** `8fecb8bf` ("the acceptances page
+was ordered, but nothing said so") shipped paging into `getUnremediatedAcceptances`
+— the exact reader D6 designs for — after a consumer reported that 24 of 44
+obligations were unreachable by any invocation. It added a **total** `ORDER BY`
+at the read site, threaded `{limit, offset}` through **both** sibling readers,
+and made the store own the clamp with the resolved page echoed back.
+
+D6 originally specified **keyset/cursor** pagination. That is now withdrawn in
+favour of the shipped `limit/offset`, on this plan's own M1 grounds: a second
+paging paradigm in the same file is exactly the one-sibling-only divergence both
+this plan and that commit exist to prevent. The offset-drift hazard is real but
+is removed by *method* (§7b pages read-only to completion, then dispositions),
+not by mechanism. Cursor encoding, versioning, `nextCursor` and stale-cursor
+semantics are all withdrawn; three §6 test rows were replaced accordingly.
+
+Two implementation constraints inherited from that commit and now recorded here:
+the `ORDER BY` must be **spelled out inline per branch** (the guard is a static
+scan of SQL literals — an interpolated `${order}` passes while asserting
+nothing, which that commit verified by trying it), and ordering authority lives
+at the **read site**, not the view, because a `CREATE OR REPLACE VIEW` dropping
+an inner sort would silently start hiding HIGH rows.
+
+**Everything else re-verified and unchanged**: the view still ignores
+`user_action` and still carries the 7–30 day band (D1 and D3 both still
+necessary); all cited files survived the `d5e66d35` shared-lib refactor
+untouched; `adjudicateFinalReviewFinding` is still the canonical writer and both
+`final-review-*` CLI verbs still work; `tests/fixtures/expected-schema.json` and
+`db:local:regen` still exist, so the close-out holds. `ba3a5990` changed store
+error *wording* (vendor-neutral), not the availability contract shape, so H1 is
+unaffected. Figures re-measured: 201 / 44 / 6 all unchanged; the population total
+moved 231 → 261, entirely in the <7-day bucket.
+
+**Status stays Approved** — no finding was invalidated, one design decision was
+replaced with the now-shipped convention.
+
+---
+
 **Gemini final gate: APPROVE** (1 round, 0 new findings, 0 wrongly dismissed).
 Deliberation quality: `claude_bias_detected: false`, `deliberation_was_fair:
 true`, architectural coherence **Strong**, **no over-engineering flags**. It
@@ -675,3 +749,12 @@ primary gate missed; all 5 were accepted and fixed:**
 
 That is the second time today the shadow caught real defects after the primary
 gate approved — consistent with the A/B experiment's KEEP verdict.
+
+> **Findings 2 and 5 were superseded a day later**, not reversed: both were
+> correct against the keyset design, and the 2026-08-10 revision withdrew keyset
+> in favour of the shipped `limit/offset`. Finding 2's substance survives in a
+> stronger form — ordering authority now lives at the read site for a reason
+> that commit `8fecb8bf` discovered independently (a view-inner sort is not
+> guaranteed to survive an outer `LIMIT`). Finding 5 (cursor versioning) no
+> longer applies: there is no cursor. Recorded rather than deleted, because a
+> finding that was right when made is part of the audit record.
