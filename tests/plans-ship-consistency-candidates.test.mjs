@@ -271,3 +271,74 @@ describe('resolveCandidateStatesByFingerprint — bounded, defensive, closed uni
     assert.equal(Object.getPrototypeOf(states), null);
   });
 });
+
+// ── Gaps found by mutation testing (2026-08-10) ─────────────────────────────
+//
+// The oversize-cursor test above asserted `.error` but NOT `.ok`, so a mutant
+// flipping `ok:false` to `ok:true` on that path survived — the caller branches
+// on `.ok`, so that mutant is a live "malformed cursor accepted" bug that the
+// suite could not see. And the byte cap's boundary was never exercised.
+
+describe('decodeCandidateCursor — assert the FIELD THE CALLER BRANCHES ON', () => {
+  it('every rejection sets ok:false, not merely an error string', () => {
+    const rejects = [
+      'not-base64url-json',
+      '',
+      Buffer.from(JSON.stringify({ v: 99, ts: 't', id: 'i', digest: 'd' })).toString('base64url'),
+      Buffer.from(JSON.stringify({ v: 1, ts: 't', id: 'i' })).toString('base64url'),
+      Buffer.from(JSON.stringify({ v: 1, ts: 'x'.repeat(600), id: 'i', digest: 'd' })).toString('base64url'),
+    ];
+    for (const raw of rejects) {
+      const d = decodeCandidateCursor(raw);
+      assert.equal(d.ok, false, `ok must be false for ${JSON.stringify(String(raw).slice(0, 24))}`);
+      assert.equal(d.cursor, undefined, 'a rejected cursor must not also hand back a payload');
+    }
+  });
+
+  it('accepts a cursor at exactly the byte cap, and rejects one byte over', () => {
+    // The cap is `> CURSOR_MAX_BYTES`, so 512 is legal and 513 is not. A mutant
+    // changing it to `>=` survived because neither boundary was tested.
+    const CAP = 512;
+    const pad = (n) => Buffer.from(JSON.stringify({ v: 1, ts: 'T', id: 'I', digest: 'x'.repeat(n) }))
+      .toString('base64url');
+    // Grow the digest until the ENCODED length lands on each side of the cap.
+    let atCap = null, overCap = null;
+    for (let n = 1; n < 2000 && (atCap === null || overCap === null); n += 1) {
+      const s = pad(n);
+      const len = Buffer.byteLength(s, 'utf-8');
+      if (len <= CAP) atCap = s;
+      else if (overCap === null) overCap = s;
+    }
+    assert.ok(atCap && overCap, 'fixture setup: both sides of the cap must be constructible');
+    assert.ok(Buffer.byteLength(atCap, 'utf-8') <= CAP);
+    assert.ok(Buffer.byteLength(overCap, 'utf-8') > CAP);
+
+    assert.equal(decodeCandidateCursor(atCap).ok, true, 'a cursor within the cap must decode');
+    const over = decodeCandidateCursor(overCap);
+    assert.equal(over.ok, false);
+    assert.equal(over.error, 'invalid-cursor');
+  });
+});
+
+describe('cursorFilterDigest — the value the resume check compares', () => {
+  it('is a stable, non-empty hex string', () => {
+    const d = cursorFilterDigest({ repoId: 'r', sinceTs: null });
+    assert.match(d, /^[0-9a-f]+$/, 'a non-hex digest would not survive the cursor round-trip');
+    assert.ok(d.length >= 8, 'too short a digest makes a filter collision plausible');
+    assert.equal(d, cursorFilterDigest({ repoId: 'r', sinceTs: null }), 'must be deterministic');
+  });
+
+  it('distinguishes a null sinceTs from an absent one identically (both mean "no filter")', () => {
+    assert.equal(
+      cursorFilterDigest({ repoId: 'r', sinceTs: null }),
+      cursorFilterDigest({ repoId: 'r' }),
+    );
+  });
+
+  it('changes when sinceTs changes — otherwise --resume could not detect a filter swap', () => {
+    assert.notEqual(
+      cursorFilterDigest({ repoId: 'r', sinceTs: '2026-01-01T00:00:00Z' }),
+      cursorFilterDigest({ repoId: 'r', sinceTs: '2026-06-01T00:00:00Z' }),
+    );
+  });
+});

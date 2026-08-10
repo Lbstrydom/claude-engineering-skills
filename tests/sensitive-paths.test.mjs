@@ -443,3 +443,80 @@ describe('Patterns are frozen', () => {
     assert.throws(() => GENERATED_NOISE_PATTERNS.push(/x/));
   });
 });
+
+// ── Gaps found by mutation testing (2026-08-10) ─────────────────────────────
+//
+// `npm run mutation -- --target sensitive-paths` scored 67.5% with 120
+// survivors, and the dominant class was ANCHOR REMOVAL on the sensitive-path
+// regexes: dropping `$` from `/\.env(\..+)?$/`, dropping `^` from `/(^|\/)…/`,
+// making an optional group required.
+//
+// Every one of those mutants makes a pattern match MORE, which is the
+// fail-closed direction and therefore not a leak. But it is not harmless, and
+// it is not asserted: over-classification silently EXCLUDES real source files
+// from every audit, index and diff that consults this module. Silent coverage
+// loss is this repo's core concern, so the negative side of the boundary
+// deserves the same rigour as the positive side.
+//
+// These are near-miss names — close enough to a sensitive pattern that a
+// widened regex swallows them, ordinary enough that they must be auditable.
+
+describe('classifyPath — near-miss names must NOT be classified sensitive', () => {
+  const MUST_BE_CLEAN = [
+    ['docs/envelope.md', 'contains "env" but is not a dotfile'],
+    ['scripts/lib/.envelope.md', 'starts with .env but continues into a word'],
+    ['docs/environment-setup.md', 'the word "environment", not a .env file'],
+    ['scripts/lib/keyboard.mjs', 'contains "key" but the extension is .mjs'],
+    ['docs/secrets-policy.md', 'names secrets but is prose, not a secrets file'],
+    ['tests/fixtures/pem-parser.test.mjs', 'mentions pem; the extension is .mjs'],
+    ['src/certificates.ts', 'a module ABOUT certs is not a cert'],
+  ];
+
+  for (const [p, why] of MUST_BE_CLEAN) {
+    it(`${p} is auditable — ${why}`, () => {
+      assert.notEqual(
+        classifyPath(p), 'sensitive',
+        `over-classifying ${p} silently removes it from every audit, index and diff `
+        + 'that consults this module — a coverage loss nobody sees',
+      );
+    });
+  }
+
+  // Vacuous-pass guard: the genuinely sensitive forms must still classify, or
+  // the assertions above would pass against a module that classifies nothing.
+  const MUST_BE_SENSITIVE = [
+    '.env',
+    '.env.production',
+    '.env.local',
+    'config/.env',
+    'foo.env',
+    'secrets.json',
+    'certs/server.pem',
+    'keys/id_rsa.key',
+  ];
+
+  for (const p of MUST_BE_SENSITIVE) {
+    it(`${p} is still classified sensitive (vacuous-pass guard)`, () => {
+      assert.equal(classifyPath(p), 'sensitive', `${p} must never reach a third-party LLM`);
+    });
+  }
+});
+
+describe('classifyPath — anchors are load-bearing, in both directions', () => {
+  it('a sensitive basename nested in a path still matches (the ^|/ alternation)', () => {
+    assert.equal(classifyPath('deep/nested/dir/.env'), 'sensitive');
+    assert.equal(classifyPath('a/b/c/secrets.json'), 'sensitive');
+  });
+
+  it('a sensitive NAME embedded mid-segment does not match', () => {
+    // Without the `(^|\/)` anchor these would match, and the file would vanish
+    // from audits.
+    assert.notEqual(classifyPath('docs/my.env.notes.md'), 'sensitive');
+    assert.notEqual(classifyPath('src/mysecrets.ts'), 'sensitive');
+  });
+
+  it('an extension pattern anchors at the END, so a mid-path match does not count', () => {
+    assert.notEqual(classifyPath('pem/readme.md'), 'sensitive');
+    assert.notEqual(classifyPath('key/index.mjs'), 'sensitive');
+  });
+});

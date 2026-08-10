@@ -110,7 +110,7 @@ const TARGETS = [
     name: 'sensitive-paths',
     mutate: ['scripts/lib/sensitive-paths.mjs'],
     tests: ['tests/sensitive-paths.test.mjs'],
-    floor: 67, goal: 85,
+    floor: 68, goal: 85,
     why: 'Tier-3 non-negotiable seam (AGENTS.md): a miss here ships credentials to a third-party '
        + 'LLM. Fail-closed classification is precisely the shape a loose assertion hides — '
        + '"returns sensitive" passes whether or not the reason was right.',
@@ -119,7 +119,7 @@ const TARGETS = [
     name: 'candidate-pagination',
     mutate: ['scripts/lib/store/candidate-pagination.mjs'],
     tests: ['tests/plans-ship-consistency-candidates.test.mjs'],
-    floor: 83, goal: 90,
+    floor: 84, goal: 90,
     why: 'Keyset cursor + batch bounds. Off-by-one and comparison-direction mutants are the '
        + 'literal defect class this module was written to remove (a page that repeats or skips).',
   },
@@ -127,7 +127,7 @@ const TARGETS = [
     name: 'quickfix-policy',
     mutate: ['scripts/lib/quickfix-policy.mjs'],
     tests: ['tests/quickfix-policy.test.mjs'],
-    floor: 67, goal: 90,
+    floor: 96, goal: 96,
     why: 'Threshold parsing that already shipped one silent-acceptance bug ("0.2junk" reading '
        + 'as 0.2). Boundary mutants are the whole point.',
   },

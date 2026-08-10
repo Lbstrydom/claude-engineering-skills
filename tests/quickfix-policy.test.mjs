@@ -57,3 +57,92 @@ describe('parseValidatedMinHits', () => {
     assert.equal(parseValidatedMinHits('', 10), 10);
   });
 });
+
+// ── Gaps found by mutation testing (2026-08-10) ─────────────────────────────
+//
+// `npm run mutation -- --target quickfix-policy` scored 67.9% with 18
+// survivors. The most telling: `n < 0` -> `n <= 0` and `n > 1` -> `n >= 1`
+// BOTH survived, which means the exact boundaries of the documented [0,1]
+// inclusive range were never tested — the two values most likely to be got
+// wrong were the two nobody asserted.
+
+describe('parseValidatedThreshold — the boundaries of the documented [0,1] range', () => {
+  it('ACCEPTS 0 — the range is inclusive, and a mutant making it exclusive survived', () => {
+    assert.equal(parseValidatedThreshold('0', 0.2), 0);
+  });
+
+  it('ACCEPTS 1 — likewise the upper bound', () => {
+    assert.equal(parseValidatedThreshold('1', 0.2), 1);
+  });
+
+  it('rejects just outside the range on both sides', () => {
+    assert.equal(parseValidatedThreshold('-0.0001', 0.2), 0.2);
+    assert.equal(parseValidatedThreshold('1.0001', 0.2), 0.2);
+  });
+
+  it('returns the fallback for undefined WITHOUT touching the value', () => {
+    // `raw === undefined -> return fallback` could be deleted entirely and
+    // nothing noticed, because no test passed undefined.
+    assert.equal(parseValidatedThreshold(undefined, 0.42), 0.42);
+  });
+
+  it('does not crash on a non-string input', () => {
+    // `typeof raw === 'string' ? raw.trim() : raw` mutated to always-trim and
+    // survived — nothing passed a value without .trim(). A number reaching
+    // this from a programmatic caller would have thrown.
+    assert.doesNotThrow(() => parseValidatedThreshold(0.5, 0.2));
+    assert.equal(parseValidatedThreshold(0.5, 0.2), 0.5);
+  });
+
+  it('warns on a blank value, naming the variable and the default used', () => {
+    // The warning IS the contract — it is the only signal an operator gets
+    // that their configured value was discarded. Emptying it left every test
+    // green.
+    const original = process.stderr.write;
+    let out = '';
+    process.stderr.write = (c) => { out += c; return true; };
+    try { parseValidatedThreshold('   ', 0.2); } finally { process.stderr.write = original; }
+    assert.match(out, /LEARNING_QUICKFIX_SKIP_THRESHOLD/);
+    assert.match(out, /blank/);
+    assert.match(out, /0\.2/, 'the default actually used must appear, or the operator cannot tell what ran');
+  });
+
+  it('warns on an invalid value, echoing what was supplied', () => {
+    const original = process.stderr.write;
+    let out = '';
+    process.stderr.write = (c) => { out += c; return true; };
+    try { parseValidatedThreshold('0.2junk', 0.2); } finally { process.stderr.write = original; }
+    assert.match(out, /0\.2junk/, 'echoing the bad input is how the operator finds the typo');
+    assert.match(out, /\[0,1\]/);
+  });
+});
+
+describe('parseValidatedMinHits — boundaries and warnings', () => {
+  it('ACCEPTS 1 — the documented minimum', () => {
+    assert.equal(parseValidatedMinHits('1', 10), 1);
+  });
+
+  it('rejects 0 and negatives, which would defeat the policy intent', () => {
+    assert.equal(parseValidatedMinHits('0', 10), 10);
+    assert.equal(parseValidatedMinHits('-1', 10), 10);
+  });
+
+  it('returns the fallback for undefined', () => {
+    assert.equal(parseValidatedMinHits(undefined, 7), 7);
+  });
+
+  it('does not crash on a non-string input', () => {
+    assert.equal(parseValidatedMinHits(5, 10), 5);
+  });
+
+  it('warns on a blank value and on an invalid one, naming the variable', () => {
+    for (const [input, needle] of [['   ', /blank/], ['1.5', /1\.5/]]) {
+      const original = process.stderr.write;
+      let out = '';
+      process.stderr.write = (c) => { out += c; return true; };
+      try { parseValidatedMinHits(input, 10); } finally { process.stderr.write = original; }
+      assert.match(out, /LEARNING_QUICKFIX_MIN_HITS/);
+      assert.match(out, needle);
+    }
+  });
+});
