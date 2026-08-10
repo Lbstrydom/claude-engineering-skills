@@ -1,8 +1,10 @@
 # Plan: Model-Comparison Campaigns — declarative arms, AI-first adjudication, decision-grade dashboard
 
 - **Date**: 2026-08-10
-- **Status**: Draft — audited, not implemented. Both gates run and closed at
-  their caps (see Audit trail); no code exists yet. Ready for `/cycle`.
+- **Status**: Draft — audited, ready for `/cycle`
+
+  Both gates ran and closed at their caps (see Audit trail below); no code
+  exists yet.
 - **Author**: Claude + Louis
 - **Scope**: full-stack (CLI + store + generated dashboard page)
 
@@ -785,7 +787,7 @@ vacuously.
 Campaign: `COLLECTING → AWAITING_ADJUDICATION → AWAITING_REVIEW →
 DECISION_READY | INCONCLUSIVE(terminal) | SUPERSEDED(lock drift)`. Every state
 renders; empty states are explicit ("no campaigns declared — see
-docs/runbooks/model-campaigns.md"); a store-offline build renders the page with
+docs/runbooks/model-campaigns.md (planned)"); a store-offline build renders the page with
 `status: degraded` and no standings (never a blank pane reading as "no
 campaigns").
 
@@ -934,7 +936,7 @@ campaign is not terminal.
 | `scripts/build-dashboard.mjs` | modify | Register the campaigns section: nav entry, collector invocation, renderer call, degraded-status propagation (the four integration points R1/M3 named). |
 | `tests/dashboard-campaigns.test.mjs` | create | Tier 1 — renderer against fixture envelopes: watermark present when gates unmet + names the failing gate; `unknown` spend renders as the word; pane DOM order; copy-override affordance per finding; degraded envelope omits standings. Asserts on emitted HTML, no browser. |
 | `tests/e2e/campaigns-page.spec.mjs` | create | Playwright over the GENERATED file (`dashboard/index.html`) — the §10 P0/P1 criteria, incl. the clipboard interaction a string assertion cannot cover. R1/M3: §10 promised Playwright verification that §7 never created. |
-| `docs/runbooks/model-campaigns.md` | create | Consumer adoption: declare → collect → adjudicate → review → decide. Worksheet-style commands (PowerShell-safe, no angle brackets). |
+| `docs/runbooks/model-campaigns.md` (planned) | create | Consumer adoption: declare → collect → adjudicate → review → decide. Worksheet-style commands (PowerShell-safe, no angle brackets). |
 | `tests/campaign-config.test.mjs` | create | Tier 1: schema strictness, INC-001 refusals, unknown-key rejection, targetN floor. |
 | `tests/campaign-lock.test.mjs` | create | Tier 1: digest stability, drift detection per input (incl. prompt-template hash), orphaning never relabels. |
 | `tests/campaign-verdict.test.mjs` | create | Tier 1: floor-before-cost; the measured perverse case (0.25-accepted arm cheapest) must NOT select; unknown-cost refusal; watermark gate logic. |
@@ -1161,7 +1163,7 @@ campaign_events           (id pk, campaign_id fk, kind, actor, detail jsonb,
   `scripts/build-dashboard.mjs` (modify),
   `tests/dashboard-campaigns.test.mjs` (create),
   `tests/e2e/campaigns-page.spec.mjs` (create).
-- **Phase 6 — Consumer docs + dogfood.** Files: `docs/runbooks/model-campaigns.md` (create).
+- **Phase 6 — Consumer docs + dogfood.** Files: `docs/runbooks/model-campaigns.md` (planned) (create).
 
 **Close-out (not a phase)**: `npm run check`; `npm run db:local:regen`;
 one live `campaign.mjs status` against this repo's campaign (pre-ship
