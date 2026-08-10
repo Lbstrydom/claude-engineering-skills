@@ -102,6 +102,17 @@ async function setupDatabase(headless) {
   for (const opt of DB_OPTIONS) {
     console.log(`    ${B}${opt.key}${X}) ${opt.name} — ${opt.desc}`);
   }
+  // State the capability delta, not just the upside: choosing 1 is a real
+  // trade-off and the operator should see it before choosing, not discover it
+  // when a skill reports `{"cloud": false}` mid-audit.
+  console.log('');
+  console.log(`  ${D}Every skill runs either way. Plans, audit reports, adjudication ledgers${X}`);
+  console.log(`  ${D}and generated specs are local files and need no database.${X}`);
+  console.log(`  ${D}Without one, these stay off: cross-run learning + bandit arms,${X}`);
+  console.log(`  ${D}architectural memory (near-duplicate detection before you write code),${X}`);
+  console.log(`  ${D}security-incident memory, semantic + cloud FP suppression,${X}`);
+  console.log(`  ${D}the memory-health gate, and persona/audit correlations.${X}`);
+  console.log(`  ${D}No database software is installed either way; option 2 only stores a DSN.${X}`);
   console.log('');
 
   const choice = await ask(`  Choose (1-2, default 1): `);
