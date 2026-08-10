@@ -360,6 +360,32 @@ test('human outranks agent regardless of timestamp', () => {
   assert.equal(t.id, 'h');
 });
 
+test('Date objects order CHRONOLOGICALLY, not by the weekday name String() puts first', () => {
+  // `String(new Date(...))` is "Wed Jan 01 2020 …" — the FIRST token is the
+  // weekday, so a raw string compare sorts by day name before year. These two
+  // dates are chosen so the naive comparison is provably wrong, and the first
+  // assertion proves it rather than assuming it.
+  const earlier = new Date('2020-01-01T00:00:00Z');   // a Wednesday
+  const later = new Date('2026-08-14T00:00:00Z');     // a Friday
+  assert.ok(String(later) < String(earlier),
+    'CONTROL: the naive string compare must be wrong here, or this test proves nothing');
+
+  const t = terminalEvent([
+    { id: 'a', adjudicatorKind: 'agent', adjudicationOutcome: 'accepted', createdAt: earlier, supersededAt: null },
+    { id: 'b', adjudicatorKind: 'agent', adjudicationOutcome: 'dismissed', createdAt: later, supersededAt: null },
+  ]);
+  assert.equal(t.id, 'b', 'the later instant must win regardless of weekday name');
+});
+
+test('the canonical Postgres string form still orders correctly', () => {
+  // What the driver actually returns today: fixed-width, UTC-offset.
+  const t = terminalEvent([
+    { id: 'a', adjudicatorKind: 'agent', createdAt: '2026-07-17 11:38:21.554759+00', supersededAt: null },
+    { id: 'b', adjudicatorKind: 'agent', createdAt: '2026-07-17 19:02:00.000000+00', supersededAt: null },
+  ]);
+  assert.equal(t.id, 'b');
+});
+
 test('same kind + same timestamp is broken by id — the order is TOTAL', () => {
   const a = { id: 'aaa', adjudicatorKind: 'agent', createdAt: 'T', supersededAt: null };
   const b = { id: 'bbb', adjudicatorKind: 'agent', createdAt: 'T', supersededAt: null };

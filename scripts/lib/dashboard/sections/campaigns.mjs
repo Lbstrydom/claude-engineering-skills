@@ -119,8 +119,14 @@ function evidencePane(c, ui) {
           ? `🟢 decision INVARIANT across ${ui.escapeHtml(c.sensitivity.outcomes?.length ?? 0)} matcher variant(s) — this verdict does not depend on the calibration`
           : `🔴 decision FLIPS across matcher variants — the calibration is load-bearing for this cohort`)
       : '⚪ threshold sensitivity not assessed by this reader — run <code>node scripts/campaign.mjs verdict</code>';
+    // What the EXISTING clusters were built at, when any exist — the config
+    // value only describes what a fresh clustering would use.
+    const recorded = c.matcher.recordedThresholds?.length
+      ? `recorded on these clusters: ${ui.escapeHtml(c.matcher.recordedThresholds.join(', '))}`
+      : 'no clusters recorded yet — the values below are what a fresh clustering would use';
     rows.push(`<tr><th scope="row">Cross-model matcher</th><td data-testid="campaign-matcher">`
       + `v${ui.escapeHtml(c.matcher.version)} · cross ${ui.escapeHtml(c.matcher.crossThreshold)} · within-arm ${ui.escapeHtml(c.matcher.withinArmThreshold)}`
+      + `<p class="summary">${recorded}</p>`
       + `<p class="summary">cross: ${ui.escapeHtml(c.matcher.crossStatus)}</p>`
       + `<p class="summary">within-arm: ${ui.escapeHtml(c.matcher.withinStatus)}</p>`
       + `<p class="summary">${sens}</p></td></tr>`);
@@ -131,7 +137,10 @@ function evidencePane(c, ui) {
     : 'none declared'}</td></tr>`);
 
   const notCollected = c.collected === false
-    ? `<p class="summary">⚪ ${ui.escapeHtml(c.collectedReason || 'no cohort recorded yet')} — run <code>node scripts/campaign.mjs reconcile --campaign ${ui.escapeHtml(c.id)}</code>.</p>`
+    ? (c.readFailed
+        // Different fact, different action: fix the store, do not collect more.
+        ? `<p class="summary">⚠ <strong>Could not read this campaign's evidence.</strong> ${ui.escapeHtml(c.collectedReason || '')}</p>`
+        : `<p class="summary">⚪ ${ui.escapeHtml(c.collectedReason || 'no cohort recorded yet')} — run <code>node scripts/campaign.mjs reconcile --campaign ${ui.escapeHtml(c.id)}</code>.</p>`)
     : '';
 
   return `<section data-testid="campaign-evidence" role="region" aria-label="Campaign evidence quality">`

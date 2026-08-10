@@ -1176,7 +1176,16 @@ export async function loadCohortEvidence({ repoId: rid, config, lock }) {
     clusters: [...clusterMap.values()],
     adjudication: { unadjudicatedFindings: unadjudicated, humanQueuePending },
     calibration: { perArm: calibration.perArm },
-    clustering: { snapshotsMissingClusters, matcherVersion: String(FINDING_MATCH_SCHEMA_VERSION) },
+    clustering: {
+      snapshotsMissingClusters,
+      matcherVersion: String(FINDING_MATCH_SCHEMA_VERSION),
+      // The threshold RECORDED on the cluster rows, not the one this process
+      // happens to be configured with. Reporting the live config as the
+      // provenance of already-written clusters is precisely the mislabelling
+      // the provenance row exists to prevent — and it would be invisible,
+      // because the two agree until someone retunes.
+      recordedThresholds: [...new Set(clusters.rows.map((r) => Number(r.matcher_threshold)))].sort((x, y) => x - y),
+    },
     overhead,
     declaredInconclusive: declared ? { reason: declared.detail?.reason ?? 'declared by operator' } : null,
     ruleChangedAfterFirstArmRun,

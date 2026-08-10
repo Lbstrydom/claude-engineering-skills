@@ -31,7 +31,8 @@
  *
  * @module scripts/lib/dashboard/collect-campaigns
  */
-import { selectCampaignConfig, ANALYSIS_TIME_FIELDS } from '../campaign/config.mjs';
+import path from 'node:path';
+import { selectCampaignConfig, ANALYSIS_TIME_FIELDS, CAMPAIGNS_DIR } from '../campaign/config.mjs';
 import { evaluateCampaign, terminalEvent } from '../campaign/verdict.mjs';
 import { loadCohortEvidence } from '../store/campaign.mjs';
 import { isCloudEnabled } from '../store/repo.mjs';
@@ -85,7 +86,14 @@ export function buildReviewRows(evidence) {
  * @returns {Promise<{campaigns: object}>}
  */
 export async function collectCampaigns(root = process.cwd(), deps = {}) {
-  const select = deps.selectCampaignConfig ?? selectCampaignConfig;
+  // `root` is READ, not decorative. It was documented and then ignored — config
+  // discovery used the default relative dir and repo identity came from
+  // `process.cwd()` — so a caller collecting for one root silently got whatever
+  // directory the process happened to be in. `collect-nav.mjs` takes a root and
+  // honours it; this now does the same.
+  const dir = path.join(root, CAMPAIGNS_DIR);
+  const rawSelect = deps.selectCampaignConfig ?? selectCampaignConfig;
+  const select = (opts) => rawSelect({ dir, ...opts });
   const cloudOn = deps.isCloudEnabled ?? isCloudEnabled;
   const loadEvidence = deps.loadCohortEvidence ?? loadCohortEvidence;
 
@@ -114,7 +122,24 @@ export async function collectCampaigns(root = process.cwd(), deps = {}) {
     });
   }
 
-  const repoId = deps.repoId !== undefined ? deps.repoId : await resolveRepoId();
+  const identity = deps.repoId !== undefined
+    ? { repoId: deps.repoId, status: 'ok' }
+    : await resolveRepoId(root);
+  if (identity.status === 'failed') {
+    // A REAL resolution failure, distinct from the routine no-identity case.
+    // Collapsing both to `null` made "we could not work out which repo this is"
+    // indistinguishable from "this repo has no campaigns" — the same
+    // unknown-vs-measured-zero conflation the page exists to prevent.
+    process.stderr.write(`  [collect-campaigns] repo-identity resolution failed (not the routine no-cloud case): ${identity.detail}
+`);
+    return wrap({
+      status: { status: 'ok', detail: '' },
+      degraded: true,
+      degradedReason: `repo identity unresolvable: ${identity.detail} — standings withheld`,
+      declaredIds: ids,
+    });
+  }
+  const repoId = identity.repoId;
   const rows = [];
   for (const id of ids) {
     const one = select({ campaignId: id });
@@ -139,6 +164,11 @@ export async function collectCampaigns(root = process.cwd(), deps = {}) {
         analysisTimeFields: analysisTimeOf(config),
         lockDigest: null,
         collected: false,
+        // DISTINCT from a cohort that simply has no rows yet. `collected: false`
+        // was doing double duty for "nothing collected" and "we could not read
+        // what was collected", which are different facts licensing different
+        // actions — collect more, versus fix the store.
+        readFailed: true,
         collectedReason: `store read failed: ${err.message}`,
       });
       continue;
@@ -152,6 +182,11 @@ export async function collectCampaigns(root = process.cwd(), deps = {}) {
       // trace — the exact failure this page exists to prevent.
       matcher: {
         version: String(FINDING_MATCH_SCHEMA_VERSION),
+        // RECORDED on the cluster rows when any exist — the config value is
+        // only what a NEW clustering would use, and reporting it as the
+        // provenance of already-written clusters would mislabel them the moment
+        // anyone retunes.
+        recordedThresholds: evidence.clustering?.recordedThresholds ?? [],
         crossThreshold: findingMatchConfig.threshold,
         withinArmThreshold: findingMatchConfig.withinArmThreshold,
         crossStatus: 'provisional (calibrated on 9 model-labelled pairs; see tests/fixtures/cross-model-pairs.json)',
@@ -194,13 +229,28 @@ function analysisTimeOf(config) {
   return Object.fromEntries(ANALYSIS_TIME_FIELDS.map((f) => [f, config[f]]));
 }
 
-async function resolveRepoId() {
+/**
+ * Repo identity WITH a status, mirroring `collect-nav.mjs::canonicalRepoId`.
+ *
+ * `unavailable` = no identity resolvable / genuinely unregistered — routine and
+ * silent. `failed` = the lookup itself threw, which is worth surfacing. A bare
+ * `catch { return null }` made those two the same fact.
+ */
+async function resolveRepoId(root) {
+  let profile;
+  try {
+    const { generateRepoProfile } = await import('../context.mjs');
+    profile = generateRepoProfile(root);
+  } catch {
+    return { repoId: null, status: 'unavailable' };
+  }
   try {
     const { resolveRepoForStore } = await import('../store/repo.mjs');
-    const { generateRepoProfile } = await import('../context.mjs');
-    const ref = await resolveRepoForStore({ profile: generateRepoProfile() });
-    return ref?.repoRowId ?? null;
-  } catch { return null; }
+    const ref = await resolveRepoForStore({ cwd: root, profile });
+    return { repoId: ref?.repoRowId ?? null, status: 'ok' };
+  } catch (err) {
+    return { repoId: null, status: 'failed', detail: err.message };
+  }
 }
 
 function wrap({ status, campaigns = [], degraded = false, degradedReason = null, declaredIds = [] }) {

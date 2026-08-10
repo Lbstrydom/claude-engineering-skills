@@ -258,6 +258,49 @@ describe('collector fault isolation + event sourcing (consolidated gate G2, G3)'
   });
 });
 
+describe('collector root + provenance honesty (audit round)', () => {
+  it('HONOURS the root it is given — config discovery must not fall back to cwd', async () => {
+    let sawDir = null;
+    await collectCampaigns('/some/other/root', {
+      isCloudEnabled: async () => false,
+      selectCampaignConfig: ({ dir }) => { sawDir = dir; return { ok: false, code: 'none' }; },
+    });
+    assert.ok(sawDir, 'the collector must pass a dir at all');
+    const normalised = sawDir.split('\\').join('/');
+    assert.ok(normalised.startsWith('/some/other/root/'),
+      `config discovery used ${sawDir} instead of the supplied root`);
+  });
+
+  it('renders the RECORDED cluster thresholds, not the live config value', () => {
+    const html = sectionCampaigns({
+      src: OK,
+      campaigns: envelope({ campaigns: [campaignFixture({
+        matcher: { version: '1', crossThreshold: 0.99, withinArmThreshold: 0.35, recordedThresholds: [0.14], crossStatus: 'provisional', withinStatus: 'uncalibrated' },
+      })] }),
+    }, ui);
+    assert.match(html, /recorded on these clusters: 0\.14/,
+      'the clusters on screen were built at 0.14; reporting the live 0.99 as their provenance would mislabel them');
+  });
+
+  it('says so when no clusters are recorded yet, rather than implying the live value produced them', () => {
+    const html = sectionCampaigns({
+      src: OK,
+      campaigns: envelope({ campaigns: [campaignFixture({
+        matcher: { version: '1', crossThreshold: 0.14, withinArmThreshold: 0.35, recordedThresholds: [], crossStatus: 'p', withinStatus: 'u' },
+      })] }),
+    }, ui);
+    assert.match(html, /no clusters recorded yet/);
+  });
+
+  it('a store READ FAILURE reads differently from a cohort that simply has no rows', () => {
+    const failed = sectionCampaigns({ src: OK, campaigns: envelope({ campaigns: [campaignFixture({ collected: false, readFailed: true, collectedReason: 'store read failed: connection reset' })] }) }, ui);
+    const empty = sectionCampaigns({ src: OK, campaigns: envelope({ campaigns: [campaignFixture({ collected: false, collectedReason: 'no cohort recorded for this campaign under the current lock' })] }) }, ui);
+    assert.match(failed, /Could not read this campaign/, 'a read failure means fix the store');
+    assert.ok(!/reconcile --campaign/.test(failed), 'and must NOT advise collecting more, which would not help');
+    assert.match(empty, /reconcile --campaign/, 'an empty cohort DOES mean collect/promote more');
+  });
+});
+
 describe('campaigns section — escaping (§4)', () => {
   // This page renders the least trustworthy content in the repo: model-authored
   // finding prose and free-text human override notes.

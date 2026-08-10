@@ -77,14 +77,36 @@ export function terminalEvent(events) {
   return best;
 }
 
+/**
+ * A comparable instant for one event's timestamp.
+ *
+ * Numeric when the value parses as a date, the raw string otherwise. The raw
+ * values Postgres returns today are canonical and fixed-width
+ * (`2026-07-17 11:38:21.554759+00`), so lexical ordering happens to be correct
+ * for them — but the field's own contract is `string|null`, callers pass Date
+ * objects, and `String(new Date(...))` yields `"Mon Aug 10 2026 …"`, where
+ * lexical order sorts by MONTH NAME. An ordering the plan calls total should
+ * not be correct only because of a driver's current formatting choice.
+ *
+ * The string fallback keeps the order TOTAL for unparseable values rather than
+ * collapsing them to a single bucket, which would reintroduce the ambiguity the
+ * `id` tiebreak exists to remove.
+ */
+function instantOf(value) {
+  if (value == null) return '';
+  if (value instanceof Date) return value.getTime();
+  const ms = Date.parse(value);
+  return Number.isNaN(ms) ? String(value) : ms;
+}
+
 /** Strictly-greater comparison for the total order above. Exported for the test
  *  that asserts the order is total rather than merely usually-decisive. */
 export function compareEvents(a, b) {
   const ra = KIND_RANK[a?.adjudicatorKind] ?? 0;
   const rb = KIND_RANK[b?.adjudicatorKind] ?? 0;
   if (ra !== rb) return ra - rb;
-  const ta = String(a?.createdAt ?? '');
-  const tb = String(b?.createdAt ?? '');
+  const ta = instantOf(a?.createdAt);
+  const tb = instantOf(b?.createdAt);
   if (ta !== tb) return ta < tb ? -1 : 1;
   const ia = String(a?.id ?? '');
   const ib = String(b?.id ?? '');
