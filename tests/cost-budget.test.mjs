@@ -25,8 +25,13 @@ const PRICED_MODEL = 'gpt-5.5';
 
 describe('buildUsageEvent', () => {
   it('computes cost from tokens via model-pricing.mjs when no self-reported cost is given', () => {
+    // Audit R1 M10/L15 — this was `if (!px) return`, which turned a renamed or
+    // removed pricing-table entry into a PASSING test that asserted nothing
+    // about the cost math it exists to check. The precondition is the test's
+    // own setup, so assert it: if gpt-5.5 ever leaves the table this must fail
+    // loudly and be repointed, not quietly stop testing.
     const px = priceFor(PRICED_MODEL);
-    if (!px) return; // skip gracefully if the static pool doesn't know this id in test env
+    assert.ok(px, `${PRICED_MODEL} must be in the pricing table for this test to mean anything — repoint PRICED_MODEL if it was removed`);
     const event = buildUsageEvent({
       provider: 'openai', modelSentinel: 'latest-gpt', resolvedModel: PRICED_MODEL,
       usage: { input_tokens: 1_000_000, output_tokens: 1_000_000 }, wallClockMs: 500,
@@ -46,13 +51,86 @@ describe('buildUsageEvent', () => {
     assert.equal(event.costAmountUsd, 0.05);
   });
 
-  it('marks usageReliability unavailable for an unpriced/unknown model, cost 0 (never null-crashing)', () => {
+  it('marks usageReliability unavailable for an unpriced/unknown model, with NULL cost (c5808479)', () => {
+    // Was `assert.equal(event.costAmountUsd, 0)`. A `0` here is a claim that
+    // the call was measured and cost nothing; the model simply has no price,
+    // so the honest record is an absent amount with `usageReliability`
+    // explaining why. computeCostReport already excludes 'unavailable' events
+    // from costUsd, so nothing under-counts as a result.
     const event = buildUsageEvent({
       provider: 'oss', modelSentinel: 'some-unknown-model', resolvedModel: 'totally-unknown-model-id-xyz',
       usage: { input_tokens: 10, output_tokens: 10 },
     }, '2026-01-01T00:00:00.000Z');
     assert.equal(event.usageReliability, 'unavailable');
-    assert.equal(event.costAmountUsd, 0);
+    assert.equal(event.costAmountUsd, null);
+    assert.equal(event.costAmountEurAtRecordedFx, null, 'the EUR field must not re-fabricate what USD stopped fabricating');
+    assert.equal(event.inputTokens, 10, 'observed tokens are still recorded');
+  });
+
+  it('a PRICED model with unmeterable usage is unavailable + null, not "estimated $0" (c5808479)', () => {
+    // The defect this fix exists for: the model IS priced, so the old code took
+    // the `priced ? 'estimated' : 'unavailable'` branch and wrote `0` — a
+    // fabricated amount under a label asserting it was calculated.
+    for (const [label, usage] of [['null', null], ['empty', {}], ['one-sided', { input_tokens: 10 }]]) {
+      const event = buildUsageEvent({
+        provider: 'oss', modelSentinel: 'latest-oss', resolvedModel: 'qwen/qwen3-coder', usage,
+      }, '2026-01-01T00:00:00.000Z');
+      assert.equal(event.usageReliability, 'unavailable', `${label}: must not claim 'estimated'`);
+      assert.equal(event.costAmountUsd, null, `${label}: must not fabricate $0`);
+    }
+    // ...while a priced + meterable call is unaffected.
+    const ok = buildUsageEvent({
+      provider: 'oss', modelSentinel: 'latest-oss', resolvedModel: 'qwen/qwen3-coder',
+      usage: { input_tokens: 1_000_000, output_tokens: 1_000_000 },
+    }, '2026-01-01T00:00:00.000Z');
+    assert.equal(ok.usageReliability, 'estimated');
+    assert.ok(ok.costAmountUsd > 0);
+    // ...and a self-reported cost still short-circuits to 'exact'.
+    const exact = buildUsageEvent({
+      provider: 'anthropic', modelSentinel: 'latest-sonnet', resolvedModel: 'claude-sonnet-5',
+      usage: null, selfReportedCostUsd: 0.05,
+    }, '2026-01-01T00:00:00.000Z');
+    assert.equal(exact.usageReliability, 'exact');
+    assert.equal(exact.costAmountUsd, 0.05);
+  });
+
+  it('the schema binds the money fields to usageReliability (audit R1 H2/M5)', () => {
+    // Making the amounts nullable widened the schema; without this the
+    // fabricated-$0 shape buildUsageEvent no longer produces stayed
+    // constructible by parsing a hand-built event.
+    const base = {
+      provider: 'oss', modelSentinel: 'latest-oss', resolvedModel: 'qwen/qwen3-coder',
+      inputTokens: 10, outputTokens: 10, fxRateUsed: EUR_PER_USD, wallClockMs: 1,
+      createdAt: '2026-01-01T00:00:00.000Z',
+    };
+    const parse = (o) => UsageEventSchema.safeParse({ ...base, ...o }).success;
+    assert.equal(parse({ usageReliability: 'unavailable', costAmountUsd: 5, costAmountEurAtRecordedFx: 4.6 }), false, 'unavailable must not carry an amount');
+    assert.equal(parse({ usageReliability: 'estimated', costAmountUsd: null, costAmountEurAtRecordedFx: null }), false, 'estimated must state its amount');
+    assert.equal(parse({ usageReliability: 'exact', costAmountUsd: null, costAmountEurAtRecordedFx: null }), false, 'exact must state its amount');
+    assert.equal(parse({ usageReliability: 'estimated', costAmountUsd: 5, costAmountEurAtRecordedFx: null }), false, 'the two currencies move together');
+    // the two legal shapes
+    assert.equal(parse({ usageReliability: 'unavailable', costAmountUsd: null, costAmountEurAtRecordedFx: null }), true);
+    assert.equal(parse({ usageReliability: 'estimated', costAmountUsd: 5, costAmountEurAtRecordedFx: 5 * EUR_PER_USD }), true);
+
+    // audit R2 M5 — the pair must also AGREE, at the rate snapshotted beside it
+    assert.equal(parse({ usageReliability: 'estimated', costAmountUsd: 5, costAmountEurAtRecordedFx: 99 }), false, 'EUR must be USD x fxRateUsed');
+    // audit R2 H1 — `Infinity >= 0` passed min(0); JSON.stringify writes it as null
+    assert.equal(parse({ usageReliability: 'estimated', costAmountUsd: Infinity, costAmountEurAtRecordedFx: Infinity }), false, 'a non-finite amount is not a cost');
+    assert.equal(parse({ usageReliability: 'estimated', costAmountUsd: 5, costAmountEurAtRecordedFx: 5 * EUR_PER_USD, fxRateUsed: Infinity }), false, 'a non-finite FX rate is not a rate');
+  });
+
+  it('computeCostReport still excludes null-cost unavailable events (c5808479 end-to-end)', () => {
+    const unmeterable = buildUsageEvent({
+      provider: 'oss', modelSentinel: 'latest-oss', resolvedModel: 'qwen/qwen3-coder', usage: null,
+    }, '2026-01-01T00:00:00.000Z');
+    const real = buildUsageEvent({
+      provider: 'oss', modelSentinel: 'latest-oss', resolvedModel: 'qwen/qwen3-coder',
+      usage: { input_tokens: 1_000_000, output_tokens: 0 },
+    }, '2026-01-01T00:00:00.000Z');
+    const report = computeCostReport({ usageEvents: [real, unmeterable], acceptedFindings: [{ severity: 'HIGH' }] });
+    assert.equal(report.unavailableCostEventCount, 1);
+    assert.ok(Number.isFinite(report.costUsd) && report.costUsd > 0, 'a null amount must never make the total NaN');
+    assert.ok(Number.isFinite(report.costEurAsRecorded));
   });
 
   it('the fxRateUsed field is snapshotted at build time (round-3 finding #G2) — validates against the schema', () => {

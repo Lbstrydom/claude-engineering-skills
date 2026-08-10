@@ -276,13 +276,64 @@ describe('model-pricing — usage→cost with null-cost policy', () => {
     assert.ok(Math.abs(toEur(10) - 10 * EUR_PER_USD) < 1e-9);
   });
   it('sanitizes garbage usage — negative/NaN/Infinity tokens never produce a bad cost (R1 H4)', () => {
+    // c5808479: these three used to assert `totalUsd === 0`. Token
+    // sanitization is unchanged (still 0), but a garbage payload no longer
+    // PRICES to a real-looking $0 — it reports null + unmeterable, which is a
+    // strictly stronger form of "never produce a bad cost": there is now no
+    // number at all to mistake for a measurement.
     const neg = costFromUsage({ input_tokens: -5, output_tokens: Number.NaN }, 'qwen/qwen3-coder');
     assert.equal(neg.inputTokens, 0);
     assert.equal(neg.outputTokens, 0);
-    assert.equal(neg.totalUsd, 0);
+    assert.equal(neg.unmeterable, true);
+    assert.equal(neg.totalUsd, null);
     const inf = costFromUsage({ input_tokens: Infinity, output_tokens: 1000 }, 'qwen/qwen3-coder');
     assert.equal(inf.inputTokens, 0);
-    assert.ok(Number.isFinite(inf.totalUsd));
+    assert.equal(inf.unmeterable, true);
+    assert.equal(inf.totalUsd, null);
+    // the positive half of the original guard: valid usage still prices finite.
+    assert.ok(Number.isFinite(costFromUsage({ input_tokens: 1000, output_tokens: 1000 }, 'qwen/qwen3-coder').totalUsd));
+  });
+
+  it('costFromUsage distinguishes a TRUE zero from absent usage (c5808479)', () => {
+    // The whole point of `unmeterable`: sanitizeTokens() clamps absent counts
+    // to 0, which used to be indistinguishable from a genuine zero-token call.
+    const trueZero = costFromUsage({ input_tokens: 0, output_tokens: 0 }, 'qwen/qwen3-coder');
+    assert.equal(trueZero.unmeterable, false);
+    assert.equal(trueZero.totalUsd, 0, 'a real zero-token call costs a real $0');
+
+    for (const [label, usage] of [
+      ['null usage', null],
+      ['empty object', {}],
+      ['input side only', { input_tokens: 10 }],
+      ['output side only', { output_tokens: 10 }],
+      ['non-numeric field', { input_tokens: 'not-a-number', output_tokens: 10 }],
+      ['explicit usageMissing flag', { input_tokens: 0, output_tokens: 0, usageMissing: true }],
+    ]) {
+      const r = costFromUsage(usage, 'qwen/qwen3-coder');
+      assert.equal(r.unmeterable, true, `${label}: must be unmeterable`);
+      assert.equal(r.totalUsd, null, `${label}: must not report a fabricated $0`);
+      assert.equal(r.priced, true, `${label}: the MODEL is still priced — the flags are orthogonal`);
+    }
+  });
+
+  it('costFromUsage: priced and unmeterable are orthogonal (c5808479)', () => {
+    const unpricedButMetered = costFromUsage({ input_tokens: 10, output_tokens: 10 }, 'some/never-priced');
+    assert.equal(unpricedButMetered.priced, false);
+    assert.equal(unpricedButMetered.unmeterable, false);
+    assert.equal(unpricedButMetered.totalUsd, null);
+    assert.equal(unpricedButMetered.inputTokens, 10, 'token counts survive — they describe what was observed');
+  });
+
+  it('priceFor cannot be fooled by an Object.prototype key (adbda8c8)', () => {
+    // A bare `familyPricing[key]` returned a truthy NON-price for these, whose
+    // .input/.output are undefined — pricing to NaN while reporting priced:true.
+    for (const poison of ['constructor', 'toString', 'valueOf', 'hasOwnProperty', '__proto__']) {
+      assert.equal(priceFor(poison), null, `priceFor("${poison}") must be null`);
+      assert.equal(isPriced(poison), false, `isPriced("${poison}") must be false`);
+      const c = costFromUsage({ input_tokens: 1000, output_tokens: 1000 }, poison);
+      assert.equal(c.totalUsd, null, `"${poison}" must not produce a NaN cost`);
+      assert.equal(c.priced, false);
+    }
   });
   it('costForBudget never returns null — an unpriced model over-estimates (R1 H7)', () => {
     const known = costForBudget({ input_tokens: 1_000_000, output_tokens: 0 }, 'qwen/qwen3-coder');

@@ -76,10 +76,93 @@ function refineRolePendingShadow(v, ctx) {
 function isJsonbSafeValue(v) {
   if (v === null) return true;
   const t = typeof v;
-  if (t === 'string' || t === 'number' || t === 'boolean') return true;
+  // r15h1jsonbfinite fix — `typeof NaN === 'number'` and `typeof Infinity ===
+  // 'number'`, so both used to pass this check; JSON.stringify then emits
+  // `null` for either WITHOUT throwing, so the value was silently CHANGED on
+  // the way to a jsonb column rather than rejected here. That is the same
+  // silent-data-loss failure this function's own docstring cites for
+  // function-valued keys — jsonb simply has no NaN/Infinity representation, so
+  // there is no honest way to store one. Reject at the boundary these comments
+  // already claim enforces "a bad value must never reach SQL assembly."
+  if (t === 'number') return Number.isFinite(v);
+  if (t === 'string' || t === 'boolean') return true;
   if (t === 'function' || t === 'symbol' || t === 'bigint' || t === 'undefined') return false;
-  if (Array.isArray(v)) return v.every(isJsonbSafeValue);
-  if (t === 'object') return Object.values(v).every(isJsonbSafeValue);
+  if (Array.isArray(v)) {
+    // Audit R1 H1 — `v.every()` SKIPS sparse-array holes, so `new Array(3)` or
+    // `[1, , 3]` passed with zero elements ever inspected, and JSON.stringify
+    // then writes each hole as `null`. Same silent-rewrite class as NaN above:
+    // the array that comes back out is not the one that went in. Index
+    // explicitly so a hole is seen and rejected.
+    for (let i = 0; i < v.length; i++) {
+      if (!Object.hasOwn(v, i)) return false;
+      if (!isJsonbSafeValue(v[i])) return false;
+    }
+    return true;
+  }
+  if (t === 'object') {
+    // Audit R1 H1 / R2 H2+H3 — `Object.values()` sees ONLY own enumerable
+    // string-keyed properties, which is the same blind spot JSON.stringify
+    // has, so the guard agreed with the serializer about nothing being lost
+    // while both were ignoring the data. Measured: Map, Set, WeakMap, RegExp,
+    // Error and Promise every one stringify to `{}` with zero own values —
+    // total, silent loss; a TypedArray re-shapes to {"0":…}; Symbol-keyed and
+    // non-enumerable properties simply vanish.
+    //
+    // An R1 fix rejecting `Map`/`Set` by name was the wrong shape — a denylist
+    // of the two kinds that had been named. The property that actually matters
+    // is "does this round-trip predictably", so test for that instead: a PLAIN
+    // object (Object.prototype or a null prototype) carrying only own
+    // enumerable string keys. Anything declaring its own serialization via
+    // toJSON (Date) is honoured as-is.
+    // Audit R3 H1/H2 then R4 H1/H2 — this exemption went through
+    // `typeof v.toJSON === 'function' -> true` (an unconditional bypass: `{
+    // toJSON: () => undefined }` erases its own key) and then through calling
+    // toJSON and validating the result, which R4 correctly flagged as
+    // validating a DIFFERENT invocation than the one persistence will make: a
+    // stateful serializer can return safe once and unsafe next.
+    //
+    // The fix is to stop invoking arbitrary serializers at all. Date is the
+    // only reason this exemption ever existed, so allow exactly Date and let
+    // everything else fall through to the plain-object test below — which
+    // rejects a class instance on its prototype, and a plain `{toJSON: fn}` on
+    // the function value itself. Nothing is called, so there is no
+    // invocation to disagree with a later one.
+    // Audit R5 H1 — `instanceof Date` alone is a claim about the CONSTRUCTOR,
+    // not about how the value serializes: a Date carrying its own `toJSON`
+    // (or a patched prototype) passes the instanceof test and then persists as
+    // whatever that override returns. Require the stock serializer. An Invalid
+    // Date is rejected too — its toJSON yields null, so the distinction
+    // between "invalid date" and "no value" would be lost on the way in.
+    // Audit R6 H2 — `v.toJSON === Date.prototype.toJSON` stops a REPLACED
+    // serializer but not attached data: `d.extra = 1` leaves the stock toJSON
+    // in place, which returns only the ISO string, so `extra` is silently
+    // dropped on write. Require a stock, bare, valid Date — exact prototype
+    // (so a Date subclass with accessors is out too), no own properties of any
+    // kind, finite time. Anything else is not the one case this exemption was
+    // opened for.
+    if (v instanceof Date) {
+      return Object.getPrototypeOf(v) === Date.prototype
+        && v.toJSON === Date.prototype.toJSON
+        && Object.getOwnPropertyNames(v).length === 0
+        && Object.getOwnPropertySymbols(v).length === 0
+        && Number.isFinite(v.getTime());
+    }
+    const proto = Object.getPrototypeOf(v);
+    if (proto !== Object.prototype && proto !== null) return false;
+    if (Object.getOwnPropertySymbols(v).length > 0) return false;
+    if (Object.getOwnPropertyNames(v).length !== Object.keys(v).length) return false;
+    // Audit R5 H3 — `Object.values()` INVOKES getters, so an accessor property
+    // was being read here and read again by JSON.stringify at write time: two
+    // invocations, two chances to differ. Walk descriptors instead, which
+    // reads `.value` without calling anything, and reject accessors outright —
+    // a computed property has no stable serialized form to validate.
+    for (const key of Object.keys(v)) {
+      const descriptor = Object.getOwnPropertyDescriptor(v, key);
+      if (typeof descriptor.get === 'function' || typeof descriptor.set === 'function') return false;
+      if (!isJsonbSafeValue(descriptor.value)) return false;
+    }
+    return true;
+  }
   return false;
 }
 

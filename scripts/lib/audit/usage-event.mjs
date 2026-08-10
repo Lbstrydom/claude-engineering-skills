@@ -22,15 +22,56 @@ export const UsageEventSchema = z.object({
   inputTokens: z.number().int().min(0),
   outputTokens: z.number().int().min(0),
   cachedTokens: z.number().int().min(0).nullable().optional(),
-  costAmountUsd: z.number().min(0),
+  // Nullable since the c5808479 fix: an unpriced OR unmeterable call has no
+  // knowable cost, and `0` is a lie about it that no reader can distinguish
+  // from a genuinely free call. `usageReliability` says WHY it is absent. This
+  // is a WIDENING, so every historical serialized event still parses.
+  // `.finite()` (audit R2 H1): `Infinity >= 0` is true, so `min(0)` alone let a
+  // non-finite amount through into a persisted/serialized event — and
+  // JSON.stringify writes Infinity as `null`, corrupting it on the way out.
+  // model-eval/cost.mjs's sibling monetary field already carried `.finite()`;
+  // this one did not, and the two schemas describe the same kind of value.
+  costAmountUsd: z.number().finite().min(0).nullable(),
   // Snapshotted at RECORDING time (round-3 finding #G2) — immutable once
   // written. A report may additionally show a live-rate re-estimate
   // alongside these, but these two fields never change retroactively.
-  costAmountEurAtRecordedFx: z.number().min(0),
-  fxRateUsed: z.number().positive(),
+  costAmountEurAtRecordedFx: z.number().finite().min(0).nullable(),
+  fxRateUsed: z.number().finite().positive(),
   wallClockMs: z.number().int().min(0),
   usageReliability: z.enum(['exact', 'estimated', 'unavailable']),
   createdAt: z.string().datetime(),
+}).superRefine((v, ctx) => {
+  // Audit R1 H2/M5 — making the money fields nullable widened this schema, and
+  // a widened schema with three independently-validated fields can express
+  // states the contract forbids: `'exact'` with no amount, or `'unavailable'`
+  // WITH one — which is exactly the fabricated-$0 shape the c5808479 fix
+  // removed from buildUsageEvent, left constructible through the schema itself.
+  // usageReliability is the discriminator, so bind the amounts to it.
+  const hasUsd = v.costAmountUsd != null;
+  const hasEur = v.costAmountEurAtRecordedFx != null;
+  if (v.usageReliability === 'unavailable' && (hasUsd || hasEur)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'usageReliability:"unavailable" must carry null costAmountUsd/costAmountEurAtRecordedFx — an unknowable cost has no amount' });
+  }
+  if (v.usageReliability !== 'unavailable' && !hasUsd) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: `usageReliability:"${v.usageReliability}" requires a non-null costAmountUsd — a known cost must state its amount` });
+  }
+  // The two currencies are one snapshotted amount in two units; one present
+  // without the other is a half-written record either way.
+  if (hasUsd !== hasEur) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'costAmountUsd and costAmountEurAtRecordedFx must be both present or both null' });
+  }
+  // Audit R2 M5 — joint PRESENCE was checked but not joint VALUE, so the pair
+  // could disagree while passing. The whole point of snapshotting fxRateUsed
+  // (round-3 #G2) is that the EUR figure is reproducible from the USD one at
+  // the rate recorded beside it; if it is not, one of the three is wrong and
+  // the record cannot be audited later. Scaled tolerance, since the product is
+  // a float multiplication.
+  if (hasUsd && hasEur) {
+    const expectedEur = v.costAmountUsd * v.fxRateUsed;
+    if (Math.abs(v.costAmountEurAtRecordedFx - expectedEur) > 1e-9 * Math.max(1, Math.abs(expectedEur))) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: `costAmountEurAtRecordedFx (${v.costAmountEurAtRecordedFx}) must equal costAmountUsd x fxRateUsed (${expectedEur}) — the EUR figure is a snapshot of the USD one, not an independent number` });
+    }
+  }
 });
 
 /**
@@ -71,10 +112,19 @@ export function buildUsageEvent(raw, createdAt) {
     usageReliability = 'exact';
   } else {
     const priced = costFromUsage(raw.usage, raw.resolvedModel);
-    costAmountUsd = priced.totalUsd ?? 0;
+    // c5808479 fix — this was `priced.totalUsd ?? 0` with the reliability
+    // keyed on `priced.priced` alone, so an unmeterable call on a PRICED model
+    // was recorded as `estimated $0`: a fabricated amount under a label that
+    // claims it was calculated. Both halves had to change — relabelling alone
+    // still writes a `0` to disk that no reader can tell from a free call.
+    // `unmeterable` and unpriced are both "no knowable cost", so both take the
+    // pre-existing 'unavailable' state that computeCostReport already excludes
+    // from `costUsd` and counts in `unavailableCostEventCount`.
+    const knowable = priced.priced && !priced.unmeterable;
+    costAmountUsd = knowable ? priced.totalUsd : null;
     inputTokens = priced.inputTokens;
     outputTokens = priced.outputTokens;
-    usageReliability = priced.priced ? 'estimated' : 'unavailable';
+    usageReliability = knowable ? 'estimated' : 'unavailable';
   }
 
   return UsageEventSchema.parse({
@@ -85,7 +135,10 @@ export function buildUsageEvent(raw, createdAt) {
     outputTokens,
     cachedTokens: raw.usage?.cached_tokens ?? null,
     costAmountUsd,
-    costAmountEurAtRecordedFx: toEur(costAmountUsd) ?? 0,
+    // `?? 0` dropped with the same fix: toEur() already passes null through,
+    // and coercing it back to 0 would re-fabricate in EUR exactly what the
+    // line above stopped fabricating in USD.
+    costAmountEurAtRecordedFx: toEur(costAmountUsd),
     fxRateUsed: EUR_PER_USD,
     wallClockMs: raw.wallClockMs ?? 0,
     usageReliability,

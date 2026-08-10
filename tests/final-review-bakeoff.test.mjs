@@ -236,6 +236,25 @@ describe('armCostUsd — spend is measured, never partially guessed', () => {
     assert.equal(armCostUsd({}).usd, null);
     assert.equal(armCostUsd({ _model: 'claude-opus-5' }).usd, null, 'a model with no usage is not a free call');
   });
+
+  it('a PARTIALLY-metered arm is null, not a confident subtotal (audit R1 H2)', () => {
+    // The discriminating case the two tests above miss: the primary call is
+    // fully metered, so `calls` is non-empty and a total gets computed — while
+    // the shadow call, which really happened, was dropped by the old
+    // `c.model && c.usage` filter before pricing. The arm then published the
+    // primary's cost as if it were the whole spend.
+    for (const [label, shadow] of [
+      ['no usage key', { model: 'claude-opus-5' }],
+      ['empty usage', { model: 'claude-opus-5', usage: {} }],
+      ['one-sided usage', { model: 'claude-opus-5', usage: { input_tokens: 1000 } }],
+    ]) {
+      const r = armCostUsd({ ...opusCall, _shadow: shadow });
+      assert.equal(r.usd, null, `${label}: an unmeterable shadow call must void the arm total`);
+      assert.deepEqual(r.unpricedModels, ['claude-opus-5'], `${label}: the unmeterable call is named`);
+    }
+    // a fully-metered shadow is still summed normally
+    assert.ok(armCostUsd({ ...opusCall, _shadow: { model: 'claude-opus-5', usage: { input_tokens: 1000, output_tokens: 1 } } }).usd > 0);
+  });
 });
 
 describe('summarise surfaces every arm (bakeoff-collect)', () => {

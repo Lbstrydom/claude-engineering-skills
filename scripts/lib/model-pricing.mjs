@@ -128,7 +128,16 @@ export function priceFor(modelId) {
   if (!modelId || typeof modelId !== 'string') return null;
   if (Object.hasOwn(OSS_PRICING, modelId)) return OSS_PRICING[modelId];
   const key = pricingKey(modelId);
-  return familyPricing[key] || familyPricing[modelId] || null;
+  // adbda8c8 fix — these two were bare bracket lookups while the OSS_PRICING
+  // check one line up already used Object.hasOwn: two different lookup
+  // disciplines inside one function. A model id colliding with an
+  // Object.prototype member ('constructor', 'toString', 'valueOf') returned a
+  // truthy NON-price whose .input/.output are undefined, which then priced as
+  // NaN while still reporting priced:true — a fabricated cost, not a caught
+  // error. Match the safer adjacent pattern.
+  if (Object.hasOwn(familyPricing, key)) return familyPricing[key];
+  if (Object.hasOwn(familyPricing, modelId)) return familyPricing[modelId];
+  return null;
 }
 
 /** True iff the model has a known price (i.e. the cost ratio may include it). */
@@ -150,26 +159,47 @@ export function isPriced(modelId) {
  * TOTAL prompt size across all three buckets, so a caller comparing prompt
  * sizes across runs sees the same number cached or not.
  *
+ * `priced` and `unmeterable` are ORTHOGONAL and are never collapsed into one
+ * flag: `priced` is a property of the MODEL (is there a price for it?),
+ * `unmeterable` a property of the USAGE (can it be trusted?). All four
+ * combinations occur. The monetary fields are non-null iff
+ * `priced && !unmeterable`; token counts are always the sanitized observation,
+ * because they describe what was seen, not what was billable.
+ *
  * @param {object|null} usage
  * @param {string} modelId - resolved concrete model id
  * @returns {{ totalUsd: number|null, inputUsd: number|null, outputUsd: number|null,
- *            priced: boolean, inputTokens: number, outputTokens: number,
+ *            priced: boolean, unmeterable: boolean, inputTokens: number, outputTokens: number,
  *            cacheWriteTokens: number, cacheReadTokens: number }}
  */
 export function costFromUsage(usage, modelId) {
+  const rawIn = usage?.input_tokens ?? usage?.prompt_tokens;
+  const rawOut = usage?.output_tokens ?? usage?.completion_tokens;
+  // c5808479 fix — this function had no missing-usage guard at all, unlike its
+  // sibling costForBudget (see its `unmeterable` below, from which this test is
+  // copied verbatim so the two can never disagree). sanitizeTokens() clamps
+  // absent/garbage counts to 0, so costFromUsage(null, <priced model>) returned
+  // `priced: true, totalUsd: 0` — a FALSE REPORT OF SUCCESSFUL $0 PRICING,
+  // indistinguishable from a genuinely free call, which is strictly worse than
+  // the honest null this module's own null-cost policy demands for the
+  // unpriced case. A true zero (`{input_tokens: 0, output_tokens: 0}`) is
+  // meterable and still prices to a real 0 — "zero" and "absent" are now
+  // distinguishable, which is the entire point.
+  const unmeterable = !usage || usage.usageMissing === true || !isValidCount(rawIn) || !isValidCount(rawOut);
   // Sanitize FIRST (audit R1 H4): non-finite / negative / NaN token counts →
   // 0, floored to integers — otherwise a garbage `usage` yields a negative or
   // Infinity cost while still reporting priced:true.
-  const uncachedTokens = sanitizeTokens(usage?.input_tokens ?? usage?.prompt_tokens);
+  const uncachedTokens = sanitizeTokens(rawIn);
   const cacheWriteTokens = sanitizeTokens(usage?.cache_creation_input_tokens);
   const cacheReadTokens = sanitizeTokens(usage?.cache_read_input_tokens);
   const inputTokens = uncachedTokens + cacheWriteTokens + cacheReadTokens;
-  const outputTokens = sanitizeTokens(usage?.output_tokens ?? usage?.completion_tokens);
+  const outputTokens = sanitizeTokens(rawOut);
   const px = priceFor(modelId);
-  if (!px) {
-    // Null-cost policy (plan decision 8): unknown price → null, NEVER 0.
+  if (!px || unmeterable) {
+    // Null-cost policy (plan decision 8): unknown price → null, NEVER 0 — now
+    // extended to unknown USAGE for the same reason.
     return {
-      totalUsd: null, inputUsd: null, outputUsd: null, priced: false,
+      totalUsd: null, inputUsd: null, outputUsd: null, priced: !!px, unmeterable,
       inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens,
     };
   }
@@ -184,6 +214,7 @@ export function costFromUsage(usage, modelId) {
     inputUsd,
     outputUsd,
     priced: true,
+    unmeterable: false,
     inputTokens,
     outputTokens,
     cacheWriteTokens,

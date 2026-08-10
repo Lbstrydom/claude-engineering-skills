@@ -189,13 +189,26 @@ export function armCostUsd(armJson) {
   const calls = [
     { model: armJson?._model, usage: armJson?._usage },
     { model: armJson?._shadow?.model, usage: armJson?._shadow?.usage },
-  ].filter((c) => c.model && c.usage);
+    // Audit R1 H2 — this filtered on `c.model && c.usage`, so a call that
+    // really happened but reported NO usage was dropped from `calls` entirely:
+    // it never reached costFromUsage, never landed in `unpricedModels`, and the
+    // arm therefore published a confident-looking total that silently omitted
+    // it. Filter on the model alone — a model with no usage IS a call, and
+    // costFromUsage now classifies it as unmeterable, which the loop below
+    // turns into an honest null total. No model means no call was made.
+  ].filter((c) => c.model);
   if (calls.length === 0) return { usd: null, unpricedModels: [] };
   let usd = 0;
   const unpricedModels = [];
   for (const c of calls) {
     const r = costFromUsage(c.usage, c.model);
-    if (!r.priced) unpricedModels.push(c.model);
+    // c5808479 fix — `if (!r.priced) … else usd += r.totalUsd` now has a third
+    // case: a PRICED model whose usage is unmeterable returns totalUsd:null,
+    // and `usd += null` would silently add 0, quietly under-reporting the arm
+    // instead of admitting the total is unknown. An unmeterable call makes the
+    // arm total exactly as unknowable as an unpriced one does, so it takes the
+    // same path.
+    if (!r.priced || r.unmeterable) unpricedModels.push(c.model);
     else usd += r.totalUsd;
   }
   return { usd: unpricedModels.length ? null : usd, unpricedModels };

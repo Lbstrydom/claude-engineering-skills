@@ -8,13 +8,21 @@
  */
 
 import { z } from 'zod';
-import { priceFor, isPriced, costFromUsage, PRICING_VERSION } from '../model-pricing.mjs';
+import { priceFor, isPriced, costFromUsage, isValidCount, PRICING_VERSION } from '../model-pricing.mjs';
 import { RoleSchema, ProviderSchema } from './contracts.mjs';
+
+/**
+ * The pipeline's phase vocabulary — ONE definition (r15m2phaseenum fix). It was
+ * previously spelled inline on the usage event's `phase` field while
+ * `CostRowSchema.byPhase` was keyed by a bare `z.string()`, so the aggregate
+ * accepted phase keys the events themselves could never carry.
+ */
+export const PhaseEnum = z.enum(['generation', 'extraction', 'judge']);
 
 export const ModelEvalUsageEventSchema = z.object({
   runId: z.string().min(1),
   role: RoleSchema,
-  phase: z.enum(['generation', 'extraction', 'judge']),
+  phase: PhaseEnum,
   armId: z.string().nullable(),
   candidateRef: z.string().min(1),
   provider: ProviderSchema,
@@ -77,7 +85,14 @@ export const CostRowSchema = z.object({
   candidateRef: z.string().min(1),
   totalUsd: z.number().finite().nonnegative().nullable(),
   costStatus: z.enum(['available', 'unavailable']),
-  byPhase: z.record(z.string(), CostPhaseEntrySchema),
+  // r15m2phaseenum fix — `z.record(z.string(), …)` accepted ANY key, including
+  // phases no event can produce. Note `z.partialRecord`, NOT `z.record`: in
+  // Zod 4 a `z.record(enum, …)` is EXHAUSTIVE (it requires every enum member to
+  // be present), and byPhase is legitimately sparse — assembleCostRows only
+  // creates a key for a phase that actually emitted usage events, so a
+  // generation-only run yields `{generation: …}`. `z.record(PhaseEnum, …)`
+  // would reject that valid row.
+  byPhase: z.partialRecord(PhaseEnum, CostPhaseEntrySchema),
 }).superRefine((v, ctx) => {
   if (v.costStatus === 'available' && v.totalUsd == null) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'costStatus:"available" requires a non-null totalUsd' });
@@ -85,15 +100,45 @@ export const CostRowSchema = z.object({
   if (v.costStatus === 'unavailable' && v.totalUsd != null) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'costStatus:"unavailable" requires totalUsd:null' });
   }
+  // Audit R1 M4 — the r15h2costrowagg fix below closed one direction only
+  // ('available' must have no unpriced phase), leaving the reciprocal
+  // constructible: a row claiming costStatus:'unavailable' while every phase
+  // it carries is priced. assembleCostRows sets 'unavailable' precisely
+  // BECAUSE some phase was unpriced (:199-200), so such a row contradicts the
+  // only thing that status means. Make the contract total, not half-checked.
+  // An empty byPhase is left alone — it makes no claim either way.
+  if (v.costStatus === 'unavailable') {
+    const phaseValues = Object.values(v.byPhase);
+    if (phaseValues.length > 0 && phaseValues.every((p) => p.usd != null)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'costStatus:"unavailable" requires at least one byPhase entry with status:"unavailable" — every phase is priced, so the row is not unavailable' });
+    }
+  }
   // Round-10 audit M2 fix — totalUsd/costStatus and each byPhase entry were
   // validated independently, so a schema-valid row could claim a totalUsd
-  // that doesn't match the sum of its own byPhase breakdown. Only checked
-  // when every phase is priced (an unpriced phase already forces
-  // costStatus:'unavailable'/totalUsd:null via assembleCostRows' own logic,
-  // so there's nothing to sum in that case).
+  // that doesn't match the sum of its own byPhase breakdown.
+  //
+  // r15h2costrowagg fix — that check was gated on `phaseValues.every(p => p.usd
+  // != null)`, i.e. it SKIPPED itself precisely when a phase was unpriced. The
+  // justification ("an unpriced phase already forces costStatus:'unavailable'
+  // via assembleCostRows' own logic") reasons about the one PRODUCER rather
+  // than about the rows this schema actually validates — and CostRowSchema is
+  // exported, so it is the contract for rows composed or deserialized
+  // elsewhere too. A row asserting costStatus:'available' while carrying an
+  // 'unavailable' phase entry is internally contradictory and must fail
+  // closed, not slip through the one check that would have caught it.
+  //
+  // Tolerance is absolute 1e-9: these are per-run LLM costs bounded well below
+  // $10, where an f64 resolves to ~1e-15, so 1e-9 absorbs addition-order
+  // rounding with orders of magnitude to spare while still catching any real
+  // mismatch (the smallest meaningful discrepancy is a whole phase, >= 1e-6).
   if (v.costStatus === 'available') {
     const phaseValues = Object.values(v.byPhase);
-    if (phaseValues.every((p) => p.usd != null)) {
+    const unpricedCount = phaseValues.filter((p) => p.usd == null).length;
+    if (unpricedCount > 0) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: `costStatus:"available" requires every byPhase entry to be priced — ${unpricedCount} of ${phaseValues.length} ${unpricedCount === 1 ? 'is' : 'are'} status:"unavailable"` });
+    } else if (v.totalUsd != null) {
+      // totalUsd == null is already reported above; skip so one contradictory
+      // row doesn't emit a second, derivative "sum mismatch" issue.
       const sum = phaseValues.reduce((acc, p) => acc + p.usd, 0);
       if (Math.abs(sum - v.totalUsd) > 1e-9) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: `totalUsd (${v.totalUsd}) does not match the sum of byPhase entries (${sum})` });
@@ -144,9 +189,12 @@ export function buildUsageEvent({ runId, role, phase, armId, candidateRef, resol
   // input_tokens:-5 would still be tagged usageStatus:'captured' and priced
   // from a silently-zeroed count — a real-looking $0 cost instead of a
   // visible "missing" state. A token count can never legitimately be negative.
-  const isValidTokenCount = (v) => typeof v === 'number' && Number.isFinite(v) && v >= 0;
-  const hasInputTokenField = usage != null && (isValidTokenCount(usage.input_tokens) || isValidTokenCount(usage.prompt_tokens));
-  const hasOutputTokenField = usage != null && (isValidTokenCount(usage.output_tokens) || isValidTokenCount(usage.completion_tokens));
+  // r15m3tokendry fix — this was a local `isValidTokenCount` byte-equivalent to
+  // model-pricing.mjs's exported `isValidCount`, in a module that already
+  // imports from model-pricing.mjs. Two copies of one validation rule is the
+  // shape where they drift apart silently; use the shared one (#1 DRY).
+  const hasInputTokenField = usage != null && (isValidCount(usage.input_tokens) || isValidCount(usage.prompt_tokens));
+  const hasOutputTokenField = usage != null && (isValidCount(usage.output_tokens) || isValidCount(usage.completion_tokens));
   const usageStatus = (hasInputTokenField && hasOutputTokenField) ? 'captured' : 'missing';
   return ModelEvalUsageEventSchema.parse({
     runId, role, phase, armId, candidateRef, provider, resolvedModel, pricingModel, deploymentId,

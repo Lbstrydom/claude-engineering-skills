@@ -100,10 +100,73 @@ function basename(filePath) {
 // string comes from.
 const MAX_MATCH_STRING_LEN = 2000;
 
-function matchScore(candidate, expected, matchMode, fuzzyConfig) {
-  const fileMatch = (expected.files || []).some((f) => f === candidate.file) // full-path match preferred
-    || (expected.files || []).some((f) => basename(f) === basename(candidate.file)); // fallback, collision-prone
-  if (!fileMatch) return null;
+/**
+ * Basenames that cannot identify a file unambiguously (62d7faf3cd80 fix).
+ *
+ * Measured per SIDE, never across the union of both — that distinction is
+ * load-bearing. A MOVED file is `src/old/thing.js` in the rubric and
+ * `src/new/thing.js` in the candidate: two distinct paths sharing a basename,
+ * so a union-scoped test would call it ambiguous and delete exactly the edge
+ * the basename fallback exists to create. Per-side, it is unambiguous on both
+ * and the fallback still works.
+ *
+ * @returns {{candidates: Set<string>, rubrics: Set<string>}} basenames appearing
+ *   in >=2 distinct candidate files / in the `files` of >=2 distinct rubrics.
+ */
+function ambiguousBasenames(candidateOutputs, expectedRubrics) {
+  const collect = (groups) => {
+    const byBasename = new Map();
+    groups.forEach((paths, groupIndex) => {
+      for (const p of new Set(paths)) {
+        const b = basename(p);
+        if (!byBasename.has(b)) byBasename.set(b, new Set());
+        byBasename.get(b).add(groupIndex);
+      }
+    });
+    const ambiguous = new Set();
+    for (const [b, groupIndexes] of byBasename) if (groupIndexes.size > 1) ambiguous.add(b);
+    return ambiguous;
+  };
+  return {
+    // Audit R2 M4 — this grouped by CANDIDATE (`candidateOutputs.map(c =>
+    // [c.file])`), so two findings reported against the SAME file became two
+    // groups and their shared basename was called ambiguous — suppressing a
+    // perfectly unambiguous edge, which is the opposite of the intent stated
+    // one line above it. Group by DISTINCT FILE: two outputs on one file are
+    // one group, two files sharing a basename are two.
+    // Audit R3 M3 — the two sides were measured asymmetrically: candidates by
+    // distinct FILE, rubrics by rubric INDEX, so two rubrics naming the SAME
+    // path counted as two collisions. Ambiguity is a property of files ("does
+    // this basename identify one file?"), not of how many rubrics mention one,
+    // so both sides now group by distinct path.
+    candidates: collect([...new Set(candidateOutputs.map((c) => c.file))].map((f) => [f])),
+    rubrics: collect([...new Set(expectedRubrics.flatMap((e) => e.files || []))].map((f) => [f])),
+  };
+}
+
+/**
+ * @returns {{score: number, pathClass: 0|1}|null} — `pathClass` 0 = full-path
+ *   match, 1 = basename-only. null when the pair is not an eligible edge.
+ */
+function matchScore(candidate, expected, matchMode, fuzzyConfig, ambiguous) {
+  const files = expected.files || [];
+  const exactFileMatch = files.some((f) => f === candidate.file);
+  let pathClass = 0;
+  if (!exactFileMatch) {
+    // 62d7faf3cd80 fix — the basename fallback used to rank EQUAL to a
+    // full-path match, so `src/a/config.js` and `src/b/config.js` were
+    // interchangeable and a candidate naming the WRONG file could be credited.
+    // Ordering was the wrong lever (it only decides which ambiguous edge wins);
+    // the fix is that an ambiguous basename yields NO edge at all, so a
+    // wrong-file credit is unconstructable rather than deprioritised. The
+    // correct candidate still matches by exact path.
+    const cb = basename(candidate.file);
+    const eligible = !ambiguous.candidates.has(cb)
+      && !ambiguous.rubrics.has(cb)
+      && files.some((f) => basename(f) === cb);
+    if (!eligible) return null;
+    pathClass = 1;
+  }
   const normCandidate = normalize(candidate.description);
   const normExpected = normalize(expected.expectedFindingRubric);
   // Round-14 audit H4 fix — the round-13 fix SLICED both strings to
@@ -128,7 +191,7 @@ function matchScore(candidate, expected, matchMode, fuzzyConfig) {
     ? (normCandidate === normExpected ? 1 : 0)
     : jaccardSimilarity(normCandidate, normExpected);
   const threshold = matchMode === 'exact' ? 1 : fuzzyConfig.similarityThreshold;
-  return descScore >= threshold ? descScore : null;
+  return descScore >= threshold ? { score: descScore, pathClass } : null;
 }
 
 /**
@@ -193,24 +256,72 @@ export function scoreDefectLocalization(candidateOutputs, expectedRubrics, { mat
       throw new Error(`scoreDefectLocalization: expectedRubrics[${i}].files must be an array when present`);
     }
   }
-  const usedCandidates = new Set();
-  const mismatches = [];
-  let correct = 0;
+  // 62d7faf3cd80 fix — this was a per-expected greedy loop: it walked
+  // expectedRubrics in ARRAY ORDER and let each take its best still-unused
+  // candidate. An early rubric could consume a candidate a later rubric matched
+  // far better, so `correct` (and every metric derived from it) depended on
+  // rubric ordering and could be strictly below the achievable match count.
+  //
+  // Replaced with a maximum-cardinality bipartite matching (Kuhn's augmenting
+  // paths). Maximum cardinality is a property of the GRAPH, so `correct` is now
+  // invariant under permutation of either input array — the guarantee the
+  // greedy loop never had. Note the eligible-edge graph must be built AFTER the
+  // MAX_SCORING_ITEMS/MAX_SCORING_PAIRS preconditions above, which is what
+  // keeps those bounds gating edge materialization and not merely the loop.
+  //
+  // Deliberately NOT a min-cost / max-weight assignment: weight reaches no
+  // output. `correct`, `precision`, `recall`, `f1` and `extraCount` are all
+  // functions of the match COUNT, so a solver optimizing which equally-maximal
+  // matching is chosen would buy nothing a caller can observe.
+  const ambiguous = ambiguousBasenames(candidateOutputs, expectedRubrics);
+  // adjacency[i] = eligible candidates for rubric i, in a deterministic order:
+  // full-path before basename-only, then higher score, then lower index. Same
+  // input => same assignment, every run.
+  const adjacency = expectedRubrics.map((expected) => candidateOutputs
+    .map((c, j) => {
+      const m = matchScore(c, expected, matchMode, fuzzyConfig, ambiguous);
+      return m == null ? null : { j, score: m.score, pathClass: m.pathClass };
+    })
+    .filter((e) => e != null)
+    .sort((a, b) => a.pathClass - b.pathClass || b.score - a.score || a.j - b.j));
 
-  for (let i = 0; i < expectedRubrics.length; i++) {
-    const expected = expectedRubrics[i];
-    let best = null, bestScore = -1;
-    for (let j = 0; j < candidateOutputs.length; j++) {
-      if (usedCandidates.has(j)) continue;
-      const score = matchScore(candidateOutputs[j], expected, matchMode, fuzzyConfig);
-      if (score != null && score > bestScore) { best = j; bestScore = score; }
+  const candidateToRubric = new Array(candidateOutputs.length).fill(-1);
+  const rubricToCandidate = new Array(expectedRubrics.length).fill(-1);
+  const tryAugment = (i, visited) => {
+    for (const edge of adjacency[i]) {
+      if (visited[edge.j]) continue;
+      visited[edge.j] = true;
+      if (candidateToRubric[edge.j] === -1 || tryAugment(candidateToRubric[edge.j], visited)) {
+        candidateToRubric[edge.j] = i;
+        rubricToCandidate[i] = edge.j;
+        return true;
+      }
     }
-    if (best != null) { usedCandidates.add(best); correct++; }
-    else mismatches.push({ index: i, reason: 'no-matching-candidate-output' });
+    return false;
+  };
+  for (let i = 0; i < expectedRubrics.length; i++) {
+    if (adjacency[i].length > 0) tryAugment(i, new Array(candidateOutputs.length).fill(false));
+  }
+
+  const correct = rubricToCandidate.reduce((n, j) => n + (j !== -1 ? 1 : 0), 0);
+  const mismatches = [];
+  for (let i = 0; i < expectedRubrics.length; i++) {
+    if (rubricToCandidate[i] !== -1) continue;
+    // Gemini gate R1 fix — an unmatched rubric used to report a flat
+    // 'no-matching-candidate-output', conflating two very different facts.
+    // Among equally-maximal matchings, WHICH rubric goes unmatched can differ,
+    // so a rubric whose candidates were all claimed by other rubrics was being
+    // reported to a human as a defect the model MISSED, when the model had in
+    // fact reported it. Name the contention instead of hiding it behind an
+    // arbitration.
+    mismatches.push({
+      index: i,
+      reason: adjacency[i].length === 0 ? 'no-matching-candidate-output' : 'candidate-consumed-by-another-rubric',
+    });
   }
 
   const total = expectedRubrics.length;
-  const extraCount = candidateOutputs.length - usedCandidates.size;
+  const extraCount = candidateOutputs.length - correct;
   const precision = (correct + extraCount) > 0 ? correct / (correct + extraCount) : null;
   const recall = total > 0 ? correct / total : null;
   const f1 = precision != null && recall != null && (precision + recall) > 0

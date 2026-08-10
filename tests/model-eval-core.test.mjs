@@ -704,6 +704,256 @@ describe('cost.mjs', () => {
     assert.throws(() => CostRowSchema.parse({ ...base, totalUsd: 5, byPhase: { generation: { usd: 3, status: 'available' } } }));
     assert.doesNotThrow(() => CostRowSchema.parse({ ...base, totalUsd: 5, byPhase: { generation: { usd: 3, status: 'available' }, extraction: { usd: 2, status: 'available' } } }));
   });
+
+  test('costStatus:"available" with an unpriced byPhase entry is rejected — the sum-check no longer skips itself (r15h2costrowagg)', () => {
+    const base = { runId: 'run-15', role: 'auditor', armId: null, candidateRef: 'cand-1' };
+    // The old guard was `if (phaseValues.every(p => p.usd != null))`, i.e. it
+    // disabled itself in exactly the case below, leaving an internally
+    // contradictory row schema-valid and never reconciled.
+    assert.throws(() => CostRowSchema.parse({
+      ...base, costStatus: 'available', totalUsd: 3,
+      byPhase: { generation: { usd: 3, status: 'available' }, extraction: { usd: null, status: 'unavailable' } },
+    }), /every byPhase entry to be priced/);
+    // an 'unavailable' row may still carry unpriced phases — nothing to sum
+    assert.doesNotThrow(() => CostRowSchema.parse({
+      ...base, costStatus: 'unavailable', totalUsd: null,
+      byPhase: { generation: { usd: 3, status: 'available' }, extraction: { usd: null, status: 'unavailable' } },
+    }));
+  });
+
+  test('the reciprocal also holds: an "unavailable" row with every phase priced is rejected (audit R1 M4)', () => {
+    const base = { runId: 'run-15c', role: 'auditor', armId: null, candidateRef: 'cand-1' };
+    // assembleCostRows sets 'unavailable' BECAUSE a phase was unpriced, so a
+    // row claiming it while pricing every phase contradicts the status itself.
+    assert.throws(() => CostRowSchema.parse({
+      ...base, costStatus: 'unavailable', totalUsd: null,
+      byPhase: { generation: { usd: 3, status: 'available' }, judge: { usd: 2, status: 'available' } },
+    }), /at least one byPhase entry with status/);
+    // an empty byPhase makes no claim either way and stays legal
+    assert.doesNotThrow(() => CostRowSchema.parse({ ...base, costStatus: 'unavailable', totalUsd: null, byPhase: {} }));
+  });
+
+  test('byPhase keys are constrained to the phase enum but the map stays SPARSE (r15m2phaseenum)', () => {
+    const base = { runId: 'run-15b', role: 'auditor', armId: null, candidateRef: 'cand-1', costStatus: 'available' };
+    // Constrained: an off-vocabulary key is rejected (it never was before).
+    assert.throws(() => CostRowSchema.parse({ ...base, totalUsd: 3, byPhase: { bogus_phase: { usd: 3, status: 'available' } } }));
+    // Sparse: assembleCostRows only creates a key for a phase that actually
+    // emitted events, so these must parse. `z.record(PhaseEnum, …)` — the
+    // obvious fix — is EXHAUSTIVE in Zod 4 and would reject both.
+    assert.doesNotThrow(() => CostRowSchema.parse({ ...base, totalUsd: 3, byPhase: { generation: { usd: 3, status: 'available' } } }));
+    assert.doesNotThrow(() => CostRowSchema.parse({ ...base, totalUsd: 5, byPhase: { generation: { usd: 3, status: 'available' }, judge: { usd: 2, status: 'available' } } }));
+    assert.doesNotThrow(() => CostRowSchema.parse({
+      ...base, totalUsd: 6,
+      byPhase: { generation: { usd: 1, status: 'available' }, extraction: { usd: 2, status: 'available' }, judge: { usd: 3, status: 'available' } },
+    }));
+  });
+});
+
+describe('deterministic-scorer — maximum-cardinality matching (62d7faf3cd80)', () => {
+  const rubric = (files, text) => ({ files, expectedFindingRubric: text });
+  const out = (file, description) => ({ file, description });
+
+  test('a candidate is not consumed by an earlier rubric that had an alternative (the greedy defect)', () => {
+    // r1 can match X or Y; r2 can match only X. The old per-expected greedy
+    // walked rubrics in array order, gave X to r1, and left r2 unmatched — a
+    // reported recall of 0.5 where 1.0 was achievable.
+    const expected = [
+      rubric(['src/x.js', 'src/y.js'], 'null pointer dereference on user input'),
+      rubric(['src/x.js'], 'null pointer dereference on user input'),
+    ];
+    const candidates = [
+      out('src/x.js', 'null pointer dereference on user input'),
+      out('src/y.js', 'null pointer dereference on user input'),
+    ];
+    const r = scoreDefectLocalization(candidates, expected, { matchMode: 'exact' });
+    assert.equal(r.correct, 2, 'both rubrics are matchable simultaneously');
+    assert.equal(r.recall, 1);
+    assert.equal(r.mismatches.length, 0);
+  });
+
+  test('metrics are invariant under permutation of BOTH input arrays', () => {
+    const expected = [
+      rubric(['src/a.js', 'src/b.js'], 'race condition in the cache write path'),
+      rubric(['src/b.js'], 'race condition in the cache write path'),
+      rubric(['src/c.js'], 'unbounded retry loop on a 4xx response'),
+    ];
+    const candidates = [
+      out('src/b.js', 'race condition in the cache write path'),
+      out('src/a.js', 'race condition in the cache write path'),
+      out('src/c.js', 'unbounded retry loop on a 4xx response'),
+    ];
+    const forward = scoreDefectLocalization(candidates, expected, { matchMode: 'exact' });
+    const revCandidates = scoreDefectLocalization([...candidates].reverse(), expected, { matchMode: 'exact' });
+    const revExpected = scoreDefectLocalization(candidates, [...expected].reverse(), { matchMode: 'exact' });
+    for (const [label, r] of [['candidates reversed', revCandidates], ['rubrics reversed', revExpected]]) {
+      assert.equal(r.correct, forward.correct, `${label}: correct`);
+      assert.equal(r.recall, forward.recall, `${label}: recall`);
+      assert.equal(r.precision, forward.precision, `${label}: precision`);
+      assert.equal(r.f1, forward.f1, `${label}: f1`);
+    }
+  });
+
+  test('an ambiguous basename produces NO edge — CANDIDATE side', () => {
+    const desc = 'timeout value read from the wrong key';
+    // Two DISTINCT candidate files share the basename config.js and neither is
+    // the rubric's path, so "which config.js did the model mean?" has no
+    // answer. Pre-fix, one of them was credited arbitrarily (correct: 1).
+    const r = scoreDefectLocalization(
+      [out('src/a/config.js', desc), out('src/c/config.js', desc)],
+      [rubric(['src/b/config.js'], desc)],
+      { matchMode: 'exact' },
+    );
+    assert.equal(r.correct, 0, 'an ambiguous basename must not be credited to either candidate');
+    assert.equal(r.mismatches[0].reason, 'no-matching-candidate-output');
+  });
+
+  test('an ambiguous basename produces NO edge — RUBRIC side', () => {
+    const desc = 'timeout value read from the wrong key';
+    // One candidate, at src/a/config.js. Rubric 0 names src/b/config.js
+    // (basename-only) and rubric 1 names src/a/config.js (exact). Only one can
+    // match. Pre-fix both were eligible and the winner was an artifact of
+    // iteration order; post-fix the basename edge to rubric 0 does not exist,
+    // so the candidate is credited to the rubric it actually names.
+    const r = scoreDefectLocalization(
+      [out('src/a/config.js', desc)],
+      [rubric(['src/b/config.js'], desc), rubric(['src/a/config.js'], desc)],
+      { matchMode: 'exact' },
+    );
+    assert.equal(r.correct, 1);
+    assert.equal(r.mismatches.length, 1);
+    assert.equal(r.mismatches[0].index, 0, 'the exact-path rubric must be the one credited');
+    assert.equal(r.mismatches[0].reason, 'no-matching-candidate-output');
+  });
+
+  test('two findings on the SAME file do not make its basename ambiguous (audit R2 M4)', () => {
+    // Grouping by candidate index rather than by distinct file made two
+    // outputs on one file look like two files sharing a basename, suppressing
+    // an edge that was never ambiguous.
+    const r = scoreDefectLocalization(
+      [out('src/new/thing.js', 'off-by-one in the pagination offset'), out('src/new/thing.js', 'unbounded retry loop on a 4xx response')],
+      [rubric(['src/old/thing.js'], 'off-by-one in the pagination offset')],
+      { matchMode: 'exact' },
+    );
+    assert.equal(r.correct, 1, 'the moved-file basename edge must survive a second finding on the same file');
+  });
+
+  test('two rubrics naming the SAME file do not make its basename ambiguous either (audit R3 M3)', () => {
+    // The rubric-side mirror of the case above: ambiguity is a property of
+    // file paths, not of how many rubrics happen to mention one.
+    const r = scoreDefectLocalization(
+      [out('src/new/thing.js', 'off-by-one in the pagination offset')],
+      [
+        rubric(['src/old/thing.js'], 'off-by-one in the pagination offset'),
+        rubric(['src/old/thing.js'], 'off-by-one in the pagination offset'),
+      ],
+      { matchMode: 'exact' },
+    );
+    assert.equal(r.correct, 1, 'one candidate matches one of the two identical rubrics');
+    assert.equal(r.mismatches[0].reason, 'candidate-consumed-by-another-rubric');
+  });
+
+  test('an exact path still matches with a same-basename decoy present', () => {
+    const desc = 'timeout value read from the wrong key';
+    const r = scoreDefectLocalization(
+      [out('src/a/config.js', desc), out('src/b/config.js', desc)],
+      [rubric(['src/b/config.js'], desc)],
+      { matchMode: 'exact' },
+    );
+    assert.equal(r.correct, 1, 'the decoy suppresses only BASENAME edges, never the exact-path one');
+    assert.equal(r.extraCount, 1, 'the decoy counts as a hallucinated extra, not a match');
+  });
+
+  test('an UNAMBIGUOUS basename still matches — the moved-file fallback survives', () => {
+    // The fallback's real use case: the rubric names the old path, the model
+    // reports the new one. Measuring ambiguity across the union of both sides
+    // would call this ambiguous and delete the edge.
+    const r = scoreDefectLocalization(
+      [out('src/new/thing.js', 'off-by-one in the pagination offset')],
+      [rubric(['src/old/thing.js'], 'off-by-one in the pagination offset')],
+      { matchMode: 'exact' },
+    );
+    assert.equal(r.correct, 1);
+  });
+
+  test('a rubric whose candidates were all claimed elsewhere is not reported as a MISS', () => {
+    // Gemini gate R1: among equally-maximal matchings, which rubric goes
+    // unmatched can differ — reporting the loser as 'no-matching-candidate-
+    // output' tells a human the model missed a defect it actually reported.
+    const r = scoreDefectLocalization(
+      [out('src/shared.js', 'deadlock when two writers contend for the lock')],
+      [
+        rubric(['src/shared.js'], 'deadlock when two writers contend for the lock'),
+        rubric(['src/shared.js'], 'deadlock when two writers contend for the lock'),
+      ],
+      { matchMode: 'exact' },
+    );
+    assert.equal(r.correct, 1, 'one candidate can only satisfy one rubric');
+    assert.equal(r.mismatches.length, 1);
+    assert.equal(r.mismatches[0].reason, 'candidate-consumed-by-another-rubric');
+    // and a genuine miss still reads as one
+    const miss = scoreDefectLocalization(
+      [out('src/unrelated.js', 'something else entirely happening here')],
+      [rubric(['src/absent.js'], 'deadlock when two writers contend for the lock')],
+      { matchMode: 'exact' },
+    );
+    assert.equal(miss.mismatches[0].reason, 'no-matching-candidate-output');
+  });
+
+  test('matching is provably maximum + internally consistent under displacement (brute-force oracle)', () => {
+    // Settles the Gemini gate's H1 concern (a reverse index left stale when an
+    // augmenting path displaces an earlier assignment) by MEASURING the result
+    // against an independent brute-force maximum matching, rather than by
+    // reading the algorithm. Deterministic LCG — no Math.random in a test.
+    let seed = 0x2f6e2b1;
+    const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+    const DESC = 'identical description so eligibility is decided purely by file';
+
+    // independent oracle: exhaustive maximum bipartite matching
+    const bruteForceMax = (adj, nCand) => {
+      const best = { n: 0 };
+      const used = new Array(nCand).fill(false);
+      const walk = (i, count) => {
+        if (i === adj.length) { if (count > best.n) best.n = count; return; }
+        walk(i + 1, count); // leave rubric i unmatched
+        for (const c of adj[i]) {
+          if (used[c]) continue;
+          used[c] = true; walk(i + 1, count + 1); used[c] = false;
+        }
+      };
+      walk(0, 0);
+      return best.n;
+    };
+
+    for (let iter = 0; iter < 200; iter++) {
+      const nCand = 1 + Math.floor(rnd() * 5);
+      const nRub = 1 + Math.floor(rnd() * 5);
+      const files = Array.from({ length: nCand }, (_, i) => `src/f${i}.js`);
+      const candidates = files.map((f) => out(f, DESC));
+      const adj = [];
+      const expected = Array.from({ length: nRub }, () => {
+        const picked = files.filter(() => rnd() < 0.5);
+        adj.push(picked.map((f) => files.indexOf(f)));
+        return rubric(picked, DESC);
+      });
+
+      const r = scoreDefectLocalization(candidates, expected, { matchMode: 'exact' });
+      assert.equal(r.correct, bruteForceMax(adj, nCand), `iter ${iter}: not a maximum matching`);
+      // internal consistency: every rubric is either matched or reported once
+      assert.equal(r.mismatches.length, nRub - r.correct, `iter ${iter}: mismatches must account for exactly the unmatched rubrics`);
+      assert.equal(new Set(r.mismatches.map((m) => m.index)).size, r.mismatches.length, `iter ${iter}: no rubric reported twice`);
+      assert.equal(r.extraCount, nCand - r.correct, `iter ${iter}: extraCount must be the unclaimed candidates`);
+      // a rubric with NO eligible edge can only ever be a genuine miss
+      for (const m of r.mismatches) {
+        if (adj[m.index].length === 0) assert.equal(m.reason, 'no-matching-candidate-output', `iter ${iter}: edgeless rubric mislabelled`);
+      }
+    }
+  });
+
+  test('the pair-count precondition still throws before any edge is built', () => {
+    const many = Array.from({ length: 201 }, (_, i) => out(`src/f${i}.js`, `finding number ${i}`));
+    const rubrics = Array.from({ length: 101 }, (_, i) => rubric([`src/f${i}.js`], `finding number ${i}`));
+    assert.throws(() => scoreDefectLocalization(many, rubrics), /must be <= 20000/);
+  });
 });
 
 describe('config/schema.mjs — .strict() catches typos', () => {
@@ -765,6 +1015,121 @@ describe('store/model-eval.mjs — persisted verdict/nextAction bounded to the r
     assert.equal(storeModelEvalInternals.CreateEvalRunBundleSchema.safeParse({ ...base, candidateRef: circular }).success, false);
     assert.equal(storeModelEvalInternals.CreateEvalRunBundleSchema.safeParse({ ...base, candidateRef: { fn: () => {} } }).success, false);
     assert.equal(storeModelEvalInternals.CreateEvalRunBundleSchema.safeParse({ ...base, candidateRef: { spec: 'x', nested: { a: 1 } } }).success, true);
+  });
+
+  test('NaN/Infinity are rejected — jsonb has no representation for them and JSON.stringify silently emits null (r15h1jsonbfinite)', () => {
+    const base = { repoId: 'r1', role: 'auditor', tier: 'screen', status: 'running' };
+    // `typeof NaN === 'number'`, so isJsonbSafeValue used to wave both through;
+    // JSON.stringify(NaN) then returns the STRING "null" without throwing, so
+    // the value was silently CHANGED on the way to the column rather than
+    // rejected — the same silent-data-loss class this seam already catches for
+    // function-valued keys.
+    assert.equal(JSON.stringify({ v: NaN }), '{"v":null}', 'negative control: stringify does not throw, it corrupts');
+    for (const bad of [NaN, Infinity, -Infinity]) {
+      assert.equal(storeModelEvalInternals.CreateEvalRunBundleSchema.safeParse({ ...base, candidateRef: { v: bad } }).success, false, `${bad} must be rejected`);
+      assert.equal(storeModelEvalInternals.CreateEvalRunBundleSchema.safeParse({ ...base, candidateRef: { nested: { deep: [1, bad] } } }).success, false, `${bad} must be rejected when nested`);
+    }
+    // finite numbers, including 0 and negatives, are still fine
+    assert.equal(storeModelEvalInternals.CreateEvalRunBundleSchema.safeParse({ ...base, candidateRef: { a: 0, b: -1.5, c: 1e308 } }).success, true);
+  });
+
+  test('sparse-array holes and Map/Set are rejected — every()/Object.values() are blind to both (audit R1 H1)', () => {
+    const base = { repoId: 'r1', role: 'auditor', tier: 'screen', status: 'running' };
+    // Negative controls: this is what the validator was failing to notice.
+    assert.equal(JSON.stringify({ v: new Array(2) }), '{"v":[null,null]}', 'holes become nulls, silently');
+    assert.equal(JSON.stringify({ v: new Map([[1, 2]]) }), '{"v":{}}', 'a Map stringifies to TOTAL data loss');
+    assert.equal(new Array(2).every(() => false), true, 'Array#every skips holes entirely');
+    assert.equal(Object.values(new Set([1, 2])).length, 0, 'a Set has no own enumerable values');
+
+    // audit R2 H2/H3 — Map/Set was a denylist of the two kinds that had been
+    // NAMED; these all share the same property (own enumerable string keys do
+    // not describe them) and all lose data.
+    assert.equal(JSON.stringify({ v: /x/g }), '{"v":{}}', 'RegExp too');
+    assert.equal(JSON.stringify({ v: new Error('boom') }), '{"v":{}}', 'Error too');
+    const symbolKeyed = { a: 1, [Symbol('s')]: 2 };
+    Object.defineProperty(symbolKeyed, 'hidden', { value: 3, enumerable: false });
+    assert.equal(JSON.stringify(symbolKeyed), '{"a":1}', 'symbol-keyed and non-enumerable props vanish');
+
+    for (const [label, bad] of [
+      ['empty holes', new Array(2)],
+      ['interior hole', [1, , 3]],
+      ['Map', new Map([['a', 1]])],
+      ['Set', new Set([1, 2])],
+      ['nested Map', { deep: { inner: new Map() } }],
+      ['RegExp', /x/g],
+      ['Error', new Error('boom')],
+      ['WeakMap', new WeakMap()],
+      ['Promise', Promise.resolve(1)],
+      ['TypedArray', new Uint8Array([1, 2])],
+      ['symbol-keyed / non-enumerable', symbolKeyed],
+    ]) {
+      assert.equal(storeModelEvalInternals.CreateEvalRunBundleSchema.safeParse({ ...base, candidateRef: { v: bad } }).success, false, `${label} must be rejected`);
+    }
+    // Dense arrays and plain nested objects are unaffected; a Date has a
+    // defined toJSON and is deliberately still allowed.
+    assert.equal(storeModelEvalInternals.CreateEvalRunBundleSchema.safeParse({ ...base, candidateRef: { v: [1, 2, 3], o: { a: [true, null] } } }).success, true);
+    assert.equal(storeModelEvalInternals.CreateEvalRunBundleSchema.safeParse({ ...base, candidateRef: { at: new Date(0) } }).success, true);
+    // a null-prototype bag is still a plain data bag
+    const bare = Object.create(null); bare.a = 1;
+    assert.equal(storeModelEvalInternals.CreateEvalRunBundleSchema.safeParse({ ...base, candidateRef: { bare } }).success, true);
+  });
+
+  test('a custom toJSON is never invoked, so it cannot pass once and persist otherwise (audit R3 H1/H2, R4 H1/H2)', () => {
+    const base = { repoId: 'r1', role: 'auditor', tier: 'screen', status: 'running' };
+    // Negative control: the key vanishes and stringify never complains.
+    assert.equal(JSON.stringify({ v: { toJSON: () => undefined } }), '{}', 'a toJSON returning undefined erases its key');
+
+    // The load-bearing case: a STATEFUL serializer. Validating its output would
+    // check the first invocation while persistence gets the second. Rejecting
+    // outright is what makes that unconstructable — and the counter proves the
+    // validator never called it.
+    let calls = 0;
+    const stateful = { toJSON: () => { calls += 1; return calls === 1 ? { ok: 1 } : { fn: () => {} }; } };
+    assert.equal(storeModelEvalInternals.CreateEvalRunBundleSchema.safeParse({ ...base, candidateRef: { v: stateful } }).success, false);
+
+    for (const [label, bad] of [
+      ['toJSON -> undefined', { toJSON: () => undefined }],
+      ['toJSON -> safe-looking object', { toJSON: () => ({ ok: 1 }) }],
+      ['toJSON -> itself', (() => { const o = {}; o.toJSON = () => o; return o; })()],
+      ['toJSON throws', { toJSON() { throw new Error('nope'); } }],
+      ['Invalid Date', new Date(NaN)],
+    ]) {
+      assert.equal(storeModelEvalInternals.CreateEvalRunBundleSchema.safeParse({ ...base, candidateRef: { v: bad } }).success, false, `${label} must be rejected`);
+    }
+    // A real Date — the one case the exemption exists for — still passes.
+    assert.equal(storeModelEvalInternals.CreateEvalRunBundleSchema.safeParse({ ...base, candidateRef: { at: new Date(0) } }).success, true);
+  });
+
+  test('a Date with an overridden toJSON, and accessor properties, are rejected (audit R5 H1/H3)', () => {
+    const base = { repoId: 'r1', role: 'auditor', tier: 'screen', status: 'running' };
+    // A Date whose serializer was replaced: `instanceof Date` still true, but
+    // what reaches the column is whatever the override returns.
+    const hijacked = new Date(0);
+    hijacked.toJSON = () => ({ fn: () => {} });
+    assert.equal(storeModelEvalInternals.CreateEvalRunBundleSchema.safeParse({ ...base, candidateRef: { at: hijacked } }).success, false);
+
+    // audit R6 H2 — attached data with the STOCK serializer still in place:
+    // Date#toJSON returns only the ISO string, so `extra` vanishes on write.
+    const decorated = new Date(0);
+    decorated.extra = { keep: 'me' };
+    assert.equal(JSON.stringify({ v: decorated }), '{"v":"1970-01-01T00:00:00.000Z"}', 'negative control: the attached property is dropped');
+    assert.equal(storeModelEvalInternals.CreateEvalRunBundleSchema.safeParse({ ...base, candidateRef: { at: decorated } }).success, false);
+    // a Date SUBCLASS is not the stock case either
+    class MyDate extends Date {}
+    assert.equal(storeModelEvalInternals.CreateEvalRunBundleSchema.safeParse({ ...base, candidateRef: { at: new MyDate(0) } }).success, false);
+
+    // An accessor is invoked once by validation and again at write time, so a
+    // stateful getter can be checked in one state and persisted in another.
+    // The counter proves the validator no longer calls it at all.
+    let reads = 0;
+    const withGetter = {};
+    Object.defineProperty(withGetter, 'v', { enumerable: true, get() { reads += 1; return reads === 1 ? 1 : { fn: () => {} }; } });
+    assert.equal(storeModelEvalInternals.CreateEvalRunBundleSchema.safeParse({ ...base, candidateRef: { withGetter } }).success, false);
+    // Exactly one read, and it is NOT the guard's: jsonbSafeRecord's
+    // circular-reference probe runs `JSON.stringify` first and that walk
+    // invokes the getter. The descriptor walk adds no second invocation — an
+    // `Object.values()`-based guard would have made it 2.
+    assert.equal(reads, 1, 'only the stringify probe reads it; the guard itself must not');
   });
 
   test('updateEvalRunTerminal args reject the same out-of-vocabulary verdict/nextAction', () => {

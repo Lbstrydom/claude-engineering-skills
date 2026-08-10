@@ -1,6 +1,73 @@
 # Project Status Log
 
-## 2026-08-10 (latest) — a swallowed failure inside the drift detector
+## 2026-08-10 (latest) — a false report of successful $0 pricing
+
+`costFromUsage(null, <priced model>)` returned `priced: true, totalUsd: 0`.
+`sanitizeTokens()` clamps absent counts to 0, so a call that was never metered
+priced out identical to a genuinely free one. Its sibling `costForBudget` had
+carried an `unmeterable` guard against exactly this the whole time; both now
+share one test, verbatim, so they cannot drift apart again.
+
+Nulling the amount only helps if callers stop coercing it back.
+`usage-event.mjs` wrote `totalUsd ?? 0` under `usageReliability: 'estimated'` —
+a fabricated figure under a label asserting it was calculated — and
+`bakeoff-collect` added `null` as 0. That second one also **dropped a call that
+had a model but no usage before pricing it**, so an arm published a confident
+total with a real call silently missing from it.
+
+The other six, from the 2026-07-26 triage:
+
+- **The jsonb guard accepted anything `JSON.stringify` rewrites without
+  throwing.** Started at `NaN`/`Infinity` (both emit `null`) and the audit
+  widened it over six rounds: sparse holes (`every()` skips them),
+  `Map`/`Set`/`RegExp`/`Error`/`Promise` (all `{}` — total loss), symbol-keyed
+  and non-enumerable properties, getters (read once by the guard and again at
+  write time), and a `Date` carrying its own `toJSON` or attached fields. Every
+  fix-by-name was the wrong shape; it now tests the property — plain data,
+  nothing invoked.
+- **`CostRowSchema`'s sum-check skipped itself** whenever a phase was unpriced,
+  disabled in precisely the case it existed for. The justification reasoned
+  about the one producer rather than about the rows an exported schema
+  validates.
+- **`byPhase` accepted any string key.** The obvious fix is wrong: Zod 4's
+  `z.record(enum, …)` is EXHAUSTIVE and `byPhase` is legitimately sparse, so it
+  would have rejected valid rows — and two existing tests. `z.partialRecord`.
+- **`priceFor` had no `Object.hasOwn` guard** on two of its three lookups, so
+  `'constructor'`/`'toString'` returned a truthy non-price and cost `NaN` while
+  still reporting `priced: true`.
+- **The defect scorer was per-expected greedy**, so an early rubric could
+  consume a candidate a later one matched better and recall depended on rubric
+  ORDER. Now a maximum-cardinality matching, checked against a brute-force
+  oracle over 200 seeded instances. Its basename fallback also ranked equal to
+  a full-path match; an ambiguous basename now yields no edge at all, and a
+  rubric whose candidates were claimed elsewhere reports
+  `candidate-consumed-by-another-rubric` instead of telling a human the model
+  missed a defect it actually found.
+- **A local `isValidTokenCount`** duplicating `isValidCount`, in a module that
+  already imported it.
+
+**Two of the nine were not implemented.** `f68a6dbc` (the fail-fast loop
+"structurally cannot validate future models") is refuted: an unlisted model has
+no price to compare against, and there is no silent default — `costFromUsage`
+returns null, `costForBudget` returns `estimated: true`, and `audit-shadow`
+persists that flag to the spend ledger. `r15m7godmodules` is declined on the
+merits: `verdict.mjs` is 405 lines, 6 functions, ONE export — cohesive, not
+multi-concern — and 41% comment carrying the why behind each guard.
+
+**Every fix was proven red-then-green** by reverting the source and re-running
+(15 tests red at HEAD, 0 after), because a check nobody has seen fail is not
+evidence. Three instrument defects surfaced doing it: two regexes that could not
+match an escaped ZodError message, and an invocation-count assertion that blamed
+the guard for a read made by the pre-existing `JSON.stringify` probe.
+
+Six `/audit-code` rounds. Deferrals live in the plan's §3.5 with a named
+INDEPENDENCE reason each, never "pre-existing". The final Gemini gate returned
+CONCERNS twice and all four findings cited code that does not exist —
+`maximumBipartiteMatching`, `matchE`/`matchC`, `!desc.enumerable`,
+`rawCacheWrite` — one of them recommending a line already present verbatim.
+Refuted by grep and execution rather than argued.
+
+## 2026-08-10 — a swallowed failure inside the drift detector
 
 `architectural-drift.yml` ran `npm run arch:refresh:full || true`. The harm was
 not the lost log line: a failed refresh let every step below run against a
