@@ -1,6 +1,68 @@
 # Project Status Log
 
-## 2026-08-10 (latest) — a gate nobody could run, hiding a filter that never ran
+## 2026-08-10 (latest) — 7 characters of headroom, and what shaving them cost
+
+`53358742`. AGENTS.md measured **91,993 of its 92,000-char cap**. Not a failure
+— the gate is a cap, and the file was under it — but the ADVISORY that fires in
+the last 10% had already named the failure mode it was in: *shaving words to
+squeeze under the cap is how a file stays permanently full*. Seven characters is
+not headroom. The next load-bearing invariant anyone needed to add would not
+have fit, and the cheap move at that point is to shave the thing you are adding,
+which is how the file got there.
+
+The advisory does more than warn — it ranks the sections **cheapest to condense
+with least loss**, defined as large AND already carrying a `docs/` pointer, i.e.
+the depth is *duplicated* rather than resident. Five sections, 57,697 characters.
+That definition is the whole reason this was a mechanical job rather than a
+judgement call: every one of them already had a home for its depth.
+
+Applied the file's own preamble rule — invariant + what-it-is/when-you-need-it/
+pointer stub, operational depth in `docs/<topic>.md`, mirroring the skill
+`SKILL.md ≤3K + references/` pattern. Skill Chain 15,347 → 6,988 (new
+`docs/reference/skill-roster.md`, plus a §7 on `skill-surface-ownership.md` for
+the Copilot-compat audit and the frontmatter contract's history); Architecture
+6,943 → 5,405 (`runbooks/prepush-sandbox.md` §2.1–2.2, which already owned the
+CRLF and sandbox-honesty material); Consumer-repo layout 5,957 → 5,149
+(`runbooks/consumer-adoption.md`); Environment Variables 5,819 → 1,545 (new
+`docs/reference/environment-variables.md` — the full table is a *lookup*,
+consulted when you need a variable, so only the rows whose semantics constrain
+how you write code stayed); Memory-Health Gate 4,821 → 3,292 (new
+`docs/reference/memory-health-gate.md`).
+
+**91,993 → 75,468: 16,532 headroom, 7,332 below the advisory threshold.** No cap
+was raised, which was the explicit constraint — `maxAgentsMdChars` untouched.
+
+The real risk in a condensation pass is not size, it is silently dropping an
+invariant while the prose reads fine. So the check was mechanical: census every
+identifier the diff removed from AGENTS.md — 26 of them, `MECHANICAL_WAVES`,
+`buildAdjacencyState`, `classifySelector`, `control_marker_prefixes`,
+`proconfig`, `resolveSkillTargets`, `per_repo_cap` and the rest — and assert each
+now resolves in the stub, the linked doc, or both. Nothing moved that binds a
+*future* change: the mechanical-wave declaration, the single selector oracle, the
+control-state sentinel, cap-the-driving-set, bound-the-RPC-at-the-caller, the
+`owner/repo` slug, the `GEMINI_REVIEW_TIMEOUT_MS` coupling all stayed resident.
+
+**A gate caught the one thing the census would not have.** `check-gate-contracts`
+failed: `scripts/gate-contracts/skills-check.json` binds the *verbatim* string
+`` `description` is required, **max 1024 chars** `` in AGENTS.md to
+`check-skill-descriptions.mjs`, and the rewrite had said "capped at 1024 chars"
+instead. A keyword census passes that — `1024` survives, the claim survives, the
+*binding* does not. Restored the exact wording rather than repointing `statedIn`,
+because the claim does still belong in AGENTS.md; the contract was right and the
+edit was wrong. Then swept all contracts with `statedIn: AGENTS.md` for the same
+class: one affected, this one. That gate exists because AGENTS.md once claimed a
+budget nothing enforced, and here it earned its keep in the opposite direction —
+catching prose drifting away from an enforcement that does exist.
+
+One process note worth keeping: the three new docs read as `GONE` net-new drift
+to `docs:refs:gate` until they were `git add`ed, because the gate resolves
+citations against tracked files. Untracked-and-cited is indistinguishable from
+deleted-and-cited, correctly.
+
+`npm run check` 10,951 pass / 0 fail / 24 skipped; `npm run context:check` OK
+with no advisory.
+
+## 2026-08-10 — a gate nobody could run, hiding a filter that never ran
 
 `df60c991`. A consumer reported `npm run context:check` broken repo-wide:
 `scripts/.claude-skills/check-context-drift.mjs` absent from disk. Correct, and
