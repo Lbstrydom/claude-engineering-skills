@@ -563,7 +563,7 @@ lifecycle, Phase-3 replay framework + promotion recipe, outbox detail):
 | `OPENAI_AUDIT_MODEL` | No | `latest-gpt` | Model sentinel or concrete ID (see "Model Resolution" below) |
 | `OPENAI_AUDIT_REASONING` | No | `high` | Reasoning effort |
 | `GEMINI_REVIEW_MODEL` | No | `latest-pro` | Gemini model sentinel or concrete ID |
-| `GEMINI_REVIEW_TIMEOUT_MS` | No | `180000` | Gemini timeout (raised from 120s 2026-07-31 — observed 78–101s runs left too little headroom; a timeout is single-shot, never retried) |
+| `GEMINI_REVIEW_TIMEOUT_MS` | No | `270000` | Gemini timeout — sized for the CONSOLIDATED union-diff gate, not a per-cluster one (120s→180s 2026-07-31; 180s→270s 2026-08-10 after a 31-file union review timed out at 180s then ran 142s/130s). **COUPLED**: the watchdog floor is `2×timeout + 60000`, so 270s is the most the `FINAL_REVIEW_HARD_DEADLINE_MS` default admits — raise both together. Rationale: `config.mjs` `geminiConfig`. |
 | `ANTHROPIC_API_KEY` | No | — | Claude Haiku fallback for brief generation (sdk backend only) |
 | `CLAUDE_BACKEND` | No | `sdk` | Routing for Claude calls: `sdk` (raw API) or `cli` (`claude -p` headless — draws from Max 20x Agent SDK $200/mo credit from 2026-06-15). See "Anthropic Backend Routing" below. |
 | `CLAUDE_BIN` | No | `claude` | Path/name of the `claude` CLI (cli backend only) |

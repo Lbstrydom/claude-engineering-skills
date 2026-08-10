@@ -128,10 +128,29 @@ export const openaiConfig = Object.freeze({
 
 export const geminiConfig = Object.freeze({
   model: resolveModel(process.env.GEMINI_REVIEW_MODEL || 'latest-pro'),
-  // 180s: field runs measured 78–101s with three consecutive timeouts under
-  // load at the old 120s default — and a timeout is a hard single-shot failure
-  // (only JSON truncation retries), so headroom matters more than latency here.
-  timeoutMs: safeInt(process.env.GEMINI_REVIEW_TIMEOUT_MS, 180000),
+  // 270s. Raised from 180s on 2026-08-10 after a CONSOLIDATED gate — one Gemini
+  // review over the union diff of three clusters (31 files, ~8,300 insertions) —
+  // timed out at 180s, then completed twice at 142s and 130s once the bound was
+  // lifted. So 180s was not comfortably clear of the work; it sat INSIDE the
+  // run-to-run spread of it, which is the worst place for a bound to be. A
+  // timeout here is a hard single-shot failure (only JSON truncation retries),
+  // so the loss is a whole paid gate rather than a slow one.
+  //
+  // **Why 270s and not the 600s the incident was resolved with.** This value is
+  // coupled: `computeFinalReviewHardDeadline` floors the background-termination
+  // watchdog at `2 × timeoutMs + 60000`. At 600s that floor is 21 minutes, so
+  // the per-attempt ceiling would drag a guard whose entire job is bounding a
+  // detached run out to a length that stops bounding much. 270s is the largest
+  // value the existing 600s watchdog default admits — `(600000 − 60000) / 2` —
+  // and it is still ~1.9× the largest measured successful consolidated run.
+  //
+  // Raising this further is legitimate, but it is not a one-line change: raise
+  // `FINAL_REVIEW_HARD_DEADLINE_MS` in the same edit, or the config warns on
+  // every import and silently lifts the watchdog for you.
+  //
+  // Prior step: 120s → 180s on 2026-07-31, after three consecutive timeouts
+  // under load against 78–101s runs. Same reasoning, one size class down.
+  timeoutMs: safeInt(process.env.GEMINI_REVIEW_TIMEOUT_MS, 270000),
   maxOutputTokens: safeInt(process.env.GEMINI_REVIEW_MAX_TOKENS, 32000),
 });
 
