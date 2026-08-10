@@ -17,6 +17,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execSync } from 'node:child_process';
 
 /**
  * Do two path strings denote the SAME directory?
@@ -140,5 +141,53 @@ export function findRepoRootFromScript(importMetaUrl) {
   const scriptPath = fileURLToPath(importMetaUrl);
   return findExpectedRoot(scriptPath);
 }
+
+/**
+ * Resolve the git repo root containing `startDir`, memoised per directory.
+ *
+ * Distinct from `findRepoRootFromScript`, which answers "where does this CODE
+ * live". This answers "which repo is the caller WORKING in" — the right
+ * question for a user-supplied path, since a path typed from a subdirectory is
+ * relative to the repo, not to the module resolving it.
+ *
+ * Added 2026-08-10 for debt `0fd6bf8f`: `validatePlanPath` defaulted its
+ * containment root to `process.cwd()`, so running any plan-recording command
+ * from a subdirectory rejected a valid absolute in-repo plan path as
+ * `escapes-repo`. Reproduced from `scripts/` before fixing.
+ *
+ * Deliberately NOT the `findRepoRoot` in `sync-manifest.mjs`, which is the same
+ * computation: importing a store/library module from the sync feature would
+ * manufacture a false domain edge, the defect that got `file-lock.mjs` moved
+ * out of `lib/brainstorm/`. That copy has 13 dependents, so moving it is a
+ * separate change; this lives where a domain-neutral repo-root primitive
+ * belongs.
+ *
+ * Falls back to `startDir` outside a git checkout (tarball install, CI export)
+ * — the pre-existing behaviour, so a non-git consumer is unaffected.
+ *
+ * @param {string} [startDir]
+ * @returns {string} absolute repo root, or the resolved startDir
+ */
+export function findRepoRootFromCwd(startDir = process.cwd()) {
+  const key = path.resolve(startDir);
+  if (_rootCache.has(key)) return _rootCache.get(key);
+  let root;
+  try {
+    root = execSync('git rev-parse --show-toplevel', {
+      cwd: key, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+  } catch {
+    root = key;
+  }
+  // A spawn per call would be paid on every plan write; the root cannot change
+  // for a given directory within one process.
+  _rootCache.set(key, root);
+  return root;
+}
+
+const _rootCache = new Map();
+
+/** Test-only: the cache is process-lifetime, so a test changing cwd must clear it. */
+export function _resetRepoRootCache() { _rootCache.clear(); }
 
 export const _internals = Object.freeze({ findExpectedRoot, sameDirectory });

@@ -143,15 +143,23 @@ const TARGETS = [
        + 'Threshold is lower than the pure modules because several branches need a genuinely '
        + 'abandoned lock or a filesystem fault to reach, and inflating it would buy fake tests.',
   },
+  {
+    name: 'ledger',
+    mutate: ['scripts/lib/ledger.mjs'],
+    tests: ['tests/ledger.test.mjs'],
+    floor: 19, goal: 70,
+    why: 'R2+ suppression — it decides whether a finding is SUPPRESSED or REOPENED, so a loose '
+       + 'assertion here is silent loss INSIDE the audit loop. Added 2026-08-10 once the module '
+       + 'got its first dedicated suite (debt bb15049a); that suite immediately found the '
+       + 'hard-suppress counter dead, because the two sides of its category key were normalised '
+       + 'differently. Exactly what a mutation seam exists to keep catching.',
+  },
 ];
 
-// NOT in the registry, and worth saying why — `scripts/lib/ledger.mjs` has NO
-// dedicated test file. It is exercised incidentally by arm-generation,
-// debt-suppression and debt-transcript-suppression, so a mutation run would
-// need all three and the resulting score would not attribute cleanly. That is a
-// coverage observation, not a Stryker limitation: a Tier-1 deterministic module
-// driving R2+ suppression should have its own suite. Left as a stated gap
-// rather than papered over with a multi-file target whose score means little.
+// The `ledger` entry above closed the last Tier-1 gap. When a module named in
+// docs/reference/testing-doctrine.md is missing from this registry, say so
+// HERE — an absence nobody wrote down is indistinguishable from an oversight,
+// which is the whole reason the previous note about ledger.mjs existed.
 
 function usage() {
   return [

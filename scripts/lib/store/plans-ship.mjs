@@ -11,6 +11,7 @@
 
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { findRepoRootFromCwd } from '../assert-repo-root.mjs';
 import { many, one, insertReturning, upsert, updateWhere, deleteWhere, withTx } from '../db/query.mjs';
 import { getPool } from '../db/client.mjs';
 import { isCloudEnabled } from './repo.mjs';
@@ -73,7 +74,17 @@ export function validatePlanPath(rawPath, opts = {}) {
     };
   }
 
-  const root = path.resolve(opts.repoRoot ?? process.cwd());
+  // Default to the caller's GIT REPO ROOT, not cwd. `process.cwd()` was wrong
+  // whenever a plan-recording command ran from a subdirectory: a valid absolute
+  // in-repo plan path resolved outside the cwd and was rejected as
+  // `escapes-repo` (debt 0fd6bf8f, reproduced from `scripts/` before fixing).
+  //
+  // Fixing the DEFAULT rather than threading `repoRoot` through every caller is
+  // deliberate. There are four callers across three modules, and a threaded
+  // parameter is inert until all of them pass it — a fix that looks done and
+  // changes nothing. Outside a git checkout the resolver falls back to the same
+  // directory this used before, so nothing regresses.
+  const root = path.resolve(opts.repoRoot ?? findRepoRootFromCwd());
   const abs = path.resolve(root, raw);
   // Windows drive-letter and path casing vary between callers (`C:/GIT/...`
   // vs `c:/git/...`), so containment compares case-insensitively there. The

@@ -326,6 +326,21 @@ export function populateFindingMetadata(finding, passName) {
  * @param {object} d - ledger entry (category/section/detailSnapshot|detail)
  * @returns {number} Jaccard similarity in [0,1]
  */
+/**
+ * The ONE spelling of the hard-suppress category key.
+ *
+ * Extracted because it was previously written twice, differently — the ledger
+ * side kept the `[Tag]` prefix and the finding side stripped it, so the two
+ * keys could never be equal and the counter was dead. One function is the fix
+ * that cannot drift again; two call sites of one expression cannot disagree.
+ *
+ * @param {string|undefined} category
+ * @returns {string}
+ */
+export function normaliseCategoryKey(category) {
+  return (category || '').toLowerCase().replaceAll(/\[.*?\]\s*/g, '').trim();
+}
+
 export function ledgerFindingSimilarity(f, d) {
   return jaccardSimilarity(
     `${f.category} ${f.section} ${f.detail}`,
@@ -406,14 +421,26 @@ export function suppressReRaises(findings, ledger, { changedFiles = [], impactSe
   for (const e of resolved) {
     if (e.source === 'stage1-mechanical') continue;
     if (e.ruling === 'overrule' || e.adjudicationOutcome === 'dismissed') {
-      const catFile = `${(e.category || '').toLowerCase().trim()}|${normalizePath(e.affectedFiles?.[0] || e.section || '')}`;
+      // MUST strip the `[Tag]` prefix, exactly as the finding side does twelve
+      // lines below. It did not, and the two keys therefore never matched:
+      // an entry keyed `[sustainability] error swallowing|foo.mjs` could not
+      // equal a finding keyed `error swallowing|foo.mjs`. Every category in
+      // this repo carries a bracketed pass tag, so the hard-suppress counter
+      // — documented as "Fix #4" — had never fired for ANY finding.
+      //
+      // Found 2026-08-10 by the first dedicated test for this module (debt
+      // bb15049a): the feature was unreachable, and nothing noticed because
+      // nothing asserted it. Stripping is also the module's own convention —
+      // `generateTopicId` normalises the same way, so a finding re-tagged from
+      // `[Sustainability]` to `[be-services]` keeps its identity.
+      const catFile = `${normaliseCategoryKey(e.category)}|${normalizePath(e.affectedFiles?.[0] || e.section || '')}`;
       overruleCountIndex.set(catFile, (overruleCountIndex.get(catFile) || 0) + 1);
     }
   }
 
   for (const f of findings) {
     // Fix #4: Hard suppress check — category+file ruled overrule 3+ times
-    const fCatFile = `${(f.category || '').toLowerCase().replaceAll(/\[.*?\]\s*/g, '').trim()}|${normalizePath(f._primaryFile || f.section || '')}`;
+    const fCatFile = `${normaliseCategoryKey(f.category)}|${normalizePath(f._primaryFile || f.section || '')}`;
     const overruleCount = overruleCountIndex.get(fCatFile) || 0;
     if (overruleCount >= HARD_SUPPRESS_THRESHOLD) {
       suppressed.push({
