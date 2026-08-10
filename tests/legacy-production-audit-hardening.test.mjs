@@ -734,3 +734,33 @@ describe('dedupReplacementId — a dedup replacement\'s id must match its severi
     }
   });
 });
+
+describe('run-cost telemetry reaches the store (2026-08-10 regression)', () => {
+  const SRC = fs.readFileSync('scripts/lib/audit/legacy-production-audit.mjs', 'utf-8');
+
+  it('the recordRunComplete payload carries costEstimate', () => {
+    // `recordRunComplete` has always mapped stats.costEstimate ->
+    // audit_runs.total_cost_estimate, and the audit has priced its aggregate
+    // into totalUsage.costUsd since 2026-07-22 — but the payload never passed
+    // it. Result: 128 runs over 7 days, ALL with total_cost_estimate NULL,
+    // while seven cache-telemetry fields in the same object were populated.
+    //
+    // A column that is always null does not look broken. It looks free. That
+    // is why this is pinned in source rather than left to a live query: the
+    // failure produces no error, no warning and no wrong number — just an
+    // absence that reads as zero spend.
+    const payload = SRC.slice(SRC.indexOf('await recordRunComplete('));
+    const block = payload.slice(0, payload.indexOf('});'));
+    assert.match(block, /costEstimate:/, 'recordRunComplete payload dropped costEstimate — per-run spend will silently stop being recorded');
+    assert.match(block, /costEstimate:\s*totalUsage\.costUsd/, 'costEstimate must come from the priced aggregate, not a re-derivation');
+  });
+
+  it('costEstimate preserves an unpriced model as null, never 0', () => {
+    // costFromUsage returns null for a model absent from the pricing table
+    // (e.g. an Azure deployment id). Coercing that to 0 would report an
+    // unpriceable run as a free one — the exact conflation the null exists for.
+    const payload = SRC.slice(SRC.indexOf('await recordRunComplete('));
+    const block = payload.slice(0, payload.indexOf('});'));
+    assert.doesNotMatch(block, /costEstimate:\s*totalUsage\.costUsd\s*\|\|/, 'a `||` fallback here turns an unknown cost into a measured $0');
+  });
+});

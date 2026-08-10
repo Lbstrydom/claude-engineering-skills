@@ -3568,6 +3568,21 @@ export async function runLegacyProductionAudit(ctx) {
       // — which it only started actually doing on 2026-07-18. This comment used
       // to assert that as fact while no such write existed anywhere.
       geminiVerdict: null,
+      // The cost this run actually incurred. `recordRunComplete` has always
+      // mapped `stats.costEstimate` → `audit_runs.total_cost_estimate`, and
+      // `totalUsage.costUsd` has been a real priced figure since 2026-07-22 —
+      // but this payload never carried it, so the column was NULL on every run
+      // ever recorded. Measured 2026-08-10: 128 runs over 7 days, 0 costed,
+      // while seven cache-telemetry fields below were populated throughout.
+      //
+      // A column that is always null does not read as "broken"; it reads as
+      // free. That is the same anti-green class as a hardcoded 0, and it is
+      // why per-run spend could not be answered from the store at all.
+      //
+      // `?? null` is deliberate: `costFromUsage` returns null for an unpriced
+      // model (an Azure deployment id absent from the pricing table), and an
+      // honest unknown must stay distinguishable from a measured zero.
+      costEstimate: totalUsage.costUsd ?? null,
       durationMs: totalLatency,
       diffLinesChanged,
       diffFilesChanged,
