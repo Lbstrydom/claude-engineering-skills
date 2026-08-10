@@ -27,19 +27,74 @@ import { spawnSync } from 'node:child_process';
  * ignored patterns today). `git ls-files --others --ignored --exclude-standard`
  * is exactly the "untracked and ignored" set and cannot make that mistake.
  *
+ * Asked of the CANDIDATES, never of the repo (fixed 2026-08-10). Materialising
+ * the whole ignored-and-untracked universe to classify ~40 walked files meant
+ * `git ls-files --others --ignored` enumerating every path under `node_modules`:
+ * 28,193 entries here, 49,768 in the consumer that reported it, both far past
+ * spawnSync's 1 MiB default `maxBuffer`. ENOBUFS surfaces as `r.error`, the
+ * guard below returned the empty set, and the exclusion was silently OFF — so
+ * the vendored-skill false positive above came back in a repo where the fix was
+ * supposedly shipped, and had never once worked in a repo with dependencies
+ * installed. The predicate is unchanged; only the side being enumerated is. It
+ * is now bounded by the candidate count, which is what the answer depends on.
+ *
  * Degrades to the empty set when git is unavailable or this is not a work tree,
  * leaving prior behaviour untouched — a scanner that throws because it is being
- * run outside git is a worse failure than one that scans slightly too much.
+ * run outside git is a worse failure than one that scans slightly too much. That
+ * degradation is now WARNED about on stderr rather than taken silently: losing
+ * the filter turns owned-file judgements into unowned-file noise, and the 2026-08
+ * recurrence was invisible precisely because nothing said the filter was off.
  *
  * @param {string} repoRoot
+ * @param {string[]} candidates repo-relative paths the walk actually found
  * @returns {Set<string>} repo-relative POSIX paths to skip
  */
-function ignoredUntrackedPaths(repoRoot) {
-  const r = spawnSync('git', ['ls-files', '-z', '--others', '--ignored', '--exclude-standard'], {
-    cwd: repoRoot, encoding: 'utf-8', windowsHide: true,
+function ignoredUntrackedPaths(repoRoot, candidates) {
+  const paths = [...new Set(candidates.map((p) => p.replaceAll(/\\/g, '/')))];
+  if (paths.length === 0) return new Set();
+
+  // Both queries take the candidate list on STDIN, so neither the output size
+  // nor the Windows ~32K argv limit scales with repo size.
+  const git = (args, input) => spawnSync('git', args, {
+    cwd: repoRoot, input, encoding: 'utf-8', windowsHide: true,
   });
-  if (r.error || r.status !== 0 || typeof r.stdout !== 'string') return new Set();
-  return new Set(r.stdout.split('\0').filter(Boolean).map((p) => p.replaceAll(/\\/g, '/')));
+  const nulList = paths.join('\0');
+  const split = (out) => (typeof out === 'string' ? out.split('\0').filter(Boolean) : []);
+
+  // `check-ignore` exits 0 when at least one path is ignored, 1 when none are —
+  // 1 is a legitimate answer, not a failure. Anything else (128 = not a work
+  // tree, spawn error) means we could not determine ownership.
+  const ign = git(['check-ignore', '-z', '--stdin'], nulList);
+  if (ign.error || (ign.status !== 0 && ign.status !== 1)) {
+    process.stderr.write(
+      '[file-scanner] WARN: could not determine gitignore status '
+      + `(${ign.error ? ign.error.code || ign.error.message : `git exit ${ign.status}`}) — `
+      + 'scanning vendored/ignored instruction files too; findings may name files this repo does not own.\n',
+    );
+    return new Set();
+  }
+  const ignored = split(ign.stdout);
+  if (ignored.length === 0) return new Set();
+
+  // Ignored is not enough: git reports a TRACKED file as ignored whenever a
+  // pattern matches it. Subtract the tracked ones to get "ignored AND untracked".
+  // `ls-files` has no `--stdin`, so these go on argv — chunked, because argv is
+  // the one bound that does not care how small our result set is.
+  const tracked = new Set();
+  for (let i = 0; i < ignored.length; i += 200) {
+    const trk = git(['ls-files', '-z', '--', ...ignored.slice(i, i + 200)]);
+    if (trk.error || trk.status !== 0) {
+      process.stderr.write(
+        '[file-scanner] WARN: could not determine tracked status '
+        + `(${trk.error ? trk.error.code || trk.error.message : `git exit ${trk.status}`}) — `
+        + 'scanning vendored/ignored instruction files too; findings may name files this repo does not own.\n',
+      );
+      return new Set();
+    }
+    for (const p of split(trk.stdout)) tracked.add(p.replaceAll(/\\/g, '/'));
+  }
+
+  return new Set(ignored.map((p) => p.replaceAll(/\\/g, '/')).filter((p) => !tracked.has(p)));
 }
 
 /** Globs that are always excluded (non-configurable). */
@@ -153,7 +208,7 @@ export function scanInstructionFiles(repoRoot, options = {}) {
   const found = walkDir(repoRoot, INSTRUCTION_PATTERNS, excludeDirs);
   // Drop what the repo does not own. `options.respectGitignore === false` opts
   // out for a caller that genuinely wants the raw walk (tests do).
-  const disowned = options.respectGitignore === false ? new Set() : ignoredUntrackedPaths(repoRoot);
+  const disowned = options.respectGitignore === false ? new Set() : ignoredUntrackedPaths(repoRoot, found);
   const files = [];
 
   for (const relPath of found) {

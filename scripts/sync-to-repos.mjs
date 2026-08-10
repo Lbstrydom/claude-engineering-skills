@@ -246,6 +246,17 @@ const CORE_ENTRY = [
   // its scope-exclusions (docs/plans, docs/research, status.md) apply verbatim
   // in a consumer. Import closure is ./lib/cli-io.mjs, already synced above.
   'scripts/check-npm-run-args.mjs',
+  // Third in the same family, and the same failure: TWO synced skills instruct
+  // `npm run context:check` — /ship Step 4 and every mode of
+  // /ai-context-management — while the script implementing it stayed
+  // source-repo-only. A consumer wired the npm script against the isolated
+  // path it *should* live at, and got `Cannot find module` repo-wide (reported
+  // 2026-08-10; the npm script had been dead since 2026-08-03). Adoptable
+  // as-is: config (`.claude-context-allowlist.json`) is optional and the
+  // defaults are topology rules, not upstream-shaped baselines — a consumer
+  // that wants a different cap sets `maxAgentsMdChars` there. Import closure
+  // (lib/claudemd/*, lib/markdown-fence-tracker.mjs) is walked automatically.
+  'scripts/check-context-drift.mjs',
   'scripts/brainstorm-round.mjs',
   'scripts/explain-history.mjs',
   'scripts/skills-help.mjs',

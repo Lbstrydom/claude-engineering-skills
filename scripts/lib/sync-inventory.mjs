@@ -28,10 +28,12 @@ const CORE_ENTRY = [
   'scripts/check-setup.mjs',
   'scripts/check-audit-tool-version.mjs',
   'scripts/cache-hitrate-check.mjs',
-  // The unknown-flag gate + its npm `--`-swallow sibling. Authoritative list
-  // is sync-to-repos.mjs; keep in lock-step.
+  // The unknown-flag gate, its npm `--`-swallow sibling, and the AGENTS.md ↔
+  // CLAUDE.md drift gate two synced skills tell consumers to run.
+  // Authoritative list is sync-to-repos.mjs; keep in lock-step.
   'scripts/check-cli-flags.mjs',
   'scripts/check-npm-run-args.mjs',
+  'scripts/check-context-drift.mjs',
   'scripts/brainstorm-round.mjs',
   'scripts/explain-history.mjs',
   'scripts/skills-help.mjs',

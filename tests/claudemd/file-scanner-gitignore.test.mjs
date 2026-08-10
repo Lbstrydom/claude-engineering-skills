@@ -86,6 +86,48 @@ describe('scanInstructionFiles — files the repo does not own', () => {
     }
   });
 
+  it('still skips the vendored file when the repo has a LARGE ignored universe', () => {
+    // THE RECURRENCE THIS LOCKS (reported from a consumer 2026-08-10). Every
+    // test above passes in a fixture with a handful of ignored files, and that
+    // is exactly why the defect survived: the old implementation answered this
+    // question by enumerating the repo's ENTIRE ignored-and-untracked set, so
+    // one `node_modules` pushed the output past spawnSync's 1 MiB default
+    // maxBuffer. ENOBUFS arrived as `r.error`, the guard returned the empty
+    // set, and the ownership filter was silently OFF — 28,193 such paths in the
+    // source repo, 49,768 in the reporting consumer, meaning the "fixed" gate
+    // had never once worked in a repo with dependencies installed.
+    write('CLAUDE.md', '# thin addendum\n@./AGENTS.md\n');
+    write('AGENTS.md', '# canonical\n');
+    write('.gitignore', '.agents/skills/\nbulk/\n');
+    write('.agents/skills/supabase-postgres-best-practices/CLAUDE.md', 'AGENTS.md');
+    git('add', 'CLAUDE.md', 'AGENTS.md', '.gitignore');
+    git('commit', '-qm', 'init');
+
+    const bulk = path.join(repo, 'bulk', 'd'.repeat(60));
+    fs.mkdirSync(bulk, { recursive: true });
+    for (let i = 0; i < 6000; i++) {
+      fs.writeFileSync(path.join(bulk, `f${i}`.padEnd(120, 'x') + '.js'), '');
+    }
+
+    // PRECONDITION — without this the test is vacuous, passing on a fixture too
+    // small to reach the failure. Assert the old whole-repo query really does
+    // blow its buffer here, so this fixture is known to exercise the defect.
+    const whole = spawnSync('git', ['ls-files', '-z', '--others', '--ignored', '--exclude-standard'], {
+      cwd: repo, encoding: 'utf-8', windowsHide: true,
+    });
+    assert.equal(
+      whole.error?.code, 'ENOBUFS',
+      'fixture is too small to reproduce the defect — the whole-repo query must overflow maxBuffer here',
+    );
+
+    const found = scanInstructionFiles(repo).files.map((f) => f.path);
+    assert.ok(found.includes('CLAUDE.md'), 'the repo\'s own CLAUDE.md must still be scanned');
+    assert.ok(
+      !found.some((p) => p.startsWith('.agents/')),
+      `ownership filter must survive a large ignored universe; got ${JSON.stringify(found)}`,
+    );
+  });
+
   it('respectGitignore:false restores the raw walk (explicit opt-out)', () => {
     write('.gitignore', '.agents/skills/\n');
     write('.agents/skills/v/CLAUDE.md', 'AGENTS.md');

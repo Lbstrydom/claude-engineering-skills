@@ -476,6 +476,7 @@ function gate5(consumerRoot, manifest) {
   }
   const scripts = pkg.scripts || {};
   const stale = [];
+  const unresolved = [];
   for (const ref of allRefs) {
     const body = scripts[ref];
     if (!body) continue; // script doesn't exist in consumer; informational only
@@ -484,16 +485,38 @@ function gate5(consumerRoot, manifest) {
     COMMAND_REGEX.lastIndex = 0;
     while ((m = COMMAND_REGEX.exec(body)) !== null) {
       const tail = m[1];
-      if (tail.startsWith('.claude-skills/')) continue;
+      if (tail.startsWith('.claude-skills/')) {
+        // Pointing at the isolated layout is necessary but not sufficient: the
+        // prefix says where the tool WOULD live, not that the bundle ships it.
+        // Checking only the prefix here is why a consumer ran `context:check`
+        // for a week against a file no CORE_ENTRY declared — the reconciliation
+        // in the adoption runbook (Step 7) invites exactly this guess, so the
+        // guess has to be verified, not assumed. Iterating refs can never show
+        // an absent file; only stat'ing the target can.
+        if (!fs.existsSync(path.join(consumerRoot, 'scripts', tail))) {
+          unresolved.push({ npmScript: ref, body, target: `scripts/${tail}` });
+        }
+        continue;
+      }
       stale.push({ npmScript: ref, body, staleInvocation: m[0] });
     }
   }
-  if (stale.length) {
+  if (stale.length || unresolved.length) {
+    const parts = [];
+    if (stale.length) {
+      parts.push(`${stale.length} stale node-scripts/ invocation(s) in consumer package.json scripts referenced by synced skills.`);
+    }
+    if (unresolved.length) {
+      parts.push(
+        `${unresolved.length} package.json script(s) invoke a scripts/.claude-skills/ file that is not present — `
+        + 'the bundle does not ship it (report upstream: `cross-skill.mjs upstream report`), or this tree needs a re-sync.',
+      );
+    }
     return {
       gate: '5',
       pass: false,
-      error: `${stale.length} stale node-scripts/ invocation(s) in consumer package.json scripts referenced by synced skills.`,
-      details: { stale },
+      error: parts.join(' '),
+      details: { stale, unresolved },
     };
   }
   return { gate: '5', pass: true };
