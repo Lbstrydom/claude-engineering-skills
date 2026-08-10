@@ -96,7 +96,7 @@ wrong.
 ## 2. Collect
 
 ```bash
-node scripts/bakeoff-collect.mjs --transcript .audit/transcript.json --plan docs/plans/some-plan.md
+node scripts/bakeoff-collect.mjs --transcript .audit/transcript.json --plan docs/plans/model-comparison-campaigns.md
 ```
 
 Arms are derived from your config — there is no hardcoded table to fork. The

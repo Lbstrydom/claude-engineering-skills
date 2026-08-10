@@ -1165,6 +1165,13 @@ export async function loadCohortEvidence({ repoId: rid, config, lock }) {
     lockDigest: resolved.lockDigest ?? null,
     cohortSuperseded: resolved.cohortSuperseded,
     findings: findings.rows,
+    // The event map for EVERY finding, keyed by finding id — not only the ones
+    // that landed in a cluster. Clusters are written per COMPLETE snapshot, so
+    // reading adjudication state out of the cluster projection silently hid
+    // every verdict on an incomplete snapshot and rendered those findings as
+    // permanently unadjudicated, breaking the human review workflow for exactly
+    // the snapshots most likely to need it.
+    eventsByFinding: Object.fromEntries(eventsByFinding),
     snapshots,
     clusters: [...clusterMap.values()],
     adjudication: { unadjudicatedFindings: unadjudicated, humanQueuePending },

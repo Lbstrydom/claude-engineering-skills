@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 
 import sectionCampaigns from '../scripts/lib/dashboard/sections/campaigns.mjs';
 import { buildUi } from '../scripts/lib/dashboard/helpers.mjs';
-import { overrideCommandFor, buildReviewRows } from '../scripts/lib/dashboard/collect-campaigns.mjs';
+import { overrideCommandFor, buildReviewRows, collectCampaigns } from '../scripts/lib/dashboard/collect-campaigns.mjs';
 
 const ui = buildUi();
 const OK = { status: 'ok', detail: '' };
@@ -204,6 +204,57 @@ describe('campaigns section — degradation (§9 case 8)', () => {
   it('a superseded cohort SAYS so — orphaned evidence must not read as current', () => {
     const html = sectionCampaigns({ src: OK, campaigns: envelope({ campaigns: [campaignFixture({ cohortSuperseded: true })] }) }, ui);
     assert.match(html, /SUPERSEDED/);
+  });
+});
+
+describe('collector fault isolation + event sourcing (consolidated gate G2, G3)', () => {
+  it('G2: one campaign failing to load does NOT hide the healthy ones', async () => {
+    // An early `return` in the loop discarded every campaign already collected,
+    // so a single corrupt cohort blanked the whole tab. A localized failure must
+    // not cascade into a total one.
+    const configs = {
+      good: { id: 'good', targetN: 12, arms: [{ id: 'a', model: 'm' }], calibration: {}, decisionRule: {}, decision: { incumbent: 'm' } },
+      bad: { id: 'bad', targetN: 12, arms: [{ id: 'a', model: 'm' }], calibration: {}, decisionRule: {}, decision: { incumbent: 'm' } },
+    };
+    const out = await collectCampaigns('/repo', {
+      isCloudEnabled: async () => true,
+      repoId: 'r1',
+      selectCampaignConfig: ({ campaignId }) => (campaignId == null
+        ? { ok: false, code: 'ambiguous', available: ['good', 'bad'] }
+        : { ok: true, config: configs[campaignId] }),
+      loadCohortEvidence: async ({ config }) => {
+        if (config.id === 'bad') throw new Error('cohort row corrupt');
+        return { ok: false, reason: 'no cohort recorded', lockDigest: null };
+      },
+    });
+    const ids = out.campaigns.campaigns.map((c) => c.id);
+    assert.deepEqual(ids.sort(), ['bad', 'good'], 'the healthy campaign must survive its neighbour failing');
+    const bad = out.campaigns.campaigns.find((c) => c.id === 'bad');
+    assert.match(bad.collectedReason, /cohort row corrupt/, 'and the failure names itself rather than vanishing');
+  });
+
+  it('G3: adjudication events come from the store map, not the cluster projection', () => {
+    // Clusters are written per COMPLETE snapshot, so sourcing events from them
+    // silently hid every verdict on an incomplete snapshot and rendered those
+    // findings as permanently unadjudicated — exactly where a human most needs
+    // to see what was ruled.
+    const rows = buildReviewRows({
+      findings: [{ finding_id: 'f-incomplete', arm_id: 'opus', severity: 'HIGH', category: 'X', primary_file: 'p', detail_snapshot: 'd' }],
+      clusters: [],   // the finding's snapshot is incomplete → no cluster set
+      eventsByFinding: {
+        'f-incomplete': [{ id: 'e1', adjudicatorKind: 'human', adjudicationOutcome: 'accepted', method: 'override', createdAt: 't', supersededAt: null }],
+      },
+    });
+    assert.equal(rows[0].outcome, 'accepted');
+    assert.equal(rows[0].adjudicatorKind, 'human');
+  });
+
+  it('G3 NEGATIVE CONTROL: with no event map the row is honestly unadjudicated', () => {
+    const rows = buildReviewRows({
+      findings: [{ finding_id: 'f1', arm_id: 'opus', severity: 'HIGH', category: 'X', primary_file: 'p', detail_snapshot: 'd' }],
+      clusters: [], eventsByFinding: {},
+    });
+    assert.equal(rows[0].outcome, null, 'absence must read as absence, never as a ruling');
   });
 });
 

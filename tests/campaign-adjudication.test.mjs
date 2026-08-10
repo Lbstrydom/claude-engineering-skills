@@ -18,6 +18,8 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 import {
   BLIND_ROW_FIELDS, buildBlindRow, buildModelRedactor, worksheetRowIdFor,
@@ -556,6 +558,44 @@ describe('clustering', () => {
       { findingId: 'f2', armId: 'b', section: 'scripts/x.mjs:10', category: 'B', detail: 'the same defect described one way', severity: 'HIGH' },
     ];
     assert.deepEqual(clusterSnapshotFindings(rows, opts), clusterSnapshotFindings([...rows].reverse(), opts));
+  });
+});
+
+// ── receipt-name parsing (consolidated gate G1) ─────────────────────────────
+
+describe('receipt filename parsing', () => {
+  it('round-trips an arm id containing a DOUBLE hyphen', async () => {
+    // `solo--opus` is a legal arm id (`^[a-z0-9][a-z0-9-]*$`), and a greedy
+    // parse read it as snapshotId="abcdef123456--solo", armId="opus". Both then
+    // fail the caller's equality check, the receipt is SILENTLY skipped,
+    // maxAttemptOnDisk returns 0, and every later run collides on `wx` — the
+    // permanent wedge resolveNextAttempt exists to prevent, with the worst
+    // possible symptom.
+    const lock = await import('../scripts/lib/campaign/lock.mjs');
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'receipt-'));
+    const args = { campaignId: 'c1', cohortDigest: 'd1', snapshotId: 'abcdef123456', armId: 'solo--opus', repoRoot: root };
+    const claim = lock.claimReceipt({ ...args, attempt: 1 });
+    assert.equal(claim.ok, true);
+
+    const max = lock.maxAttemptOnDisk(args);
+    assert.equal(max, 1, 'the receipt just written must be visible to the disk scan');
+    assert.equal(lock.resolveNextAttempt({ ...args, dbMaxAttempt: 0 }), 2, 'a wedge would resolve 1 forever');
+
+    const scanned = lock.scanReceipts('c1', { repoRoot: root });
+    assert.equal(scanned.length, 1);
+    assert.equal(scanned[0].snapshotId, 'abcdef123456');
+    assert.equal(scanned[0].armId, 'solo--opus');
+    assert.equal(scanned[0].attempt, 1);
+  });
+
+  it('still parses the ordinary single-hyphen arm id', async () => {
+    const lock = await import('../scripts/lib/campaign/lock.mjs');
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'receipt2-'));
+    const args = { campaignId: 'c1', cohortDigest: 'd1', snapshotId: 'abcdef123456', armId: 'solo-opus', repoRoot: root };
+    lock.claimReceipt({ ...args, attempt: 3 });
+    const scanned = lock.scanReceipts('c1', { repoRoot: root });
+    assert.equal(scanned[0].armId, 'solo-opus');
+    assert.equal(scanned[0].attempt, 3);
   });
 });
 

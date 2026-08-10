@@ -134,7 +134,26 @@ export function receiptPath({ campaignId, cohortDigest, snapshotId, armId, attem
   return assertContained(path.join(dir, `${snapshotId}--${armId}--${attempt}.receipt.json`), repoRoot);
 }
 
-const RECEIPT_NAME = /^(.+)--(.+)--(\d+)\.receipt\.json$/;
+/**
+ * `<snapshotId>--<armId>--<attempt>.receipt.json`, parsed NON-GREEDILY.
+ *
+ * Greedy `(.+)` was wrong, and wrong in the worst direction. An arm id may
+ * contain `-` (`^[a-z0-9][a-z0-9-]*$` permits `solo--opus`), so on
+ * `abcdef123456--solo--opus--1.receipt.json` the greedy first group ran past
+ * the delimiter and yielded `snapshotId = "abcdef123456--solo"`,
+ * `armId = "opus"`. Both then fail the caller's equality check, the receipt is
+ * SILENTLY SKIPPED, `maxAttemptOnDisk` returns 0, every later run resolves
+ * `attempt = 1`, collides on `wx`, and concludes it lost a race — the exact
+ * permanent wedge, with the exact silent-skip symptom, that
+ * `resolveNextAttempt` exists to prevent.
+ *
+ * Non-greedy is provably correct here rather than merely better: the first
+ * group is minimal, so it stops at the first `--`, and a `snapshotId` never
+ * contains one (it is 12 hex chars from `snapshotId()`, or the literal
+ * `adjudicate` for an adjudication receipt). The arm id absorbs any remaining
+ * `--`, which is what it should do.
+ */
+const RECEIPT_NAME = /^(.+?)--(.+?)--(\d+)\.receipt\.json$/;
 
 /** Highest attempt number already CLAIMED on disk for one arm-run, or 0. */
 export function maxAttemptOnDisk({ campaignId, cohortDigest, snapshotId, armId, repoRoot = process.cwd() }) {

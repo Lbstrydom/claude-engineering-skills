@@ -51,10 +51,12 @@ export function overrideCommandFor(findingId) {
  * uninterpretable.
  */
 export function buildReviewRows(evidence) {
-  const eventsByFinding = new Map();
-  for (const cluster of evidence.clusters ?? []) {
-    for (const m of cluster.members ?? []) eventsByFinding.set(m.findingId, m.events ?? []);
-  }
+  // Events come from the store's OWN per-finding map, never from the cluster
+  // projection. Clusters are written per COMPLETE snapshot, so harvesting
+  // events out of them hid every verdict belonging to an incomplete snapshot
+  // and showed those findings as permanently unadjudicated — silently, and
+  // precisely where a human most needs to see what was ruled.
+  const eventsByFinding = new Map(Object.entries(evidence.eventsByFinding ?? {}));
   return (evidence.findings ?? []).map((f) => {
     const term = terminalEvent(eventsByFinding.get(f.finding_id) ?? []);
     return {
@@ -124,12 +126,21 @@ export async function collectCampaigns(root = process.cwd(), deps = {}) {
       // reader wants: the newest contract's evidence, with its own digest.
       evidence = await loadEvidence({ repoId, config, lock: null });
     } catch (err) {
-      return wrap({
-        status: { status: 'ok', detail: '' },
-        degraded: true,
-        degradedReason: `store read failed: ${err.message} — standings withheld`,
-        declaredIds: ids,
+      // PER-CAMPAIGN degradation, not a global abort. An early `return` here
+      // discarded every campaign already loaded, so one corrupt cohort blanked
+      // the whole tab and hid healthy campaigns from the operator — a localized
+      // failure cascading into a total one. The failing campaign says so in its
+      // own row; the rest still render.
+      rows.push({
+        id,
+        targetN: config.targetN,
+        replicates: config.arms.filter((a) => a.type === 'replicate').map((a) => a.id),
+        analysisTimeFields: analysisTimeOf(config),
+        lockDigest: null,
+        collected: false,
+        collectedReason: `store read failed: ${err.message}`,
       });
+      continue;
     }
 
     const base = {
