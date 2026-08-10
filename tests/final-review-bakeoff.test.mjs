@@ -14,7 +14,13 @@ import { findEligibleTranscripts, assessWindow } from '../scripts/final-review-b
 import {
   zeroFindingArms, isComplete, summarise, CONTRACT_EPOCH, buildArmArgs, EXPERIMENT_TAG,
   distinctFindingCount, shadowFindingTotal, armCostUsd,
+  LEGACY_ARMS, transportForModel, deriveArms, armRequestFingerprint,
+  classifyArmCollisions, computeCollectLock, resolveArms,
 } from '../scripts/bakeoff-collect.mjs';
+import { parseCampaignConfig } from '../scripts/lib/campaign/config.mjs';
+import nodeFs from 'node:fs';
+import nodePath from 'node:path';
+import nodeOs from 'node:os';
 
 /** Build an injectable fake FS for the pure enumerator. */
 function io(files, existingPlans = []) {
@@ -404,5 +410,169 @@ describe('cloud run wiring (bakeoff-collect buildArmArgs)', () => {
     // denominator is COUNT(*) over audit_runs. Replays are not audits; an
     // untagged replay deflates the rate it is being compared against.
     assert.equal(EXPERIMENT_TAG, 'final-review-bakeoff');
+  });
+});
+
+// ── Phase 2: arms derived from the campaign config ────────────────────────
+// docs/plans/model-comparison-campaigns.md §7b Phase 2, D4.
+
+const REAL_CAMPAIGN = JSON.parse(nodeFs.readFileSync('.campaigns/final-review-2026q3.json', 'utf-8'));
+const campaign = () => parseCampaignConfig(JSON.parse(JSON.stringify(REAL_CAMPAIGN))).config;
+const tmpDir = (tag) => nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), tag));
+
+describe('deriveArms — the refactor must change no request', () => {
+  it('the derived arms are BYTE-IDENTICAL to the hardcoded table they replace', () => {
+    // This is the whole safety argument for Phase 2. `ARMS` was a frozen table
+    // whose env/args decide what is actually sent, so deriving it from a config
+    // is only safe if the wire shape is unchanged — and "unchanged" has to mean
+    // key-for-key, not "looks equivalent".
+    const derived = deriveArms(campaign());
+    assert.equal(derived.length, LEGACY_ARMS.length);
+    for (const [i, legacy] of LEGACY_ARMS.entries()) {
+      const got = derived[i];
+      assert.equal(got.id, legacy.id, `arm ${i} id`);
+      assert.deepEqual(got.env, legacy.env, `arm ${legacy.id} env must match key-for-key`);
+      assert.deepEqual(got.args ?? undefined, legacy.args ?? undefined, `arm ${legacy.id} args`);
+      assert.equal(got.solo ?? undefined, legacy.solo ?? undefined, `arm ${legacy.id} solo`);
+      // env key ORDER too: the spawn env is how a reader diffs two runs, and a
+      // reordered object reads as a change.
+      assert.equal(JSON.stringify(got.env), JSON.stringify(legacy.env), `arm ${legacy.id} env key order`);
+    }
+  });
+
+  it('preserves DECLARATION order — the two Opus arms stay adjacent', () => {
+    // Order is not cosmetic: adjacency keeps the second identical Opus prompt
+    // inside the 5-minute cache TTL. Sorting for tidiness would change no
+    // request and no result, only whether that send is billed at 1.0x or 0.1x.
+    assert.deepEqual(deriveArms(campaign()).map((a) => a.id), ['opus', 'solo-opus', 'kimi']);
+    const reordered = campaign();
+    reordered.arms = [reordered.arms[2], reordered.arms[0], reordered.arms[1]];
+    assert.deepEqual(deriveArms(reordered).map((a) => a.id), ['kimi', 'opus', 'solo-opus'], 'config order is the run order, verbatim');
+  });
+
+  it('a primary arm runs with NO shadow, blanked explicitly rather than omitted', () => {
+    const solo = deriveArms(campaign()).find((a) => a.id === 'solo-opus');
+    assert.equal(solo.solo, true);
+    assert.deepEqual(solo.args, ['--provider', 'claude-opus']);
+    assert.equal(solo.env.FINAL_REVIEW_SHADOW, '', 'an arm must be a function of the config, never of the ambient environment');
+    assert.ok('FINAL_REVIEW_SHADOW' in solo.env, 'blanked, not absent — an absent var inherits whatever the operator exported');
+  });
+
+  it('marks declared replicates so model-level metrics can exclude them', () => {
+    assert.deepEqual(deriveArms(campaign()).filter((a) => a.replicate).map((a) => a.id), ['solo-opus']);
+  });
+});
+
+describe('transportForModel — the HOW the config deliberately does not express', () => {
+  it('classifies each family onto its wire shape', () => {
+    assert.equal(transportForModel('claude-opus').route, 'anthropic');
+    assert.equal(transportForModel('claude-opus').promptCache, '1', 'cache multipliers are an Anthropic-only feature');
+    assert.equal(transportForModel('moonshotai/kimi-k2-thinking').route, 'openrouter');
+    assert.equal(transportForModel('moonshotai/kimi-k2-thinking').shadowModel, 'moonshotai/kimi-k2-thinking');
+    assert.equal(transportForModel('gemini-pro-latest').route, 'gemini');
+  });
+
+  it('a concrete Claude model rides in SHADOW_MODEL; the bare family token does not', () => {
+    assert.equal(transportForModel('claude-opus').shadowModel, null, 'omitted so the derived arm stays byte-identical');
+    assert.equal(transportForModel('claude-opus-5').shadowModel, 'claude-opus-5');
+  });
+
+  it('REFUSES an unknown family instead of guessing a token', () => {
+    // A fabricated FINAL_REVIEW_SHADOW value does not fail here — it fails
+    // inside a spawned reviewer, after the arm is counted as attempted.
+    for (const bad of ['llama-3', 'mistral-large', '', null]) {
+      assert.throws(() => transportForModel(bad), /no transport for model|must be a non-empty string/);
+    }
+  });
+});
+
+describe('D4 — rerolls are classified before spend, never discovered after', () => {
+  it('detects that opus and solo-opus send an IDENTICAL request', () => {
+    const fps = classifyArmCollisions(campaign()).fingerprints;
+    assert.equal(fps.opus, fps['solo-opus'], 'shadow-vs-primary is not a difference in the REQUEST');
+    assert.notEqual(fps.opus, fps.kimi);
+  });
+
+  it('permits the collision BECAUSE solo-opus is a declared replicate', () => {
+    assert.equal(classifyArmCollisions(campaign()).ok, true);
+  });
+
+  it('REFUSES an undeclared duplicate — a reroll masquerading as a comparison', () => {
+    const cfg = campaign();
+    delete cfg.arms.find((a) => a.id === 'solo-opus').type;
+    const r = classifyArmCollisions(cfg);
+    assert.equal(r.ok, false);
+    assert.match(r.message, /IDENTICAL request/);
+    assert.match(r.message, /solo-opus/);
+    assert.match(r.message, /Refusing before spend/);
+  });
+
+  it('the fingerprint keys on the request, not on ids or mode', () => {
+    const cfg = campaign();
+    const before = armRequestFingerprint(cfg.arms[0], cfg.controls);
+    assert.equal(armRequestFingerprint({ ...cfg.arms[0], id: 'renamed', mode: 'primary' }, cfg.controls), before,
+      'renaming an arm or flipping its mode does not change what is sent');
+    assert.notEqual(armRequestFingerprint(cfg.arms[0], { ...cfg.controls, reasoningEffort: 'low' }), before,
+      'a control dial DOES change what is sent');
+  });
+});
+
+describe('collect-time lock', () => {
+  it('changes when resolved reality changes, and is honest about what it can see', () => {
+    const cfg = campaign();
+    const arms = deriveArms(cfg);
+    const base = computeCollectLock(cfg, 'cfgdigest00000000', arms);
+    assert.match(base.lockDigest, /^[0-9a-f]{16}$/);
+    // The stated limitation is carried in the record, not buried in a comment:
+    // this lock sees a DECLARED template change, not an undeclared edit to the
+    // template body (assembled inside gemini-review — Cluster B's).
+    assert.equal(base.promptTemplateSource, 'declared-id');
+
+    const swapped = { ...cfg, adjudicator: { ...cfg.adjudicator, model: 'latest-sonnet' } };
+    assert.notEqual(computeCollectLock(swapped, 'cfgdigest00000000', arms).lockDigest, base.lockDigest);
+    assert.notEqual(computeCollectLock(cfg, 'DIFFERENT0000000', arms).lockDigest, base.lockDigest);
+    const effort = { ...cfg, controls: { ...cfg.controls, reasoningEffort: 'low' } };
+    assert.notEqual(computeCollectLock(effort, 'cfgdigest00000000', arms).lockDigest, base.lockDigest);
+  });
+});
+
+describe('resolveArms — selection is a refusal, never a silent fallback', () => {
+  it('derives from the committed campaign when one exists', () => {
+    const r = resolveArms({});
+    assert.equal(r.source, 'campaign:final-review-2026q3');
+    assert.equal(r.arms.length, 3);
+    assert.ok(r.lock.lockDigest);
+  });
+
+  it('falls back to the legacy table only when NO campaign exists', () => {
+    const r = resolveArms({ dir: tmpDir('no-campaigns-') });
+    assert.equal(r.source, 'legacy-table');
+    assert.deepEqual(r.arms, LEGACY_ARMS, 'a repo that never adopted campaigns collects exactly as before');
+    assert.equal(r.config, null);
+  });
+
+  it('THROWS on ambiguity rather than falling back or picking one', () => {
+    // Falling back to the legacy table here would run a DIFFERENT comparison
+    // than either declared campaign, silently.
+    const dir = tmpDir('two-campaigns-');
+    const a = campaign(); a.id = 'alpha';
+    const b = campaign(); b.id = 'beta';
+    nodeFs.writeFileSync(nodePath.join(dir, 'a.json'), JSON.stringify(a));
+    nodeFs.writeFileSync(nodePath.join(dir, 'b.json'), JSON.stringify(b));
+    assert.throws(() => resolveArms({ dir }), /pass --campaign/);
+    assert.equal(resolveArms({ dir, campaignId: 'beta' }).source, 'campaign:beta');
+  });
+
+  it('an undeclared collision refuses at RESOLVE time — before any arm is spawned', () => {
+    const dir = tmpDir('collide-campaign-');
+    const cfg = campaign();
+    // A SECOND kimi arm, undeclared. Note what this does not do: stripping
+    // `type` from solo-opus instead would trip the incumbent-ambiguity rule
+    // first (two non-replicate arms would then carry the incumbent model), so
+    // the config would be refused by the schema and D4 would never run — a
+    // refusal either way, but not a test of this rule.
+    cfg.arms.push({ id: 'kimi-again', model: 'moonshotai/kimi-k2-thinking', mode: 'shadow' });
+    nodeFs.writeFileSync(nodePath.join(dir, 'c.json'), JSON.stringify(cfg));
+    assert.throws(() => resolveArms({ dir }), /D4/);
   });
 });

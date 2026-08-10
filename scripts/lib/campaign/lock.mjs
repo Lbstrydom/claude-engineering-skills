@@ -64,14 +64,14 @@ function assertContained(candidate, repoRoot) {
  *   eligibilityRule:string, armIds:string[]}} inputs
  * @returns {string} 16 hex chars
  */
-export function lockDigest(inputs) {
+export function computeLockDigest(inputs) {
   const required = ['schemaVersion', 'configDigest', 'resolvedModels', 'providerRoutes', 'reasoningEffort',
     'promptTemplateHash', 'outputSchemaHash', 'adjudicatorModel', 'pricingVersion', 'eligibilityRule', 'armIds'];
   for (const key of required) {
     if (inputs?.[key] == null) {
       // A missing input would silently produce a DIFFERENT digest that still
       // looks valid, orphaning evidence for a reason nobody can see.
-      throw new Error(`[campaign/lock] lockDigest requires "${key}" — an absent input silently changes the epoch`);
+      throw new Error(`[campaign/lock] computeLockDigest requires "${key}" — an absent input silently changes the epoch`);
     }
   }
   const canonical = canonicalJson({

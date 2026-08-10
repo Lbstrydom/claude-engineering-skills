@@ -34,10 +34,12 @@ import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
-import { costFromUsage } from './lib/model-pricing.mjs';
+import { costFromUsage, PRICING_VERSION } from './lib/model-pricing.mjs';
+import { canonicalJson, selectCampaignConfig } from './lib/campaign/config.mjs';
+import { computeLockDigest } from './lib/campaign/lock.mjs';
 
 const KNOWN_FLAGS = Object.freeze([
-  '--transcript', '--plan', '--mode', '--progress', '--target',
+  '--transcript', '--plan', '--mode', '--progress', '--target', '--campaign',
   '--selfcheck-relocation', '--help', '-h',
 ]);
 
@@ -79,7 +81,12 @@ const DEFAULT_TARGET = 12;
 export const CONTRACT_EPOCH = 'e2-matched-reasoning-effort';
 
 /**
- * The arms, in run order. Arm 1 IS the ordinary gate config.
+ * The LEGACY hardcoded arms — the fallback for a repo with no `.campaigns/`
+ * config, and the byte-for-byte reference the derived arms are tested against.
+ * The notes below describe why these three arms exist; the campaign config now
+ * DECLARES them, and `deriveArms` reproduces exactly this wire shape.
+ *
+ * In run order. Arm 1 IS the ordinary gate config.
  *
  * `solo-opus` answers a different question from the two shadow arms: not "what
  * does a second reviewer ADD to Gemini" but "would Opus alone have done". A
@@ -107,7 +114,10 @@ export const CONTRACT_EPOCH = 'e2-matched-reasoning-effort';
  * changes no request and no result; it only decides whether the second send is
  * billed at 1.0x or 0.1x. Kimi last because nothing waits on it.
  */
-const ARMS = Object.freeze([
+/** Exported for the request-preservation test only: the derived arms must be
+ * byte-identical to this for the committed campaign, which is what proves the
+ * Phase-2 refactor changed no request. Not for production use. */
+export const LEGACY_ARMS = Object.freeze([
   { id: 'opus', env: { FINAL_REVIEW_SHADOW: 'claude-opus', FINAL_REVIEW_PROMPT_CACHE: '1' } },
   { id: 'solo-opus', solo: true, args: ['--provider', 'claude-opus'], env: { FINAL_REVIEW_SHADOW: '', FINAL_REVIEW_PROMPT_CACHE: '1' } },
   // Explicitly blanked, not merely omitted: every arm must be a function of this
@@ -116,6 +126,235 @@ const ARMS = Object.freeze([
   // property of the config rather than a coincidence of the wire shape.
   { id: 'kimi', env: { FINAL_REVIEW_SHADOW: 'openrouter', FINAL_REVIEW_SHADOW_MODEL: 'moonshotai/kimi-k2-thinking', FINAL_REVIEW_PROMPT_CACHE: '' } },
 ]);
+
+/**
+ * Transport for one declared model — the HOW that the config deliberately does
+ * not express.
+ *
+ * The split is the point of Phase 2: a campaign config declares WHAT is being
+ * compared (model, mode), while reaching a provider family is runner knowledge,
+ * not campaign policy. A consumer editing `.campaigns/*.json` therefore cannot
+ * invent a wire shape, and adding a model family is a code change with a test.
+ *
+ * **Refuses an unknown family rather than guessing a token.** A fabricated
+ * `FINAL_REVIEW_SHADOW` value does not fail at derivation; it fails inside a
+ * spawned reviewer, after the arm is already counted as attempted — the late,
+ * expensive failure this pre-flight exists to convert into an early, free one.
+ *
+ * @param {string} model
+ * @returns {{route: string, shadowToken: string, providerArg: string, shadowModel: string|null, promptCache: '1'|''}}
+ */
+export function transportForModel(model) {
+  if (typeof model !== 'string' || model.length === 0) {
+    throw new ArgvError(`[bakeoff] arm model must be a non-empty string, got ${JSON.stringify(model)}`);
+  }
+  // An OpenRouter id is the only one carrying a '/', and `pricingKey` returns
+  // it verbatim for exactly that reason.
+  if (model.includes('/')) {
+    return { route: 'openrouter', shadowToken: 'openrouter', providerArg: 'openrouter', shadowModel: model, promptCache: '' };
+  }
+  if (model.startsWith('claude')) {
+    // `claude-opus` is the PROVIDER token for the Opus shadow reviewer, not a
+    // model id (AGENTS.md: FINAL_REVIEW_SHADOW=claude-opus|gemini|openrouter).
+    // The concrete model rides in FINAL_REVIEW_SHADOW_MODEL, and is omitted
+    // when the declaration is the bare family token so the derived arm stays
+    // byte-identical to the table this replaces.
+    return { route: 'anthropic', shadowToken: 'claude-opus', providerArg: 'claude-opus', shadowModel: model === 'claude-opus' ? null : model, promptCache: '1' };
+  }
+  if (model.startsWith('gemini')) {
+    return { route: 'gemini', shadowToken: 'gemini', providerArg: 'gemini', shadowModel: model, promptCache: '' };
+  }
+  throw new ArgvError(`[bakeoff] no transport for model "${model}" — a campaign cannot declare a family the runner has no wire shape for. Add one to transportForModel() rather than letting it fail inside a spawned reviewer.`);
+}
+
+/**
+ * Derive the wire arms from a campaign config, in declared order.
+ *
+ * **Declaration order is load-bearing and is preserved verbatim.** The two Opus
+ * arms are adjacent so their identical prompts land inside Anthropic's 5-minute
+ * cache TTL; under an `opus → kimi → solo-opus` order the second Opus call
+ * lands ~8.8 min after the first, a guaranteed miss that the 1-hour TTL cannot
+ * rescue (a 1h write is 2.0x base, so 2.0 + 0.1 exceeds the 2.0 it replaces).
+ * Sorting these for tidiness would change no request and no result — only
+ * whether the second send is billed at 1.0x or 0.1x.
+ *
+ * @param {object} config - a parsed campaign config
+ * @returns {ReadonlyArray<{id: string, solo?: boolean, args?: string[], env: object, model: string, replicate: boolean, route: string}>}
+ */
+export function deriveArms(config) {
+  return Object.freeze(config.arms.map((arm) => {
+    const t = transportForModel(arm.model);
+    const replicate = arm.type === 'replicate';
+    if (arm.mode === 'primary') {
+      // A primary arm answers "would this model ALONE have done", so it runs
+      // with no shadow at all. Blanked explicitly rather than omitted: an arm
+      // must be a function of the config, never of whatever the operator
+      // happens to have exported into the environment.
+      return {
+        id: arm.id, model: arm.model, replicate, route: t.route, solo: true,
+        args: ['--provider', t.providerArg],
+        env: { FINAL_REVIEW_SHADOW: '', FINAL_REVIEW_PROMPT_CACHE: t.promptCache },
+      };
+    }
+    const env = { FINAL_REVIEW_SHADOW: t.shadowToken, FINAL_REVIEW_PROMPT_CACHE: t.promptCache };
+    if (t.shadowModel) env.FINAL_REVIEW_SHADOW_MODEL = t.shadowModel;
+    // Key order matches the table this replaces so a derived arm is byte-identical.
+    const ordered = t.shadowModel
+      ? { FINAL_REVIEW_SHADOW: env.FINAL_REVIEW_SHADOW, FINAL_REVIEW_SHADOW_MODEL: env.FINAL_REVIEW_SHADOW_MODEL, FINAL_REVIEW_PROMPT_CACHE: env.FINAL_REVIEW_PROMPT_CACHE }
+      : env;
+    return { id: arm.id, model: arm.model, replicate, route: t.route, env: ordered };
+  }));
+}
+
+/**
+ * D4 — the request fingerprint, computed PRE-FLIGHT.
+ *
+ * Over `{model, controls}` and deliberately NOT `mode`: two arms differing only
+ * in shadow-vs-primary send the *same request*. Measured — per snapshot our own
+ * `opus` and `solo-opus` arms report identical input token counts to the byte
+ * (81,182 / 81,182; 192,998 / 192,998). They are one distribution sampled
+ * twice, which is a real thing to buy at this N but is a REROLL, not a second
+ * scenario, and the arithmetic must know the difference.
+ */
+export function armRequestFingerprint(arm, controls) {
+  return crypto.createHash('sha256').update(canonicalJson({ model: arm.model, controls })).digest('hex').slice(0, 16);
+}
+
+/**
+ * D4 — colliding arms are classified BEFORE spend, never discovered after.
+ *
+ * Two arms with the same request fingerprint are a hard refusal unless the
+ * collision is *declared*: at most one arm per fingerprint may be undeclared,
+ * the rest must carry `type: "replicate"`. The escape is not a loophole — our
+ * own `solo-opus` is a deliberate and valuable replicate — but an UNdeclared
+ * duplicate silently halves the apparent evidence for one model while looking
+ * like two independent arms, which is lesson (c): a reroll discovered after the
+ * spend is a reroll that already corrupted the aggregate.
+ *
+ * @returns {{ok: true, fingerprints: Record<string,string>} | {ok: false, message: string}}
+ */
+export function classifyArmCollisions(config) {
+  const arms = config.arms;
+  const fingerprints = {};
+  const byFingerprint = new Map();
+  for (const arm of arms) {
+    const fp = armRequestFingerprint(arm, config.controls);
+    fingerprints[arm.id] = fp;
+    if (!byFingerprint.has(fp)) byFingerprint.set(fp, []);
+    byFingerprint.get(fp).push(arm);
+  }
+  for (const [fp, group] of byFingerprint) {
+    if (group.length < 2) continue;
+    const undeclared = group.filter((a) => a.type !== 'replicate');
+    if (undeclared.length > 1) {
+      return {
+        ok: false,
+        message: `[bakeoff] D4: arms ${undeclared.map((a) => `"${a.id}"`).join(', ')} send an IDENTICAL request (fingerprint ${fp}) but none is declared type:"replicate". `
+          + 'Two arms sampling one distribution are a reroll, not a comparison — declare the duplicate as a replicate, or make the requests differ. '
+          + 'Refusing before spend: discovering this afterwards means the aggregate was already wrong.',
+      };
+    }
+  }
+  return { ok: true, fingerprints };
+}
+
+/**
+ * The collect-time lock inputs available to the RUNNER.
+ *
+ * **Stated limitation, deliberately not disguised.** §2.5b specifies
+ * `promptTemplateHash` as the sha256 of the *assembled* system prompt template.
+ * That template is assembled inside `gemini-review.mjs`, which this cluster does
+ * not touch, so what is hashed here is the template *identifier the config
+ * declares*. The difference matters and must not be papered over: this lock
+ * detects a DECLARED template change, and cannot see an undeclared edit to the
+ * template body. Every other input is real resolved reality. The stamped record
+ * carries `promptTemplateSource` so a reader knows which guarantee they have
+ * rather than assuming the stronger one — wiring the assembled hash is Cluster
+ * B's, where the reviewer is in scope.
+ */
+export function computeCollectLock(config, configDigest, derivedArms) {
+  const sha16 = (s) => crypto.createHash('sha256').update(String(s)).digest('hex').slice(0, 16);
+  const resolvedModels = Object.fromEntries(derivedArms.map((a) => [a.id, a.model]));
+  const providerRoutes = Object.fromEntries(derivedArms.map((a) => [a.id, a.route]));
+  const digest = computeLockDigest({
+    schemaVersion: config.schemaVersion,
+    configDigest,
+    resolvedModels,
+    providerRoutes,
+    reasoningEffort: config.controls.reasoningEffort,
+    promptTemplateHash: sha16(config.controls.promptTemplateId),
+    outputSchemaHash: sha16(config.controls.outputSchemaId),
+    adjudicatorModel: config.adjudicator.model,
+    pricingVersion: PRICING_VERSION,
+    eligibilityRule: ELIGIBILITY_RULE,
+    armIds: derivedArms.map((a) => a.id),
+  });
+  return { lockDigest: digest, resolvedModels, providerRoutes, promptTemplateSource: 'declared-id', pricingVersion: PRICING_VERSION };
+}
+
+/** The transcript-eligibility rule this runner applies, as a lock input —
+ * widening it must orphan prior evidence rather than blend two populations. */
+export const ELIGIBILITY_RULE = 'mode=code;plan-resolvable;audited_sha-present';
+
+let _defaultArms = null;
+/**
+ * The expected arm set for the ANALYSIS functions (`isComplete`,
+ * `zeroFindingArms`, `aggregateMatched`, `summarise`), which must know which
+ * arms a snapshot *should* contain — reading only the arms an entry happens to
+ * carry would make a missing arm invisible, and absence is never a pass.
+ *
+ * Lazy and memoised rather than resolved at import: a module-level filesystem
+ * read would make a malformed `.campaigns/` file break every consumer of this
+ * module, including ones that never collect.
+ *
+ * Falls back to the legacy table on ANY resolution problem, deliberately. That
+ * is not the silent fallback `resolveArms` refuses to make: the COLLECT path
+ * still throws loudly on the same config, so this can never let a live run
+ * proceed against a wrong arm set — it only decides how already-logged history
+ * is read, and the legacy table is what that history was collected under.
+ * Per-cohort arm sets (so an old entry is read under ITS OWN lock rather than
+ * today's) arrive with the cohort store in Cluster B.
+ */
+export function defaultArms() {
+  if (_defaultArms) return _defaultArms;
+  try { _defaultArms = resolveArms({}).arms; }
+  catch { _defaultArms = LEGACY_ARMS; }
+  return _defaultArms;
+}
+
+/** Test seam — mirrors the `_reset*` pattern used elsewhere in scripts/lib. */
+export function _resetDefaultArms() { _defaultArms = null; }
+
+/**
+ * Resolve the arms for this run: derived from the committed campaign when one
+ * exists, else the legacy hardcoded table.
+ *
+ * The fallback is not indefinite compatibility — it keeps a repo that has not
+ * adopted campaigns collecting exactly as before, and it is what makes this
+ * change provably request-preserving (a test asserts the derived arms are
+ * byte-identical to `LEGACY_ARMS` for the committed campaign).
+ */
+export function resolveArms({ campaignId = null, dir = undefined } = {}) {
+  const selected = selectCampaignConfig({ ...(dir ? { dir } : {}), campaignId });
+  if (!selected.ok) {
+    if (selected.code === 'none') return { arms: LEGACY_ARMS, config: null, source: 'legacy-table' };
+    // Ambiguity and unknown ids are refusals, never a silent fallback to the
+    // legacy table — which campaign ran is not a detail a spend-bearing runner
+    // may decide on the operator's behalf.
+    throw new ArgvError(selected.message);
+  }
+  const collision = classifyArmCollisions(selected.config);
+  if (!collision.ok) throw new ArgvError(collision.message);
+  const arms = deriveArms(selected.config);
+  return {
+    arms,
+    config: selected.config,
+    configDigest: selected.configDigest,
+    fingerprints: collision.fingerprints,
+    lock: computeCollectLock(selected.config, selected.configDigest, arms),
+    source: `campaign:${selected.config.id}`,
+  };
+}
 
 /**
  * Snapshot identity is the transcript's CONTENT hash, not its path — two runs
@@ -300,9 +539,9 @@ export function readLog(logPath = LOG_PATH) {
  * uniqueness claim, which is the same "measured nothing, read as data" failure
  * the epoch gate exists to prevent elsewhere.
  */
-export function isComplete(entry) {
+export function isComplete(entry, arms = defaultArms()) {
   if (entry?.contractEpoch !== CONTRACT_EPOCH) return false; // unstamped or stale ⇒ ineligible
-  return ARMS.every((a) => {
+  return arms.every((a) => {
     const r = entry?.arms?.[a.id];
     if (!r || r.error) return false;
     // A solo arm has no shadow, so demanding shadowState==='ran' would make the
@@ -330,9 +569,9 @@ export function isComplete(entry) {
  * `reviewed` (returned a verdict ⇒ genuinely found nothing), or `no-verdict`
  * (recorded, and empty ⇒ suspect the arm, not the model).
  */
-export function zeroFindingArms(entry) {
+export function zeroFindingArms(entry, arms = defaultArms()) {
   const out = [];
-  for (const a of ARMS) {
+  for (const a of arms) {
     const r = entry?.arms?.[a.id];
     if (a.solo) continue; // no shadow bucket exists; a zero here would be meaningless
     if (!r || r.shadowState !== 'ran') continue;
@@ -362,11 +601,11 @@ export function zeroFindingArms(entry) {
  *     to 0, so a single `not-applicable` snapshot would silently drag the
  *     campaign's coverage down. Divide by the count of non-null coverages.
  */
-export function aggregateMatched(complete) {
+export function aggregateMatched(complete, arms = defaultArms()) {
   const rows = [];
   let notComputed = 0;
   for (const e of complete) {
-    for (const a of ARMS) {
+    for (const a of arms) {
       if (a.solo) continue;                       // no shadow ⇒ no matched view
       const r = e.arms?.[a.id];
       if (!r) continue;
@@ -402,8 +641,11 @@ export function aggregateMatched(complete) {
   };
 }
 
-export function summarise(entries, target = DEFAULT_TARGET) {
-  const complete = entries.filter(isComplete);
+export function summarise(entries, target = DEFAULT_TARGET, arms = defaultArms()) {
+  // Arrow, not a bare reference: Array#filter passes (element, index, array),
+  // so `filter(isComplete)` would hand the INDEX to the optional `arms` param
+  // and `arms.every` would blow up on a number. Caught by the existing suite.
+  const complete = entries.filter((e) => isComplete(e, arms));
   const totals = {
     opusUnique: 0, kimiUnique: 0, soloFindings: 0, primaryTotal: 0,
     primaryDivergence: [], opusDivergence: [], opusDivergenceUnpaired: 0,
@@ -456,7 +698,7 @@ export function summarise(entries, target = DEFAULT_TARGET) {
 
     // Spend, per arm.
     let snapshotFullyCosted = true;
-    for (const a of ARMS) {
+    for (const a of arms) {
       const c = e.arms?.[a.id]?.costUsd;
       const prev = armCostState.get(a.id) ?? { usd: 0, costable: true };
       if (typeof c === 'number') prev.usd += c;
@@ -470,7 +712,7 @@ export function summarise(entries, target = DEFAULT_TARGET) {
     // reporting convention — never a fact about reviewer roles. Reported as a
     // property of the data rather than left as tribal knowledge, because the
     // arm table looks like three configurations and reads like three questions.
-    const byArm = ARMS.map((a) => [a.id, new Set(e.arms?.[a.id]?.requestFingerprints ?? [])]);
+    const byArm = arms.map((a) => [a.id, new Set(e.arms?.[a.id]?.requestFingerprints ?? [])]);
     for (let i = 0; i < byArm.length; i++) {
       for (let k = i + 1; k < byArm.length; k++) {
         const shared = [...byArm[i][1]].filter((fp) => byArm[k][1].has(fp));
@@ -578,7 +820,7 @@ function printProgress(logPath, target) {
   // verdict beside it so "lenient reviewer" and "broken arm" are never conflated
   // in the one number the stopping rule reads.
   const LABEL = { unrecorded: 'verdict not recorded (pre-dates the field)', 'no-verdict': 'NO VERDICT — suspect a BROKEN arm' };
-  const zeros = entries.filter(isComplete).flatMap((e) => zeroFindingArms(e)
+  const zeros = entries.filter((e) => isComplete(e)).flatMap((e) => zeroFindingArms(e)
     .map((z) => `${z.arm}: ${LABEL[z.evidence] ?? `reviewed, verdict ${z.verdict}`}`));
   if (zeros.length > 0) {
     const tally = {};
@@ -702,9 +944,17 @@ async function main() {
     return;
   }
 
+  // Arms + D4 collision classification resolve BEFORE the output directory is
+  // made and before any arm is spawned: a refusal must cost nothing.
+  const resolved = resolveArms({ campaignId: arg('campaign') });
+  const ARMS = resolved.arms;
+
   const outDir = path.join('.audit', 'bakeoff', id);
   fs.mkdirSync(outDir, { recursive: true });
-  process.stderr.write(`  [bakeoff] snapshot ${id} — ${ARMS.length} arms on ${path.basename(transcript)}\n`);
+  process.stderr.write(`  [bakeoff] snapshot ${id} — ${ARMS.length} arms on ${path.basename(transcript)} [${resolved.source}]\n`);
+  if (resolved.lock) {
+    process.stderr.write(`  [bakeoff] lock ${resolved.lock.lockDigest} (config ${resolved.configDigest}, prompt-template source: ${resolved.lock.promptTemplateSource})\n`);
+  }
 
   const arms = {};
   for (const a of ARMS) {
@@ -714,7 +964,22 @@ async function main() {
 
   const entry = {
     snapshotId: id,
+    // Both stamped, and `isComplete` still gates on CONTRACT_EPOCH alone.
+    // §2.5b's plan is for the derived lock to REPLACE the hand-maintained
+    // string, but flipping the gate here would orphan every existing e2 row on
+    // the next read — a data-meaning change that belongs with the cohort store
+    // that can record the supersession, i.e. Cluster B. Stamping both now means
+    // the rows collected in between carry the digest the new gate will need,
+    // so the switchover reads history rather than discarding it.
     contractEpoch: CONTRACT_EPOCH,
+    ...(resolved.lock ? {
+      campaignId: resolved.config.id,
+      configDigest: resolved.configDigest,
+      lockDigest: resolved.lock.lockDigest,
+      promptTemplateSource: resolved.lock.promptTemplateSource,
+      requestFingerprints: resolved.fingerprints,
+      replicateArmIds: ARMS.filter((a) => a.replicate).map((a) => a.id),
+    } : {}),
     collectedAt: new Date().toISOString(),
     transcript: path.basename(transcript),
     plan,

@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import {
-  lockDigest, lockFilePath, writeLockFile, readLockFile,
+  computeLockDigest, lockFilePath, writeLockFile, readLockFile,
   receiptPath, maxAttemptOnDisk, resolveNextAttempt,
   claimReceipt, completeReceipt, markReceiptRecorded, scanReceipts,
 } from '../scripts/lib/campaign/lock.mjs';
@@ -29,14 +29,14 @@ const armRun = (repoRoot) => ({ campaignId: 'c1', cohortDigest: 'deadbeefdeadbee
 
 describe('lockDigest — the epoch nobody has to remember to bump', () => {
   it('is stable, and independent of arm DECLARATION order', () => {
-    const a = lockDigest(LOCK_INPUTS);
-    const b = lockDigest({ ...LOCK_INPUTS, armIds: ['solo-opus', 'kimi', 'opus'] });
+    const a = computeLockDigest(LOCK_INPUTS);
+    const b = computeLockDigest({ ...LOCK_INPUTS, armIds: ['solo-opus', 'kimi', 'opus'] });
     assert.match(a, /^[0-9a-f]{16}$/);
     assert.equal(a, b, 'reordering arms in the config must not orphan evidence');
   });
 
   it('CHANGES on every meaning-changing input — that is what orphans a cohort', () => {
-    const before = lockDigest(LOCK_INPUTS);
+    const before = computeLockDigest(LOCK_INPUTS);
     const mutations = {
       configDigest: 'ffffffffffffffff',
       resolvedModels: { opus: 'claude-opus-6', kimi: 'moonshotai/kimi-k2-thinking' },
@@ -50,7 +50,7 @@ describe('lockDigest — the epoch nobody has to remember to bump', () => {
       armIds: ['opus', 'kimi'],           // dropping an arm mixes two populations
     };
     for (const [key, value] of Object.entries(mutations)) {
-      assert.notEqual(lockDigest({ ...LOCK_INPUTS, [key]: value }), before, `${key} must be part of the epoch`);
+      assert.notEqual(computeLockDigest({ ...LOCK_INPUTS, [key]: value }), before, `${key} must be part of the epoch`);
     }
   });
 
@@ -58,7 +58,7 @@ describe('lockDigest — the epoch nobody has to remember to bump', () => {
     for (const key of Object.keys(LOCK_INPUTS)) {
       const partial = { ...LOCK_INPUTS };
       delete partial[key];
-      assert.throws(() => lockDigest(partial), new RegExp(key), `omitting ${key} must throw`);
+      assert.throws(() => computeLockDigest(partial), new RegExp(key), `omitting ${key} must throw`);
     }
   });
 });

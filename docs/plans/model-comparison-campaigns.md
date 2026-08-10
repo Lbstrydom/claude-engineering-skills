@@ -1177,7 +1177,7 @@ empirical verify — the readout must show the real 5/12 state, not a demo).
 | The lock digest misses a meaning-bearing input (the gap that survived `CONTRACT_EPOCH`) | The digest input list is a named, tested constant; `tests/campaign-lock.test.mjs` asserts drift detection per input including the prompt-template hash. Adding a prompt input later orphans old evidence — the safe failure direction. |
 | Copy-command override UX is too much friction | Measured trigger (not vibes): >~20 overrides per campaign → local POST endpoint on `dashboard serve`. Deferred, named. |
 | Consumers game `targetN` down to get fast verdicts | Schema minimum = the terminal-INCONCLUSIVE floor; below it the verdict engine emits INCONCLUSIVE regardless of config. |
-| Mid-campaign rule change relabels evidence | The decision rule is a lock input — changing it orphans the cohort automatically (D5's pre-registration integrity, mechanised). |
+| Mid-campaign rule change relabels evidence | **NOT** by making the rule a lock input — §2.5b removes it deliberately, because hashing an analysis-time field means editing a cost ceiling destroys every snapshot ever collected. Instead: every change to an analysis-time field appends a `rule_changed` event with before/after and the operator, and `verdict.mjs` watermarks any standings whose rule changed after the first arm-run was collected. The evidence survives; the fact that the goalposts moved is recorded next to the number (D5's pre-registration integrity, mechanised). |
 | Migration drifts live schema from ledger | Idempotent migration + `--check-drift` in CI + `db:local:regen` from a fresh replay only (INC-002 allowlist). |
 
 **Deliberately deferred** (independence named): roles 1–2 adapters (swap-eval
