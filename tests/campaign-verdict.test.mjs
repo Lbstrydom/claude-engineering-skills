@@ -18,7 +18,7 @@ import fs from 'node:fs';
 import {
   evaluateCampaign, evaluateFloor, evaluateCost, terminalEvent, compareEvents,
   creditAccepted, completionMatrix, armSpend, calibrationShortfall, deriveState,
-  evaluateGates,
+  evaluateGates, assessThresholdSensitivity,
 } from '../scripts/lib/campaign/verdict.mjs';
 import { parseCampaignConfig } from '../scripts/lib/campaign/config.mjs';
 
@@ -229,6 +229,93 @@ test('an adjudicator downgrade is honoured — severity comes from the terminal 
     }],
   }]);
   assert.deepEqual(perArm, {}, 'a downgraded finding stops counting');
+});
+
+// ── within-arm dedup + threshold sensitivity ────────────────────────────────
+
+test('a CROSS-arm merge cannot move any arm count; a WITHIN-arm merge must', () => {
+  // The measurement the whole calibration decision rests on. Both directions
+  // asserted, because "insensitive" and "nothing to be sensitive to" look
+  // identical from the cross-arm case alone.
+  const ev = (id) => [{ id, adjudicatorKind: 'agent', adjudicationOutcome: 'accepted', createdAt: 't', supersededAt: null }];
+  const m = (findingId, armId) => ({ findingId, armId, severity: 'HIGH', events: ev(findingId) });
+
+  const crossSplit = creditAccepted([
+    { clusterId: 'c1', snapshotId: 's1', members: [m('fa', 'A')] },
+    { clusterId: 'c2', snapshotId: 's1', members: [m('fb', 'B')] },
+  ]).perArm;
+  const crossMerged = creditAccepted([
+    { clusterId: 'c1', snapshotId: 's1', members: [m('fa', 'A'), m('fb', 'B')] },
+  ]).perArm;
+  assert.deepEqual(crossSplit, crossMerged, 'each arm is credited on its OWN member — merging cannot move that');
+
+  const withinSplit = creditAccepted([
+    { clusterId: 'c1', snapshotId: 's1', members: [m('f1', 'A')] },
+    { clusterId: 'c2', snapshotId: 's1', members: [m('f2', 'A')] },
+  ]).perArm;
+  const withinMerged = creditAccepted([
+    { clusterId: 'c1', snapshotId: 's1', members: [m('f1', 'A'), m('f2', 'A')] },
+  ]).perArm;
+  assert.deepEqual(withinSplit, { A: 2 });
+  assert.deepEqual(withinMerged, { A: 1 }, 'POSITIVE CONTROL — if this stops changing, the test above proves nothing');
+});
+
+test('an invariant sweep passes the gate and says the verdict does not depend on the calibration', () => {
+  const { snapshots, clusters } = buildCohort({ n: 12, accepted: { opus: 18, kimi: 3 }, spendUsd: { opus: 35.64, kimi: 1.74, 'solo-opus': 0 } });
+  const s = assessThresholdSensitivity({
+    config: REAL_CONFIG, snapshots,
+    variants: [{ label: 'a', clusters }, { label: 'b', clusters }],
+  });
+  assert.equal(s.assessed, true);
+  assert.equal(s.invariant, true);
+  const r = evaluateCampaign({ config: REAL_CONFIG, snapshots, clusters, ...CLEAN_GATES, sensitivity: s });
+  assert.equal(r.decisionEligible, true);
+  assert.ok(!r.advisories.some((a) => a.id === 'threshold-sensitivity-unassessed'));
+});
+
+test('a sweep whose decision FLIPS blocks the verdict and names the calibration', () => {
+  const strong = buildCohort({ n: 12, accepted: { opus: 18, kimi: 3 }, spendUsd: { opus: 35.64, kimi: 1.74, 'solo-opus': 0 } });
+  // The same cohort clustered so aggressively that opus loses its accepted
+  // findings — a decision that depends on where the matcher cut.
+  const collapsed = buildCohort({ n: 12, accepted: { opus: 1, kimi: 3 }, spendUsd: { opus: 35.64, kimi: 1.74, 'solo-opus': 0 } });
+  const s = assessThresholdSensitivity({
+    config: REAL_CONFIG, snapshots: strong.snapshots,
+    variants: [{ label: 'current', clusters: strong.clusters }, { label: 'permissive', clusters: collapsed.clusters }],
+  });
+  assert.equal(s.invariant, false);
+  assert.ok(s.distinctOutcomes > 1);
+
+  const r = evaluateCampaign({ config: REAL_CONFIG, snapshots: strong.snapshots, clusters: strong.clusters, ...CLEAN_GATES, sensitivity: s });
+  assert.equal(r.decisionEligible, false, 'a threshold-dependent verdict is not a verdict');
+  assert.ok(r.watermark.failing.some((g) => g.id === 'threshold-invariance'));
+});
+
+test('a flip in the COST WINNER alone is caught — the signature is the decision, not just the floor', () => {
+  // The earlier flip case changed which arms CLEARED, so `cleared` alone
+  // distinguished the variants and the winner field was never exercised. Here
+  // the cleared set is identical in both and only the cost winner moves, which
+  // is just as much a changed decision.
+  const A = buildCohort({ n: 12, accepted: { opus: 12, kimi: 6 }, spendUsd: { opus: 24, kimi: 18, 'solo-opus': 0 } });
+  const B = buildCohort({ n: 12, accepted: { opus: 12, kimi: 12 }, spendUsd: { opus: 24, kimi: 18, 'solo-opus': 0 } });
+
+  const s = assessThresholdSensitivity({
+    config: REAL_CONFIG, snapshots: A.snapshots,
+    variants: [{ label: 'A', clusters: A.clusters }, { label: 'B', clusters: B.clusters }],
+  });
+  assert.deepEqual(s.outcomes[0].cleared, s.outcomes[1].cleared, 'the cleared set must be identical, or this tests the wrong thing');
+  assert.notEqual(s.outcomes[0].winner, s.outcomes[1].winner, 'only the winner moves');
+  assert.equal(s.invariant, false, 'a changed winner IS a changed decision');
+});
+
+test('an UNASSESSED sweep does not silently pass as invariant — it advises', () => {
+  // The "green having checked nothing" shape. The gate cannot fail (that would
+  // watermark every reader that does not re-cluster), so the absence is NAMED.
+  const { snapshots, clusters } = buildCohort({ n: 12, accepted: { opus: 18, kimi: 3 }, spendUsd: { opus: 35.64, kimi: 1.74, 'solo-opus': 0 } });
+  const r = evaluateCampaign({ config: REAL_CONFIG, snapshots, clusters, ...CLEAN_GATES });
+  assert.ok(r.advisories.some((a) => a.id === 'threshold-sensitivity-unassessed'),
+    'a reader that did not sweep must say so rather than imply invariance');
+  const gate = r.gates.find((g) => g.id === 'threshold-invariance');
+  assert.match(gate.detail, /not assessed/);
 });
 
 // ── the terminal-event total order ──────────────────────────────────────────

@@ -308,6 +308,81 @@ export function evaluateCost({ eligibleArmIds, acceptedPerArm, spend, costCeilin
 }
 
 /**
+ * Is the decision the same at every plausible matcher threshold?
+ *
+ * **This replaces validating a point threshold, and the reason is measured.**
+ * The cross-model cutoff (0.14) rests on a fixture whose own status reads
+ * "PROVISIONAL — labels are model-generated ... Not a validated calibration."
+ * The instinct is to validate it. The measurement says not to bother: on the
+ * live cohort the floor metric took ONE distinct value across thresholds 0.00
+ * to 0.90, and a controlled probe shows why — §2.5c-i credits each arm on its
+ * OWN member's terminal event, so a CROSS-arm merge cannot move any arm's
+ * count, and the denominator is complete snapshots, not clusters. Only
+ * WITHIN-arm merging moves the metric (positive control: it does).
+ *
+ * So the threshold is not a number to be validated in advance; it is a number
+ * whose wrongness is DETECTABLE PER DECISION. Sweep it, and:
+ *   - if the outcome is identical at every variant, say so and proceed — the
+ *     verdict did not depend on the calibration, which is a stronger statement
+ *     than "the calibration was validated";
+ *   - if it flips, refuse. That is a real finding about this cohort, and it
+ *     names the human effort worth spending.
+ *
+ * Cheap by construction: near-invariance is the expected case, so this gate
+ * almost never fires, and when it does it means something happened.
+ *
+ * @param {{config: object, snapshots: Array<object>, variants: Array<{label: string, clusters: Array<object>}>}} input
+ */
+export function assessThresholdSensitivity({ config, snapshots = [], variants = [] }) {
+  if (!variants.length) {
+    return { assessed: false, invariant: null, outcomes: [], reason: 'no variants supplied' };
+  }
+  const nonReplicate = config.arms.filter((a) => a.type !== 'replicate');
+  const armIds = nonReplicate.map((a) => a.id);
+  const incumbent = nonReplicate.find((a) => a.model === config.decision.incumbent);
+  if (!incumbent) throw new Error('[campaign/verdict] sensitivity needs a declared incumbent arm');
+
+  const matrix = completionMatrix(snapshots, armIds);
+  const complete = new Set(matrix.complete);
+  const nComplete = matrix.complete.length;
+  const spend = armSpend(snapshots);
+
+  const outcomes = variants.map(({ label, clusters }) => {
+    const scoped = (clusters || []).filter((c) => complete.has(c.snapshotId));
+    const { perArm: acceptedPerArm } = creditAccepted(scoped);
+    const floor = evaluateFloor({
+      acceptedPerArm, nComplete, incumbentArmId: incumbent.id,
+      floorMargin: config.decisionRule.floorMargin, armIds,
+    });
+    const cost = evaluateCost({
+      eligibleArmIds: floor.cleared, acceptedPerArm, spend,
+      costCeilingUsdPerAccepted: config.decisionRule.costCeilingUsdPerAccepted,
+    });
+    return {
+      label,
+      degenerate: floor.degenerate,
+      cleared: [...floor.cleared].sort(),
+      winner: cost.winner ?? null,
+      // The SIGNATURE is what invariance is judged on: the decision, not the
+      // arithmetic behind it. Two variants that pick the same arm for different
+      // reasons still agree about what to do.
+      signature: JSON.stringify({ degenerate: floor.degenerate, cleared: [...floor.cleared].sort(), winner: cost.winner ?? null }),
+    };
+  });
+
+  const distinct = new Set(outcomes.map((o) => o.signature));
+  return {
+    assessed: true,
+    invariant: distinct.size === 1,
+    outcomes,
+    distinctOutcomes: distinct.size,
+    reason: distinct.size === 1
+      ? `identical decision at all ${outcomes.length} matcher variant(s) — this verdict does not depend on the calibration`
+      : `the decision CHANGES across matcher variants (${distinct.size} distinct outcomes) — the calibration is load-bearing for this cohort`,
+  };
+}
+
+/**
  * The decision-eligibility gates (§2.5d pane 2). Standings ALWAYS render; the
  * watermark names every failing gate, because a gate that doesn't say why reads
  * as arbitrary and gets argued with rather than fixed.
@@ -315,7 +390,7 @@ export function evaluateCost({ eligibleArmIds, acceptedPerArm, spend, costCeilin
  * Returned in a fixed order so the watermark text is stable across reads.
  */
 export function evaluateGates({
-  config, nComplete, adjudication, calibration, clustering, cohortSuperseded,
+  config, nComplete, adjudication, calibration, clustering, cohortSuperseded, sensitivity = null,
 }) {
   const gates = [];
   const push = (id, ok, detail) => gates.push({ id, ok, detail });
@@ -340,6 +415,16 @@ export function evaluateGates({
     calibrationGaps.length === 0
       ? 'assigned calibration sample dispositioned for every arm'
       : calibrationGaps.map((g) => `${g.armId}: ${g.dispositioned}/${g.assigned}`).join('; '));
+
+  // Assessed → invariance decides. NOT assessed → this gate cannot claim
+  // anything, so it passes and an ADVISORY says the check did not run. Failing
+  // it unassessed would watermark every reader that does not re-cluster (the
+  // dashboard); passing it silently would be the "green having checked nothing"
+  // shape. Naming the absence is the honest third option.
+  push('threshold-invariance', sensitivity?.assessed ? sensitivity.invariant === true : true,
+    sensitivity?.assessed
+      ? sensitivity.reason
+      : 'not assessed by this reader — run `node scripts/campaign.mjs verdict` for the swept check');
 
   const missingClusters = clustering?.snapshotsMissingClusters ?? [];
   push('attribution', missingClusters.length === 0,
@@ -430,7 +515,7 @@ export function evaluateCampaign(input) {
   const {
     config, snapshots = [], clusters = [], adjudication = {}, calibration = {},
     clustering = {}, cohortSuperseded = false, declaredInconclusive = null,
-    ruleChangedAfterFirstArmRun = false,
+    ruleChangedAfterFirstArmRun = false, sensitivity = null,
   } = input;
 
   const nonReplicate = config.arms.filter((a) => a.type !== 'replicate');
@@ -464,11 +549,23 @@ export function evaluateCampaign(input) {
   // stage only runs when the cohort is complete.
   const spend = armSpend(snapshots);
 
-  const gates = evaluateGates({ config, nComplete, adjudication, calibration, clustering, cohortSuperseded });
+  const gates = evaluateGates({ config, nComplete, adjudication, calibration, clustering, cohortSuperseded, sensitivity });
   const { state, reason } = deriveState({ gates, declaredInconclusive, cohortSuperseded, floor, nComplete, config });
 
   const failingGates = gates.filter((g) => !g.ok);
-  const decisionEligible = state === 'DECISION_READY';
+  // Eligibility is the CONJUNCTION of the lifecycle state and every gate — not
+  // the state alone.
+  //
+  // `deriveState` re-checks most gates by hand, so for a while the two agreed
+  // and the distinction looked cosmetic. It is not: a gate `deriveState` does
+  // not know about was completely inert, because eligibility never consulted it
+  // AND the watermark only renders when ineligible — so a failing gate rendered
+  // NOWHERE. Adding `threshold-invariance` walked straight into that (it read
+  // `invariant: false` and the campaign stayed DECISION_READY). Making this a
+  // conjunction means any gate added later is load-bearing by construction,
+  // rather than load-bearing only if someone remembers to teach `deriveState`
+  // about it too.
+  const decisionEligible = state === 'DECISION_READY' && failingGates.length === 0;
 
   let cost = { evaluated: false, evidence: 'not-evaluated', perArm: {}, winner: null, reason: 'floor stage not reached' };
   let verdict = null;
@@ -487,6 +584,14 @@ export function evaluateCampaign(input) {
   }
 
   const advisories = [];
+  if (!sensitivity?.assessed) {
+    // The verdict is being read without the swept check. Say so rather than let
+    // a silent pass imply the calibration was shown not to matter.
+    advisories.push({
+      id: 'threshold-sensitivity-unassessed',
+      detail: 'matcher-threshold sensitivity was not swept by this reader — the verdict may or may not depend on the calibration',
+    });
+  }
   if (ruleChangedAfterFirstArmRun) {
     // Pre-registration is protected by recording that the goalposts moved, not
     // by destroying the evidence — hashing an analysis-time field would mean a
@@ -514,6 +619,7 @@ export function evaluateCampaign(input) {
     spend,
     cost,
     verdict,
+    sensitivity,
     analysisTimeFields: {
       targetN: config.targetN,
       calibration: config.calibration,

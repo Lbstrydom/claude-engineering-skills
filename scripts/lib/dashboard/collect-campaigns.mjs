@@ -35,6 +35,7 @@ import { selectCampaignConfig, ANALYSIS_TIME_FIELDS } from '../campaign/config.m
 import { evaluateCampaign, terminalEvent } from '../campaign/verdict.mjs';
 import { loadCohortEvidence } from '../store/campaign.mjs';
 import { isCloudEnabled } from '../store/repo.mjs';
+import { findingMatchConfig, FINDING_MATCH_SCHEMA_VERSION } from '../config.mjs';
 
 /** The override command the page renders per finding, prefilled and copyable. */
 export function overrideCommandFor(findingId) {
@@ -145,6 +146,17 @@ export async function collectCampaigns(root = process.cwd(), deps = {}) {
 
     const base = {
       id,
+      // Matcher provenance travels WITH the numbers it produced. The cross-model
+      // cutoff rests on a fixture whose own status reads PROVISIONAL, so a
+      // co-detection figure rendered without that word is a number nobody can
+      // trace — the exact failure this page exists to prevent.
+      matcher: {
+        version: String(FINDING_MATCH_SCHEMA_VERSION),
+        crossThreshold: findingMatchConfig.threshold,
+        withinArmThreshold: findingMatchConfig.withinArmThreshold,
+        crossStatus: 'provisional (calibrated on 9 model-labelled pairs; see tests/fixtures/cross-model-pairs.json)',
+        withinStatus: 'uncalibrated (reasoned, not measured — no labelled within-arm corpus exists)',
+      },
       targetN: config.targetN,
       replicates: config.arms.filter((a) => a.type === 'replicate').map((a) => a.id),
       analysisTimeFields: analysisTimeOf(config),

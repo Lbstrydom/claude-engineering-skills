@@ -691,9 +691,61 @@ campaign uncollectable.
    Adjudication *coverage* was lesson (a)'s prerequisite; this deterministic
    sample is what replaces "human does 100%" without replacing it with "human
    does the easy ones".
-6. **Retirement path for the PROVISIONAL matcher labels**: the 9 file-sharing
+6. ~~**Retirement path for the PROVISIONAL matcher labels**: the 9 file-sharing
    calibration pairs enter this same review queue; human disposition of them
-   retires the fixture's caveat (or corrects the threshold).
+   retires the fixture's caveat (or corrects the threshold).~~
+   **SUPERSEDED 2026-08-10 — the premise was false, and measurement is what
+   falsified it.**
+
+   This step assumed the matcher threshold gates the switch decision. It does
+   not. Measured on the live cohort: the floor metric took **one distinct
+   value across thresholds 0.00 → 0.90**, and a controlled probe shows the
+   mechanism — §2.5c-i credits each arm on its **OWN** member's terminal event,
+   so a CROSS-arm merge cannot move any arm's count, and the denominator is
+   complete snapshots (`evaluateFloor` divides by `nComplete`), not clusters.
+   Only WITHIN-arm merging moves the metric; the probe's positive control
+   confirms it does, so the sweep is not a vacuous pass.
+
+   Labelling the 9 pairs would therefore have validated a number no decision
+   depends on. What the check found instead was worse and real: **within-arm
+   dedup — the one thing the threshold IS load-bearing for — was not
+   implemented.** `clusterSnapshotFindings` iterated `i < k` over *distinct*
+   arms, so two findings from one arm could only merge via a transitive bridge
+   through a third. Two byte-identical findings from one arm, same file,
+   produced 2 clusters at every threshold from 0.00 to 0.50. The anti-inflation
+   rule in §2.5c-i row 2 was prose beside a loop that could not enforce it.
+
+   **What replaces this step:**
+
+   1. **Within-arm dedup implemented, with its own threshold**
+      (`findingMatchConfig.withinArmThreshold`). Cross-model matching is hard
+      (two vocabularies, ~17% signature overlap → 0.14); within-arm matching is
+      easy (one voice), so both its distributions sit higher and reusing 0.14
+      there would merge distinct defects sharing a file — under-counting the
+      arm, the inverse of the inflation this rule targets. The new number is
+      **uncalibrated** and says so, because no labelled within-arm corpus
+      exists.
+   2. **A sensitivity gate replaces validating a point threshold.**
+      `campaign.mjs verdict` re-clusters across a band of both cutoffs
+      (including *no clustering at all*) and `assessThresholdSensitivity`
+      compares the resulting decisions. Invariant → proceed, and state that the
+      verdict did not depend on the calibration, which is a stronger claim than
+      "the calibration was validated". Flips → `threshold-invariance` fails and
+      the verdict is withheld, naming the human effort actually worth spending.
+      Shipping an uncalibrated constant is acceptable precisely because its
+      wrongness is detected per decision.
+   3. **Matcher provenance renders with the numbers it produced** — version,
+      both thresholds, `provisional` for the cross cutoff and `uncalibrated`
+      for the within-arm one, beside the sweep result.
+   4. **The fixture stays PROVISIONAL and becomes a regression guard**
+      (`tests/cross-model-buckets.test.mjs`), pinning that 0.14 still separates
+      the 9 known pairs so a tokenizer or signature change fails loudly. It
+      does not establish that 0.14 is right, and nothing load-bearing now needs
+      it to be.
+
+   Blind re-labelling of the 9 pairs is therefore **optional** — worth doing
+   before quoting the co-detection figure externally, not a prerequisite for a
+   campaign verdict.
 
 ### 2.5c-i Metric attribution — deterministic, and stated (R1/H5)
 

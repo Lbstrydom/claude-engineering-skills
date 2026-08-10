@@ -552,6 +552,42 @@ describe('clustering', () => {
     assert.deepEqual(sizes, [1, 2], 'two arms describing one defect are one cluster; the unrelated finding is its own');
   });
 
+  it('WITHIN-arm duplicates are merged — the anti-inflation rule §2.5c-i states', () => {
+    // It was prose beside a loop that could not enforce it: clustering iterated
+    // `i < k` over DISTINCT arms, so two findings from one arm could only merge
+    // via a transitive bridge through a third. Measured: two byte-identical
+    // findings from one arm produced 2 clusters at every threshold 0.00–0.50.
+    const dup = 'the cost column sums only live rows so a superseded attempt vanishes';
+    const rows = [
+      { findingId: 'f1', armId: 'opus', section: 'scripts/x.mjs', category: 'Backend', detail: dup, severity: 'HIGH' },
+      { findingId: 'f2', armId: 'opus', section: 'scripts/x.mjs', category: 'Backend', detail: dup, severity: 'HIGH' },
+    ];
+    const merged = clusterSnapshotFindings(rows, { ...opts, withinArmThreshold: 0.35 });
+    assert.equal(merged.clusters.length, 1, 'a verbose arm must not inflate itself');
+    assert.equal(merged.clusters[0].members.length, 2);
+
+    // NEGATIVE CONTROL: without the within-arm threshold the duplicate survives,
+    // so the assertion above is the new pass doing work — not the cross-arm loop
+    // happening to catch it.
+    const unmerged = clusterSnapshotFindings(rows, { ...opts, withinArmThreshold: null });
+    assert.equal(unmerged.clusters.length, 2);
+  });
+
+  it('within-arm uses its OWN threshold — the cross-model cutoff would over-merge', () => {
+    // Two DISTINCT defects from one arm in one file. They share category, path
+    // and house style, so at the cross-model cutoff (0.14, driven down by ~17%
+    // cross-vocabulary overlap) they merge — under-counting the arm, which is
+    // the inverse of the inflation the rule targets.
+    const rows = [
+      { findingId: 'f1', armId: 'opus', section: 'scripts/x.mjs', category: 'Backend', detail: 'the cost column sums only live rows so a superseded attempt vanishes from the total', severity: 'HIGH' },
+      { findingId: 'f2', armId: 'opus', section: 'scripts/x.mjs', category: 'Backend', detail: 'the retry path claims an exclusive receipt and never releases it on a crash', severity: 'HIGH' },
+    ];
+    assert.equal(clusterSnapshotFindings(rows, { ...opts, withinArmThreshold: 0.14 }).clusters.length, 1,
+      'control: at the CROSS threshold these two distinct defects wrongly merge');
+    assert.equal(clusterSnapshotFindings(rows, { ...opts, withinArmThreshold: 0.35 }).clusters.length, 2,
+      'at the within-arm threshold they stay distinct');
+  });
+
   it('is deterministic — two runs over one snapshot produce identical clusters', () => {
     const rows = [
       { findingId: 'f1', armId: 'a', section: 'scripts/x.mjs:10', category: 'B', detail: 'the same defect described one way', severity: 'HIGH' },

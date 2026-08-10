@@ -260,6 +260,36 @@ export const findingMatchConfig = Object.freeze({
   coverageFloor: clampConfigNumber(process.env.AUDIT_FINDING_MATCH_COVERAGE_FLOOR, {
     fallback: 0.6, min: 0, max: 1, parser: Number.parseFloat, envVar: 'AUDIT_FINDING_MATCH_COVERAGE_FLOOR',
   }),
+  // WITHIN-ARM dedup threshold — a different question from the one above, and
+  // deliberately a different number.
+  //
+  // `threshold` (0.14) answers "did TWO MODELS describe the same defect?" and is
+  // low because they share almost no vocabulary: measured, same-defect pairs
+  // overlap only ~17% because each model writes its own category label and
+  // section phrasing. Within ONE arm the opposite holds — same model, same label
+  // vocabulary, same phrasing habits — so both the same-defect and the
+  // different-defect distributions sit far higher, and 0.14 there would merge
+  // distinct defects that merely share a file. That under-counts the arm and
+  // penalises thoroughness, which is the inverse of the inflation §2.5c-i wants
+  // prevented.
+  //
+  // **This number is UNCALIBRATED, and that word is chosen precisely.** The
+  // committed fixture holds cross-model pairs only; there is no labelled
+  // within-arm corpus, so unlike 0.14 this is not "provisional" (measured, with
+  // a stated bias risk) — nothing has been measured. It is REASONED: a genuine
+  // within-arm duplicate restates one defect in one voice and should overlap far
+  // more than a cross-model match (0.167–0.187), while two distinct defects from
+  // one model in one file share category + path + house style and plausibly
+  // reach 0.2–0.3. 0.35 sits above both.
+  //
+  // What makes shipping an uncalibrated constant acceptable is that nothing
+  // rests on it being right: `campaign.mjs verdict` sweeps this value and
+  // refuses when the outcome depends on it (`threshold-sensitive`). A number
+  // whose wrongness is detected per decision does not need to be validated
+  // in advance — which is the whole reason that gate exists.
+  withinArmThreshold: clampConfigNumber(process.env.AUDIT_FINDING_MATCH_WITHIN_ARM_THRESHOLD, {
+    fallback: 0.35, min: 0, max: 1, parser: Number.parseFloat, envVar: 'AUDIT_FINDING_MATCH_WITHIN_ARM_THRESHOLD',
+  }),
   // Opt-OUT. Disabled emits `bucketsMatched: null` (the honest "not computed"),
   // never an empty bucket set that reads as a measured zero.
   enabled: process.env.AUDIT_FINDING_MATCH_ENABLED !== 'false',

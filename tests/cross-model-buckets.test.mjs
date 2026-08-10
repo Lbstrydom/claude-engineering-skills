@@ -8,6 +8,22 @@
  * pass in CI having checked nothing, which is the sandbox-honesty failure
  * AGENTS.md names.
  *
+ * **What the fixture is FOR, since this is the file that reads it: a regression
+ * guard, not a validation.** Its own `status` says
+ * "PROVISIONAL — labels are model-generated ... Not a validated calibration",
+ * and that has not changed. What these assertions establish is that the
+ * threshold still separates the 9 known pairs — so a tokenizer change, a
+ * signature-format change or a careless retune fails loudly instead of silently
+ * re-bucketing history. They do NOT establish that 0.14 is the right number.
+ *
+ * Nothing load-bearing rests on it any more, which is why leaving it provisional
+ * is honest rather than lazy. Measured 2026-08-10: the campaign's floor metric
+ * is invariant to this threshold (§2.5c-i credits each arm on its OWN member, so
+ * a cross-arm merge moves no arm's count, and the denominator is complete
+ * snapshots), and `campaign.mjs verdict` now sweeps a band of thresholds and
+ * REFUSES if a verdict ever does depend on one. A number whose wrongness is
+ * detected per decision does not need validating in advance.
+ *
  * @module tests/cross-model-buckets
  */
 import { describe, it } from 'node:test';

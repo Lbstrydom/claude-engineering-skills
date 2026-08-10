@@ -110,6 +110,22 @@ function evidencePane(c, ui) {
     ? `<table><thead><tr><th>Arm</th><th>Sample reviewed</th><th>Override rate</th><th>Self-family</th></tr></thead><tbody>${calib}</tbody></table>`
     : 'no agent verdicts yet'}</td></tr>`);
 
+  if (c.matcher) {
+    // Paired deliberately: the honest reassurance is not "the threshold is
+    // validated" — it is "the decision did not depend on it", which is a
+    // stronger claim and one the sweep actually establishes.
+    const sens = c.sensitivity?.assessed
+      ? (c.sensitivity.invariant
+          ? `🟢 decision INVARIANT across ${ui.escapeHtml(c.sensitivity.outcomes?.length ?? 0)} matcher variant(s) — this verdict does not depend on the calibration`
+          : `🔴 decision FLIPS across matcher variants — the calibration is load-bearing for this cohort`)
+      : '⚪ threshold sensitivity not assessed by this reader — run <code>node scripts/campaign.mjs verdict</code>';
+    rows.push(`<tr><th scope="row">Cross-model matcher</th><td data-testid="campaign-matcher">`
+      + `v${ui.escapeHtml(c.matcher.version)} · cross ${ui.escapeHtml(c.matcher.crossThreshold)} · within-arm ${ui.escapeHtml(c.matcher.withinArmThreshold)}`
+      + `<p class="summary">cross: ${ui.escapeHtml(c.matcher.crossStatus)}</p>`
+      + `<p class="summary">within-arm: ${ui.escapeHtml(c.matcher.withinStatus)}</p>`
+      + `<p class="summary">${sens}</p></td></tr>`);
+  }
+
   rows.push(`<tr><th scope="row">Replicates</th><td>${c.replicates?.length
     ? `${c.replicates.map((r) => `<code>${ui.escapeHtml(r)}</code>`).join(', ')} — collected, excluded from model-level evidence`
     : 'none declared'}</td></tr>`);

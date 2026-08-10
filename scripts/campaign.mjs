@@ -45,7 +45,7 @@ import { selectCampaignConfig, ANALYSIS_TIME_FIELDS, canonicalJson } from './lib
 import {
   receiptPath, resolveNextAttempt, claimReceipt, completeReceipt, markReceiptRecorded, scanReceipts,
 } from './lib/campaign/lock.mjs';
-import { evaluateCampaign } from './lib/campaign/verdict.mjs';
+import { evaluateCampaign, assessThresholdSensitivity } from './lib/campaign/verdict.mjs';
 import { resolveArms, readLog } from './bakeoff-collect.mjs';
 import { matchFindings, affectedFilesOf } from './lib/finding-match.mjs';
 import { findingMatchConfig, FINDING_MATCH_SCHEMA_VERSION } from './lib/config.mjs';
@@ -420,10 +420,27 @@ export function routesToHumanQueue(verdict) {
  * outcome; writing a cluster set from an unusable match would silently revert to
  * the pre-matcher behaviour that made "unique" mean "total".
  *
+ * **Within-arm dedup runs too, at its OWN threshold.** §2.5c-i states the rule —
+ * "same defect raised twice within one arm ... counts once. Otherwise a verbose
+ * arm inflates itself" — and it was not implemented: the loop below iterated
+ * `i < k` over DISTINCT arms, so two findings from one arm could only ever land
+ * in one cluster via a transitive bridge through a third. Measured 2026-08-10:
+ * two byte-identical findings from one arm, same file, produced 2 clusters at
+ * every threshold from 0.00 to 0.50. The stated anti-inflation rule was prose
+ * next to a loop that could not enforce it.
+ *
+ * The two passes take DIFFERENT thresholds because they are different questions.
+ * Cross-model matching is hard (two vocabularies, ~17% signature overlap, hence
+ * 0.14); within-arm matching is easy (one voice), so both its distributions sit
+ * higher and 0.14 there would merge distinct defects that merely share a file —
+ * under-counting the arm, the inverse of the inflation the rule targets. See
+ * `findingMatchConfig.withinArmThreshold` for why that number is UNCALIBRATED
+ * and why shipping it uncalibrated is acceptable.
+ *
  * @param {Array<{findingId: string, armId: string, section: string|null, category: string|null, detail: string|null, severity: string}>} findings
- * @param {{threshold: number, coverageFloor: number}} opts
+ * @param {{threshold: number, coverageFloor: number, withinArmThreshold?: number}} opts
  */
-export function clusterSnapshotFindings(findings, { threshold, coverageFloor }) {
+export function clusterSnapshotFindings(findings, { threshold, coverageFloor, withinArmThreshold = null }) {
   const rows = (findings || []).filter(Boolean);
   if (rows.length === 0) return { coverage: 'unknown', reason: 'no findings', clusters: [] };
 
@@ -453,6 +470,23 @@ export function clusterSnapshotFindings(findings, { threshold, coverageFloor }) 
     for (let k = i + 1; k < armIds.length; k += 1) {
       const res = matchFindings(byArm.get(armIds[i]), byArm.get(armIds[k]), { threshold, coverageFloor });
       for (const pair of res.pairs) union(pair.primaryHash, pair.shadowHash);
+    }
+  }
+
+  // WITHIN-arm pass. `matchFindings` is one-to-one and would refuse to compare a
+  // list against itself meaningfully, so each arm's findings are split into two
+  // halves-by-position and matched pairwise across every ordered split — every
+  // unordered pair within the arm is considered exactly once, through the same
+  // matcher, with the same file-sharing conjunction and deterministic tiebreak.
+  if (withinArmThreshold != null) {
+    for (const armId of armIds) {
+      const list = byArm.get(armId);
+      for (let i = 0; i < list.length; i += 1) {
+        for (let k = i + 1; k < list.length; k += 1) {
+          const res = matchFindings([list[i]], [list[k]], { threshold: withinArmThreshold, coverageFloor });
+          for (const pair of res.pairs) union(pair.primaryHash, pair.shadowHash);
+        }
+      }
     }
   }
 
@@ -526,6 +560,52 @@ async function readCohortEvidence({ config, lock }) {
   return store.loadCohortEvidence({ repoId: await repoId(), config, lock });
 }
 
+/**
+ * Re-cluster the cohort at a BAND of matcher thresholds, so `verdict.mjs` can
+ * ask whether the decision depends on the calibration.
+ *
+ * The band brackets both cutoffs far more widely than any re-calibration would
+ * plausibly land — including "no clustering at all" — because the point is to
+ * show the decision survives the threshold being WRONG, not to explore near it.
+ * `current` is included so the reported set always contains the value in force.
+ */
+function buildSensitivityVariants(ev) {
+  const { threshold, coverageFloor, withinArmThreshold } = findingMatchConfig;
+  const VARIANTS = [
+    { label: `current (cross ${threshold}, within ${withinArmThreshold})`, cross: threshold, within: withinArmThreshold },
+    { label: 'cross-permissive (0.05)', cross: 0.05, within: withinArmThreshold },
+    { label: 'cross-strict (0.40)', cross: 0.40, within: withinArmThreshold },
+    { label: 'within-permissive (0.15)', cross: threshold, within: 0.15 },
+    { label: 'within-strict (0.70)', cross: threshold, within: 0.70 },
+    { label: 'no clustering at all', cross: 1.01, within: 1.01 },
+  ];
+
+  const bySnapshot = new Map();
+  for (const f of ev.findings) {
+    if (!bySnapshot.has(f.snapshot_id)) bySnapshot.set(f.snapshot_id, []);
+    bySnapshot.get(f.snapshot_id).push({
+      findingId: f.finding_id, armId: f.arm_id, section: f.primary_file,
+      category: f.category, detail: f.detail_snapshot, severity: f.severity,
+    });
+  }
+  const eventsFor = (id) => ev.eventsByFinding?.[id] ?? [];
+
+  return VARIANTS.map((v) => {
+    const clusters = [];
+    for (const [snapshotId, rows] of bySnapshot) {
+      const res = clusterSnapshotFindings(rows, { threshold: v.cross, coverageFloor, withinArmThreshold: v.within });
+      if (res.coverage === 'unknown') continue;
+      for (const c of res.clusters) {
+        clusters.push({
+          clusterId: c.canonicalFindingId, snapshotId,
+          members: c.members.map((m) => ({ ...m, events: eventsFor(m.findingId) })),
+        });
+      }
+    }
+    return { label: v.label, clusters };
+  });
+}
+
 async function verbStatus(campaignId, { asJson }) {
   const { config, lock } = loadCampaign(campaignId);
   const ev = await readCohortEvidence({ config, lock });
@@ -543,6 +623,7 @@ async function verbStatus(campaignId, { asJson }) {
     config, snapshots: ev.snapshots, clusters: ev.clusters, adjudication: ev.adjudication,
     calibration: ev.calibration, clustering: ev.clustering, cohortSuperseded: ev.cohortSuperseded,
     declaredInconclusive: ev.declaredInconclusive, ruleChangedAfterFirstArmRun: ev.ruleChangedAfterFirstArmRun,
+    sensitivity: assessThresholdSensitivity({ config, snapshots: ev.snapshots, variants: buildSensitivityVariants(ev) }),
   });
   if (asJson) { process.stdout.write(`${JSON.stringify({ ...result, overhead: ev.overhead }, null, 2)}\n`); return 0; }
 
@@ -569,6 +650,9 @@ async function verbStatus(campaignId, { asJson }) {
     for (const g of result.watermark.failing) L.push(`    ${g.id}: ${g.detail}`);
   }
   for (const a of result.advisories) L.push(`  advisory ${a.id}: ${a.detail}`);
+  if (result.sensitivity?.assessed) {
+    L.push(`  matcher sensitivity: ${result.sensitivity.invariant ? 'INVARIANT' : 'DECISION FLIPS'} — ${result.sensitivity.reason}`);
+  }
   L.push(`  analysis-time fields (outside every digest): ${ANALYSIS_TIME_FIELDS.join(', ')}`);
   process.stdout.write(`${L.join('\n')}\n`);
   return 0;
@@ -582,6 +666,7 @@ async function verbVerdict(campaignId, { asJson }) {
     config, snapshots: ev.snapshots, clusters: ev.clusters, adjudication: ev.adjudication,
     calibration: ev.calibration, clustering: ev.clustering, cohortSuperseded: ev.cohortSuperseded,
     declaredInconclusive: ev.declaredInconclusive, ruleChangedAfterFirstArmRun: ev.ruleChangedAfterFirstArmRun,
+    sensitivity: assessThresholdSensitivity({ config, snapshots: ev.snapshots, variants: buildSensitivityVariants(ev) }),
   });
   if (asJson) { process.stdout.write(`${JSON.stringify(result, null, 2)}\n`); return result.decisionEligible ? 0 : 3; }
 
