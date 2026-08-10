@@ -113,6 +113,7 @@ async function setupDatabase(headless) {
   console.log(`  ${D}security-incident memory, semantic + cloud FP suppression,${X}`);
   console.log(`  ${D}the memory-health gate, and persona/audit correlations.${X}`);
   console.log(`  ${D}No database software is installed either way; option 2 only stores a DSN.${X}`);
+  console.log(`  ${D}No Postgres yet? docs/runbooks/provisioning-postgres.md picks a route.${X}`);
   console.log('');
 
   const choice = await ask(`  Choose (1-2, default 1): `);

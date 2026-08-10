@@ -306,6 +306,11 @@ Unset → local JSON files only, single audit session, zero cloud. See
 [AGENTS.md → Postgres-Parity Store](AGENTS.md#postgres-parity-store-m1m4)
 for the connection model + setup recipe.
 
+Don't have a Postgres yet? [docs/runbooks/provisioning-postgres.md](docs/runbooks/provisioning-postgres.md)
+picks a route (managed / Docker / your own box) and tells you how to check a
+candidate provider works **before** you commit to it — `CREATEROLE` is a hard
+requirement and several managed tiers withhold it.
+
 ## Security
 
 - `.env` files are gitignored; API keys are never logged
