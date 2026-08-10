@@ -143,8 +143,20 @@ function sampleGamma(shape) {
   // Marsaglia & Tsang (2000) for shape >= 1
   const d = shape - 1 / 3;
   const c = 1 / Math.sqrt(9 * d);
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
+  // `for (;;)` rather than `while (true)`: the rejection loop is intentionally
+  // unbounded (it retries until a sample is accepted), and a loop with no test
+  // expression gives `no-constant-condition` nothing to examine under ANY
+  // configuration. This carried an `eslint-disable-next-line` instead, which
+  // upstream `897aa607` reported as suppressing nothing.
+  //
+  // Notably this repo has no ESLint config and no eslint dependency, so the
+  // directive was inert HERE and only ever surfaced in consumers that lint the
+  // synced bundle — where the file is overwritten on every sync and so could
+  // not be fixed locally. The report's premise (that the rule's default
+  // `checkLoops` spares `while (true)`, making the directive unused) could not
+  // be verified from this repo for that same reason; this form sidesteps it,
+  // being correct whether or not that default holds.
+  for (;;) {
     let x; let v;
     do {
       x = standardNormal();

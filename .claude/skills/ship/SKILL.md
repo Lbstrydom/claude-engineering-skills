@@ -659,9 +659,22 @@ Follow project convention:
 Types: `feat`, `fix`, `refactor`, `docs`, `style`, `test`, `chore`.
 Keep first line under 72 chars. Body explains WHY, not WHAT.
 
-**Write the message to a file** (never `-m`, never shell interpolation):
-use the Write tool → `.claude/tmp/ship-commit-msg-<epoch>.txt`. Do NOT
-include any `AI-*` lines — the helper is their only writer and rejects
+**Pass the message as a file or on stdin** (not `-m`, no shell interpolation) —
+two routes, both fine:
+
+- **A file** — Write tool → `.claude/tmp/ship-commit-msg-<epoch>.txt`, then
+  `--message-file <that path>`. Delete it once the commit lands.
+- **Stdin** — `--message-file -` reads the message from stdin, so a heredoc
+  works and leaves nothing behind. Use `-`, not `/dev/stdin`: Git-Bash resolves
+  the latter to `/proc/self/fd/0`, which is not a regular file, so it looked to
+  the helper like a path that simply was not there (upstream `575256de`).
+
+Prefer stdin for a one-shot message. The file route is what filled
+`.claude/tmp` with 658 files / 39MB by 2026-08-10, nearly all of them spent
+commit messages nobody deleted — the directory is gitignored, so nothing ever
+prompted anyone to notice.
+
+Do NOT include any `AI-*` lines — the helper is their only writer and rejects
 them (`reserved-trailer`).
 
 Decide the provenance values (full convention: `docs/reference/commit-provenance.md`):

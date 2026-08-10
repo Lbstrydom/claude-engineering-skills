@@ -377,4 +377,93 @@ describe('ship-commit CLI — E1 audited-target identity', () => {
     assert.equal(r.status, 0, r.stderr);
     assert.match(git(['log', '-1', '--format=%B']), /AI-Gate: waived/);
   });
+
+// ── `--message-file -` reads the commit message from stdin ──────────────────
+//
+// Upstream 575256de asked for this via `/dev/stdin`, which cannot work: on
+// Git-Bash it resolves to `/proc/self/fd/0`, which is not a regular file, so
+// the existence check reported it as a merely-missing path. `-` needs no
+// filesystem at all. It fails at the most expensive moment too — after tests
+// have run and the tree is staged — which is why a papercut here is worth more
+// than its severity suggests.
+//
+// The other reason: `.claude/tmp` had accumulated 658 files (39MB) when this
+// landed, largely one-shot commit messages that only existed because a file was
+// the only way in.
+describe('--message-file - (stdin)', () => {
+  // runCli cannot pipe stdin, so these spawn directly with the same hermetic env.
+  const runWithStdin = (args, input) => spawnSync(
+    process.execPath, [CLI, ...args],
+    {
+      encoding: 'utf-8', cwd: repo, input,
+      env: { ...gitFixtureEnv(), AUDIT_DB_URL: '', HOME: repo, USERPROFILE: repo },
+    },
+  );
+
+  it('commits a heredoc-style message piped on stdin', () => {
+    fs.writeFileSync(path.join(repo, 'README.md'), 'changed\n');
+    git(['add', 'README.md']);
+    const before = commitCount();
+    const r = runWithStdin(
+      ['--message-file', '-', '--skill', 'ship', '--models', 'claude', '--gate', 'not-run'],
+      'feat: piped subject\n\nbody line\n');
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(commitCount(), before + 1, 'the commit must actually land');
+    const body = git(['log', '-1', '--format=%B']);
+    assert.match(body, /feat: piped subject/);
+    assert.match(body, /body line/);
+  });
+
+  it('still writes the AI-* provenance trailers', () => {
+    // The whole reason the helper exists rather than `git commit -F -`. A stdin
+    // path that skipped the trailers would silently defeat the thing it is for.
+    fs.writeFileSync(path.join(repo, 'README.md'), 'changed\n');
+    git(['add', 'README.md']);
+    const r = runWithStdin(
+      ['--message-file', '-', '--skill', 'ship', '--models', 'claude,gpt', '--gate', 'not-run'],
+      'chore: trailers please\n');
+    assert.equal(r.status, 0, r.stderr);
+    const body = git(['log', '-1', '--format=%B']);
+    assert.match(body, /AI-Skill: ship/);
+    assert.match(body, /AI-Models: claude,gpt/);
+    assert.match(body, /AI-Gate: not-run/);
+  });
+
+  it('empty stdin is an input error, not a blank commit and not a hang', () => {
+    fs.writeFileSync(path.join(repo, 'README.md'), 'changed\n');
+    git(['add', 'README.md']);
+    const before = commitCount();
+    const r = runWithStdin(
+      ['--message-file', '-', '--skill', 'ship', '--models', 'claude', '--gate', 'not-run'], '');
+    assert.equal(r.status, 2, 'an empty message is agent-correctable input, so exit 2');
+    assert.match(r.stderr, /AGENT FIX/);
+    assert.match(r.stderr, /stdin/, 'the error must name stdin, not a path the caller never gave');
+    assert.equal(commitCount(), before, 'nothing may be committed');
+  });
+
+  it('whitespace-only stdin is rejected the same way', () => {
+    fs.writeFileSync(path.join(repo, 'README.md'), 'changed\n');
+    git(['add', 'README.md']);
+    const r = runWithStdin(
+      ['--message-file', '-', '--skill', 'ship', '--models', 'claude', '--gate', 'not-run'], '   \n\n  \n');
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /AGENT FIX/);
+  });
+
+  it('a literal path is unaffected — `-` is a sentinel, not a new parse mode', () => {
+    // Regression guard for the change itself: the file path is the common case
+    // and every other test here depends on it still working.
+    fs.writeFileSync(path.join(repo, 'README.md'), 'changed\n');
+    git(['add', 'README.md']);
+    const mf = path.join(repo, 'msg.txt');
+    fs.writeFileSync(mf, 'docs: from a real file\n');
+    const before = commitCount();
+    const r = runWithStdin(
+      ['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'not-run'], '');
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(commitCount(), before + 1);
+    assert.match(git(['log', '-1', '--format=%B']), /docs: from a real file/);
+  });
+});
+
 });

@@ -13,6 +13,10 @@
  *     --models <csv> --gate passed|waived|not-run [--no-run-id] \
  *     [--path <repo-relative-path> ...]
  *
+ * `--message-file -` reads the message from stdin, so a heredoc works and no
+ * temp file is left behind. NOT `/dev/stdin`: Git-Bash resolves it to
+ * `/proc/self/fd/0`, which is not a regular file and fails the existence check.
+ *
  * `--path` (repeatable) scopes the commit to exactly those paths — git's
  * `--only` semantics: their WORKTREE contents are committed and every other
  * index entry is left alone. Use it when a second agent/session shares this
@@ -136,6 +140,35 @@ async function main() {
   const mf = opts.messageFile;
   if (!mf) {
     inputErrors.push(messageFileError('missing', String(mf)));
+  } else if (mf === '-') {
+    // `-` reads the message from stdin, so a heredoc satisfies the skill's
+    // "write it to a file, never -m" rule without leaving a file behind.
+    // Upstream 575256de asked for this via `/dev/stdin`, which cannot work on
+    // the containment path below: Git-Bash resolves it to `/proc/self/fd/0`,
+    // which is not a regular file, so `existsSync` is false and it reported as
+    // a merely-missing path. `-` is the portable spelling and needs no
+    // filesystem at all.
+    //
+    // It also removes the reason temp files accumulate: `.claude/tmp` held 658
+    // of them (39MB) when this landed, largely one-shot commit messages.
+    //
+    // No safety check, and that is not a gap: `checkMessageFileSafety` exists
+    // to stop a path argument being pointed at a file the caller never intended
+    // to read (a key, something outside the repo). Piped bytes were already in
+    // the caller's hands — there is no path to traverse and no new egress.
+    try {
+      messageText = fs.readFileSync(0, 'utf-8');
+    } catch (e) {
+      err(`ship-commit: could not read the commit message from stdin: ${e.code}`);
+      process.exit(1);
+    }
+    if (messageText.trim() === '') {
+      // Same disposition as an empty file, including when nothing was piped at
+      // all — an empty commit message is the failure either way, and saying
+      // "empty" beats a hang or a blank commit.
+      inputErrors.push(messageFileError('empty', 'stdin'));
+      messageText = null;
+    }
   } else {
     const abs = path.isAbsolute(mf) ? mf : path.resolve(repoRoot, mf);
     if (!fs.existsSync(abs)) {
