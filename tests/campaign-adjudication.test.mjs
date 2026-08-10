@@ -27,7 +27,7 @@ import {
 import {
   centredWindow, citedLineOf, resolveCitedSources, clusterSnapshotFindings,
   normaliseVerdict, routesToHumanQueue, ADJUDICATION_TOOL, AdjudicationVerdictSchema,
-  classifyLogEntry,
+  classifyLogEntry, detailAnchors, anchorLine,
 } from '../scripts/campaign.mjs';
 import { parseCampaignConfig } from '../scripts/lib/campaign/config.mjs';
 
@@ -86,6 +86,25 @@ describe('redaction leak canary (real campaign fixture, not a synthetic row)', (
     assert.ok(text.includes('[MODEL-A]') || text.includes('[ARM]'), 'the redactor must actually have fired');
   });
 
+  it('the SECTION is redacted too — it is not always a file path', () => {
+    // It looks like a path, so an earlier version passed it through. But
+    // recordFindings stores `_primaryFile || section`, so raw model-authored
+    // prose lands in the column whenever the resolved path is absent. Measured
+    // on the live store: 43 rows already carry a provider term there. These two
+    // strings are real values from that query.
+    for (const real of [
+      '§4 phase 5; §6 “the gemini census must discover, not enumerate”',
+      'Audit transcript (rounds: [], claude_resolutions[0]) — consolidated gate',
+    ]) {
+      const row = buildBlindRow({ worksheetRowId: 'w1', primaryFile: real, detail: 'x', severity: 'HIGH', citedSources: [] }, redact);
+      assert.ok(!/gemini|claude/i.test(row.section), `section leaked a provider term: ${row.section}`);
+    }
+    // A genuine path still survives intact — redaction must not destroy the
+    // location the reviewer needs.
+    const pathRow = buildBlindRow({ worksheetRowId: 'w1', primaryFile: 'scripts/lib/store/campaign.mjs', detail: 'x', severity: 'HIGH', citedSources: [] }, redact);
+    assert.equal(pathRow.section, 'scripts/lib/store/campaign.mjs');
+  });
+
   it('NEGATIVE CONTROL: the same row fails the canary when the redactor is bypassed', () => {
     // Without this the canary could pass vacuously — e.g. if buildBlindRow ever
     // stopped emitting `detail` at all.
@@ -99,6 +118,59 @@ describe('redaction leak canary (real campaign fixture, not a synthetic row)', (
     const a = redact('claude-opus wrote this');
     const b = redact('moonshotai/kimi-k2-thinking wrote this');
     assert.equal(a, b, 'two different models must render identically');
+  });
+
+  it('a SHORT arm id is redacted on a token boundary, not as a bare substring', () => {
+    // The arm-id pattern permits a single character. As a plain substring that
+    // would rewrite every letter `a` in the finding — which does not make the
+    // row blind, it makes it unreadable, and an adjudicator that cannot read
+    // the claim cannot verify it.
+    const short = buildModelRedactor({ armIds: ['a'], armModels: [] });
+    assert.equal(short('a caching layer already allocates'), '[ARM] caching layer already [MODEL-A]llocates'.replace('[MODEL-A]llocates', 'allocates'),
+      'ordinary words containing the letter must survive');
+    assert.match(short('arm a failed'), /\[ARM\]/, 'the standalone arm id is still redacted');
+    assert.ok(!short('a caching layer already allocates').includes('[ARM] c[ARM]ching'), 'no intra-word rewriting');
+  });
+
+  it('EVERY arm id is token-boundaried, whatever its length', () => {
+    // The split is by KIND, not length. An arm id is a discrete label that
+    // appears as a whole word; a three-character one has no more business
+    // rewriting the inside of a word than a one-character one does.
+    const r = buildModelRedactor({ armIds: ['abc'], armModels: [] });
+    assert.equal(r('the abcdef helper'), 'the abcdef helper', 'a 3-char arm id must not match mid-word');
+    assert.match(r('arm abc failed'), /\[ARM\]/, 'but still redacts standing alone');
+  });
+
+  it('a long model id embedded in a longer token still redacts', () => {
+    const r = buildModelRedactor({ armIds: [], armModels: ['claude-opus'] });
+    assert.ok(!r('running claude-opus-4-8-preview here').includes('claude-opus'));
+  });
+
+  it('a SHORT arm MODEL is redacted, not dropped for being short', () => {
+    // The length floor is a readability heuristic for the ambient catalogue. It
+    // must never decide whether THIS campaign's own arms are blind — and it did:
+    // a two-character model id (which the schema permits) fell through the
+    // `>= MIN_REDACTABLE_TERM` filter and stayed visible in the worksheet.
+    const r = buildModelRedactor({ armIds: [], armModels: ['g5'] });
+    assert.ok(!r('the g5 model found it').includes(' g5 '), 'a short arm model leaked');
+    assert.match(r('the g5 model found it'), /\[MODEL-A\]/);
+    assert.equal(r('a g5x identifier'), 'a g5x identifier', 'and it is boundary-guarded, not shredding longer tokens');
+  });
+
+  it('a provider NAME the resolver knows is redacted, not just its model ids', () => {
+    // `flattenPool` walks values only, so the pool KEYS — google, openai,
+    // anthropic — were absent from the term set: "gemini" redacted while
+    // "Google's model" passed through. Half a vocabulary reads as a whole one.
+    const r = buildModelRedactor({ armIds: ['opus'], armModels: ['claude-opus'] });
+    // `z-ai` is deliberate: it is a vendor namespace in OSS_PRICING that the
+    // hardcoded PROVIDER_TERMS list does NOT contain, so it is covered only by
+    // deriving vendors from the pricing table. Asserting on `moonshotai` here
+    // would pass whether or not that derivation exists — a vacuous test of a
+    // real mechanism.
+    for (const vendor of ['Google', 'google', 'z-ai']) {
+      assert.ok(!r(`built by ${vendor} originally`).includes(vendor), `leaked vendor "${vendor}"`);
+    }
+    assert.match(r('the Gemini family'), /\[MODEL-A\]/, 'and the previously-covered terms still redact');
   });
 
   it('citedSources are NEVER redacted — repo source at a fixed sha carries no arm signal', () => {
@@ -153,7 +225,12 @@ describe('calibration sample', () => {
     assert.equal(isCalibrationSelected(id, 'c', KEY, 0.0), false, 'rate 0 selects nothing');
   });
 
-  it('tops up to the per-arm minimum, and the top-up only ever ADDS', () => {
+  // NOTE the name: it asserts the per-arm MINIMUM is reached, nothing about
+  // monotonicity. An earlier name ("the top-up only ever ADDS") claimed the
+  // property the test below proves FALSE of this function — a test whose name
+  // outran its assertions, which is the false-green shape this suite exists to
+  // avoid. Monotonicity is a store property; see the live half.
+  it('tops up to the per-arm minimum even when the filter selects nothing', () => {
     const assigned = assignCalibrationSample(rows, { campaignId: 'c', key: KEY, rate: 0.0 });
     for (const armId of ['opus', 'kimi']) {
       const n = rows.filter((r) => r.armId === armId && assigned.get(r.worksheetRowId)).length;
@@ -165,6 +242,30 @@ describe('calibration sample', () => {
         assert.equal(atRate.get(r.worksheetRowId), true);
       }
     }
+  });
+
+  it('the TOP-UP is population-dependent, and pretending otherwise is the trap', () => {
+    // Pinned as a limitation, not a bug: an exact per-arm minimum is a RANK over
+    // the current population, so a lower-scoring arrival displaces a previously
+    // topped-up row. No implementation of "exactly 5 lowest" can be
+    // population-independent. This test exists so the incompatibility stays
+    // visible — the plan asserted both properties of this function, and only the
+    // filter half is true here.
+    const at8 = assignCalibrationSample(rows.slice(0, 8), { campaignId: 'c', key: KEY, rate: 0.2 });
+    const at12 = assignCalibrationSample(rows.slice(0, 12), { campaignId: 'c', key: KEY, rate: 0.2 });
+    const dropped = [...at8].filter(([id, was]) => was && at12.get(id) !== true);
+    assert.ok(dropped.length > 0,
+      'if this ever passes with 0 drops, the top-up changed shape — re-derive which layer owns monotonicity');
+    // The property that protects human work is enforced by the STORE
+    // (`calibration_assigned OR EXCLUDED.calibration_assigned`), asserted in the
+    // live half: "re-running the worksheet ... never lowers a calibration
+    // assignment". Placed there because that is where it actually holds.
+  });
+
+  it('is deterministic given a population — two computations never disagree', () => {
+    const a = assignCalibrationSample(rows, { campaignId: 'c', key: KEY, rate: 0.2 });
+    const b = assignCalibrationSample([...rows].reverse(), { campaignId: 'c', key: KEY, rate: 0.2 });
+    for (const [id, v] of a) assert.equal(b.get(id), v, `row ${id} depended on input ORDER`);
   });
 
   it('an arm with fewer rows than the minimum has ALL of them assigned', () => {
@@ -198,6 +299,106 @@ describe('cited sources', () => {
     assert.equal(win.startLine, 680);
     assert.match(win.text, /^line680\n/);
     assert.equal(win.truncated, true);
+  });
+
+  it('a SINGLE line longer than the whole budget is CUT — the bound is a bound', () => {
+    // The first version kept an oversized first line whole (`&& kept.length > 0`
+    // on the break), so one minified line bypassed the ceiling entirely:
+    // measured at 500,000 characters through a 24,000 budget. A limit with an
+    // exception for the common bad case is not a limit.
+    const one = 'x'.repeat(500000);
+    const win = centredWindow(one, 1, 240, 24000);
+    // `<= 24000` exactly, with no tolerance. An earlier version of this
+    // assertion allowed `+ 120` to accommodate the truncation marker — a test
+    // written around the bug rather than against it. The marker is paid for out
+    // of the budget, so the ceiling holds for the WHOLE returned string.
+    assert.ok(win.text.length <= 24000, `single line escaped the budget at ${win.text.length} chars`);
+    assert.equal(win.truncated, true);
+    assert.match(win.text, /truncated: single line exceeds/, 'and it says so, rather than silently losing the tail');
+
+    // The ceiling holds at EVERY budget, including ones smaller than the
+    // truncation marker itself — where reserving room for the marker still
+    // overflows, because `room` clamps to 0 and the marker is appended anyway.
+    // An exported function has to survive the degenerate arguments it is handed.
+    for (const budget of [80, 40, 10, 1]) {
+      const win2 = centredWindow(one, 1, 240, budget);
+      assert.ok(win2.text.length <= budget, `budget ${budget} produced ${win2.text.length} chars`);
+    }
+
+    // A budget that merely LOOKS numeric must not disable the bound. `NaN`
+    // defeats every comparison silently (`len <= NaN` is false), so an
+    // unvalidated parameter is a bound a caller can switch off by accident.
+    for (const bogus of [NaN, Infinity, -1, 0, undefined, null]) {
+      const win3 = centredWindow(one, 1, 240, bogus);
+      assert.ok(win3.text.length <= 24000, `budget ${String(bogus)} produced ${win3.text.length} chars`);
+    }
+  });
+
+  it('the window is bounded by CHARACTERS as well as lines', () => {
+    // 240 lines of a minified file is megabytes, and every character is paid
+    // for on a spend-bearing call. A line budget is not a byte budget.
+    const wide = Array.from({ length: 50 }, () => 'x'.repeat(5000)).join('\n');
+    const win = centredWindow(wide, 1, 240, 24000);
+    assert.ok(win.text.length <= 24000, `excerpt was ${win.text.length} chars`);
+    assert.equal(win.truncated, true, 'a char-clamped excerpt is truncated, whatever the line count says');
+    assert.ok(win.endLine < 50, 'endLine must follow the clamp, not the pre-clamp window');
+  });
+
+  it('recovers an anchor from the finding prose — the cited line is absent on EVERY real row', () => {
+    // Measured 2026-08-10 against the live store: primary_file carries a :line
+    // in 0 of 3993 rows, because recordFindings stores `_primaryFile || section`
+    // and the resolved bare path wins. Without a prose anchor the centring
+    // mitigation is inert in production while its test passes on a synthetic
+    // section — a mitigation that reads as covered and never fires.
+    const anchors = detailAnchors('The `resolveNextAttempt` helper wedges when store.maxArmRunAttempt returns 0.');
+    assert.ok(anchors.includes('resolveNextAttempt'), `got ${JSON.stringify(anchors)}`);
+    assert.ok(anchors.includes('store.maxArmRunAttempt'));
+    assert.ok(!anchors.includes('The'), 'ordinary words are not anchors');
+
+    const content = `${'filler\n'.repeat(600)}function resolveNextAttempt() {}\n${'more\n'.repeat(600)}`;
+    const hit = anchorLine(content, anchors);
+    assert.equal(hit.anchor, 'resolveNextAttempt');
+    assert.equal(hit.line, 601);
+  });
+
+  it('an anchor is matched LITERALLY — model prose never becomes a regex', () => {
+    // The detail is model-authored and arrives unvalidated; compiling it would
+    // be an injection surface and a catastrophic-backtracking one.
+    assert.equal(anchorLine('a.b.c', ['a.b.c']).line, 1);
+    assert.equal(anchorLine('axbxc', ['a.b.c']), null, 'the dot must not match any character');
+  });
+
+  it('each cited path gets its OWN line — one path\'s line is never applied to another', () => {
+    const seen = [];
+    const res = resolveCitedSources({
+      section: 'scripts/a.mjs:800 and scripts/b.mjs:5',
+      detail: '', auditedSha: 'HEAD',
+      show: (_root, _sha, p) => { seen.push(p); return { ok: true, content: Array.from({ length: 1000 }, (_, i) => `${p}-line${i + 1}`).join('\n') }; },
+    });
+    const a = res.sources.find((s) => s.path === 'scripts/a.mjs');
+    const b = res.sources.find((s) => s.path === 'scripts/b.mjs');
+    assert.ok(a.startLine < 800 && a.endLine > 800, `a centred on ${a.startLine}-${a.endLine}, not on 800`);
+    assert.ok(b.startLine <= 5 && b.endLine > 5, `b centred on ${b.startLine}-${b.endLine}, not on 5`);
+    assert.equal(a.anchorKind, 'cited-line');
+    assert.equal(b.anchorKind, 'cited-line');
+  });
+
+  it('names WHICH anchor produced the window, so a head window is never ambiguous', () => {
+    const long = Array.from({ length: 1000 }, (_, i) => (i === 700 ? 'const targetSymbol = 1;' : `pad${i}`)).join('\n');
+    const viaDetail = resolveCitedSources({
+      section: 'scripts/a.mjs', detail: 'the `targetSymbol` constant is wrong', auditedSha: 'HEAD',
+      show: () => ({ ok: true, content: long }),
+    });
+    assert.equal(viaDetail.sources[0].anchorKind, 'detail-anchor');
+    assert.equal(viaDetail.sources[0].anchor, 'targetSymbol');
+    assert.ok(viaDetail.sources[0].startLine <= 701 && viaDetail.sources[0].endLine >= 701);
+
+    const viaHead = resolveCitedSources({
+      section: 'scripts/a.mjs', detail: 'nothing nameable here', auditedSha: 'HEAD',
+      show: () => ({ ok: true, content: long }),
+    });
+    assert.equal(viaHead.sources[0].anchorKind, 'head', '"found nothing" must be distinguishable from "small file"');
+    assert.equal(viaHead.sources[0].truncated, true, 'and a head window on a long file is honestly truncated');
   });
 
   it('a file that fits is not marked truncated', () => {
@@ -501,13 +702,52 @@ describe('campaign store against a live schema', { skip }, () => {
     ids.worksheetId = ws.id;
   });
 
-  it('re-running the worksheet is idempotent and never lowers a calibration assignment', async () => {
+  it('THE monotonicity guarantee lives here: the store ratchets, it never lowers', async () => {
+    // The pure `assignCalibrationSample` cannot be population-independent (an
+    // exact per-arm minimum is a rank — see its own test). What protects
+    // completed human review work is that the PERSISTED assignment only ever
+    // goes up, so a later recompute that would have dropped this row cannot
+    // discard the human's work.
     const before2 = await store.upsertWorksheetRows(ids.worksheetId, [
       { worksheetRowId: worksheetRowIdFor(ids.findingOpus, KEY), findingId: ids.findingOpus, calibrationAssigned: false },
     ]);
-    assert.equal(before2.inserted, 0);
+    assert.equal(before2.inserted, 0, 're-running inserts nothing');
     const row = await client.query('SELECT calibration_assigned FROM campaign_worksheet_rows WHERE worksheet_id = $1 AND finding_id = $2', [ids.worksheetId, ids.findingOpus]);
     assert.equal(row.rows[0].calibration_assigned, true, 'a row once assigned is never unassigned');
+
+    // NEGATIVE CONTROL: the column is genuinely writable in the other
+    // direction, so the assertion above is the OR clause holding, not a column
+    // that simply never changes.
+    await client.query('UPDATE campaign_worksheet_rows SET calibration_assigned = FALSE WHERE worksheet_id = $1 AND finding_id = $2', [ids.worksheetId, ids.findingOpus]);
+    const lowered = await client.query('SELECT calibration_assigned FROM campaign_worksheet_rows WHERE worksheet_id = $1 AND finding_id = $2', [ids.worksheetId, ids.findingOpus]);
+    assert.equal(lowered.rows[0].calibration_assigned, false, 'control: a direct UPDATE can lower it');
+    await store.upsertWorksheetRows(ids.worksheetId, [
+      { worksheetRowId: worksheetRowIdFor(ids.findingOpus, KEY), findingId: ids.findingOpus, calibrationAssigned: true },
+    ]);
+    const raised = await client.query('SELECT calibration_assigned FROM campaign_worksheet_rows WHERE worksheet_id = $1 AND finding_id = $2', [ids.worksheetId, ids.findingOpus]);
+    assert.equal(raised.rows[0].calibration_assigned, true, 'and the upsert raises it again');
+  });
+
+  it('a needs_triage verdict MUST carry method=unverifiable — the constraint, not the convention', async () => {
+    // The first draft of this CHECK permitted `method IS NULL`, making
+    // provenance-free rows legal while its own comment forbade them.
+    await assert.rejects(
+      client.query(
+        `INSERT INTO finding_adjudication_events (finding_id, adjudication_outcome, remediation_state, round, adjudicator_kind)
+         VALUES ($1, 'needs_triage', 'pending', 1, 'human')`, [ids.findingOpus],
+      ),
+      (err) => /needs_triage_is_unverifiable/.test(err.message),
+      'an undecided outcome with no method must be unrepresentable',
+    );
+    // Positive control: the same row WITH the method is accepted, so the
+    // rejection above is the predicate binding rather than the insert being
+    // impossible for some unrelated reason.
+    const ok = await client.query(
+      `INSERT INTO finding_adjudication_events (finding_id, adjudication_outcome, remediation_state, round, adjudicator_kind, method)
+       VALUES ($1, 'needs_triage', 'pending', 1, 'human', 'unverifiable') RETURNING id`, [ids.findingOpus],
+    );
+    assert.ok(ok.rows[0].id);
+    await client.query('DELETE FROM finding_adjudication_events WHERE id = $1', [ok.rows[0].id]);
   });
 
   it('self_family is computed store-side from the unblinded row', async () => {

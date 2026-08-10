@@ -1,0 +1,48 @@
+-- Tighten `fae_needs_triage_is_unverifiable_chk`: a `needs_triage` event MUST
+-- carry `method = 'unverifiable'`.
+--
+-- Plan: docs/plans/model-comparison-campaigns.md §2.5c.3.
+--
+-- The previous predicate read
+--   adjudication_outcome <> 'needs_triage' OR method IS NULL OR method = 'unverifiable'
+-- whose own comment claimed the row "must carry the method that says so" — and
+-- then admitted `method IS NULL`, which is exactly the row the comment forbids.
+-- A stated-but-unenforced constraint is the class this repo's gate-honesty work
+-- exists to catch, and it was caught by the audit rather than by review.
+--
+-- The `IS NULL` escape looked like defence for pre-campaign rows. It was not:
+-- `needs_triage` became a legal `adjudication_outcome` only in the migration
+-- immediately before this one, so no row predating campaigns can carry it, and
+-- the escape protected nothing while making provenance-free rows legal. Under
+-- it, "nobody recorded how this was decided" and "the instrument could not
+-- settle it" are the same row — and the second is the only one the
+-- verify-don't-judge protocol is willing to count.
+--
+-- A separate file rather than an edit to 20260811010000, for the same reason
+-- that one was separate from 20260811000000: it is applied and ledgered, and
+-- `setup-postgres --migrate` classifies a changed sha as tampering.
+--
+-- Safe to apply: this narrows the accepted set, and the only writer of
+-- `needs_triage` (scripts/lib/store/campaign.mjs) has always set
+-- `method: 'unverifiable'` alongside it, so no existing row violates the
+-- tightened predicate. Verified by the live suite in
+-- tests/campaign-adjudication.test.mjs.
+--
+-- `IS NOT DISTINCT FROM`, NOT `=`, and this is the whole point of the file.
+-- The obvious spelling
+--   CHECK (adjudication_outcome <> 'needs_triage' OR method = 'unverifiable')
+-- does not reject the row it exists to reject. With `method` NULL the operands
+-- evaluate to `FALSE OR NULL`, which is NULL — and **a Postgres CHECK passes
+-- when its expression is NULL**, failing only on an explicit FALSE. So the
+-- "tightened" constraint would have admitted exactly the provenance-free row it
+-- was written to forbid, while reading as strict. Two rounds of review missed
+-- it; the live suite's negative control caught it on the first run against a
+-- real database, which is why that half of the suite exists.
+--
+-- `IS NOT DISTINCT FROM` is NULL-safe: it returns FALSE (never NULL) when one
+-- side is NULL, so the disjunction becomes `FALSE OR FALSE` and the constraint
+-- fires.
+
+ALTER TABLE finding_adjudication_events DROP CONSTRAINT IF EXISTS fae_needs_triage_is_unverifiable_chk;
+ALTER TABLE finding_adjudication_events ADD  CONSTRAINT fae_needs_triage_is_unverifiable_chk
+  CHECK (adjudication_outcome <> 'needs_triage' OR method IS NOT DISTINCT FROM 'unverifiable');

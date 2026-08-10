@@ -8859,9 +8859,9 @@
     },
     {
       "table_name": "campaign_arm_runs",
-      "constraint_name": "campaign_arm_runs_snapshot_row_id_fkey",
+      "constraint_name": "campaign_arm_runs_snapshot_in_cohort_fk",
       "constraint_type": "FOREIGN KEY",
-      "definition": "FOREIGN KEY (snapshot_row_id) REFERENCES campaign_snapshots(id) ON DELETE CASCADE"
+      "definition": "FOREIGN KEY (snapshot_row_id, cohort_id) REFERENCES campaign_snapshots(id, cohort_id) ON DELETE CASCADE"
     },
     {
       "table_name": "campaign_cluster_members",
@@ -8946,6 +8946,12 @@
       "constraint_name": "campaign_snapshots_cohort_id_snapshot_id_key",
       "constraint_type": "UNIQUE",
       "definition": "UNIQUE (cohort_id, snapshot_id)"
+    },
+    {
+      "table_name": "campaign_snapshots",
+      "constraint_name": "campaign_snapshots_id_cohort_key",
+      "constraint_type": "UNIQUE",
+      "definition": "UNIQUE (id, cohort_id)"
     },
     {
       "table_name": "campaign_snapshots",
@@ -9173,7 +9179,7 @@
       "table_name": "finding_adjudication_events",
       "constraint_name": "fae_needs_triage_is_unverifiable_chk",
       "constraint_type": "CHECK",
-      "definition": "CHECK (((adjudication_outcome <> 'needs_triage'::text) OR (method IS NULL) OR (method = 'unverifiable'::text)))"
+      "definition": "CHECK (((adjudication_outcome <> 'needs_triage'::text) OR (NOT (method IS DISTINCT FROM 'unverifiable'::text))))"
     },
     {
       "table_name": "finding_adjudication_events",
@@ -10391,6 +10397,11 @@
       "tablename": "campaign_snapshots",
       "indexname": "campaign_snapshots_cohort_id_snapshot_id_key",
       "indexdef": "CREATE UNIQUE INDEX campaign_snapshots_cohort_id_snapshot_id_key ON public.campaign_snapshots USING btree (cohort_id, snapshot_id)"
+    },
+    {
+      "tablename": "campaign_snapshots",
+      "indexname": "campaign_snapshots_id_cohort_key",
+      "indexdef": "CREATE UNIQUE INDEX campaign_snapshots_id_cohort_key ON public.campaign_snapshots USING btree (id, cohort_id)"
     },
     {
       "tablename": "campaign_snapshots",

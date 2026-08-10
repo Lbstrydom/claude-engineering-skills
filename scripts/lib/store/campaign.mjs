@@ -97,16 +97,64 @@ function escapeRegex(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
  */
 export function buildModelRedactor({ armIds = [], armModels = [], extraTerms = [] } = {}) {
   const modelTerms = new Set();
-  for (const id of [...flattenPool(STATIC_POOL), ...flattenPool(OSS_POOL), ...Object.keys(OSS_PRICING), ...armModels, ...extraTerms]) {
+  const catalogue = [
+    ...flattenPool(STATIC_POOL), ...flattenPool(OSS_POOL), ...Object.keys(OSS_PRICING),
+    // Pool KEYS are provider names the resolver genuinely knows (`google`,
+    // `openai`, `anthropic`) and `flattenPool` walks values only, so without
+    // this a finding saying "Google's model" passed through untouched while
+    // "gemini" was redacted — half a vocabulary reads as a whole one.
+    ...Object.keys(STATIC_POOL), ...Object.keys(OSS_POOL),
+    // A vendor namespace is a provider name: `moonshotai/kimi-k2` names its
+    // vendor in the id itself.
+    ...Object.keys(OSS_PRICING).map((k) => String(k).split('/')[0]),
+    ...extraTerms,
+  ];
+  for (const id of catalogue) {
     if (typeof id === 'string' && id.length >= MIN_REDACTABLE_TERM) modelTerms.add(id.toLowerCase());
   }
   for (const t of PROVIDER_TERMS) modelTerms.add(t);
-  // Arm ids are campaign-local labels and are the most direct leak of all.
+  // **Arm models are NEVER dropped for being short.** They went through the
+  // same `>= MIN_REDACTABLE_TERM` filter as the catalogue, so a two-character
+  // model id — which the config schema permits (`model: z.string().min(1)`) —
+  // was silently excluded from the term set and stayed visible in the
+  // worksheet. A length floor is a readability heuristic for the ambient
+  // catalogue; it must never decide whether THIS campaign's own arms are blind.
+  // Short ones join the boundary-guarded set below instead of vanishing.
   const armTerms = new Set(armIds.filter((a) => typeof a === 'string' && a.length > 0).map((a) => a.toLowerCase()));
+  for (const m of armModels) {
+    if (typeof m === 'string' && m.length > 0) modelTerms.add(m.toLowerCase());
+  }
 
   const all = [...modelTerms, ...armTerms].sort((a, b) => b.length - a.length);
   if (all.length === 0) return (text) => (text == null ? null : String(text));
-  const re = new RegExp(all.map(escapeRegex).join('|'), 'gi');
+  // **Every ARM ID is token-boundaried; every MODEL/PROVIDER term is a plain
+  // substring.** The split is by KIND, not by length, and that is the precise
+  // rule: an arm id is a discrete campaign-local label that appears as a whole
+  // word, so bounding it costs nothing and stops it rewriting the inside of
+  // ordinary words — a bare match on a one-character id `a` rewrites every
+  // letter `a` in the finding, which does not make the row blind, it makes it
+  // unreadable, and an adjudicator that cannot read the claim cannot verify it.
+  // A model id is the opposite: it must still redact when embedded in a longer
+  // token (`claude-opus-4-8-preview`), so it stays substring-matched.
+  //
+  // TWO independent reasons to bound a term, and the set is their UNION —
+  // getting this wrong in either direction was caught by a test:
+  //   - it is an ARM ID (a discrete campaign-local label, any length); and
+  //   - it is SHORT (under `MIN_REDACTABLE_TERM`), whoever owns it — a
+  //     two-character arm MODEL like `g5` shreds `g5x` exactly as a short arm
+  //     id shreds ordinary words, and short arm models are deliberately never
+  //     dropped for being short (see above), so they must be bounded instead.
+  // An earlier version split on LENGTH alone, which left every arm id of three
+  // or more characters matching mid-word for no reason — the length was
+  // standing in for the kind. Splitting on KIND alone then un-bounded the short
+  // models. Both conditions are load-bearing.
+  const needsBoundary = (t) => armTerms.has(t) || t.length < MIN_REDACTABLE_TERM;
+  const boundaried = all.filter(needsBoundary);
+  const plain = all.filter((t) => !needsBoundary(t));
+  const parts = [];
+  if (plain.length > 0) parts.push(plain.map(escapeRegex).join('|'));
+  if (boundaried.length > 0) parts.push(`(?<![a-z0-9-])(?:${boundaried.map(escapeRegex).join('|')})(?![a-z0-9-])`);
+  const re = new RegExp(parts.join('|'), 'gi');
   return (text) => {
     if (text == null) return null;
     return String(text).replace(re, (hit) => (armTerms.has(hit.toLowerCase()) ? '[ARM]' : '[MODEL-A]'));
@@ -126,7 +174,20 @@ export function buildBlindRow(src, redact) {
   return Object.freeze({
     worksheetRowId: src.worksheetRowId,
     category: redact(src.category ?? null),
-    section: src.primaryFile ?? null,
+    // `section` IS redacted, and the reasoning that said otherwise was wrong on
+    // the facts. It looks like a file path — repo source, identical whichever
+    // arm cited it, therefore no arm signal — but `recordFindings` stores
+    // `f._primaryFile || f.section`, so whenever the resolved path is absent the
+    // raw model-authored SECTION prose lands in the column. Measured against the
+    // live store 2026-08-10: 43 rows already carry a provider term there, e.g.
+    // "§4 phase 5; §6 'the gemini census must discover, not enumerate'" and
+    // "Audit transcript (rounds: [], claude_resolutions[0])". Every one of those
+    // would have reached the adjudicator naming a model.
+    //
+    // Redacting costs nothing that matters: citation resolution reads the
+    // UNREDACTED `primary_file` straight off the store row, never this field, so
+    // the paths that resolve sources are unaffected.
+    section: redact(src.primaryFile ?? null),
     detail: redact(detail),
     evidenceExcerpt: redact(src.evidenceExcerpt ?? null),
     severity: src.severity ?? null,
@@ -210,9 +271,26 @@ export const CALIBRATION_MIN_PER_ARM = 5;
  * top-up to `CALIBRATION_MIN_PER_ARM`, **stratified per arm** so a lopsided arm
  * cannot be under-sampled.
  *
- * The top-up only ever ADDS (HMAC-ascending over the unselected rows), which is
- * the property that protects completed human work: a row once assigned is never
- * unassigned.
+ * **Two stability properties live in two different places, and the plan asserted
+ * both of one.** The FILTER is a property of the row alone: `HMAC(row) < rate`
+ * does not mention `n`, so a row's filter membership never changes as the
+ * campaign grows — that is the churn fix, and it holds here.
+ *
+ * The TOP-UP cannot have that property, and no implementation of it can. An
+ * exact per-arm minimum is a rank over the current population: "the 5
+ * lowest-scoring rows" is a different set once a lower-scoring row arrives, so a
+ * previously topped-up row is displaced. Growing the population from 8 to 12
+ * demonstrably unassigns a row (asserted in `tests/campaign-adjudication.test.mjs`).
+ * Choosing an exact minimum and choosing population-independence is choosing two
+ * incompatible things.
+ *
+ * So the property that actually protects completed human review work —
+ * **a row once assigned is never unassigned** — is enforced one layer down, by
+ * `upsertWorksheetRows`'s `calibration_assigned OR EXCLUDED.calibration_assigned`.
+ * The assignment is PERSISTED, and the persisted value only ever ratchets up.
+ * This function is deterministic given a population; the store is what makes the
+ * campaign's assignment monotonic across the campaign's life. Both facts are
+ * tested, each where it holds.
  *
  * The frame is BOTH rulings — accepted and dismissed. Sampling only accepted
  * rows would never catch a false dismissal, which is exactly how an 86%
