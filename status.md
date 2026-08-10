@@ -62,6 +62,17 @@ deleted-and-cited, correctly.
 `npm run check` 10,951 pass / 0 fail / 24 skipped; `npm run context:check` OK
 with no advisory.
 
+**Consumer-side: `verified`.** `git -c core.longpaths=true clone --depth 3` of
+`95b1960c` into a scratch dir, `node_modules` junctioned from the main checkout.
+All three new docs present in `git ls-files`; AGENTS.md reads **75,468 chars as
+received**; `context:check` OK / no advisory, `docs:refs:gate` clean with 0
+net-new, `skills:check` green including the no-shadowing-tree assertion. The
+tracked-vs-ignored fault this catches is the one that actually threatened this
+change — the new docs were untracked long enough for the refs gate to call them
+`GONE`, and a clone is where that would have shipped. (A first attempt failed on
+Windows `MAX_PATH` under the deep scratchpad path; that is the clone location,
+not the repo, and `core.longpaths=true` settled it.)
+
 ## 2026-08-10 — a gate nobody could run, hiding a filter that never ran
 
 `df60c991`. A consumer reported `npm run context:check` broken repo-wide:
