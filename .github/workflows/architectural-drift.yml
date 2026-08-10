@@ -46,14 +46,25 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # NOT `|| true`. A swallowed refresh failure does not merely lose a log
+      # line — it lets every step below run against a STALE index, and a
+      # stale-data `green` reaches "Auto-close sticky issue if green" and
+      # closes a real drift issue. A failure that launders into a clean verdict
+      # is the capture-dishonesty class this repo exists to catch, and it was
+      # sitting in the job whose whole purpose is detecting drift.
+      #
+      # Failing here stops the job before the sweep, so there is no verdict, no
+      # artefact and no issue churn — the honest outcome for a run that could
+      # not establish its own inputs. A weekly job going red IS the signal.
       - name: Refresh architectural memory (full)
+        id: refresh
         if: steps.secrets-check.outputs.skip != 'true'
         env:
           AUDIT_DB_URL: ${{ secrets.AUDIT_DB_URL }}
           AUDIT_DB_SSL_MODE: no-verify
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: npm run arch:refresh:full || true
+        run: npm run arch:refresh:full
 
       - name: Run drift sweep
         if: steps.secrets-check.outputs.skip != 'true'
@@ -71,12 +82,22 @@ jobs:
           elif [ "$EXIT" = "1" ]; then echo "status=triggered" >> "$GITHUB_OUTPUT";
           else echo "status=error" >> "$GITHUB_OUTPUT"; fi
 
+      # `continue-on-error`, NOT `|| true`. Both tolerate a failure; only one
+      # SHOWS it. `|| true` reports success to Actions and the step renders
+      # green, so a prune that has been broken for months looks identical to
+      # one that ran. This surfaces as a failed-but-tolerated step.
+      #
+      # Tolerated because retention pruning cannot corrupt the verdict: it runs
+      # AFTER the sweep, and its failure means old rows linger — a housekeeping
+      # cost, not a wrong answer. That is the actual test for `|| true`, and
+      # the refresh above fails it while this passes.
       - name: Run retention prune
         if: steps.secrets-check.outputs.skip != 'true'
+        continue-on-error: true
         env:
           AUDIT_DB_URL: ${{ secrets.AUDIT_DB_URL }}
           AUDIT_DB_SSL_MODE: no-verify
-        run: npm run arch:prune || true
+        run: npm run arch:prune
 
       # Do NOT re-add a hashFiles() guard here: hashFiles resolves relative to
       # GITHUB_WORKSPACE and cannot see /tmp, so the predicate was ALWAYS empty
@@ -119,8 +140,16 @@ jobs:
               --body-file /tmp/issue-body.md
           fi
 
+      # The `steps.refresh.outcome` clause is belt-and-braces, and deliberately
+      # kept even though removing `|| true` above already prevents this step
+      # from being reached on a failed refresh (the job stops first). It is the
+      # guard that survives a future edit re-adding tolerance to the refresh:
+      # auto-closing is the only IRREVERSIBLE action in this workflow, so it is
+      # the one that must never fire on an index whose freshness is unproven.
+      # Closing a real drift issue on stale data is silent and unrecoverable;
+      # leaving one open costs a week.
       - name: Auto-close sticky issue if green
-        if: steps.drift.outputs.status == 'green'
+        if: steps.drift.outputs.status == 'green' && steps.refresh.outcome == 'success'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}

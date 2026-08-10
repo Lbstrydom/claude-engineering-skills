@@ -1,6 +1,45 @@
 # Project Status Log
 
-## 2026-08-10 (latest) — the coverage gate had measured nothing for 13 days
+## 2026-08-10 (latest) — a swallowed failure inside the drift detector
+
+`architectural-drift.yml` ran `npm run arch:refresh:full || true`. The harm was
+not the lost log line: a failed refresh let every step below run against a
+**stale index**, and a stale-data `green` reached "Auto-close sticky issue if
+green" — silently closing a real drift issue. A failure laundering into a clean
+verdict, sitting in the job whose entire purpose is detecting drift.
+
+Removed. A failed refresh now stops the job before the sweep, so there is no
+verdict, no artefact and no issue churn — the honest outcome for a run that
+could not establish its own inputs. A weekly job going red IS the signal.
+
+Two supporting changes, both about making tolerance **visible** rather than
+silent:
+
+- The retention prune keeps its tolerance but as `continue-on-error: true`, not
+  `|| true`. Both tolerate a failure; only one SHOWS it — `|| true` reports
+  success and the step renders green, so a prune broken for months looks
+  identical to one that ran. It stays tolerated because it runs AFTER the sweep
+  and cannot corrupt the verdict. That is the actual test for `|| true`, and the
+  refresh failed it while the prune passes.
+- Auto-close gained `steps.refresh.outcome == 'success'`. Redundant today (the
+  job already stops first) and kept deliberately: auto-closing is the only
+  IRREVERSIBLE action in the workflow, so it is the one that must survive a
+  future edit re-adding tolerance. Closing a real issue on stale data is silent
+  and unrecoverable; leaving one open costs a week.
+
+**Census before generalising**: 10 `|| true` across all workflows. The other
+nine are `gh label create … || true` — the correct idempotency idiom, since
+creating an existing label fails by design, and a genuine permission failure
+still surfaces unswallowed at the next `gh issue create --label`. So this was a
+**class of one**, not a systemic pattern, and no linter was built for it.
+
+**Not verified**: the failure path itself, which needs a real Actions run. It is
+not a guess — steps without `if: always()` or `continue-on-error` do not run
+after a failed step in the same job — but it is reasoning, not observation, and
+the first red run is what will confirm it.
+
+
+## 2026-08-10 — the coverage gate had measured nothing for 13 days
 
 `arch:coverage-gate` was reporting `UNKNOWN (stale_measurement)` and exiting 0.
 Not a bug — a **structural inability to be green in normal operation**, which is
