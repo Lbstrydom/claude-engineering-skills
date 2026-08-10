@@ -878,6 +878,34 @@ export function isFullRunFromFiles(files) {
   return files === null;
 }
 
+/**
+ * Choose the file list the coverage DENOMINATOR is computed from.
+ *
+ * PURE (the walk is injected) because this one decision is the whole fix, and
+ * it is invisible from the outside: both branches return a plausible array, so
+ * a wrong choice yields a real-looking ratio rather than an error.
+ *
+ * `restrictFiles` scopes SYMBOL EXTRACTION. Coverage asks a different question
+ * — "of the repo's eligible files, how many did the cruiser reach" — and the
+ * cruiser walks the whole tree on every run. Measuring a whole-repo numerator
+ * against a changed-files denominator would be nonsense, which is why coverage
+ * used to be suppressed on incremental runs entirely. Suppression was the safe
+ * call; it also meant the gate read `unknown` for 13 days at a time. Walking
+ * the universe independently is the honest one.
+ *
+ * @param {string} repoRoot
+ * @param {string[]|null} restrictFiles - null = full run
+ * @param {string[]} extractionFiles - the already-enumerated extraction scope
+ * @param {(root: string, restrict: string[]|null) => string[]} enumerate
+ * @returns {string[]} the coverage universe
+ */
+export function coverageUniverse(repoRoot, restrictFiles, extractionFiles, enumerate) {
+  // A full run already enumerated the whole repo — walking twice would be
+  // identical work for an identical answer.
+  if (isFullRunFromFiles(restrictFiles)) return extractionFiles;
+  return enumerate(repoRoot, null);
+}
+
 export function enumerateFiles(repoRoot, restrictFiles) {
   // b021576b (origin/main) / Theme 3 (this branch) — the same fix landed
   // independently on both sides: `null`/`undefined` means "no restriction,
@@ -915,12 +943,27 @@ async function main() {
   }
   emitProgress(`scanning ${files.length} files (mode=${args.mode})`);
   const stats = extractSymbols(files, repoRoot, { includeDelegates: args.includeDelegates });
-  // Coverage is a FULL-RUN measurement (plan §2.1.3 row 4). On an incremental
-  // run `files` is the caller's restricted list, not the repo's universe, so
-  // measuring against it would produce a real-looking ratio computed from the
-  // wrong denominator. Pass null and let refresh.mjs copy the prior row
-  // forward as stale instead.
-  const isFullRun = isFullRunFromFiles(args.files);
+  // ── Coverage denominator: its OWN whole-repo walk, not `files` ────────────
+  //
+  // `files` answers "which files am I re-extracting symbols for" — restricted
+  // on an incremental run. Coverage asks a DIFFERENT question: "of the repo's
+  // eligible files, how many did the cruiser reach". One variable was serving
+  // both, and that conflation is why coverage was suppressed on every
+  // incremental run and the gate read `unknown` for 13 days straight
+  // (measured 2026-08-09: last real measurement 2026-07-27).
+  //
+  // The suppression was the RIGHT call for the code as it stood — measuring a
+  // whole-repo numerator against a changed-files denominator would have
+  // produced a real-looking ratio from the wrong universe. But the numerator
+  // was never the problem: `extractGraphAndViolations` cruises `targets` (the
+  // source dirs) on EVERY run, incremental included. Only the denominator was
+  // missing, so the fix is to compute it independently rather than to
+  // withhold the measurement.
+  //
+  // Cost: one unrestricted walk + a statSync per file, against a
+  // dependency-cruise of the same tree that has already run. The walk is the
+  // cheap half of a measurement that was being thrown away.
+  const universeFiles = coverageUniverse(repoRoot, args.files, files, enumerateFiles);
   // §2.1.1's third clause: a file this pipeline refuses to read must not count
   // against the denominator. An unreadable file is excluded for the same
   // reason — it is not a coverage failure, and failing closed here would
@@ -940,7 +983,10 @@ async function main() {
       return true;
     }
   };
-  const eligible = isFullRun ? eligibleFiles(files, { repoRoot, isTooLarge }) : null;
+  // Always measurable now: the denominator is the repo's eligible universe on
+  // both run modes, so the ratio is commensurable with the whole-repo cruise
+  // regardless of how many files were re-extracted.
+  const eligible = eligibleFiles(universeFiles, { repoRoot, isTooLarge });
   if (statFailures > 0) {
     emitProgress(`WARNING: ${statFailures} file(s) excluded from the coverage `
       + `denominator because their size could not be read — the reported ratio `

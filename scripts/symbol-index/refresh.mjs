@@ -99,7 +99,16 @@ function logOk(s) { process.stderr.write(`  [refresh] ${s}\n`); }
  * @param {{mode: string, extractionTimedOut: boolean, coverageConfig: object, coverageLine: object|null, refreshId: string}} args
  */
 async function persistExtractionCoverage({ mode, extractionTimedOut, coverageConfig, coverageLine, refreshId }) {
-  if (mode !== 'full') return;
+  // Both run modes now, deliberately. Coverage used to be full-run-only
+  // because the DENOMINATOR was taken from the extraction scope, which is
+  // restricted on an incremental run. `extract.mjs` now walks the eligible
+  // universe independently of that scope, so an incremental measurement is
+  // commensurable with a full one — the cruise numerator was already
+  // whole-repo on every run.
+  //
+  // This is the half that makes the gate live: full refreshes happen weekly at
+  // most, so gating on them alone left the verdict `unknown` for 13 days at a
+  // stretch, passing silently having measured nothing.
   const extraction = extractionTimedOut
     ? assessExtractionCoverage({
         outcome: 'timedOut', elapsedMs: coverageConfig.hardTimeoutMs,
@@ -107,9 +116,9 @@ async function persistExtractionCoverage({ mode, extractionTimedOut, coverageCon
     : (coverageLine?.extraction ?? null);
 
   if (!extraction) {
-    // A full run that produced no coverage line is itself a signal —
-    // silence here is what the whole feature exists to stop.
-    logOk('WARNING: full refresh produced no coverage line; the graph will read `unknown`');
+    // A run that produced no coverage line is itself a signal — silence here
+    // is what the whole feature exists to stop.
+    logOk(`WARNING: ${mode} refresh produced no coverage line; the graph will read \`unknown\``);
     return;
   }
 
@@ -520,7 +529,14 @@ async function main() {
           // the prior (often `verified`) record would launder a degraded run
           // into a clean-looking one — the exact capture-dishonesty this whole
           // fix exists to remove. Incremental only.
-          if (mode === 'incremental') {
+          //
+          // An incremental run that MEASURED its own coverage must not copy
+          // forward either: overwriting a fresh measurement with a stale one
+          // would move the verdict backwards to `unknown`, which is the very
+          // silence this change removes. Copy-forward is now the FALLBACK for
+          // an incremental run that produced no coverage line (e.g. the
+          // cruise failed), not the default.
+          if (mode === 'incremental' && !coverageLine?.extraction) {
             const cov = await copyForwardCoverage({
               fromRefreshId: prior.refreshId,
               toRefreshId: refreshId,

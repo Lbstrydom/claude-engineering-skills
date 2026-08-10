@@ -1,6 +1,68 @@
 # Project Status Log
 
-## 2026-08-09 (latest) — the tests passed; that turned out not to be the same as working
+## 2026-08-10 (latest) — the coverage gate had measured nothing for 13 days
+
+`arch:coverage-gate` was reporting `UNKNOWN (stale_measurement)` and exiting 0.
+Not a bug — a **structural inability to be green in normal operation**, which is
+the inverse of cried-wolf: a check that never fails and never succeeds.
+
+**The chain.** Coverage asks *of the repo’s eligible files, how many did the
+cruiser reach*. The **numerator** is whole-repo on every run — the
+dependency-cruise walks `targets` (the source dirs) regardless of mode. The
+**denominator** came from `files`, which on an incremental run is the CHANGED
+set. So `extract.mjs` set `eligible = isFullRun ? … : null` and emitted no
+coverage line at all; `refresh.mjs` copied the prior row forward as `stale`;
+`graphVerdict` returned `unknown`; `coverageGateExitCode` maps `unknown` to 0.
+
+The only producer of a fresh number is `arch:refresh:full`, whose sole
+scheduled caller is `architectural-drift.yml` (weekly) — **running `|| true`**,
+so a failure is swallowed, against this repo’s own local-first-CI policy.
+*Measured*: last real measurement **2026-07-27**, i.e. **13 days** of passing
+silently having read nothing.
+
+**Two hypotheses died on contact with the code before the right one.** I first
+assumed per-file coverage could compose across incremental runs; then that the
+denominator was cheaply available from `files`. Both wrong. And the existing
+suppression turned out to be **correct, not lazy** — a whole-repo numerator
+over a changed-files denominator is nonsense, so refusing to publish it was the
+safe call. It was also why the gate went dark.
+
+**The fix is a de-conflation, not a redesign.** One `files` variable served two
+questions. The denominator now gets its own unrestricted walk
+(`coverageUniverse`), independent of extraction scope; `refresh.mjs` persists
+coverage on both modes, and copy-forward becomes the FALLBACK for a run that
+produced no line rather than the default for every incremental run.
+
+**Result** — first real measurement in 13 days, and the gate is live on every
+push instead of once a week:
+
+```
+arch:coverage-gate: VERIFIED
+  extraction: 1144/1179 eligible files cruised
+  attribution: 1802/1803 attributable edges
+```
+
+Cost: **1731ms** for the coverage step (*measured*) — the cheap half of a
+measurement that was being discarded, next to a cruise of the same tree that
+had already run.
+
+The decision is a pure function because both branches return a plausible array:
+a wrong denominator yields a real-looking ratio, not an error, so it is
+invisible downstream. Negative-controlled — restoring the old gating turns
+exactly the three behavioural assertions red.
+
+**Also done this session**: architectural memory refreshed (141 symbols, 141
+embedded) — I had skipped `/ship` Step 0.5c across the day’s commits, which
+matters because the duplication wave caught me writing a private
+`assertKnownFlags` that already existed, precisely because arch-memory returned
+`review` for a helper that was there.
+
+**Still open, tracked**: debt `0fd6bf8f` (validatePlanPath repoRoot),
+`bb15049a` (no dedicated suite for `lib/ledger.mjs`), four mutation seams below
+goal, and the `|| true` in `architectural-drift.yml` — the fix makes the weekly
+job far less load-bearing but does not clean up that swallowed failure.
+
+## 2026-08-09 — the tests passed; that turned out not to be the same as working
 
 Added mutation testing (Stryker 9.6.1) after a durability property resisted
 every attempt to build a negative control for it. The instrument justified
