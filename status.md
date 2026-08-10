@@ -1,6 +1,81 @@
 # Project Status Log
 
-## 2026-08-10 (latest) — a pull-only updater, because the conditional step is the one everyone skips
+## 2026-08-10 (latest) — three consumer reports, and the attribution was wrong in all but one
+
+`90cf67c6`, `3b0b495f`, `ba3a5990`. Three upstream reports triaged and fixed in
+one sitting. The through-line is worth more than any of the fixes: **every
+report's conclusion was right and its stated mechanism was wrong**, in a
+different way each time — and one of the wrong ones was mine.
+
+`a0b58a34` (HIGH) is the exception, and it was excellent: five claims, all exact,
+including two the reporter inferred rather than read. The persona-consistency rig
+could only bind a collection when the body carried a named array, so an object
+map and a top-level array were both unbindable and both failed as a bare
+`continue`. A surface in the reporting consumer declared a per-row assertion that
+had never executed, for months, because a skipped binding and a passing one
+produce the same zero findings. Object maps now bind (with `keyField: "$key"`
+when the id IS the key), `jsonPath: "$"` addresses the root, and an unusable
+binding raises `collection-binding-unusable`.
+
+Two things that were not asked for and the fix needed. The warning is deduped for
+the **lifetime of the listener** — an unusable binding is a property of the
+manifest, so it is wrong on every matching response, and warning per response
+would have fixed a silent failure by making it a loud useless one. And
+`persona-consistency-run.mjs` attached the listener with **no opts at all**, so
+every warning above would have been detected perfectly and heard by nothing. That
+is the original bug wearing a different hat: a detector that never reaches the
+verdict, the same shape AGENTS.md records for the gate-honesty contract. Emitting
+was the easy half; wiring was the half that mattered.
+
+`--id` on the upstream triage verbs now takes a prefix like a git short sha. It
+demanded all 36 characters and answered a short one with a raw
+`invalid input syntax for type uuid` under code `EXCEPTION`. Two halves that need
+each other: the boundary rejects anything but ≥8 hex characters, which is what
+makes the store's `id::text LIKE $1 || '%'` safe — `%` and `_` are LIKE wildcards
+living in the **data**, so parameterisation does not neutralise them and a bare
+`--id %` would have matched every issue and resolved to whichever sorted first.
+And the store selects `LIMIT 2`: the second row is what makes ambiguity
+*detectable*, where `LIMIT 1` would transition an arbitrary issue and look like it
+worked.
+
+The third report was an eight-section specification arguing the store should be
+made vendor-neutral. It already was — one `AUDIT_DB_URL` through `pg`, any
+Postgres 13+, SSL modes covering managed poolers and plain local alike,
+`setup.mjs` carrying zero vendor strings, and the single Supabase branch being a
+correct narrow refusal of the transaction pooler scoped to `pooler.supabase.com`
+so a self-hosted Postgres on 6543 still works. Seven of eight requirements were
+already true, already done, or had no upstream subject; the reporter's own machine
+needed no change at all, Docker was simply stopped.
+
+What was real was one string, and it was worse than reported. The probe said
+`Supabase connection failed` for a plain local Postgres — and **pg's aggregate
+`ECONNREFUSED` carries an empty `message`**, verified against a dead endpoint
+rather than assumed, so `failed: ${err.message}` rendered as a vendor name
+followed by nothing whatsoever. No host, no port, no reason. That is why a stopped
+container was undiagnosable and why one string generated eight sections. It now
+names the database and the cause, reusing `dbIdentity` (banded `precedent` by
+architectural memory, and the only DSN renderer here that is credential-free *by
+construction* — three fields, never touches userinfo, so a password containing
+`@` or `:` cannot ride along).
+
+**And the one that was mine.** I reported wine-cellar-app's bundle verifier as
+missing and recorded the consumer as `unverified` in a shipped status entry. It
+was present the whole time, one directory down under `lib/`, and passes all 10
+gates. I had read `MODULE_NOT_FOUND` on my own wrong path as evidence about the
+consumer's tooling. A failure to *load* a module says the path is wrong; only an
+error from *inside* one that loaded says anything about the artifact. Corrected in
+the entry below, and `/ship` Step 6.8 now carries the runnable command rather than
+the bare name — the omission is what made the mistake reachable. It also closed a
+stale finding: gate 2C's disk→manifest orphan walk exists and passes, so that
+repo's 100-orphan report is resolved.
+
+Deliberately not built, against the specification: a Docker Compose local-store
+subsystem, a setup-wizard rewrite, a doctor command, and reason codes plumbed
+into return values — every caller gates on a boolean, so the structure would have
+had no consumer. The band-aid would have been a doc line; the over-built version
+was on offer in writing.
+
+## 2026-08-10 — a pull-only updater, because the conditional step is the one everyone skips
 
 A downstream fork/mirror of this bundle (deployment shape B in the consumer-
 adoption runbook) is now cloned by a team rather than one person, and asked for a
