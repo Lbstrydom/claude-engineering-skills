@@ -209,6 +209,7 @@ jobs:
         # Postgres.
         run: |
           node --test --test-concurrency=1 \
+            tests/campaign-adjudication.test.mjs \
             tests/db-schema-realization-live.test.mjs \
             tests/regression-spec-multi-finding-lock.test.mjs \
             tests/symbol-index-drift-justification.test.mjs

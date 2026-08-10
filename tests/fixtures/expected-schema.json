@@ -9147,6 +9147,12 @@
     },
     {
       "table_name": "finding_adjudication_events",
+      "constraint_name": "fae_adjudication_outcome_chk",
+      "constraint_type": "CHECK",
+      "definition": "CHECK ((adjudication_outcome = ANY (ARRAY['accepted'::text, 'dismissed'::text, 'severity_adjusted'::text, 'needs_triage'::text])))"
+    },
+    {
+      "table_name": "finding_adjudication_events",
       "constraint_name": "fae_adjudicator_kind_chk",
       "constraint_type": "CHECK",
       "definition": "CHECK (((adjudicator_kind IS NULL) OR (adjudicator_kind = ANY (ARRAY['agent'::text, 'human'::text]))))"
@@ -9165,15 +9171,15 @@
     },
     {
       "table_name": "finding_adjudication_events",
-      "constraint_name": "fae_override_names_target_chk",
+      "constraint_name": "fae_needs_triage_is_unverifiable_chk",
       "constraint_type": "CHECK",
-      "definition": "CHECK (((method IS DISTINCT FROM 'override'::text) OR (overrides_event_id IS NOT NULL)))"
+      "definition": "CHECK (((adjudication_outcome <> 'needs_triage'::text) OR (method IS NULL) OR (method = 'unverifiable'::text)))"
     },
     {
       "table_name": "finding_adjudication_events",
-      "constraint_name": "finding_adjudication_events_adjudication_outcome_check",
+      "constraint_name": "fae_override_names_target_chk",
       "constraint_type": "CHECK",
-      "definition": "CHECK ((adjudication_outcome = ANY (ARRAY['dismissed'::text, 'accepted'::text, 'severity_adjusted'::text])))"
+      "definition": "CHECK (((method IS DISTINCT FROM 'override'::text) OR (overrides_event_id IS NOT NULL)))"
     },
     {
       "table_name": "finding_adjudication_events",

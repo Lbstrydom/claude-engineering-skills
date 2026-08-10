@@ -1,0 +1,996 @@
+/**
+ * @fileoverview Campaign store seam — the relational spine, the BLIND worksheet,
+ * and the verdict/override writers.
+ *
+ * Plan: docs/plans/model-comparison-campaigns.md §2.5c (adjudication protocol),
+ * §2.5c-i (metric attribution), §7a (persistence model).
+ *
+ * Mirrors `store/upstream-issues.mjs`: cloud-off is a graceful `{ok:true,
+ * cloud:false}` no-op, every write is wrapped, and no SQL leaks into the CLI.
+ *
+ * **The blindness contract lives here, and it is a whitelist.** Omitting
+ * `source_model` from a projection is necessary and nowhere near sufficient:
+ * finding `detail` is model-authored prose that routinely names its own
+ * provider. So the worksheet row is CONSTRUCTED from a closed field list rather
+ * than derived by deleting keys from a wider row — a column added to
+ * `audit_findings` next year must not auto-leak into an adjudication worksheet —
+ * and every free-text field passes a redactor before it is rendered.
+ *
+ * @module scripts/lib/store/campaign
+ */
+
+import crypto from 'node:crypto';
+import { many, one, insertReturning, updateWhere, withTx } from '../db/query.mjs';
+import { isCloudEnabled } from './repo.mjs';
+import { STATIC_POOL, OSS_POOL } from '../model-resolver.mjs';
+import { OSS_PRICING } from '../model-pricing.mjs';
+
+// ── The blind DTO ───────────────────────────────────────────────────────────
+
+/**
+ * The CLOSED shape of one worksheet row. Anything not listed here does not
+ * reach the adjudicator, by construction rather than by review.
+ *
+ * `evidenceExcerpt` is present-but-usually-null and that is stated rather than
+ * hidden: `audit_findings` has no separate excerpt column — `detail_snapshot`
+ * (capped at 600 chars by `recordFindings`) is the only model prose the store
+ * retains. The field exists for callers that DO have an excerpt (an arm's raw
+ * `--out` JSON), and `detailTruncated` tells the reader the detail was capped,
+ * so a short detail is never mistaken for a complete one.
+ */
+export const BLIND_ROW_FIELDS = Object.freeze([
+  'worksheetRowId', 'category', 'section', 'detail', 'evidenceExcerpt',
+  'severity', 'citedSources', 'detailTruncated',
+]);
+
+/** The cap `recordFindings` applies to `detail_snapshot`. */
+const DETAIL_SNAPSHOT_CAP = 600;
+
+/** Provider names that carry arm signal. `meta` is deliberately absent — it
+ *  matches inside ordinary words ("metadata") and redacting it would corrupt
+ *  the prose the adjudicator has to read. */
+const PROVIDER_TERMS = Object.freeze([
+  'openai', 'anthropic', 'gemini', 'claude', 'openrouter', 'moonshotai',
+  'moonshot', 'deepseek', 'qwen', 'zhipu', 'mistral', 'llama', 'grok',
+  'kimi', 'opus', 'sonnet', 'haiku', 'gpt', 'glm',
+]);
+
+/** Shortest term the redactor will act on. A 1-2 char token matches inside
+ *  ordinary words, and over-redaction that destroys the evidence is not the
+ *  safe direction — it makes the adjudication unperformable rather than blind. */
+const MIN_REDACTABLE_TERM = 3;
+
+function flattenPool(pool) {
+  const out = [];
+  for (const v of Object.values(pool || {})) {
+    if (Array.isArray(v)) out.push(...v);
+    else if (v && typeof v === 'object') out.push(...flattenPool(v));
+    else if (typeof v === 'string') out.push(v);
+  }
+  return out;
+}
+
+function escapeRegex(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+/**
+ * Build the redaction pass applied to `detail` + `evidenceExcerpt`.
+ *
+ * Terms: every model id the resolver knows (`STATIC_POOL` ∪ `OSS_POOL` ∪
+ * `OSS_PRICING` keys) ∪ the campaign's own arm ids and arm models ∪ a provider
+ * vocabulary. Longest-first so a longer id is not left half-redacted by a
+ * shorter prefix.
+ *
+ * **One placeholder, not a per-model alias.** `[MODEL-A]` is a single literal
+ * for every model id: a stable per-model alias would let the adjudicator
+ * correlate rows and re-derive which arm spoke, restoring exactly the signal
+ * the redaction removes.
+ *
+ * **`citedSources` is deliberately NOT redacted.** It is repo source at a fixed
+ * sha, identical whichever arm cited it, so it carries no arm signal — and this
+ * repo's own source legitimately contains model ids (`model-resolver.mjs`'s
+ * `STATIC_POOL`), so redacting it would corrupt the evidence the adjudicator
+ * exists to read. Blindness is about which arm spoke, not which strings exist
+ * in the tree.
+ *
+ * @param {{armIds?: string[], armModels?: string[], extraTerms?: string[]}} [opts]
+ * @returns {(text: string|null|undefined) => string|null}
+ */
+export function buildModelRedactor({ armIds = [], armModels = [], extraTerms = [] } = {}) {
+  const modelTerms = new Set();
+  for (const id of [...flattenPool(STATIC_POOL), ...flattenPool(OSS_POOL), ...Object.keys(OSS_PRICING), ...armModels, ...extraTerms]) {
+    if (typeof id === 'string' && id.length >= MIN_REDACTABLE_TERM) modelTerms.add(id.toLowerCase());
+  }
+  for (const t of PROVIDER_TERMS) modelTerms.add(t);
+  // Arm ids are campaign-local labels and are the most direct leak of all.
+  const armTerms = new Set(armIds.filter((a) => typeof a === 'string' && a.length > 0).map((a) => a.toLowerCase()));
+
+  const all = [...modelTerms, ...armTerms].sort((a, b) => b.length - a.length);
+  if (all.length === 0) return (text) => (text == null ? null : String(text));
+  const re = new RegExp(all.map(escapeRegex).join('|'), 'gi');
+  return (text) => {
+    if (text == null) return null;
+    return String(text).replace(re, (hit) => (armTerms.has(hit.toLowerCase()) ? '[ARM]' : '[MODEL-A]'));
+  };
+}
+
+/**
+ * Construct one blind row BY WHITELIST from an unblinded finding row.
+ *
+ * @param {{worksheetRowId: string, category?: string, primaryFile?: string|null,
+ *   detail?: string|null, evidenceExcerpt?: string|null, severity?: string,
+ *   citedSources?: Array<object>}} src
+ * @param {(t: string|null|undefined) => string|null} redact
+ */
+export function buildBlindRow(src, redact) {
+  const detail = src.detail ?? '';
+  return Object.freeze({
+    worksheetRowId: src.worksheetRowId,
+    category: redact(src.category ?? null),
+    section: src.primaryFile ?? null,
+    detail: redact(detail),
+    evidenceExcerpt: redact(src.evidenceExcerpt ?? null),
+    severity: src.severity ?? null,
+    // Never redacted — see buildModelRedactor's docstring.
+    citedSources: Array.isArray(src.citedSources) ? src.citedSources : [],
+    detailTruncated: detail.length >= DETAIL_SNAPSHOT_CAP,
+  });
+}
+
+// ── Worksheet identity + the calibration sample ─────────────────────────────
+
+/**
+ * The env var NAME holding a campaign's HMAC key. `campaign_worksheets`
+ * persists only this string — an env-held secret must never land in a table
+ * that gets dumped, replicated, and read by every consumer of this DSN.
+ */
+export function hmacKeyRefFor(campaignKey) {
+  return `CAMPAIGN_HMAC_KEY_${String(campaignKey).toUpperCase().replace(/[^A-Z0-9]/g, '_')}`;
+}
+
+/**
+ * Read the campaign's HMAC key from the environment.
+ *
+ * **An absent key is a hard refusal, never a regenerated key.** A new key
+ * produces different `worksheetRowId`s, which would orphan every human
+ * disposition already recorded against the old ones — silently, since the new
+ * ids would look perfectly valid. Rotation is likewise unsupported and refused
+ * with an explanation rather than half-implemented: a rotated key re-randomises
+ * the calibration sample, and no current requirement justifies the migration
+ * machinery needed to do that safely.
+ */
+export function requireCampaignHmacKey(campaignKey, env = process.env) {
+  const ref = hmacKeyRefFor(campaignKey);
+  const key = env[ref];
+  if (!key) {
+    throw new Error(
+      `[campaign] ${ref} is not set. The worksheet HMAC key is per-campaign and lives in your gitignored .env. `
+      + 'Generate one ONCE with `node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"` and add it. '
+      + 'Refusing to mint a new key: a different key produces different worksheetRowIds and would orphan every human disposition already recorded.',
+    );
+  }
+  return key;
+}
+
+/** One-way mapping finding → worksheet row. There is no agent-reachable path
+ *  back: the agent returns the opaque id and the store maps it. */
+export function worksheetRowIdFor(findingId, key) {
+  return crypto.createHmac('sha256', key).update(String(findingId)).digest('hex').slice(0, 24);
+}
+
+/**
+ * Per-row calibration filter (§2.5c.5, Gemini/G6).
+ *
+ * A row is in the sample iff `HMAC(campaignId:worksheetRowId) / 2^32 < rate`.
+ * Deterministic, reproducible across machines, and — the property that matters —
+ * **stable as the campaign grows**, which a top-N sort is not: campaigns collect
+ * snapshots continuously, so `n` grows, and a row in the top 2 at `n=10` can
+ * fall out at `n=15`. That left only bad options — recompute and the assignment
+ * churns, overwriting human review work already done; freeze it and the stored
+ * boolean no longer means what the rule says it means. Evaluating each row
+ * against its own hash removes `n` from the decision entirely.
+ *
+ * Expected size is `rate × n` rather than exactly `ceil(rate × n)`. That is the
+ * correct trade: an exact count is worth nothing here, and stability is worth
+ * the campaign's human effort.
+ */
+export function calibrationScore(worksheetRowId, campaignId, key) {
+  const hex = crypto.createHmac('sha256', key).update(`${campaignId}:${worksheetRowId}`).digest('hex').slice(0, 8);
+  return parseInt(hex, 16) / 2 ** 32;
+}
+
+export function isCalibrationSelected(worksheetRowId, campaignId, key, rate) {
+  return calibrationScore(worksheetRowId, campaignId, key) < rate;
+}
+
+/** Minimum reviewed rows per arm, or all of them when the arm has fewer. */
+export const CALIBRATION_MIN_PER_ARM = 5;
+
+/**
+ * Assign the calibration sample: the per-row filter, then a deterministic
+ * top-up to `CALIBRATION_MIN_PER_ARM`, **stratified per arm** so a lopsided arm
+ * cannot be under-sampled.
+ *
+ * The top-up only ever ADDS (HMAC-ascending over the unselected rows), which is
+ * the property that protects completed human work: a row once assigned is never
+ * unassigned.
+ *
+ * The frame is BOTH rulings — accepted and dismissed. Sampling only accepted
+ * rows would never catch a false dismissal, which is exactly how an 86%
+ * dismissal rate could hide a real finding.
+ *
+ * @param {Array<{worksheetRowId: string, armId: string}>} rows
+ * @param {{campaignId: string, key: string, rate: number, minPerArm?: number}} opts
+ * @returns {Map<string, boolean>} worksheetRowId → assigned
+ */
+export function assignCalibrationSample(rows, { campaignId, key, rate, minPerArm = CALIBRATION_MIN_PER_ARM }) {
+  const assigned = new Map();
+  const byArm = new Map();
+  for (const row of rows || []) {
+    const score = calibrationScore(row.worksheetRowId, campaignId, key);
+    const selected = score < rate;
+    assigned.set(row.worksheetRowId, selected);
+    if (!byArm.has(row.armId)) byArm.set(row.armId, []);
+    byArm.get(row.armId).push({ ...row, score, selected });
+  }
+  for (const armRows of byArm.values()) {
+    const target = Math.min(minPerArm, armRows.length);
+    let have = armRows.filter((r) => r.selected).length;
+    if (have >= target) continue;
+    const spare = armRows.filter((r) => !r.selected).sort((a, b) => (a.score - b.score) || (a.worksheetRowId < b.worksheetRowId ? -1 : 1));
+    for (const r of spare) {
+      if (have >= target) break;
+      assigned.set(r.worksheetRowId, true);
+      have += 1;
+    }
+  }
+  return assigned;
+}
+
+/**
+ * `self_family` — computed at write time from the UNBLINDED row, by the store,
+ * never by the blinded agent (which by construction cannot know).
+ *
+ * Family, not exact id: an Opus adjudicator judging a Sonnet arm is the same
+ * bias question as one judging another Opus. Bias made visible, not denied.
+ */
+export function isSelfFamily(adjudicatorModel, armModel) {
+  const fam = (m) => {
+    const s = String(m ?? '').toLowerCase();
+    if (s.includes('/')) return s.split('/')[0];
+    const head = s.split(/[-.]/)[0];
+    return head || null;
+  };
+  const a = fam(adjudicatorModel);
+  const b = fam(armModel);
+  if (!a || !b) return null;   // unknown, never a confident `false`
+  return a === b;
+}
+
+// ── The spine: campaign → cohort → snapshot → arm-run ───────────────────────
+
+/** Idempotent on `(repo_id, campaign_key)`. `config_digest` is refreshed so the
+ *  row witnesses what was declared at the LATEST collect; historical digests
+ *  live on the cohorts, which is where evidence hangs. */
+export async function ensureCampaign({ repoId, campaignKey, configDigest }) {
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, id: null };
+  try {
+    return await withTx(async () => {
+      const hit = await one(
+        `INSERT INTO campaigns (repo_id, campaign_key, config_digest)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (repo_id, campaign_key) DO UPDATE SET config_digest = EXCLUDED.config_digest
+         RETURNING id`,
+        [repoId, campaignKey, configDigest],
+      );
+      return { ok: true, cloud: true, id: hit?.id ?? null };
+    });
+  } catch (err) {
+    process.stderr.write(`  [campaign] ensureCampaign failed: ${err.message}\n`);
+    return { ok: false, cloud: true, error: err.message, id: null };
+  }
+}
+
+/**
+ * Idempotent on `(campaign_id, lock_digest)`. A NEW digest creates a NEW cohort
+ * — prior evidence is orphaned into its own cohort, never deleted and never
+ * relabelled. That is the whole mechanism: there is no string to remember to
+ * bump, so the five-false-greens failure becomes unrepresentable rather than
+ * merely discouraged.
+ */
+export async function ensureCohort({ campaignId, lockDigest, resolved }) {
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, id: null };
+  try {
+    const hit = await one(
+      `INSERT INTO campaign_cohorts (campaign_id, lock_digest, resolved)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (campaign_id, lock_digest) DO UPDATE SET resolved = EXCLUDED.resolved
+       RETURNING id, lock_digest, superseded_at`,
+      [campaignId, lockDigest, resolved == null ? null : JSON.stringify(resolved)],
+    );
+    return { ok: true, cloud: true, id: hit?.id ?? null, supersededAt: hit?.superseded_at ?? null };
+  } catch (err) {
+    process.stderr.write(`  [campaign] ensureCohort failed: ${err.message}\n`);
+    return { ok: false, cloud: true, error: err.message, id: null };
+  }
+}
+
+/**
+ * One snapshot, one revision. The unique `(cohort_id, snapshot_id)` plus a
+ * NOT NULL `audited_sha` is what makes §2.5b-i's identity claim TRUE rather
+ * than merely asserted next to a schema that permitted the violation.
+ *
+ * A conflicting sha is a REFUSAL, not an update: the sha is what adjudication
+ * verifies against, so silently taking the newer one would retroactively change
+ * what every existing verdict on this snapshot was checked against.
+ */
+export async function upsertSnapshot({ cohortId, snapshotId, auditedSha, transcriptPath }) {
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, id: null };
+  try {
+    const existing = await one(
+      'SELECT id, audited_sha FROM campaign_snapshots WHERE cohort_id = $1 AND snapshot_id = $2',
+      [cohortId, snapshotId],
+    );
+    if (existing) {
+      if (existing.audited_sha !== auditedSha) {
+        return {
+          ok: false, cloud: true, conflict: true, id: existing.id,
+          error: `snapshot ${snapshotId} is already recorded at audited_sha ${existing.audited_sha}, not ${auditedSha} — `
+            + 'a snapshot identifies one transcript at one revision, and adjudication verifies against that sha',
+        };
+      }
+      return { ok: true, cloud: true, id: existing.id, created: false };
+    }
+    const row = await insertReturning('campaign_snapshots', {
+      cohort_id: cohortId, snapshot_id: snapshotId, audited_sha: auditedSha, transcript_path: transcriptPath ?? null,
+    }, { returning: ['id'] });
+    const id = Array.isArray(row) ? row[0]?.id : row?.id;
+    return { ok: true, cloud: true, id: id ?? null, created: true };
+  } catch (err) {
+    process.stderr.write(`  [campaign] upsertSnapshot failed: ${err.message}\n`);
+    return { ok: false, cloud: true, error: err.message, id: null };
+  }
+}
+
+/** Highest attempt RECORDED in the store for one arm-run. Half of
+ *  `resolveNextAttempt`'s DISK ∪ DB input — the store is the authority on what
+ *  was recorded, the receipt directory on what was claimed, and a crash is
+ *  precisely the window where those differ. */
+export async function maxArmRunAttempt({ cohortId, snapshotId, armId }) {
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, attempt: 0 };
+  try {
+    const row = await one(
+      'SELECT COALESCE(MAX(attempt), 0) AS attempt FROM campaign_arm_runs WHERE cohort_id = $1 AND snapshot_id = $2 AND arm_id = $3',
+      [cohortId, snapshotId, armId],
+    );
+    return { ok: true, cloud: true, attempt: Number(row?.attempt ?? 0) };
+  } catch (err) {
+    process.stderr.write(`  [campaign] maxArmRunAttempt failed: ${err.message}\n`);
+    return { ok: false, cloud: true, error: err.message, attempt: 0 };
+  }
+}
+
+/**
+ * Record one arm-run. `--force` supersedes rather than overwrites: the prior
+ * live row is stamped `superseded_at` and the new attempt is APPENDED, so a
+ * re-run never double-charges the recorded spend and never destroys the
+ * evidence of what the earlier attempt produced.
+ *
+ * The supersede and the insert are one transaction because the partial unique
+ * index permits exactly one live row — doing them apart would leave a window
+ * where the insert fails against a row we are about to retire.
+ */
+export async function recordArmRun({
+  cohortId, snapshotRowId, snapshotId, armId, attempt,
+  auditRunId = null, usage = null, costUsd = null, costStatus = 'unknown', error = null, supersedePrior = false,
+}) {
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, id: null };
+  // The CHECK constraint pairs these; keeping them coherent HERE means a caller
+  // that forgets gets a clear refusal instead of a Postgres constraint name.
+  if (costStatus === 'priced' && !Number.isFinite(costUsd)) {
+    return { ok: false, cloud: true, error: `costStatus 'priced' requires a finite costUsd (got ${costUsd})` };
+  }
+  const price = costStatus === 'priced' ? Number(costUsd) : null;
+  try {
+    return await withTx(async () => {
+      if (supersedePrior) {
+        await updateWhere('campaign_arm_runs', { superseded_at: new Date().toISOString() },
+          { cohort_id: cohortId, snapshot_id: snapshotId, arm_id: armId, superseded_at: null });
+      }
+      const row = await insertReturning('campaign_arm_runs', {
+        cohort_id: cohortId, snapshot_row_id: snapshotRowId, snapshot_id: snapshotId, arm_id: armId,
+        attempt, audit_run_id: auditRunId, usage, cost_usd: price, cost_status: costStatus, error,
+      }, { returning: ['id'] });
+      const id = Array.isArray(row) ? row[0]?.id : row?.id;
+      if (!id) {
+        // An unverified write is never success in this repo.
+        throw new Error('arm-run insert returned no id');
+      }
+      return { ok: true, cloud: true, id };
+    });
+  } catch (err) {
+    process.stderr.write(`  [campaign] recordArmRun failed: ${err.message}\n`);
+    return { ok: false, cloud: true, error: err.message, id: null };
+  }
+}
+
+/** Append-only lifecycle log. Enforced by a trigger, not merely documented:
+ *  a log that can be edited cannot evidence that a rule change happened. */
+export async function appendCampaignEvent({ campaignId, kind, actor = null, detail = null }) {
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, id: null };
+  try {
+    const row = await insertReturning('campaign_events',
+      { campaign_id: campaignId, kind, actor, detail }, { returning: ['id'] });
+    const id = Array.isArray(row) ? row[0]?.id : row?.id;
+    return { ok: true, cloud: true, id: id ?? null };
+  } catch (err) {
+    process.stderr.write(`  [campaign] appendCampaignEvent failed: ${err.message}\n`);
+    return { ok: false, cloud: true, error: err.message, id: null };
+  }
+}
+
+export async function listCampaignEvents(campaignId, { limit = 200 } = {}) {
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, rows: [] };
+  try {
+    const rows = await many(
+      'SELECT id, kind, actor, detail, created_at FROM campaign_events WHERE campaign_id = $1 ORDER BY created_at ASC, id ASC LIMIT $2',
+      [campaignId, Math.min(Math.max(1, limit), 1000)],
+    );
+    return { ok: true, cloud: true, rows };
+  } catch (err) {
+    process.stderr.write(`  [campaign] listCampaignEvents failed: ${err.message}\n`);
+    return { ok: false, cloud: true, rows: [], error: err.message };
+  }
+}
+
+// ── Findings + adjudication ─────────────────────────────────────────────────
+
+/**
+ * Every finding produced by this cohort's arm-runs, UNBLINDED — the input to
+ * worksheet construction and to metric attribution. Never rendered directly.
+ *
+ * `source_model` IS selected here, deliberately: this is the store-side view
+ * that computes `self_family` and credits arms. The blind projection is
+ * `loadBlindWorksheet`, and the two are separate functions precisely so the
+ * blindness contract is a property of one named query rather than a habit.
+ */
+export async function loadCohortFindings(cohortId, { liveOnly = true } = {}) {
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, rows: [] };
+  try {
+    const rows = await many(
+      `SELECT f.id            AS finding_id,
+              f.severity, f.category, f.primary_file, f.detail_snapshot, f.source_model,
+              ar.id           AS arm_run_id,
+              ar.arm_id, ar.snapshot_id, ar.attempt, ar.superseded_at,
+              cs.audited_sha
+         FROM campaign_arm_runs ar
+         JOIN campaign_snapshots cs ON cs.id = ar.snapshot_row_id
+         JOIN audit_findings f       ON f.run_id = ar.audit_run_id
+        WHERE ar.cohort_id = $1
+          AND ($2::bool IS NOT TRUE OR ar.superseded_at IS NULL)
+        ORDER BY ar.snapshot_id, ar.arm_id, f.id`,
+      [cohortId, liveOnly],
+    );
+    return { ok: true, cloud: true, rows };
+  } catch (err) {
+    process.stderr.write(`  [campaign] loadCohortFindings failed: ${err.message}\n`);
+    return { ok: false, cloud: true, rows: [], error: err.message };
+  }
+}
+
+/**
+ * Every arm-run row for a cohort — read SEPARATELY from the findings, and that
+ * is load-bearing: an arm-run that produced zero findings has no row in the
+ * finding join, so deriving the arm set from findings alone would make a silent
+ * arm indistinguishable from an absent one. Absence is never a pass.
+ *
+ * Superseded rows are INCLUDED: they were paid for, and the spend rule sums all
+ * attempts (§7a shadow/S4). The caller filters for effectiveness.
+ */
+export async function loadCohortArmRuns(cohortId) {
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, rows: [] };
+  try {
+    const rows = await many(
+      `SELECT id, snapshot_id, arm_id, attempt, superseded_at, audit_run_id,
+              cost_usd, cost_status, error, created_at
+         FROM campaign_arm_runs
+        WHERE cohort_id = $1
+        ORDER BY snapshot_id, arm_id, attempt`,
+      [cohortId],
+    );
+    return { ok: true, cloud: true, rows };
+  } catch (err) {
+    process.stderr.write(`  [campaign] loadCohortArmRuns failed: ${err.message}\n`);
+    return { ok: false, cloud: true, rows: [], error: err.message };
+  }
+}
+
+/** Every adjudication event for a set of findings, for the terminal-event
+ *  total order in `verdict.mjs`. */
+export async function loadAdjudicationEvents(findingIds) {
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, rows: [] };
+  const ids = [...new Set((findingIds || []).filter(Boolean))];
+  if (ids.length === 0) return { ok: true, cloud: true, rows: [] };
+  try {
+    const rows = await many(
+      `SELECT id, finding_id, adjudication_outcome, adjudicator_kind, adjudicator_model,
+              method, self_family, overrides_event_id, superseded_at, evidence, created_at
+         FROM finding_adjudication_events
+        WHERE finding_id = ANY($1::uuid[])
+        ORDER BY created_at ASC, id ASC`,
+      [ids],
+    );
+    return { ok: true, cloud: true, rows };
+  } catch (err) {
+    process.stderr.write(`  [campaign] loadAdjudicationEvents failed: ${err.message}\n`);
+    return { ok: false, cloud: true, rows: [], error: err.message };
+  }
+}
+
+/** Create (or reuse) the adjudication session for a cohort. */
+export async function ensureWorksheet({ cohortId, hmacKeyRef }) {
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, id: null };
+  try {
+    const existing = await one(
+      'SELECT id, hmac_key_ref FROM campaign_worksheets WHERE cohort_id = $1 ORDER BY created_at ASC LIMIT 1',
+      [cohortId],
+    );
+    if (existing) {
+      if (existing.hmac_key_ref !== hmacKeyRef) {
+        return {
+          ok: false, cloud: true,
+          error: `this cohort's worksheet was created under key ref ${existing.hmac_key_ref}, not ${hmacKeyRef} — `
+            + 'key rotation is not supported: a rotated key re-randomises the calibration sample and orphans every recorded disposition',
+        };
+      }
+      return { ok: true, cloud: true, id: existing.id, created: false };
+    }
+    const row = await insertReturning('campaign_worksheets', { cohort_id: cohortId, hmac_key_ref: hmacKeyRef }, { returning: ['id'] });
+    const id = Array.isArray(row) ? row[0]?.id : row?.id;
+    return { ok: true, cloud: true, id: id ?? null, created: true };
+  } catch (err) {
+    process.stderr.write(`  [campaign] ensureWorksheet failed: ${err.message}\n`);
+    return { ok: false, cloud: true, error: err.message, id: null };
+  }
+}
+
+/**
+ * Persist the row↔finding mapping and the calibration assignment.
+ *
+ * Both are STORED, not recomputed. Without persistence the "deterministic
+ * sample" of §2.5c.5 was reproducible only by accident, and the stored boolean
+ * is what keeps the assignment stable if the key ever became unreadable.
+ *
+ * `calibration_assigned` is monotonic: an existing TRUE is never lowered, which
+ * is the property protecting completed human review work.
+ */
+export async function upsertWorksheetRows(worksheetId, rows) {
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, inserted: 0 };
+  if (!rows?.length) return { ok: true, cloud: true, inserted: 0 };
+  try {
+    return await withTx(async () => {
+      let inserted = 0;
+      for (const r of rows) {
+        const hit = await one(
+          `INSERT INTO campaign_worksheet_rows (worksheet_id, worksheet_row_id, finding_id, calibration_assigned)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (worksheet_id, finding_id)
+             DO UPDATE SET calibration_assigned = campaign_worksheet_rows.calibration_assigned OR EXCLUDED.calibration_assigned
+           RETURNING id, (xmax = 0) AS was_insert`,
+          [worksheetId, r.worksheetRowId, r.findingId, r.calibrationAssigned === true],
+        );
+        if (hit?.was_insert) inserted += 1;
+      }
+      return { ok: true, cloud: true, inserted };
+    });
+  } catch (err) {
+    process.stderr.write(`  [campaign] upsertWorksheetRows failed: ${err.message}\n`);
+    return { ok: false, cloud: true, inserted: 0, error: err.message };
+  }
+}
+
+/**
+ * The BLIND projection. `source_model` is structurally absent from the SELECT —
+ * not selected-and-unused — so a future edit that starts rendering "everything
+ * the query returns" cannot leak it.
+ *
+ * Ordering is a **seeded hash shuffle**: insert order is arm-ordered, so
+ * returning rows in it would carry the signal the redactor just removed.
+ */
+export async function loadBlindWorksheet(worksheetId, { key, campaignId }) {
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, rows: [] };
+  try {
+    const rows = await many(
+      `SELECT wr.worksheet_row_id, wr.calibration_assigned, wr.agent_event_id,
+              f.severity, f.category, f.primary_file, f.detail_snapshot
+         FROM campaign_worksheet_rows wr
+         JOIN audit_findings f ON f.id = wr.finding_id
+        WHERE wr.worksheet_id = $1`,
+      [worksheetId],
+    );
+    const shuffled = rows
+      .map((r) => ({ r, k: crypto.createHmac('sha256', key).update(`shuffle:${campaignId}:${r.worksheet_row_id}`).digest('hex') }))
+      .sort((a, b) => (a.k < b.k ? -1 : a.k > b.k ? 1 : 0))
+      .map((x) => x.r);
+    return { ok: true, cloud: true, rows: shuffled };
+  } catch (err) {
+    process.stderr.write(`  [campaign] loadBlindWorksheet failed: ${err.message}\n`);
+    return { ok: false, cloud: true, rows: [], error: err.message };
+  }
+}
+
+/**
+ * `finding_adjudication_events.remediation_state` and `round` are NOT NULL with
+ * no campaign-meaningful value, so campaign writers supply them explicitly.
+ * Papering over the omission with a default would manufacture a remediation
+ * claim this workflow never makes.
+ *
+ * `ruling` is deliberately NULL and stays that way. It is a DIFFERENT AXIS —
+ * `(sustain, overrule, compromise)` is the GPT-vs-Gemini deliberation ruling —
+ * and a campaign verdict is not a deliberation. The verdict lands in
+ * `adjudication_outcome`; writing it to both would put one fact in two
+ * vocabularies, and the CHECK constraints would disagree about it.
+ */
+const CAMPAIGN_EVENT_DEFAULTS = Object.freeze({ remediation_state: 'pending', round: 1, ruling: null });
+
+/** Outcomes a campaign verdict may record. `needs_triage` is the honest value
+ *  for a claim the instrument could not settle — never `dismissed`, which a
+ *  reader who skips `method` would take for a real dismissal. */
+export const CAMPAIGN_OUTCOMES = Object.freeze(['accepted', 'dismissed', 'severity_adjusted', 'needs_triage']);
+
+/**
+ * Record the agent's verdict, superseding any prior live agent verdict for the
+ * same finding.
+ *
+ * The partial unique index permits exactly one live agent verdict per finding,
+ * so a re-run of `adjudicate` cannot silently stack duplicate PAID verdicts and
+ * inflate the calibration denominator. Supersede + insert in one transaction,
+ * for the same reason as the arm-run.
+ */
+export async function recordAgentVerdict({
+  findingId, worksheetRowId, worksheetId, armRunId, adjudicatorModel,
+  method, outcome, evidence = null, selfFamily = null, rationale = null,
+}) {
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, id: null };
+  if (!CAMPAIGN_OUTCOMES.includes(outcome)) {
+    return { ok: false, cloud: true, error: `outcome must be one of ${CAMPAIGN_OUTCOMES.join(', ')} (got ${JSON.stringify(outcome)})` };
+  }
+  try {
+    return await withTx(async () => {
+      await updateWhere('finding_adjudication_events', { superseded_at: new Date().toISOString() },
+        { finding_id: findingId, adjudicator_kind: 'agent', superseded_at: null });
+      const row = await insertReturning('finding_adjudication_events', {
+        finding_id: findingId,
+        adjudication_outcome: outcome,
+        ...CAMPAIGN_EVENT_DEFAULTS,
+        ruling_rationale: rationale,
+        adjudicator_kind: 'agent',
+        adjudicator_model: adjudicatorModel,
+        method,
+        self_family: selfFamily,
+        campaign_arm_run_id: armRunId ?? null,
+        evidence,
+      }, { returning: ['id'] });
+      const id = Array.isArray(row) ? row[0]?.id : row?.id;
+      if (!id) throw new Error('agent verdict insert returned no id');
+      if (worksheetId && worksheetRowId) {
+        await updateWhere('campaign_worksheet_rows', { agent_event_id: id },
+          { worksheet_id: worksheetId, worksheet_row_id: worksheetRowId });
+      }
+      return { ok: true, cloud: true, id };
+    });
+  } catch (err) {
+    process.stderr.write(`  [campaign] recordAgentVerdict failed: ${err.message}\n`);
+    return { ok: false, cloud: true, error: err.message, id: null };
+  }
+}
+
+/**
+ * A human override is APPEND-ONLY and TERMINAL: it writes a new event naming
+ * the agent verdict it overrides, and the original stays visible. Override rate
+ * per arm IS the campaign's published calibration figure, so an override that
+ * quietly replaced its target would destroy the measurement it produces.
+ *
+ * The agent verdict it names is deliberately NOT superseded — the pair is the
+ * datum.
+ */
+export async function recordHumanOverride({ findingId, outcome, note = null, actor = null, overridesEventId = null }) {
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, id: null };
+  if (!CAMPAIGN_OUTCOMES.includes(outcome)) {
+    return { ok: false, cloud: true, error: `outcome must be one of ${CAMPAIGN_OUTCOMES.join(', ')} (got ${JSON.stringify(outcome)})` };
+  }
+  try {
+    return await withTx(async () => {
+      let target = overridesEventId;
+      if (!target) {
+        const live = await one(
+          `SELECT id FROM finding_adjudication_events
+            WHERE finding_id = $1 AND adjudicator_kind = 'agent' AND superseded_at IS NULL
+            ORDER BY created_at DESC, id DESC LIMIT 1`,
+          [findingId],
+        );
+        target = live?.id ?? null;
+      }
+      if (!target) {
+        // The CHECK constraint would reject this anyway; refusing here names WHY.
+        return {
+          ok: false, cloud: true, notFound: true,
+          error: `no live agent verdict exists for finding ${findingId} — an override must NAME the verdict it overrides, `
+            + 'or the override rate (the campaign\'s calibration figure) is computed from a guess about which rows pair up. '
+            + 'Run `campaign.mjs adjudicate` first, or record a direct human disposition instead.',
+        };
+      }
+      const row = await insertReturning('finding_adjudication_events', {
+        finding_id: findingId,
+        adjudication_outcome: outcome,
+        ...CAMPAIGN_EVENT_DEFAULTS,
+        ruling_rationale: note,
+        adjudicator_kind: 'human',
+        method: 'override',
+        overrides_event_id: target,
+      }, { returning: ['id'] });
+      const id = Array.isArray(row) ? row[0]?.id : row?.id;
+      if (!id) throw new Error('override insert returned no id');
+      // `finding_adjudication_events` has no `actor` column, and adding one for
+      // this would duplicate a fact `campaign_events` already holds. The CLI
+      // appends the actor there; it is returned so the caller can do so without
+      // re-deriving it.
+      return { ok: true, cloud: true, id, overrides: target, actor: actor ?? null };
+    });
+  } catch (err) {
+    process.stderr.write(`  [campaign] recordHumanOverride failed: ${err.message}\n`);
+    return { ok: false, cloud: true, error: err.message, id: null };
+  }
+}
+
+/**
+ * Adjudication spend, per attempt, because it IS spend. The same
+ * all-attempts-count rule as arm-runs: a superseded attempt was paid for.
+ *
+ * Reported as campaign OVERHEAD on its own line and never folded into per-arm
+ * cost-per-accepted — adjudication is paid once per finding regardless of which
+ * arm produced it, so charging it to an arm would penalise the arm that found
+ * more.
+ */
+export async function recordAdjudicationAttempt({ worksheetRowUuid, attempt, status, usage = null, costUsd = null, costStatus = 'unknown' }) {
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, id: null };
+  if (costStatus === 'priced' && !Number.isFinite(costUsd)) {
+    return { ok: false, cloud: true, error: `costStatus 'priced' requires a finite costUsd (got ${costUsd})` };
+  }
+  try {
+    const row = await insertReturning('campaign_adjudication_attempts', {
+      worksheet_row_id: worksheetRowUuid, attempt, status, usage,
+      cost_usd: costStatus === 'priced' ? Number(costUsd) : null, cost_status: costStatus,
+    }, { returning: ['id'] });
+    const id = Array.isArray(row) ? row[0]?.id : row?.id;
+    return { ok: true, cloud: true, id: id ?? null };
+  } catch (err) {
+    process.stderr.write(`  [campaign] recordAdjudicationAttempt failed: ${err.message}\n`);
+    return { ok: false, cloud: true, error: err.message, id: null };
+  }
+}
+
+/**
+ * The worksheet row's UUID plus the highest adjudication attempt RECORDED for
+ * it — the DB half of `resolveNextAttempt`'s DISK ∪ DB input, for the same
+ * reason the arm-run has one: a crash between the receipt claim and the store
+ * write is exactly the window where disk and database disagree, and consulting
+ * only the database wedges the row permanently at `attempt = 1`.
+ */
+export async function resolveWorksheetRowAttempt({ worksheetId, worksheetRowId }) {
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, id: null, attempt: 0 };
+  try {
+    const row = await one(
+      `SELECT wr.id, COALESCE(MAX(a.attempt), 0) AS attempt
+         FROM campaign_worksheet_rows wr
+         LEFT JOIN campaign_adjudication_attempts a ON a.worksheet_row_id = wr.id
+        WHERE wr.worksheet_id = $1 AND wr.worksheet_row_id = $2
+        GROUP BY wr.id`,
+      [worksheetId, worksheetRowId],
+    );
+    return { ok: true, cloud: true, id: row?.id ?? null, attempt: Number(row?.attempt ?? 0) };
+  } catch (err) {
+    process.stderr.write(`  [campaign] resolveWorksheetRowAttempt failed: ${err.message}\n`);
+    return { ok: false, cloud: true, id: null, attempt: 0, error: err.message };
+  }
+}
+
+/** Total adjudication overhead for a cohort, all attempts, unknown-honest. */
+export async function adjudicationOverhead(cohortId) {
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, spendUsd: null, costEvidence: 'unknown' };
+  try {
+    const row = await one(
+      `SELECT COALESCE(SUM(a.cost_usd), 0)                                  AS spend_usd,
+              COUNT(*)                                                       AS attempts,
+              COUNT(*) FILTER (WHERE a.cost_status <> 'priced')              AS unpriced
+         FROM campaign_adjudication_attempts a
+         JOIN campaign_worksheet_rows wr ON wr.id = a.worksheet_row_id
+         JOIN campaign_worksheets w      ON w.id = wr.worksheet_id
+        WHERE w.cohort_id = $1`,
+      [cohortId],
+    );
+    const unpriced = Number(row?.unpriced ?? 0);
+    return {
+      ok: true, cloud: true,
+      attempts: Number(row?.attempts ?? 0),
+      // Postgres NUMERIC arrives as a STRING over node-pg — Number() it, or a
+      // later sum concatenates instead of adding.
+      spendUsd: unpriced > 0 ? null : Number(row?.spend_usd ?? 0),
+      costEvidence: unpriced > 0 ? 'unknown' : 'known',
+    };
+  } catch (err) {
+    process.stderr.write(`  [campaign] adjudicationOverhead failed: ${err.message}\n`);
+    return { ok: false, cloud: true, spendUsd: null, costEvidence: 'unknown', error: err.message };
+  }
+}
+
+// ── Clusters ────────────────────────────────────────────────────────────────
+
+/**
+ * Persist one snapshot's cluster set with the matcher version + threshold that
+ * produced it. Re-running at a new threshold writes a NEW set; the old one
+ * stays readable, because the matcher is a post-hoc analytical transform over
+ * evidence already paid for — which is exactly why it is not a lock input.
+ *
+ * Idempotent by `(cohort, snapshot, matcher_version, canonical_finding)`.
+ */
+export async function writeClusterSet({ cohortId, snapshotId, matcherVersion, matcherThreshold, clusters }) {
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, written: 0 };
+  try {
+    return await withTx(async () => {
+      let written = 0;
+      for (const cluster of clusters || []) {
+        const hit = await one(
+          `INSERT INTO campaign_clusters (cohort_id, snapshot_id, matcher_version, matcher_threshold, canonical_finding_id)
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (cohort_id, snapshot_id, matcher_version, canonical_finding_id) DO UPDATE SET matcher_threshold = EXCLUDED.matcher_threshold
+           RETURNING id`,
+          [cohortId, snapshotId, matcherVersion, matcherThreshold, cluster.canonicalFindingId],
+        );
+        if (!hit?.id) throw new Error(`cluster upsert returned no id for ${cluster.canonicalFindingId}`);
+        for (const m of cluster.members) {
+          await one(
+            `INSERT INTO campaign_cluster_members (cluster_id, finding_id, arm_id)
+             VALUES ($1, $2, $3) ON CONFLICT (cluster_id, finding_id) DO UPDATE SET arm_id = EXCLUDED.arm_id
+             RETURNING cluster_id`,
+            [hit.id, m.findingId, m.armId],
+          );
+        }
+        written += 1;
+      }
+      return { ok: true, cloud: true, written };
+    });
+  } catch (err) {
+    process.stderr.write(`  [campaign] writeClusterSet failed: ${err.message}\n`);
+    return { ok: false, cloud: true, written: 0, error: err.message };
+  }
+}
+
+/** Cluster sets for a cohort under ONE matcher version — never a blend of two,
+ *  which would silently mix incompatible attributions. */
+export async function loadClusters(cohortId, matcherVersion) {
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, rows: [] };
+  try {
+    const rows = await many(
+      `SELECT c.id AS cluster_id, c.snapshot_id, c.matcher_threshold,
+              m.finding_id, m.arm_id, f.severity
+         FROM campaign_clusters c
+         JOIN campaign_cluster_members m ON m.cluster_id = c.id
+         JOIN audit_findings f            ON f.id = m.finding_id
+        WHERE c.cohort_id = $1 AND c.matcher_version = $2
+        ORDER BY c.snapshot_id, c.id, m.finding_id`,
+      [cohortId, String(matcherVersion)],
+    );
+    return { ok: true, cloud: true, rows };
+  } catch (err) {
+    process.stderr.write(`  [campaign] loadClusters failed: ${err.message}\n`);
+    return { ok: false, cloud: true, rows: [], error: err.message };
+  }
+}
+
+/** Per-arm calibration figures: assigned, dispositioned, override rate,
+ *  `self_family` share. The override rate IS the campaign's calibration
+ *  measurement, so it is computed from the paired rows, never estimated. */
+export async function calibrationSummary(cohortId) {
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, perArm: {} };
+  try {
+    const rows = await many(
+      `WITH rows AS (
+         SELECT wr.id AS wr_id, wr.finding_id, wr.calibration_assigned,
+                ar.arm_id,
+                ae.id AS agent_event_id, ae.self_family,
+                he.id AS human_event_id
+           FROM campaign_worksheet_rows wr
+           JOIN campaign_worksheets w ON w.id = wr.worksheet_id
+           JOIN audit_findings f      ON f.id = wr.finding_id
+           JOIN campaign_arm_runs ar  ON ar.audit_run_id = f.run_id AND ar.cohort_id = w.cohort_id
+           LEFT JOIN LATERAL (
+             SELECT e.id, e.self_family FROM finding_adjudication_events e
+              WHERE e.finding_id = wr.finding_id AND e.adjudicator_kind = 'agent' AND e.superseded_at IS NULL
+              ORDER BY e.created_at DESC, e.id DESC LIMIT 1) ae ON TRUE
+           LEFT JOIN LATERAL (
+             SELECT e.id FROM finding_adjudication_events e
+              WHERE e.finding_id = wr.finding_id AND e.adjudicator_kind = 'human'
+              ORDER BY e.created_at DESC, e.id DESC LIMIT 1) he ON TRUE
+          WHERE w.cohort_id = $1
+       )
+       SELECT arm_id,
+              COUNT(*)                                                           AS rows_total,
+              COUNT(*) FILTER (WHERE agent_event_id IS NOT NULL)                  AS agent_verdicts,
+              COUNT(*) FILTER (WHERE calibration_assigned)                        AS assigned,
+              COUNT(*) FILTER (WHERE calibration_assigned AND human_event_id IS NOT NULL) AS dispositioned,
+              COUNT(*) FILTER (WHERE human_event_id IS NOT NULL AND agent_event_id IS NOT NULL) AS overrides,
+              COUNT(*) FILTER (WHERE self_family)                                 AS self_family
+         FROM rows GROUP BY arm_id ORDER BY arm_id`,
+      [cohortId],
+    );
+    const perArm = {};
+    for (const r of rows) {
+      const agentVerdicts = Number(r.agent_verdicts);
+      perArm[r.arm_id] = {
+        rowsTotal: Number(r.rows_total),
+        agentVerdicts,
+        assigned: Number(r.assigned),
+        dispositioned: Number(r.dispositioned),
+        overrides: Number(r.overrides),
+        // A rate over zero verdicts is `null`, never 0 — "we never measured" and
+        // "we measured no disagreement" are different facts and read identically
+        // as a zero.
+        overrideRate: agentVerdicts > 0 ? Number(r.overrides) / agentVerdicts : null,
+        selfFamily: Number(r.self_family),
+        selfFamilyShare: agentVerdicts > 0 ? Number(r.self_family) / agentVerdicts : null,
+      };
+    }
+    return { ok: true, cloud: true, perArm };
+  } catch (err) {
+    process.stderr.write(`  [campaign] calibrationSummary failed: ${err.message}\n`);
+    return { ok: false, cloud: true, perArm: {}, error: err.message };
+  }
+}
+
+/**
+ * The commit each arm-run's `audit_runs` row was taken at.
+ *
+ * This is where `audited_sha` comes from, and it is a LOOKUP rather than a
+ * field on the bake-off log, deliberately: the log records what the collector
+ * observed, while the sha is a property of the audit the arm actually ran, and
+ * only the run row knows it. A snapshot whose arms disagree about the commit is
+ * not one snapshot (§2.5b-i) — the caller refuses it rather than picking one.
+ *
+ * @param {string[]} runIds
+ * @returns {Promise<{ok: boolean, cloud: boolean, byRunId: Record<string, string|null>}>}
+ */
+export async function auditedShasForRuns(runIds) {
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, byRunId: {} };
+  const ids = [...new Set((runIds || []).filter(Boolean))];
+  if (ids.length === 0) return { ok: true, cloud: true, byRunId: {} };
+  try {
+    const rows = await many('SELECT id, commit_sha FROM audit_runs WHERE id = ANY($1::uuid[])', [ids]);
+    return { ok: true, cloud: true, byRunId: Object.fromEntries(rows.map((r) => [r.id, r.commit_sha ?? null])) };
+  } catch (err) {
+    process.stderr.write(`  [campaign] auditedShasForRuns failed: ${err.message}\n`);
+    return { ok: false, cloud: true, byRunId: {}, error: err.message };
+  }
+}
+
+/** Resolve a campaign + its live cohort by campaign key. */
+export async function resolveCohort({ repoId, campaignKey, lockDigest = null }) {
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, campaignId: null, cohortId: null };
+  try {
+    const campaign = await one(
+      'SELECT id, config_digest FROM campaigns WHERE repo_id = $1 AND campaign_key = $2',
+      [repoId, campaignKey],
+    );
+    if (!campaign) return { ok: true, cloud: true, campaignId: null, cohortId: null };
+    const cohort = lockDigest
+      ? await one('SELECT id, lock_digest, superseded_at, resolved FROM campaign_cohorts WHERE campaign_id = $1 AND lock_digest = $2', [campaign.id, lockDigest])
+      : await one('SELECT id, lock_digest, superseded_at, resolved FROM campaign_cohorts WHERE campaign_id = $1 ORDER BY created_at DESC LIMIT 1', [campaign.id]);
+    return {
+      ok: true, cloud: true, campaignId: campaign.id,
+      cohortId: cohort?.id ?? null, lockDigest: cohort?.lock_digest ?? null,
+      cohortSuperseded: cohort?.superseded_at != null,
+    };
+  } catch (err) {
+    process.stderr.write(`  [campaign] resolveCohort failed: ${err.message}\n`);
+    return { ok: false, cloud: true, campaignId: null, cohortId: null, error: err.message };
+  }
+}

@@ -59,6 +59,9 @@ export const DESTRUCTIVE_SUITE_FILES = Object.freeze([
 // regression-spec-multi-finding-lock.test.mjs came to be committed and then
 // never executed by the DB job at all.
 export const ISOLATED_SUITE_FILES = Object.freeze([
+  // campaign-adjudication's LIVE half needs the campaign spine migrated and
+  // intact; its pure half runs everywhere and is a no-op here.
+  'tests/campaign-adjudication.test.mjs',
   'tests/db-schema-realization-live.test.mjs',
   'tests/regression-spec-multi-finding-lock.test.mjs',
   'tests/symbol-index-drift-justification.test.mjs',
