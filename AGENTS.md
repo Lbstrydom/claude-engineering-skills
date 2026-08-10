@@ -153,11 +153,36 @@ skills/<name>/                   ← authoritative; edit ONLY here
 .claude/skills/<name>/            ← generated copy — run `npm run skills:regenerate`
 ```
 
-> **Note**: `.github/skills/<name>/` was a previously-generated mirror, deprecated in Phase 4 of ai-context-sync (at the time, no documented AI tool read it). **Updated 2026-07-21 (Copilot-compat audit)**: VS Code Copilot's Agent Skills (GA + default-on since VS Code 1.109, Jan 2026) natively discovers THREE workspace roots — `.github/skills/`, `.claude/skills/`, and `.agents/skills/` — plus personal dirs (`~/.copilot/skills`, `~/.claude/skills`, `~/.agents/skills`). Collision precedence between roots is **NOT officially documented** (the earlier "`.github/skills` wins" claim traces only to third-party sources) — so the robust rule is *never ship the same skill name in two discovered roots*. Keeping `.github/skills` deleted stays load-bearing: a stale resurrected copy is an undefined-behavior collision against the fresh `.claude/skills` copies (found live in ai-organiser 2026-07-21 — a 2025-era leftover shadowed 3 skills; sync deliberately never deletes it in consumers, so check `.github/skills/` AND `.agents/skills/` when a consumer's Copilot behaves oddly).
+> **Skill surfaces — three invariants.** Discovery-root history, the Copilot-compat
+> audit, the retired-tooling table and the migration recipe live in
+> [`docs/reference/skill-surface-ownership.md`](docs/reference/skill-surface-ownership.md).
 >
-> The committed `.claude/skills/**` is the single Copilot-native surface. Contract (enforced by `skills:check` + verified in the 2026-07-21 audit): frontmatter `name` must equal the directory name and match `^[a-z0-9-]{1,64}$` (violation = **silent skip**); `description` is required, **max 1024 chars** — keep trigger phrases in the description, move Usage/Examples syntax into the SKILL body (`Full command syntax: see the Usage section in this skill.`). **The budget half of that claim was fiction until 2026-08-04**: only `name` was enforced (poison-tested), while `investigate` 1257 / `explain` 1152 / `ux-lock` 1062 sat over the cap with `skills:check` green — a stated-but-unenforced gate, the class the gate-honesty suite exists to catch. [`check-skill-descriptions.mjs`](scripts/check-skill-descriptions.mjs) now enforces the budget **and** forbids two skills advertising the same literal trigger phrase (one live clash: `"verify the plan"` in both audit-plan and ux-lock). Exact-match only, deliberately: fuzzy matching was measured at 47 cross-skill noise pairs (Jaccard ≥0.5, mostly one shared word) and rejected. Semantic overlap has no oracle — declare the discriminator in BOTH descriptions instead (*topic* → `/explain --history`, *claim* → `/investigate`). Copilot also reads `CLAUDE.md` + `AGENTS.md` + `.github/copilot-instructions.md` (all default-on) — mind duplication cost when editing. **The `.github/prompts/*.prompt.md` shim surface was RETIRED 2026-07-21**: since VS Code 1.109 skills surface as `/name` slash commands in the SAME namespace as prompt files, so same-basename shims collided with their own skills (and half pointed at non-existent CLIs). `.claude/skills/**` is now the sole Copilot slash-command surface — do not re-introduce a `.github/prompts` generator. MCP: VS Code reads `.vscode/mcp.json`, NOT Claude's `.mcp.json` — keep the two mirrored when adding servers. **`--keep-github-skills` was removed entirely 2026-07-28** (`docs/plans/refactor-skill-governance.md`) — from `regenerate-skill-copies.mjs`, `install-skills.mjs`, and `sync-to-repos.mjs` alike. None of the three write paths can resurrect `.github/skills/` any more; `regenerate-skill-copies.mjs` now actively deletes a pre-existing tree in this repo, and `check-stale-skill-surface.mjs` remains the drift backstop for a consumer-repo copy created by other means.
-
-> **Skills install REPO-SCOPED, never machine-global (invariant, 2026-07-30).** A SKILL.md is only valid alongside the runner layout it cites (`scripts/X.mjs` here, `scripts/.claude-skills/X.mjs` in a consumer), and `~/.claude/skills/` is ONE directory shared by every repo — layout-agnostic by construction, so **no correct content for it exists** and rewriting it merely flips which repo is broken (it was also 15 name collisions against every synced consumer, the hazard the note above forbids). The `claude` (`~/.claude/skills/`) and `agents` (`.agents/skills/`) install surfaces are therefore **retired**: `resolveSkillTargets` throws for both plus `both`; `install-skills.mjs` no longer installs and exists only for `--uninstall-legacy` (receipt-bounded, so it can never touch a skill you wrote); `.githooks/post-merge` is **deleted** — it regenerated committed, freshness-verified artifacts and its only real effect was creating the global tree. Installing anywhere is one command: `npx github:Lbstrydom/claude-engineering-skills <dir>`, or `npm run sync -- --target-path <dir>` from here; `CONSUMER_REPOS` is the maintainer's convenience list, not a gate on who may install. Proposing a new skill-install surface? Answer first: *which of the two layouts does its content belong to, and what stops it colliding with `.claude/skills/`?* Full model + migration: [`docs/reference/skill-surface-ownership.md`](docs/reference/skill-surface-ownership.md).
+> **(1) Never ship the same skill name in two discovered roots.** VS Code Copilot
+> (1.109+) discovers `.github/skills/`, `.claude/skills/` and `.agents/skills/` plus
+> personal dirs, and precedence between them is **undocumented**. The committed
+> `.claude/skills/**` is the single Copilot-native surface; `.github/skills/` and the
+> `.github/prompts/*.prompt.md` shims are **RETIRED** — do not re-introduce a generator
+> for either, and check `.github/skills/` AND `.agents/skills/` when a consumer's
+> Copilot behaves oddly (sync deliberately never deletes them).
+>
+> **(2) Skills install REPO-SCOPED, never machine-global.** A SKILL.md is only valid
+> alongside the runner layout it cites (`scripts/X.mjs` here, `scripts/.claude-skills/X.mjs`
+> in a consumer), so **no correct content exists** for the layout-agnostic
+> `~/.claude/skills/`. That surface and `.agents/skills/` are retired
+> (`resolveSkillTargets` throws), and `.githooks/post-merge` is **deleted** — don't
+> restore it. Installing anywhere is one command: `npx github:Lbstrydom/claude-engineering-skills <dir>`,
+> or `npm run sync -- --target-path <dir>` from here. Proposing a new install surface?
+> Answer first: *which of the two layouts does its content belong to, and what stops it
+> colliding with `.claude/skills/`?*
+>
+> **(3) Frontmatter is a contract** (enforced by `skills:check`): `name` must equal the
+> directory name and match `^[a-z0-9-]{1,64}$` (violation = **silent skip**);
+> `description` is required, **max 1024 chars** (keep trigger phrases there, move
+> Usage syntax into the body); no two skills may advertise the same **literal**
+> trigger phrase. Semantic overlap has no oracle — declare the discriminator in BOTH
+> descriptions (*topic* → `/explain --history`, *claim* → `/investigate`). Copilot also
+> reads `CLAUDE.md` + `AGENTS.md` + `.github/copilot-instructions.md`; VS Code reads
+> `.vscode/mcp.json`, **NOT** `.mcp.json` — keep the two mirrored when adding servers.
 
 Every reference file has `summary:` YAML frontmatter that must byte-match the
 parent SKILL.md's reference-index row. `npm run skills:check` enforces this — see
@@ -166,33 +191,21 @@ parent SKILL.md's reference-index row. `npm run skills:check` enforces this — 
 packaged/synced; no contract = `uncontracted`, not failed) — `npm run
 skills:check`/`gates:check` validate it; details: `docs/reference/gate-honesty.md`.
 
-Each skill is a sibling — they share env vars and the cloud audit store but have distinct scopes:
-- **plan**: code that doesn't exist yet. Unified planner (auto-detects backend/frontend/full-stack); the frontend/full-stack path produces a machine-parseable "Acceptance Criteria" section that `/ux-lock verify` consumes.
-- **audit-plan**: refines plans before implementation (max 3 rounds, rigor-pressure stop). Single-file edits.
-- **audit-code**: code that was just written (5-pass parallel static analysis + LLM audit + R2+ suppression). Always also runs a mechanical **duplication** wave (pure-Git diff attribution against the architectural-memory index, read-only) — suppress an intentional duplicate with a `// @duplicate-justification: target=<file>:<symbol> reason=<why>` pragma above the declaration; see `skills/audit-code/SKILL.md` and `docs/plans/audit-code-duplication-wave.md`. **Wave 6 — containment adjacency ("what else is in this branch?")**: a diff hunk landing inside an `if` branch triggers enumeration of that branch's other top-level statements, each classified as condition-dependent or *merely nested* (trapped). Four invariants not to "simplify": enumeration is never the LLM's job (the bouncer only judges what it's handed); the trigger is the **diff**, never a finding; `clean` is unconstructable without real coverage, and the state label never gates emission; `buildAdjacencyState` has exactly one call site. Containers are conditionals only, never functions (that's the cost bound). Opt out via `--passes`; bounds are `adjacencyConfig`/`ADJACENCY_*`, not `symbolIndexConfig`. Adding a mechanical wave? Declare it in `MECHANICAL_WAVES` ([`audit-shadow.mjs`](scripts/lib/audit-shadow.mjs)) or `PASS_PROMPTS` silently enrols it in the model-A/B/C shadow's **paid** generator comparison. Plan: [`adjacency-check-containment.md`](docs/plans/adjacency-check-containment.md).
-- **ux-lock**: code that was just fixed (Playwright e2e regression lock). **Verify mode** (`/ux-lock verify <plan.md>`) grades a `/plan` plan against its live implementation — each criterion becomes a Playwright test case; results populate `plan_verification_runs` + `plan_verification_items`. **Selector policy (2026-07)**: generated specs LOCATE via the semantic ladder (`getByRole` → `getByLabel`/`getByPlaceholder` → `getByText` → `getByTestId` → justified-structural CSS carrying `// selector-policy: structural — <reason>`); `ux-lock-run.mjs` lints every spec it runs plus its local-helper import closure (unmarked structural selectors, `app-module-import` — specs must never import app source; drive the UI). Warn by default, `--strict-selectors` exits 6; unjustified counts persist per run row (`selector_policy_violations`, migration `20260703200000`). [`scripts/lib/ux-lock/selector-policy.mjs`](scripts/lib/ux-lock/selector-policy.mjs) `classifySelector` is the single policy oracle — `candidate-spec.mjs` reuses it so consistency-candidate promotion emits the same markers. Plan: `docs/plans/ux-lock-selector-policy.md`.
-- **persona-test**: deployed app, narrative QA. Three execution modes:
-  - **Exploratory** (default, MCP-driven): persona walks the app via Playwright MCP, finds UX issues, writes a P0-P3 report + debrief.
-  - **Pair** (`--pair "<p1>" "<p2>" <url>`): runs two opposed-expertise personas back-to-back, diffs findings into CONSENSUS / A-ONLY / B-ONLY buckets. Use when coverage matters more than speed — empirically ~92% disjoint findings.
-  - **Consistency mode** (`--mode consistency --canary <name>`, code-driven Playwright): deterministic runner against a canary journey + a `surfaces.json` manifest declaring `data-engine-claim` HTML attributes. Detects cross-step UI/state contradictions (DOM-vs-network-truth, stale-projection, undeclared-engine-claim, missing-surface). Emits `regression_specs` candidates with full witness snapshots; `/ship` Step 5.6 promotes them to locked Playwright specs. See `docs/reference/consistency-contract.md` for the HTML attribute contract.
-- **click-test**: deployed app, structural DOM audit. Mechanical complement to persona-test — walks every interactive element, asserts semantic-HTML contracts (duplicate IDs, orphan labels, inputs without names, ARIA misuse, heading hierarchy, missing alt, undersized touch targets). Catches issues personas never trigger because there's no narrative reason to notice them. Optional `--with-modals` opens each modal/dropdown and re-scans the live DOM. Cache-busts service workers before scanning.
-- **nav-audit**: the **system-level** third UX lens (persona=journey, click=page, nav=system). Static, code-derived audit of the WHOLE navigation graph — every entry point x destination via `@babel/parser` AST (plus a string/template scan so vanilla template-HTML apps work), run through a 10-class taxonomy (orphan, coverage-gap, redundancy, competing-models, anchor-regression, ...) asking "is what's OFFERED what's NEEDED?", grounded in the persona registry. Two-artifact split: route facts colocate in code (`navMeta`/`@nav` docblock), product intent in a committed `nav-contract.json`, the observed graph gitignored + regenerated. CI gate is **drift-only** (a declared-intent regression on the changed surface). `--verify <url>` reconciles static-vs-live, attributes each live destination to its DOM-container layer for a per-persona scorecard, and runs the layer-attribution classes over LIVE evidence (`source:'live'`) that the static taxonomy cannot model. **Capture honesty (v1.4)**: a visible-but-empty or never-observable nav container is `unverifiable` and degrades to `unverified` rather than emit an authoritative `missing`/`misplaced`; the activation pass aborts after 3 unactionable triggers so it cannot amplify a degraded app's storm. Plans: `docs/plans/nav-audit-skill.md`, `nav-audit-v1.3-live-findings.md`, `nav-audit-debt-digest-decouple.md`, `nav-audit-v1.4-capture-honesty.md`.
-- **visual-audit**: the **paint-level** fourth UX lens (persona=journey, click=page, nav=system, **visual=paint**). Math-first, deterministic — drives Playwright + `getComputedStyle` + `getBoundingClientRect` + CDP `forcePseudoState` to assert what the page *paints*; the VLM (`--explain`) is advisory and never gates. **Verify-primary** (unlike static-primary nav-audit): paint cannot be asserted without rendering, so the static run parses token sources only and emits NO paint findings (the banner says so). `--verify <url>` runs four tiers: declared-token reconciliation (cascade-resolved, else `token_violation`), theme parity (geometry must match for nodes rendered in BOTH themes; untokened literals identical across themes are `theme_unmapped_token`), layout physics (overflow / clipping / overlap / image distortion), and the signifier matrix (`missing_visible_focus`, `state_has_no_visual_delta`, `disabled_not_signified`) read via forced pseudo-state after freezing transitions. Two-artifact split: committed `visual-contract.json`; gitignored `.audit-loop/visual-*.json`. CI gate is **drift-only** via the canonical `ChangedScopeResolver`. Capture honesty: an absent/empty-skeleton surface or unresolvable backdrop degrades to `unverified`, never a false authoritative finding. Scope firewall (verbatim in SKILL.md): *"include a check only if you can assert it on a computed style without knowing what the page is FOR"* — signifiers in, affordance judgments out (those are persona-test's). Plan: `docs/plans/visual-audit-skill.md`.
-- **ship**: packaging and delivery (now includes Step 5.6 candidate promotion when consistency mode is adopted)
+Each skill is a sibling — they share env vars and the cloud audit store but have
+distinct scopes. **Per-skill depth** (modes, flags, two-artifact splits, the design
+invariants of each wave and lens) and the **naming convention** live in
+[`docs/reference/skill-roster.md`](docs/reference/skill-roster.md) — read it before
+renaming a skill or "simplifying" a wave.
 
-> **Skill naming convention (two families — don't "fix" by forcing a uniform prefix).**
-> Names encode *mechanism*, and there are two legitimate families:
-> - **`audit-*` (verb-first)** = the GPT+Gemini multi-round adjudication loop over a
->   static artifact: `audit-plan`, `audit-code`, `audit-loop`. They share rounds +
->   ledger suppression + a Gemini final gate.
-> - **UX-lens suffix** = the live/static UI checks. The suffix tells you the driver:
->   **`-test` = pure live-browser walk** (`persona-test`, `click-test`); **`-audit` =
->   static extract + `--verify` reconcile** (`nav-audit`, `visual-audit`).
->
-> So the pairs are already consistent. Renaming the lenses to `audit-nav`/`audit-click`
-> would *break* this: the `audit-` prefix would falsely imply membership in the
-> adjudication-loop family (rounds/ledger/Gemini) the lenses don't have. Grammar test:
-> you "audit *the plan/code*" (verb+object) but you run "a *nav audit*" (compound noun).
+- **plan**: code that doesn't exist yet. Auto-detects backend/frontend/full-stack; the frontend path emits the machine-parseable "Acceptance Criteria" section `/ux-lock verify` consumes.
+- **audit-plan**: refines plans before implementation (max 3 rounds, rigor-pressure stop). Single-file edits.
+- **audit-code**: code just written — 5 LLM passes + R2+ suppression, plus mechanical waves (duplication; Wave 6 containment adjacency). Suppress an intentional duplicate with a `// @duplicate-justification: target=<file>:<symbol> reason=<why>` pragma above the declaration. **Adding a mechanical wave? Declare it in `MECHANICAL_WAVES` ([`audit-shadow.mjs`](scripts/lib/audit-shadow.mjs))** — or `PASS_PROMPTS` silently enrols it in the model-A/B/C shadow's **paid** generator comparison.
+- **ux-lock**: locks a fix's DOM contract (Playwright e2e); verify mode grades a `/plan` plan against the live app. Specs LOCATE via the semantic ladder and never import app source; [`selector-policy.mjs`](scripts/lib/ux-lock/selector-policy.mjs) `classifySelector` is the **single policy oracle** — never add a second classifier.
+- **persona-test**: deployed app, narrative QA. Three modes — exploratory (MCP-driven), pair (two opposed personas; ~92% disjoint findings), consistency (deterministic canary; emits `regression_specs` candidates `/ship` Step 5.6 promotes). HTML attribute contract: [`consistency-contract.md`](docs/reference/consistency-contract.md).
+- **click-test**: deployed app, structural DOM audit — the mechanical complement to persona-test (duplicate IDs, orphan labels, ARIA misuse, heading hierarchy, touch targets). Catches what personas never trigger because there's no narrative reason to notice it.
+- **nav-audit**: the **system** lens (persona=journey, click=page, nav=system). Static nav graph from source, asking "is what's OFFERED what's NEEDED?", grounded in the persona registry. `--verify <url>` reconciles static-vs-live. CI gate is **drift-only**.
+- **visual-audit**: the **paint** lens. Math-first and deterministic (computed styles, geometry, forced pseudo-state); the VLM is advisory and never gates. Verify-primary — the static run emits NO paint findings. CI gate is **drift-only**. Scope firewall: *include a check only if you can assert it on a computed style without knowing what the page is FOR* — signifiers in, affordance judgments out (those are persona-test's).
+- **ship**: packaging and delivery (includes Step 5.6 candidate promotion when consistency mode is adopted).
 
 ## Consumer-repo layout (isolation)
 
@@ -219,29 +232,22 @@ consumer instead of the named one. Verified 2026-07-20.)
 > at the consumer/upstream seam — the local edit is the band-aid; the upstream
 > fix is the root. Repo-specific **push gates** have a sanctioned home — the committed, never-rewritten `.githooks/pre-push.local` ([recipe](docs/runbooks/consumer-adoption.md)), never an edit to the managed hook.
 >
-> **File the report, don't paste it (2026-07-31).** Consumer: `cross-skill.mjs upstream report --title …
-> --affected-path <synced path>` (body on **stdin**) — auto-captures repo, **bundle sha**, and whether the
-> path is really upstream-owned. Here: `npm run upstream:issues` → `upstream ack|fix --commit <sha>|wont-fix
-> --id <id>`; **`/ship` Step 0.5h prints the open count** (advisory — cloud state nudges, never blocks; 2
-> reports sat unread 2026-08-01, one already fixed 45min earlier). Prose reports arrived with a non-existent
-> path against an unknowable version for a bug fixed the day before; the worksheet answers "already fixed?"
-> mechanically. Bodies readable by every repo sharing the DSN. [Plan](docs/plans/upstream-issue-reports.md).
+> **File the report, don't paste it.** Consumer: `cross-skill.mjs upstream report --title … --affected-path <synced path>`
+> (body on **stdin**) — it auto-captures the repo, the bundle sha, and whether the path is really
+> upstream-owned. Here: `npm run upstream:issues` → `upstream ack|fix|wont-fix`. Worksheet + why prose
+> reports failed: [consumer-adoption.md](docs/runbooks/consumer-adoption.md) §Reporting an upstream bug.
 
 > **Three shapes consumers keep reporting — check for them when adding a gate or nudge (2026-08-08).**
-> *(1) A read handing back a key its writer rejects*: `/ship` 0.5e listed unclosable rows for weeks because
-> `unremediated_acceptances` projected `audit_finding_id` while its only closer needs `--fingerprint` — two
-> reports, one column. **A new close-this-row nudge means a new row in**
-> [`view-writer-key-contract.test.mjs`](tests/view-writer-key-contract.test.mjs). *(2) A gate judging files
-> the repo does not own*: `context:check` scanned a vendored gitignored `.agents/skills/**/CLAUDE.md` and
-> exited 1 on a clean repo — predicate **ignored AND untracked**, not a longer exclusion list (grows per
-> vendoring tool). Ask it of the **candidates**, never of the repo: whole-repo `ls-files --others --ignored`
-> is MBs of `node_modules`, ENOBUFS past spawnSync's 1MiB `maxBuffer`, and a fail-open guard reads that as
-> "nothing disowned" — inert 2026-08-08→08-10, green throughout.
-> *(3) A check verifying one direction only*: `sync-isolation-verify` walked
-> manifest→disk, so 100 orphaned executables were invisible *by construction*; gate **2C** now walks
-> disk→manifest over `scripts/.claude-skills/` alone (other dirs hold consumer-owned files; flagging those
-> earns a bypass). Ask of any set comparison: **which side am I iterating, and what is unrepresentable from
-> it?**
+> Each is a general defect class; the incidents behind them are in
+> [consumer-adoption.md](docs/runbooks/consumer-adoption.md) §Three shapes.
+> *(1) A read handing back a key its writer rejects* — **a new close-this-row nudge means a new row in**
+> [`view-writer-key-contract.test.mjs`](tests/view-writer-key-contract.test.mjs).
+> *(2) A gate judging files the repo does not own* — the predicate is **ignored AND untracked**, not a
+> longer exclusion list, and you ask it of the **candidates**, never of the repo (a whole-repo
+> `ls-files --others --ignored` ENOBUFs past spawnSync's 1MiB `maxBuffer`, and a fail-open guard reads
+> that as "nothing disowned").
+> *(3) A check verifying one direction only* — ask of any set comparison: **which side am I iterating,
+> and what is unrepresentable from it?**
 
 > **Upstream bug, but you're blocked? Source patch = forbidden; a labelled
 > runtime/env workaround is OK and must reconcile.** Editing upstream-owned
@@ -353,21 +359,6 @@ and false passes (a fix in the tree but not the commit read green). Not `git
 stash` — that yanks the other session's files mid-edit. Detail + escape hatches:
 [`docs/runbooks/prepush-sandbox.md`](docs/runbooks/prepush-sandbox.md).
 
-- **A worktree has no `node_modules`, and tools must RESOLVE that, not assume it.**
-  Everything in a nested worktree works because Node walks up and finds the main
-  checkout's copy — so any tool that hard-codes `<repoRoot>/node_modules` breaks
-  there and nowhere else. Two tools provision it into an isolated copy;
-  `prepush-check.mjs` guards with `existsSync` + falls back to `npm ci`, while
-  `check-gate-poison-pills.mjs` did not, and on Windows **a junction to a missing
-  target succeeds and leaves a dangling link** (verified 2026-08-08), so its
-  try/catch never fired and the only symptom was the CONTROL run dying on
-  `Cannot find package 'zod'` — a message pointing at the gate under test rather
-  than the harness. It now resolves upward like Node does and asserts the link
-  RESOLVES, not merely that creating it threw nothing. (`prepush-check.mjs` was
-  already correct — in a worktree it just falls back to a slower `npm ci`, which
-  is safe, so it was deliberately left alone.) Do not "fix" a worktree by
-  hand-linking `node_modules` into it: that hides the tool bug from the next
-  person and is the ritual this removes.
 - **Sandbox-honesty rule.** A fresh worktree has no gitignored inputs, so a check
   that *skips* on a missing input passes having read nothing (known skips are
   forced hard: `AUDIT_PUSH_RANGE_REQUIRED`, `ARCH_COVERAGE_REQUIRE_ENVELOPE`).
@@ -379,21 +370,16 @@ stash` — that yanks the other session's files mid-edit. Detail + escape hatche
   that scoped multi-commit pushes to their tip and collapsed to `HEAD~1` always
   in a detached tree. An unresolvable explicit base fails hard, never demotes to
   inference.
-- **Hashing working-tree bytes ≠ hashing committed source.** `skills.manifest.json`
-  broke its own Category-B contract this way: 16 skill files carried CRLF locally
-  while `.gitattributes` pins `eol=lf`, git calls such files CLEAN, so
-  `bundleVersion` tracked local line endings and a fresh clone read STALE.
-  Generators hashing files for a committed artifact must canonicalise CRLF→LF —
-  **with `canonicalizeEol` from [`lib/file-io.mjs`](scripts/lib/file-io.mjs)**, the
-  one byte-level fold (it leaves a lone `CR` alone and never decodes, so it cannot
-  corrupt non-UTF-8 bytes while hashing them). It bit a SECOND generator on
-  2026-08-08: `regenerate-skill-copies.mjs` compared raw bytes, so a worktree
-  whose `.claude/skills/**` landed CRLF while `skills/**` landed LF reported all
-  67 destinations as differing — sending the operator to regenerate, which
-  commits an EOL flip as if it were content. The tell is a diff where git says
-  clean and your tool says changed: **git is right, the tool is comparing the
-  wrong thing.** Do NOT canonicalise where the exact bytes ARE the contract
-  (transfer-corruption checks) — that masks the corruption being looked for.
+- **Hashing working-tree bytes ≠ hashing committed source.** A generator hashing
+  files for a *committed* artifact must canonicalise CRLF→LF — with
+  `canonicalizeEol` from [`lib/file-io.mjs`](scripts/lib/file-io.mjs), the one
+  byte-level fold. Git calls a CRLF file CLEAN under `.gitattributes eol=lf`, so
+  the tell is a diff where **git says clean and your tool says changed: git is
+  right, the tool is comparing the wrong thing.** Do NOT canonicalise where the
+  exact bytes ARE the contract (transfer-corruption checks). Both generators this
+  bit, and the worktree-`node_modules` resolution rule (a tool hard-coding
+  `<repoRoot>/node_modules` breaks in a worktree and nowhere else; never hand-link
+  one in): [prepush-sandbox.md](docs/runbooks/prepush-sandbox.md) §2.1–2.2.
 
 #### Testing doctrine — pointer
 
@@ -482,51 +468,30 @@ recover. Three triggers:
 Runtime is the `memory_health_metrics(window_days)` Postgres RPC added by
 `supabase/migrations/20260421163525_memory_health.sql` (uses `pg_trgm`).
 
-> **Metrics 1 and 3 are SAMPLED, and two Postgres traps live here (2026-08-08).**
-> The gate had measured nothing for months: the 2026-04-21 perf patch added a `%`
-> prefilter *and* truncated both operands to `LEFT(detail_snapshot,500)` in one
-> edit, which disabled the bare-column GIN index `%` was added to use — 3.7M
-> filter-evaluated pairs, >15 min, killed by the runner's 5-min spawn budget as a
-> bare `spawn ETIMEDOUT`. Fixed by `20260808160000_memory_health_trgm_index.sql`:
-> a GIN index on `left(detail_snapshot,500)`, LATERAL probes behind an
-> **`OFFSET 0` fence** (without it the planner still picks the `created_at`
-> btree — it costs `%` at 1 unit against a measured ~65us), and a `per_repo_cap`
-> on the **driving** set. Cap the driving set, NEVER the searched set — the
-> latter drops real matches and biases the rate down into a false GREEN. So
-> `fuzzy_reraise.rate` / `recurrence.rate` are sample estimates over the N most
-> recent per repo; read `new_fingerprints_total` / `fixed_findings_total` /
-> `per_repo_cap` beside them. **Trap 1: `SET statement_timeout` on a function is
-> DECORATIVE** — Postgres arms the timer at statement start and a `SET` inside
-> the body never re-arms it (negative-controlled); bound these RPCs at the
-> caller, as `db/rpc.mjs` now does via `withTx` + `SET LOCAL`. **Trap 2:
-> `CREATE OR REPLACE FUNCTION` replaces the whole proconfig array and resets the
-> ACL**, so any redefinition silently reverts `20260721130000`'s `search_path`
-> pin + EXECUTE revoke unless it re-states both — verify with `pg_proc.proconfig`
-> / `proacl`, not review.
-
-> **Cluster density counts FINDINGS, never a wave's own control state.** A wave
-> that prints a machine-generated notice about its own execution (coverage cap
-> hit, aborted enumeration) emits byte-identical text every time, so those rows
-> pair at similarity 1.00 with each other and inflate the metric by
-> construction — 44% of the raw signal on 2026-07-20. Sentinels are listed in
-> `control_marker_prefixes` (migration `20260720210000`) and matched on the
-> **detail-snapshot prefix, not the category**: the adjacency wave emits both
-> `ADJACENCY_INCOMPLETE` control state AND real `[Adjacency]` findings, so
-> excluding the category would drop genuine signal. **Add a sentinel there when
-> a new wave starts emitting control state**, or this gate will read AMBER
-> forever on its own logging. Two companion fixes in the same migration:
-> `open_findings` now means the considered population (it previously counted
-> only findings that already had a match), and a repo with zero similar pairs
-> contributes a 0 to the median instead of vanishing from it via an INNER JOIN.
-
-**Auto-scheduled** via `.github/workflows/memory-health.yml` — runs every Monday
-09:00 UTC, silent when all metrics green, opens/updates a sticky GH issue
-(label `memory-health`) when any trigger fires. Auto-closes when metrics
-return to green. Run locally: `npm run memory:health` or `npm run memory:health:json`.
-
 **Decision rule**: 0 triggers for 4 weeks → current design is fine. 1 trigger
 for 2 consecutive weeks → prototype pgvector similarity. 2+ triggers → build
-the full clustering pipeline.
+the full clustering pipeline. Auto-scheduled weekly by
+`.github/workflows/memory-health.yml`; locally `npm run memory:health`.
+
+Three obligations stay resident; the incidents, query mechanics and thresholds are
+in [`docs/reference/memory-health-gate.md`](docs/reference/memory-health-gate.md):
+
+- **Metrics 1 and 3 are SAMPLED, not exhaustive** — `fuzzy_reraise.rate` /
+  `recurrence.rate` are estimates over the N most recent per repo; read
+  `new_fingerprints_total` / `fixed_findings_total` / `per_repo_cap` beside them.
+  When capping, **cap the driving set, NEVER the searched set** — the latter drops
+  real matches and biases the rate down into a false GREEN.
+- **Add a `control_marker_prefixes` sentinel when a new wave starts emitting
+  control state**, or the gate reads AMBER forever on its own logging:
+  machine-generated notices are byte-identical, so they pair at similarity 1.00
+  (44% of the raw signal on 2026-07-20). Matched on the detail-snapshot **prefix**,
+  never the category — a wave emits both control state and real findings.
+- **`SET statement_timeout` inside a function is DECORATIVE** (Postgres arms the
+  timer at statement start) — bound an RPC at the **caller**, as `db/rpc.mjs` does
+  via `withTx` + `SET LOCAL`. And `CREATE OR REPLACE FUNCTION` resets the whole
+  `proconfig` array **and** the ACL, so a redefinition silently reverts a
+  `search_path` pin + EXECUTE revoke unless it re-states both — verify with
+  `pg_proc.proconfig` / `proacl`, not review.
 
 > **pgvector prototyped + promoted (2026-07-21):** trigram UNDER-counts churn; semantic cosine
 > catches reworded re-raises. `scripts/semantic-suppress.mjs` reconciler (dry-run default) + a
@@ -558,41 +523,20 @@ lifecycle, Phase-3 replay framework + promotion recipe, outbox detail):
 
 ## Environment Variables
 
-| Variable | Required | Default | Purpose |
-|----------|----------|---------|---------|
-| `OPENAI_API_KEY` | Yes | — | GPT access (audit model defaults to latest pinned GPT) |
-| `GEMINI_API_KEY` | No | — | Gemini final review (Step 7 falls back to Claude Opus if absent) |
-| `OPENAI_AUDIT_MODEL` | No | `latest-gpt` | Model sentinel or concrete ID (see "Model Resolution" below) |
-| `OPENAI_AUDIT_REASONING` | No | `high` | Reasoning effort |
-| `GEMINI_REVIEW_MODEL` | No | `latest-pro` | Gemini model sentinel or concrete ID |
-| `GEMINI_REVIEW_TIMEOUT_MS` | No | `270000` | Gemini timeout — sized for the CONSOLIDATED union-diff gate, not a per-cluster one (120s→180s 2026-07-31; 180s→270s 2026-08-10 after a 31-file union review timed out at 180s then ran 142s/130s). **COUPLED**: the watchdog floor is `2×timeout + 60000`, so 270s is the most the `FINAL_REVIEW_HARD_DEADLINE_MS` default admits — raise both together. Rationale: `config.mjs` `geminiConfig`. |
-| `ANTHROPIC_API_KEY` | No | — | Claude Haiku fallback for brief generation (sdk backend only) |
-| `CLAUDE_BACKEND` | No | `sdk` | Routing for Claude calls: `sdk` (raw API) or `cli` (`claude -p` headless — draws from Max 20x Agent SDK $200/mo credit from 2026-06-15). See "Anthropic Backend Routing" below. |
-| `CLAUDE_BIN` | No | `claude` | Path/name of the `claude` CLI (cli backend only) |
-| `CLAUDE_FINAL_REVIEW_MODEL` | No | `latest-opus` | Claude Opus override (Step 7 fallback) |
-| `FINAL_REVIEW_SHADOW` | No | — | Opt-in **shadow** final reviewer (observation-only A/B): `claude-opus` \| `anthropic` \| `gemini`. Runs a second blind reviewer in parallel with the primary; never gates the build. No-op when unset or under an Azure profile. See "Shadow final-review A/B" below. |
-| `FINAL_REVIEW_SHADOW_MODEL` | No | per-provider | Concrete model / sentinel for the shadow reviewer. Unset → derived from the provider (`claude-opus`→`latest-opus`, `gemini`→`latest-pro`). A family mismatch is a logged no-op. `FINAL_REVIEW_{BASE_URL,API_KEY,MODEL,HARD_DEADLINE_MS}` (provider-agnostic gateway + termination watchdog) are documented in the [azure-work-profile runbook](docs/runbooks/azure-work-profile.md) §Provider-agnostic final review. |
-| `BRIEF_MODEL_GEMINI` | No | `latest-flash` | Brief-generation Gemini model |
-| `BRIEF_MODEL_CLAUDE` | No | `latest-haiku` | Brief-generation Claude model |
-| `META_ASSESS_MODEL` | No | `latest-flash` | Meta-assessment Gemini model |
-| `META_ASSESS_GPT_FALLBACK` | No | `latest-gpt-mini` | Meta-assessment GPT fallback when GEMINI_API_KEY is absent |
-| `SUPPRESS_SIMILARITY_THRESHOLD` | No | `0.35` | Jaccard threshold for R2+ suppression (0.0-1.0) |
-| `AUDIT_DB_URL` | No | — | **Postgres DSN** for the audit-loop store. Supabase users: dashboard → Connect → **Session pooler** (URI, port 5432). Unset → local-only mode (#16 graceful degradation). Replaces the legacy `SUPABASE_AUDIT_*` triplet (postgres-parity M4). |
-| `AUDIT_DB_SSL_MODE` | No | `require` | TLS mode: `require` (default; strict verify), `no-verify` (accept self-signed — needed for Supabase poolers), `disable`. |
-| `AUDIT_DB_POOL_MAX` | No | `4` | Maximum simultaneous pg connections. Increase only when the audit-loop's chunked upserts demand it. |
-| `PERSONA_TEST_APP_URL` | No | — | Default app URL for persona-test list/add (per-project `.env`) |
-| `PERSONA_TEST_REPO_NAME` | No | — | Repo name for cross-referencing audit-loop findings (per-project `.env`) |
-| `MEMORY_HEALTH_WINDOW_DAYS` | No | `30` | Memory-health lookback window |
-| `MEMORY_HEALTH_FUZZY_RATE` | No | `0.15` | Fuzzy re-raise rate trigger threshold |
-| `MEMORY_HEALTH_CLUSTER_MEDIAN` | No | `5` | Cluster density trigger threshold (median similar pairs/repo) |
-| `MEMORY_HEALTH_RECURRENCE_RATE` | No | `0.10` | Fixed-finding recurrence rate trigger threshold |
-| `MEMORY_HEALTH_MIN_FINDINGS` | No | `50` | Minimum findings in window to report a trigger (below → INSUFFICIENT_DATA) |
-| `MEMORY_HEALTH_RPC_TIMEOUT_MS` | No | `240000` | Caller-side bound on `memory_health_metrics` (the function's own `SET statement_timeout` is inert). Sized under the maintenance runner's 300s spawn budget so a runaway is a loud `57014`, not a silent kill. |
-| ~~`SUPABASE_AUDIT_*`~~ | — | — | **Sunset in M4** (postgres-parity). The audit-loop now uses `AUDIT_DB_URL` exclusively; the legacy URL + anon-key + service-role-key triplet was tied to the old `@supabase/supabase-js` PostgREST path which has been removed. The runtime DSN's password IS the secret — no separate write-role key. |
-| `LEARNING_DISABLE` | No | — | Set to `1` to disable all adaptive-learning live behaviour and telemetry recording (single env-var kill switch). |
-| `LEARNING_REPO_NAME` | Required for weekly-review | — | Per-repo gate for `weekly-review.mjs`. Aborts if missing — prevents cross-tenant data leakage in the digest issue body. **Must be the `owner/repo` slug** (matches `audit_repos.name`, derived from the git origin URL via `resolveRepoIdentity()`) — the bare repo name silently misses the lookup (`{posted:false, reason:'unknown-repo'}`), which is exactly how this sat broken for weeks in every consumer before 2026-07-22. `install.mjs`/`setup.mjs` now derive it automatically; don't hand-type it. |
-| `LEARNING_QUEUE_CAP_PER_TYPE` | No | `64` | Per-`decision_type` bounded sub-queue cap. Increase for high-throughput audits. |
-| `AUDIT_AUTHOR_TIER_HINT` | No | — | **Observation-only** (never routes). Optional author-model hint (concrete id e.g. `claude-sonnet-4-6`, or a logical tier `economy\|standard\|frontier`) read by the `author_tier` recorder in `openai-audit.mjs` to capture actual-vs-suggested tier + the ladder partition key. A concrete id populates the partition key; a bare logical tier leaves it null. See `docs/plans/model-tier-observation.md`. |
+**Full table** (every variable, default and purpose):
+[`docs/reference/environment-variables.md`](docs/reference/environment-variables.md).
+Azure work-profile vars: [`azure-work-profile.md`](docs/runbooks/azure-work-profile.md).
+The rows below are the ones whose semantics constrain how you write code:
+
+| Variable | Default | Load-bearing because |
+|----------|---------|----------------------|
+| `OPENAI_API_KEY` | — | The one **required** variable. Everything else degrades gracefully. |
+| `AUDIT_DB_URL` | — | Postgres DSN for the store. Unset → **local-only mode**, not an error (#16 graceful degradation). Supabase: **Session pooler (5432)**, never the Transaction pooler. |
+| `LEARNING_DISABLE` | — | `1` kills **all** adaptive-learning behaviour + telemetry in one variable. |
+| `LEARNING_REPO_NAME` | — | Must be the **`owner/repo` slug** (matches `audit_repos.name`) — a bare repo name silently misses the lookup, which is how weekly-review sat broken for weeks in every consumer. `install.mjs`/`setup.mjs` derive it; don't hand-type it. |
+| `GEMINI_REVIEW_TIMEOUT_MS` | `270000` | **COUPLED** to `FINAL_REVIEW_HARD_DEADLINE_MS`: the watchdog floor is `2×timeout + 60000`, so 270s is the most the default admits — raise both together. |
+| `AUDIT_AUTHOR_TIER_HINT` | — | **Observation-only** — it records an author-model tier and must never route. |
+| ~~`SUPABASE_AUDIT_*`~~ | — | **Sunset in M4.** The runtime DSN's password IS the secret — there is no separate write-role key. |
 
 ## Postgres-Parity Store (M1–M4)
 

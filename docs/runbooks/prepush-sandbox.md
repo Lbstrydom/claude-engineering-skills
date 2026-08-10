@@ -77,6 +77,41 @@ see it: the working tree never disagrees with itself.
 > artifact must canonicalise CRLF→LF first. Hash the bytes git stores, not the
 > bytes your filesystem happens to hold.
 
+Use **`canonicalizeEol` from [`lib/file-io.mjs`](../../scripts/lib/file-io.mjs)** —
+the one byte-level fold. It leaves a lone `CR` alone and never decodes, so it
+cannot corrupt non-UTF-8 bytes while hashing them.
+
+**It bit a SECOND generator on 2026-08-08.** `regenerate-skill-copies.mjs`
+compared raw bytes, so a worktree whose `.claude/skills/**` landed CRLF while
+`skills/**` landed LF reported all 67 destinations as differing — sending the
+operator to regenerate, which commits an EOL flip as if it were content. The tell
+is a diff where **git says clean and your tool says changed: git is right, the
+tool is comparing the wrong thing.**
+
+> **Do NOT canonicalise where the exact bytes ARE the contract** (transfer-corruption
+> checks) — that masks the corruption being looked for.
+
+### 2.2 A worktree has no `node_modules`, and tools must RESOLVE that
+
+Everything in a nested worktree works because Node walks *up* and finds the main
+checkout's copy — so any tool that hard-codes `<repoRoot>/node_modules` breaks
+there and nowhere else.
+
+Two tools provision it into an isolated copy. `prepush-check.mjs` guards with
+`existsSync` and falls back to `npm ci` (§4). `check-gate-poison-pills.mjs` did
+not — and on Windows **a junction to a missing target succeeds and leaves a
+dangling link** (verified 2026-08-08), so its `try`/`catch` never fired and the
+only symptom was the CONTROL run dying on `Cannot find package 'zod'`: a message
+pointing at the gate under test rather than at the harness. It now resolves
+upward like Node does, and asserts the link **RESOLVES**, not merely that
+creating it threw nothing.
+
+`prepush-check.mjs` was already correct — in a worktree it just falls back to a
+slower `npm ci`, which is safe, so it was deliberately left alone.
+
+> **Do not "fix" a worktree by hand-linking `node_modules` into it.** That hides
+> the tool bug from the next person, and is the ritual this removes.
+
 ## 3. The push range
 
 The hook reads git's stdin (`<local_ref> <local_sha> <remote_ref> <remote_sha>`)

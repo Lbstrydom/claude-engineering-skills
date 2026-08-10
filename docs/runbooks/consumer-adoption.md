@@ -701,3 +701,57 @@ moved off `pre-commit` (which now lints staged files only). Worth copying if
 your repo auto-deploys from `main`: push is the last boundary before code
 leaves the machine, and it fires far less often than commit, so the gate stays
 cheap enough that routing around it never becomes the rational move.
+
+## Reporting an upstream bug — file it, don't paste it
+
+Condensed out of AGENTS.md 2026-08-10; the governance rule ("a failure in
+`scripts/.claude-skills/**` is an UPSTREAM bug — never patch the synced copy")
+stays resident there.
+
+**From the consumer:**
+
+```bash
+node scripts/.claude-skills/cross-skill.mjs upstream report --title "…" --affected-path <synced path>
+```
+
+The body goes on **stdin**. The command auto-captures the repo, the **bundle
+sha**, and whether the cited path is really upstream-owned.
+
+**From here (the source repo):** `npm run upstream:issues` to list, then
+`upstream ack` / `upstream fix --commit <sha>` / `upstream wont-fix --id <id>`.
+`/ship` Step 0.5h prints the open count — **advisory**: cloud state nudges, never
+blocks.
+
+Why the worksheet exists (2026-07-31): prose reports arrived with a non-existent
+path, against an unknowable version, for a bug fixed the day before. The
+worksheet answers "already fixed?" mechanically. Two reports sat unread on
+2026-08-01, one of them already fixed 45 minutes earlier. Bodies are readable by
+every repo sharing the DSN. Plan:
+[`upstream-issue-reports.md`](../plans/upstream-issue-reports.md).
+
+### Three shapes consumers keep reporting (2026-08-08)
+
+Check for these when adding a gate or a nudge. Each is a general defect class,
+not a one-off.
+
+**(1) A read handing back a key its writer rejects.** `/ship` 0.5e listed
+unclosable rows for weeks because `unremediated_acceptances` projected
+`audit_finding_id` while its only closer needs `--fingerprint` — two reports, one
+column. **A new close-this-row nudge means a new row in**
+[`view-writer-key-contract.test.mjs`](../../tests/view-writer-key-contract.test.mjs).
+
+**(2) A gate judging files the repo does not own.** `context:check` scanned a
+vendored, gitignored `.agents/skills/**/CLAUDE.md` and exited 1 on a clean repo.
+The right predicate is **ignored AND untracked**, not a longer exclusion list
+(which grows per vendoring tool). Ask it of the **candidates**, never of the
+repo: a whole-repo `git ls-files --others --ignored` is megabytes of
+`node_modules`, ENOBUFS past `spawnSync`'s 1MiB `maxBuffer`, and a fail-open
+guard reads that as "nothing disowned" — inert 2026-08-08 → 08-10, green
+throughout.
+
+**(3) A check verifying one direction only.** `sync-isolation-verify` walked
+manifest→disk, so 100 orphaned executables were invisible *by construction*. Gate
+**2C** now walks disk→manifest over `scripts/.claude-skills/` alone — other
+directories hold consumer-owned files, and flagging those earns a bypass. Ask of
+any set comparison: **which side am I iterating, and what is unrepresentable from
+it?**

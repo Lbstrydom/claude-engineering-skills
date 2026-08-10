@@ -223,6 +223,73 @@ copy — where they were **already broken**, because they cited runners that did
 exist there. No skill beats a skill that confidently names a nonexistent path;
 that is what cost a session its audit gates.
 
+## 7. The skill-file contract on the surviving surface
+
+Condensed out of AGENTS.md 2026-08-10; the invariants themselves stay resident
+there, this is the evidence and the history.
+
+`.claude/skills/**` is committed here and is the **single Copilot-native
+surface**. `.github/skills/<name>/` was a previously-generated mirror, deprecated
+in Phase 4 of ai-context-sync (at the time, no documented AI tool read it).
+
+**Updated 2026-07-21 (Copilot-compat audit).** VS Code Copilot's Agent Skills
+(GA + default-on since VS Code 1.109, Jan 2026) natively discovers THREE
+workspace roots — `.github/skills/`, `.claude/skills/`, `.agents/skills/` — plus
+the personal dirs `~/.copilot/skills`, `~/.claude/skills`, `~/.agents/skills`.
+Collision precedence between roots is **NOT officially documented** (the earlier
+"`.github/skills` wins" claim traces only to third-party sources), so the robust
+rule is *never ship the same skill name in two discovered roots*.
+
+Keeping `.github/skills` deleted stays load-bearing: a stale resurrected copy is
+an undefined-behavior collision against the fresh `.claude/skills` copies. Found
+live in ai-organiser 2026-07-21 — a 2025-era leftover shadowed 3 skills. Sync
+deliberately never deletes it in consumers, so **check `.github/skills/` AND
+`.agents/skills/` when a consumer's Copilot behaves oddly.**
+
+### Frontmatter contract (enforced by `skills:check`)
+
+| Field | Rule | Violation |
+|---|---|---|
+| `name` | must equal the directory name and match `^[a-z0-9-]{1,64}$` | **silent skip** |
+| `description` | required, **max 1024 chars** | gate failure |
+| trigger phrases | no two skills may advertise the same *literal* phrase | gate failure |
+
+Keep trigger phrases in the `description`; move Usage/Examples syntax into the
+SKILL body (`Full command syntax: see the Usage section in this skill.`).
+
+**The budget half of that claim was fiction until 2026-08-04**: only `name` was
+enforced (poison-tested), while `investigate` 1257 / `explain` 1152 / `ux-lock`
+1062 sat over the cap with `skills:check` green — a stated-but-unenforced gate,
+the class the gate-honesty suite exists to catch.
+[`check-skill-descriptions.mjs`](../../scripts/check-skill-descriptions.mjs) now
+enforces the budget **and** the duplicate-trigger-phrase rule (one live clash:
+`"verify the plan"` in both audit-plan and ux-lock).
+
+**Exact-match only, deliberately**: fuzzy matching was measured at 47 cross-skill
+noise pairs (Jaccard ≥ 0.5, mostly one shared word) and rejected. Semantic overlap
+has no oracle — declare the discriminator in BOTH descriptions instead (*topic* →
+`/explain --history`, *claim* → `/investigate`).
+
+### Adjacent editor-config surfaces
+
+- Copilot also reads `CLAUDE.md` + `AGENTS.md` + `.github/copilot-instructions.md`
+  (all default-on) — mind duplication cost when editing.
+- **`.github/prompts/*.prompt.md` was RETIRED 2026-07-21**: since VS Code 1.109
+  skills surface as `/name` slash commands in the SAME namespace as prompt files,
+  same-basename shims collided with their own skills (and half pointed at
+  non-existent CLIs). **Do not re-introduce a `.github/prompts` generator.**
+- MCP: VS Code reads `.vscode/mcp.json`, **NOT** Claude's `.mcp.json` — keep the
+  two mirrored when adding servers.
+
+### `--keep-github-skills` removed entirely (2026-07-28)
+
+From `regenerate-skill-copies.mjs`, `install-skills.mjs`, and `sync-to-repos.mjs`
+alike ([refactor-skill-governance.md](../plans/refactor-skill-governance.md)).
+None of the three write paths can resurrect `.github/skills/` any more;
+`regenerate-skill-copies.mjs` now actively **deletes** a pre-existing tree in this
+repo, and [`check-stale-skill-surface.mjs`](../../scripts/check-stale-skill-surface.mjs)
+remains the drift backstop for a consumer-repo copy created by other means.
+
 ---
 
 Design record: [repo-scoped-skill-surfaces-and-installer.md](../plans/repo-scoped-skill-surfaces-and-installer.md).
