@@ -1,6 +1,46 @@
 # Project Status Log
 
-## 2026-08-10 (latest) — the page was ordered, but nothing said so
+## 2026-08-10 (latest) — a pull-only updater, because the conditional step is the one everyone skips
+
+A downstream fork/mirror of this bundle (deployment shape B in the consumer-
+adoption runbook) is now cloned by a team rather than one person, and asked for a
+tracked `npm run update-auditloop` that updates a clone and cannot push. The
+owner's existing updater pulls, installs, and then mirrors to a private remote —
+machine-local and untracked, correctly so, since its remote topology is true on
+exactly one machine. A tracked script that sometimes pushes would run in every
+teammate's clone against a notion of "the right remote" nobody verified.
+
+**The interesting requirement is the dependency condition, and it has two arms.**
+Comparing `HEAD` before and after the pull catches a manifest change, but the
+failure that actually strands a clone is a run that fast-forwarded and *then*
+died during install: on the retry `HEAD` is unchanged, so the manifest arm sees
+nothing while the tree is still broken. An unhealthy `npm ls --depth=0` therefore
+triggers repair on its own. Without that second arm the retry is a silent no-op —
+precisely the state a user runs the command to escape.
+
+**Two claims in the handoff did not survive contact with this repo**, both in the
+direction of reimplementing something that already exists. The requested Windows
+fix was "invoke npm through the shell", but `npmInvocation()` in
+`lib/install/deps.mjs` already solves it strictly better — it runs npm's own
+`npm-cli.js` under the current node binary, so there is no `.cmd`, no shell, and
+no quoting surface; its own docstring records that this was the *second* attempt
+after `shell: true`. And the catalogue lives at `scripts/.cli-catalog.json`, not
+the repo root. The handoff's underlying requirement (npm must really spawn on
+Windows, proven by a non-mocked test) is met either way, so the reuse path won.
+
+The paired test earned its keep immediately: it went red on a real defect in the
+first draft. `git status --porcelain` output was `.trim()`ed before being split
+into lines, which ate the leading status column of the first line, so `slice(3)`
+bit a character off the first filename — the dirty-tree refusal would have named
+`cripts/foo.mjs`. Split first, trim per line.
+
+Ships as six files: `scripts/update-auditloop.mjs`,
+`tests/update-auditloop.test.mjs` (16 cases, including a non-mocked real-npm
+spawn and a no-push assertion over seven scenarios' recorded argv), plus the
+`package.json` script, the catalogue entry, the runbook section, and this note.
+Nothing about the downstream's private topology is recorded here.
+
+## 2026-08-10 — the page was ordered, but nothing said so
 
 Upstream report `96a829f8` (HIGH, from wine-cellar-app): `list-unremediated-acceptances`
 returns a 20-row page with no `ORDER BY`, so /ship Step 0.5e's own instruction —

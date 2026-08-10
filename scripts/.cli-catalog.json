@@ -555,6 +555,10 @@
       "description": "Triage worksheet for upstream bug reports filed from consumer repos (bundle staleness + prior fixes).",
       "category": "sync"
     },
+    "update-auditloop": {
+      "description": "Update THIS clone of the bundle from its own upstream: fast-forward-only pull, npm ci when the manifests changed or the dep tree is unhealthy, then skills:check. Never pushes. For a fork/mirror shared by a team — not sync:refresh, which copies the bundle into a separate product repo.",
+      "category": "sync"
+    },
     "docs:citations": {
       "description": "Re-resolves every pinned `path:line (sha)` citation in a document at its commit and reports ok / moved / drifted / unresolvable. Catches the citation that still RESOLVES but to different content — the decay a proofread cannot see, because proofreading re-reads the sentence rather than re-running the citation. Report-only and deliberately NOT in `npm run check`; `--require-citations` makes a parsed-nothing run exit 1 so a clean report over zero citations cannot read as a pass. Contract: docs/audit/shared-references/verification-discipline.md §1.",
       "category": "diagnostic"

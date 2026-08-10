@@ -557,6 +557,56 @@ git pull upstream main      # latest canonical
 git push origin main        # mirror to your private remote
 ```
 
+#### Keeping a *shared* fork updated — `npm run update-auditloop`
+
+The two-line "stay updated" recipe above is the **owner's** flow: it ends in a
+push to a private remote, so it belongs to whoever owns that remote. When several
+people clone the fork, they need the other half — update my clone, touch no
+remote — and they need it to be one command:
+
+```bash
+npm run update-auditloop
+```
+
+It fast-forwards the current branch from its configured upstream, reinstalls
+dependencies when they need it, verifies the generated skills, and **never
+pushes**. There is no push code in the script, and the test suite asserts that on
+the commands actually issued rather than on the source reading well.
+
+What it will not do, deliberately: it refuses a dirty tracked tree, refuses a
+detached `HEAD`, and never merges, rebases, resets, stashes, or force-updates to
+resolve divergence. A fork's `main` should hold no local commits; when it does,
+that is a fact for a human, not something a script should quietly paper over.
+Untracked and gitignored files (`.env`, `consumer-repos.local.json`, local notes)
+do **not** block an update.
+
+The dependency step runs `npm ci` — never `npm install`, which can rewrite the
+lockfile and leave the tree dirty for the *next* update — under either of two
+conditions: the pull changed `package.json`/`package-lock.json`, **or**
+`npm ls --depth=0` reports an unhealthy tree. The second condition is the one
+that matters in practice: if an earlier run fast-forwarded and then died during
+install, `HEAD` is already current on the retry, so only the health check can
+still spot the broken tree.
+
+A `skills:check` failure is reported as a warning and still exits `0`. It
+describes the commit you just pulled, not anything you did — report it upstream
+instead of regenerating locally.
+
+Exit codes: `0` updated (including the advisory skills warning) · `1` dirty tree,
+detached `HEAD`, pull failure, or dependency failure · `2` bad arguments.
+
+**Not the same command as `sync:refresh`** — the distinction is worth holding
+onto, because both sound like "update my skills":
+
+| | updates | use when |
+|---|---|---|
+| `npm run update-auditloop` | **this clone of the bundle**, from its own upstream | the bundle IS the repo (shape B) |
+| `npm run sync:refresh -- --target <alias>` | a **separate product repo**, by copying the bundle into it | the skills are layered into your app (shape A) |
+
+Teammates on a clone that predates this command need one manual bootstrap
+(`git pull --ff-only && npm ci`) to acquire it; every update after that is the
+one-liner.
+
 Secrets live in a gitignored `.env` (or `~/.audit-loop.env`), so they never
 reach either remote. The fork is fully self-contained + runnable from a fresh
 clone — including the Azure work profile, which ships in this bundle. Keep the
