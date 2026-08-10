@@ -82,20 +82,68 @@ export const EUR_PER_USD = 0.92;
 export const PRICING_VERSION = '2026-07-01';
 
 /**
- * Conservative fallback price (USD/1M) for an UNPRICED model, used ONLY by the
- * spend-cap path (never the analytics cost ratio). Set at/above the priciest
- * known model so an unknown-price arm can never UNDER-count against the hard €
- * ceiling (audit R1 H7 — "can't meter it → over-estimate, never treat as free").
+ * Multiple of the priciest KNOWN model used to derive the spend-cap fallback.
+ * 2x is a judgement call, not a proof (see FALLBACK_PRICE_USD) — it is the
+ * headroom by which a brand-new model may exceed today's most expensive one
+ * before the reservation stops being an over-estimate.
  */
-export const FALLBACK_PRICE_USD = Object.freeze({ input: 15, output: 75 });
+export const FALLBACK_MARGIN = 2;
 
-// Self-enforcing invariant (audit R4 M5 / R5 M3): the budget fallback MUST
-// dominate every known price — OSS *and* the family table — else an unpriced
-// model could be UNDER-estimated against the hard € ceiling. Fail-fast at
-// import if any pricing edit breaks it.
+/**
+ * Conservative fallback price (USD/1M) for an UNPRICED model, used ONLY by the
+ * spend-cap path (never the analytics cost ratio), so an unknown-price arm can
+ * never UNDER-count against the hard € ceiling (audit R1 H7 — "can't meter it →
+ * over-estimate, never treat as free").
+ *
+ * DERIVED from the price tables (`max(listed) × FALLBACK_MARGIN`), not
+ * hand-picked — debt `f68a6dbc`. It was the literal `{15, 75}`, and the
+ * priciest listed model (claude-opus) is also `{15, 75}`: **headroom had
+ * decayed to exactly 1.0x**, and the invariant below threw only on `>`, so the
+ * tie passed. `costForBudget` reserves an unlisted model at this rate, so any
+ * model above Opus — the ordinary case for a new frontier release, which is
+ * what an unpriced id usually IS — under-reserved against the ceiling, the one
+ * direction that function exists to prevent. A hand-maintained constant beside
+ * a table that grows toward it will always drift back into that tie; deriving
+ * it means it cannot.
+ *
+ * **What this does and does not establish.** It CANNOT prove a bound on a
+ * price nobody has: no finite constant can, and the original debt entry is
+ * right about that. What it now guarantees is (1) the fallback strictly
+ * dominates every KNOWN price, checked below rather than remembered, (2) it
+ * tracks the table automatically, so adding a pricier model raises it, and
+ * (3) every use is still flagged `estimated: true` by `costForBudget` and
+ * persisted by the spend ledger, so a reservation made this way is always
+ * identifiable as a guess rather than a measurement. A model priced above
+ * `FALLBACK_MARGIN ×` the current maximum remains under-reserved — the residual
+ * is bounded and visible instead of silent and zero.
+ */
+export const FALLBACK_PRICE_USD = (() => {
+  const listed = [...Object.entries(OSS_PRICING), ...Object.entries(familyPricing)];
+  if (listed.length === 0) {
+    throw new Error('[model-pricing] cannot derive FALLBACK_PRICE_USD: both price tables are empty, so there is no maximum to bound the spend cap with.');
+  }
+  for (const [id, px] of listed) {
+    if (!Number.isFinite(px?.input) || !Number.isFinite(px?.output) || px.input < 0 || px.output < 0) {
+      throw new Error(`[model-pricing] price["${id}"] is not a finite non-negative {input,output} (${JSON.stringify(px)}) — a spend-cap floor derived from it would be meaningless.`);
+    }
+  }
+  const maxInput = Math.max(...listed.map(([, px]) => px.input));
+  const maxOutput = Math.max(...listed.map(([, px]) => px.output));
+  if (!(maxInput > 0) || !(maxOutput > 0)) {
+    throw new Error(`[model-pricing] every listed price is 0 on one side (max in=${maxInput}, out=${maxOutput}) — refusing to derive a 0 spend-cap floor, which would treat unpriced models as free.`);
+  }
+  return Object.freeze({ input: maxInput * FALLBACK_MARGIN, output: maxOutput * FALLBACK_MARGIN });
+})();
+
+// Self-enforcing invariant (audit R4 M5 / R5 M3, tightened for f68a6dbc): the
+// budget fallback must STRICTLY dominate every known price — OSS *and* the
+// family table. `>` allowed a tie, which is how the margin reached 1.0x
+// unnoticed; `>=` makes a tie the failure it always was. Now that the value is
+// derived this is a post-condition on the derivation rather than a reminder to
+// a human, so it can only fire on a real bug above.
 for (const [id, px] of [...Object.entries(OSS_PRICING), ...Object.entries(familyPricing)]) {
-  if (px.input > FALLBACK_PRICE_USD.input || px.output > FALLBACK_PRICE_USD.output) {
-    throw new Error(`[model-pricing] FALLBACK_PRICE_USD {${FALLBACK_PRICE_USD.input}/${FALLBACK_PRICE_USD.output}} must be ≥ price["${id}"] {${px.input}/${px.output}} — raise the fallback to keep the spend-cap over-estimate honest.`);
+  if (px.input >= FALLBACK_PRICE_USD.input || px.output >= FALLBACK_PRICE_USD.output) {
+    throw new Error(`[model-pricing] FALLBACK_PRICE_USD {${FALLBACK_PRICE_USD.input}/${FALLBACK_PRICE_USD.output}} must STRICTLY exceed price["${id}"] {${px.input}/${px.output}} — a tie is not an over-estimate.`);
   }
 }
 

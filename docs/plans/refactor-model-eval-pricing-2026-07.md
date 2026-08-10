@@ -60,12 +60,26 @@ merits.** Line numbers below are pinned to `d5e66d35`.
 > function exists to make impossible. Measured: an unlisted model at 1M/1M
 > reserves $90, while a real $20/$100 model costs $120.
 >
-> The entry is therefore **NOT closed** and is not resolvable by argument. The
-> honest fix is to stop hand-picking the constant: derive the floor from the
-> table (`max(listed) × margin`) so it cannot silently come to rest at a tie,
-> and make the invariant strict (`>=` rejected, not just `>`). Tracked as open
-> debt `f68a6dbc`; see [`model-comparison-campaigns.md`](model-comparison-campaigns.md),
-> whose cost ceilings rest on this exact premise.
+> **FIXED, same day.** `FALLBACK_PRICE_USD` is now derived — `max(listed) ×
+> FALLBACK_MARGIN` (2) = `{30, 150}`, headroom 2.0x — and the import-time
+> invariant rejects a **tie** (`>=`), not just a breach. An unlisted model at
+> 1M/1M now reserves $180 where it reserved $90. Deriving it is the load-bearing
+> part: a hand-maintained constant sitting beside a table that grows toward it
+> will always drift back into a tie, which is exactly how this one reached 1.0x
+> unnoticed. The guarding test previously read `OSS_PRICING` only with `>=`,
+> which is why it stayed green — the tie was against `claude-opus` in the
+> **family** table it never looked at. Both gaps closed.
+>
+> **What is still not established** (the entry was right, and this does not
+> pretend otherwise): no finite constant can bound a price nobody has. A model
+> above `2 ×` today's maximum is still under-reserved. What holds now is that
+> the fallback strictly dominates every KNOWN price *by construction*, rises
+> automatically when a pricier model is listed, and is flagged `estimated: true`
+> on every use, so such a reservation is always identifiable as a guess. The
+> residual is bounded and visible rather than silent and zero — which is the
+> most this mechanism can honestly claim. Debt `f68a6dbc` resolved on that
+> basis. See [`model-comparison-campaigns.md`](model-comparison-campaigns.md),
+> whose cost ceilings rest on this premise.
 
 ### 0.1a The original (withdrawn) refutation, kept for the record
 

@@ -13,7 +13,8 @@ import {
   buildCandidateArm,
 } from '../scripts/lib/audit-arms.mjs';
 import { resolveModel, isSentinel, pickOssModel, OSS_POOL } from '../scripts/lib/model-resolver.mjs';
-import { costFromUsage, costForBudget, priceFor, isPriced, toEur, EUR_PER_USD, FALLBACK_PRICE_USD, OSS_PRICING } from '../scripts/lib/model-pricing.mjs';
+import { costFromUsage, costForBudget, priceFor, isPriced, toEur, EUR_PER_USD, FALLBACK_PRICE_USD, FALLBACK_MARGIN, OSS_PRICING } from '../scripts/lib/model-pricing.mjs';
+import { modelPricing } from '../scripts/lib/config.mjs';
 
 describe('audit-arms — canonical arms', () => {
   it('the 3 canonical arms A/B/C all validate against ArmSchema', () => {
@@ -350,11 +351,34 @@ describe('model-pricing — usage→cost with null-cost policy', () => {
       assert.equal(isPriced(head), true, `OSS_POOL.${role} head "${head}" must be priced`);
     }
   });
-  it('FALLBACK_PRICE_USD is at/above every known OSS price — cap invariant (R3 M5)', () => {
-    const maxIn = Math.max(...Object.values(OSS_PRICING).map((p) => p.input));
-    const maxOut = Math.max(...Object.values(OSS_PRICING).map((p) => p.output));
-    assert.ok(FALLBACK_PRICE_USD.input >= maxIn, 'fallback input rate must dominate OSS prices');
-    assert.ok(FALLBACK_PRICE_USD.output >= maxOut, 'fallback output rate must dominate OSS prices');
+  it('FALLBACK_PRICE_USD STRICTLY dominates every known price, OSS *and* family (f68a6dbc)', () => {
+    // This test used to read OSS_PRICING only, with `>=`. That is why it stayed
+    // green while the real margin decayed to 1.0x: the tie was against
+    // claude-opus in the FAMILY table, which the assertion never looked at, and
+    // `>=` would have permitted it anyway. Both gaps closed — a tie is not an
+    // over-estimate, and the family table is exactly where the maximum lives.
+    const all = [...Object.values(OSS_PRICING), ...Object.values(modelPricing)];
+    const maxIn = Math.max(...all.map((p) => p.input));
+    const maxOut = Math.max(...all.map((p) => p.output));
+    assert.ok(FALLBACK_PRICE_USD.input > maxIn, `fallback input ${FALLBACK_PRICE_USD.input} must strictly exceed max listed ${maxIn}`);
+    assert.ok(FALLBACK_PRICE_USD.output > maxOut, `fallback output ${FALLBACK_PRICE_USD.output} must strictly exceed max listed ${maxOut}`);
+  });
+
+  it('FALLBACK_PRICE_USD is DERIVED from the tables, so it cannot decay back to a tie (f68a6dbc)', () => {
+    // The failure mode was a hand-picked constant sitting beside a table that
+    // grew toward it. Pin the relationship, not the number: assert the value IS
+    // max(listed) x margin, so adding a pricier model necessarily raises it.
+    const all = [...Object.values(OSS_PRICING), ...Object.values(modelPricing)];
+    const maxIn = Math.max(...all.map((p) => p.input));
+    const maxOut = Math.max(...all.map((p) => p.output));
+    assert.equal(FALLBACK_PRICE_USD.input, maxIn * FALLBACK_MARGIN);
+    assert.equal(FALLBACK_PRICE_USD.output, maxOut * FALLBACK_MARGIN);
+    assert.ok(FALLBACK_MARGIN > 1, 'a margin of 1 or less is a tie or an under-estimate by construction');
+    // and the reservation it produces genuinely exceeds the priciest known model
+    const priciest = costForBudget({ input_tokens: 1_000_000, output_tokens: 1_000_000 }, 'claude-opus-5');
+    const unlisted = costForBudget({ input_tokens: 1_000_000, output_tokens: 1_000_000 }, 'some/never-priced-model');
+    assert.equal(unlisted.estimated, true, 'an unlisted model must still be flagged as an estimate, never a measurement');
+    assert.ok(unlisted.totalUsd > priciest.totalUsd, 'the unpriced reservation must exceed the priciest known model, not tie it');
   });
   it('costForBudget flags unmeterable usage so €0 is never authoritative (R5 H4)', () => {
     assert.equal(costForBudget(null, 'qwen/qwen3-coder').unmeterable, true);

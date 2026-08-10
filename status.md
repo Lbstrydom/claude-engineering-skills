@@ -129,9 +129,22 @@ only on `>`, so a tie passes. An unlisted model above Opus therefore
 to derive the floor from `max(listed) × margin` rather than hand-picking a
 constant that has quietly come to rest at a tie.
 
+Fixed the same day: the fallback is now **derived** — `max(listed) ×
+FALLBACK_MARGIN` (2) = `{30, 150}` — and the invariant rejects a tie, not just a
+breach. Deriving it is the point; a hand-maintained constant beside a table that
+grows toward it drifts back into a tie, which is how this reached 1.0x
+unnoticed. Its guarding test read `OSS_PRICING` only, with `>=` — so it could
+not have caught this: the tie was against `claude-opus` in the **family** table
+it never looked at. Both gaps closed. What is still not established, and is not
+claimed: no finite constant bounds a price nobody has. A model above 2x today's
+maximum is still under-reserved — but that residual is now bounded, and every
+fallback use is flagged `estimated: true`, so it is visible rather than silent.
+
 The lesson is the reusable part: **a refutation has to answer the claim as
 filed, not as summarised.** The paraphrase was mine, and refuting my own
-paraphrase read exactly like refuting the finding.
+paraphrase read exactly like refuting the finding. The companion lesson is that
+its guard test was scoped to the wrong table — **a check that cannot observe
+the case it exists for is not evidence**, and it read green for months.
 
 **Every fix was proven red-then-green** by reverting the source and re-running
 (15 tests red at HEAD, 0 after), because a check nobody has seen fail is not
