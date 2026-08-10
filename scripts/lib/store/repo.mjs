@@ -20,7 +20,7 @@
  * @module scripts/lib/store/repo
  */
 
-import { getPool } from '../db/client.mjs';
+import { getPool, dbIdentity, classifyDbConnectionError } from '../db/client.mjs';
 import { one, insertReturning, updateWhere, many, pgArray } from '../db/query.mjs';
 import { resolveRepoIdentity } from '../repo-identity.mjs';
 
@@ -59,7 +59,26 @@ export async function initLearningStore() {
   try {
     await pool.query('SELECT 1 FROM audit_repos LIMIT 1');
   } catch (err) {
-    process.stderr.write(`  [learning] Supabase connection failed: ${err.message}\n`);
+    // Names the DATABASE and the CAUSE, not a vendor. This line used to read
+    // "Supabase connection failed" for every failure — including a plain local
+    // Postgres that was simply not running — which is how a consumer concluded
+    // the store was Supabase-coupled when it has been provider-neutral since
+    // the M4 postgres-parity migration. `dbIdentity` is credential-free by
+    // construction, so the DSN's password cannot ride along.
+    const where = dbIdentity(process.env.AUDIT_DB_URL || '') ?? 'the configured database';
+    const { cause, hint } = classifyDbConnectionError(err);
+    // `err.message` is EMPTY for pg's aggregate ECONNREFUSED — verified against
+    // a dead endpoint, not assumed. That is why the old line rendered as
+    // "Supabase connection failed: " with nothing after the colon: a vendor
+    // name and no reason whatsoever. Appending it unconditionally would put a
+    // whitespace-only line back in its place, so it is emitted only when it
+    // actually says something.
+    const raw = String(err?.message ?? '').trim();
+    process.stderr.write(
+      `  [learning] Postgres store unavailable at ${where} (${cause})\n` +
+      `             ${hint}\n` +
+      (raw ? `             ${raw}\n` : '')
+    );
     return false;
   }
   process.stderr.write('  [learning] Cloud store connected\n');

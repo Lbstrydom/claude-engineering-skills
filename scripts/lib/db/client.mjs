@@ -143,10 +143,16 @@ export function isDisposableDbHost(hostname) {
  * every one of those, which mattered the moment production stopped being
  * catchable by hostname.
  *
+ * Exported since 2026-08-10 for operator-facing diagnostics as well as identity
+ * comparison: it is the only DSN renderer in the codebase that is
+ * credential-free BY CONSTRUCTION (it reads three fields and never touches
+ * userinfo), so a message built from it cannot leak a password by omission the
+ * way a regex-masked DSN can.
+ *
  * @param {string} dsn
  * @returns {string|null} canonical `host:port/database`, or null if unparseable
  */
-function dbIdentity(dsn) {
+export function dbIdentity(dsn) {
   let u;
   try { u = new URL(dsn); } catch { return null; }
   const host = u.hostname.trim().toLowerCase();
@@ -155,6 +161,69 @@ function dbIdentity(dsn) {
   const port = u.port || '5432';
   const database = decodeURIComponent(u.pathname.replace(/^\//, ''));
   return `${canonHost}:${port}/${database}`;
+}
+
+/**
+ * Classify a failed connection/probe into an actionable cause.
+ *
+ * WHY THIS EXISTS. The store is provider-neutral by construction — any
+ * Postgres 13+ behind one `AUDIT_DB_URL`, with the sole provider-specific
+ * branch being the narrow Supabase transaction-pooler refusal above. But the
+ * probe reported every failure with one line that named Supabase, so a
+ * consumer pointing at a plain local Postgres read "Supabase connection
+ * failed", concluded the runtime was Supabase-coupled, and wrote an
+ * eight-section proposal to make it vendor-neutral. It already was. The defect
+ * was that the message could not tell you WHICH database it meant or WHY it
+ * failed (upstream, 2026-08-10).
+ *
+ * The three classes below are the onboarding failures for a NEW provider —
+ * wrong host, wrong TLS mode, un-migrated schema — which is exactly the moment
+ * "point it at any Postgres you like" either works or silently doesn't. Each
+ * carries the remedy rather than a code the reader has to look up.
+ *
+ * Deliberately NOT plumbed into a return value or a reason-code enum: every
+ * caller today gates on a boolean cloud-on/off, so a structured result would be
+ * an abstraction with no consumer. This shapes the message; that is the whole job.
+ *
+ * @param {{code?: string, message?: string}} err
+ * @returns {{cause: string, hint: string}}
+ */
+export function classifyDbConnectionError(err) {
+  const code = String(err?.code ?? '');
+  const msg = String(err?.message ?? '');
+
+  // Node socket-level failures — nothing answered at all.
+  if (['ECONNREFUSED', 'ENOTFOUND', 'ETIMEDOUT', 'EHOSTUNREACH', 'ENETUNREACH', 'EAI_AGAIN'].includes(code)) {
+    return {
+      cause: 'unreachable',
+      hint: 'nothing is listening there — start the server (or the container), or correct AUDIT_DB_URL',
+    };
+  }
+  // TLS. The single most common failure when moving between providers: the
+  // default mode is strict `require`, which a managed pooler's internal CA and
+  // a self-signed self-hosted cert both fail. Naming the knob turns a stack of
+  // OpenSSL text into a one-line fix.
+  if (/^(SELF_SIGNED_CERT|DEPTH_ZERO_SELF_SIGNED|UNABLE_TO_VERIFY_LEAF)/.test(code)
+      || /self[- ]signed certificate|unable to verify the first certificate|certificate/i.test(msg)) {
+    return {
+      cause: 'tls-rejected',
+      hint: 'TLS verification failed — set AUDIT_DB_SSL_MODE to `no-verify` (managed poolers with an '
+        + 'internal CA) or `disable` (plain local Postgres); `require` is the strict default',
+    };
+  }
+  if (code === '28P01' || code === '28000') {
+    return { cause: 'auth-failed', hint: 'the server rejected the credentials in AUDIT_DB_URL' };
+  }
+  if (code === '3D000') {
+    return { cause: 'database-missing', hint: 'the server is up but has no such database — create it, then run `node scripts/setup-postgres.mjs --migrate`' };
+  }
+  // 42P01 undefined_table: reached the right database, but the audit-loop
+  // schema was never installed. Distinct from every case above — the DSN is
+  // correct and only the bootstrap step is missing.
+  if (code === '42P01') {
+    return { cause: 'schema-missing', hint: 'connected, but the audit-loop tables are absent — run `node scripts/setup-postgres.mjs --migrate`' };
+  }
+  return { cause: code || 'unknown', hint: 'see docs/runbooks/postgres-parity.md' };
 }
 
 /**

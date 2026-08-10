@@ -138,7 +138,10 @@ async function main() {
       );
 
       if (noRls.length > 0) {
-        process.stderr.write(`${R}Tables WITHOUT RLS${X} (Supabase scanner will flag these):\n`);
+        // Vendor named as an EXAMPLE, not as the subject: RLS is a Postgres
+        // feature and this check runs against any host. Supabase's advisor is
+        // just the linter most users will have seen flag it.
+        process.stderr.write(`${R}Tables WITHOUT RLS${X} (some hosts' security advisors — e.g. Supabase's — flag these):\n`);
         for (const r of noRls) {
           process.stderr.write(
             `  ${R}✗${X} ${r.table_name.padEnd(45)} ${D}owner=${r.owner} policies=${r.policy_count}${X}\n`
