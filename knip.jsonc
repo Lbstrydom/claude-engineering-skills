@@ -25,7 +25,16 @@
     // graph cannot see the caller. Declared as an entry rather than baselined —
     // a baseline entry means "known unused code we tolerate", which would be a
     // false statement about a spec that runs and asserts.
-    "tests/e2e/**/*.spec.mjs"
+    "tests/e2e/**/*.spec.mjs",
+
+    // Test-guard fixtures, for the SAME reason as the playwright specs above:
+    // they are executed by being named on a `node --test` command line that
+    // tests/test-guard-false-green.test.mjs builds at runtime, so no static
+    // import graph can reach them. They are `.fixture.mjs`, NOT `.test.mjs`,
+    // precisely so the default `tests/*.test.mjs` glob cannot pick them up —
+    // one of them is deliberately broken, and it must only ever run under the
+    // suite that asserts the guard catches it.
+    "tests/fixtures/test-guard/*.fixture.mjs"
   ],
 
   "project": [

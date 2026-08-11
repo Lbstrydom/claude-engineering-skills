@@ -365,6 +365,19 @@ stash` — that yanks the other session's files mid-edit. Detail + escape hatche
   **Adding a check? Ask whether it can go green in a clean checkout having
   checked nothing — if so it needs a strictness flag, not a tolerated skip.** A
   sandbox setup failure is a push failure, never a pass.
+- **`npm test` refuses a green it did not earn.** Node reports a suite that
+  throws while being CONSTRUCTED (in the `describe` body — e.g. calling an
+  unimported `test`) as `not ok`, but counts it in neither `# fail` nor the exit
+  code: dd83e1f8 shipped `# pass 15 # fail 0`, exit 0, with **three suites that
+  never ran** and `check` green. The guard ([run-tests.mjs](scripts/run-tests.mjs)
+  `adjudicateRun` + [test-guard-reporter.mjs](scripts/lib/test-guard-reporter.mjs))
+  fails the run on **any non-todo `test:fail` reported alongside exit 0** — keyed
+  on the CONSEQUENCE (a failure the exit code dropped), not on the cause, so
+  future variants are caught without predicting them; a failing `{todo:true}` is
+  the one legitimate exit-0 failure and is exempt. It fails **closed** when its
+  own report is missing. Same class, same file: an ambient `NODE_TEST_CONTEXT`
+  is scrubbed from the child env because it makes `node --test` skip every file
+  and exit 0.
 - **One range, one resolver** — [`push-range.mjs`](scripts/lib/push-range.mjs).
   Gates must not re-infer a base from working-tree state (`@{u}`, dirty→`HEAD~1`):
   that scoped multi-commit pushes to their tip and collapsed to `HEAD~1` always

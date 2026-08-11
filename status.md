@@ -1,6 +1,80 @@
 # Project Status Log
 
-## 2026-08-11 (latest) — a table nobody used, and the check that came before the delete
+## 2026-08-11 (latest) — the runner reported a pass for tests it never ran
+
+The report was that `tests/gate-evidence-tree-identity.test.mjs` imports only
+`{describe, it}` while three suites call `test(...)`, so each dies at
+construction and the file still reads `# pass 15 # fail 0`, exit 0.
+
+**The file at HEAD was already correct.** `dd83e1f8` shipped the defect;
+`4571a2ed`, the very next commit, added `test` to the import. `git show
+dd83e1f8:…| sed -n 15p` is the whole diff. So there was nothing to fix in that
+file — the three suites run today, 15 → 24 subtests, exactly the +9 they
+contribute (3 branch-state + 4 malformed-branch + 2 writer), and the
+`auditedBranch` contract they assert holds. Test-wiring bug, not a masked
+finding.
+
+What was real was the class. Node reports a suite that throws while being
+CONSTRUCTED as `not ok` in the TAP body and counts it in **neither `# fail` nor
+the exit code**. `npm run check` was therefore green for the life of `dd83e1f8`
+with nine subtests absent. Reproduced before building anything: a two-file run
+emits `not ok 2`, `# fail 0`, exit 0.
+
+### The guard, keyed on the consequence rather than the cause
+
+`scripts/lib/test-guard-reporter.mjs` (a `node:test` reporter that emits one
+JSON line) plus `adjudicateRun`/`buildReporterArgs` in `scripts/run-tests.mjs`,
+which always attaches it. Since `npm test` **is** `run-tests.mjs`, `check`
+inherits it from the one choke point.
+
+The invariant is **any non-todo `test:fail` reported alongside exit 0**, not
+"construction failure". Keying on the consequence — a failure the exit code
+dropped — catches a throwing fixture or a future Node accounting change without
+anyone predicting it, and it cannot false-alarm: a genuine non-todo failure
+already exits 1, so there the guard only agrees with the runner. A failing
+`{todo:true}` is the one legitimate exit-0 failure event and is exempt; that
+carve-out came from probing the event stream, not from assuming it. Fails
+**closed** when its own report is missing, unparseable, version-drifted, or
+carries no `failures` array — the reporter emits even when clean precisely so
+absence is unambiguous.
+
+### The worse bug it surfaced on the way
+
+The existing hermeticity suite went red, and the cause was independent: node
+sets `NODE_TEST_CONTEXT=child-v8` in every test child, and an inherited copy
+makes `node --test` **skip every file and exit 0**. Zero tests run, reported
+green — strictly worse than the bug I was closing. `scrubChildEnv` now strips
+it, kept as a list separate from `SCRUBBED_ROUTING_ENV` so that block's
+documented "routing selectors only" contract and its drift-guard tests stay
+true.
+
+It also made one of my own tests pass for the wrong reason: it matched
+`/test-guard:/` against the fail-closed "no report" message rather than the real
+one. The instrument was broken and green.
+
+### Verification
+
+Red-then-green on the real artifact: reverted line 15 of the actual
+`gate-evidence-tree-identity.test.mjs`, ran the real `npm test` path → exit 1,
+naming all three suites at lines 278/307/321; restored, `git status` clean. That
+replay is now *in* the suite — it reconstructs the file via `git show dd83e1f8:`
+rather than a hand copy, so it cannot drift, and skips (not fails) if the object
+is unavailable in a shallow clone. Negative controls: healthy fixture and
+failing-todo fixture both still exit 0. `npm run check`: exit 0, 11,276 tests,
+0 fail.
+
+Fixtures are `.fixture.mjs`, never `.test.mjs`, so the default glob cannot pick
+up the deliberately-broken one. `knip.jsonc` classifies them as `entry` — they
+are *run*, not imported, the same rationale the config already records for the
+Playwright specs — rather than `ignore` ("not code", false here) or a baseline
+("known unused", also false).
+
+`docs:refs:gate` blocked once on the new AGENTS.md link: `check-docs-refs.mjs`
+resolves refs against the **git index**, not the filesystem, so an uncommitted
+new file reads `GONE`. Staging by name cleared it. Worth knowing before
+diagnosing that message as a broken link.
+
+## 2026-08-11 — a table nobody used, and the check that came before the delete
 
 Retired `persona_test_candidates`. The interesting part is what the
 investigation overturned, twice.
