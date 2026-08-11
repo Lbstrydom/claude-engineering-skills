@@ -183,6 +183,10 @@ function finish(report) {
 }
 
 checkSync().catch(err => {
-  log(`\n  [ERROR] ${err.message}\n`);
+  // stderr UNCONDITIONALLY, never through `log()` — that helper is a no-op under
+  // --json, so routing the crash diagnostic through it left a --json caller with
+  // empty stdout, a bare exit 3, and nothing naming what failed. stderr also
+  // keeps stdout clean for the JSON envelope, per the project's --out convention.
+  process.stderr.write(`\n  [ERROR] ${err.message}\n\n`);
   process.exit(3);
 });

@@ -103,6 +103,45 @@ describe('check-sync.mjs SQL matches the committed schema contract', () => {
   });
 });
 
+/**
+ * Pull the CODE of the top-level `.catch(err => { … })` handler out of the
+ * source, so the assertion below is about the real handler and not a substring
+ * match anywhere in the file. `//` comments are stripped: the handler's own
+ * comment names `log()` as the thing it must not use, and a naive match on the
+ * raw body reads that mention as the defect it warns about (it did, first run).
+ */
+function extractCatchBody(src) {
+  const m = src.match(/\.catch\(\s*err\s*=>\s*\{([\s\S]*?)\n\}\);/);
+  if (!m) return null;
+  return m[1].split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
+}
+
+describe('check-sync.mjs crash diagnostic survives --json', () => {
+  const body = extractCatchBody(SRC);
+
+  it('the extractor found the handler (anti-vacuous)', () => {
+    assert.ok(body, 'no top-level .catch handler extracted — the guard below would be vacuous');
+    assert.match(body, /process\.exit\(3\)/, 'extracted the wrong block');
+  });
+
+  it('reports through process.stderr, not the --json-silenced log()', () => {
+    // `log()` is a no-op when --json is passed, so a handler that used it printed
+    // NOTHING on a crash: empty stdout, exit 3, no cause named.
+    assert.match(body, /process\.stderr\.write\(/,
+      'the crash diagnostic must go to stderr unconditionally');
+    assert.ok(!/\blog\(/.test(body),
+      'the crash diagnostic must not route through log() — it is silenced under --json');
+  });
+
+  it('negative control: the pre-fix handler is rejected', () => {
+    const bad = extractCatchBody(
+      'checkSync().catch(err => {\n  log(`[ERROR] ${err.message}`);\n  process.exit(3);\n});');
+    assert.ok(bad, 'the extractor must see the pre-fix shape too');
+    assert.ok(/\blog\(/.test(bad) && !/process\.stderr\.write\(/.test(bad),
+      'the pre-fix handler must fail both assertions above');
+  });
+});
+
 describe('extractQueries negative control', () => {
   it('flags a bad predicate column it is given', () => {
     // The guard above only means something if the extractor can SEE the defect.
