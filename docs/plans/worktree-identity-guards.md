@@ -1,7 +1,7 @@
 # Plan: Worktree-identity guards for multi-step skills
 
 - **Date**: 2026-08-11
-- **Status**: Draft
+- **Status**: Complete — all 3 clusters shipped 2026-08-11; consolidated gate APPROVE (round 2)
 - **Author**: Claude + Louis
 - **Scope**: backend (CLI binaries + skill prose + gate contract; no UI)
 
@@ -1112,3 +1112,61 @@ measurement changed the design:
 have prevented this plan's *own* field evidence #2 — a commit landing on `main`
 instead of a feature branch — because two refs at the same commit pass a
 SHA-only check. That is why the identity expectation is an atomic bundle.
+
+---
+
+## 11. Execution outcome (2026-08-11)
+
+Shipped via `/cycle --autonomous` in three clusters, each audited and pushed
+separately. **Tests: 11,247 pass / 0 fail.**
+
+| Cluster | Phases | Audit | In-cluster after triage |
+|---|---|---|---|
+| A — oracle + evidence bundle | 1–2 | 2 rounds, 32 findings | H:0 M:0 |
+| B — ship-commit + audit resolver | 3–4 | 2 rounds, 31 findings | H:0 M:0 |
+| C — prose + gate contracts | 5–6 | consolidated gate only (`fix-gate: final`) | — |
+
+**Consolidated gate: APPROVE at round 2** (round 1 `CONCERNS`, one MEDIUM, fixed).
+Zero `wrongly_dismissed` and zero over-engineering flags across both rounds. All
+four `deferred-declared` findings were re-checked and satisfied before the gate
+ran — including verifying **both consumer repos actually carry the guards**
+rather than assuming the sync did it.
+
+### Three defects the work found that the plan had not predicted
+
+- **A live pre-existing bug**: `--scope diff` on a dirty tree missed
+  **staged-but-uncommitted** files through all three of its calls. Pinned by a
+  test that reproduces the old computation and asserts it misses.
+- **A regression this plan introduced, caught by the migrated tests**: guard A
+  makes `--path` mandatory, but `committedTree` was only computed when `--path`
+  was *absent* — so `AI-Gate: passed` became structurally unreachable, the same
+  defect this repo had already fixed once. This is why the 38 failing suites were
+  migrated rather than deleted.
+- **A silent success in the guard binary itself**: `--selfcheck-relocation` was a
+  bare `argv.includes()`, so any invocation carrying it exited 0 having committed
+  nothing — and `/ship` reads exit 0 as "committed" and pushes.
+
+### The gate's own finding, and why it mattered
+
+`Object.hasOwn` answers *"is the key there"*, not *"is the value usable"*. An
+explicitly-`undefined` `auditedBranch` passed the required-field throw and
+`String()`-coerced to the literal `"undefined"`, which the reader accepts as a
+valid branch **name** — leaving guard B expecting a branch called `undefined` and
+refusing every ship. The same 100%-refusal failure the required-field check
+existed to prevent, reached through the value instead of the key. A presence
+check was necessary and not sufficient.
+
+### Verified in the field, during its own implementation
+
+Mid-way through cluster C another session placed **staged deletions** in the
+shared index. The `--path`-scoped commit took exactly its own 13 files; the other
+session's work landed independently. That is the failure this plan was written
+about, and it did not happen.
+
+### Still open
+
+- `docs/plans/ship-commit-transaction.md` (Draft) owns *prevention* at the commit
+  boundary; this plan ships *detection*. Its blocking question and trigger are
+  stated there.
+- Cluster C carries `AI-Gate: not-run` on its commits — accurate: it was covered
+  by the consolidated gate, not by a per-cluster code audit.
