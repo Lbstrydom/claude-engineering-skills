@@ -1,6 +1,63 @@
 # Project Status Log
 
-## 2026-08-10 (latest) — the consumer side of df60c991, and a commit that shipped work I never wrote
+## 2026-08-10 (latest) — a rule that could never fire for the case it was written for
+
+`6963fcbd`. A consumer was told on every sync that two of its skills had
+"undefined precedence — yours to resolve". Both were **one directory reached by
+two names**: a junction from `.claude/skills/<n>` to `.agents/skills/<n>`. There
+was nothing to resolve, and following the advice would have removed multi-agent
+access.
+
+`compareSkillSurfaces` has classified a same-directory name as `aliased` since
+2026-07-30. It tested **ownership first** and `continue`d to `orphan` before ever
+resolving a path — and `liveNames` carries what the bundle *deploys*, so a
+plugin's skill is by construction a name we do not own. The alias rule was
+unreachable for the only case its own comment cites, and had never once fired in
+the field. Ordering was the whole bug: identity is a fact about the filesystem,
+ownership a fact about the bundle, and asking the bundle question first makes the
+filesystem fact unrepresentable.
+
+Three more defects behind the one symptom. `sync-to-repos.mjs` passed no
+`realPathOf` at all — latent second consequence: the day a consumer aliased one
+of OUR names, sync would have failed the repo for correct wiring. Gate 8 carried
+a **second implementation** (its own reader, symlink filter, alias compare)
+because the oracle lived in a source-repo CLI a synced module cannot import; the
+copies agreed by luck, had already drifted in vocabulary (`foreign` vs
+`orphans`), and gate 8's copy had the same ordering bug. And the one that would
+have survived a junction-only fix: the `skills` CLI (skills.sh) treats
+`.agents/skills/` as **canonical** and fans a *copy* out per agent root —
+separate directories, so identity cannot clear them, only `skills-lock.json` can.
+`check-stale-skill-surface.mjs` learned that on 2026-08-09 after an operator
+followed a "resolve this" note, deleted a copy, and the tool restored it. The
+sync path reimplemented orphan reporting and never learned, so an identity-only
+fix would still have lied on any machine where the tool copies rather than links
+— which is most of them.
+
+`scripts/lib/skill-surface-identity.mjs` now owns the vocabulary, the reader,
+`compareSkillSurfaces` and `classifyOrphans`. It is in `lib/` because that is the
+only place all three enforcement points can reach — that boundary is *why* gate 8
+grew a copy, so removing the excuse is the fix. Same shape as
+`sensitive-paths.mjs`; all three delegate, no re-export shim.
+`classifyOrphans` splits "orphan" into the four situations that want different
+advice — `toolManaged` (never advise deletion), `contested` (a real ambiguity),
+`theirs` (say nothing), `undetermined` (the one case where a hedge is accurate).
+The old text hedged *"if any also exists in `.claude/skills/`"*: a tool handing
+the operator the check it declined to run. It now looks.
+
+Test-first, three red-for-the-right-reason failures before any source change —
+`aliased: []` in the unit, the same through a real junction, and the call-site
+contract naming `sync-to-repos.mjs`. **An existing test caught an
+over-correction**: a first pass dropped "precedence" unconditionally and went red
+against two genuinely separate directories, which is what forced the four-way
+split rather than a flat replacement. Negative control on the new sync test —
+blinding `realPathOf` fails exactly that one test. The repo's own guards caught
+two more of my errors (an unhardened `fs.rmSync`, a dropped import).
+
+Verified against the reporting consumer: `sync:dry` emits **zero**
+`[stale-skill-surface]` lines, and the reader returns both names as `aliased`,
+`orphans: []`, exit 0. `npm run check` 11,002 tests / 0 fail.
+
+## 2026-08-10 — the consumer side of df60c991, and a commit that shipped work I never wrote
 
 Consumer-side verification for `df60c991` (Step 6.8), plus the three wine PRs and
 one ai-organiser push that closing it out required. **`verified`** — retrieved as
