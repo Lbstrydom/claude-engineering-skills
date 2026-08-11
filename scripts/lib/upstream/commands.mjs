@@ -20,6 +20,9 @@ import crypto from 'crypto';
 import { spawnSync } from 'child_process';
 
 import { atomicWriteFileSync } from '../file-io.mjs';
+import {
+  parseEnvelopeFrame, writeEnvelope as writeEnvelopeToDir, drainEnvelopes,
+} from '../outbox-envelope.mjs';
 import { redactSecrets } from '../secret-patterns.mjs';
 
 /** Envelope format version. Bumping it makes older files `rejected/`. */
@@ -245,28 +248,28 @@ function rejectedDir(repoRoot) { return path.join(outboxDir(repoRoot), 'rejected
 /**
  * Validate an envelope read back off disk. Returns `null` when unusable — the
  * caller quarantines rather than deleting or retrying forever.
+ *
+ * The FRAME check (version, fingerprint, payload-is-an-object) now lives in the
+ * shared `outbox-envelope.mjs`; the report-shape check below stays here,
+ * because it is the one part that is genuinely upstream-specific.
  */
 export function parseEnvelope(text) {
-  let parsed;
-  try { parsed = JSON.parse(text); } catch { return null; }
-  if (!parsed || typeof parsed !== 'object') return null;
-  if (parsed.v !== OUTBOX_ENVELOPE_VERSION) return null;
-  if (typeof parsed.fingerprint !== 'string' || !parsed.fingerprint) return null;
-  const p = parsed.payload;
-  if (!p || typeof p !== 'object') return null;
-  if (typeof p.title !== 'string' || typeof p.body !== 'string') return null;
-  if (!VALID_SEVERITIES.includes(p.severity)) return null;
-  if (typeof p.affectedPath !== 'string') return null;
-  return parsed;
+  return parseEnvelopeFrame(text, {
+    version: OUTBOX_ENVELOPE_VERSION,
+    validatePayload: (p) => typeof p.title === 'string'
+      && typeof p.body === 'string'
+      && VALID_SEVERITIES.includes(p.severity)
+      && typeof p.affectedPath === 'string',
+  });
 }
 
-/** Write-ahead: the envelope lands on disk BEFORE any remote attempt. */
+/**
+ * Write-ahead: the envelope lands on disk BEFORE any remote attempt.
+ * Signature kept `(repoRoot, envelope)` — the shared helper takes a resolved
+ * directory, and this module's callers all speak repo-root.
+ */
 export function writeEnvelope(repoRoot, envelope) {
-  const dir = outboxDir(repoRoot);
-  fs.mkdirSync(dir, { recursive: true });
-  const file = path.join(dir, `${envelope.fingerprint}.json`);
-  atomicWriteFileSync(file, JSON.stringify(envelope, null, 2) + '\n');
-  return file;
+  return writeEnvelopeToDir(outboxDir(repoRoot), envelope);
 }
 
 /**
@@ -279,42 +282,22 @@ export function writeEnvelope(repoRoot, envelope) {
  * housekeeping piggybacking on another command, never that command's failure.
  */
 export async function drainOutbox({ repoRoot = process.cwd(), recordFn, cap = DRAIN_CAP } = {}) {
-  const dir = outboxDir(repoRoot);
-  if (!fs.existsSync(dir)) return { drained: 0, rejected: 0, failed: 0 };
-
-  let entries;
-  try {
-    entries = fs.readdirSync(dir).filter((f) => f.endsWith('.json')).slice(0, cap);
-  } catch { return { drained: 0, rejected: 0, failed: 0 }; }
-
-  let drained = 0, rejected = 0, failed = 0;
-  for (const name of entries) {
-    const file = path.join(dir, name);
-    let envelope = null;
-    try { envelope = parseEnvelope(fs.readFileSync(file, 'utf-8')); } catch { envelope = null; }
-
-    if (!envelope) {
-      // Quarantine, never delete and never retry forever: a poison envelope
-      // must not block the queue or vanish silently.
-      try {
-        fs.mkdirSync(rejectedDir(repoRoot), { recursive: true });
-        fs.renameSync(file, path.join(rejectedDir(repoRoot), name));
-        rejected++;
-      } catch { failed++; }
-      continue;
-    }
-
-    try {
+  // `state` is ADDITIVE: the three counters keep their existing meaning and
+  // shape, so callers and tests written against them are unaffected. What is
+  // new is that an unreadable outbox now says so instead of reporting the same
+  // `{drained: 0}` as an empty one.
+  return drainEnvelopes({
+    dir: outboxDir(repoRoot),
+    cap,
+    parse: parseEnvelope,
+    // The receipt test is unchanged, and it was already right: `ok` alone is
+    // not enough, because a cloud-off write resolves `{ok: true, cloud: false}`
+    // having persisted nothing. Deleting on that would lose the report.
+    apply: async (envelope) => {
       const res = await recordFn({ ...envelope.payload, fingerprint: envelope.fingerprint });
-      if (res?.ok && res.cloud !== false) {
-        fs.rmSync(file, { force: true, recursive: true, maxRetries: 3, retryDelay: 50 });
-        drained++;
-      } else {
-        failed++;   // cloud off or write failed — leave it for next time
-      }
-    } catch { failed++; }
-  }
-  return { drained, rejected, failed };
+      return Boolean(res?.ok && res.cloud !== false);
+    },
+  });
 }
 
 // ── Validation ──────────────────────────────────────────────────────────────

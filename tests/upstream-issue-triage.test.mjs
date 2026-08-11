@@ -307,11 +307,35 @@ test('drain: cloud-off (cloud:false) leaves the envelope for a later run', async
   } finally { rmTmp(dir); }
 });
 
-test('drain: a missing outbox directory is a silent no-op', async () => {
+test('drain: a missing outbox directory reports EMPTY, not just zeroes', async () => {
+  // Contract widened 2026-08-11 (docs/plans/audit-store-write-durability.md,
+  // decision 1e): the counters keep their meaning, and a discriminated `state`
+  // is added. It used to return the same `{drained:0,rejected:0,failed:0}` for
+  // "nothing to do" and for "I could not read the directory" — the vacuous-pass
+  // shape. `empty` is the assertion; the sibling test below is the other half.
   const dir = mkTmp('ces-outbox4-');
   try {
     const res = await drainOutbox({ repoRoot: dir, recordFn: async () => ({ ok: true, cloud: true }) });
-    assert.deepEqual(res, { drained: 0, rejected: 0, failed: 0 });
+    assert.deepEqual(res, { state: 'empty', drained: 0, rejected: 0, failed: 0 });
+  } finally { rmTmp(dir); }
+});
+
+test('drain: an UNREADABLE outbox is unavailable, never a clean zero', async () => {
+  // The negative control for the test above. Without it, "empty" and "broken"
+  // are still one state as far as the suite is concerned.
+  const dir = mkTmp('ces-outbox5-');
+  try {
+    // A regular FILE where the outbox directory should be: readdir fails with
+    // ENOTDIR, which is the readable stand-in for a permissions failure and
+    // behaves identically on Windows and POSIX.
+    const outbox = path.join(dir, '.audit', 'upstream-outbox');
+    fs.mkdirSync(path.dirname(outbox), { recursive: true });
+    fs.writeFileSync(outbox, 'not a directory');
+
+    const res = await drainOutbox({ repoRoot: dir, recordFn: async () => ({ ok: true, cloud: true }) });
+    assert.equal(res.state, 'unavailable', 'an unreadable outbox must not report empty');
+    assert.match(res.reason, /readdir failed/);
+    assert.equal(res.drained, 0);
   } finally { rmTmp(dir); }
 });
 
