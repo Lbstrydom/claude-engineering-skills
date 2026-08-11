@@ -21,6 +21,29 @@
  */
 
 /**
+ * Last path segment of a repo name — the ONE place that decides whether two
+ * spellings mean the same repository.
+ *
+ * The two identity systems write names in different forms: the arch path uses
+ * `owner/repo` (from the git origin), the older audit path used the bare
+ * directory basename. `wine-cellar-app` and `Lbstrydom/wine-cellar-app` are the
+ * same repo.
+ *
+ * Lives here rather than in `scripts/reconcile-repo-identity.mjs`, where it was
+ * written, because a CLI is the wrong home for an equivalence two libraries need
+ * — and because the alternative, a second copy, is a rule that can silently
+ * disagree with itself. That reconciler now imports it; its tests still import
+ * it from there via a re-export, so the move is behaviour-preserving.
+ *
+ * @param {string} name
+ * @returns {string}
+ */
+export function repoBaseName(name) {
+  const s = String(name ?? '');
+  return s.split('/').filter(Boolean).pop() || s;
+}
+
+/**
  * @typedef {{kind: 'scoped', repoId: string}
  *   | {kind: 'no-identity'}
  *   | {kind: 'unknown-repo', repoUuid: string}
@@ -103,7 +126,19 @@ export async function resolveRepoScope({ resolveRepoUuid, getRepoIdByUuid, expli
  *          | {ok: false, conflict: 'name'|'id', supplied: string, ambient: string}}
  */
 export function reconcileRepoIdentity({ repoId = null, repoName = null }, ref) {
-  if (repoName && ref?.name && ref.name !== repoName) {
+  // Compare by BASENAME, not by raw string. The two identity systems spell the
+  // same repo differently — the arch path uses `owner/repo` from the git origin,
+  // the older audit path used the bare directory name — and
+  // `scripts/reconcile-repo-identity.mjs` has encoded that equivalence since it
+  // was written: "`wine-cellar-app` and `Lbstrydom/wine-cellar-app` are the same
+  // repo". Comparing raw strings made this reconciler call that pair a CONFLICT
+  // and refuse the write, which would have broken persona recording for exactly
+  // the consumer whose 6 live sessions carry the bare form.
+  //
+  // `repoBaseName` is IMPORTED rather than re-implemented: a second encoding of
+  // "are these the same repo?" that can disagree with the first is the defect,
+  // not the fix.
+  if (repoName && ref?.name && repoBaseName(ref.name) !== repoBaseName(repoName)) {
     return { ok: false, conflict: 'name', supplied: repoName, ambient: ref.name };
   }
   if (repoId && ref?.repoRowId && ref.repoRowId !== repoId) {
@@ -112,6 +147,12 @@ export function reconcileRepoIdentity({ repoId = null, repoName = null }, ref) {
   return {
     ok: true,
     repoId: repoId || ref?.repoRowId || null,
-    repoName: repoName || ref?.name || null,
+    // When the two agree by basename, prefer the AMBIENT spelling. `ref.name`
+    // is `audit_repos.name` — the value every name-keyed join compares against
+    // (`audit_effectiveness` joins `persona_test_sessions.repo_name = r.name`).
+    // Keeping the caller's bare form here is what produced 7 live sessions that
+    // join to nothing and are invisible to precision/recall. Canonicalising at
+    // the writer is what stops the divergence being re-created.
+    repoName: ref?.name || repoName || null,
   };
 }

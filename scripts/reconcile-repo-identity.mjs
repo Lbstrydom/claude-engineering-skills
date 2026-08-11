@@ -59,16 +59,24 @@ const ALIAS_MAP_PATH = '.audit-loop/repo-alias-map.json';
 const ADVISORY_LOCK_KEY = 760414233; // 'reconcile-repo-identity' arbitrary fixed key
 
 /**
- * Last path segment of a repo name. The two identity systems wrote names in
- * different forms — the arch path uses `owner/repo` (from the git origin), the
- * old audit path used the bare directory basename — so matching must normalize
- * to the basename. `wine-cellar-app` and `Lbstrydom/wine-cellar-app` are the
- * same repo.
+ * Re-exported, not re-implemented. The definition moved to
+ * `scripts/lib/repo-scope.mjs` on 2026-08-11 so that `reconcileRepoIdentity`
+ * (the WRITE-side identity check) decides "same repo?" by the same rule this
+ * one-shot reconciler always has. It did not, and called
+ * `wine-cellar-app` vs `Lbstrydom/wine-cellar-app` a conflict — the equivalence
+ * was documented here, three lines above the code that needed it, and a second
+ * caller could not see it.
+ *
+ * Kept as an export so this module's existing tests and any operator script
+ * importing it keep working.
+ *
+ * NOTE: imported AND re-exported. `export { x } from '…'` alone creates no local
+ * binding, so this module's own `repoBaseName(...)` calls would be undefined —
+ * caught immediately by the existing suite when it was written that way.
  */
-export function repoBaseName(name) {
-  const s = String(name ?? '');
-  return s.split('/').filter(Boolean).pop() || s;
-}
+import { repoBaseName } from './lib/repo-scope.mjs';
+
+export { repoBaseName };
 
 /**
  * Pure proposal builder (exported for unit tests). Maps fragmented legacy rows

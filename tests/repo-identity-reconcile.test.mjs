@@ -35,6 +35,56 @@ describe('reconcileRepoIdentity — refuses a split identity', () => {
   });
 });
 
+/**
+ * Added 2026-08-11, the same day the refusal above shipped. Comparing raw
+ * strings made this reconciler call a repo a conflict with ITSELF: the two
+ * identity systems spell the same repository differently (the arch path uses
+ * `owner/repo` from the git origin, the older audit path used the bare
+ * directory name), and `scripts/reconcile-repo-identity.mjs` had encoded that
+ * equivalence — as `repoBaseName` — since it was written. The write-side check
+ * could not see it, three lines of documentation away.
+ *
+ * Live consequence: 6 persona sessions carry the bare `wine-cellar-app` against
+ * a canonical `Lbstrydom/wine-cellar-app` id, so the refusal would have blocked
+ * recording for exactly the consumer that produced them.
+ */
+describe('reconcileRepoIdentity — bare and owner/repo are the SAME repo', () => {
+  const CANONICAL = { repoRowId: 'id-w', name: 'Lbstrydom/wine-cellar-app' };
+
+  it('does not call a bare name a conflict with its own owner/repo form', () => {
+    const r = reconcileRepoIdentity({ repoName: 'wine-cellar-app' }, CANONICAL);
+    assert.equal(r.ok, true, 'the same repo, spelled two ways, is not a conflict');
+  });
+
+  it('adopts the CANONICAL spelling, because that is what name-joins compare against', () => {
+    // `audit_effectiveness` joins persona_test_sessions.repo_name = audit_repos.name.
+    // Keeping the caller's bare form is what made 7 live sessions join to nothing.
+    const r = reconcileRepoIdentity({ repoName: 'wine-cellar-app' }, CANONICAL);
+    assert.equal(r.repoName, 'Lbstrydom/wine-cellar-app');
+    assert.equal(r.repoId, 'id-w');
+  });
+
+  it('normalises the other direction too (canonical supplied, bare ambient)', () => {
+    const r = reconcileRepoIdentity(
+      { repoName: 'Lbstrydom/wine-cellar-app' }, { repoRowId: 'id-w', name: 'wine-cellar-app' });
+    assert.equal(r.ok, true);
+  });
+
+  // Vacuous-pass guard: basename comparison must not collapse DIFFERENT repos.
+  it('still refuses two genuinely different repos that share an owner', () => {
+    const r = reconcileRepoIdentity({ repoName: 'Lbstrydom/other-app' }, CANONICAL);
+    assert.equal(r.ok, false);
+    assert.equal(r.conflict, 'name');
+  });
+
+  it('still refuses a rename — a different basename is a different repo', () => {
+    const r = reconcileRepoIdentity({ repoName: 'claude-audit-loop' },
+      { repoRowId: 'id-c', name: 'Lbstrydom/claude-engineering-skills' });
+    assert.equal(r.ok, false,
+      'a pure rename must stay operator-adjudicated, exactly as the one-shot reconciler quarantines it');
+  });
+});
+
 describe('reconcileRepoIdentity — the legitimate cases still resolve', () => {
   // Vacuous-pass guards: a function that refused everything would satisfy the
   // block above, and the whole point is to keep filling gaps where it is safe.
