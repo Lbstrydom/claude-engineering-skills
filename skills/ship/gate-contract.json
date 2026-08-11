@@ -255,6 +255,10 @@
     {
       "line": ">   recording remediations (`practiceStart`). A real leak: never shown again.",
       "reason": "Describes the CONSEQUENCE of a row crossing the 30-day ceiling unremediated — it stops appearing in this step's read. Not an enforcement claim: the ACCEPTANCES LOST block is explicitly non-blocking with no override flag, exactly like the REGRESSION LOCK GATE and OBLIGATIONS LOST blocks it sits beside."
+    },
+    {
+      "line": "investigate. `open === total` always; they are one number under two names.",
+      "reason": "States an arithmetic identity of the emitted payload, not a gate: byDisposition.open is total under a second name, so a caller reading either gets the same number. It IS mechanically asserted — tests/unremediated-acceptance-disposition.test.mjs pins total === byDisposition.open against a seeded fixture matrix on a disposable Postgres — which is why it is dispositioned here rather than as document-only (that kind would claim it is not checkable when it is). Nothing about it blocks a ship; 0.5e remains non-blocking with no override flag, per the unremediated-acceptances-never-blocks gate above."
     }
   ]
 }
