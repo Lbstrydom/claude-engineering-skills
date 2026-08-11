@@ -1,6 +1,80 @@
 # Project Status Log
 
-## 2026-08-11 (latest) — a writer that threw for 12 weeks, filed upstream as "nobody uses this"
+## 2026-08-11 (latest) — a fixture rebuilt 26 times, and a lever that turned out to already exist
+
+Two pieces of work from a `/brainstorm` round on why `npm test` costs what it
+does. One landed; the other was a measurement that returned "no".
+
+### Landed: build the git fixture once, copy it per test
+
+`ship-commit-cli.test.mjs`'s `beforeEach` ran `git init` + 3 `git config` +
+`git add` + `git commit` for **every** test — **406 ms x 26 = 10.6s** of a
+44.9s file, none of it testing anything. Building it once and `fs.cpSync`-ing
+costs **19 ms**: **21.9x**, measured over 20 iterations.
+
+**File: 44.9s → 26.3s / 26.7s**, 26 pass / 0 fail / 0 skip unchanged.
+
+Copying is *equivalent*, not merely similar: a fresh `.git` carries no absolute
+paths (`core.worktree` unset; `config` never names its own directory, verified),
+so a copy is a working repo wherever it lands, and the template is built by real
+git so it cannot drift from what git produces.
+
+`makeRepoTemplate` went into `tests/helpers/fixtures.mjs` as a **memoizer, not a
+fifth fixture builder** — architectural memory banded this space `precedent /
+above-floor-cluster` against four existing constructors (`gitInit`,
+`gitInitWithEmptyCommit`, `initTempRepo`, and this inline one). The caller keeps
+owning *what* its fixture contains; the helper owns only build-once-copy-many.
+
+**Structural effect, which is the honest claim**: the suite's longest single
+file was `ship-commit-cli` at 44.9s, so the floor (`max(longest file, S/N)`) was
+44.9s. It is now `sync-target-path` at 40.0s — **44.9s → 40.0s, −11%**, and the
+binding file moved from A to B exactly as predicted. **Suite wall clock is NOT
+claimed**: run-to-run variance on this box measured 97.9s to 169.6s today, which
+swamps the ~2.5s of wall clock that 18s of removed work buys back at this
+suite's 23% parallel efficiency. A number that noisy is not evidence.
+
+### Measured and rejected: trimming the CLI's module graph
+
+The hypothesis was that `ship-commit.mjs` drags `learning-store` → `pg` into
+every one of the ~40 processes the tests spawn, and that a lazy import there
+would beat both splitting the file and an in-process refactor. **Measured: the
+lever does not exist.**
+
+| | ms |
+|---|---:|
+| bare `node` | 44 |
+| `ship-commit.mjs`'s module graph alone | **54** |
+| `--selfcheck-relocation` (exits at top of `main`) | 112 |
+| `--bogus-flag` (argv reject) | **589** |
+
+The graph is **+10 ms over bare node**. Every store import is *already* lazy
+(`await import('./lib/store/repo.mjs')` and four siblings, inside functions).
+The ~477 ms between the two exit paths is `main()` **executing** — git
+subprocess identity resolution that runs before an argv rejection surfaces.
+
+**This corrects a figure I stated earlier in the session and fed to the
+brainstorm models**: "~293 ms of every CLI invocation is module-graph loading"
+was wrong. That measurement imported the module *and ran `main()`*, and I
+attributed the whole cost to the import. Both models reasoned from it — one
+built an in-process-invocation proposal on top of it. The real lever, if one is
+wanted, is that the CLI resolves git identity before validating argv; that is a
+production ordering question about a commit tool, not a test-speed one, and is
+**not** being changed off the back of a benchmark.
+
+### Also corrected this session
+
+The work total given to round 1 (`3,364s` summed test time) was **4.7x too
+high** — it came from a contention-inflated instrumented run. Measured properly
+at `--test-concurrency=1`: **S = 713s**, identical pass/fail/skip. That inverts
+the packing argument (`S/31 = 23.0s` against a 44.9s longest file, so the suite
+is tail-bound, not volume-bound) and makes the 23% parallel efficiency —
+**53.0s of a 97.9s best-case wall** — the dominant unexplained quantity. A
+concurrency sweep already rules out oversubscription: 8 → 166.6s, 16 → 144.3s,
+31 → 127.7s, monotonic, no knee.
+
+---
+
+## 2026-08-11 — a writer that threw for 12 weeks, filed upstream as "nobody uses this"
 
 Triaged one consumer report plus three unfiled defects from wine-cellar-app.
 The report's headline was falsified by one of the unfiled defects, which is the
