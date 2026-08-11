@@ -1,6 +1,56 @@
 # Project Status Log
 
-## 2026-08-11 (latest) — a fixture rebuilt 26 times, and a lever that turned out to already exist
+## 2026-08-11 (latest) — ship-commit's "argv after git" ordering: read, and CLOSED as designed
+
+Closes the question the entry below left open ("the real lever, if one is
+wanted, is that the CLI resolves git identity before validating argv"). **Read
+the code before treating that as work: the ordering is deliberate, and the
+reorder would break a contract to win a benchmark. Decision: leave it.**
+
+What the code actually does (`scripts/ship-commit.mjs`, read at `46d09e61`):
+argv validation **already runs first** — every flag is parsed before any git
+spawn. What runs late is the *flush*: errors accumulate in an `inputErrors`
+array and surface at one point (`allErrors = [...inputErrors, ...errors]`),
+after repo resolution, message-file checks, `git log -1` for the HEAD commit
+time, evidence resolution, and identity verification. That array is the tell —
+this is **error batching**, not misordering: one invocation returns *every*
+`AGENT FIX:` line, argv mistakes and trailer/gate/evidence mistakes together.
+
+Three reasons the late flush is load-bearing:
+
+- **The batch cannot move earlier.** Gate validation depends on evidence
+  freshness, which depends on `headCommitTs`, which comes from `git log -1`.
+  Flushing argv-shape errors early would split a mixed-error invocation into
+  two round trips.
+- **The retry budget depends on the batching.** `/ship`'s exit-2 protocol is
+  "fix exactly what the AGENT FIX lines say and re-invoke (**max 2 retries**,
+  then report)". Batching is what makes a three-mistake invocation fixable
+  inside that budget; fail-fast would spend a retry per mistake.
+- **The invariant the reorder was meant to protect already holds.** Everything
+  before the flush is read-only (`rev-parse`, `log`, `symbolic-ref`); the
+  commit happens far later, so invalid input cannot attempt a commit today.
+  Part of the pre-flush git cost is itself load-bearing UX: the
+  missing-`--expect-head` error renders the *actual* current sha and branch as
+  a paste-ready remedy, which requires reading git on the error path.
+
+The ~477 ms between the two exit paths (`--selfcheck-relocation` 112 ms vs
+`--bogus-flag` 589 ms, `measured` 2026-08-11, `node scripts/ship-commit.mjs
+<flag>` x6) is therefore the *price of returning all fixes in one round trip*,
+paid only on error paths. The reorder would have optimised that number while
+quietly degrading the retry contract it serves.
+
+One wrinkle noted, not fixed: **Guard B (identity) preempts the batch** — an
+identity refusal exits before `inputErrors` flushes, so identity-plus-argv
+mistakes take two round trips today. If this area is ever touched again, the
+improvement is folding identity errors *into* the batch (which strengthens the
+round-trip property), never fail-fast (which trades it away). Not worth opening
+the file for now: `ship-commit.mjs` is the repo's most safety-critical CLI, a
+concurrent session made `--expect-head` mandatory in it this same day, and
+`docs/plans/ship-commit-transaction.md` is pending against the same function.
+
+---
+
+## 2026-08-11 — a fixture rebuilt 26 times, and a lever that turned out to already exist
 
 Two pieces of work from a `/brainstorm` round on why `npm test` costs what it
 does. One landed; the other was a measurement that returned "no".
