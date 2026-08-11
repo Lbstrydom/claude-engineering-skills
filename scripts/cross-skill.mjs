@@ -56,6 +56,7 @@ import {
   findUnlockedFixInRepo,
   countUnlockedFixes,
   countAgedUnlockedFixes,
+  countAgedUnremediatedAcceptances,
   getUnremediatedAcceptances,
   countUnremediatedAcceptances,
   resolveNudgePage,
@@ -935,7 +936,10 @@ async function cmdListUnremediatedAcceptances() {
       measured: false, reason: scope.reason, rows: [], shown: 0, total: 0, byMode: { total: 0, code: 0, plan: 0 } });
   }
   const storeScope = storeScopeFor(scope);
-  const page = pageArgsFromFlags();
+  // `--all-ages` drops BOTH age bounds — see cmdListUnlockedFixes for why the
+  // wider read is asked for rather than defaulted.
+  const allAges = rest.includes('--all-ages');
+  const page = { ...pageArgsFromFlags(), allAges };
   const rows = await getUnremediatedAcceptances(storeScope, page);
   // `rows` is ONE PAGE. Emitting only it let /ship report "20" against a real
   // 129 (2026-07-31) — the same undercount `countUnlockedFixes` fixed for the
@@ -943,13 +947,22 @@ async function cmdListUnremediatedAcceptances() {
   // instead of letting a saturated array masquerade as a complete count, and
   // `--limit`/`--offset` make the rows past `shown` reachable at all: a consumer
   // measured 44 total / 20 shown with 24 rows no CLI invocation could reach.
-  const byMode = await countUnremediatedAcceptances(storeScope);
+  const byMode = await countUnremediatedAcceptances(storeScope, { allAges });
+  // What the two bounds EXCLUDED. `notYetDue` (under the 7-day maturity floor)
+  // is reported beside `agedOut` but is NOT a loss — those rows appear on their
+  // own once they mature. Conflating them is the specific error this view
+  // invites, because both read as "not shown".
+  const aged = await countAgedUnremediatedAcceptances(storeScope);
   const { limit, offset } = resolveNudgePage(page);
   emit({
     ok: true, cloud: true,
     scope: { mode: scope.mode, repoId: scope.repoId, slug: scope.slug },
     measured: true, reason: null,
     rows, shown: rows.length, total: byMode.total, byMode,
+    allAges,
+    agedOut: aged.agedOut, agedOutByMode: aged.byMode, agedOutBySeverity: aged.bySeverity,
+    notYetDue: aged.notYetDue,
+    prePractice: aged.prePractice, practiceStart: aged.practiceStart,
     limit, offset,
   });
 }

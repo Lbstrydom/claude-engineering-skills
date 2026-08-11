@@ -189,6 +189,14 @@
     {
       "line": "Waiting is not a way to clear this gate. Read them:",
       "reason": "Rhetorical instruction to the operator about the lock nudge's intent; the OBLIGATIONS LOST block it sits in is explicitly labelled non-blocking and has no override flag, exactly like the REGRESSION LOCK GATE block above it."
+    },
+    {
+      "line": ">   matures. **Never add this to `agedOut`, and never report it as a backlog.**",
+      "reason": "An instruction to the AGENT about how to READ two counters, not a gate the skill enforces. notYetDue counts rows under the 7-day maturity floor, which surface on their own; the imperative exists because both it and agedOut present as 'not shown' and folding them is the specific misreading this view invites. Nothing blocks on either number."
+    },
+    {
+      "line": ">   recording remediations (`practiceStart`). A real leak: never shown again.",
+      "reason": "Describes the CONSEQUENCE of a row crossing the 30-day ceiling unremediated — it stops appearing in this step's read. Not an enforcement claim: the ACCEPTANCES LOST block is explicitly non-blocking with no override flag, exactly like the REGRESSION LOCK GATE and OBLIGATIONS LOST blocks it sits beside."
     }
   ]
 }

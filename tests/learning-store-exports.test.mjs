@@ -96,6 +96,7 @@ const EXPECTED_EXPORTS = [
   'getExistingCorrelationHashesForSession', // WS1 — first-hit-wins existence check
   'countUnlockedFixes', // denominator for the /ship lock nudge — rows are LIMIT-capped (2026-07-29)
   'countAgedUnlockedFixes', // what the 14-day window DROPPED — the denominator's blind spot (2026-08-11)
+  'countAgedUnremediatedAcceptances', // same, for the 30d ceiling + 7d floor (2026-08-11)
   'countUnremediatedAcceptances', // same denominator, sibling view (2026-07-31)
   'getUnlockedFixes',
   // Repo-scoped single-finding lookup. Exists because the LIMIT-20 sampler
@@ -382,6 +383,14 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // reappearing on the TIME axis, and it needed its own reader for the same
     // reason: the count of what a bound excluded cannot be computed from the
     // rows the bound kept.
-    assert.equal(EXPECTED_EXPORTS.length, 186);
+    // 186 -> 187: countAgedUnremediatedAcceptances added 2026-08-11, the sibling
+    // of 185 -> 186 on the other nudge view. It needs its own reader rather than
+    // a shared one because this view's window has TWO bounds doing opposite jobs:
+    // a 7-day maturity FLOOR (a row under it is not yet due and will appear on
+    // its own) and a 30-day CEILING (a row over it is gone for good). Both read
+    // as "not shown", so a single counter would have to fold them and the fold
+    // is the defect. Measured the day it landed: agedOut 0, but 201 live
+    // obligations with the first 31 due to expire five days later.
+    assert.equal(EXPECTED_EXPORTS.length, 187);
   });
 });

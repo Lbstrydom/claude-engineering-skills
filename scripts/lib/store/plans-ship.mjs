@@ -663,9 +663,24 @@ export async function getUnlockedFixes(scope, opts = {}) {
     // `opts.allAges` reads the unwindowed base view. The default stays the
     // 14-day window: an unbounded ship-time nudge becomes noise and earns
     // `--no-verify`. What the window drops is reachable, not shown by default.
-    const source = opts?.allAges ? 'unlocked_fixes_all' : 'unlocked_fixes';
+    //
+    // The view name is SPELLED OUT per branch rather than interpolated, for the
+    // same reason the ORDER BY is duplicated in the sibling below: the static
+    // guards in tests/cross-skill-unlocked-scope.test.mjs match `FROM <view>`
+    // inside the SQL LITERAL, and `FROM ${source}` is invisible to them. Doing
+    // it the short way silently removed this reader from BOTH the repo-fence
+    // scan and the order-before-cap scan, and every assertion stayed green
+    // because the remaining readers still cleared the vacuous-pass floor — the
+    // exact failure those floors exist to make visible, one notch under them.
+    if (opts?.allAges) {
+      return await many(
+        `SELECT * FROM unlocked_fixes_all${where} ORDER BY fixed_at DESC, audit_finding_id ` +
+        `LIMIT $${params.length - 1} OFFSET $${params.length}`,
+        params
+      );
+    }
     return await many(
-      `SELECT * FROM ${source}${where} ORDER BY fixed_at DESC, audit_finding_id ` +
+      `SELECT * FROM unlocked_fixes${where} ORDER BY fixed_at DESC, audit_finding_id ` +
       `LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params
     );
@@ -734,10 +749,17 @@ export async function countUnlockedFixes(scope, opts = {}) {
     // unwindowed one would report `shown 5 / total 29` over a 219-row set — a
     // page you cannot tell is short, which is the defect `shown`/`total` exists
     // to prevent, reintroduced one axis over.
-    const src = opts?.allAges ? 'unlocked_fixes_all' : 'unlocked_fixes';
-    const rows = !allRepos
-      ? await many(`SELECT audit_mode, count(*)::int AS n FROM ${src} WHERE repo_id = $1 GROUP BY audit_mode`, [repoId])
-      : await many(`SELECT audit_mode, count(*)::int AS n FROM ${src} GROUP BY audit_mode`);
+    //
+    // Four literal branches, not one interpolated string: see the note in
+    // `getUnlockedFixes`. The repo-fence scan reads these bodies for
+    // `FROM <view>` literals, so an interpolated name drops the reader out.
+    const rows = opts?.allAges
+      ? (!allRepos
+        ? await many(`SELECT audit_mode, count(*)::int AS n FROM unlocked_fixes_all WHERE repo_id = $1 GROUP BY audit_mode`, [repoId])
+        : await many(`SELECT audit_mode, count(*)::int AS n FROM unlocked_fixes_all GROUP BY audit_mode`))
+      : (!allRepos
+        ? await many(`SELECT audit_mode, count(*)::int AS n FROM unlocked_fixes WHERE repo_id = $1 GROUP BY audit_mode`, [repoId])
+        : await many(`SELECT audit_mode, count(*)::int AS n FROM unlocked_fixes GROUP BY audit_mode`));
     return rows.reduce((acc, r) => {
       const n = Number(r.n) || 0;
       acc.total += n;
@@ -887,6 +909,26 @@ export async function getUnremediatedAcceptances(scope, opts = {}) {
   // whole harness exists to prevent. Verified by trying it: the hoisted version
   // failed the guard, and that failure is the guard working.
   try {
+    // Four literal branches. `opts.allAges` drops BOTH age bounds, so it also
+    // surfaces rows under the 7-day maturity floor — deliberately: the flag
+    // means "show me everything this nudge is not telling me", and not-yet-due
+    // is part of that answer even though it is not a loss.
+    if (opts?.allAges) {
+      if (!allRepos) {
+        return await many(
+          `SELECT * FROM unremediated_acceptances_all WHERE repo_id = $1 ` +
+          `ORDER BY CASE severity WHEN 'HIGH' THEN 0 ELSE 1 END, accepted_at ASC, audit_finding_id ` +
+          `LIMIT $2 OFFSET $3`,
+          [repoId, limit, offset]
+        );
+      }
+      return await many(
+        `SELECT * FROM unremediated_acceptances_all ` +
+        `ORDER BY CASE severity WHEN 'HIGH' THEN 0 ELSE 1 END, accepted_at ASC, audit_finding_id ` +
+        `LIMIT $1 OFFSET $2`,
+        [limit, offset]
+      );
+    }
     if (!allRepos) {
       return await many(
         `SELECT * FROM unremediated_acceptances WHERE repo_id = $1 ` +
@@ -931,14 +973,20 @@ export async function getUnremediatedAcceptances(scope, opts = {}) {
  * @param {string|null|{repoId?: string|null, allRepos?: boolean}} [scope]
  * @returns {Promise<{total:number, code:number, plan:number}>}
  */
-export async function countUnremediatedAcceptances(scope) {
+export async function countUnremediatedAcceptances(scope, opts = {}) {
   const { repoId, allRepos } = resolveExplicitRepoScope(scope, 'countUnremediatedAcceptances');
   const empty = { total: 0, code: 0, plan: 0 };
   if (!await isCloudEnabled()) return empty;
   try {
-    const rows = !allRepos
-      ? await many(`SELECT audit_mode, count(*)::int AS n FROM unremediated_acceptances WHERE repo_id = $1 GROUP BY audit_mode`, [repoId])
-      : await many(`SELECT audit_mode, count(*)::int AS n FROM unremediated_acceptances GROUP BY audit_mode`);
+    // The denominator follows the source the rows came from — see the note on
+    // `countUnlockedFixes`. Literal branches, not an interpolated view name.
+    const rows = opts?.allAges
+      ? (!allRepos
+        ? await many(`SELECT audit_mode, count(*)::int AS n FROM unremediated_acceptances_all WHERE repo_id = $1 GROUP BY audit_mode`, [repoId])
+        : await many(`SELECT audit_mode, count(*)::int AS n FROM unremediated_acceptances_all GROUP BY audit_mode`))
+      : (!allRepos
+        ? await many(`SELECT audit_mode, count(*)::int AS n FROM unremediated_acceptances WHERE repo_id = $1 GROUP BY audit_mode`, [repoId])
+        : await many(`SELECT audit_mode, count(*)::int AS n FROM unremediated_acceptances GROUP BY audit_mode`));
     return rows.reduce((acc, r) => {
       const n = Number(r.n) || 0;
       acc.total += n;
@@ -948,6 +996,118 @@ export async function countUnremediatedAcceptances(scope) {
     }, { ...empty });
   } catch (err) {
     process.stderr.write(`  [learning] countUnremediatedAcceptances failed: ${err.message}\n`);
+    return empty;
+  }
+}
+
+/**
+ * What the two age bounds EXCLUDE, split by which bound and by whether the row
+ * was ever an obligation.
+ *
+ * The sibling of `countAgedUnlockedFixes`, with one extra bucket, because this
+ * view's window does two different jobs:
+ *
+ *  - `notYetDue` — under the 7-day MATURITY FLOOR. Not a loss: the row appears
+ *    on its own once it ages past the floor. Reported so a reader can tell a
+ *    genuinely empty backlog from one whose rows have not matured yet, and
+ *    NEVER added to `agedOut`.
+ *  - `agedOut` — over the 30-day CEILING, and accepted after this repo started
+ *    recording remediations. A real leak: never shown again.
+ *  - `prePractice` — over the ceiling but accepted before `practiceStart`. Not
+ *    an obligation the repo ever had.
+ *
+ * `practiceStart` is the earliest remediation this repo ever RECORDED (the
+ * analogue of the first regression spec on the locking side), derived from the
+ * store rather than configured, for the same reason: it must be correct in
+ * every consumer without a constant to keep in step.
+ *
+ * Same failure contract as its siblings — cloud-off and query failure return
+ * zeroed counts, because this feeds a non-blocking nudge.
+ *
+ * @param {{repoId?: string|null, allRepos?: boolean}} scope
+ * @returns {Promise<{agedOut:number, prePractice:number, notYetDue:number,
+ *                    practiceStart:string|null, byMode:{code:number, plan:number},
+ *                    bySeverity:{HIGH:number, MEDIUM:number}}>}
+ */
+export async function countAgedUnremediatedAcceptances(scope) {
+  const { repoId, allRepos } = resolveExplicitRepoScope(scope, 'countAgedUnremediatedAcceptances');
+  const empty = {
+    agedOut: 0, prePractice: 0, notYetDue: 0, practiceStart: null,
+    byMode: { code: 0, plan: 0 }, bySeverity: { HIGH: 0, MEDIUM: 0 },
+  };
+  if (!await isCloudEnabled()) return empty;
+  try {
+    const scoped = !allRepos;
+    const params = scoped ? [repoId] : [];
+    // One statement, so the practice boundary and the counts are read at a
+    // single instant — computing `practiceStart` separately would let a
+    // remediation landing between the two queries reclassify rows underneath
+    // the caller.
+    const rows = scoped
+      ? await many(
+        `WITH practice AS (
+           SELECT min(e.created_at) AS started_at
+             FROM finding_adjudication_events e
+             JOIN audit_findings f2 ON f2.id = e.finding_id
+             JOIN audit_runs r2 ON r2.id = f2.run_id
+            WHERE e.remediation_state IN ('fixed','verified') AND r2.repo_id = $1
+         )
+         SELECT a.audit_mode, a.severity,
+                count(*) FILTER (WHERE NOT a.is_mature)::int AS not_yet_due,
+                count(*) FILTER (
+                  WHERE a.is_mature AND NOT a.is_recent
+                    AND (SELECT started_at FROM practice) IS NOT NULL
+                    AND a.accepted_at >= (SELECT started_at FROM practice)
+                )::int AS aged_out,
+                count(*) FILTER (
+                  WHERE a.is_mature AND NOT a.is_recent
+                    AND ((SELECT started_at FROM practice) IS NULL
+                         OR a.accepted_at < (SELECT started_at FROM practice))
+                )::int AS pre_practice,
+                (SELECT started_at FROM practice) AS practice_start
+           FROM unremediated_acceptances_all a
+          WHERE a.repo_id = $1 AND NOT (a.is_mature AND a.is_recent)
+          GROUP BY a.audit_mode, a.severity`,
+        params
+      )
+      : await many(
+        `WITH practice AS (
+           SELECT min(e.created_at) AS started_at
+             FROM finding_adjudication_events e
+            WHERE e.remediation_state IN ('fixed','verified')
+         )
+         SELECT a.audit_mode, a.severity,
+                count(*) FILTER (WHERE NOT a.is_mature)::int AS not_yet_due,
+                count(*) FILTER (
+                  WHERE a.is_mature AND NOT a.is_recent
+                    AND (SELECT started_at FROM practice) IS NOT NULL
+                    AND a.accepted_at >= (SELECT started_at FROM practice)
+                )::int AS aged_out,
+                count(*) FILTER (
+                  WHERE a.is_mature AND NOT a.is_recent
+                    AND ((SELECT started_at FROM practice) IS NULL
+                         OR a.accepted_at < (SELECT started_at FROM practice))
+                )::int AS pre_practice,
+                (SELECT started_at FROM practice) AS practice_start
+           FROM unremediated_acceptances_all a
+          WHERE NOT (a.is_mature AND a.is_recent)
+          GROUP BY a.audit_mode, a.severity`,
+        params
+      );
+    return rows.reduce((acc, r) => {
+      const aged = Number(r.aged_out) || 0;
+      acc.agedOut += aged;
+      acc.prePractice += Number(r.pre_practice) || 0;
+      acc.notYetDue += Number(r.not_yet_due) || 0;
+      acc.practiceStart = r.practice_start ? String(r.practice_start) : acc.practiceStart;
+      if (r.audit_mode === 'code') acc.byMode.code += aged;
+      else if (r.audit_mode === 'plan') acc.byMode.plan += aged;
+      if (r.severity === 'HIGH') acc.bySeverity.HIGH += aged;
+      else if (r.severity === 'MEDIUM') acc.bySeverity.MEDIUM += aged;
+      return acc;
+    }, { ...empty, byMode: { ...empty.byMode }, bySeverity: { ...empty.bySeverity } });
+  } catch (err) {
+    process.stderr.write(`  [learning] countAgedUnremediatedAcceptances failed: ${err.message}\n`);
     return empty;
   }
 }

@@ -1,6 +1,86 @@
 # Project Status Log
 
-## 2026-08-11 (latest) — 45 fixes locked, and a gate that was clearing itself by waiting
+## 2026-08-11 (latest) — the second nudge view, caught five days before it started forgetting
+
+Gave `unremediated_acceptances` the treatment `unlocked_fixes` got this morning,
+and found the same defect one step earlier in its life.
+
+**Measured first.** Nothing has aged out of this view yet: the oldest
+accepted-but-unremediated finding is 25 days old against a 30-day ceiling. But
+**201 live obligations** (50 HIGH / 151 MEDIUM) were sitting behind it, the first
+**31 of them (8 HIGH) due to expire on 2026-08-16 — five days out**, and 146 gone
+inside a fortnight. Unlike the sibling, where 94 rows had already vanished before
+anyone looked, this one is instrumented *before* the first loss. There is no
+pre-practice escape either: remediations have been recorded here since
+2026-07-17 (702 findings), which predates every live row, so every one of those
+201 would have counted as a genuine `agedOut`.
+
+**This view's window does TWO jobs, and only one of them forgets.** That is why
+it was deferred out of the morning's migration rather than pattern-matched into
+it. `created_at < now() - 7 days` is a maturity FLOOR — a finding accepted three
+days ago is in flight, and it surfaces on its own once it ripens. `created_at >
+now() - 30 days` is a CEILING, and that one is the forgetting mechanism. Both
+present as "not shown" and they are opposite states, so folding them into one
+number would have been the real error here. `notYetDue` is reported beside
+`agedOut` and never added to it; /ship is told explicitly not to print it as a
+backlog.
+
+Migration `20260811050000` mirrors the sibling: the predicate moves to
+`unremediated_acceptances_all`, which carries BOTH bounds as columns
+(`is_mature`, `is_recent`), and `unremediated_acceptances` becomes the projection
+over it — same columns, same order, and the inner `ORDER BY` retained, so
+removing that sort stays a deliberate act rather than a side effect of
+restructuring. `practiceStart` is the earliest remediation this repo ever
+recorded, derived rather than configured, for the same reason as the locking
+side: it has to be right in every consumer without a constant to keep in step.
+
+### The morning's change had quietly halved two guards
+
+Wiring this exposed a regression I introduced hours earlier and did not notice.
+`getUnlockedFixes` had been changed to `FROM ${source}` to pick between the
+windowed and unwindowed views — and both static guards in
+`cross-skill-unlocked-scope.test.mjs` match `FROM <view>` **in the SQL literal**.
+An interpolated name is invisible to them. That silently removed two readers from
+the repo-scope fence and one statement from the order-before-cap scan, and every
+assertion stayed green, because the remaining readers still cleared floors of
+`>= 3` and `>= 2` while seven readers and six paged statements existed.
+
+A floor with that much slack cannot report the loss it exists to report. Both
+now track reality (`>= 7`, `>= 6`), both name the interpolation trap in their
+failure message, and the view names are written out per branch — the same
+deliberate duplication the ORDER BY already carried in this file, for the same
+reason. The fence enumerates six readers again instead of three.
+
+A third guard was brittle in the other direction: the counter check sliced
+`body.slice(0, 1600)` looking for a `LIMIT`, and a comment added above the SQL
+pushed a still-present LIMIT past the cutoff, reporting that the reader had
+stopped capping. A magic length is wrong both ways — it can miss a real LIMIT
+(what happened) and borrow the NEXT function's to alibi a reader that genuinely
+lost its own. Now bounded to the function.
+
+### Vacuity, twice
+
+Two of the new assertions were vacuous when written and are now labelled rather
+than passing. The practice-boundary split compares over-ceiling rows, of which
+this store has **zero** — so it survived swapping the buckets outright. It now
+skips with a reason (`no row has passed the 30-day ceiling yet — practice split
+unproven, not proven correct`) and the suite's skip count moved 24 → 25, which is
+visible. The fixture selector picks the repo that actually exercises the split,
+not `ORDER BY created_at LIMIT 1`.
+
+Two mutations of the four attempted turned out to be semantic no-ops rather than
+test failures — widening the outer `WHERE` and dropping an inner `is_recent`
+both leave the counts identical, because the FILTER conditions and the outer
+predicate each defend the case the other would have exposed. Worth recording as
+a result: the redundancy is load-bearing, not clutter.
+
+Verification: 11,094 pass / 0 fail / 25 skipped (the one remaining failure is the
+manifest-vs-HEAD check, which resolves on commit by construction — a Category B
+artifact and its source commit together). Six surgical mutations across this
+change, each with a parse check; the two that bind are the floor-into-agedOut
+fold and the denominator reading a different source than its rows.
+
+## 2026-08-11 — 45 fixes locked, and a gate that was clearing itself by waiting
 
 Worked the `unlocked_fixes` backlog end to end: 52 code obligations down to 1.
 Then measured why the number had been so quiet, and rebuilt the read that hid it.

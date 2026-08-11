@@ -235,7 +235,36 @@ node scripts/cross-skill.mjs list-unremediated-acceptances
 ```
 
 Returns `{ok, cloud, scope:{mode,repoId,slug}, measured, reason, rows, shown,
-total, byMode:{total,code,plan}}`.
+total, byMode:{total,code,plan}, allAges, agedOut, agedOutByMode:{code,plan},
+agedOutBySeverity:{HIGH,MEDIUM}, notYetDue, prePractice, practiceStart}`.
+
+> **This view has TWO bounds, and only one of them forgets** (added 2026-08-11,
+> the sibling of 0.5b's `agedOut`). Do not read them as one thing — both present
+> as "not shown", and they are opposite states:
+>
+> - **`notYetDue`** — under the 7-day **maturity floor**. A finding accepted
+>   three days ago is in flight, not forgotten, and it appears on its own once it
+>   matures. **Never add this to `agedOut`, and never report it as a backlog.**
+>   It is here so an empty page can be told from one whose rows have not ripened.
+> - **`agedOut`** — over the 30-day **ceiling**, accepted after this repo started
+>   recording remediations (`practiceStart`). A real leak: never shown again.
+> - **`prePractice`** — over the ceiling but older than `practiceStart`. Not an
+>   obligation this repo ever had.
+>
+> Measured the day this shipped: `agedOut` **0**, but **201 live obligations**
+> (50 HIGH / 151 MEDIUM) with the first **31 due to expire five days later**, and
+> 146 gone inside a fortnight. Unlike 0.5b — where 94 rows had already been lost
+> before anyone looked — this one was instrumented *before* the first row went.
+> There is no pre-practice escape here either: remediations have been recorded
+> since 2026-07-17, which predates every live row.
+>
+> `--all-ages` drops both bounds, and `total`/`byMode` then describe the
+> unwindowed set, because a denominator from a different source than the rows is
+> how a short page reads as an exhausted one.
+
+```bash
+node scripts/cross-skill.mjs list-unremediated-acceptances --all-ages
+```
 
 **Use `byMode.total` as `unremediated_count` — NEVER `rows.length`.** `rows` is
 capped at 20 by the query, and `shown` vs `total` exists to make that cap
@@ -324,6 +353,25 @@ so a short page can be told from an exhausted one.
       --commit <sha that fixed it> --state fixed
   Leaving them open is fine — leaving them open SILENTLY is what this catches.
 ```
+
+If `agedOut > 0`, print it separately. It is a worse signal than the backlog
+size, because those rows are already past the point where this step will ever
+mention them again:
+
+```
+⚠ ACCEPTANCES LOST TO THE CEILING (non-blocking)
+  <agedOut> accepted finding(s) (<agedOutBySeverity.HIGH> HIGH) passed the 30-day
+  ceiling still unremediated, after this repo started recording remediations
+  (<practiceStart>). They will not appear above again. Read them:
+    node scripts/cross-skill.mjs list-unremediated-acceptances --all-ages
+  Then remediate, or close the loop with final-review-record-fix, or write them
+  off in status.md — an obligation discharged by silence is what this counts.
+```
+
+**Do not print `notYetDue` as a backlog** — those rows are under the 7-day floor
+and will surface here on their own. Mention it only if `total` is 0 and
+`notYetDue` is not, where it is the difference between "nothing owed" and
+"nothing owed *yet*".
 
 > **Why not `finalize-outcomes` (it used to say that, and it was unactionable).**
 > `finalize-outcomes` needs one round's `--ledger` + `--result`; a finding

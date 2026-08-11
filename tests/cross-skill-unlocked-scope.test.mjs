@@ -197,7 +197,13 @@ describe('the fence covers the whole view family, not just the reported one', ()
   // hand is what missed it, so enumerate mechanically instead.
   const storeSrc = fs.readFileSync(
     path.join(repoRoot, 'scripts', 'lib', 'store', 'plans-ship.mjs'), 'utf-8');
-  const NUDGE_VIEWS = ['unlocked_fixes', 'unremediated_acceptances'];
+  // The `_all` base views are listed explicitly: `\b` after `unlocked_fixes`
+  // does NOT match `unlocked_fixes_all` (the next char is a word char), so an
+  // aged-visibility reader would otherwise be invisible to this scan.
+  const NUDGE_VIEWS = [
+    'unlocked_fixes', 'unlocked_fixes_all',
+    'unremediated_acceptances', 'unremediated_acceptances_all',
+  ];
 
   // Split on function declarations so each body can be attributed to its owner.
   const parts = storeSrc.split(/(?=^(?:export\s+)?(?:async\s+)?function\s+\w+)/m);
@@ -205,10 +211,17 @@ describe('the fence covers the whole view family, not just the reported one', ()
     .map((body) => ({ name: (body.match(/^(?:export\s+)?(?:async\s+)?function\s+(\w+)/) || [])[1], body }))
     .filter((f) => f.name && NUDGE_VIEWS.some((v) => new RegExp(`FROM\\s+${v}\\b`).test(f.body)));
 
+  // The floor TRACKS REALITY rather than sitting under it. It read `>= 3` while
+  // seven readers existed, and on 2026-08-11 an interpolated view name
+  // (`FROM ${source}`, invisible to a literal scan) silently dropped TWO of them
+  // out — leaving exactly 3, so this passed and the fence quietly covered half
+  // of what it claimed. A floor with slack in it cannot report the loss it exists
+  // to report. Raise it deliberately when a reader is added or removed.
   it('finds the readers at all (guards against the regex silently matching nothing)', () => {
-    assert.ok(readers.length >= 3,
-      `expected >=3 nudge-view readers, found ${readers.length} (${readers.map((r) => r.name).join(', ')}) ` +
-      '— if this dropped, the scan below is passing vacuously');
+    assert.ok(readers.length >= 7,
+      `expected >=7 nudge-view readers, found ${readers.length} (${readers.map((r) => r.name).join(', ')}) ` +
+      '— if this dropped, the scan below is passing vacuously. A reader whose view name is ' +
+      'INTERPOLATED rather than written out is invisible here and will show up as a missing reader.');
   });
 
   for (const { name, body } of readers) {
@@ -266,7 +279,10 @@ describe('a capped nudge reader must impose its OWN total order', () => {
   const storeSrc = fs.readFileSync(
     path.join(repoRoot, 'scripts', 'lib', 'store', 'plans-ship.mjs'), 'utf-8')
     .replace(/`\s*\+\s*`/g, '');
-  const NUDGE_VIEWS = ['unlocked_fixes', 'unremediated_acceptances'];
+  const NUDGE_VIEWS = [
+    'unlocked_fixes', 'unlocked_fixes_all',
+    'unremediated_acceptances', 'unremediated_acceptances_all',
+  ];
 
   // Only SELECTs that actually take a page. A `count(*) … GROUP BY` needs no
   // order (it returns a set the caller reduces), and demanding one there would
@@ -279,10 +295,14 @@ describe('a capped nudge reader must impose its OWN total order', () => {
     // choose between candidates.
     .filter((sql) => !/audit_finding_id\s*=\s*\$\d/.test(sql));
 
+  // Same reasoning as the reader floor above: this read `>= 2` while six paged
+  // statements existed, so an interpolated view name could remove two thirds of
+  // the coverage without failing anything.
   it('finds paged statements at all (vacuous-pass guard)', () => {
-    assert.ok(pagedStatements.length >= 2,
-      `expected >=2 paged nudge-view reads, found ${pagedStatements.length} — if this dropped to ` +
-      'zero the assertions below would all pass having checked nothing');
+    assert.ok(pagedStatements.length >= 6,
+      `expected >=6 paged nudge-view reads, found ${pagedStatements.length} — if this dropped, ` +
+      'the assertions below are checking less than they claim. A read whose view name is ' +
+      'INTERPOLATED is invisible to this scan.');
   });
 
   for (const sql of pagedStatements) {
@@ -383,12 +403,21 @@ describe('a capped nudge reader must ship a counter, and the CLI must emit it', 
       // If the reader were renamed or stopped capping, the assertions below
       // would be pinning a contract nothing needs any more.
       assert.match(storeSrc, new RegExp(`function\\s+${reader}\\b`), `${reader} not found in the store`);
-      const body = storeSrc.slice(storeSrc.search(new RegExp(`function\\s+${reader}\\b`)));
+      // Bounded to THIS function, not to a byte window. It sliced the first
+      // 1600 chars until 2026-08-11, when a comment added above the SQL pushed
+      // a still-present LIMIT past the cutoff and the guard reported that the
+      // reader had stopped capping. A magic length is wrong in both directions:
+      // it can miss a real LIMIT (what happened), and it can borrow the NEXT
+      // function's LIMIT to alibi a reader that genuinely lost its own.
+      const startAt = storeSrc.search(new RegExp(`function\\s+${reader}\\b`));
+      const after = storeSrc.slice(startAt + 1);
+      const endRel = after.search(/^(?:export\s+)?(?:async\s+)?function\s+\w+/m);
+      const body = endRel === -1 ? after : after.slice(0, endRel);
       // `LIMIT $n` counts as a cap as much as `LIMIT 20` does. This read
       // `/\bLIMIT\s+\d+/` until the readers took a bound page parameter
       // (2026-08-10), at which point it failed on a reader that still capped —
       // the assertion was pinned to the literal rather than to the property.
-      assert.match(body.slice(0, 1600), /\bLIMIT\s+(?:\d+|\$)/,
+      assert.match(body, /\bLIMIT\s+(?:\d+|\$)/,
         `${reader} no longer caps its rows — re-check whether a counter is still required`);
     });
 
