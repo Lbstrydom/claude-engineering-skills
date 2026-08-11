@@ -73,7 +73,23 @@ const ClaudeCliErrorEnvelope = z.object({
   result: z.string().optional(),
 }).passthrough();
 
-const VALID_BACKENDS = new Set(['sdk', 'cli']);
+const VALID_BACKENDS = new Set(['sdk', 'cli', 'bedrock']);
+
+/**
+ * AWS Bedrock serves Claude through its own SDK and its own credential chain.
+ *
+ * `@anthropic-ai/bedrock-sdk` is deliberately NOT a dependency of this repo: it
+ * pulls the AWS SDK credential-provider stack, and this bundle syncs into
+ * consumer repos that will never use Bedrock. It is imported dynamically and a
+ * missing package produces an install hint rather than a module-resolution
+ * stack trace.
+ *
+ * Model ids differ on Bedrock (`anthropic.claude-…-v1:0`, or an `eu.`/`us.`
+ * inference-profile prefix) and are NOT mapped here — a silent rewrite of a
+ * caller's model id is how you bill the wrong model and never notice. Callers
+ * targeting Bedrock pass a Bedrock model id.
+ */
+const BEDROCK_SDK_PACKAGE = '@anthropic-ai/bedrock-sdk';
 
 // Default subprocess timeout for cli backend. Overridable via
 // CLAUDE_CLI_TIMEOUT_MS env var. Picked to comfortably exceed Haiku/Sonnet
@@ -114,7 +130,7 @@ let _warnedMaxTokensCli = false;
  * choice affects billing, so a typo like `CLAUDE_BACKEND=cil` must surface
  * at config-load time rather than silently routing to a paid path. Unset
  * the variable to use the default `sdk`.
- * @returns {'sdk'|'cli'}
+ * @returns {'sdk'|'cli'|'bedrock'}
  * @throws {Error} when CLAUDE_BACKEND is set to an unrecognised value
  */
 export function resolveBackend() {
@@ -129,7 +145,20 @@ export function resolveBackend() {
       `Unset the variable to use the default "sdk".`,
     );
   }
-  return /** @type {'sdk'|'cli'} */ (raw);
+  return /** @type {'sdk'|'cli'|'bedrock'} */ (raw);
+}
+
+/**
+ * The AWS region Bedrock calls target, or '' when none is resolvable.
+ *
+ * Region is the one part of the AWS chain that cannot be discovered for us:
+ * credentials come from env vars, a shared profile, SSO or the instance
+ * metadata service, but `AnthropicBedrock` still needs to know WHERE. Checking
+ * it here turns "no region" into a named config error instead of a failure
+ * from inside the AWS SDK.
+ */
+function resolveAwsRegion() {
+  return (process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || '').trim();
 }
 
 /**
@@ -148,7 +177,15 @@ export function resolveBackend() {
  * @returns {boolean}
  */
 export function isClaudeAvailable() {
-  return resolveBackend() === 'cli' || Boolean(process.env.ANTHROPIC_API_KEY);
+  const backend = resolveBackend();
+  if (backend === 'cli') return true;
+  // Bedrock authenticates through the AWS credential chain, so ANTHROPIC_API_KEY
+  // is irrelevant to it — gating on that key would skip a fully-available
+  // backend, the same defect this function exists to prevent for `cli`. Region
+  // is the only part the chain cannot supply for us, so it is the availability
+  // signal; credentials themselves surface at call time via the AWS SDK.
+  if (backend === 'bedrock') return Boolean(resolveAwsRegion());
+  return Boolean(process.env.ANTHROPIC_API_KEY);
 }
 
 /**
@@ -211,6 +248,20 @@ let _warnedBaseUrlForcedSdk = false;
  * @returns {'sdk'|'cli'}
  */
 function reconcileBackendWithBaseUrl(backend, baseURL, backendWasExplicit) {
+  // Bedrock targets an AWS endpoint derived from the region; an Anthropic
+  // baseURL cannot be honoured. Unlike `cli` this NEVER coerces to sdk, not
+  // even for an ambient backend: cli-vs-sdk moves billing between Anthropic
+  // meters, but bedrock-vs-sdk moves it between an AWS account and an Anthropic
+  // key. Silently picking one is worse than refusing. (The harness-injected
+  // canonical URL has already normalised to '' before this point, so only a
+  // genuinely custom endpoint reaches here.)
+  if (backend === 'bedrock' && baseURL) {
+    throw new Error(
+      `[anthropic-client] backend:'bedrock' cannot honour baseURL="${baseURL}" — Bedrock ` +
+      `targets an AWS endpoint derived from AWS_REGION. Unset ANTHROPIC_BASE_URL to use ` +
+      `Bedrock, or choose backend:'sdk' to target that endpoint directly.`,
+    );
+  }
   if (backend !== 'cli' || !baseURL) return backend;
   if (backendWasExplicit) {
     throw new Error(
@@ -300,7 +351,11 @@ export async function createAnthropicClient(options = {}) {
   // a string key, returning the wrong redactor to the second caller.
   const defaultRedactor = await getDefaultRedactor();
   const cacheable = effectiveRedactor === null || effectiveRedactor === defaultRedactor;
-  const cacheKey = `${backend}:${keyDigest(effectiveApiKey)}:${effectiveBaseURL}:${effectiveClaudeBin}:${effectiveTimeoutMs}:${effectiveRedactor === null ? 'n' : 'd'}`;
+  // Region is appended ONLY on the bedrock branch, so sdk/cli keys stay
+  // byte-identical to today. Without it, two calls differing only by region
+  // would share a client and silently target the first one's region.
+  const cacheKey = `${backend}:${keyDigest(effectiveApiKey)}:${effectiveBaseURL}:${effectiveClaudeBin}:${effectiveTimeoutMs}:${effectiveRedactor === null ? 'n' : 'd'}`
+    + (backend === 'bedrock' ? `:${resolveAwsRegion()}` : '');
   if (!options.fresh && cacheable && _clientCache.has(cacheKey)) {
     return _clientCache.get(cacheKey);
   }
@@ -312,6 +367,29 @@ export async function createAnthropicClient(options = {}) {
       timeoutMs: effectiveTimeoutMs,
       redactor: effectiveRedactor,
     });
+  } else if (backend === 'bedrock') {
+    const awsRegion = resolveAwsRegion();
+    if (!awsRegion) {
+      throw new Error(
+        "[anthropic-client] backend:'bedrock' requires AWS_REGION (or AWS_DEFAULT_REGION). " +
+        'Credentials come from the standard AWS chain (env, shared profile, SSO, instance ' +
+        'metadata), but the region cannot be inferred.',
+      );
+    }
+    let AnthropicBedrock;
+    try {
+      ({ AnthropicBedrock } = await import(BEDROCK_SDK_PACKAGE));
+    } catch {
+      throw new Error(
+        `[anthropic-client] backend:'bedrock' requires the ${BEDROCK_SDK_PACKAGE} package, ` +
+        `which is not installed. Install it in the repo that uses this backend: ` +
+        `\`npm install ${BEDROCK_SDK_PACKAGE}\`. It is intentionally not a dependency of the ` +
+        `skills bundle, which syncs into consumer repos that do not use Bedrock.`,
+      );
+    }
+    // Same redaction wrapper as the sdk path — Bedrock takes the identical
+    // Messages-API shape, so payloads must pass through the same egress guard.
+    client = wrapSdkClient(new AnthropicBedrock({ awsRegion }), effectiveRedactor);
   } else {
     const { default: Anthropic } = await import('@anthropic-ai/sdk');
     if (!effectiveApiKey) {

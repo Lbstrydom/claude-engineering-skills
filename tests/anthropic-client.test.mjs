@@ -18,6 +18,7 @@ import path from 'node:path';
 import os from 'node:os';
 import {
   resolveBackend,
+  isClaudeAvailable,
   createAnthropicClient,
   _resetClientCache,
   _internals,
@@ -38,7 +39,10 @@ let savedEnv;
 // missed the sibling — the exact scrub-list-vs-resolution-list drift the
 // containment-adjacency wave exists to catch in code. A test that NEEDS one of
 // these sets it explicitly via `withEnv`.
-const AMBIENT_PROVIDER_ENV = ['CLAUDE_BACKEND', 'CLAUDE_BIN', 'ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL'];
+const AMBIENT_PROVIDER_ENV = ['CLAUDE_BACKEND', 'CLAUDE_BIN', 'ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL',
+  // AWS vars are ambient on any machine with a configured CLI/profile; without
+  // isolation an ambient AWS_REGION silently changes bedrock availability.
+  'AWS_REGION', 'AWS_DEFAULT_REGION'];
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'anthropic-client-'));
@@ -799,6 +803,75 @@ describe('createAnthropicClient (sdk backend)', () => {
     await assert.rejects(
       () => createAnthropicClient({ backend: 'sdk', fresh: true }),
       /ANTHROPIC_API_KEY required/,
+    );
+  });
+});
+
+// ── bedrock backend ──────────────────────────────────────────────────────────
+// The live Bedrock call is NOT covered: @anthropic-ai/bedrock-sdk is not a
+// dependency of this repo and no AWS account is wired up here. Everything up to
+// construction — validation, availability, contradiction handling, and the
+// missing-package path — is real and asserted below.
+
+describe('bedrock backend', () => {
+  it('resolveBackend accepts bedrock', () => {
+    process.env.CLAUDE_BACKEND = 'bedrock';
+    assert.equal(resolveBackend(), 'bedrock');
+  });
+
+  it('isClaudeAvailable follows AWS region, NOT ANTHROPIC_API_KEY', () => {
+    process.env.CLAUDE_BACKEND = 'bedrock';
+    delete process.env.ANTHROPIC_API_KEY;
+    assert.equal(isClaudeAvailable(), false, 'no region → unavailable');
+    process.env.AWS_REGION = 'eu-west-1';
+    assert.equal(isClaudeAvailable(), true, 'region alone → available, no Anthropic key needed');
+  });
+
+  it('AWS_DEFAULT_REGION is honoured as a fallback', () => {
+    process.env.CLAUDE_BACKEND = 'bedrock';
+    process.env.AWS_DEFAULT_REGION = 'us-east-1';
+    assert.equal(isClaudeAvailable(), true);
+  });
+
+  it('throws a named error when no region is resolvable', async () => {
+    process.env.CLAUDE_BACKEND = 'bedrock';
+    await assert.rejects(
+      () => createAnthropicClient({ fresh: true }),
+      (e) => /requires AWS_REGION/.test(e.message),
+    );
+  });
+
+  it('refuses a custom baseURL instead of silently coercing to sdk', async () => {
+    // cli coerces to sdk on an ambient backend; bedrock must NOT — that would
+    // move billing between an AWS account and an Anthropic key.
+    process.env.CLAUDE_BACKEND = 'bedrock';
+    process.env.AWS_REGION = 'eu-west-1';
+    process.env.ANTHROPIC_BASE_URL = 'https://gateway.internal/anthropic';
+    await assert.rejects(
+      () => createAnthropicClient({ fresh: true }),
+      (e) => /cannot honour baseURL/.test(e.message),
+    );
+  });
+
+  it('the harness-injected canonical baseURL does NOT trip the contradiction', async () => {
+    // ANTHROPIC_BASE_URL=https://api.anthropic.com is injected ambiently by
+    // agent harnesses; it normalises to absent and must not break bedrock.
+    process.env.CLAUDE_BACKEND = 'bedrock';
+    process.env.AWS_REGION = 'eu-west-1';
+    process.env.ANTHROPIC_BASE_URL = 'https://api.anthropic.com';
+    await assert.rejects(
+      () => createAnthropicClient({ fresh: true }),
+      (e) => /bedrock-sdk/.test(e.message) && !/cannot honour baseURL/.test(e.message),
+      'should reach the package check, not the baseURL contradiction',
+    );
+  });
+
+  it('names the package and the install command when the SDK is absent', async () => {
+    process.env.CLAUDE_BACKEND = 'bedrock';
+    process.env.AWS_REGION = 'eu-west-1';
+    await assert.rejects(
+      () => createAnthropicClient({ fresh: true }),
+      (e) => /@anthropic-ai\/bedrock-sdk/.test(e.message) && /npm install/.test(e.message),
     );
   });
 });
