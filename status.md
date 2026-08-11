@@ -1940,7 +1940,7 @@ Consumer-side verification (Step 6.8): `not applicable by construction` — plan
 documents and this log only; no code, no synced tooling, no generated artifact,
 so there is no consumer-side receiver.
 
-## 2026-08-08 (latest) — raw uniqueness misled twice; adjudication says the opposite
+## 2026-08-08 — raw uniqueness misled twice; adjudication says the opposite
 
 21 bake-off shadow-only HIGH/MED findings adjudicated **blind to arm** —
 `source_model` withheld, hash-shuffled order (insert order is arm-ordered, opus
@@ -1989,7 +1989,7 @@ commit changes one plan document and this log; it ships no code, no synced
 tooling and no generated artifact, so there is no consumer-side receiver to
 check. Labels live in the cloud store, not the repo.
 
-## 2026-08-08 (latest) — the bake-off was starving, and the fix was three defects deep
+## 2026-08-08 — the bake-off was starving, and the fix was three defects deep
 
 The final-review bake-off counter had sat at 1/12 for five days. Asking why
 surfaced a supply chain that was broken at every link.
