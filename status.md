@@ -141,6 +141,40 @@ two changes, each failing on the intended assertion and only that assertion;
 `gates:poison` re-verified end-to-end with a sabotaged contract (exit 1, correct
 message) and restored (exit 0). Full suite green.
 
+### Consumer-side verification — `verified`
+
+Not inherited from the producer-side green; retrieved and checked as a consumer
+would (§6 of `verification-discipline.md`).
+
+- **The pushed commit** — `69f1203f`, on `origin/main` (confirmed by
+  `git merge-base --is-ancestor HEAD origin/main` after `git fetch`, not by the
+  push exit code; a piped push reports the pipe's status, and the first attempt
+  here was in fact `[remote rejected] … cannot lock ref` while exiting through a
+  filter). One rebase onto `a396f3a7` was needed — a concurrent session landed a
+  plan doc mid-check. It touched no file of mine and the rebase was clean.
+- **The fix, observed in production rather than in a test.** The pre-push hook's
+  own sandbox — a real worktree push — logged `sandbox ready (node_modules:
+  linked)`. Before this change that same path logged `installed` on every
+  worktree push, which is the defect. This is the live confirmation the unit
+  tests cannot give.
+- **The consumer bundle** — `npm run sync` → `Targets: 2/2 reached, Updated: 2,
+  Errors: 0`, then the authoritative in-consumer check
+  `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` in **both**
+  `wine-cellar-app` and `ai-organiser`: 8/8 gates, exit 0. `concurrency.mjs`
+  landed in each (`scripts/.claude-skills/lib/`, 2,159 bytes) and
+  `import()`s clean, exporting `runWithConcurrency`; the relocated
+  `summarise-domains.mjs` resolves it at the rewritten path.
+- **Scope of the consumer delta**: only `concurrency.mjs` and its importer.
+  `prepush-check.mjs` and `check-gate-poison-pills.mjs` are not in the synced
+  bundle — they are source-repo governance tooling — so consumers get the shared
+  module and none of the gate change. Nothing for them to re-run.
+
+Ship gates at push time: no persona P0s (no `PERSONA_TEST_REPO_NAME`); unlocked
+fixes 5 code / 31 plan, `agedOut` **0**; unremediated acceptances 158, `agedOut`
+**0**, 73 not yet due; upstream queue empty. `AI-Gate: not-run` is the honest
+value — no audit loop ran this cycle, and the marker is not something to
+manufacture.
+
 ---
 
 ## 2026-08-11 — 39 obligations written off, and the doctrine that made them look like work
