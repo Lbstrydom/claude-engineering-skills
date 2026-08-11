@@ -1,6 +1,126 @@
 # Project Status Log
 
-## 2026-08-11 (latest) — a rule that could never fire for the case it was written for
+## 2026-08-11 (latest) — two hand-kept lists, and the one that steered people toward corrupting a fixture
+
+A consumer report (wine-cellar-app, Windows, `core.autocrlf=true`) said the
+managed `.gitattributes` block omitted `.audit-loop/expected-schema.json`. It
+did. Verified before acting: mapping the real wine bundle through
+`sourceRelToDestRel`, the destinations outside the gitignored tooling dir are
+**exactly** the seven pinned globs plus that one. One omission, no others — and
+it had been unpinned for as long as the surface has shipped.
+
+**Why an EOL bug was worth more than cosmetics.** The file showed ` M` with an
+EMPTY diff on a 400 KB fixture, which reads as unexplained drift, and it had
+already caused one mis-triage (three synced files reported as bundle-drift when
+none had drifted). The dangerous part is the next move: regenerating
+`expected-schema.json` to "resolve" the phantom. That fixture must only ever
+come from a fresh replay (`npm run db:local:regen`) — a restored DB renumbers
+`attnum` past DROP COLUMN tombstones. A cosmetic churn bug was pointing at the
+one file where the obvious remedy corrupts it. (The committed copy is currently
+correct: `refresh_runs` is the only table with `attnum` gaps, missing exactly
+6–11, matching `20260721150000_drop_refresh_runs_dead_columns.sql`.)
+
+**Fixed as a derivation, not a line.** New `lib/sync-eol-pins.mjs`:
+`computeEolPins` iterates the bundle's own DESTINATIONS and returns
+`{pins, uncovered}`; a non-empty `uncovered` is a sync ABORT naming the paths
+and the constant to edit. The exemption rule is a property of what a pin is for
+— *not inside `CONSUMER_TOOLING_DIR`*, i.e. anything a consumer can track —
+rather than a second list to keep in step. Deliberately NOT "matches a managed
+ignore pattern": `scripts/.sync-manifest.json` is ignore-listed but never
+force-untracked, so it still needs its pin. Only globs that matched are emitted,
+so the block is a real function of the bundle. AGENTS.md shape (3), one more time.
+
+**The old guard could not have caught it**, and that was the real defect.
+`sync-gitattributes.test.mjs` asserted block SHAPE against a 2-element
+illustrative list — it never asserted the real list was COMPLETE, so a missing
+surface was structurally invisible. It now sweeps every real consumer inventory
+for uncovered destinations, with a negative control (an unpinned path must be
+*reported*, not dropped) and an anti-vacuous guard (empty bundle fails).
+
+**Second thread: `check-sync.mjs` step 5 crashed for every registered repo.**
+It counted `FROM bandit_arms WHERE repo_id = $1`, but `bandit_arms` is global —
+keyed `(pass_name, variant_id, context_bucket)`, no `repo_id` column at all
+(`bandit-fp.mjs:90` reads it with no predicate). Guaranteed 42703.
+
+The report called this fail-open — "reports an error and exits 0". **It exits
+3**, verified by running it in wine-cellar-app; the throw reaches the top-level
+catch. Not fail-open, but worse than the reporter thought: a hard abort *before
+the verdict*, so the FP-pattern count and the SYNCING/NOT_SYNCING line — the
+entire point of the tool — never printed. Post-fix against wine:
+`Bandit arms: 26 (global — not repo-scoped)` / `FP patterns: 365` /
+`Verdict: SYNCING`, exit 0. Left the hard exit alone: wrapping step 5 in a
+try/catch would convert a loud failure into the soft one the reporter feared,
+and the root cause was the column.
+
+`check-sync-schema-columns.test.mjs` extracts columns from the script's OWN SQL
+and validates them against the committed `expected-schema.json`. A hand-kept
+column list would have been the same drift class as the bug; this way a new
+query is covered with no edit. Extractor is deliberately narrow — it reads the
+FROM table and `col = $n` predicates, and skips any select list carrying a call,
+cast or alias rather than guessing.
+
+**Both guards were seen to fail before being trusted.** Reintroduced each defect
+and confirmed the exact diagnostics fire (`column "repo_id" does not exist on
+"bandit_arms"`, `"wine" has trackable synced destinations with no EOL pin`),
+then restored and re-ran green.
+
+Verification (Step 6.8): **verified**, consumer-side, before committing (the
+sync reads the working tree, so the receiver could be checked first). Re-synced
+wine-cellar-app — `npm run sync -- --target wine`, 1 created / 42 updated / 0
+errors — then ran `node scripts/.claude-skills/lib/sync-isolation-verify.mjs`
+**in the consumer**: all 8 gates ✓, exit 0. (The pre-push hook re-synced both
+consumers again from the pushed tree — 2 created / 82 updated / 0 errors — and
+the consumer state below was re-checked after that.) Three observations that are
+the actual subject:
+
+- The pin landed in the consumer's managed block.
+- `git ls-files --eol .audit-loop/expected-schema.json` moved from
+  `i/lf w/crlf attr/` to `i/lf w/lf attr/text eol=lf`. No `--renormalize` was
+  needed — the index was already LF, so once the attribute existed the clean
+  filter simply started matching.
+- The file still shows ` M`, and that is now **correct**: `git diff` is a real
+  97-line content change (new `unlocked_fixes_all` view rows the bundle just
+  delivered), not an empty-diff phantom. Signal restored, which was the point.
+- The synced `check-sync.mjs` in wine reaches its verdict: `Bandit arms: 26
+  (global — not repo-scoped)` / `FP patterns: 365` / `Verdict: SYNCING`, exit 0.
+  It exited 3 before the fix.
+
+**A sentinel that made its own file binary.** `sync-eol-pins.mjs` used a NUL as
+the placeholder between the `**` and `*` wildcard passes, and it went into the
+source as a *literal* control byte rather than the escape. Runtime was fine and
+tests were green; git called the file `Bin 0 -> 5823 bytes` — no diff, no blame,
+for a brand-new module. Caught by reading `git show --stat` after committing
+rather than trusting the commit, and amended to `'\u0000'`. Worth the note
+because nothing in the toolchain complained: the only signal was one word in a
+stat line.
+
+Suite: 11,070 pass / 2 fail, both a concurrent session's — `learning-store`
+public-surface drift from `countAgedUnlockedFixes` (added to `plans-ship.mjs`,
+contract list not yet updated) and the `sync --target-path` idempotency test,
+which hashes `cross-skill.mjs`, modified 30 seconds into the run, and passes in
+isolation. Left untouched per scope discipline. Gate: `not-run` — no audit loop
+this session, and the honest value.
+
+Skipped `arch:refresh` (Step 0.5c) deliberately: advisory, and a concurrent
+session has nine modules mid-edit that an index refresh would capture unfinished.
+
+**The push needed the origin-worktree detour.** A concurrent session rewrote and
+force-pushed a different line mid-session (`138346a0` → `8479d539`, plus two new
+commits), so the commit sat on an orphaned base and `push` was rejected
+non-fast-forward. Rebased by cherry-picking into a throwaway worktree based on
+`origin/main` rather than pulling into the shared dirty tree — clean pick, hook
+fully armed. Local `main` keeps a duplicate (`d48bcc13`); patch-ids match the
+pushed commit exactly, so `git pull --rebase` drops it once that tree is clean.
+Not `reset --hard` with their work present.
+
+This entry was spliced onto the pushed `status.md` rather than committed from
+the working tree: that copy was based on the stale line, so it was MISSING an
+entry the other session had already pushed and CARRYING one they had not
+committed. Committing the file wholesale would have deleted the first and
+published the second. Two stale `(latest)` markers further down (2026-08-08)
+were left alone — not this session's to rewrite.
+
+## 2026-08-11 — a rule that could never fire for the case it was written for
 
 `6963fcbd`. A consumer was told on every sync that two of its skills had
 "undefined precedence — yours to resolve". Both were **one directory reached by
