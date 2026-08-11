@@ -32,6 +32,21 @@
 > Two of the plan's own premises were falsified during the audit: the
 > `updatePlanStatus` scoping defect (already fixed in `d1d8097c`, §1) and the
 > "already in flight concurrently" latency claim (§7).
+>
+> **Re-check 2026-08-11 against `origin/main` (7 commits on from the plan).**
+> All **19 pinned `file:line` citations still resolve exactly** — the pin
+> discipline held. All three measured DB facts still hold (0 unique indexes on
+> `finding_fingerprint`, 1 duplicate group / 1 excess row, 4,222 rows). One
+> plan file changed (`cross-skill.mjs`, in the unrelated upstream-report path).
+>
+> **What DID change is the design, not the facts**: the re-check found
+> `scripts/lib/upstream/commands.mjs` already implementing this pattern, which
+> falsifies the plan's "proceed greenfield" conclusion (§1). Three consequences,
+> folded in as decisions 1c–1e: adopt **write-ahead** ordering over
+> spill-on-failure; **extract** the envelope core rather than ship a third
+> outbox; and the extraction **fixes a live vacuous-pass defect** in upstream's
+> own drain. A new **Phase 0** carries the extraction, and Cluster A grew to
+> Phases 0–2. **These changes are un-gated** — they postdate the last review.
 
 ---
 
@@ -97,11 +112,32 @@ pool. A rejection anywhere is absorbed at the first hop.
 `scripts/lib/audit/plan-audit-cloud.mjs:66`. All three currently read a falsy
 return as "no plan". All three are in this plan's file list.
 
-### Neighbourhood considered
+### Neighbourhood considered — and the conclusion it got wrong
 
 `get-neighbourhood` (refresh `8ce25c7f`) returned 8 records, **all banded
-`review`** — top score 0.775, `bandReason: below-noise-floor`. No existing symbol
-occupies this space: proceed greenfield.
+`review`** — top score 0.775, `bandReason: below-noise-floor` — and the plan
+concluded *"no existing symbol occupies this space: proceed greenfield."*
+
+**That conclusion is false, and was false when written.** A re-check on
+2026-08-11 against `origin/main` found `scripts/lib/upstream/commands.mjs`
+already implementing this exact pattern for a different writer:
+
+| Concept this plan proposed | Already shipped there |
+|---|---|
+| spill artifact | `writeEnvelope` / `parseEnvelope`, `OUTBOX_DIR = .audit/upstream-outbox` |
+| `schemaVersion` + quarantine | `OUTBOX_ENVELOPE_VERSION`, `rejected/` |
+| bounded drain batch | `DRAIN_CAP = 20`, env-overridable |
+| three named outcomes | `{drained, rejected, failed}` |
+| "a failed write is not a normal outcome" | *"A success line is never printed having persisted nothing; the envelope on disk is the proof."* |
+
+The embedding query missed it because the module is `upstream`-domain and
+report-shaped: nothing in its summaries reads as *durability*. **This is the
+band contract working as documented and still yielding a wrong answer** —
+`review` means "nothing cleared this repo's noise floor", not "nothing exists".
+The plan treated it as the latter. Grep for the *mechanism* (`outbox`,
+`envelope`, `drain`), not only the intent, before concluding greenfield.
+
+Consequences for the design are in decisions 1c and 1d.
 
 ### Past incidents
 
@@ -119,7 +155,13 @@ graph LR
   subgraph Orch["audit-orchestration"]
     CALLS["4 audit-store writes<br/>legacy-production-audit.mjs"]
   end
-  subgraph Seam["shared-lib (new)"]
+  subgraph Up["upstream (existing consumer)"]
+    UR["upstreamReport"]
+  end
+  subgraph Core["shared-lib: outbox-envelope.mjs (EXTRACTED)"]
+    ENV["writeEnvelope · parseEnvelope<br/>version · rejected/<br/>oldest-first capped drain"]
+  end
+  subgraph Seam["shared-lib: durable-write.mjs (new)"]
     REG["writer registry<br/>registerWriter(id, spec)"]
     DW["durableWrite(id, payload)"]
     DR["drainSpill(opts)"]
@@ -127,17 +169,20 @@ graph LR
   subgraph Sinks
     DB[("audit store")]
     SPILL["spill dir<br/>.audit/write-spill/"]
-    QUAR["quarantine/"]
+    QUAR["rejected/"]
   end
   CALLS --> DW
-  REG -.->|"schema · idempotencyKey · replay"| DW
+  UR --> ENV
+  REG -.->|"schemaVersion · rowKey · replay"| DW
   REG -.-> DR
-  DW -->|"await, classify"| DB
-  DW -->|"retryable + idempotent"| SPILL
-  DW -->|"not idempotent, or spill failed"| LOST["outcome: lost<br/>(counted, surfaced)"]
+  DW -->|"1. write-ahead envelope"| ENV
+  ENV --> SPILL
+  DW -->|"2. attempt, await, classify"| DB
+  DW -->|"applied receipt -> delete envelope"| SPILL
+  DW -->|"no key declared"| LOST["outcome: lost<br/>(envelope kept, counted)"]
   SPILL --> DR
-  DR -->|"bounded batch, under lock"| DB
-  DR -->|"unknown writerId / bad schema"| QUAR
+  DR -->|"bounded batch, oldest first, under lock"| DB
+  DR -->|"unknown writerId / version mismatch"| QUAR
 ```
 
 **`stores` is deliberately NOT a seam consumer.** The `upsertPlan` fix is a local
@@ -180,6 +225,50 @@ sites — a contradiction the audit caught (H4). The rule is narrowed accordingl
    the CLI. The registry is populated by importing that one module, and a drain
    asserts the registry is non-empty before it starts (an empty registry is a
    **bootstrap failure**, not "nothing to do").
+
+1c. **Write-ahead, not spill-on-failure — adopted from the upstream outbox.**
+   The first draft attempted the store and spilled *on failure*. The shipped
+   upstream mechanism does the opposite and is strictly better: *"validate →
+   redact → write-ahead envelope → attempt the store"*. Spill-on-failure loses
+   the payload if the process dies **during** the await — the window this plan
+   most wants covered. Write-ahead closes it: the envelope exists before the
+   attempt, and the successful path deletes it. Cost is one atomic write per
+   store write, on a path that already does network I/O.
+
+   This also **simplifies decision 2**: with write-ahead, a `lost` outcome no
+   longer means "we could not spill", it means "we will not replay this" — which
+   remains true for the three writers that declare no key, but their envelope is
+   still written and can be inspected. Nothing vanishes silently.
+
+1d. **Extract the envelope core; do not write a third outbox** *(#1 DRY, and the
+   AGENTS.md single-oracle rule)*. Counting this plan's, the repo would have
+   **three** implementations of the same idea: `learning/decision-logger.mjs`
+   (decision entries), `upstream/commands.mjs` (reports), and a new one here.
+   Two is already the smell the single-oracle rule names.
+
+   Right-sized answer: extract `writeEnvelope` / `parseEnvelope` / version +
+   `rejected/` handling from `upstream/commands.mjs` into
+   `scripts/lib/outbox-envelope.mjs`, migrate that module onto it (mechanical,
+   and it carries its own tests), and build the writer registry on top. The
+   *registry* is what is genuinely new here — upstream has one writer and needs
+   no dispatch; four writers do. `decision-logger.mjs` is **left alone**: its
+   entries are keyed and evicted on a different contract, and refactoring a
+   working backpressure implementation is scope this plan does not need.
+
+1e. **The extracted drain fixes a live defect in the upstream one.**
+   `upstream/commands.mjs::drainOutbox` returns `{drained: 0, rejected: 0,
+   failed: 0}` both when the directory is absent **and** from
+   `catch { … }` around `readdirSync` — so an unreadable outbox is
+   indistinguishable from an empty one. That is precisely the vacuous-pass the
+   Gemini gate flagged in this plan's own drain, already shipped one module over.
+   The shared core carries this plan's `{state:'unavailable'}` contract, so
+   extracting fixes upstream's drain as a side effect. In scope by the impact
+   test: this plan's drain **is** that code once extracted.
+
+   Also observed while reading it: `readdirSync(...).slice(0, cap)` takes
+   directory order, so a capped drain processes an arbitrary subset rather than
+   the oldest. The shared core sorts by enqueue time. Noted, not a finding
+   against this plan.
 
 2. **Only idempotent writers may spill, and exactly one qualifies today**
    *(#13 Idempotency)*. H2's scenario is real: a commit that fails at the client
@@ -366,7 +455,10 @@ columns to `audit_runs` (see §7).
 
 | File | Intent | Purpose |
 |---|---|---|
-| `scripts/lib/durable-write.mjs` | create | Registry + `durableWrite()`, `drainSpill()`, `spillSummary()`, `_internals`. |
+| `scripts/lib/outbox-envelope.mjs` | create | Extracted from `upstream/commands.mjs` (decision 1d): `writeEnvelope`/`parseEnvelope`, version + `rejected/`, oldest-first capped drain, `{state:'drained'\|'empty'\|'unavailable'}`. |
+| `scripts/lib/upstream/commands.mjs` | modify | Migrate onto the extracted core. Behaviour-preserving except the drain-failure contract, which is the point (decision 1e). |
+| `tests/outbox-envelope.test.mjs` | create | The shared core's own suite, including the unavailable-vs-empty distinction upstream currently lacks. |
+| `scripts/lib/durable-write.mjs` | create | Writer registry + `durableWrite()` (write-ahead), `drainSpill()`, `spillSummary()` — built ON the envelope core, not duplicating it. |
 | `scripts/lib/audit-store-writers.mjs` | create | The four `registerWriter` calls. Imported by BOTH the orchestrator and the CLI (decision 1b) — the registry has no other bootstrap. |
 | `tests/durable-write.test.mjs` | create | Three outcomes; spill round-trip; non-idempotent writer never spills; unknown writerId quarantines; replay-failure lifecycle; negative control. |
 | `supabase/migrations/<ts>_audit_findings_fingerprint_unique.sql` | create | Dedup the 1 known excess row, then `CREATE UNIQUE INDEX … (run_id, finding_fingerprint)`. Without this the `audit.findings` upsert cannot run (decision 2b). |
@@ -382,9 +474,18 @@ columns to `audit_runs` (see §7).
 
 ### 5b. Implementation Phases
 
-**Phase 1 — Registry + seam + the constraint it needs**: `registerWriter`, `durableWrite`, `spillSummary`; the unique-index migration (decision 2b);
-spill artifact schema; non-idempotent writers classify `lost`. Files:
-`scripts/lib/durable-write.mjs` (create), `tests/durable-write.test.mjs` (create).
+**Phase 0 — Extract the envelope core** (new, from the 2026-08-11 re-check):
+lift `writeEnvelope`/`parseEnvelope`/version/`rejected/` out of
+`upstream/commands.mjs`, add the oldest-first capped drain and the
+`drained|empty|unavailable` contract, migrate upstream onto it. Files:
+`scripts/lib/outbox-envelope.mjs` (create), `scripts/lib/upstream/commands.mjs`
+(modify), `tests/outbox-envelope.test.mjs` (create).
+
+**Phase 1 — Registry + seam + the constraint it needs**: `registerWriter`,
+`durableWrite` (write-ahead, on the Phase 0 core), `spillSummary`; the
+unique-index migration (decision 2b); non-idempotent writers classify `lost`.
+Files: `scripts/lib/durable-write.mjs` (create), `tests/durable-write.test.mjs`
+(create).
 
 **Phase 2 — Drain, bounded and locked**: `drainSpill` with batch cap, admission
 cap, advisory lock, quarantine for unknown/mismatched artifacts. Files:
@@ -487,10 +588,12 @@ Tier 1 (test-first) — `durable-write.mjs` is deterministic, no LLM.
 
 ## 8. Execution Clustering
 
-- **Cluster A** — Phases 1–2 — fix-gate: `yes`
-  - Coupling: Phase 2's drain reads the spill artifact Phase 1 defines and
-    dispatches through the registry Phase 1 owns. The shared seam is the artifact
-    schema + registry contract; a change to either breaks both at once.
+- **Cluster A** — Phases 0–2 — fix-gate: `yes`
+  - Coupling: Phase 0 defines the envelope + drain contract that Phase 1's
+    `durableWrite` writes through and Phase 2's drain reads; Phase 0 also
+    re-points an existing consumer (`upstream/commands.mjs`) at it, so a change
+    to the artifact schema breaks all three at once. Auditing them together is
+    the only way the wiring pass sees the extraction seam AND its two consumers.
   - author-tier: `standard`
 - **Cluster B** — Phases 3–4 — fix-gate: `yes`
   - Coupling: Phase 4's operator command reports and drains the spill Phase 3's
