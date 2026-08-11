@@ -233,7 +233,7 @@ export function collectImportClosure({ entryPoints, repoFiles, readFile }) {
         // regex noise resolve to null and are not dependencies).
         const pkg = packageNameFromSpecifier(spec);
         if (pkg) {
-          const key = `${file} ${pkg}`;
+          const key = `${file}\u0000${pkg}`;
           if (!seenExternal.has(key)) {
             seenExternal.add(key);
             external.push({ from: file, specifier: spec, pkg });

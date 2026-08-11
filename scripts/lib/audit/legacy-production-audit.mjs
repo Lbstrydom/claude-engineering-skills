@@ -3140,10 +3140,16 @@ export async function runLegacyProductionAudit(ctx) {
   // figure (2026-07-22 defect: legacy never priced its tokens, so the tiered-
   // shadow comparison recorded `legacyCostUsd: null` on every run). All legacy
   // passes use the one resolved audit model, so a single price over the
-  // aggregate is correct. `costFromUsage` returns `null` for an unpriced model
-  // (e.g. an Azure deployment id not in the pricing table) — an honest
-  // "unknown", never a fabricated 0. Cache discounts are ignored (a slight
-  // over-estimate, the conservative direction for a cost comparison).
+  // aggregate is correct. For an unpriced model (e.g. an Azure deployment id
+  // not in the pricing table) `costFromUsage` returns an OBJECT whose
+  // `totalUsd` is `null` — an honest "unknown", never a fabricated 0. It never
+  // returns a bare `null`, so this dereference is safe; the wording used to say
+  // "returns null", which reads as a null-deref waiting to happen and was
+  // raised as exactly that by an audit pass on 2026-07-28 (finding accepted,
+  // then unactionable, because the code was already correct). Verified by
+  // execution 2026-08-11: costFromUsage(usage, '<unpriced>').totalUsd === null.
+  // Cache discounts are ignored (a slight over-estimate, the conservative
+  // direction for a cost comparison).
   totalUsage.costUsd = costFromUsage(totalUsage, openaiConfig.model).totalUsd;
 
   // ── Cache telemetry (PR-4) ───────────────────────────────────────────
@@ -3578,9 +3584,10 @@ export async function runLegacyProductionAudit(ctx) {
       // free. That is the same anti-green class as a hardcoded 0, and it is
       // why per-run spend could not be answered from the store at all.
       //
-      // `?? null` is deliberate: `costFromUsage` returns null for an unpriced
-      // model (an Azure deployment id absent from the pricing table), and an
-      // honest unknown must stay distinguishable from a measured zero.
+      // `?? null` is deliberate: `totalUsage.costUsd` is null for an unpriced
+      // model (an Azure deployment id absent from the pricing table — see the
+      // costFromUsage note above; the function itself always returns an object),
+      // and an honest unknown must stay distinguishable from a measured zero.
       costEstimate: totalUsage.costUsd ?? null,
       durationMs: totalLatency,
       diffLinesChanged,

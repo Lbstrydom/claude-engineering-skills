@@ -222,7 +222,7 @@ describe('fail-closed — never `ok` when it could not read both sides', () => {
   });
 
   it('rejects path shapes that could escape the repo', () => {
-    for (const p of ['/etc/passwd', '../outside.js', 'src/ evil.js']) {
+    for (const p of ['/etc/passwd', '../outside.js', 'src/\u0000evil.js']) {
       const r = resolveCitation(reader(), { path: p, line: 1, sha: SHA_A, kind: 'pinned' });
       assert.equal(r.verdict, 'unresolvable', `expected unresolvable for ${p}`);
       assert.equal(r.reason, 'bad-path');

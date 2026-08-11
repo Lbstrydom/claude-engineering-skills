@@ -308,9 +308,28 @@ whose `adjudication_outcome` is `accepted`/`severity_adjusted` but whose
 findings in this repo, only 3 had a confirmed targeted code fix. One — the bare
 `catch { result = null; }` in `stage0-relevance-context.mjs` — was accepted,
 shipped, and is still in the code today. **`accepted` is not evidence of a
-fix.** The audit loop is already designed to re-raise these (`suppressReRaises`
-suppresses only `dismissed` or `fixed`/`verified`), so an unremediated
-acceptance is an open obligation, not a closed one.
+fix.**
+
+**And nothing is chasing them — this step is the only thing that will.** The
+line here used to read *"the audit loop is already designed to re-raise these
+(`suppressReRaises` suppresses only `dismissed` or `fixed`/`verified`)"*, which
+is true of the suppressor and false of the outcome. Measured 2026-08-11 over
+this repo's 201 windowed rows: **200 appear exactly once in the entire store,
+and zero were ever fixed or dismissed on a sibling row** — against a positive
+control of 707 findings marked fixed/verified and 462 dismissed, so the query
+could see a re-raise if one existed. Audits default to `--scope diff`, so a
+finding is re-raised only if a later audit happens to cover the same file, and
+mostly none does. An unremediated acceptance is an open obligation that no
+other mechanism will surface again.
+
+That also means the backlog decays the *other* way: a finding gets genuinely
+fixed and nobody writes that down, because the loop does not re-raise it to
+notice.
+Sampling four HIGH code rows the same day found three still-live defects and one
+already fixed — `duplicate-justification-pragma.mjs`, whose own source comment
+documents the `git grep -z` fix while the store still says `pending`. So treat a
+row as a *hypothesis about current code*, verify it, and then close it in the
+right direction (`--state fixed` or a dismissal) rather than assuming either.
 
 If > 0, print — **never blocks, and there is no override flag for it** (nudge,
 not gate; the same philosophy as quick-fix detection). **Show the first 5 rows

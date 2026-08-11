@@ -1266,7 +1266,7 @@ export async function runFinalReview(provider, client, planContent, transcriptCo
   // (which decide WHERE a request runs, not what it asks). Truncated to 16 hex:
   // this distinguishes a handful of arms, it is not a security boundary.
   const requestFingerprint = crypto.createHash('sha256')
-    .update(`${selectedModel} ${finalReviewConfig.reasoningEffort} ${systemPrompt} ${userPrompt}`)
+    .update(`${selectedModel}\u0000${finalReviewConfig.reasoningEffort}\u0000${systemPrompt}\u0000${userPrompt}`)
     .digest('hex').slice(0, 16);
 
   // `userPrompt` is the single egress envelope — assembled once above via
