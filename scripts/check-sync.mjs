@@ -131,10 +131,15 @@ async function checkSync() {
   log('');
   log('  5. Learning State');
 
-  const armCountRow = await one(
-    `SELECT COUNT(*)::int AS c FROM bandit_arms WHERE repo_id = $1`,
-    [repoRow.id]
-  );
+  // `bandit_arms` is GLOBAL, not repo-scoped — its identity is
+  // (pass_name, variant_id, context_bucket) and it has no `repo_id` column at
+  // all (see lib/store/bandit-fp.mjs, whose loader reads `SELECT * FROM
+  // bandit_arms` with no predicate). This counted `WHERE repo_id = $1`, a
+  // guaranteed 42703 that the top-level catch turned into a bare
+  // `[ERROR] column "repo_id" does not exist` + exit 3 — aborting the check
+  // before the FP-pattern count and the VERDICT, for every registered repo.
+  // Guarded by tests/check-sync-schema-columns.test.mjs.
+  const armCountRow = await one(`SELECT COUNT(*)::int AS c FROM bandit_arms`);
   report.learning.banditArms = armCountRow?.c ?? 0;
 
   const fpCountRow = await one(
@@ -143,7 +148,7 @@ async function checkSync() {
   );
   report.learning.fpPatterns = fpCountRow?.c ?? 0;
 
-  info(`Bandit arms: ${report.learning.banditArms}`);
+  info(`Bandit arms: ${report.learning.banditArms} (global — not repo-scoped)`);
   info(`FP patterns: ${report.learning.fpPatterns}`);
 
   // 6. Verdict

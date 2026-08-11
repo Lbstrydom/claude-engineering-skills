@@ -32,6 +32,7 @@ import { injectUpstreamBanner, BANNER_BODY } from './lib/sync-banner.mjs';
 import { classifyOwnership, describeEvidence } from './lib/sync-ownership.mjs';
 import { updateManagedBlock, parseGitignoreState } from './lib/sync-gitignore.mjs';
 import { untrackNewlyIgnored } from './lib/sync-untrack.mjs';
+import { computeEolPins, renderEolPinLines } from './lib/sync-eol-pins.mjs';
 import { getGitLocalEnvVarNames } from './lib/git-env-sanitize.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { assertContainedDestination } from './lib/install/safe-destination.mjs';
@@ -1429,24 +1430,30 @@ async function main() {
     // checks them out as LF — no churn. Reuses the same content-agnostic
     // managed-block machinery as .gitignore (same marker sentinels; one block
     // per file). Precise globs only — never the consumer's own files.
-    // (scripts/.claude-skills/** is gitignored, so not pinned here.)
+    //
+    // DERIVED from this bundle's own destinations (lib/sync-eol-pins.mjs), not
+    // hand-listed: the inline list drifted and silently omitted
+    // `.audit-loop/expected-schema.json` — a tracked synced surface sitting
+    // beside the migrations glob. `computeEolPins` iterates the DESTINATIONS,
+    // so a new tracked surface with no covering glob aborts here instead of
+    // shipping perpetual churn. (scripts/.claude-skills/** is gitignored and
+    // therefore exempt; see `isPinExempt`.)
     const gaPath = path.join(repo.path, '.gitattributes');
     let priorGitattributes = null;
     try {
       priorGitattributes = fs.existsSync(gaPath) ? fs.readFileSync(gaPath, 'utf-8') : null;
     } catch { priorGitattributes = null; }
-    const gaPreview = updateManagedBlock(
-      priorGitattributes,
-      [
-        '.claude/skills/** text eol=lf',
-        '.claude/hooks/** text eol=lf',
-        '.claude/settings.json text eol=lf',
-        '.vscode/mcp.json text eol=lf',
-        'docs/reference/consistency-contract.md text eol=lf',
-        'scripts/.sync-manifest.json text eol=lf',
-        '.audit-loop/migrations/** text eol=lf',
-      ],
-    );
+    const eolPins = computeEolPins(repo.files.map(sourceRelToDestRel));
+    if (eolPins.uncovered.length) {
+      console.log(`  ${R}ABORT${X}  .gitattributes preflight: ${eolPins.uncovered.length} trackable synced destination(s) have no EOL pin.`);
+      console.log(`           Add a covering glob to EOL_PIN_GLOBS in scripts/lib/sync-eol-pins.mjs:`);
+      for (const p of eolPins.uncovered.slice(0, 10)) console.log(`             ${p}`);
+      if (eolPins.uncovered.length > 10) console.log(`             … and ${eolPins.uncovered.length - 10} more`);
+      totalErrors++;
+      console.log('');
+      continue;
+    }
+    const gaPreview = updateManagedBlock(priorGitattributes, renderEolPinLines(eolPins.pins));
     if (gaPreview.action === 'abort') {
       console.log(`  ${R}ABORT${X}  .gitattributes preflight: ${gaPreview.error}`);
       totalErrors++;
