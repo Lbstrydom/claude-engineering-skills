@@ -35,7 +35,12 @@ describe('recordPersonaAuditCorrelation hash_version stamping (disposable DB)', 
     const { rows } = await pool.query(
       `INSERT INTO persona_test_sessions
          (session_id, persona, url, browser_tool, verdict, repo_id)
-       VALUES ($1, 'tester', 'https://example.com', 'playwright', 'pass', $2)
+       -- 'Ready for users' | 'Needs work' | 'Blocked' are the only values the
+       -- persona_test_sessions_verdict_check accepts (20260413224948). This
+       -- fixture said 'pass' and had never been executed to find out — the
+       -- suite was registered in neither db-test-container.mjs nor
+       -- postgres-parity.yml, so it never ran anywhere until 2026-08-11.
+       VALUES ($1, 'tester', 'https://example.com', 'playwright', 'Needs work', $2)
        RETURNING id`,
       [`session-${crypto.randomUUID()}`, repoId],
     );

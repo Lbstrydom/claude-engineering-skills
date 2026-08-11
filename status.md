@@ -67,6 +67,47 @@ own write time: 2026-07-21 → 2 emissions, 2026-08-10 → 3 emissions (all
 `audit_missed`, which is legitimate ground truth and is what feeds
 `user_visible_recall`).
 
+### Follow-up, same day — the candidate window went blind 19% of the time
+
+The 2026-07-28 `no-candidate-runs` above turned out not to be a one-off, so it
+shipped too. Replaying every `audit_run` as an as-of moment and rebuilding the
+window the correlator would construct there:
+
+| repo | as-of moments | empty candidate set |
+|---|---|---|
+| `Lbstrydom/wine-cellar-app` | 237 | **44 (19%)** |
+| `Lbstrydom/claude-engineering-skills` | 426 | 1 (0.2%) |
+
+The driver is the empty-run rate feeding a `LIMIT` that caps **runs** rather
+than runs-with-findings: 112 of 188 (60%) of wine's `mode=code` runs carry zero
+findings against 36 of 293 (12%) here, so five consecutive clean rounds is
+ordinary there. The defect is latent in the query for every repo; wine's audit
+cadence is just what makes it fire.
+
+One `AND EXISTS (SELECT 1 FROM audit_findings …)` in `getCandidateAuditFindings`
+takes wine to 8 of 237 (3%) and this repo to 0. The residual 8 are correct — no
+findings-bearing run in the window at all, which is what `no-candidate-runs` is
+FOR, and a test asserts that path stays reachable. Empirically, on the real
+store with `now()` pinned per session: 2026-07-28 goes `no-candidate-runs` → 3
+emissions, and the other two sessions keep their emission counts on richer
+candidate sets (40→68, 59→99). Knock-on: an `audit_missed` row's `audit_run_id`
+now names the most recent run that *found something*, which is the better
+reading — a run with no findings cannot be the one that missed a thing.
+
+Red-then-green on a disposable Postgres (5 seeded runs with 0 findings hiding a
+6th that has them): 3 fail / 2 pass, the 2 passes being the invariants that must
+NOT move. Removing the EXISTS predicate again kills 3, with `node --check` OK.
+
+**Two suites were never running anywhere.** `tests/plans-ship-persona-correlation.test.mjs`
+shipped with the WS1 correlator and was registered in neither
+`DESTRUCTIVE_SUITE_FILES`/`ISOLATED_SUITE_FILES` nor
+`.github/workflows/postgres-parity.yml` — being `assertDisposableDbUrl`-gated, it
+had therefore never executed in any environment since the day it landed. Exactly
+the shape the registry's own comment warns about. Enrolled alongside the new one,
+and it **failed on its first-ever run**: its fixture seeds `verdict: 'pass'`,
+which the `persona_test_sessions_verdict_check` has rejected since 20260413224948.
+Fixed to `'Needs work'`; both suites now run in the pre-push gate and in CI.
+
 ### Two things deliberately left
 
 **No backfill of the 5 recoverable correlations.** `getCandidateAuditFindings`
@@ -74,8 +115,9 @@ windows on `now() - 14 days`, so re-posting a July session today would correlate
 it against August audit runs — manufactured ground truth, which is the one thing
 this module exists not to do. An as-of-aware backfill is a separate change.
 
-**2026-07-28 is genuinely `no-candidate-runs`, and that exposes a second, weaker
-defect.** Its 3 P1s correlate against nothing because the `LIMIT 5` in
+**2026-07-28's `no-candidate-runs` — SUPERSEDED same day, see the follow-up
+section above, which shipped the fix after measuring a 19% recurrence rate.**
+The original deferral read: Its 3 P1s correlate against nothing because the `LIMIT 5` in
 `getCandidateAuditFindings` caps **runs**, not runs-with-findings — wine has 237
 audit_runs in three weeks and most carry 0 findings, so findings-bearing runs get
 crowded out of the window (its 5 most recent runs had 0 findings between them).

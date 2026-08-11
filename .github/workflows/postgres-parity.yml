@@ -210,7 +210,9 @@ jobs:
         run: |
           node --test --test-concurrency=1 \
             tests/campaign-adjudication.test.mjs \
+            tests/candidate-audit-findings-window.test.mjs \
             tests/db-schema-realization-live.test.mjs \
+            tests/plans-ship-persona-correlation.test.mjs \
             tests/regression-spec-multi-finding-lock.test.mjs \
             tests/symbol-index-drift-justification.test.mjs
 

@@ -1263,6 +1263,25 @@ export async function retireMissedCorrelationsForHash(repoId, personaFindingHash
  * commit_sha exactly matches `exactCommitSha`, when given. One query, no
  * N+1. Each row carries `run_created_at` (for tie-breaking) and `run_id`.
  *
+ * **The `limit` counts runs that HAVE findings, not runs.** Without the
+ * EXISTS predicate a run that found nothing still spent one of the five
+ * slots, so a repo that converges clean often went blind: 112 of 188 (60%)
+ * of wine-cellar-app's `mode=code` runs carry zero findings, and replaying
+ * every audit_run as an as-of moment, 44 of 237 (19%) built an entirely
+ * empty candidate set — including the 2026-07-28 persona session, whose 3
+ * real P1s correlated against nothing. Filtering takes that repo to 8 of
+ * 237 (3%) and claude-engineering-skills from 1 of 426 to 0. It only ever
+ * widens the window, and only over runs that already exist; an empty
+ * result stays reachable (and correct) when nothing in the window found
+ * anything. Measured 2026-08-11; guarded by
+ * `tests/candidate-audit-findings-window.test.mjs`.
+ *
+ * Knock-on worth knowing: `decideCorrelations` stamps an `audit_missed`
+ * row with the most recent candidate run's id, so that attribution moves
+ * from "most recent run" to "most recent run that found something" — the
+ * better reading of the two, since a run with no findings cannot
+ * meaningfully be the one that missed a thing.
+ *
  * Discriminated result — `ok: false` (a real query failure) is distinct
  * from `ok: true, rows: []` (genuinely zero candidates in window): the
  * auto-correlator's `correlationSummary.reason` needs to tell
@@ -1279,6 +1298,7 @@ export async function getCandidateAuditFindings({ repoId, sinceDays = 14, limit 
         WHERE repo_id = $1
           AND (created_at >= now() - ($2 || ' days')::interval
                OR commit_sha = $3)
+          AND EXISTS (SELECT 1 FROM audit_findings af WHERE af.run_id = audit_runs.id)
         ORDER BY created_at DESC
         LIMIT $4`,
       [repoId, String(sinceDays), exactCommitSha, limit],

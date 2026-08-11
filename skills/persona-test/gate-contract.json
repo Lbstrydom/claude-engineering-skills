@@ -24,6 +24,20 @@
       "reason": "'personaFindingHash() is the single source' — the same hash computed identically on both the correlator and report sides — is a same-function-identity guarantee. There is no cli-exit for it, and while a unit-seam oracle could import personaFindingHash and assert stability, the closed registry has no general 'assert this function is the sole hash producer' oracle; a cli-exit recipe cannot bind a code-identity invariant."
     },
     {
+      "id": "finding-severity-literal-p0-p3",
+      "kind": "document-only",
+      "statedIn": "skills/persona-test/SKILL.md",
+      "stated": "it must be the literal string",
+      "reason": "'severity must be the literal string P0/P1/P2/P3' is a contract on the payload the MODEL authors in exploratory mode, which has no CLI and therefore no exit code for a cli-exit recipe to assert. The read side IS mechanically covered — personaSeverityCode/isP0OrP1 in scripts/lib/persona/audit-correlator.mjs, pinned by tests/persona-finding-severity-contract.test.mjs — but that is detection at the correlator boundary, not rejection at the persona-test boundary: a wrongly-spelled field is REPORTED (see the p0p1-shape-mismatch gate below), never refused. Binding an executable gate here would claim an enforcement that does not exist, which is the fake-check class this contract exists to catch. Same category as no-typed-input-values-persisted below, where enforcement also lives in another subsystem."
+    },
+    {
+      "id": "p0p1-shape-mismatch-never-benign",
+      "kind": "document-only",
+      "statedIn": "skills/persona-test/SKILL.md",
+      "stated": "never benign",
+      "reason": "The claim is that runAutoCorrelate distinguishes 'you declared P0/P1 counts but none parsed' from 'this run was genuinely clean' — added 2026-08-11 after the two reasons were indistinguishable for a month and hid the code-vs-severity divergence store-wide. runAutoCorrelate lives in scripts/cross-skill.mjs, which exports nothing, so there is no importable seam and no exit code to bind: record-persona-session exits 0 either way by design (a correlator failure must never fail an already-committed session write). Document-only until that reason string has a real oracle; the honest alternative to a gate that cannot fail."
+    },
+    {
       "id": "no-typed-input-values-persisted",
       "kind": "document-only",
       "reason": "'NEVER include typed input values … the store rejects any' is enforced at the STORE boundary (a server-side rejection), not by the persona-test skill's own CLI. Asserting it would mean exercising the store's validation, which is a different subsystem's contract, not persona-test's exit behaviour; document-only here."

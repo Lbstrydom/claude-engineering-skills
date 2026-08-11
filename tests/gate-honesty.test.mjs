@@ -106,7 +106,14 @@ const PINNED_DOCUMENT_ONLY = {
   brainstorm: ['artifact-sensitive-path-refusal', 'exit-0-on-provider-failure'],
   'click-test': ['verdict-precedence', 'arg-validation-refusals', 'capability-abort', 'scanner-error-caps'],
   'nav-audit': ['gate-exit-1-on-regression'],
-  'persona-test': ['consistency-exit-codes-live', 'persona-finding-hash-single-source', 'no-typed-input-values-persisted'],
+  // 3 -> 5 on 2026-08-11, both from the correlator field-name fix:
+  // `finding-severity-literal-p0-p3` (the read side IS covered by
+  // tests/persona-finding-severity-contract.test.mjs, but that is DETECTION at
+  // the correlator boundary, not rejection at persona-test's — exploratory mode
+  // has no CLI to bind an exit code to) and `p0p1-shape-mismatch-never-benign`
+  // (runAutoCorrelate lives in cross-skill.mjs, which exports nothing, and
+  // record-persona-session exits 0 either way by design).
+  'persona-test': ['consistency-exit-codes-live', 'persona-finding-hash-single-source', 'no-typed-input-values-persisted', 'finding-severity-literal-p0-p3', 'p0p1-shape-mismatch-never-benign'],
   'ux-lock': ['verify-is-a-report-not-a-blocker', 'status-rubric'],
   // `unremediated-acceptances-never-blocks` added 2026-07-27 with /ship Step 0.5e.
   // Document-only for the same reason as step-0-5-gates-non-blocking beside it:
@@ -202,7 +209,10 @@ describe('gate-honesty — real skills/', () => {
     // 37 → 38: +1 ship (final-review-credit-advisory-exit-zero, 2026-07-29).
     // 38 → 39: +1 audit-code (detector-blocks-convergence, /audit-code Step 5.0b, 2026-08-01).
     // 39 → 40: +1 ship (upstream-queue-never-blocks, /ship Step 0.5h, 2026-08-01).
-    assert.equal(totalDocOnly, 41);   // +2 ux-lock, +5 ship, +4 cycle, +4 plan (Phase C final — ALL 15 contracted); +1 cycle cluster-start-ref (Phase 5)
+    // 41 → 43: +2 persona-test (finding-severity-literal-p0-p3 and
+    //   p0p1-shape-mismatch-never-benign, 2026-08-11 — see the comment on the
+    //   persona-test row in PINNED_DOCUMENT_ONLY for why neither is executable).
+    assert.equal(totalDocOnly, 43);   // +2 ux-lock, +5 ship, +4 cycle, +4 plan (Phase C final — ALL 15 contracted); +1 cycle cluster-start-ref (Phase 5)
 
     const allSkillNames = listSkillNames(skillsRoot);
     const expectedUncontracted = allSkillNames.filter((n) => !PINNED_CONTRACTED_SKILLS.includes(n));

@@ -62,7 +62,14 @@ export const ISOLATED_SUITE_FILES = Object.freeze([
   // campaign-adjudication's LIVE half needs the campaign spine migrated and
   // intact; its pure half runs everywhere and is a no-op here.
   'tests/campaign-adjudication.test.mjs',
+  'tests/candidate-audit-findings-window.test.mjs',
   'tests/db-schema-realization-live.test.mjs',
+  // Enrolled 2026-08-11. It was committed with the WS1 correlator and
+  // registered nowhere — neither here nor in the workflow — so, being
+  // `assertDisposableDbUrl`-gated, it had never executed in any environment
+  // since the day it landed. Exactly the shape this list's own comment
+  // warns about, found while enrolling the suite above it.
+  'tests/plans-ship-persona-correlation.test.mjs',
   'tests/regression-spec-multi-finding-lock.test.mjs',
   'tests/symbol-index-drift-justification.test.mjs',
 ]);
