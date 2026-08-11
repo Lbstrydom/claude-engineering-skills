@@ -58,7 +58,6 @@ export * from './lib/store/persona.mjs';
 // Kept as a separate domain from persona.mjs because the lifecycle
 // (UPSERT with occurrences++) and consumer (promote-canary-candidates)
 // are different from persona_test_sessions.
-export * from './lib/store/persona-test-candidates.mjs';
 export * from './lib/store/plans-ship.mjs';
 export * from './lib/store/repo.mjs';
 export * from './lib/store/runs-findings.mjs';

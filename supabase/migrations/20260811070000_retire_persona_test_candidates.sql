@@ -1,0 +1,42 @@
+-- Retire `persona_test_candidates` — superseded, never used, never promoted from.
+--
+-- WS-PIPE1 (commit b339afd, 2026-05-22) added this table plus three store
+-- functions and three `cross-skill.mjs` verbs, as a cross-repo aggregation of
+-- persona consistency candidates. The feature that actually shipped landed
+-- somewhere else: `/ship` Step 5.6 promotes candidates from `regression_specs`
+-- WHERE `source_kind = 'persona-consistency-candidate'`, a different table with
+-- a proper `repo_id` FK. Nobody removed the original.
+--
+-- Evidence gathered before dropping it (2026-08-11):
+--   * `git log -S` over `skills/`, `.claude/skills/` and `.github/` returns
+--     **0 commits, ever**, for any of the three CLI verbs — no skill has ever
+--     driven this surface, at any point in its history.
+--   * No foreign key anywhere references it (it has no `id` column to
+--     reference — the PK is `(repo_name, fingerprint)`).
+--   * No view reads it.
+--   * 0 rows had ever been promoted (`proposed_at IS NULL` on every row).
+--   * The only two rows in the table were throwaway smoke-test values —
+--     `('r','f')` and `('test-repo', 64×'a')`, written 2.6 seconds apart on
+--     2026-07-23, with `canary_name='c'` and `surface_id='s'`. Neither name
+--     resolved to any `audit_repos` row, by exact match or by basename. This
+--     DROP subsumes deleting them; a separate DELETE would be redundant.
+--   * The table also could never be canonically repo-scoped: it carries a
+--     denormalized `repo_name` in its PRIMARY KEY and no `repo_id`, so one
+--     repository spelled two ways would silently occupy two candidate buckets —
+--     a latent instance of the divergence repaired in 20260811060000.
+--
+-- The CREATING migration (20260521120000_persona_test_candidates.sql) is NOT
+-- deleted and must not be: migrations are immutable, its sha is in the applied
+-- ledger, and three documents plus a comment in `setup-postgres.mjs` cite that
+-- filename as the canonical example of the CRLF/LF false-drift incident. Those
+-- references stay valid because the file stays.
+--
+-- Accepted residual risk, stated rather than hidden: the store module and
+-- `cross-skill.mjs` are both part of the synced consumer bundle, so a consumer
+-- could in principle have hand-scripted one of the three verbs. There is no
+-- skill, no runbook and no doc pointing at them, so the risk is low — and the
+-- failure mode is loud (`unknown command`), not silent. Sync does not prune
+-- removed files, so a consumer's orphaned copy of the store module is surfaced
+-- by the existing disk→manifest orphan gate rather than lingering invisibly.
+
+DROP TABLE IF EXISTS persona_test_candidates;

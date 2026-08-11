@@ -1,6 +1,76 @@
 # Project Status Log
 
-## 2026-08-11 (latest) — the write-side check did not know what the reconciler knew
+## 2026-08-11 (latest) — a table nobody used, and the check that came before the delete
+
+Retired `persona_test_candidates`. The interesting part is what the
+investigation overturned, twice.
+
+**The premise was wrong.** The open item read "2 bare-name rows with no repo_id,
+needs an operator decision to map by name". Neither row was a repo:
+`('r','f')` and `('test-repo', 64×'a')`, with `canary_name='c'` and
+`surface_id='s'`, written 2.6 seconds apart on 2026-07-23. Neither name resolved
+to any `audit_repos` row by exact match OR by basename. There was nothing to
+canonicalise them TO — the question I had carefully deferred did not exist.
+
+**My first attribution was also wrong, and I checked it.** The dedicated test
+uses exactly those fixture values, so it looked like the writer. Its isolation
+(`AUDIT_DB_URL` scrubbed, `AUDIT_LOOP_DISABLE_SHARED=1`, temp cwd) landed
+2026-05-22/23 — **two months before** the rows — and the file imports only node
+builtins, so no `DOTENV_CONFIG_PATH` leak either. It is genuinely hermetic.
+Forensics on the write window found normal working activity, no candidate-feature
+work in flight. I could not pin the writer and stopped guessing; most likely a
+manual CLI smoke-test from the repo root, where `AUDIT_DB_URL` is set.
+
+**The real finding: the table was vestigial.** WS-PIPE1 (`b339afd`, 2026-05-22)
+built it plus 3 store functions and 3 CLI verbs. The feature that shipped landed
+on `regression_specs` with `source_kind='persona-consistency-candidate'` — a
+different table with a proper `repo_id` FK, and the one `/ship` Step 5.6 actually
+promotes from. `listConsistencyCandidates(repoId)` reads THAT table; this one had
+no reader in any live flow.
+
+Evidence gathered before dropping anything, because this removes CLI surface from
+a **synced bundle** and a missed reference breaks a consumer silently:
+
+- `git log -S` over `skills/`, `.claude/skills/` and `.github/` → **0 commits,
+  ever**, for all three verbs. No skill has driven this at any point in history.
+- No FK references it (no `id` column to reference — PK is
+  `(repo_name, fingerprint)`), no view reads it, 0 rows ever promoted.
+- The three doc references and the `setup-postgres.mjs` comment cite the
+  *migration filename* as the canonical CRLF/LF false-drift example. Migrations
+  are immutable and the creating file stays, so those references stay valid — a
+  DROP migration is added, the original is not deleted.
+- The table could never be canonically repo-scoped anyway: denormalized
+  `repo_name` in the PRIMARY KEY, no `repo_id`, so one repo spelled two ways
+  occupies two buckets — a latent instance of what 20260811060000 just repaired.
+
+The DROP subsumes deleting the two rows; a separate DELETE would have been
+redundant, and hardcoding two junk keys into a migration that ships to consumers
+would have been worse than redundant.
+
+Removed: the store module, its barrel line, 3 CLI handlers + imports + dispatch
+entries, its test file, and 3 entries from the export pin (**187 → 184 — the
+only shrink in that pin's history**, noted there because a dropped export is how
+a consumer finds out by crashing).
+
+**Attribution under a dirty shared tree.** The full suite showed 5 failures. The
+other session is mid-change on the gate-honesty subsystem itself
+(`oracles.mjs`, `schema.mjs`, `gate-honesty.test.mjs`, `gate-contract.json`) plus
+`ship-commit.mjs`, so the failures looked plausibly like mine — I had just
+removed 3 CLI verbs, and one failing assertion is a CLI/skill census. Rather than
+assert innocence, I applied ONLY my files to a worktree at `origin/main` and ran
+the whole suite there: **11,200 pass / 0 fail**. That first run reported one
+failure which turned out to be my own harness — files deleted from disk while
+still tracked in that worktree's index, so `check-npm-run-args`'s `git ls-files`
+scan stat-failed. Staging them cleared it. A dirty-tree failure is not evidence
+about your change, and neither is a clean one until the index matches the disk.
+
+Accepted residual risk, stated not hidden: the store module and `cross-skill.mjs`
+both ship in the synced bundle, so a consumer could have hand-scripted a verb.
+No skill, runbook or doc points at them, and the failure mode is loud (`unknown
+command`), not silent. Sync does not prune, so an orphaned consumer copy is
+surfaced by the existing disk→manifest orphan gate.
+
+## 2026-08-11 — the write-side check did not know what the reconciler knew
 
 Log entry for `6dc86cbc`, which shipped without one.
 

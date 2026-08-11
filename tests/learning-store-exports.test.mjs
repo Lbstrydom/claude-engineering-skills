@@ -142,12 +142,12 @@ const EXPECTED_EXPORTS = [
   'sanitizeStepUrl',
   'buildSanitizedClickPath',
   'unnestReachabilityRows',
-  // persona-test-candidates (3 — Phase 3 WS-PIPE1, aggregation table for
-  // consistency-mode canary findings; lifecycle distinct from
-  // persona_test_sessions so kept as a separate domain module)
-  'listPersonaTestCandidates',
-  'markPersonaTestCandidateProposed',
-  'upsertPersonaTestCandidate',
+  // persona-test-candidates: RETIRED 2026-08-11 (migration 20260811070000).
+  // WS-PIPE1's aggregation table was superseded by the regression_specs path
+  // /ship Step 5.6 actually promotes from. `git log -S` over every skill
+  // surface returned 0 commits for all three CLI verbs across their entire
+  // history, no FK referenced the table, nothing was ever promoted from it,
+  // and its only two rows were smoke-test fixtures.
   // security (8 — +3 audit-trail/stats back-port: docs/plans/security)
   'callIncidentNeighbourhoodRpc',
   'getMaxIncidentRefreshAt',
@@ -391,6 +391,11 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // as "not shown", so a single counter would have to fold them and the fold
     // is the defect. Measured the day it landed: agedOut 0, but 201 live
     // obligations with the first 31 due to expire five days later.
-    assert.equal(EXPECTED_EXPORTS.length, 187);
+    // 187 -> 184: the three persona-test-candidates operations retired
+    // 2026-08-11 with the table itself (migration 20260811070000). The only
+    // surface reduction in this pin's history — recorded here because a
+    // SHRINKING count is exactly as much a contract change as a growing one,
+    // and a silently-dropped export is how a consumer finds out by crashing.
+    assert.equal(EXPECTED_EXPORTS.length, 184);
   });
 });

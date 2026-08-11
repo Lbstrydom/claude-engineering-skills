@@ -4322,74 +4322,6 @@
       ]
     },
     {
-      "table_name": "persona_test_candidates",
-      "columns": [
-        {
-          "column_name": "repo_name",
-          "data_type": "text",
-          "is_nullable": "NO",
-          "column_default": null,
-          "ordinal_position": 1
-        },
-        {
-          "column_name": "fingerprint",
-          "data_type": "text",
-          "is_nullable": "NO",
-          "column_default": null,
-          "ordinal_position": 2
-        },
-        {
-          "column_name": "canary_name",
-          "data_type": "text",
-          "is_nullable": "NO",
-          "column_default": null,
-          "ordinal_position": 3
-        },
-        {
-          "column_name": "surface_id",
-          "data_type": "text",
-          "is_nullable": "NO",
-          "column_default": null,
-          "ordinal_position": 4
-        },
-        {
-          "column_name": "severity",
-          "data_type": "text",
-          "is_nullable": "NO",
-          "column_default": null,
-          "ordinal_position": 5
-        },
-        {
-          "column_name": "first_seen",
-          "data_type": "timestamp with time zone",
-          "is_nullable": "NO",
-          "column_default": "now()",
-          "ordinal_position": 6
-        },
-        {
-          "column_name": "last_seen",
-          "data_type": "timestamp with time zone",
-          "is_nullable": "NO",
-          "column_default": "now()",
-          "ordinal_position": 7
-        },
-        {
-          "column_name": "occurrences",
-          "data_type": "integer",
-          "is_nullable": "NO",
-          "column_default": "1",
-          "ordinal_position": 8
-        },
-        {
-          "column_name": "proposed_at",
-          "data_type": "timestamp with time zone",
-          "is_nullable": "YES",
-          "column_default": null,
-          "ordinal_position": 9
-        }
-      ]
-    },
-    {
       "table_name": "persona_test_sessions",
       "columns": [
         {
@@ -9677,24 +9609,6 @@
       "definition": "CHECK (((outcome <> ALL (ARRAY['dismissed'::text, 'wont_fix'::text])) OR ((rationale IS NOT NULL) AND (length(btrim(rationale)) > 0))))"
     },
     {
-      "table_name": "persona_test_candidates",
-      "constraint_name": "persona_test_candidates_occurrences_check",
-      "constraint_type": "CHECK",
-      "definition": "CHECK ((occurrences >= 1))"
-    },
-    {
-      "table_name": "persona_test_candidates",
-      "constraint_name": "persona_test_candidates_pkey",
-      "constraint_type": "PRIMARY KEY",
-      "definition": "PRIMARY KEY (repo_name, fingerprint)"
-    },
-    {
-      "table_name": "persona_test_candidates",
-      "constraint_name": "persona_test_candidates_severity_check",
-      "constraint_type": "CHECK",
-      "definition": "CHECK ((severity = ANY (ARRAY['P0'::text, 'P1'::text, 'P2'::text, 'P3'::text])))"
-    },
-    {
       "table_name": "persona_test_sessions",
       "constraint_name": "persona_click_path_is_array",
       "constraint_type": "CHECK",
@@ -10996,21 +10910,6 @@
       "indexdef": "CREATE UNIQUE INDEX persona_finding_outcomes_repo_id_persona_finding_hash_key ON public.persona_finding_outcomes USING btree (repo_id, persona_finding_hash)"
     },
     {
-      "tablename": "persona_test_candidates",
-      "indexname": "persona_test_candidates_last_seen",
-      "indexdef": "CREATE INDEX persona_test_candidates_last_seen ON public.persona_test_candidates USING btree (repo_name, last_seen DESC)"
-    },
-    {
-      "tablename": "persona_test_candidates",
-      "indexname": "persona_test_candidates_pkey",
-      "indexdef": "CREATE UNIQUE INDEX persona_test_candidates_pkey ON public.persona_test_candidates USING btree (repo_name, fingerprint)"
-    },
-    {
-      "tablename": "persona_test_candidates",
-      "indexname": "persona_test_candidates_promotable",
-      "indexdef": "CREATE INDEX persona_test_candidates_promotable ON public.persona_test_candidates USING btree (repo_name, last_seen DESC, occurrences DESC) WHERE (proposed_at IS NULL)"
-    },
-    {
       "tablename": "persona_test_sessions",
       "indexname": "idx_persona_sessions_commit",
       "indexdef": "CREATE INDEX idx_persona_sessions_commit ON public.persona_test_sessions USING btree (commit_sha) WHERE (commit_sha IS NOT NULL)"
@@ -11857,11 +11756,6 @@
     },
     {
       "grantee": "postgres",
-      "object": "public.persona_test_candidates",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "postgres",
       "object": "public.persona_test_sessions",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
@@ -12244,11 +12138,6 @@
     },
     {
       "object_name": "persona_finding_outcomes",
-      "object_kind": "r",
-      "owner": "postgres"
-    },
-    {
-      "object_name": "persona_test_candidates",
       "object_kind": "r",
       "owner": "postgres"
     },
