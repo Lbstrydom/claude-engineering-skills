@@ -221,6 +221,11 @@
       "description": "Apply pending migrations (idempotent; skips already-applied via sha256). Requires AUDIT_DB_URL.",
       "category": "diagnostic"
     },
+    "db:enrolment:gate": {
+      "script": "db:enrolment:gate",
+      "description": "Requires every AUDIT_DB_TEST_URL-gated test suite to be named by a runner (db-test-container.mjs's *_SUITE_FILES) or to carry a written DB_SUITE_ENROLMENT_EXEMPT reason. A gated suite no runner names skips itself everywhere, and node reports a suite that never ran as a clean pass — 15 suites sat in that state until 2026-08-11. Iterates the filesystem, the only side of the comparison that can see a file no list mentions. Fails closed on zero files scanned, zero candidates, a stale or unexplained exemption, or a file both enrolled and exempt.",
+      "category": "diagnostic"
+    },
     "db:suites:gate": {
       "script": "db:suites:gate",
       "description": "The gate form of db:local, wired into `npm run check`: runs the destructive DB suites against an ephemeral Docker Postgres so the DB seam is covered by the same gate as everything else. Blocks ONLY on a real suite/schema-diff failure (exit 1); a missing daemon, port clash, or concurrent container owner degrades to a loud skip that never implies coverage. AUDIT_LOOP_DB_TESTS_REQUIRED=1 promotes every skip to a hard failure; AUDIT_LOOP_DB_TESTS_SKIP=1 opts out (REQUIRED wins).",

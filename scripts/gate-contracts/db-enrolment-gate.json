@@ -16,11 +16,11 @@
         "isolation": "tmpdir",
         "argv": ["scripts/check-db-suite-enrolment.mjs"],
         "overlay": {
-          "tests/poison-unenrolled-db-suite.test.mjs": "tests/fixtures/poison/db-suite-unenrolled.test.mjs.txt"
+          "tests/nav-drift.test.mjs": "tests/fixtures/poison/db-suite-unenrolled.test.mjs.txt"
         },
         "expectExit": 1,
         "expectStderr": "named by no runner",
-        "why": "An ordinary-looking integration suite gated on AUDIT_DB_TEST_URL, added without being enrolled anywhere. This is the SILENT variant and the only one that matters: the suite compiles, the runner reports it as a clean pass, and `npm run check` goes green over coverage that never executed. Fifteen suites sat in this exact state — one, tests/plans-ship-persona-correlation.test.mjs, shipped with the WS1 correlator and failed on its first-ever run once enrolled, on a schema CHECK that had rejected its fixture since 20260413224948. The pill is an overlay rather than a mutation of the registry because ADDING an unenrolled file is how this happens in practice; deleting an entry from a *_SUITE_FILES list would test the same predicate from the side that a reviewer can already see in a diff."
+        "why": "An ordinary-looking integration suite gated on AUDIT_DB_TEST_URL, added without being enrolled anywhere. This is the SILENT variant and the only one that matters: the suite compiles, the runner reports it as a clean pass, and `npm run check` goes green over coverage that never executed. Fifteen suites sat in this exact state — one, tests/plans-ship-persona-correlation.test.mjs, shipped with the WS1 correlator and failed on its first-ever run once enrolled, on a schema CHECK that had rejected its fixture since 20260413224948. The overlay lands on an existing, unrelated suite (tests/nav-drift.test.mjs) rather than a new path, because the harness overlays ONTO tracked files. That models the equally-real second route in: an existing suite gains a DB-gated block and nobody enrols it. Deleting an entry from a *_SUITE_FILES list would test the same predicate from the side a reviewer can already see in a diff."
       }
     }
   ]

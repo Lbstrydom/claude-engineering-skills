@@ -1,10 +1,12 @@
 /**
- * POISON FIXTURE — overlaid as `tests/poison-unenrolled-db-suite.test.mjs`
- * inside the gate's tmpdir copy. Never executed; it exists to be SCANNED.
+ * POISON FIXTURE — overlaid OVER an existing, unrelated suite inside the
+ * gate's tmpdir copy. Never executed; it exists to be SCANNED.
  *
  * This is the silent shape `db:enrolment:gate` exists to catch: a perfectly
  * ordinary integration suite that skips itself when `AUDIT_DB_TEST_URL` is
- * unset, added without being named in any runner. Node reports a suite that
+ * unset, present in tests/ without being named in any runner. Overlaying it
+ * onto a file that already exists also models the second route in — an
+ * existing suite GAINS a DB-gated block and nobody enrols it. Node reports a suite that
  * never ran as `# fail 0` and exits 0, so nothing downstream can tell this
  * apart from real coverage. Fifteen suites lived in exactly this state until
  * 2026-08-11; one of them failed on its first-ever execution.
