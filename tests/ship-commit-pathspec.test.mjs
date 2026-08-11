@@ -21,6 +21,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { makeGitRunner, gitFixtureEnv } from './helpers/fixtures.mjs';
 import { makeRunCli } from './helpers/run-cli.mjs';
+import { identityArgs } from './helpers/worktree-guard-args.mjs';
 
 const CLI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../scripts/ship-commit.mjs');
 
@@ -31,7 +32,10 @@ const git = makeGitRunner(() => repo);
 const runCli = makeRunCli(CLI, {
   cwd: () => repo,
   command: process.execPath,
-  buildEnv: (cwd) => ({ ...process.env, AUDIT_DB_URL: '', HOME: cwd, USERPROFILE: cwd }),
+  // gitFixtureEnv(), NOT raw process.env: this spawns the real CLI as a
+  // subprocess that makes git commits, so ambient machine config must not
+  // leak in (the 2026-07-23 audit fix the sibling suite already carries).
+  buildEnv: (cwd) => ({ ...gitFixtureEnv(), AUDIT_DB_URL: '', HOME: cwd, USERPROFILE: cwd }),
 });
 
 function msgFile(text = 'feat: scoped subject\n\nbody\n') {
@@ -42,22 +46,7 @@ function msgFile(text = 'feat: scoped subject\n\nbody\n') {
 }
 
 
-/**
- * The identity bundle guard B requires (worktree-identity-guards, Phase 3).
- * Computed live from the fixture repo — a fresh repo per test means a
- * hardcoded sha would never match. Unborn HEAD returns nothing: guard B's one
- * documented skip.
- */
-function identityArgs() {
-  const h = spawnSync('git', ['rev-parse', '--verify', '--quiet', 'HEAD'], { cwd: repo, encoding: 'utf-8', env: gitFixtureEnv() });
-  const head = h.status === 0 ? (h.stdout || '').trim() : '';
-  if (!head) return [];
-  const b = spawnSync('git', ['symbolic-ref', '--quiet', '--short', 'HEAD'], { cwd: repo, encoding: 'utf-8', env: gitFixtureEnv() });
-  const br = b.status === 0 ? (b.stdout || '').trim() : '';
-  return br ? ['--expect-head', head, '--expect-branch', br] : ['--expect-head', head, '--expect-detached'];
-}
-
-const BASE = (mf) => ['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'not-run', ...identityArgs()];
+const BASE = (mf) => ['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'not-run', ...identityArgs(repo)];
 
 /** Files touched by the commit at HEAD. */
 function filesInHead() {

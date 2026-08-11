@@ -22,6 +22,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { initTempRepo, cleanupTempRepo } from './helpers/worktree-guard-args.mjs';
 
 const CLI = fileURLToPath(new URL('../scripts/ship-commit.mjs', import.meta.url));
 const SKILLS_DIR = fileURLToPath(new URL('../skills', import.meta.url));
@@ -46,11 +47,7 @@ function ship(args) {
 }
 
 before(() => {
-  repo = fs.mkdtempSync(path.join(os.tmpdir(), 'wt-ship-'));
-  git(['init', '-q', '.']);
-  git(['config', 'user.email', 't@t']);
-  git(['config', 'user.name', 't']);
-  git(['config', 'commit.gpgsign', 'false']);
+  repo = initTempRepo('wt-ship-');
   // ship-commit resolves its --skill enum from a skills/ layout; symlinking is
   // unreliable on Windows, so mirror just the directory names.
   fs.mkdirSync(path.join(repo, 'skills'), { recursive: true });
@@ -62,7 +59,7 @@ before(() => {
   git(['commit', '-qm', 'seed']);
 });
 
-after(() => { try { fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* best effort */ } });
+after(() => cleanupTempRepo(repo));
 
 const head = () => git(['rev-parse', 'HEAD']);
 const branch = () => git(['symbolic-ref', '--quiet', '--short', 'HEAD']);

@@ -109,7 +109,26 @@ function resolveSkillNames(repoRoot) {
 async function main() {
   // CLI smoke contract — proves imports survived the scripts/.claude-skills
   // relocation. No git side effects.
-  if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
+  //
+  // MUTUALLY EXCLUSIVE, not a presence check. A bare `argv.includes(...)` means
+  // any invocation that happens to carry the flag exits 0 having committed
+  // NOTHING — a silent success, in the one binary whose entire purpose is now to
+  // refuse rather than quietly do the wrong thing. `/ship` reads exit 0 as
+  // "committed" and would push. Standalone behaviour is unchanged, so the
+  // relocation smoke test still passes exactly as before.
+  if (process.argv.includes('--selfcheck-relocation')) {
+    const others = process.argv.slice(2).filter((a) => a !== '--selfcheck-relocation');
+    if (others.length > 0) {
+      err(
+        'AGENT FIX: --selfcheck-relocation: a standalone smoke check that commits nothing; '
+        + `it cannot be combined with commit arguments (also given: ${others.join(' ')}). `
+        + 'Run it alone, or drop it to perform a real commit.',
+      );
+      process.exit(2);
+    }
+    console.log('OK');
+    process.exit(0);
+  }
 
   // ---- arg parse (unknown flag = taxonomy row 1) -------------------------
   const argv = process.argv.slice(2);
@@ -676,12 +695,6 @@ async function main() {
       if (commit.stdout) process.stderr.write(commit.stdout);
       exitCode = 1;
     } else {
-      // Post-commit integrity parse-back (R2 H3, tightened R3 H2): a
-      // commit-msg hook or clean filter can rewrite the message after us —
-      // parse the persisted message with git-trailer semantics (the same
-      // parser as authoring) and require each expected key to appear EXACTLY
-      // ONCE in the trailer BLOCK with the expected value. Substring matches
-      // against body prose do not count.
       // ---- Post-commit verification (guard B's second half) ---------------
       //
       // This DETECTS; it does not prevent. `git commit` has already created the
@@ -713,6 +726,12 @@ async function main() {
         }
       }
 
+      // Post-commit integrity parse-back (R2 H3, tightened R3 H2): a
+      // commit-msg hook or clean filter can rewrite the message after us —
+      // parse the persisted message with git-trailer semantics (the same
+      // parser as authoring) and require each expected key to appear EXACTLY
+      // ONCE in the trailer BLOCK with the expected value. Substring matches
+      // against body prose do not count.
       const persisted = git(['log', '-1', '--format=%B'], repoRoot);
       const expected = formatTrailerBlock(values);
       const parsed = persisted.status === 0 ? parseMessageTrailers(persisted.stdout) : { isTrailerBlock: false, trailers: [] };

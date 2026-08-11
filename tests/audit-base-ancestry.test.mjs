@@ -24,6 +24,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { initTempRepo, cleanupTempRepo } from './helpers/worktree-guard-args.mjs';
 
 import { resolveRangeSnapshot, makeGitRunner } from '../scripts/lib/worktree-identity.mjs';
 
@@ -31,14 +32,10 @@ let repo;
 const git = (args, cwd = repo) => execFileSync('git', args, { cwd, encoding: 'utf-8' }).trim();
 
 before(() => {
-  repo = fs.mkdtempSync(path.join(os.tmpdir(), 'wt-ancestry-'));
-  git(['init', '-q', '.']);
-  git(['config', 'user.email', 't@t']);
-  git(['config', 'user.name', 't']);
-  git(['config', 'commit.gpgsign', 'false']);
+  repo = initTempRepo('wt-ancestry-');
 });
 
-after(() => { try { fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* best effort */ } });
+after(() => cleanupTempRepo(repo));
 
 const write = (rel, body) => fs.writeFileSync(path.join(repo, rel), body);
 

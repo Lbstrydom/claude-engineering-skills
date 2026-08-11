@@ -15,6 +15,13 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { makeGitRunner, gitFixtureEnv } from './helpers/fixtures.mjs';
 import { makeRunCli } from './helpers/run-cli.mjs';
+import { identityArgs as sharedIdentityArgs, scopeArgs as sharedScopeArgs } from './helpers/worktree-guard-args.mjs';
+
+// Thin local bindings so call sites stay readable; the CANONICAL definition of
+// a guard bundle lives in the shared helper (audit H2 — three suites had
+// diverging copies).
+const identityArgs = (cwd = repo) => sharedIdentityArgs(cwd);
+const scopeArgs = (cwd = repo) => sharedScopeArgs(cwd, 'work.txt');
 
 const CLI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../scripts/ship-commit.mjs');
 let repo;
@@ -52,32 +59,6 @@ function arrange({ message = 'feat: test subject\n\nbody line\n', stage = true }
     git(['add', 'work.txt']);
   }
   return mf;
-}
-
-/**
- * The identity bundle guard B requires (worktree-identity-guards, Phase 3).
- *
- * Computed LIVE from the repo the CLI will run in, because these fixtures mint a
- * fresh repo per test — a hardcoded sha would be wrong on every run. An unborn
- * HEAD returns nothing on purpose: that is guard B's one documented skip, and
- * passing an expectation there would assert a binding that cannot exist.
- */
-function identityArgs(cwd = repo) {
-  const h = spawnSync('git', ['rev-parse', '--verify', '--quiet', 'HEAD'], { cwd, encoding: 'utf-8', env: gitFixtureEnv() });
-  const head = h.status === 0 ? (h.stdout || '').trim() : '';
-  if (!head) return [];
-  const b = spawnSync('git', ['symbolic-ref', '--quiet', '--short', 'HEAD'], { cwd, encoding: 'utf-8', env: gitFixtureEnv() });
-  const br = b.status === 0 ? (b.stdout || '').trim() : '';
-  return br ? ['--expect-head', head, '--expect-branch', br] : ['--expect-head', head, '--expect-detached'];
-}
-
-/**
- * Guard A refuses an unscoped commit, so name what `arrange()` staged. Only when
- * the file is actually there — the "nothing staged" rows must still reach their
- * own exit-1 error rather than a --path input rejection.
- */
-function scopeArgs(cwd = repo) {
-  return fs.existsSync(path.join(cwd, 'work.txt')) ? ['--path', 'work.txt'] : [];
 }
 
 const BASE_ARGS = (mf, cwd = repo) => [
