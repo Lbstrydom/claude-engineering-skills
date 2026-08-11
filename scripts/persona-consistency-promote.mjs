@@ -396,7 +396,9 @@ export async function promoteCandidates(args, deps = {}) {
   let repoId = null;
   try {
     const uuid = readLocalRepoUuid(args.repoRoot);
-    if (uuid) repoId = await getRepoIdByUuid(uuid);
+    // `.id` — getRepoIdByUuid returns a descriptor, not an id. See the note
+    // at the matching resolution in persona-consistency-run.mjs.
+    if (uuid) repoId = (await getRepoIdByUuid(uuid))?.id ?? null;
   } catch { /* fall through */ }
   if (!repoId) {
     process.stderr.write(
@@ -691,7 +693,10 @@ export async function reconcilePromotionJournal(repoRoot, deps = {}) {
   if (await isCloudEnabled()) {
     try {
       const uuid = readLocalRepoUuid(repoRoot);
-      if (uuid) repoId = await getRepoIdByUuid(uuid);
+      // `.id` — descriptor, not an id. `canQueryDb` below is a truthiness
+      // check, so the object would have made the reconciler believe it could
+      // query and then resolve every fingerprint against a malformed scope.
+      if (uuid) repoId = (await getRepoIdByUuid(uuid))?.id ?? null;
     } catch { /* fall through */ }
   }
   const canQueryDb = !!repoId;

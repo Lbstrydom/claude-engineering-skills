@@ -532,7 +532,20 @@ export function renderWorksheet(items, { state = 'open' } = {}) {
     lines.push(`[${it.severity}] ${it.title}`);
     lines.push(`  id        ${it.id}`);
     lines.push(`  from      ${it.repo_name || it.repo_id}`);
-    lines.push(`  path      ${it.affected_path}${it.path_recognised === false ? '   (NOT an upstream-owned synced file)' : ''}`);
+    // path_recognised is a TRI-state and must render as one. `false` and
+    // `null` are different claims: `false` means "checked against the
+    // reporter's manifest and it is not an upstream-owned file"; `null` means
+    // "no manifest was available, so nothing was checked". Rendering `null`
+    // the same as `true` — as this line did until 2026-08-11 — silently
+    // upgrades an unmade check into a passed one. That is now the COMMON
+    // case, not an edge one: the sync manifest is gitignored in consumers, so
+    // any fresh clone that has not re-synced reports `null`.
+    const pathNote = it.path_recognised === false
+      ? '   (NOT an upstream-owned synced file)'
+      : it.path_recognised === null || it.path_recognised === undefined
+        ? '   (ownership unverified — reporter had no sync manifest)'
+        : '';
+    lines.push(`  path      ${it.affected_path}${pathNote}`);
     lines.push(`  bundle    ${stamp}`);
     if (it.priorFixes.length) {
       lines.push(`  prior fixes touching this path (evidence, not a verdict):`);

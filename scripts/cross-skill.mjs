@@ -2402,7 +2402,19 @@ async function cmdUpstream() {
   const store = await import('./lib/store/upstream-issues.mjs');
   await initLearningStore();
   const cloud = await isCloudEnabled();
-  const repoRoot = process.cwd();
+  // NOT process.cwd(). Every provenance fact on a report hangs off this path —
+  // the sync manifest (`<root>/scripts/.sync-manifest.json`), the write-ahead
+  // envelope directory, and the repo identity. Run the CLI from a
+  // subdirectory and readBundleStamp finds nothing, so the report is stamped
+  // `bundle_sha: null` + `path_recognised: null` — indistinguishable from a
+  // consumer that genuinely has no manifest. Verified 2026-08-11 against
+  // wine-cellar-app: from its root the same report resolves
+  // `path_recognised: true, sha 2222ccdb`; from `src/` all three go null, and
+  // that is how report d6849e0b was filed. `findRepoRootFromCwd` is the
+  // existing resolver for exactly this question ("which repo is the caller
+  // WORKING in"); do not hand-roll a second one.
+  const { findRepoRootFromCwd } = await import('./lib/assert-repo-root.mjs');
+  const repoRoot = findRepoRootFromCwd();
 
   // Best-effort drain on EVERY verb: gated on the directory existing, so a run
   // with nothing pending costs one stat. Triggering only on report/list would

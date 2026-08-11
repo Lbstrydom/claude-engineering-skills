@@ -449,3 +449,102 @@ test('upstreamTransition accepts a full uuid unchanged', async () => {
   });
   assert.equal(seen.id, '96a829f8-d2b9-457a-b5ab-530b5530dad8');
 });
+
+// ── renderWorksheet: path_recognised is a TRI-state ───────────────────────────
+//
+// Consumers are told to check this field, so the worksheet must not collapse
+// `null` ("no manifest — nothing was checked") into `true` ("checked, and it
+// is upstream-owned"). Reported by Lbstrydom/wine-cellar-app 2026-08-11: a
+// report filed with a CORRECT consumer-relative bundle key still landed
+// `path_recognised: null`, and the worksheet rendered it identically to a
+// verified path. The null case is the common one — the sync manifest is
+// gitignored in consumers, so any un-resynced clone reports null.
+
+import { renderWorksheet } from '../scripts/lib/upstream/commands.mjs';
+
+const worksheetRow = (pathRecognised) => renderWorksheet([{
+  id: '96a829f8-d2b9-457a-b5ab-530b5530dad8',
+  severity: 'MEDIUM',
+  title: 'T',
+  repo_name: 'owner/repo',
+  affected_path: 'scripts/.claude-skills/x.mjs',
+  path_recognised: pathRecognised,
+  freshness: { verdict: 'unknown', reason: 'no-stamp', distanceAhead: null, ageDays: null },
+  priorFixes: [],
+}]).split('\n').find((l) => l.trim().startsWith('path '));
+
+test('worksheet: path_recognised true → no ownership caveat', () => {
+  const line = worksheetRow(true);
+  assert.ok(line, 'subject probe: the path row must render');
+  assert.doesNotMatch(line, /unverified|NOT an upstream-owned/);
+});
+
+test('worksheet: path_recognised false → says NOT upstream-owned', () => {
+  assert.match(worksheetRow(false), /NOT an upstream-owned synced file/);
+});
+
+test('worksheet: path_recognised null → says unverified, never silent', () => {
+  const line = worksheetRow(null);
+  assert.match(line, /ownership unverified/);
+  // The load-bearing assertion: null must not read like true.
+  assert.notEqual(line, worksheetRow(true));
+});
+
+// ── Provenance survives being invoked from a subdirectory ────────────────────
+//
+// Root cause of the "path_recognised stays null on a correctly-keyed report"
+// defect (Lbstrydom/wine-cellar-app, 2026-08-11). `cross-skill.mjs upstream`
+// derived repoRoot from process.cwd(), so running it from any subdirectory
+// silently lost the sync manifest — and with it bundle_sha, generated_at and
+// path_recognised. The degraded result is indistinguishable from "this
+// consumer has no manifest", which is why it read as a benign tri-state
+// instead of a bug.
+
+import { findRepoRootFromCwd } from '../scripts/lib/assert-repo-root.mjs';
+
+test('repoRoot resolution: a subdirectory resolves to the repo root', () => {
+  const root = findRepoRootFromCwd(REPO_ROOT);
+  const fromSub = findRepoRootFromCwd(path.join(REPO_ROOT, 'scripts', 'lib'));
+  assert.equal(
+    path.resolve(fromSub), path.resolve(root),
+    'a nested cwd must resolve to the same repo root, or provenance is lost',
+  );
+});
+
+test('bundle stamp: found via the resolver, lost via a raw cwd', () => {
+  // Hermetic fixture — deliberately NOT this repo. The sync manifest is
+  // gitignored, so asserting against it would pass here and fail in the
+  // clean pre-push worktree, where no manifest exists (sandbox-honesty rule).
+  const dir = mkTmp('upstream-root-');
+  try {
+    execSync('git init', { cwd: dir, stdio: 'ignore' });
+    const root = fs.realpathSync(dir);
+    fs.mkdirSync(path.join(root, 'scripts', 'lib'), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, 'scripts', '.sync-manifest.json'),
+      JSON.stringify({
+        commitSha: SHA, generatedAt: '2026-08-11T16:52:06.798Z', sourceDirty: false,
+        files: { 'scripts/.claude-skills/persona-consistency-promote.mjs': 'abc' },
+      }),
+    );
+    const sub = path.join(root, 'scripts', 'lib');
+
+    // Negative control — the exact pre-fix behaviour. Kept so the assertion
+    // below cannot go vacuous if readBundleStamp ever walks up on its own.
+    assert.equal(
+      readBundleStamp(sub), null,
+      'readBundleStamp takes a repo ROOT; a raw subdir must not resolve',
+    );
+    // Subject probe + the fix: resolve first, then read.
+    const viaResolver = readBundleStamp(findRepoRootFromCwd(sub));
+    assert.ok(viaResolver, 'subject probe: the fixture manifest must be findable');
+    assert.equal(viaResolver.commitSha, SHA);
+
+    // The consumer-visible consequence: ownership goes from unverifiable to true.
+    const key = 'scripts/.claude-skills/persona-consistency-promote.mjs';
+    assert.equal(validateAffectedPath(key, readBundleStamp(sub)).recognised, null);
+    assert.equal(validateAffectedPath(key, viaResolver).recognised, true);
+  } finally {
+    rmTmp(dir);
+  }
+});

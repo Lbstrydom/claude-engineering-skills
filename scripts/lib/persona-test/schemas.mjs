@@ -408,6 +408,13 @@ export const RigWarningKindSchema = z.enum([
   // indistinguishable from a passing one. Emitted once per surface at end
   // of run (it is a property of the whole run, not of any single step).
   'route-pattern-never-matched',
+  // Upstream (wine-cellar-app, 2026-08-11) — a contradiction cleared every
+  // candidate-worthiness gate, so emission was ATTEMPTED, and the store write
+  // returned null. Before this kind existed the runner dropped the null and
+  // stayed green, so a broken writer and an unadopted feature were
+  // indistinguishable from the outside: both leave an empty candidate table.
+  // That ambiguity is what got mis-filed upstream as "zero adoption".
+  'candidate-emission-failed',
 ]);
 
 export const RigWarningSchema = z.object({

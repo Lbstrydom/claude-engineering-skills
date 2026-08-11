@@ -1,6 +1,72 @@
 # Project Status Log
 
-## 2026-08-11 (latest) — `db:suites:gate` cost 24s against a docstring saying 10s, and nothing could see it
+## 2026-08-11 (latest) — a writer that threw for 12 weeks, filed upstream as "nobody uses this"
+
+Triaged one consumer report plus three unfiled defects from wine-cellar-app.
+The report's headline was falsified by one of the unfiled defects, which is the
+interesting part.
+
+**Report d6849e0b said consistency candidate emission had produced zero rows in
+~12 weeks and should be retired for zero adoption. The writer had been throwing
+on every call since the day the feature landed.** `getRepoIdByUuid` returns a
+repo DESCRIPTOR (`{id, name, activeRefreshId, …}`), not an id;
+`persona-consistency-run.mjs` assigned it straight to `repoId`.
+`recordRegressionSpec`'s only repo guard is `if (!repoId)` — an object is truthy
+— so the descriptor reached a `repo_id uuid` column, Postgres raised `22P02`,
+and the catch swallowed it into `return null`. Every run exited 0 with an empty
+queue. Introduced in `d898aa31` (2026-05-20), the same day the first canary
+landed, so the table was never going to hold a row.
+
+**Census found three sites, not one.** `persona-consistency-run.mjs:215` (the
+writer) and `persona-consistency-promote.mjs:399` + `:694` (the promoter) —
+both ends of the lifecycle. Every other caller in the repo already dereferenced
+`.id`. Guarded by [tests/repo-descriptor-callsite-contract.test.mjs](tests/repo-descriptor-callsite-contract.test.mjs),
+a static call-site check seen **red on exactly those three lines** before the
+fix, with a subject probe and a negative control.
+
+**The consumer's control was real but one-sided** — they proved the *read* path
+worked (a sibling query returned 24 rows for the same repo id) and never
+exercised the *write* path. A broken writer and an unadopted feature produce the
+same empty table. Emission failure is no longer silent: a candidate that clears
+every worthiness gate and then fails to write emits a `candidate-emission-failed`
+rig warning naming the surface.
+
+**Defect 4 was deeper than filed.** `path_recognised` stayed null on a correctly-
+keyed report. Two independent bugs: `cross-skill.mjs upstream` derived `repoRoot`
+from `process.cwd()`, so invoking it from a subdirectory silently lost the sync
+manifest and with it `bundle_sha`, `generated_at` **and** `path_recognised`; and
+`renderWorksheet` only rendered the `false` case, so `null` printed identically
+to `true` — an unmade check reading as a passed one. Verified against the real
+consumer: from wine-cellar-app's root the same report resolves
+`path_recognised: true, sha 2222ccdb`; from `src/` all three go null. Now uses
+the existing `findRepoRootFromCwd` (the resolver whose docstring names exactly
+this case), and the worksheet renders the tri-state.
+
+**Defect 3 needed no work** — the `cache-only-network-claim` warning missing its
+`surfaceId` was fixed hours earlier the same day in `69231d6c`. Censused all
+seven rig-warning emitters; every one now carries the field. The consumer is on
+a stale bundle and needs a re-sync, not a fix.
+
+### Verification
+
+`npm run check` green — **11,298 tests, 0 fail, exit 0** (measured, this tree).
+The subdirectory-provenance test is built on a hermetic `git init` fixture
+rather than this repo's own manifest, which is gitignored: asserting against it
+would have passed here and failed in the clean pre-push worktree.
+
+### Disposition of the retirement question
+
+Acked, not closed. The artifact argument is independent of the row count and
+still stands — and is stronger than filed: a promoted spec replays the same
+journey the canary **already** replays deterministically in CI, so the promotion
+artifact is largely redundant with its own producer. Retirement is likely
+correct and is a separate change. When it happens the record should say it was
+retired for being the wrong shape, not for being unused.
+
+Backlogs at ship time (pre-existing, non-blocking): `unlocked_fixes` 23
+(5 code / 18 plan), `unremediated_acceptances` 158, **`agedOut` 0 on both**.
+
+## 2026-08-11 — `db:suites:gate` cost 24s against a docstring saying 10s, and nothing could see it
 
 Follow-up to the pre-push perf work below, from one question: *why 24s and not
 the ~10s the code claims?*

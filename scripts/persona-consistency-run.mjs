@@ -212,7 +212,12 @@ export async function runConsistency(args, deps = {}) {
     if (cloudOn) {
       try {
         const uuid = readLocalRepoUuid(repoRoot);
-        if (uuid) repoId = await getRepoIdByUuid(uuid);
+        // `.id` is load-bearing: getRepoIdByUuid returns a DESCRIPTOR
+        // ({id, name, activeRefreshId, …}), not an id. Passing the whole
+        // object into recordRegressionSpec's `repo_id uuid` column raises
+        // 22P02 into a swallowed catch — the run stays green and emits
+        // nothing, which reads downstream as "nobody uses this feature".
+        if (uuid) repoId = (await getRepoIdByUuid(uuid))?.id ?? null;
         else resolveErr = 'no .audit-loop/repo-identity.json present';
       } catch (err) {
         resolveErr = err.message || String(err);
@@ -411,7 +416,22 @@ export async function runConsistency(args, deps = {}) {
               candidateFingerprint: fingerprint,
             },
           });
-          if (specId) ledger.recordCandidate(specId);
+          if (specId) {
+            ledger.recordCandidate(specId);
+          } else {
+            // Emission was ATTEMPTED and the write returned null. Never
+            // silent: an empty candidate queue must not be readable as
+            // "nothing qualified" when the truth is "the write failed".
+            // recordRegressionSpec logs its own reason to stderr; this
+            // carries the fact into the ledger, which is what survives.
+            warnings.push({
+              kind: 'candidate-emission-failed',
+              surfaceId: c.surfaceId,
+              detail: `Candidate for ${candidateDescription(c)} cleared every worthiness gate `
+                + 'but the store write returned null (see stderr for the store-layer reason). '
+                + 'The queue will under-report; this run is NOT evidence of zero candidates.',
+            });
+          }
         }
       }
 

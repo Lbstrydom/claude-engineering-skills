@@ -624,6 +624,48 @@ write the ledger" condition).
 
 ---
 
+## Candidate emission — why an empty queue is not one fact
+
+A contradiction does **not** become a queued candidate just by existing. Three
+gates run in `candidateWorthy` (`persona-consistency-run.mjs`), all of which
+must pass:
+
+| Gate | Rejects | Rationale |
+|---|---|---|
+| `c.surfaceId` is set | negative-space findings with no resolved surface | a candidate that names no surface cannot be replayed |
+| `c.severity` is `P0` or `P1` | `P2`/`P3` | the promotion queue is for user-visible breakage, not nudges |
+| not `canaryExpectsShape(canary, c)` | anything in the canary's `expectedContradictions` | a contradiction you declared is a passing assertion, not a new defect |
+
+Above those sits a fourth, coarser gate: emission is skipped entirely unless
+the cloud store is on **and** the repo identity resolved
+(`.audit-loop/repo-identity.json`). That disablement is announced at startup.
+
+**So a run with contradictions and no candidates is normal** — most commonly
+because the contradictions were `P2`, or were canary-expected. It is not
+evidence that emission is broken.
+
+The converse used to be true too, and that was the bug. Distinguish these four
+states before concluding anything from an empty `regression_specs` candidate
+queue:
+
+1. **Nothing qualified** — contradictions existed but failed a gate above. Normal.
+2. **Emission disabled** — cloud off or no repo identity. Announced at startup.
+3. **Emission failed** — a candidate cleared every gate and the write returned
+   null. Since 2026-08-11 this emits a `candidate-emission-failed` rig warning
+   naming the surface, and the store logs its reason to stderr. **Before that
+   date it was silent**, and the run still exited 0.
+4. **Genuinely no contradictions** — the canary passed.
+
+State 3 was indistinguishable from states 1 and 4 for ~12 weeks, because
+`getRepoIdByUuid` returns a repo *descriptor* and the consistency runner
+assigned it straight to `repoId`. The descriptor is truthy, so it passed the
+writer's `if (!repoId)` guard, reached a `uuid` column, raised `22P02`, and was
+swallowed into `return null`. Every affected run reported green with an empty
+queue. If you are reading a candidate queue recorded before 2026-08-11, it is
+**not** a measurement of what qualified.
+
+---
+
 ## Retention
 
 These artifacts are local-only (gitignored):
