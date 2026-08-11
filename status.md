@@ -74,6 +74,29 @@ resolves refs against the **git index**, not the filesystem, so an uncommitted
 new file reads `GONE`. Staging by name cleared it. Worth knowing before
 diagnosing that message as a broken link.
 
+### Consumer-side verification (Step 6.8) — `verified`
+
+Locator `83b5eba7132a5a883b6a0c6acb21923c49683a76`, retrieved as a consumer
+does: `git clone https://github.com/Lbstrydom/claude-engineering-skills.git`
+→ `git checkout 83b5eba7`, into a **short path** (`C:\tmp\cv1`) with
+`-c core.longpaths=true` — a deep clone target fails Windows `MAX_PATH` on
+this repo's `docs/arm-eval/sessions/` names, which is a property of the
+checkout location, not of the commit.
+
+Observed in that clone, with **no `node_modules`** (the guard imports only
+node builtins plus two repo files, so it is genuinely self-contained):
+
+- all 9 changed paths present in the pushed tree — the fault this catches is
+  a fixture that works locally because it is untracked-but-on-disk;
+- `tests/test-guard-false-green.test.mjs` → **32/32 pass**;
+- the shipped guard *fires*: the broken fixture exits **1**, naming both dead
+  suites — this is the check that matters, since a green test suite only shows
+  the tests pass, not that the artifact works;
+- negative control: healthy fixture exits **0**.
+
+Not inherited from the producer-side green; each line above was run against
+the clone.
+
 ## 2026-08-11 — a table nobody used, and the check that came before the delete
 
 Retired `persona_test_candidates`. The interesting part is what the
