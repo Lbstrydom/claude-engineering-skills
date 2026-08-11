@@ -9,6 +9,16 @@ authoritative writer is [`scripts/ship-commit.mjs`](../../scripts/ship-commit.mj
 `/ship` Step 6.3 invokes it. Plan + audit trail:
 [`docs/plans/provenance-trailers-and-gate-honesty.md`](../completed/provenance-trailers-and-gate-honesty.md).
 
+> **Two arguments became REQUIRED in 2026-08 and the writer refuses without
+> them** ([`worktree-identity-guards.md`](../plans/worktree-identity-guards.md)):
+> a complete identity bundle (`--expect-head <sha>` plus `--expect-branch <name>`
+> or `--expect-detached`) and an explicit `--path` scope per file. Both are
+> fail-closed on purpose — a shared working tree means the commit you get is not
+> necessarily the commit you checked. The identity bundle may be omitted only
+> when a fresh audit supplied it via `.audit/last-audit-run.json`
+> (`auditedSha` + `auditedBranch`); a marker predating that field reports
+> `pre-bundle-evidence` and refuses rather than half-matching.
+
 ## Schema (v1)
 
 ```text

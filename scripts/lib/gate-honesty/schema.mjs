@@ -44,6 +44,12 @@ export const CLI_EXIT_SCENARIOS = Object.freeze([
   'nav-bootstrap-refuse-clobber',
   'persona-fatal-rig-no-manifest',
   'uxlock-strict-selector-violation',
+  // worktree-identity guards: both trigger on GIT INDEX / HEAD state, which a
+  // filesystem fixture CAN construct — unlike the migration-realization gate,
+  // whose DATABASE trigger is why it stays uncontracted rather than claim a
+  // binding that does not hold.
+  'ship-unscoped-index-refusal',
+  'ship-identity-absent-refusal',
 ]);
 
 const ProofSchema = z.enum(['process', 'unit-seam']);

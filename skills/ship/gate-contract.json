@@ -3,6 +3,32 @@
   "skill": "ship",
   "gates": [
     {
+      "id": "guard-a-unscoped-commit-refused",
+      "kind": "executable",
+      "oracle": "cli-exit",
+      "scenario": "ship-unscoped-index-refusal",
+      "statedIn": "skills/ship/SKILL.md",
+      "stated": "`--path` is MANDATORY, not conditional",
+      "implementation": "scripts/ship-commit.mjs",
+      "tests": [
+        "tests/gate-honesty.test.mjs"
+      ],
+      "proof": "process"
+    },
+    {
+      "id": "guard-b-identity-is-a-precondition",
+      "kind": "executable",
+      "oracle": "cli-exit",
+      "scenario": "ship-identity-absent-refusal",
+      "statedIn": "skills/ship/SKILL.md",
+      "stated": "Both of these are now REQUIRED, and `ship-commit` refuses without them",
+      "implementation": "scripts/ship-commit.mjs",
+      "tests": [
+        "tests/gate-honesty.test.mjs"
+      ],
+      "proof": "process"
+    },
+    {
       "id": "gate-passed-refused-without-evidence",
       "kind": "document-only",
       "reason": "'--gate passed is refused unless the run's convergence verdict is verified against the cloud store' is real (ship-commit.mjs enforces it — observed live this session), but its exit code depends on the git + .audit/last-audit-run.json evidence state (exit 1 vs 2 across setups), so a hermetic cli-exit fixture cannot bind it DETERMINISTICALLY — the trigger state is subtle and store-dependent. The refusal itself is verified by ship-commit's own provenance tests; document-only here rather than a fragile recipe."

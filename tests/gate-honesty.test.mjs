@@ -80,7 +80,11 @@ const PINNED_EXECUTABLE = {
   'persona-test': ['consistency-fatal-rig-exit-3'],
   // Phase C final — ux-lock strict-selectors; ship/cycle/plan document-only.
   'ux-lock': ['strict-selectors-fails-the-run'],
-  ship: [],
+  // worktree-identity-guards Phase 6: ship gains its FIRST executable gates.
+  // Both trigger on GIT INDEX / HEAD state, which a filesystem fixture can
+  // construct — unlike the migration-realization gate, whose DATABASE trigger
+  // is why it correctly stays document-only.
+  ship: ['guard-a-unscoped-commit-refused', 'guard-b-identity-is-a-precondition'],
   cycle: [],
   plan: [],
 };
@@ -186,7 +190,10 @@ describe('gate-honesty — real skills/', () => {
 
     const totalExecutable = Object.values(PINNED_EXECUTABLE).flat().length;
     const totalDocOnly = Object.values(PINNED_DOCUMENT_ONLY).flat().length;
-    assert.equal(totalExecutable, 12); // +1 ux-lock strict-selectors (Phase C final)
+    // +2 ship guard-a/guard-b (worktree-identity-guards Phase 6) — ship's first
+    // executable gates. The count is pinned so coverage cannot drift silently in
+    // EITHER direction: a gate quietly downgraded to document-only fails here too.
+    assert.equal(totalExecutable, 14); // +1 ux-lock strict-selectors (Phase C final)
     // 35 → 36: +1 ship (unremediated-acceptances-never-blocks, /ship Step 0.5e, 2026-07-27).
     // 36 → 37: +1 ship (unit-test-lock-refuses-unverifiable-claims, 2026-07-29).
     // 37 → 38: +1 ship (final-review-credit-advisory-exit-zero, 2026-07-29).

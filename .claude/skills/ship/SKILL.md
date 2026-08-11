@@ -830,25 +830,56 @@ Decide the provenance values (full convention: `docs/reference/commit-provenance
 ### 6.3 Commit and push
 
 **The `/ship` command IS the user's approval.** Proceed directly — no
-confirmation prompts:
+confirmation prompts.
+
+**Both of these are now REQUIRED, and `ship-commit` refuses without them.**
 
 ```bash
+# Capture the worktree identity ONCE, at the start of the ship (Step 0 if you
+# ran one), and pass that exact pair to every ship-commit invocation in the run.
+SHIP_HEAD=$(git rev-parse HEAD)
+SHIP_BRANCH=$(git symbolic-ref --quiet --short HEAD)   # empty ⇒ detached
+
 node scripts/ship-commit.mjs \
   --message-file .claude/tmp/ship-commit-msg-<epoch>.txt \
-  --skill ship --models <csv> --gate <value>
+  --skill ship --models <csv> --gate <value> \
+  --expect-head "$SHIP_HEAD" --expect-branch "$SHIP_BRANCH" \
+  --path <file> --path <file>          # one per file you are shipping
 git push origin <current-branch>
 ```
 
-**Shared working tree — use `--path`.** If `git status` shows staged changes
-that are NOT yours (another agent or a parallel session working in the same
-checkout), do NOT commit the index: that bundles their in-flight work into
-your commit and corrupts blame for both. Add one `--path <file>` per file you
+> **Why identity is a precondition and not a warning.** A concurrent session can
+> amend, rebase or check out between your first command and your commit — this
+> repo saw HEAD move six times in one session. An amend changes NO working-tree
+> file, so a content-hash check sails past it; only a sha comparison catches it.
+> And the pair is ATOMIC: a head-only check passes whenever two refs sit on the
+> same commit — a feature branch freshly cut from `main` is exactly that — and
+> the commit then lands on the wrong branch.
+>
+> **On a detached HEAD** pass `--expect-detached` instead of `--expect-branch`.
+> A head with no ref disposition is `incomplete-expectation` → exit 2, never a
+> silent degrade to a sha-only check.
+>
+> **You may omit the flags only when a FRESH audit ran in this session**: the
+> evidence marker carries `auditedSha` + `auditedBranch` and supplies the bundle
+> for you. A marker written before that field existed reports
+> `pre-bundle-evidence` and you must pass the flags explicitly — it can never
+> half-match.
+
+**Shared working tree — `--path` is MANDATORY, not conditional.** `ship-commit`
+refuses an unscoped commit outright: it cannot know whose staged entries the
+index holds, so it requires you to declare what you are shipping. There is no
+override flag, deliberately — an unscoped commit is a TOCTOU by construction
+(the index is checked at one moment and consumed by `git commit` at another),
+and HEAD verification cannot cover it because index mutations do not move HEAD.
+Add one `--path <file>` per file you
 are shipping:
 
 ```bash
 node scripts/ship-commit.mjs \
   --message-file .claude/tmp/ship-commit-msg-<epoch>.txt \
   --skill ship --models <csv> --gate <value> \
+  --expect-head "$SHIP_HEAD" --expect-branch "$SHIP_BRANCH" \
   --path scripts/foo.mjs --path tests/foo.test.mjs
 ```
 
@@ -857,6 +888,20 @@ entry staged and untouched. Untracked paths are handled (marked
 intent-to-add, rolled back if the run is rejected). Do **not** fall back to a
 bare `git commit -- <paths>` — it scopes correctly but drops the `AI-*`
 provenance trailers, which is exactly what this helper exists to prevent.
+
+**A directory is refused, not expanded.** `--path <dir>` would let git commit
+everything beneath it — measured: naming `sub/` committed a file the caller
+never named. Pass each file. A DELETED directory is refused for the same reason
+(and needs `cat-file -t`, not `-e`, to detect: `-e` exits 0 for a tree).
+
+**After a successful commit, `ship-commit` re-verifies that the new commit's
+parent and branch are the ones it checked.** That DETECTS drift; it does not
+prevent it — `git commit` has already moved the ref by then. On
+`post-commit-drift` it exits 1 and prints a recovery command: **do not push.**
+The commit exists but was not built on the base you verified, and an unpushed
+wrong-parent commit is recoverable in seconds whereas a pushed one needed a
+human to notice a 12-line change with a 2,324-line diff. The transactional
+boundary that would prevent it is `docs/plans/ship-commit-transaction.md`.
 
 (Consumer repos: the synced copy of this file already carries the
 rewritten `scripts/.claude-skills/ship-commit.mjs` path.)

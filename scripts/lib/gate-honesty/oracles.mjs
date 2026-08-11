@@ -309,6 +309,62 @@ const CLI_EXIT_RECIPES = {
     expectStderrContains: null, // the violation is on stdout as JSON; exit 6 is the gate
     envPrereq: null,
   },
+
+  // ── worktree-identity guards (docs/plans/worktree-identity-guards.md) ─────
+  //
+  // These two are genuinely bindable where the sibling migration-realization
+  // gate is not: that gate's trigger is DATABASE state (a ledger missing a
+  // bundled filename), which no filesystem recipe can construct, so it stays
+  // uncontracted rather than claim an oracle that does not hold. Guard A and
+  // guard B trigger on GIT INDEX and HEAD state — both constructible right here
+  // in the fixture directory, with no store, no network and no browser.
+  'ship-unscoped-index-refusal': {
+    args: ['--message-file', 'msg.txt', '--skill', 'ship', '--models', 'claude', '--gate', 'not-run', '--no-run-id'],
+    fixture(dir) {
+      const g = (args) => spawnSync('git', args, { cwd: dir, encoding: 'utf-8', windowsHide: true });
+      g(['init', '-q', '-b', 'main']);
+      g(['config', 'user.email', 'gate@example.com']);
+      g(['config', 'user.name', 'Gate']);
+      g(['config', 'commit.gpgsign', 'false']);
+      fs.mkdirSync(path.join(dir, 'skills', 'ship'), { recursive: true });
+      atomicWriteFileSync(path.join(dir, 'msg.txt'), 'test: fixture\n');
+      // UNBORN HEAD — deliberately no seed commit. Guard B runs BEFORE guard A
+      // (identity is a precondition, checked before the index is inspected), so
+      // a fixture with a real HEAD would refuse on `no-expectation` and this
+      // recipe would go green having proven the OTHER gate fires. An unborn HEAD
+      // takes guard B's one documented skip, leaving guard A as the only thing
+      // that can refuse — which is what the contract claims.
+      atomicWriteFileSync(path.join(dir, 'staged.txt'), 'someone else\n');
+      g(['add', 'staged.txt']);
+    },
+    expectExit: 2,
+    expectStderrContains: 'refusing to commit the whole index',
+    envPrereq: null, // deterministic: git only, no store/network/browser
+  },
+
+  'ship-identity-absent-refusal': {
+    // Same fixture shape, but scoped with --path so guard A is satisfied and
+    // guard B is the ONLY thing that can refuse. Without that isolation the
+    // recipe would pass for the wrong reason — a green test proving the other
+    // gate fired.
+    args: ['--message-file', 'msg.txt', '--skill', 'ship', '--models', 'claude', '--gate', 'not-run', '--no-run-id', '--path', 'work.txt'],
+    fixture(dir) {
+      const g = (args) => spawnSync('git', args, { cwd: dir, encoding: 'utf-8', windowsHide: true });
+      g(['init', '-q', '-b', 'main']);
+      g(['config', 'user.email', 'gate@example.com']);
+      g(['config', 'user.name', 'Gate']);
+      g(['config', 'commit.gpgsign', 'false']);
+      fs.mkdirSync(path.join(dir, 'skills', 'ship'), { recursive: true });
+      atomicWriteFileSync(path.join(dir, 'msg.txt'), 'test: fixture\n');
+      atomicWriteFileSync(path.join(dir, 'seed.txt'), 'seed\n');
+      g(['add', 'seed.txt']);
+      g(['commit', '-qm', 'seed']);
+      atomicWriteFileSync(path.join(dir, 'work.txt'), 'mine\n');
+    },
+    expectExit: 2,
+    expectStderrContains: 'no-expectation',
+    envPrereq: null,
+  },
 };
 
 /** @returns {Promise<OracleResult>} */

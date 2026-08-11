@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "1c82144a844233b8",
+  "bundleVersion": "c48bd2b4141ca03a",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -151,14 +151,14 @@
     },
     "cycle": {
       "path": "skills/cycle/SKILL.md",
-      "sha": "6de3afd3b539",
-      "size": 29038,
+      "sha": "75110a789535",
+      "size": 29734,
       "summary": "End-to-end feature cycle orchestrator. Runs the full skill chain in",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "6de3afd3b539",
-          "size": 29038
+          "sha": "75110a789535",
+          "size": 29734
         }
       ]
     },
@@ -357,14 +357,14 @@
     },
     "ship": {
       "path": "skills/ship/SKILL.md",
-      "sha": "72be1a517c3b",
-      "size": 52878,
+      "sha": "f5763cb87fee",
+      "size": 55587,
       "summary": "Sync all project documentation, optionally update a plan, then commit and push to git.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "72be1a517c3b",
-          "size": 52878
+          "sha": "f5763cb87fee",
+          "size": 55587
         },
         {
           "relPath": "references/python-environment-discovery.md",
