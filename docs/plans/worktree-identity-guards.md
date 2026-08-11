@@ -322,7 +322,7 @@ depend on one declared contract instead of on git's error text.
 | `skills/ship/SKILL.md` | **modify** | 5 | `npm run skills:check` |
 | `skills/cycle/SKILL.md` | **modify** | 5 | `npm run skills:check` |
 | `docs/reference/commit-provenance.md` | **modify** | 5 | `npm run docs:citations` |
-| `docs/plans/ship-commit-transaction.md` | **create** | 5 | `npm run plans:index:check` — the promoted follow-up (R3-H2) |
+| `docs/plans/ship-commit-transaction.md` (planned) | **create** | 5 | `npm run plans:index:check` — the promoted follow-up (R3-H2) |
 | `skills/ship/gate-contract.json` | **modify** | 6 | `npm run gates:check` |
 | `scripts/lib/gate-honesty/oracles.mjs` | **modify** | 6 | `cli-exit` recipes for A + B |
 | `.claude/skills/**` | **regenerate-only** | close-out | `npm run skills:regenerate` → `skills:check` — never hand-edited |
@@ -654,7 +654,7 @@ debt that stays a bullet inside someone else's plan is how a known hole becomes
 permanent. The complete fix — build a candidate tree in a private index
 (`GIT_INDEX_FILE` + `read-tree` + `write-tree`), `commit-tree` against the
 expected parent, then `update-ref <ref> <new> <expected-old>`, which is a **real**
-CAS git guarantees — becomes **`docs/plans/ship-commit-transaction.md`**, opened
+CAS git guarantees — becomes `docs/plans/ship-commit-transaction.md` (planned), opened
 with the work already done here:
 
 - **Measured 2026-08-11**: this repo has **no `pre-commit` hook** (`.githooks/`
@@ -918,7 +918,7 @@ validated-on-use; state plainly that the commit boundary is *detected*, not
 *prevented* (R3-H2), and open the follow-up plan carrying that work.
 Files: `skills/ship/SKILL.md` (modify), `skills/cycle/SKILL.md` (modify),
 `docs/reference/commit-provenance.md` (modify),
-`docs/plans/ship-commit-transaction.md` (create).
+`docs/plans/ship-commit-transaction.md` (planned) (create).
 
 **Phase 6 — Gate contract + consumer-surface proof.** Bind A and B to real
 `cli-exit` recipes; add the sync fixture that materialises the consumer skill
@@ -1063,7 +1063,7 @@ changed the design:
 
 **One finding was raised twice and promoted rather than re-deferred.** The
 non-atomic commit boundary (R2-H3, R3-H2) is now
-`docs/plans/ship-commit-transaction.md` with its blocking question stated first,
+`docs/plans/ship-commit-transaction.md` (planned) with its blocking question stated first,
 because twice-raised accepted debt that stays a bullet in someone else's plan is
 how a known hole becomes permanent.
 
