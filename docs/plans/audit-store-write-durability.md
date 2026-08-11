@@ -18,8 +18,9 @@
 > | GPT R2 | `SIGNIFICANT_GAPS` | H:6 M:3 | 9/9 fix-now |
 > | Gemini R1 | `CONCERNS_REMAINING` | 3 new (2 HIGH) | 3/3 fix-now |
 > | Gemini R2 | `CONCERNS_REMAINING` | 2 new (1 HIGH) + 1 wrongly-dismissed | 3/3 fix-now |
+> | Gemini R3 (on the revised plan) | `CONCERNS` | 3 new (2 HIGH) | 3/3 fix-now |
 >
-> **35 findings, 35 accepted, 0 dismissed, 0 deferred-as-rigor-pressure.**
+> **38 findings, 38 accepted, 0 dismissed, 0 deferred-as-rigor-pressure.**
 >
 > **Stop decision**: GPT stopped at 2 rounds (cap 3) — both rounds 100%
 > acceptance, but R2's residual character was implementation-completeness, which
@@ -46,7 +47,15 @@
 > spill-on-failure; **extract** the envelope core rather than ship a third
 > outbox; and the extraction **fixes a live vacuous-pass defect** in upstream's
 > own drain. A new **Phase 0** carries the extraction, and Cluster A grew to
-> Phases 0–2. **These changes are un-gated** — they postdate the last review.
+> Phases 0–2.
+>
+> **Re-gating the revision was the right call**: its HIGH was a flat
+> contradiction the write-ahead rewrite introduced (decision 1c said an unkeyed
+> writer's envelope is kept; decision 2 and §6 said the spill directory stays
+> empty). Resolved by separating *retention* from *replay eligibility* —
+> `spill/` is the queue, `lost/` is an evidence drawer. The second HIGH —
+> a DB outage burning every artifact's retry budget — was a real queue-design
+> defect.
 
 ---
 
@@ -235,10 +244,22 @@ sites — a contradiction the audit caught (H4). The rule is narrowed accordingl
    attempt, and the successful path deletes it. Cost is one atomic write per
    store write, on a path that already does network I/O.
 
-   This also **simplifies decision 2**: with write-ahead, a `lost` outcome no
-   longer means "we could not spill", it means "we will not replay this" — which
-   remains true for the three writers that declare no key, but their envelope is
-   still written and can be inspected. Nothing vanishes silently.
+   **Every writer gets an envelope; only keyed writers get a REPLAY QUEUE.**
+   The first write-ahead draft said non-idempotent writers keep an envelope
+   while decision 2 said they are "never spilled" and §6 asserted the spill
+   directory stays empty — a flat contradiction the gate caught. Resolved by
+   separating *retention* from *eligibility*, which are two different questions:
+
+   | Outcome | Envelope | Counted |
+   |---|---|---|
+   | store write succeeded | deleted | `written` |
+   | failed, writer declares a `rowKey` | **retained in `spill/`** — the drain will replay it | `spilled` |
+   | failed, no `rowKey` declared | **moved to `lost/`** — kept for inspection, never replayed | `lost` |
+
+   So nothing vanishes silently *and* nothing unkeyed is ever replayed. `spill/`
+   is the replay queue; `lost/` is an evidence drawer the drain does not read.
+   §6's assertion changes accordingly: after a non-idempotent failure the
+   **replay queue** is empty and the artifact is in `lost/`.
 
 1d. **Extract the envelope core; do not write a third outbox** *(#1 DRY, and the
    AGENTS.md single-oracle rule)*. Counting this plan's, the repo would have
@@ -352,6 +373,18 @@ sites — a contradiction the audit caught (H4). The rule is narrowed accordingl
    permanent error (constraint violation, bad input) quarantines on the **first**
    failure rather than burning three attempts. Artifact states are exactly:
    `pending → (applied ∧ deleted) | quarantined`.
+
+   **A global outage must not burn the whole backlog's attempts** (Gemini gate
+   R3, HIGH). `normalizePostgresError` classifies `ECONNREFUSED` as transient —
+   correctly — but that is a statement about the *store*, not about the
+   *artifact*. Under the naive loop, one outage-time drain increments `attempts`
+   on every artifact in the batch, and three such drains quarantine an entire
+   healthy backlog for a reason that was never the data's fault. So the drain
+   distinguishes them: an error whose scope is the **connection** aborts the
+   whole drain immediately, returns `{state:'unavailable', reason}`, and
+   increments **nothing**. Only an error attributable to the artifact itself
+   (constraint violation, serialisation failure, bad payload) touches `attempts`.
+   The retry budget exists to retire poison messages, not to punish downtime.
 
 3. **Outcomes reach the run record, not just stderr** *(#19 Observability)*. H3
    was right that a counter in a log line is not a completion contract.
@@ -504,6 +537,9 @@ persist them. Files: `scripts/lib/audit/legacy-production-audit.mjs` (modify),
 **Phase 5 — `upsertPlan` shape B + all three callers, atomically**. Files:
 `scripts/lib/store/plans-ship.mjs` (modify), `scripts/cross-skill.mjs` (modify),
 `scripts/lib/audit/plan-audit-cloud.mjs` (modify),
+`scripts/lib/audit/legacy-production-audit.mjs` (modify — the third caller at
+`:1499`; omitted from this list until the Gemini R3 gate caught it, while §1
+had named it correctly all along),
 `tests/plans-ship-failure-contract.test.mjs` (create), `AGENTS.md` (modify).
 
 **Close-out (not a phase)**: `node scripts/setup-postgres.mjs --migrate` ·
@@ -519,9 +555,15 @@ partial) · `npm run check` · `npm test` · close each addressed finding with
 Tier 1 (test-first) — `durable-write.mjs` is deterministic, no LLM.
 
 - **Three outcomes reachable and distinct**: `written` / `spilled` / `lost`.
-- **Non-idempotent writer never spills** (decision 2) — a writer registered
-  without `idempotencyKey` whose write rejects returns `lost`, and the spill
-  directory stays empty. This is the assertion that keeps at-least-once honest.
+- **Non-idempotent writer never enters the REPLAY QUEUE** (decision 2) — a
+  writer registered without a `rowKey` whose write rejects returns `lost`, the
+  `spill/` queue stays empty, and the envelope is present in `lost/`. Asserting
+  on both directories is the point: "not replayed" and "not kept" are different
+  claims, and the earlier draft conflated them.
+- **A connection-scoped failure aborts the drain without incrementing attempts**
+  (decision 2c): with a writer whose replay rejects `ECONNREFUSED`, drain a
+  batch of 3 and assert `{state:'unavailable'}` and that all three artifacts
+  still read `attempts: 0`. Without this, an outage retires the backlog.
 - **Spill round-trip**: a spilled payload drains and applies; replaying it twice
   leaves one row (idempotency, on the real `(run_id, finding_fingerprint)` key).
 - **Unknown `writerId` / `schemaVersion` mismatch quarantines** — not dropped,
