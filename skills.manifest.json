@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "80dfeaf08d1200d0",
+  "bundleVersion": "8d8c84526f172506",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -357,14 +357,14 @@
     },
     "ship": {
       "path": "skills/ship/SKILL.md",
-      "sha": "0d9284b59973",
-      "size": 46378,
+      "sha": "fa19aa8d1d0a",
+      "size": 49073,
       "summary": "Sync all project documentation, optionally update a plan, then commit and push to git.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "0d9284b59973",
-          "size": 46378
+          "sha": "fa19aa8d1d0a",
+          "size": 49073
         },
         {
           "relPath": "references/python-environment-discovery.md",

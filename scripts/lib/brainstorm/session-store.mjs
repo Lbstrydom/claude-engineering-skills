@@ -204,6 +204,20 @@ export function loadSession(sid, { root = null } = {}) {
         invalidLines.push({ lineIdx: idx, raw: line, reason: 'v2-schema-invalid', issues: v.error.issues.slice(0, 3) });
         continue;
       }
+      // The FILE is the row scope, and the record carries its own `sid` — but
+      // schema-validity says nothing about the two agreeing. A record naming a
+      // different session (a copied file, a mis-targeted append, a restored
+      // backup under the wrong name) was loaded into THIS session's rounds and
+      // shifted every subsequent round number. Quarantined rather than dropped,
+      // so the mismatch stays inspectable instead of vanishing.
+      if (v.data.sid != null && v.data.sid !== sid) {
+        invalidCount++;
+        invalidLines.push({
+          lineIdx: idx, raw: line, reason: 'sid-mismatch',
+          issues: [{ message: `record sid ${JSON.stringify(v.data.sid)} does not match session ${JSON.stringify(sid)}` }],
+        });
+        continue;
+      }
       rounds.push(normalizeArchFields(v.data));
     } else if (Object.hasOwn(parsed, 'schemaVersion')) {
       // Present but not 2 — neither V2 nor V1, so the loader cannot interpret

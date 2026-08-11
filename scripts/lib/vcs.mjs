@@ -585,6 +585,48 @@ export function gitUnifiedDiffWithWorkingTree(cwd, sinceCommit, { maxBytes = nul
 }
 
 /**
+ * Byte size of a blob at a revision, WITHOUT materialising it.
+ *
+ * `gitShowFileAtRevision` reads the whole object into memory; a caller that only
+ * wants a small excerpt needs to know the size before paying for it. `git
+ * cat-file -s` reads the object header only, so this is cheap regardless of blob
+ * size — which is the entire point.
+ *
+ * @param {string} cwd
+ * @param {string} revision - MUST pass isSafeGitRevision
+ * @param {string} filePath - repo-relative path, forward-slash form
+ * @param {{env?: NodeJS.ProcessEnv}} [opts]
+ * @returns {{ok: true, bytes: number} | {ok: false, error: object}}
+ */
+export function gitBlobSizeAtRevision(cwd, revision, filePath, opts = {}) {
+  if (!isSafeGitRevision(revision)) {
+    return {
+      ok: false,
+      error: { code: 'BAD_REVISION', message: `refusing unsafe revision: ${JSON.stringify(revision).slice(0, 80)}` },
+    };
+  }
+  let res;
+  try {
+    res = spawnSync('git', ['cat-file', '-s', `${revision}:${filePath}`], {
+      cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'],
+      ...(opts.env ? { env: opts.env } : {}),
+    });
+  } catch (err) {
+    return { ok: false, error: classifyChildError(err, { wantedRev: revision }) };
+  }
+  if (res.error) return { ok: false, error: classifyChildError(res.error, { wantedRev: revision }) };
+  if (res.status !== 0) {
+    const synth = { stderr: res.stderr, status: res.status, signal: res.signal };
+    return { ok: false, error: classifyChildError(synth, { wantedRev: revision }) };
+  }
+  const bytes = Number.parseInt(String(res.stdout ?? '').trim(), 10);
+  if (!Number.isInteger(bytes) || bytes < 0) {
+    return { ok: false, error: { code: 'EXEC_FAILED', message: `unparseable cat-file -s output: ${String(res.stdout).slice(0, 40)}` } };
+  }
+  return { ok: true, bytes };
+}
+
+/**
  * @param {string} cwd
  * @param {string} revision - MUST pass isSafeGitRevision
  * @param {string} filePath - repo-relative path, forward-slash form

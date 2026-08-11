@@ -72,6 +72,12 @@ describe('unlocked_fixes view contract', () => {
   const fixture = JSON.parse(fs.readFileSync(
     path.resolve(import.meta.dirname, 'fixtures/expected-schema.json'), 'utf8'));
   const view = fixture.views.find((v) => v.view_name === 'unlocked_fixes');
+  // The obligation predicate now lives one view down: `unlocked_fixes_all` holds
+  // it plus the age test as a COLUMN (`is_recent`), and `unlocked_fixes` is the
+  // windowed projection over it. Splitting them is what made "what did the
+  // window drop?" answerable; the predicate itself is unchanged, so these
+  // assertions follow it rather than relaxing.
+  const base = fixture.views.find((v) => v.view_name === 'unlocked_fixes_all');
 
   it('exposes audit_mode so callers can separate code from plan obligations', () => {
     assert.ok(view, 'unlocked_fixes must exist in the schema fixture');
@@ -79,9 +85,32 @@ describe('unlocked_fixes view contract', () => {
       'without this column the nudge cannot tell an obligation from an unlockable plan finding');
   });
 
-  it('still filters to HIGH + fixed/verified — the mode change widened nothing', () => {
-    assert.match(view.definition, /severity = 'HIGH'/);
-    assert.match(view.definition, /remediation_state/);
+  it('still filters to HIGH + fixed/verified — neither change widened anything', () => {
+    assert.ok(base, 'unlocked_fixes_all must exist — it now owns the obligation predicate');
+    assert.match(base.definition, /severity = 'HIGH'/);
+    assert.match(base.definition, /remediation_state/);
+  });
+
+  it('the age window lives in exactly ONE expression', () => {
+    // Two copies of `14 days` is how "what is in the window" and "what the
+    // window dropped" drift apart, which is the whole point of the split.
+    assert.match(base.definition, /is_recent/,
+      'the window must be a column on the base view, not a filter duplicated per reader');
+    assert.equal((view.definition.match(/14 days/g) ?? []).length, 0,
+      'the windowed view must inherit the bound, never restate it');
+  });
+
+  it('unlocked_fixes narrows unlocked_fixes_all rather than re-deriving it', () => {
+    assert.match(view.definition, /FROM unlocked_fixes_all/);
+    assert.match(view.definition, /is_recent/);
+    // Vacuous-pass guard: a projection that dropped a column would still match
+    // the two assertions above, and every existing reader does `SELECT *`.
+    for (const col of ['audit_finding_id', 'audit_run_id', 'repo_id', 'severity',
+      'category', 'primary_file', 'detail_snapshot', 'fixed_at', 'lock_spec_count', 'audit_mode']) {
+      assert.match(view.definition, new RegExp(`\\b${col}\\b`), `${col} must survive the split`);
+    }
+    assert.ok(!/\bis_recent\b[\s\S]*FROM/.test(view.definition.split('FROM')[0]),
+      'is_recent is an implementation detail of the base view and must not leak into the windowed column list');
   });
 
   it('mirrors the sibling view, which also exposes mode rather than dropping rows', () => {

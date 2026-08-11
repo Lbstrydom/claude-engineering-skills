@@ -94,12 +94,25 @@ export function shouldSkipPattern(patternName, stats) {
  * Beta posteriors, writes the cache atomically (temp+rename).
  *
  * @param {object} [opts]
- * @param {string} [opts.repoId] — restrict to one repo; defaults to "all"
+ * @param {string} [opts.repoId] — restrict to one repo
+ * @param {boolean} [opts.allRepos] — read EVERY repo's decisions; must be asked for
  * @param {string} [opts.cachePath]
  * @param {object} [opts.store] — injected for tests; defaults to learning-store.mjs
  * @returns {Promise<{ok: boolean, totalDecisions: number, patternCount: number, written?: string, error?: string}>}
  */
-export async function rebuildFromCloud({ repoId = null, cachePath = CACHE_PATH, store = null } = {}) {
+export async function rebuildFromCloud({ repoId = null, allRepos = false, cachePath = CACHE_PATH, store = null } = {}) {
+  // Global access must be ASKED for, never inherited from an omitted argument —
+  // the same rule the unlocked-fixes / unremediated-acceptances readers already
+  // enforce, and for the same reason: `repoId = null` documented as meaning
+  // "all" turned an ordinary no-argument call into an unscoped cross-repo read.
+  // Both production call sites pass an explicit repoId, so this narrows nothing
+  // they do; it closes the default.
+  if (!repoId && !allRepos) {
+    return {
+      ok: false, totalDecisions: 0, patternCount: 0,
+      error: 'repo-scope-required: pass repoId, or allRepos:true to read every repo deliberately',
+    };
+  }
   const learningStore = store || await import('../../learning-store.mjs');
   if (typeof learningStore.initLearningStore === 'function') {
     await learningStore.initLearningStore();
@@ -108,7 +121,7 @@ export async function rebuildFromCloud({ repoId = null, cachePath = CACHE_PATH, 
   if (!cloudEnabled) {
     return { ok: false, totalDecisions: 0, patternCount: 0, error: 'cloud-disabled' };
   }
-  const readResult = await readQuickfixDecisions(learningStore, { repoId });
+  const readResult = await readQuickfixDecisions(learningStore, { repoId: allRepos ? null : repoId });
   if (!readResult.ok) {
     // Reuses the exact {ok:false, error} shape the cloud-disabled branch
     // above already returns — a transient read failure or a malformed

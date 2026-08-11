@@ -345,7 +345,7 @@ describe('quickfix-stats / rebuildFromCloud — failure vs empty vs malformed', 
     fs.writeFileSync(cachePath, preExisting);
 
     const store = fakeStore({ readDecisionsPaginated: async () => { throw new Error('connection reset'); } });
-    const r = await rebuildFromCloud({ cachePath, store });
+    const r = await rebuildFromCloud({ cachePath, store, allRepos: true });
 
     assert.equal(r.ok, false);
     assert.match(r.error, /connection reset/);
@@ -354,7 +354,7 @@ describe('quickfix-stats / rebuildFromCloud — failure vs empty vs malformed', 
 
   it('a genuinely empty cloud response is not a failure — the cache IS written with patterns:{}', async () => {
     const store = fakeStore({ readDecisionsPaginated: async () => [] });
-    const r = await rebuildFromCloud({ cachePath, store });
+    const r = await rebuildFromCloud({ cachePath, store, allRepos: true });
 
     assert.equal(r.ok, true);
     assert.equal(r.totalDecisions, 0);
@@ -365,7 +365,7 @@ describe('quickfix-stats / rebuildFromCloud — failure vs empty vs malformed', 
 
   it('a store missing readDecisionsPaginated is treated as a failure, not silent empty', async () => {
     const store = fakeStore(); // no readDecisionsPaginated
-    const r = await rebuildFromCloud({ cachePath, store });
+    const r = await rebuildFromCloud({ cachePath, store, allRepos: true });
     assert.equal(r.ok, false);
     assert.ok(r.error);
     assert.equal(fs.existsSync(cachePath), false, 'no cache should be written on this failure path');
@@ -373,7 +373,7 @@ describe('quickfix-stats / rebuildFromCloud — failure vs empty vs malformed', 
 
   it('a non-array success payload is a protocol violation, not an empty result (round-1 finding M1)', async () => {
     const store = fakeStore({ readDecisionsPaginated: async () => ({ not: 'an array' }) });
-    const r = await rebuildFromCloud({ cachePath, store });
+    const r = await rebuildFromCloud({ cachePath, store, allRepos: true });
     assert.equal(r.ok, false);
     assert.match(r.error, /non-array payload/);
     assert.equal(fs.existsSync(cachePath), false);
@@ -384,7 +384,7 @@ describe('quickfix-stats / rebuildFromCloud — failure vs empty vs malformed', 
     fs.writeFileSync(cachePath, preExisting);
 
     const store = fakeStore({ readDecisionsPaginated: async () => [{}, { foo: 'bar' }] });
-    const r = await rebuildFromCloud({ cachePath, store });
+    const r = await rebuildFromCloud({ cachePath, store, allRepos: true });
 
     assert.equal(r.ok, false);
     assert.equal(r.totalDecisions, 2);
@@ -400,7 +400,7 @@ describe('quickfix-stats / rebuildFromCloud — failure vs empty vs malformed', 
         { foo: 'bar' },
       ],
     });
-    const r = await rebuildFromCloud({ cachePath, store });
+    const r = await rebuildFromCloud({ cachePath, store, allRepos: true });
 
     assert.equal(r.ok, true);
     assert.equal(r.totalDecisions, 2);
@@ -420,5 +420,55 @@ describe('quickfix-stats / internals', () => {
 
   it('cache version is set', () => {
     assert.ok(Number.isFinite(_internals.CACHE_VERSION));
+  });
+});
+
+/**
+ * Audit finding "Tenant/owner scoping": `rebuildFromCloud` defaulted `repoId` to
+ * `null`, documented that value as meaning "all", and passed it straight to
+ * `readQuickfixDecisions` — so the ordinary no-argument public call performed an
+ * unscoped cross-repo cloud read. Same rule the unlocked-fixes and
+ * unremediated-acceptances readers already enforce: global access is ASKED for,
+ * never inherited from an omitted argument.
+ *
+ * Both production call sites (`cross-skill.mjs learning-quickfix-stats` and
+ * `learning/backfill-outcomes.mjs`) already pass an explicit repoId, so this
+ * narrows nothing they do — it closes the default.
+ */
+describe('quickfix-stats / rebuildFromCloud — global access is asked for', () => {
+  let tmpDir, cachePath;
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'qfs-scope-'));
+    cachePath = path.join(tmpDir, 'quickfix-pattern-stats.json');
+  });
+  afterEach(() => {
+    try { fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* ignore */ }
+  });
+
+  const emptyStore = () => fakeStore({ readDecisionsPaginated: async () => [] });
+
+  it('refuses a no-argument call rather than reading every repo', async () => {
+    const r = await rebuildFromCloud({ cachePath, store: emptyStore() });
+    assert.equal(r.ok, false);
+    assert.match(r.error, /repo-scope-required/);
+    assert.equal(r.totalDecisions, 0);
+  });
+
+  it('names allRepos in the refusal, so the deliberate path is discoverable', async () => {
+    const r = await rebuildFromCloud({ cachePath, store: emptyStore() });
+    assert.match(r.error, /allRepos/);
+  });
+
+  // Vacuous-pass guards: a function refusing everything would satisfy both above.
+  it('an explicit repoId proceeds (negative control)', async () => {
+    const r = await rebuildFromCloud({ cachePath, store: emptyStore(), repoId: 'repo-1' });
+    assert.ok(!/repo-scope-required/.test(r.error ?? ''), 'a scoped call must clear the fence');
+    assert.equal(r.ok, true);
+  });
+
+  it('an explicit allRepos:true proceeds (negative control)', async () => {
+    const r = await rebuildFromCloud({ cachePath, store: emptyStore(), allRepos: true });
+    assert.ok(!/repo-scope-required/.test(r.error ?? ''), 'the deliberate global path must still work');
+    assert.equal(r.ok, true);
   });
 });

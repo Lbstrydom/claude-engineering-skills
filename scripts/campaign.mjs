@@ -50,7 +50,7 @@ import { resolveArms, readLog } from './bakeoff-collect.mjs';
 import { matchFindings, affectedFilesOf } from './lib/finding-match.mjs';
 import { findingMatchConfig, FINDING_MATCH_SCHEMA_VERSION } from './lib/config.mjs';
 import { classifyPath } from './lib/sensitive-paths.mjs';
-import { gitShowFileAtRevision } from './lib/vcs.mjs';
+import { gitShowFileAtRevision, gitBlobSizeAtRevision } from './lib/vcs.mjs';
 import { resolveModel } from './lib/model-resolver.mjs';
 import { costFromUsage } from './lib/model-pricing.mjs';
 import { createAnthropicClient } from './lib/anthropic-client.mjs';
@@ -75,6 +75,13 @@ export const CITED_SOURCE_MAX_FILES = 4;
  * first sets `truncated`.
  */
 export const CITED_SOURCE_MAX_CHARS = 24000;
+/**
+ * Largest blob worth READING to produce a `CITED_SOURCE_MAX_CHARS` excerpt.
+ * Two orders of magnitude of headroom over the excerpt itself: a source file
+ * this large is a generated artifact, and citing it tells an adjudicator
+ * nothing that the excerpt budget would have preserved anyway.
+ */
+export const CITED_SOURCE_MAX_BYTES = 1024 * 1024;
 
 // ── Cited sources ───────────────────────────────────────────────────────────
 
@@ -247,7 +254,10 @@ export function anchorLine(content, anchors) {
  *
  * @returns {{sources: Array<object>, resolvedAny: boolean}}
  */
-export function resolveCitedSources({ section, detail = '', auditedSha, repoRoot = process.cwd(), show = gitShowFileAtRevision }) {
+export function resolveCitedSources({
+  section, detail = '', auditedSha, repoRoot = process.cwd(),
+  show = gitShowFileAtRevision, blobSize = gitBlobSizeAtRevision,
+}) {
   const paths = affectedFilesOf({ section }).slice(0, CITED_SOURCE_MAX_FILES);
   // A `path:line` reference belongs to THAT path, not to every path named.
   const sectionText = String(section ?? '');
@@ -265,6 +275,21 @@ export function resolveCitedSources({ section, detail = '', auditedSha, repoRoot
     }
     if (path.isAbsolute(p) || p.split('/').includes('..')) {
       sources.push({ path: p, resolved: false, reason: 'path-escapes-repo' });
+      continue;
+    }
+    // Bound the INPUT, not just the output. The excerpt is capped in lines and
+    // characters and the file COUNT is capped, but `show` materialises the whole
+    // blob first — so a cited lockfile or bundle was read in full to produce a
+    // 24,000-character window. The only ceiling was `spawnSync`'s 20MB
+    // `maxBuffer`, an accident of the transport that surfaces as an opaque
+    // ENOBUFS rather than a reason an adjudicator can read. `cat-file -s` reads
+    // the object header only, so this costs nothing on the paths that pass.
+    const size = blobSize(repoRoot, auditedSha, p);
+    if (size.ok && size.bytes > CITED_SOURCE_MAX_BYTES) {
+      sources.push({
+        path: p, resolved: false, reason: 'oversized',
+        bytes: size.bytes, maxBytes: CITED_SOURCE_MAX_BYTES,
+      });
       continue;
     }
     const res = show(repoRoot, auditedSha, p);

@@ -6728,6 +6728,88 @@
       ]
     },
     {
+      "table_name": "unlocked_fixes_all",
+      "columns": [
+        {
+          "column_name": "audit_finding_id",
+          "data_type": "uuid",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "audit_run_id",
+          "data_type": "uuid",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "repo_id",
+          "data_type": "uuid",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 3
+        },
+        {
+          "column_name": "severity",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 4
+        },
+        {
+          "column_name": "category",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 5
+        },
+        {
+          "column_name": "primary_file",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 6
+        },
+        {
+          "column_name": "detail_snapshot",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 7
+        },
+        {
+          "column_name": "fixed_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 8
+        },
+        {
+          "column_name": "lock_spec_count",
+          "data_type": "bigint",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 9
+        },
+        {
+          "column_name": "audit_mode",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 10
+        },
+        {
+          "column_name": "is_recent",
+          "data_type": "boolean",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 11
+        }
+      ]
+    },
+    {
       "table_name": "unremediated_acceptances",
       "columns": [
         {
@@ -8478,7 +8560,11 @@
     },
     {
       "view_name": "unlocked_fixes",
-      "definition": " SELECT f.id AS audit_finding_id,\n    f.run_id AS audit_run_id,\n    r.repo_id,\n    f.severity,\n    f.category,\n    f.primary_file,\n    f.detail_snapshot,\n    r.created_at AS fixed_at,\n    ( SELECT count(*) AS count\n           FROM regression_specs rs\n          WHERE ((rs.source_finding_type = 'audit'::text) AND (rs.source_finding_id = f.id) AND (rs.source_kind <> 'persona-consistency-candidate'::text))) AS lock_spec_count,\n    r.mode AS audit_mode\n   FROM (audit_findings f\n     JOIN audit_runs r ON ((r.id = f.run_id)))\n  WHERE ((f.severity = 'HIGH'::text) AND (f.adjudication_outcome = ANY (ARRAY['accepted'::text, 'severity_adjusted'::text])) AND (f.remediation_state = ANY (ARRAY['fixed'::text, 'verified'::text])) AND (r.created_at > (now() - '14 days'::interval)) AND (NOT (EXISTS ( SELECT 1\n           FROM regression_specs rs\n          WHERE ((rs.source_finding_type = 'audit'::text) AND (rs.source_finding_id = f.id) AND (rs.source_kind <> 'persona-consistency-candidate'::text))))));"
+      "definition": " SELECT audit_finding_id,\n    audit_run_id,\n    repo_id,\n    severity,\n    category,\n    primary_file,\n    detail_snapshot,\n    fixed_at,\n    lock_spec_count,\n    audit_mode\n   FROM unlocked_fixes_all\n  WHERE is_recent;"
+    },
+    {
+      "view_name": "unlocked_fixes_all",
+      "definition": " SELECT f.id AS audit_finding_id,\n    f.run_id AS audit_run_id,\n    r.repo_id,\n    f.severity,\n    f.category,\n    f.primary_file,\n    f.detail_snapshot,\n    r.created_at AS fixed_at,\n    ( SELECT count(*) AS count\n           FROM regression_specs rs\n          WHERE ((rs.source_finding_type = 'audit'::text) AND (rs.source_finding_id = f.id) AND (rs.source_kind <> 'persona-consistency-candidate'::text))) AS lock_spec_count,\n    r.mode AS audit_mode,\n    (r.created_at > (now() - '14 days'::interval)) AS is_recent\n   FROM (audit_findings f\n     JOIN audit_runs r ON ((r.id = f.run_id)))\n  WHERE ((f.severity = 'HIGH'::text) AND (f.adjudication_outcome = ANY (ARRAY['accepted'::text, 'severity_adjusted'::text])) AND (f.remediation_state = ANY (ARRAY['fixed'::text, 'verified'::text])) AND (NOT (EXISTS ( SELECT 1\n           FROM regression_specs rs\n          WHERE ((rs.source_finding_type = 'audit'::text) AND (rs.source_finding_id = f.id) AND (rs.source_kind <> 'persona-consistency-candidate'::text))))));"
     },
     {
       "view_name": "unremediated_acceptances",
@@ -11795,6 +11881,11 @@
     },
     {
       "grantee": "postgres",
+      "object": "public.unlocked_fixes_all",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "postgres",
       "object": "public.unremediated_acceptances",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
@@ -12242,6 +12333,11 @@
     },
     {
       "object_name": "unlocked_fixes",
+      "object_kind": "v",
+      "owner": "postgres"
+    },
+    {
+      "object_name": "unlocked_fixes_all",
       "object_kind": "v",
       "owner": "postgres"
     },

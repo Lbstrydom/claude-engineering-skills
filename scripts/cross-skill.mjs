@@ -55,6 +55,7 @@ import {
   getUnlockedFixes,
   findUnlockedFixInRepo,
   countUnlockedFixes,
+  countAgedUnlockedFixes,
   getUnremediatedAcceptances,
   countUnremediatedAcceptances,
   resolveNudgePage,
@@ -121,7 +122,7 @@ import { getLearningStats } from './lib/learning/stats.mjs';
 import { emit, assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 import { classifyReadPath, classifyTestPath } from './lib/path-validation.mjs';
 import { validateCountFields } from './lib/command-input.mjs';
-import { resolveRepoScope } from './lib/repo-scope.mjs';
+import { resolveRepoScope, reconcileRepoIdentity } from './lib/repo-scope.mjs';
 import {
   classifyFinalReviewOutcome, summariseCounts, orderItems, isActionable, renderFinalReviewCard,
 } from './lib/final-review-credit.mjs';
@@ -131,7 +132,7 @@ import { detectRepoStack, detectPythonEnvironmentManager } from './lib/repo-stac
 import { StackProfileSchema, ReachabilityEvidenceRequestSchema, ReachabilityEvidenceResponseSchema } from './lib/schemas.mjs';
 import { recommendSkills, renderRecommendationCard } from './lib/skill-recommender.mjs';
 import { resolvePreviewGate } from './lib/cycle/topology.mjs';
-import { cycleConfig } from './lib/config.mjs';
+import { cycleConfig, dbConfig } from './lib/config.mjs';
 import { decideCorrelations, MATCHER_VERSION, personaFindingHash } from './lib/persona/audit-correlator.mjs';
 import { buildPersonaSessionId } from './lib/persona-test/session-id.mjs';
 import { recordNavAuditRun, listNavAuditRunHistory } from './lib/store/nav-audit.mjs';
@@ -180,6 +181,8 @@ const KNOWN_FLAGS = [
   '--suggestions', '--canonical', '--actor',
   // ── arm-eval-{run,decision,stats,adjudicate,toggle,maybe-capture,export} ──
   '--experiment', '--task', '--budget-eur', '--phase', '--seed', '--all-repos',
+  // list-unlocked-fixes: read past the 14-day nudge window (see cmdListUnlockedFixes)
+  '--all-ages',
   '--session-id', '--ranked', '--reviewer', '--all',
   // ── finalize-outcomes ─────────────────────────────────────────────────────
   '--ledger', '--result', '--round',
@@ -538,12 +541,21 @@ async function cmdPromoteRegressionSpec() {
   }
   await initLearningStore();
   if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, rowsAffected: 0 });
+  // Same cross-tenant fence as candidate CREATION: resolve identity first and
+  // scope the mutation to it. A specId is a global uuid, so promoting on it
+  // alone can flip another repo's candidate row to `locked`.
+  const ref = await resolveRepoForStore({}).catch(() => null);
+  const repoId = ref?.repoRowId || null;
+  if (!repoId) {
+    return emit({ ok: false, error: 'refusing: repo identity unresolvable — promoting a regression spec must be attributed to a repo, and guessing one is how another repo\'s rows got mutated.' });
+  }
   const r = await promoteRegressionSpec(p.specId, {
     specPath: p.specPath,
     promotedBy: p.promotedBy,
     candidateFingerprint: p.candidateFingerprint,
+    repoId,
   });
-  emit({ ok: r.ok, cloud: true, rowsAffected: r.rowsAffected });
+  emit({ ok: r.ok, cloud: true, rowsAffected: r.rowsAffected, reason: r.reason ?? null });
 }
 
 // ── Phase 3 WS-PIPE1 — persona_test_candidates ─────────────────────────────
@@ -668,8 +680,12 @@ async function cmdRecordPlanVerifyItems() {
   }
   await initLearningStore();
   if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, inserted: 0 });
-  await recordPlanVerificationItems(p.runId, p.planId, p.items);
-  emit({ ok: true, cloud: true, inserted: p.items.length });
+  // Report what the store PERSISTED, never what we asked it to persist: every
+  // failure path in recordPlanVerificationItems logs and swallows, so
+  // `p.items.length` would claim a write that may not have happened at all.
+  const res = await recordPlanVerificationItems(p.runId, p.planId, p.items);
+  if (!res?.ok) return emitError('WRITE_FAILED', `plan verification items not persisted: ${res?.reason ?? 'unknown'}`);
+  emit({ ok: true, cloud: true, inserted: res.inserted, requested: p.items.length });
 }
 
 async function cmdPlanSatisfaction() {
@@ -867,20 +883,34 @@ async function cmdListUnlockedFixes() {
   }
 
   const storeScope = storeScopeFor(scope);
-  const page = pageArgsFromFlags();
+  // `--all-ages` opts out of the 14-day window. The window stays the default:
+  // an unbounded ship-time nudge becomes noise and earns `--no-verify`. Same
+  // precedent as `--all-repos` — the wider read is ASKED for, never inherited.
+  const allAges = rest.includes('--all-ages');
+  const page = { ...pageArgsFromFlags(), allAges };
   const rows = await getUnlockedFixes(storeScope, page);
   // `rows` is ONE PAGE, so its length is NOT the obligation count — reporting it
   // as one undercounted 232 as "20" for weeks.
   // `byMode.plan` is surfaced separately because a plan finding can never carry
   // a regression spec; folding it into one total makes an unactionable half of
   // the backlog read as work.
-  const byMode = await countUnlockedFixes(storeScope);
+  const byMode = await countUnlockedFixes(storeScope, { allAges });
+  // What the WINDOW dropped, reported beside what it kept — the same obligation
+  // `shown`/`total` discharges for the row cap. Without it, "not shown" and
+  // "not owed" are one state and an obligation is discharged by waiting.
+  // `agedOut` is the number that matters (expired under a live locking
+  // practice); `prePractice` predates this repo's first lock and is not an
+  // obligation it ever had.
+  const aged = await countAgedUnlockedFixes(storeScope);
   const { limit, offset } = resolveNudgePage(page);
   emit({
     ok: true, cloud: true,
     scope: { mode: scope.mode, repoId: scope.repoId, slug: scope.slug },
     measured: true, reason: null,
     rows, shown: rows.length, total: byMode.total, byMode,
+    allAges,
+    agedOut: aged.agedOut, agedOutByMode: aged.byMode,
+    prePractice: aged.prePractice, practiceStart: aged.practiceStart,
     // Echo the RESOLVED page, not the raw flags: the store clamps, so a caller
     // that asked for 10_000 and a caller that asked for nothing must be able to
     // tell what they actually received before concluding the tail is empty.
@@ -1556,24 +1586,47 @@ async function cmdFinalizeOutcomes() {
   if (!ledger || !Array.isArray(ledger.entries)) {
     return emitError('BAD_INPUT', 'ledger file must have an "entries" array');
   }
-  const round = Number.isInteger(Number(roundOpt)) ? Number(roundOpt) : (result.round || 1);
+  // `argOption` returns null when --round is absent, and Number(null) is 0 —
+  // an integer — so coercing first made the `result.round || 1` fallback
+  // unreachable and silently finalised round 0. Only coerce what was supplied.
+  const roundArg = roundOpt == null ? null : Number(roundOpt);
+  const round = Number.isInteger(roundArg) ? roundArg : (result.round || 1);
 
   await initLearningStore().catch(() => { /* cloud optional */ });
   const cloud = await isCloudEnabled();
 
   // §R2-H2: cloud off → local-only no-op. Delegate to the shared finalize with
   // store=null so it degrades to the local `.audit/outcomes.jsonl` write.
+  //
+  // `isCloudEnabled()` swallows pool-construction failures and returns false, so
+  // "no DSN configured" and "DSN configured, server unreachable" arrive here
+  // identically. Both still degrade to the local write — that is the graceful
+  // degradation this branch exists for — but they are NOT the same event, and
+  // reporting the second as the first told operators their config was missing
+  // when their database was merely down, while this round's adjudications
+  // silently never reached the store.
   if (!cloud) {
+    const configured = Boolean(dbConfig.url);
     const status = await finalizeRoundOutcomes({ result, ledger, round, store: null, sid: null });
     return emit({
-      ok: true, cloud: false, runId: null, round,
+      ok: true, cloud: false, degraded: configured, runId: null, round,
       labelled: status.labelled, total: status.total, needsTriage: 0, autoDismissed: 0,
-      hint: 'AUDIT_DB_URL unset — local-only capture; run npm run setup:cloud to enable cloud finalize',
+      reason: configured ? 'store-unreachable' : 'not-configured',
+      hint: configured
+        ? 'AUDIT_DB_URL is SET but the store was unreachable — captured locally only, so these outcomes are NOT in the cloud store. Fix connectivity and re-run to finalize this round.'
+        : 'AUDIT_DB_URL unset — local-only capture; run npm run setup:cloud to enable cloud finalize',
     });
   }
 
   // §R2-H2: cloud on but the run_id does not exist → hard error (bad threaded id).
-  if (!await auditRunExists(runId)) {
+  // Tri-state: null means the probe itself failed. Reporting that as UNKNOWN_RUN
+  // blamed the operator's --run-id for the store being unreachable.
+  const runExists = await auditRunExists(runId);
+  if (runExists === null) {
+    return emitError('STORE_UNAVAILABLE',
+      `cannot verify run_id ${runId}: AUDIT_DB_URL is configured but the store could not be queried. Not treating this as an unknown run — fix connectivity and re-run.`);
+  }
+  if (!runExists) {
     return emitError('UNKNOWN_RUN',
       `run_id ${runId} not found in audit_runs (cloud is configured) — was --run-id threaded correctly?`);
   }
@@ -1715,10 +1768,18 @@ async function cmdRecordPersonaSession() {
   // view joins `persona_test_sessions.repo_name = audit_repos.name`, so a null
   // here silently drops the session from precision/recall entirely. Resolve when
   // EITHER is missing (a caller may pass repoId but omit the name).
+  // Filling only the MISSING field split identity across two repos: a caller
+  // supplying repoName for repo A from a checkout of repo B kept A's name and
+  // took B's id, and the two joins above then disagreed. Reconcile instead.
   if (!data.repoId || !data.repoName) {
     const ref = await resolveRepoForStore({}).catch(() => null);
-    if (ref?.repoRowId && !data.repoId) data.repoId = ref.repoRowId;
-    if (ref?.name && !data.repoName) data.repoName = ref.name;
+    const merged = reconcileRepoIdentity(data, ref);
+    if (!merged.ok) {
+      return emitError('REPO_IDENTITY_CONFLICT',
+        `refusing: supplied repo ${merged.conflict} "${merged.supplied}" does not match this checkout ("${merged.ambient}") — recording would put repo_id and repo_name on different repositories.`);
+    }
+    data.repoId = merged.repoId;
+    data.repoName = merged.repoName;
   }
 
   const result = await recordPersonaSession(data);
@@ -2006,11 +2067,19 @@ async function cmdGetReachabilityEvidence() {
     ...(parsed.data.sinceDays ? { sinceDays: parsed.data.sinceDays } : {}),
   });
   // Guarantee the structural contract before emission (R2-M2) — a reader drift
-  // never ships a malformed payload to the nav-audit consumer; degrade to empty.
+  // never ships a malformed payload to the nav-audit consumer.
+  //
+  // It used to degrade to `{ok:true, cloud:true, personas:[]}`. Withholding the
+  // malformed payload was right; calling that OUTCOME a success was not — the
+  // consumer cannot distinguish "this repo has no reachability evidence" from
+  // "the reader is broken", and reads the second as the first. Same shape as
+  // `measured:false` vs a genuine zero elsewhere in this file: an unmeasurable
+  // condition is reported as unmeasured, never as a clean empty result.
   const validated = ReachabilityEvidenceResponseSchema.safeParse({ ok: true, cloud: true, personas });
   if (!validated.success) {
-    process.stderr.write('[cross-skill] reachability response failed its schema — emitting empty\n');
-    return emit({ ok: true, cloud: true, personas: [] });
+    return emitError('PROTOCOL_VIOLATION',
+      'reachability evidence failed its response schema — withholding the payload rather than reporting an empty success',
+      { issues: validated.error.issues });
   }
   emit(validated.data);
 }
@@ -2700,7 +2769,7 @@ async function cmdLockWithTestWorksheet() {
   // were invisible and the page membership changed between identical calls.
   const storeScope = storeScopeFor(scope);
   const rows = await getUnlockedFixes(storeScope, { mode: 'code' });
-  const byMode = await countUnlockedFixes(storeScope);
+  const byMode = await countUnlockedFixes(storeScope, { allAges });
   const capped = byMode.code > rows.length;
 
   const lines = ['# Unlocked code fixes — regression-lock worksheet', '',

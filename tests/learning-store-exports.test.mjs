@@ -95,6 +95,7 @@ const EXPECTED_EXPORTS = [
   'getCandidateAuditFindings', // WS1 — auto-correlator candidate read (temporally bounded)
   'getExistingCorrelationHashesForSession', // WS1 — first-hit-wins existence check
   'countUnlockedFixes', // denominator for the /ship lock nudge — rows are LIMIT-capped (2026-07-29)
+  'countAgedUnlockedFixes', // what the 14-day window DROPPED — the denominator's blind spot (2026-08-11)
   'countUnremediatedAcceptances', // same denominator, sibling view (2026-07-31)
   'getUnlockedFixes',
   // Repo-scoped single-finding lookup. Exists because the LIMIT-20 sampler
@@ -372,6 +373,15 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // handler read. The clamp is exported rather than duplicated in the CLI so
     // the payload can echo what it actually resolved: a caller who cannot tell
     // a clamped page from an exhausted one reads a short page as "no tail".
-    assert.equal(EXPECTED_EXPORTS.length, 185);
+    // 185 → 186: countAgedUnlockedFixes added 2026-08-11. The 14-day window sat
+    // INSIDE the predicate that defines the obligation, so "not shown" and "not
+    // owed" were one state and an unlocked HIGH fix left the backlog by the
+    // passage of time with no trace but a smaller number — measured that day, 94
+    // code findings had aged out against 1 still visible. This is the same
+    // reporting gap 180 → 181 closed on the ROW axis (`shown` vs `total`),
+    // reappearing on the TIME axis, and it needed its own reader for the same
+    // reason: the count of what a bound excluded cannot be computed from the
+    // rows the bound kept.
+    assert.equal(EXPECTED_EXPORTS.length, 186);
   });
 });

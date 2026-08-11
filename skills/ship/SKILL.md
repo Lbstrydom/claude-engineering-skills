@@ -101,12 +101,45 @@ requires the outcome ledger — the legacy fallback path has no equivalent).
 node scripts/cross-skill.mjs list-unlocked-fixes
 ```
 
-Returns `{ok, cloud, scope:{mode,repoId,slug}, measured, reason, rows, shown, total, byMode:{total,code,plan}}`.
+Returns `{ok, cloud, scope:{mode,repoId,slug}, measured, reason, rows, shown, total,
+byMode:{total,code,plan}, allAges, agedOut, agedOutByMode:{code,plan}, prePractice,
+practiceStart}`.
 
 **Check `measured` BEFORE reading any count.** `measured:false` means *nothing
 was measured* (`reason: repo-identity-unresolvable` / `cloud-off`) — the zeroes
 are "not applicable", **not** "no obligations". Report it as unmeasured; never
 render it as a clean backlog.
+
+> **`agedOut` is the number to watch, and it should be 0** (added 2026-08-11).
+> The view's 14-day window used to sit inside the predicate that *defines* the
+> obligation, so "not shown" and "not owed" were one state: an unlocked HIGH fix
+> left the backlog by the passage of time and the only trace was a smaller
+> number. Measured the day this shipped, **94 code findings had aged out against
+> 1 still visible** — a gate whose cheapest clearing strategy was to wait two
+> weeks. Same defect `shown`/`total` already fixed on the row axis (`rows.length`
+> once reported 20 against a real 232), one axis over.
+>
+> The window is KEPT and stays the default — an unbounded ship-time nudge becomes
+> noise and earns `--no-verify`. What changed is that it now *says* what it
+> dropped:
+> - **`agedOut`** — expired **while a locking practice was live**. This is a real
+>   leak. Non-zero means obligations are being discharged by delay; say so.
+> - **`prePractice`** — expired before this repo's first audit-sourced lock
+>   (`practiceStart`, derived from the store, never configured). You cannot lapse
+>   a practice you had not started, so these are **not** obligations. A repo that
+>   has never locked anything reports `agedOut: 0` rather than indicting itself.
+>
+> *This repo's 190 `prePractice` rows (94 code / 96 plan, 2026-07-17..07-27, all
+> before `practiceStart` 2026-07-29) were written off deliberately on 2026-08-11
+> — see `status.md`. They are classified, not hidden.*
+>
+> Read past the window with `--all-ages`; `total` and `byMode` then describe the
+> unwindowed set, because a denominator from a different source than the rows is
+> how `shown 5 / total 29` gets reported over a 219-row page.
+
+```bash
+node scripts/cross-skill.mjs list-unlocked-fixes --all-ages
+```
 
 > **Scoping — fixed 2026-07-30, and worth knowing why.** This command used to
 > read `--repo-id` only. `--repo` was accepted (it is globally valid, since
@@ -164,6 +197,23 @@ If > 0, judge each row by `primary_file` before suggesting a fix:
   reverted, root cause undiagnosed) — prefer a unit test there too unless the
   contract genuinely needs a live DOM.
 ```
+
+If `agedOut > 0`, print it too — it is a distinct and worse signal than the
+backlog size, because those obligations are already past the point where the
+nudge will ever mention them again:
+
+```
+⚠ OBLIGATIONS LOST TO THE WINDOW (non-blocking)
+  <agedOut> fix(es) (<agedOutByMode.code> code / <agedOutByMode.plan> plan) aged out
+  of the 14-day window UNLOCKED, after this repo started locking (<practiceStart>).
+  Waiting is not a way to clear this gate. Read them:
+    node scripts/cross-skill.mjs list-unlocked-fixes --all-ages
+  Then either lock them, or write them off in status.md so the decision is on
+  the record — an obligation discharged by silence is the thing this counts.
+```
+
+Do **not** print the `prePractice` figure as a backlog. It is bookkeeping for
+findings that predate the practice, not work anybody owes.
 
 **Re-running existing regression specs before a push** (optional gate): drive
 them through the deterministic runner with the ship `run_context` so the

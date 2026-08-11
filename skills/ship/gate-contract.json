@@ -173,6 +173,22 @@
     {
       "line": "accepted and never amended, which is real work. Split it out to say which kind",
       "reason": "Explains why byMode.plan must not be discarded here (unlike 0.5b, where a plan finding can never carry a spec). Guidance on interpreting a count, with no enforcement claim and nothing to assert an exit code against."
+    },
+    {
+      "line": "> 1 still visible** — a gate whose cheapest clearing strategy was to wait two",
+      "reason": "Describes the DEFECT this step's aged-out reporting closes, not a gate the skill enforces. The measurement (94 aged out vs 1 visible) is history explaining why agedOut is reported at all; the reporting itself is non-blocking, like every other Step 0.5b signal."
+    },
+    {
+      "line": ">   (`practiceStart`, derived from the store, never configured). You cannot lapse",
+      "reason": "States a property of the derived practice boundary (a repo that never locked cannot have lapsed a locking practice), not an enforcement claim. Nothing blocks on practiceStart — it only decides which bucket an already-expired row is counted in."
+    },
+    {
+      "line": ">   has never locked anything reports `agedOut: 0` rather than indicting itself.",
+      "reason": "Describes a REPORTING outcome for a repo with no locking history, not a gate. The counter is advisory in both directions: 0 is not a pass and non-zero is not a block."
+    },
+    {
+      "line": "Waiting is not a way to clear this gate. Read them:",
+      "reason": "Rhetorical instruction to the operator about the lock nudge's intent; the OBLIGATIONS LOST block it sits in is explicitly labelled non-blocking and has no override flag, exactly like the REGRESSION LOCK GATE block above it."
     }
   ]
 }

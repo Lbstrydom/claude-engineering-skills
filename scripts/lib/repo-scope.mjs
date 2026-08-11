@@ -84,3 +84,34 @@ export async function resolveRepoScope({ resolveRepoUuid, getRepoIdByUuid, expli
   if (!repoId) return { kind: 'unknown-repo', repoUuid };
   return { kind: 'scoped', repoId };
 }
+
+/**
+ * Reconcile a caller-supplied repo identity against the ambient checkout before
+ * either field is written.
+ *
+ * `persona_test_sessions` carries BOTH `repo_id` (the native join key) and the
+ * denormalized `repo_name` — the `audit_effectiveness` view joins on the name
+ * while everything else joins on the id. Filling only the MISSING field from
+ * ambient identity therefore lets the two describe different repositories: a
+ * caller passing `repoName` for repo A from a checkout of repo B got A's name
+ * and B's id on the same row, and neither join could be trusted afterwards.
+ *
+ * Pure, so the decision is testable without a store. `ref` is the resolved
+ * ambient identity (`{repoRowId, name}`) or null when unresolvable.
+ *
+ * @returns {{ok: true, repoId: string|null, repoName: string|null}
+ *          | {ok: false, conflict: 'name'|'id', supplied: string, ambient: string}}
+ */
+export function reconcileRepoIdentity({ repoId = null, repoName = null }, ref) {
+  if (repoName && ref?.name && ref.name !== repoName) {
+    return { ok: false, conflict: 'name', supplied: repoName, ambient: ref.name };
+  }
+  if (repoId && ref?.repoRowId && ref.repoRowId !== repoId) {
+    return { ok: false, conflict: 'id', supplied: repoId, ambient: ref.repoRowId };
+  }
+  return {
+    ok: true,
+    repoId: repoId || ref?.repoRowId || null,
+    repoName: repoName || ref?.name || null,
+  };
+}

@@ -903,13 +903,26 @@ export async function recordFinalReviewFix(runId, fingerprint, opts = {}) {
  * @param {string} runId
  * @returns {Promise<boolean>}
  */
+/**
+ * Tri-state on purpose: `true` present, `false` genuinely absent, **`null` the
+ * probe could not be performed**.
+ *
+ * It used to collapse a failed query into `false`, and its one caller renders
+ * that as "run_id not found in audit_runs (cloud is configured) — was --run-id
+ * threaded correctly?". With the store merely unreachable, that message blames
+ * the operator's argument for a connectivity failure and sends them looking in
+ * the wrong place. A boolean cannot carry three outcomes.
+ *
+ * An absent `runId` is still `false` — that is a real answer, not a failed probe.
+ */
 export async function auditRunExists(runId) {
-  if (!runId || !await isCloudEnabled()) return false;
+  if (!runId) return false;
+  if (!await isCloudEnabled()) return null;
   try {
     const row = await one(`SELECT id FROM audit_runs WHERE id = $1`, [runId]);
     return !!row?.id;
   } catch {
-    return false;
+    return null;
   }
 }
 

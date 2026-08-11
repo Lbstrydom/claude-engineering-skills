@@ -453,18 +453,29 @@ export async function resolveCandidateStatesByFingerprint(repoId, fingerprints) 
  * candidate_fingerprint.
  */
 export async function promoteRegressionSpec(specId, args) {
-  if (!await isCloudEnabled()) return { ok: false, rowsAffected: 0 };
+  // Argument validation precedes the environment check on purpose: a caller
+  // that forgot the repo scope has a bug whether or not a store is configured,
+  // and ordering it after `isCloudEnabled()` would make the fence untestable
+  // without a live DSN.
   if (!specId || !args?.specPath || !args?.promotedBy) {
-    return { ok: false, rowsAffected: 0 };
+    return { ok: false, rowsAffected: 0, reason: 'bad-input' };
   }
+  // CROSS-TENANT WRITE FENCE — the same one `cmdRecordRegressionCandidate`
+  // already carries on the CREATE path. `specId` is a globally-unique uuid, so
+  // an UPDATE keyed on it alone promotes whichever repo's candidate row happens
+  // to bear that id. Candidate creation and candidate listing are both
+  // repo-scoped; promotion was the one mutation that was not.
+  if (!args?.repoId) return { ok: false, rowsAffected: 0, reason: 'repo-scope-required' };
+  if (!await isCloudEnabled()) return { ok: false, rowsAffected: 0, reason: 'cloud-off' };
   try {
     const pool = await getPool();
-    if (!pool) return { ok: false, rowsAffected: 0 };
+    if (!pool) return { ok: false, rowsAffected: 0, reason: 'no-pool' };
     const params = [
       args.specPath,
       new Date().toISOString(),
       args.promotedBy,
       specId,
+      args.repoId,
     ];
     let whereExtra = '';
     if (args.candidateFingerprint) {
@@ -479,6 +490,7 @@ export async function promoteRegressionSpec(specId, args) {
               promoted_by = $3,
               updated_at = $2
         WHERE id = $4
+          AND repo_id = $5
           AND source_kind = 'persona-consistency-candidate'
           ${whereExtra}`,
       params
@@ -633,7 +645,8 @@ export function resolveNudgePage(opts = {}) {
  * can see that rows are missing but has no way to ever read one of them.
  *
  * @param {{repoId?: string|null, allRepos?: boolean}} scope
- * @param {{mode?: 'code'|'plan'|null, limit?: number|null, offset?: number|null}} [opts]
+ * @param {{mode?: 'code'|'plan'|null, limit?: number|null, offset?: number|null,
+ *          allAges?: boolean}} [opts]
  */
 export async function getUnlockedFixes(scope, opts = {}) {
   const { repoId, allRepos } = resolveExplicitRepoScope(scope, 'getUnlockedFixes');
@@ -647,8 +660,12 @@ export async function getUnlockedFixes(scope, opts = {}) {
     if (mode) { params.push(mode); preds.push(`audit_mode = $${params.length}`); }
     const where = preds.length ? ` WHERE ${preds.join(' AND ')}` : '';
     params.push(limit, offset);
+    // `opts.allAges` reads the unwindowed base view. The default stays the
+    // 14-day window: an unbounded ship-time nudge becomes noise and earns
+    // `--no-verify`. What the window drops is reachable, not shown by default.
+    const source = opts?.allAges ? 'unlocked_fixes_all' : 'unlocked_fixes';
     return await many(
-      `SELECT * FROM unlocked_fixes${where} ORDER BY fixed_at DESC, audit_finding_id ` +
+      `SELECT * FROM ${source}${where} ORDER BY fixed_at DESC, audit_finding_id ` +
       `LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params
     );
@@ -707,14 +724,20 @@ export async function findUnlockedFixInRepo({ repoId, findingId }) {
  * @param {string|null} [repoId]
  * @returns {Promise<{total:number, code:number, plan:number}>}
  */
-export async function countUnlockedFixes(scope) {
+export async function countUnlockedFixes(scope, opts = {}) {
   const { repoId, allRepos } = resolveExplicitRepoScope(scope, 'countUnlockedFixes');
   const empty = { total: 0, code: 0, plan: 0 };
   if (!await isCloudEnabled()) return empty;
   try {
+    // The denominator must come from the SAME source as the rows it describes.
+    // Counting the windowed view while `getUnlockedFixes({allAges})` paged the
+    // unwindowed one would report `shown 5 / total 29` over a 219-row set — a
+    // page you cannot tell is short, which is the defect `shown`/`total` exists
+    // to prevent, reintroduced one axis over.
+    const src = opts?.allAges ? 'unlocked_fixes_all' : 'unlocked_fixes';
     const rows = !allRepos
-      ? await many(`SELECT audit_mode, count(*)::int AS n FROM unlocked_fixes WHERE repo_id = $1 GROUP BY audit_mode`, [repoId])
-      : await many(`SELECT audit_mode, count(*)::int AS n FROM unlocked_fixes GROUP BY audit_mode`);
+      ? await many(`SELECT audit_mode, count(*)::int AS n FROM ${src} WHERE repo_id = $1 GROUP BY audit_mode`, [repoId])
+      : await many(`SELECT audit_mode, count(*)::int AS n FROM ${src} GROUP BY audit_mode`);
     return rows.reduce((acc, r) => {
       const n = Number(r.n) || 0;
       acc.total += n;
@@ -725,6 +748,82 @@ export async function countUnlockedFixes(scope) {
   } catch (err) {
     process.stderr.write(`  [learning] countUnlockedFixes failed: ${err.message}
 `);
+    return empty;
+  }
+}
+
+/**
+ * What the 14-day window EXCLUDED, split by whether it was ever an obligation.
+ *
+ * `countUnlockedFixes` answers "how many are in the window?". Nothing answered
+ * "how many left it unlocked?", so an obligation was discharged by the passage
+ * of time and the only trace was a smaller number. Measured 2026-08-11: 94 code
+ * findings had aged out against 1 still visible.
+ *
+ * **`practiceStart` is derived, never configured.** It is this repo's earliest
+ * audit-sourced `regression_specs` row — the moment locking was first practised
+ * here. Anything that aged out BEFORE it is `prePractice`: you cannot have
+ * lapsed a practice you had not started, and a repo that has never locked
+ * anything correctly reports `agedOut: 0` rather than indicting itself for a
+ * process it never adopted. Deriving it also makes this correct in every
+ * consumer without a per-repo constant to keep in step — the shape a synced
+ * tool needs.
+ *
+ * `agedOut` is therefore the number that matters: obligations that existed
+ * under a live practice and expired anyway. It should sit at 0.
+ *
+ * Same failure contract as its siblings — cloud-off and query failure return
+ * zeroed counts, because this feeds a non-blocking nudge.
+ *
+ * @param {{repoId?: string|null, allRepos?: boolean}} scope
+ * @returns {Promise<{agedOut:number, prePractice:number, practiceStart:string|null,
+ *                    byMode:{code:number, plan:number}}>}
+ */
+export async function countAgedUnlockedFixes(scope) {
+  const { repoId, allRepos } = resolveExplicitRepoScope(scope, 'countAgedUnlockedFixes');
+  const empty = { agedOut: 0, prePractice: 0, practiceStart: null, byMode: { code: 0, plan: 0 } };
+  if (!await isCloudEnabled()) return empty;
+  try {
+    const scoped = !allRepos;
+    const params = scoped ? [repoId] : [];
+    const repoPred = scoped ? `WHERE repo_id = $1` : '';
+    // One statement so the practice boundary and the counts are read at a single
+    // instant — computing `practiceStart` separately would let a lock landing
+    // between the two queries reclassify rows underneath the caller.
+    const rows = await many(
+      `WITH practice AS (
+         SELECT min(created_at) AS started_at
+           FROM regression_specs
+          WHERE source_finding_type = 'audit'
+            ${scoped ? 'AND repo_id = $1' : ''}
+       )
+       SELECT
+         (SELECT started_at FROM practice)                                  AS practice_start,
+         a.audit_mode,
+         count(*) FILTER (
+           WHERE (SELECT started_at FROM practice) IS NOT NULL
+             AND a.fixed_at >= (SELECT started_at FROM practice)
+         )::int                                                             AS aged_out,
+         count(*) FILTER (
+           WHERE (SELECT started_at FROM practice) IS NULL
+              OR a.fixed_at < (SELECT started_at FROM practice)
+         )::int                                                             AS pre_practice
+       FROM unlocked_fixes_all a
+       ${repoPred}${repoPred ? ' AND' : 'WHERE'} NOT a.is_recent
+       GROUP BY a.audit_mode`,
+      params
+    );
+    return rows.reduce((acc, r) => {
+      const aged = Number(r.aged_out) || 0;
+      acc.agedOut += aged;
+      acc.prePractice += Number(r.pre_practice) || 0;
+      acc.practiceStart = r.practice_start ? String(r.practice_start) : acc.practiceStart;
+      if (r.audit_mode === 'code') acc.byMode.code += aged;
+      else if (r.audit_mode === 'plan') acc.byMode.plan += aged;
+      return acc;
+    }, { ...empty, byMode: { ...empty.byMode } });
+  } catch (err) {
+    process.stderr.write(`  [learning] countAgedUnlockedFixes failed: ${err.message}\n`);
     return empty;
   }
 }
@@ -1158,10 +1257,20 @@ export async function recordPlanVerificationRun(run) {
   }
 }
 
-/** Record per-criterion outcomes for a verification run. */
+/**
+ * Record per-criterion outcomes for a verification run.
+ *
+ * Returns `{ok, inserted, reason}` rather than `undefined`. Every failure path
+ * below logs to stderr and swallows, so a caller that infers a count from
+ * `items.length` reports a persistence result this function never established —
+ * which is exactly what `cross-skill.mjs record-plan-verify-items` did. `inserted`
+ * is the row count Postgres accepted, not the row count we asked it to accept.
+ */
 export async function recordPlanVerificationItems(runId, planId, items) {
-  if (!runId || !planId || !Array.isArray(items) || items.length === 0) return;
-  if (!await isCloudEnabled()) return;
+  if (!runId || !planId || !Array.isArray(items) || items.length === 0) {
+    return { ok: false, inserted: 0, reason: 'bad-input' };
+  }
+  if (!await isCloudEnabled()) return { ok: true, inserted: 0, reason: 'cloud-off' };
   const rows = items.map((item) => ({
     run_id: runId,
     plan_id: planId,
@@ -1178,7 +1287,7 @@ export async function recordPlanVerificationItems(runId, planId, items) {
     duration_ms: item.durationMs || null,
   }));
   const pool = await getPool();
-  if (!pool) return;
+  if (!pool) return { ok: false, inserted: 0, reason: 'no-pool' };
   const insertItems = async (omitSkipped) => {
     const cols = Object.keys(rows[0]).filter((c) => !(omitSkipped && c === 'skipped'));
     const params = [];
@@ -1189,23 +1298,28 @@ export async function recordPlanVerificationItems(runId, planId, items) {
       });
       return `(${placeholders.join(', ')})`;
     });
-    await pool.query(
+    const res = await pool.query(
       `INSERT INTO plan_verification_items (${cols.map((c) => `"${c}"`).join(', ')})
        VALUES ${valueGroups.join(', ')}`,
       params
     );
+    return res?.rowCount ?? 0;
   };
   try {
-    await insertItems(false);
+    return { ok: true, inserted: await insertItems(false) };
   } catch (err) {
     // 42703-only: consumer DB predates the `skipped` column (migration
     // 20260704…) — retry once without it so the per-criterion rows aren't lost.
     if (err?.code === '42703' && 'skipped' in rows[0]) {
       process.stderr.write('  [learning] plan_verification_items.skipped missing — run setup-postgres --migrate; recording without it\n');
-      try { await insertItems(true); return; }
-      catch (retryErr) { process.stderr.write(`  [learning] recordPlanVerificationItems failed: ${retryErr.message}\n`); return; }
+      try { return { ok: true, inserted: await insertItems(true) }; }
+      catch (retryErr) {
+        process.stderr.write(`  [learning] recordPlanVerificationItems failed: ${retryErr.message}\n`);
+        return { ok: false, inserted: 0, reason: retryErr.message };
+      }
     }
     process.stderr.write(`  [learning] recordPlanVerificationItems failed: ${err.message}\n`);
+    return { ok: false, inserted: 0, reason: err.message };
   }
 }
 

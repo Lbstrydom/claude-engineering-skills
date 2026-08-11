@@ -1,6 +1,139 @@
 # Project Status Log
 
-## 2026-08-11 (latest) — two hand-kept lists, and the one that steered people toward corrupting a fixture
+## 2026-08-11 (latest) — 45 fixes locked, and a gate that was clearing itself by waiting
+
+Worked the `unlocked_fixes` backlog end to end: 52 code obligations down to 1.
+Then measured why the number had been so quiet, and rebuilt the read that hid it.
+
+**Locking, 45 of 52.** Eight new test files; the rest locked to existing suites
+read first and confirmed to cover the claim. Six aged out of the view's window
+mid-session — not resolved, expired. One left deliberately:
+`getPersonaSessionsByRepo` scopes by `repo_name` and not by canonical
+`audit_repos.id`, and since `persona_test_sessions.repo_id` is nullable by
+design, adding an id predicate would silently drop legacy rows. That is the
+"check verifying one direction only" trap; it needs a backfill first, not a
+predicate.
+
+**`accepted` + `fixed` is a label, not a fix — nine were neither.** The backlog
+carried findings marked remediated whose defect was still in the code, so
+locking them as-is would have recorded fabricated coverage for live bugs.
+Fixed at the cause, each with a test verified red-then-green:
+
+- `promoteRegressionSpec` updated on `WHERE id = $4` with no `repo_id` — a
+  global uuid, so promotion could flip **another repo's** candidate row.
+  Creation and listing were both scoped; promotion was the one mutation in the
+  trio that was not, which is why review kept passing it.
+- `auditRunExists` collapsed "could not query" into "not found", so an
+  unreachable store surfaced as `UNKNOWN_RUN` — blaming the operator's
+  `--run-id` for a server being down. Now tri-state.
+- `finalize-outcomes` told operators `AUDIT_DB_URL unset` when it was set and
+  the store was merely unreachable, while that round's adjudications silently
+  never left the machine.
+- `--round` omitted parsed as `null`, and `Number(null)` is `0` — an integer —
+  so the `result.round || 1` fallback was unreachable and every flagless
+  invocation finalised **round 0**.
+- `record-plan-verify-items` reported `inserted: items.length` while the store
+  returned `undefined` on every path, success and failure alike.
+- Reachability schema failure degraded to `{ok:true, personas:[]}`, so
+  nav-audit could not tell "no evidence" from "broken reader".
+- A schema-valid brainstorm record naming a *different* session loaded into this
+  one and shifted every later round number.
+- Cited sources capped the excerpt but materialised the whole blob first; the
+  only ceiling was `spawnSync`'s `maxBuffer`, surfacing as an opaque ENOBUFS.
+- `rebuildFromCloud` defaulted `repoId` to `null` and documented it as "all", so
+  the no-argument call was an unscoped cross-repo read.
+
+**26 surgical mutations, all red.** One early mutation broke the file at import
+and reddened tests for the wrong reason, so every later one carries a
+`node --check` plus a CLI-run control. The harness also caught a test of mine
+running against the **real production store** while claiming to be hermetic:
+deleting `AUDIT_DB_URL` is not enough, because importing anything under
+`scripts/lib/` runs `load-shared-env`, which writes the discovered repo `.env`
+path into `DOTENV_CONFIG_PATH` — and the child inherits it.
+
+**Three findings were pipeline artifacts, not defects**, each locked against the
+real invariant it named and labelled so nobody re-investigates: the
+`[REDACTED:dsn-password]` in `buildDsn` is the audit pipeline's **own secret
+redactor** rewriting `postgres:postgres@` before the source reached the model
+(it reported a bug in text the pipeline had mangled, twice, in two rounds);
+`expected-schema.json` "cannot be parsed as JSON" parses fine at 395,184 bytes —
+all five audit units that "independently" confirmed it were reading a
+**truncated excerpt** and calling the truncation boundary a syntax error; and
+the `package-lock.json` drift compared against versions (`^2.16.0`, `17.0.0`,
+`7.1.x`) that exist nowhere in this repo. Redaction and truncation both
+manufacture believable findings, and all three were adjudicated
+`compromise/accepted/fixed` without anyone opening the file.
+
+### The gate was forgetting rather than escalating
+
+`unlocked_fixes` carried `created_at > now() - interval '14 days'` **inside the
+predicate that defines the obligation**, so "not shown" and "not owed" were one
+state. An unlocked HIGH fix left the backlog by the passage of time and the only
+trace was a smaller number. Measured before the fix: **94 code findings had aged
+out unlocked against 1 still visible.**
+
+The cheapest way to clear that gate was to do nothing for two weeks. Any gate
+where waiting is a winning strategy gets cleared by attrition, not intent — and
+in an audit or during onboarding you cannot tell "clean" from "forgot".
+
+It also contradicted three rules this repo had already written down: the row
+axis reports `shown` vs `total` precisely because `rows.length` once reported 20
+against a real 232; Step 0.5e's own philosophy is *"leaving them open is fine —
+leaving them open SILENTLY is what this catches"*; and `measured:false` exists so
+unmeasured never renders as clean. The time axis had the identical defect and no
+reporting at all.
+
+**The window is kept — the defect was the silence, not the bound.** An unbounded
+ship-time nudge becomes noise and earns `--no-verify`. Migration
+`20260811040000` moves the predicate into `unlocked_fixes_all` and carries the
+age test as a **column** (`is_recent`) rather than a filter;
+`unlocked_fixes` becomes the windowed projection over it, same columns, same
+order, so every existing reader is untouched. The 14-day figure now appears in
+exactly one expression — the alternative was a second hand-written copy of the
+predicate in JS, which is the DRY defect this repo's own audits flag.
+
+`--all-ages` reads past the window, and `countUnlockedFixes` follows the same
+source, because a denominator drawn from a different view than the rows is how
+`shown 5 / total 29` gets reported over a 219-row page — the same defect one
+axis over, again.
+
+**`prePractice` vs `agedOut`, and why the boundary is derived.** `practiceStart`
+is this repo's earliest audit-sourced `regression_specs` row, read from the
+store rather than configured. Anything that expired before it is `prePractice`:
+you cannot lapse a practice you had not started, and a repo that has never
+locked anything reports `agedOut: 0` rather than indicting itself for a process
+it never adopted. Deriving it also makes this correct in every consumer with no
+per-repo constant to keep in step — the shape a synced tool needs.
+
+### The 94 are written off, deliberately
+
+All 190 aged-out rows (94 code, 96 plan, runs dated 2026-07-17..07-27) fall
+before `practiceStart` **2026-07-29**, the first audit-sourced lock in this
+store. They are pre-practice backlog, not leakage from a working process — the
+distinction the readers can now draw and could not before. **Written off as of
+2026-08-11**; they are classified, not hidden, and remain readable via
+`list-unlocked-fixes --all-ages`.
+
+Going forward `agedOut` is the number that matters, and it currently reads
+**0**. Non-zero means obligations are being discharged by delay.
+
+The sibling `unremediated_acceptances` carries the same shape — a 30-day window
+inside its predicate — and was deliberately left alone: one view at a time, and
+that one's window has a second job (a 7-day floor) that needs its own thinking.
+
+Verification: 11,051 pass / 0 fail / 24 skipped before the view change; the
+`unlocked_fixes` contract test now follows the predicate down to
+`unlocked_fixes_all` rather than relaxing, and a new live-store suite pins the
+composition, the split direction and the derived boundary. Its fixture picks the
+repo that actually *has* dropped rows — the first draft took `ORDER BY
+created_at LIMIT 1`, landed on a repo with nothing dropped, and survived a
+mutation that disabled the feature outright.
+
+One pre-existing flake surfaced and is not mine:
+`refresh-subprocess-recovery.test.mjs:154` counts `arch-refresh-files-*`
+directories in the shared OS temp root before and after, so a concurrent suite
+shifts the count. It failed once under `npm test` and passes in isolation.
+## 2026-08-11 — two hand-kept lists, and the one that steered people toward corrupting a fixture
 
 A consumer report (wine-cellar-app, Windows, `core.autocrlf=true`) said the
 managed `.gitattributes` block omitted `.audit-loop/expected-schema.json`. It
