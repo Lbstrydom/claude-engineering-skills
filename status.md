@@ -1,6 +1,93 @@
 # Project Status Log
 
-## 2026-08-11 (latest) — a leak test that measured the whole machine
+## 2026-08-11 (latest) — a gate that could never fire, and the crash that hid behind it
+
+Upstream `8c62cfcc` from wine-cellar-app: `appliesTo.routePattern` was matched
+against `page.url()`'s **pathname alone**, while `appliesToCurrent`'s docstring
+had always promised "minus protocol/host". For an SPA that routes on a query
+parameter — every view served from `/` as `/?view=grid` — `currentRoute` was the
+string `"/"` at every step, so any pattern naming a query param could never test
+true. Four surfaces in that consumer sat inert for their whole life, three of
+them CI-enforced.
+
+**The report was right on every claim, including the subtle one.** Positive
+capture is by locator, so claims were still compared and runs read healthy; only
+the negative-space checks (`missing-surface`, `unannotated-surface`) went off —
+exactly the ones that fire when a surface *stops rendering*. Corroboration
+nobody had noticed: our own shipped adopter template
+(`docs/adopter-handoff/template-surfaces.json`) declares
+`"routePattern": "view=analysis"`, which was inert on arrival.
+
+Both of the reporter's suggested changes shipped. `currentRoute` is now
+`pathname + search` (which also widens `resolvedTarget` on the non-navigate step
+paths, bringing them into line with the navigate step that already recorded the
+full URL); and a new `route-pattern-never-matched` rig warning fires when a
+pattern matched no route the run visited, to stderr and to a new run-level
+`runWarnings[]` on the ledger — it is only knowable once every step has been
+seen, so attributing it to a step would be a lie. Advisory, never changes the
+exit code. Same precedent as `collection-binding-unusable`.
+
+**The one breaking shape breaks silently, so it got a mechanical voice rather
+than a release note.** An end-anchored pattern (`^/wines$`) stops matching
+`/wines?tab=all` — and the failure direction is *losing a check*, not gaining a
+failure, so CI would never mention it. The warning therefore detects that case
+outright: when stripping the query would have matched, it reports the pattern as
+anchored before the query and names the re-anchored form.
+
+### The defect the verification found
+
+Doctrine says a browser-driving skill runs against one real app before it is
+called done, and that is the only reason this was caught: the first live run
+exited 3 (fatal-rig) **and lost its ledger**. `cache-only-network-claim` and
+`dom-stabilisation-cap-reached` omitted `RigWarningSchema`'s required-nullable
+`surfaceId`, so `close()` rejected the whole ledger — an informational warning
+destroying the record that carried it. The first fires on the most ordinary case
+there is: a DOM claim with no declared `networkSource`.
+
+In scope by impact, not authorship — the verification rode that path. Its
+regression test validates emitted warnings **against the ledger schema** rather
+than against themselves, which is precisely why the existing unit tests, which
+assert on the warning object, had never seen it.
+
+### Verification
+
+Red-then-green on the subject probe: `safeCurrentRoute` is now exported via
+`_internals` and was seen failing before it passed. Then a real Chromium run on
+a query-routed fixture, with a negative control — same fixture, same journey,
+old code reported 1 contradiction and **no `missing-surface`** for an absent
+query-gated surface; new code reports it. Ledger confirmed carrying
+`runWarnings: ['route-pattern-never-matched / chip-grid']`.
+
+Consumer-side (Step 6.8): **verified**, not inherited. The pre-push sync reached
+both consumers (76 files updated); `appliesToCurrent` was then exercised from
+wine-cellar-app's own `scripts/.claude-skills/` bundle at
+`69231d6cfe802ee27b4dc354221c9cc37bcbf5b6` — `true` on `/?view=grid`, `false` on
+`/?view=history` (discrimination survives the fix, it did not just start
+matching everything), and the never-matched detector fires.
+`sync-isolation-verify.mjs` clean, gates 2B–8.
+
+`npm test` 11,152 pass / 0 fail / 26 skipped. Upstream report closed `fixed`
+against the commit; the queue is empty.
+
+**Two notes handed back to the consumer**: their four grandfathered
+`routePattern` surfaces will now start applying, so the three canary-enforced
+ones gain live `missing-surface` coverage and will report if any is not
+rendering — this commit is the trigger to add the positive control they said
+they lacked, or retire them. And if they had seen unexplained exit-3 runs with
+no session file, that was the ledger crash above.
+
+### Housekeeping
+
+This entry was spliced onto the **pushed** copy from a throwaway `origin/main`
+worktree. A concurrent session holds `status.md` in the shared tree on a stale
+line — 3 entries behind HEAD, with three demoted `(latest)` markers still
+promoted — so committing it from there would have deleted pushed history. Their
+copy carries no new content, so nothing of theirs is at risk; their next pull
+resolves it.
+
+---
+
+## 2026-08-11 — a leak test that measured the whole machine
 
 `tests/refresh-subprocess-recovery.test.mjs`'s "leaks no temp directory when the
 file list is rejected" is flaky under `npm test` and passes in isolation. It
