@@ -253,7 +253,7 @@ const CORE_ENTRY = [
   // /ai-context-management — while the script implementing it stayed
   // source-repo-only. A consumer wired the npm script against the isolated
   // path it *should* live at, and got `Cannot find module` repo-wide (reported
-  // 2026-08-10; the npm script had been dead since 2026-08-03). Adoptable
+  // 2026-08-11; the npm script had been dead since 2026-08-03). Adoptable
   // as-is: config (`.claude-context-allowlist.json`) is optional and the
   // defaults are topology rules, not upstream-shaped baselines — a consumer
   // that wants a different cap sets `maxAgentsMdChars` there. Import closure

@@ -87,7 +87,7 @@ describe('scanInstructionFiles — files the repo does not own', () => {
   });
 
   it('still skips the vendored file when the repo has a LARGE ignored universe', () => {
-    // THE RECURRENCE THIS LOCKS (reported from a consumer 2026-08-10). Every
+    // THE RECURRENCE THIS LOCKS (reported from a consumer 2026-08-11). Every
     // test above passes in a fixture with a handful of ignored files, and that
     // is exactly why the defect survived: the old implementation answered this
     // question by enumerating the repo's ENTIRE ignored-and-untracked set, so

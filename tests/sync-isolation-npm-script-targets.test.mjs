@@ -2,7 +2,7 @@
  * @fileoverview Gate 5 — a package.json script may not invoke a
  * `scripts/.claude-skills/` file the bundle does not actually ship.
  *
- * THE BLIND SPOT THIS LOCKS (reported from a consumer 2026-08-10). Gate 5
+ * THE BLIND SPOT THIS LOCKS (reported from a consumer 2026-08-11). Gate 5
  * reconciled `npm run X` references by checking the PREFIX of the invocation:
  * a `scripts/.claude-skills/` tail was treated as "already migrated" and
  * `continue`d past. But the prefix says where a tool WOULD live, not that any

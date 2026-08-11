@@ -27,7 +27,7 @@ import { spawnSync } from 'node:child_process';
  * ignored patterns today). `git ls-files --others --ignored --exclude-standard`
  * is exactly the "untracked and ignored" set and cannot make that mistake.
  *
- * Asked of the CANDIDATES, never of the repo (fixed 2026-08-10). Materialising
+ * Asked of the CANDIDATES, never of the repo (fixed 2026-08-11). Materialising
  * the whole ignored-and-untracked universe to classify ~40 walked files meant
  * `git ls-files --others --ignored` enumerating every path under `node_modules`:
  * 28,193 entries here, 49,768 in the consumer that reported it, both far past

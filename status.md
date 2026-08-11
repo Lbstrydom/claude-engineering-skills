@@ -1,6 +1,6 @@
 # Project Status Log
 
-## 2026-08-10 (latest) — a rule that could never fire for the case it was written for
+## 2026-08-11 (latest) — a rule that could never fire for the case it was written for
 
 `6963fcbd`. A consumer was told on every sync that two of its skills had
 "undefined precedence — yours to resolve". Both were **one directory reached by
@@ -57,7 +57,7 @@ Verified against the reporting consumer: `sync:dry` emits **zero**
 `[stale-skill-surface]` lines, and the reader returns both names as `aliased`,
 `orphans: []`, exit 0. `npm run check` 11,002 tests / 0 fail.
 
-## 2026-08-10 — the consumer side of df60c991, and a commit that shipped work I never wrote
+## 2026-08-11 — the consumer side of df60c991, and a commit that shipped work I never wrote
 
 Consumer-side verification for `df60c991` (Step 6.8), plus the three wine PRs and
 one ai-organiser push that closing it out required. **`verified`** — retrieved as
