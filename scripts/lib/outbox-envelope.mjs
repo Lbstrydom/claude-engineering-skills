@@ -191,7 +191,7 @@ export async function drainEnvelopes({ dir, apply, parse, cap, isConnectionError
       if (!n.endsWith('.claimed')) continue;
       const orig = path.join(dir, n.slice(0, -'.claimed'.length));
       try {
-        if (fs.existsSync(orig)) fs.rmSync(path.join(dir, n), { force: true, maxRetries: 3, retryDelay: 50 });
+        if (fs.existsSync(orig)) fs.rmSync(path.join(dir, n), { force: true, recursive: true, maxRetries: 3, retryDelay: 50 });
         else fs.renameSync(path.join(dir, n), orig);
       } catch { /* next run */ }
     }
@@ -275,7 +275,7 @@ export async function drainEnvelopes({ dir, apply, parse, cap, isConnectionError
         // strict predecessor of what now sits in the queue.
         try {
           if (fs.existsSync(file)) {
-            fs.rmSync(claimed, { force: true, maxRetries: 3, retryDelay: 50 });
+            fs.rmSync(claimed, { force: true, recursive: true, maxRetries: 3, retryDelay: 50 });
           } else {
             fs.renameSync(claimed, file);
           }
@@ -285,7 +285,7 @@ export async function drainEnvelopes({ dir, apply, parse, cap, isConnectionError
     } catch (err) {
       // Hand the claim back before returning/counting — an artifact stranded as
       // `.claimed` would be invisible to the next drain's `.json` filter.
-      try { if (!fs.existsSync(file)) fs.renameSync(claimed, file); else fs.rmSync(claimed, { force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* swept next run */ }
+      try { if (!fs.existsSync(file)) fs.renameSync(claimed, file); else fs.rmSync(claimed, { force: true, recursive: true, maxRetries: 3, retryDelay: 50 }); } catch { /* swept next run */ }
       if (isConnectionError?.(err)) {
         // The sink is down. Stop: the remaining envelopes are fine, and
         // recording a failure against each of them is how an outage retires a
