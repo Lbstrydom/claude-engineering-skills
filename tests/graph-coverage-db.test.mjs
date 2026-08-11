@@ -53,11 +53,18 @@ describe('coverage.mjs — recordGraphCoverage/getGraphCoverage/copyForwardCover
     repoId = repo.id;
     const pool = await getPool();
     refreshIdA = (await pool.query(
-      `INSERT INTO refresh_runs (repo_id, mode, status) VALUES ($1, 'full', 'running') RETURNING id`,
+      // Seeded 'published', not 'running': idx_refresh_runs_repo_running is a
+      // UNIQUE partial index allowing at most ONE running refresh per repo, so
+      // two seeded 'running' rows for one repo collide before any assertion
+      // runs. Nothing here reads refresh_runs.status — these rows exist only to
+      // satisfy the refresh_id FK — so a terminal status is both collision-free
+      // and the more truthful shape (you copy coverage FORWARD from a finished
+      // refresh). The suites were enrolled in no runner, so this never surfaced.
+      `INSERT INTO refresh_runs (repo_id, mode, status) VALUES ($1, 'full', 'published') RETURNING id`,
       [repoId],
     )).rows[0].id;
     refreshIdB = (await pool.query(
-      `INSERT INTO refresh_runs (repo_id, mode, status) VALUES ($1, 'incremental', 'running') RETURNING id`,
+      `INSERT INTO refresh_runs (repo_id, mode, status) VALUES ($1, 'incremental', 'published') RETURNING id`,
       [repoId],
     )).rows[0].id;
   });
@@ -82,6 +89,21 @@ describe('coverage.mjs — recordGraphCoverage/getGraphCoverage/copyForwardCover
     }
     if (errors.length > 0) throw new AggregateError(errors, 'teardown failed — disposable DB may have residual rows');
   });
+
+  /**
+   * A destination refresh nobody else has written to. Cases that copy coverage
+   * FORWARD need one: the shared refreshIdB deliberately carries a fresh
+   * measurement by the time they run, and copy-forward is meant to refuse
+   * that. Cleaned up with the rest of the repo's rows in `after`.
+   */
+  const freshRefresh = async () => {
+    const pool = await getPool();
+    const { rows } = await pool.query(
+      `INSERT INTO refresh_runs (repo_id, mode, status) VALUES ($1, 'incremental', 'published') RETURNING id`,
+      [repoId],
+    );
+    return rows[0].id;
+  };
 
   it('recordGraphCoverage writes a row; getGraphCoverage reads the same payload back', async () => {
     const record = verifiedCoverageRecord(refreshIdA);
@@ -110,7 +132,7 @@ describe('coverage.mjs — recordGraphCoverage/getGraphCoverage/copyForwardCover
     // against real Postgres semantics flagged it.
     const pool = await getPool();
     const refreshIdInvalid = (await pool.query(
-      `INSERT INTO refresh_runs (repo_id, mode, status) VALUES ($1, 'incremental', 'running') RETURNING id`,
+      `INSERT INTO refresh_runs (repo_id, mode, status) VALUES ($1, 'incremental', 'published') RETURNING id`,
       [repoId],
     )).rows[0].id;
     try {
@@ -154,11 +176,19 @@ describe('coverage.mjs — recordGraphCoverage/getGraphCoverage/copyForwardCover
     const record = verifiedCoverageRecord(refreshIdA);
     await recordGraphCoverage(refreshIdA, record);
 
-    const copyRes = await copyForwardCoverage({ fromRefreshId: refreshIdA, toRefreshId: refreshIdB });
+    // ...and its own DESTINATION, which that earlier fix did not do. The test
+    // above deliberately leaves a FRESH measurement on refreshIdB to prove
+    // copy-forward refuses to clobber one, so reusing refreshIdB here means
+    // this case is refused for that reason and can never pass. Arranging only
+    // the source is a one-direction fix; the destination is state too. (Never
+    // observed until 2026-08-11 — the suite was enrolled in no runner.)
+    const destId = await freshRefresh();
+
+    const copyRes = await copyForwardCoverage({ fromRefreshId: refreshIdA, toRefreshId: destId });
     assert.equal(copyRes.copied, true);
 
-    const copied = await getGraphCoverage(refreshIdB);
-    assert.ok(copied, 'copy-forward must persist a row for refreshIdB');
+    const copied = await getGraphCoverage(destId);
+    assert.ok(copied, 'copy-forward must persist a row for the destination refresh');
     assert.equal(copied.stale, true, 'a copied-forward record is always marked stale');
     assert.equal(copied.verdict.status, 'unknown', 'a SUCCESSFUL prior measurement going stale forces unknown, never the copied-from verdict');
     assert.equal(copied.verdict.reason, 'stale_measurement');
@@ -175,10 +205,12 @@ describe('coverage.mjs — recordGraphCoverage/getGraphCoverage/copyForwardCover
     };
     await recordGraphCoverage(refreshIdA, failedRecord);
 
-    const copyRes = await copyForwardCoverage({ fromRefreshId: refreshIdA, toRefreshId: refreshIdB });
+    // Its own destination, for the same reason as the case above.
+    const destId = await freshRefresh();
+    const copyRes = await copyForwardCoverage({ fromRefreshId: refreshIdA, toRefreshId: destId });
     assert.equal(copyRes.copied, true);
 
-    const copied = await getGraphCoverage(refreshIdB);
+    const copied = await getGraphCoverage(destId);
     assert.equal(copied.stale, true, 'still marked stale — it IS from an earlier run');
     assert.equal(copied.verdict.status, 'unverified', 'a measurement that never succeeded stays unverified, not unknown');
     assert.equal(copied.verdict.reason, 'extraction_failed');
@@ -191,11 +223,11 @@ describe('coverage.mjs — recordGraphCoverage/getGraphCoverage/copyForwardCover
     // guard would short-circuit to invalid-input before ever reaching the
     // no-prior-coverage path this test exists to cover.)
     const refreshIdC = (await pool.query(
-      `INSERT INTO refresh_runs (repo_id, mode, status) VALUES ($1, 'incremental', 'running') RETURNING id`,
+      `INSERT INTO refresh_runs (repo_id, mode, status) VALUES ($1, 'incremental', 'published') RETURNING id`,
       [repoId],
     )).rows[0].id;
     const refreshIdD = (await pool.query(
-      `INSERT INTO refresh_runs (repo_id, mode, status) VALUES ($1, 'incremental', 'running') RETURNING id`,
+      `INSERT INTO refresh_runs (repo_id, mode, status) VALUES ($1, 'incremental', 'published') RETURNING id`,
       [repoId],
     )).rows[0].id;
     try {

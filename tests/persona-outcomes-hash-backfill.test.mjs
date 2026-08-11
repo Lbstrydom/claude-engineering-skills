@@ -31,7 +31,10 @@ async function seedSession({ findings, clickPath = [] }) {
   const { rows } = await pool.query(
     `INSERT INTO persona_test_sessions
        (session_id, persona, url, browser_tool, verdict, repo_id, findings, click_path)
-     VALUES ($1, 'tester', 'https://example.com', 'playwright', 'pass', $2, $3, $4)
+     -- 'Ready for users' | 'Needs work' | 'Blocked' are the only values
+     -- persona_test_sessions_verdict_check accepts (20260413224948). This said
+     -- 'pass'; the suite was enrolled in no runner, so it never ran to find out.
+     VALUES ($1, 'tester', 'https://example.com', 'playwright', 'Needs work', $2, $3, $4)
      RETURNING id`,
     [`session-${crypto.randomUUID()}`, repoId, JSON.stringify(findings), JSON.stringify(clickPath)],
   );

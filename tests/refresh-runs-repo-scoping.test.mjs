@@ -16,7 +16,7 @@
  * re-implement the SQL predicate and prove nothing about the real
  * constraint/RPC behavior. Gated on `AUDIT_DB_TEST_URL`.
  */
-import { describe, it, before, after } from 'node:test';
+import { describe, it, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 
@@ -48,6 +48,17 @@ describe('refresh-runs.mjs — repo-scoping + abort/publish race safety (integra
     await q.query('DELETE FROM audit_repos WHERE id = ANY($1)', [[repoIdA, repoIdB]]);
     const { closePool } = await import('../scripts/lib/db/client.mjs');
     await closePool();
+  });
+
+  // Unlike its sibling suites, `running` IS the subject here — these cases are
+  // about abort/publish races on a live run, so the status cannot be softened.
+  // `idx_refresh_runs_repo_running` permits at most ONE running row per repo,
+  // and no case terminates the row it inserts, so every case after the first
+  // collided on it. Isolation per case is the fix; weakening the index would
+  // delete the invariant this suite exists to prove. (Enrolled in no runner
+  // until 2026-08-11, so it had never run to discover this.)
+  beforeEach(async () => {
+    await q.query('DELETE FROM refresh_runs WHERE repo_id = ANY($1)', [[repoIdA, repoIdB]]);
   });
 
   const insertRunning = async (repoId) => {

@@ -46,6 +46,10 @@ export const DESTRUCTIVE_SUITE_FILES = Object.freeze([
   'tests/db-date-parser.test.mjs',
   'tests/db-withtx.test.mjs',
   'tests/db-setup.test.mjs',
+  // Destructive, not isolated: it TRUNCATEs and DROPs `audit_loop_migrations`,
+  // the ledger `db-schema-realization-live` reads. Runs here, after the
+  // schema-intact step, for the same reason db-setup does.
+  'tests/repair-eol.integration.test.mjs',
 ]);
 // Suites that need the migrated schema INTACT, so they must run BEFORE the
 // destructive step (db-setup.test.mjs does DROP SCHEMA PUBLIC CASCADE). Their
@@ -64,14 +68,77 @@ export const ISOLATED_SUITE_FILES = Object.freeze([
   'tests/campaign-adjudication.test.mjs',
   'tests/candidate-audit-findings-window.test.mjs',
   'tests/db-schema-realization-live.test.mjs',
-  // Enrolled 2026-08-11. It was committed with the WS1 correlator and
-  // registered nowhere — neither here nor in the workflow — so, being
-  // `assertDisposableDbUrl`-gated, it had never executed in any environment
-  // since the day it landed. Exactly the shape this list's own comment
-  // warns about, found while enrolling the suite above it.
-  'tests/plans-ship-persona-correlation.test.mjs',
   'tests/regression-spec-multi-finding-lock.test.mjs',
   'tests/symbol-index-drift-justification.test.mjs',
+  // ── Enrolled 2026-08-11 ──────────────────────────────────────────────────
+  // Every entry below was `AUDIT_DB_TEST_URL`-gated and named by NO runner, so
+  // each skipped itself everywhere and node reported the skip as a pass: 15
+  // suites that had never executed in any environment since the day they
+  // landed. Found while enrolling `candidate-audit-findings-window` above, and
+  // now prevented from recurring by `npm run db:enrolment:gate`
+  // (scripts/check-db-suite-enrolment.mjs), which iterates the FILESYSTEM —
+  // the only side of the comparison that can see a file no list mentions.
+  'tests/final-review-adjudicate.test.mjs',
+  'tests/graph-coverage-db.test.mjs',
+  'tests/mark-findings-remediation.test.mjs',
+  'tests/on-conflict-scope-identity.test.mjs',
+  'tests/persist-kept-embeddings.test.mjs',
+  'tests/persona-outcomes-hash-backfill.test.mjs',
+  'tests/plans-ship-persona-correlation.test.mjs',
+  'tests/refresh-provenance-promotion.test.mjs',
+  'tests/refresh-runs-repo-scoping.test.mjs',
+  'tests/repo-identity-store.test.mjs',
+  'tests/repo-last-audited-at.test.mjs',
+  'tests/setup-postgres-surface-precondition.test.mjs',
+  'tests/symbol-embeddings-rowcount.test.mjs',
+  'tests/symbol-file-imports.test.mjs',
+  'tests/symbols-count-for-snapshot.test.mjs',
+]);
+
+/**
+ * Test files that mention `AUDIT_DB_TEST_URL` but need no database — the
+ * disposition list for `scripts/check-db-suite-enrolment.mjs`.
+ *
+ * The gate scans for the literal token rather than trying to recognise a skip
+ * idiom (the real files use four different ones, and a skip-shaped regex
+ * silently missed two suites on the first pass). Over-collecting on purpose
+ * means the non-suites are disposed of HERE, by name, with a reason — an
+ * allowlist is a property of what "needs a database" means, where a regex is
+ * only a guess about how someone wrote their skip.
+ *
+ * A reason must be non-empty, must not name a file that no longer mentions the
+ * token, and must not name a file that is also enrolled. The gate enforces all
+ * three: a stale exemption is how a list quietly stops meaning anything.
+ */
+export const DB_SUITE_ENROLMENT_EXEMPT = Object.freeze([
+  {
+    file: 'tests/db-config-resolver.test.mjs',
+    reason: 'Pure unit tests over DSN resolution. The token appears once, in a docstring sentence describing where the INTEGRATION half of that seam lives; this file reads no database.',
+  },
+  {
+    file: 'tests/db-test-container.integration.test.mjs',
+    reason: 'Tests the container script itself and is gated on DB_TEST_CONTAINER_IT + a Docker daemon, not on a DSN — it BRINGS UP the Postgres the other suites consume, so enrolling it in a list the container runner executes would be circular.',
+  },
+  {
+    file: 'tests/db-test-container.test.mjs',
+    reason: 'The unit test OF this module. It mentions the token while asserting the registries and the workflow stay in lockstep, and reads no database. (A hand census read it as "enrolled" because the strings it asserts on also appear in this file — the gate caught that, which is the argument for iterating disk rather than grepping names.)',
+  },
+  {
+    file: 'tests/gate-honesty.test.mjs',
+    reason: 'Uses the string as a fixture VALUE — one of the env names asserted to be scrubbed from a subprocess environment. Enrolled nowhere because it needs no database; it runs in the ordinary `npm test`.',
+  },
+  {
+    file: 'tests/graph-coverage-lineage.test.mjs',
+    reason: 'The token appears only in a stale docstring line claiming a DB-touching block "env-gated on AUDIT_DB_TEST_URL". No such block exists — the file reads no DB env at all (verified 2026-08-11). Pure unit tests over the coverage envelope.',
+  },
+  {
+    file: 'tests/symbols-duplicate-justifications-chunking.test.mjs',
+    reason: 'Pure chunking unit tests. The token appears once, in a docstring cross-reference naming the gated suite that covers the end-to-end behaviour instead.',
+  },
+  {
+    file: 'tests/test-env-hermeticity.test.mjs',
+    reason: 'Uses the string as a fixture VALUE while asserting which env vars survive into a hermetic test subprocess. Needs no database.',
+  },
 ]);
 export const CONTRACT_SUITE_FILES = Object.freeze([
   'tests/learning-store-contract.test.mjs',

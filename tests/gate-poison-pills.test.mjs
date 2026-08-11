@@ -308,6 +308,11 @@ const MANDATORY = {
   // (it sat unmerged on a branch for 110 commits). A gate added after 2026-07-31 must
   // carry a pill, never an exemption — §2 dec. 3.
   'docs:architecture-intent:check': ['architecture-intent-check-detects-an-undocumented-domain'],
+  // Added 2026-08-11 with the gate itself. Post-2026-07-31, so a pill is
+  // mandatory and an exemption would not have been available — correctly, since
+  // the whole point of this gate is that a check nobody can see fail is
+  // indistinguishable from no check at all.
+  'db:enrolment:gate': ['db-enrolment-gate-detects-a-suite-no-runner-names'],
 };
 
 test('every gate the plan made mandatory is contracted — not quietly exempted', () => {

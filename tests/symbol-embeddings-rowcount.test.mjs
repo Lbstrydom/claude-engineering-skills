@@ -37,7 +37,11 @@ const skip = TEST_URL ? false : 'AUDIT_DB_TEST_URL not set';
 
 let savedUrl, repoId;
 const REPO_UUID = `test-embeddings-rowcount-${crypto.randomUUID()}`;
-const DIM = 8;
+// Must match the `vector(768)` width of symbol_embeddings.embedding — pgvector
+// rejects any other length at the write ("expected 768 dimensions, not 8"), so
+// a smaller convenience value makes every case here unrunnable. This said 8;
+// the suite was enrolled in no runner, so it never ran to find out.
+const DIM = 768;
 const vec = (seed) => Array.from({ length: DIM }, (_, i) => (seed + i) / 100);
 
 describe('symbol_embeddings write-result honesty (disposable DB)', { skip }, () => {

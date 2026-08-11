@@ -142,7 +142,13 @@ describe('markFindingsRemediation — DB write shape (integration)', { skip }, (
     runId = crypto.randomUUID();
     await q.query(`INSERT INTO audit_repos (id, name) VALUES ($1, $2)
                    ON CONFLICT (id) DO NOTHING`, [repoId, `test-${repoId.slice(0, 8)}`]);
-    await q.query(`INSERT INTO audit_runs (id, repo_id) VALUES ($1, $2)
+    // `plan_file` and `mode` are the two NOT NULL columns on audit_runs with no
+    // default, so omitting them throws 23502. It read clean only because a
+    // conflicting row skips the check — this passed on a re-used
+    // check whenever the row already exists — so this passed on a re-used
+    // container and failed on a fresh one. The suite was enrolled in no runner
+    // until 2026-08-11, so neither case was ever observed.
+    await q.query(`INSERT INTO audit_runs (id, repo_id, plan_file, mode) VALUES ($1, $2, 'docs/plans/test-fixture.md', 'code')
                    ON CONFLICT (id) DO NOTHING`, [runId, repoId]);
 
     const insFinding = async (fp, adjudicationOutcome, remediationState) => {

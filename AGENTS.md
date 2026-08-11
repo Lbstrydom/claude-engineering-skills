@@ -359,6 +359,18 @@ and false passes (a fix in the tree but not the commit read green). Not `git
 stash` — that yanks the other session's files mid-edit. Detail + escape hatches:
 [`docs/runbooks/prepush-sandbox.md`](docs/runbooks/prepush-sandbox.md).
 
+- **A DB suite no runner names has never run.** A suite gated on
+  `AUDIT_DB_TEST_URL` skips itself without a disposable DSN, and node reports a
+  suite that never ran as a clean pass — so being listed in one of
+  `db-test-container.mjs`'s `*_SUITE_FILES` (**and**, in lockstep,
+  `postgres-parity.yml`) is the only thing that makes it coverage. A census on
+  2026-08-11 found **15 such suites enrolled nowhere**, never executed in any
+  environment since the day they landed; enrolling them added 127 assertions and
+  6 of them failed immediately, against schema constraints years older than the
+  tests. `npm run db:enrolment:gate` now iterates the FILESYSTEM — the only side
+  that can see a file no list mentions — and requires each hit to be enrolled or
+  carry a written `DB_SUITE_ENROLMENT_EXEMPT` reason. **Adding a DB-gated suite
+  is two edits, never one.**
 - **Sandbox-honesty rule.** A fresh worktree has no gitignored inputs, so a check
   that *skips* on a missing input passes having read nothing (known skips are
   forced hard: `AUDIT_PUSH_RANGE_REQUIRED`, `ARCH_COVERAGE_REQUIRE_ENVELOPE`).
@@ -1055,6 +1067,36 @@ it, sessions drift from the requested task into repo-hygiene meta-work
 the user didn't authorise, and the final commit bundles unrelated work
 that's hard to revert cleanly.  Repo hygiene is a separate, dedicated
 task — request it explicitly when you want it done.
+
+## Contracts across the prose↔code seam (no compiler runs here)
+
+The single-oracle rule (`classifySelector`, `sensitive-paths.mjs`) is stated
+elsewhere for **code↔code** seams. Its worst case is the seam where the
+**producer is a SKILL.md** — prose a model follows — and the **consumer is
+code**. Nothing type-checks that, nothing errors, and the failure is silent in
+both directions.
+
+- **The incident (2026-08-11).** `skills/persona-test/SKILL.md` had specified
+  `finding.severity` since 2026-04-19. Every consumer read `finding.code`, on a
+  docstring claiming that shape was verified against live data one day before
+  the store was wiped. `isP0OrP1` matched **0 findings in all 7 live sessions**;
+  `persona_audit_correlations` was empty store-wide for the correlator's whole
+  life, and the reason string it returned was indistinguishable from a clean
+  run. Fixture factories in its own test suite were all built from the reader's
+  spelling, so a green suite proved the reader against a shape production has
+  never emitted.
+- **Before reading a field out of a model-authored payload**, grep the authoring
+  SKILL.md for the field name. A docstring about "the real production shape" is
+  a claim about mutable state — see verification-discipline §1b.
+- **At least one fixture must be derived from a row actually in the store.** A
+  hand-written factory encodes what the reader expects, which is the assumption
+  under test.
+- **One exported accessor owns the read.** The duplicate inline predicate in
+  `cross-skill.mjs` is why the drift survived undetected — two spellings, and
+  nothing that could compare them.
+- **Name the mismatch distinctly.** "No P0/P1 findings" and "P0/P1 declared but
+  none parsed" must not share a reason string; the second is a shape bug wearing
+  the first's clothes.
 
 ## Sensitive paths + VCS contract (canonical locations)
 

@@ -1,6 +1,78 @@
 # Project Status Log
 
-## 2026-08-11 (latest) — the correlator read a field the skill never wrote
+## 2026-08-11 (latest) — fifteen test suites that had never run
+
+The persona-correlator work turned up one DB suite registered in no runner. A
+census found it was not one file.
+
+**A suite gated on `AUDIT_DB_TEST_URL` skips itself without a disposable DSN,
+and node reports a suite that never ran as `# fail 0`.** So the only thing
+making such a file coverage is being named in one of `db-test-container.mjs`'s
+`*_SUITE_FILES`. Measured: **25 gated suites, 9 enrolled — 15 had never executed
+in any environment since the day they landed**, while `npm run check` read green
+over all of them. `npm run test:db` names two of them and is chained into
+nothing.
+
+### The gate
+
+`npm run db:enrolment:gate` ([check-db-suite-enrolment.mjs](scripts/check-db-suite-enrolment.mjs))
+requires every `AUDIT_DB_TEST_URL`-gated test file to be enrolled or to carry a
+written `DB_SUITE_ENROLMENT_EXEMPT` reason.
+
+**It iterates the filesystem, and that is the entire point.**
+`tests/db-test-container.test.mjs` already checked registry↔workflow in *both*
+directions and was green throughout — because both sides agreed about the 9
+files they knew of. Nothing iterated disk, so the 15 files neither side had
+heard of were unrepresentable in the comparison. AGENTS.md's third
+consumer-reported shape, applied to the test registry itself.
+
+It scans for the literal token rather than recognising a skip idiom. The real
+files use four different ones (`const skip = TEST_URL ? …`, `{ skip: dbSkip }`,
+`skipReason`, `{ skip: !RUN_IT && … }`), and the first pass at this census used
+a skip-shaped regex that silently missed two suites. Over-collecting on purpose
+and disposing of each non-suite by name is an allowlist — a property of what
+"needs a database" means — where a regex is a guess about how someone wrote
+their skip. The gate immediately caught a file a hand census had miscounted as
+enrolled because a comment happened to name it.
+
+Fails closed: zero files scanned, zero candidates found, a stale exemption, an
+empty reason, or a file both enrolled and exempt are all failures. Three
+negative controls fire, each with its own message, and it carries a poison pill
+(an ordinary-looking unenrolled suite overlaid into a tmpdir) so the gate is
+demonstrably capable of failing.
+
+### What ran for the first time
+
+Enrolling all 15 took the DB gate from **110 assertions to 237**. Six failed
+immediately, in four classes — every one a stale fixture against a constraint
+the product enforces correctly:
+
+| Class | Suites | Cause |
+|---|---|---|
+| NOT NULL omitted | 3 | `audit_runs.plan_file`/`mode` absent; `ON CONFLICT DO NOTHING` hid it whenever the row already existed, so it passed on a re-used container and failed on a fresh one |
+| CHECK violated | 1 | `verdict: 'pass'`, rejected by `persona_test_sessions_verdict_check` since 20260413224948 |
+| pgvector width | 1 | fixture vectors of `DIM = 8` against a `vector(768)` column |
+| Order dependence | 3 | `idx_refresh_runs_repo_running` permits one running refresh per repo; suites seeded two, and copy-forward cases reused a destination an earlier case had deliberately filled |
+
+The last class is worth keeping. `graph-coverage-db`'s own comment records an
+earlier audit fixing exactly this — for the *source* refresh, not the
+destination. Arranging one side against order-dependence and not the other is a
+one-direction fix, the same shape as the gate above.
+
+Nothing here weakened a product invariant to get green; the one-running-refresh
+index and the schema CHECKs are all still enforced, and the fixtures moved.
+
+### Doctrine
+
+Two rules landed with it. `verification-discipline.md` §1b: **a claim sourced
+from mutable state must carry the query that produced it** — a commit id makes a
+file claim re-checkable, a wiped store leaves nothing, so the claim is not stale
+but *unfalsifiable*, and reads exactly as authoritative. AGENTS.md gains the
+**prose↔code seam**: the single-oracle rule stated for code↔code seams, applied
+where the producer is a SKILL.md and the consumer is code, with no compiler
+between them.
+
+## 2026-08-11 — the correlator read a field the skill never wrote
 
 `persona_audit_correlations` was empty store-wide, leaving
 `audit_effectiveness.user_visible_precision` / `user_visible_recall` NULL for

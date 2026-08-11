@@ -169,7 +169,14 @@ describe('recordSymbolFileImports — duplicate edges in one batch', { skip: dbS
     repoId = repo.id;
     const pool = await getPool();
     refreshId = (await pool.query(
-      `INSERT INTO refresh_runs (repo_id, mode, status) VALUES ($1, 'full', 'running') RETURNING id`,
+      // Seeded 'published', not 'running': idx_refresh_runs_repo_running is a
+      // UNIQUE partial index allowing at most ONE running refresh per repo, so
+      // two seeded 'running' rows for one repo collide before any assertion
+      // runs. Nothing here reads refresh_runs.status — these rows exist only to
+      // satisfy the refresh_id FK — so a terminal status is both collision-free
+      // and the more truthful shape (you copy coverage FORWARD from a finished
+      // refresh). The suites were enrolled in no runner, so this never surfaced.
+      `INSERT INTO refresh_runs (repo_id, mode, status) VALUES ($1, 'full', 'published') RETURNING id`,
       [repoId],
     )).rows[0].id;
   });
@@ -239,18 +246,27 @@ describe('recordSymbolFileImports — duplicate edges in one batch', { skip: dbS
   // must report a rowCount backed by the DB's own result, not payload.length.
   it('copyForwardImports reports a count matching a real post-write SELECT, not the attempted payload length', async () => {
     const pool = await getPool();
-    await recordSymbolFileImports(refreshId, [
+    // Its own SOURCE refresh, not the suite-wide `refreshId`. The cases above
+    // load that one with 602 edges, so copy-forward legitimately carried 604
+    // rows here and the assertion of 2 could never hold — the case measures
+    // what copyForwardImports does with THREE edges, so it has to own those
+    // three. (Never observed until 2026-08-11: enrolled in no runner.)
+    const fromRefreshId = (await pool.query(
+      `INSERT INTO refresh_runs (repo_id, mode, status) VALUES ($1, 'incremental', 'published') RETURNING id`,
+      [repoId],
+    )).rows[0].id;
+    await recordSymbolFileImports(fromRefreshId, [
       { importer: 'kept-a.js', imported: 'lib.js' },
       { importer: 'kept-b.js', imported: 'lib.js' },
       { importer: 'touched.js', imported: 'lib.js' },
     ]);
     const toRefreshId = (await pool.query(
-      `INSERT INTO refresh_runs (repo_id, mode, status) VALUES ($1, 'incremental', 'running') RETURNING id`,
+      `INSERT INTO refresh_runs (repo_id, mode, status) VALUES ($1, 'incremental', 'published') RETURNING id`,
       [repoId],
     )).rows[0].id;
 
     const { copied } = await copyForwardImports({
-      fromRefreshId: refreshId, toRefreshId, touchedFileSet: new Set(['touched.js']),
+      fromRefreshId, toRefreshId, touchedFileSet: new Set(['touched.js']),
     });
     assert.equal(copied, 2, 'only the two untouched importers copy forward');
 
@@ -259,7 +275,7 @@ describe('recordSymbolFileImports — duplicate edges in one batch', { skip: dbS
     );
     assert.equal(rows[0].n, 2, 'the reported count matches the real row count in the DB');
 
-    await pool.query(`DELETE FROM symbol_file_imports WHERE refresh_id = $1`, [toRefreshId]);
-    await pool.query(`DELETE FROM refresh_runs WHERE id = $1`, [toRefreshId]);
+    await pool.query(`DELETE FROM symbol_file_imports WHERE refresh_id = ANY($1)`, [[fromRefreshId, toRefreshId]]);
+    await pool.query(`DELETE FROM refresh_runs WHERE id = ANY($1)`, [[fromRefreshId, toRefreshId]]);
   });
 });

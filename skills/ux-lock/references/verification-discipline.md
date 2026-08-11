@@ -98,6 +98,36 @@ makes a location claim as well as a content claim; a reader following it lands o
 the wrong text. `moved` exists so that case reads as a cheap re-pin rather than an
 alarm.
 
+### 1b. A claim sourced from mutable state must carry the query that produced it
+
+> **Measured**: a module docstring asserted a payload shape *"verified against
+> live session data, 2026-07-13"*. The store was wiped **2026-07-14**. The claim
+> was also wrong, and every later reader trusted it — including the one that
+> wrote an entire correlator against the wrong field name, which then produced
+> zero rows for a month.
+
+A commit id makes a file claim re-checkable: the bytes still exist. **A live
+store offers no such anchor.** When the source is a database, a dashboard, an
+API, or anything else that can be mutated, dropped or restored, a claim recorded
+without its query is not merely at risk of going *stale* — it becomes
+**unfalsifiable**, because there is no longer any way to ask the question again.
+And unfalsifiable prose reads exactly as authoritative as verified prose.
+
+- **Writing one**: paste the query, RPC, or command beside the claim, and pin
+  the date. `-- SELECT count(*) FROM x WHERE …  → 7 (2026-08-11)` costs one line
+  and converts an assertion into an instrument someone else can re-run.
+- **Reading one**: re-run the query before building on it. If the claim predates
+  a known wipe, restore, migration or provider switch, treat it as
+  **unverified** — not as weak evidence, as *no* evidence. It cannot be checked,
+  so it cannot be relied on.
+- **The tell**: a claim about live data that is *also* about a shape, count or
+  schema — the things a migration silently changes. Those are the claims worth
+  re-running first.
+
+This is §1's rule with the anchor removed. Where a line citation decays into
+pointing at the wrong text, a store-sourced claim decays into pointing at
+nothing at all.
+
 ---
 
 ## 2. A figure without provenance misdirects debugging

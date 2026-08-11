@@ -212,9 +212,23 @@ jobs:
             tests/campaign-adjudication.test.mjs \
             tests/candidate-audit-findings-window.test.mjs \
             tests/db-schema-realization-live.test.mjs \
+            tests/final-review-adjudicate.test.mjs \
+            tests/graph-coverage-db.test.mjs \
+            tests/mark-findings-remediation.test.mjs \
+            tests/on-conflict-scope-identity.test.mjs \
+            tests/persist-kept-embeddings.test.mjs \
+            tests/persona-outcomes-hash-backfill.test.mjs \
             tests/plans-ship-persona-correlation.test.mjs \
+            tests/refresh-provenance-promotion.test.mjs \
+            tests/refresh-runs-repo-scoping.test.mjs \
             tests/regression-spec-multi-finding-lock.test.mjs \
-            tests/symbol-index-drift-justification.test.mjs
+            tests/repo-identity-store.test.mjs \
+            tests/repo-last-audited-at.test.mjs \
+            tests/setup-postgres-surface-precondition.test.mjs \
+            tests/symbol-embeddings-rowcount.test.mjs \
+            tests/symbol-file-imports.test.mjs \
+            tests/symbol-index-drift-justification.test.mjs \
+            tests/symbols-count-for-snapshot.test.mjs
 
       - name: Env-gated DB tests (G1 date parser + G3 withTx + setup integration)
         # --test-concurrency=1 is LOAD-BEARING: node --test runs each test
@@ -238,7 +252,8 @@ jobs:
           node --test --test-concurrency=1 \
             tests/db-date-parser.test.mjs \
             tests/db-withtx.test.mjs \
-            tests/db-setup.test.mjs
+            tests/db-setup.test.mjs \
+            tests/repair-eol.integration.test.mjs
 
       - name: Contract suite — public-surface assertions
         # Source-level only: asserts the 93-function contract surface is
