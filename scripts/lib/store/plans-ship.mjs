@@ -763,17 +763,28 @@ export async function getUnremediatedAcceptances(scope, opts = {}) {
     // surfaces rows under the 7-day maturity floor — deliberately: the flag
     // means "show me everything this nudge is not telling me", and not-yet-due
     // is part of that answer even though it is not a loss.
+    //
+    // `is_open_disposition` is applied at EVERY age, including here.
+    // `--all-ages` means "ignore the time window", NOT "include work that was
+    // decided on the merits" — an `accepted-permanent` row is not something the
+    // nudge is failing to tell you about. Keeping the filter on both sides is
+    // also what preserves the aged-visibility invariant that
+    // `allAges.total - windowed.total` IS the temporally-excluded set: let the
+    // disposition apply on one side only and that gap silently acquires a
+    // second, non-temporal term, and one of the two numbers starts lying.
+    // The census — every row regardless of disposition — is
+    // `unremediated_acceptances_all` itself, which no filter touches.
     if (opts?.allAges) {
       if (!allRepos) {
         return await many(
-          `SELECT * FROM unremediated_acceptances_all WHERE repo_id = $1 ` +
+          `SELECT * FROM unremediated_acceptances_all WHERE repo_id = $1 AND is_open_disposition ` +
           `ORDER BY CASE severity WHEN 'HIGH' THEN 0 ELSE 1 END, accepted_at ASC, audit_finding_id ` +
           `LIMIT $2 OFFSET $3`,
           [repoId, limit, offset]
         );
       }
       return await many(
-        `SELECT * FROM unremediated_acceptances_all ` +
+        `SELECT * FROM unremediated_acceptances_all WHERE is_open_disposition ` +
         `ORDER BY CASE severity WHEN 'HIGH' THEN 0 ELSE 1 END, accepted_at ASC, audit_finding_id ` +
         `LIMIT $1 OFFSET $2`,
         [limit, offset]
@@ -823,6 +834,42 @@ export async function getUnremediatedAcceptances(scope, opts = {}) {
  * @param {string|null|{repoId?: string|null, allRepos?: boolean}} [scope]
  * @returns {Promise<{total:number, code:number, plan:number}>}
  */
+/**
+ * How many findings were dispositioned `accepted-permanent` — decided on the
+ * merits rather than forgotten.
+ *
+ * **Unwindowed, deliberately.** It counts over `unremediated_acceptances_all`,
+ * not the nag window. A windowed count would expire the anti-dumping-ground
+ * guarantee exactly when the dumping ground becomes worth auditing: a decision
+ * taken 31 days ago would vanish from every reported field, which is the
+ * time-based invisibility this whole view family has been fixing.
+ *
+ * Excluding these rows from the nag (migration
+ * `20260811160000_unremediated_acceptances_disposition`) is only honest if the
+ * count stays visible — a disposition you cannot see is indistinguishable from
+ * a leak. Same failure contract as its siblings: cloud-off and query failure
+ * both yield 0; an invalid scope still throws.
+ *
+ * @param {{repoId?: string|null, allRepos?: boolean}} scope
+ * @returns {Promise<number>}
+ */
+export async function countAcceptedPermanent(scope) {
+  const { repoId, allRepos } = resolveExplicitRepoScope(scope, 'countAcceptedPermanent');
+  if (!await isCloudEnabled()) return 0;
+  try {
+    // Literal branches, not an interpolated view name or predicate — the guard
+    // in tests/cross-skill-unlocked-scope.test.mjs statically scans the SQL
+    // literals in this file, and an interpolated clause is invisible to it.
+    const rows = !allRepos
+      ? await many(`SELECT count(*)::int AS n FROM unremediated_acceptances_all WHERE repo_id = $1 AND NOT is_open_disposition`, [repoId])
+      : await many(`SELECT count(*)::int AS n FROM unremediated_acceptances_all WHERE NOT is_open_disposition`);
+    return Number(rows?.[0]?.n) || 0;
+  } catch (err) {
+    process.stderr.write(`  [learning] countAcceptedPermanent failed: ${err.message}\n`);
+    return 0;
+  }
+}
+
 export async function countUnremediatedAcceptances(scope, opts = {}) {
   const { repoId, allRepos } = resolveExplicitRepoScope(scope, 'countUnremediatedAcceptances');
   const empty = { total: 0, code: 0, plan: 0 };
@@ -832,8 +879,8 @@ export async function countUnremediatedAcceptances(scope, opts = {}) {
     // `countUnlockedFixes`. Literal branches, not an interpolated view name.
     const rows = opts?.allAges
       ? (!allRepos
-        ? await many(`SELECT audit_mode, count(*)::int AS n FROM unremediated_acceptances_all WHERE repo_id = $1 GROUP BY audit_mode`, [repoId])
-        : await many(`SELECT audit_mode, count(*)::int AS n FROM unremediated_acceptances_all GROUP BY audit_mode`))
+        ? await many(`SELECT audit_mode, count(*)::int AS n FROM unremediated_acceptances_all WHERE repo_id = $1 AND is_open_disposition GROUP BY audit_mode`, [repoId])
+        : await many(`SELECT audit_mode, count(*)::int AS n FROM unremediated_acceptances_all WHERE is_open_disposition GROUP BY audit_mode`))
       : (!allRepos
         ? await many(`SELECT audit_mode, count(*)::int AS n FROM unremediated_acceptances WHERE repo_id = $1 GROUP BY audit_mode`, [repoId])
         : await many(`SELECT audit_mode, count(*)::int AS n FROM unremediated_acceptances GROUP BY audit_mode`));
@@ -916,7 +963,7 @@ export async function countAgedUnremediatedAcceptances(scope) {
                 )::int AS pre_practice,
                 (SELECT started_at FROM practice) AS practice_start
            FROM unremediated_acceptances_all a
-          WHERE a.repo_id = $1 AND NOT (a.is_mature AND a.is_recent)
+          WHERE a.repo_id = $1 AND a.is_open_disposition AND NOT (a.is_mature AND a.is_recent)
           GROUP BY a.audit_mode, a.severity`,
         params
       )
@@ -940,7 +987,7 @@ export async function countAgedUnremediatedAcceptances(scope) {
                 )::int AS pre_practice,
                 (SELECT started_at FROM practice) AS practice_start
            FROM unremediated_acceptances_all a
-          WHERE NOT (a.is_mature AND a.is_recent)
+          WHERE a.is_open_disposition AND NOT (a.is_mature AND a.is_recent)
           GROUP BY a.audit_mode, a.severity`,
         params
       );

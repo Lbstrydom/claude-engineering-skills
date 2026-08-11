@@ -76,15 +76,26 @@ describe('unremediated_acceptances age bounds — floor and ceiling are not the 
       assert.ok(excludedHere > 0);
     });
 
-    it('the visible view is exactly the mature-AND-recent slice', async () => {
+    it('the visible view is exactly the mature-AND-recent-AND-open slice', async () => {
+      // The invariant is unchanged in substance: the visible view must BE a
+      // slice of `_all` selected by ITS OWN flags, never a parallel
+      // re-derivation of the predicates. `is_open_disposition` joined
+      // `is_mature`/`is_recent` as a third flag when `accepted-permanent`
+      // stopped being reported as open work (migration 20260811160000) — it is
+      // an orthogonal dimension, not a re-derivation, so the guard keeps its
+      // teeth by naming it rather than by dropping to an inequality.
       const r = await q.one(
         `SELECT
            (SELECT count(*) FROM unremediated_acceptances)                            AS visible,
            (SELECT count(*) FROM unremediated_acceptances_all
-             WHERE is_mature AND is_recent)                                           AS both,
+             WHERE is_mature AND is_recent AND is_open_disposition)                    AS slice,
+           (SELECT count(*) FROM unremediated_acceptances_all
+             WHERE is_mature AND is_recent)                                           AS time_only,
            (SELECT count(*) FROM unremediated_acceptances_all)                        AS every_age`, []);
-      assert.equal(Number(r.visible), Number(r.both),
+      assert.equal(Number(r.visible), Number(r.slice),
         'unremediated_acceptances must BE the slice, not a parallel re-derivation');
+      assert.ok(Number(r.time_only) >= Number(r.visible),
+        'the disposition filter can only ever narrow the time slice, never widen it');
       assert.ok(Number(r.every_age) >= Number(r.visible));
     });
 
@@ -104,10 +115,17 @@ describe('unremediated_acceptances age bounds — floor and ceiling are not the 
     it('the floor is NOT counted as a loss', async (t) => {
       if (needsFixture(t)) return;
       const aged = await store.countAgedUnremediatedAcceptances({ repoId });
+      // `is_open_disposition` here for the same reason every other obligation
+      // count carries it (migration 20260811160000): an `accepted-permanent`
+      // row under the maturity floor is not an obligation that is merely not
+      // due yet — it is a decision. Counting it as not-yet-due would make the
+      // excluded-set buckets stop summing to the windowed/all-ages gap, which
+      // is the invariant the next test asserts. The census, deliberately
+      // unfiltered, is `unremediated_acceptances_all` itself.
       const under = await q.one(
         `SELECT count(*)::int AS n FROM unremediated_acceptances_all
-          WHERE repo_id = $1 AND NOT is_mature`, [repoId]);
-      assert.equal(aged.notYetDue, under.n, 'notYetDue must be exactly the under-floor set');
+          WHERE repo_id = $1 AND is_open_disposition AND NOT is_mature`, [repoId]);
+      assert.equal(aged.notYetDue, under.n, 'notYetDue must be exactly the open under-floor set');
       // The whole point: a maturity delay is not a forgetting mechanism.
       const overCeiling = await q.one(
         `SELECT count(*)::int AS n FROM unremediated_acceptances_all

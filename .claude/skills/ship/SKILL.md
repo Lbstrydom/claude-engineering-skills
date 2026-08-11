@@ -390,6 +390,7 @@ so a short page can be told from an exhausted one.
 
 ```
 ⚠ UNREMEDIATED ACCEPTANCES (non-blocking)
+  <byDisposition.open> open · <byDisposition.acceptedPermanent> permanently accepted
   <n> finding(s) you accepted were never marked fixed (showing <=5):
     • [<severity>] <primary_file> — accepted <days_open>d ago
   Either remediate them, or close the loop honestly — per row:
@@ -398,6 +399,19 @@ so a short page can be told from an exhausted one.
       --commit <sha that fixed it> --state fixed
   Leaving them open is fine — leaving them open SILENTLY is what this catches.
 ```
+
+**`byDisposition.acceptedPermanent` is a decision, not a backlog — print it, do
+not chase it.** Those rows carry `user_action = 'accepted-permanent'`: weighed
+and declined on the merits, stamped with `decided_at`, and excluded from
+`open`/`total` by the nag view since migration
+`20260811160000_unremediated_acceptances_disposition`. Measured at that
+migration: 36 of 231 rows in this repo were already decided and still being
+reported as open work.
+
+It is reported for one reason — **a disposition you cannot see is
+indistinguishable from a leak.** If that number climbs while `open` does not,
+`accepted-permanent` is being used as a silence button, and THAT is the thing to
+investigate. `open === total` always; they are one number under two names.
 
 If `agedOut > 0`, print it separately. It is a worse signal than the backlog
 size, because those rows are already past the point where this step will ever

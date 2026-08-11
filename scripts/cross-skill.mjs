@@ -54,6 +54,7 @@ import {
   countUnlockedFixes,
   countAgedUnlockedFixes,
   countAgedUnremediatedAcceptances,
+  countAcceptedPermanent,
   getUnremediatedAcceptances,
   countUnremediatedAcceptances,
   resolveNudgePage,
@@ -780,12 +781,18 @@ async function cmdListUnremediatedAcceptances() {
   // own once they mature. Conflating them is the specific error this view
   // invites, because both read as "not shown".
   const aged = await countAgedUnremediatedAcceptances(storeScope);
+  // Rows dispositioned `accepted-permanent` are excluded from the nag (they were
+  // decided, not forgotten) — so the count has to stay visible, or the
+  // disposition becomes a silence button. `open` is `total` under a second name:
+  // one number, two names, and the test asserts they never diverge.
+  const acceptedPermanent = await countAcceptedPermanent(storeScope);
   const { limit, offset } = resolveNudgePage(page);
   emit({
     ok: true, cloud: true,
     scope: { mode: scope.mode, repoId: scope.repoId, slug: scope.slug },
     measured: true, reason: null,
     rows, shown: rows.length, total: byMode.total, byMode,
+    byDisposition: { open: byMode.total, acceptedPermanent },
     allAges,
     agedOut: aged.agedOut, agedOutByMode: aged.byMode, agedOutBySeverity: aged.bySeverity,
     notYetDue: aged.notYetDue,

@@ -93,6 +93,7 @@ export const ISOLATED_SUITE_FILES = Object.freeze([
   'tests/setup-postgres-surface-precondition.test.mjs',
   'tests/symbol-embeddings-rowcount.test.mjs',
   'tests/symbol-file-imports.test.mjs',
+  'tests/unremediated-acceptance-disposition.test.mjs',
   'tests/symbols-count-for-snapshot.test.mjs',
 ]);
 

@@ -97,6 +97,7 @@ const EXPECTED_EXPORTS = [
   'countUnlockedFixes', // denominator for the /ship lock nudge — rows are LIMIT-capped (2026-07-29)
   'countAgedUnlockedFixes', // what the 14-day window DROPPED — the denominator's blind spot (2026-08-11)
   'countAgedUnremediatedAcceptances', // same, for the 30d ceiling + 7d floor (2026-08-11)
+  'countAcceptedPermanent', // the DISPOSITION axis — decided, not forgotten (2026-08-11)
   'countUnremediatedAcceptances', // same denominator, sibling view (2026-07-31)
   'getUnlockedFixes',
   // Repo-scoped single-finding lookup. Exists because the LIMIT-20 sampler
@@ -397,6 +398,17 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // and promoteRegressionSpec retired 2026-08-11 with the consistency
     // candidate/promotion path. Second shrink in this pin's history, and the
     // same reasoning applies — a dropped export is a contract change.
-    assert.equal(EXPECTED_EXPORTS.length, 181);
+    // 181 -> 182: countAcceptedPermanent added 2026-08-11. A third axis on the
+    // same nudge view, and it needs its own reader for the same reason the
+    // other two did — this one is not a TIME bound but a DISPOSITION:
+    // `user_action = 'accepted-permanent'` means weighed and declined on the
+    // merits, and migration 20260811160000 stopped the nag reporting those as
+    // open work. Excluding them is only honest if the count stays visible, so
+    // the reader exists to keep `accepted-permanent` from becoming a silence
+    // button. Deliberately UNWINDOWED, unlike its two siblings: a windowed
+    // count would expire the guarantee exactly when the dumping ground becomes
+    // worth auditing. Measured the day it landed: 36 of 231 rows in this repo
+    // were already decided and still being reported as open.
+    assert.equal(EXPECTED_EXPORTS.length, 182);
   });
 });
