@@ -77,6 +77,26 @@ export function buildGateEvidence(input) {
     );
   }
   const { auditedBranch } = input;
+  // `Object.hasOwn` answers "is the property THERE", not "is it usable" — so
+  // `{auditedBranch: undefined}` (an uninitialised variable, a failed branch
+  // resolution) sails past the check above. A bare String() would then coerce it
+  // to the literal "undefined", the reader would accept that as a perfectly
+  // valid branch NAME, and guard B would spend the rest of its life expecting a
+  // branch called "undefined" — refusing every ship in the repo. That is the
+  // same 100%-refusal failure the required-field check exists to prevent,
+  // reached through the value instead of the key.
+  if (auditedBranch !== null && typeof auditedBranch !== 'string') {
+    throw new TypeError(
+      `buildGateEvidence: auditedBranch must be a branch-name string or an explicit null (detached); got ${
+        auditedBranch === undefined ? 'undefined' : typeof auditedBranch}. `
+      + 'A non-string would be written to the marker and then read back as a branch name.',
+    );
+  }
+  if (auditedBranch !== null && auditedBranch.trim() === '') {
+    throw new TypeError(
+      'buildGateEvidence: auditedBranch is an empty string — pass the branch name, or null for a detached HEAD.',
+    );
+  }
 
   return {
     runId,
@@ -84,7 +104,7 @@ export function buildGateEvidence(input) {
     round: Number.isFinite(round) ? round : null,
     auditedSha: auditedSha ?? null,
     auditedTree: auditedTree ?? null,
-    auditedBranch: auditedBranch === null ? null : String(auditedBranch),
+    auditedBranch,   // already validated: a non-empty string, or null
     ts: nowIso ?? new Date().toISOString(),
   };
 }
@@ -155,10 +175,21 @@ export function writeGateEvidence({
     return { written: false, reason: 'no-audited-tree' };
   }
 
-  const payload = buildGateEvidence({
-    runId, sid, round, auditedSha, auditedTree,
-    ...(hasBranch ? { auditedBranch: rest.auditedBranch } : {}),
-  });
+  // buildGateEvidence THROWS on a malformed/missing auditedBranch — correct at a
+  // pure boundary (it is a programming error), but this writer is best-effort
+  // telemetry by contract and must never fail an audit that otherwise succeeded.
+  // So the throw is caught here and degraded to "no marker", which reads as
+  // `not-run` — the same direction every other failure in this function takes.
+  let payload;
+  try {
+    payload = buildGateEvidence({
+      runId, sid, round, auditedSha, auditedTree,
+      ...(hasBranch ? { auditedBranch: rest.auditedBranch } : {}),
+    });
+  } catch (e) {
+    log(`  [gate-evidence] refusing to build a marker (${e?.message || e}) — writing none; commit will read as not-run\n`);
+    return { written: false, reason: 'invalid-input' };
+  }
 
   // Validate the marker against the READER's contract before publishing it.
   // Writing a marker the reader will classify `malformed` is worse than writing

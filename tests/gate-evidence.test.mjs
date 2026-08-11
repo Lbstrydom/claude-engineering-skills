@@ -215,3 +215,47 @@ describe('WIRING PIN: the audit pipeline actually calls the writer', () => {
     assert.match(src, /recordConvergenceState\(cloudRunId/, 'the convergence verdict must be recorded');
   });
 });
+
+describe('auditedBranch value validation (final gate — the undefined-coercion hole)', () => {
+  // Object.hasOwn answers "is the property THERE", not "is it usable". An
+  // explicitly-undefined property passes the required-field check, and a bare
+  // String() would then write the literal "undefined" into the marker — which
+  // the reader accepts as a valid branch NAME, leaving guard B expecting a
+  // branch called "undefined" and refusing every ship in the repo. Same
+  // 100%-refusal failure as an omitted field, reached through the value.
+  for (const [label, value] of [
+    ['explicit undefined', undefined],
+    ['a number', 42],
+    ['an object', {}],
+    ['an empty string', ''],
+    ['whitespace only', '   '],
+  ]) {
+    test(`${label} throws rather than being coerced into the marker`, () => {
+      assert.throws(
+        () => buildGateEvidence({ runId: RUN_ID, auditedTree: AUDITED_TREE, auditedBranch: value }),
+        /auditedBranch/,
+        `${label} must not reach the marker`,
+      );
+    });
+  }
+
+  test('the two LEGAL values still pass — the check is not always-refuse', () => {
+    assert.equal(buildGateEvidence({ runId: RUN_ID, auditedTree: AUDITED_TREE, auditedBranch: 'main' }).auditedBranch, 'main');
+    assert.equal(buildGateEvidence({ runId: RUN_ID, auditedTree: AUDITED_TREE, auditedBranch: null }).auditedBranch, null);
+  });
+});
+
+test('writeGateEvidence DEGRADES on a malformed branch — telemetry never crashes an audit', () => {
+  // The throw is correct at the pure boundary (a programming error), but this
+  // writer is best-effort by contract: a marker failure must never fail an audit
+  // that otherwise succeeded. It degrades to "no marker", which reads as not-run.
+  let wrote = false;
+  const res = writeGateEvidence({
+    repoRoot: '/repo', runId: RUN_ID, mode: 'code', auditedTree: AUDITED_TREE,
+    auditedBranch: undefined,           // the explicit-undefined hole
+    log: () => {}, adapters: { atomicWriteFileSync: () => { wrote = true; } },
+  });
+  assert.equal(res.written, false);
+  assert.equal(res.reason, 'invalid-input');
+  assert.equal(wrote, false, 'a marker built from invalid input must never reach disk');
+});
