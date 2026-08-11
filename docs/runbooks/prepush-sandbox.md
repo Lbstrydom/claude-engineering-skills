@@ -215,6 +215,17 @@ hooks.
 | Skip the hook entirely | `git push --no-verify` |
 | Run the sandbox by hand | `npm run prepush:check -- --base <sha> --head <sha>` |
 | Run the poison pills serially (debugging) | `GATES_POISON_CONCURRENCY=1 npm run gates:poison` |
+| Force a refresh of the DB test image | `AUDIT_LOOP_DB_IMAGE_PULL=always npm run db:suites:gate` |
+
+`db:suites:gate` reuses a locally-tagged test image for a week rather than
+re-pulling a mutable tag on every push (~1.9s each time, measured). The window is
+bounded on purpose — that pull is the ONLY thing that ever refreshes the image,
+since the `postgres-parity` CI job uses an Actions service container and never
+reaches that code. Every state where the local image's provenance can't be
+established (absent, no timestamp, clock skew) pulls. The gate and the container
+runner now both report their own elapsed time, so its cost is read off a run
+rather than trusted from a comment — which is how the old "~10s" claim came to
+stand at a real 24s for three weeks.
 
 `gates:poison` runs its pills across `min(cpus-2, pillCount)` forked workers
 (49.3 s → 20.7 s measured, 2026-08-11 — see `status.md`). Output stays in

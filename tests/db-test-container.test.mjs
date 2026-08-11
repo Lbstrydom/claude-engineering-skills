@@ -24,8 +24,11 @@ import {
   parseArgs,
   classifyRunFailure,
   createLifecycle,
+  decideImagePull,
+  IMAGE_MAX_AGE_MS,
   _internals,
 } from '../scripts/db-test-container.mjs';
+import { fmtMs } from '../scripts/lib/cli-io.mjs';
 import { assertDisposableDbUrl } from '../scripts/lib/db/client.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -259,10 +262,14 @@ describe('--selfcheck-relocation', () => {
  */
 function createFakeExec(handlers) {
   const calls = [];
+  // Deliberately NO catch-all `default` beyond what a test declares: the fake
+  // throwing on an unregistered command is what caught the `docker image
+  // inspect` call added in 2026-08-11 rather than silently answering it.
+  const merged = { ...baseDockerHandlers(), ...handlers };
   const exec = async (cmd, args, opts) => {
     calls.push({ cmd, args, opts });
     const key = cmd === 'docker' ? args[0] : cmd;
-    const handler = handlers[key] || handlers.default;
+    const handler = merged[key] || merged.default;
     if (!handler) throw new Error(`no fake handler for ${cmd} ${args.join(' ')}`);
     return handler(args, opts, calls.length);
   };
@@ -272,6 +279,21 @@ function createFakeExec(handlers) {
 
 const ok = (stdout = '') => async () => ({ code: 0, stdout, stderr: '', signal: null, timedOut: false });
 const fail = (stderr = 'boom', code = 1) => async () => ({ code, stdout: '', stderr, signal: null, timedOut: false });
+
+/**
+ * `docker image inspect` — the image-staleness probe added 2026-08-11.
+ *
+ * Keyed `image` because the fake dispatches docker by `args[0]`, and `docker
+ * image inspect <image>` is a different command from `docker inspect
+ * <container>`; collapsing them would let a container probe answer an image
+ * question.
+ *
+ * Defaults to **absent**, so the pull still runs and every lifecycle test below
+ * keeps exercising the same call sequence it was written against — this base is
+ * here to avoid restating one line in ten handler maps, not to change what any
+ * of them tests. The reuse path is covered explicitly further down.
+ */
+const baseDockerHandlers = () => ({ image: fail('No such image: pgvector/pgvector:pg16', 1) });
 
 describe('_internals.createLifecycle stays the same seam as the top-level export (audit round-2 L1)', () => {
   it('is the identical function object', () => {
@@ -480,5 +502,184 @@ describe('scratch-dir lifetime is not bound to the container\'s (2026-08-01)', (
     const lifecycle = createLifecycle({ exec, waitForReady: async () => ({ ok: true }) });
     await lifecycle.run('regen-schema', { port: 5433 });
     assert.equal(huskCount(), before);
+  });
+});
+
+// ── Image-pull policy (2026-08-11) ──────────────────────────────────────────
+//
+// `docker pull` on an ALREADY-PRESENT image measured 1.77s against 0.19s for a
+// local `docker image inspect` — ~7% of `db:suites:gate`, spent re-confirming a
+// tag we already had. But the tag is MUTABLE and this pull is the only thing
+// that ever refreshes it (the postgres-parity CI job uses an Actions service
+// container and never reaches this code), so skipping unconditionally would
+// freeze every developer on their first pull, permanently and silently.
+//
+// The policy is therefore a staleness WINDOW, and what these tests pin is the
+// direction it fails in: every state where the local image's provenance cannot
+// be established must PULL. Being slow is recoverable; testing against an image
+// we cannot vouch for is the silent kind of wrong.
+
+describe('decideImagePull — bounded staleness, failing toward the pull', () => {
+  const NOW = Date.parse('2026-08-11T12:00:00Z');
+  const DAY = 86_400_000;
+  const at = (ms) => new Date(NOW - ms).toISOString();
+  const decide = (o) => decideImagePull({ now: NOW, ...o });
+
+  it('a present, recently-tagged image is REUSED — the whole point', () => {
+    const r = decide({ present: true, lastTagTime: at(DAY) });
+    assert.equal(r.pull, false);
+    assert.match(r.reason, /1\.0d old/, 'the reason must state the age it judged');
+  });
+
+  it('an image older than the window is re-pulled, so freshness is bounded not abandoned', () => {
+    assert.equal(decide({ present: true, lastTagTime: at(IMAGE_MAX_AGE_MS + DAY) }).pull, true);
+  });
+
+  it('the boundary is inclusive on the reuse side and exclusive on the pull side', () => {
+    // Pinned because an off-by-one here silently halves or doubles the refresh
+    // interval, and nothing downstream would ever report it.
+    assert.equal(decide({ present: true, lastTagTime: at(IMAGE_MAX_AGE_MS) }).pull, false);
+    assert.equal(decide({ present: true, lastTagTime: at(IMAGE_MAX_AGE_MS + 1) }).pull, true);
+  });
+
+  it('an ABSENT image pulls', () => {
+    assert.equal(decide({ present: false }).pull, true);
+  });
+
+  for (const [label, lastTagTime] of [
+    ['missing', undefined], ['empty', ''], ['whitespace', '   '],
+    ['unparseable', 'not-a-date'], ['null-ish', null],
+  ]) {
+    it(`a ${label} LastTagTime is UNKNOWN age → pulls, never treated as fresh`, () => {
+      // The fail-open version reads an unknown age as 0 and reuses forever.
+      const r = decide({ present: true, lastTagTime });
+      assert.equal(r.pull, true, label);
+      assert.match(r.reason, /unknown/);
+    });
+  }
+
+  it('a FUTURE timestamp (clock skew) pulls rather than reading as eternally fresh', () => {
+    // A negative age compares as fresher than any threshold, so a skewed clock
+    // would disable refresh permanently — the exact silent-freeze this policy
+    // exists to avoid, arriving through the back door.
+    const r = decideImagePull({ present: true, lastTagTime: new Date(NOW + DAY).toISOString(), now: NOW });
+    assert.equal(r.pull, true);
+    assert.match(r.reason, /future|skew/i);
+  });
+
+  it('AUDIT_LOOP_DB_IMAGE_PULL=always overrides a fresh image', () => {
+    // The escape hatch has to beat the cache, or "always" does not mean always.
+    assert.equal(decide({ present: true, lastTagTime: at(0), policy: 'always' }).pull, true);
+  });
+
+  it('an unrecognised policy value does not silently disable the refresh', () => {
+    // Notably there is no `never`: a value that permanently disables freshness
+    // is not an escape hatch, it is the unconditional skip wearing a flag.
+    for (const policy of ['never', 'no', 'false', '', undefined]) {
+      assert.equal(decide({ present: true, lastTagTime: at(IMAGE_MAX_AGE_MS + DAY), policy }).pull, true,
+        `policy=${JSON.stringify(policy)} must not defeat the staleness window`);
+    }
+  });
+
+  it('every branch explains itself — a bare boolean is not diagnosable', () => {
+    for (const o of [{ present: false }, { present: true, lastTagTime: at(DAY) },
+      { present: true, lastTagTime: 'x' }, { present: true, lastTagTime: at(0), policy: 'always' }]) {
+      assert.match(decide(o).reason, /\S/);
+    }
+  });
+});
+
+describe('fmtMs — the shared duration formatter', () => {
+  it('renders sub-second as ms and second-scale as one decimal', () => {
+    assert.equal(fmtMs(188), '188ms');
+    assert.equal(fmtMs(999), '999ms');
+    assert.equal(fmtMs(1000), '1.0s');
+    assert.equal(fmtMs(24076), '24.1s');
+  });
+});
+
+// ── The pull decision, wired through the real lifecycle ──────────────────────
+//
+// decideImagePull is unit-tested above; these prove it is actually CONSULTED —
+// a pure policy nothing calls is the shape this repo keeps finding.
+
+describe('createLifecycle — image pull is conditional, and reuse is visible', () => {
+  const lifecycleWith = (imageHandler, stderrSink) => {
+    const exec = createFakeExec({
+      version: ok('25.0.0'),
+      image: imageHandler,
+      pull: ok(),
+      inspect: fail('No such object', 1), // no stale container
+      rm: ok(),
+      run: ok('deadbeef0001\n'),
+      node: ok(),
+    });
+    return {
+      exec,
+      lifecycle: createLifecycle({
+        exec,
+        waitForReady: async () => ({ ok: true }),
+        stderr: { write: (s) => stderrSink.push(s) },
+      }),
+    };
+  };
+  const pulls = (exec) => exec.calls.filter((c) => c.cmd === 'docker' && c.args[0] === 'pull').length;
+
+  it('a FRESH local image skips the pull entirely', async () => {
+    const out = [];
+    const { exec, lifecycle } = lifecycleWith(ok(`${new Date().toISOString()}\n`), out);
+    assert.equal(await lifecycle.run('regen-schema', { port: 5433 }), 0);
+    assert.equal(pulls(exec), 0, 'the whole 1.77s saving is this call not happening');
+    assert.match(out.join(''), /using local pgvector\/pgvector:pg16/,
+      'a skipped pull must SAY so — silence is indistinguishable from a pull that happened');
+    assert.match(out.join(''), /AUDIT_LOOP_DB_IMAGE_PULL=always/, 'and must name the way to force one');
+  });
+
+  it('a STALE local image still pulls', async () => {
+    const old = new Date(Date.now() - (IMAGE_MAX_AGE_MS + 86_400_000)).toISOString();
+    const { exec, lifecycle } = lifecycleWith(ok(`${old}\n`), []);
+    assert.equal(await lifecycle.run('regen-schema', { port: 5433 }), 0);
+    assert.equal(pulls(exec), 1, 'bounded staleness means the refresh must still happen');
+  });
+
+  it('an ABSENT local image pulls — the first-run path', async () => {
+    const { exec, lifecycle } = lifecycleWith(fail('No such image', 1), []);
+    assert.equal(await lifecycle.run('regen-schema', { port: 5433 }), 0);
+    assert.equal(pulls(exec), 1);
+  });
+
+  it('a failing pull is still exit 2 — the short-circuit did not swallow it', async () => {
+    const out = [];
+    const exec = createFakeExec({
+      version: ok('25.0.0'),
+      image: fail('No such image', 1),
+      pull: fail('network unreachable', 1),
+      inspect: fail('No such object', 1),
+      rm: ok(), run: ok('x\n'), node: ok(),
+    });
+    const lifecycle = createLifecycle({
+      exec, waitForReady: async () => ({ ok: true }), stderr: { write: (s) => out.push(s) },
+    });
+    assert.equal(await lifecycle.run('regen-schema', { port: 5433 }), 2);
+    assert.match(out.join(''), /failed to pull/);
+  });
+
+  it('the probe is ONE cheap inspect, and it precedes the pull it is deciding about', async () => {
+    // Guards the optimisation against inverting into a cost: if the probe ever
+    // became expensive, or ran after/alongside a pull, the saving would be gone
+    // while every other assertion here still passed.
+    const old = new Date(Date.now() - (IMAGE_MAX_AGE_MS + 86_400_000)).toISOString();
+    const { exec, lifecycle } = lifecycleWith(ok(`${old}\n`), []);
+    assert.equal(await lifecycle.run('regen-schema', { port: 5433 }), 0);
+
+    const docker = exec.calls.filter((c) => c.cmd === 'docker').map((c) => c.args);
+    const probes = docker.filter((a) => a[0] === 'image');
+    assert.equal(probes.length, 1, 'exactly one probe per run');
+    assert.deepEqual(probes[0].slice(0, 2), ['image', 'inspect'],
+      'the probe must be a local inspect — anything touching the registry defeats the point');
+    assert.ok(
+      docker.findIndex((a) => a[0] === 'image') < docker.findIndex((a) => a[0] === 'pull'),
+      'the decision must be made BEFORE the pull, not used to justify one already issued',
+    );
   });
 });

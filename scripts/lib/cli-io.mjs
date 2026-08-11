@@ -86,6 +86,24 @@ export function hasFlag(name) {
  * machine-readable JSON via `emit`).
  * @param {string} msg
  */
+/**
+ * `1234` → `1.2s`, `188` → `188ms`. The shared duration formatter for CLI
+ * output.
+ *
+ * Lives here rather than beside its first caller because its second caller
+ * (`db-suites-gate.mjs`) would otherwise have had to import
+ * `db-test-container.mjs` — a module that pulls in the `pg` driver — purely for
+ * a formatter, and would have inverted the dependency: the gate is a thin
+ * wrapper AROUND that script, not a consumer of its internals. Two copies of a
+ * one-line formatter is the other wrong answer.
+ *
+ * @param {number} ms
+ * @returns {string}
+ */
+export function fmtMs(ms) {
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`;
+}
+
 export function log(msg) {
   process.stderr.write(`${msg}\n`);
 }

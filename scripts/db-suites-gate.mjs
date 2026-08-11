@@ -23,8 +23,42 @@
  *
  * Deliberately UNSCOPED — it runs on every check rather than only when a
  * path list says the DB seam changed. A stale path list that silently stops
- * matching is the failure mode this repo has hit twice; ~10s is cheaper than
- * that risk.
+ * matching is the failure mode this repo has hit twice, and paying the gate's
+ * full cost on every push is cheaper than that risk. That trade is unchanged;
+ * what follows is only what the cost currently IS.
+ *
+ * **Cost — `measured` 2026-08-11, and it SCALES, so do not read it as a
+ * constant.** ~`22.2s` total on a 32-core Windows box (mean of 2 runs),
+ * decomposed by the runner's own per-step output — run
+ * `npm run db:suites:gate` and read it off, which is the point:
+ *
+ *   ~15.2s  the serial `ISOLATED_SUITE_FILES` block  ← the driver
+ *    ~3.2s  docker preflight + image probe + container create + ready + teardown
+ *    ~1.8s  `migrate`
+ *    ~1.6s  the serial `DESTRUCTIVE_SUITE_FILES` block
+ *    ~0.2s  `schema-diff`, ~0.2s the contract suite
+ *
+ * Add ~1.9s when the image is refreshed (`AUDIT_LOOP_DB_IMAGE_PULL=always`, or
+ * a local image older than a week) — `decideImagePull` in db-test-container.mjs
+ * explains why that is a weekly cost and not a per-push one.
+ *
+ * **The driver is the ENROLLED FILE COUNT, not the assertions.** That block runs
+ * under `--test-concurrency=1` (those suites share one database and several
+ * mutate schema, so serial is load-bearing, not incidental), and each file costs
+ * ~513ms of fixed overhead — node startup plus a Postgres connection and its
+ * fixtures — against only ~5.1s of actual test bodies across all twenty. So the
+ * gate's cost is roughly `files x 0.5s + 7s`, and **enrolling a suite adds ~0.5s
+ * whatever it asserts**.
+ *
+ * **Why this paragraph is written this way.** It previously read "~10s is
+ * cheaper than that risk" — a bare figure with no date, no method and no driver.
+ * It was accurate when written (`3b143bf6`, 2026-07-20), when the serial list
+ * held ONE file; `e7e182ea` took it to twenty on 2026-08-11 and the number
+ * silently became 2.4x wrong, in the sentence justifying the design. Per
+ * AGENTS.md a figure carries its label and its command — and the more durable
+ * fix is that `db-test-container.mjs` now reports every step's elapsed time, so
+ * the live decomposition is read off a run rather than trusted from this
+ * comment. If these numbers and a run disagree, **the run is right**.
  *
  * Exit-code policy (the whole point of this wrapper). `db-test-container.mjs`
  * distinguishes a real failure from an environmental one, and only the former
@@ -48,7 +82,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { ArgvError, assertKnownFlags } from './lib/cli-io.mjs';
+import { ArgvError, assertKnownFlags, fmtMs } from './lib/cli-io.mjs';
 
 /** Every flag this CLI accepts. Enforced below — see `cli:flags:gate`. */
 const KNOWN_FLAGS = Object.freeze(['--selfcheck-relocation']);
@@ -76,9 +110,11 @@ export function repoRoot() {
  * @param {() => {status: number|null, error?: Error}} io.runSuites  run the suites
  * @param {(s: string) => void} io.write  stderr sink
  * @param {Record<string, string|undefined>} io.env
+ * @param {() => number} [io.now]  clock, injected so the elapsed-time line is
+ *   assertable without making a test wait for real seconds to pass
  * @returns {number} process exit code
  */
-export function decide({ dockerAvailable, runSuites, write, env }) {
+export function decide({ dockerAvailable, runSuites, write, env, now = Date.now }) {
   const required = env.AUDIT_LOOP_DB_TESTS_REQUIRED === '1';
   const optedOut = env.AUDIT_LOOP_DB_TESTS_SKIP === '1';
 
@@ -102,11 +138,17 @@ export function decide({ dockerAvailable, runSuites, write, env }) {
 
   if (!dockerAvailable()) return skip('no reachable Docker daemon (`docker info` failed)');
 
+  const startedAt = now();
   const res = runSuites();
   if (res.error) return skip(`could not spawn db-test-container.mjs (${res.error.message})`);
 
   switch (res.status) {
     case 0:
+      // Report the total. This is the second-largest item in the `check` chain
+      // and it used to say nothing about its own cost, so the only figure anyone
+      // had was a comment — which is exactly how that comment came to be 2.4x
+      // wrong for three weeks. A gate that states its cost cannot drift silently.
+      write(`db-suites-gate: DB suites passed in ${fmtMs(now() - startedAt)}.\n`);
       return 0;
     case 2:
       return skip('docker/port problem starting the test container (exit 2)');

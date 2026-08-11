@@ -18,6 +18,12 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { decide } from '../scripts/db-suites-gate.mjs';
 
+/** A clock that returns each value in turn, so elapsed time is exact and instant. */
+function stubClock(...values) {
+  let i = 0;
+  return () => values[Math.min(i++, values.length - 1)];
+}
+
 /** Harness: records output, defaults to the happy path. */
 function run(overrides = {}) {
   const out = [];
@@ -32,10 +38,32 @@ function run(overrides = {}) {
 }
 
 describe('db-suites-gate — blocks only on real failure', () => {
-  test('suites pass → exit 0, silent', () => {
-    const { code, out } = run();
+  test('suites pass → exit 0, one line, and it states the cost', () => {
+    // This asserted `out === ''` ("a passing gate must not add noise") until
+    // 2026-08-11. The intent was no DETAIL dump, but the literal reading made
+    // this gate the only one in the `check` chain that reports nothing on
+    // success — every sibling prints a one-line summary — and that silence is
+    // how its own docstring's cost figure drifted 2.4x (10s → 24s) unchallenged
+    // for three weeks. The number nobody can see is the number nobody corrects.
+    const { code, out } = run({ now: stubClock(0, 24_076) });
     assert.equal(code, 0);
-    assert.equal(out, '', 'a passing gate must not add noise');
+    assert.equal(out.trimEnd().split('\n').length, 1, 'one line — the no-detail-dump intent is preserved');
+    assert.match(out, /passed in 24\.1s/, 'the elapsed time is the point of the line');
+  });
+
+  test('the elapsed figure comes from the clock, not from a hardcoded string', () => {
+    // A fabricated constant in a telemetry field reads exactly like a
+    // measurement. Drive two different clocks and require the output to follow.
+    assert.match(run({ now: stubClock(1_000, 3_500) }).out, /passed in 2\.5s/);
+    assert.match(run({ now: stubClock(0, 188) }).out, /passed in 188ms/);
+  });
+
+  test('a FAILING or SKIPPED run does not claim a passing duration', () => {
+    // The success line must be reachable only from the success branch.
+    for (const o of [{ runSuites: () => ({ status: 1 }) }, { runSuites: () => ({ status: 2 }) },
+      { dockerAvailable: () => false }]) {
+      assert.doesNotMatch(run({ ...o, now: stubClock(0, 9_999) }).out, /passed in/);
+    }
   });
 
   test('suite failure (exit 1) → blocks, and says it is NOT an environment problem', () => {

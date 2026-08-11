@@ -35,6 +35,7 @@ import { pathToFileURL } from 'node:url';
 import pg from 'pg';
 
 import { assertRepoRoot, findRepoRootFromScript } from './lib/assert-repo-root.mjs';
+import { fmtMs } from './lib/cli-io.mjs';
 
 // ── CI-parity constants (single source; guarded by tests/db-test-container.test.mjs) ──
 
@@ -235,6 +236,70 @@ export function parseArgs(argv) {
  * @param {string} stderrText
  * @param {number} port
  */
+/** How long a locally-tagged image is trusted before it is re-pulled. */
+export const IMAGE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Should we `docker pull` the test image, or is the local copy good enough?
+ *
+ * **The cost.** Measured 2026-08-11: `docker pull` on an image that is ALREADY
+ * PRESENT still costs **1.77 s** — a registry round-trip to re-confirm a tag —
+ * against **0.19 s** for a local `docker image inspect`. `db:suites:gate` runs on
+ * every push, so that was ~7% of the gate spent re-learning something it already
+ * knew.
+ *
+ * **Why not simply skip when present.** `pgvector/pgvector:pg16` is a MUTABLE
+ * tag: upstream can republish it. And this pull is the ONLY thing that ever
+ * refreshes it — the `postgres-parity` CI job uses a GitHub Actions *service*
+ * container and never runs this code path, so "CI will catch a stale image" is
+ * false here. Skipping unconditionally would freeze every developer on whatever
+ * they happened to pull first, permanently and silently, which is the failure
+ * shape this repo keeps finding rather than a saving.
+ *
+ * So: **bounded staleness, not none and not unbounded.** Re-pull when the local
+ * tag is older than `IMAGE_MAX_AGE_MS`, otherwise trust it. The freshness
+ * property survives with a stated window; the cost drops from every-push to
+ * once-a-week.
+ *
+ * **Fails toward pulling.** Absent image, missing/unparseable timestamp, or a
+ * timestamp in the FUTURE (clock skew — a negative age would otherwise read as
+ * "brand new" forever) all pull. Being slow is recoverable; silently testing
+ * against an image whose provenance we cannot establish is not.
+ *
+ * `LastTagTime` is deliberate: it is when this machine last tagged the image,
+ * i.e. when it was pulled. `.Created` is the image's BUILD date, which for a
+ * long-lived upstream tag is months old and would make every run re-pull.
+ *
+ * @param {object} o
+ * @param {boolean} o.present            `docker image inspect` exited 0
+ * @param {string|undefined} o.lastTagTime  `{{.Metadata.LastTagTime}}` output
+ * @param {number} o.now                 epoch ms
+ * @param {string} [o.policy]            `AUDIT_LOOP_DB_IMAGE_PULL`: `always` | `auto`
+ * @param {number} [o.maxAgeMs]
+ * @returns {{pull: boolean, reason: string}}
+ */
+export function decideImagePull({ present, lastTagTime, now, policy, maxAgeMs = IMAGE_MAX_AGE_MS }) {
+  if (policy === 'always') return { pull: true, reason: 'AUDIT_LOOP_DB_IMAGE_PULL=always' };
+  if (!present) return { pull: true, reason: 'image not present locally' };
+
+  const tagged = Date.parse(String(lastTagTime ?? '').trim());
+  if (!Number.isFinite(tagged)) {
+    return { pull: true, reason: 'local image age is unknown (no usable LastTagTime)' };
+  }
+  const ageMs = now - tagged;
+  if (ageMs < 0) {
+    // Not pedantry: a future timestamp makes `ageMs` negative, which compares as
+    // fresher than any threshold — so the image would never be refreshed again
+    // on a skewed clock. Treat it as unknown, i.e. pull.
+    return { pull: true, reason: 'local image is tagged in the future (clock skew) — treating age as unknown' };
+  }
+  const days = (ms) => (ms / 86_400_000).toFixed(1);
+  if (ageMs > maxAgeMs) {
+    return { pull: true, reason: `local image is ${days(ageMs)}d old (> ${days(maxAgeMs)}d)` };
+  }
+  return { pull: false, reason: `local image is ${days(ageMs)}d old (<= ${days(maxAgeMs)}d)` };
+}
+
 export function classifyRunFailure(stderrText, port) {
   const text = stderrText || '';
   if (/is already in use by container/i.test(text)) {
@@ -381,13 +446,29 @@ export function createLifecycle(deps = {}) {
     return teardown();
   }
 
+  /**
+   * Every step reports its own elapsed time.
+   *
+   * Added 2026-08-11 after an investigation that should not have been one: this
+   * gate's cost had drifted 10s → 24s and answering "where does it go" required
+   * hand-instrumenting the runner and parsing TAP durations out of a saved log.
+   * The steps are the natural unit of that answer and they were silent. A
+   * self-reporting step means the NEXT drift is read off the output rather than
+   * re-derived — and it is what keeps the prose figures in this file's
+   * fileoverview honest, since a number nobody recomputes is a number that rots
+   * (`db-suites-gate.mjs`'s "~10s" was written when the serial list held ONE
+   * file and stood unchallenged for three weeks at twenty).
+   */
   async function runStep(name, cmd, args, env) {
     stderr.write(`[db-test-container] step "${name}": ${cmd} ${args.join(' ')}\n`);
+    const t0 = Date.now();
     const res = await exec(cmd, args, { env, capture: false, cwd: repoRoot });
+    const elapsed = fmtMs(Date.now() - t0);
     if (res.code !== 0) {
-      stderr.write(`[db-test-container] step "${name}" failed (exit ${res.code}${res.timedOut ? ', timed out' : ''})\n`);
+      stderr.write(`[db-test-container] step "${name}" failed (exit ${res.code}${res.timedOut ? ', timed out' : ''}) after ${elapsed}\n`);
       return false;
     }
+    stderr.write(`[db-test-container] step "${name}" ok (${elapsed})\n`);
     return true;
   }
 
@@ -454,10 +535,35 @@ export function createLifecycle(deps = {}) {
 
     // ── pull (visible progress; kept separate from `run` so a slow first
     //    pull doesn't eat into `run`'s bounded timeout) ──
-    const pull = await exec('docker', ['pull', DB_TEST_IMAGE], { timeoutMs: 600000, capture: false });
-    if (pull.code !== 0) {
-      stderr.write(`[db-test-container] failed to pull ${DB_TEST_IMAGE} (exit ${pull.code})\n`);
-      return 2;
+    //
+    // Conditional since 2026-08-11 — see decideImagePull() for why this is a
+    // staleness WINDOW rather than either extreme.
+    const inspImage = await exec(
+      'docker', ['image', 'inspect', DB_TEST_IMAGE, '--format', '{{.Metadata.LastTagTime}}'],
+      { timeoutMs: 10000, capture: true },
+    );
+    const pullDecision = decideImagePull({
+      present: inspImage.code === 0,
+      lastTagTime: inspImage.stdout,
+      now: Date.now(),
+      policy: process.env.AUDIT_LOOP_DB_IMAGE_PULL,
+    });
+    if (pullDecision.pull) {
+      stderr.write(`[db-test-container] pulling ${DB_TEST_IMAGE} — ${pullDecision.reason}\n`);
+      const t0 = Date.now();
+      const pull = await exec('docker', ['pull', DB_TEST_IMAGE], { timeoutMs: 600000, capture: false });
+      if (pull.code !== 0) {
+        stderr.write(`[db-test-container] failed to pull ${DB_TEST_IMAGE} (exit ${pull.code})\n`);
+        return 2;
+      }
+      stderr.write(`[db-test-container] pull ok (${fmtMs(Date.now() - t0)})\n`);
+    } else {
+      // Say which image is being used and why it was trusted. A skipped pull
+      // that prints nothing is indistinguishable from a pull that happened, and
+      // "which image did that run actually use" is the first question when a DB
+      // suite fails for no apparent reason.
+      stderr.write(`[db-test-container] using local ${DB_TEST_IMAGE} — ${pullDecision.reason} `
+        + `(set AUDIT_LOOP_DB_IMAGE_PULL=always to force a refresh)\n`);
     }
 
     // ── state-aware reconcile: remove only a STOPPED stale container; a

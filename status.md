@@ -1,6 +1,103 @@
 # Project Status Log
 
-## 2026-08-11 (latest) — pre-push gate: 20 gates 86.2s → 57.1s, and the sandbox's fast path was dead code in every worktree
+## 2026-08-11 (latest) — `db:suites:gate` cost 24s against a docstring saying 10s, and nothing could see it
+
+Follow-up to the pre-push perf work below, from one question: *why 24s and not
+the ~10s the code claims?*
+
+### The figure was not wrong — it was stale, and unwatchable
+
+`git log -S` pins *"~10s is cheaper than that risk"* to **`3b143bf6`,
+2026-07-20**, when `ISOLATED_SUITE_FILES` held **one** file. It holds **twenty**
+now, and fourteen of those landed the same day I measured, in `e7e182ea`
+(the enrolment of suites that had never executed anywhere). The growth is
+correct and deliberate; the cost sentence beside it silently became 2.4x wrong —
+in the paragraph justifying the design.
+
+Answering *where does it go* required hand-instrumenting the runner and parsing
+TAP durations out of a saved log, because **the steps reported nothing**. That
+is the actual defect. Bumping the number would have left the next drift equally
+invisible, so both fixes target the observability, not the digit:
+
+- **`db-test-container.mjs` reports every step's elapsed time**, and
+  `db-suites-gate` reports its total. The decomposition is now read off a run.
+  `db:suites:gate` was the only gate in the `check` chain silent on success —
+  every sibling prints a one-line summary — and that silence is what let the
+  claim stand unchallenged.
+- **The docstring states its measurement date, its command, and its DRIVER** —
+  the cost is `files × ~0.5s + ~7s`, so enrolling a suite adds ~0.5s whatever it
+  asserts. It ends with "if these numbers and a run disagree, the run is right."
+
+Measured decomposition (`npm run db:suites:gate`, mean of 2): ~15.2s the serial
+`ISOLATED` block · ~3.2s docker + container lifecycle · ~1.8s `migrate` · ~1.6s
+the serial `DESTRUCTIVE` block · ~0.4s schema-diff + contract.
+
+**The driver is the file count, not the assertions.** That block runs under
+`--test-concurrency=1` — load-bearing, since those suites share one database and
+several mutate schema — and each file costs **~513 ms** of fixed overhead
+against only **~5.1s** of actual test bodies across all twenty. Measured
+separately: the same files with no DSN (they self-skip but still pay startup)
+cost **144 ms** each, so ~370 ms of that is the Postgres connection and its
+fixtures. I did **not** touch this: reclaiming it means per-file DB isolation
+against suites that run `DROP SCHEMA public CASCADE`, which is not a trade worth
+10s.
+
+### `docker pull` on an image we already had: 1.9s per push → per week
+
+Measured: `docker pull` on an already-present image costs **1.9–2.0s** (a
+registry round-trip to re-confirm a tag) against **0.19s** for a local
+`docker image inspect`.
+
+Skipping it unconditionally was the wrong fix. `pgvector/pgvector:pg16` is a
+**mutable** tag and this pull is the ONLY thing that ever refreshes it — the
+`postgres-parity` CI job uses a GitHub Actions *service* container and never
+reaches this code, so "CI will catch a stale image" is false here. An
+unconditional skip would freeze every developer on their first pull,
+permanently and silently.
+
+So it is a **staleness window**, not an absence of one: reuse a locally-tagged
+image for 7 days, re-pull after. `decideImagePull` is pure and exported, and
+**fails toward pulling** — absent image, missing or unparseable timestamp, and a
+*future* timestamp all pull. The future case is not pedantry: a negative age
+compares as fresher than any threshold, so one skewed clock would disable
+refresh forever, which is the silent freeze arriving through the back door.
+`LastTagTime` (when this machine tagged it) not `.Created` (the image's build
+date, months old for a long-lived tag — every run would re-pull).
+`AUDIT_LOOP_DB_IMAGE_PULL=always` forces one. There is deliberately no `never`.
+
+**Controlled A/B, paired, same session** — the only difference is the flag:
+
+| | run 1 | run 2 | mean |
+|---|---:|---:|---:|
+| forced pull (pre-change behaviour) | 24.24s | 24.01s | **24.13s** |
+| reuse | 22.36s | 22.01s | **22.19s** |
+
+**−1.94s (−8%)**, exit 0 throughout, per-step timings unchanged between arms.
+
+### Verification
+
+Four red controls, each failing on the intended assertion and only that one:
+unconditional-skip-when-present (5 tests red), unknown-age-reads-as-fresh (5),
+clock-skew guard removed (1), and a fabricated duration constant in place of the
+clock (1). Plus a fifth defect caught in my own work: the first version of
+"the probe is one cheap inspect" asserted on a lifecycle it never ran — a
+vacuous green, the exact shape `/audit-code` Step 4.5 exists to catch. Rewritten
+to assert the probe count, that it is a local `image inspect`, and that it
+precedes the pull.
+
+The `createFakeExec` harness throws on an unregistered command rather than
+answering it, which is what surfaced the new `docker image inspect` call in ten
+lifecycle tests instead of letting it pass silently. Its new base handler
+defaults the image to **absent**, so those ten keep exercising the exact
+sequence they were written for.
+
+One test was overridden deliberately: `suites pass → exit 0, silent` asserted
+`out === ''`. The intent was *no detail dump*, and that is preserved (one line,
+asserted); the literal reading is what made this gate unwatchable.
+
+---
+
+## 2026-08-11 — pre-push gate: 20 gates 86.2s → 57.1s, and the sandbox's fast path was dead code in every worktree
 
 Two verified defects, neither of which weakened anything to fix. All figures
 below are **measured** on a 32-core Windows box, 2026-08-11.
