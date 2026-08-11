@@ -20,6 +20,7 @@ import { many, one, upsert, withTx } from '../db/query.mjs';
 import { isCloudEnabled } from './repo.mjs';
 import {
   personaFindingHash, isP0OrP1, isMalformedFinding, buildStepUrlLookup,
+  personaSeverityCode,
   PERSONA_FINDING_HASH_VERSION, PERSONA_FINDING_HASH_SHAPE,
 } from '../persona/audit-correlator.mjs';
 import { retireMissedCorrelationsForHash } from './plans-ship.mjs';
@@ -271,8 +272,8 @@ export async function getPersonaOutcomesSummary({ repoName, repoId: callerRepoId
 
     const stepUrlByNumber = buildStepUrlLookup(session.click_path);
     const p0p1 = (session.findings || []).filter(isIdentifiableP0OrP1);
-    const rawP0 = p0p1.filter((f) => f.code === 'P0').length;
-    const rawP1 = p0p1.filter((f) => f.code === 'P1').length;
+    const rawP0 = p0p1.filter((f) => personaSeverityCode(f) === 'P0').length;
+    const rawP1 = p0p1.filter((f) => personaSeverityCode(f) === 'P1').length;
 
     const repoId = session.repo_id;
     const outcomeByHash = new Map();
@@ -296,7 +297,7 @@ export async function getPersonaOutcomesSummary({ repoName, repoId: callerRepoId
       if (outcome === 'fixed') openRelabeledFixed += 1;
       else if (outcome === 'stale') openRelabeledStale += 1;
       else unlabeled += 1;
-      if (f.code === 'P0') openP0 += 1; else openP1 += 1;
+      if (personaSeverityCode(f) === 'P0') openP0 += 1; else openP1 += 1;
     }
 
     const { staleHashCount, hint } = repoId
@@ -420,7 +421,7 @@ export async function getActionablePersonaOutcomeItems({ repoName, repoId: calle
         outcome: outcome ?? null,
         sessionId: entry.sessionId,
         sessionCreatedAt: entry.sessionCreatedAt,
-        severity: entry.finding.code,
+        severity: personaSeverityCode(entry.finding),
         element: entry.finding.element,
         observed: entry.finding.observed,
       });

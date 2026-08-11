@@ -385,6 +385,13 @@ Record a finding only when confidence ≥0.6. Below that, note it as
 "uncertain — did not report". Every finding needs `element`, `observed`,
 `fix`, `severity`, `confidence`.
 
+**`severity` is load-bearing, not a label** — it must be the literal string
+`"P0"`, `"P1"`, `"P2"` or `"P3"`, and it is the field the auto-correlator
+(Phase 6b) filters on to decide what reaches `persona_audit_correlations`.
+A finding that spells it anything else is silently uncorrelatable; the
+correlator reports `p0p1-shape-mismatch` when your declared counts and this
+field disagree.
+
 ### Special cases
 
 - **404 / page-not-found** → 1 retry after 5s; if still 404, emit P0 "Target URL unreachable" and stop
@@ -671,7 +678,11 @@ this is the visibility the mechanism depends on). Shape:
 
 `attempted: false` means the correlator didn't run at all — `reason` says why
 (`disabled-by-flag`, `no-repo-identity`, `no-p0p1-findings`,
-`session-write-failed`). `attempted: true` with a `reason` still set
+`p0p1-shape-mismatch`, `session-write-failed`). **`p0p1-shape-mismatch` is
+never benign**: you declared `p0Count`/`p1Count` above zero but not one entry
+in `findings` carried a `severity` of `P0`/`P1`, so nothing could be
+correlated. Fix the payload and re-post — every finding needs `severity`
+(see Phase 3), not a differently-named field. `attempted: true` with a `reason` still set
 (`no-candidate-runs`, `candidate-read-failed`, `existence-check-failed`) means
 it tried but couldn't compare against anything real — in BOTH cases, **zero
 correlation rows were written**, which is correct (an empty candidate set is

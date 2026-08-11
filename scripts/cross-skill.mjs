@@ -131,7 +131,7 @@ import { StackProfileSchema, ReachabilityEvidenceRequestSchema, ReachabilityEvid
 import { recommendSkills, renderRecommendationCard } from './lib/skill-recommender.mjs';
 import { resolvePreviewGate } from './lib/cycle/topology.mjs';
 import { cycleConfig, dbConfig } from './lib/config.mjs';
-import { decideCorrelations, MATCHER_VERSION, personaFindingHash } from './lib/persona/audit-correlator.mjs';
+import { decideCorrelations, isP0OrP1, MATCHER_VERSION, personaFindingHash } from './lib/persona/audit-correlator.mjs';
 import { buildPersonaSessionId } from './lib/persona-test/session-id.mjs';
 import { recordNavAuditRun, listNavAuditRunHistory } from './lib/store/nav-audit.mjs';
 import { upsertPersonaFindingOutcome, getPersonaOutcomesSummary, getActionablePersonaOutcomeItems, resolveLabelTarget } from './lib/store/persona-outcomes.mjs';
@@ -1772,8 +1772,26 @@ async function runAutoCorrelate(data, sessionId) {
   if (data.autoCorrelate === false) return { ...base, reason: 'disabled-by-flag' };
   if (!data.repoId) return { ...base, reason: 'no-repo-identity' };
 
-  const p0p1 = (data.findings || []).filter((f) => f?.code === 'P0' || f?.code === 'P1');
-  if (p0p1.length === 0) return { ...base, reason: 'no-p0p1-findings' };
+  // Delegate to the correlator's own `isP0OrP1` oracle — this line used to
+  // re-implement the predicate inline, and when the two drifted apart
+  // (`code` here vs the contract's `severity`) nothing could notice.
+  const p0p1 = (data.findings || []).filter(isP0OrP1);
+  if (p0p1.length === 0) {
+    // A caller-declared P0/P1 count with zero parseable P0/P1 findings is a
+    // SHAPE problem, not an absence — the exact condition that hid the
+    // `code`-vs-`severity` divergence for a month behind a reason string
+    // that reads identically to a genuinely clean run. Name it separately
+    // so the next field rename surfaces in one session, not one month.
+    const declared = (Number(data.p0Count) || 0) + (Number(data.p1Count) || 0);
+    if (declared > 0) {
+      process.stderr.write(
+        `  [correlator] session declares ${declared} P0/P1 finding(s) but none parsed from findings[] — `
+        + `every finding needs a "severity" (or legacy "code") of P0/P1; nothing correlated\n`,
+      );
+      return { ...base, reason: 'p0p1-shape-mismatch', declaredP0P1: declared };
+    }
+    return { ...base, reason: 'no-p0p1-findings' };
+  }
 
   try {
     const candResult = await getCandidateAuditFindings({ repoId: data.repoId, exactCommitSha: data.commitSha || null });

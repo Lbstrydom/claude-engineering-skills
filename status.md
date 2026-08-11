@@ -1,6 +1,88 @@
 # Project Status Log
 
-## 2026-08-11 (latest) — the runner reported a pass for tests it never ran
+## 2026-08-11 (latest) — the correlator read a field the skill never wrote
+
+`persona_audit_correlations` was empty store-wide, leaving
+`audit_effectiveness.user_visible_precision` / `user_visible_recall` NULL for
+every repo. The repo-identity fix earlier today (`6dc86cbc` + migration
+`20260811060000`) was necessary but not sufficient — the sessions joined and the
+table stayed empty.
+
+**The cause is a field-name divergence between the authoring contract and every
+reader.** `skills/persona-test/SKILL.md` has specified **`severity`** since
+2026-04-19 (`cb1679ba`): *"Every finding needs `element`, `observed`, `fix`,
+`severity`, `confidence`"*, and the Phase 5 fence renders `[P<n>]`. There is no
+`code` field anywhere in the authoring surface. Every consumer nevertheless read
+`finding.code` — `isP0OrP1`, `isSeverityUnderstated`, the `personaFindingHash`
+payload, the emitted `personaSeverity`, four counters in `persona-outcomes.mjs`,
+and a *duplicated* inline predicate in `cross-skill.mjs`'s `runAutoCorrelate`.
+
+It was written against a docstring claiming the `code` shape was "verified
+against live session data, 2026-07-13" — evidence the 2026-07-14 store wipe
+erased, and which the live store contradicts. **Measured on all 7 sessions:
+`isP0OrP1` matched 0 findings; reading `severity` matched exactly the stored
+`p0_count + p1_count` every time (2, 3, 3), with 0 malformed.**
+
+**Why it stayed invisible for a month.** Three sessions with real P0/P1s took
+the `no-p0p1-findings` branch — byte-identical to the reason the four genuinely
+clean sessions get. `correlationSummary` has no operator surface at all: Phase 6b
+asks the *agent* to echo it, and what it would have echoed reads as benign. The
+correlator's own test suite is green because every fixture is built from a
+`code`-shaped factory, so it proved the reader against a shape production has
+never emitted.
+
+### The fix
+
+One oracle — `personaSeverityCode(finding)` in `audit-correlator.mjs` — reads the
+documented `severity`, falls back to legacy `code`, normalises, and returns `''`
+rather than `undefined` (`persona_severity` is NOT NULL and
+`recordPersonaAuditCorrelation` silently no-ops on a falsy one, so an
+`undefined` reaching it is a dropped write). Every reader routes through it;
+`cross-skill.mjs` now calls the shared `isP0OrP1` instead of its own copy — that
+duplication is why the drift could survive. `personaFindingHashV1` stays frozen
+on raw `code` by design.
+
+**No `PERSONA_FINDING_HASH_VERSION` bump is owed** and this is pinned, not
+assumed: a legacy `code`-shaped finding hashes to its pre-fix value byte for
+byte (`d086343c…`), and `persona_audit_correlations` / `persona_finding_outcomes`
+both held 0 rows, so nothing is orphaned.
+
+Second line of defence: declared `p0Count`/`p1Count` above zero with zero
+parseable P0/P1 findings is now `p0p1-shape-mismatch`, not `no-p0p1-findings`,
+with a stderr line naming the required field. The next rename surfaces in one
+session instead of one month.
+
+### Verification
+
+Red-then-green, one defect at a time. The accessor was first extracted verbatim
+at the *pre-fix* behaviour so the red was behavioural, not a load error: 8 fail /
+5 pass across 5 suites, the 5 passes being the legacy-shape and pre-fix-hash pins
+that prove the test is not vacuous. After the fix, 13/13. Surgical mutation
+(`severity ?? code` → `code`) kills 8 assertions, with `node --check` reporting
+OK on the mutant so the failure is behavioural and not a broken import. Full
+suite 11,223 tests / 0 fail / 26 skipped (measured, `npm test`, 111s).
+
+Replayed against the three real sessions with `now()` pinned to each session's
+own write time: 2026-07-21 → 2 emissions, 2026-08-10 → 3 emissions (all
+`audit_missed`, which is legitimate ground truth and is what feeds
+`user_visible_recall`).
+
+### Two things deliberately left
+
+**No backfill of the 5 recoverable correlations.** `getCandidateAuditFindings`
+windows on `now() - 14 days`, so re-posting a July session today would correlate
+it against August audit runs — manufactured ground truth, which is the one thing
+this module exists not to do. An as-of-aware backfill is a separate change.
+
+**2026-07-28 is genuinely `no-candidate-runs`, and that exposes a second, weaker
+defect.** Its 3 P1s correlate against nothing because the `LIMIT 5` in
+`getCandidateAuditFindings` caps **runs**, not runs-with-findings — wine has 237
+audit_runs in three weeks and most carry 0 findings, so findings-bearing runs get
+crowded out of the window (its 5 most recent runs had 0 findings between them).
+Not folded into this fix: the empty-table symptom is fully explained without it,
+and the correct remedy (filter to runs that have findings) changes candidate
+recall for every repo and wants its own measurement.
+## 2026-08-11 — the runner reported a pass for tests it never ran
 
 The report was that `tests/gate-evidence-tree-identity.test.mjs` imports only
 `{describe, it}` while three suites call `test(...)`, so each dies at

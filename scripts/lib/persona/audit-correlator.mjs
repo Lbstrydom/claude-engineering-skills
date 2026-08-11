@@ -83,9 +83,16 @@ const MIN_TOKEN_LEN = 3;
  * here is defensive (`?? ''`) because a malformed/older-shape finding must
  * degrade to a harmless empty-string component, never throw.
  *
- * Real production shape (verified against live session data, 2026-07-13):
- * `{ fix, code, step, element, expected, observed, confidence }` — `code`
- * IS the severity ("P0".."P3"), there is no separate `category` field.
+ * Real production shape (re-verified against all 7 live sessions,
+ * 2026-08-11): `{ fix, title, element, observed, severity, confidence }` —
+ * **`severity`** carries "P0".."P3", matching the authoring contract in
+ * `skills/persona-test/SKILL.md` Phase 3. There is no `category` field,
+ * and in practice no `step` or `expected` either, so `route`/`expected`
+ * are usually empty. This docstring previously claimed a `code`-keyed
+ * shape "verified 2026-07-13" — evidence the 2026-07-14 store wipe erased
+ * — and every reader below was written against it; see
+ * `personaSeverityCode` for what that cost. Read the severity through
+ * that oracle, never off the finding directly.
  *
  * v2 identity contract (docs/plans/persona-finding-hash-versioning.md):
  * a fixed-order, always-present 5-key payload — `element`, `code`, `route`,
@@ -121,7 +128,13 @@ const MIN_TOKEN_LEN = 3;
 export function personaFindingHash(finding, stepUrlByNumber) {
   const payload = {
     element: String(finding?.element ?? '').trim().toLowerCase(),
-    code: String(finding?.code ?? '').trim().toLowerCase(),
+    // Payload KEY stays `code` (changing it would change every v2 hash);
+    // the VALUE comes from the shared oracle, so the documented `severity`
+    // spelling and the legacy `code` spelling of one observation share a
+    // single identity. Byte-identical for any finding that was hashable
+    // before — `personaSeverityCode` already trims/upper-cases and this
+    // lower-cases, so a `code`-shaped finding lands on the same digest.
+    code: personaSeverityCode(finding).toLowerCase(),
     route: String(stepUrlByNumber.get(finding?.step) ?? '').trim().toLowerCase(),
     expected: String(finding?.expected ?? '').trim().toLowerCase(),
     observed: String(finding?.observed ?? '').trim().toLowerCase(),
@@ -142,14 +155,52 @@ export function personaFindingHash(finding, stepUrlByNumber) {
  */
 export function personaFindingHashV1(finding) {
   const section = String(finding?.element ?? '');
+  // Deliberately NOT routed through `personaSeverityCode` — this function
+  // must reproduce what a v1 row's hash WAS, and v1 read `code` raw.
   const category = String(finding?.code ?? '');
   const detail = String(finding?.observed ?? '');
   return semanticId({ section, category, detail });
 }
 
+/**
+ * THE single oracle for "what severity is this persona finding?" — never
+ * read the field off a finding by hand (that duplication is exactly how
+ * this went wrong; see below).
+ *
+ * `skills/persona-test/SKILL.md` has specified **`severity`** since
+ * 2026-04-19 (cb1679ba): "Every finding needs `element`, `observed`,
+ * `fix`, `severity`, `confidence`", and the Phase 5 report fence renders
+ * `[P<n>]`. There is no `code` field anywhere in the authoring contract.
+ * Every consumer here nonetheless read `finding.code`, on the strength of
+ * a docstring claiming the shape was "verified against live session data,
+ * 2026-07-13" — evidence the 2026-07-14 store wipe erased and which the
+ * live store contradicts: all 7 sessions carry `severity`, none carry
+ * `code`. Result: `isP0OrP1` matched 0 findings in every session, the
+ * correlator reported `no-p0p1-findings` (indistinguishable from a
+ * genuinely clean run), and `persona_audit_correlations` was empty
+ * store-wide for the correlator's whole life — the same zero-row outcome
+ * the correlator was built in 2026-07-13 to replace.
+ *
+ * `code` is still accepted as a legacy alias so pre-existing fixtures and
+ * any hand-authored session keep working; `severity` wins when both are
+ * present, because it is the documented field. Returns `''` (never
+ * `undefined`/`null`) for a missing or non-string value so callers can
+ * compare without guarding — `persona_severity` is a NOT NULL column and
+ * `recordPersonaAuditCorrelation` silently no-ops on a falsy one, so an
+ * `undefined` leaking this far is a dropped write, not a loud error.
+ *
+ * @param {object} finding
+ * @returns {string} 'P0'|'P1'|'P2'|'P3'|'' — trimmed and upper-cased
+ */
+export function personaSeverityCode(finding) {
+  const raw = finding?.severity ?? finding?.code;
+  return typeof raw === 'string' ? raw.trim().toUpperCase() : '';
+}
+
 /** P0/P1 only — the correlator's scope (P2/P3 are not ground-truth-worthy). */
 export function isP0OrP1(finding) {
-  return finding?.code === 'P0' || finding?.code === 'P1';
+  const code = personaSeverityCode(finding);
+  return code === 'P0' || code === 'P1';
 }
 
 /**
@@ -314,7 +365,8 @@ function isNewerOrHigherSeverity(candidate, current) {
 
 /** True when the audit's own severity understates a P0 persona finding. */
 export function isSeverityUnderstated(finding, auditFinding) {
-  return finding?.code === 'P0' && (auditFinding.severity === 'LOW' || auditFinding.severity === 'MEDIUM');
+  return personaSeverityCode(finding) === 'P0'
+    && (auditFinding.severity === 'LOW' || auditFinding.severity === 'MEDIUM');
 }
 
 /**
@@ -377,7 +429,7 @@ export function decideCorrelations({ findings, clickPath, candidates, alreadyCor
         : 'confirmed_hit';
       emissions.push({
         personaFindingHash: hash,
-        personaSeverity: finding.code,
+        personaSeverity: personaSeverityCode(finding),
         auditFindingId: match.auditFinding.id,
         auditRunId: match.auditFinding.run_id,
         correlationType,
@@ -399,7 +451,7 @@ export function decideCorrelations({ findings, clickPath, candidates, alreadyCor
       );
       emissions.push({
         personaFindingHash: hash,
-        personaSeverity: finding.code,
+        personaSeverity: personaSeverityCode(finding),
         auditFindingId: null,
         auditRunId: mostRecent.run_id,
         correlationType: 'audit_missed',
