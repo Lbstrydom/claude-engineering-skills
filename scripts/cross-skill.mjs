@@ -2653,7 +2653,14 @@ async function cmdLockWithTestWorksheet() {
   // were invisible and the page membership changed between identical calls.
   const storeScope = storeScopeFor(scope);
   const rows = await getUnlockedFixes(storeScope, { mode: 'code' });
-  const byMode = await countUnlockedFixes(storeScope, { allAges });
+  // `allAges: false` — spelled out rather than inherited. This line read
+  // `{ allAges }` against no such binding in this function, so the worksheet
+  // threw `allAges is not defined` on every invocation: a hard crash in the
+  // exact command /ship Step 0.5b tells operators to run. The windowed count is
+  // the right denominator here anyway — the worksheet lists rows the DEFAULT
+  // read returned, and a denominator from a wider population would report a
+  // cap that does not match the rows shown.
+  const byMode = await countUnlockedFixes(storeScope, { allAges: false });
   const capped = byMode.code > rows.length;
 
   const lines = ['# Unlocked code fixes — regression-lock worksheet', '',
