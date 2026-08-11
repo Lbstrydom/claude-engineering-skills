@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**7 active · 178 terminal · 27 audit summaries · 4 reference docs**
+**8 active · 178 terminal · 27 audit summaries · 4 reference docs**
 
 ---
 
@@ -28,6 +28,7 @@ This is the list to read when asking "what is in flight?".
 | [Standing Queue Burndown — the three gates that fire on every ship](./standing-queue-burndown.md) | `In Progress` | Q1 38 code rows, Q2 unknown (reader reports no total), Q3 68 actionable; measured 2026-08-09 |
 | [Tiered Recall-Weighted Audit Pipeline](./tiered-recall-audit-pipeline.md) | `In Progress` | implementation complete (Clusters A-F implemented |
 | [Unremediated-acceptance backlog — fix the mechanism, then the rows](./unremediated-acceptance-backlog.md) | `Approved` |  |
+| [Worktree-identity guards for multi-step skills](./worktree-identity-guards.md) | `Draft` |  |
 
 ## Superseded / abandoned
 
