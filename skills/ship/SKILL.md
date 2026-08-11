@@ -276,10 +276,37 @@ to the operator as the size of the backlog they were deciding whether to work.
 Identical defect to 0.5b's `rows.length` undercount — fixed in the tool for both
 views, fixed in the prose for only one.
 
-`byMode.plan` rows are counted separately but are **not** discardable: unlike an
-unlockable plan finding in 0.5b, a plan-mode row here is a plan section that was
-accepted and never amended, which is real work. Split it out to say which kind
-it is, not to drop it.
+`byMode.plan` rows are counted separately, and **what they are worth depends on
+the plan's status** — a distinction this text used to miss. A plan-mode row is a
+plan section that was accepted and then not amended:
+
+- **Plan still in flight** → real work. Amending the section changes what gets
+  built. Treat it as an obligation.
+- **Plan marked Complete** → the obligation is to edit a shipped design
+  document, which is a historical record by then. That is close to worthless,
+  and it is not what anyone does. Write the class off with the reasoning on the
+  record; do not let it sit as a permanent count.
+
+Measured 2026-08-11: all 39 plan-mode rows in this repo belonged to seven plans,
+**every one Complete**. Sampling three of them, the under-specification each row
+named had been settled by the implementation — most explicitly by
+[tests/suppression-call-site.test.mjs](../../tests/suppression-call-site.test.mjs),
+whose header cites that plan and those finding IDs. The row that looked most
+dangerous (a data-destroying `alpha = sum(alpha) − (n−1)` recovery procedure) is
+annotated as verified-false *inside the plan document itself*. All 39 were
+written off; the backlog went 199 → 160, and every survivor is code-mode.
+
+**What a write-off here does not cover**: the code-level defect an ambiguity may
+have produced. That is a code finding, it lives in the code-mode rows, and code
+audits raise it. Writing off the document obligation does not write off the risk.
+
+> **Representation gap, worth knowing before you do this.** The store has no
+> "written off / declined on the merits" state — `remediation_state` runs
+> pending/planned/fixed/verified/regressed, and adjudication offers only
+> accepted/dismissed. So a class write-off has to be recorded as `dismissed`,
+> which reads as "this was not a real finding" when the truth is "this was real
+> and is no longer worth acting on". Put the reasoning in `status.md`; the store
+> alone cannot carry it.
 
 **Check `measured` BEFORE reading the count** — identical contract to 0.5b.
 `measured:false` (`reason: repo-identity-unresolvable` / `cloud-off`) means

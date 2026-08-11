@@ -1,6 +1,74 @@
 # Project Status Log
 
-## 2026-08-11 (latest) — ship-commit-transaction Phase 1: the consumer that was never checked has a `pre-commit` hook
+## 2026-08-11 (latest) — 39 obligations written off, and the doctrine that made them look like work
+
+Triaged the unremediated-acceptances backlog properly instead of quoting its
+size. **199 → 160, and every survivor is code-mode.**
+
+**The three nudges are not double-counting.** Checked before touching anything:
+`unlocked_fixes` (36) and `unremediated_acceptances` (199) overlap by **exactly
+0** — one is "fixed but unlocked", the other "accepted but not fixed", disjoint
+stages of one lifecycle. The final-review credit card's 91 is a third population
+(`bucket IS NOT NULL`), of which only 15 sit inside the 199. Nothing needed
+restructuring; the numbers are separately true.
+
+**All 39 plan-mode rows belonged to seven plans, every one marked Complete.**
+Plan statuses here are systematically stale, so that alone decided nothing — the
+question is whether the ambiguity survived into code. Sampled three plans:
+
+- Three HIGH rows said the suppression pipeline had no executable composition
+  boundary. It has one — `tests/suppression-call-site.test.mjs`, whose header
+  cites *that plan and those finding IDs* (WS-B/WS-C, R3-M2, R4-H2, R2-H3).
+- The row that looked genuinely dangerous — a recovery procedure prescribing
+  `alpha = sum(alpha) − (n−1)` on Beta posteriors — turned out to be annotated
+  as **verified-false and data-destroying inside the plan document itself**,
+  in a table of that plan's own procedural bugs. My "residual risk" reading of
+  it was wrong.
+
+So the obligation these rows encode is *amend a shipped design document*, which
+is a historical record by the time it is Complete. Written off as a class, with
+`/ship` Step 0.5e updated to draw the distinction it was missing: a plan-mode
+row is real work while the plan is in flight, and close to worthless once it is
+Complete. **What is not written off is the code-level risk** an ambiguity may
+have produced — that is a code finding, it lives in the 160, and audits raise it.
+
+> **The store cannot say "written off".** `remediation_state` runs
+> pending/planned/fixed/verified/regressed and adjudication offers only
+> accepted/dismissed, so a class decision has to be recorded as `dismissed` —
+> which reads as "never a real finding" when the truth is "real, and no longer
+> worth acting on". The reasoning lives here because the store cannot hold it.
+> Same gap the debt ledger has for "declined on the merits".
+
+**The remaining 160 (30 HIGH) is inflated at the defect level, not fabricated.**
+On the hottest file (23 rows, 11 HIGH) the rows collapse ~3x: one verified false
+positive (`costFromUsage`, dismissed — it never returns a bare null, so the
+"deref" was a stale comment, not a bug), three rows describing one durability
+defect, two describing one known god-module debt, one already closed as a debt
+cluster in July, one resolved by the composition test above. Roughly four
+genuinely-open defects out of eleven rows.
+
+Two closures earned rather than assumed: the pragma colon-safety row against
+`0bcb8d09`, the commit whose `git grep -z` fix its own source comment documents;
+and the `costFromUsage` false positive.
+
+**Family census of the 160**, which decides the next scope: failure-contract /
+silent-degrade 37 (9 HIGH, 22 files) · god-module / layering 26 (2 HIGH) ·
+input parsing 21 (2 HIGH) · scoping / identity 11 (4 HIGH) · durability /
+unverified writes 9 (4 HIGH) · observability 6 · other 50 (8 HIGH).
+
+Durability and failure-contract are one theme — *what happens when a write or a
+step fails* — and together are 46 rows and 13 of the 30 HIGH. That is the plan
+scope. God-module is 26 rows at 2 HIGH and is architectural refactoring, a
+different kind of work; bundling it would be the over-broad version.
+
+The durability defect itself is confirmed live on origin: `recordFindings`,
+`recordSuppressionEvents` and `syncBanditArms` are `.catch(log)` with no await
+and no outbox (`legacy-production-audit.mjs:3273`, `:3301`, `:3369`), while the
+learning-telemetry flush directly below them *does* have an outbox with
+flushed/outboxed/dropped accounting. A silently-dropped `recordFindings` is
+exactly how a believable false zero enters this store.
+
+## 2026-08-11 — ship-commit-transaction Phase 1: the consumer that was never checked has a `pre-commit` hook
 
 Docs-only. No code changed, and the plan is deliberately still `Draft`.
 
