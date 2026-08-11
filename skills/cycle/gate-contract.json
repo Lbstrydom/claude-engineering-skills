@@ -3,6 +3,13 @@
   "skill": "cycle",
   "gates": [
     {
+      "id": "cluster-start-ref-validated-on-use",
+      "kind": "document-only",
+      "statedIn": "skills/cycle/SKILL.md",
+      "stated": "halt and report rather than demoting to the\n     dirty-aware default",
+      "reason": "DOCUMENT-ONLY here, but the claim is NOT unbacked — the mechanical half lives one layer down and is tested. /cycle is an orchestrator that delegates; it emits no exit code of its own, so there is nothing for the cli-exit oracle to assert against, and asserting one would be the fake-check class this registry exists to catch. What IS enforced: scripts/lib/worktree-identity.mjs::resolveRangeSnapshot refuses a non-ancestor explicit base with reason 'not-an-ancestor', and scripts/openai-audit.mjs re-raises that refusal PAST the catch that would otherwise swallow it into a silent fallback to plan-referenced files — the precise demotion this SKILL line forbids. Pinned by tests/audit-base-ancestry.test.mjs (against a real diverged ref) and tests/diff-base-resolver.test.mjs (injected runner). So the SKILL prose is the first of two layers and says so; the second layer is where the exit code is. Added 2026-08-11 under docs/plans/worktree-identity-guards.md Phase 5."
+    },
+    {
       "id": "preview-gate-halt-blocks-ship",
       "kind": "document-only",
       "reason": "'Under [HALT] a P0 blocks ship until fixed' delegates to the preview-gate seam (cross-skill.mjs preview-gate) whose decision is a tested function, but /cycle enacts the halt by ORCHESTRATION — it reads the directive and chooses not to ship. There is no /cycle CLI exit code; /cycle is an orchestrator invoking other skills, so the halt is agent flow, not a mechanical exit a cli-exit recipe can assert."

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "c48bd2b4141ca03a",
+  "bundleVersion": "e750f6ea0713fc6b",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -151,14 +151,14 @@
     },
     "cycle": {
       "path": "skills/cycle/SKILL.md",
-      "sha": "75110a789535",
-      "size": 29734,
+      "sha": "3a5f9dee82ac",
+      "size": 29742,
       "summary": "End-to-end feature cycle orchestrator. Runs the full skill chain in",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "75110a789535",
-          "size": 29734
+          "sha": "3a5f9dee82ac",
+          "size": 29742
         }
       ]
     },

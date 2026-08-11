@@ -73,6 +73,38 @@
   ],
   "ignoredCandidates": [
     {
+      "line": "`post-commit-drift` it exits 1 and prints a recovery command: **do not push.**",
+      "reason": "Post-commit verification, and deliberately NOT contracted as executable: it DETECTS drift rather than preventing it, and \"do not push\" is an instruction to the AGENT about what to do with exit 1 — there is no further exit code for a recipe to assert. The exit-1 path is covered by tests/ship-commit-worktree-identity.test.mjs; the prevention half is docs/plans/ship-commit-transaction.md."
+    },
+    {
+      "line": "(and needs `cat-file -t`, not `-e`, to detect: `-e` exits 0 for a tree).",
+      "reason": "Explains WHY the deleted-directory probe uses `cat-file -t` rather than `-e` (`-e` exits 0 for a tree as well as a blob). A measured statement about git behaviour (2026-08-11), not a gate this skill enforces."
+    },
+    {
+      "line": "never named. Pass each file. A DELETED directory is refused for the same reason",
+      "reason": "Elaboration of guard-a: the directory and deleted-directory refusals are the same declare-your-scope rule applied to a pathspec git would expand. Asserted in tests/ship-commit-worktree-identity.test.mjs — existing directory, deleted directory, and a deleted FILE still committing normally."
+    },
+    {
+      "line": "index holds, so it requires you to declare what you are shipping. There is no",
+      "reason": "Continuation of the same sentence as the line above; same gate, same disposition."
+    },
+    {
+      "line": "refuses an unscoped commit outright: it cannot know whose staged entries the",
+      "reason": "Restates guard-a-unscoped-commit-refused (bound executably above) — the WHY behind the refusal, not a second gate. The exit-2 behaviour is asserted by the ship-unscoped-index-refusal recipe."
+    },
+    {
+      "line": "> `pre-bundle-evidence` and you must pass the flags explicitly — it can never",
+      "reason": "Elaboration of the same gate for the pre-bundle-evidence path — a marker written before auditedBranch existed cannot half-match. Asserted in tests/gate-evidence-tree-identity.test.mjs (present / explicit-null / absent are three distinct states) and tests/worktree-identity.test.mjs."
+    },
+    {
+      "line": "> A head with no ref disposition is `incomplete-expectation` → exit 2, never a",
+      "reason": "Elaboration of guard-b-identity-is-a-precondition (bound executably above): it names the specific reason code an INCOMPLETE bundle produces. The refusal is asserted by the ship-identity-absent-refusal recipe and by tests/worktree-identity.test.mjs, which pins incomplete-expectation across every illegal flag combination."
+    },
+    {
+      "line": "--skill ship --models <csv> --gate <value> \\",
+      "reason": "A line INSIDE the fenced example invocation, not a claim of its own. The literal `--gate <value>` placeholder is what trips the verb scan; the gate it illustrates is guard-b-identity-is-a-precondition, bound EXECUTABLY above."
+    },
+    {
       "line": "what's about to ship. The map itself is **never committed** — see below.",
       "reason": "Restates the category-a-never-staged gate for docs/architecture-map.md; not a separate claim. Its skill-text side is mechanically guarded by tests/skill-staging-instructions.test.mjs."
     },
