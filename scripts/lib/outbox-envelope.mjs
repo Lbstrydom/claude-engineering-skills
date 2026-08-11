@@ -82,10 +82,32 @@ export function parseEnvelopeFrame(text, { version, validatePayload } = {}) {
  * @returns {string} the file written
  */
 export function writeEnvelope(dir, envelope) {
+  assertSafeFingerprint(envelope?.fingerprint);
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, `${envelope.fingerprint}.json`);
   atomicWriteFileSync(file, `${JSON.stringify(envelope, null, 2)}\n`);
   return file;
+}
+
+/**
+ * A fingerprint becomes a FILENAME, so it is a path, not a label.
+ *
+ * The extracted code interpolated it straight into `path.join` — safe while the
+ * only producer was a sha256 hex digest, and a traversal the moment a second
+ * consumer derives one from anything less constrained. `../../../etc/x` escapes
+ * the outbox; on Windows `a:b` or a reserved device name fails in stranger ways.
+ * Rejecting at the boundary keeps every current caller working and makes the
+ * next one safe by construction.
+ *
+ * @param {unknown} fingerprint
+ */
+export function assertSafeFingerprint(fingerprint) {
+  if (typeof fingerprint !== 'string' || !/^[A-Za-z0-9._-]{1,128}$/.test(fingerprint)
+      || fingerprint === '.' || fingerprint === '..') {
+    throw new TypeError(
+      `outbox: fingerprint must be a safe basename ([A-Za-z0-9._-], 1-128 chars); got ${JSON.stringify(fingerprint)}`,
+    );
+  }
 }
 
 /**
@@ -116,6 +138,29 @@ export function listEnvelopesOldestFirst(dir, cap) {
 }
 
 /**
+ * Is the file at `p` still the one described by `before`?
+ *
+ * Compares mtime + size + inode where the platform supplies one. Not a lock —
+ * it cannot close the window entirely — but it turns "always delete the
+ * pathname" into "delete only what we read", which is the difference between
+ * discarding a producer's newer envelope and leaving it for the next drain.
+ *
+ * @param {string} p
+ * @param {import('node:fs').Stats} before
+ * @returns {boolean}
+ */
+function fileUnchanged(p, before) {
+  try {
+    const now = fs.statSync(p);
+    return now.mtimeMs === before.mtimeMs
+      && now.size === before.size
+      && (!now.ino || now.ino === before.ino);
+  } catch {
+    return false;   // gone or unreadable — do not delete blind
+  }
+}
+
+/**
  * Drain pending envelopes.
  *
  * Deliberately tolerant of a concurrent winner: two invocations can drain the
@@ -137,11 +182,31 @@ export function listEnvelopesOldestFirst(dir, cap) {
  */
 export async function drainEnvelopes({ dir, apply, parse, cap, isConnectionError }) {
   const empty = { state: 'empty', drained: 0, rejected: 0, failed: 0 };
+
+  // `cap` reaches `slice`, where a negative value means "all but the last N" —
+  // so `cap: -1` would drain everything except the newest, the exact opposite of
+  // a maximum. Validate at the shared boundary rather than trusting four
+  // consumers to pass a sane number.
+  const limit = Number.isInteger(cap) && cap > 0 ? cap : null;
+  if (limit === null) {
+    throw new TypeError(`outbox: cap must be a positive integer; got ${JSON.stringify(cap)}`);
+  }
+
   // Absent directory is genuinely "nothing to do" — it is created on first
   // write. Unreadable is NOT, and the two used to share a return value.
-  if (!fs.existsSync(dir)) return { ...empty };
+  // `existsSync` cannot tell them apart (it answers false for a permission
+  // failure too), so stat and read the errno.
+  try {
+    fs.statSync(dir);
+  } catch (err) {
+    if (err?.code === 'ENOENT') return { ...empty };
+    return {
+      state: 'unavailable', drained: 0, rejected: 0, failed: 0,
+      reason: `stat failed: ${err?.code || err?.message}`,
+    };
+  }
 
-  const listed = listEnvelopesOldestFirst(dir, cap);
+  const listed = listEnvelopesOldestFirst(dir, limit);
   if (!listed.ok) {
     return { state: 'unavailable', drained: 0, rejected: 0, failed: 0, reason: listed.reason };
   }
@@ -150,15 +215,35 @@ export async function drainEnvelopes({ dir, apply, parse, cap, isConnectionError
   let drained = 0, rejected = 0, failed = 0;
   for (const name of listed.names) {
     const file = path.join(dir, name);
+
+    // READ and PARSE are separate failures and must not share a branch.
+    // Collapsing them quarantines a perfectly good envelope on a transient EIO
+    // or a momentary lock — evidence moved out of the queue for a reason that
+    // had nothing to do with its contents.
+    let text = null;
+    let stat = null;
+    try {
+      stat = fs.statSync(file);
+      text = fs.readFileSync(file, 'utf-8');
+    } catch (err) {
+      if (err?.code === 'ENOENT') continue;  // a concurrent drain won it
+      failed++;                              // transient — retry next drain
+      continue;
+    }
+
     let envelope = null;
-    try { envelope = parse(fs.readFileSync(file, 'utf-8')); } catch { envelope = null; }
+    try { envelope = parse(text); } catch { envelope = null; }
 
     if (!envelope) {
       // Quarantine: a poison envelope must neither block the queue nor vanish.
       try {
         const rej = path.join(dir, REJECTED_SUBDIR);
         fs.mkdirSync(rej, { recursive: true });
-        fs.renameSync(file, path.join(rej, name));
+        // NEVER clobber earlier evidence. `renameSync` replaces the destination
+        // on POSIX, so two rejections of the same fingerprint silently left one.
+        let dest = path.join(rej, name);
+        for (let n = 1; fs.existsSync(dest); n++) dest = path.join(rej, `${name}.${n}`);
+        fs.renameSync(file, dest);
         rejected++;
       } catch { failed++; }
       continue;
@@ -166,8 +251,17 @@ export async function drainEnvelopes({ dir, apply, parse, cap, isConnectionError
 
     try {
       const applied = await apply(envelope);
-      if (applied) {
-        fs.rmSync(file, { force: true, recursive: true, maxRetries: 3, retryDelay: 50 });
+      // `=== true`, not truthy. The contract says a handler PROVES application;
+      // an adapter returning a status object before its write is durable would
+      // otherwise satisfy `if (applied)` and the envelope would be deleted.
+      if (applied === true) {
+        // Delete the artifact we actually applied, not whatever now occupies
+        // the pathname: a producer can rewrite this fingerprint during the
+        // await, and deleting by name alone would discard that newer envelope
+        // having persisted only the older payload.
+        if (fileUnchanged(file, stat)) {
+          fs.rmSync(file, { force: true, recursive: true, maxRetries: 3, retryDelay: 50 });
+        }
         drained++;
       } else {
         failed++;   // sink declined or unavailable — leave it for next time

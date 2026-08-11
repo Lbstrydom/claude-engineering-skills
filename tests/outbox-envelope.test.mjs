@@ -169,6 +169,100 @@ test('drain: a connection-scoped failure ABORTS and spares the rest of the batch
   } finally { rmTmp(dir); }
 });
 
+// ── Audit round 1 fixes (each finding gets its own falsifiable assertion) ────
+
+test('apply must resolve LITERAL true — a truthy status object is not a receipt', async () => {
+  // H2. `if (applied)` accepted any truthy value, so an adapter returning
+  // `{ok:true}` BEFORE its write was durable had its envelope deleted.
+  const dir = mkTmp('ces-env-truthy-');
+  try {
+    writeEnvelope(dir, env('f'));
+    const res = await drainEnvelopes({ dir, apply: async () => ({ ok: true }), parse, cap: 10 });
+    assert.equal(res.drained, 0, 'a truthy non-true result must not count as applied');
+    assert.ok(fs.existsSync(path.join(dir, 'f.json')));
+  } finally { rmTmp(dir); }
+});
+
+test('a transient READ failure is retried, not quarantined as poison', async () => {
+  // H3. Read errors and parse errors shared one branch, so an EIO moved a
+  // perfectly good envelope into rejected/ for a reason unrelated to content.
+  const dir = mkTmp('ces-env-readfail-');
+  try {
+    // A directory named `x.json` — readable by readdir, fails on readFileSync
+    // with EISDIR, which stands in for any transient read error.
+    fs.mkdirSync(path.join(dir, 'x.json'));
+    const res = await drainEnvelopes({ dir, apply: async () => true, parse, cap: 10 });
+    assert.equal(res.failed, 1, 'a read failure is a retryable failure');
+    assert.equal(res.rejected, 0, 'and must NOT be quarantined as poison');
+  } finally { rmTmp(dir); }
+});
+
+test('the drain deletes what it APPLIED, not whatever now holds the pathname', async () => {
+  // H5. A producer rewriting the same fingerprint during the await would have
+  // had its newer envelope deleted on the strength of the older payload.
+  const dir = mkTmp('ces-env-race-');
+  try {
+    const file = writeEnvelope(dir, env('f', { gen: 1 }));
+    const res = await drainEnvelopes({
+      dir, parse, cap: 10,
+      apply: async () => {
+        // The producer wins the race mid-apply.
+        fs.writeFileSync(file, `${JSON.stringify(env('f', { gen: 2 }))}\n`);
+        fs.utimesSync(file, Date.now() / 1000 + 10, Date.now() / 1000 + 10);
+        return true;
+      },
+    });
+    assert.equal(res.drained, 1);
+    assert.ok(fs.existsSync(file), 'the newer envelope must survive');
+    assert.equal(JSON.parse(fs.readFileSync(file, 'utf-8')).payload.gen, 2);
+  } finally { rmTmp(dir); }
+});
+
+test('quarantine never clobbers earlier evidence', async () => {
+  // M2. renameSync replaces its destination, so a second rejection of the same
+  // name silently destroyed the first artifact.
+  const dir = mkTmp('ces-env-quar-');
+  try {
+    const rej = path.join(dir, REJECTED_SUBDIR);
+    fs.mkdirSync(rej, { recursive: true });
+    fs.writeFileSync(path.join(rej, 'bad.json'), 'FIRST');
+    fs.writeFileSync(path.join(dir, 'bad.json'), '{not json');
+
+    await drainEnvelopes({ dir, apply: async () => true, parse, cap: 10 });
+    assert.equal(fs.readFileSync(path.join(rej, 'bad.json'), 'utf-8'), 'FIRST',
+      'the earlier rejected artifact must be intact');
+    assert.ok(fs.existsSync(path.join(rej, 'bad.json.1')), 'the new one lands beside it');
+  } finally { rmTmp(dir); }
+});
+
+test('cap must be a positive integer — a negative cap inverted the contract', () => {
+  // M4. `slice(0, -1)` selects everything but the newest: the opposite of a max.
+  const dir = mkTmp('ces-env-cap-');
+  try {
+    for (const c of [-1, 0, 1.5, 'lots', null, undefined]) {
+      assert.rejects(
+        () => drainEnvelopes({ dir, apply: async () => true, parse, cap: c }),
+        (e) => e instanceof TypeError && /cap must be a positive integer/.test(e.message),
+        `cap=${JSON.stringify(c)} must be refused`,
+      );
+    }
+  } finally { rmTmp(dir); }
+});
+
+test('a fingerprint is a FILENAME, so traversal is refused at the boundary', () => {
+  // M5. It was interpolated straight into path.join.
+  const dir = mkTmp('ces-env-fp-');
+  try {
+    for (const bad of ['../escape', 'a/b', '..', '.', '', 'x'.repeat(129), 'a\\b', null]) {
+      assert.throws(() => writeEnvelope(dir, { v: V, fingerprint: bad, payload: {} }),
+        /safe basename/, `fingerprint ${JSON.stringify(bad)} must be refused`);
+    }
+    // The shapes real producers emit still work.
+    assert.ok(writeEnvelope(dir, env('a1b2c3d4e5f6')));
+    assert.ok(writeEnvelope(dir, env('report-2026-08-11_v1.2')));
+  } finally { rmTmp(dir); }
+});
+
 test('drain: an ARTIFACT-scoped failure is charged to that artifact and the batch continues', async () => {
   // The other side of the rule above — without this pair, "abort on error"
   // and "abort on connection error" are indistinguishable.
