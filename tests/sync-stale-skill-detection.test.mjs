@@ -200,6 +200,80 @@ describe('inspectTargetSkillSurfaces (round-1 H2, round-2 H1/M1/M2, round-3 H1/M
     );
   });
 
+  // The consumer case this whole rule exists for, on the SYNC path. A plugin
+  // keeps its skill in `.agents/skills/<n>` and exposes it as
+  // `.claude/skills/<n>` via a junction: ONE directory, two names, nothing
+  // ambiguous. Until 2026-08-10 this warned on every sync, because sync passed
+  // no `realPathOf` and the classifier tested ownership before identity — so a
+  // non-bundle name could never reach the alias branch. Two of these fired
+  // against a real consumer for eleven days.
+  it('says nothing at all about a junctioned alias — one directory is not an ambiguity', () => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sync-stale-'));
+    const target = path.join(tmp, '.agents', 'skills', 'use-railway');
+    fs.mkdirSync(target, { recursive: true });
+    fs.mkdirSync(path.join(tmp, '.claude', 'skills'), { recursive: true });
+    try {
+      fs.symlinkSync(target, path.join(tmp, '.claude', 'skills', 'use-railway'), 'junction');
+    } catch {
+      return;   // platform forbids links — the alias case cannot arise either
+    }
+
+    const { logger, warnings } = makeLogger();
+    inspectTargetSkillSurfaces({ targetRoot: tmp, desiredLiveNames: ['plan'], logger });
+
+    assert.deepEqual(
+      warnings.filter((w) => w.includes('use-railway')), [],
+      'an alias must produce no warning of any kind — not a softened one',
+    );
+  });
+
+  // Identity is not the only reason a name in two roots is fine, and on most
+  // machines it is not even the common one. The `skills` CLI (skills.sh) treats
+  // `.agents/skills/` as CANONICAL and fans a COPY out to every agent root the
+  // skill was added for — separate directories, so `realpath` differs and the
+  // alias rule above cannot help. `skills-lock.json` is that tool's own record.
+  //
+  // `check-stale-skill-surface.mjs` has honoured the lockfile since 2026-08-09,
+  // after an operator followed a "resolve this" note, deleted a copy, and the
+  // tool restored it — the lockfile is the source of truth. The sync path never
+  // learned: it reimplements orphan reporting and reads no lockfile, so it kept
+  // issuing the advice that was already known to be wrong.
+  it('honours skills-lock.json — a tool-managed copy is expected, not an ambiguity', () => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sync-stale-'));
+    // Two genuinely separate directories, exactly as `skills add` fans them out.
+    fs.mkdirSync(path.join(tmp, '.agents', 'skills', 'use-railway'), { recursive: true });
+    fs.mkdirSync(path.join(tmp, '.claude', 'skills', 'use-railway'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, 'skills-lock.json'), JSON.stringify({
+      version: 1,
+      skills: { 'use-railway': { source: 'railwayapp/railway-skills', sourceType: 'github' } },
+    }));
+
+    const { logger, warnings } = makeLogger();
+    inspectTargetSkillSurfaces({ targetRoot: tmp, desiredLiveNames: ['plan'], logger });
+
+    const w = warnings.find((x) => x.includes('use-railway')) ?? '';
+    assert.ok(
+      !/yours to resolve|precedence/.test(w),
+      `the lockfile explains this copy; telling the operator to resolve it sends them to break multi-agent access. Got: ${w}`,
+    );
+  });
+
+  // The companion, so the lockfile rule cannot swallow a real one: a name the
+  // lockfile does NOT claim, present as a separate directory in both roots, is
+  // still an undefined-precedence ambiguity worth naming.
+  it('an unclaimed name in two separate directories still reports undefined precedence', () => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sync-stale-'));
+    fs.mkdirSync(path.join(tmp, '.agents', 'skills', 'hand-copied'), { recursive: true });
+    fs.mkdirSync(path.join(tmp, '.claude', 'skills', 'hand-copied'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, 'skills-lock.json'), JSON.stringify({ version: 1, skills: {} }));
+
+    const { logger, warnings } = makeLogger();
+    inspectTargetSkillSurfaces({ targetRoot: tmp, desiredLiveNames: ['plan'], logger });
+
+    const w = warnings.find((x) => x.includes('hand-copied')) ?? '';
+    assert.match(w, /precedence/, `nothing explains this one; got: ${w}`);
+  });
+
   it('round-2 M1 / round-3 M2 — an injected unreadable listSurfaceNamesFn produces inspectionError, never a false-clean shadowed:[]', () => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sync-stale-'));
     const { logger, warnings } = makeLogger();

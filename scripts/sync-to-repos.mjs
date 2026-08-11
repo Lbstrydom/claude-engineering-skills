@@ -37,7 +37,9 @@ import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { assertContainedDestination } from './lib/install/safe-destination.mjs';
 import { inspectLegacySurfaces, describeLegacySurfaces } from './lib/install/legacy-surfaces.mjs';
 import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
-import { compareSkillSurfaces, listSurfaceNames, LIVE_SURFACE, SHADOWING_SURFACES } from './check-stale-skill-surface.mjs';
+import {
+  compareSkillSurfaces, listSurfaceNames, classifyOrphans, LIVE_SURFACE, SHADOWING_SURFACES,
+} from './lib/skill-surface-identity.mjs';
 // Reused rather than re-parsed: env-setting owns .env key resolution (dotenv's
 // last-wins semantics included), and it is pure — the caller supplies the text.
 import { resolveEnvValue } from './lib/env-setting.mjs';
@@ -754,6 +756,21 @@ function inspectTargetSkillSurfaces({
     }
     const cmp = compareSkillSurfaces({
       staleNames: read.names, liveNames: desiredLiveNames, contentOf: () => null,
+      // Resolve both sides on the TARGET's disk, so a plugin that exposes one
+      // directory under two roots is an alias rather than an ambiguity we hand
+      // back to the operator. Omitted from the day the parameter was added
+      // (2026-07-30) until 2026-08-10 — see the ordering note in
+      // `compareSkillSurfaces`. A blind caller here would also have reported a
+      // fatal shadow for correct plugin wiring the moment a consumer aliased one
+      // of OUR names.
+      //
+      // Unresolvable (a dry run into a target that has no `.claude/skills/<n>`
+      // yet) returns null and falls through to the ownership test — the
+      // conservative direction, and identical to the pre-existing behaviour.
+      realPathOf: (which, name) => {
+        const dir = path.join(targetRoot, ...(which === 'live' ? LIVE_SURFACE : surface).split('/'), name);
+        try { return fs.realpathSync(dir); } catch { return null; }
+      },
     });
     for (const s of cmp.shadowed) shadowed.push({ ...s, surface });
     // Structured, not pre-joined: the renderer groups by surface, and a
@@ -799,12 +816,66 @@ function inspectTargetSkillSurfaces({
       if (!bySurface.has(surface)) bySurface.set(surface, []);
       bySurface.get(surface).push(name);
     }
+    // ANSWER THE QUESTION INSTEAD OF ASKING IT BACK.
+    //
+    // This message used to end "if any also exists in `.claude/skills/`, its
+    // precedence is undefined and that is yours to resolve" — the tool handing
+    // the operator the check the tool declined to run. It hedged because
+    // `desiredLiveNames` is what this bundle DEPLOYS, so it genuinely could not
+    // see the target's own `.claude/skills/`.
+    //
+    // So look. One read of the live surface splits the orphans into the two
+    // cases the hedge conflated, and each gets the message that is true of it:
+    //
+    //   contested — the name IS in `.claude/skills/` and is a DIFFERENT
+    //               directory (identity already cleared every alias upstream).
+    //               A real ambiguity between two discovered roots, in their
+    //               repo, over their own skill. Worth naming; still not ours to
+    //               gate on.
+    //   theirs    — no live counterpart at all. Simply a skill they keep
+    //               elsewhere. Nothing to resolve, so claim nothing.
+    //
+    // Degrades honestly: if the live surface is unreadable we cannot tell the
+    // two apart, and the conditional wording comes back — that is the one case
+    // where a hedge is the accurate statement.
+    const liveRead = listSurfaceNamesFn(targetRoot, LIVE_SURFACE);
+    const liveOnDisk = liveRead.readable ? new Set(liveRead.names) : null;
     for (const [surface, names] of bySurface) {
-      logger.warn(
-        `[stale-skill-surface] ${targetRoot}: ${surface}/ holds ${names.length} skill(s) this bundle does not ` +
-        `deploy (${names.join(', ')}) — not gated here; if any also exists in ${LIVE_SURFACE}/, its precedence ` +
-        `is undefined and that is yours to resolve (see check-stale-skill-surface.mjs --repo ${targetRoot})`,
-      );
+      const hint = `(see check-stale-skill-surface.mjs --repo ${targetRoot})`;
+      // Same classifier the standalone reader uses, so the two cannot drift into
+      // giving different advice about one directory — which is how this path came
+      // to keep issuing "yours to resolve" for `skills`-CLI copies that the
+      // reader had already learned to explain.
+      const kind = classifyOrphans({ orphans: names, root: targetRoot, liveNames: liveOnDisk });
+      if (kind.toolManaged.length > 0) {
+        logger.warn(
+          `[stale-skill-surface] ${targetRoot}: ${surface}/ holds ${kind.toolManaged.length} skill(s) managed by ` +
+          `the \`skills\` CLI (${kind.toolManaged.join(', ')}) — canonical there, copied per agent root by ` +
+          `design. Expected; change the agent set with \`skills add … --agent …\`, never by deleting a copy.`,
+        );
+      }
+      if (kind.contested.length > 0) {
+        logger.warn(
+          `[stale-skill-surface] ${targetRoot}: ${surface}/ holds ${kind.contested.length} skill(s) this bundle ` +
+          `does not deploy (${kind.contested.join(', ')}) that ALSO exist as a separate directory in ` +
+          `${LIVE_SURFACE}/ — precedence between those two is undefined; not gated here, but yours to ` +
+          `resolve ${hint}`,
+        );
+      }
+      if (kind.theirs.length > 0) {
+        logger.warn(
+          `[stale-skill-surface] ${targetRoot}: ${surface}/ holds ${kind.theirs.length} skill(s) this bundle does ` +
+          `not deploy (${kind.theirs.join(', ')}) — no counterpart in ${LIVE_SURFACE}/, so nothing we write is ` +
+          `shadowed ${hint}`,
+        );
+      }
+      if (kind.undetermined.length > 0) {
+        logger.warn(
+          `[stale-skill-surface] ${targetRoot}: ${surface}/ holds ${kind.undetermined.length} skill(s) this ` +
+          `bundle does not deploy (${kind.undetermined.join(', ')}); ${LIVE_SURFACE}/ could not be read, so ` +
+          `whether any is also there is unknown ${hint}`,
+        );
+      }
     }
   }
   return { shadowed, orphans, inspectionError: null };

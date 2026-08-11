@@ -37,138 +37,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { inspectLegacySurfaces, describeLegacySurfaces } from './lib/install/legacy-surfaces.mjs';
+// The shadow predicate, the surface vocabulary and the reader live in `lib/`
+// so gate 8 — which is SYNCED to consumers and may only import its own `lib/`
+// siblings — can share this exact implementation instead of carrying a second
+// copy. Imported, never re-exported: one home, one import path, so a reader
+// never has to ask which of two modules owns the rule.
+import {
+  STALE_SURFACE, LIVE_SURFACE, AGENTS_SURFACE, SHADOWING_SURFACES,
+  listSurfaceNames, compareSkillSurfaces, classifyOrphans,
+} from './lib/skill-surface-identity.mjs';
 
 const R = '\x1b[31m', G = '\x1b[32m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0m';
 
-/** The deprecated surface, and the live one it shadows. */
-export const STALE_SURFACE = '.github/skills';
-export const LIVE_SURFACE = '.claude/skills';
-
-/** `<repo>/.agents/skills/` — retired 2026-07-30, and a discovered root too. */
-export const AGENTS_SURFACE = '.agents/skills';
-
-/**
- * Skill names the `skills` CLI (skills.sh) manages in this repo, read from its
- * own `skills-lock.json`.
- *
- * That tool treats `.agents/skills/` as CANONICAL and fans copies out to every
- * agent root a skill was added for, so a name in both `.agents/skills/` and
- * `.claude/skills/` is it working correctly — not an ambiguity to resolve.
- *
- * Absent / unreadable / malformed → empty set, so a repo without the tool
- * behaves exactly as before and every name still gets the precedence warning.
- * Fail-open is right here: this only ever *downgrades* an advisory note, never
- * suppresses a gated finding (those are `shadowed`, handled above).
- */
-function readSkillsLockNames(repoRoot) {
-  try {
-    const raw = fs.readFileSync(path.join(repoRoot, 'skills-lock.json'), 'utf-8');
-    return new Set(Object.keys(JSON.parse(raw).skills || {}));
-  } catch { return new Set(); }
-}
-
-/**
- * Every workspace root that can shadow `LIVE_SURFACE`.
- *
- * Both are read by VS Code Copilot's Agent Skills alongside `.claude/skills/`,
- * and precedence between roots is **not documented** — so a name in either one
- * makes the live copy's resolution undefined, not merely redundant.
- *
- * `.agents/skills` joined the list when the `agents` install surface was retired
- * (docs/reference/skill-surface-ownership.md §3). It was found live in a consumer
- * the same day: a stale `ship/SKILL.md` there against the synced `.claude/skills/ship`.
- *
- * ## Ownership is the whole predicate
- *
- * A name here is only OUR problem when it collides with a skill this bundle
- * deploys. Consumers legitimately keep their own skills in `.agents/skills/` —
- * one carries `supabase-postgres-best-practices` and `use-railway` from unrelated
- * plugins — and failing on those would be a gate about someone else's content
- * that no one can act on, which is how a gate earns a permanent `--no-verify`.
- * Ownership comes from `ourBundleSkillNames()` — this bundle's own `skills/`
- * directory — NOT from whatever sits in the target's `.claude/skills/`, which in a
- * consumer also holds their skills. A non-bundle name is an `orphan` (advisory),
- * never a `shadowed` (fatal).
- *
- * And a name that resolves to the SAME directory in both roots is `aliased`, not
- * shadowed: a consumer's plugin legitimately keeps a skill in `.agents/skills/<n>`
- * and exposes it as `.claude/skills/<n>` via a symlink, so both roots read one
- * file and precedence is moot. Verified in a consumer 2026-07-30.
- */
-export const SHADOWING_SURFACES = Object.freeze([STALE_SURFACE, AGENTS_SURFACE]);
-
-/**
- * Read a surface's skill-directory names. `docs/plans/refactor-skill-governance.md`
- * round-2 M1: exported (was a private `listSkillDirs`) so `sync-to-repos.mjs`
- * shares this exact reader instead of re-deriving its own — and given a richer
- * contract than before: no `fs.existsSync` pre-check, because `existsSync`
- * swallows EVERY stat error (not just "doesn't exist") and returns `false` for
- * an EACCES-unreadable directory exactly the same as a genuinely-absent one —
- * that would silently misreport an unreadable surface as clean. `readdirSync`
- * runs directly in a try/catch: `ENOENT` is the absent/clean case; ANY other
- * `err.code` (`EACCES`, `EPERM`, `ENOTDIR` for a stray non-directory path at
- * the surface location, or anything else) is `readable: false` — never
- * silently "no shadow."
- *
- * **Audit-code round-3 M1 (real bug, fixed)**: an `ENOENT` on
- * `<root>/<surface>` was unconditionally treated as "surface legitimately
- * absent, clean" — but that same `ENOENT` also fires when `root` ITSELF
- * doesn't exist (e.g. a typo'd `--repo` path), which is a fundamentally
- * different, actionable error this contract should never mask as "nothing
- * can shadow." Fixed: an `ENOENT` now checks whether `root` exists first.
- *
- * **Gemini gate shadow finding #2 (real bug, fixed)**: the round-3 fix
- * above used `fs.existsSync(root)` for that root check — reintroducing, in
- * this very function's own body, the exact `existsSync` EACCES-swallowing
- * defect this whole reader exists to eliminate. A `root` that exists but is
- * unreadable would have `existsSync` report `false`, misclassifying a real
- * permissions problem as "repository root does not exist." Fixed: probes
- * `root` with `lstatSync` in its own try/catch (same pattern as
- * `regenerate-skill-copies.mjs`'s `removeStaleGithubSkills`) — `ENOENT`
- * means genuinely absent; any other code (`EACCES`, etc.) is reported
- * accurately as its own error, not relabeled as "does not exist."
- *
- * @param {string} root
- * @param {string} surface
- * @returns {{names: string[], readable: true} | {names: null, readable: false, error: {code: string, message: string, path: string}}}
- */
-export function listSurfaceNames(root, surface) {
-  const base = path.join(root, ...surface.split('/'));
-  try {
-    const names = fs.readdirSync(base, { withFileTypes: true })
-      // A SYMLINK to a directory is a skill directory. `Dirent.isDirectory()` is
-      // false for a link, so the original filter silently dropped them — and that
-      // was a false-green in this very gate: a plugin (or anyone) that exposes a
-      // skill via a symlink made the name invisible to `liveNames`, so a real
-      // shadow of one of OUR skills would have been misclassified as a harmless
-      // `orphan` and the gate would have passed. Found live in a consumer whose
-      // plugin skills are symlinks (2026-07-30).
-      //
-      // `statSync` follows the link, so a DANGLING link is correctly excluded —
-      // it is not a readable skill directory by any definition.
-      .filter((e) => {
-        if (e.isDirectory()) return true;
-        if (!e.isSymbolicLink()) return false;
-        try { return fs.statSync(path.join(base, e.name)).isDirectory(); } catch { return false; }
-      })
-      .map(e => e.name)
-      .sort();
-    return { names, readable: true };
-  } catch (err) {
-    if (err.code === 'ENOENT') {
-      try {
-        fs.lstatSync(root);
-      } catch (rootErr) {
-        if (rootErr.code === 'ENOENT') {
-          return { names: null, readable: false, error: { code: 'ENOENT', message: `repository root does not exist: ${root}`, path: root } };
-        }
-        return { names: null, readable: false, error: { code: rootErr.code, message: rootErr.message, path: root } };
-      }
-      return { names: [], readable: true };
-    }
-    return { names: null, readable: false, error: { code: err.code, message: err.message, path: base } };
-  }
-}
 
 /**
  * The skill names THIS BUNDLE owns, read from the source repo's authoritative
@@ -200,56 +80,6 @@ function readSkillMd(root, surface, name) {
   try { return fs.readFileSync(p, 'utf-8'); } catch { return null; }
 }
 
-/**
- * Compare the two surfaces. PURE apart from the two directory reads it is
- * handed — callers pass already-read content so this is unit-testable.
- *
- * A skill present in BOTH surfaces is a `shadowed` collision: Copilot resolves
- * `.github/skills` first, so the live copy is unreachable for that name. A
- * skill present ONLY in the stale surface is `orphan` — it does not shadow
- * anything, but it is still a deprecated copy that can drift into a collision
- * the moment a skill of that name is added.
- *
- * @param {{staleNames: string[], liveNames: string[], contentOf: (surface: string, name: string) => string|null}} a
- * @returns {{shadowed: object[], orphans: string[], total: number}}
- */
-export function compareSkillSurfaces({ staleNames, liveNames, contentOf, realPathOf = null }) {
-  const live = new Set(liveNames);
-  const shadowed = [];
-  const orphans = [];
-  const aliased = [];
-  for (const name of staleNames) {
-    if (!live.has(name)) { orphans.push(name); continue; }
-    // TWO NAMES FOR ONE DIRECTORY IS NOT A COLLISION.
-    //
-    // A consumer's plugin legitimately stores a skill in `.agents/skills/<n>` and
-    // exposes it as `.claude/skills/<n>` via a symlink — verified in a consumer
-    // 2026-07-30, where `realpath` of both was byte-identical. Whichever root the
-    // agent reads, it gets the same file, so precedence is irrelevant. Flagging
-    // that as a shadow would fail a repo for correct plugin wiring, which is how a
-    // gate earns a permanent `--no-verify`.
-    //
-    // Opt-in: callers that cannot resolve paths (the pure unit tests, the sync's
-    // name-only inspection) pass no resolver and keep the old behaviour.
-    if (realPathOf) {
-      const a = realPathOf('stale', name);
-      const b = realPathOf('live', name);
-      if (a && b && a === b) { aliased.push(name); continue; }
-    }
-    const staleBody = contentOf(STALE_SURFACE, name);
-    const liveBody = contentOf(LIVE_SURFACE, name);
-    const staleLines = staleBody === null ? 0 : staleBody.split('\n').length;
-    const liveLines = liveBody === null ? 0 : liveBody.split('\n').length;
-    shadowed.push({
-      name,
-      staleLines,
-      liveLines,
-      identical: staleBody !== null && staleBody === liveBody,
-      lineDelta: liveLines - staleLines,
-    });
-  }
-  return { shadowed, orphans, aliased, total: staleNames.length };
-}
 
 /**
  * The blocking decision, extracted pure (testing-doctrine Tier 1). A shadowing
@@ -427,36 +257,41 @@ function main() {
       );
     } else if (s.orphans.length > 0 && s.surface === AGENTS_SURFACE) {
       // Names we do NOT deploy. Not our gate — but the advice depends on WHO put
-      // them there, and the old wording assumed a mistake.
-      //
-      // `skills-lock.json` is the `skills` CLI's own record (skills.sh). That tool
-      // treats `.agents/skills/` as CANONICAL and fans copies out to every agent
-      // root the skill was added for — Claude Code, Codex, Gemini CLI, Copilot,
-      // Kiro. So a name in BOTH `.agents/skills/` and `.claude/skills/` is that
-      // tool working correctly, kept in sync by `skills update`, not an ambiguity
-      // anyone should "resolve". Telling an operator to delete one copy sends them
-      // to remove multi-agent access; measured 2026-08-09 — deleted, and the tool
-      // restored it, because the lockfile is the source of truth.
-      //
-      // Only names ABSENT from that lockfile are unexplained, and only those get
-      // the precedence warning.
-      const managed = readSkillsLockNames(root);
-      const toolManaged = s.orphans.filter((n) => managed.has(n));
-      const unexplained = s.orphans.filter((n) => !managed.has(n));
-      if (toolManaged.length > 0) {
+      // them there, so `classifyOrphans` (the shared oracle, also used by the
+      // sync) splits them rather than this file deciding on its own. Identity
+      // already removed every alias upstream, so nothing reaching here is one
+      // directory under two names.
+      const kind = classifyOrphans({
+        orphans: s.orphans, root, liveNames: live.readable ? new Set(live.names) : null,
+      });
+      if (kind.toolManaged.length > 0) {
         process.stderr.write(
-          `${D}note: ${s.surface}/ holds ${toolManaged.length} skill(s) managed by the ` +
-          `\`skills\` CLI (${toolManaged.join(', ')}) — canonical there, copied per agent ` +
+          `${D}note: ${s.surface}/ holds ${kind.toolManaged.length} skill(s) managed by the ` +
+          `\`skills\` CLI (${kind.toolManaged.join(', ')}) — canonical there, copied per agent ` +
           `root by design. Expected; change the agent set with \`skills add … --agent …\`, ` +
           `never by deleting a copy.${X}\n`,
         );
       }
-      if (unexplained.length > 0) {
+      if (kind.contested.length > 0) {
         process.stderr.write(
-          `${D}note: ${s.surface}/ holds ${unexplained.length} skill(s) this bundle does not ` +
-          `deploy and no skills-lock.json claims (${unexplained.join(', ')}) — not gated here; ` +
-          `if any also exists in ${LIVE_SURFACE}/, its precedence is undefined and that is ` +
-          `yours to resolve.${X}\n`,
+          `${D}note: ${s.surface}/ holds ${kind.contested.length} skill(s) this bundle does not ` +
+          `deploy and no skills-lock.json claims (${kind.contested.join(', ')}), each also a ` +
+          `separate directory in ${LIVE_SURFACE}/ — precedence between those two is undefined ` +
+          `and that is yours to resolve.${X}\n`,
+        );
+      }
+      if (kind.theirs.length > 0) {
+        process.stderr.write(
+          `${D}note: ${s.surface}/ holds ${kind.theirs.length} skill(s) this bundle does not ` +
+          `deploy (${kind.theirs.join(', ')}) — no counterpart in ${LIVE_SURFACE}/, so nothing ` +
+          `is shadowed and there is nothing to resolve.${X}\n`,
+        );
+      }
+      if (kind.undetermined.length > 0) {
+        process.stderr.write(
+          `${D}note: ${s.surface}/ holds ${kind.undetermined.length} skill(s) this bundle does ` +
+          `not deploy (${kind.undetermined.join(', ')}); ${LIVE_SURFACE}/ could not be read, so ` +
+          `whether any is also there is unknown.${X}\n`,
         );
       }
     }

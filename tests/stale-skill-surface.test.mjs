@@ -25,13 +25,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { decideStaleSurfaceExit } from '../scripts/check-stale-skill-surface.mjs';
 import {
   compareSkillSurfaces,
-  decideStaleSurfaceExit,
   listSurfaceNames,
   STALE_SURFACE,
   LIVE_SURFACE,
-} from '../scripts/check-stale-skill-surface.mjs';
+} from '../scripts/lib/skill-surface-identity.mjs';
 
 const execFileAsync = promisify(execFile);
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');

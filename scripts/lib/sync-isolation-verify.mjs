@@ -34,6 +34,7 @@ import { parseGitignoreState } from './sync-gitignore.mjs';
 import { LAYOUT_CONSTANTS } from './sync-path-map.mjs';
 import { SyncManifestSchema, hashFile } from './sync-manifest.mjs';
 import { enumerateNpmRunRefs } from './npm-script-enumerator.mjs';
+import { listSurfaceNames, compareSkillSurfaces } from './skill-surface-identity.mjs';
 
 // NOTE: this module intentionally does NOT import sync-inventory.mjs.
 // Inventory is source-only (depends on consumer-repos.mjs which uses
@@ -103,6 +104,11 @@ const LIB_IMPORT_SET = [
   { rel: 'lib/nav/findings.mjs', mustExport: ['runTaxonomy'] },
   { rel: 'lib/nav/drift.mjs', mustExport: ['partitionFindings', 'ageDivergences'] },
   { rel: 'lib/ux-lock/selector-policy.mjs', mustExport: ['scanSpecSource', 'classifySelector', 'resolveTestRoot'] },
+  // Gate 8 below classifies through this module rather than its own copy, so in
+  // a consumer it is a runtime dependency of this very file. Listed here for the
+  // same reason as the rest: a synced lib that did not arrive breaks a gate in a
+  // repo we cannot observe.
+  { rel: 'lib/skill-surface-identity.mjs', mustExport: ['listSurfaceNames', 'compareSkillSurfaces', 'classifyOrphans'] },
 ];
 
 const CMD_SCAN_PATHS = [
@@ -595,44 +601,39 @@ function gate8(consumerRoot, manifest) {
     return { gate: '8', pass: true, details: { ownedSkills: 0, note: 'manifest declares no .claude/skills entries' } };
   }
 
-  /** Resolve to a real path, or null. */
-  const real = (p) => { try { return fs.realpathSync(p); } catch { return null; } };
-
+  // DELEGATES — this gate used to carry its own copy of the surface reader, the
+  // symlink-tolerant filter and the alias rule, because the oracle lived in a
+  // source-repo CLI this synced module cannot import. Moving the rule to
+  // `lib/skill-surface-identity.mjs` removed that excuse: one implementation,
+  // three call sites. The two copies happened to agree, which is not a property
+  // anything was maintaining — and they had already diverged in vocabulary
+  // (`foreign` here, `orphans` there) for one concept.
   const shadowed = [];
   const aliased = [];
   const foreign = [];
   for (const surface of SHADOWING) {
-    const base = path.join(consumerRoot, ...surface.split('/'));
-    let names;
-    try {
-      names = fs.readdirSync(base, { withFileTypes: true })
-        // A symlink TO a directory is a skill directory. Skipping links (which
-        // `Dirent.isDirectory()` does) would let a symlinked shadow slip past
-        // this gate entirely — a false green in the check itself.
-        .filter((e) => {
-          if (e.isDirectory()) return true;
-          if (!e.isSymbolicLink()) return false;
-          try { return fs.statSync(path.join(base, e.name)).isDirectory(); } catch { return false; }
-        })
-        .map((e) => e.name);
-    } catch (err) {
-      if (err.code === 'ENOENT') continue;          // absent = clean
+    const read = listSurfaceNames(consumerRoot, surface);
+    if (!read.readable) {
       // Unreadable is NOT clean — fail closed rather than report a shadow-free
-      // verdict we did not earn.
-      return { gate: '8', pass: false, error: `cannot inspect ${surface}: ${err.code} ${err.message}` };
+      // verdict we did not earn. (`listSurfaceNames` already reports a genuinely
+      // absent surface as readable with zero names.)
+      return { gate: '8', pass: false, error: `cannot inspect ${surface}: ${read.error.code} ${read.error.message}` };
     }
-    for (const n of names) {
-      if (!ours.has(n)) { foreign.push(`${surface}/${n}`); continue; }
-      // Two names for ONE directory is not a collision. A consumer's plugin
-      // legitimately keeps a skill in `.agents/skills/<n>` and exposes it as
-      // `.claude/skills/<n>` via a symlink — verified in a consumer 2026-07-30,
-      // where `realpath` of both was identical. Whichever root the agent reads it
-      // gets the same file, so there is nothing ambiguous to fail on.
-      const a = real(path.join(base, n));
-      const b = real(path.join(consumerRoot, ...LIVE.split('/'), n));
-      if (a && b && a === b) { aliased.push(`${surface}/${n}`); continue; }
-      shadowed.push(`${surface}/${n}`);
-    }
+    const cmp = compareSkillSurfaces({
+      staleNames: read.names,
+      liveNames: [...ours],
+      contentOf: () => null,          // this gate reports names, never diffs bodies
+      realPathOf: (which, name) => {
+        const dir = path.join(consumerRoot, ...(which === 'live' ? LIVE : surface).split('/'), name);
+        try { return fs.realpathSync(dir); } catch { return null; }
+      },
+    });
+    for (const s of cmp.shadowed) shadowed.push(`${surface}/${s.name}`);
+    for (const n of cmp.aliased) aliased.push(`${surface}/${n}`);
+    // `orphans` is the oracle's word for "a name we do not deploy"; this gate has
+    // published it as `foreign` in its `details` since it shipped. Mapped once,
+    // here, rather than renaming a field consumers may already parse.
+    for (const n of cmp.orphans) foreign.push(`${surface}/${n}`);
   }
 
   if (shadowed.length > 0) {
