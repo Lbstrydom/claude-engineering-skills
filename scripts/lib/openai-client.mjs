@@ -36,7 +36,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { azureConfig } from './config.mjs';
+import { azureConfig, auditShadowConfig } from './config.mjs';
 import { azureMaxRetries } from './azure-throttle.mjs';
 
 const VALID_PURPOSES = new Set(['gpt', 'foundry-claude', 'embed']);
@@ -157,6 +157,54 @@ export async function createOpenAIClient(options = {}) {
   const client = build();
   _clientCache.set(cacheKey, client);
   return client;
+}
+
+/**
+ * Create an OpenRouter client — the named entry point for the OSS route.
+ *
+ * OpenRouter is an OpenAI-shaped endpoint, so this deliberately does NOT build
+ * a second client: it resolves the credentials and delegates to the `oss` path
+ * of {@link createOpenAIClient}, which owns the cache key (including the header
+ * digest) and the construction. Architectural-memory consultation banded
+ * `createOpenAIClient` as `precedent/above-floor-standout` for exactly this
+ * intent — a sibling client would have fragmented OSS routing across two
+ * modules and duplicated the header-digest cache fix.
+ *
+ * What it removes: every call site used to re-thread
+ * `{oss: {baseURL: auditShadowConfig.openrouterBaseUrl, apiKey: auditShadowConfig.openrouterApiKey}}`
+ * by hand, so each one independently re-read config and independently decided
+ * what to do when the key was absent (most did nothing, and surfaced the
+ * SDK's own opaque 401 instead).
+ *
+ * Request-side OpenRouter pinning (`provider:{require_parameters,sort}`,
+ * `reasoning:{effort}`) is NOT here — that is per-request and already owned by
+ * `oss-structured-output.mjs` / `tiered-provider-calls.mjs`. This seam is
+ * construction only.
+ *
+ * @param {object} [options]
+ * @param {object} [options.config] - inject an auditShadowConfig snapshot (tests;
+ *   the module-level config is frozen at import, so env set afterwards is unseen)
+ * @param {Record<string,string>} [options.headers] - routing/identity headers
+ *   (e.g. OpenRouter's `HTTP-Referer` / `X-Title`); part of the cache key
+ * @param {boolean} [options.fresh] - bypass cache (tests)
+ * @returns {Promise<import('openai').OpenAI>}
+ * @throws {Error} when no OpenRouter key is configured — actionable, and named,
+ *   rather than deferring to a 401 from the wire
+ */
+export async function createOpenRouterClient(options = {}) {
+  const cfg = options.config || auditShadowConfig;
+  const baseURL = cfg.openrouterBaseUrl;
+  const apiKey = cfg.openrouterApiKey;
+  if (!apiKey) {
+    throw new Error(
+      '[openai-client] OpenRouter route requires OPENROUTER_API_KEY. ' +
+      'Set it in .env (OPENROUTER_BASE_URL is optional; defaults to https://openrouter.ai/api/v1).',
+    );
+  }
+  return createOpenAIClient({
+    oss: { baseURL, apiKey, headers: options.headers },
+    fresh: options.fresh,
+  });
 }
 
 /** Reset the module-global client cache. Tests only. */

@@ -81,12 +81,9 @@ function rowPrompt(row) {
 }
 
 async function buildGlmAdapter(candidateModel) {
-  const { createOpenAIClient } = await import('./lib/openai-client.mjs');
+  const { createOpenRouterClient } = await import('./lib/openai-client.mjs');
   const { ossStructuredCall } = await import('./lib/oss-structured-output.mjs');
-  const { auditShadowConfig } = await import('./lib/config.mjs');
-  const client = await createOpenAIClient({
-    oss: { baseURL: auditShadowConfig.openrouterBaseUrl, apiKey: auditShadowConfig.openrouterApiKey },
-  });
+  const client = await createOpenRouterClient();
   return async (row) => {
     const r = await ossStructuredCall(client, {
       model: candidateModel,

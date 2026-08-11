@@ -575,11 +575,9 @@ function defaultDeps() {
  * `reasoningEffort` (D4a parity) is forwarded to BOTH transports. */
 async function callModelDefault({ provider, model, system, userPrompt, passName, reasoningEffort = null }) {
   if (provider === 'oss') {
-    const { createOpenAIClient } = await import('./openai-client.mjs');
+    const { createOpenRouterClient } = await import('./openai-client.mjs');
     const { ossStructuredCall } = await import('./oss-structured-output.mjs');
-    const client = await createOpenAIClient({
-      oss: { baseURL: auditShadowConfig.openrouterBaseUrl, apiKey: auditShadowConfig.openrouterApiKey },
-    });
+    const client = await createOpenRouterClient();
     // ossStructuredCall echoes requestedReasoningEffort in its result shape.
     return ossStructuredCall(client, {
       model, system, userPrompt, schema: ShadowPassSchema, schemaName: 'shadow_pass',

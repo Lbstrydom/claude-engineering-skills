@@ -739,15 +739,15 @@ async function cmdApparatusBC() {
   const maxDiffChars = Number.parseInt(argOption('max-diff-chars', '600000'), 10);
   const force = hasFlag('force');
 
-  const { createOpenAIClient } = await import('./lib/openai-client.mjs');
+  const { createOpenAIClient, createOpenRouterClient } = await import('./lib/openai-client.mjs');
   const { zodTextFormat } = await import('openai/helpers/zod');
-  const { auditShadowConfig, PASS_REASONING } = await import('./lib/config.mjs');
+  const { PASS_REASONING } = await import('./lib/config.mjs');
   try { const mr = await import('./lib/model-resolver.mjs'); await mr.refreshModelCatalog?.(); } catch { /* offline */ }
   const ossModel = resolveModel('latest-oss-reasoner');
   const gptModel = resolveModel('latest-gpt');
   const geminiModel = resolveModel('latest-pro');
   const gptClient = await createOpenAIClient({ purpose: 'gpt' });
-  const ossClient = await createOpenAIClient({ oss: { baseURL: auditShadowConfig.openrouterBaseUrl, apiKey: auditShadowConfig.openrouterApiKey } });
+  const ossClient = await createOpenRouterClient();
 
   const destB = sFindingsPath('B');
   const destC = sFindingsPath('C');

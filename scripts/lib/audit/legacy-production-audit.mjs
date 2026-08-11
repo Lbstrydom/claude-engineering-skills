@@ -105,7 +105,7 @@ import { PromptBandit, computeReward, buildContext } from '../../bandit.mjs';
 import { openaiConfig, PASS_NAMES, modelPricing, azureConfig, tieredAuditConfig, auditRuntimeConfig, adjacencyConfig } from '../config.mjs';
 import { supportsReasoningEffort, refreshModelCatalog, resolveModel, pricingKey } from '../model-resolver.mjs';
 import { costFromUsage } from '../model-pricing.mjs';
-import { createOpenAIClient } from '../openai-client.mjs';
+import { createOpenRouterClient } from '../openai-client.mjs';
 import { createAnthropicClient } from '../anthropic-client.mjs';
 import { ossStructuredCall } from '../oss-structured-output.mjs';
 import { createGeminiReviewSubprocessAdapters } from './final-adjudication.mjs';
@@ -121,7 +121,6 @@ import {
 } from '../prompt-seeds.mjs';
 import { getActiveRevisionId } from '../prompt-registry.mjs';
 import { incrementRunCounter } from '../llm-auditor.mjs';
-import { auditShadowConfig } from '../config.mjs';
 
 // ── Code Audit Pass Schemas (moved from openai-audit.mjs — tiered-recall
 // pipeline Phase 11: used exclusively by this file's orchestration loop) ──
@@ -3863,9 +3862,7 @@ export async function buildAuditRunContext(cliArgs) {
       );
     }
     try {
-      const ossClient = await createOpenAIClient({
-        oss: { baseURL: auditShadowConfig.openrouterBaseUrl, apiKey: auditShadowConfig.openrouterApiKey },
-      });
+      const ossClient = await createOpenRouterClient();
       ossCall = (opts) => ossStructuredCall(ossClient, opts);
     } catch (err) {
       process.stderr.write(`  [ctx] ossCall unavailable (non-blocking — only the tiered pipeline's discovery portfolio needs it): ${err.message}\n`);

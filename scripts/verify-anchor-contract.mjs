@@ -73,10 +73,10 @@ import { TieredUnavailableError } from './lib/audit/discovery-fallback.mjs';
 import { filterDiffFiles, formatSkipLog } from './lib/sensitive-paths.mjs';
 import { isSafeGitRevision, exitCodeFor } from './lib/vcs.mjs';
 import { createAnthropicClient } from './lib/anthropic-client.mjs';
-import { createOpenAIClient } from './lib/openai-client.mjs';
+import { createOpenAIClient, createOpenRouterClient } from './lib/openai-client.mjs';
 import { ossStructuredCall } from './lib/oss-structured-output.mjs';
 import { resolveModel } from './lib/model-resolver.mjs';
-import { auditShadowConfig, tieredAuditConfig } from './lib/config.mjs';
+import { tieredAuditConfig } from './lib/config.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { findRepoRootFromScript } from './lib/assert-repo-root.mjs';
 import { argOption } from './lib/cli-io.mjs';
@@ -571,9 +571,7 @@ async function buildProbeProviders(generator) {
 
   let ossCall;
   if (generator === 'glm') {
-    const ossClient = await createOpenAIClient({
-      oss: { baseURL: auditShadowConfig.openrouterBaseUrl, apiKey: auditShadowConfig.openrouterApiKey },
-    });
+    const ossClient = await createOpenRouterClient();
     // Operation-aware: `providers.ossCall` serves BOTH the GLM discovery
     // generator and the Stage 1 triager. Only the former is under test.
     ossCall = (opts) => (opts?.operation === 'discovery_generation'

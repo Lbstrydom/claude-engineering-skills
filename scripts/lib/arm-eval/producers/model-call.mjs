@@ -33,9 +33,8 @@ export async function callModelFreeText({ model, system, userPrompt, maxTokens =
   const provider = providerFor(resolved);
 
   if (provider === 'oss') {                            // OSS via OpenRouter
-    const { createOpenAIClient } = await import('../../openai-client.mjs');
-    const { auditShadowConfig } = await import('../../config.mjs');
-    const client = await createOpenAIClient({ oss: { baseURL: auditShadowConfig.openrouterBaseUrl, apiKey: auditShadowConfig.openrouterApiKey } });
+    const { createOpenRouterClient } = await import('../../openai-client.mjs');
+    const client = await createOpenRouterClient();
     const resp = await client.chat.completions.create({ model: resolved, messages: [{ role: 'system', content: system }, { role: 'user', content: userPrompt }], max_tokens: maxTokens });
     // usageMissing on EVERY branch, not only Gemini (audit M3). The `?? 0`
     // defaults turn absent telemetry into a measured zero; leaving two sibling

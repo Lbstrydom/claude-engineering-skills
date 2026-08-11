@@ -1,6 +1,6 @@
 import { describe, it, afterEach, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { createOpenAIClient, _resetClientCache, _internals } from '../scripts/lib/openai-client.mjs';
+import { createOpenAIClient, createOpenRouterClient, _resetClientCache, _internals } from '../scripts/lib/openai-client.mjs';
 import { buildAzureConfig } from '../scripts/lib/config.mjs';
 import { providerEnvHooks } from './helpers/provider-env.mjs';
 
@@ -117,5 +117,57 @@ describe('createOpenAIClient — OSS path caching (consolidated Gemini gate fix 
     const withHeaders = await createOpenAIClient({ oss: { baseURL: 'https://openrouter.ai/api/v1', apiKey: 'sk-oss', headers: { 'HTTP-Referer': 'app-a' } } });
     const noHeaders = await createOpenAIClient({ oss: { baseURL: 'https://openrouter.ai/api/v1', apiKey: 'sk-oss' } });
     assert.notEqual(withHeaders, noHeaders);
+  });
+});
+
+describe('createOpenRouterClient — the named OSS seam', () => {
+  beforeEach(() => { providerEnv.beforeEach(); _resetClientCache(); });
+  afterEach(() => { providerEnv.afterEach(); _resetClientCache(); });
+
+  const CFG = {
+    openrouterApiKey: 'sk-or-test',
+    openrouterBaseUrl: 'https://openrouter.ai/api/v1',
+  };
+
+  it('resolves credentials from config and constructs against the OpenRouter base URL', async () => {
+    const client = await createOpenRouterClient({ config: CFG, fresh: true });
+    assert.equal(client.baseURL, 'https://openrouter.ai/api/v1');
+    assert.equal(client.apiKey, 'sk-or-test');
+  });
+
+  it('throws an actionable, named error when no key is configured', async () => {
+    // Asserts on THIS seam's message, not merely on the var name: the delegate
+    // (createOpenAIClient's oss path) also names OPENROUTER_API_KEY, so a
+    // looser regex passes even with this guard removed. Verified by mutation —
+    // disabling the guard must turn this test red, and with `/OPENROUTER_API_KEY/`
+    // it did not.
+    await assert.rejects(
+      () => createOpenRouterClient({ config: { ...CFG, openrouterApiKey: null }, fresh: true }),
+      (err) => err instanceof Error && /OpenRouter route requires OPENROUTER_API_KEY/.test(err.message),
+    );
+  });
+
+  it('honours a custom base URL (self-hosted / proxied router)', async () => {
+    const client = await createOpenRouterClient({
+      config: { ...CFG, openrouterBaseUrl: 'https://router.internal/v1' }, fresh: true,
+    });
+    assert.equal(client.baseURL, 'https://router.internal/v1');
+  });
+
+  it('caches by credentials, and does NOT share a client across different headers', async () => {
+    // Guards the header-digest cache fix in the oss path: two calls differing
+    // only by routing headers must not reuse the first call's headers.
+    const a = await createOpenRouterClient({ config: CFG, headers: { 'X-Title': 'one' } });
+    const b = await createOpenRouterClient({ config: CFG, headers: { 'X-Title': 'one' } });
+    const c = await createOpenRouterClient({ config: CFG, headers: { 'X-Title': 'two' } });
+    assert.equal(a, b, 'identical headers should hit the cache');
+    assert.notEqual(a, c, 'different headers must construct a distinct client');
+  });
+
+  it('does not activate the Azure path even when Azure env is present', async () => {
+    // The OSS route is independent of the Azure/public branches by construction.
+    for (const [k, v] of Object.entries(AZURE_ENV)) process.env[k] = v;
+    const client = await createOpenRouterClient({ config: CFG, fresh: true });
+    assert.equal(client.baseURL, 'https://openrouter.ai/api/v1');
   });
 });

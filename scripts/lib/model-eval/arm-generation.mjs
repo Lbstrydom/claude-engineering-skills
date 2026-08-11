@@ -19,8 +19,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { createOpenAIClient } from '../openai-client.mjs';
-import { auditShadowConfig } from '../config.mjs';
+import { createOpenAIClient, createOpenRouterClient } from '../openai-client.mjs';
 import { runMultiPassCodeAudit } from '../../openai-audit.mjs';
 import { buildUsageEvent } from './cost.mjs';
 import { assertEgressSafe, isPathSensitive } from '../sensitive-egress-gate.mjs';
@@ -92,9 +91,7 @@ async function resolveGenerationClient(generation, route) {
     return { client: await createOpenAIClient({ purpose: 'gpt' }), model: route.resolvedModel };
   }
   if (generation.kind === 'oss-role') {
-    const client = await createOpenAIClient({
-      oss: { baseURL: auditShadowConfig.openrouterBaseUrl, apiKey: auditShadowConfig.openrouterApiKey },
-    });
+    const client = await createOpenRouterClient();
     return { client, model: route.resolvedModel };
   }
   // resolved-route (Azure deployment candidate) — ambient azureConfig.active
