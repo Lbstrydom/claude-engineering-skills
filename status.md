@@ -1,6 +1,83 @@
 # Project Status Log
 
-## 2026-08-11 (latest) — a gate that could never fire, and the crash that hid behind it
+## 2026-08-11 (latest) — the write-side check did not know what the reconciler knew
+
+Log entry for `6dc86cbc`, which shipped without one.
+
+Two identity systems spell repositories differently: the arch path writes
+`owner/repo` from the git origin, the older audit path wrote the bare directory
+name. `scripts/reconcile-repo-identity.mjs` has encoded that equivalence since
+it was written — *"`wine-cellar-app` and `Lbstrydom/wine-cellar-app` are the same
+repo"* — as `repoBaseName`.
+
+**`reconcileRepoIdentity`, added THIS MORNING as the write-side identity check,
+compared raw strings.** So it called that pair a conflict and refused the write.
+The equivalence was documented three lines above the code that needed it, in a
+module the new caller could not see. Live consequence: it would have blocked
+persona recording for exactly the consumer whose six sessions carry the bare
+form. **I shipped that regression at 09:03 and found it at 12:00, not from a
+failing test but from chasing a data mismatch two steps downstream.** Nothing in
+the suite could have caught it — the refusal is correct behaviour for a genuine
+conflict, and no test asserted that a bare name is not one.
+
+The arch-memory hook is what surfaced the existing normaliser, on the prompt that
+asked for the data fix. It fired, named `reconcile-repo-identity.mjs`, and that
+is the only reason the second encoding did not get written.
+
+`repoBaseName` moved to `lib/repo-scope.mjs` and is now IMPORTED by both callers.
+A second encoding of "are these the same repo?" that can disagree with the first
+is the defect, not the fix. The one-shot reconciler re-exports it so its tests
+keep working — imported AND re-exported, because `export { x } from '…'` alone
+creates no local binding and broke that module's own calls, which its suite
+caught in one run.
+
+### The data, and what it did and did not fix
+
+`audit_effectiveness` reaches persona data only through
+`LEFT JOIN persona_test_sessions s ON s.repo_name = r.name` — the denormalized
+text column, not the `repo_id` FK, decides whether a session contributes to
+`user_visible_precision` / `user_visible_recall`. Measured before: **7 of 7
+sessions mismatched** (6 bare, 1 NULL name), every one pointing at the same
+canonical `audit_repos` row, and **0 sessions joined**. After migration
+`20260811060000`: **7 join**. Because it is a LEFT JOIN the view never failed or
+shrank — it reported those repos as having no persona data at all. A silent zero.
+
+Safe to automate, unlike the sibling case: `repo_id` is an FK, so for a row that
+HAS one the canonical name is a lookup, not a guess, and the migration never
+matches on name. Rows with `repo_id IS NULL` are untouched, and
+`persona_test_candidates` — a `repo_name` with **no `repo_id` column**, 2 bare
+rows — is deliberately left alone, because deriving those would be exactly the
+automatic name-merge the one-shot reconciler refuses without operator sign-off.
+That one needs a decision, not a migration.
+
+**What this did NOT fix, stated because the earlier claim overreached.**
+Precision/recall are still NULL: `persona_audit_correlations` is empty
+store-wide, so the join was necessary and not sufficient. My earlier note said
+those sessions were "invisible to precision/recall", which was right about the
+cause and would have been wrong as a claim about the outcome. Four of the seven
+sessions are clean (`P0=0 P1=0`, so the correlator legitimately returns
+`no-p0p1-findings`); three carried findings — including 2026-08-10 with `P0=2` —
+and still produced no correlation rows. That is a separate gap in the WS1
+correlator, handed off with the measurements rather than guessed at here.
+
+### Not done, deliberately
+
+Considered and rejected: hardening `audit_effectiveness` to join on `repo_id`,
+and adding a live-store test asserting no row's `repo_name` disagrees with its
+id. The join fragility is real, but the writer now canonicalises and the pure
+`reconcileRepoIdentity` tests already pin that; a data-quality assertion in a
+suite that ships to consumers would fail on THEIR drift, which is a health-check
+concern, not a test one. Recording the rejection so it is a decision rather than
+an omission.
+
+Housekeeping: the full suite showed 2 failures from the other session's
+in-flight work (`scripts/openai-audit.mjs`, `tests/diff-base-resolver.test.mjs`,
+and an untracked `tests/audit-base-ancestry.test.mjs`). Left untouched; the
+commit was path-scoped to four files and the pre-push gate ran the whole check in
+a clean sandbox at that commit and passed, which is independent evidence their
+breakage was not in it.
+
+## 2026-08-11 — a gate that could never fire, and the crash that hid behind it
 
 Upstream `8c62cfcc` from wine-cellar-app: `appliesTo.routePattern` was matched
 against `page.url()`'s **pathname alone**, while `appliesToCurrent`'s docstring
