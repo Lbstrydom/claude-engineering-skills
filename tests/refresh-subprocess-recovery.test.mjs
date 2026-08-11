@@ -155,11 +155,50 @@ describe('writeFilesManifestIfRestricted (b021576b/e86a9cbb)', () => {
     // formatFilesManifest validates and throws. If that ran AFTER mkdtempSync,
     // every rejected input would abandon a directory in the temp root — and the
     // caller never gets a path, so its finally block cannot clean up.
-    const before = fs.readdirSync(os.tmpdir()).filter(n => n.startsWith('arch-refresh-files-')).length;
-    assert.throws(() => writeFilesManifestIfRestricted(['ok.mjs', { from: 'x', to: 'y' }]), /expected a string/);
-    assert.throws(() => writeFilesManifestIfRestricted(['']), /empty string/);
-    const after = fs.readdirSync(os.tmpdir()).filter(n => n.startsWith('arch-refresh-files-')).length;
-    assert.equal(after, before, 'a rejected file list must leave no temp directory behind');
+    //
+    // Measured inside a PRIVATE temp root, never the shared `os.tmpdir()`. The
+    // original form counted `arch-refresh-files-*` entries in the machine-wide
+    // temp directory before and after, so ANY concurrently-running suite that
+    // created or removed one between the two reads failed the assertion for a
+    // reason unrelated to what it tests (seen under a full `npm test` on
+    // 2026-08-11: `615 !== 614`; passed in isolation). Node re-reads
+    // TMPDIR/TEMP/TMP on every `os.tmpdir()` call, so redirecting them scopes
+    // the observation to this process's own directories while leaving the code
+    // under test — which calls the real `os.tmpdir()` — untouched.
+    const privateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'manifest-leak-probe-'));
+    const savedEnv = { TMPDIR: process.env.TMPDIR, TEMP: process.env.TEMP, TMP: process.env.TMP };
+    const manifestDirs = () => fs.readdirSync(privateRoot).filter(n => n.startsWith('arch-refresh-files-')).sort();
+    try {
+      process.env.TMPDIR = privateRoot;
+      process.env.TEMP = privateRoot;
+      process.env.TMP = privateRoot;
+      assert.equal(
+        path.resolve(os.tmpdir()), path.resolve(privateRoot),
+        'precondition: the temp root must be redirected, or the emptiness asserted below proves nothing',
+      );
+
+      // Vacuous-pass guard: prove a SUCCESSFUL write lands in the private root
+      // and is visible to `manifestDirs()`. Without this, an ineffective
+      // redirect (or a renamed prefix) would leave the root empty for reasons
+      // having nothing to do with the leak this test exists to catch.
+      const control = writeFilesManifestIfRestricted(['ok.mjs']);
+      assert.deepEqual(
+        manifestDirs(), [path.basename(path.dirname(control))],
+        'control: a successful call must create exactly one observable directory in the private root',
+      );
+      removeFilesManifest(control);
+      assert.deepEqual(manifestDirs(), [], 'control: cleanup must leave the private root empty again');
+
+      assert.throws(() => writeFilesManifestIfRestricted(['ok.mjs', { from: 'x', to: 'y' }]), /expected a string/);
+      assert.throws(() => writeFilesManifestIfRestricted(['']), /empty string/);
+      assert.deepEqual(manifestDirs(), [], 'a rejected file list must leave no temp directory behind');
+    } finally {
+      for (const [k, v] of Object.entries(savedEnv)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+      fs.rmSync(privateRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
   });
 
   it('still refuses to write through anything pre-existing at the manifest path (wx retained)', () => {

@@ -1,6 +1,58 @@
 # Project Status Log
 
-## 2026-08-11 (latest) — the last unlocked fix, and the deferral reason was wrong
+## 2026-08-11 (latest) — a leak test that measured the whole machine
+
+`tests/refresh-subprocess-recovery.test.mjs`'s "leaks no temp directory when the
+file list is rejected" is flaky under `npm test` and passes in isolation. It
+asserted no-leak by counting `arch-refresh-files-*` entries in the **shared**
+`os.tmpdir()` before and after two rejected calls, so any concurrently-running
+suite that created or removed one between the two reads failed it for a reason
+unrelated to what it tests. Seen once on a full run: `615 !== 614`; green on two
+isolated re-runs.
+
+**The invariant is real and stayed** — `formatFilesManifest` validates and
+throws, and if that ran after `mkdtempSync` every rejected input would abandon a
+directory the caller never receives a path to, so its `finally` could not clean
+up. Only the measurement was wrong, and the fix is test-only: no production
+signature changed. Node re-reads `TMPDIR`/`TEMP`/`TMP` on **every** `os.tmpdir()`
+call, so the test redirects those three to a per-test `mkdtempSync` root for the
+duration of the case and restores them in `finally`. The code under test still
+calls the real `os.tmpdir()` — it just lands somewhere only this process writes
+to. Sets replaced counts too, so a failure names the leaked directories instead
+of reporting `615 !== 614`.
+
+**The redirect is exactly the kind of scoping that can pass having checked
+nothing**, so it carries a redirect precondition and a positive control: a
+*successful* call must appear as one observable directory in the private root and
+vanish after `removeFilesManifest`. Without that, an ineffective redirect or a
+renamed `arch-refresh-files-` prefix would leave the root empty for reasons
+having nothing to do with a leak.
+
+Red-then-green with a surgical mutation — swapping the two lines in
+`writeFilesManifest` so `mkdtempSync` ran before `formatFilesManifest`. It failed
+on the **final** assertion naming both abandoned directories
+(`arch-refresh-files-c2LVfl`, `arch-refresh-files-lfm3r2`), which is also the
+proof the control ran rather than the suite dying at import: the precondition and
+both control assertions executed and passed first. Mutation reverted;
+`git diff --stat` showed the test file alone.
+
+Left alone deliberately: the sibling reads of `os.tmpdir()` at lines 100-105 and
+171 assert on their own returned paths and a PID-suffixed filename, so neither
+reads the global namespace as a population and neither has this failure class.
+
+Verification: 11,117 pass / 0 fail / 25 skipped, whole suite, 133s.
+Consumer-side (Step 6.8): the pushed commit re-read from the remote after push —
+locator and result in the commit's own trailer block and below.
+
+Session hygiene: this session ran in a harness worktree whose branch
+(`claude/intelligent-swartz-817fed`) turned out to be a **stale duplicate line** —
+8 commits ahead of `origin/main` by count, but every one of them already on
+origin under a different sha from another session's rebase, and 13 behind. Base
+and origin were byte-identical for both files this change touches (checked, not
+assumed), so the fix was carried to a fresh `origin/main` worktree rather than
+pushed from the duplicate line. The stale branch is left as-is.
+
+## 2026-08-11 — the last unlocked fix, and the deferral reason was wrong
 
 Closed the one code row left in `unlocked_fixes`. **The backlog is now `code: 0`.**
 
