@@ -32,6 +32,14 @@
   ],
   "ignoredCandidates": [
     {
+      "line": "same base (`not-an-ancestor`, hard fail), which is where the exit code is.",
+      "reason": "Continuation of the same sentence; same disposition. \"hard fail\" describes /audit-code's behaviour, not a gate /cycle enforces."
+    },
+    {
+      "line": "This is the first of two layers: `/audit-code`'s own resolver refuses the",
+      "reason": "Points at WHERE the enforcement lives rather than asserting one here: /cycle is an orchestrator with no exit code of its own. The refusal named is scripts/lib/worktree-identity.mjs::resolveRangeSnapshot returning not-an-ancestor, contracted under cluster-start-ref-validated-on-use above and asserted in tests/audit-base-ancestry.test.mjs against a real diverged ref."
+    },
+    {
       "line": "an existing plan or straight to code-audit, per-step skips, max-round",
       "reason": "Usage/description documentation line surfaced by the 2026-07-21 Copilot-cap description trim (Usage relocated to the SKILL body). Not a new gate claim — it documents an existing flag; the real gate (where one exists, e.g. nav-audit --gate) is contracted separately in this file."
     },

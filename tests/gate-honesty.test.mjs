@@ -131,7 +131,10 @@ const PINNED_DOCUMENT_ONLY = {
   // the upstream queue is CLOUD state, so the commit being pushed cannot change
   // it — blocking on it would be cried-wolf by construction, not by choice.
   ship: ['gate-passed-refused-without-evidence', 'category-a-never-staged', 'step-0-5-gates-non-blocking', 'unremediated-acceptances-never-blocks', 'unit-test-lock-refuses-unverifiable-claims', 'final-review-credit-advisory-exit-zero', 'upstream-queue-never-blocks'],
-  cycle: ['preview-gate-halt-blocks-ship', 'fix-gate-convergence-before-next-cluster', 'author-tier-never-routes', 'consolidated-gemini-gate-mandatory'],
+  // +1 cluster-start-ref-validated-on-use (worktree-identity-guards Phase 5):
+  // document-only because /cycle delegates and emits no exit code of its own —
+  // the enforcing refusal lives in the audit resolver and IS bound there.
+  cycle: ['cluster-start-ref-validated-on-use', 'preview-gate-halt-blocks-ship', 'fix-gate-convergence-before-next-cluster', 'author-tier-never-routes', 'consolidated-gemini-gate-mandatory'],
   plan: ['gate-1-phase-triggers', 'never-a-lone-phase-1', 'warnings-never-block-plan-generation', 'section-10-graded-by-ux-lock-verify'],
 };
 const PINNED_CONTRACTED_SKILLS = ['ai-context-management', 'audit-code', 'audit-plan', 'brainstorm', 'click-test', 'cycle', 'explain', 'investigate', 'nav-audit', 'persona-test', 'plan', 'security-strategy', 'ship', 'skills', 'ux-lock', 'visual-audit'];
@@ -199,7 +202,7 @@ describe('gate-honesty — real skills/', () => {
     // 37 → 38: +1 ship (final-review-credit-advisory-exit-zero, 2026-07-29).
     // 38 → 39: +1 audit-code (detector-blocks-convergence, /audit-code Step 5.0b, 2026-08-01).
     // 39 → 40: +1 ship (upstream-queue-never-blocks, /ship Step 0.5h, 2026-08-01).
-    assert.equal(totalDocOnly, 40);   // +2 ux-lock, +5 ship, +4 cycle, +4 plan (Phase C final — ALL 15 contracted)
+    assert.equal(totalDocOnly, 41);   // +2 ux-lock, +5 ship, +4 cycle, +4 plan (Phase C final — ALL 15 contracted); +1 cycle cluster-start-ref (Phase 5)
 
     const allSkillNames = listSkillNames(skillsRoot);
     const expectedUncontracted = allSkillNames.filter((n) => !PINNED_CONTRACTED_SKILLS.includes(n));
