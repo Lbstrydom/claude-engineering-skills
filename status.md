@@ -1,6 +1,60 @@
 # Project Status Log
 
-## 2026-08-10 (latest) — the campaign shipped, then ran, and running it is what found the rest
+## 2026-08-10 (latest) — the consumer side of df60c991, and a commit that shipped work I never wrote
+
+Consumer-side verification for `df60c991` (Step 6.8), plus the three wine PRs and
+one ai-organiser push that closing it out required. **`verified`** — retrieved as
+a consumer does, not inherited from the producer-side green.
+
+`npm run sync -- --target wine|ai` hydrated both; `node
+scripts/.claude-skills/lib/sync-isolation-verify.mjs` run **in each consumer**
+returned 10/10 gates. In wine, `check-context-drift.mjs` present and running,
+`context:check` **6 findings → 1**. The last one was true: a vendored
+`supabase-postgres-best-practices/CLAUDE.md` (body: the literal string
+`AGENTS.md`) that wine *tracked* rather than gitignored, so the ownership
+predicate correctly owned it. `.kiro/` held nothing Kiro-specific — 42 files, two
+vendored skills, `diff -rq`-identical to the gitignored `.claude/skills/` and
+`.agents/skills/` copies, referenced by nothing. Removed in **#278 `397f9082`**;
+re-run from a clean worktree at merged main: **`OK No context drift detected`,
+exit 0**. Two follow-ons: **#280 `8266e14e`** gave `boot-gate.yml` the
+`concurrency` group it was the only ruleset-required check to lack, and **#283
+`7fbc18b3`** recorded why `security/snyk` is red. ai-organiser got the npm script
+(`29c80f0`) but deliberately not the push gate — `--strict` exits 1 there today on
+a 261,936-char AGENTS.md, and a gate red on arrival stops being read.
+
+**`security/snyk` is not ours to fix, and #265 never claimed to.** It is a legacy
+*commit status* from Snyk's GitHub SCM integration — present only under
+`/commits/{sha}/status`, never `/check-runs`, `target_url`
+`app.snyk.io/…/pr-checks/…`, description "You have used your limit of private
+tests". #265 replaced the lost dependency COVERAGE with the free npm-audit drift
+gate; the status is a different surface no workflow produces. Not scriptable
+either: wine's `SNYK_TOKEN` authenticates (`v1/user/me` 200) but the org is "not
+entitled for api access", `v1/org/{id}/projects` 410, `rest/orgs/{id}/projects`
+403. It is a *scanning* credential — what `snyk code test` uses — so the SAST
+gate is unaffected by turning PR Checks off in the Snyk UI.
+
+**The incident worth keeping: `git add <file>` scopes staging, not the commit.**
+#280's first commit went up as 14 files, deleting 13 files of another session's
+in-flight React-slice migration, because their deletions sat staged in this shared
+index and `git commit` publishes the whole index. AGENTS.md and the shared-tree
+memory both already said `--path`/`--only`; the habit did not survive moving to a
+consumer repo where `ship-commit.mjs` is not the reflex. A **contract test** caught
+it, not me — and I nearly filed that as flake, because the same test passed
+against `origin/main`. Running it against the **PR head** reproduced it in 2.5s.
+*When a test fails on your branch and passes on main, diff the two file lists
+before concluding anything.* Rebuilt in an isolated worktree, force-pushed with
+`--force-with-lease`, and the shared tree restored pointer-only (`reset --mixed`,
+never `--hard`, which would have resurrected files they deliberately deleted).
+Their 13 deletions and 3 modified files came back exactly as they were.
+
+Two smaller corrections from the same session, both from trusting a signal that
+does not mean what it looks like: `gh pr checks --watch` **exits 0 with a red
+required check**, so its exit code is not a pass signal; and `main` here is
+protected by a **ruleset** (`strict: true`), which the legacy
+`/branches/main/protection` endpoint 404s on — reading that 404 as "unprotected"
+was wrong twice over.
+
+## 2026-08-10 — the campaign shipped, then ran, and running it is what found the rest
 
 `fe9682dd`. Model-comparison campaigns went from Cluster B through Cluster C,
 the consolidated gate, a first real end-to-end run, and a brainstorm that
