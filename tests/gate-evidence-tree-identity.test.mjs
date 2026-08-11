@@ -45,7 +45,7 @@ describe('E1 — the false-pass attack is refused', () => {
   it('audit clean tree -> edit -> commit: fresh + converged, but REFUSED on tree mismatch', () => {
     // The audit recorded TREE_A. The operator then edited, so the tree actually
     // being committed is TREE_B. Every legacy signal still says yes:
-    const evidence = freshEvidence(buildGateEvidence({ runId: RUN_ID, auditedTree: TREE_A, auditedSha: TREE_A }));
+    const evidence = freshEvidence(buildGateEvidence({ runId: RUN_ID, auditedTree: TREE_A, auditedSha: TREE_A, auditedBranch: 'main' }));
     assert.equal(evidence.state, 'fresh', 'freshness alone still passes — that is the whole problem');
     assert.equal(converged.roundConvergedAfter, 2, 'the store verdict also still says converged');
 
@@ -58,7 +58,7 @@ describe('E1 — the false-pass attack is refused', () => {
   });
 
   it('the matching case still passes — the check is not simply always-refuse', () => {
-    const evidence = freshEvidence(buildGateEvidence({ runId: RUN_ID, auditedTree: TREE_A, auditedSha: TREE_A }));
+    const evidence = freshEvidence(buildGateEvidence({ runId: RUN_ID, auditedTree: TREE_A, auditedSha: TREE_A, auditedBranch: 'main' }));
     const verdict = evaluateGateVerification({
       gate: 'passed', evidence, cloudEnabled: true, convergence: converged, committedTree: TREE_A,
     });
@@ -88,7 +88,7 @@ describe('E1 — unverifiable evidence never reads as a pass', () => {
   });
 
   it('an unresolvable committed tree is refused rather than skipped', () => {
-    const evidence = freshEvidence(buildGateEvidence({ runId: RUN_ID, auditedTree: TREE_A }));
+    const evidence = freshEvidence(buildGateEvidence({ runId: RUN_ID, auditedTree: TREE_A, auditedBranch: 'main' }));
     const verdict = evaluateGateVerification({
       gate: 'passed', evidence, cloudEnabled: true, convergence: converged, committedTree: null,
     });
@@ -97,7 +97,7 @@ describe('E1 — unverifiable evidence never reads as a pass', () => {
   });
 
   it('the tree check runs BEFORE the store lookups, so it refuses even with cloud off', () => {
-    const evidence = freshEvidence(buildGateEvidence({ runId: RUN_ID, auditedTree: TREE_A }));
+    const evidence = freshEvidence(buildGateEvidence({ runId: RUN_ID, auditedTree: TREE_A, auditedBranch: 'main' }));
     const verdict = evaluateGateVerification({
       gate: 'passed', evidence, cloudEnabled: false, convergence: null, committedTree: TREE_B,
     });
@@ -106,7 +106,7 @@ describe('E1 — unverifiable evidence never reads as a pass', () => {
   });
 
   it('gates other than passed are unaffected', () => {
-    const evidence = freshEvidence(buildGateEvidence({ runId: RUN_ID, auditedTree: TREE_A }));
+    const evidence = freshEvidence(buildGateEvidence({ runId: RUN_ID, auditedTree: TREE_A, auditedBranch: 'main' }));
     for (const gate of ['waived', 'not-run']) {
       assert.equal(evaluateGateVerification({
         gate, evidence, cloudEnabled: true, convergence: converged, committedTree: TREE_B,
@@ -133,6 +133,7 @@ describe('E1 — writeGateEvidence is evidence-less without an identity', () => 
     let payload = null;
     const res = writeGateEvidence({
       repoRoot: '/repo', runId: RUN_ID, mode: 'code', auditedTree: TREE_A, auditedSha: TREE_B,
+      auditedBranch: 'main',
       log: () => {}, adapters: { atomicWriteFileSync: (_p, body) => { payload = JSON.parse(body); } },
     });
     assert.equal(res.written, true);
@@ -268,5 +269,74 @@ describe('E1 — gitWorktreeTree hashes the worktree, not the index', () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
+  });
+});
+
+// ── Phase 2: the identity BUNDLE round-trips writer → reader ────────────────
+// Guard B's fallback expectation is only usable if the branch the producer
+// RECORDS survives the reader by presence. These pin the three states apart.
+describe('auditedBranch — presence, null and absence are three distinct states', () => {
+  test('an attached capture round-trips through the real reader', () => {
+    const payload = buildGateEvidence({
+      runId: RUN_ID, auditedTree: TREE_A, auditedSha: TREE_A, auditedBranch: 'main',
+    });
+    const ev = freshEvidence(payload);
+    assert.equal(Object.hasOwn(ev, 'auditedBranch'), true);
+    assert.equal(ev.auditedBranch, 'main');
+  });
+
+  test('an explicit null survives as null (detached), NOT as absent', () => {
+    const payload = buildGateEvidence({
+      runId: RUN_ID, auditedTree: TREE_A, auditedSha: TREE_A, auditedBranch: null,
+    });
+    const ev = freshEvidence(payload);
+    assert.equal(Object.hasOwn(ev, 'auditedBranch'), true, 'null must remain PRESENT');
+    assert.equal(ev.auditedBranch, null);
+  });
+
+  test('a pre-bundle marker leaves the property ABSENT, not null', () => {
+    // Hand-built to mimic a marker written before this field existed.
+    const legacy = { runId: RUN_ID, sid: null, round: 1, auditedSha: TREE_A, auditedTree: TREE_A, ts: new Date().toISOString() };
+    const ev = freshEvidence(legacy);
+    assert.equal(Object.hasOwn(ev, 'auditedBranch'), false,
+      'absence is what makes a legacy marker refusable as pre-bundle-evidence');
+  });
+});
+
+// ── Cluster-A audit fixes (M8 / M4+M9 / M11) ────────────────────────────────
+describe('a present-but-MALFORMED auditedBranch is refused, not coerced', () => {
+  for (const [label, value] of [['a number', 123], ['an empty string', ''], ['whitespace', '   '], ['an object', {}]]) {
+    test(`${label} leaves the property ABSENT so the marker reads as pre-bundle`, () => {
+      const marker = {
+        runId: RUN_ID, sid: null, round: 1, auditedSha: TREE_A, auditedTree: TREE_A,
+        auditedBranch: value, ts: new Date().toISOString(),
+      };
+      const ev = freshEvidence(marker);
+      assert.equal(Object.hasOwn(ev, 'auditedBranch'), false,
+        'coercing corrupt input to null would manufacture a valid "detached" bundle');
+    });
+  }
+});
+
+describe('the writer refuses a marker the reader would reject (M4/M9)', () => {
+  test('a malformed runId is not published', () => {
+    let wrote = false;
+    const res = writeGateEvidence({
+      repoRoot: '/repo', runId: 'short', mode: 'code', auditedTree: TREE_A, auditedBranch: 'main',
+      log: () => {}, adapters: { atomicWriteFileSync: () => { wrote = true; } },
+    });
+    assert.equal(res.written, false);
+    assert.equal(res.reason, 'schema-invalid');
+    assert.equal(wrote, false, 'a marker that can never verify must not reach disk');
+  });
+
+  test('a valid marker still publishes — the check is not always-refuse', () => {
+    let wrote = false;
+    const res = writeGateEvidence({
+      repoRoot: '/repo', runId: RUN_ID, mode: 'code', auditedTree: TREE_A, auditedBranch: 'main',
+      log: () => {}, adapters: { atomicWriteFileSync: () => { wrote = true; } },
+    });
+    assert.equal(res.written, true);
+    assert.equal(wrote, true);
   });
 });

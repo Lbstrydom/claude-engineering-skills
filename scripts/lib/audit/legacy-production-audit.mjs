@@ -3469,15 +3469,25 @@ export async function runLegacyProductionAudit(ctx) {
     //     BEFORE input collection — never re-derived here, which would hash the
     //     tree as it looks now rather than as the audit read it.
     const { writeGateEvidence } = await import('./gate-evidence.mjs');
-    writeGateEvidence({
-      repoRoot: process.cwd(),
-      runId: cloudRunId,
-      mode: 'code',
-      sid: debtRunId ?? null,   // the session's stable `audit-<ts>` id (declared above)
-      round: round || 1,
-      auditedSha: ctx.auditedSha ?? null,
-      auditedTree: ctx.auditedTree ?? null,
-    });
+    // `auditedBranch` is forwarded by PRESENCE, never `?? null`: null MEANS
+    // "detached at capture", so coalescing an unset property into null would
+    // record every attached audit as detached and make /ship's guard B refuse
+    // every ship. If the capture block never ran, that is a wiring bug — say so
+    // and write nothing, rather than fabricating a plausible-looking marker.
+    if (!Object.hasOwn(ctx, 'auditedBranch')) {
+      process.stderr.write('  [gate-evidence] ctx.auditedBranch was never captured (wiring bug) — writing no marker; commit will read as not-run\n');
+    } else {
+      writeGateEvidence({
+        repoRoot: process.cwd(),
+        runId: cloudRunId,
+        mode: 'code',
+        sid: debtRunId ?? null,   // the session's stable `audit-<ts>` id (declared above)
+        round: round || 1,
+        auditedSha: ctx.auditedSha ?? null,
+        auditedTree: ctx.auditedTree ?? null,
+        auditedBranch: ctx.auditedBranch,
+      });
+    }
 
     // (b) The store verdict — the ONLY thing that can license `passed`.
     //     `converged` uses the same canonical threshold /audit-code gates on

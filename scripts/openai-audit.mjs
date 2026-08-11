@@ -443,10 +443,28 @@ export async function runMultiPassCodeAudit(openai, planContent, projectContext,
   // commit honestly reads `not-run`.
   {
     const { gitWorktreeTree, gitCommitSha } = await import('./lib/vcs.mjs');
+    const { readActualIdentity, makeGitRunner } = await import('./lib/worktree-identity.mjs');
     const treeRes = gitWorktreeTree(process.cwd());
     const shaRes = gitCommitSha(process.cwd());
     ctx.auditedTree = treeRes.ok ? treeRes.tree : null;
     ctx.auditedSha = shaRes.ok ? shaRes.sha : null;
+    // The REF the audit ran on, captured here beside the sha so the evidence
+    // marker carries a COMPLETE identity bundle. `/ship`'s guard B falls back to
+    // this when no --expect-head was passed, and a sha without a ref cannot
+    // distinguish two branches sitting on the same commit — which is exactly how
+    // a commit lands on `main` instead of a feature branch.
+    //
+    // ALWAYS ASSIGNED, including on failure: `auditedBranch` is required
+    // downstream and `null` MEANS "detached at capture", so leaving the property
+    // absent (rather than explicitly null) is what tells the writer this run
+    // predates the bundle. Never let a capture failure masquerade as detached.
+    const idRes = readActualIdentity({ run: makeGitRunner(process.cwd()) });
+    ctx.auditedBranch = idRes.ok && idRes.identity.ref.kind === 'attached'
+      ? idRes.identity.ref.name
+      : null;
+    if (!idRes.ok) {
+      process.stderr.write(`  [gate-evidence] branch capture failed (${idRes.reason}) — recording detached\n`);
+    }
     if (!treeRes.ok) {
       process.stderr.write(`  [gate-evidence] audit-target capture failed (${treeRes.error?.code || 'UNKNOWN'}) — this run will be evidence-less\n`);
     }

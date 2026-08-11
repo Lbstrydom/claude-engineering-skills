@@ -46,7 +46,7 @@ function fsStub(contents) {
 
 describe('the marker the writer produces is ACCEPTED by the real validator', () => {
   test('a fresh marker resolves as fresh, carrying the runId through', () => {
-    const payload = buildGateEvidence({ runId: RUN_ID, sid: 'audit-123', round: 2, auditedTree: AUDITED_TREE, nowIso: '2026-07-18T11:00:00.000Z' });
+    const payload = buildGateEvidence({ runId: RUN_ID, sid: 'audit-123', round: 2, auditedTree: AUDITED_TREE, nowIso: '2026-07-18T11:00:00.000Z', auditedBranch: 'main' });
     const ev = resolveEvidence({
       auditRunPath: '/repo/.audit/last-audit-run.json',
       headCommitTs: HEAD_TS,
@@ -57,7 +57,7 @@ describe('the marker the writer produces is ACCEPTED by the real validator', () 
   });
 
   test('the payload satisfies RUN_ID_RE and a parseable ts (via the validator, not a restated rule)', () => {
-    const payload = buildGateEvidence({ runId: RUN_ID, auditedTree: AUDITED_TREE, nowIso: '2026-07-18T11:00:00.000Z' });
+    const payload = buildGateEvidence({ runId: RUN_ID, auditedTree: AUDITED_TREE, nowIso: '2026-07-18T11:00:00.000Z', auditedBranch: 'main' });
     const ev = resolveEvidence({
       auditRunPath: '/m.json', headCommitTs: HEAD_TS,
       fsMod: fsStub({ '/m.json': JSON.stringify(payload) }),
@@ -68,7 +68,7 @@ describe('the marker the writer produces is ACCEPTED by the real validator', () 
   test('MIRROR: a marker written BEFORE HEAD reads as stale, not fresh', () => {
     // Without this the freshness assertion above could pass on a writer that
     // stamped a constant far-future ts.
-    const payload = buildGateEvidence({ runId: RUN_ID, auditedTree: AUDITED_TREE, nowIso: '2026-07-18T09:00:00.000Z' });
+    const payload = buildGateEvidence({ runId: RUN_ID, auditedTree: AUDITED_TREE, nowIso: '2026-07-18T09:00:00.000Z', auditedBranch: 'main' });
     const ev = resolveEvidence({
       auditRunPath: '/m.json', headCommitTs: HEAD_TS,
       fsMod: fsStub({ '/m.json': JSON.stringify(payload) }),
@@ -80,7 +80,7 @@ describe('the marker the writer produces is ACCEPTED by the real validator', () 
 describe('THE REACHABILITY PIN: passed is now attainable, and only with both halves', () => {
   const freshEv = () => resolveEvidence({
     auditRunPath: '/m.json', headCommitTs: HEAD_TS,
-    fsMod: fsStub({ '/m.json': JSON.stringify(buildGateEvidence({ runId: RUN_ID, auditedTree: AUDITED_TREE, nowIso: '2026-07-18T11:00:00.000Z' })) }),
+    fsMod: fsStub({ '/m.json': JSON.stringify(buildGateEvidence({ runId: RUN_ID, auditedTree: AUDITED_TREE, nowIso: '2026-07-18T11:00:00.000Z', auditedBranch: 'main' })) }),
   });
 
   test('fresh marker + a converged store row → passed is ACCEPTED', () => {
@@ -141,7 +141,7 @@ describe('writeGateEvidence — when it writes, and when it stays silent', () =>
 
   test('writes for a cloud-backed CODE audit', () => {
     const { writes, adapters } = capture();
-    const r = writeGateEvidence({ repoRoot: '/repo', runId: RUN_ID, mode: 'code', round: 1, auditedTree: AUDITED_TREE, adapters });
+    const r = writeGateEvidence({ repoRoot: '/repo', runId: RUN_ID, mode: 'code', round: 1, auditedTree: AUDITED_TREE, auditedBranch: 'main', adapters });
     assert.equal(r.written, true);
     assert.equal(writes.length, 1);
     assert.ok(writes[0].p.endsWith(GATE_EVIDENCE_RELPATH), `unexpected path ${writes[0].p}`);
@@ -169,7 +169,7 @@ describe('writeGateEvidence — when it writes, and when it stays silent', () =>
   test('a write failure degrades to not-run rather than failing the audit', () => {
     const logs = [];
     const r = writeGateEvidence({
-      repoRoot: '/repo', runId: RUN_ID, mode: 'code', auditedTree: AUDITED_TREE,
+      repoRoot: '/repo', runId: RUN_ID, mode: 'code', auditedTree: AUDITED_TREE, auditedBranch: 'main',
       log: (m) => logs.push(m),
       adapters: { atomicWriteFileSync: () => { const e = new Error('EACCES'); e.code = 'EACCES'; throw e; } },
     });
@@ -179,9 +179,28 @@ describe('writeGateEvidence — when it writes, and when it stays silent', () =>
   });
 
   test('round is normalised to a number-or-null (never NaN/undefined in the JSON)', () => {
-    assert.equal(buildGateEvidence({ runId: RUN_ID, round: undefined }).round, null);
-    assert.equal(buildGateEvidence({ runId: RUN_ID, round: 3 }).round, 3);
-    assert.equal(JSON.parse(JSON.stringify(buildGateEvidence({ runId: RUN_ID }))).sid, null);
+    assert.equal(buildGateEvidence({ runId: RUN_ID, round: undefined, auditedBranch: 'main' }).round, null);
+
+    // auditedBranch is REQUIRED and OMISSION THROWS — it must not default.
+    // `null` is meaningful here ("detached at capture"), so a silent default
+    // would record every attached audit as detached, and guard B would then
+    // refuse every ship. Presence, not nullish-coalescing, is the contract.
+    assert.throws(
+      () => buildGateEvidence({ runId: RUN_ID, auditedTree: AUDITED_TREE }),
+      /auditedBranch is required/,
+      'omitting auditedBranch must throw, never default to null',
+    );
+    assert.equal(
+      buildGateEvidence({ runId: RUN_ID, auditedTree: AUDITED_TREE, auditedBranch: null }).auditedBranch,
+      null,
+      'an EXPLICIT null is a legal, complete bundle meaning detached',
+    );
+    assert.equal(
+      buildGateEvidence({ runId: RUN_ID, auditedTree: AUDITED_TREE, auditedBranch: 'main' }).auditedBranch,
+      'main',
+    );
+    assert.equal(buildGateEvidence({ runId: RUN_ID, round: 3, auditedBranch: 'main' }).round, 3);
+    assert.equal(JSON.parse(JSON.stringify(buildGateEvidence({ runId: RUN_ID, auditedBranch: 'main' }))).sid, null);
   });
 });
 

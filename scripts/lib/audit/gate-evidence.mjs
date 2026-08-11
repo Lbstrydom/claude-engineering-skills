@@ -28,6 +28,7 @@
 
 import path from 'node:path';
 import { atomicWriteFileSync } from '../file-io.mjs';
+import { RUN_ID_RE, TREE_ID_RE } from '../commit-trailers.mjs';
 
 /**
  * The marker's schema, matched to `resolveEvidence`'s validation exactly:
@@ -52,16 +53,38 @@ export const GATE_EVIDENCE_RELPATH = path.join('.audit', 'last-audit-run.json');
  * "when", never "what". `auditedTree` is the only one of the three checks a
  * post-audit edit cannot satisfy.
  *
- * @param {{runId: string, sid?: string|null, round?: number|null, auditedSha?: string|null, auditedTree?: string|null, nowIso?: string}} input
- * @returns {{runId: string, sid: string|null, round: number|null, auditedSha: string|null, auditedTree: string|null, ts: string}}
+ * `auditedBranch` names the REF the audit ran on, and it is **required** — see
+ * the throw below.
+ *
+ * @param {{runId: string, sid?: string|null, round?: number|null, auditedSha?: string|null, auditedTree?: string|null, auditedBranch?: string|null, nowIso?: string}} input
+ * @returns {{runId: string, sid: string|null, round: number|null, auditedSha: string|null, auditedTree: string|null, auditedBranch: string|null, ts: string}}
  */
-export function buildGateEvidence({ runId, sid = null, round = null, auditedSha = null, auditedTree = null, nowIso }) {
+export function buildGateEvidence(input) {
+  const { runId, sid = null, round = null, auditedSha = null, auditedTree = null, nowIso } = input ?? {};
+
+  // `auditedBranch` is REQUIRED, and an omitted argument throws rather than
+  // defaulting. This is the presence-vs-null contract on the WRITE side: `null`
+  // is a MEANINGFUL value here — "detached at capture" — so a default of `null`
+  // would silently record every attached audit as detached. The reader
+  // (`resolveExpectedIdentity`) then compares an attached checkout against a
+  // detached expectation and refuses EVERY ship. A guard that fails 100% of the
+  // time is as useless as one that fails 0%, and a wrong default is how you get
+  // there without anyone writing a bug.
+  if (!input || !Object.hasOwn(input, 'auditedBranch')) {
+    throw new TypeError(
+      'buildGateEvidence: auditedBranch is required — pass the branch name, or an explicit null for a detached HEAD. '
+      + 'Omitting it would record an attached audit as detached.',
+    );
+  }
+  const { auditedBranch } = input;
+
   return {
     runId,
     sid: sid ?? null,
     round: Number.isFinite(round) ? round : null,
     auditedSha: auditedSha ?? null,
     auditedTree: auditedTree ?? null,
+    auditedBranch: auditedBranch === null ? null : String(auditedBranch),
     ts: nowIso ?? new Date().toISOString(),
   };
 }
@@ -80,8 +103,12 @@ export function buildGateEvidence({ runId, sid = null, round = null, auditedSha 
  * @param {'code'|'plan'} [opts.mode='code']
  * @param {string|null} [opts.sid]
  * @param {number|null} [opts.round]
- * @param {string|null} [opts.auditedSha] — HEAD at capture time (cheap secondary)
+ * @param {string|null} [opts.auditedSha] — HEAD at capture time
  * @param {string|null} [opts.auditedTree] — worktree content identity; REQUIRED
+ * @param {string|null} opts.auditedBranch — the ref the audit ran on; REQUIRED
+ *   (explicit `null` = detached at capture). Together with `auditedSha` this is
+ *   the identity BUNDLE `/ship`'s guard B falls back to when no `--expect-head`
+ *   was passed; a head without a ref disposition is refused, not degraded.
  * @param {(msg: string) => void} [opts.log]
  * @param {{atomicWriteFileSync?: Function}} [opts.adapters] — injected for tests
  * @returns {{written: boolean, reason?: string, payload?: object, filePath?: string}}
@@ -96,8 +123,12 @@ export function writeGateEvidence({
   auditedTree = null,
   log = (m) => process.stderr.write(m),
   adapters = {},
+  ...rest
 } = {}) {
   const write = adapters.atomicWriteFileSync || atomicWriteFileSync;
+  // Forwarded by PRESENCE so buildGateEvidence's required-field check is the one
+  // place that decides; defaulting here would defeat it.
+  const hasBranch = Object.hasOwn(rest, 'auditedBranch');
 
   // No cloud run → no verifiable evidence. Writing a marker whose runId the
   // store cannot resolve would let `resolveEvidence` report `fresh` while
@@ -124,7 +155,25 @@ export function writeGateEvidence({
     return { written: false, reason: 'no-audited-tree' };
   }
 
-  const payload = buildGateEvidence({ runId, sid, round, auditedSha, auditedTree });
+  const payload = buildGateEvidence({
+    runId, sid, round, auditedSha, auditedTree,
+    ...(hasBranch ? { auditedBranch: rest.auditedBranch } : {}),
+  });
+
+  // Validate the marker against the READER's contract before publishing it.
+  // Writing a marker the reader will classify `malformed` is worse than writing
+  // none: `{written: true}` reports success for evidence that can never verify,
+  // and the failure then surfaces one layer away at commit time. The reader's
+  // own regexes are imported rather than restated, so writer and reader cannot
+  // drift into disagreeing about what a valid marker is.
+  const defects = [];
+  if (!RUN_ID_RE.test(String(payload.runId ?? ''))) defects.push(`runId=${JSON.stringify(payload.runId)}`);
+  if (!TREE_ID_RE.test(String(payload.auditedTree ?? ''))) defects.push(`auditedTree=${JSON.stringify(payload.auditedTree)}`);
+  if (Number.isNaN(Date.parse(payload.ts))) defects.push(`ts=${JSON.stringify(payload.ts)}`);
+  if (defects.length > 0) {
+    log(`  [gate-evidence] refusing to write a marker the reader would reject (${defects.join(', ')}) — commit will read as not-run\n`);
+    return { written: false, reason: 'schema-invalid', payload, filePath: path.join(repoRoot, GATE_EVIDENCE_RELPATH) };
+  }
   const filePath = path.join(repoRoot, GATE_EVIDENCE_RELPATH);
   try {
     write(filePath, JSON.stringify(payload, null, 2));

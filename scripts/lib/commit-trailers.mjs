@@ -16,6 +16,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { resolveAndClassify } from './sensitive-paths.mjs';
+import { GIT_OBJECT_ID_RE } from './worktree-identity.mjs';
 
 export const GATE_VALUES = Object.freeze(['passed', 'waived', 'not-run']);
 export const MODEL_TOKEN_RE = /^[a-z][a-z0-9.-]*$/;
@@ -25,8 +26,16 @@ export const RUN_ID_RE = /^[A-Za-z0-9-]{8,64}$/;
  * A git object id (sha-1 tree/commit). Validated rather than trusted so a
  * malformed `auditedTree` degrades to "no identity" → `passed` refused, instead
  * of being compared as an opaque string that could never match anyway.
+ *
+ * Re-export of the ONE git object-id contract (worktree-identity.mjs).
+ *
+ * Kept as a named export because existing callers and tests import
+ * `TREE_ID_RE` from here, but it is no longer a second definition: the marker's
+ * `auditedSha` is compared against this by the reader and against the same
+ * matcher by the identity oracle, so a divergence between two copies would let
+ * one side accept an id the other rejects.
  */
-export const TREE_ID_RE = /^[0-9a-f]{40}$/;
+export const TREE_ID_RE = GIT_OBJECT_ID_RE;
 export const SKILL_NAME_RE = /^[a-z][a-z0-9-]*$/;
 export const RESERVED_TRAILER_RE = /^AI-[A-Za-z0-9-]*\s*:/i;
 
@@ -134,7 +143,28 @@ export function resolveEvidence({ auditRunPath, headCommitTs, noRunId = false, f
   const auditedTree = TREE_ID_RE.test(parsed?.auditedTree ?? '') ? parsed.auditedTree : null;
   const auditedSha = TREE_ID_RE.test(parsed?.auditedSha ?? '') ? parsed.auditedSha : null;
   const fresh = evidenceMs > headCommitTs * 1000;
-  return { state: fresh ? 'fresh' : 'stale', runId, ts, auditedTree, auditedSha };
+  const result = { state: fresh ? 'fresh' : 'stale', runId, ts, auditedTree, auditedSha };
+  // `auditedBranch` is forwarded by PRESENCE, and the property is only DEFINED
+  // on the result when the marker carried it. That distinction is the contract:
+  // an explicit `null` means "detached at capture" — a COMPLETE identity bundle —
+  // while the property being ABSENT means the marker predates the bundle and can
+  // only support a sha, which `resolveExpectedIdentity` refuses as
+  // `pre-bundle-evidence`. A `?? null` here would collapse the two and silently
+  // turn every legacy marker into a detached expectation.
+  if (Object.hasOwn(parsed ?? {}, 'auditedBranch')) {
+    const raw = parsed.auditedBranch;
+    if (raw === null) {
+      result.auditedBranch = null;                 // detached at capture
+    } else if (typeof raw === 'string' && raw.trim()) {
+      result.auditedBranch = raw.trim();           // attached at capture
+    }
+    // A PRESENT-but-malformed value (a number, an empty string) is deliberately
+    // left OFF the result. Coercing it to `null` would manufacture a valid
+    // "detached" bundle out of corrupt input — the one reading that cannot be
+    // right. Omitting the property makes the marker read as pre-bundle
+    // evidence, which refuses rather than guesses.
+  }
+  return result;
 }
 
 /**
