@@ -2044,8 +2044,15 @@ async function cmdGetPersonaSessionsByRepo() {
   const cloud = await isPersonaCloudEnabled();
   if (!cloud) return emit({ ok: true, cloud: false, rows: [] });
 
-  const rows = await getPersonaSessionsByRepo(parsed.data);
-  emit({ ok: true, cloud: true, rows });
+  // Pass the CANONICAL repo id alongside the caller's name, so a row whose two
+  // identity fields disagree is rejected rather than served. Best-effort: an
+  // unresolvable checkout leaves repoId null and the read stays name-scoped,
+  // which is the pre-existing behaviour — this tightens where it can and
+  // degrades to where it was, never below it.
+  const ref = await resolveRepoForStore({}).catch(() => null);
+  const repoId = ref?.repoRowId || null;
+  const rows = await getPersonaSessionsByRepo({ ...parsed.data, repoId });
+  emit({ ok: true, cloud: true, rows, scopedByRepoId: Boolean(repoId) });
 }
 
 /**

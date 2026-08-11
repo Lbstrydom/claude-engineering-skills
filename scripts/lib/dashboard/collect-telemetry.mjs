@@ -295,6 +295,13 @@ async function collectPersonaTests(root) {
   try {
     if (!await isCloudEnabled()) return { data: empty, status: { status: 'missing-optional', detail: 'persona-test telemetry needs cloud + a service-role key' } };
 
+    // Deliberately name-scoped: `repoName` here comes from the LOCAL
+    // `resolveRepoIdentity(root)`, which has no canonical `audit_repos.id` to
+    // hand, and buying one would cost an extra store round-trip for a display
+    // panel. `repoId` is optional on the reader precisely so this call keeps
+    // its pre-existing behaviour rather than being tightened by accident — the
+    // omission is a decision, not an oversight. Revisit if this panel ever
+    // starts driving a gate.
     const sessions = await getPersonaSessionsByRepo({
       repoName, limit: PERSONA_TESTS_TREND_LIMIT,
       select: ['persona', 'verdict', 'p0_count', 'p1_count', 'created_at'],

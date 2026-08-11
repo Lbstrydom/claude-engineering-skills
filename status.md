@@ -1,6 +1,63 @@
 # Project Status Log
 
-## 2026-08-11 (latest) — the second nudge view, caught five days before it started forgetting
+## 2026-08-11 (latest) — the last unlocked fix, and the deferral reason was wrong
+
+Closed the one code row left in `unlocked_fixes`. **The backlog is now `code: 0`.**
+
+**The deferral I recorded this morning was falsified by measuring it.** I left
+`getPersonaSessionsByRepo` unfixed on the grounds that `persona_test_sessions.repo_id`
+is nullable, so adding an id predicate would silently drop legacy rows — the
+"check verifying one direction only" trap. Measured: **0 of 7 rows are null**.
+The trap was real as a *shape* and wrong as a *fact about this store*, and the
+fix that respects both is one clause, not a backfill.
+
+**What the finding was actually about, which I had also got wrong.** `repo_name`
+IS `audit_repos.name` and is unique, so name-scoping was never a cross-repo
+leak. What it cannot catch is a row whose two identity fields **disagree** — and
+that row was producible until this morning, because `cmdRecordPersonaSession`
+filled only the MISSING field: a caller supplying repo A's name from a checkout
+of repo B wrote A's name beside B's id, and this reader served it as A's. The
+writer fix (`reconcileRepoIdentity`) and this one are two halves of the same
+defect, found eight hours apart without noticing they were connected.
+
+**And the condition is not hypothetical: all 7 live rows carry exactly that
+mismatch** — `repo_name` is the bare `wine-cellar-app` while `repo_id` resolves
+to a row named `Lbstrydom/wine-cellar-app`. Which raises a separate, pre-existing
+problem worth recording rather than fixing here: `audit_effectiveness` joins
+`persona_test_sessions.repo_name = audit_repos.name`, so with the bare name on
+one side and the canonical slug on the other, **those 7 sessions join to nothing
+and are invisible to precision/recall entirely.** Not this finding's scope; it is
+wine's data and needs a backfill decision, not a predicate.
+
+The predicate is `repo_name = $1 AND (repo_id = $3 OR repo_id IS NULL)`, and the
+`IS NULL` arm is load-bearing rather than laxity — the writer records by name
+when ambient identity cannot resolve, so requiring the id would drop precisely
+the degraded rows that branch exists to produce. `repoId` is optional: the CLI
+resolves and passes it, an unresolvable checkout degrades to the previous
+name-scoped behaviour, and the dashboard collector deliberately does not pass one
+(it holds a local name, not a canonical row) with a comment saying so, so the
+omission reads as a decision rather than an oversight.
+
+Four tests, two mutations, both red: reverting the fence, and fencing only the
+non-p0 branch. That second one matters — **one-sibling-only drift is this file
+family's recurring defect** (the LIMIT counter, the repo-scope fence and the
+ORDER BY each shipped to one of a pair first), and the p0 branch is written out
+separately precisely so it can drift. The NULL-arm assertion skips with a stated
+reason rather than passing, because this store has no null row to demonstrate it
+with; the suite's skip count moved 25 → 26, which is visible.
+
+Verification: 11,100 pass / 0 fail / 26 skipped, whole suite green.
+
+Session hygiene: local `main` is 8 ahead / 12 behind and stays that way
+deliberately. Patch-id comparison says 6 of the 8 local commits are duplicates of
+commits already on origin; of the two that are not, one is mine (already on
+origin under a different `status.md` conflict resolution) and one is the other
+session's genuinely-unpushed work. Rebasing would duplicate my status entry and
+rewrite their commit, so the branch is left alone. Origin's 12 commits touch none
+of the files this session edited — verified by path diff before working, rather
+than assumed.
+
+## 2026-08-11 — the second nudge view, caught five days before it started forgetting
 
 Gave `unremediated_acceptances` the treatment `unlocked_fixes` got this morning,
 and found the same defect one step earlier in its life.

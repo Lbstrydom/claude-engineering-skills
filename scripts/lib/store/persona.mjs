@@ -324,20 +324,57 @@ export async function recordPersonaSession(session) {
  * Phase 1, /ship Step 0.5a, and persona-test interop helpers (replaces
  * the curl-based anon reads after the 20260507 RLS hardening).
  */
-export async function getPersonaSessionsByRepo({ repoName, limit = 5, p0Only = false, select = null }) {
+export async function getPersonaSessionsByRepo({
+  repoName, repoId = null, limit = 5, p0Only = false, select = null,
+}) {
   if (!repoName || !await isCloudEnabled()) return [];
   const cols = (Array.isArray(select) && select.length > 0)
     ? select.map((c) => `"${c}"`).join(', ')
     : '*';
   const n = Math.max(1, Math.min(limit, 100));
+  // Canonical-identity predicate, added for the "reader scopes only by
+  // caller-provided repoName" finding. `repo_name` is `audit_repos.name` and is
+  // unique, so name-scoping was never a cross-repo LEAK — what it could not
+  // catch is a row whose two identity fields DISAGREE. That row was producible
+  // until 2026-08-11: `cmdRecordPersonaSession` filled only the missing field,
+  // so a caller supplying repo A's name from a checkout of repo B wrote A's name
+  // beside B's id, and this reader served it as A's. The writer is fixed
+  // (reconcileRepoIdentity); this makes the READ reject such a row instead of
+  // trusting it — the two halves of the same defect.
+  //
+  // `OR repo_id IS NULL` is load-bearing, not laxity: the column is nullable BY
+  // DESIGN — the writer records by name when ambient identity is unresolvable,
+  // and dropping those rows would be a silent read regression for exactly the
+  // degraded case they exist to cover. Measured 2026-08-11: 0 of 7 rows here
+  // are null, but a consumer's store is not this store. Requiring the id would
+  // be the "check verifying one direction only" trap.
+  const scoped = Boolean(repoId);
   try {
     if (p0Only) {
+      if (scoped) {
+        return await many(
+          `SELECT ${cols} FROM persona_test_sessions
+            WHERE repo_name = $1 AND p0_count > 0 AND (repo_id = $3 OR repo_id IS NULL)
+            ORDER BY created_at DESC
+            LIMIT $2`,
+          [repoName, n, repoId]
+        );
+      }
       return await many(
         `SELECT ${cols} FROM persona_test_sessions
           WHERE repo_name = $1 AND p0_count > 0
           ORDER BY created_at DESC
           LIMIT $2`,
         [repoName, n]
+      );
+    }
+    if (scoped) {
+      return await many(
+        `SELECT ${cols} FROM persona_test_sessions
+          WHERE repo_name = $1 AND (repo_id = $3 OR repo_id IS NULL)
+          ORDER BY created_at DESC
+          LIMIT $2`,
+        [repoName, n, repoId]
       );
     }
     return await many(
