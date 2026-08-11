@@ -138,29 +138,6 @@ export function listEnvelopesOldestFirst(dir, cap) {
 }
 
 /**
- * Is the file at `p` still the one described by `before`?
- *
- * Compares mtime + size + inode where the platform supplies one. Not a lock —
- * it cannot close the window entirely — but it turns "always delete the
- * pathname" into "delete only what we read", which is the difference between
- * discarding a producer's newer envelope and leaving it for the next drain.
- *
- * @param {string} p
- * @param {import('node:fs').Stats} before
- * @returns {boolean}
- */
-function fileUnchanged(p, before) {
-  try {
-    const now = fs.statSync(p);
-    return now.mtimeMs === before.mtimeMs
-      && now.size === before.size
-      && (!now.ino || now.ino === before.ino);
-  } catch {
-    return false;   // gone or unreadable — do not delete blind
-  }
-}
-
-/**
  * Drain pending envelopes.
  *
  * Deliberately tolerant of a concurrent winner: two invocations can drain the
@@ -206,6 +183,20 @@ export async function drainEnvelopes({ dir, apply, parse, cap, isConnectionError
     };
   }
 
+  // Reclaim `.claimed` leftovers from a drain that died mid-flight. Without
+  // this they are invisible to the `.json` filter below and leak permanently —
+  // the same silent-loss shape this module exists to prevent.
+  try {
+    for (const n of fs.readdirSync(dir)) {
+      if (!n.endsWith('.claimed')) continue;
+      const orig = path.join(dir, n.slice(0, -'.claimed'.length));
+      try {
+        if (fs.existsSync(orig)) fs.rmSync(path.join(dir, n), { force: true, maxRetries: 3, retryDelay: 50 });
+        else fs.renameSync(path.join(dir, n), orig);
+      } catch { /* next run */ }
+    }
+  } catch { /* listing handles the real error below */ }
+
   const listed = listEnvelopesOldestFirst(dir, limit);
   if (!listed.ok) {
     return { state: 'unavailable', drained: 0, rejected: 0, failed: 0, reason: listed.reason };
@@ -249,24 +240,52 @@ export async function drainEnvelopes({ dir, apply, parse, cap, isConnectionError
       continue;
     }
 
+    // CLAIM the artifact with an atomic rename before doing anything slow with
+    // it. `rename` is the only primitive here that is atomic against a
+    // concurrent producer: once the file is moved aside, the producer's next
+    // write to this fingerprint lands on a free pathname and cannot be
+    // destroyed by our later delete. Compare-then-delete narrowed that window;
+    // it could not close it (round-2 H2).
+    const claimed = `${file}.claimed`;
+    try {
+      fs.renameSync(file, claimed);
+    } catch (err) {
+      if (err?.code === 'ENOENT') continue;   // another drain claimed it first
+      failed++;
+      continue;
+    }
+
     try {
       const applied = await apply(envelope);
       // `=== true`, not truthy. The contract says a handler PROVES application;
       // an adapter returning a status object before its write is durable would
       // otherwise satisfy `if (applied)` and the envelope would be deleted.
       if (applied === true) {
-        // Delete the artifact we actually applied, not whatever now occupies
-        // the pathname: a producer can rewrite this fingerprint during the
-        // await, and deleting by name alone would discard that newer envelope
-        // having persisted only the older payload.
-        if (fileUnchanged(file, stat)) {
-          fs.rmSync(file, { force: true, recursive: true, maxRetries: 3, retryDelay: 50 });
-        }
+        // The claim above already moved this artifact out of the producer's
+        // pathname, so there is nothing left to race: deleting the claim file
+        // cannot touch a newer envelope, because a newer envelope is written to
+        // the ORIGINAL name. A compare-then-delete would still have had a
+        // window between the comparison and the unlink.
+        fs.rmSync(claimed, { force: true, recursive: true, maxRetries: 3, retryDelay: 50 });
         drained++;
       } else {
+        // Not applied — hand the artifact back to the queue under its own name
+        // so the next drain sees it. If the producer has since written a newer
+        // envelope there, that one wins and this claim is dropped: it is a
+        // strict predecessor of what now sits in the queue.
+        try {
+          if (fs.existsSync(file)) {
+            fs.rmSync(claimed, { force: true, maxRetries: 3, retryDelay: 50 });
+          } else {
+            fs.renameSync(claimed, file);
+          }
+        } catch { /* leave the claim file; the sweep below reclaims it */ }
         failed++;   // sink declined or unavailable — leave it for next time
       }
     } catch (err) {
+      // Hand the claim back before returning/counting — an artifact stranded as
+      // `.claimed` would be invisible to the next drain's `.json` filter.
+      try { if (!fs.existsSync(file)) fs.renameSync(claimed, file); else fs.rmSync(claimed, { force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* swept next run */ }
       if (isConnectionError?.(err)) {
         // The sink is down. Stop: the remaining envelopes are fine, and
         // recording a failure against each of them is how an outage retires a

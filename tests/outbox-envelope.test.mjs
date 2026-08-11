@@ -263,6 +263,34 @@ test('a fingerprint is a FILENAME, so traversal is refused at the boundary', () 
   } finally { rmTmp(dir); }
 });
 
+test('a .claimed leftover from a crashed drain is reclaimed, not leaked', async () => {
+  // Round-2 H2 replaced compare-then-delete with an atomic claim, which closes
+  // the producer race but introduces a new way to lose data: a drain that dies
+  // between the rename and the delete leaves a `.claimed` file that the `.json`
+  // filter cannot see. That is the silent-loss shape this module exists to
+  // prevent, so the reclaim sweep gets its own assertion.
+  const dir = mkTmp('ces-env-reclaim-');
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'orphan.json.claimed'), `${JSON.stringify(env('orphan'))}\n`);
+
+    const res = await drainEnvelopes({ dir, apply: async () => true, parse, cap: 10 });
+    assert.equal(res.drained, 1, 'the orphaned claim must be picked up, not ignored');
+    assert.equal(fs.existsSync(path.join(dir, 'orphan.json.claimed')), false);
+  } finally { rmTmp(dir); }
+});
+
+test('a claim is handed back when apply declines, so the next drain sees it', async () => {
+  const dir = mkTmp('ces-env-handback-');
+  try {
+    writeEnvelope(dir, env('f'));
+    const res = await drainEnvelopes({ dir, apply: async () => false, parse, cap: 10 });
+    assert.equal(res.failed, 1);
+    assert.ok(fs.existsSync(path.join(dir, 'f.json')), 'back under its own name, not stranded as .claimed');
+    assert.equal(fs.existsSync(path.join(dir, 'f.json.claimed')), false);
+  } finally { rmTmp(dir); }
+});
+
 test('drain: an ARTIFACT-scoped failure is charged to that artifact and the batch continues', async () => {
   // The other side of the rule above — without this pair, "abort on error"
   // and "abort on connection error" are indistinguishable.
