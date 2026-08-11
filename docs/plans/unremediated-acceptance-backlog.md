@@ -511,15 +511,45 @@ Before this ships:
 
 ---
 
-## 7b. Implementation Phases
+## 7b. Implementation Phases — none (deliberately flat)
 
-**Phase 1 — Disposition + aged view**: migration, store counts, CLI payload,
-skill prose, both test files. Files: `supabase/migrations/<ts>_unremediated_acceptance_disposition.sql` (create),
-`scripts/lib/store/plans-ship.mjs` (modify), `scripts/cross-skill.mjs` (modify),
-`skills/ship/SKILL.md` (modify), `tests/unremediated-acceptance-view.test.mjs` (create),
-`tests/cross-skill-unlocked-scope.test.mjs` (modify).
+> **Removed 2026-08-10, and the reason is worth keeping.** This plan carried a
+> two-phase §7b and a matching two-cluster §11 until `/cycle`'s Step 0.7
+> preflight refused it: **Cluster B's derived scope was `Files: no fixed set —
+> determined per cluster by the findings themselves`**, which is not
+> intent-tagged and cannot be, because the burn-down is *judgement over
+> findings*, not edits to a file set. `/cycle --autonomous` implements code per
+> cluster; there is no code to write for it.
+>
+> Both the GPT rounds and the Gemini gate checked §11 for partition, coupling
+> and fix-gate placement — the things the rubric names — and none of them asked
+> *"can `/cycle` actually execute this cluster?"*. The preflight is the only
+> check that did, which is precisely why it is fail-closed and runs before any
+> execution.
+>
+> With the burn-down out of the phase set, one implementation unit remains, and
+> the planner's own grammar then forbids the structure that was there: **never a
+> lone "Phase 1"**, and §11 is emitted **only** when phases group into **≥2**
+> clusters. So the work is flat §7, and the burn-down moves to §7c below —
+> outside the phase set, exactly as close-out is.
 
-**Phase 2 — Cluster burn-down, largest family first**: work the remaining rows
+The implementation is the single cohesive change described in §4: the migration,
+the store counts, the CLI payload, the skill prose, and both test files. It runs
+as one unit under `/cycle --autonomous`'s degenerate single-cluster path.
+
+**§11 is removed entirely, not left saying "none".** The orchestrator keys
+`hasClustering` on the presence of the `## 11. Execution Clustering` heading, so
+a heading that exists but declares no clusters parses to an empty cluster set and
+fails the same preflight for a new reason — a placeholder that reads as
+documentation and behaves as a malformed block is the messy middle the
+generated-artifact policy names. The seam the old Cluster A described (view
+predicate, count projection, CLI payload and skill prose being ONE contract in
+four places) is not lost — it is why §4 keeps them in one change set, and it is
+what the consolidated gate reviews.
+
+## 7c. Follow-on campaign (not a phase, not autonomously executable)
+
+**Cluster burn-down, largest family first**: work the remaining rows
 as findings, not as data.
 
 **Operating contract (H3) — the canonical mutation, named before any cluster
@@ -617,23 +647,15 @@ Order and method:
 3. `[backend]` (16), `[Architecture]`+`[Structure]` (11), misc (~21).
 4. plan-mode (39) — each is a plan section accepted and never amended; resolve
    by amending the plan or recording the decision.
-Files: no fixed set — determined per cluster by the findings themselves.
 
-## 11. Execution Clustering
+**Not autonomously executable, and not a `/cycle` cluster.** There is no file
+set: the unit of work is a finding, the action is `final-review-adjudicate` or
+`final-review-record-fix`, and the input is a judgement about whether a row is
+decided, already fixed, or genuinely open. Run it as a separate human-led pass
+once §4 has shipped — **it depends on that**, because until the disposition
+exclusion and the aged count exist, the burn-down cannot distinguish decided
+from open, which is the whole failure this plan removes.
 
-- **Cluster A** — Phases 1 — fix-gate: yes
-  - Coupling: single phase, but the seam is the point — the view predicate, the
-    count projection, the CLI payload and the skill prose are ONE contract in
-    four places. Auditing them together is what catches the drift class that
-    produced the 20-vs-201 report; auditing them apart is how that drift
-    happened.
-- **Cluster B** — Phases 2 — fix-gate: final
-  - Coupling: one cluster per category family would fragment a judgement that is
-    the same in all of them ("is this decided, already fixed, or genuinely
-    open?"). Depends on Cluster A: without the disposition exclusion and the
-    aged count, the burn-down cannot tell decided from open, which is the
-    failure this whole plan exists to remove.
-- **Final gate**: consolidated Gemini review over the union diff.
 
 ---
 
