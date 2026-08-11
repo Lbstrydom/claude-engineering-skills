@@ -1,6 +1,65 @@
 # Project Status Log
 
-## 2026-08-11 (latest) — fifteen test suites that had never run
+## 2026-08-11 (latest) — ship-commit-transaction Phase 1: the consumer that was never checked has a `pre-commit` hook
+
+Docs-only. No code changed, and the plan is deliberately still `Draft`.
+
+`docs/plans/ship-commit-transaction.md` §2 had one blocking question — whether
+switching `ship-commit` from `git commit` to `commit-tree` would silently skip a
+consumer's hooks — and §2 option 3 proposed the cheap way to answer it: ask the
+two consumers. The hypothesis attached to it was *"if both say no, option 1's
+cost may simply not be owed yet, and option 2 becomes a two-line guard."*
+
+**It was answered by reading, not asking, and the hypothesis is falsified.**
+`wine-cellar-app` carries a live `.git/hooks/pre-commit` (682 bytes, mtime
+2026-07-19) that runs `npx eslint` over staged `src/*.js` + `public/js/*.js` and
+exits 1 on lint failure. `ai-organiser` and this repo are clear. Recorded as
+§2.1 with the command, because `.git/hooks/` is never tracked — this is
+untracked machine state, so it is stronger than a recollection and weaker than a
+durable fact, and a re-read elsewhere can differ.
+
+**And the hook demonstrably fires under the exact call `ship-commit` makes** —
+replicated against a throwaway fixture rather than inferred.
+scripts/ship-commit.mjs:685-688 (d57fe3c8) issues
+`git commit -F <msg> --cleanup=whitespace -- <paths>`; under those `--only`
+semantics git runs `pre-commit` **and** `commit-msg`, handing `pre-commit` a
+temp index (`.git/next-index-*.lock`) containing precisely the declared
+`--path` set and nothing else. So every `ship-commit` run in `wine-cellar-app`
+is today lint-gated on exactly the files it commits, and `commit-tree` would
+delete that gate silently — in the one consumer whose hooks nobody had checked.
+
+**Net effect on the plan: the fix got more expensive, not less.** Option 1's
+cost is owed in full and permanently; option 2 survives but is not a two-line
+guard, because `wine-cellar-app` would take the *weakened* branch on every
+commit and it is the consumer carrying the drift risk. So §3's posture stands
+unchanged, and both trigger arms are recorded as unfired at `d57fe3c8`:
+`npm run upstream:issues` → `No open upstream issues`, and this repo's
+`core.hooksPath` (`.githooks`) still holds only `post-checkout` + `pre-push`.
+Note the §2.1 consumer hook is **not** a trigger — the second arm is about this
+repo by design, and a consumer hook is evidence of cost, not of due-ness.
+
+### Verification
+
+No test run: nothing outside `docs/plans/` changed and no suite reads these
+files beyond the two doc gates, both of which were run — `plans:index:check` up
+to date, `plans:lint` 224 files / 102 mermaid blocks / 0 issues. `arch:refresh`
++ `arch:render` and the dashboard rebuild were run as the advisory steps and
+both exited 0; nothing from either is staged (both Category A).
+
+One instrument defect caught on the way, and it is the reason to trust the rest
+less than the prose implies: my first draft of the §2.1 citation was invisible
+to `docs:citations` — a bare `ship-commit.mjs:…` with no directory and the sha
+in backticks parses as nothing at all, so the doc read `0 pinned (2 unpinned)`
+**identically before and after** the edit. Only measuring the pre-edit baseline
+separated "my citation is fine" from "my citation was never seen". Reformatted
+to `scripts/ship-commit.mjs:685-688 (d57fe3c8)`; now `1 pinned — 1 ok`. The two
+pre-existing `f6caab93` citations remain unparseable and were left alone — they
+carry their sha in prose, and I read the code at a different commit.
+
+Consumer-side (Step 6.8): the pushed commit re-read from the remote after push;
+method and result reported in-session below the push.
+
+## 2026-08-11 — fifteen test suites that had never run
 
 The persona-correlator work turned up one DB suite registered in no runner. A
 census found it was not one file.

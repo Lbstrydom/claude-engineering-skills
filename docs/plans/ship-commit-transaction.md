@@ -1,7 +1,8 @@
 # Plan: A transactional commit boundary for `ship-commit`
 
-- **Date**: 2026-08-11 (updated 2026-08-11 after `worktree-identity-guards` shipped)
-- **Status**: Draft — not started; trigger-gated (see §3)
+- **Date**: 2026-08-11 (updated 2026-08-11 after `worktree-identity-guards` shipped;
+  §2 Phase 1 answered same day — see §2.1)
+- **Status**: Draft — not started; trigger-gated; Phase 1 answered in §2.1 and the cost widened
 - **Author**: Claude + Louis
 - **Scope**: backend (one CLI binary + its consumer-synced copy; no UI)
 
@@ -82,8 +83,8 @@ repo cannot observe consumer hooks.
 
 **Measured 2026-08-11 (`f6caab93`): this repo has no `pre-commit` and no
 `commit-msg` hook** — `.githooks/` holds only `post-checkout` and `pre-push`. So
-the approach is feasible *here*. That is not evidence about consumers, and the
-two known consumers are exactly the repos whose hooks nobody here can enumerate.
+the approach is feasible *here*. That is not evidence about consumers — and the
+consumers have now been measured (§2.1), which is where the cost actually lives.
 
 Second cost: `--no-tests` works by passing `--no-verify` to `git commit`. Under
 `commit-tree` there is no hook to bypass, so the flag becomes meaningless and its
@@ -101,9 +102,63 @@ flag exists at all.
    detect-and-report when they are. Honest, but a guard that silently weakens
    based on repo configuration **must announce which mode it took** — an
    unannounced downgrade is the fake-check shape this repo already polices.
-3. **Ask the consumers.** Two repos, one question: do you have `pre-commit` or
-   `commit-msg` hooks? If both say no, option 1's cost may simply not be owed
-   yet, and option 2 becomes a two-line guard rather than a design.
+3. **Ask the consumers.** ~~Two repos, one question: do you have `pre-commit` or
+   `commit-msg` hooks?~~ **DONE 2026-08-11 — and not by asking: both checkouts
+   were read directly off this machine, which is stronger than a recollection and
+   weaker than a durable fact (§2.1). One of the two has a live `pre-commit`.**
+   The hypothesis attached to this option ("if both say no, option 1's cost may
+   simply not be owed yet, and option 2 becomes a two-line guard") is
+   **falsified**.
+
+### 2.1 Phase 1 answer — the consumer hook census (measured 2026-08-11)
+
+Read directly off the two consumer checkouts on this machine at this repo's
+`d57fe3c8`. **This is untracked machine state, not a committed fact**:
+`.git/hooks/` is never tracked, so a re-read on another machine — or here next
+month — can differ. Carry the command, not the conclusion:
+
+```bash
+for r in C:/GIT/wine-cellar-app C:/GIT/ai-organiser; do git -C "$r" config --get core.hooksPath; ls -1 "$(git -C "$r" rev-parse --git-path hooks)"; done
+```
+
+| Repo | `core.hooksPath` | active `pre-commit` | active `commit-msg` |
+|---|---|---|---|
+| `wine-cellar-app` | `.git/hooks` | **YES** | no |
+| `ai-organiser` | `.git/hooks` (unset) | no | no |
+| this repo | `.githooks` | no | no |
+
+`wine-cellar-app`'s `.git/hooks/pre-commit` (682 bytes, mtime 2026-07-19) runs
+`npx eslint` over the staged `src/*.js` + `public/js/*.js` and **exits 1 on lint
+failure**. A real gate, not a no-op. `ai-organiser` carries a `.githooks/post-commit`
+that is inert (its `core.hooksPath` is unset, so `.git/hooks/` wins) and would be
+irrelevant here regardless — `post-commit` is best-effort and `commit-tree` skips
+it either way.
+
+**And that hook demonstrably fires under the exact call `ship-commit` makes.**
+Not inferred — replicated. scripts/ship-commit.mjs:685-688 (d57fe3c8) issues
+`git commit -F <msg> --cleanup=whitespace -- <paths>`; the same shape against a
+throwaway fixture repo with instrumented hooks emits:
+
+```
+HOOK-RAN pre-commit
+HOOK-SEES-STAGED: a.txt          # exactly the declared --path set, nothing else
+HOOK-GIT_INDEX_FILE=…/.git/next-index-98244.lock
+HOOK-RAN commit-msg on .git/COMMIT_EDITMSG
+```
+
+So under `--only`, git hands `pre-commit` a temp index containing precisely the
+paths being committed, and `commit-msg` runs too. **Every `ship-commit` run in
+`wine-cellar-app` is today lint-gated on exactly the files it commits, and
+`commit-tree` would silently delete that gate** — in the one consumer whose hooks
+had never been checked.
+
+**What this does to the fork.** Option 1's cost is owed in full and permanently,
+for a trigger that has not fired. Option 2 survives but is **not** the two-line
+guard it was hoped to be: `wine-cellar-app` would take the *weakened* branch on
+every commit, so the announced-downgrade requirement becomes load-bearing rather
+than decorative — and the consumer carrying the drift risk is the one that would
+not get the transaction. The measurement makes this work **more** expensive than
+§2 assumed, which is why the posture in §3 stands unchanged.
 
 **Rejected on sight:** commit normally, then `update-ref` the branch back on a
 wrong parent. That is a destructive rewrite in a shared worktree — the exact
@@ -119,8 +174,21 @@ Not speculative work. Start when either fires:
 - **the first `commit-msg` or `pre-commit` hook landing in this repo**, at which
   point option 1's cost must be paid explicitly either way.
 
-Until then the honest posture is: the window is narrowed to a process-spawn, the
-failure is detected and loudly reported, and the push is blocked.
+**Neither has fired, checked 2026-08-11 at `d57fe3c8`:**
+
+- `npm run upstream:issues` → `No open upstream issues.` No consumer has reported
+  a `post-commit-drift`.
+- This repo's `core.hooksPath` is `.githooks`, which holds only `post-checkout`
+  and `pre-push` — no commit-time hook. (`.git/hooks/` carries stale
+  `post-checkout`/`post-merge`/`pre-push` copies; `core.hooksPath` makes them
+  inert, and none are commit-time in any case.)
+
+Note the second arm is about **this** repo by design. The §2.1 census found a
+`pre-commit` hook in a *consumer*, which is not a trigger — it is the opposite:
+evidence that the fix costs more, not that it is now due.
+
+Until one fires the honest posture is: the window is narrowed to a process-spawn,
+the failure is detected and loudly reported, and the push is blocked.
 
 ## 4. Out of scope
 
