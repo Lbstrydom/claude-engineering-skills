@@ -3,8 +3,10 @@
  * @fileoverview First-run setup wizard for claude-engineering-skills.
  *
  * Run once after cloning this repo. Configures:
- *   1. API keys (.env in this repo)
- *   2. Learning database (none / SQLite / Supabase / Postgres)
+ *   1. LLM access route + its keys (.env in this repo) — direct API keys,
+ *      Azure work profile, or OpenRouter; verified before moving on
+ *   2. Learning database (none / Postgres) — verified before moving on.
+ *      There is no SQLite backend; "none" means local JSON files.
  *   3. Weekly local maintenance checks (optional, default off)
  *   4. npm dependencies (in this repo)
  *   5. Skill-surface verification (this repo's .claude/skills/ is committed —
@@ -28,7 +30,17 @@ import { execSync, execFileSync } from 'node:child_process';
 import { createPrompter } from './scripts/lib/install/prompt.mjs';
 
 const SELF_DIR = path.dirname(fileURLToPath(import.meta.url));
-const { rl, ask } = createPrompter();
+// Lazy: createPrompter() opens a readline interface on stdin, which keeps the
+// event loop alive forever. At module scope that made setup.mjs un-importable —
+// any test that merely imported it hung instead of failing, which is a large
+// part of why the wizard had no coverage. Constructed on first prompt, so
+// --headless and any importer never open stdin at all.
+let _prompter = null;
+function prompter() {
+  if (!_prompter) _prompter = createPrompter();
+  return _prompter;
+}
+const ask = (q) => prompter().ask(q);
 
 const B = '\x1b[1m', G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', D = '\x1b[2m', X = '\x1b[0m';
 function ok(msg) { console.log(`  ${G}✓${X} ${msg}`); }
@@ -50,19 +62,97 @@ function checkPrereqs() {
 
 // ── Step 2: API Keys ────────────────────────────────────────────────────────
 
-const API_KEYS = [
-  { name: 'OPENAI_API_KEY', required: true, desc: 'GPT auditing' },
-  { name: 'GEMINI_API_KEY', required: false, desc: 'Gemini final review + A/B pipeline' },
-  { name: 'ANTHROPIC_API_KEY', required: false, desc: 'Claude Opus fallback review' },
-  { name: 'OPENROUTER_API_KEY', required: false, desc: 'OSS models via OpenRouter (tiered-pipeline GLM discovery/triage, model-eval candidates)' },
+/**
+ * How this machine reaches the models.
+ *
+ * This used to be a flat list with OPENAI_API_KEY marked `required`, which is
+ * false for a corporate Azure profile: there the GPT auditor routes to Azure
+ * OpenAI and the final reviewer to Foundry Claude, and no public OpenAI key is
+ * involved. Setup was telling a supported configuration it needed a key it does
+ * not need — and never offering the eleven AZURE_* vars that configuration
+ * actually wants.
+ *
+ * `required` is therefore a property of the ROUTE, not of the key.
+ */
+const ACCESS_ROUTES = [
+  {
+    key: '1',
+    name: 'Direct API keys',
+    desc: 'openai.com / Google / Anthropic — the default',
+    keys: [
+      { name: 'OPENAI_API_KEY', required: true, desc: 'GPT auditing' },
+      { name: 'GEMINI_API_KEY', required: false, desc: 'Gemini final review + A/B pipeline' },
+      { name: 'ANTHROPIC_API_KEY', required: false, desc: 'Claude Opus fallback review' },
+      { name: 'OPENROUTER_API_KEY', required: false, desc: 'OSS models via OpenRouter (tiered-pipeline GLM discovery/triage, model-eval candidates)' },
+    ],
+  },
+  {
+    key: '2',
+    name: 'Azure work profile',
+    desc: 'Azure OpenAI + AI Foundry — no public OpenAI key needed',
+    verify: 'azure',
+    keys: [
+      { name: 'AZURE_OPENAI_ENDPOINT', required: true, desc: 'https://<resource>.openai.azure.com — this var alone activates the Azure path' },
+      { name: 'AZURE_OPENAI_API_KEY', required: true, desc: 'Azure OpenAI key' },
+      { name: 'AZURE_OPENAI_GPT_DEPLOYMENT', required: true, desc: 'deployment name for the GPT auditor' },
+      { name: 'AZURE_AI_ENDPOINT', required: false, desc: 'AI Foundry endpoint — needed for Claude as final reviewer' },
+      { name: 'AZURE_FOUNDRY_CLAUDE_DEPLOYMENT', required: false, desc: 'Foundry deployment serving Claude' },
+      { name: 'AZURE_OPENAI_EMBED_DEPLOYMENT', required: false, desc: 'embeddings deployment (leave blank and run `npm run azure:doctor -- --fix` to probe it)' },
+    ],
+  },
+  {
+    key: '3',
+    name: 'OpenRouter only',
+    desc: 'one key, many models — OSS routes and model-eval candidates',
+    keys: [
+      { name: 'OPENROUTER_API_KEY', required: true, desc: 'OpenRouter key' },
+      { name: 'OPENAI_API_KEY', required: false, desc: 'GPT auditing — the main audit passes still want a real GPT route' },
+    ],
+  },
 ];
+
+/**
+ * Print what setup cannot configure, so nobody concludes it is supported.
+ * AWS Bedrock now has a client backend (CLAUDE_BACKEND=bedrock) but it is
+ * Claude-only and needs a package this bundle deliberately does not depend on,
+ * so it is a documented manual step rather than a wizard route.
+ */
+function printUnsupportedRoutes() {
+  console.log(`  ${D}Not offered here: AWS Bedrock serves Claude only (set CLAUDE_BACKEND=bedrock,${X}`);
+  console.log(`  ${D}AWS_REGION, and npm i @anthropic-ai/bedrock-sdk) and there is no GPT-auditor${X}`);
+  console.log(`  ${D}route through it. Vertex AI is not supported at all.${X}`);
+}
 
 async function setupApiKeys(headless) {
   const envPath = path.join(SELF_DIR, '.env');
   let content = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf-8') : '';
   let modified = false;
 
-  for (const key of API_KEYS) {
+  // An already-configured Azure endpoint means the Azure path is ALREADY active
+  // at runtime (config.mjs keys off exactly this var), so defaulting such a
+  // machine to the direct-key route would prompt for keys it will never use.
+  const azureAlreadyActive = /^AZURE_OPENAI_ENDPOINT=.+/m.test(content);
+  let route = ACCESS_ROUTES[0];
+
+  if (!headless) {
+    console.log('');
+    console.log(`  How does this machine reach the models?\n`);
+    for (const r of ACCESS_ROUTES) {
+      const marker = (azureAlreadyActive && r.verify === 'azure') ? `  ${D}← detected${X}` : '';
+      console.log(`    ${B}${r.key}${X}) ${r.name} — ${r.desc}${marker}`);
+    }
+    console.log('');
+    printUnsupportedRoutes();
+    console.log('');
+    const def = azureAlreadyActive ? '2' : '1';
+    const choice = await ask(`  Choose (1-3, default ${def}): `);
+    route = ACCESS_ROUTES.find(r => r.key === (choice?.trim() || def)) || ACCESS_ROUTES[0];
+    ok(`Access route: ${route.name}`);
+  } else if (azureAlreadyActive) {
+    route = ACCESS_ROUTES.find(r => r.verify === 'azure');
+  }
+
+  for (const key of route.keys) {
     if (content.match(new RegExp(`^${key.name}=.+`, 'm'))) {
       ok(`${key.name} already configured`);
       continue;
@@ -84,6 +174,37 @@ async function setupApiKeys(headless) {
     }
   }
   if (modified) fs.writeFileSync(envPath, content.trim() + '\n');
+
+  if (!headless && route.verify === 'azure') verifyAzureProfile();
+}
+
+/**
+ * Prove the Azure profile answers, at the moment it is configured.
+ *
+ * Same reasoning as verifyDatabase below: storing endpoints and deployment
+ * names proves nothing, and the failure that actually bites — a guessed
+ * embeddings deployment name that 400s — is invisible until an audit run tries
+ * to embed. `azure:doctor` already probes all of it, so this delegates rather
+ * than re-implementing the checks.
+ *
+ * Never fatal, for the same reason: setup must finish even when the endpoint is
+ * unreachable from where the operator is sitting right now.
+ */
+function verifyAzureProfile() {
+  console.log('');
+  console.log(`  ${D}Checking the Azure profile answers (read-only)…${X}`);
+  try {
+    execFileSync(process.execPath, [path.join(SELF_DIR, 'scripts', 'azure-doctor.mjs')], {
+      stdio: 'inherit', timeout: 120_000,
+    });
+    ok('Azure profile reachable');
+  } catch (err) {
+    if (err?.signal) warn('Azure endpoint did not answer within 120s');
+    else warn('Azure profile check reported problems (see above)');
+    console.log(`  ${D}Probe and lock in the embeddings deployment: npm run azure:doctor -- --fix${X}`);
+    console.log(`  ${D}Full guide: docs/runbooks/azure-work-profile.md${X}`);
+    console.log(`  ${D}Not fatal: setup continues.${X}`);
+  }
 }
 
 // ── Step 3: Database Selection ──────────────────────────────────────────────
@@ -381,7 +502,18 @@ ${B}╔════════════════════════�
     node scripts/install-skills.mjs --uninstall-legacy
 `);
 
-  rl.close();
+  _prompter?.rl.close();
 }
 
-main().catch(err => { console.error(`Setup failed: ${err.message}`); process.exit(1); });
+// Run only when invoked directly. Without this guard the wizard starts on
+// import, which is why nothing could test it — the first thing every user runs
+// had no coverage at all. `node setup.mjs` is unaffected.
+const invokedDirectly = process.argv[1]
+  && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
+if (invokedDirectly) {
+  main().catch(err => { console.error(`Setup failed: ${err.message}`); process.exit(1); });
+}
+
+// Exported for tests — the route table is a contract (which keys are required
+// on which route), and that contract is exactly what was wrong before.
+export const _internals = { ACCESS_ROUTES, DB_OPTIONS };
