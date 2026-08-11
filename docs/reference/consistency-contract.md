@@ -279,6 +279,43 @@ The stale-projection contradiction kind ALWAYS fires when
 `data-freshness="stale"` is visible — severity choice controls whether
 that fires loud or quiet, not whether it fires at all.
 
+### Applicability (`appliesTo`) — gating a surface to where it renders
+
+A surface that only exists on some views declares `appliesTo`, and the
+**negative-space** checks (`missing-surface`, `unannotated-surface`) are then
+skipped everywhere it doesn't apply. Positive comparison is unaffected —
+claims are captured by locator regardless.
+
+| Key | Matched against | Notes |
+|---|---|---|
+| `routePattern` | `currentRoute` — the URL's **pathname AND query string** (`/wines?tab=all`) | Unanchored regex |
+| `journeyStepLabels` | the current journey step's `label` | Exact membership |
+| `requiresState` | `activeStateTags`, derived from state-projecting DOM claims | ALL tags must be active |
+
+**`routePattern` matches on the query string** (`"view=grid"` against
+`/?view=grid`). It did not before 2026-08-11: `currentRoute` was the pathname
+alone, so a query-routed SPA — every view served from `/` — produced `"/"` at
+every step and any such pattern could never test true. Nothing looked wrong,
+which is the point: the surface's claims were still compared, so only the
+checks that fire when a surface **stops rendering** went quiet (upstream
+`8c62cfcc`, wine-cellar-app; four surfaces sat that way for their whole life).
+
+> **Upgrading from before 2026-08-11 — one shape changes.** A pattern anchored
+> at the end (`^/wines$`) matched `/wines` and now stops matching
+> `/wines?tab=all`. It fails **silent**, not loud: the surface is gated out, so
+> you lose a check rather than gain a failure. Re-anchor as `^/wines(\?|$)`, or
+> drop the `$`. Unanchored patterns (`^/wines`, `wines`) are unaffected.
+
+**A pattern that matches nothing is reported.** If a `routePattern` matched no
+route the whole run visited, the run emits a `route-pattern-never-matched` rig
+warning to stderr and to the ledger's top-level `runWarnings[]`, naming the
+surface, the pattern and the routes actually visited — and saying so outright
+when stripping the query would have matched (i.e. the anchoring case above). It
+does not change the exit code: a declared check that never ran is a defect
+worth hearing, not a reason to fail someone's build. Same reasoning as
+`collection-binding-unusable` — a gate that abstains is indistinguishable from
+one that passes unless it says so.
+
 ### Locators
 
 The `locator` is a discriminated union:

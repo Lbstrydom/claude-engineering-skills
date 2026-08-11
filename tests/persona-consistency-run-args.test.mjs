@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { parseArgs, runConsistency, EXIT }
+import { parseArgs, runConsistency, EXIT, _internals }
   from '../scripts/persona-consistency-run.mjs';
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -177,6 +177,39 @@ describe('runConsistency — early exits (no Playwright session needed)', () => 
     const r = await runConsistency({ help: true });
     assert.equal(r.exitCode, 0);
     assert.equal(r.ledgerPath, '');
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// safeCurrentRoute — upstream 8c62cfcc
+//
+// This function IS the defect: it returned `pathname` alone, so every
+// `appliesTo.routePattern` was matched against a string with the query
+// stripped. For a query-routed SPA that made the gate structurally
+// unsatisfiable — and an unsatisfiable gate abstains silently rather than
+// failing, which is why it survived the whole life of four surfaces.
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('safeCurrentRoute', () => {
+  const page = (url) => ({ url: () => url });
+
+  it('retains the query string (the query-routed-SPA case)', () => {
+    assert.equal(_internals.safeCurrentRoute(page('https://app.example/?view=grid')), '/?view=grid');
+    assert.equal(_internals.safeCurrentRoute(page('https://app.example/wines?tab=all')), '/wines?tab=all');
+  });
+
+  it('is unchanged for pathname-only URLs (no churn for path-routed adopters)', () => {
+    assert.equal(_internals.safeCurrentRoute(page('https://app.example/wines')), '/wines');
+    assert.equal(_internals.safeCurrentRoute(page('https://app.example/')), '/');
+  });
+
+  it('drops protocol/host and the fragment, per the documented contract', () => {
+    assert.equal(_internals.safeCurrentRoute(page('https://app.example:8443/a/b?x=1#frag')), '/a/b?x=1');
+  });
+
+  it('returns null on an unparseable URL rather than throwing', () => {
+    assert.equal(_internals.safeCurrentRoute(page('not a url')), null);
+    assert.equal(_internals.safeCurrentRoute({ url: () => { throw new Error('detached'); } }), null);
   });
 });
 

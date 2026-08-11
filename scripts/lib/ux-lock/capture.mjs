@@ -450,6 +450,12 @@ export async function stabiliseDom(page, opts = {}) {
 
   if (typeof opts.warn === 'function') {
     opts.warn({
+      // `surfaceId` is REQUIRED-nullable in RigWarningSchema, not optional.
+      // Omitting it made the whole ledger fail validation at close() — the
+      // run exited 3 (fatal-rig) and the session file was lost, so a warning
+      // meant to be informational destroyed the record that carried it.
+      // Page-wide condition, hence null rather than a surface.
+      surfaceId: null,
       kind: 'dom-stabilisation-cap-reached',
       detail: `DOM did not stabilise within ${capMs}ms (${ticks} ticks)`,
     });
@@ -598,6 +604,10 @@ export async function captureWitness(page, manifest, listener, opts = {}) {
       cacheOnly = true;
       if (typeof opts.warn === 'function') {
         opts.warn({
+          // Same required-nullable contract as dom-stabilisation-cap-reached
+          // above. Here the surface IS known, so name it — the ledger reader
+          // can group by surfaceId instead of parsing it back out of prose.
+          surfaceId: dom.surfaceId,
           kind: 'cache-only-network-claim',
           detail: `No network ground-truth for ${dom.surfaceId}.${dom.engineField}${dom.key ? `[${dom.key}]` : ''}`,
         });

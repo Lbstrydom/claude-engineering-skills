@@ -15,7 +15,8 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { diffClaims, coerceDomValue, coerceDomKey, manifestQualityWarnings, _internals }
+import { diffClaims, coerceDomValue, coerceDomKey, manifestQualityWarnings,
+  matchesRoutePattern, routePatternCoverageWarnings, _internals }
   from '../scripts/lib/persona-test/consistency.mjs';
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -409,6 +410,97 @@ describe('diffClaims — missing-surface respects appliesTo', () => {
     // No activeStateTags ⇒ requiresState clause cannot evaluate ⇒ default
     // is "applies" (the existing behavior — backwards-compat).
     assert.ok(missing, 'no activeStateTags → assume applies (legacy callers preserved)');
+  });
+
+  // Upstream 8c62cfcc (wine-cellar-app): currentRoute was pathname-only, so a
+  // query-routed SPA (`/?view=grid`) produced "/" at every step and a
+  // routePattern naming a query param could never test true — the gate
+  // abstained on every step for the whole life of the surface.
+  it('routePattern matches a query-routed SPA (currentRoute carries ?search)', async () => {
+    const m = makeManifest();
+    m.surfaces[0].appliesTo = { routePattern: 'view=grid' };
+    const f = await diffClaims(emptyWitness(), m, {
+      context: { currentRoute: '/?view=grid' },
+    });
+    assert.ok(f.find((x) => x.kind === 'missing-surface'),
+      'query-param routePattern must gate IN on the matching view');
+  });
+
+  it('routePattern on a query-routed SPA still gates OUT the non-matching view', async () => {
+    const m = makeManifest();
+    m.surfaces[0].appliesTo = { routePattern: 'view=grid' };
+    const f = await diffClaims(emptyWitness(), m, {
+      context: { currentRoute: '/?view=history' },
+    });
+    assert.equal(f.find((x) => x.kind === 'missing-surface'), undefined,
+      'discrimination must survive the fix — not just "matches everything"');
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// matchesRoutePattern + routePatternCoverageWarnings — upstream 8c62cfcc
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('matchesRoutePattern', () => {
+  it('matches on the query string, not just the pathname', () => {
+    assert.equal(matchesRoutePattern('view=grid', '/?view=grid'), true);
+    assert.equal(matchesRoutePattern('view=grid', '/'), false);
+  });
+  it('an uncompilable pattern degrades to "unrestricted", never to "excluded"', () => {
+    assert.equal(matchesRoutePattern('([', '/anything'), true);
+  });
+});
+
+describe('routePatternCoverageWarnings', () => {
+  const withPattern = (pattern, id = 'status-chip') => {
+    const m = makeManifest();
+    m.surfaces[0].id = id;
+    m.surfaces[0].appliesTo = { routePattern: pattern };
+    return m;
+  };
+
+  it('emits nothing when the pattern matched at least one visited route', () => {
+    const w = routePatternCoverageWarnings(withPattern('view=grid'), ['/?view=grid', '/?view=history']);
+    assert.deepEqual(w, []);
+  });
+
+  it('emits route-pattern-never-matched when the pattern matched no visited route', () => {
+    const w = routePatternCoverageWarnings(withPattern('view=analysis'), ['/?view=grid', '/?view=history']);
+    assert.equal(w.length, 1);
+    assert.equal(w[0].kind, 'route-pattern-never-matched');
+    assert.equal(w[0].surfaceId, 'status-chip');
+    assert.match(w[0].detail, /view=analysis/);
+    assert.match(w[0].detail, /view=history/, 'the observed routes must be in the detail — that is the diagnosis');
+  });
+
+  it('names the anchored-before-query cause when stripping ?search would have matched', () => {
+    const w = routePatternCoverageWarnings(withPattern('^/wines$'), ['/wines?tab=all']);
+    assert.equal(w.length, 1);
+    assert.match(w[0].detail, /anchored before the query/);
+    assert.match(w[0].detail, /\^\/wines\(\\\?\|\$\)/, 'suggests a concrete re-anchored pattern');
+  });
+
+  it('does NOT claim anchoring when the pattern is simply wrong', () => {
+    const w = routePatternCoverageWarnings(withPattern('^/admin'), ['/wines?tab=all']);
+    assert.equal(w.length, 1);
+    assert.doesNotMatch(w[0].detail, /anchored before the query/);
+    assert.match(w[0].detail, /journeyStepLabels/, 'points at the working discriminator instead');
+  });
+
+  it('emits nothing when the run observed no routes at all (absence of evidence)', () => {
+    assert.deepEqual(routePatternCoverageWarnings(withPattern('view=grid'), []), []);
+    assert.deepEqual(routePatternCoverageWarnings(withPattern('view=grid'), [null, undefined, '']), []);
+  });
+
+  it('ignores surfaces that declare no routePattern', () => {
+    assert.deepEqual(routePatternCoverageWarnings(makeManifest(), ['/?view=grid']), []);
+  });
+
+  it('caps the observed-route list and says how many were elided', () => {
+    const routes = Array.from({ length: 12 }, (_, i) => `/?view=v${i}`);
+    const w = routePatternCoverageWarnings(withPattern('view=nope'), routes);
+    assert.equal(w.length, 1);
+    assert.match(w[0].detail, /…\+4 more/);
   });
 });
 

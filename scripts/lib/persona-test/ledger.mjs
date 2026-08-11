@@ -51,6 +51,7 @@ export const SESSIONS_DIR = path.join('.persona-test', 'sessions');
  *   ledgerPath: string,
  *   state: object,
  *   appendStep(stepRecord: object): void,
+ *   addRunWarnings(warnings: object[]): void,
  *   recordCandidate(specId: string): void,
  *   setVerdicts(updates: object): void,
  *   close(): object,
@@ -92,6 +93,7 @@ export function openLedger(repoRoot, sessionId, opts) {
     authKind: opts.authKind ?? 'none',
     startedAt,
     steps: [],
+    runWarnings: [],
     candidateSpecIds: [],
     rigVerdict: 'fatal',
     canaryVerdict: 'not-applicable',
@@ -111,6 +113,15 @@ export function openLedger(repoRoot, sessionId, opts) {
 
     appendStep(stepRecord) {
       ledger.steps.push(stepRecord);
+      persist(ledgerPath, ledger);
+    },
+
+    // Run-level warnings are appended once, near close(), so they persist
+    // immediately rather than riding on close() alone — a crash between the
+    // last step and close() must not swallow "a declared check never ran".
+    addRunWarnings(warnings) {
+      if (!Array.isArray(warnings) || warnings.length === 0) return;
+      ledger.runWarnings.push(...warnings);
       persist(ledgerPath, ledger);
     },
 
@@ -174,6 +185,11 @@ export function normaliseForReplay(ledger) {
   // Top-level timestamps.
   out.startedAt = '';
   out.endedAt = '';
+
+  // Run-level warnings are deterministic given the same canary + fixture;
+  // sort so emission order can't change replay output (same treatment the
+  // per-step warnings get below).
+  if (Array.isArray(out.runWarnings)) out.runWarnings.sort(stableCompareWarning);
 
   if (Array.isArray(out.steps)) {
     for (const step of out.steps) {

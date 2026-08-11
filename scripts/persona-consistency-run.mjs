@@ -29,7 +29,8 @@ import { resolveManifest }       from './lib/persona-test/manifest-resolver.mjs'
 import { loadCanary, verifyExpectations, canaryExpectsShape, candidateFingerprint }
   from './lib/persona-test/canary.mjs';
 import { openLedger }            from './lib/persona-test/ledger.mjs';
-import { diffClaims, manifestQualityWarnings, appliesToCurrent } from './lib/persona-test/consistency.mjs';
+import { diffClaims, manifestQualityWarnings, appliesToCurrent, routePatternCoverageWarnings }
+  from './lib/persona-test/consistency.mjs';
 import { attachNetworkListener, captureWitness }
   from './lib/ux-lock/capture.mjs';
 import {
@@ -266,6 +267,11 @@ export async function runConsistency(args, deps = {}) {
     // and aren't repeated per-step. Resolves wine-cellar adoption #2/#3.
     const startupWarnings = manifestQualityWarnings(manifestResult.manifest);
 
+    // Every route the journey actually visited. A `routePattern` that matches
+    // none of these gated a surface out of every step — a declared check that
+    // never ran — so the set is drained into run-level warnings at close.
+    const observedRoutes = [];
+
     for (let i = 0; i < canary.journeySteps.length; i++) {
       const step = canary.journeySteps[i];
       const stepStart = Date.now();
@@ -352,6 +358,7 @@ export async function runConsistency(args, deps = {}) {
         currentStepLabel: step.label,
         activeStateTags,
       };
+      observedRoutes.push(stepContext.currentRoute);
 
       const unannotatedFindings = await detectUnannotatedSurfaces(
         page,
@@ -439,6 +446,19 @@ export async function runConsistency(args, deps = {}) {
         warnings: stepWarnings,
         durationMs: Date.now() - stepStart,
       });
+    }
+
+    // ── 7b. Route-pattern coverage (upstream 8c62cfcc) ────────────────────
+    // Only knowable once every step has been visited, so it lands in
+    // `runWarnings` rather than being mis-attributed to a step. Also written
+    // to stderr: this warning says a declared check never ran, and a fact of
+    // that class must not live only in a JSON file nobody opens.
+    const routeWarnings = routePatternCoverageWarnings(manifestResult.manifest, observedRoutes);
+    if (routeWarnings.length) {
+      ledger.addRunWarnings(routeWarnings);
+      for (const w of routeWarnings) {
+        process.stderr.write(`rig-warning: ${w.kind}: ${w.detail}\n`);
+      }
     }
 
     // ── 8. Verify expectations ────────────────────────────────────────────
@@ -824,8 +844,23 @@ function joinUrl(base, suffix) {
   return trimmedBase + trimmedSuf;
 }
 
+/**
+ * The route string every `appliesTo.routePattern` is matched against:
+ * `page.url()` minus protocol/host — pathname AND query string.
+ *
+ * Upstream 8c62cfcc (wine-cellar-app): this returned `pathname` alone, which
+ * makes `routePattern` structurally unusable for any SPA that routes on a
+ * query parameter (`/?view=grid`, `/?view=history`) — currentRoute was the
+ * string "/" at every step, so such a pattern could never test true and the
+ * surface's negative-space checks silently never ran. The docstring on
+ * `appliesToCurrent` had always said "minus protocol/host"; the
+ * implementation was the thing that disagreed.
+ */
 function safeCurrentRoute(page) {
-  try { return new URL(page.url()).pathname; } catch { return null; }
+  try {
+    const u = new URL(page.url());
+    return u.pathname + u.search;
+  } catch { return null; }
 }
 
 function safeGitSha(repoRoot) {
@@ -851,6 +886,12 @@ function readLocalRepoUuid(repoRoot) {
     return raw?.uuid || null;
   } catch { return null; }
 }
+
+// Test-internal exports (mirrors file-io.mjs / shared.mjs / anthropic-client.mjs).
+// `safeCurrentRoute` is the string every appliesTo.routePattern is matched
+// against — upstream 8c62cfcc lived entirely inside it, so it is pinned by
+// direct test rather than reached only through a full browser session.
+export const _internals = Object.freeze({ safeCurrentRoute });
 
 // ────────────────────────────────────────────────────────────────────────────
 // Main entry (skipped when imported as a module).

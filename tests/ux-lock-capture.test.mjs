@@ -439,6 +439,57 @@ describe('captureWitness', () => {
 });
 
 // ────────────────────────────────────────────────────────────────────────────
+// Warning shape contract — found by a real-browser run, 2026-08-11.
+//
+// `RigWarningSchema.surfaceId` is required-NULLABLE, not optional. Two
+// emitters here omitted it entirely, so `SessionLedgerSchema` rejected the
+// whole ledger at `close()`: the run exited 3 (fatal-rig) and the session
+// file was LOST. An informational warning destroyed the record carrying it,
+// and it fired on the most ordinary case there is — a DOM claim with no
+// declared networkSource. Unit tests missed it because they assert on the
+// warning object, never on whether a ledger would accept it.
+//
+// Retire this test when RigWarningSchema stops requiring surfaceId.
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('every capture-layer warning satisfies RigWarningSchema', () => {
+  const validate = async (w) => {
+    const { RigWarningSchema } = await import('../scripts/lib/persona-test/schemas.mjs');
+    const parsed = RigWarningSchema.safeParse(w);
+    assert.ok(parsed.success,
+      `warning "${w.kind}" would be rejected by the ledger: ${parsed.error?.message}`);
+  };
+
+  it('dom-stabilisation-cap-reached (page-wide → surfaceId null)', async () => {
+    const warnings = [];
+    // Never stabilises: a fresh signature every tick until the cap.
+    const page = createFakePage({ evalScript: (tick) => `sig-${tick}` });
+    await stabiliseDom(page, { pollMs: 1, capMs: 20, warn: (w) => warnings.push(w) });
+    assert.equal(warnings.length, 1, 'subject probe: the cap warning must actually fire');
+    assert.equal(warnings[0].kind, 'dom-stabilisation-cap-reached');
+    await validate(warnings[0]);
+  });
+
+  it('cache-only-network-claim (surface is known → names it)', async () => {
+    const warnings = [];
+    const page = createFakePage({
+      evalScript: (tick) => (tick < 2 ? 'sig' : [{
+        engineField: 'cellarOrganised', domValueRaw: 'true',
+        freshness: 'current', scope: null, key: null, visible: true, selector: '.chip',
+      }]),
+    });
+    const { store } = attachNetworkListener(page, SINGLETON_MANIFEST, {});
+    // No response fired → the DOM claim has no ground truth → cache-only.
+    await captureWitness(page, SINGLETON_MANIFEST, { store },
+      { pollMs: 1, capMs: 2000, warn: (w) => warnings.push(w) });
+    const w = warnings.find((x) => x.kind === 'cache-only-network-claim');
+    assert.ok(w, 'subject probe: the cache-only warning must actually fire');
+    assert.equal(w.surfaceId, 'status-chip', 'the surface is known here — null would lose it');
+    await validate(w);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
 // _internals: resolveJsonPath, regexMatch, stripCollectionPrefix
 // ────────────────────────────────────────────────────────────────────────────
 

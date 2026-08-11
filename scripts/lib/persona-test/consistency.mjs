@@ -467,8 +467,17 @@ function locatorToString(locator) {
  * Gate a surface's applicability for the current capture context.
  *
  * The three sub-rules:
- *  - `routePattern` — regex against `context.currentRoute` (typically
- *    `page.url()` minus protocol/host).
+ *  - `routePattern` — regex against `context.currentRoute`, which is
+ *    `page.url()` minus protocol/host: **pathname AND query string**
+ *    (`/wines?tab=all`). Upstream 8c62cfcc (wine-cellar-app): the runner
+ *    used to pass `pathname` alone, so a query-routed SPA — every view
+ *    served from `/` as `/?view=grid` — saw `currentRoute === '/'` at
+ *    every step, and any `routePattern` naming a query param could never
+ *    test true. Nothing looked wrong: positive capture is by locator, so
+ *    the surface's claims were still compared; it was the negative-space
+ *    checks (`missing-surface`, `unannotated-surface`) that silently went
+ *    off, so a declared surface could stop rendering entirely and the
+ *    canary would stay green with one fewer claim.
  *  - `journeyStepLabels` — `context.currentStepLabel` must be in the list.
  *  - `requiresState` — `context.activeStateTags` must include EVERY tag
  *    in the list. State tags are typically derived by the runner from
@@ -488,10 +497,7 @@ function locatorToString(locator) {
 export function appliesToCurrent(appliesTo, context) {
   if (!appliesTo) return true;   // unrestricted surfaces always apply
   if (appliesTo.routePattern && context.currentRoute) {
-    let re;
-    try { re = new RegExp(appliesTo.routePattern); }
-    catch { re = null; }
-    if (re && !re.test(context.currentRoute)) return false;
+    if (!matchesRoutePattern(appliesTo.routePattern, context.currentRoute)) return false;
   }
   if (Array.isArray(appliesTo.journeyStepLabels) && context.currentStepLabel) {
     if (!appliesTo.journeyStepLabels.includes(context.currentStepLabel)) return false;
@@ -503,6 +509,98 @@ export function appliesToCurrent(appliesTo, context) {
     }
   }
   return true;
+}
+
+/**
+ * The single oracle for "does this routePattern match this route string".
+ *
+ * Kept as one exported function rather than inlined at each call site so the
+ * coverage detector below and the applicability gate above can never drift
+ * into disagreeing about what a match is — the same reason
+ * `ux-lock/selector-policy.mjs` keeps one `classifySelector`.
+ *
+ * An uncompilable pattern matches EVERYTHING (permissive). The manifest
+ * schema's `RegexPatternSchema` already refuses those at load, so this
+ * branch is unreachable via the runner; it exists so a hand-built context
+ * in a test or a library caller degrades to "unrestricted", never to
+ * "silently excluded".
+ *
+ * @param {string} pattern
+ * @param {string} route
+ * @returns {boolean}
+ */
+export function matchesRoutePattern(pattern, route) {
+  let re;
+  try { re = new RegExp(pattern); }
+  catch { return true; }
+  return re.test(route);
+}
+
+// Cap the observed-route list in a warning detail. Enough to diagnose a
+// pattern by eye; short of pasting a 40-step journey into one string.
+const OBSERVED_ROUTES_IN_WARNING = 8;
+
+/**
+ * Detect `appliesTo.routePattern` values that matched NOTHING across a whole
+ * run — the audible half of upstream 8c62cfcc.
+ *
+ * A surface gated on a pattern that never matches is not merely unused: it is
+ * a declared negative-space check that never ran, and `surfaces.json` still
+ * reads as enforced coverage. That is the same "a silently-skipped gate is
+ * indistinguishable from a passing one" class as `collection-binding-unusable`
+ * — and the reason the fix to `currentRoute` alone is not enough. It shipped
+ * WITH the semantic fix rather than after it, because the semantic fix is
+ * itself capable of silencing a pattern (see the anchoring note below).
+ *
+ * Zero observed routes emits nothing: a run that recorded no route at all is
+ * absence of evidence, not evidence the pattern is dead.
+ *
+ * @param {import('./schemas.mjs').SurfaceManifest} manifest
+ * @param {Iterable<string|null|undefined>} observedRoutes - every
+ *   `context.currentRoute` the run produced; duplicates and nulls tolerated.
+ * @returns {import('./schemas.mjs').RigWarning[]}
+ */
+export function routePatternCoverageWarnings(manifest, observedRoutes) {
+  const routes = [...new Set([...(observedRoutes || [])].filter(
+    (r) => typeof r === 'string' && r.length > 0,
+  ))];
+  if (routes.length === 0) return [];
+
+  const out = [];
+  for (const surface of (manifest?.surfaces || [])) {
+    const pattern = surface?.appliesTo?.routePattern;
+    if (!pattern) continue;
+    if (routes.some((r) => matchesRoutePattern(pattern, r))) continue;
+
+    // Would it have matched with the query string stripped? If so the pattern
+    // is anchored before the query (`^/wines$` vs `/wines?tab=all`) — the one
+    // shape the currentRoute fix can break — so name that cause outright
+    // instead of leaving the operator to spot it in the observed list.
+    const anchoredBeforeQuery = routes.some(
+      (r) => r.includes('?') && matchesRoutePattern(pattern, r.split('?')[0]),
+    );
+    const shown = routes.slice(0, OBSERVED_ROUTES_IN_WARNING);
+    const more  = routes.length - shown.length;
+    const observedList = shown.map((r) => JSON.stringify(r)).join(', ')
+      + (more > 0 ? `, …+${more} more` : '');
+
+    out.push({
+      kind: 'route-pattern-never-matched',
+      surfaceId: surface.id,
+      detail:
+        `Surface "${surface.id}" declares appliesTo.routePattern ${JSON.stringify(pattern)}, `
+        + `which matched NONE of the ${routes.length} route(s) this run visited: ${observedList}. `
+        + `Its negative-space checks (missing-surface, unannotated-surface) therefore never ran — `
+        + `the surface could stop rendering entirely and this canary would stay green. `
+        + (anchoredBeforeQuery
+          ? `The pattern DOES match once the query string is stripped, so it is anchored before the query: `
+            + `currentRoute is pathname+search (e.g. "/wines?tab=all"), not pathname alone. `
+            + `Re-anchor as "${pattern.replace(/\$$/, '')}(\\?|$)" or drop the trailing "$".`
+          : `Check the pattern against the routes listed above, or gate on `
+            + `appliesTo.journeyStepLabels instead (it discriminates by step label, not URL shape).`),
+    });
+  }
+  return out;
 }
 
 function deepEqual(a, b) {

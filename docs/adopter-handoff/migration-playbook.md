@@ -152,6 +152,7 @@ Likely first-run findings (wine-cellar saw them all):
 | `value-mismatch` | The DOM value AND the engine value disagree — this is the rig doing exactly what you built it for! Investigate the divergence. |
 | `stale-projection` | DOM declares `data-freshness="stale"` + the surface is visible. Real cross-time inconsistency. Investigate WHY the surface's data is stale. |
 | `manifest-network-await-timeout` warning | The rig waited (default 3s) for your declared `networkSource.urlPattern` but didn't see it fire. Either your endpoint is slow (bump `awaitTimeoutMs` on the source) OR the journey didn't trigger it. |
+| `route-pattern-never-matched` warning | A surface's `appliesTo.routePattern` matched none of the routes the run visited, so its negative-space checks never ran. The warning lists the routes actually visited — compare them against the pattern. If it says the pattern is *anchored before the query*, see the upgrade note below. |
 
 ---
 
@@ -232,6 +233,33 @@ for in case any of these regress in your environment.
 - **`requiresState` field accepted but `activeStateTags` never populated**. **Fixed in same commit**: runner derives `activeStateTags` from any chip-style domClaim (engineField ∈ stateV2/state/mode/status).
 - **Stale-projection P1 fires on every page load** for cellars in mid-recompute state. **Adopter fix in WS1a**: on-read lazy recompute self-heals divergent-stale projections.
 - **Chip refresh() inflight race** dropped revision bumps mid-flight. **Adopter fix**: `_pendingRevision` snapshot + convergence re-fire in finally-block.
+
+### Round 8 — `appliesTo.routePattern` on query-routed apps (upstream `8c62cfcc`)
+
+- **`routePattern` was matched against the pathname only**, so an app that
+  routes on a query parameter (`/?view=grid`) saw `"/"` at every step and no
+  such pattern could ever match. The surface's claims were still compared, so
+  runs looked healthy — it was `missing-surface` / `unannotated-surface` that
+  silently never ran. **Fixed upstream**: `currentRoute` is now pathname +
+  query, matching what the contract always documented.
+- **A pattern that matches nothing is now reported**, as a
+  `route-pattern-never-matched` rig warning (stderr + ledger `runWarnings[]`).
+  Advisory — it never changes the exit code.
+
+> **⚠ Upgrade note — one pattern shape changes meaning.** A routePattern
+> anchored at the end (`^/wines$`) matched `/wines` before and no longer
+> matches `/wines?tab=all`. The failure is **silent** (you lose a check, you
+> don't gain a failure), so it will not announce itself in CI — the new
+> warning is what surfaces it. Re-anchor as `^/wines(\?|$)` or drop the `$`.
+> Unanchored patterns are unaffected, which is most of them.
+
+- **Two rig warnings crashed the ledger** (found in the same sitting, by a real
+  browser run rather than review): `cache-only-network-claim` and
+  `dom-stabilisation-cap-reached` omitted the required-nullable `surfaceId`, so
+  `close()` failed schema validation, the run exited 3 (fatal-rig) and the
+  session file was lost. `cache-only-network-claim` fires on the most ordinary
+  case there is — a DOM claim with no declared `networkSource`. **Fixed
+  upstream**; if you saw unexplained exit-3 runs with no ledger, this was it.
 
 If you hit a NEW class of friction not listed above — **open an
 upstream issue against `claude-engineering-skills`**. That's how the

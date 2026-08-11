@@ -115,6 +115,35 @@ describe('openLedger — incremental writes', () => {
     handle.recordCandidate('spec-2');
     assert.deepEqual(readLedger(handle.ledgerPath).candidateSpecIds, ['spec-1', 'spec-2']);
   });
+
+  // Upstream 8c62cfcc — run-level warnings. `route-pattern-never-matched` says
+  // a declared check never ran, so it must survive a crash between the last
+  // step and close(): it persists on write, not only at close.
+  it('addRunWarnings persists immediately and appends', () => {
+    const handle = openLedger(tmpDir, 'SID-RW', { journeyKey: 'k' });
+    assert.deepEqual(readLedger(handle.ledgerPath).runWarnings, []);
+    handle.addRunWarnings([{ kind: 'route-pattern-never-matched', surfaceId: 'a', detail: 'x' }]);
+    assert.equal(readLedger(handle.ledgerPath).runWarnings.length, 1);
+    handle.addRunWarnings([{ kind: 'route-pattern-never-matched', surfaceId: 'b', detail: 'y' }]);
+    assert.deepEqual(
+      readLedger(handle.ledgerPath).runWarnings.map((w) => w.surfaceId), ['a', 'b'],
+    );
+  });
+
+  it('addRunWarnings is a no-op for an empty or non-array argument', () => {
+    const handle = openLedger(tmpDir, 'SID-RW2', { journeyKey: 'k' });
+    handle.addRunWarnings([]);
+    handle.addRunWarnings(null);
+    handle.addRunWarnings(undefined);
+    assert.deepEqual(readLedger(handle.ledgerPath).runWarnings, []);
+  });
+
+  it('close() validates run warnings against the schema', () => {
+    const handle = openLedger(tmpDir, 'SID-RW3', { journeyKey: 'k' });
+    handle.addRunWarnings([{ kind: 'not-a-real-kind', surfaceId: null, detail: 'x' }]);
+    handle.setVerdicts({ rigVerdict: 'healthy', canaryVerdict: 'passed', failureReason: null, truncated: false });
+    assert.throws(() => handle.close(), /schema validation failed/);
+  });
 });
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -264,6 +293,27 @@ describe('normaliseForReplay', () => {
   it('throws on non-object input', () => {
     assert.throws(() => normaliseForReplay(null), /must be an object/);
     assert.throws(() => normaliseForReplay('x'),  /must be an object/);
+  });
+
+  it('sorts runWarnings so emission order cannot change replay output', () => {
+    const a = makeLedgerWithNoise({ runWarnings: [
+      { kind: 'route-pattern-never-matched', surfaceId: 'zulu',  detail: 'z' },
+      { kind: 'route-pattern-never-matched', surfaceId: 'alpha', detail: 'a' },
+    ] });
+    const b = makeLedgerWithNoise({ runWarnings: [
+      { kind: 'route-pattern-never-matched', surfaceId: 'alpha', detail: 'a' },
+      { kind: 'route-pattern-never-matched', surfaceId: 'zulu',  detail: 'z' },
+    ] });
+    assert.equal(
+      JSON.stringify(normaliseForReplay(a)),
+      JSON.stringify(normaliseForReplay(b)),
+    );
+  });
+
+  it('tolerates a ledger written before runWarnings existed', () => {
+    const legacy = makeLedgerWithNoise();
+    delete legacy.runWarnings;
+    assert.doesNotThrow(() => normaliseForReplay(legacy));
   });
 });
 

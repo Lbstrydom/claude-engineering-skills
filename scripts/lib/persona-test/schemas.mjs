@@ -400,6 +400,14 @@ export const RigWarningKindSchema = z.enum([
   // a silently-skipped binding is indistinguishable from a passing one. This
   // is the "green having done nothing" class, inside the rig meant to catch it.
   'collection-binding-unusable',
+  // Upstream 8c62cfcc (MEDIUM, wine-cellar-app) — a surface's
+  // `appliesTo.routePattern` matched NO route the run visited, so its
+  // negative-space checks never ran while `surfaces.json` still read as
+  // enforced coverage. Same class as `collection-binding-unusable` above:
+  // the gate did not fail, it abstained, and an abstaining gate is
+  // indistinguishable from a passing one. Emitted once per surface at end
+  // of run (it is a property of the whole run, not of any single step).
+  'route-pattern-never-matched',
 ]);
 
 export const RigWarningSchema = z.object({
@@ -452,6 +460,11 @@ export const SessionLedgerSchema = z.object({
   authKind: z.enum(['none', 'token', 'storageState']).default('none'),
   startedAt: z.string(),
   steps: z.array(StepRecordSchema),
+  // Run-level rig warnings — facts about the run as a whole that cannot be
+  // attributed to any one step (upstream 8c62cfcc:
+  // `route-pattern-never-matched` is only knowable once every step has been
+  // visited). Defaulted so ledgers written before this field parse unchanged.
+  runWarnings: z.array(RigWarningSchema).default([]),
   candidateSpecIds: z.array(z.string()),
   rigVerdict: RigVerdictSchema,
   canaryVerdict: CanaryVerdictSchema,
