@@ -689,7 +689,7 @@ async function main() {
       // NOT a compare-and-swap — calling it one would let a reader believe the
       // window is closed when it is only narrowed. The full transaction
       // (candidate tree + `update-ref <ref> <new> <expected-old>`) lives in
-      // docs/plans/ship-commit-transaction.md.
+      // docs/plans/ship-commit-transaction.md (planned).
       //
       // What it buys is the half that mattered in the field: the incident
       // escaped because it was PUSHED. A detected, unpushed wrong-parent commit
