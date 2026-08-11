@@ -57,6 +57,7 @@ import { detectRepoStack } from './lib/repo-stack.mjs';
 import { listRepoFiles } from './lib/repo-inventory.mjs';
 import { verifyExistenceFindings } from './lib/audit/finding-verification.mjs';
 import { getRepoContext } from './lib/repo-context.mjs';
+import { resolveRangeSnapshot, makeGitRunner } from './lib/worktree-identity.mjs';
 import { getRequirementsContext, getPlanRequirementsRubric } from './lib/requirements/context.mjs';
 import { ArchIntentPassSchema } from './lib/schemas.mjs';
 import { detectOrphansIntroduced } from './lib/audit/orphan-introduced.mjs';
@@ -496,27 +497,20 @@ export async function runMultiPassCodeAudit(openai, planContent, projectContext,
 
 // resolveLedgerPath imported from lib/robustness.mjs
 
-/**
- * Resolve the git base ref for `--scope diff`. Pure + deterministic so the
- * decision is unit-testable apart from the git subprocess (repo testing
- * doctrine Tier 1 — deterministic seam lands with its test).
- *
- * - Explicit `--base <ref>` always wins (clustered/resume audits).
- * - Otherwise dirty-aware: a dirty working tree means the operator is auditing
- *   UNCOMMITTED work → `HEAD` (don't re-pull an already-committed/audited prior
- *   commit). A clean tree means "audit my last commit" → `HEAD~1`.
- *
- * `workingTreeDirty` MUST be derived from `git status --porcelain` (untracked
- * files count as dirty) — NOT `git diff --quiet`, which ignores untracked.
- *
- * @param {string|null} explicitBase value of `--base`, or null when absent
- * @param {boolean} workingTreeDirty whether `git status --porcelain` was non-empty
- * @returns {string} the git ref to diff `..HEAD` against
- */
-function resolveDiffBase(explicitBase, workingTreeDirty) {
-  if (explicitBase) return explicitBase;
-  return workingTreeDirty ? 'HEAD' : 'HEAD~1';
-}
+// `resolveDiffBase` was REPLACED by `resolveRangeSnapshot`
+// (scripts/lib/worktree-identity.mjs), which keeps the same dirty-aware decision
+// — explicit `--base` wins; otherwise dirty→HEAD, clean→HEAD~1 — and adds the
+// two things the string-returning version structurally could not provide:
+//
+//   1. It resolves BOTH ends to canonical OIDs once, so a movable ref cannot
+//      mean commit A during validation and commit B at `git diff` time.
+//   2. It VALIDATES an explicit base (resolvable, and an ancestor of HEAD)
+//      instead of passing it through verbatim.
+//
+// The dirty-aware regression this function originally existed to pin (the
+// ai-organiser over-capture, where a blind HEAD~1 re-pulled an already-audited
+// commit) is still pinned — it moved to tests/diff-base-resolver.test.mjs
+// against the new resolver, not deleted with the function.
 
 // ── Main ───────────────────────────────────────────────────────────────────────
 
@@ -772,31 +766,60 @@ async function main() {
         // prior commit is not re-pulled into scope. A clean tree means "audit
         // my last commit" → HEAD~1..HEAD. This fixes the over-capture where a
         // shipped+audited cluster reappears as out-of-scope findings.
-        if (!explicitBase) {
-          let workingTreeDirty = false;
-          try {
-            const porcelain = execFileSync('git', ['status', '--porcelain'], {
-              encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 10000
-            }).trim();
-            workingTreeDirty = porcelain.length > 0;
-          } catch { /* not a git repo / git missing — treat as clean (HEAD~1) */ }
-          diffBase = resolveDiffBase(explicitBase, workingTreeDirty);
-          process.stderr.write(`  [scope] base resolved to ${diffBase} (working tree ${workingTreeDirty ? 'dirty → uncommitted work only' : 'clean → last commit'}; pass --base <ref> to override)\n`);
+        let workingTreeDirty = false;
+        try {
+          const porcelain = execFileSync('git', ['status', '--porcelain'], {
+            encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 10000
+          }).trim();
+          workingTreeDirty = porcelain.length > 0;
+        } catch { /* not a git repo / git missing — treat as clean */ }
+
+        // Guard C: resolve the range ONCE to canonical OIDs and validate ancestry.
+        // Validating a ref EXPRESSION and then re-resolving it downstream is not
+        // validation — a movable ref (a branch, or /cycle's --base <clusterStartRef>)
+        // can mean commit A here and commit B at `git diff` time.
+        const snapshot = resolveRangeSnapshot({
+          explicitBase: explicitBase || null, workingTreeDirty, run: makeGitRunner(process.cwd()),
+        });
+        if (!snapshot.ok) {
+          // HARD FAIL, and deliberately OUTSIDE the catch below: that catch
+          // falls back to plan-referenced files, which for a bad --base would
+          // silently swap the range the operator asked for with a different,
+          // wider one and report nothing wrong. An explicit base that cannot be
+          // validated must stop the run, never demote to inference
+          // (scripts/lib/push-range.mjs:72-75 states the same rule).
+          const err = new Error(
+            `AGENT FIX: --base ${JSON.stringify(explicitBase)}: ${snapshot.reason}`
+            + `${snapshot.detail ? ` — ${snapshot.detail}` : ''}. `
+            + 'Pass a base that is an ancestor of HEAD in this checkout, or drop --base to use the dirty-aware default.',
+          );
+          err.auditScopeFatal = true;
+          throw err;
         }
-        const diffOutput = execFileSync('git', ['diff', '--name-only', `${diffBase}..HEAD`], {
+        diffBase = snapshot.baseSha;
+        process.stderr.write(
+          `  [scope] range snapshot ${snapshot.baseSha.slice(0, 12)}..worktree `
+          + `(head ${snapshot.headSha.slice(0, 12)}, ${snapshot.relation}, `
+          + `${explicitBase ? 'explicit --base' : `inferred: tree ${workingTreeDirty ? 'dirty' : 'clean'}`}; ancestry verified)\n`,
+        );
+
+        // ONE call, no `..`: this diffs the base commit against the WORKING TREE,
+        // which covers committed + staged + unstaged in every clean/dirty x
+        // inferred/explicit combination. The previous three-call union
+        // (`<base>..HEAD` + a bare `git diff` + ls-files) missed a
+        // STAGED-but-uncommitted file through all three branches — measured, and
+        // pinned in tests/audit-base-ancestry.test.mjs.
+        const diffOutput = execFileSync('git', ['diff', '--name-only', snapshot.baseSha], {
           encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 10000
         }).trim();
         const diffChanged = diffOutput ? diffOutput.split('\n').filter(Boolean) : [];
-        // Also include unstaged working-tree changes
-        const unstaged = execFileSync('git', ['diff', '--name-only'], {
-          encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 10000
-        }).trim();
-        const unstagedChanged = unstaged ? unstaged.split('\n').filter(Boolean) : [];
+        // Untracked files are still a separate question: they are in neither the
+        // index nor any commit, so no `git diff` can see them.
         const untracked = execFileSync('git', ['ls-files', '--others', '--exclude-standard'], {
           encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 10000
         }).trim();
         const untrackedFiles = untracked ? untracked.split('\n').filter(Boolean) : [];
-        let allChanged = [...new Set([...diffChanged, ...unstagedChanged, ...untrackedFiles])]
+        let allChanged = [...new Set([...diffChanged, ...untrackedFiles])]
           .filter(f => allowInfraScope || !isAuditInfraFile(f));
         if (excludePatterns.length > 0) allChanged = applyExclusions(allChanged, excludePatterns);
         if (allChanged.length > 0) {
@@ -810,6 +833,10 @@ async function main() {
           process.stderr.write(`  [scope] --scope=diff: no changes detected vs ${diffBase}, falling back to plan-referenced files\n`);
         }
       } catch (err) {
+        // A guard-C refusal is NOT a scope hiccup — re-raise it. Falling back
+        // here would answer "your --base is unusable" with a silently different,
+        // wider scope and a green-looking run.
+        if (err?.auditScopeFatal) throw err;
         process.stderr.write(`  [scope] --scope=diff failed (${err.message?.slice(0, 80)}), falling back to plan-referenced files\n`);
       }
     } else if (scopeMode === 'full') {
@@ -1194,7 +1221,7 @@ async function main() {
 // set the env var, so the export is undefined and the test scaffolding is
 // dead code at runtime cost.
 export const __testExports = process.env.AUDIT_EXPORTS_FOR_TESTS === '1'
-  ? { _callGPTOnce, callGPT, safeCallGPT, normalisePromptInput, resolveDiffBase, runMultiPassCodeAudit, buildAuditRunContext, runLegacyProductionAudit }
+  ? { _callGPTOnce, callGPT, safeCallGPT, normalisePromptInput, runMultiPassCodeAudit, buildAuditRunContext, runLegacyProductionAudit }
   : undefined;
 
 // CLI entry — only fire main() when this module is executed directly,

@@ -60,8 +60,27 @@ function arrange(message = 'fix: subject\n\nbody\n') {
   return mf;
 }
 
+/**
+ * The identity bundle guard B requires, plus the --path scope guard A requires
+ * (worktree-identity-guards, Phase 3). Both computed live: the fixture mints a
+ * fresh repo per test, so a hardcoded sha would never match, and an unborn HEAD
+ * legitimately needs no expectation (guard B's one documented skip).
+ */
+function guardArgs() {
+  const h = spawnSync('git', ['rev-parse', '--verify', '--quiet', 'HEAD'], { cwd: repo, encoding: 'utf-8' });
+  const head = h.status === 0 ? (h.stdout || '').trim() : '';
+  const ident = [];
+  if (head) {
+    const b = spawnSync('git', ['symbolic-ref', '--quiet', '--short', 'HEAD'], { cwd: repo, encoding: 'utf-8' });
+    const br = b.status === 0 ? (b.stdout || '').trim() : '';
+    ident.push('--expect-head', head, ...(br ? ['--expect-branch', br] : ['--expect-detached']));
+  }
+  const scope = fs.existsSync(path.join(repo, 'work.txt')) ? ['--path', 'work.txt'] : [];
+  return [...ident, ...scope];
+}
+
 const ARGS = (mf, ...extra) =>
-  ['--message-file', mf, '--skill', 'ship', '--models', 'claude', ...extra];
+  ['--message-file', mf, '--skill', 'ship', '--models', 'claude', ...extra, ...guardArgs()];
 
 beforeEach(() => {
   repo = fs.mkdtempSync(path.join(os.tmpdir(), 'ship-notests-'));

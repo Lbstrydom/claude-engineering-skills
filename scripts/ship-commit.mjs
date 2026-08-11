@@ -42,6 +42,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import {
+  resolveExpectedIdentity,
+  verifyHeadIdentity,
+  readActualIdentity,
+  classifyStagedScope,
+  makeGitRunner,
+  sampleDirectoryEntries,
+} from './lib/worktree-identity.mjs';
+import {
   validateTrailerInput,
   renderAgentFixLines,
   resolveEvidence,
@@ -53,8 +61,13 @@ import {
   parseMessageTrailers,
 } from './lib/commit-trailers.mjs';
 
-const KNOWN_FLAGS = new Set(['--message-file', '--skill', '--models', '--gate', '--path']);
-const KNOWN_BOOLEAN_FLAGS = new Set(['--no-run-id', '--no-tests', '--selfcheck-relocation']);
+const KNOWN_FLAGS = new Set([
+  '--message-file', '--skill', '--models', '--gate', '--path',
+  '--expect-head', '--expect-branch',
+]);
+const KNOWN_BOOLEAN_FLAGS = new Set([
+  '--no-run-id', '--no-tests', '--selfcheck-relocation', '--expect-detached',
+]);
 
 function err(line) { process.stderr.write(`${line}\n`); }
 
@@ -100,12 +113,13 @@ async function main() {
 
   // ---- arg parse (unknown flag = taxonomy row 1) -------------------------
   const argv = process.argv.slice(2);
-  const opts = { noRunId: false, noTests: false, paths: [] };
+  const opts = { noRunId: false, noTests: false, expectDetached: false, paths: [] };
   const inputErrors = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--no-run-id') { opts.noRunId = true; continue; }
     if (a === '--no-tests') { opts.noTests = true; continue; }
+    if (a === '--expect-detached') { opts.expectDetached = true; continue; }
     if (KNOWN_FLAGS.has(a)) {
       const v = argv[i + 1];
       if (v === undefined || v.startsWith('--')) {
@@ -124,7 +138,7 @@ async function main() {
     if (!KNOWN_BOOLEAN_FLAGS.has(a)) {
       inputErrors.push({
         field: a,
-        custom: `AGENT FIX: ${a}: unknown flag; expected one of --message-file|--skill|--models|--gate|--path|--no-run-id|--no-tests. Example: --gate passed`,
+        custom: `AGENT FIX: ${a}: unknown flag; expected one of --message-file|--skill|--models|--gate|--path|--expect-head|--expect-branch|--expect-detached|--no-run-id|--no-tests. Example: --gate passed`,
       });
     }
   }
@@ -218,6 +232,7 @@ async function main() {
     headCommitTs = parsed;
   }
   const auditRunPath = path.join(repoRoot, '.audit', 'last-audit-run.json');
+  const gitRun = makeGitRunner(repoRoot);
   const evidence = resolveEvidence({ auditRunPath, headCommitTs, noRunId: opts.noRunId });
   if (evidence.state === 'malformed') {
     // Row 10: environment state we must not guess about. --no-run-id opts out.
@@ -230,6 +245,70 @@ async function main() {
     // `not-run` while an audit record sits unreadable on disk).
     err(`ship-commit: audit evidence unreadable (${evidence.errno}): ${auditRunPath} (fix permissions or pass --no-run-id)`);
     process.exit(1);
+  }
+
+  // ---- Guard B: worktree identity is a PRECONDITION, not a diagnostic -----
+  //
+  // Runs BEFORE the index is inspected or touched. Absence of an expectation is
+  // a refusal, not a log line: an optional safety input whose omission passes is
+  // not a safety gate (INC-002's lesson, and the shape of the arch-memory bands
+  // that fired zero times in 1,763 consultations).
+  //
+  // The expectation is an ATOMIC bundle {head, ref}. A head-only check passes
+  // whenever two refs sit on the same commit — a feature branch freshly cut from
+  // `main` is exactly that — and the commit then lands on the wrong branch,
+  // which is the field incident this guard exists to prevent.
+  //
+  // Unborn HEAD is the one documented skip: there is no HEAD to bind to.
+  let verifiedIdentity = null;
+  if (headExists.status === 0) {
+    const expectation = resolveExpectedIdentity({
+      flags: {
+        expectHead: opts.expectHead,
+        expectBranch: opts.expectBranch,
+        expectDetached: opts.expectDetached,
+      },
+      evidence,
+    });
+    if (!expectation.ok) {
+      const actual = readActualIdentity({ run: gitRun });
+      const nowHead = actual.ok ? actual.identity.head : '<unresolvable>';
+      const nowRef = actual.ok && actual.identity.ref.kind === 'attached'
+        ? `--expect-branch ${actual.identity.ref.name}`
+        : '--expect-detached';
+      err(
+        `AGENT FIX: --expect-head: ${expectation.reason}`
+        + `${expectation.detail ? ` — ${expectation.detail}` : ''}. `
+        + 'Capture the worktree identity when the operation starts and pass it here, so a concurrent '
+        + `checkout or amend cannot land this commit on a different base. Example: --expect-head ${nowHead} ${nowRef}`,
+      );
+      process.exit(2);
+    }
+    const verdict = verifyHeadIdentity(expectation.identity, { run: gitRun });
+    if (!verdict.ok) {
+      const exp = expectation.identity;
+      const act = verdict.actual;
+      const nameOf = (r) => (r && r.kind === 'attached' ? r.name : '(detached)');
+      err(
+        `AGENT FIX: --expect-head: ${verdict.reason} — the worktree is not the one this operation started in. `
+        + `Expected ${exp.head.slice(0, 12)} on ${nameOf(exp.ref)}; `
+        + `found ${act ? act.head.slice(0, 12) : '<unresolvable>'} on ${nameOf(act && act.ref)}. `
+        + 'If you moved deliberately, re-verify what you are shipping and re-pass the new identity.',
+      );
+      process.exit(2);
+    }
+    verifiedIdentity = expectation.identity;
+    // Guard D — announce. Emitted on EVERY verified run so the guard's presence
+    // is visible rather than inferred. There is deliberately no `unverified`
+    // outcome: that state is an exit 2 above, because a diagnostic everyone
+    // reads as protection is the defect, not the fix.
+    err(
+      `  [worktree] identity verified (source: ${expectation.source}) — `
+      + `${verifiedIdentity.head.slice(0, 12)} on `
+      + `${verifiedIdentity.ref.kind === 'attached' ? verifiedIdentity.ref.name : '(detached)'}`,
+    );
+  } else {
+    err('  [worktree] identity check skipped — unborn HEAD (no commit to bind to)');
   }
 
   // ---- --no-tests: the sanctioned override (feedback 2026-07-19 item 5) ---
@@ -313,11 +392,41 @@ async function main() {
     // gate is `passed` and the evidence is `fresh` — the very condition above.
     // Hoisting would spawn a `git write-tree` subprocess on every commit,
     // including docs-only `not-run` ships, for a value nothing else reads.
+    // The tree this commit will actually carry.
+    //
+    // Guard A makes `--path` mandatory, so the old "index tree, but only when
+    // unscoped" rule would have left `committedTree` null on EVERY run and made
+    // `--gate passed` structurally unreachable — the exact defect this repo
+    // already fixed once (the marker had four readers and zero writers). A gate
+    // value that cannot be earned is worse than no gate value: it silently
+    // understates the rigor behind a change.
+    //
+    // Under `--only`, git builds the commit from HEAD's tree with the named
+    // paths' WORKTREE contents applied. That is reproducible here in a private
+    // index, so the comparison stays honest rather than being skipped: a partial
+    // commit of an audited worktree yields a DIFFERENT tree and is still
+    // correctly refused — which is the property the old null-skip was protecting.
     let committedTree = null;
     if (opts.paths.length === 0) {
       const { gitIndexTree } = await import('./lib/vcs.mjs');
       const treeRes = gitIndexTree(repoRoot);
       committedTree = treeRes.ok ? treeRes.tree : null;
+    } else {
+      const tmpIndex = path.join(repoRoot, '.git', `ship-commit-index-${process.pid}-${Date.now()}`);
+      try {
+        const withIndex = (args) => spawnSync('git', args, {
+          cwd: repoRoot, encoding: 'utf-8', windowsHide: true,
+          env: { ...process.env, GIT_INDEX_FILE: tmpIndex },
+        });
+        const seeded = withIndex(['read-tree', 'HEAD']);
+        const added = seeded.status === 0 ? withIndex(['add', '--', ...opts.paths]) : null;
+        const written = added && added.status === 0 ? withIndex(['write-tree']) : null;
+        // Any failure leaves committedTree null, which refuses `passed` and
+        // points at `waived` — the fail-closed direction, unchanged.
+        if (written && written.status === 0) committedTree = (written.stdout || '').trim() || null;
+      } finally {
+        try { fs.rmSync(tmpIndex, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* best effort */ }
+      }
     }
     const ver = evaluateGateVerification({ gate: values.gate, evidence, cloudEnabled, convergence, committedTree });
     if (ver) {
@@ -348,9 +457,34 @@ async function main() {
   let pathspecRollback = null;
 
   if (!usePathspec) {
-    const staged = git(['diff', '--cached', '--quiet'], repoRoot);
-    if (staged.error) { err('ship-commit: git spawn failed'); process.exit(1); }
-    if (staged.status === 0) { err('ship-commit: nothing staged'); process.exit(1); }
+    // ---- Guard A: an unscoped commit is refused, fail-closed --------------
+    //
+    // This CLI cannot know WHOSE staged entries the index holds — there is no
+    // ownership signal there — so the question is not "are these foreign?" but
+    // "has the caller declared what it intends to commit?". Committing the bare
+    // index in a shared worktree is how 13 staged deletions were absorbed into
+    // another session's 12-line commit and pushed as a −2,324-line diff.
+    //
+    // There is deliberately NO `--index-is-mine` escape hatch. An unscoped
+    // commit is a TOCTOU by construction — the index is read here and consumed
+    // by `git commit` later — and HEAD verification cannot cover it, because
+    // index mutations do not move HEAD. Deleting the mode removes the race
+    // instead of documenting it, and removes a flag instead of adding one.
+    const scope = classifyStagedScope({ paths: [], repoRoot, run: gitRun });
+    if (scope.reason === 'nothing-staged') { err('ship-commit: nothing staged'); process.exit(1); }
+    if (scope.reason === 'git-exec-failed') {
+      err(`ship-commit: could not read the index (${scope.detail || 'git failed'})`);
+      process.exit(1);
+    }
+    const staged = scope.staged || [];
+    const shown = staged.slice(0, 5);
+    err(
+      `AGENT FIX: --path: refusing to commit the whole index (${staged.length} staged path(s): `
+      + `${shown.join(', ')}${staged.length > 5 ? ', …' : ''}). `
+      + "In a shared working tree the index may hold another session's in-flight work. "
+      + `Name what you are shipping: ${shown.map((p) => `--path ${p}`).join(' ')}`,
+    );
+    process.exit(2);
   } else {
     // Rollback helper: a rejected run must leave the index exactly as found.
     // `git add -N` is the one index mutation this flag makes, and it is only
@@ -380,6 +514,31 @@ async function main() {
       // the `.githooks/post-merge` removal, where dropping it would have left the
       // hook live in HEAD and still recreating the tree the commit exists to
       // retire.
+      // A DIRECTORY silently widens the declaration: git expands the pathspec,
+      // so `--path sub` was measured to commit `sub/b.txt` — a file the caller
+      // never named. Refused, and the sample is bounded: the decision rests on
+      // `lstat` alone (a huge directory is refused as cheaply as a small one),
+      // and the message stops collecting at the cap rather than computing an
+      // exact remainder, which would reintroduce the traversal.
+      let statErr = null;
+      let isDirectory = false;
+      try { isDirectory = fs.lstatSync(abs).isDirectory(); } catch (e) { statErr = e; }
+      if (statErr && statErr.code !== 'ENOENT') {
+        rollback();
+        err(`ship-commit: could not stat ${rel} (${statErr.code})`);
+        process.exit(1);
+      }
+      if (isDirectory) {
+        const { sample, truncated } = sampleDirectoryEntries(abs);
+        pathErrors.push({
+          field: '--path',
+          custom: `AGENT FIX: --path ${p}: is a directory, and git would expand it — `
+            + `naming it commits everything beneath it (${sample.join(', ')}`
+            + `${truncated ? ', … additional entries omitted' : ''}). `
+            + 'Pass each file you are shipping. Example: --path scripts/foo.mjs',
+        });
+        continue;
+      }
       if (!fs.existsSync(abs)) {
         // BOTH the index and HEAD, because they disagree in exactly the case
         // that matters: once `git rm --cached` (or `git add` of a removal) has
@@ -387,7 +546,25 @@ async function main() {
         // present in HEAD — so an index-only probe reports "git does not track
         // it" for a deletion that is already half-committed.
         const inIndex = git(['ls-files', '--error-unmatch', '--', rel], repoRoot).status === 0;
-        const inHead = git(['cat-file', '-e', `HEAD:${rel}`], repoRoot).status === 0;
+        // `-t`, NOT `-e`. `cat-file -e` only asks "does this object exist", and
+        // it exits 0 for a TREE as happily as for a blob — so a DELETED
+        // directory passed this probe and `git commit --only -- <dir>` then
+        // silently committed every deletion beneath it, reintroducing the
+        // widening the directory check above exists to stop. Measured
+        // 2026-08-11: lstat('sub') → ENOENT, `cat-file -e HEAD:sub` → exit 0,
+        // `cat-file -t HEAD:sub` → `tree`.
+        const headType = git(['cat-file', '-t', `HEAD:${rel}`], repoRoot);
+        const headKind = headType.status === 0 ? (headType.stdout || '').trim() : null;
+        if (headKind === 'tree') {
+          pathErrors.push({
+            field: '--path',
+            custom: `AGENT FIX: --path ${p}: is a DELETED directory — naming it would commit every `
+              + 'deletion beneath it, not just the path you named. Pass each deleted file. '
+              + 'Example: --path scripts/foo.mjs',
+          });
+          continue;
+        }
+        const inHead = headKind === 'blob';
         if (!inIndex && !inHead) {
           pathErrors.push({
             field: '--path',
@@ -505,6 +682,37 @@ async function main() {
       // parser as authoring) and require each expected key to appear EXACTLY
       // ONCE in the trailer BLOCK with the expected value. Substring matches
       // against body prose do not count.
+      // ---- Post-commit verification (guard B's second half) ---------------
+      //
+      // This DETECTS; it does not prevent. `git commit` has already created the
+      // commit and moved the checked-out ref by the time this runs, so it is
+      // NOT a compare-and-swap — calling it one would let a reader believe the
+      // window is closed when it is only narrowed. The full transaction
+      // (candidate tree + `update-ref <ref> <new> <expected-old>`) lives in
+      // docs/plans/ship-commit-transaction.md.
+      //
+      // What it buys is the half that mattered in the field: the incident
+      // escaped because it was PUSHED. A detected, unpushed wrong-parent commit
+      // is recoverable in seconds. So: report loudly, print the recovery
+      // command, and NEVER auto-reset — an automatic reset in a shared worktree
+      // is exactly the destructive action this plan exists to prevent.
+      if (verifiedIdentity) {
+        const parentRes = git(['rev-parse', '--verify', '--quiet', 'HEAD^'], repoRoot);
+        const parentSha = parentRes.status === 0 ? (parentRes.stdout || '').trim() : null;
+        const nowRef = readActualIdentity({ run: gitRun });
+        const nowName = nowRef.ok && nowRef.identity.ref.kind === 'attached' ? nowRef.identity.ref.name : '(detached)';
+        const expName = verifiedIdentity.ref.kind === 'attached' ? verifiedIdentity.ref.name : '(detached)';
+        const drift = [];
+        if (parentSha !== verifiedIdentity.head) drift.push(`parent ${parentSha ? parentSha.slice(0, 12) : '<none>'} != verified base ${verifiedIdentity.head.slice(0, 12)}`);
+        if (nowName !== expName) drift.push(`branch ${nowName} != verified ${expName}`);
+        if (drift.length > 0) {
+          err(`ship-commit: post-commit-drift — the worktree moved between verification and commit (${drift.join('; ')}).`);
+          err(`ship-commit: the commit EXISTS but was not built on the base you verified. DO NOT PUSH.`);
+          err(`ship-commit: inspect with \`git log -1\`, and if it is wrong: git reset --soft HEAD^`);
+          exitCode = 1;
+        }
+      }
+
       const persisted = git(['log', '-1', '--format=%B'], repoRoot);
       const expected = formatTrailerBlock(values);
       const parsed = persisted.status === 0 ? parseMessageTrailers(persisted.stdout) : { isTrailerBlock: false, trailers: [] };

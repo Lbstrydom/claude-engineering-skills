@@ -18,7 +18,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { makeGitRunner } from './helpers/fixtures.mjs';
+import { spawnSync } from 'node:child_process';
+import { makeGitRunner, gitFixtureEnv } from './helpers/fixtures.mjs';
 import { makeRunCli } from './helpers/run-cli.mjs';
 
 const CLI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../scripts/ship-commit.mjs');
@@ -40,7 +41,23 @@ function msgFile(text = 'feat: scoped subject\n\nbody\n') {
   return mf;
 }
 
-const BASE = (mf) => ['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'not-run'];
+
+/**
+ * The identity bundle guard B requires (worktree-identity-guards, Phase 3).
+ * Computed live from the fixture repo — a fresh repo per test means a
+ * hardcoded sha would never match. Unborn HEAD returns nothing: guard B's one
+ * documented skip.
+ */
+function identityArgs() {
+  const h = spawnSync('git', ['rev-parse', '--verify', '--quiet', 'HEAD'], { cwd: repo, encoding: 'utf-8', env: gitFixtureEnv() });
+  const head = h.status === 0 ? (h.stdout || '').trim() : '';
+  if (!head) return [];
+  const b = spawnSync('git', ['symbolic-ref', '--quiet', '--short', 'HEAD'], { cwd: repo, encoding: 'utf-8', env: gitFixtureEnv() });
+  const br = b.status === 0 ? (b.stdout || '').trim() : '';
+  return br ? ['--expect-head', head, '--expect-branch', br] : ['--expect-head', head, '--expect-detached'];
+}
+
+const BASE = (mf) => ['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'not-run', ...identityArgs()];
 
 /** Files touched by the commit at HEAD. */
 function filesInHead() {
@@ -224,12 +241,31 @@ describe('ship-commit --path', () => {
     }
   });
 
-  it('without --path, behaviour is unchanged (commits the whole index)', () => {
+  // INVERTED (worktree-identity-guards, Phase 3). This row used to assert
+  // "without --path, behaviour is unchanged (commits the whole index)". That
+  // behaviour is exactly what guard A removes: committing the bare index in a
+  // shared worktree is how 13 staged deletions were absorbed into another
+  // session's commit and pushed as a −2,324-line diff. The row is kept, and
+  // flipped, rather than deleted — a deleted test is silent about the change,
+  // whereas an inverted one records that the old contract was retired
+  // deliberately and pins the new one in the same place.
+  it('without --path, an unscoped commit is now REFUSED (guard A, fail-closed)', () => {
     fs.writeFileSync(path.join(repo, 'x.txt'), 'x\n');
     fs.writeFileSync(path.join(repo, 'y.txt'), 'y\n');
     git(['add', 'x.txt', 'y.txt']);
+    const before = filesInHead().sort();
+
     const r = runCli(BASE(msgFile()));
-    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.status, 2, `an unscoped commit must fail closed: ${r.stderr}`);
+    assert.match(r.stderr, /refusing to commit the whole index/);
+    assert.match(r.stderr, /x\.txt/, 'the refusal names what it saw');
+    assert.match(r.stderr, /--path x\.txt/, 'and prints the exact remedy');
+    assert.deepEqual(filesInHead().sort(), before, 'nothing may land');
+
+    // …and the remedy actually works, so the gate is satisfiable by doing the
+    // work correctly rather than only by bypassing it.
+    const ok = runCli([...BASE(msgFile()), '--path', 'x.txt', '--path', 'y.txt']);
+    assert.equal(ok.status, 0, ok.stderr);
     assert.deepEqual(filesInHead().sort(), ['x.txt', 'y.txt']);
   });
 });

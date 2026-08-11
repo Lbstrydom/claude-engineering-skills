@@ -12,7 +12,7 @@
  * exists so a future edit cannot quietly weaken one leg of it.
  */
 
-import { describe, it } from 'node:test';
+import { describe, it, test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';

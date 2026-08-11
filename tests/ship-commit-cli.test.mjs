@@ -54,7 +54,36 @@ function arrange({ message = 'feat: test subject\n\nbody line\n', stage = true }
   return mf;
 }
 
-const BASE_ARGS = (mf) => ['--message-file', mf, '--skill', 'ship', '--models', 'claude,gpt', '--gate', 'not-run'];
+/**
+ * The identity bundle guard B requires (worktree-identity-guards, Phase 3).
+ *
+ * Computed LIVE from the repo the CLI will run in, because these fixtures mint a
+ * fresh repo per test — a hardcoded sha would be wrong on every run. An unborn
+ * HEAD returns nothing on purpose: that is guard B's one documented skip, and
+ * passing an expectation there would assert a binding that cannot exist.
+ */
+function identityArgs(cwd = repo) {
+  const h = spawnSync('git', ['rev-parse', '--verify', '--quiet', 'HEAD'], { cwd, encoding: 'utf-8', env: gitFixtureEnv() });
+  const head = h.status === 0 ? (h.stdout || '').trim() : '';
+  if (!head) return [];
+  const b = spawnSync('git', ['symbolic-ref', '--quiet', '--short', 'HEAD'], { cwd, encoding: 'utf-8', env: gitFixtureEnv() });
+  const br = b.status === 0 ? (b.stdout || '').trim() : '';
+  return br ? ['--expect-head', head, '--expect-branch', br] : ['--expect-head', head, '--expect-detached'];
+}
+
+/**
+ * Guard A refuses an unscoped commit, so name what `arrange()` staged. Only when
+ * the file is actually there — the "nothing staged" rows must still reach their
+ * own exit-1 error rather than a --path input rejection.
+ */
+function scopeArgs(cwd = repo) {
+  return fs.existsSync(path.join(cwd, 'work.txt')) ? ['--path', 'work.txt'] : [];
+}
+
+const BASE_ARGS = (mf, cwd = repo) => [
+  '--message-file', mf, '--skill', 'ship', '--models', 'claude,gpt', '--gate', 'not-run',
+  ...identityArgs(cwd), ...scopeArgs(cwd),
+];
 
 beforeEach(() => {
   repo = fs.mkdtempSync(path.join(os.tmpdir(), 'ship-cli-'));
@@ -100,9 +129,9 @@ describe('ship-commit CLI — §F1.4 taxonomy', () => {
     const before = commitCount();
     for (const [args, family] of [
       [[...BASE_ARGS(mf), '--bogus'], /AGENT FIX: --bogus: unknown flag/],
-      [['--message-file', mf, '--skill', 'shipping', '--models', 'claude', '--gate', 'not-run'], /AGENT FIX: --skill: expected one of \[ship\]/],
-      [['--message-file', mf, '--skill', 'ship', '--models', 'claude gpt', '--gate', 'not-run'], /AGENT FIX: --models:/],
-      [['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'green'], /AGENT FIX: --gate:/],
+      [['--message-file', mf, '--skill', 'shipping', '--models', 'claude', '--gate', 'not-run', ...identityArgs(), ...scopeArgs()], /AGENT FIX: --skill: expected one of \[ship\]/],
+      [['--message-file', mf, '--skill', 'ship', '--models', 'claude gpt', '--gate', 'not-run', ...identityArgs(), ...scopeArgs()], /AGENT FIX: --models:/],
+      [['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'green', ...identityArgs(), ...scopeArgs()], /AGENT FIX: --gate:/],
     ]) {
       const r = runCli(args);
       assert.equal(r.status, 2, r.stderr);
@@ -114,19 +143,19 @@ describe('ship-commit CLI — §F1.4 taxonomy', () => {
   it('row 5: fresh evidence + --gate not-run → exit 2; and --gate passed without evidence → exit 2', () => {
     const mf = arrange();
     // no evidence: passed is illegal
-    let r = runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'passed']);
+    let r = runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'passed', ...identityArgs(), ...scopeArgs()]);
     assert.equal(r.status, 2);
     assert.match(r.stderr, /AGENT FIX: gate-evidence: no fresh audit evidence exists but --gate is "passed"/);
     // fresh evidence: not-run is illegal
     fs.mkdirSync(path.join(repo, '.audit'), { recursive: true });
     fs.writeFileSync(path.join(repo, '.audit', 'last-audit-run.json'),
       JSON.stringify({ runId: 'ecae388d-c176-4182-9d27-0210b919b844', ts: new Date(Date.now() + 60_000).toISOString() }));
-    r = runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'not-run']);
+    r = runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'not-run', ...identityArgs(), ...scopeArgs()]);
     assert.equal(r.status, 2);
     assert.match(r.stderr, /AGENT FIX: gate-evidence: an audit ran after HEAD/);
     // fresh evidence + passed, but the marker predates E1 (no audited-tree):
     // refused on IDENTITY before the store is even consulted.
-    r = runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'passed']);
+    r = runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'passed', ...identityArgs(), ...scopeArgs()]);
     assert.equal(r.status, 2);
     assert.match(r.stderr, /recorded no audited-tree identity/);
 
@@ -140,11 +169,11 @@ describe('ship-commit CLI — §F1.4 taxonomy', () => {
         ts: new Date(Date.now() + 60_000).toISOString(),
         auditedTree: git(['write-tree']).trim(),
       }));
-    r = runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'passed']);
+    r = runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'passed', ...identityArgs(), ...scopeArgs()]);
     assert.equal(r.status, 2);
     assert.match(r.stderr, /AGENT FIX: gate-evidence: "passed" requires a verified verdict for run ecae388d-c176-4182-9d27-0210b919b844 but verification is unavailable \(AUDIT_DB_URL unset\)/);
     // fresh evidence + waived (declared, unverified): legal, AI-Run-ID auto-injected
-    r = runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'waived']);
+    r = runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'waived', ...identityArgs(), ...scopeArgs()]);
     assert.equal(r.status, 0, r.stderr);
     assert.match(git(['log', '-1', '--format=%B']), /AI-Run-ID: ecae388d-c176-4182-9d27-0210b919b844/);
     assert.match(git(['log', '-1', '--format=%B']), /AI-Gate: waived/);
@@ -274,7 +303,7 @@ describe('ship-commit CLI — §F1.4 taxonomy', () => {
     g(['config', 'user.name', 'T']);
     fs.mkdirSync(path.join(bare, '.claude', 'tmp'), { recursive: true });
     fs.writeFileSync(path.join(bare, '.claude', 'tmp', 'msg.txt'), 'feat: x\n\nbody\n');
-    const r = runCli(BASE_ARGS(path.join('.claude', 'tmp', 'msg.txt')), bare);
+    const r = runCli(BASE_ARGS(path.join('.claude', 'tmp', 'msg.txt'), bare), bare);
     assert.equal(r.status, 1);
     assert.match(r.stderr, /ship-commit: no skill layout found/);
     fs.rmSync(bare, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
@@ -308,7 +337,10 @@ describe('ship-commit CLI — §F1.4 taxonomy', () => {
       JSON.stringify({ runId: 'ecae388d-c176-4182-9d27-0210b919b844', ts: '2020-01-01T00:00:00Z' }));
     fs.writeFileSync(path.join(fresh, 'work.txt'), 'x\n');
     g(['add', 'work.txt']);
-    const r = runCli(['--message-file', path.join('.claude', 'tmp', 'msg.txt'), '--skill', 'ship', '--models', 'claude', '--gate', 'waived'], fresh);
+    const r = runCli(['--message-file', path.join('.claude', 'tmp', 'msg.txt'), '--skill', 'ship', '--models', 'claude',
+      // Unborn HEAD skips guard B, but guard A still applies: the index is
+      // non-empty, so the first commit must name what it ships like any other.
+      '--gate', 'waived', '--path', 'work.txt'], fresh);
     assert.equal(r.status, 0, r.stderr);
     const body = g(['log', '-1', '--format=%B']).stdout;
     assert.match(body, /AI-Run-ID: ecae388d/);
@@ -350,7 +382,14 @@ describe('ship-commit CLI — E1 audited-target identity', () => {
     fs.writeFileSync(path.join(repo, 'sneaked-in.txt'), 'never audited\n');
     git(['add', 'sneaked-in.txt']);
 
-    const r = runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'passed']);
+    // The unaudited file must be NAMED for E1 to be the thing under test.
+    // Guard A changed the shape of this attack: since a commit now has to
+    // declare its scope, content cannot ride along via the index unnoticed —
+    // scoping to `work.txt` alone would legitimately match the audited tree and
+    // E1 would (correctly) not fire. So the row now models an author who ships
+    // the unaudited file deliberately, which is the case E1 still owns.
+    const r = runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'passed',
+      ...identityArgs(), '--path', 'work.txt', '--path', 'sneaked-in.txt']);
     assert.equal(r.status, 2, r.stderr);
     assert.match(r.stderr, /is not what run .* audited/);
     assert.equal(commitCount(), before, 'the false-pass commit must not land');
@@ -365,7 +404,7 @@ describe('ship-commit CLI — E1 audited-target identity', () => {
     freshMarker({ auditedTree: git(['write-tree']).trim() });
 
     const r = runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude',
-      '--gate', 'passed', '--path', 'other.txt']);
+      '--gate', 'passed', '--path', 'other.txt', ...identityArgs()]);
     assert.equal(r.status, 2, r.stderr);
     assert.match(r.stderr, /cannot resolve the tree being committed|is not what run .* audited/);
   });
@@ -373,7 +412,7 @@ describe('ship-commit CLI — E1 audited-target identity', () => {
   it('waived is still reachable on a mismatched tree (the identity check only gates passed)', () => {
     const mf = arrange();
     freshMarker({ auditedTree: 'a'.repeat(40) });   // deliberately not our tree
-    const r = runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'waived']);
+    const r = runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'waived', ...identityArgs(), ...scopeArgs()]);
     assert.equal(r.status, 0, r.stderr);
     assert.match(git(['log', '-1', '--format=%B']), /AI-Gate: waived/);
   });
@@ -392,6 +431,11 @@ describe('ship-commit CLI — E1 audited-target identity', () => {
 // the only way in.
 describe('--message-file - (stdin)', () => {
   // runCli cannot pipe stdin, so these spawn directly with the same hermetic env.
+  /** The stdin rows stage README.md rather than work.txt (see arrange()). */
+  const stdinScopeArgs = () => (
+    fs.existsSync(path.join(repo, 'README.md')) ? ['--path', 'README.md'] : []
+  );
+
   const runWithStdin = (args, input) => spawnSync(
     process.execPath, [CLI, ...args],
     {
@@ -405,7 +449,7 @@ describe('--message-file - (stdin)', () => {
     git(['add', 'README.md']);
     const before = commitCount();
     const r = runWithStdin(
-      ['--message-file', '-', '--skill', 'ship', '--models', 'claude', '--gate', 'not-run'],
+      ['--message-file', '-', '--skill', 'ship', '--models', 'claude', '--gate', 'not-run', ...identityArgs(), ...stdinScopeArgs()],
       'feat: piped subject\n\nbody line\n');
     assert.equal(r.status, 0, r.stderr);
     assert.equal(commitCount(), before + 1, 'the commit must actually land');
@@ -420,7 +464,7 @@ describe('--message-file - (stdin)', () => {
     fs.writeFileSync(path.join(repo, 'README.md'), 'changed\n');
     git(['add', 'README.md']);
     const r = runWithStdin(
-      ['--message-file', '-', '--skill', 'ship', '--models', 'claude,gpt', '--gate', 'not-run'],
+      ['--message-file', '-', '--skill', 'ship', '--models', 'claude,gpt', '--gate', 'not-run', ...identityArgs(), ...stdinScopeArgs()],
       'chore: trailers please\n');
     assert.equal(r.status, 0, r.stderr);
     const body = git(['log', '-1', '--format=%B']);
@@ -434,7 +478,7 @@ describe('--message-file - (stdin)', () => {
     git(['add', 'README.md']);
     const before = commitCount();
     const r = runWithStdin(
-      ['--message-file', '-', '--skill', 'ship', '--models', 'claude', '--gate', 'not-run'], '');
+      ['--message-file', '-', '--skill', 'ship', '--models', 'claude', '--gate', 'not-run', ...identityArgs(), ...stdinScopeArgs()], '');
     assert.equal(r.status, 2, 'an empty message is agent-correctable input, so exit 2');
     assert.match(r.stderr, /AGENT FIX/);
     assert.match(r.stderr, /stdin/, 'the error must name stdin, not a path the caller never gave');
@@ -445,7 +489,7 @@ describe('--message-file - (stdin)', () => {
     fs.writeFileSync(path.join(repo, 'README.md'), 'changed\n');
     git(['add', 'README.md']);
     const r = runWithStdin(
-      ['--message-file', '-', '--skill', 'ship', '--models', 'claude', '--gate', 'not-run'], '   \n\n  \n');
+      ['--message-file', '-', '--skill', 'ship', '--models', 'claude', '--gate', 'not-run', ...identityArgs(), ...stdinScopeArgs()], '   \n\n  \n');
     assert.equal(r.status, 2);
     assert.match(r.stderr, /AGENT FIX/);
   });
@@ -459,7 +503,8 @@ describe('--message-file - (stdin)', () => {
     fs.writeFileSync(mf, 'docs: from a real file\n');
     const before = commitCount();
     const r = runWithStdin(
-      ['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'not-run'], '');
+      ['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'not-run',
+        ...identityArgs(), ...stdinScopeArgs()], '');
     assert.equal(r.status, 0, r.stderr);
     assert.equal(commitCount(), before + 1);
     assert.match(git(['log', '-1', '--format=%B']), /docs: from a real file/);
