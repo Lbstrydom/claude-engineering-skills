@@ -123,15 +123,19 @@ async function setupDatabase(headless) {
   const envPath = path.join(SELF_DIR, '.env');
   let content = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf-8') : '';
 
+  let dsn = null;
   if (selected.extraKeys) {
     for (const key of selected.extraKeys) {
-      if (content.match(new RegExp(`^${key}=.+`, 'm'))) {
+      const existing = content.match(new RegExp(`^${key}=(.+)$`, 'm'));
+      if (existing) {
         ok(`${key} already configured`);
+        if (key === 'AUDIT_DB_URL') dsn = existing[1].trim();
         continue;
       }
       const value = await ask(`  ${key}: `);
       if (value?.trim()) {
         content += `\n${key}=${value.trim()}`;
+        if (key === 'AUDIT_DB_URL') dsn = value.trim();
         ok(`${key} saved`);
       } else {
         warn(`${key} skipped — add to .env before running audits`);
@@ -141,6 +145,51 @@ async function setupDatabase(headless) {
   }
 
   fs.writeFileSync(envPath, content.trim() + '\n');
+
+  if (dsn) verifyDatabase(dsn);
+}
+
+/**
+ * Prove the DSN can actually host the store, at the moment it is entered.
+ *
+ * Storing a DSN used to be the whole of Step 3, so the two requirements that
+ * disqualify a provider — `CREATEROLE` (needed for the anon/authenticated/
+ * service_role stubs) and the three extension packages — surfaced only when the
+ * operator later found `setup-postgres.mjs --migrate` on their own, i.e. after
+ * they had already chosen and signed up for that provider.
+ *
+ * This delegates rather than restating the requirement list: `--preflight-only`
+ * runs the same `preflight()` the migration path runs, then returns before any
+ * DDL. A fourth extension added there is picked up here for free — the list is
+ * never duplicated in this file.
+ *
+ * Never fatal. Setup is an onboarding wizard, and an unreachable DB at setup
+ * time is ordinary (not provisioned yet, VPN down, typo). It reports and moves
+ * on; the audit tooling degrades to local-only regardless.
+ */
+function verifyDatabase(dsn) {
+  console.log('');
+  console.log(`  ${D}Checking this Postgres can host the store (read-only; creates nothing)…${X}`);
+  try {
+    execFileSync(
+      process.execPath,
+      [path.join(SELF_DIR, 'scripts', 'setup-postgres.mjs'), '--migrate', '--preflight-only'],
+      { env: { ...process.env, AUDIT_DB_URL: dsn }, stdio: 'inherit', timeout: 60_000 },
+    );
+  } catch (err) {
+    if (err?.signal) {
+      warn('Database did not answer within 60s — check the host, port and firewall');
+    } else if (err?.status === 2) {
+      warn('This Postgres does not meet the requirements (see the preflight above)');
+      console.log(`  ${D}Routes that do, and how to test one: docs/runbooks/provisioning-postgres.md${X}`);
+    } else {
+      warn('Could not reach the database — the DSN is saved; fix the connection and re-run');
+    }
+    console.log(`  ${D}Not fatal: skills run local-only until this resolves.${X}`);
+    return;
+  }
+  ok('Database meets the requirements');
+  console.log(`  ${D}Create the schema next (idempotent): node scripts/setup-postgres.mjs --migrate${X}`);
 }
 
 // ── Step 4: Weekly Local Maintenance (optional) ─────────────────────────────
