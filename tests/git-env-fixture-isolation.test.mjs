@@ -21,7 +21,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { gitInit, gitInitWithEmptyCommit, commit, makeGitRunner, gitFixtureEnv } from './helpers/fixtures.mjs';
+import { gitInit, gitInitWithEmptyCommit, commit, makeGitRunner, gitFixtureEnv, makeRepoTemplate } from './helpers/fixtures.mjs';
 
 const rmrf = (p) => fs.rmSync(p, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 
@@ -135,5 +135,86 @@ describe('fixture helpers are immune to a leaked GIT_DIR/GIT_WORK_TREE', () => {
     } finally {
       rmrf(fixture);
     }
+  });
+});
+
+// ── makeRepoTemplate — build once, copy many (2026-08-11) ───────────────────
+//
+// `ship-commit-cli.test.mjs` rebuilt an identical git repo in `beforeEach`:
+// 406 ms x 26 tests = 10.6 s of a 44.9 s file, none of it testing anything.
+// Building once and `fs.cpSync`-ing costs 19 ms (21.9x measured), and took the
+// file to 26.5 s with identical pass/fail/skip counts.
+//
+// The optimisation is only sound if a COPY is a real, independent repo. The
+// dangerous failure is silent: hand out the template itself (or a shallow
+// alias) and tests corrupt each other's fixtures in ways that surface as
+// unrelated flakes months later. So these pin independence and functionality,
+// not merely that a directory appeared.
+describe('makeRepoTemplate — copies are real, private repos', () => {
+  const made = [];
+  const seeded = makeRepoTemplate((dir) => {
+    gitInit(dir);
+    fs.writeFileSync(path.join(dir, 'README.md'), 'seed\n');
+    const g = makeGitRunner(() => dir);
+    g(['add', 'README.md']);
+    g(['commit', '-q', '-m', 'seed']);
+  });
+  const mk = (p) => { const d = seeded(p); made.push(d); return d; };
+  after(() => {
+    for (const d of made) fs.rmSync(d, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  });
+
+  it('a copy is a WORKING git repo — the equivalence the speed-up rests on', () => {
+    const repo = mk('tpl-a-');
+    const rev = execFileSync('git', ['rev-list', '--count', 'HEAD'],
+      { cwd: repo, encoding: 'utf-8', env: gitFixtureEnv() }).trim();
+    assert.equal(rev, '1', 'the copied repo must have the template\'s commit and be queryable');
+    assert.equal(fs.readFileSync(path.join(repo, 'README.md'), 'utf-8'), 'seed\n');
+  });
+
+  it('a copy can be committed into — it is not a frozen or detached artifact', () => {
+    const repo = mk('tpl-b-');
+    fs.writeFileSync(path.join(repo, 'next.txt'), 'x\n');
+    const g = makeGitRunner(() => repo);
+    g(['add', 'next.txt']);
+    g(['commit', '-q', '-m', 'second']);
+    const rev = execFileSync('git', ['rev-list', '--count', 'HEAD'],
+      { cwd: repo, encoding: 'utf-8', env: gitFixtureEnv() }).trim();
+    assert.equal(rev, '2');
+  });
+
+  it('copies are INDEPENDENT — the failure mode that would corrupt tests silently', () => {
+    const a = mk('tpl-c-');
+    const b = mk('tpl-d-');
+    assert.notEqual(a, b, 'each call must yield its own directory');
+
+    fs.writeFileSync(path.join(a, 'only-in-a.txt'), 'a\n');
+    fs.rmSync(path.join(a, 'README.md'), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+
+    assert.equal(fs.existsSync(path.join(b, 'only-in-a.txt')), false, 'a write in one copy must not reach another');
+    assert.equal(fs.existsSync(path.join(b, 'README.md')), true, 'a delete in one copy must not reach another');
+
+    // …and the TEMPLATE itself must survive, or copy N+1 inherits copy N's damage.
+    const c = mk('tpl-e-');
+    assert.equal(fs.existsSync(path.join(c, 'README.md')), true,
+      'a later copy must come from the pristine template, not from a mutated sibling');
+    assert.equal(fs.existsSync(path.join(c, 'only-in-a.txt')), false);
+  });
+
+  it('builds exactly ONCE however many copies are taken', () => {
+    // If the build ran per call the helper would be a rename of the problem.
+    let builds = 0;
+    const t = makeRepoTemplate((dir) => { builds += 1; fs.writeFileSync(path.join(dir, 'f'), 'x'); });
+    const dirs = [t('tpl-f-'), t('tpl-f-'), t('tpl-f-')];
+    made.push(...dirs);
+    assert.equal(builds, 1, `expected one build for three copies, got ${builds}`);
+    for (const d of dirs) assert.equal(fs.readFileSync(path.join(d, 'f'), 'utf-8'), 'x');
+  });
+
+  it('a failing build THROWS and is never handed out as an empty fixture', () => {
+    // Fail-closed: a silently degraded fixture is how a suite goes green having
+    // tested a repo that is not the one it describes.
+    const t = makeRepoTemplate(() => { throw new Error('git exploded'); });
+    assert.throws(() => t('tpl-g-'), /fixture template build failed: git exploded/);
   });
 });

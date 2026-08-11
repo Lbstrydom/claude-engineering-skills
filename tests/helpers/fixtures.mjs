@@ -93,6 +93,59 @@ export function makeGitRunner(getCwd) {
 }
 
 /**
+ * Build an expensive fixture tree ONCE per process, then hand out cheap
+ * filesystem copies of it.
+ *
+ * **Why (measured 2026-08-11).** A `beforeEach` that runs `git init` + three
+ * `git config` + `git add` + `git commit` costs **406 ms**, and
+ * `ship-commit-cli.test.mjs` paid it 26 times — 10.6 s of a 44.9 s file, none
+ * of it testing anything. `fs.cpSync` of the resulting seeded tree costs
+ * **19 ms**: **21.9x faster**, 20 iterations, benchmarked with this file's own
+ * `gitFixtureEnv()`.
+ *
+ * Copying is *equivalent*, not merely similar: a fresh `.git` contains no
+ * absolute paths (verified — `core.worktree` is unset and `config` never names
+ * its own directory), so a copy is a working repo wherever it lands. The
+ * template is built by real git, so it can never drift from what git produces.
+ *
+ * **This is a memoizer, not a fifth fixture builder.** The repo already had
+ * four overlapping git-fixture constructors (`gitInit`,
+ * `gitInitWithEmptyCommit`, `worktree-guard-args.mjs`'s `initTempRepo`, and an
+ * inline one); architectural memory banded this space `precedent /
+ * above-floor-cluster`. So the caller keeps owning WHAT its fixture contains
+ * and this owns only the build-once-copy-many part.
+ *
+ * The template is process-scoped (node's test runner gives each FILE its own
+ * process, so there is no cross-file sharing to reason about) and removed on
+ * exit. A build failure is NOT swallowed — a silently degraded fixture is how a
+ * suite goes green having tested a repo that is not the one it describes.
+ *
+ * @param {(dir: string) => void} build - populates a fresh directory; runs once
+ * @returns {(prefix?: string) => string} instantiate → path to a private copy
+ */
+export function makeRepoTemplate(build) {
+  let template = null;
+  return function instantiate(prefix = 'ces-fixture-') {
+    if (template === null) {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ces-template-'));
+      try {
+        build(dir);
+      } catch (err) {
+        fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+        throw new Error(`fixture template build failed: ${err.message}`, { cause: err });
+      }
+      template = dir;
+      process.on('exit', () => {
+        try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* best effort */ }
+      });
+    }
+    const copy = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+    fs.cpSync(template, copy, { recursive: true });
+    return copy;
+  };
+}
+
+/**
  * Initialize a git repo with a deterministic test identity and GPG signing
  * disabled — NO initial commit. Use when the caller creates its own first
  * commit immediately afterward (`commit()` below).

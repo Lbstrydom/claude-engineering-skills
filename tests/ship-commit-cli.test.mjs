@@ -13,7 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { makeGitRunner, gitFixtureEnv } from './helpers/fixtures.mjs';
+import { makeGitRunner, gitFixtureEnv, makeRepoTemplate } from './helpers/fixtures.mjs';
 import { makeRunCli } from './helpers/run-cli.mjs';
 import { identityArgs as sharedIdentityArgs, scopeArgs as sharedScopeArgs } from './helpers/worktree-guard-args.mjs';
 
@@ -66,18 +66,37 @@ const BASE_ARGS = (mf, cwd = repo) => [
   ...identityArgs(cwd), ...scopeArgs(cwd),
 ];
 
-beforeEach(() => {
-  repo = fs.mkdtempSync(path.join(os.tmpdir(), 'ship-cli-'));
-  git(['init', '-q', '-b', 'main']);
-  git(['config', 'user.email', 'test@example.com']);
-  git(['config', 'user.name', 'Test']);
-  git(['config', 'commit.gpgsign', 'false']);
+/**
+ * The per-test repo, built ONCE and copied per test.
+ *
+ * The six `git` subprocesses below used to run in `beforeEach` — 406 ms x 26
+ * tests = 10.6 s of a 44.9 s file, spent constructing an identical repo 26
+ * times. Building it once and `fs.cpSync`-ing costs 19 ms per test (21.9x,
+ * measured 2026-08-11). Isolation is unchanged: every test still gets its own
+ * private directory that it may mutate freely.
+ *
+ * The `git` runner is bound to `repo` by closure, so the template build uses
+ * its own runner against the template directory.
+ */
+const newRepo = makeRepoTemplate((dir) => {
+  const g = (args) => {
+    const r = spawnSync('git', args, { cwd: dir, encoding: 'utf-8', env: gitFixtureEnv() });
+    if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr || r.stdout}`);
+  };
+  g(['init', '-q', '-b', 'main']);
+  g(['config', 'user.email', 'test@example.com']);
+  g(['config', 'user.name', 'Test']);
+  g(['config', 'commit.gpgsign', 'false']);
   // skill-name enum source (§F1.3c): source layout uses skills/<name>/
-  fs.mkdirSync(path.join(repo, 'skills', 'ship'), { recursive: true });
+  fs.mkdirSync(path.join(dir, 'skills', 'ship'), { recursive: true });
   // baseline commit so HEAD exists for most rows
-  fs.writeFileSync(path.join(repo, 'README.md'), 'seed\n');
-  git(['add', 'README.md']);
-  git(['commit', '-q', '-m', 'seed']);
+  fs.writeFileSync(path.join(dir, 'README.md'), 'seed\n');
+  g(['add', 'README.md']);
+  g(['commit', '-q', '-m', 'seed']);
+});
+
+beforeEach(() => {
+  repo = newRepo('ship-cli-');
 });
 afterEach(() => { fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 
