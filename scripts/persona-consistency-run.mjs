@@ -26,20 +26,12 @@ import { execFileSync } from 'node:child_process';
 import 'dotenv/config';
 
 import { resolveManifest }       from './lib/persona-test/manifest-resolver.mjs';
-import { loadCanary, verifyExpectations, canaryExpectsShape, candidateFingerprint }
-  from './lib/persona-test/canary.mjs';
+import { loadCanary, verifyExpectations } from './lib/persona-test/canary.mjs';
 import { openLedger }            from './lib/persona-test/ledger.mjs';
 import { diffClaims, manifestQualityWarnings, appliesToCurrent, routePatternCoverageWarnings }
   from './lib/persona-test/consistency.mjs';
 import { attachNetworkListener, captureWitness }
   from './lib/ux-lock/capture.mjs';
-import {
-  initLearningStore,
-  isCloudEnabled,
-  recordRegressionSpec,
-  getRepoIdByUuid,
-} from './learning-store.mjs';
-
 // Exit codes — also used by tests to assert behaviour without spawning.
 export const EXIT = Object.freeze({
   HEALTHY:            0,
@@ -204,48 +196,11 @@ export async function runConsistency(args, deps = {}) {
     ledger.state.fixtureSeed = canary.fixtureSeed || null;
     ledger.state.authKind = canary.authBootstrap?.kind || 'none';
 
-    // ── 5. Resolve repo identity for candidate emission (soft) ────────────
-    await initLearningStore();
-    const cloudOn = await isCloudEnabled();
-    let repoId = null;
-    let resolveErr = null;
-    if (cloudOn) {
-      try {
-        const uuid = readLocalRepoUuid(repoRoot);
-        // `.id` is load-bearing: getRepoIdByUuid returns a DESCRIPTOR
-        // ({id, name, activeRefreshId, …}), not an id. Passing the whole
-        // object into recordRegressionSpec's `repo_id uuid` column raises
-        // 22P02 into a swallowed catch — the run stays green and emits
-        // nothing, which reads downstream as "nobody uses this feature".
-        if (uuid) repoId = (await getRepoIdByUuid(uuid))?.id ?? null;
-        else resolveErr = 'no .audit-loop/repo-identity.json present';
-      } catch (err) {
-        resolveErr = err.message || String(err);
-      }
-    }
-    const candidateEnabled = cloudOn && !!repoId;
-    // Resolves R1-M10 + wine-cellar adoption #8: surface disablement
-    // audibly, but with different messages depending on what's missing.
-    // Cloud-off is "linkage off" (informational); cloud-on-but-no-repo-id
-    // is "DISABLED" (actionable). Don't conflate the two — operators
-    // who haven't configured Supabase shouldn't see a "fix this" warning;
-    // operators who configured Supabase but didn't run identity-resolve
-    // should.
-    if (!cloudOn) {
-      process.stderr.write(
-        'ℹ audit-loop linkage off (cloud off) — contradictions ' +
-        'will be logged to the session ledger only; no regression_specs ' +
-        'candidates written. This is fine for first-run adoption.\n',
-      );
-    } else if (!candidateEnabled) {
-      process.stderr.write(
-        `⚠ candidate emission DISABLED: ${resolveErr || 'unknown reason'}\n` +
-        '  Cloud is configured but no repo identity is registered. To enable\n' +
-        '  candidate persistence, run from this repo root:\n' +
-        '    node scripts/cross-skill.mjs resolve-repo-identity --persist\n' +
-        '  Contradictions will still appear in the session ledger.\n',
-      );
-    }
+    // ── 5. (retired) ──────────────────────────────────────────────────────
+    // Consistency-candidate emission was removed 2026-08-11. The runner no
+    // longer writes regression_specs rows; contradictions live in the session
+    // ledger, and the canary's own `expectedContradictions` is the gate.
+    // Rationale + the max-ratchet caveat: docs/reference/consistency-contract.md.
 
     // ── 6. Launch browser + apply auth bootstrap ──────────────────────────
     const browser = await playwright.chromium.launch();
@@ -387,53 +342,6 @@ export async function runConsistency(args, deps = {}) {
         ),
         ...unannotatedFindings,
       ];
-
-      // Candidate emission — for unexpected P0/P1 contradictions with a
-      // resolved surfaceId. Suppress canary-expected shapes (Gemini-R3-G1).
-      if (candidateEnabled) {
-        for (const c of contradictions) {
-          if (!candidateWorthy(c, canary)) continue;
-          const fingerprint = candidateFingerprint({
-            repoId, journeyKey: canary.name, contradiction: c,
-          });
-          const specId = await recordRegressionSpec(repoId, {
-            sourceKind: 'persona-consistency-candidate',
-            description: candidateDescription(c),
-            commitSha,
-            candidateFingerprint: fingerprint,
-            witnessSnapshot: shrinkWitness(witness, c),
-            contradictionPayload: c,
-            journeyContext: {
-              journeySteps: canary.journeySteps.slice(0, i + 1),
-              // Resolves R3-H4: explicit replay boundary in the payload
-              // contract. Consumers (renderCandidateSpec) validate that
-              // journeySteps.length === contradictionStepIndex + 1 so the
-              // producer/consumer agreement is enforced at promotion time,
-              // not implicit in the slice call here.
-              contradictionStepIndex: i,
-              routes: canary.routes,
-              authBootstrap: canary.authBootstrap,
-              candidateFingerprint: fingerprint,
-            },
-          });
-          if (specId) {
-            ledger.recordCandidate(specId);
-          } else {
-            // Emission was ATTEMPTED and the write returned null. Never
-            // silent: an empty candidate queue must not be readable as
-            // "nothing qualified" when the truth is "the write failed".
-            // recordRegressionSpec logs its own reason to stderr; this
-            // carries the fact into the ledger, which is what survives.
-            warnings.push({
-              kind: 'candidate-emission-failed',
-              surfaceId: c.surfaceId,
-              detail: `Candidate for ${candidateDescription(c)} cleared every worthiness gate `
-                + 'but the store write returned null (see stderr for the store-layer reason). '
-                + 'The queue will under-report; this run is NOT evidence of zero candidates.',
-            });
-          }
-        }
-      }
 
       allContradictions.push(...contradictions);
       // Drain the listener's buffer as LATE in the step as possible — responses
@@ -811,38 +719,6 @@ async function newAuthedContext(browser, auth) {
   throw new Error(`unknown authBootstrap.kind "${auth.kind}"`);
 }
 
-// ── Candidate emission helpers ────────────────────────────────────────────
-
-function candidateWorthy(c, canary) {
-  if (!c.surfaceId) return false;                           // negative-space without surfaceId — no candidate
-  if (c.severity !== 'P0' && c.severity !== 'P1') return false;
-  if (canaryExpectsShape(canary, c)) return false;          // canary-expected — suppress (Gemini-R3-G1)
-  return true;
-}
-
-function candidateDescription(c) {
-  return `${c.kind} on ${c.surfaceId}.${c.engineField || '(n/a)'} (${c.severity})`;
-}
-
-// Shrink the witness payload to just the relevant slice for this candidate.
-// Saves bytes in the JSONB column and keeps the candidate row narrowly
-// scoped to the contradiction it represents.
-function shrinkWitness(witness, c) {
-  const matches = (item) =>
-    item.surfaceId === c.surfaceId &&
-    (c.engineField ? item.engineField === c.engineField : true) &&
-    (c.scope ?? null) === (item.scope ?? null) &&
-    (c.key ?? null)   === (item.key   ?? null);
-  return {
-    stepIndex: witness.stepIndex,
-    domClaims: witness.domClaims.filter(matches),
-    networkClaims: witness.networkClaims.filter(matches),
-    undeclaredDomClaims: [],
-    partialCapture: witness.partialCapture,
-    customClaims: {},
-  };
-}
-
 // ── Misc helpers ──────────────────────────────────────────────────────────
 
 function emptyWitness(stepIndex) {
@@ -896,16 +772,6 @@ async function safeBrowserClose(browser) {
   try { await browser.close(); } catch { /* swallow */ }
 }
 
-function readLocalRepoUuid(repoRoot) {
-  // Mirrors the convention in scripts/cross-skill.mjs — repo identity persists
-  // to .audit-loop/repo-identity.json. If absent, candidate emission is off.
-  try {
-    const p = path.join(repoRoot, '.audit-loop', 'repo-identity.json');
-    if (!fs.existsSync(p)) return null;
-    const raw = JSON.parse(fs.readFileSync(p, 'utf-8'));
-    return raw?.uuid || null;
-  } catch { return null; }
-}
 
 // Test-internal exports (mirrors file-io.mjs / shared.mjs / anthropic-client.mjs).
 // `safeCurrentRoute` is the string every appliesTo.routePattern is matched

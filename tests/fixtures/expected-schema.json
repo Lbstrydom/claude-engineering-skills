@@ -5674,55 +5674,6 @@
           "is_nullable": "NO",
           "column_default": "now()",
           "ordinal_position": 12
-        },
-        {
-          "column_name": "candidate_fingerprint",
-          "data_type": "text",
-          "is_nullable": "YES",
-          "column_default": null,
-          "ordinal_position": 13
-        },
-        {
-          "column_name": "witness_snapshot",
-          "data_type": "jsonb",
-          "is_nullable": "YES",
-          "column_default": null,
-          "ordinal_position": 14
-        },
-        {
-          "column_name": "contradiction_payload",
-          "data_type": "jsonb",
-          "is_nullable": "YES",
-          "column_default": null,
-          "ordinal_position": 15
-        },
-        {
-          "column_name": "journey_context",
-          "data_type": "jsonb",
-          "is_nullable": "YES",
-          "column_default": null,
-          "ordinal_position": 16
-        },
-        {
-          "column_name": "promoted_at",
-          "data_type": "timestamp with time zone",
-          "is_nullable": "YES",
-          "column_default": null,
-          "ordinal_position": 17
-        },
-        {
-          "column_name": "promoted_by",
-          "data_type": "text",
-          "is_nullable": "YES",
-          "column_default": null,
-          "ordinal_position": 18
-        },
-        {
-          "column_name": "redaction_count",
-          "data_type": "integer",
-          "is_nullable": "NO",
-          "column_default": "0",
-          "ordinal_position": 19
         }
       ]
     },
@@ -9888,7 +9839,7 @@
       "table_name": "regression_specs",
       "constraint_name": "regression_specs_row_shape_check",
       "constraint_type": "CHECK",
-      "definition": "CHECK ((((source_kind = ANY (ARRAY['audit-loop-fix'::text, 'persona-test-p0'::text, 'persona-test-p1'::text, 'plan-frontend-verify'::text, 'plan-backend-verify'::text, 'unit-test'::text, 'manual'::text, 'other'::text])) AND (spec_path IS NOT NULL) AND (candidate_fingerprint IS NULL) AND (witness_snapshot IS NULL) AND (contradiction_payload IS NULL) AND (journey_context IS NULL) AND (promoted_at IS NULL) AND (promoted_by IS NULL)) OR ((source_kind = 'persona-consistency-candidate'::text) AND (spec_path IS NULL) AND (candidate_fingerprint IS NOT NULL) AND (witness_snapshot IS NOT NULL) AND (contradiction_payload IS NOT NULL) AND (journey_context IS NOT NULL) AND (promoted_at IS NULL) AND (promoted_by IS NULL)) OR ((source_kind = 'persona-consistency-locked'::text) AND (spec_path IS NOT NULL) AND (candidate_fingerprint IS NOT NULL) AND (witness_snapshot IS NOT NULL) AND (contradiction_payload IS NOT NULL) AND (journey_context IS NOT NULL) AND (promoted_at IS NOT NULL))))"
+      "definition": "CHECK ((spec_path IS NOT NULL))"
     },
     {
       "table_name": "regression_specs",
@@ -9900,7 +9851,7 @@
       "table_name": "regression_specs",
       "constraint_name": "regression_specs_source_kind_check",
       "constraint_type": "CHECK",
-      "definition": "CHECK ((source_kind = ANY (ARRAY['audit-loop-fix'::text, 'persona-test-p0'::text, 'persona-test-p1'::text, 'plan-frontend-verify'::text, 'plan-backend-verify'::text, 'persona-consistency-candidate'::text, 'persona-consistency-locked'::text, 'unit-test'::text, 'manual'::text, 'other'::text])))"
+      "definition": "CHECK ((source_kind = ANY (ARRAY['audit-loop-fix'::text, 'persona-test-p0'::text, 'persona-test-p1'::text, 'plan-frontend-verify'::text, 'plan-backend-verify'::text, 'unit-test'::text, 'manual'::text, 'other'::text])))"
     },
     {
       "table_name": "regression_specs",
@@ -11151,18 +11102,8 @@
     },
     {
       "tablename": "regression_specs",
-      "indexname": "idx_regression_specs_candidate_fingerprint",
-      "indexdef": "CREATE UNIQUE INDEX idx_regression_specs_candidate_fingerprint ON public.regression_specs USING btree (repo_id, candidate_fingerprint) WHERE ((candidate_fingerprint IS NOT NULL) AND (source_kind = 'persona-consistency-candidate'::text) AND (repo_id IS NOT NULL))"
-    },
-    {
-      "tablename": "regression_specs",
       "indexname": "idx_regression_specs_path_nonunit",
       "indexdef": "CREATE UNIQUE INDEX idx_regression_specs_path_nonunit ON public.regression_specs USING btree (repo_id, spec_path) WHERE ((source_kind <> 'unit-test'::text) AND (spec_path IS NOT NULL))"
-    },
-    {
-      "tablename": "regression_specs",
-      "indexname": "idx_regression_specs_pending_candidates",
-      "indexdef": "CREATE INDEX idx_regression_specs_pending_candidates ON public.regression_specs USING btree (repo_id, created_at) WHERE (source_kind = 'persona-consistency-candidate'::text)"
     },
     {
       "tablename": "regression_specs",

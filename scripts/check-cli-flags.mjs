@@ -141,7 +141,6 @@ export const BASELINE = new Set([
   'scripts/model-eval-auditor.mjs',
   'scripts/nav-audit.mjs',
   'scripts/on-conflict-lint.mjs',
-  'scripts/persona-consistency-promote.mjs',
   'scripts/persona-consistency-run.mjs',
   'scripts/postgres-parity/generate-expected-schema.mjs',
   'scripts/prepush-check.mjs',

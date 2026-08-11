@@ -5,8 +5,6 @@
  *   - loadCanary: success path, path-traversal refusal, ENOENT, JSON
  *     parse errors, schema validation errors, filename/name mismatch
  *   - verifyExpectations: min/max/shapes; reasons emitted
- *   - canaryExpectsShape: matches by tuple; honours empty shapes
- *   - candidateFingerprint: deterministic; journeyKey in mix (Gemini-R6-G2)
  */
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,8 +14,6 @@ import os from 'node:os';
 import {
   loadCanary,
   verifyExpectations,
-  canaryExpectsShape,
-  candidateFingerprint,
   CANARY_DIR,
 } from '../scripts/lib/persona-test/canary.mjs';
 
@@ -214,50 +210,6 @@ describe('verifyExpectations', () => {
     );
     assert.equal(r.passed, false);
     assert.match(r.reason, /shape.*not found/i);
-  });
-});
-
-// ────────────────────────────────────────────────────────────────────────────
-// canaryExpectsShape
-// ────────────────────────────────────────────────────────────────────────────
-
-describe('canaryExpectsShape', () => {
-  it('returns true when shape matches a declared (engineField, surfaceId) tuple', () => {
-    const canary = {
-      expectedContradictions: {
-        shapes: [{ engineField: 'cellarOrganised', surfaceId: 'status-chip' }],
-      },
-    };
-    assert.equal(canaryExpectsShape(canary, c({ engineField: 'cellarOrganised', surfaceId: 'status-chip' })), true);
-    assert.equal(canaryExpectsShape(canary, c({ engineField: 'other',           surfaceId: 'status-chip' })), false);
-  });
-  it('returns false when canary has no declared shapes', () => {
-    assert.equal(canaryExpectsShape({ expectedContradictions: { min: 1 } }, c()), false);
-  });
-});
-
-// ────────────────────────────────────────────────────────────────────────────
-// candidateFingerprint (Gemini-R6-G2 — journeyKey load-bearing)
-// ────────────────────────────────────────────────────────────────────────────
-
-describe('candidateFingerprint', () => {
-  it('is deterministic for same inputs', () => {
-    const args = {
-      repoId: 'r', journeyKey: 'oliver',
-      contradiction: c({ engineField: 'f', surfaceId: 's', kind: 'value-mismatch', selector: '[role="status"]' }),
-    };
-    assert.equal(candidateFingerprint(args), candidateFingerprint(args));
-  });
-
-  it('differs for different journeyKey (Gemini-R6-G2)', () => {
-    const base = { repoId: 'r', contradiction: c({ engineField: 'f', surfaceId: 's', kind: 'k', selector: 'x' }) };
-    const a = candidateFingerprint({ ...base, journeyKey: 'oliver' });
-    const b = candidateFingerprint({ ...base, journeyKey: 'sarah'  });
-    assert.notEqual(a, b);
-  });
-
-  it('throws on missing inputs', () => {
-    assert.throws(() => candidateFingerprint({}), /required/);
   });
 });
 

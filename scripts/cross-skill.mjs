@@ -41,9 +41,6 @@ import {
   getPlanIdByPath,
   recordRegressionSpec,
   recordRegressionSpecRun,
-  listConsistencyCandidates,
-  resolveCandidateStatesByFingerprint,
-  promoteRegressionSpec,
   recordPersonaAuditCorrelation,
   getCandidateAuditFindings,
   getExistingCorrelationHashesForSession,
@@ -92,7 +89,6 @@ import {
   // Phase 1 — adaptive-learning-v1
   insertLearningDecision,
   backfillLearningOutcome,
-  // Phase 3 WS-PIPE1 — persona_test_candidates aggregation table.
   // Shadow final-review A/B (docs/plans/final-review-shadow-reviewer.md)
   getFinalReviewStats,
   adjudicateFinalReviewFinding,
@@ -412,53 +408,21 @@ async function cmdRecordRegressionSpec() {
   if (!p.sourceKind || !p.description) {
     return emitError('BAD_INPUT', 'sourceKind and description are required');
   }
-  // Resolves Gemini-final-G1: defense-in-depth pre-egress redaction at the
-  // cross-skill CLI boundary. learning-store.recordRegressionSpec ALSO
-  // redacts (R1 fix), but redacting at the boundary too means future
-  // callers / future learning-store refactors can't bypass it. Idempotent
-  // — applying redact twice is harmless (patterns already replaced won't
-  // match again).
-  if (p.sourceKind === 'persona-consistency-candidate' || p.sourceKind === 'persona-consistency-locked') {
-    try {
-      const { redactObject } = await import('./lib/redact.mjs');
-      if (p.witnessSnapshot !== undefined && p.witnessSnapshot !== null) {
-        p.witnessSnapshot = redactObject(p.witnessSnapshot).redacted;
-      }
-      if (p.contradictionPayload !== undefined && p.contradictionPayload !== null) {
-        p.contradictionPayload = redactObject(p.contradictionPayload).redacted;
-      }
-      if (p.journeyContext !== undefined && p.journeyContext !== null) {
-        p.journeyContext = redactObject(p.journeyContext).redacted;
-      }
-    } catch (err) {
-      return emitError('REDACT_FAILED', `pre-egress redact threw: ${err.message}`);
-    }
-  }
-  // Conditional specPath requirement by sourceKind (Gemini-R6-G2 fix).
-  const isCandidate = p.sourceKind === 'persona-consistency-candidate';
-  const isLocked    = p.sourceKind === 'persona-consistency-locked';
-  if (!isCandidate && !p.specPath) {
-    return emitError('BAD_INPUT', 'specPath is required for non-candidate source_kind');
-  }
-  if (isCandidate) {
-    if (!p.candidateFingerprint) {
-      return emitError('BAD_INPUT', 'candidate rows require candidateFingerprint');
-    }
-    if (!p.witnessSnapshot || !p.contradictionPayload || !p.journeyContext) {
-      return emitError('BAD_INPUT',
-        'candidate rows require witnessSnapshot, contradictionPayload, journeyContext');
-    }
+  if (!p.specPath) {
+    return emitError('BAD_INPUT', 'specPath is required');
   }
   await initLearningStore();
   if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, specId: null });
   const repoId = await resolveRepoId(p);
-  // Resolves R1-H3 — repo scoping enforced at the CLI boundary. Both
-  // candidate AND locked rows require a resolved repoId; without it the
-  // partial unique index has no anchor and concurrent runs can silently
-  // produce duplicate-fingerprint rows (Postgres NULL-distinct trap).
-  if ((isCandidate || isLocked) && !repoId) {
+  // Resolves R1-H3 — repo scoping enforced at the CLI boundary. Kept after the
+  // consistency kinds were retired (2026-08-11): the (repo_id, spec_path)
+  // arbiter is a FULL index, and a NULL repo_id is distinct from every other
+  // NULL in Postgres, so an unscoped row INSERTs a duplicate on every re-run
+  // instead of updating. The store refuses too; refusing here as well keeps
+  // the CLI boundary self-contained.
+  if (!repoId) {
     return emitError('BAD_INPUT',
-      'consistency rows (candidate or locked) require a resolved repoId — run resolve-repo-identity --persist first');
+      'regression specs require a resolved repoId — run resolve-repo-identity --persist first');
   }
   const specId = await recordRegressionSpec(repoId, {
     specPath: p.specPath ?? null,
@@ -469,93 +433,9 @@ async function cmdRecordRegressionSpec() {
     sourceKind: p.sourceKind,
     sourceFindingId: p.sourceFindingId,
     sourceFindingType: p.sourceFindingType,
-    candidateFingerprint: p.candidateFingerprint,
-    witnessSnapshot: p.witnessSnapshot,
-    contradictionPayload: p.contradictionPayload,
-    journeyContext: p.journeyContext,
   });
   emit({ ok: !!specId, cloud: true, specId });
 }
-
-async function cmdListConsistencyCandidates() {
-  const p = parsePayload();
-  await initLearningStore();
-  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, candidates: [] });
-  const repoId = await resolveRepoId(p);
-  if (!repoId) {
-    return emitError('BAD_INPUT', 'repoId could not be resolved; pass repoId or repoUuid');
-  }
-  const result = await listConsistencyCandidates(repoId, {
-    sinceTs: p.sinceTs,
-    limit: p.limit,
-    cursor: p.cursor,
-  });
-  if (!result.ok) {
-    // A store-layer failure must NEVER surface as {ok:true, candidates:[]}.
-    // That conflation is finding C, and it is what made finding B
-    // destructive: reconcile read "not in the list" as "already promoted"
-    // and deleted the recovery journal.
-    return emitError('STORE_FAILURE', `list-consistency-candidates failed: ${result.error}`, {
-      storeError: result.error,
-    });
-  }
-  emit({ ok: true, cloud: true, candidates: result.candidates, nextCursor: result.nextCursor });
-}
-
-/**
- * Resolve the CURRENT state of specific candidate fingerprints.
- *
- * The bridge hop `reconcilePromotionJournal` needs (gate finding G1). §2
- * mandated it and §7 originally omitted it entirely, so an implementer
- * following §7 would have built a reconcile path with no way to reach the
- * store.
- */
-async function cmdResolveConsistencyCandidateStates() {
-  const p = parsePayload();
-  if (!Array.isArray(p.fingerprints)) {
-    return emitError('BAD_INPUT', 'fingerprints must be an array');
-  }
-  await initLearningStore();
-  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, states: {} });
-  const repoId = await resolveRepoId(p);
-  if (!repoId) {
-    return emitError('BAD_INPUT', 'repoId could not be resolved; pass repoId or repoUuid');
-  }
-  const result = await resolveCandidateStatesByFingerprint(repoId, p.fingerprints);
-  if (!result.ok) {
-    // Never an empty map on failure: `{}` reads as "every fingerprint absent",
-    // and `absent` is a state the recovery transition table acts on.
-    return emitError('STORE_FAILURE', `resolve-consistency-candidate-states failed: ${result.error}`, {
-      storeError: result.error,
-    });
-  }
-  emit({ ok: true, cloud: true, states: result.states });
-}
-
-async function cmdPromoteRegressionSpec() {
-  const p = parsePayload();
-  if (!p.specId || !p.specPath || !p.promotedBy) {
-    return emitError('BAD_INPUT', 'specId, specPath, promotedBy are required');
-  }
-  await initLearningStore();
-  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, rowsAffected: 0 });
-  // Same cross-tenant fence as candidate CREATION: resolve identity first and
-  // scope the mutation to it. A specId is a global uuid, so promoting on it
-  // alone can flip another repo's candidate row to `locked`.
-  const ref = await resolveRepoForStore({}).catch(() => null);
-  const repoId = ref?.repoRowId || null;
-  if (!repoId) {
-    return emit({ ok: false, error: 'refusing: repo identity unresolvable — promoting a regression spec must be attributed to a repo, and guessing one is how another repo\'s rows got mutated.' });
-  }
-  const r = await promoteRegressionSpec(p.specId, {
-    specPath: p.specPath,
-    promotedBy: p.promotedBy,
-    candidateFingerprint: p.candidateFingerprint,
-    repoId,
-  });
-  emit({ ok: r.ok, cloud: true, rowsAffected: r.rowsAffected, reason: r.reason ?? null });
-}
-
 
 async function cmdRecordRegressionSpecRun() {
   const p = parsePayload();
@@ -3241,9 +3121,6 @@ const commands = {
   'update-plan-status': cmdUpdatePlanStatus,
   'record-regression-spec': cmdRecordRegressionSpec,
   'record-regression-spec-run': cmdRecordRegressionSpecRun,
-  'list-consistency-candidates': cmdListConsistencyCandidates,
-  'resolve-consistency-candidate-states': cmdResolveConsistencyCandidateStates,
-  'promote-regression-spec':     cmdPromoteRegressionSpec,
   // Phase 3 WS-PIPE1 — persona_test_candidates aggregation table.
   'record-correlation': cmdRecordCorrelation,
   'record-ship-event': cmdRecordShipEvent,

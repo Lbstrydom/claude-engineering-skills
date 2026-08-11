@@ -71,8 +71,8 @@ source; drive the UI). Warn by default, `--strict-selectors` exits 6; unjustifie
 counts persist per run row (`selector_policy_violations`, migration
 `20260703200000`).
 [`scripts/lib/ux-lock/selector-policy.mjs`](../../scripts/lib/ux-lock/selector-policy.mjs)
-`classifySelector` is the **single policy oracle** — `candidate-spec.mjs` reuses
-it so consistency-candidate promotion emits the same markers. Plan:
+`classifySelector` is the **single policy oracle** — never add a second
+classifier. Plan:
 [`docs/plans/ux-lock-selector-policy.md`](../plans/ux-lock-selector-policy.md).
 
 ## `persona-test`
@@ -88,9 +88,14 @@ Deployed app, narrative QA. Three execution modes:
   Playwright): deterministic runner against a canary journey + a `surfaces.json`
   manifest declaring `data-engine-claim` HTML attributes. Detects cross-step
   UI/state contradictions (DOM-vs-network-truth, stale-projection,
-  undeclared-engine-claim, missing-surface). Emits `regression_specs` candidates
-  with full witness snapshots; `/ship` Step 5.6 promotes them to locked Playwright
-  specs. HTML attribute contract:
+  undeclared-engine-claim, missing-surface). Contradictions land in the session
+  ledger, and the canary's own `expectedContradictions` is the gate. The
+  candidate/promotion path that turned them into generated Playwright specs was
+  **retired 2026-08-11** — it never wrote a row, and a browser spec is the wrong
+  artifact for a DOM-vs-engine contradiction (a declaration or a renderer
+  contract test is). Note the gate counts rather than names: `max` is the only
+  journey-level lock left, and raising it silently unlocks every past defect on
+  that journey. HTML attribute contract:
   [`consistency-contract.md`](consistency-contract.md).
 
 ## `click-test`
@@ -166,8 +171,8 @@ in, affordance judgments out (those are persona-test's). Plan:
 
 ## `ship`
 
-Packaging and delivery (includes Step 5.6 candidate promotion when consistency
-mode is adopted).
+Packaging and delivery. (Step 5.6 promoted consistency candidates into locked
+Playwright specs; it was removed 2026-08-11 with the rest of that path.)
 
 ---
 

@@ -56,7 +56,6 @@ const CONTRACT_FUNCTIONS = [
   'getFalsePositivePatterns', 'getPassEffectiveness',
   // plans-ship
   'upsertPlan', 'updatePlanStatus', 'recordRegressionSpec',
-  'listConsistencyCandidates', 'promoteRegressionSpec',
   'recordRegressionSpecRun', 'getUnlockedFixes',
   'recordPersonaAuditCorrelation', 'readCorrelationsForRun',
   'readCorrelationsForFinding', 'readAuditEffectiveness',
@@ -99,10 +98,13 @@ describe('learning-store / contract suite — structural checks', () => {
     assert.deepEqual(missing, [], `barrel missing contract functions: ${missing.join(', ')}`);
   });
 
-  it('the contract function count matches the matrix (91)', () => {
+  it('the contract function count matches the matrix (89)', () => {
     // 93 → 91: syncExperiments + syncPromptRevision deleted 2026-07-19 (dead
     // writers; syncExperiments targeted a table that does not exist).
-    assert.equal(CONTRACT_FUNCTIONS.length, 91);
+    // 91 → 89: listConsistencyCandidates + promoteRegressionSpec retired
+    // 2026-08-11 with the consistency candidate/promotion path (migration
+    // 20260811150000). Both had zero callers and zero rows, ever.
+    assert.equal(CONTRACT_FUNCTIONS.length, 89);
   });
 
   it('the list has no duplicate entries', () => {

@@ -624,45 +624,48 @@ write the ledger" condition).
 
 ---
 
-## Candidate emission — why an empty queue is not one fact
+## Candidate emission — RETIRED 2026-08-11, and what replaced it
 
-A contradiction does **not** become a queued candidate just by existing. Three
-gates run in `candidateWorthy` (`persona-consistency-run.mjs`), all of which
-must pass:
+The runner used to write each unexpected P0/P1 contradiction into
+`regression_specs` as a `persona-consistency-candidate`, and `/ship` Step 5.6
+promoted approved ones into generated Playwright specs. **The whole path is
+removed** — both consistency `source_kind` values, the four evidence columns,
+the promoter, the spec renderer and the `/ship` step (migration
+`20260811150000`).
 
-| Gate | Rejects | Rationale |
-|---|---|---|
-| `c.surfaceId` is set | negative-space findings with no resolved surface | a candidate that names no surface cannot be replayed |
-| `c.severity` is `P0` or `P1` | `P2`/`P3` | the promotion queue is for user-visible breakage, not nudges |
-| not `canaryExpectsShape(canary, c)` | anything in the canary's `expectedContradictions` | a contradiction you declared is a passing assertion, not a new defect |
+Two facts sit behind that, and they are independent:
 
-Above those sits a fourth, coarser gate: emission is skipped entirely unless
-the cloud store is on **and** the repo identity resolved
-(`.audit-loop/repo-identity.json`). That disablement is announced at startup.
+1. **It never worked.** The runner passed a repo *descriptor* where a uuid was
+   expected, so every write raised `22P02` into a swallowed catch and the run
+   still exited 0. Measured against the live store on the day of removal:
+   `regression_specs` held 100 rows, all `unit-test`, and
+   `count(candidate_fingerprint)` was 0. Not one candidate was ever written and
+   not one was ever promoted.
+2. **It was the wrong artifact anyway** — which is why it was removed rather
+   than kept now that the writer is fixed. A promoted spec asserts a DOM
+   contract through a browser; the durable fix for a DOM-vs-engine
+   contradiction is a **declaration** (what the surface claims) or a
+   **renderer contract test** (what the renderer must emit). The sole adopting
+   consumer wrote 106 contract tests over the same 12 weeks and every defect in
+   its recent surface push was fixed by a manifest fragment or a contract test.
 
-**So a run with contradictions and no candidates is normal** — most commonly
-because the contradictions were `P2`, or were canary-expected. It is not
-evidence that emission is broken.
+> **The `max` ratchet is now the only journey-level lock, and it is loosenable.**
+> This is the cost of the removal, recorded rather than hidden.
+> `expectedContradictions` gates on a **count** (`min`/`max`) plus
+> assert-**present** `shapes[]`. It cannot express *"this specific contradiction
+> must be absent"* — so after fixing a defect you lock it by setting `max: 0`,
+> and anyone can unlock every past defect on that journey by editing one integer
+> to unblock CI, with no diff that reads as a regression. A named per-defect
+> spec resisted that; nothing in the remaining design does. A renderer contract
+> test resists it equally well, but only if somebody writes one.
+>
+> **Treat raising `max` with the same scrutiny as deleting a test**, and prefer
+> pinning the mechanism in a contract test so the lock does not live in an
+> integer.
 
-The converse used to be true too, and that was the bug. Distinguish these four
-states before concluding anything from an empty `regression_specs` candidate
-queue:
-
-1. **Nothing qualified** — contradictions existed but failed a gate above. Normal.
-2. **Emission disabled** — cloud off or no repo identity. Announced at startup.
-3. **Emission failed** — a candidate cleared every gate and the write returned
-   null. Since 2026-08-11 this emits a `candidate-emission-failed` rig warning
-   naming the surface, and the store logs its reason to stderr. **Before that
-   date it was silent**, and the run still exited 0.
-4. **Genuinely no contradictions** — the canary passed.
-
-State 3 was indistinguishable from states 1 and 4 for ~12 weeks, because
-`getRepoIdByUuid` returns a repo *descriptor* and the consistency runner
-assigned it straight to `repoId`. The descriptor is truthy, so it passed the
-writer's `if (!repoId)` guard, reached a `uuid` column, raised `22P02`, and was
-swallowed into `return null`. Every affected run reported green with an empty
-queue. If you are reading a candidate queue recorded before 2026-08-11, it is
-**not** a measurement of what qualified.
+A run with contradictions and no failure is still normal — most commonly
+because they were `P2`/`P3`, or were declared in the canary's `shapes[]`. What
+is no longer possible is a silent write failure masquerading as either.
 
 ---
 

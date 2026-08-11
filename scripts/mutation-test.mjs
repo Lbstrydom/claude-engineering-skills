@@ -116,14 +116,6 @@ const TARGETS = [
        + '"returns sensitive" passes whether or not the reason was right.',
   },
   {
-    name: 'candidate-pagination',
-    mutate: ['scripts/lib/store/candidate-pagination.mjs'],
-    tests: ['tests/plans-ship-consistency-candidates.test.mjs'],
-    floor: 84, goal: 90,
-    why: 'Keyset cursor + batch bounds. Off-by-one and comparison-direction mutants are the '
-       + 'literal defect class this module was written to remove (a page that repeats or skips).',
-  },
-  {
     name: 'quickfix-policy',
     mutate: ['scripts/lib/quickfix-policy.mjs'],
     tests: ['tests/quickfix-policy.test.mjs'],

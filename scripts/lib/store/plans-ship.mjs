@@ -243,74 +243,54 @@ export async function updatePlanStatus({ repoId, planId, status }) {
 // ── regression_specs ───────────────────────────────────────────────────────
 
 /**
- * Record a regression spec authored by /ux-lock. Handles three source-kinds:
- *   - 'persona-consistency-candidate' — upserts by (repo_id, candidate_fingerprint)
- *   - 'persona-consistency-locked'    — upserts by (repo_id, spec_path)
- *   - everything else                  — upserts by (repo_id, spec_path)
+ * Record a regression spec authored by /ux-lock. Every row upserts by
+ * (repo_id, spec_path); `unit-test` additionally discriminates on
+ * source_finding_id.
+ *
+ * The 'persona-consistency-candidate' kind was RETIRED 2026-08-11 along with
+ * the promotion path — a candidate row was an un-materialised spec, and
+ * nothing consumes them now. `persona-consistency-locked` rows (already
+ * promoted, spec on disk) are untouched and still redact their JSONB columns.
  *
  * Pre-egress redaction applies to the three JSONB columns (witness_snapshot,
- * contradiction_payload, journey_context) for both candidate + locked rows
- * (Gemini-R6-G3).
+ * contradiction_payload, journey_context) on locked rows (Gemini-R6-G3).
  */
 export async function recordRegressionSpec(repoId, spec) {
   if (!await isCloudEnabled()) return null;
   if (!spec?.sourceKind) return null;
-  const isCandidate = spec.sourceKind === 'persona-consistency-candidate';
-  const isLocked    = spec.sourceKind === 'persona-consistency-locked';
-
-  if (isCandidate) {
-    if (!spec.candidateFingerprint || !spec.witnessSnapshot || !spec.contradictionPayload || !spec.journeyContext) {
-      process.stderr.write('  [learning] recordRegressionSpec: candidate rows require candidateFingerprint, witnessSnapshot, contradictionPayload, journeyContext\n');
-      return null;
-    }
-    if (!repoId) {
-      process.stderr.write('  [learning] recordRegressionSpec: candidate rows require resolved repoId (NULL would silently allow duplicates through the partial unique index)\n');
-      return null;
-    }
-  } else {
-    if (!spec.specPath) {
-      process.stderr.write('  [learning] recordRegressionSpec: spec_path is required for non-candidate source_kind\n');
-      return null;
-    }
-    if (!repoId) {
-      // The (repo_id, spec_path) unique constraint is a FULL index; a NULL
-      // repo_id is distinct from every other NULL in Postgres, so the upsert
-      // would silently INSERT a duplicate on every re-run instead of updating.
-      // Mirror the candidate branch: refuse rather than accrue dupes.
-      process.stderr.write('  [learning] recordRegressionSpec: non-candidate rows require a resolved repoId (NULL would duplicate on the (repo_id, spec_path) unique index)\n');
-      return null;
-    }
-    if (spec.sourceKind === 'unit-test' && !spec.sourceFindingId) {
-      // A unit-test lock's identity IS the finding it pins (see the arbiter
-      // note below): without one the row asserts nothing, and the
-      // (repo_id, spec_path, source_finding_id) index could not dedupe it.
-      // Refused here rather than left to the CHECK so the caller gets a
-      // reason instead of a raised constraint name.
-      process.stderr.write('  [learning] recordRegressionSpec: unit-test rows require sourceFindingId — a lock that names no finding pins nothing\n');
-      return null;
-    }
+  // RETIRED 2026-08-11: refuse the candidate kind outright rather than let it
+  // fall through to the spec_path branch, where it would be rejected for a
+  // MISLEADING reason ("spec_path is required") on a stale consumer still
+  // running the old runner. Name what actually happened.
+  if (spec.sourceKind === 'persona-consistency-candidate') {
+    process.stderr.write(
+      '  [learning] recordRegressionSpec: source_kind persona-consistency-candidate '
+      + 'was retired 2026-08-11 with the promotion path; re-sync the bundle '
+      + '(npm run sync) — this row was NOT written\n',
+    );
+    return null;
+  }
+  if (!spec.specPath) {
+    process.stderr.write('  [learning] recordRegressionSpec: spec_path is required\n');
+    return null;
+  }
+  if (!repoId) {
+    // The (repo_id, spec_path) unique constraint is a FULL index; a NULL
+    // repo_id is distinct from every other NULL in Postgres, so the upsert
+    // would silently INSERT a duplicate on every re-run instead of updating.
+    // Refuse rather than accrue dupes.
+    process.stderr.write('  [learning] recordRegressionSpec: rows require a resolved repoId (NULL would duplicate on the (repo_id, spec_path) unique index)\n');
+    return null;
+  }
+  if (spec.sourceKind === 'unit-test' && !spec.sourceFindingId) {
+    // A unit-test lock's identity IS the finding it pins: without one the row
+    // asserts nothing, and the (repo_id, spec_path, source_finding_id) index
+    // could not dedupe it. Refused here rather than left to the CHECK so the
+    // caller gets a reason instead of a raised constraint name.
+    process.stderr.write('  [learning] recordRegressionSpec: unit-test rows require sourceFindingId — a lock that names no finding pins nothing\n');
+    return null;
   }
   if (!spec.description) return null;
-
-  let redactionCount = 0;
-  let witnessSnapshot      = null;
-  let contradictionPayload = null;
-  let journeyContext       = null;
-  if (isCandidate || isLocked) {
-    try {
-      const { redactObject } = await import('../redact.mjs');
-      const w = redactObject(spec.witnessSnapshot ?? null);
-      const c = redactObject(spec.contradictionPayload ?? null);
-      const j = redactObject(spec.journeyContext ?? null);
-      witnessSnapshot      = w.redacted;
-      contradictionPayload = c.redacted;
-      journeyContext       = j.redacted;
-      redactionCount = w.count + c.count + j.count;
-    } catch (err) {
-      process.stderr.write(`  [learning] recordRegressionSpec: redact failed (${err.message})\n`);
-      return null;
-    }
-  }
 
   const row = {
     repo_id: repoId || null,
@@ -322,17 +302,11 @@ export async function recordRegressionSpec(repoId, spec) {
     source_kind: spec.sourceKind,
     source_finding_id: spec.sourceFindingId || null,
     source_finding_type: spec.sourceFindingType || null,
-    candidate_fingerprint: spec.candidateFingerprint || null,
-    witness_snapshot: witnessSnapshot,
-    contradiction_payload: contradictionPayload,
-    journey_context: journeyContext,
-    redaction_count: redactionCount,
     updated_at: new Date().toISOString(),
   };
   // WS-C3 manual review (2026-07-19, revised 2026-08-01) — the lint reports
   // this target as `unresolved-conflict-target` because the branch is not
   // statically readable. Reviewed by hand and CORRECT on all three:
-  //   - candidate     → (repo_id, candidate_fingerprint)
   //   - unit-test     → (repo_id, spec_path, source_finding_id)
   //   - everything else → (repo_id, spec_path)
   // `repo_id` is provably non-null on every path — each branch above returns
@@ -351,18 +325,16 @@ export async function recordRegressionSpec(repoId, spec) {
   // Every arbiter is now a PARTIAL unique index, so each needs a `WHERE`
   // matching the index predicate or Postgres cannot infer it (42P10 on every
   // write). Predicates are byte-aligned with the migrations:
-  //   candidate → idx_regression_specs_candidate_fingerprint (20260520120000)
   //   unit-test → idx_regression_specs_unit_test_lock        (20260801120000)
   //   other     → idx_regression_specs_path_nonunit          (20260801120000)
   // A total index trivially satisfies any predicate, so these also work
   // against the pre-20260801120000 schema — the migration may lag the code.
+  // The candidate arbiter is gone with the promotion path; its index and column
+  // are dropped by migration 20260811150000.
   const isUnitTest = spec.sourceKind === 'unit-test';
   let onConflict;
   let conflictWhere;
-  if (isCandidate) {
-    onConflict = ['repo_id', 'candidate_fingerprint'];
-    conflictWhere = "candidate_fingerprint IS NOT NULL AND source_kind = 'persona-consistency-candidate' AND repo_id IS NOT NULL";
-  } else if (isUnitTest) {
+  if (isUnitTest) {
     onConflict = ['repo_id', 'spec_path', 'source_finding_id'];
     conflictWhere = "source_kind = 'unit-test'";
   } else {
@@ -377,128 +349,6 @@ export async function recordRegressionSpec(repoId, spec) {
   } catch (err) {
     process.stderr.write(`  [learning] recordRegressionSpec failed: ${err.message}\n`);
     return null;
-  }
-}
-
-/**
- * List pending consistency candidates for a repo. Used by /ship at promotion.
- */
-// Candidate pagination + batch resolution. The PURE parts (cursor codec,
-// keyset query construction, bounds, state projection) live in
-// candidate-pagination.mjs — see that module's header for why they are not
-// on this file's barrel-exported surface.
-import {
-  CANDIDATE_PAGE_SIZE, RECONCILE_BATCH_SIZE,
-  buildCandidatePageQuery, derivePageResult,
-  decodeCandidateCursor, validateFingerprintBatch, mapFingerprintRowsToStates,
-} from './candidate-pagination.mjs';
-
-export async function listConsistencyCandidates(repoId, opts = {}) {
-  const built = buildCandidatePageQuery({
-    repoId, sinceTs: opts.sinceTs ?? null, cursor: opts.cursor ?? null, limit: opts.limit,
-  });
-  if (!built.ok) return built;
-  if (!await isCloudEnabled()) return { ok: false, error: 'cloud-disabled' };
-
-  let rows;
-  try {
-    rows = await many(built.sql, built.params);
-  } catch (err) {
-    process.stderr.write(`  [learning] listConsistencyCandidates failed: ${err.message}\n`);
-    return { ok: false, error: `query-failed: ${err.message}` };
-  }
-  // `built` already proved the cursor decodes (an undecodable one returned a
-  // typed failure above), so re-decoding here cannot fail — but read it from
-  // the SAME null/undefined test the builder used, not a truthiness one, so
-  // the two cannot disagree about whether a cursor was supplied.
-  const priorCursor = (opts.cursor !== null && opts.cursor !== undefined)
-    ? decodeCandidateCursor(opts.cursor).cursor
-    : null;
-  return derivePageResult(rows, built, priorCursor);
-}
-
-export async function resolveCandidateStatesByFingerprint(repoId, fingerprints) {
-  if (!repoId) return { ok: false, error: 'repo-id-required' };
-  const validated = validateFingerprintBatch(fingerprints);
-  if (!validated.ok) return validated;
-  const clean = validated.clean;
-  if (clean.length === 0) return { ok: true, states: {} };
-  if (!await isCloudEnabled()) return { ok: false, error: 'cloud-disabled' };
-
-  let rows;
-  try {
-    rows = await many(
-      `SELECT candidate_fingerprint, source_kind
-         FROM regression_specs
-        WHERE repo_id = $1
-          AND candidate_fingerprint = ANY($2)`,
-      // Plain array, deliberately NOT pgArray(). `many()` passes params
-      // straight to the driver — serializeWriteParam is the WRITE-side seam
-      // (INSERT / UPSERT / UPDATE SET), and this is a read. The ANY(...)
-      // predicate needs node-pg to build the array literal from a raw JS
-      // array, so pgArray() here would bind its wrapper object instead.
-      [repoId, clean],
-    );
-  } catch (err) {
-    process.stderr.write(`  [learning] resolveCandidateStatesByFingerprint failed: ${err.message}\n`);
-    return { ok: false, error: `query-failed: ${err.message}` };
-  }
-
-  return { ok: true, states: mapFingerprintRowsToStates(clean, rows) };
-}
-
-/**
- * Promote a candidate spec row to locked. Atomic update + records
- * spec_path + promoter identity. Optional belt-and-braces re-check on
- * candidate_fingerprint.
- */
-export async function promoteRegressionSpec(specId, args) {
-  // Argument validation precedes the environment check on purpose: a caller
-  // that forgot the repo scope has a bug whether or not a store is configured,
-  // and ordering it after `isCloudEnabled()` would make the fence untestable
-  // without a live DSN.
-  if (!specId || !args?.specPath || !args?.promotedBy) {
-    return { ok: false, rowsAffected: 0, reason: 'bad-input' };
-  }
-  // CROSS-TENANT WRITE FENCE — the same one `cmdRecordRegressionCandidate`
-  // already carries on the CREATE path. `specId` is a globally-unique uuid, so
-  // an UPDATE keyed on it alone promotes whichever repo's candidate row happens
-  // to bear that id. Candidate creation and candidate listing are both
-  // repo-scoped; promotion was the one mutation that was not.
-  if (!args?.repoId) return { ok: false, rowsAffected: 0, reason: 'repo-scope-required' };
-  if (!await isCloudEnabled()) return { ok: false, rowsAffected: 0, reason: 'cloud-off' };
-  try {
-    const pool = await getPool();
-    if (!pool) return { ok: false, rowsAffected: 0, reason: 'no-pool' };
-    const params = [
-      args.specPath,
-      new Date().toISOString(),
-      args.promotedBy,
-      specId,
-      args.repoId,
-    ];
-    let whereExtra = '';
-    if (args.candidateFingerprint) {
-      params.push(args.candidateFingerprint);
-      whereExtra = ` AND candidate_fingerprint = $${params.length}`;
-    }
-    const res = await pool.query(
-      `UPDATE regression_specs
-          SET source_kind = 'persona-consistency-locked',
-              spec_path = $1,
-              promoted_at = $2,
-              promoted_by = $3,
-              updated_at = $2
-        WHERE id = $4
-          AND repo_id = $5
-          AND source_kind = 'persona-consistency-candidate'
-          ${whereExtra}`,
-      params
-    );
-    return { ok: (res.rowCount || 0) > 0, rowsAffected: res.rowCount || 0 };
-  } catch (err) {
-    process.stderr.write(`  [learning] promoteRegressionSpec failed: ${err.message}\n`);
-    return { ok: false, rowsAffected: 0 };
   }
 }
 

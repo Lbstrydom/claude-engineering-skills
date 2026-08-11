@@ -110,9 +110,6 @@ const EXPECTED_EXPORTS = [
   // bounds beats the CLI re-deriving them and drifting (2026-08-10).
   'resolveNudgePage',
   'insertRunRowWithPolicyFallback', // selector-policy 42703 write seam (plan: ux-lock-selector-policy)
-  'listConsistencyCandidates',
-  'resolveCandidateStatesByFingerprint',
-  'promoteRegressionSpec',
   'readAuditEffectiveness',
   'readCorrelationCountsByType', // WS3 — persona-tests dashboard correlation-loop-health line
   'readCorrelationsForFinding',
@@ -396,6 +393,10 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // surface reduction in this pin's history — recorded here because a
     // SHRINKING count is exactly as much a contract change as a growing one,
     // and a silently-dropped export is how a consumer finds out by crashing.
-    assert.equal(EXPECTED_EXPORTS.length, 184);
+    // 184 -> 181: listConsistencyCandidates, resolveCandidateStatesByFingerprint
+    // and promoteRegressionSpec retired 2026-08-11 with the consistency
+    // candidate/promotion path. Second shrink in this pin's history, and the
+    // same reasoning applies — a dropped export is a contract change.
+    assert.equal(EXPECTED_EXPORTS.length, 181);
   });
 });

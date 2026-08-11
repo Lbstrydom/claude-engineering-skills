@@ -42,21 +42,25 @@ describe('regression_specs accepts unit-test as a lock kind', () => {
       'without this, a fix guarded by a unit test can never be recorded as locked');
   });
 
-  it('unit-test sits in the spec_path-bearing row shape, not the consistency shape', () => {
-    // A unit-test row carries the test file in spec_path and leaves every
-    // consistency-mode column NULL. If it landed in the candidate branch it
-    // would require a witness snapshot it can never have.
+  it('the row shape requires spec_path, which a unit-test row always carries', () => {
+    // Was: "unit-test sits in the spec_path-bearing branch, not the consistency
+    // shape". The consistency branches are gone (migration 20260811150000
+    // retired both persona-consistency kinds with the promotion path), so the
+    // three-branch CHECK collapsed to the single predicate every surviving kind
+    // already satisfied. The property under test is unchanged — a unit-test row
+    // is legal precisely because it names a spec_path.
     const t = constraintText('regression_specs_row_shape_check');
-    assert.match(t, /unit-test/);
-    const beforeCandidate = t.split('persona-consistency-candidate')[0];
-    assert.match(beforeCandidate, /unit-test/,
-      'unit-test must appear in the FIRST (spec_path IS NOT NULL) branch');
+    assert.match(t, /spec_path IS NOT NULL/);
   });
 
-  it('does not disturb the existing consistency-mode branches', () => {
-    const t = constraintText('regression_specs_row_shape_check');
-    assert.match(t, /persona-consistency-candidate/);
-    assert.match(t, /persona-consistency-locked/);
+  it('the retired consistency kinds are gone from both constraints', () => {
+    // The negative direction, asserted rather than assumed: a lingering
+    // candidate branch would reference columns this migration dropped.
+    for (const name of ['regression_specs_row_shape_check', 'regression_specs_source_kind_check']) {
+      const t = constraintText(name);
+      assert.doesNotMatch(t, /persona-consistency-candidate/, `${name} still names the candidate kind`);
+      assert.doesNotMatch(t, /persona-consistency-locked/, `${name} still names the locked kind`);
+    }
   });
 });
 

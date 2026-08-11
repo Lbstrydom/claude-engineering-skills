@@ -1,6 +1,66 @@
 # Project Status Log
 
-## 2026-08-11 (latest) — ship-commit's "argv after git" ordering: read, and CLOSED as designed
+## 2026-08-11 (latest) — the candidate promotion path is gone, and the ratchet it leaves behind
+
+Full removal of the persona-consistency candidate/promotion path: the promoter
+(959 lines), `ux-lock/candidate-spec.mjs`, `store/candidate-pagination.mjs`,
+four test suites, three store operations, three CLI verbs, `/ship` Step 5.6,
+both consistency `source_kind` values, and seven columns
+(migration `20260811150000`). **-1,703 lines of module code.**
+
+**Decided on the artifact argument, not the row count** — that distinction is
+the whole point, because the row count turned out to be an artefact of a broken
+writer (fixed hours earlier in `ef86ef92`). A promoted spec asserts a DOM
+contract through a browser; the durable fix for a DOM-vs-engine contradiction is
+a declaration or a renderer contract test. The sole adopting consumer wrote 106
+contract tests in the same 12 weeks and reached for a generated spec zero times.
+
+**Measured before dropping anything** (live store, day of removal):
+`regression_specs` held **100 rows, all `unit-test`**;
+`count(candidate_fingerprint)` was **0**. Not one candidate was ever written and
+not one was ever promoted, so the migration could not lose data.
+
+> ### The `max` ratchet is the cost, and it is recorded rather than hidden
+>
+> I claimed mid-session that the canary "already is the regression lock, so a
+> promoted spec is redundant with its own producer." **That was wrong**, and I
+> had not read `verifyExpectations` when I said it. The canary gates on a
+> **count** (`min`/`max`) plus assert-**present** `shapes[]`; it cannot express
+> *"this specific contradiction must be absent"*.
+>
+> So after fixing a defect you lock it by setting `max: 0` — and anyone can
+> unlock every past defect on that journey by editing one integer to unblock CI,
+> with no diff that reads as a regression. A named per-defect spec resisted that;
+> nothing in the remaining design does. **Treat raising `max` like deleting a
+> test.** Written into the migration header, `consistency-contract.md`,
+> `skill-roster.md`, the persona-test reference and AGENTS.md, because a caveat
+> that lives only in a commit message is not a caveat.
+
+### Two things the removal surfaced
+
+- **`@playwright/test` left the derived dep set entirely.** It was only ever
+  there because `candidate-spec.mjs` *rendered* that import line into generated
+  specs — a string literal the regex walker could not distinguish from real
+  code. Its own comment said "if the generator stops emitting it, re-justify or
+  drop"; this is that case, so it is dropped. Consumers still get it:
+  `playwright-runner.mjs` resolves `@playwright/test/cli` at runtime and falls
+  back to `npx`.
+- **A stale-consumer path now names itself.** `recordRegressionSpec` refuses the
+  retired kind explicitly instead of letting it fall through to the spec_path
+  branch, where it would have been rejected as "spec_path is required" — a true
+  message about the wrong problem.
+
+### Verification
+
+`npm run check`: **11,221 tests, 1 fail** — `skills-artifact-freshness-wiring`,
+which compares the manifest against `git show HEAD` and therefore cannot pass on
+an uncommitted skill edit by construction. It passes in the pre-push sandbox,
+which checks out the commit. Every other suite green. `db:suites:gate` green
+after regenerating `expected-schema.json` from a **fresh replay**
+(`npm run db:local:regen`), never from production. Migration applied to the live
+store; `--check-drift` reports 110/110, no drift.
+
+## 2026-08-11 — ship-commit's "argv after git" ordering: read, and CLOSED as designed
 
 Closes the question the entry below left open ("the real lever, if one is
 wanted, is that the CLI resolves git identity before validating argv"). **Read

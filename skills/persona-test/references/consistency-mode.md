@@ -206,26 +206,23 @@ captures that would otherwise hide as flakiness.
 
 ---
 
-## Candidate emission
+## Candidate emission — RETIRED 2026-08-11
 
-For every contradiction with `severity ∈ {P0, P1}` AND a resolved
-surfaceId, the runner emits a candidate row via `cross-skill.mjs`:
+The runner used to write each unexpected P0/P1 contradiction to
+`regression_specs` as a `persona-consistency-candidate` row, which `/ship`
+Step 5.6 promoted into a generated Playwright spec. **That whole path is
+gone**, along with both consistency `source_kind` values and the four evidence
+columns (migration `20260811150000`). It never wrote a row in its 12-week life
+— the writer passed a repo descriptor where a uuid was expected and failed soft
+on every call — and it was removed on the artifact argument rather than
+repaired: the durable fix for a DOM-vs-engine contradiction is a declaration or
+a renderer contract test, not a browser spec.
 
-- `source_kind = 'persona-consistency-candidate'`
-- `candidate_fingerprint = sha256(repoId + journeyKey + surfaceId + engineField + contradictionKind + normalisedLocator)`
-- `witness_snapshot` carries the relevant WitnessRecord slice (deep-redacted)
-- `contradiction_payload` carries the Contradiction record (deep-redacted)
-- `journey_context` carries `canary.journeySteps[0..stepIndex]` plus
-  `authBootstrap` + `routes` so the spec renderer at promotion has the
-  navigation context
-
-Re-emit suppression: before INSERT, the writer checks for an existing
-`persona-consistency-locked` row with the same fingerprint. If present,
-candidate emission is skipped and the ledger records
-`suppressedByLockedSpec: <specId>` on the contradiction.
-
-The partial unique index `(repo_id, candidate_fingerprint) WHERE … repo_id IS NOT NULL`
-makes the candidate INSERT effectively an upsert per `(repo, fingerprint)`.
+Contradictions now live in the session ledger only. **The canary is the lock**,
+via `expectedContradictions` — and that gate counts (`min`/`max`), it does not
+name. After fixing a defect you pin it by setting `max: 0`; raising `max` again
+silently unlocks every past defect on that journey, so treat a `max` increase
+like deleting a test. See `docs/reference/consistency-contract.md`.
 
 ---
 
@@ -241,4 +238,3 @@ makes the candidate INSERT effectively an upsert per `(repo, fingerprint)`.
 - **Phase 3 (after)**: `scripts/lib/persona-test/ledger.mjs` — atomic
   per-step JSON writes; mandatory persistence for every terminal state.
 - **Phase 4**: `scripts/lib/persona-test/canary.mjs` + `scripts/persona-consistency-run.mjs`.
-- **Phase 6**: `/ship` promotion of candidates → locked specs.

@@ -93,10 +93,17 @@ describe('the writer sends a predicate matching each partial arbiter', () => {
     assert.match(src, /onConflict = \['repo_id', 'spec_path', 'source_finding_id'\]/);
   });
 
-  it('each of the three branches sets a conflictWhere', () => {
-    assert.match(src, /conflictWhere = "candidate_fingerprint IS NOT NULL/);
+  it('each of the two branches sets a conflictWhere', () => {
+    // Was three. The candidate arbiter (candidate_fingerprint IS NOT NULL) went
+    // with the consistency candidate/promotion path on 2026-08-11, along with
+    // the column and the partial index it inferred — migration 20260811150000.
     assert.match(src, /conflictWhere = "source_kind = 'unit-test'"/);
     assert.match(src, /conflictWhere = "source_kind <> 'unit-test' AND spec_path IS NOT NULL"/);
+    assert.doesNotMatch(
+      src, /candidate_fingerprint/,
+      'the retired candidate arbiter must not linger in the writer — it would '
+      + 'reference a dropped column and 42P10 into the swallowing catch',
+    );
   });
 });
 

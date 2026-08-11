@@ -35,16 +35,17 @@ export const OPTIONAL_DEPS = [
                             //   has adopted consistency mode (canaries/ + surfaces.json).
                             //   Browser binaries are a separate step:
                             //   `npx playwright install chromium`.
-  '@playwright/test',       // NOT imported by the bundle itself. The graph sees
-                            //   it because `ux-lock/candidate-spec.mjs` renders
-                            //   that import line into the specs it GENERATES
-                            //   (a string literal the regex walker cannot tell
-                            //   from real code — see bundleDeps()). Kept because
-                            //   it is genuinely required to RUN those generated
-                            //   specs; optional on the same adoption gate as
-                            //   `playwright`. If the generator stops emitting
-                            //   it, the stale-entry test fires and this line
-                            //   must be re-justified or dropped.
+  // DROPPED 2026-08-11: `@playwright/test`. It was only ever in the derived set
+  //   because `ux-lock/candidate-spec.mjs` RENDERED that import line into the
+  //   specs it generated — a string literal the regex walker could not tell from
+  //   real code. That module was deleted with the consistency-candidate
+  //   promotion path, so nothing in the bundle mentions it as an import any
+  //   more and the stale-entry test fires. This is exactly the "if the generator
+  //   stops emitting it, re-justify or drop" case the old comment called out.
+  //   Consumers running /ux-lock specs still need the package, and they still
+  //   get it: `playwright-runner.mjs` resolves `@playwright/test/cli` at runtime
+  //   and falls back to `npx` when it is unresolvable. Declaring it here would
+  //   now be a claim about the import graph that is false.
 ];
 
 /** Memoised — the closure walk reads the whole source tree. */

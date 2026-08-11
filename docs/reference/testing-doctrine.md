@@ -108,7 +108,6 @@ First census, **measured 2026-08-09** — `node scripts/mutation-test.mjs --all`
 | Seam | Score | Survivors | Goal |
 |---|---|---|---|
 | `shell-quote` | 100% | 0 | 100 |
-| `candidate-pagination` | 83.2% | 35 | 90 |
 | `quickfix-policy` | 67.9% | 18 | 90 |
 | `sensitive-paths` (Tier 3) | 67.5% | 120 | 85 |
 | `file-lock` | 31.7% | 270 | 70 |

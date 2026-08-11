@@ -38,7 +38,7 @@ export const SESSIONS_DIR = path.join('.persona-test', 'sessions');
 
 /**
  * Open a ledger and write the initial record. Returns a handle exposing
- * step appends, candidate id tracking, verdict updates, and close.
+ * step appends, verdict updates, and close.
  *
  * The initial record is persisted IMMEDIATELY (before any step runs) so a
  * runner crash during journey execution still leaves a record with
@@ -52,7 +52,6 @@ export const SESSIONS_DIR = path.join('.persona-test', 'sessions');
  *   state: object,
  *   appendStep(stepRecord: object): void,
  *   addRunWarnings(warnings: object[]): void,
- *   recordCandidate(specId: string): void,
  *   setVerdicts(updates: object): void,
  *   close(): object,
  * }}
@@ -122,13 +121,6 @@ export function openLedger(repoRoot, sessionId, opts) {
     addRunWarnings(warnings) {
       if (!Array.isArray(warnings) || warnings.length === 0) return;
       ledger.runWarnings.push(...warnings);
-      persist(ledgerPath, ledger);
-    },
-
-    recordCandidate(specId) {
-      if (!ledger.candidateSpecIds.includes(specId)) {
-        ledger.candidateSpecIds.push(specId);
-      }
       persist(ledgerPath, ledger);
     },
 

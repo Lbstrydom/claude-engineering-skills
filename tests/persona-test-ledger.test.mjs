@@ -5,7 +5,6 @@
  *   - openLedger persists immediately (write-once probe — fails fast if path
  *     is not writable)
  *   - appendStep persists after every step (crash-safe)
- *   - recordCandidate persists + de-duplicates
  *   - setVerdicts is in-memory; close() does the final validated write
  *   - close() fails Zod validation on bad terminal state
  *   - Zero-step ledger is a valid terminal state (R2-H2)
@@ -96,7 +95,7 @@ describe('openLedger — initial persistence', () => {
 });
 
 // ────────────────────────────────────────────────────────────────────────────
-// appendStep / recordCandidate — per-step atomic write
+// appendStep — per-step atomic write
 // ────────────────────────────────────────────────────────────────────────────
 
 describe('openLedger — incremental writes', () => {
@@ -108,17 +107,6 @@ describe('openLedger — incremental writes', () => {
     assert.equal(readLedger(handle.ledgerPath).steps.length, 2);
   });
 
-  it('recordCandidate persists + de-duplicates by specId', () => {
-    const handle = openLedger(tmpDir, 'SID-B', { journeyKey: 'k' });
-    handle.recordCandidate('spec-1');
-    handle.recordCandidate('spec-1');         // dup
-    handle.recordCandidate('spec-2');
-    assert.deepEqual(readLedger(handle.ledgerPath).candidateSpecIds, ['spec-1', 'spec-2']);
-  });
-
-  // Upstream 8c62cfcc — run-level warnings. `route-pattern-never-matched` says
-  // a declared check never ran, so it must survive a crash between the last
-  // step and close(): it persists on write, not only at close.
   it('addRunWarnings persists immediately and appends', () => {
     const handle = openLedger(tmpDir, 'SID-RW', { journeyKey: 'k' });
     assert.deepEqual(readLedger(handle.ledgerPath).runWarnings, []);
