@@ -50,6 +50,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { log } from './lib/cli-io.mjs';
+import { dependencySetChanged } from './lib/dependency-identity.mjs';
+import { findNodeModules } from './lib/node-modules-resolver.mjs';
 import { GIT_LOCK_RETRY_DELAYS_MS, withGitLockRetry } from './lib/git-lock-retry.mjs';
 import { sanitizeGitEnv } from './lib/git-env-sanitize.mjs';
 import {
@@ -138,8 +140,12 @@ function argValue(flag) {
 /**
  * Provision node_modules. A junction/symlink to the main checkout is ~instant
  * and correct WHENEVER the dependency set is unchanged by the pushed commit —
- * which is almost always. When package-lock.json differs we must install, or
- * we'd be testing the new code against the old dependency tree.
+ * which is almost always. When the lockfile or a dependency-relevant
+ * `package.json` field differs we must install, or we'd be testing the new code
+ * against the old dependency tree. "Dependency-relevant" is
+ * lib/dependency-identity.mjs's business, and it fails closed; see its
+ * fileoverview for why the whole-file comparison this replaced was answering a
+ * broader question than the concern it was written for.
  *
  * @param {string} sandbox
  * @param {string} repoRoot
@@ -151,8 +157,20 @@ function argValue(flag) {
  * @returns {'linked'|'installed'|'skipped'}
  */
 function provisionNodeModules(sandbox, repoRoot, gitEnv) {
-  const mainModules = path.join(repoRoot, 'node_modules');
-  const lockMain = path.join(repoRoot, 'package-lock.json');
+  // Resolve node_modules the way NODE does, not as `<repoRoot>/node_modules`
+  // (2026-08-11). A git worktree has none of its own, so the hard-coded path was
+  // absent in every worktree and the fast path below was unreachable there —
+  // every push paid `npm ci`, and the whole-file package.json compare below hid
+  // it by installing anyway. Same defect the poison-pill harness fixed on
+  // 2026-08-08; the walk is now shared rather than written twice.
+  const mainModules = findNodeModules(repoRoot);
+  // …and compare against the checkout that OWNS those modules, not blindly
+  // against repoRoot. In a worktree the two differ, and comparing one
+  // checkout's manifest while linking another's tree would decide "unchanged"
+  // about something it never looked at. Outside a worktree they are the same
+  // directory and this is byte-identical to the old behaviour.
+  const modulesOwner = mainModules ? path.dirname(mainModules) : repoRoot;
+  const lockMain = path.join(modulesOwner, 'package-lock.json');
   const lockSandbox = path.join(sandbox, 'package-lock.json');
   // Also compare package.json (item 5 — sast-sandbox-backlog-hardening.md):
   // a pushed commit can edit dependency declarations without touching the
@@ -160,9 +178,21 @@ function provisionNodeModules(sandbox, repoRoot, gitEnv) {
   // hasn't been re-run to regenerate the lock), which the lockfile-only
   // comparison would miss, reusing dependencies that don't represent the
   // commit being checked.
-  const pkgMain = path.join(repoRoot, 'package.json');
+  //
+  // But compare only the fields that DECIDE the tree, not the whole file
+  // (2026-08-11). A whole-file compare answered a much broader question than
+  // the concern it was written for: e7e182ea added one `scripts` entry, touched
+  // no lockfile, and paid a full 410-package `npm ci`. In a worktree the
+  // sandbox's file is compared against the MAIN checkout's, which is usually on
+  // a different commit, so `scripts`/`version`/formatting churn made the fast
+  // path unreachable on nearly every push. `dependencySetChanged` fails CLOSED
+  // — unreadable, unparseable, or an unexpected field shape all install.
+  const pkgMain = path.join(modulesOwner, 'package.json');
   const pkgSandbox = path.join(sandbox, 'package.json');
 
+  const readOrNull = (p) => {
+    try { return fs.readFileSync(p, 'utf8'); } catch { return null; }
+  };
   const filePairChanged = (a, b) => {
     try {
       return fs.readFileSync(a, 'utf8') !== fs.readFileSync(b, 'utf8');
@@ -170,9 +200,22 @@ function provisionNodeModules(sandbox, repoRoot, gitEnv) {
       return true; // can't prove they match → install rather than assume
     }
   };
-  const lockChanged = filePairChanged(lockMain, lockSandbox) || filePairChanged(pkgMain, pkgSandbox);
+  const deps = dependencySetChanged(readOrNull(pkgMain), readOrNull(pkgSandbox));
+  // The lockfile stays a WHOLE-file comparison: it is a resolved-tree artifact
+  // with no non-dependency sections, so every byte of it is dependency-relevant.
+  const lockChanged = filePairChanged(lockMain, lockSandbox) || deps.changed;
+  // Name the cause of every install. A silent 40s pause mid-push is
+  // indistinguishable from a hang, and "which input moved" is the first thing
+  // you need — this branch was previously taken on every worktree push with no
+  // output at all, which is how it went unnoticed.
+  if (!mainModules) {
+    log(`  no node_modules found at or above ${repoRoot} — installing`);
+  } else if (lockChanged) {
+    log(`  dependency tree may differ — installing (${
+      deps.changed ? deps.reason : 'package-lock.json differs between the checkouts'})`);
+  }
 
-  if (!lockChanged && fs.existsSync(mainModules)) {
+  if (!lockChanged && mainModules) {
     try {
       // 'junction' is Windows-only and needs no elevation; other platforms
       // ignore the type and create a directory symlink.

@@ -97,17 +97,35 @@ Everything in a nested worktree works because Node walks *up* and finds the main
 checkout's copy — so any tool that hard-codes `<repoRoot>/node_modules` breaks
 there and nowhere else.
 
-Two tools provision it into an isolated copy. `prepush-check.mjs` guards with
-`existsSync` and falls back to `npm ci` (§4). `check-gate-poison-pills.mjs` did
-not — and on Windows **a junction to a missing target succeeds and leaves a
-dangling link** (verified 2026-08-08), so its `try`/`catch` never fired and the
-only symptom was the CONTROL run dying on `Cannot find package 'zod'`: a message
-pointing at the gate under test rather than at the harness. It now resolves
-upward like Node does, and asserts the link **RESOLVES**, not merely that
-creating it threw nothing.
+Two tools provision it into an isolated copy. `check-gate-poison-pills.mjs`
+hard-coded the path — and on Windows **a junction to a missing target succeeds
+and leaves a dangling link** (verified 2026-08-08), so its `try`/`catch` never
+fired and the only symptom was the CONTROL run dying on `Cannot find package
+'zod'`: a message pointing at the gate under test rather than at the harness. It
+now resolves upward like Node does, and asserts the link **RESOLVES**, not
+merely that creating it threw nothing.
 
-`prepush-check.mjs` was already correct — in a worktree it just falls back to a
-slower `npm ci`, which is safe, so it was deliberately left alone.
+**`prepush-check.mjs` had the same bug, and "safe" is why it survived three days
+longer (2026-08-11).** It guarded with `existsSync` and fell back to `npm ci`, so
+this section originally recorded it as *already correct — deliberately left
+alone*. The fallback is indeed safe; what it is not is **reachable**. `existsSync`
+was false in every worktree, so the link branch was dead code exactly where this
+repo's sessions run, and every worktree push paid a full `npm ci` — the cost was
+read as an inherent property of worktrees (§4 said so in as many words) rather
+than as a bug, because a slow correct answer never files a bug report.
+
+The generalisable form: **a fallback that is safe can hide that the primary path
+never executes.** "It degrades gracefully" answers the correctness question and
+says nothing about whether the fast path is alive; ask *when did this branch last
+run* separately. Both tools now share one upward walk
+([`lib/node-modules-resolver.mjs`](../../scripts/lib/node-modules-resolver.mjs))
+— a second sighting is what turns a private helper into a shared one.
+
+Resolving upward has a consequence worth stating: the linked `node_modules` may
+belong to a **different checkout** than `repoRoot`. So `provisionNodeModules`
+compares the manifest of the directory that *owns* those modules, not
+`repoRoot`'s — comparing one checkout's `package.json` while linking another's
+tree would decide "unchanged" about something it never read.
 
 > **Do not "fix" a worktree by hand-linking `node_modules` into it.** That hides
 > the tool bug from the next person, and is the ritual this removes.
@@ -145,27 +163,44 @@ while reporting success is the exact defect class this module was built to end.
 
 `node_modules` is gitignored, so the sandbox provisions it:
 
-- **linked** (~instant) — a junction/symlink to the main checkout. Used only
-  when **both** `package-lock.json` **and `package.json`** are byte-identical
-  between the main checkout and the sandbox, *and* the main checkout actually
-  has a `node_modules`.
-- **installed** — `npm ci --ignore-scripts --no-audit --no-fund` otherwise,
-  because testing new code against the old dependency tree proves nothing.
+- **linked** (~instant — **1 ms measured**) — a junction/symlink to the resolved
+  `node_modules` (§2.2). Used when `package-lock.json` is byte-identical between
+  that checkout and the sandbox **and** their **dependency-relevant**
+  `package.json` fields agree.
+- **installed** — `npm ci --ignore-scripts --no-audit --no-fund` otherwise
+  (**10.7 s measured**, warm npm cache; more when cold), because testing new
+  code against the old dependency tree proves nothing.
 
 `package.json` is compared as well as the lockfile because a pushed commit can
 hand-edit a dependency declaration without regenerating the lock; a
-lockfile-only comparison would then link the main checkout's stale tree and
-silently check the commit against dependencies it does not declare. Anything
-that cannot be *proved* identical counts as changed — an unreadable file on
-either side, a missing main `node_modules`, or a failed `symlinkSync` all fall
-through to the install path. The bias is deliberate: a needless install costs
-seconds, a wrong link costs a false green.
+lockfile-only comparison would then link a stale tree and silently check the
+commit against dependencies it does not declare.
 
-> **In a linked worktree, expect `installed` every time.** `repoRoot` resolves
-> to the worktree, and a `.claude/worktrees/*` checkout has no `node_modules`
-> of its own, so the `existsSync` test fails and the sandbox installs (~180
-> packages, a few seconds). Not a bug — just why a push from a worktree is
-> slower than one from the main checkout.
+**But only the fields that decide the tree** —
+[`lib/dependency-identity.mjs`](../../scripts/lib/dependency-identity.mjs):
+`dependencies`, `devDependencies`, `optionalDependencies`, `peerDependencies`,
+`peerDependenciesMeta`, `bundledDependencies`, `bundleDependencies` (npm honours
+both spellings), `overrides`, `engines`. It compared the **whole file** until
+2026-08-11, which answered a far broader question than the concern it was written
+for: commit `e7e182ea` added one `scripts` entry, touched no lockfile, and paid a
+full 410-package install. The sandbox's copy is compared against a checkout that
+is routinely on a different commit, so `scripts`/`version`/formatting churn alone
+made the fast path unreachable. Comparing parsed values also means CRLF-vs-LF and
+key-order churn stop reading as dependency changes (§2.1's rule, one file over).
+
+Anything that cannot be *proved* identical counts as changed — an unreadable or
+unparseable file on either side, a non-object root, a dependency field of an
+unexpected shape, no `node_modules` found anywhere up the chain, or a failed
+`symlinkSync` all fall through to the install path. The bias is deliberate: a
+needless install costs seconds, a wrong link costs a false green. Reading
+`"dependencies": "oops"` as *no dependencies* is the fail-open version, and is
+refused explicitly rather than left to `typeof`.
+
+> **A worktree push now links, like any other.** Until 2026-08-11 this section
+> said to *expect `installed` every time* in a worktree and called it "not a bug
+> — just why a push from a worktree is slower". It was a bug, twice over (§2.2),
+> and each cause alone was sufficient. The sandbox log names the reason for every
+> install, so a silent 40-second pause is no longer indistinguishable from a hang.
 
 `--ignore-scripts` is load-bearing: the `prepare` lifecycle runs
 `install-git-hooks.mjs`, which writes `core.hooksPath` — config shared with the
@@ -179,6 +214,15 @@ hooks.
 | Run checks in-tree (old behaviour) | `AUDIT_PREPUSH_SANDBOX=0 git push` |
 | Skip the hook entirely | `git push --no-verify` |
 | Run the sandbox by hand | `npm run prepush:check -- --base <sha> --head <sha>` |
+| Run the poison pills serially (debugging) | `GATES_POISON_CONCURRENCY=1 npm run gates:poison` |
+
+`gates:poison` runs its pills across `min(cpus-2, pillCount)` forked workers
+(49.3 s → 20.7 s measured, 2026-08-11 — see `status.md`). Output stays in
+contract order regardless of completion order, and a worker that dies without
+reporting fails the gate rather than vanishing from it. Set
+`GATES_POISON_CONCURRENCY=1` to remove interleaving from the picture when one
+pill misbehaves; it reproduces the pre-change timing (52.4 s) as well as the
+pre-change ordering.
 
 A sandbox setup failure exits **1** and says *"The push was NOT verified."* It
 is never reported as success — an unbuildable sandbox means nothing was checked,

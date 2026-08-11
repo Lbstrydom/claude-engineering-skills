@@ -9,9 +9,11 @@ import {
   cosineSimilarity,
   rankNeighbourhood,
 } from '../scripts/lib/symbol-index.mjs';
-import { runWithConcurrency } from '../scripts/symbol-index/summarise-domains.mjs';
+// Moved to scripts/lib/concurrency.mjs 2026-08-11 so the poison-pill runner can
+// share it without importing an LLM CLI. The behaviour under test is unchanged.
+import { runWithConcurrency } from '../scripts/lib/concurrency.mjs';
 
-describe('runWithConcurrency (domain-summary worker pool)', () => {
+describe('runWithConcurrency (shared bounded worker pool)', () => {
   it('processes every item exactly once', async () => {
     const seen = [];
     await runWithConcurrency([1, 2, 3, 4, 5], 2, async (n) => { seen.push(n); });

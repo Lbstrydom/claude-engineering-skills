@@ -31,12 +31,17 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { fork, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { loadCliGateContracts } from './lib/gate-honesty/loader.mjs';
+import { runWithConcurrency } from './lib/concurrency.mjs';
+// Shared with prepush-check.mjs since 2026-08-11 — the same worktree defect was
+// found there. One walk, so there is one place to regress it.
+import { findNodeModules } from './lib/node-modules-resolver.mjs';
 import { assertKnownFlags } from './lib/cli-io.mjs';
 
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const SELF = fileURLToPath(import.meta.url);
+const REPO_ROOT = path.resolve(path.dirname(SELF), '..');
 const CONTRACTS_DIR = path.join(REPO_ROOT, 'scripts', 'gate-contracts');
 const EXEMPTIONS = path.join(CONTRACTS_DIR, '_exemptions.json');
 
@@ -326,38 +331,6 @@ function listTracked(repoRoot) {
   return String(r.stdout || '').split('\0').filter(Boolean);
 }
 
-/**
- * Nearest real `node_modules` at or above `startDir`, mirroring Node's own
- * upward resolution.
- *
- * Why walk instead of `path.join(repoRoot, 'node_modules')` (2026-08-08): a git
- * WORKTREE has no `node_modules` of its own. Everything else in a worktree still
- * works, because Node walks up and — for a worktree nested inside the main
- * checkout, which is how this repo's are created — finds the main checkout's
- * copy. This harness was the one thing that bypassed that, hard-coding the
- * worktree root and linking a path that did not exist. Resolving the way Node
- * does makes the isolated copy behave like the checkout it was copied FROM,
- * which is the property the harness actually needs, and removes the operator
- * ritual of hand-linking `node_modules` into every worktree.
- *
- * Returns null when nothing is found anywhere up the chain — a real "you have
- * not installed dependencies" state, which the caller reports as such.
- *
- * @param {string} startDir
- * @returns {string|null} absolute path to a node_modules directory, or null
- */
-function findNodeModules(startDir) {
-  let dir = path.resolve(startDir);
-  for (;;) {
-    const candidate = path.join(dir, 'node_modules');
-    // existsSync follows links, so a dangling junction correctly reads as absent.
-    if (fs.existsSync(candidate)) return candidate;
-    const parent = path.dirname(dir);
-    if (parent === dir) return null;
-    dir = parent;
-  }
-}
-
 function copyTracked(repoRoot, files, dest) {
   for (const rel of files) {
     const s = path.join(repoRoot, rel), d = path.join(dest, rel);
@@ -568,13 +541,163 @@ export function runPill(contract, { repoRoot = REPO_ROOT, tmpRoot } = {}) {
   return { ok: problems.length === 0, problems };
 }
 
+// ── Parallel execution ──────────────────────────────────────────────────────
+//
+// The pills were run in a `for` loop around a synchronous `runPill`. Measured
+// 2026-08-11 on a 32-core box: 53.2s for 10 pills — 33% of the whole `check`
+// chain, the second-largest line item after the test suite. Each pill copies the
+// full tracked file set (1,934 files, ~1.35s) into its own tmpdir and then
+// spawns the gate twice, so the loop was ten repo copies and twenty node
+// processes, strictly one at a time.
+//
+// They are already fully isolated — own tmpdir, own `node_modules` link, own
+// optional git fixture, own processes — which is precisely the property that
+// makes them embarrassingly parallel. Nothing about the CONTRACT changes here:
+// each pill still runs its control and then its poison, in that order, against
+// its own copy.
+//
+// **Processes, not promises.** The dominant cost is `copyTracked`, which is
+// synchronous `fs.copyFileSync` — parallelising only the spawns would leave the
+// copies serialised on the one thread and buy back a third of the time at most.
+// Forking also keeps `runPill` exactly as it was: synchronous, exported, and
+// covered by the tests that call it directly.
+
+/** Internal fork mode — see `runPillWorker`. Not for hand invocation. */
+const WORKER_FLAG = '--pill-worker';
+
+/**
+ * How many pills run at once. `os.cpus().length - 2` leaves headroom for the
+ * parent and the OS; capped at the pill count, floored at 1 so a 2-core machine
+ * still makes progress.
+ *
+ * `GATES_POISON_CONCURRENCY=1` restores the old serial-in-parallel-clothing
+ * behaviour. That is a debugging affordance, not a tuning knob: when a pill
+ * misbehaves, being able to remove interleaving from the picture without editing
+ * the gate is the difference between a diagnosis and a guess.
+ */
+export function resolveConcurrency(pillCount, env = process.env, cpuCount = os.cpus().length) {
+  const override = Number.parseInt(env.GATES_POISON_CONCURRENCY ?? '', 10);
+  const requested = Number.isInteger(override) && override > 0 ? override : cpuCount - 2;
+  return Math.max(1, Math.min(requested, Math.max(1, pillCount)));
+}
+
+/**
+ * The child half of the fork: run ONE pill and hand the result back over IPC.
+ *
+ * Reports a thrown `runPill` as a problem rather than letting it become a bare
+ * non-zero exit. Both paths fail the gate — but a crash the parent has to infer
+ * from an exit code says only "worker 4 died", while this says which contract
+ * and why.
+ */
+function runPillWorker() {
+  return new Promise((resolve) => {
+    process.on('message', (msg) => {
+      let result;
+      try {
+        result = runPill(msg.contract);
+      } catch (err) {
+        result = {
+          ok: false,
+          problems: [`${msg.contract?.script ?? '(unknown gate)'}: pill worker threw — ${err?.stack || err}`],
+        };
+      }
+      // Close the channel only once the message is on it. `process.send` is
+      // asynchronous, so exiting (or disconnecting) immediately can drop it —
+      // and a dropped result is indistinguishable, from the parent, from a
+      // worker that died mid-pill. Disconnecting rather than `process.exit` lets
+      // the child unwind normally; with no other handles open it exits 0.
+      process.send(result, () => {
+        try { process.disconnect(); } catch { /* parent already tore it down */ }
+        resolve(result);
+      });
+    });
+  });
+}
+
+/**
+ * Run every pill across a bounded pool of forked workers.
+ *
+ * Three properties this must not lose relative to the loop it replaces:
+ *
+ *  1. **Deterministic output.** Problems are written into a positional slot and
+ *     flattened in CONTRACT order at the end, so the report is byte-identical
+ *     whichever pill finishes first. A gate whose output reorders run-to-run
+ *     cannot be diffed, and an operator learns to skim it.
+ *  2. **A crashed worker FAILS the gate.** A worker that exits without sending a
+ *     result, is killed by a signal, or cannot be spawned becomes a problem
+ *     attributed to its contract — never an empty slot. Silently dropping it
+ *     would be this file's own subject: a green produced by not checking.
+ *  3. **Control-then-poison per pill** is `runPill`'s business and is untouched.
+ *
+ * @param {object[]} contracts
+ * @param {{concurrency?: number, fork?: typeof fork}} [deps]
+ * @returns {Promise<string[]>} problems, in contract order
+ */
+export async function runPillsInParallel(contracts, { concurrency, fork: forkFn = fork } = {}) {
+  const slots = contracts.map(() => []);
+  const limit = concurrency ?? resolveConcurrency(contracts.length);
+
+  await runWithConcurrency(contracts, limit, (contract, index) => new Promise((resolve) => {
+    const label = `${contract.script} (${contract.id})`;
+    let child;
+    try {
+      // stdio piped, not inherited: a worker that writes to the terminal
+      // directly would interleave with nine others into unreadable mush. It is
+      // captured and surfaced only when it explains a failure.
+      child = forkFn(SELF, [WORKER_FLAG], { stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
+    } catch (err) {
+      slots[index].push(`${label}: could not spawn a pill worker — ${err.message}`);
+      resolve();
+      return;
+    }
+
+    let result = null;
+    let stderr = '';
+    let settled = false;
+    const settle = () => { if (!settled) { settled = true; resolve(); } };
+
+    child.stderr?.on('data', (d) => { stderr += d; });
+    child.stdout?.on('data', (d) => { stderr += d; });
+    child.on('message', (msg) => { result = msg; });
+    child.on('error', (err) => {
+      slots[index].push(`${label}: pill worker error — ${err.message}`);
+      settle();
+    });
+    child.on('exit', (code, signal) => {
+      if (result) {
+        slots[index].push(...result.problems);
+      } else if (!settled) {
+        // No result AND no `error` event: the worker died mid-pill. This is the
+        // case a naive pool drops on the floor, and dropping it means the pill
+        // never ran while the gate reports nothing wrong with it.
+        slots[index].push(
+          `${label}: pill worker exited without a result (${signal ? `signal ${signal}` : `exit ${code}`}) — `
+          + 'the pill did not run, so the gate is unverified. '
+          + `Re-run with GATES_POISON_CONCURRENCY=1 to reproduce serially.${
+            stderr.trim() ? ` stderr: ${stderr.trim().slice(-400)}` : ''}`,
+        );
+      }
+      settle();
+    });
+
+    child.send({ contract });
+  }));
+
+  return slots.flat();
+}
+
 // ── CLI ─────────────────────────────────────────────────────────────────────
 
-const KNOWN_FLAGS = ['--selfcheck-relocation'];
+const KNOWN_FLAGS = ['--selfcheck-relocation', WORKER_FLAG];
 
 async function main() {
   if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
   assertKnownFlags(process.argv.slice(2), KNOWN_FLAGS, { cli: 'gates:poison' });
+
+  // Fork mode: this process is one pill, driven over IPC by the parent below.
+  // Branch before any of the parent's own work — a worker that re-ran the
+  // reconciliation would pay for it ten times and report it ten times.
+  if (process.argv.includes(WORKER_FLAG)) { await runPillWorker(); return; }
 
   const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf-8'));
   let gates;
@@ -634,10 +757,7 @@ async function main() {
       + 'nothing about the chain');
   }
 
-  for (const c of contracts) {
-    const r = runPill(c);
-    problems.push(...r.problems);
-  }
+  problems.push(...await runPillsInParallel(contracts));
 
   if (problems.length) {
     process.stderr.write(`\n${R}✗ gates:poison${X} — ${problems.length} problem(s):\n`);

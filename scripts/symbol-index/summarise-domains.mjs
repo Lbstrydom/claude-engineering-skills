@@ -26,6 +26,7 @@ import {
   upsertDomainSummary,
   listSymbolsForSnapshot,
 } from '../learning-store.mjs';
+import { runWithConcurrency } from '../lib/concurrency.mjs';
 import { resolveRepoIdentity } from '../lib/repo-identity.mjs';
 import { resolveModel } from '../lib/model-resolver.mjs';
 import { redactSecrets } from '../lib/secret-patterns.mjs';
@@ -204,28 +205,6 @@ export async function summariseDomains({ repoId, refreshId, model, concurrency }
 
   await runWithConcurrency(pending, limit, generateOne);
   return { summaries, errors, stats };
-}
-
-/**
- * Run `fn` over `items` with at most `limit` in flight at once. Dependency-free
- * worker-pool (no p-limit). Single-threaded JS → the shared accumulators the
- * callback mutates are race-free. If `fn` rejects, the rejection propagates
- * (callers that must not abort should catch inside `fn`).
- * @template T
- * @param {T[]} items
- * @param {number} limit
- * @param {(item: T) => Promise<void>} fn
- */
-export async function runWithConcurrency(items, limit, fn) {
-  const queue = [...items];
-  const n = Math.max(1, Math.min(limit, queue.length));
-  const worker = async () => {
-    while (queue.length) {
-      const item = queue.shift();
-      await fn(item);
-    }
-  };
-  await Promise.all(Array.from({ length: n }, worker));
 }
 
 // CLI thin wrapper

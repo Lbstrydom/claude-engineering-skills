@@ -1,6 +1,149 @@
 # Project Status Log
 
-## 2026-08-11 (latest) — 39 obligations written off, and the doctrine that made them look like work
+## 2026-08-11 (latest) — pre-push gate: 20 gates 86.2s → 57.1s, and the sandbox's fast path was dead code in every worktree
+
+Two verified defects, neither of which weakened anything to fix. All figures
+below are **measured** on a 32-core Windows box, 2026-08-11.
+
+### 1. `gates:poison` — 10 pills, run one at a time: 49.3s → 20.7s
+
+`scripts/check-gate-poison-pills.mjs` ran its pills in a `for` loop around a
+synchronous `runPill`. Each pill copies the full tracked file set (**1,934
+files, 1.35s measured**) into its own tmpdir and then spawns the gate twice, so
+the loop was ten repo copies and twenty node processes strictly in series — 33%
+of the whole `check` chain, second only to the test suite.
+
+They were already fully isolated (own tmpdir, own `node_modules` link, own
+optional git fixture, own processes), which is exactly what made them
+embarrassingly parallel. They now run across a bounded pool of forked workers,
+`min(cpus-2, pillCount)`. **The contract is untouched**: each pill still runs
+its control and then its poison, in that order, against its own copy.
+
+Three properties parallelism could have quietly cost, each pinned by a test with
+a red control (`tests/gate-poison-pills.test.mjs`):
+
+- **Deterministic output.** Problems land in a positional slot and are flattened
+  in *contract* order, so the report is byte-identical whichever pill finishes
+  first. Red control: appending on completion → the ordering test fails.
+- **A crashed worker fails the gate.** No result + exit code, a signal kill, an
+  `error` event, and a synchronous `fork` throw are four distinct problems
+  naming the contract. Red control: dropping the no-result branch → 3 tests fail.
+  A silently-dropped worker would be this file's own subject — a green produced
+  by not checking.
+- **The IPC result is real.** The worker `disconnect`s inside the `send`
+  callback, never before it. Red control: `process.exit(0)` ahead of the send →
+  the round-trip test fails, confirming the truncation hazard is not theoretical.
+
+`GATES_POISON_CONCURRENCY=1` restores serial execution for debugging. Measured
+at **52.4s against the pre-change 53.2s**, which is the control that says the
+speed-up is parallelism and not lost work.
+
+### 2. The pre-push sandbox forced `npm ci` on every push — twice over
+
+`provisionNodeModules` links the main checkout's `node_modules` when the pushed
+commit describes the same dependency tree. Two independent bugs made that fast
+path unreachable, and **each one alone was sufficient**, so fixing either in
+isolation would have re-measured as no change:
+
+- **It compared the WHOLE `package.json`.** Its own docstring stated the concern
+  as "we'd be testing the new code against the old dependency tree", but the
+  comparison answered a much broader question. Commit `e7e182ea` added one
+  `scripts` entry and touched no lockfile, and the sandbox discarded the instant
+  junction for a full 410-package `npm ci`. Now compared via
+  `scripts/lib/dependency-identity.mjs`: `dependencies`, `devDependencies`,
+  `optionalDependencies`, `peerDependencies`, `peerDependenciesMeta`,
+  `bundledDependencies`, `bundleDependencies` (npm honours both spellings),
+  `overrides`, `engines`. Lockfile comparison unchanged — every byte of a
+  resolved-tree artifact is dependency-relevant.
+- **`path.join(repoRoot, 'node_modules')` does not exist in a git worktree.** So
+  `existsSync` was false and the link branch was **dead code wherever this
+  repo's sessions actually run**, regardless of the comparison above. This is
+  the same worktree defect `check-gate-poison-pills.mjs` fixed on 2026-08-08 and
+  that AGENTS.md records as a standing rule; the upward walk is now shared
+  (`scripts/lib/node-modules-resolver.mjs`) rather than written twice, since a
+  second sighting is what turns a private helper into a shared one.
+- **Consequence of fixing the walk**: the manifest compared is now the one
+  belonging to the checkout that *owns* the linked modules, not blindly
+  `repoRoot`. In a worktree those differ, and comparing one checkout's manifest
+  while linking another's tree would decide "unchanged" about something it never
+  read. Outside a worktree they are the same directory and behaviour is
+  identical.
+
+`dependencySetChanged` **fails closed**: unreadable file, unparseable JSON, a
+non-object root, or a dependency field of an unexpected shape all install.
+Installing when you needn't costs seconds; linking when you should have
+installed runs the entire chain against the wrong dependency tree and reports
+green. Comparing parsed values also means CRLF-vs-LF and key-order churn stop
+reading as dependency changes.
+
+Sandbox now logs `node_modules: linked` and names the cause of every install —
+this branch was previously taken on every worktree push with no output at all,
+which is how it went unnoticed.
+
+### Measurements
+
+**Controlled, back-to-back, same session** — the two passes differ only in
+`GATES_POISON_CONCURRENCY`, so test-suite noise cannot reach the delta
+(`npm run check` minus `npm test`, all 20 gates):
+
+| gate | before | after | delta |
+|---|---:|---:|---:|
+| `gates:poison` | 49,272 ms | 20,684 ms | **−28,588** |
+| `db:suites:gate` | 25,027 ms | 24,078 ms | −949 |
+| other 18 gates combined | 11,938 ms | 12,290 ms | +352 |
+| **total (20 gates)** | **86,237 ms** | **57,052 ms** | **−29,185 (−34%)** |
+
+Every gate other than `gates:poison` moves within ±0.4s — the entire delta is
+the one change.
+
+**Sandbox provisioning**, measured directly in a real sandbox worktree:
+`npm ci --ignore-scripts --no-audit --no-fund` **10,689 ms** (warm npm cache)
+vs `fs.symlinkSync` junction **1 ms**, verified resolving (`node_modules/zod`
+present). Saving is cache-dependent and larger cold.
+
+**End-to-end `prepush-check --head HEAD --base origin/main~4`**: baseline 4m07s
+(247s) reporting `node_modules: installed`; after, three runs at 236.8s / 238.4s
+/ 230.6s reporting `node_modules: linked`. **Read this figure with care** — the
+sandbox total is dominated by `npm test`, which measured 65.7s, 112.7s and
+139.9s across runs on this box today. That ±40s swamps a ~39s improvement, so
+the end-to-end number is an observation, not the evidence; the controlled
+component measurements above are.
+
+### Declined: parallelising the 18 static gates
+
+The table above prices them at **12.0s combined (8%)**, and the case against is
+structural rather than about the payoff. The `check` chain is an `&&` string in
+`package.json`, and `extractCheckGates` parses exactly that string to enumerate
+every gate for the poison-pill census — it hard-errors on any shell operator
+other than `&&`, deliberately, because a command it cannot see is a gate nobody
+decided about. Replacing the chain with a parallel runner would move the gate
+roster out of the one place that mechanism can read it. Trading the gate census
+for 8% is the wrong side of that bargain.
+
+### Files
+
+- `scripts/check-gate-poison-pills.mjs` — forked worker pool (`runPillsInParallel`,
+  `resolveConcurrency`, `runPillWorker`); `findNodeModules` moved out to lib.
+- `scripts/prepush-check.mjs` — dependency-relevant comparison; Node-style
+  `node_modules` resolution; manifest compared against the modules' owner.
+- `scripts/lib/dependency-identity.mjs` — **new**, pure, fails closed.
+- `scripts/lib/node-modules-resolver.mjs` — **new**, the shared upward walk.
+- `scripts/lib/concurrency.mjs` — **new**; `runWithConcurrency` moved here from
+  `symbol-index/summarise-domains.mjs` so a pre-push gate can share it without
+  importing an LLM CLI. Now passes the item's original index, which is what
+  makes ordered output possible.
+- `tests/prepush-dependency-identity.test.mjs` — **new**, 28 tests.
+- `tests/gate-poison-pills.test.mjs`, `tests/prepush-sandbox-honesty.test.mjs`,
+  `tests/symbol-index.test.mjs` — updated.
+
+Verification: `node --check` on every mutated file; 7 red controls across the
+two changes, each failing on the intended assertion and only that assertion;
+`gates:poison` re-verified end-to-end with a sabotaged contract (exit 1, correct
+message) and restored (exit 0). Full suite green.
+
+---
+
+## 2026-08-11 — 39 obligations written off, and the doctrine that made them look like work
 
 Triaged the unremediated-acceptances backlog properly instead of quoting its
 size. **199 → 160, and every survivor is code-mode.**

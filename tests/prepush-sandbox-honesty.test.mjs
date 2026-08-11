@@ -162,9 +162,45 @@ describe('the sandbox forbids the silent-skip paths', () => {
     // without regenerating the lockfile — the lockfile-only comparison this
     // regression guards against would then silently symlink the main
     // checkout's stale node_modules instead of installing.
-    assert.match(runnerSrc, /pkgMain = path\.join\(repoRoot, 'package\.json'\)/);
+    //
+    // The MECHANISM narrowed on 2026-08-11 (whole-file → dependency-relevant
+    // fields, because the whole-file form made the link path unreachable and so
+    // was never exercised); the PROPERTY is unchanged and is what is pinned
+    // here. Which fields count, and that unreadable input still installs, is
+    // tests/prepush-dependency-identity.test.mjs.
     assert.match(runnerSrc, /pkgSandbox = path\.join\(sandbox, 'package\.json'\)/);
-    assert.match(runnerSrc, /lockChanged = filePairChanged\(lockMain, lockSandbox\) \|\| filePairChanged\(pkgMain, pkgSandbox\)/);
+    assert.match(runnerSrc, /const deps = dependencySetChanged\(readOrNull\(pkgMain\), readOrNull\(pkgSandbox\)\)/);
+    assert.match(runnerSrc, /lockChanged = filePairChanged\(lockMain, lockSandbox\) \|\| deps\.changed/);
+  });
+
+  it('resolves node_modules the way NODE does, so the link path is reachable in a worktree', () => {
+    // Measured 2026-08-11: `<repoRoot>/node_modules` does not exist in a git
+    // worktree, so `existsSync` was false and EVERY worktree push fell through
+    // to a full `npm ci` — the fast path was dead code exactly where this repo's
+    // sessions run. Same defect check-gate-poison-pills.mjs fixed on 2026-08-08;
+    // the walk is shared now so there is one place to regress it.
+    assert.match(runnerSrc, /from '\.\/lib\/node-modules-resolver\.mjs'/);
+    assert.match(runnerSrc, /const mainModules = findNodeModules\(repoRoot\)/);
+    assert.doesNotMatch(
+      runnerSrc, /node_modules = path\.join\(repoRoot, 'node_modules'\)/,
+      'the hard-coded repoRoot path is the defect; it must not come back',
+    );
+  });
+
+  it('compares the manifest of the checkout that OWNS the modules it links', () => {
+    // In a worktree the resolved node_modules belongs to the MAIN checkout while
+    // repoRoot is the worktree. Comparing one checkout's manifest and linking
+    // another's tree would decide "unchanged" about something it never read.
+    assert.match(runnerSrc, /const modulesOwner = mainModules \? path\.dirname\(mainModules\) : repoRoot/);
+    assert.match(runnerSrc, /pkgMain = path\.join\(modulesOwner, 'package\.json'\)/);
+    assert.match(runnerSrc, /lockMain = path\.join\(modulesOwner, 'package-lock\.json'\)/);
+  });
+
+  it('an absent node_modules INSTALLS and says so, never links a path that is not there', () => {
+    // On Windows a junction to a MISSING target succeeds and leaves a dangling
+    // link, so "the symlink call didn't throw" is not evidence the link works.
+    assert.match(runnerSrc, /if \(!lockChanged && mainModules\)/);
+    assert.match(runnerSrc, /no node_modules found at or above/);
   });
 
   it('wraps every shared-metadata git worktree call in lock-contention retry (2026-07-23)', () => {

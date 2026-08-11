@@ -16,8 +16,11 @@ import path from 'node:path';
 
 import os from 'node:os';
 
+import { EventEmitter } from 'node:events';
+
 import {
-  extractCheckGates, loadContracts, loadExemptions, reconcile, runPill, _internals,
+  extractCheckGates, loadContracts, loadExemptions, reconcile, runPill,
+  runPillsInParallel, resolveConcurrency, _internals,
 } from '../scripts/check-gate-poison-pills.mjs';
 import { validateCliGateContract } from '../scripts/lib/gate-honesty/schema.mjs';
 
@@ -362,6 +365,159 @@ test('gates:poison is wired into the check chain — an uninvoked gate protects 
   assert.match(pkg.scripts.check, /gates:poison/,
     'the manifest gate was correct and simply never called; that is the precedent here');
   assert.ok(pkg.scripts['gates:poison'], 'the script must exist');
+});
+
+// ── Parallel execution (2026-08-11) ─────────────────────────────────────────
+//
+// The pills moved from a `for` loop around a synchronous `runPill` to a bounded
+// pool of forked workers — 53.2s → 24.7s, measured, on a 32-core box. Speed is
+// only acceptable if nothing about the gate's honesty moved with it, so what
+// these pin is the three properties parallelism is capable of quietly costing:
+// deterministic ordering, no silently-dropped worker, and a real IPC round trip.
+
+/**
+ * A `fork`-shaped stub whose Nth call plays the Nth scripted behaviour.
+ *
+ * Deliberately NOT a stub of `runPill`: what is under test is the parent's
+ * handling of a child process it cannot see inside — including the cases where
+ * the child never speaks. A stub at the runPill seam would make every worker
+ * well-behaved by construction, which is the one assumption these tests exist to
+ * refuse.
+ */
+function scriptedFork(behaviours) {
+  let call = 0;
+  const spawned = [];
+  const forkFn = () => {
+    const behaviour = behaviours[call++];
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.send = () => { setTimeout(() => behaviour(child), behaviour.delayMs ?? 0); };
+    spawned.push(child);
+    return child;
+  };
+  forkFn.spawned = spawned;
+  return forkFn;
+}
+
+const contract = (id) => ({ script: `gate:${id}`, id, poisonPill: { isolation: 'tmpdir', argv: [] } });
+const replies = (problems, delayMs) => Object.assign(
+  (child) => { child.emit('message', { ok: !problems.length, problems }); child.emit('exit', 0, null); },
+  { delayMs },
+);
+
+test('parallel: output order follows CONTRACT order, not completion order', async () => {
+  // A report that reorders run-to-run cannot be diffed, and an operator learns
+  // to skim it. The first contract is made the SLOWEST so a naive
+  // append-on-completion implementation produces the reverse and fails here.
+  const contracts = [contract('a'), contract('b'), contract('c')];
+  const forkFn = scriptedFork([
+    replies(['a-problem'], 30),
+    replies(['b-problem'], 15),
+    replies(['c-problem'], 0),
+  ]);
+
+  const problems = await runPillsInParallel(contracts, { concurrency: 3, fork: forkFn });
+  assert.deepEqual(problems, ['a-problem', 'b-problem', 'c-problem']);
+});
+
+test('parallel: a worker that exits WITHOUT a result fails the gate', async () => {
+  // The silently-dropped worker: the pill never ran, and an empty slot is
+  // indistinguishable from a clean one. That is this file's own subject — a
+  // green produced by not checking — performed by the runner instead of a gate.
+  const forkFn = scriptedFork([
+    (child) => { child.stderr.emit('data', 'ENOMEM: out of memory'); child.emit('exit', 7, null); },
+  ]);
+
+  const problems = await runPillsInParallel([contract('a')], { concurrency: 1, fork: forkFn });
+  assert.equal(problems.length, 1, 'a dead worker must not read as a passing pill');
+  assert.match(problems[0], /gate:a/);
+  assert.match(problems[0], /exited without a result \(exit 7\)/);
+  assert.match(problems[0], /ENOMEM/, 'its stderr is the only diagnosis available — surface it');
+});
+
+test('parallel: a worker killed by a SIGNAL fails the gate, and says so', async () => {
+  const forkFn = scriptedFork([(child) => { child.emit('exit', null, 'SIGKILL'); }]);
+  const problems = await runPillsInParallel([contract('a')], { concurrency: 1, fork: forkFn });
+  assert.equal(problems.length, 1);
+  assert.match(problems[0], /signal SIGKILL/);
+});
+
+test('parallel: a spawn `error` event fails the gate', async () => {
+  const forkFn = scriptedFork([(child) => { child.emit('error', new Error('EAGAIN')); }]);
+  const problems = await runPillsInParallel([contract('a')], { concurrency: 1, fork: forkFn });
+  assert.equal(problems.length, 1);
+  assert.match(problems[0], /pill worker error — EAGAIN/);
+});
+
+test('parallel: a fork that THROWS synchronously fails the gate', async () => {
+  const forkFn = () => { throw new Error('EMFILE: too many open files'); };
+  const problems = await runPillsInParallel([contract('a')], { concurrency: 1, fork: forkFn });
+  assert.equal(problems.length, 1);
+  assert.match(problems[0], /could not spawn a pill worker — EMFILE/);
+});
+
+test('parallel: one dead worker does not mask its healthy neighbours\' findings', async () => {
+  const forkFn = scriptedFork([
+    replies(['real-finding']),
+    (child) => { child.emit('exit', 1, null); },
+    replies([]),
+  ]);
+  const problems = await runPillsInParallel(
+    [contract('a'), contract('b'), contract('c')], { concurrency: 3, fork: forkFn },
+  );
+  assert.equal(problems[0], 'real-finding');
+  assert.match(problems[1], /gate:b/);
+  assert.equal(problems.length, 2, 'the clean third pill contributes nothing, as before');
+});
+
+test('parallel: a clean run produces NO problems — the pool cannot manufacture one', async () => {
+  const forkFn = scriptedFork([replies([]), replies([]), replies([])]);
+  const problems = await runPillsInParallel(
+    [contract('a'), contract('b'), contract('c')], { concurrency: 2, fork: forkFn },
+  );
+  assert.deepEqual(problems, []);
+});
+
+test('parallel: every contract is spawned exactly once, even below the concurrency cap', async () => {
+  const forkFn = scriptedFork([replies([]), replies([]), replies([]), replies([]), replies([])]);
+  await runPillsInParallel(
+    ['a', 'b', 'c', 'd', 'e'].map(contract), { concurrency: 2, fork: forkFn },
+  );
+  assert.equal(forkFn.spawned.length, 5, 'a pill the pool never started is a gate that never ran');
+});
+
+test('the real fork path round-trips a result over IPC', async () => {
+  // The stubbed tests above prove the parent's logic; this proves the CHANNEL —
+  // that a worker process really loads the module, runs the pill, and gets its
+  // verdict back. Uses the non-tmpdir refusal, which `runPill` answers without
+  // copying the repo, so the round trip costs one process rather than 5 seconds.
+  const problems = await runPillsInParallel(
+    [{ script: 'gate:real', id: 'real', poisonPill: { isolation: 'flag', argv: [] } }],
+    { concurrency: 1 },
+  );
+  assert.equal(problems.length, 1);
+  assert.match(problems[0], /isolation must be "tmpdir"/,
+    'the worker\'s own verdict must cross the boundary — not a crash the parent inferred');
+});
+
+test('concurrency leaves headroom, never exceeds the work, and never hits zero', () => {
+  assert.equal(resolveConcurrency(10, {}, 32), 10, 'capped by the pill count');
+  assert.equal(resolveConcurrency(40, {}, 32), 30, 'cpus - 2, leaving the parent and the OS room');
+  assert.equal(resolveConcurrency(10, {}, 2), 1, 'a 2-core box still makes progress');
+  assert.equal(resolveConcurrency(0, {}, 32), 1, 'no pills must not mean a zero-worker pool');
+});
+
+test('GATES_POISON_CONCURRENCY=1 restores serial execution for debugging', () => {
+  // Measured: serial-through-fork is 52.4s against the pre-change 53.2s, so this
+  // reproduces the old timing as well as the old interleaving — which is what
+  // makes it usable for bisecting a misbehaving pill.
+  assert.equal(resolveConcurrency(10, { GATES_POISON_CONCURRENCY: '1' }, 32), 1);
+  assert.equal(resolveConcurrency(10, { GATES_POISON_CONCURRENCY: '4' }, 32), 4);
+  for (const junk of ['0', '-3', 'abc', '']) {
+    assert.equal(resolveConcurrency(10, { GATES_POISON_CONCURRENCY: junk }, 32), 10,
+      `"${junk}" is not a concurrency — fall back to the default, never to zero workers`);
+  }
 });
 
 // ── findNodeModules — the worktree dependency-resolution fix (2026-08-08) ────
