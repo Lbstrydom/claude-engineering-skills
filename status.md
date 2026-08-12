@@ -1,6 +1,55 @@
 # Project Status Log
 
-## 2026-08-11 (latest) — a decision recorded was still an obligation open
+## 2026-08-12 (latest) — the deployment was never in the Azure URL
+
+`createOpenAIClient`'s Azure branch pinned `baseURL = ${endpoint}/openai/v1` and
+emitted `…/openai/v1/embeddings`, carrying the deployment only as the body's
+`model`. That is one Azure surface, not the general one: a resource or APIM
+front-end exposing the standard **deployment-qualified** API has no such route
+and 404s every GPT and embedding call.
+
+`gpt`/`embed` now build the SDK's `AzureOpenAI` from `{endpoint, apiKey,
+deployment, apiVersion, maxRetries}` and it derives the paths —
+`/openai/deployments/{deployment}/{embeddings,chat/completions}` and a
+deliberately un-qualified `/openai/responses`. Nothing concatenates an operation
+path. Foundry-Claude is untouched: separate surface, still `/openai/v1`, still
+the undated `preview` (the new `deploymentApiVersion` defaults to
+`2025-03-01-preview` so one field could not silently move both).
+
+**A second defect shared the root.** Both purposes resolved to one `baseURL`, so
+the cache key collided and `gpt`/`embed` **returned the same client instance**.
+Deployment is constructor-level route state; `purpose` + `deployment` are now in
+the key. Same fact broke `azure-doctor`'s probe ladder, which passes *candidate*
+names as the body `model` — the SDK prefers the constructor's deployment, so
+every probe would have hit the configured one and stamped the first candidate
+`verified`. That is the "green check that never checked" shape the module's own
+`dimensions` comment warns about, one layer up. `probeDeployment` /
+`selectEmbedDeployment` took a `clientFor(name)` seam. In scope by impact, not
+authorship: the doctor's correctness rides on this change.
+
+**The old tests were green the whole time.** They asserted `client.baseURL` and
+`client.buildURL('/embeddings')` — both properties of how the client was
+*configured*. The deployment segment is added in `buildRequest`, a stage
+`buildURL` never runs, so no assertion on the client object could ever have seen
+this. The new tests drive an injected `fetch` and compare the emitted URL by
+full string equality. Negative control run: reverting only the construction
+turns them red reporting `actual: '…/openai/v1/embeddings'`, while
+Foundry/public/OSS stay green — the first attempt failed at *construction* and
+was thrown away as proving nothing.
+
+Focused suites 100 pass / 0 fail / 0 skipped; full suite 11487 pass / 0 fail (26
+skipped, all DB-gated).
+
+**Live Azure verification: `unverified`.** Blocked prerequisite —
+`AZURE_OPENAI_ENDPOINT` / `AZURE_OPENAI_API_KEY` unset on this machine, so
+`azureConfig.active` is `false`; no live 200 for embeddings or chat completions.
+`npm run azure:doctor` exits 0 on its inactive fast path, exercising none of the
+changed routing. Close on the Azure machine: `npm run azure:doctor -- --fix`.
+
+**Consumer-side verification (Step 6.8): `unverified`** — no consumer checkout
+of this bundle exists on this machine to run `sync-isolation-verify` in.
+
+## 2026-08-11 — a decision recorded was still an obligation open
 
 `user_action = 'accepted-permanent'` has been this repo's "declined on the
 merits" disposition since the adaptive-learning migration — in the CHECK

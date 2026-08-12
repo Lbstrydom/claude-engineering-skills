@@ -820,10 +820,18 @@ const VALID_CLAUDE_SHAPES = new Set(['openai', 'anthropic']);
  * never echoes key material) when Azure is half-configured.
  * @param {Record<string,string|undefined>} env
  * @returns {Readonly<{active:boolean, openaiEndpoint:string|null, aiEndpoint:string|null,
- *   apiKey:string|null, apiVersion:string, gptDeployment:string|null,
+ *   apiKey:string|null, apiVersion:string, deploymentApiVersion:string,
+ *   gptDeployment:string|null,
  *   claudeDeployment:string|null, embedDeployment:string, claudeApiShape:string,
  *   foundryApiPath:string}>}
  */
+/**
+ * Default `api-version` for the deployment-qualified Azure OpenAI surface
+ * (`/openai/deployments/{deployment}/…`). Distinct from the v1 surface's
+ * undated `preview` sentinel, which that surface rejects.
+ */
+export const DEPLOYMENT_API_VERSION_DEFAULT = '2025-03-01-preview';
+
 export function buildAzureConfig(env = process.env) {
   const openaiEndpoint = (env.AZURE_OPENAI_ENDPOINT || '').trim() || null;
   const active = !!openaiEndpoint;
@@ -833,7 +841,8 @@ export function buildAzureConfig(env = process.env) {
     return Object.freeze({
       active: false,
       openaiEndpoint: null, aiEndpoint: null, apiKey: null,
-      apiVersion: 'preview', gptDeployment: null, claudeDeployment: null,
+      apiVersion: 'preview', deploymentApiVersion: DEPLOYMENT_API_VERSION_DEFAULT,
+      gptDeployment: null, claudeDeployment: null,
       summaryDeployment: 'claude-sonnet-4-6',
       embedDeployment: 'text-embedding-3-large', claudeApiShape: 'anthropic',
       claudeBaseUrl: null, foundryApiPath: '/openai/v1',
@@ -882,6 +891,14 @@ export function buildAzureConfig(env = process.env) {
     aiEndpoint,
     apiKey,
     apiVersion: (env.AZURE_OPENAI_API_VERSION || 'preview').trim(),
+    // The DEPLOYMENT-QUALIFIED surface's api-version — a different default from
+    // `apiVersion` above because they are different Azure surfaces, not two
+    // spellings of one. `/openai/v1/*` (the v1 surface, still used by the
+    // Foundry-Claude route via `foundryApiPath`) takes the undated `preview`
+    // sentinel; `/openai/deployments/{deployment}/*` takes a DATED version and
+    // rejects `preview`. One env var overrides both, so an operator who pins a
+    // version still pins it everywhere.
+    deploymentApiVersion: (env.AZURE_OPENAI_API_VERSION || '').trim() || DEPLOYMENT_API_VERSION_DEFAULT,
     gptDeployment,
     claudeDeployment,
     // Arch-index summariser deployment (Sonnet on Foundry by default).

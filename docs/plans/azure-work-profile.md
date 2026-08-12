@@ -634,3 +634,50 @@ cluster commit(s); no stateful teardown because nothing persists Azure state.
   Claude/summary deployments default to `claude-opus-4-6` / `claude-sonnet-4-6`.
 - **Scope boundary CLOSED**: arch-index summariser now routes to Sonnet on
   Foundry (`summarise.mjs` + `summarise-domains.mjs`).
+
+### 2026-08-12 (deployment-qualified routing — corrects the 2026-06-05 contract)
+
+- **Routing bug**: GPT + embeddings were pinned to `baseURL =
+  ${endpoint}/openai/v1` and emitted `…/openai/v1/embeddings`, carrying the
+  deployment only as the body's `model`. The 2026-06-05 entry above records
+  "GPT/embeddings confirmed on `/openai/v1` + `api-key`" — true of the resource
+  smoke-tested then, but NOT general: resources and APIM front-ends exposing the
+  standard **deployment-qualified** API have no `/openai/v1/*` route and 404.
+- **Fix**: `gpt`/`embed` now construct the SDK's `AzureOpenAI` from
+  `{endpoint, apiKey, deployment, apiVersion, maxRetries}` and the SDK derives
+  every path — `/openai/deployments/{deployment}/embeddings`,
+  `/openai/deployments/{deployment}/chat/completions`, `/openai/responses`
+  (the Responses API is deliberately NOT deployment-qualified). No operation
+  path is concatenated by hand anywhere.
+- **Second defect, same root**: both purposes resolved to one `baseURL`, so the
+  client cache key collided and `gpt`/`embed` **shared one instance**. The
+  deployment is constructor-level route state, so `purpose` + `deployment` are
+  now part of the key.
+- **Consumer fixed with it**: `azure-doctor`'s probe ladder passed *candidate*
+  deployment names as the body's `model`. The SDK prefers the constructor's
+  deployment, so every probe would have hit the configured one and stamped the
+  first candidate `verified`. `selectEmbedDeployment`/`probeDeployment` gained a
+  `clientFor(name)` seam; the doctor supplies it via the existing `azure`
+  snapshot-injection pattern.
+- **api-version**: new `azureConfig.deploymentApiVersion`, default
+  `2025-03-01-preview` (the dated version this surface requires).
+  `azureConfig.apiVersion` keeps the undated `preview` sentinel for the
+  Foundry-Claude `/openai/v1` route, which is otherwise untouched.
+  `AZURE_OPENAI_API_VERSION` overrides both.
+- **Tests**: an injected fake `fetch` captures the URL the *installed SDK*
+  emits, asserted by full string equality. This is necessary, not stylistic —
+  the deployment segment is added in `buildRequest`, which `buildURL` never
+  runs, which is why the prior suite (asserting `client.baseURL` /
+  `buildURL`) was green for this path's entire life while the wire URL was
+  wrong. Negative control: reverting only the construction turns the URL tests
+  red reporting `actual: '…/openai/v1/embeddings'`, while the Foundry/public/OSS
+  tests stay green.
+- **Verification**: focused suites 100 pass / 0 fail / 0 skipped; full suite
+  11487 pass / 0 fail (26 skipped, all DB-gated); `context:check`,
+  `skills:check`, `cli:flags:gate`, `requirements:map:check`, `plans:lint` clean.
+- **Live Azure verification: `unverified`** — blocked prerequisite:
+  `AZURE_OPENAI_ENDPOINT` / `AZURE_OPENAI_API_KEY` are unset on this machine, so
+  `azureConfig.active` is `false` and no live 200 was obtained for embeddings or
+  chat completions. `npm run azure:doctor` exits 0 on its inactive fast path,
+  which exercises none of the changed routing. Close it on the Azure-configured
+  machine with `npm run azure:doctor -- --fix` + `npm run azure:limits`.

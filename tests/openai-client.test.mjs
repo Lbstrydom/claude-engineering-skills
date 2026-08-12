@@ -1,6 +1,6 @@
 import { describe, it, afterEach, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { createOpenAIClient, createOpenRouterClient, _resetClientCache, _internals } from '../scripts/lib/openai-client.mjs';
+import { createOpenAIClient, createOpenRouterClient, _resetClientCache, _cacheKeys, _internals } from '../scripts/lib/openai-client.mjs';
 import { buildAzureConfig } from '../scripts/lib/config.mjs';
 import { providerEnvHooks } from './helpers/provider-env.mjs';
 
@@ -38,26 +38,198 @@ describe('createOpenAIClient — opt-in / byte-identical (the load-bearing invar
     const b = await createOpenAIClient({ azure: INACTIVE, apiKey: 'sk-same' });
     assert.equal(a, b);
   });
+
+  it('emits the stock public OpenAI URL — no deployment segment, no api-version', async () => {
+    // The end-to-end counterpart of the Azure URL tests: the deployment-qualified
+    // work must be invisible from off-Azure.
+    const t = captureTransport();
+    const client = await createOpenAIClient({ azure: INACTIVE, apiKey: 'sk-test', fetch: t.fetchImpl });
+    await client.embeddings.create({ model: 'text-embedding-3-large', input: 'ping' });
+    assert.equal(t.calls[0].url, 'https://api.openai.com/v1/embeddings');
+    assert.equal(t.calls[0].headers.get('authorization'), 'Bearer sk-test');
+    assert.equal(t.calls[0].headers.get('api-key'), null);
+  });
+});
+
+// ── Fake fetch transport ────────────────────────────────────────────────────
+// The deployment segment is injected inside `AzureOpenAI.buildRequest`, NOT in
+// `buildURL` — so asserting on `client.baseURL` (as this suite used to) cannot
+// observe the routing that actually ships. These tests therefore drive a real
+// request through an injected transport and assert on the URL the INSTALLED SDK
+// emitted. Bodies are inert stubs; no credential is ever asserted-on by value
+// beyond the fake key defined in this file.
+function captureTransport(body = { data: [{ embedding: [0, 0] }] }) {
+  const calls = [];
+  const fetchImpl = async (url, init = {}) => {
+    calls.push({ url: String(url), headers: new Headers(init.headers || {}) });
+    return new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+  return { calls, fetchImpl };
+}
+
+const DEPLOY_ENV = {
+  ...AZURE_ENV,
+  AZURE_OPENAI_GPT_DEPLOYMENT: 'gpt-deployment-name',
+  AZURE_OPENAI_EMBED_DEPLOYMENT: 'embed-deployment-name',
+};
+
+describe('createOpenAIClient — Azure deployment-qualified routing (SDK-generated URLs)', () => {
+  beforeEach(() => { providerEnv.beforeEach(); _resetClientCache(); });
+  afterEach(() => { providerEnv.afterEach(); _resetClientCache(); });
+
+  it('embeddings go to /openai/deployments/{embed-deployment}/embeddings', async () => {
+    const cfg = buildAzureConfig(DEPLOY_ENV);
+    const t = captureTransport();
+    const client = await createOpenAIClient({ purpose: 'embed', azure: cfg, fetch: t.fetchImpl });
+    await client.embeddings.create({ model: cfg.embedDeployment, input: 'ping', dimensions: 768 });
+    assert.equal(
+      t.calls[0].url,
+      'https://example.openai.azure.com/openai/deployments/embed-deployment-name/embeddings?api-version=2025-03-01-preview',
+    );
+  });
+
+  it('chat completions go to /openai/deployments/{gpt-deployment}/chat/completions', async () => {
+    const cfg = buildAzureConfig(DEPLOY_ENV);
+    const t = captureTransport({ id: 'x', choices: [] });
+    const client = await createOpenAIClient({ purpose: 'gpt', azure: cfg, fetch: t.fetchImpl });
+    // `max_completion_tokens`, not the deprecated `max_tokens` — the newer Azure
+    // API versions reject `max_tokens` on chat completions.
+    await client.chat.completions.create({
+      model: cfg.gptDeployment,
+      max_completion_tokens: 256,
+      messages: [{ role: 'user', content: 'ping' }],
+    });
+    assert.equal(
+      t.calls[0].url,
+      'https://example.openai.azure.com/openai/deployments/gpt-deployment-name/chat/completions?api-version=2025-03-01-preview',
+    );
+  });
+
+  it('the Responses API is NOT deployment-qualified — /openai/responses', async () => {
+    const cfg = buildAzureConfig(DEPLOY_ENV);
+    const t = captureTransport({ id: 'x', output: [], status: 'completed' });
+    const client = await createOpenAIClient({ purpose: 'gpt', azure: cfg, fetch: t.fetchImpl });
+    await client.responses.create({ model: cfg.gptDeployment, input: 'ping' });
+    assert.equal(
+      t.calls[0].url,
+      'https://example.openai.azure.com/openai/responses?api-version=2025-03-01-preview',
+    );
+  });
+
+  it('a trailing slash on the endpoint emits no double slash', async () => {
+    const cfg = buildAzureConfig({ ...DEPLOY_ENV, AZURE_OPENAI_ENDPOINT: 'https://example.openai.azure.com/' });
+    const t = captureTransport();
+    const client = await createOpenAIClient({ purpose: 'embed', azure: cfg, fetch: t.fetchImpl });
+    await client.embeddings.create({ model: cfg.embedDeployment, input: 'ping', dimensions: 768 });
+    assert.equal(
+      t.calls[0].url,
+      'https://example.openai.azure.com/openai/deployments/embed-deployment-name/embeddings?api-version=2025-03-01-preview',
+    );
+    // Belt-and-braces: no `//` anywhere after the scheme, whatever the shape.
+    assert.equal(/([^:])\/\//.test(t.calls[0].url), false, t.calls[0].url);
+  });
+
+  it('an endpoint carrying a base-path suffix preserves that suffix (APIM route)', async () => {
+    const cfg = buildAzureConfig({ ...DEPLOY_ENV, AZURE_OPENAI_ENDPOINT: 'https://gateway.example.net/aoai-route/' });
+    const t = captureTransport();
+    const client = await createOpenAIClient({ purpose: 'embed', azure: cfg, fetch: t.fetchImpl });
+    await client.embeddings.create({ model: cfg.embedDeployment, input: 'ping', dimensions: 768 });
+    assert.equal(
+      t.calls[0].url,
+      'https://gateway.example.net/aoai-route/openai/deployments/embed-deployment-name/embeddings?api-version=2025-03-01-preview',
+    );
+  });
+
+  it('api-key authentication remains in effect', async () => {
+    const cfg = buildAzureConfig(DEPLOY_ENV);
+    const t = captureTransport();
+    const client = await createOpenAIClient({ purpose: 'embed', azure: cfg, fetch: t.fetchImpl });
+    await client.embeddings.create({ model: cfg.embedDeployment, input: 'ping', dimensions: 768 });
+    assert.equal(t.calls[0].headers.get('api-key'), 'fake-azure-key');
+    // Azure uses the `api-key` header, never `Authorization: Bearer`.
+    assert.equal(t.calls[0].headers.get('authorization'), null);
+  });
+
+  it('AZURE_OPENAI_API_VERSION overrides the deployment-qualified default', async () => {
+    const cfg = buildAzureConfig({ ...DEPLOY_ENV, AZURE_OPENAI_API_VERSION: '2024-10-21' });
+    const t = captureTransport();
+    const client = await createOpenAIClient({ purpose: 'embed', azure: cfg, fetch: t.fetchImpl });
+    await client.embeddings.create({ model: cfg.embedDeployment, input: 'ping', dimensions: 768 });
+    assert.equal(
+      t.calls[0].url,
+      'https://example.openai.azure.com/openai/deployments/embed-deployment-name/embeddings?api-version=2024-10-21',
+    );
+  });
+
+  it('a client built with an injected transport is never cached', async () => {
+    // Guards the leak direction: a test client must not be servable to a real
+    // call site through the module-global cache.
+    const cfg = buildAzureConfig(DEPLOY_ENV);
+    const t = captureTransport();
+    await createOpenAIClient({ purpose: 'embed', azure: cfg, fetch: t.fetchImpl });
+    const real = await createOpenAIClient({ purpose: 'embed', azure: cfg });
+    await real.embeddings.create({ model: cfg.embedDeployment, input: 'x', dimensions: 768 })
+      .catch(() => {}); // a real transport will fail; we only care it wasn't the fake
+    assert.equal(t.calls.length, 0, 'the cached client must not be the fake-transport one');
+  });
+});
+
+describe('createOpenAIClient — Azure client cache isolation by purpose/deployment', () => {
+  beforeEach(() => { providerEnv.beforeEach(); _resetClientCache(); });
+  afterEach(() => { providerEnv.afterEach(); _resetClientCache(); });
+
+  it('gpt and embed purposes return DISTINCT clients pinned to their own deployment', async () => {
+    const cfg = buildAzureConfig(DEPLOY_ENV);
+    const gpt = await createOpenAIClient({ purpose: 'gpt', azure: cfg });
+    const embed = await createOpenAIClient({ purpose: 'embed', azure: cfg });
+    assert.notEqual(gpt, embed, 'deployment is constructor-level route state — must not share a client');
+    assert.equal(gpt.deploymentName, 'gpt-deployment-name');
+    assert.equal(embed.deploymentName, 'embed-deployment-name');
+  });
+
+  it('the same purpose still hits the cache', async () => {
+    const cfg = buildAzureConfig(DEPLOY_ENV);
+    assert.equal(
+      await createOpenAIClient({ purpose: 'gpt', azure: cfg }),
+      await createOpenAIClient({ purpose: 'gpt', azure: cfg }),
+    );
+  });
+
+  it('two deployments of the SAME purpose do not share a client (doctor probe ladder)', async () => {
+    // azure-doctor probes candidate deployments by injecting an azure snapshot.
+    // If the deployment were absent from the cache key, every probe after the
+    // first would silently reuse the first candidate's route.
+    const cfg = buildAzureConfig(DEPLOY_ENV);
+    const a = await createOpenAIClient({ purpose: 'embed', azure: { ...cfg, embedDeployment: 'cand-a' } });
+    const b = await createOpenAIClient({ purpose: 'embed', azure: { ...cfg, embedDeployment: 'cand-b' } });
+    assert.notEqual(a, b);
+    assert.equal(a.deploymentName, 'cand-a');
+    assert.equal(b.deploymentName, 'cand-b');
+  });
+
+  it('never puts raw key material in a cache key', async () => {
+    const cfg = buildAzureConfig(DEPLOY_ENV);
+    await createOpenAIClient({ purpose: 'gpt', azure: cfg });
+    for (const k of _cacheKeys()) {
+      assert.equal(k.includes('fake-azure-key'), false, 'cache key must carry only a digest');
+    }
+  });
 });
 
 describe('createOpenAIClient — Azure routing', () => {
   beforeEach(() => { providerEnv.beforeEach(); _resetClientCache(); });
   afterEach(() => { providerEnv.afterEach(); _resetClientCache(); });
 
-  it('gpt purpose targets AZURE_OPENAI_ENDPOINT /openai/v1 with api-key + api-version', async () => {
+  it('gpt purpose is built against AZURE_OPENAI_ENDPOINT with the api-key credential', async () => {
     const cfg = buildAzureConfig(AZURE_ENV);
     const client = await createOpenAIClient({ purpose: 'gpt', azure: cfg, fresh: true });
-    assert.equal(client.baseURL, 'https://example.openai.azure.com/openai/v1');
+    // baseURL is now the SDK-owned `${endpoint}/openai` root; the deployment
+    // segment is appended per-operation (asserted end-to-end above).
+    assert.equal(client.baseURL, 'https://example.openai.azure.com/openai');
     assert.equal(client.apiKey, 'fake-azure-key');
-  });
-
-  it('applies the api-version query and api-key header (load-bearing Azure options)', async () => {
-    const cfg = buildAzureConfig(AZURE_ENV);
-    const client = await createOpenAIClient({ purpose: 'gpt', azure: cfg, fresh: true });
-    // buildURL bakes the defaultQuery into every request URL.
-    assert.match(client.buildURL('/embeddings', {}), /[?&]api-version=preview/);
-    // defaultHeaders carries the Azure api-key header.
-    assert.equal(client._options?.defaultHeaders?.['api-key'], 'fake-azure-key');
   });
 
   it('foundry-claude purpose targets AZURE_AI_ENDPOINT', async () => {
@@ -72,6 +244,33 @@ describe('createOpenAIClient — Azure routing', () => {
     assert.equal(client.baseURL, 'https://example.services.ai.azure.com/models');
   });
 
+  it('foundry-claude is UNCHANGED — v1 surface, undated api-version, no /deployments', async () => {
+    // Foundry is a separate product surface with no deployment-qualified routing.
+    // The GPT/embed migration must not drag it along, including its api-version.
+    const cfg = buildAzureConfig(DEPLOY_ENV);
+    const t = captureTransport({ id: 'x', choices: [] });
+    const client = await createOpenAIClient({ purpose: 'foundry-claude', azure: cfg, fetch: t.fetchImpl });
+    assert.equal(client.baseURL, 'https://example.services.ai.azure.com/openai/v1');
+    await client.chat.completions.create({
+      model: cfg.claudeDeployment,
+      max_completion_tokens: 256,
+      messages: [{ role: 'user', content: 'ping' }],
+    });
+    assert.equal(
+      t.calls[0].url,
+      'https://example.services.ai.azure.com/openai/v1/chat/completions?api-version=preview',
+    );
+    assert.equal(t.calls[0].headers.get('api-key'), 'fake-azure-key');
+  });
+
+  it('foundry-claude does not share a client with gpt or embed', async () => {
+    const cfg = buildAzureConfig(DEPLOY_ENV);
+    const foundry = await createOpenAIClient({ purpose: 'foundry-claude', azure: cfg });
+    const gpt = await createOpenAIClient({ purpose: 'gpt', azure: cfg });
+    assert.notEqual(foundry, gpt);
+    assert.equal(foundry.deploymentName, undefined, 'foundry client must not be deployment-pinned');
+  });
+
   it('rejects an invalid purpose', async () => {
     await assert.rejects(() => createOpenAIClient({ purpose: 'bogus', azure: INACTIVE }), /Invalid purpose/);
   });
@@ -83,9 +282,24 @@ describe('createOpenAIClient — Azure routing', () => {
 });
 
 describe('azureBaseUrl helper', () => {
-  it('strips trailing slashes before concatenation', () => {
+  it('strips trailing slashes from the gpt/embed endpoint root', () => {
     const cfg = buildAzureConfig({ ...AZURE_ENV, AZURE_OPENAI_ENDPOINT: 'https://x.openai.azure.com/' });
-    assert.equal(_internals.azureBaseUrl('gpt', cfg), 'https://x.openai.azure.com/openai/v1');
+    assert.equal(_internals.azureBaseUrl('gpt', cfg), 'https://x.openai.azure.com');
+  });
+
+  it('preserves a base-path suffix on the endpoint root', () => {
+    const cfg = buildAzureConfig({ ...AZURE_ENV, AZURE_OPENAI_ENDPOINT: 'https://gw.example.net/route//' });
+    assert.equal(_internals.azureBaseUrl('embed', cfg), 'https://gw.example.net/route');
+  });
+
+  it('azureDeploymentFor maps purpose → the right deployment, and names the missing var', () => {
+    const cfg = buildAzureConfig(DEPLOY_ENV);
+    assert.equal(_internals.azureDeploymentFor('gpt', cfg), 'gpt-deployment-name');
+    assert.equal(_internals.azureDeploymentFor('embed', cfg), 'embed-deployment-name');
+    assert.throws(
+      () => _internals.azureDeploymentFor('embed', { ...cfg, embedDeployment: '' }),
+      /AZURE_OPENAI_EMBED_DEPLOYMENT/,
+    );
   });
 });
 

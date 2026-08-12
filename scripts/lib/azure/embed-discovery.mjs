@@ -103,9 +103,22 @@ function classifyProbeError(err) {
 
 /**
  * Probe ONE deployment name with a 1-token embeddings call. Typed outcome (H5).
+ *
+ * **`opts.clientFor` is load-bearing on the deployment-qualified Azure surface.**
+ * There, the deployment is CONSTRUCTOR-level route state — it is baked into the
+ * request path (`/openai/deployments/{deployment}/embeddings`) and the SDK
+ * prefers it over the body's `model`. So one client cannot probe a second
+ * candidate: every call would hit the client's own deployment and the first
+ * candidate would come back `verified` no matter what is deployed — the exact
+ * "green check that never checked" this module's `dimensions` comment warns
+ * about, one layer up. A caller on that surface MUST pass `clientFor` so each
+ * candidate gets a client pinned to it. Default (`() => client`) preserves the
+ * injected-fake contract every unit test here relies on.
+ *
  * @param {{embeddings:{create:Function}}} client
  * @param {string} name - deployment name to try
- * @param {{throttle?: (fn:()=>Promise<any>)=>Promise<any>}} [opts]
+ * @param {{throttle?: (fn:()=>Promise<any>)=>Promise<any>,
+ *          clientFor?: (name:string)=>Promise<object>|object}} [opts]
  * @returns {Promise<{name:string, outcome:string, status?:number|null, detail?:string}>}
  */
 export async function probeDeployment(client, name, opts = {}) {
@@ -115,8 +128,13 @@ export async function probeDeployment(client, name, opts = {}) {
   // a green check that never checked the thing that matters. `dimensions` is
   // exactly where that gap lives: ada-002 rejects it outright.
   const dim = opts.dim ?? symbolIndexConfig.embedDim;
-  const call = () => client.embeddings.create({ model: name, input: 'ping', dimensions: dim });
   try {
+    // Resolving the per-candidate client is INSIDE the try: on the
+    // deployment-qualified surface a bad candidate name can be rejected at
+    // construction, and that must classify as a probe outcome rather than
+    // escape as an unhandled throw that aborts the whole ladder.
+    const probeClient = opts.clientFor ? await opts.clientFor(name) : client;
+    const call = () => probeClient.embeddings.create({ model: name, input: 'ping', dimensions: dim });
     await (opts.throttle ? opts.throttle(call) : call());
     return { name, outcome: ProbeOutcome.VERIFIED, status: 200 };
   } catch (err) {
@@ -176,13 +194,18 @@ function sortCatalog(names, configured) {
  * @param {object} args
  * @param {string|null} args.configured - the currently-configured deployment (probed first)
  * @param {string[]} [args.userCandidates] - repeatable `--candidate` values, ordered
- * @param {{embeddings:{create:Function}, models?:{list:Function}}} args.client
+ * @param {{embeddings:{create:Function}, models?:{list:Function}}} args.client - used
+ *   for the catalog listing (NOT deployment-scoped) and as the probe client when
+ *   no `clientFor` is given
+ * @param {(name:string)=>Promise<object>|object} [args.clientFor] - build a client
+ *   pinned to one candidate deployment; REQUIRED on the deployment-qualified
+ *   Azure surface (see {@link probeDeployment})
  * @param {(fn:()=>Promise<any>)=>Promise<any>} [args.throttle]
  * @param {number} [args.maxProbes] - bounded budget (default 6)
  * @returns {Promise<{status:'verified'|'unverified'|'none-found', selected:string|null,
  *   probed:object[], catalogSource:string, truncatedFrom?:number, reason?:object}>}
  */
-export async function selectEmbedDeployment({ configured, userCandidates = [], client, throttle, maxProbes = 6 }) {
+export async function selectEmbedDeployment({ configured, userCandidates = [], client, clientFor, throttle, maxProbes = 6 }) {
   const catalog = await listEmbeddingCandidates(client);
   const ordered = dedupeOrdered([
     configured,
@@ -192,7 +215,7 @@ export async function selectEmbedDeployment({ configured, userCandidates = [], c
   const budget = ordered.slice(0, maxProbes);
   const probed = [];
   for (const name of budget) {
-    const r = await probeDeployment(client, name, { throttle });
+    const r = await probeDeployment(client, name, { throttle, clientFor });
     probed.push(r);
     if (r.outcome === ProbeOutcome.VERIFIED) {
       return { status: 'verified', selected: name, probed, catalogSource: catalog.source };

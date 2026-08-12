@@ -8,14 +8,28 @@
  *
  * Routing (gated on `azureConfig.active`, i.e. AZURE_OPENAI_ENDPOINT present):
  *
- *   - **Azure active** → the Azure OpenAI **v1 surface**: plain `OpenAI` SDK
- *     with `baseURL = ${endpoint}/openai/v1`, `api-key` header, `api-version`
- *     query. This is the kit-proven construction
- *     (docs/plans/security/files/scripts/lib/security/azure-embed.mjs).
- *       · purpose `gpt` / `embed` → `AZURE_OPENAI_ENDPOINT`
- *       · purpose `foundry-claude` → `AZURE_AI_ENDPOINT` (+ `foundryApiPath`,
- *         which may be `/models` rather than `/openai/v1` on Foundry
- *         Serverless — Gemini-R3-M, manual-verification-required).
+ *   - **Azure active, purpose `gpt` / `embed`** → the **deployment-qualified**
+ *     surface, via the SDK's own `AzureOpenAI` client against
+ *     `AZURE_OPENAI_ENDPOINT`. The SDK derives every operation path itself:
+ *       · `/openai/deployments/{deployment}/embeddings`
+ *       · `/openai/deployments/{deployment}/chat/completions`
+ *       · `/openai/responses`  (NOT deployment-qualified — by Azure's design)
+ *     We never concatenate an operation path by hand; we supply only the
+ *     endpoint, the key, the deployment, and the api-version.
+ *
+ *     Was (until 2026-08-12): a plain `OpenAI` pinned to
+ *     `baseURL = ${endpoint}/openai/v1`, i.e. the **v1 surface**, which emits
+ *     `…/openai/v1/embeddings` and carries the deployment only as the body's
+ *     `model`. Resources and APIM front-ends exposing the standard
+ *     deployment-qualified API have no such route and 404. Two clients on one
+ *     Azure resource can legitimately need different deployments, so the
+ *     deployment is **constructor-level route state** — see the cache key.
+ *
+ *   - **Azure active, purpose `foundry-claude`** → UNCHANGED: plain `OpenAI`
+ *     with `baseURL = ${AZURE_AI_ENDPOINT}${foundryApiPath}` (which may be
+ *     `/models` rather than `/openai/v1` on Foundry Serverless — Gemini-R3-M,
+ *     manual-verification-required) and the undated `preview` api-version.
+ *     Foundry is a separate product surface with no `/deployments/` routing.
  *
  *   - **Azure inactive** → `new OpenAI({ apiKey: OPENAI_API_KEY })`, **byte-
  *     identical** to today (the opt-in invariant; see tests).
@@ -64,6 +78,12 @@ function keyDigest(k) {
 /**
  * Resolve the Azure base URL for a purpose. `gpt`/`embed` use the AOAI
  * endpoint; `foundry-claude` uses the Foundry inference endpoint + path.
+ *
+ * NOTE for `gpt`/`embed` this returns the endpoint ROOT only (trailing slashes
+ * stripped, any base-path suffix such as an APIM route preserved). It is what we
+ * hand to `AzureOpenAI` as `endpoint`; the SDK appends `/openai` and the
+ * `/deployments/{deployment}` segment itself. It is deliberately no longer a
+ * request-ready base URL for those purposes — see the module header.
  * @returns {string}
  */
 function azureBaseUrl(purpose, cfg) {
@@ -75,7 +95,25 @@ function azureBaseUrl(purpose, cfg) {
     }
     return `${trimTrailingSlash(cfg.aiEndpoint)}${normalizeApiPath(cfg.foundryApiPath)}`;
   }
-  return `${trimTrailingSlash(cfg.openaiEndpoint)}/openai/v1`;
+  return trimTrailingSlash(cfg.openaiEndpoint);
+}
+
+/**
+ * The deployment that routes a `gpt`/`embed` call. Constructor-level state: it
+ * is baked into every path the client emits, so two purposes can never share one
+ * client instance.
+ * @returns {string}
+ */
+function azureDeploymentFor(purpose, cfg) {
+  const deployment = purpose === 'embed' ? cfg.embedDeployment : cfg.gptDeployment;
+  if (!deployment) {
+    throw new Error(
+      `[openai-client] Azure purpose "${purpose}" requires a deployment name ` +
+      `(${purpose === 'embed' ? 'AZURE_OPENAI_EMBED_DEPLOYMENT' : 'AZURE_OPENAI_GPT_DEPLOYMENT'}). ` +
+      'Run `npm run azure:doctor -- --fix` to find the deployment your resource actually has.',
+    );
+  }
+  return deployment;
 }
 
 /**
@@ -86,6 +124,11 @@ function azureBaseUrl(purpose, cfg) {
  * @param {object} [options.azure] - inject an azureConfig snapshot (tests)
  * @param {string} [options.apiKey] - override OPENAI_API_KEY (public path, tests)
  * @param {boolean} [options.fresh] - bypass cache (tests)
+ * @param {Function} [options.fetch] - inject a transport so a test can capture the
+ *   exact URL the INSTALLED SDK generates (the deployment segment is added inside
+ *   `AzureOpenAI.buildRequest`, so `buildURL` alone cannot observe it). A client
+ *   built with an injected transport is never cached, so it can never be handed
+ *   to a production call site.
  * @returns {Promise<import('openai').OpenAI>}
  */
 export async function createOpenAIClient(options = {}) {
@@ -130,26 +173,63 @@ export async function createOpenAIClient(options = {}) {
   // the in-process map — and we never log it).
   let cacheKey;
   let build;
-  if (cfg.active) {
+  if (cfg.active && purpose !== 'foundry-claude') {
+    // ── Deployment-qualified Azure OpenAI (purposes `gpt` / `embed`) ────────
+    const endpoint = azureBaseUrl(purpose, cfg);
+    const deployment = azureDeploymentFor(purpose, cfg);
+    const { AzureOpenAI } = await import('openai');
+    // `purpose` AND `deployment` are both in the key: the deployment is baked
+    // into every path this client emits, so a `gpt` client handed to an
+    // embedding call would silently POST to the GPT deployment's
+    // `/embeddings` route. Before this fix both purposes resolved to one
+    // baseURL and therefore shared ONE cached instance. `purpose` is kept
+    // alongside `deployment` so two purposes configured to the SAME deployment
+    // name still stay isolated. Digest the key — never store raw secret
+    // material as a Map key, and never log it.
+    cacheKey = `azure:deployment:${purpose}:${endpoint}:${deployment}:${cfg.deploymentApiVersion}:${keyDigest(cfg.apiKey)}`;
+    build = () => new AzureOpenAI({
+      // `endpoint`, not `baseURL` — they are mutually exclusive in the SDK, and
+      // only `endpoint` lets the SDK own path derivation. Any base-path suffix
+      // on the configured endpoint (e.g. an APIM route) is preserved; the SDK
+      // strips trailing slashes before appending, and so do we, so no request
+      // can carry a double slash.
+      endpoint,
+      apiKey: cfg.apiKey,
+      // Constructor-level route state: pins /deployments/{deployment} on the
+      // operation paths that take it, and leaves /openai/responses alone.
+      deployment,
+      apiVersion: cfg.deploymentApiVersion,
+      // The SDK retries 429/503 honouring the `Retry-After` / `x-ratelimit-reset-*`
+      // headers with exponential backoff — the primary 429 absorber on Azure's
+      // small default quotas.
+      maxRetries: azureMaxRetries(),
+      // Test-only transport injection (see `options.fetch`); undefined in prod.
+      ...(options.fetch ? { fetch: options.fetch } : {}),
+    });
+    // AzureOpenAI emits `api-key` from its own `authHeaders()`; we deliberately
+    // do not also set a defaultHeaders entry, so there is exactly one writer.
+  } else if (cfg.active) {
+    // ── Foundry-Claude (OpenAI-shaped surface) — UNCHANGED ─────────────────
     const baseURL = azureBaseUrl(purpose, cfg);
-    // Digest the key — never store raw secret material as a Map key.
     cacheKey = `azure:${baseURL}:${cfg.apiVersion}:${keyDigest(cfg.apiKey)}`;
     build = () => new OpenAI({
       baseURL,
       apiKey: cfg.apiKey,
       defaultHeaders: { 'api-key': cfg.apiKey },
       defaultQuery: { 'api-version': cfg.apiVersion },
-      // The SDK retries 429/503 honouring the `Retry-After` / `x-ratelimit-reset-*`
-      // headers with exponential backoff — the primary 429 absorber on Azure's
-      // small default quotas.
       maxRetries: azureMaxRetries(),
+      ...(options.fetch ? { fetch: options.fetch } : {}),
     });
   } else {
     const apiKey = options.apiKey || process.env.OPENAI_API_KEY || '';
     // Byte-identical to today's `new OpenAI({ apiKey })`.
     cacheKey = `public:${keyDigest(apiKey)}`;
-    build = () => new OpenAI({ apiKey });
+    build = () => new OpenAI({ apiKey, ...(options.fetch ? { fetch: options.fetch } : {}) });
   }
+
+  // A client carrying an injected transport is a test artefact: never read from
+  // and never written to the shared cache, so it cannot leak into a real call.
+  if (options.fetch) return build();
 
   if (!options.fresh && _clientCache.has(cacheKey)) {
     return _clientCache.get(cacheKey);
@@ -212,9 +292,19 @@ export function _resetClientCache() {
   _clientCache.clear();
 }
 
+/**
+ * The current cache keys. Tests only — exists so a test can assert that NO key
+ * carries raw credential material (they hold only a `keyDigest`). Never logged.
+ * @returns {string[]}
+ */
+export function _cacheKeys() {
+  return [..._clientCache.keys()];
+}
+
 // Exports for tests — mirrors the file-io.mjs / anthropic-client.mjs pattern.
 export const _internals = {
   azureBaseUrl,
+  azureDeploymentFor,
   trimTrailingSlash,
   VALID_PURPOSES,
 };

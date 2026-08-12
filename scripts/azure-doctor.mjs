@@ -75,6 +75,7 @@ function reportExitCode(result, configured) {
  * @param {{
  *   azure: typeof azureConfig,
  *   client: object,
+ *   clientFor?: (name:string)=>Promise<object>|object,
  *   select?: typeof realSelect,
  *   throttle?: Function,
  *   isTTY: boolean,
@@ -111,6 +112,7 @@ export async function runAzureDoctor(options, deps) {
     configured: azure.embedDeployment,
     userCandidates: options.candidates || [],
     client: deps.client,
+    clientFor: deps.clientFor,
     throttle: deps.throttle,
   });
   const configured = azure.embedDeployment;
@@ -249,6 +251,17 @@ async function main() {
   const { createOpenAIClient } = await import('./lib/openai-client.mjs');
   const { azureThrottle } = await import('./lib/azure-throttle.mjs');
   const client = await createOpenAIClient({ purpose: 'embed' });
+  // One client PER candidate. The deployment is constructor-level route state on
+  // the deployment-qualified surface — reusing `client` would send every probe to
+  // the already-configured deployment and stamp the first candidate `verified`
+  // regardless of what the resource actually has (see probeDeployment's docstring).
+  // `azure` snapshot-injection is the existing seam for this (same pattern as
+  // model-eval's provider-adapter); the factory's cache key includes the
+  // deployment, so candidates stay isolated from each other and from `client`.
+  const clientFor = (name) => createOpenAIClient({
+    purpose: 'embed',
+    azure: { ...azureConfig, embedDeployment: name },
+  });
   const repoRoot = process.cwd();
   const envPath = resolveEnvPath(repoRoot, options.envFile);
 
@@ -269,7 +282,7 @@ async function main() {
 
   try {
     const r = await runAzureDoctor(options, {
-      azure: azureConfig, client, throttle: azureThrottle,
+      azure: azureConfig, client, clientFor, throttle: azureThrottle,
       isTTY: Boolean(process.stdin.isTTY) && !options.json,
       prompt,
       readEnvFile: (p) => (existsSync(p) ? readFileSync(p, 'utf8') : ''),

@@ -783,19 +783,28 @@ audit trail: [`docs/plans/azure-work-profile.md`](docs/plans/azure-work-profile.
 
 | Role | Public | Azure work profile |
 |---|---|---|
-| GPT auditor | `new OpenAI()` → api.openai.com | Azure OpenAI v1 (`AZURE_OPENAI_ENDPOINT/openai/v1`), deployment `AZURE_OPENAI_GPT_DEPLOYMENT` |
+| GPT auditor | `new OpenAI()` → api.openai.com | Azure OpenAI, deployment-qualified via the SDK's `AzureOpenAI` (`AZURE_OPENAI_ENDPOINT/openai/deployments/<deployment>/…`), deployment `AZURE_OPENAI_GPT_DEPLOYMENT` |
 | Final reviewer | Gemini → Claude Opus fallback | **Opus on Foundry** (`AZURE_AI_ENDPOINT`), deployment `AZURE_FOUNDRY_CLAUDE_DEPLOYMENT` — replaces Gemini |
 | Embeddings | Gemini `gemini-embedding-001` | Azure `text-embedding-3-large` (`dimensions: 768`) |
 
 **Seam (mirrors `anthropic-client.mjs`)**: [`scripts/lib/openai-client.mjs`](scripts/lib/openai-client.mjs)
 `createOpenAIClient({purpose})` + [`embed-text.mjs`](scripts/lib/embed-text.mjs)
-`embedText()` route to Azure-v1 or public by env presence; `azureConfig` in
+`embedText()` route to Azure or public by env presence; `azureConfig` in
 [config.mjs](scripts/lib/config.mjs). Wire deployment comes from the
 `AZURE_*_DEPLOYMENT` vars while `OPENAI_AUDIT_MODEL` / `CLAUDE_FINAL_REVIEW_MODEL`
 stay logical sentinels (dodges the `gpt-5.3 → latest-gpt` remap footgun);
 `MODEL_CATALOG_REFRESH` auto-skips under Azure.
 
 **Load-bearing gotchas** (the operational depth is in the guide):
+- **The deployment is CONSTRUCTOR-level route state, not a body field** (fixed
+  2026-08-12). `gpt` and `embed` are built as `AzureOpenAI({endpoint, deployment,
+  apiVersion})` and the SDK derives `/openai/deployments/{deployment}/…` itself —
+  never concatenate an operation path, and never share one client across purposes
+  (the cache key carries purpose + deployment). A caller probing *candidate*
+  deployments must build a client per candidate (`selectEmbedDeployment`'s
+  `clientFor`), or every probe silently hits the configured one. `api-version`
+  defaults to the dated `2025-03-01-preview` here; the Foundry-Claude route is
+  untouched and keeps `/openai/v1` + the undated `preview`.
 - **Vector-space safety + embedding-deployment doctor**: provenance is the single
   endpoint-qualified `resolveEmbedProfile()` identity; a deployment/resource switch
   is a distinct space and `refresh` auto-promotes to full so spaces can't mix. Unset

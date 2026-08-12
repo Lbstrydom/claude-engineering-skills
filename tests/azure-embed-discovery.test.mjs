@@ -31,6 +31,68 @@ function fakeClient({ deployed = [], catalog = null, failWith = null } = {}) {
 
 const err = (status, code, message) => Object.assign(new Error(message || code), { status, code });
 
+describe('probe ladder — per-candidate client (deployment-qualified Azure surface)', () => {
+  // On that surface the deployment is CONSTRUCTOR-level route state, so probing a
+  // second candidate through the first candidate's client silently re-probes the
+  // first deployment. These lock the seam that prevents it.
+  it('probeDeployment uses clientFor(name) rather than the shared client', async () => {
+    const shared = fakeClient({ deployed: ['anything'] });
+    const built = [];
+    // A client pinned to `pinned-a` — it answers for its OWN deployment only,
+    // exactly like a real deployment-pinned client would.
+    const clientFor = (name) => {
+      built.push(name);
+      return {
+        embeddings: {
+          create: async () => {
+            if (name !== 'pinned-a') {
+              const e = new Error(`Unknown model: ${name}`);
+              e.status = 400; e.code = 'unknown_model';
+              throw e;
+            }
+            return { data: [{ embedding: [0.1] }] };
+          },
+        },
+      };
+    };
+    const miss = await probeDeployment(shared, 'pinned-b', { clientFor });
+    assert.equal(miss.outcome, ProbeOutcome.UNSUPPORTED);
+    const hit = await probeDeployment(shared, 'pinned-a', { clientFor });
+    assert.equal(hit.outcome, ProbeOutcome.VERIFIED);
+    assert.deepEqual(built, ['pinned-b', 'pinned-a']);
+    assert.equal(shared.calls(), 0, 'the shared client must never serve a probe when clientFor is given');
+  });
+
+  it('selectEmbedDeployment builds one client per probed candidate', async () => {
+    const built = [];
+    const c = fakeClient({ deployed: ['team-embed'], catalog: [{ id: 'text-embedding-3-large' }] });
+    const clientFor = (name) => {
+      built.push(name);
+      return { embeddings: { create: ({ model }) => c.embeddings.create({ model }) } };
+    };
+    const r = await selectEmbedDeployment({ configured: 'nope', userCandidates: ['team-embed'], client: c, clientFor });
+    assert.equal(r.status, 'verified');
+    assert.equal(r.selected, 'team-embed');
+    assert.deepEqual(built, ['nope', 'team-embed'], 'one client per candidate, in ladder order');
+  });
+
+  it('a clientFor that throws classifies as a probe outcome, not an unhandled throw', async () => {
+    // Construction can reject a malformed candidate name; that must not abort
+    // the whole ladder.
+    const c = fakeClient({ deployed: [] });
+    const r = await probeDeployment(c, 'x', {
+      clientFor: () => { throw Object.assign(new Error('boom'), { status: 500 }); },
+    });
+    assert.equal(r.outcome, ProbeOutcome.UNVERIFIED);
+  });
+
+  it('without clientFor, the shared client is still used (existing callers unchanged)', async () => {
+    const c = fakeClient({ deployed: ['e'] });
+    assert.equal((await probeDeployment(c, 'e')).outcome, ProbeOutcome.VERIFIED);
+    assert.equal(c.calls(), 1);
+  });
+});
+
 describe('probeDeployment — "verified" must mean "usable"', () => {
   // The probe used to call embeddings.create WITHOUT `dimensions`, while every
   // real embedText call sends it. So a deployment could pass the probe, get
