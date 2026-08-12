@@ -310,19 +310,25 @@ export async function syncFalsePositivePatterns(repoId, patterns) {
         `(would mislabel ${Object.keys(patterns || {}).length} repo-scoped patterns as cross-repo GLOBAL)\n`
       );
     }
-    return;
+    // An unresolved repo identity is a REFUSAL, not a decline: the sync would
+    // have mislabelled repo-scoped patterns as GLOBAL. Reported as a failed
+    // write so it is counted rather than passing as a normal outcome.
+    return { applied: false, rows: 0, reason: 'repo-identity-unresolved' };
   }
-  if (!await isCloudEnabled()) return;
+  if (!await isCloudEnabled()) return { applied: false, rows: 0, reason: 'cloud-off' };
   const rows = buildFpPatternRows(repoId, patterns);
-  if (rows.length === 0) return;
+  // Terminal: an empty dirty subset maps to zero rows on every attempt.
+  if (rows.length === 0) return { applied: true, rows: 0, reason: 'no-rows' };
   try {
     await upsert('false_positive_patterns', rows, {
       onConflict: ['repo_id', 'pattern_type', 'pattern_value'],
       update: 'all',
     });
     process.stderr.write(`  [learning] Synced ${rows.length} FP patterns to cloud\n`);
+    return { applied: true, rows: rows.length };
   } catch (err) {
     process.stderr.write(`  [learning] syncFalsePositivePatterns failed: ${err.message}\n`);
+    return { applied: false, rows: 0, reason: 'write-failed', error: err };
   }
 }
 

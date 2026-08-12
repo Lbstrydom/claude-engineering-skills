@@ -212,9 +212,18 @@ test('every learning-state sink sits under the writeLearningState gate', () => {
   assert.match(banditBlock, /bandit\.flush\(\);/, 'bandit.flush must be inside that gate');
   assert.match(banditBlock, /durableWrite\('learning\.banditArms'/,
     'the bandit-arms cloud sink must be inside that same gate');
-  // syncFalsePositivePatterns has its own.
-  assert.match(src, /if\s*\(fpTracker\)\s*\{[\s\S]{0,900}?writeLearningState\(learningWritesAllowed,\s*\(\)\s*=>\s*\{[\s\S]{0,300}?syncFalsePositivePatterns\(/,
-    'syncFalsePositivePatterns must be routed through writeLearningState');
+  // The FP-pattern sink has its own gate. Its SINK MOVED too (2026-08-12): the
+  // Cluster B audit found it was still fire-and-forget inside the gate — the
+  // fifth such write — so it now goes through `durableWrite('learning.fpPatterns')`
+  // and is awaited. Same block-extraction discipline as above, for the same
+  // reason: a lazy cross-file match would find a later gate and prove nothing.
+  const fpIdx = src.indexOf('\n  if (fpTracker) {');
+  assert.ok(fpIdx > 0, 'the fpTracker sync block must exist');
+  const fpBlock = src.slice(fpIdx, src.indexOf('\n  }', fpIdx));
+  assert.match(fpBlock, /writeLearningState\(learningWritesAllowed,\s*async\s*\(\)\s*=>\s*\{/,
+    'the fpTracker block must open with a writeLearningState gate');
+  assert.match(fpBlock, /durableWrite\('learning\.fpPatterns'/,
+    'the FP-pattern cloud sink must be inside that gate');
   // No sink calls writeLearningState with a literal `true` (that would
   // silently re-open the ungated leak this whole mechanism exists to close).
   const hardcodedAllowed = src.match(/writeLearningState\(\s*true\s*,/g) || [];

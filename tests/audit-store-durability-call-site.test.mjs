@@ -62,8 +62,18 @@ const NOT_A_DURABLE_WRITE = {
   recordFinalReviewFix: 'Operator-initiated CLI write (cross-skill.mjs final-review-record-fix). Synchronous, awaited, and its failure reaches the operator as a non-zero exit.',
   recordAdjudicationEvent: 'Operator/ledger-initiated, awaited by its caller, and the ledger on disk is the durable copy — a spill would be a second queue over the same evidence.',
   recordConvergenceState: 'Gate-evidence write with its own try/catch and explicit stderr report at the call site; the local evidence marker is the durable copy.',
-  syncFalsePositivePatterns: 'Dirty-subset upsert of a LOCAL file that is itself the durable copy — the local tracker survives the failure and the next run re-syncs. Replaying a stale snapshot would overwrite newer patterns (the same reason learning.banditArms is registered but keyless).',
 };
+
+/**
+ * A write-shaped export declaration, in EITHER form.
+ *
+ * `export function` only was the first version, and it was a real hole
+ * (Cluster B audit M15): a writer added as `export const recordX = async () =>`
+ * would have been invisible to the oracle — and invisible is the failure mode
+ * this whole test exists to remove. No such export exists today, which is
+ * exactly why it needed fixing before one does.
+ */
+const WRITER_DECL = /^export (?:async function|function|const) (\w+)/gm;
 
 describe('writer-set oracle — derived from the store modules, not enumerated', () => {
   test('every write-shaped store export is registered or explicitly exempted', async () => {
@@ -77,7 +87,7 @@ describe('writer-set oracle — derived from the store modules, not enumerated',
     const unaccounted = [];
     for (const mod of STORE_MODULES) {
       const src = read(mod);
-      for (const m of src.matchAll(/^export (?:async )?function (\w+)/gm)) {
+      for (const m of src.matchAll(new RegExp(WRITER_DECL.source, WRITER_DECL.flags))) {
         const name = m[1];
         if (!WRITER_NAME.test(name)) continue;
         if (NOT_A_DURABLE_WRITE[name]) continue;
@@ -102,14 +112,14 @@ describe('writer-set oracle — derived from the store modules, not enumerated',
     // what is unrepresentable from it?"
     const all = new Set();
     for (const mod of STORE_MODULES) {
-      for (const m of read(mod).matchAll(/^export (?:async )?function (\w+)/gm)) all.add(m[1]);
+      for (const m of read(mod).matchAll(new RegExp(WRITER_DECL.source, WRITER_DECL.flags))) all.add(m[1]);
     }
     // recordConvergenceState / recordDiffComplexity live in sibling store
     // modules; accept an exemption that resolves anywhere under scripts/lib/store.
     const storeDir = path.join(REPO, 'scripts/lib/store');
     for (const f of fs.readdirSync(storeDir)) {
       if (!f.endsWith('.mjs')) continue;
-      for (const m of fs.readFileSync(path.join(storeDir, f), 'utf-8').matchAll(/^export (?:async )?function (\w+)/gm)) {
+      for (const m of fs.readFileSync(path.join(storeDir, f), 'utf-8').matchAll(new RegExp(WRITER_DECL.source, WRITER_DECL.flags))) {
         all.add(m[1]);
       }
     }
@@ -150,7 +160,10 @@ describe('orchestrator call sites', () => {
     // The literal defect: a store writer called with a trailing `.catch(` and no
     // await. Asserted on the four names the plan traced, because THIS test is
     // about those call sites; the oracle above is what catches a fifth writer.
-    for (const fn of ['recordFindings', 'recordPassStats', 'recordSuppressionEvents', 'syncBanditArms']) {
+    // `syncFalsePositivePatterns` joined this list on 2026-08-12: the Cluster B
+    // audit found it was the FIFTH fire-and-forget write in the same block,
+    // which the plan's own trace of "the four call sites" had missed.
+    for (const fn of ['recordFindings', 'recordPassStats', 'recordSuppressionEvents', 'syncBanditArms', 'syncFalsePositivePatterns']) {
       const bad = new RegExp(`(?<!await )\\b${fn}\\([^;]*\\)\\.catch\\(`, 's');
       assert.ok(!bad.test(src), `${fn} is still called fire-and-forget in ${ORCH}`);
     }
@@ -165,16 +178,19 @@ describe('orchestrator call sites', () => {
     assert.match(src, /durableWrite\('audit\.suppressionEvents'/);
     assert.match(src, /durableWrite\('learning\.banditArms'/);
     assert.match(src, /durableWrite\('audit\.runComplete'/);
+    assert.match(src, /durableWrite\('learning\.fpPatterns'/);
   });
 
   test('a lost write makes the run incomplete — in the result AND in the persisted row', () => {
     const src = read(ORCH);
     // Two writers of one verdict (the returned object and the column) is exactly
     // the shape that drifts, so both are pinned to the same expression.
-    const occurrences = [...src.matchAll(/writeOutcomes\.lost > 0 \? 'incomplete' : 'complete'/g)];
+    // SPILLED counts as incomplete too (Cluster B audit M16): at the moment the
+    // row is written, a spilled write's data is not in the store.
+    const occurrences = [...src.matchAll(/writeOutcomes\.lost > 0 \|\| writeOutcomes\.spilled > 0 \? 'incomplete' : 'complete'/g)];
     assert.equal(occurrences.length, 2,
       'runStatus must be derived identically for the returned result and for audit_runs.run_status');
-    assert.match(src, /runStatus: writeOutcomes\.lost > 0/);
+    assert.match(src, /runStatus: writeOutcomes\.lost > 0 \|\| writeOutcomes\.spilled > 0/);
     assert.ok(!/mergedResult\.runStatus = 'complete';/.test(src),
       'an unconditional complete is the false zero this plan exists to remove');
   });
@@ -257,6 +273,7 @@ describe('a declined write is `skipped`, not `lost`', () => {
       'run-row-absent': 'the UPDATE ran and matched no row — attempted, not declined',
       'no-persistable-rows': 'terminal success: the payload maps to zero rows on every attempt',
       'no-rows': 'terminal success: the payload maps to zero rows on every attempt',
+      'repo-identity-unresolved': 'a REFUSAL, not a decline — the sync would have mislabelled repo-scoped patterns as cross-repo GLOBAL, so it must be counted, not passed over',
     };
 
     // Match the RECEIPT shape specifically — `{applied, rows, reason}` — not any

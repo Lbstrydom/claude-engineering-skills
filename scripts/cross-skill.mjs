@@ -2668,9 +2668,15 @@ async function cmdWriteSpill() {
     });
   }
 
-  const cap = argOption('cap') ? Number.parseInt(argOption('cap'), 10) : undefined;
-  if (argOption('cap') && !(Number.isInteger(cap) && cap > 0)) {
-    return emitError('BAD_INPUT', `--cap must be a positive integer; got ${JSON.stringify(argOption('cap'))}`);
+  // `/^\d+$/` before parseInt, not parseInt alone: parseInt takes the numeric
+  // PREFIX, so `--cap 1junk` would parse as 1 and run a cap the operator never
+  // asked for. A malformed bound on a queue-draining command is exactly the
+  // "silently does something other than what you asked" class assertKnownFlags
+  // refuses one level up.
+  const capRaw = argOption('cap');
+  const cap = capRaw ? Number.parseInt(capRaw, 10) : undefined;
+  if (capRaw && !(/^\d+$/.test(String(capRaw).trim()) && Number.isInteger(cap) && cap > 0)) {
+    return emitError('BAD_INPUT', `--cap must be a positive integer; got ${JSON.stringify(capRaw)}`);
   }
   const res = await drainSpill({ cap, isCloudEnabled });
   if (res.state === 'unavailable') {

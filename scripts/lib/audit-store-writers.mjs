@@ -34,7 +34,7 @@ import { registerWriter, registeredWriters } from './durable-write.mjs';
 import {
   recordFindings, recordPassStats, recordSuppressionEvents, recordRunComplete,
 } from './store/runs-findings.mjs';
-import { syncBanditArms } from './store/bandit-fp.mjs';
+import { syncBanditArms, syncFalsePositivePatterns } from './store/bandit-fp.mjs';
 
 /**
  * Turn a store receipt into a `durableWrite` result.
@@ -150,6 +150,25 @@ export function registerAuditStoreWriters() {
   registerWriter('learning.banditArms', {
     schemaVersion: 1,
     replay: (payload) => receipt(syncBanditArms(payload.arms)),
+  });
+
+  // ── learning.fpPatterns ───────────────────────────────────────────────────
+  // The FIFTH fire-and-forget write in the orchestrator's cloud block, which
+  // the plan's own trace missed and the Cluster B audit caught (H4/M12). It was
+  // `.catch(log)` with no await inside `writeLearningState`, so the pool's
+  // `allowExitOnIdle: true` could kill it in flight — the exact mechanism that
+  // left 25/25 code runs with un-updated completion rows in July.
+  //
+  // In scope by IMPACT, not authorship: decision 6 says every audit-store write
+  // in that block goes through the seam, and shipping "the writes are no longer
+  // fire-and-forget" while one still is would be the claim this plan exists to
+  // stop. Keyless — the local FP tracker file IS the durable copy and a stale
+  // dirty subset replayed later would overwrite newer patterns. Registering it
+  // keyless buys exactly what it needs: an await, a counted outcome, and a
+  // guarantee it is never replayed.
+  registerWriter('learning.fpPatterns', {
+    schemaVersion: 1,
+    replay: (payload) => receipt(syncFalsePositivePatterns(payload.repoId, payload.patterns)),
   });
 
   return registeredWriters();

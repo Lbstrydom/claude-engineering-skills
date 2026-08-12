@@ -3487,8 +3487,13 @@ export async function runLegacyProductionAudit(ctx) {
     // a DIFFERENT failure (unresolved repo identity on a real run) — before
     // this gate, that coincidence was the only thing keeping shadow runs
     // from writing FP patterns.
-    writeLearningState(learningWritesAllowed, () => {
-      syncFalsePositivePatterns(cloudRepoId, fpTracker.dirtyPatterns()).catch(e => process.stderr.write(`  [learning] ${e.message}\n`));
+    // Awaited and counted since 2026-08-12 (Cluster B audit H4/M12). This was
+    // the fifth fire-and-forget write in this block — un-awaited, so the pool's
+    // `allowExitOnIdle` could kill it once the last awaited query went idle.
+    await writeLearningState(learningWritesAllowed, async () => {
+      tallyWriteOutcomes(writeOutcomes, [await durableWrite('learning.fpPatterns', {
+        repoId: cloudRepoId, patterns: fpTracker.dirtyPatterns(),
+      })]);
     });
   }
 
@@ -3742,7 +3747,7 @@ export async function runLegacyProductionAudit(ctx) {
       // its verdict says. Computed here rather than read from `mergedResult`
       // because this write happens BEFORE the tail sets `runStatus` — and the
       // two must agree, which is asserted in the durability test suite.
-      runStatus: writeOutcomes.lost > 0 ? 'incomplete' : 'complete',
+      runStatus: writeOutcomes.lost > 0 || writeOutcomes.spilled > 0 ? 'incomplete' : 'complete',
     };
     tallyWriteOutcomes(writeOutcomes, [
       await durableWrite('audit.runComplete', { runId: cloudRunId, stats: completionStats }),
@@ -3895,8 +3900,16 @@ export async function runLegacyProductionAudit(ctx) {
   // and under-reports. `lost` (not `spilled`) is the trigger — a spilled write
   // is queued and a later drain will apply it, whereas a lost one is only
   // evidence in `lost/` and will never reach the store on its own.
+  // SPILLED counts too (Cluster B audit M16). The first version triggered on
+  // `lost` alone, on the reasoning that a spilled write is recoverable — true,
+  // and beside the point: at the moment this row is written the data is NOT in
+  // the store, so `complete` is a claim about a state that does not yet exist.
+  // A consumer querying that run's findings gets fewer rows than the audit
+  // produced while `run_status` says nothing is missing — the believable false
+  // zero, one layer up. `write_outcomes` carries which of the two it was, so
+  // "will be retried" and "never" stay distinguishable.
   mergedResult.writeOutcomes = writeOutcomes;
-  mergedResult.runStatus = writeOutcomes.lost > 0 ? 'incomplete' : 'complete';
+  mergedResult.runStatus = writeOutcomes.lost > 0 || writeOutcomes.spilled > 0 ? 'incomplete' : 'complete';
 
   // Say it where a human will see it. A count that only ever reaches a column
   // is better than stderr, but the operator running the audit is the one who
