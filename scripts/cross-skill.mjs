@@ -384,7 +384,7 @@ async function cmdUpsertPlan() {
   await initLearningStore();
   if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, planId: null });
   const repoId = await resolveRepoId(p);
-  const planId = await upsertPlan(repoId, {
+  const res = await upsertPlan(repoId, {
     path: p.path,
     skill: p.skill,
     status: p.status,
@@ -393,6 +393,21 @@ async function cmdUpsertPlan() {
     commitSha: p.commitSha || currentCommitSha(),
     checksum: p.checksum,
   });
+  // This CLI's stdout is read by a skill, so a store failure has to reach the
+  // envelope (durability plan decision 6). `write-failed` is an ERROR here: a
+  // skill that sees `{ok:true, planId:null}` proceeds as though the plan simply
+  // was not registered, which is the reading that made an outage invisible.
+  // `invalid-input` is also an error — it is a caller bug, and this caller is a
+  // command line someone typed.
+  if (!res.ok && res.reason === 'write-failed') {
+    return emitError('PLAN_WRITE_FAILED', res.message, { cloud: true });
+  }
+  if (!res.ok && res.reason === 'invalid-input') {
+    return emitError('BAD_INPUT', res.message, { cloud: true });
+  }
+  // `cloud-off` keeps today's silence — but it is unreachable here: the guard
+  // above already returned for a disabled store.
+  const planId = res.ok ? res.planId : null;
   // Deterministic arm-eval capture (toggle-gated; detached) — fires when the
   // plan skill includes the original task text in this upsert payload, so
   // capture is part of PERSISTING the plan rather than a skippable trailing

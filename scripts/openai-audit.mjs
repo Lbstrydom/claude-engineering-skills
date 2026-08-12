@@ -1101,7 +1101,13 @@ async function main() {
     // Best-effort: cloud off / failure → result simply lacks _cloudRunId,
     // exactly today's behaviour.
     if (mode === 'plan' && !result._cloudRunId && Array.isArray(result.findings)) {
-      const { cloudRunId } = await registerPlanAuditRun({ repoProfile, planFile, runId: explicitRunId });
+      const { cloudRunId, planLinkLost } = await registerPlanAuditRun({ repoProfile, planFile, runId: explicitRunId });
+      // A plan upsert that failed against a reachable store is carried onto the
+      // result (durability plan decision 6). Without this the plan-audit branch
+      // would keep the silence the code-audit branch just lost: `_cloudRunId` is
+      // set, the run looks fully registered, and the missing plan linkage is
+      // visible nowhere a consumer reads.
+      if (planLinkLost) result._planLinkLost = planLinkLost;
       if (cloudRunId) {
         result._cloudRunId = cloudRunId;
         await completePlanAuditRun(cloudRunId, result, { round, durationMs: Date.now() - startMs });

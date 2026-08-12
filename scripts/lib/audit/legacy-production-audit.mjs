@@ -1539,12 +1539,30 @@ export async function runLegacyProductionAudit(ctx) {
       // If we have a plan file path, register it so audit_runs.plan_id links back.
       let planId = null;
       if (planFile) {
-        planId = await upsertPlan(cloudRepoId, {
+        // Discriminated result since 2026-08-12 (durability plan decision 6).
+        // The `.catch(() => null)` this replaces collapsed a store failure into
+        // the same null a plan-less run produces, so the audit recorded
+        // `plan_id: null` — indistinguishable from a deliberate ad-hoc audit.
+        const planRes = await upsertPlan(cloudRepoId, {
           path: planFile,
           skill: 'plan',
           status: 'in_progress',
           commitSha,
-        }).catch(() => null);
+        }).catch((err) => ({ ok: false, reason: 'write-failed', message: err?.message ?? String(err) }));
+        if (planRes.ok) {
+          planId = planRes.planId;
+        } else if (planRes.reason === 'write-failed') {
+          // Degrade to a local-only run AND count it, so the audit reports the
+          // lost linkage instead of proceeding as if no plan existed. Not a
+          // registered durable writer — there is no envelope and nothing to
+          // replay — so it is tallied under its own id, which is why `byWriter`
+          // exists rather than a bare total.
+          process.stderr.write(`  [learning] plan linkage lost: ${planRes.message}\n`);
+          tallyWriteOutcomes(writeOutcomes, [{ outcome: 'lost', writerId: 'audit.planLink', error: planRes.message }]);
+        } else {
+          // cloud-off / invalid-input: today's silence, one line of why.
+          process.stderr.write(`  [learning] no plan linkage (${planRes.reason}): ${planRes.message}\n`);
+        }
       }
 
       cloudRunId = await recordRunStart(cloudRepoId, planFile || 'ad-hoc', 'code', {

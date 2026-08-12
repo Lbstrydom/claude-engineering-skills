@@ -125,12 +125,42 @@ export function validatePlanPath(rawPath, opts = {}) {
 }
 
 /**
- * Upsert a plan artefact. Returns the plan UUID so audit_runs can link.
- * Idempotent on `(repo_id, path)`.
+ * Upsert a plan artefact. Idempotent on `(repo_id, path)`.
+ *
+ * **Returns a DISCRIMINATED RESULT, never a bare id** (durability plan
+ * decision 6, Phase 5). This function used to return `null` for five different
+ * things — missing input, cloud off, an out-of-repo path, an unresolved repoId,
+ * and a caught DB failure — and every caller read that one value as "no plan".
+ * A store outage was therefore indistinguishable from "this run has no plan",
+ * which is shape B of the defect this plan exists for: *failure wearing
+ * success's clothes*. The audit paths then proceeded to record a run with
+ * `plan_id: null`, which reads as a deliberate ad-hoc audit rather than as lost
+ * linkage.
+ *
+ * Mirrors `getPlanIdByPath` below, which already had this shape — the two are
+ * the same question asked in two directions and should answer alike.
+ *
+ * @returns {Promise<{ok:true, planId:string}
+ *                  |{ok:false, reason:'cloud-off'|'invalid-input'|'write-failed',
+ *                    message:string, error?:unknown}>}
+ *   - `cloud-off`     — the store is disabled. Today's normal path; proceed silently.
+ *   - `invalid-input` — missing `path`/`skill`, a path outside the repo, or an
+ *                       unresolved `repoId`. A caller bug: log and proceed.
+ *   - `write-failed`  — the DB rejected it or was unreachable. REPORT it; this
+ *                       is the one that must never be read as "no plan".
  */
 export async function upsertPlan(repoId, plan) {
-  if (!plan?.path || !plan?.skill) return null;
-  if (!await isCloudEnabled()) return null;
+  if (!plan?.path || !plan?.skill) {
+    return { ok: false, reason: 'invalid-input', message: 'upsertPlan requires both `path` and `skill`' };
+  }
+  // Path validation runs BEFORE the cloud check (moved 2026-08-12, Phase 5).
+  // A malformed or out-of-repo path is a caller bug whatever the store is
+  // doing, and answering `cloud-off` hid it: a local-only user would never
+  // learn their plan path was wrong, and would discover it only when enabling
+  // the store later. `getPlanIdByPath` below already validated first — these
+  // two are the same question asked in opposite directions and must answer
+  // alike. Found by the Phase 5 contract test, which asserted the ordering this
+  // docstring claimed and got `cloud-off` back.
   // Validated HERE rather than at the CLI boundary because `upsertPlan` is the
   // real chokepoint — three callers reach it (cross-skill.mjs, the code-audit
   // path in legacy-production-audit.mjs, and plan-audit-cloud.mjs), and two of
@@ -138,21 +168,25 @@ export async function upsertPlan(repoId, plan) {
   // only the CLI would have left the audit paths open, which is where the
   // scratchpad rows most likely entered.
   //
-  // Returns null rather than throwing: every caller already treats a null plan
-  // id as "no plan linkage" and continues, so a bad path costs the link, never
-  // the audit. The warning is what makes it non-silent.
+  // Returns a result rather than throwing: a bad path costs the link, never the
+  // audit. The warning is what makes it non-silent; the `reason` is what makes
+  // it distinguishable from a store failure at the call site.
   const validated = validatePlanPath(plan.path);
   if (!validated.ok) {
     process.stderr.write(`  [learning] upsertPlan: ${validated.message}\n`);
-    return null;
+    return { ok: false, reason: 'invalid-input', message: validated.message };
+  }
+  if (!await isCloudEnabled()) {
+    return { ok: false, reason: 'cloud-off', message: 'cloud store is disabled' };
   }
   if (!repoId) {
     // Idempotence is claimed on (repo_id, path), a FULL unique index. A NULL
     // repo_id is distinct from every other NULL in Postgres, so a null here
     // INSERTs a duplicate plan row on every call instead of updating — same
     // defect class as recordRegressionSpec's repoId guard. Refuse.
-    process.stderr.write('  [learning] upsertPlan: requires a resolved repoId (NULL would duplicate on the (repo_id, path) unique index)\n');
-    return null;
+    const message = 'upsertPlan requires a resolved repoId (NULL would duplicate on the (repo_id, path) unique index)';
+    process.stderr.write(`  [learning] ${message}\n`);
+    return { ok: false, reason: 'invalid-input', message };
   }
   try {
     // The `|| null` below is defensive residue that reads as nullable to the lint;
@@ -170,10 +204,20 @@ export async function upsertPlan(repoId, plan) {
       checksum: plan.checksum || null,
       updated_at: new Date().toISOString(),
     }], { onConflict: ['repo_id', 'path'], update: 'all', returning: ['id'] });
-    return rows[0]?.id ?? null;
+    const planId = rows[0]?.id ?? null;
+    if (!planId) {
+      // An upsert that returned no row did not verify. Postgres reports success
+      // for a statement that affected nothing, and reporting `ok:true` with a
+      // null id would hand the caller back exactly the ambiguous value this
+      // change removes — the unverified-write-success class.
+      const message = 'upsert returned no row — the write did not verify';
+      process.stderr.write(`  [learning] upsertPlan: ${message}\n`);
+      return { ok: false, reason: 'write-failed', message };
+    }
+    return { ok: true, planId };
   } catch (err) {
     process.stderr.write(`  [learning] upsertPlan failed: ${err.message}\n`);
-    return null;
+    return { ok: false, reason: 'write-failed', message: err.message, error: err };
   }
 }
 

@@ -47,10 +47,17 @@ async function gitAnchor() {
  * @param {{ repoProfile: object|null, planFile: string|null, runId?: string|null }} args
  *   `runId` threads an orchestrator-minted id (--run-id) so all rounds of one
  *   plan audit share a single row — same run-unification contract as code mode.
- * @returns {Promise<{ cloudRunId: string|null, cloudRepoId: string|null }>}
+ * `planLinkLost` carries the message when the plan upsert failed against a
+ * REACHABLE store (durability plan decision 6). It is deliberately distinct
+ * from a null `planId`, which a plan-less or cloud-off run produces too — the
+ * whole point of the change is that those stop sharing a value. Null on every
+ * other path, including the early returns.
+ *
+ * @returns {Promise<{ cloudRunId: string|null, cloudRepoId: string|null,
+ *                     planLinkLost: string|null }>}
  */
 export async function registerPlanAuditRun({ repoProfile, planFile, runId = null } = {}) {
-  const NONE = { cloudRunId: null, cloudRepoId: null };
+  const NONE = { cloudRunId: null, cloudRepoId: null, planLinkLost: null };
   try {
     if (!await isCloudEnabled() || !repoProfile) return NONE;
     const repoRef = await resolveRepoForStore({ profile: repoProfile }).catch(() => null);
@@ -62,16 +69,32 @@ export async function registerPlanAuditRun({ repoProfile, planFile, runId = null
     // Register the plan artifact so audit_runs.plan_id links back
     // (cross-skill data-loop joins).
     let planId = null;
+    let planLinkLost = null;
     if (planFile) {
-      planId = await upsertPlan(cloudRepoId, {
+      // Discriminated result since 2026-08-12 (durability plan decision 6).
+      // Same reasoning as the code-audit path: a store failure must not arrive
+      // as the same null a plan-less run produces.
+      const planRes = await upsertPlan(cloudRepoId, {
         path: planFile, skill: 'plan', status: 'in_progress', commitSha,
-      }).catch(() => null);
+      }).catch((err) => ({ ok: false, reason: 'write-failed', message: err?.message ?? String(err) }));
+      if (planRes.ok) {
+        planId = planRes.planId;
+      } else if (planRes.reason === 'write-failed') {
+        // Degrade to a local-only run and SAY so. This path has no
+        // `writeOutcomes` tally of its own, so the report is the return value:
+        // swallowing it here would leave the plan-audit branch with exactly the
+        // silence the code-audit branch just removed.
+        planLinkLost = planRes.message;
+        process.stderr.write(`  [learning] plan linkage lost: ${planRes.message}\n`);
+      } else {
+        process.stderr.write(`  [learning] no plan linkage (${planRes.reason}): ${planRes.message}\n`);
+      }
     }
 
     const cloudRunId = await recordRunStart(cloudRepoId, planFile || 'ad-hoc', 'plan', {
       scopeMode: 'plan', commitSha, branch, planId, runId,
     }).catch(() => null);
-    return { cloudRunId, cloudRepoId };
+    return { cloudRunId, cloudRepoId, planLinkLost };
   } catch (err) {
     process.stderr.write(`  [learning] plan-run registration failed (non-blocking): ${err.message}\n`);
     return NONE;

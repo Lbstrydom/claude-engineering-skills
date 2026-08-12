@@ -599,6 +599,20 @@ connection string. **Load-bearing invariants** (the rest is in the docs below):
   error-swallow + unverified-write-success (RLS/0-row) as HIGH.
 - **Migrations stay schema-portable**: `parity:check-coupling` fails on any `<schema>.`
   qualification or non-core reference outside the recorded baseline.
+- **Every audit-store write in `legacy-production-audit.mjs`'s cloud block goes
+  through `durableWrite`** ([durable-write.mjs](scripts/lib/durable-write.mjs)),
+  registered in [audit-store-writers.mjs](scripts/lib/audit-store-writers.mjs) —
+  which is the registry's ONLY bootstrap, so both the orchestrator and
+  `cross-skill.mjs write-spill` must import it. Four outcomes, and they are not
+  interchangeable: `written` · `spilled` (queued, a later drain replays it) ·
+  `lost` (evidence in `lost/`, never replayed) · `skipped` (the store declined —
+  cloud off is a supported mode, not a failure). `lost` **or** `spilled` makes a
+  run `incomplete`: at the moment the row is written that data is not in the
+  store. A writer is spill-eligible only by declaring a `rowKey`, and that key
+  needs a real DB constraint — a logical key is not an `ON CONFLICT` target
+  (measured: a PARTIAL unique index answers `42P10`). `npm test` derives the
+  writer set from the store modules, so a new `record*`/`sync*` export must be
+  registered or exempted **with a reason**. Plan: [audit-store-write-durability.md](docs/plans/audit-store-write-durability.md).
 - **"Disposable" is an ALLOWLIST of loopback hosts, and it fails CLOSED.**
   `isDisposableDbHost` / `assertDisposableDbUrl` (`scripts/lib/db/client.mjs`)
   guard the `db-setup`/`db-withtx` suites (they `DROP SCHEMA public CASCADE`) and
