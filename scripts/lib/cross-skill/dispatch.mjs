@@ -275,6 +275,7 @@ export async function dispatch(argv, overrides = {}) {
     // boolean would exempt every verb from the validator when only one carries
     // the frozen legacy quirk (audit CA-r1).
     const softFailApplies = cmd.softFail === true
+      || cmd.softFail?.all === true
       || (Array.isArray(cmd.softFail?.verbs) && cmd.softFail.verbs.includes(bare[0]));
     if (envelope.ok !== true && !softFailApplies) {
       return {

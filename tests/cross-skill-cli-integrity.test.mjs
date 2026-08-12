@@ -181,13 +181,20 @@ describe('F1 — learning-record context_hash uses the one oracle', () => {
     // Keyed on the CONSEQUENCE (a second implementation exists) rather than on
     // one spelling of it: any re-introduced local sha256-over-stringify here is
     // a second writer of the same column.
+    // RETARGETED (command-registry Cluster B): learning-record migrated to
+    // commands/misc.mjs. The negative half still guards the LEGACY file (the
+    // defective expression must not reappear anywhere), and the positive half
+    // follows the handler to its new home.
+    const miscSrc = stripComments(fs.readFileSync(
+      fileURLToPath(new URL('../scripts/lib/cross-skill/commands/misc.mjs', import.meta.url)), 'utf8',
+    ));
     assert.ok(
-      !/Object\.keys\(p\.context\)\.sort\(\)/.test(CODE),
-      'the replacer-array context hash is back in cross-skill.mjs',
+      !/Object\.keys\(p\.context\)\.sort\(\)/.test(CODE) && !/Object\.keys\(p\.context\)\.sort\(\)/.test(miscSrc),
+      'the replacer-array context hash is back',
     );
     assert.ok(
-      /contextHash: computeContextHash/.test(CODE),
-      'cross-skill.mjs must import decision-logger\'s contextHash, not re-implement it',
+      /contextHash: computeContextHash/.test(miscSrc),
+      'learningRecordCmd must import decision-logger\'s contextHash, not re-implement it',
     );
   });
 });
@@ -212,13 +219,17 @@ describe('F2/F3 — writers report their own outcome', () => {
     // the guarantee is additionally behavioural in
     // tests/cross-skill-store-calls.test.mjs (the store's {ok:false} becomes
     // a thrown CommandError). record-regression-spec-run is still legacy.
+    // Both writers now live in commands/ship.mjs (Cluster A moved
+    // record-ship-event; Cluster B moved record-regression-spec-run). Their
+    // fail-closed guarantee is additionally behavioural in
+    // tests/cross-skill-store-calls.test.mjs.
     const shipSrc = fs.readFileSync(
       fileURLToPath(new URL('../scripts/lib/cross-skill/commands/ship.mjs', import.meta.url)), 'utf8',
     );
     assert.ok(/ship event not persisted/.test(shipSrc),
       'recordShipEventCmd must fail closed on a failed write');
-    assert.ok(/regression spec run not persisted/.test(CROSS_SKILL_SRC),
-      'cmdRecordRegressionSpecRun must fail closed on a failed write');
+    assert.ok(/regression spec run not persisted/.test(shipSrc),
+      'recordRegressionSpecRunCmd must fail closed on a failed write');
   });
 
   it('ux-lock-run `recorded` is no longer a bare alias for `cloud`', () => {
@@ -324,10 +335,18 @@ describe('F4/F5 — a flag that is accepted must decide something', () => {
   });
 
   it('abort-refresh-run fails closed when nothing was aborted', () => {
-    const body = functionBody('cmdAbortRefreshRun');
-    assert.ok(/ABORT_NOT_APPLIED/.test(body),
+    // RETARGETED (command-registry Cluster B): moved to commands/arch-refresh.mjs.
+    const src = stripComments(fs.readFileSync(
+      fileURLToPath(new URL('../scripts/lib/cross-skill/commands/arch-refresh.mjs', import.meta.url)), 'utf8',
+    ));
+    assert.ok(/ABORT_NOT_APPLIED/.test(src),
       'a wrong-repo or already-terminal abort must not report ok:true');
-    assert.ok(/if \(!aborted\)/.test(body));
+    assert.ok(/if \(!aborted\)/.test(src));
+    // The wrapper must not swallow that refusal: passthroughErrors re-throws a
+    // CommandError untouched, or ABORT_NOT_APPLIED would lose its exit-1 and
+    // its payload on the way out (caught while writing it).
+    assert.ok(/if \(err instanceof CommandError\) throw err;/.test(src),
+      'passthroughErrors must re-throw a handler CommandError, not re-wrap it');
   });
 
   it('ux-lock-run distinguishes a store outage from an unconfigured store', () => {

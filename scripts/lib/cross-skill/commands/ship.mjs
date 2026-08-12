@@ -42,3 +42,72 @@ export async function recordShipEventCmd(ctx) {
   }
   return { ok: true, cloud: true };
 }
+
+/**
+ * `record-regression-spec` — /ux-lock writes a new Playwright spec.
+ *
+ * Moved from `cmdRecordRegressionSpec`. The `!repoId` refusal is load-bearing
+ * and stays a hard error: the (repo_id, spec_path) arbiter is a FULL index and
+ * a NULL repo_id is distinct from every other NULL in Postgres, so an unscoped
+ * row INSERTs a duplicate on every re-run instead of updating.
+ */
+export async function recordRegressionSpecCmd(ctx) {
+  const p = ctx.payload();
+  if (!p.sourceKind || !p.description) {
+    throw new CommandError('BAD_INPUT', 'sourceKind and description are required');
+  }
+  if (!p.specPath) throw new CommandError('BAD_INPUT', 'specPath is required');
+  if (!ctx.cloud.enabled) return { ...ctx.degrade(), specId: null };
+  const scope = await ctx.resolveScope();
+  const repoId = scope.kind === 'scoped' ? scope.repoId : null;
+  if (!repoId) {
+    throw new CommandError('BAD_INPUT',
+      'regression specs require a resolved repoId — run resolve-repo-identity --persist first');
+  }
+  const specId = await ctx.deps.recordRegressionSpec(repoId, {
+    specPath: p.specPath ?? null,
+    description: p.description,
+    commitSha: p.commitSha || ctx.git.commitSha(),
+    assertionCount: p.assertionCount,
+    domContractTypes: p.domContractTypes,
+    sourceKind: p.sourceKind,
+    sourceFindingId: p.sourceFindingId,
+    sourceFindingType: p.sourceFindingType,
+  });
+  // Legacy `ok: !!specId` (the store returns null on a swallowed failure) —
+  // declared softFail; tightening it changes an envelope /ux-lock reads.
+  return { ok: !!specId, cloud: true, specId };
+}
+
+/**
+ * `record-regression-spec-run` — append a pass/fail run to a spec.
+ *
+ * Moved from `cmdRecordRegressionSpecRun`. The store reports its own outcome
+ * (fixed 2026-08-12): this emitted an unconditional `{ok:true}` while the
+ * writer swallowed every error, so a run that never reached the store reported
+ * as persisted.
+ *
+ * NOTE (Cluster F): `specId` is an opaque parent id with no ownership check —
+ * the deferred `parent: {table:'regression_specs'}` declaration lands here.
+ */
+export async function recordRegressionSpecRunCmd(ctx) {
+  const p = ctx.payload();
+  if (!p.specId || typeof p.passed !== 'boolean') {
+    throw new CommandError('BAD_INPUT', 'specId and passed (bool) are required');
+  }
+  if (!ctx.cloud.enabled) return ctx.degrade();
+  const res = await ctx.deps.recordRegressionSpecRun(p.specId, {
+    passed: p.passed,
+    commitSha: p.commitSha || ctx.git.commitSha(),
+    capturedRegression: p.capturedRegression,
+    durationMs: p.durationMs,
+    errorMessage: p.errorMessage,
+    runContext: p.runContext,
+  });
+  if (!res.ok) {
+    throw new CommandError('WRITE_FAILED',
+      `regression spec run not persisted: ${res.reason ?? 'unknown'}${res.error ? ` (${res.error})` : ''}`,
+      { reason: res.reason ?? null }, 1);
+  }
+  return { ok: true, cloud: true };
+}

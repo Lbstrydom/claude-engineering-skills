@@ -121,12 +121,25 @@ describe('registry entries — every policy tuple is valid', () => {
     }
   });
 
-  it('softFail is a boolean or verb-scoped {verbs:[…]}, never broader than declared', () => {
+  it('every softFail is verb-scoped or carries a WRITTEN reason — the debt is enumerable, not a bare flag', () => {
+    // `softFail` exempts a command from the ok:true validator, i.e. it is a
+    // licence to emit a failure at exit 0. A bare boolean makes that licence
+    // invisible and unreviewable; requiring a reason turns the set into a
+    // legible worklist (Cluster F owns the tightenings, and this is how it
+    // finds them: REGISTRY.filter(e => e.softFail?.all)).
     for (const e of REGISTRY) {
       if (e.softFail === undefined) continue;
-      assert.ok(e.softFail === true || Array.isArray(e.softFail?.verbs),
-        `${e.name}: softFail must be true or {verbs:[…]}`);
-      if (Array.isArray(e.softFail?.verbs)) {
+      const verbScoped = Array.isArray(e.softFail?.verbs);
+      const allScoped = e.softFail?.all === true;
+      assert.ok(verbScoped || allScoped,
+        `${e.name}: softFail must be {verbs:[…]} or {all:true, reason}, never a bare boolean`);
+      if (allScoped) {
+        assert.equal(typeof e.softFail.reason, 'string',
+          `${e.name}: a command-wide softFail must say WHY in a reason string`);
+        assert.ok(e.softFail.reason.length > 40,
+          `${e.name}: softFail reason must name the legacy shape and its owner, not just a label`);
+      }
+      if (verbScoped) {
         assert.ok(Array.isArray(e.positionals?.verbs), `${e.name}: verb-scoped softFail needs declared verbs`);
         for (const v of e.softFail.verbs) {
           assert.ok(e.positionals.verbs.includes(v), `${e.name}: softFail verb "${v}" is not a declared verb`);

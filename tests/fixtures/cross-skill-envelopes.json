@@ -1,5 +1,5 @@
 {
-  "_comment": "Captured from the live legacy CLI by scripts/dev/capture-cross-skill-envelopes.mjs — never hand-edit an entry.",
+  "_comment": "Captured from the live legacy CLI by scripts/dev/capture-cross-skill-envelopes.mjs — never hand-edit an entry; existing entries are preserved on re-run (see --recapture).",
   "cases": {
     "whoami-cloud-off": {
       "args": [
@@ -185,6 +185,743 @@
           "code": "BAD_INPUT",
           "message": "--repo <name> is required for backfill-hash"
         }
+      }
+    },
+    "upsert-plan-missing": {
+      "args": [
+        "upsert-plan",
+        "--json",
+        "{}"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "path and skill are required"
+        }
+      }
+    },
+    "upsert-plan-cloud-off": {
+      "args": [
+        "upsert-plan",
+        "--json",
+        "{\"path\":\"docs/plans/x.md\",\"skill\":\"plan\"}"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false,
+        "planId": null
+      }
+    },
+    "update-plan-status-no-id": {
+      "args": [
+        "update-plan-status",
+        "--json",
+        "{}"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "one of planId or path is required (path is usually what you know)"
+        }
+      }
+    },
+    "update-plan-status-no-status": {
+      "args": [
+        "update-plan-status",
+        "--json",
+        "{\"path\":\"docs/plans/x.md\"}"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "status is required"
+        }
+      }
+    },
+    "update-plan-status-cloud-off": {
+      "args": [
+        "update-plan-status",
+        "--json",
+        "{\"path\":\"docs/plans/x.md\",\"status\":\"Complete\"}"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false
+      }
+    },
+    "rec-spec-missing": {
+      "args": [
+        "record-regression-spec",
+        "--json",
+        "{}"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "sourceKind and description are required"
+        }
+      }
+    },
+    "rec-spec-no-path": {
+      "args": [
+        "record-regression-spec",
+        "--json",
+        "{\"sourceKind\":\"audit-loop-fix\",\"description\":\"d\"}"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "specPath is required"
+        }
+      }
+    },
+    "rec-spec-cloud-off": {
+      "args": [
+        "record-regression-spec",
+        "--json",
+        "{\"sourceKind\":\"audit-loop-fix\",\"description\":\"d\",\"specPath\":\"tests/x.spec.ts\"}"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false,
+        "specId": null
+      }
+    },
+    "rec-spec-run-missing": {
+      "args": [
+        "record-regression-spec-run",
+        "--json",
+        "{}"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "specId and passed (bool) are required"
+        }
+      }
+    },
+    "rec-spec-run-cloud-off": {
+      "args": [
+        "record-regression-spec-run",
+        "--json",
+        "{\"specId\":\"s1\",\"passed\":true}"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false
+      }
+    },
+    "rec-correlation-missing": {
+      "args": [
+        "record-correlation",
+        "--json",
+        "{}"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "personaSessionId, personaFindingHash, personaSeverity, correlationType required"
+        }
+      }
+    },
+    "rec-correlation-cloud-off": {
+      "args": [
+        "record-correlation",
+        "--json",
+        "{\"personaSessionId\":\"s1\",\"personaFindingHash\":\"h\",\"personaSeverity\":\"P0\",\"correlationType\":\"exact\"}"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false
+      }
+    },
+    "nav-run-no-sha": {
+      "args": [
+        "record-nav-audit-run",
+        "--json",
+        "{}"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "headSha is required"
+        }
+      }
+    },
+    "nav-run-no-drift": {
+      "args": [
+        "record-nav-audit-run",
+        "--json",
+        "{\"headSha\":\"abc\"}"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "driftKeys (array) is required"
+        }
+      }
+    },
+    "nav-run-bad-scope": {
+      "args": [
+        "record-nav-audit-run",
+        "--json",
+        "{\"headSha\":\"abc\",\"driftKeys\":[],\"scope\":\"bogus\"}"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "scope must be one of full|diff, got \"bogus\""
+        }
+      }
+    },
+    "nav-run-cloud-off": {
+      "args": [
+        "record-nav-audit-run",
+        "--json",
+        "{\"headSha\":\"abc\",\"driftKeys\":[]}"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false
+      }
+    },
+    "pv-run-no-plan": {
+      "args": [
+        "record-plan-verify-run",
+        "--json",
+        "{}"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "planId is required"
+        }
+      }
+    },
+    "pv-run-bad-counts": {
+      "args": [
+        "record-plan-verify-run",
+        "--json",
+        "{\"planId\":\"p1\",\"totalCriteria\":-3}"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "totalCriteria must not be negative"
+        }
+      }
+    },
+    "pv-run-cloud-off": {
+      "args": [
+        "record-plan-verify-run",
+        "--json",
+        "{\"planId\":\"p1\",\"totalCriteria\":3,\"passedCount\":3}"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false,
+        "runId": null
+      }
+    },
+    "pv-items-missing": {
+      "args": [
+        "record-plan-verify-items",
+        "--json",
+        "{}"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "runId, planId, and non-empty items array are required"
+        }
+      }
+    },
+    "pv-items-empty": {
+      "args": [
+        "record-plan-verify-items",
+        "--json",
+        "{\"runId\":\"r1\",\"planId\":\"p1\",\"items\":[]}"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "runId, planId, and non-empty items array are required"
+        }
+      }
+    },
+    "pv-items-cloud-off": {
+      "args": [
+        "record-plan-verify-items",
+        "--json",
+        "{\"runId\":\"r1\",\"planId\":\"p1\",\"items\":[{\"criterion\":\"c\"}]}"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false,
+        "inserted": 0
+      }
+    },
+    "add-persona-missing": {
+      "args": [
+        "add-persona",
+        "--json",
+        "{}"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "name, description, appUrl are required",
+          "issues": [
+            {
+              "expected": "string",
+              "code": "invalid_type",
+              "path": [
+                "name"
+              ],
+              "message": "Invalid input: expected string, received undefined"
+            },
+            {
+              "expected": "string",
+              "code": "invalid_type",
+              "path": [
+                "description"
+              ],
+              "message": "Invalid input: expected string, received undefined"
+            },
+            {
+              "expected": "string",
+              "code": "invalid_type",
+              "path": [
+                "appUrl"
+              ],
+              "message": "Invalid input: expected string, received undefined"
+            }
+          ]
+        }
+      }
+    },
+    "add-persona-cloud-off": {
+      "args": [
+        "add-persona",
+        "--json",
+        "{\"name\":\"n\",\"description\":\"d\",\"appUrl\":\"https://e.test\"}"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false,
+        "personaId": null,
+        "existed": false
+      }
+    },
+    "rec-session-missing": {
+      "args": [
+        "record-persona-session",
+        "--json",
+        "{}"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "session payload failed validation",
+          "issues": [
+            {
+              "expected": "string",
+              "code": "invalid_type",
+              "path": [
+                "persona"
+              ],
+              "message": "Invalid input: expected string, received undefined"
+            },
+            {
+              "expected": "string",
+              "code": "invalid_type",
+              "path": [
+                "url"
+              ],
+              "message": "Invalid input: expected string, received undefined"
+            },
+            {
+              "expected": "string",
+              "code": "invalid_type",
+              "path": [
+                "browserTool"
+              ],
+              "message": "Invalid input: expected string, received undefined"
+            },
+            {
+              "code": "invalid_value",
+              "values": [
+                "Ready for users",
+                "Needs work",
+                "Blocked"
+              ],
+              "path": [
+                "verdict"
+              ],
+              "message": "Invalid option: expected one of \"Ready for users\"|\"Needs work\"|\"Blocked\""
+            }
+          ]
+        }
+      }
+    },
+    "rec-session-cloud-off": {
+      "args": [
+        "record-persona-session",
+        "--json",
+        "{\"persona\":\"p\",\"url\":\"https://e.test\",\"browserTool\":\"playwright\",\"verdict\":\"Needs work\"}"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false,
+        "sessionId": null,
+        "existed": false,
+        "statsUpdated": false
+      }
+    },
+    "fr-adj-cloud-off": {
+      "args": [
+        "final-review-adjudicate",
+        "--run-id",
+        "r1",
+        "--fingerprint",
+        "f1",
+        "--action",
+        "accepted"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": false,
+        "cloud": false,
+        "updated": 0
+      }
+    },
+    "fr-fix-cloud-off": {
+      "args": [
+        "final-review-record-fix",
+        "--run-id",
+        "r1",
+        "--fingerprint",
+        "f1"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": false,
+        "cloud": false,
+        "updated": 0
+      }
+    },
+    "mab-adj-cloud-off": {
+      "args": [
+        "model-ab-adjudicate",
+        "--json"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": false,
+        "cloud": false
+      }
+    },
+    "arm-run-missing": {
+      "args": [
+        "arm-eval-run"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "--experiment <plan-authoring|brainstorm> --task \"<text>\" required"
+        }
+      }
+    },
+    "arm-toggle-status": {
+      "args": [
+        "arm-eval-toggle",
+        "status"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "toggle": {
+          "enabled": false,
+          "budgetEur": null,
+          "enabledAt": null,
+          "present": false
+        },
+        "shadowArms": {
+          "enabled": false,
+          "requested": [],
+          "source": "off"
+        }
+      }
+    },
+    "arm-toggle-bad-verb": {
+      "args": [
+        "arm-eval-toggle",
+        "bogus"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "usage: arm-eval-toggle on|off|status [--budget-eur N]"
+        }
+      }
+    },
+    "arm-capture-toggle-off": {
+      "args": [
+        "arm-eval-maybe-capture",
+        "--experiment",
+        "brainstorm",
+        "--task",
+        "t"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "captured": false,
+        "reason": "toggle-off"
+      }
+    },
+    "arm-adj-cloud-off": {
+      "args": [
+        "arm-eval-adjudicate",
+        "--session-id",
+        "s1"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": false,
+        "cloud": false
+      }
+    },
+    "arm-export-cloud-off": {
+      "args": [
+        "arm-eval-export",
+        "--session-id",
+        "s1"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": false,
+        "cloud": false
+      }
+    },
+    "learning-record-missing": {
+      "args": [
+        "learning-record",
+        "--json",
+        "{}"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "decisionType is required"
+        }
+      }
+    },
+    "learning-record-no-binding": {
+      "args": [
+        "learning-record",
+        "--json",
+        "{\"decisionType\":\"pass_selection\",\"context\":{\"a\":1},\"choice\":{\"b\":2}}"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "must provide either (auditRunId, round, sequence) OR externalId"
+        }
+      }
+    },
+    "learning-record-cloud-off": {
+      "args": [
+        "learning-record",
+        "--json",
+        "{\"decisionType\":\"pass_selection\",\"context\":{\"a\":1},\"choice\":{\"b\":2},\"externalId\":\"e1\"}"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false,
+        "decisionKey": null
+      }
+    },
+    "open-refresh-missing": {
+      "args": [
+        "open-refresh-run",
+        "--json",
+        "{}"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "repoUuid and mode required"
+        }
+      }
+    },
+    "publish-refresh-missing": {
+      "args": [
+        "publish-refresh-run",
+        "--json",
+        "{}"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "repoId and refreshId required"
+        }
+      }
+    },
+    "abort-refresh-missing": {
+      "args": [
+        "abort-refresh-run",
+        "--json",
+        "{}"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "repoId and refreshId required"
+        }
+      }
+    },
+    "rec-symdefs-missing": {
+      "args": [
+        "record-symbol-definitions",
+        "--json",
+        "{}"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "repoId and definitions required"
+        }
+      }
+    },
+    "rec-symindex-missing": {
+      "args": [
+        "record-symbol-index",
+        "--json",
+        "{}"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "refreshId, repoId, rows required"
+        }
+      }
+    },
+    "rec-symembed-missing": {
+      "args": [
+        "record-symbol-embedding",
+        "--json",
+        "{}"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "definitionId, embeddingModel, dimension, vector required"
+        }
+      }
+    },
+    "rec-layering-missing": {
+      "args": [
+        "record-layering-violations",
+        "--json",
+        "{}"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "refreshId, repoId, violations required"
+        }
+      }
+    },
+    "set-embed-model-missing": {
+      "args": [
+        "set-active-embedding-model",
+        "--json",
+        "{}"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "repoId, model, dim required"
+        }
+      }
+    },
+    "lock-with-test-missing": {
+      "args": [
+        "lock-with-test"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false,
+        "locked": false
       }
     }
   }

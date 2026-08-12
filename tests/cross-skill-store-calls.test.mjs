@@ -170,6 +170,104 @@ describe('persona-outcomes — the explicit-required template', () => {
   });
 });
 
+describe('Cluster B writers — store-call shapes', () => {
+  it('upsert-plan resolves ambient scope then upserts with it', async () => {
+    const { deps, calls } = recordingDeps();
+    deps.upsertPlan = async (repoId, plan) => { calls.push({ fn: 'upsertPlan', args: [repoId, plan] }); return { ok: true, planId: 'plan-1' }; };
+    const r = await dispatch(argv('upsert-plan', '--json', '{"path":"docs/plans/x.md","skill":"plan"}'), { deps, cloudGate: 'ready' });
+    assert.equal(r.exitCode, 0, JSON.stringify(r.envelope));
+    assert.equal(r.envelope.planId, 'plan-1');
+    assert.deepEqual(calls.map((c) => c.fn), ['resolveRepoForStoreResult', 'upsertPlan']);
+    assert.equal(calls[1].args[0], 'repo-row-1', 'the plan row must carry the resolved scope');
+  });
+
+  it("upsert-plan maps the store's write-failed reason to a typed failure", async () => {
+    const { deps } = recordingDeps();
+    deps.upsertPlan = async () => ({ ok: false, reason: 'write-failed', message: 'boom' });
+    const r = await dispatch(argv('upsert-plan', '--json', '{"path":"docs/plans/x.md","skill":"plan"}'), { deps, cloudGate: 'ready' });
+    assert.equal(r.envelope.error.code, 'PLAN_WRITE_FAILED');
+  });
+
+  it('update-plan-status resolves the plan by path, scoped, then updates', async () => {
+    const { deps, calls } = recordingDeps();
+    deps.getPlanIdByPath = async (repoId, p) => { calls.push({ fn: 'getPlanIdByPath', args: [repoId, p] }); return { ok: true, planId: 'plan-1', path: p }; };
+    deps.updatePlanStatus = async (a) => { calls.push({ fn: 'updatePlanStatus', args: [a] }); return { ok: true }; };
+    const r = await dispatch(argv('update-plan-status', '--json', '{"path":"docs/plans/x.md","status":"Complete"}'), { deps, cloudGate: 'ready' });
+    assert.equal(r.exitCode, 0, JSON.stringify(r.envelope));
+    assert.deepEqual(calls.find((c) => c.fn === 'getPlanIdByPath').args, ['repo-row-1', 'docs/plans/x.md']);
+    assert.deepEqual(calls.find((c) => c.fn === 'updatePlanStatus').args[0],
+      { repoId: 'repo-row-1', planId: 'plan-1', status: 'Complete' });
+  });
+
+  it('update-plan-status separates a lookup OUTAGE from a genuinely absent plan', async () => {
+    const { deps } = recordingDeps();
+    deps.getPlanIdByPath = async () => ({ ok: false, reason: 'lookup-failed', message: 'store down' });
+    const r = await dispatch(argv('update-plan-status', '--json', '{"path":"docs/plans/x.md","status":"Complete"}'), { deps, cloudGate: 'ready' });
+    assert.equal(r.envelope.error.code, 'PLAN_LOOKUP_FAILED',
+      'a store outage must not read as "no plan registered — run /plan first"');
+  });
+
+  it('record-regression-spec REFUSES an unscoped write (the duplicate-on-rerun trap)', async () => {
+    const { deps, calls } = recordingDeps({
+      resolveRepoForStoreResult: async () => ({ kind: 'unresolved' }),
+    });
+    const r = await dispatch(argv('record-regression-spec', '--json', '{"sourceKind":"audit-loop-fix","description":"d","specPath":"tests/x.spec.ts"}'), { deps, cloudGate: 'ready' });
+    assert.equal(r.envelope.error.code, 'BAD_INPUT');
+    assert.ok(!calls.some((c) => c.fn === 'recordRegressionSpec'),
+      'a NULL repo_id is distinct from every other NULL in Postgres — the row would duplicate on every re-run');
+  });
+
+  it('the batch writers demand EXACT cardinality — short, over, or non-numeric (audit CB-r1/r2)', async () => {
+    const rows = [{ a: 1 }, { a: 2 }, { a: 3 }];
+    const partial = recordingDeps();
+    partial.deps.recordSymbolIndex = async () => 1;
+    const r1 = await dispatch(argv('record-symbol-index', '--json', JSON.stringify({ refreshId: 'r', repoId: 'p', rows })), { deps: partial.deps, cloudGate: 'ready' });
+    assert.equal(r1.envelope.error.code, 'ROW_COUNT_MISMATCH');
+
+    // An OVER-count is equally evidence the one-row-per-input contract does
+    // not hold — rejecting only short counts let it read as success.
+    const over = recordingDeps();
+    over.deps.recordSymbolIndex = async () => 5;
+    const rOver = await dispatch(argv('record-symbol-index', '--json', JSON.stringify({ refreshId: 'r', repoId: 'p', rows })), { deps: over.deps, cloudGate: 'ready' });
+    assert.equal(rOver.envelope.error.code, 'ROW_COUNT_MISMATCH');
+
+    const nan = recordingDeps();
+    nan.deps.recordLayeringViolations = async () => undefined;
+    const r2 = await dispatch(argv('record-layering-violations', '--json', JSON.stringify({ refreshId: 'r', repoId: 'p', violations: rows })), { deps: nan.deps, cloudGate: 'ready' });
+    assert.equal(r2.envelope.error.code, 'WRITE_UNVERIFIED');
+
+    // Vacuous-pass guard: a complete write still succeeds.
+    const okDeps = recordingDeps();
+    okDeps.deps.recordSymbolIndex = async () => 3;
+    const r3 = await dispatch(argv('record-symbol-index', '--json', JSON.stringify({ refreshId: 'r', repoId: 'p', rows })), { deps: okDeps.deps, cloudGate: 'ready' });
+    assert.equal(r3.exitCode, 0);
+    assert.equal(r3.envelope.inserted, 3);
+  });
+
+  it('abort-refresh-run keeps its exit-1 refusal through the error wrapper', async () => {
+    const { deps } = recordingDeps();
+    deps.abortRefreshRun = async () => ({ aborted: false });
+    const r = await dispatch(argv('abort-refresh-run', '--json', '{"repoId":"p","refreshId":"r"}'), { deps, cloudGate: 'ready' });
+    assert.equal(r.envelope.error.code, 'ABORT_NOT_APPLIED');
+    assert.equal(r.exitCode, 1, 'passthroughErrors must not re-wrap a handler CommandError down to exit 2');
+  });
+
+  it('record-persona-session reconciles identity UNCONDITIONALLY, even when both fields are supplied', async () => {
+    const { deps, calls } = recordingDeps({
+      isPersonaCloudEnabled: async () => true,
+      resolveRepoForStoreResult: async () => ({ kind: 'resolved', repoRowId: 'id-B', repoUuid: 'u', name: 'owner/repo-B' }),
+    });
+    const payload = JSON.stringify({
+      persona: 'p', url: 'https://e.test', browserTool: 'playwright', verdict: 'Needs work',
+      repoId: 'id-A', repoName: 'owner/repo-A',
+    });
+    const r = await dispatch(argv('record-persona-session', '--json', payload), { deps, cloudGate: 'ready' });
+    assert.equal(r.envelope.error.code, 'REPO_IDENTITY_CONFLICT',
+      'a payload naming repo A from a checkout of repo B must not be written verbatim');
+    assert.ok(!calls.some((c) => c.fn === 'recordPersonaSession'));
+  });
+});
+
 describe('the dispatcher contract itself', () => {
   it('an undeclared flag READ throws UNDECLARED_FLAG (the --report-path class, structurally)', async () => {
     // whoami declares no flags; a handler stub reading one must die. Proven

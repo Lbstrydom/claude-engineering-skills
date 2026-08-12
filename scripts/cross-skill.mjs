@@ -380,214 +380,19 @@ async function resolveRepoId(payload) {
 
 // ── Subcommands ─────────────────────────────────────────────────────────────
 
-async function cmdUpsertPlan() {
-  const p = parsePayload();
-  if (!p.path || !p.skill) return emitError('BAD_INPUT', 'path and skill are required');
-  await initLearningStore();
-  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, planId: null });
-  const repoId = await resolveRepoId(p);
-  const res = await upsertPlan(repoId, {
-    path: p.path,
-    skill: p.skill,
-    status: p.status,
-    principlesCited: p.principlesCited,
-    focusAreas: p.focusAreas,
-    commitSha: p.commitSha || currentCommitSha(),
-    checksum: p.checksum,
-  });
-  // This CLI's stdout is read by a skill, so a store failure has to reach the
-  // envelope (durability plan decision 6). `write-failed` is an ERROR here: a
-  // skill that sees `{ok:true, planId:null}` proceeds as though the plan simply
-  // was not registered, which is the reading that made an outage invisible.
-  // `invalid-input` is also an error — it is a caller bug, and this caller is a
-  // command line someone typed.
-  if (!res.ok && res.reason === 'write-failed') {
-    return emitError('PLAN_WRITE_FAILED', res.message, { cloud: true });
-  }
-  if (!res.ok && res.reason === 'invalid-input') {
-    return emitError('BAD_INPUT', res.message, { cloud: true });
-  }
-  // `cloud-off` keeps today's silence — but it is unreachable here: the guard
-  // above already returned for a disabled store.
-  const planId = res.ok ? res.planId : null;
-  // Deterministic arm-eval capture (toggle-gated; detached) — fires when the
-  // plan skill includes the original task text in this upsert payload, so
-  // capture is part of PERSISTING the plan rather than a skippable trailing
-  // step. No-op when the per-repo toggle is off. The audit-time upsertPlan
-  // (openai-audit.mjs) carries no taskText, so only the plan-authoring flow
-  // triggers a capture.
-  if (p.taskText && String(p.taskText).trim()) {
-    try {
-      const { maybeFireArmEvalCaptureDetached } = await import('./lib/arm-eval/capture-trigger.mjs');
-      maybeFireArmEvalCaptureDetached({ experimentType: 'plan-authoring', task: p.taskText });
-    } catch { /* never block plan persistence on capture */ }
-  }
-  emit({ ok: !!planId, cloud: true, planId });
-}
+// cmdUpsertPlan moved to scripts/lib/cross-skill/commands/plans.mjs (registry).
 
-async function cmdUpdatePlanStatus() {
-  const p = parsePayload();
-  if (!p.planId && !p.path) {
-    return emitError('BAD_INPUT', 'one of planId or path is required (path is usually what you know)');
-  }
-  if (!p.status) return emitError('BAD_INPUT', 'status is required');
-  await initLearningStore();
-  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false });
+// cmdUpdatePlanStatus moved to scripts/lib/cross-skill/commands/plans.mjs (registry).
 
-  // `path` is the ergonomic entry point: this command exists to be typed by a
-  // human deciding a plan is done, and nobody knows a plan by its UUID.
-  let planId = p.planId;
-  let resolvedPath = null;
-  // Resolve tenant scope on BOTH entry paths. It used to be resolved only inside the
-  // `!planId` branch, so supplying an explicit `planId` skipped scoping entirely and the
-  // UPDATE could land on another repo's plan row.
-  const repoId = await resolveRepoId(p);
-  if (!planId) {
-    const found = await getPlanIdByPath(repoId, p.path);
-    if (!found.ok) {
-      // Carry the reason: `not-found` (the plan really is not registered) and
-      // `lookup-failed` (the store could not be queried) are different facts and
-      // used to arrive under one label, so a store outage read as "run the /plan
-      // flow first" and invited a duplicate registration.
-      const code = found.reason === 'lookup-failed' ? 'PLAN_LOOKUP_FAILED' : 'PLAN_NOT_RESOLVED';
-      return emitError(code, found.message, { reason: found.reason ?? null }, 1);
-    }
-    planId = found.planId;
-    resolvedPath = found.path;
-  }
+// cmdRecordRegressionSpec moved to scripts/lib/cross-skill/commands/ship.mjs (registry).
 
-  // Report the STORE's answer, not a blanket ok. `updatePlanStatus` returns rowCount 0
-  // for a stale id, an invalid status, or — now that repo_id is a SQL predicate — a plan
-  // owned by a different repo. Emitting `{ok:true}` regardless would be a phantom write.
-  const res = await updatePlanStatus({ repoId, planId, status: p.status });
-  if (!res.ok) {
-    return emitError('STATUS_NOT_UPDATED',
-      `no row updated for planId=${planId} — stale id, invalid status, or the plan belongs to another repo`,
-      { reason: res.reason ?? null }, 1);
-  }
-  emit({ ok: true, cloud: true, planId, path: resolvedPath, status: p.status });
-}
+// cmdRecordRegressionSpecRun moved to scripts/lib/cross-skill/commands/ship.mjs (registry).
 
-async function cmdRecordRegressionSpec() {
-  const p = parsePayload();
-  if (!p.sourceKind || !p.description) {
-    return emitError('BAD_INPUT', 'sourceKind and description are required');
-  }
-  if (!p.specPath) {
-    return emitError('BAD_INPUT', 'specPath is required');
-  }
-  await initLearningStore();
-  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, specId: null });
-  const repoId = await resolveRepoId(p);
-  // Resolves R1-H3 — repo scoping enforced at the CLI boundary. Kept after the
-  // consistency kinds were retired (2026-08-11): the (repo_id, spec_path)
-  // arbiter is a FULL index, and a NULL repo_id is distinct from every other
-  // NULL in Postgres, so an unscoped row INSERTs a duplicate on every re-run
-  // instead of updating. The store refuses too; refusing here as well keeps
-  // the CLI boundary self-contained.
-  if (!repoId) {
-    return emitError('BAD_INPUT',
-      'regression specs require a resolved repoId — run resolve-repo-identity --persist first');
-  }
-  const specId = await recordRegressionSpec(repoId, {
-    specPath: p.specPath ?? null,
-    description: p.description,
-    commitSha: p.commitSha || currentCommitSha(),
-    assertionCount: p.assertionCount,
-    domContractTypes: p.domContractTypes,
-    sourceKind: p.sourceKind,
-    sourceFindingId: p.sourceFindingId,
-    sourceFindingType: p.sourceFindingType,
-  });
-  emit({ ok: !!specId, cloud: true, specId });
-}
+// cmdRecordCorrelation moved to scripts/lib/cross-skill/commands/persona.mjs (registry).
 
-async function cmdRecordRegressionSpecRun() {
-  const p = parsePayload();
-  if (!p.specId || typeof p.passed !== 'boolean') {
-    return emitError('BAD_INPUT', 'specId and passed (bool) are required');
-  }
-  await initLearningStore();
-  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false });
-  // Report the STORE's answer. This emitted an unconditional `{ok:true}` while
-  // the writer swallowed every error and returned undefined, so a run that never
-  // reached the store reported as persisted.
-  const res = await recordRegressionSpecRun(p.specId, {
-    passed: p.passed,
-    commitSha: p.commitSha || currentCommitSha(),
-    capturedRegression: p.capturedRegression,
-    durationMs: p.durationMs,
-    errorMessage: p.errorMessage,
-    runContext: p.runContext,
-  });
-  if (!res.ok) {
-    return emitError('WRITE_FAILED',
-      `regression spec run not persisted: ${res.reason ?? 'unknown'}${res.error ? ` (${res.error})` : ''}`,
-      { reason: res.reason ?? null }, 1);
-  }
-  emit({ ok: true, cloud: true });
-}
+// cmdRecordPlanVerifyRun moved to scripts/lib/cross-skill/commands/plan-verify.mjs (registry).
 
-async function cmdRecordCorrelation() {
-  const p = parsePayload();
-  if (!p.personaSessionId || !p.personaFindingHash || !p.personaSeverity || !p.correlationType) {
-    return emitError('BAD_INPUT', 'personaSessionId, personaFindingHash, personaSeverity, correlationType required');
-  }
-  await initLearningStore();
-  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false });
-  const result = await recordPersonaAuditCorrelation(p.personaSessionId, {
-    personaFindingHash: p.personaFindingHash,
-    personaSeverity: p.personaSeverity,
-    auditFindingId: p.auditFindingId,
-    auditRunId: p.auditRunId,
-    correlationType: p.correlationType,
-    matchScore: p.matchScore,
-    matchRationale: p.matchRationale,
-  });
-  if (!result.ok) return emitError('WRITE_FAILED', result.error || 'correlation write failed');
-  emit({ ok: true, cloud: true });
-}
-
-async function cmdRecordPlanVerifyRun() {
-  const p = parsePayload();
-  if (!p.planId) return emitError('BAD_INPUT', 'planId is required');
-  // `typeof n === 'number'` admitted NaN, negatives and fractions straight into the
-  // database — and a NaN peer is worse than a NaN total, because a satisfaction
-  // percentage derived from it renders as a plausible number. Validate the whole count
-  // set (and their sum) BEFORE repo resolution or any store call.
-  const counts = validateCountFields(p);
-  if (!counts.ok) return emitError('BAD_INPUT', counts.reason);
-  await initLearningStore();
-  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, runId: null });
-  const runId = await recordPlanVerificationRun({
-    planId: p.planId,
-    specId: p.specId,
-    commitSha: p.commitSha || currentCommitSha(),
-    url: p.url,
-    totalCriteria: p.totalCriteria,
-    passedCount: p.passedCount || 0,
-    failedCount: p.failedCount || 0,
-    skippedCount: p.skippedCount || 0,
-    durationMs: p.durationMs,
-    runContext: p.runContext || 'ux-lock-verify',
-  });
-  emit({ ok: !!runId, cloud: true, runId });
-}
-
-async function cmdRecordPlanVerifyItems() {
-  const p = parsePayload();
-  if (!p.runId || !p.planId || !Array.isArray(p.items) || p.items.length === 0) {
-    return emitError('BAD_INPUT', 'runId, planId, and non-empty items array are required');
-  }
-  await initLearningStore();
-  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, inserted: 0 });
-  // Report what the store PERSISTED, never what we asked it to persist: every
-  // failure path in recordPlanVerificationItems logs and swallows, so
-  // `p.items.length` would claim a write that may not have happened at all.
-  const res = await recordPlanVerificationItems(p.runId, p.planId, p.items);
-  if (!res?.ok) return emitError('WRITE_FAILED', `plan verification items not persisted: ${res?.reason ?? 'unknown'}`);
-  emit({ ok: true, cloud: true, inserted: res.inserted, requested: p.items.length });
-}
+// cmdRecordPlanVerifyItems moved to scripts/lib/cross-skill/commands/plan-verify.mjs (registry).
 
 async function cmdPlanSatisfaction() {
   await initLearningStore();
@@ -603,32 +408,7 @@ async function cmdPlanSatisfaction() {
 
 const NAV_AUDIT_RUN_SCOPES = ['full', 'diff'];
 
-async function cmdRecordNavAuditRun() {
-  // /nav-audit run telemetry (WS2, docs/plans/persona-nav-feedback-recovery.md).
-  // Idempotent by (repoId, headSha, scope) — see scripts/lib/store/nav-audit.mjs.
-  const p = parsePayload();
-  if (!p.headSha) return emitError('BAD_INPUT', 'headSha is required');
-  if (!Array.isArray(p.driftKeys)) return emitError('BAD_INPUT', 'driftKeys (array) is required');
-  // Absent scope normalizes to 'full'; an UNKNOWN scope is rejected, never
-  // silently folded in (the store's UNIQUE constraint depends on this being
-  // one of exactly two closed values — see the migration's NOT NULL note).
-  const scope = p.scope ?? 'full';
-  if (!NAV_AUDIT_RUN_SCOPES.includes(scope)) {
-    return emitError('BAD_INPUT', `scope must be one of ${NAV_AUDIT_RUN_SCOPES.join('|')}, got "${scope}"`);
-  }
-  await initLearningStore();
-  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false });
-  const repoId = await resolveRepoId(p);
-  if (!repoId) return emit({ ok: true, cloud: true, status: 'unavailable', note: 'no resolvable repo identity' });
-  const result = await recordNavAuditRun({
-    repoId, headSha: p.headSha, scope,
-    driftKeys: p.driftKeys,
-    findingCounts: p.findingCounts ?? null,
-    verifySummary: p.verifySummary ?? null,
-    toolVersion: p.toolVersion ?? null,
-  });
-  emit({ ok: result.status !== 'failed', cloud: true, ...result });
-}
+// cmdRecordNavAuditRun moved to scripts/lib/cross-skill/commands/misc.mjs (registry).
 
 async function cmdGetNavFirstSeen() {
   const p = parsePayload();
@@ -947,48 +727,7 @@ async function cmdFinalReviewStats() {
   emit(res);
 }
 
-async function cmdFinalReviewAdjudicate() {
-  await initLearningStore();
-  if (!await isCloudEnabled()) return emit({ ok: false, cloud: false, updated: 0 });
-  const runId = argOption('run-id');
-  const fingerprint = argOption('fingerprint');
-  const action = argOption('action');
-  if (!runId || !fingerprint || !action) {
-    return emitError('BAD_INPUT', '--run-id <id> --fingerprint <hash> --action <accepted|dismissed> are all required');
-  }
-  if (action !== 'accepted' && action !== 'dismissed') {
-    return emitError('BAD_INPUT', `--action must be 'accepted' or 'dismissed', got '${action}'`);
-  }
-  // --bucket is optional. Omitted → the store resolves it, refusing rather than
-  // guessing when a fingerprint spans several buckets. `primary` / `none` name
-  // the NULL bucket, which is what a non-shadow final-review finding carries.
-  // `argOption` returns NULL for an absent flag, never `undefined` — so the
-  // `undefined` test made the omitted-bucket branch UNREACHABLE, and every
-  // caller that omitted `--bucket` silently got `{bucket: null}`, i.e. "scope to
-  // the PRIMARY bucket" rather than the documented "let the store resolve it".
-  // A shadow-only finding then matched 0 rows. Its sibling
-  // `cmdFinalReviewRecordFix` already tests `=== null` correctly; this is that
-  // copy-paste divergence, found by the code audit on the exact command the
-  // /ship credit card points operators at (R1-H3).
-  const rawBucket = argOption('bucket');
-  const opts = rawBucket === null ? {}
-    : { bucket: (rawBucket === 'primary' || rawBucket === 'none') ? null : rawBucket };
-  const res = await adjudicateFinalReviewFinding(runId, fingerprint, action, opts);
-  // A 0-row adjudication is a FAILURE, not a quiet success. Reporting ok:true
-  // there is how a hardcoded bucket filter went unnoticed: every primary
-  // finding "adjudicated" fine and nothing changed.
-  if (!res.ok) {
-    const hint = res.reason === 'ambiguous-bucket'
-      ? ` — fingerprint spans buckets [${(res.buckets || []).map((b) => b ?? 'primary').join(', ')}]; re-run with --bucket <name>`
-      : res.reason === 'no-match-in-bucket'
-        ? ` — no row in that bucket; present in [${(res.buckets || []).map((b) => b ?? 'primary').join(', ')}]`
-        : '';
-    return emitError('ADJUDICATION_FAILED', `${res.reason || 'unknown'}${hint}`, {
-      updated: 0, cloud: res.cloud, buckets: res.buckets,
-    });
-  }
-  emit(res);
-}
+// cmdFinalReviewAdjudicate moved to scripts/lib/cross-skill/commands/final-review.mjs (registry).
 
 /**
  * Findings awaiting credit — the READ that makes `/ship`'s nudge possible.
@@ -1073,33 +812,7 @@ async function cmdFinalReviewPending() {
  * (AGENTS.md two-axis model), and collapsing them would make "accepted, fix
  * pending" unrepresentable.
  */
-async function cmdFinalReviewRecordFix() {
-  await initLearningStore();
-  if (!await isCloudEnabled()) return emit({ ok: false, cloud: false, updated: 0 });
-  const runId = argOption('run-id');
-  const fingerprint = argOption('fingerprint');
-  if (!runId || !fingerprint) {
-    return emitError('BAD_INPUT', '--run-id <id> and --fingerprint <hash> are both required');
-  }
-  const rawBucket = argOption('bucket');
-  const opts = {
-    commitSha: argOption('commit'),
-    ...(argOption('state') ? { state: argOption('state') } : {}),
-    ...(rawBucket === null ? {} : { bucket: (rawBucket === 'primary' || rawBucket === 'none') ? null : rawBucket }),
-  };
-  const res = await recordFinalReviewFix(runId, fingerprint, opts);
-  if (!res.ok) {
-    const hint = res.reason === 'ambiguous-bucket'
-      ? ` — fingerprint spans buckets [${(res.buckets || []).map((b) => b ?? 'primary').join(', ')}]; re-run with --bucket <name>`
-      : res.reason === 'dismissed-cannot-be-fixed'
-        ? ' — this finding was adjudicated `dismissed`; recording a fix for a non-issue is incoherent'
-        : '';
-    return emitError('RECORD_FIX_FAILED', `${res.reason || 'unknown'}${hint}`, {
-      updated: 0, cloud: res.cloud, buckets: res.buckets,
-    });
-  }
-  emit(res);
-}
+// cmdFinalReviewRecordFix moved to scripts/lib/cross-skill/commands/final-review.mjs (registry).
 
 // ── Model-A/B/C experiment harness (Cluster C) ──────────────────────────────
 
@@ -1695,19 +1408,7 @@ const AddPersonaRequestSchema = z.object({
   repoName: z.string().optional(),
 });
 
-async function cmdAddPersona() {
-  const p = parsePayload();
-  const parsed = AddPersonaRequestSchema.safeParse(p);
-  if (!parsed.success) {
-    return emitError('BAD_INPUT', 'name, description, appUrl are required', { issues: parsed.error.issues });
-  }
-
-  const cloud = await isPersonaCloudEnabled();
-  if (!cloud) return emit({ ok: true, cloud: false, personaId: null, existed: false });
-
-  const { personaId, existed } = await upsertPersona(parsed.data);
-  emit({ ok: !!personaId, cloud: true, personaId, existed });
-}
+// cmdAddPersona moved to scripts/lib/cross-skill/commands/persona.mjs (registry).
 
 const RecordPersonaSessionRequestSchema = z.object({
   // OPTIONAL since WS-C2 — omit it and the CLI mints a collision-resistant id
@@ -1745,78 +1446,7 @@ const RecordPersonaSessionRequestSchema = z.object({
   clickPath: z.array(z.unknown()).optional(),
 });
 
-async function cmdRecordPersonaSession() {
-  const p = parsePayload();
-  if (!p.commitSha) p.commitSha = currentCommitSha() || undefined;
-  const parsed = RecordPersonaSessionRequestSchema.safeParse(p);
-  if (!parsed.success) {
-    return emitError('BAD_INPUT', 'session payload failed validation', { issues: parsed.error.issues });
-  }
-
-  const cloud = await isPersonaCloudEnabled();
-  if (!cloud) return emit({ ok: true, cloud: false, sessionId: null, existed: false, statsUpdated: false });
-
-  // Resolve the CANONICAL repo identity (stable repo_uuid → audit_repos.id) from
-  // the runner's cwd, so the session joins natively to audit_runs/findings
-  // regardless of the bare-vs-owner/repo display name. resolveRepoForStore mints
-  // the canonical row if this repo has never been audited (persona is a
-  // legitimate identity writer). Best-effort: a resolution failure leaves repo_id
-  // null and the session still records by name.
-  const data = { ...parsed.data };
-  // WS-C2: mint the session_id in code when the caller omitted it. Keeps the
-  // weak `persona-test-<unix>` shape the LLM used to author out of the identity
-  // path entirely, without breaking re-posts (an explicit id passes through).
-  const mintedSessionId = data.sessionId ? null : buildPersonaSessionId();
-  if (mintedSessionId) data.sessionId = mintedSessionId;
-  // Populate BOTH the canonical repo_id (native join key) and the denormalized
-  // repo_name. repo_name is load-bearing, not cosmetic: the `audit_effectiveness`
-  // view joins `persona_test_sessions.repo_name = audit_repos.name`, so a null
-  // here silently drops the session from precision/recall entirely. Resolve when
-  // EITHER is missing (a caller may pass repoId but omit the name).
-  // Filling only the MISSING field split identity across two repos: a caller
-  // supplying repoName for repo A from a checkout of repo B kept A's name and
-  // took B's id, and the two joins above then disagreed. Reconcile instead.
-  //
-  // Reconcile UNCONDITIONALLY. This was gated on `if (!data.repoId ||
-  // !data.repoName)`, so a caller supplying BOTH skipped reconciliation
-  // entirely — which is precisely the input reconciliation exists to check, and
-  // it made the REPO_IDENTITY_CONFLICT branch below unreachable for it. A
-  // payload naming repo A's id with repo B's name was written verbatim.
-  {
-    // Fail closed on a RESOLVER ERROR. `reconcileRepoIdentity` can only detect a
-    // cross-repo payload by comparing against the ambient identity, so a
-    // swallowed lookup failure (`ref = null`) makes both of its conflict guards
-    // short-circuit and waves the payload through unchecked — the reconciliation
-    // silently becomes a no-op precisely when the store is unhealthy. A genuine
-    // `cloud-off`/`unresolved` still passes through (the CI escape hatch); only
-    // a real error refuses.
-    const refResult = await resolveRepoForStoreResult({}).catch(
-      (err) => ({ kind: 'error', error: err?.message ?? String(err) }),
-    );
-    if (refResult.kind === 'error') {
-      return emitError('REPO_RESOLVE_FAILED',
-        `cannot verify this session's repo identity (${refResult.error}) — refusing rather than recording an `
-        + 'unreconciled repoId/repoName pair that could put the two on different repositories.');
-    }
-    const ref = refResult.kind === 'resolved'
-      ? { repoRowId: refResult.repoRowId, repoUuid: refResult.repoUuid, name: refResult.name }
-      : null;
-    const merged = reconcileRepoIdentity(data, ref);
-    if (!merged.ok) {
-      return emitError('REPO_IDENTITY_CONFLICT',
-        `refusing: supplied repo ${merged.conflict} "${merged.supplied}" does not match this checkout ("${merged.ambient}") — recording would put repo_id and repo_name on different repositories.`);
-    }
-    data.repoId = merged.repoId;
-    data.repoName = merged.repoName;
-  }
-
-  const result = await recordPersonaSession(data);
-  const correlationSummary = await runAutoCorrelate(data, result.sessionId);
-  // `sessionKey` is the persona_test_sessions.session_id TEXT (the idempotency
-  // key); `sessionId` is the row's uuid PK, which is what downstream correlation
-  // calls take. Surfacing the key lets a caller re-post the same session.
-  emit({ ok: !!result.sessionId, cloud: true, ...result, sessionKey: data.sessionId, correlationSummary });
-}
+// cmdRecordPersonaSession moved to scripts/lib/cross-skill/commands/persona.mjs (registry).
 
 /**
  * WS1 — deterministic persona<->audit correlator orchestration. Runs
@@ -1828,93 +1458,7 @@ async function cmdRecordPersonaSession() {
  * docs/plans/persona-nav-feedback-recovery.md WS1.
  * @returns {Promise<object>} correlationSummary
  */
-async function runAutoCorrelate(data, sessionId) {
-  const base = { attempted: false, candidates: 0, exact: 0, fuzzy: 0, missed: 0, skippedExisting: 0, malformed: 0, writeFailed: 0, matcherVersion: MATCHER_VERSION };
-  // A null sessionId means recordPersonaSession's OWN write failed (a
-  // genuine DB error inside its catch block — cloud is already confirmed
-  // on by this point) — distinct from "no repo identity", which is a
-  // resolvable-input problem, not a write failure. Nothing to attach
-  // correlations to either way; result.sessionId===null already surfaces
-  // via the overall response's `ok: false`.
-  if (!sessionId) return { ...base, reason: 'session-write-failed' };
-  if (data.autoCorrelate === false) return { ...base, reason: 'disabled-by-flag' };
-  if (!data.repoId) return { ...base, reason: 'no-repo-identity' };
-
-  // Delegate to the correlator's own `isP0OrP1` oracle — this line used to
-  // re-implement the predicate inline, and when the two drifted apart
-  // (`code` here vs the contract's `severity`) nothing could notice.
-  const p0p1 = (data.findings || []).filter(isP0OrP1);
-  if (p0p1.length === 0) {
-    // A caller-declared P0/P1 count with zero parseable P0/P1 findings is a
-    // SHAPE problem, not an absence — the exact condition that hid the
-    // `code`-vs-`severity` divergence for a month behind a reason string
-    // that reads identically to a genuinely clean run. Name it separately
-    // so the next field rename surfaces in one session, not one month.
-    const declared = (Number(data.p0Count) || 0) + (Number(data.p1Count) || 0);
-    if (declared > 0) {
-      process.stderr.write(
-        `  [correlator] session declares ${declared} P0/P1 finding(s) but none parsed from findings[] — `
-        + `every finding needs a "severity" (or legacy "code") of P0/P1; nothing correlated\n`,
-      );
-      return { ...base, reason: 'p0p1-shape-mismatch', declaredP0P1: declared };
-    }
-    return { ...base, reason: 'no-p0p1-findings' };
-  }
-
-  try {
-    const candResult = await getCandidateAuditFindings({ repoId: data.repoId, exactCommitSha: data.commitSha || null });
-    if (!candResult.ok) {
-      process.stderr.write(`  [correlator] candidate read failed: ${candResult.error}\n`);
-      return { ...base, attempted: true, reason: 'candidate-read-failed' };
-    }
-    if (candResult.rows.length === 0) {
-      // Ground-truth integrity (WS1): a session with zero eligible audit
-      // runs is NOT evidence of an audit miss — emit nothing.
-      return { ...base, attempted: true, reason: 'no-candidate-runs' };
-    }
-
-    const existResult = await getExistingCorrelationHashesForSession(sessionId);
-    if (!existResult.ok) {
-      process.stderr.write(`  [correlator] existence check failed: ${existResult.error}\n`);
-      return { ...base, attempted: true, candidates: candResult.rows.length, reason: 'existence-check-failed' };
-    }
-
-    const { emissions, skippedExisting, malformed } = decideCorrelations({
-      findings: data.findings, clickPath: data.clickPath,
-      candidates: candResult.rows, alreadyCorrelatedHashes: existResult.hashes,
-    });
-    if (malformed > 0) {
-      process.stderr.write(`  [correlator] session ${sessionId}: ${malformed} P0/P1 finding(s) quarantined (missing element/observed) — not correlated\n`);
-    }
-
-    let exact = 0, fuzzy = 0, missed = 0, writeFailed = 0;
-    for (const emission of emissions) {
-      if (emission._tier === 'exact') exact += 1;
-      else if (emission._tier === 'fuzzy') fuzzy += 1;
-      else missed += 1;
-      const writeResult = await recordPersonaAuditCorrelation(sessionId, emission);
-      if (!writeResult.ok) {
-        writeFailed += 1;
-        process.stderr.write(`  [correlator] write failed for finding ${emission.personaFindingHash}: ${writeResult.error}\n`);
-      }
-    }
-
-    const summary = {
-      attempted: true, candidates: candResult.rows.length,
-      exact, fuzzy, missed, skippedExisting, malformed, writeFailed, matcherVersion: MATCHER_VERSION,
-    };
-    if (writeFailed > 0) {
-      process.stderr.write(`  [correlator] session ${sessionId}: ${writeFailed}/${emissions.length} correlation writes failed\n`);
-    }
-    return summary;
-  } catch (err) {
-    // Best-effort invariant (graceful degradation #16): correlator failure
-    // NEVER fails the already-committed session write — but is always
-    // visible via stderr + the reason union, never a silent no-op.
-    process.stderr.write(`  [correlator] unexpected failure: ${err.message}\n`);
-    return { ...base, attempted: true, reason: 'candidate-read-failed', error: err.message };
-  }
-}
+// runAutoCorrelate moved to scripts/lib/cross-skill/commands/persona.mjs (registry).
 
 // cmdPersonaOutcomes (WS4 outcome labels) moved to scripts/lib/cross-skill/commands/persona.mjs (registry).
 
@@ -2902,164 +2446,21 @@ async function cmdGetNeighbourhood() {
   }
 }
 
-async function cmdOpenRefreshRun() {
-  const p = parsePayload();
-  if (!p.repoUuid || !p.mode) return emitError('BAD_INPUT', 'repoUuid and mode required');
-  await initLearningStore();
-  try {
-    let repo = await getRepoIdByUuid(p.repoUuid);
-    if (!repo) {
-      const newRepo = await upsertRepoByUuid({ repoUuid: p.repoUuid, name: p.name || 'unknown' });
-      if (!newRepo) return emitError('UPSERT_FAILED', 'could not create audit_repos row');
-      repo = { id: newRepo.id };
-    }
-    const run = await openRefreshRun({
-      repoId: repo.id, mode: p.mode, walkStartCommit: p.walkStartCommit,
-    });
-    emit({ ok: true, cloud: true, repoId: repo.id, ...run });
-  } catch (err) {
-    emitError(err.code || 'EXCEPTION', err.message);
-  }
-}
+// cmdOpenRefreshRun moved to scripts/lib/cross-skill/commands/arch-refresh.mjs (registry).
 
-async function cmdPublishRefreshRun() {
-  const p = parsePayload();
-  if (!p.repoId || !p.refreshId) return emitError('BAD_INPUT', 'repoId and refreshId required');
-  await initLearningStore();
-  try {
-    const r = await publishRefreshRun({ repoId: p.repoId, refreshId: p.refreshId });
-    // ASSERT the success rather than assume it, mirroring cmdAbortRefreshRun.
-    //
-    // The three real failure modes (run not found, run belongs to another repo,
-    // status not `running`) are `RAISE EXCEPTION` in the live
-    // `publish_refresh_run` definition, so they arrive at the catch below and
-    // this branch genuinely means "published" — that was verified against
-    // `pg_proc`, not against the first migration. But the sibling above now
-    // fails closed and this one did not, and an asymmetry between two lifecycle
-    // commands is how the next reader concludes the unchecked one is fine.
-    // Checking the RPC's own `ok` costs nothing and removes the question.
-    if (!r || r.ok !== true) {
-      return emitError('PUBLISH_NOT_CONFIRMED',
-        `publish_refresh_run returned no confirmation for refresh ${p.refreshId} — treating an unconfirmed publish as a failure`,
-        { cloud: true, result: r ?? null }, 1);
-    }
-    emit({ ok: true, cloud: true, result: r });
-  } catch (err) {
-    emitError(err.code || 'EXCEPTION', err.message);
-  }
-}
+// cmdPublishRefreshRun moved to scripts/lib/cross-skill/commands/arch-refresh.mjs (registry).
 
-async function cmdAbortRefreshRun() {
-  const p = parsePayload();
-  if (!p.repoId || !p.refreshId) return emitError('BAD_INPUT', 'repoId and refreshId required');
-  await initLearningStore();
-  try {
-    // Reflect the real outcome (shadow final-gate finding) — the same
-    // false-success class already fixed for refresh-lock.mjs (round-2 L1)
-    // and refresh.mjs's caller (round-4 H2): an external caller (CI,
-    // another skill) that aborts a wrong-repo or already-terminal run must
-    // be told so, not given an unconditional {ok:true}.
-    const { aborted } = await abortRefreshRun({ refreshId: p.refreshId, repoId: p.repoId, reason: p.reason });
-    // The comment above states the contract; this line did not implement it.
-    // `abortRefreshRun` was fixed at the STORE layer to return `aborted:false`
-    // for a wrong-repo or already-terminal run (proved by
-    // tests/refresh-runs-repo-scoping.test.mjs), and the CLI then wrapped that
-    // honest false in an unconditional `ok:true` — surfacing the real outcome as
-    // a data field that a shell caller checking `.ok` never reads. A comment
-    // claiming a fix that was only half-made is this file's signature defect.
-    if (!aborted) {
-      return emitError('ABORT_NOT_APPLIED',
-        `refresh run ${p.refreshId} was not aborted — no running row for that id under repo ${p.repoId} `
-        + '(wrong repo, already published, or already terminal). Nothing was changed.',
-        { cloud: true, aborted: false }, 1);
-    }
-    emit({ ok: true, cloud: true, aborted });
-  } catch (err) {
-    emitError(err.code || 'EXCEPTION', err.message);
-  }
-}
+// cmdAbortRefreshRun moved to scripts/lib/cross-skill/commands/arch-refresh.mjs (registry).
 
-async function cmdRecordSymbolDefinitions() {
-  const p = parsePayload();
-  if (!p.repoId || !Array.isArray(p.definitions)) return emitError('BAD_INPUT', 'repoId and definitions required');
-  await initLearningStore();
-  try {
-    const map = await recordSymbolDefinitions(p.repoId, p.definitions);
-    emit({ ok: true, cloud: true, definitionMap: map });
-  } catch (err) {
-    emitError(err.code || 'EXCEPTION', err.message);
-  }
-}
+// cmdRecordSymbolDefinitions moved to scripts/lib/cross-skill/commands/arch-refresh.mjs (registry).
 
-async function cmdRecordSymbolIndex() {
-  const p = parsePayload();
-  if (!p.refreshId || !p.repoId || !Array.isArray(p.rows)) {
-    return emitError('BAD_INPUT', 'refreshId, repoId, rows required');
-  }
-  await initLearningStore();
-  try {
-    const n = await recordSymbolIndex(p.refreshId, p.repoId, p.rows);
-    // These use ON CONFLICT DO UPDATE, so a successful chunk's rowCount equals
-    // the rows attempted (the store warns on any mismatch). A ZERO against a
-    // non-empty request is therefore anomalous — an RLS-filtered or otherwise
-    // silently-dropped batch — and reporting it as `{ok:true}` is the
-    // unverified-write-success shape. An empty request stays a legitimate no-op.
-    if (p.rows.length > 0 && n === 0) {
-      return emitError('NO_ROWS_WRITTEN',
-        `recordSymbolIndex was given ${p.rows.length} row(s) and wrote 0 — refusing to report a write that did not happen`,
-        { cloud: true, requested: p.rows.length, inserted: 0 }, 1);
-    }
-    emit({ ok: true, cloud: true, inserted: n, requested: p.rows.length });
-  } catch (err) {
-    emitError(err.code || 'EXCEPTION', err.message);
-  }
-}
+// cmdRecordSymbolIndex moved to scripts/lib/cross-skill/commands/arch-refresh.mjs (registry).
 
-async function cmdRecordSymbolEmbedding() {
-  const p = parsePayload();
-  if (!p.definitionId || !p.embeddingModel || !p.dimension || !Array.isArray(p.vector)) {
-    return emitError('BAD_INPUT', 'definitionId, embeddingModel, dimension, vector required');
-  }
-  await initLearningStore();
-  try {
-    await recordSymbolEmbedding(p);
-    emit({ ok: true, cloud: true });
-  } catch (err) {
-    emitError(err.code || 'EXCEPTION', err.message);
-  }
-}
+// cmdRecordSymbolEmbedding moved to scripts/lib/cross-skill/commands/arch-refresh.mjs (registry).
 
-async function cmdRecordLayeringViolations() {
-  const p = parsePayload();
-  if (!p.refreshId || !p.repoId || !Array.isArray(p.violations)) {
-    return emitError('BAD_INPUT', 'refreshId, repoId, violations required');
-  }
-  await initLearningStore();
-  try {
-    const n = await recordLayeringViolations(p.refreshId, p.repoId, p.violations);
-    // Same zero-against-non-empty check as record-symbol-index above.
-    if (p.violations.length > 0 && n === 0) {
-      return emitError('NO_ROWS_WRITTEN',
-        `recordLayeringViolations was given ${p.violations.length} row(s) and wrote 0 — refusing to report a write that did not happen`,
-        { cloud: true, requested: p.violations.length, inserted: 0 }, 1);
-    }
-    emit({ ok: true, cloud: true, inserted: n, requested: p.violations.length });
-  } catch (err) {
-    emitError(err.code || 'EXCEPTION', err.message);
-  }
-}
+// cmdRecordLayeringViolations moved to scripts/lib/cross-skill/commands/arch-refresh.mjs (registry).
 
-async function cmdSetActiveEmbeddingModel() {
-  const p = parsePayload();
-  if (!p.repoId || !p.model || !p.dim) return emitError('BAD_INPUT', 'repoId, model, dim required');
-  await initLearningStore();
-  try {
-    await setActiveEmbeddingModel({ repoId: p.repoId, model: p.model, dim: p.dim });
-    emit({ ok: true, cloud: true });
-  } catch (err) {
-    emitError(err.code || 'EXCEPTION', err.message);
-  }
-}
+// cmdSetActiveEmbeddingModel moved to scripts/lib/cross-skill/commands/arch-refresh.mjs (registry).
 
 async function cmdListSymbolsForSnapshot() {
   const p = parsePayload();
@@ -3115,54 +2516,7 @@ async function cmdResolveRepoIdentity() {
  * to import scripts/lib/learning/decision-logger.mjs directly (e.g. shell
  * pipelines).  Validates input shape, derives decision_key, inserts row.
  */
-async function cmdLearningRecord() {
-  const p = parsePayload();
-  if (!p.decisionType) return emitError('BAD_INPUT', 'decisionType is required');
-  if (!p.context || !p.choice) return emitError('BAD_INPUT', 'context and choice are required');
-
-  const auditBound = p.auditRunId && Number.isInteger(p.round) && Number.isInteger(p.sequence);
-  if (!auditBound && !p.externalId) {
-    return emitError('BAD_INPUT', 'must provide either (auditRunId, round, sequence) OR externalId');
-  }
-
-  await initLearningStore();
-  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, decisionKey: null });
-
-  // Build decision_key the same way decision-logger does.
-  const decisionKey = auditBound
-    ? `${p.auditRunId}:${p.decisionType}:r${p.round}:s${p.sequence}`
-    : `${p.decisionType}:${p.externalId}`;
-
-  // Compute context_hash via decision-logger's oracle — do NOT re-implement.
-  //
-  // This line used to read `JSON.stringify(p.context, Object.keys(p.context).sort())`
-  // under a comment claiming it was decision-logger's algorithm. The second
-  // argument to JSON.stringify is a replacer ARRAY — a recursive property
-  // allowlist, not a key sort — so every nested object serialised EMPTY
-  // (`{passName:'x',meta:{model:'gpt'}}` → `{"meta":{},"passName":"x"}`) and two
-  // contexts differing only below the top level produced an identical sha256.
-  // decision-logger fixed exactly this bug in its own copy; this one kept it, so
-  // the column had two writers producing different hashes for the same context.
-  const { contextHash: computeContextHash } = await import('./lib/learning/decision-logger.mjs');
-  const contextHash = computeContextHash(p.context);
-
-  const result = await insertLearningDecision({
-    decisionKey,
-    auditRunId:  p.auditRunId  ?? null,
-    decisionType: p.decisionType,
-    round:       p.round       ?? null,
-    sequence:    p.sequence    ?? null,
-    externalId:  p.externalId  ?? null,
-    repoId:      p.repoId      ?? null,
-    context:     p.context,
-    contextHash,
-    choice:      p.choice,
-    outcome:     p.outcome     ?? null,
-  });
-
-  if (!result.ok) return emitError('STORE_ERROR', result.error || 'insert failed', { decisionKey });
-  emit({ ok: true, cloud: true, decisionKey });
-}
+// cmdLearningRecord moved to scripts/lib/cross-skill/commands/misc.mjs (registry).
 
 /**
  * Stats snapshot for human inspection or weekly review.  Currently emits
@@ -3323,24 +2677,14 @@ async function cmdLearningQuickfixStats() {
 // ── Dispatcher ──────────────────────────────────────────────────────────────
 
 const commands = {
-  'upsert-plan': cmdUpsertPlan,
-  'update-plan-status': cmdUpdatePlanStatus,
-  'record-regression-spec': cmdRecordRegressionSpec,
-  'record-regression-spec-run': cmdRecordRegressionSpecRun,
   // Phase 3 WS-PIPE1 — persona_test_candidates aggregation table.
-  'record-correlation': cmdRecordCorrelation,
-  'record-nav-audit-run': cmdRecordNavAuditRun,
   'get-nav-first-seen': cmdGetNavFirstSeen,
-  'record-plan-verify-run': cmdRecordPlanVerifyRun,
-  'record-plan-verify-items': cmdRecordPlanVerifyItems,
   'plan-satisfaction': cmdPlanSatisfaction,
   'list-unlocked-fixes': cmdListUnlockedFixes,
   'list-unremediated-acceptances': cmdListUnremediatedAcceptances,
   'audit-effectiveness': cmdAuditEffectiveness,
   'final-review-stats': cmdFinalReviewStats,
   'final-review-pending': cmdFinalReviewPending,
-  'final-review-adjudicate': cmdFinalReviewAdjudicate,
-  'final-review-record-fix': cmdFinalReviewRecordFix,
   'finalize-outcomes': cmdFinalizeOutcomes,
   // Model-A/B/C experiment harness (Cluster C)
   'model-ab-adjudicate': cmdModelAbAdjudicate,
@@ -3356,8 +2700,6 @@ const commands = {
   'arm-eval-export': cmdArmEvalExport,
   'detect-stack': cmdDetectStack,
   'list-personas': cmdListPersonas,
-  'add-persona': cmdAddPersona,
-  'record-persona-session': cmdRecordPersonaSession,
   'get-persona-sessions-by-repo': cmdGetPersonaSessionsByRepo,
   'get-reachability-evidence': cmdGetReachabilityEvidence,
   'recommend-skills': cmdRecommendSkills,
@@ -3373,19 +2715,10 @@ const commands = {
   'get-incident-neighbourhood':       cmdGetIncidentNeighbourhood,
   'compute-target-domains':           cmdComputeTargetDomains,
   'get-callers-for-file':             cmdGetCallersForFile,
-  'open-refresh-run':                 cmdOpenRefreshRun,
-  'publish-refresh-run':              cmdPublishRefreshRun,
-  'abort-refresh-run':                cmdAbortRefreshRun,
-  'record-symbol-definitions':        cmdRecordSymbolDefinitions,
-  'record-symbol-index':              cmdRecordSymbolIndex,
-  'record-symbol-embedding':          cmdRecordSymbolEmbedding,
-  'record-layering-violations':       cmdRecordLayeringViolations,
-  'set-active-embedding-model':       cmdSetActiveEmbeddingModel,
   'list-symbols-for-snapshot':        cmdListSymbolsForSnapshot,
   'list-layering-violations-for-snapshot': cmdListLayeringViolationsForSnapshot,
   'compute-drift-score':              cmdComputeDriftScore,
   // Phase 1 — adaptive-learning-v1
-  'learning-record':                  cmdLearningRecord,
   'learning-stats':                   cmdLearningStats,
   'learning-weekly-review':           cmdLearningWeeklyReview,
   // Phase 2 — live quickfix learner

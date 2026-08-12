@@ -61,6 +61,64 @@ export const CASES = [
   { id: 'po-label-cloud-off', args: ['persona-outcomes', 'label', '--session', 's', '--hash', 'h', '--outcome', 'fixed'] },
   { id: 'po-worksheet-no-repo', args: ['persona-outcomes', '--worksheet'] },
   { id: 'po-backfill-no-repo', args: ['persona-outcomes', 'backfill-hash'] },
+
+  // ── Cluster B (Phase 3) — mutating writers ────────────────────────────────
+  // Captured from the LEGACY handlers before migration. Cloud is off in the
+  // hermetic env, so every "happy" row here is the documented degrade path.
+  //
+  // SPEND SAFETY: `arm-eval-run` has NO cloud gate — it proceeds straight to
+  // runArmEvalSession, which makes paid LLM calls, and the hermetic env still
+  // inherits the API keys. Only its input-refusal (which returns before any
+  // provider call) is capturable; its degrade path is deliberately uncovered
+  // and named as such in the plan's coverage note rather than captured by
+  // spending money in a test.
+  { id: 'upsert-plan-missing', args: ['upsert-plan', '--json', '{}'] },
+  { id: 'upsert-plan-cloud-off', args: ['upsert-plan', '--json', '{"path":"docs/plans/x.md","skill":"plan"}'] },
+  { id: 'update-plan-status-no-id', args: ['update-plan-status', '--json', '{}'] },
+  { id: 'update-plan-status-no-status', args: ['update-plan-status', '--json', '{"path":"docs/plans/x.md"}'] },
+  { id: 'update-plan-status-cloud-off', args: ['update-plan-status', '--json', '{"path":"docs/plans/x.md","status":"Complete"}'] },
+  { id: 'rec-spec-missing', args: ['record-regression-spec', '--json', '{}'] },
+  { id: 'rec-spec-no-path', args: ['record-regression-spec', '--json', '{"sourceKind":"audit-loop-fix","description":"d"}'] },
+  { id: 'rec-spec-cloud-off', args: ['record-regression-spec', '--json', '{"sourceKind":"audit-loop-fix","description":"d","specPath":"tests/x.spec.ts"}'] },
+  { id: 'rec-spec-run-missing', args: ['record-regression-spec-run', '--json', '{}'] },
+  { id: 'rec-spec-run-cloud-off', args: ['record-regression-spec-run', '--json', '{"specId":"s1","passed":true}'] },
+  { id: 'rec-correlation-missing', args: ['record-correlation', '--json', '{}'] },
+  { id: 'rec-correlation-cloud-off', args: ['record-correlation', '--json', '{"personaSessionId":"s1","personaFindingHash":"h","personaSeverity":"P0","correlationType":"exact"}'] },
+  { id: 'nav-run-no-sha', args: ['record-nav-audit-run', '--json', '{}'] },
+  { id: 'nav-run-no-drift', args: ['record-nav-audit-run', '--json', '{"headSha":"abc"}'] },
+  { id: 'nav-run-bad-scope', args: ['record-nav-audit-run', '--json', '{"headSha":"abc","driftKeys":[],"scope":"bogus"}'] },
+  { id: 'nav-run-cloud-off', args: ['record-nav-audit-run', '--json', '{"headSha":"abc","driftKeys":[]}'] },
+  { id: 'pv-run-no-plan', args: ['record-plan-verify-run', '--json', '{}'] },
+  { id: 'pv-run-bad-counts', args: ['record-plan-verify-run', '--json', '{"planId":"p1","totalCriteria":-3}'] },
+  { id: 'pv-run-cloud-off', args: ['record-plan-verify-run', '--json', '{"planId":"p1","totalCriteria":3,"passedCount":3}'] },
+  { id: 'pv-items-missing', args: ['record-plan-verify-items', '--json', '{}'] },
+  { id: 'pv-items-empty', args: ['record-plan-verify-items', '--json', '{"runId":"r1","planId":"p1","items":[]}'] },
+  { id: 'pv-items-cloud-off', args: ['record-plan-verify-items', '--json', '{"runId":"r1","planId":"p1","items":[{"criterion":"c"}]}'] },
+  { id: 'add-persona-missing', args: ['add-persona', '--json', '{}'] },
+  { id: 'add-persona-cloud-off', args: ['add-persona', '--json', '{"name":"n","description":"d","appUrl":"https://e.test"}'] },
+  { id: 'rec-session-missing', args: ['record-persona-session', '--json', '{}'] },
+  { id: 'rec-session-cloud-off', args: ['record-persona-session', '--json', '{"persona":"p","url":"https://e.test","browserTool":"playwright","verdict":"Needs work"}'] },
+  { id: 'fr-adj-cloud-off', args: ['final-review-adjudicate', '--run-id', 'r1', '--fingerprint', 'f1', '--action', 'accepted'] },
+  { id: 'fr-fix-cloud-off', args: ['final-review-record-fix', '--run-id', 'r1', '--fingerprint', 'f1'] },
+  { id: 'mab-adj-cloud-off', args: ['model-ab-adjudicate', '--json'] },
+  { id: 'arm-run-missing', args: ['arm-eval-run'] },
+  { id: 'arm-toggle-status', args: ['arm-eval-toggle', 'status'] },
+  { id: 'arm-toggle-bad-verb', args: ['arm-eval-toggle', 'bogus'] },
+  { id: 'arm-capture-toggle-off', args: ['arm-eval-maybe-capture', '--experiment', 'brainstorm', '--task', 't'] },
+  { id: 'arm-adj-cloud-off', args: ['arm-eval-adjudicate', '--session-id', 's1'] },
+  { id: 'arm-export-cloud-off', args: ['arm-eval-export', '--session-id', 's1'] },
+  { id: 'learning-record-missing', args: ['learning-record', '--json', '{}'] },
+  { id: 'learning-record-no-binding', args: ['learning-record', '--json', '{"decisionType":"pass_selection","context":{"a":1},"choice":{"b":2}}'] },
+  { id: 'learning-record-cloud-off', args: ['learning-record', '--json', '{"decisionType":"pass_selection","context":{"a":1},"choice":{"b":2},"externalId":"e1"}'] },
+  { id: 'open-refresh-missing', args: ['open-refresh-run', '--json', '{}'] },
+  { id: 'publish-refresh-missing', args: ['publish-refresh-run', '--json', '{}'] },
+  { id: 'abort-refresh-missing', args: ['abort-refresh-run', '--json', '{}'] },
+  { id: 'rec-symdefs-missing', args: ['record-symbol-definitions', '--json', '{}'] },
+  { id: 'rec-symindex-missing', args: ['record-symbol-index', '--json', '{}'] },
+  { id: 'rec-symembed-missing', args: ['record-symbol-embedding', '--json', '{}'] },
+  { id: 'rec-layering-missing', args: ['record-layering-violations', '--json', '{}'] },
+  { id: 'set-embed-model-missing', args: ['set-active-embedding-model', '--json', '{}'] },
+  { id: 'lock-with-test-missing', args: ['lock-with-test'] },
 ];
 
 /** Run one case hermetically. Shared by capture (here) and replay (the test). */

@@ -125,7 +125,11 @@ describe('all three callers were migrated together', () => {
   // of `[object Object]`. That failure is silent at the type level, so it is
   // pinned here.
   const callers = {
-    'scripts/cross-skill.mjs': /const res = await upsertPlan\(/,
+    // The CLI caller moved to the command registry (command-registry Cluster B,
+    // Phase 3) and now reaches the store through the injected port, so the
+    // pattern admits the `ctx.deps.` prefix. This census CAUGHT that move —
+    // which is the point of deriving the set rather than listing it.
+    'scripts/lib/cross-skill/commands/plans.mjs': /const res = await ctx\.deps\.upsertPlan\(/,
     'scripts/lib/audit/legacy-production-audit.mjs': /const planRes = await upsertPlan\(/,
     'scripts/lib/audit/plan-audit-cloud.mjs': /const planRes = await upsertPlan\(/,
   };

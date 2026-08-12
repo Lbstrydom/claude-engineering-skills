@@ -120,6 +120,167 @@ export const REGISTRY = Object.freeze([
     softFail: { verbs: ['summary'] },
     load: () => import('./commands/persona.mjs').then((m) => m.personaOutcomesCmd),
   },
+
+  // ── Cohort: mutating writers (Cluster B, Phase 3) ────────────────────────
+  // `softFail: true` below marks the legacy `ok: !!id` shape — a store that
+  // swallows a failure returns null, which the legacy CLI emitted as
+  // `{ok:false}` at exit 0. Each is fixture-pinned; tightening any of them
+  // changes an envelope a skill reads, so it is a deliberate later decision.
+  {
+    name: 'upsert-plan',
+    flags: [], positionals: 'none', payload: 'json',
+    scope: 'ambient-ok', kind: 'write', cloud: 'degrade-noop',
+    // softFail REMOVED (audit CB-r4): upsertPlanCmd now throws for EVERY
+    // `!res.ok`, including an unhandled future reason, so it can no longer
+    // return a failure-shaped envelope and needs no exemption. This is what
+    // paying down a softFail looks like — one down, the rest listed for
+    // Cluster F with written reasons.
+    degradeShape: { planId: null },
+    load: () => import('./commands/plans.mjs').then((m) => m.upsertPlanCmd),
+  },
+  {
+    name: 'update-plan-status',
+    flags: [], positionals: 'none', payload: 'json',
+    scope: 'ambient-ok', kind: 'write', cloud: 'degrade-noop',
+    degradeShape: {},
+    load: () => import('./commands/plans.mjs').then((m) => m.updatePlanStatusCmd),
+  },
+  {
+    name: 'record-regression-spec',
+    flags: [], positionals: 'none', payload: 'json',
+    scope: 'ambient-ok', kind: 'write', cloud: 'degrade-noop',
+    degradeShape: { specId: null }, softFail: { all: true, reason: 'legacy `ok: !!specId` — same swallowed-null shape as upsert-plan. Owned by Cluster F.' },
+    load: () => import('./commands/ship.mjs').then((m) => m.recordRegressionSpecCmd),
+  },
+  {
+    name: 'record-regression-spec-run',
+    flags: [], positionals: 'none', payload: 'json',
+    // scope:'none' — addressed purely by specId. Cluster F adds
+    // `parent: {table:'regression_specs', idField:'specId'}`.
+    scope: 'none', kind: 'write', cloud: 'degrade-noop', degradeShape: {},
+    load: () => import('./commands/ship.mjs').then((m) => m.recordRegressionSpecRunCmd),
+  },
+  {
+    name: 'record-correlation',
+    flags: [], positionals: 'none', payload: 'json',
+    scope: 'none', kind: 'write', cloud: 'degrade-noop', degradeShape: {},
+    load: () => import('./commands/persona.mjs').then((m) => m.recordCorrelationCmd),
+  },
+  {
+    name: 'record-nav-audit-run',
+    flags: [], positionals: 'none', payload: 'json',
+    scope: 'ambient-ok', kind: 'write', cloud: 'degrade-noop',
+    degradeShape: {},
+    softFail: { all: true, reason: 'legacy ok = (result.status !== "failed") — the store\'s own failure shape rides the envelope. Owned by Cluster F.' },
+    load: () => import('./commands/misc.mjs').then((m) => m.recordNavAuditRunCmd),
+  },
+  {
+    name: 'record-plan-verify-run',
+    flags: [], positionals: 'none', payload: 'json',
+    scope: 'none', kind: 'write', cloud: 'degrade-noop',
+    degradeShape: { runId: null }, softFail: { all: true, reason: 'legacy `ok: !!runId` — same swallowed-null shape. Owned by Cluster F.' },
+    load: () => import('./commands/plan-verify.mjs').then((m) => m.recordPlanVerifyRunCmd),
+  },
+  {
+    name: 'record-plan-verify-items',
+    flags: [], positionals: 'none', payload: 'json',
+    scope: 'none', kind: 'write', cloud: 'degrade-noop',
+    degradeShape: { inserted: 0 },
+    load: () => import('./commands/plan-verify.mjs').then((m) => m.recordPlanVerifyItemsCmd),
+  },
+  {
+    name: 'add-persona',
+    flags: [], positionals: 'none', payload: 'json',
+    scope: 'none', kind: 'write', cloud: 'degrade-noop',
+    degradeShape: { personaId: null, existed: false }, softFail: { all: true, reason: 'legacy `ok: !!personaId` — same swallowed-null shape. Owned by Cluster F.' },
+    load: () => import('./commands/persona.mjs').then((m) => m.addPersonaCmd),
+  },
+  {
+    name: 'record-persona-session',
+    flags: [], positionals: 'none', payload: 'json',
+    scope: 'none', kind: 'write', cloud: 'degrade-noop',
+    degradeShape: { sessionId: null, existed: false, statsUpdated: false },
+    softFail: { all: true, reason: 'legacy ok = !!result.sessionId — a throw would DISCARD the correlationSummary payload that names why (reason: session-write-failed), so this one needs a payload-preserving design. Owned by Cluster F.' },
+    load: () => import('./commands/persona.mjs').then((m) => m.recordPersonaSessionCmd),
+  },
+  {
+    name: 'final-review-adjudicate',
+    flags: ['run-id', 'fingerprint', 'action', 'bucket'],
+    positionals: 'none', payload: 'none',
+    scope: 'none', kind: 'write', cloud: 'degrade-noop',
+    // Frozen quirk: cloud-off emits {ok:false, cloud:false, updated:0} at exit 0.
+    degradeShape: {}, softFail: { all: true, reason: 'FIXTURE-PINNED (fr-adj-cloud-off): cloud-off emits {ok:false, cloud:false, updated:0} at exit 0.' },
+    load: () => import('./commands/final-review.mjs').then((m) => m.finalReviewAdjudicateCmd),
+  },
+  {
+    name: 'final-review-record-fix',
+    flags: ['run-id', 'fingerprint', 'bucket', 'commit', 'state'],
+    positionals: 'none', payload: 'none',
+    scope: 'none', kind: 'write', cloud: 'degrade-noop',
+    degradeShape: {}, softFail: { all: true, reason: 'FIXTURE-PINNED (fr-fix-cloud-off): cloud-off emits {ok:false, cloud:false, updated:0} at exit 0.' },
+    load: () => import('./commands/final-review.mjs').then((m) => m.finalReviewRecordFixCmd),
+  },
+  {
+    name: 'learning-record',
+    flags: [], positionals: 'none', payload: 'json',
+    scope: 'none', kind: 'write', cloud: 'degrade-noop',
+    degradeShape: { decisionKey: null },
+    load: () => import('./commands/misc.mjs').then((m) => m.learningRecordCmd),
+  },
+  // Arch-refresh pipeline steps. `scope:'none'` + payload repoId is correct
+  // here and not a gap: these are invoked only by `arch:refresh`, which
+  // resolves the id itself immediately before calling them.
+  // `cloud:'none'` matches legacy: they call initLearningStore and then the
+  // store, whose own guards produce the failure — there is no cloud-off
+  // envelope to degrade to.
+  {
+    name: 'open-refresh-run',
+    flags: [], positionals: 'none', payload: 'json',
+    scope: 'none', kind: 'write', cloud: 'none',
+    load: () => import('./commands/arch-refresh.mjs').then((m) => m.openRefreshRunCmd),
+  },
+  {
+    name: 'publish-refresh-run',
+    flags: [], positionals: 'none', payload: 'json',
+    scope: 'none', kind: 'write', cloud: 'none',
+    load: () => import('./commands/arch-refresh.mjs').then((m) => m.publishRefreshRunCmd),
+  },
+  {
+    name: 'abort-refresh-run',
+    flags: [], positionals: 'none', payload: 'json',
+    scope: 'none', kind: 'write', cloud: 'none',
+    load: () => import('./commands/arch-refresh.mjs').then((m) => m.abortRefreshRunCmd),
+  },
+  {
+    name: 'record-symbol-definitions',
+    flags: [], positionals: 'none', payload: 'json',
+    scope: 'none', kind: 'write', cloud: 'none',
+    load: () => import('./commands/arch-refresh.mjs').then((m) => m.recordSymbolDefinitionsCmd),
+  },
+  {
+    name: 'record-symbol-index',
+    flags: [], positionals: 'none', payload: 'json',
+    scope: 'none', kind: 'write', cloud: 'none',
+    load: () => import('./commands/arch-refresh.mjs').then((m) => m.recordSymbolIndexCmd),
+  },
+  {
+    name: 'record-symbol-embedding',
+    flags: [], positionals: 'none', payload: 'json',
+    scope: 'none', kind: 'write', cloud: 'none',
+    load: () => import('./commands/arch-refresh.mjs').then((m) => m.recordSymbolEmbeddingCmd),
+  },
+  {
+    name: 'record-layering-violations',
+    flags: [], positionals: 'none', payload: 'json',
+    scope: 'none', kind: 'write', cloud: 'none',
+    load: () => import('./commands/arch-refresh.mjs').then((m) => m.recordLayeringViolationsCmd),
+  },
+  {
+    name: 'set-active-embedding-model',
+    flags: [], positionals: 'none', payload: 'json',
+    scope: 'none', kind: 'write', cloud: 'none',
+    load: () => import('./commands/arch-refresh.mjs').then((m) => m.setActiveEmbeddingModelCmd),
+  },
 ]);
 
 const _byName = new Map(REGISTRY.map((e) => [e.name, e]));
