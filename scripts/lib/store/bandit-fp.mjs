@@ -63,9 +63,10 @@ export function buildBanditArmRows(arms) {
  * @param {object} arms - The bandit arms map from PromptBandit
  */
 export async function syncBanditArms(arms) {
-  if (!await isCloudEnabled()) return;
+  if (!await isCloudEnabled()) return { applied: false, rows: 0, reason: 'cloud-off' };
   const rows = buildBanditArmRows(arms);
-  if (rows.length === 0) return;
+  // Terminal: an empty arms map yields zero rows on every attempt.
+  if (rows.length === 0) return { applied: true, rows: 0, reason: 'no-rows' };
   try {
     // @on-conflict-ok(context_bucket): falls back to GLOBAL_CONTEXT_BUCKET ('global', scripts/lib/config.mjs:260) — a module constant the intra-file resolver cannot see; never null.
     await upsert('bandit_arms', rows, {
@@ -73,8 +74,13 @@ export async function syncBanditArms(arms) {
       update: 'all',
     });
     process.stderr.write(`  [learning] Synced ${rows.length} bandit arms to cloud\n`);
+    return { applied: true, rows: rows.length };
   } catch (err) {
     process.stderr.write(`  [learning] syncBanditArms failed: ${err.message}\n`);
+    // Receipt (durability plan Phase 3): the `durableWrite` seam needs the error
+    // OBJECT to classify outage-vs-poison, and a caller needs to be able to tell
+    // a completed sync from a swallowed one.
+    return { applied: false, rows: 0, reason: 'write-failed', error: err };
   }
 }
 

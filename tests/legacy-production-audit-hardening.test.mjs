@@ -749,8 +749,12 @@ describe('run-cost telemetry reaches the store (2026-08-10 regression)', () => {
     // is why this is pinned in source rather than left to a live query: the
     // failure produces no error, no warning and no wrong number — just an
     // absence that reads as zero spend.
-    const payload = SRC.slice(SRC.indexOf('await recordRunComplete('));
-    const block = payload.slice(0, payload.indexOf('});'));
+    // The payload MOVED (durability plan Phase 3, 2026-08-12): the completion
+    // write now goes through `durableWrite('audit.runComplete', …)`, so the
+    // stats object is bound to `completionStats` first instead of being an
+    // inline argument. Same object, same invariant, new anchor.
+    const payload = SRC.slice(SRC.indexOf('const completionStats = {'));
+    const block = payload.slice(0, payload.indexOf('\n    };'));
     assert.match(block, /costEstimate:/, 'recordRunComplete payload dropped costEstimate — per-run spend will silently stop being recorded');
     assert.match(block, /costEstimate:\s*totalUsage\.costUsd/, 'costEstimate must come from the priced aggregate, not a re-derivation');
   });
@@ -759,8 +763,12 @@ describe('run-cost telemetry reaches the store (2026-08-10 regression)', () => {
     // costFromUsage returns null for a model absent from the pricing table
     // (e.g. an Azure deployment id). Coercing that to 0 would report an
     // unpriceable run as a free one — the exact conflation the null exists for.
-    const payload = SRC.slice(SRC.indexOf('await recordRunComplete('));
-    const block = payload.slice(0, payload.indexOf('});'));
+    // The payload MOVED (durability plan Phase 3, 2026-08-12): the completion
+    // write now goes through `durableWrite('audit.runComplete', …)`, so the
+    // stats object is bound to `completionStats` first instead of being an
+    // inline argument. Same object, same invariant, new anchor.
+    const payload = SRC.slice(SRC.indexOf('const completionStats = {'));
+    const block = payload.slice(0, payload.indexOf('\n    };'));
     assert.doesNotMatch(block, /costEstimate:\s*totalUsage\.costUsd\s*\|\|/, 'a `||` fallback here turns an unknown cost into a measured $0');
   });
 });

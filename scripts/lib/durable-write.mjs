@@ -26,6 +26,16 @@
  *   success                → envelope deleted            → `written`
  *   failure, `rowKey`      → retained in `spill/`        → `spilled`  (drain replays)
  *   failure, no `rowKey`   → moved to `lost/`            → `lost`     (evidence only)
+ *   DECLINED (not tried)   → envelope deleted            → `skipped`
+ *
+ * The fourth outcome is not a softening of the other three — it exists because
+ * they had no name for the store being OFF, which is a supported mode
+ * (AGENTS.md: an unset `AUDIT_DB_URL` is local-only, not an error). Without it a
+ * cloud-off run classified every write as `lost`: unbounded junk in `lost/`, and
+ * `runStatus: 'incomplete'` on runs where nothing went wrong at all. A write
+ * that was never attempted is not a write that failed, and calling it one is the
+ * same false-signal class this module exists to remove, pointed the other way.
+ * A writer signals it by resolving `{applied: false, declined: true}`.
  *
  * `spill/` is the replay queue; `lost/` is an evidence drawer the drain never
  * reads. Nothing vanishes silently, and nothing without a declared idempotency
@@ -38,6 +48,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 
 import {
   writeEnvelope, parseEnvelopeFrame, drainEnvelopes, assertSafeFingerprint,
@@ -149,7 +160,7 @@ function fingerprintFor(writerId, payload, spec) {
  * @param {string} writerId
  * @param {object} payload
  * @param {{repoRoot?: string}} [opts]
- * @returns {Promise<{outcome:'written'|'spilled'|'lost', writerId:string, error?:string}>}
+ * @returns {Promise<{outcome:'written'|'spilled'|'lost'|'skipped', writerId:string, error?:string}>}
  */
 export async function durableWrite(writerId, payload, { repoRoot = process.cwd() } = {}) {
   const spec = _registry.get(writerId);
@@ -162,8 +173,25 @@ export async function durableWrite(writerId, payload, { repoRoot = process.cwd()
     );
   }
 
-  const fingerprint = fingerprintFor(writerId, payload, spec);
-  assertSafeFingerprint(fingerprint);
+  // The fingerprint is derived by serialising the payload, so a payload that
+  // cannot be serialised (a cycle, a BigInt) throws HERE — before any store
+  // attempt. That mattered the moment the orchestrator started awaiting these
+  // calls: the sites it replaced were `.catch(log)`, so a throw that used to be
+  // swallowed would now abort an audit that had already produced its findings.
+  // A payload that cannot be written to disk is exactly `lost` by this module's
+  // own definition, so classify it as such and still ATTEMPT the write — a
+  // successful store write with no envelope beats skipping it.
+  let fingerprint;
+  try {
+    fingerprint = fingerprintFor(writerId, payload, spec);
+    assertSafeFingerprint(fingerprint);
+  } catch (err) {
+    try {
+      const res = await spec.replay(payload);
+      if (res?.applied === true) return { outcome: 'written', writerId };
+    } catch { /* fall through to lost */ }
+    return { outcome: 'lost', writerId, error: `payload not serialisable: ${err?.message || err}` };
+  }
   const envelope = {
     v: AUDIT_ENVELOPE_VERSION,
     fingerprint,
@@ -203,6 +231,16 @@ export async function durableWrite(writerId, payload, { repoRoot = process.cwd()
 
   try {
     const res = await spec.replay(payload);
+    if (res?.applied !== true && res?.declined === true) {
+      // Nothing was attempted, so there is nothing to retain: the envelope
+      // records an INTENT to write, and an intent the sink refused to receive is
+      // not evidence of anything. Keeping it would grow `lost/` without bound on
+      // every local-only run.
+      try {
+        fs.rmSync(file, { force: true, recursive: true, maxRetries: 3, retryDelay: 50 });
+      } catch { /* swept by the next drain's reclaim */ }
+      return { outcome: 'skipped', writerId, error: res.reason };
+    }
     if (res?.applied === true) {
       // Cleanup is OUTSIDE the attempt's failure path. If the write committed
       // and only the envelope removal failed, the operation SUCCEEDED — calling
@@ -326,6 +364,55 @@ export function isConnectionScoped(err) {
   return code.startsWith('08') || /^57P0[123]$/.test(code);
 }
 
+/**
+ * Which artifacts in the spill directory are git-TRACKED?
+ *
+ * Provenance, not content (plan decision 2e). A legitimate spill artifact is
+ * written at runtime into a gitignored directory, so it is never tracked;
+ * `.gitignore` does not stop `git add -f`, which makes "it is ignored" a
+ * convention rather than a control. Reasoning about the JSON's shape cannot
+ * help — a hostile artifact would be perfectly well-formed. Tracked-ness keys on
+ * a property whoever committed the file cannot avoid producing.
+ *
+ * ONE `git ls-files` for the whole directory, tested in memory afterwards. A
+ * per-artifact `--error-unmatch` would be up to `cap` synchronous spawns per
+ * drain (the plan's R2 LOW).
+ *
+ * Scoped by pathspec deliberately: an unscoped listing of a large repo can
+ * exceed `spawnSync`'s 1 MiB `maxBuffer` and come back truncated, which for a
+ * membership test reads as "nothing is tracked" — a silent fail-OPEN in a
+ * security check. The pathspec bounds it to the queue, and the buffer is raised
+ * anyway; a buffer overrun is reported as a failure, never as an empty set.
+ *
+ * @returns {{ok: true, tracked: Set<string>} | {ok: false, reason: string}}
+ */
+export function readTrackedSpillArtifacts(repoRoot) {
+  const dir = spillDir(repoRoot);
+  const res = spawnSync(
+    'git', ['-C', repoRoot, 'ls-files', '-z', '--', dir],
+    { encoding: 'buffer', maxBuffer: 16 * 1024 * 1024 },
+  );
+  if (res.error) return { ok: false, reason: `git ls-files failed: ${res.error.code || res.error.message}` };
+  // ENOBUFS arrives as a truncated stdout with a non-zero signal/status — treat
+  // ANY non-zero exit as unverified rather than as an empty tracked set.
+  if (res.status !== 0) {
+    // …EXCEPT "this is not a git repository", which is not an unknown: nothing
+    // in a non-repo can be git-tracked, so the empty set is the VERIFIED answer
+    // and refusing to drain would be a false alarm. Disambiguated by a second
+    // probe rather than by matching git's stderr prose, which is localised.
+    // Only reached on the failure path, so the normal case stays one spawn.
+    const probe = spawnSync('git', ['-C', repoRoot, 'rev-parse', '--git-dir'], { encoding: 'utf-8' });
+    if (probe.status !== 0) return { ok: true, tracked: new Set() };
+    return { ok: false, reason: `git ls-files exited ${res.status ?? res.signal}: ${String(res.stderr || '').trim().slice(0, 200)}` };
+  }
+  const tracked = new Set(
+    String(res.stdout || '').split('\0').filter(Boolean)
+      // Paths come back repo-relative with forward slashes on every platform.
+      .map((p) => path.basename(p)),
+  );
+  return { ok: true, tracked };
+}
+
 /** Artifact states are exactly: pending → (applied ∧ deleted) | quarantined. */
 function quarantine(repoRoot, held, name, envelope, lastError) {
   const dir = path.join(spillDir(repoRoot), REJECTED_SUBDIR);
@@ -368,6 +455,24 @@ export async function drainSpill({
     return { ...nothing, state: 'unavailable', reason: 'cloud disabled — nothing can be applied' };
   }
 
+  // Provenance check (decision 2e). Resolved ONCE per drain and defaulted HERE
+  // rather than at each call site: it was an optional injectable that nothing
+  // supplied, so the refusal it describes was unimplemented for every real
+  // caller. An injectable with no default is a control on paper only.
+  //
+  // Unverifiable provenance is `unavailable`, not "nothing is tracked". The
+  // fail-open reading is the one that lets a planted artifact replay, and this
+  // module already has the honest vocabulary for "I could not look" — the
+  // artifacts stay on disk and the operator is told why.
+  let trackedCheck = isTracked;
+  if (!trackedCheck) {
+    const tracked = readTrackedSpillArtifacts(repoRoot);
+    if (!tracked.ok) {
+      return { ...nothing, state: 'unavailable', reason: `provenance unverifiable: ${tracked.reason}` };
+    }
+    trackedCheck = (file) => tracked.tracked.has(path.basename(file));
+  }
+
   // The operator drain and the run-start drain are two writers over one
   // directory — decision 4's self-contradiction, which the audit caught. Reuse
   // the repo's existing lock (stale detection, PID liveness, corrupted-lock
@@ -376,7 +481,7 @@ export async function drainSpill({
   fs.mkdirSync(spillDir(repoRoot), { recursive: true });
   try {
     return await withFileLock(lockPath, { maxWaitMs: 5000 }, () =>
-      drainLocked({ repoRoot, cap, isConnectionError, isTracked }));
+      drainLocked({ repoRoot, cap, isConnectionError, isTracked: trackedCheck }));
   } catch (err) {
     // Losing the lock race is not a failure — another drain is doing the work.
     // Reporting it as `unavailable` keeps it distinct from an empty queue.

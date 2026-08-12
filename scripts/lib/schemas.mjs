@@ -755,6 +755,24 @@ export const AuditRunResultSchema = z.object({
   // emissions⊆enum scan in tests/tiered-pipeline-wiring.test.mjs.
   runStatus: z.enum(['complete', 'incomplete', 'fallback_legacy', 'skipped_no_eligible_files', 'failed_invalid_diff_input']),
   fallbackReason: z.string().optional(),
+  // Durable audit-store write outcomes (docs/plans/audit-store-write-durability.md
+  // decision 3). Optional because only the legacy orchestrator populates it
+  // today; ABSENT is meaningfully different from all-zero — absent says nobody
+  // measured, zero says nothing was lost, and collapsing the two would recreate
+  // the believable-false-zero this field exists to expose.
+  //
+  // `lost > 0` is what makes `runStatus` 'incomplete'. Declared here because the
+  // enum note above holds for the whole object: a contract that omits values the
+  // system emits is the schema-vs-reality divergence these tests exist to kill.
+  writeOutcomes: z.object({
+    written: z.number(),
+    spilled: z.number(),
+    lost: z.number(),
+    // `skipped` = the store declined (cloud off). Counted, but NOT a failure —
+    // only `lost` makes a run incomplete.
+    skipped: z.number(),
+    byWriter: z.record(z.string(), z.record(z.string(), z.any())),
+  }).optional(),
   // Conditional / historically-optional fields:
   _failed_passes: z.array(z.string()).optional(),
   _executionMeta: z.record(z.string(), z.any()).optional(),

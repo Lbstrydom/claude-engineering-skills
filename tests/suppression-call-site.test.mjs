@@ -189,9 +189,29 @@ test('every learning-state sink sits under the writeLearningState gate', () => {
   assert.match(src, /^function writeLearningState\(allowed, fn\) \{\s*\n\s*if \(!allowed\) return;\s*\n\s*return fn\(\);\s*\n\}/m,
     'the single choke point every learning-state write must go through');
 
-  // syncBanditArms + bandit.flush share one writeLearningState call.
-  assert.match(src, /if\s*\(bandit\)\s*\{\s*\n\s*writeLearningState\(learningWritesAllowed,\s*\(\)\s*=>\s*\{[^}]*bandit\.flush\(\);[^}]*syncBanditArms\(/s,
-    'bandit.flush + syncBanditArms must both live inside one writeLearningState(...) call');
+  // The bandit-arms cloud sink + bandit.flush share one writeLearningState call.
+  //
+  // The SINK MOVED (durability plan Phase 3, 2026-08-12): the raw
+  // `syncBanditArms(...)` call is now `durableWrite('learning.banditArms', …)`,
+  // which routes to the same store function through the write-ahead seam. The
+  // invariant is unchanged and so is its strength — what changed is the name of
+  // the thing that must sit inside the gate. A regex is used on the EXTRACTED
+  // block rather than across the file, because a lazy match spanning the closing
+  // brace would happily find a later `writeLearningState` and pass with the sink
+  // outside the gate — which is the one thing this test exists to refuse.
+  // Anchored on the flush, not on the first `if (bandit)` — there are two such
+  // blocks (the earlier one registers arms) and picking the wrong one is how a
+  // scan like this passes while asserting nothing about the real sink.
+  const flushIdx = src.indexOf('bandit.flush();');
+  assert.ok(flushIdx > 0, 'the bandit flush/sync block must exist');
+  const banditIdx = src.lastIndexOf('\n  if (bandit) {', flushIdx);
+  assert.ok(banditIdx > 0, 'bandit.flush must sit inside an `if (bandit)` block');
+  const banditBlock = src.slice(banditIdx, src.indexOf('\n  }', flushIdx));
+  assert.match(banditBlock, /writeLearningState\(learningWritesAllowed,\s*async\s*\(\)\s*=>\s*\{/,
+    'the bandit block must open with a writeLearningState gate');
+  assert.match(banditBlock, /bandit\.flush\(\);/, 'bandit.flush must be inside that gate');
+  assert.match(banditBlock, /durableWrite\('learning\.banditArms'/,
+    'the bandit-arms cloud sink must be inside that same gate');
   // syncFalsePositivePatterns has its own.
   assert.match(src, /if\s*\(fpTracker\)\s*\{[\s\S]{0,900}?writeLearningState\(learningWritesAllowed,\s*\(\)\s*=>\s*\{[\s\S]{0,300}?syncFalsePositivePatterns\(/,
     'syncFalsePositivePatterns must be routed through writeLearningState');

@@ -96,6 +96,12 @@ import {
   selectEventSource, loadDebtLedger, appendEvents, reconcileLocalToCloud, mergeLedgers as mergeLedgersForSuppression
 } from '../debt-memory.mjs';
 import { initLearningStore, isCloudEnabled, resolveRepoForStore, upsertPlan, recordRunStart, recordRunComplete, recordFindings, recordPassStats, recordSuppressionEvents, syncBanditArms, syncFalsePositivePatterns, loadFalsePositivePatterns, recordDiffComplexity, backfillLearningOutcome, insertLearningDecision, markFindingsRemediation, reconcileRemediationProjection } from '../../learning-store.mjs';
+// Durable audit-store writes (docs/plans/audit-store-write-durability.md).
+// `audit-store-writers.mjs` is imported for its REGISTRATIONS — importing it is
+// the registry's bootstrap, and `durableWrite` throws for an unregistered id, so
+// dropping this import would fail loudly rather than silently.
+import { durableWrite, drainSpill, spillSummary } from '../durable-write.mjs';
+import '../audit-store-writers.mjs';
 import { buildCloudFpPolicy, runSuppressionPasses } from '../suppression-policy.mjs';
 import { finalizePriorRoundOutcomes } from '../finalize-outcomes.mjs';
 import { recordDecision as _learningRecordDecision, flush as _learningFlush, installLifecycleHooks as _learningInstallHooks, buildDecisionKey as _learningBuildKey, reconcileOutbox as _learningReconcileOutbox } from '../learning/decision-logger.mjs';
@@ -1019,6 +1025,39 @@ function writeLearningState(allowed, fn) {
 }
 
 /**
+ * Fold `durableWrite` results into the run's write-outcome tally.
+ *
+ * Kept as a named helper rather than an inline reduce because the SHAPE is the
+ * contract: `{written, spilled, lost}` reaches `audit_runs.write_outcomes`, and
+ * `lost > 0` is what makes a run `incomplete`. `byWriter` is carried too — a
+ * bare total says a write was lost, not WHICH, and the operator's next question
+ * is always which.
+ *
+ * `skipped` is counted but is NOT a failure: it means the store declined the
+ * write (cloud off), which is a supported mode. Only `lost` makes a run
+ * incomplete — conflating the two would mark every local-only run as broken.
+ *
+ * @param {{written:number, spilled:number, lost:number, skipped:number, byWriter:Record<string,object>}} tally
+ * @param {Array<{outcome:string, writerId:string, error?:string}>} results
+ */
+const WRITE_OUTCOMES = new Set(['written', 'spilled', 'lost', 'skipped']);
+
+function tallyWriteOutcomes(tally, results) {
+  for (const r of results) {
+    if (!r || typeof r.outcome !== 'string') continue;
+    // An unrecognised outcome is counted as `lost`, never dropped. Silently
+    // ignoring it would let a future outcome name read as a clean run — the
+    // false-zero shape this whole mechanism exists to remove.
+    const bucket = WRITE_OUTCOMES.has(r.outcome) ? r.outcome : 'lost';
+    tally[bucket]++;
+    const w = tally.byWriter[r.writerId] ?? (tally.byWriter[r.writerId] = { written: 0, spilled: 0, lost: 0, skipped: 0 });
+    w[bucket]++;
+    if (bucket !== 'written' && r.error && !w.lastError) w.lastError = String(r.error).slice(0, 300);
+  }
+  return tally;
+}
+
+/**
  * Wave 1.5b — Orphan-Introduced check. Runs after the architecture pass; reuses
  * the HEAD import graph from `archReport._meta['js-ts']`. Pure deterministic
  * algorithm (no LLM call); emits MEDIUM findings for files orphaned by the diff.
@@ -1477,6 +1516,10 @@ export async function runLegacyProductionAudit(ctx) {
   // isn't a valid uuid and just failed loudly on every reuse-probe/insert.
   let cloudRunId = null;
   let cloudRepoId = null;
+  // Durable-write tally for this run (plan decision 3). Declared here so it
+  // exists on EVERY exit path, including the ones that never reach the cloud
+  // block — an absent tally and an all-zero tally must not be the same thing.
+  const writeOutcomes = { written: 0, spilled: 0, lost: 0, skipped: 0, byWriter: {} };
   if (!noCloudRecording && (await isCloudEnabled()) && repoProfile) {
     // Cluster A (§2.1): resolve the STABLE audit_repos.id via repo_uuid identity
     // (not the volatile content fingerprint that fragmented B1). The returned
@@ -1549,6 +1592,36 @@ export async function runLegacyProductionAudit(ctx) {
           _learningInstallHooks({ insertLearningDecision, backfillLearningOutcome, isCloudEnabled });
         } catch { /* validation failure — best-effort telemetry */ }
       }
+    }
+  }
+
+  // ── Drain the write-spill queue (plan Phase 3) ────────────────────────────
+  // At run START, not at the end: the store has just been shown to be reachable
+  // (the run row above was written through it), and anything spilled by a
+  // previous run should land before this run starts adding to the queue.
+  //
+  // Gated on `cloudRunId` because a drain replays into the store — with cloud
+  // off `drainSpill` refuses anyway (`state: 'unavailable'`), and this avoids
+  // taking the lock to be told so. Never fails the audit: a drain is
+  // housekeeping, and the artifacts stay on disk for the next attempt.
+  //
+  // `unavailable` is REPORTED, not swallowed. It is not `drained: 0` — that is
+  // the vacuous-pass distinction the shared core exists to preserve, and a
+  // silent one here would hide exactly the backlog this feature accumulates.
+  if (cloudRunId && !noCloudRecording) {
+    try {
+      // No `repoRoot`: it defaults to `process.cwd()`, which is what every other
+      // root-taking call in this orchestrator passes explicitly (`runArchitecturePass`,
+      // the duplication and adjacency analyses). Passing the default back in would
+      // just be a second spelling of the same resolution.
+      const drained = await drainSpill({ isCloudEnabled });
+      if (drained.state === 'drained') {
+        process.stderr.write(`  [durable-write] drained ${drained.drained} spilled write(s) (${drained.rejected} quarantined, ${drained.failed} retained)\n`);
+      } else if (drained.state === 'unavailable') {
+        process.stderr.write(`  [durable-write] spill drain unavailable: ${drained.reason}\n`);
+      }
+    } catch (err) {
+      process.stderr.write(`  [durable-write] spill drain error: ${err?.message || err}\n`);
     }
   }
 
@@ -3268,28 +3341,51 @@ export async function runLegacyProductionAudit(ctx) {
     });
   } });
 
-  // Phase 3: Cloud store — record findings + pass stats (fire-and-forget)
+  // Phase 3: Cloud store — record findings + pass stats.
+  //
+  // NO LONGER FIRE-AND-FORGET (durability plan, decision 1c/3). These four
+  // writes were `.catch(log)` with no await, no spill and no counter: a dropped
+  // `recordFindings` produced a run row that looks healthy and under-reports —
+  // a believable false zero. Each now goes through `durableWrite`, which writes
+  // a write-ahead envelope BEFORE attempting the store, so a process that dies
+  // mid-write still leaves the payload on disk.
+  //
+  // CONCURRENCY IS PRESERVED BY CONSTRUCTION. Every `durableWrite` below is
+  // dispatched before the single `await` at the end of the block, so the store
+  // round-trips still overlap exactly as the un-awaited calls did. What is new
+  // is one join point — unavoidable if the outcome is to be reported at all,
+  // and bounded by the slowest of writes that were already in flight. That is an
+  // argument from the code's shape, NOT a measurement: §7 of the plan asks for a
+  // before/after figure and none has been taken, so no latency claim is made.
   if (cloudRunId) {
-    recordFindings(cloudRunId, allFindings, 'merged', round).catch(e => process.stderr.write(`  [learning] ${e.message}\n`));
+    const writePromises = [];
+    writePromises.push(durableWrite('audit.findings', {
+      runId: cloudRunId, findings: allFindings, passName: 'merged', round,
+    }));
 
     // Record per-pass stats
     // Phase 3 (audit-orchestrator-hardening): registry-derived — previously
     // a 4th hand-listed pass array that also excluded architecture/
     // orphan-introduced.
     for (const entry of passRegistry) {
-      recordPassStats(cloudRunId, entry.name, {
-        raised: entry.findings.length,
-        accepted: 0, // Updated after deliberation
-        dismissed: 0,
-        compromised: 0,
-        inputTokens: entry.usage?.input_tokens,
-        outputTokens: entry.usage?.output_tokens,
-        latencyMs: entry.latencyMs,
-        // 6ae952bf: read from the single reasoningLevelForPass definition
-        // (attached to each entry as _reasoning above) instead of a second,
-        // independently-maintained copy of the same name->level guess.
-        reasoning: entry._reasoning,
-      }, round).catch(e => process.stderr.write(`  [learning] ${e.message}\n`));
+      writePromises.push(durableWrite('audit.passStats', {
+        runId: cloudRunId,
+        passName: entry.name,
+        round,
+        stats: {
+          raised: entry.findings.length,
+          accepted: 0, // Updated after deliberation
+          dismissed: 0,
+          compromised: 0,
+          inputTokens: entry.usage?.input_tokens,
+          outputTokens: entry.usage?.output_tokens,
+          latencyMs: entry.latencyMs,
+          // 6ae952bf: read from the single reasoningLevelForPass definition
+          // (attached to each entry as _reasoning above) instead of a second,
+          // independently-maintained copy of the same name->level guess.
+          reasoning: entry._reasoning,
+        },
+      }));
     }
 
     // Record suppression events if R2+ — OR whenever a suppression PASS fired.
@@ -3298,8 +3394,17 @@ export async function runLegacyProductionAudit(ctx) {
     // and can suppress on round 1, where the bare gate would silently drop their
     // provenance. A suppression on R1 is no less accountable than one on R2.
     if ((isR2Plus || passes.suppressedCount > 0) && mergedResult._suppression) {
-      recordSuppressionEvents(cloudRunId, mergedResult._suppression).catch(e => process.stderr.write(`  [learning] ${e.message}\n`));
+      writePromises.push(durableWrite('audit.suppressionEvents', {
+        runId: cloudRunId, suppressionResult: mergedResult._suppression,
+      }));
     }
+
+    // The single join point. `durableWrite` never rejects for a store failure —
+    // the store is optional by design and an audit that produced findings must
+    // not fail because it could not record them — so this cannot throw here and
+    // a rejection would be a programmer error (an unregistered writer id), which
+    // SHOULD surface.
+    tallyWriteOutcomes(writeOutcomes, await Promise.all(writePromises));
   }
 
   // ── Model-A/B/C generation shadow (observation-only; awaited, NEVER gates) ──
@@ -3364,9 +3469,14 @@ export async function runLegacyProductionAudit(ctx) {
   // local flush() is gated too: an observation run persisting the shared
   // bandit file is the same contamination class, one channel over.
   if (bandit) {
-    writeLearningState(learningWritesAllowed, () => {
+    // `writeLearningState` returns whatever `fn` returns, so the promise is
+    // awaited here rather than dropped — this is the fourth of the plan's
+    // fire-and-forget sites and the await is the point of migrating it.
+    // Awaited only when `learningWritesAllowed`; the gate returns undefined
+    // otherwise, which `await` handles.
+    await writeLearningState(learningWritesAllowed, async () => {
       bandit.flush();
-      syncBanditArms(bandit.arms).catch(e => process.stderr.write(`  [learning] ${e.message}\n`));
+      tallyWriteOutcomes(writeOutcomes, [await durableWrite('learning.banditArms', { arms: bandit.arms })]);
     });
   }
   if (fpTracker) {
@@ -3571,8 +3681,20 @@ export async function runLegacyProductionAudit(ctx) {
   // `plan-audit-cloud.mjs` awaits its call. The `.catch()` stays: this is still
   // best-effort telemetry that must never fail an audit. Awaiting only
   // guarantees it gets the chance to finish.
+  //
+  // NOW A DURABLE WRITE (plan decision 3). A lost completion write does not
+  // leave a neutral row, it leaves a WRONG one — the run stays at its
+  // `recordRunStart` values, so a finished run reads as one still executing.
+  // That is a second false zero inside the mechanism added to report the first,
+  // which is why this write is not exempt from the contract it records. It is
+  // keyed on `run_id` and therefore spill-eligible: a lost completion leaves an
+  // artifact the next run's drain applies.
   if (cloudRunId) {
-    await recordRunComplete(cloudRunId, {
+    // The tally this payload carries covers the four content writes above. It
+    // cannot include this write's OWN outcome — a payload cannot contain the
+    // result of writing itself — so a spilled/lost `audit.runComplete` shows up
+    // in the returned `writeOutcomes` and in the spill queue, not in the column.
+    const completionStats = {
       rounds: round,
       totalFindings: allFindings.length,
       accepted: allFindings.filter(f => f.adjudicationOutcome === 'accepted').length,
@@ -3614,7 +3736,17 @@ export async function runLegacyProductionAudit(ctx) {
       // alone cannot distinguish a withheld seed from an impossible one.
       cacheSeedEligible: cacheMetrics?.seedEligible ?? null,
       cacheSeedSkipReason: cacheMetrics?.seedSkipReason ?? null,
-    }).catch(e => process.stderr.write(`  [learning] recordRunComplete: ${e.message}\n`));
+      // Decision 3: the outcomes reach the ROW, not just stderr.
+      writeOutcomes,
+      // A run that could not durably record a write did not complete, whatever
+      // its verdict says. Computed here rather than read from `mergedResult`
+      // because this write happens BEFORE the tail sets `runStatus` — and the
+      // two must agree, which is asserted in the durability test suite.
+      runStatus: writeOutcomes.lost > 0 ? 'incomplete' : 'complete',
+    };
+    tallyWriteOutcomes(writeOutcomes, [
+      await durableWrite('audit.runComplete', { runId: cloudRunId, stats: completionStats }),
+    ]);
 
     // Phase 1 — adaptive-learning-v1.  Backfill the pass_selection decision
     // outcome with kept/dismissed counts and flush all queued telemetry to
@@ -3754,7 +3886,30 @@ export async function runLegacyProductionAudit(ctx) {
   // function IS the fallback target). AuditRunResultSchema requires both
   // fields on every return, per both orchestrators.
   mergedResult.generatorOutcomes = [];
-  mergedResult.runStatus = 'complete';
+
+  // Durability plan decision 3 — the outcome contract.
+  //
+  // `runStatus` is no longer unconditionally 'complete'. A run that produced
+  // findings it could NOT durably record is `incomplete`, and saying so is the
+  // whole point: the failure this plan exists for is a run that looks healthy
+  // and under-reports. `lost` (not `spilled`) is the trigger — a spilled write
+  // is queued and a later drain will apply it, whereas a lost one is only
+  // evidence in `lost/` and will never reach the store on its own.
+  mergedResult.writeOutcomes = writeOutcomes;
+  mergedResult.runStatus = writeOutcomes.lost > 0 ? 'incomplete' : 'complete';
+
+  // Say it where a human will see it. A count that only ever reaches a column
+  // is better than stderr, but the operator running the audit is the one who
+  // can act now, and `spillSummary` is what tells them whether the backlog is
+  // growing. Printed only when there is something to say.
+  if (writeOutcomes.lost > 0 || writeOutcomes.spilled > 0) {
+    const summary = spillSummary();
+    const age = summary.oldestAgeMs == null ? 'n/a' : `${Math.round(summary.oldestAgeMs / 60000)}m`;
+    process.stderr.write(
+      `  [durable-write] ${writeOutcomes.written} written, ${writeOutcomes.spilled} spilled, ${writeOutcomes.lost} lost `
+      + `— queue: ${summary.state === 'ok' ? `${summary.spilled} pending (oldest ${age}), ${summary.lost} unreplayable` : summary.reason}\n`,
+    );
+  }
 
   return mergedResult;
 }

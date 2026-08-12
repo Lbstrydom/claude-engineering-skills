@@ -308,7 +308,8 @@ export async function recordRunStart(repoId, planFile, mode, { scopeMode, commit
  * Best-effort.
  */
 export async function recordRunComplete(runId, stats) {
-  if (!runId || !await isCloudEnabled()) return;
+  if (!runId) return { applied: false, rows: 0, reason: 'no-run-id' };
+  if (!await isCloudEnabled()) return { applied: false, rows: 0, reason: 'cloud-off' };
   const update = {
     rounds: stats.rounds,
     total_findings: stats.totalFindings,
@@ -349,10 +350,38 @@ export async function recordRunComplete(runId, stats) {
       && await columnExists('audit_runs', 'cache_seed_skip_reason', many, isCloudEnabled)) {
     update.cache_seed_skip_reason = stats.cacheSeedSkipReason;
   }
+  // Write-durability outcomes (migration 20260812080000, durability plan
+  // decision 3). Same probe-guard as the columns above so a pre-migration store
+  // skips ONLY these fields instead of failing the whole completion update.
+  //
+  // `write_outcomes` is passed RAW — the jsonb write seam serialises it
+  // (AGENTS.md: never hand-JSON.stringify a jsonb column).
+  if (stats.writeOutcomes != null
+      && await columnExists('audit_runs', 'write_outcomes', many, isCloudEnabled)) {
+    update.write_outcomes = stats.writeOutcomes;
+  }
+  // `run_status` carries the honest completion state. A run that produced
+  // findings it could not record is `incomplete`, and that has to be a column
+  // rather than a log line — the whole point of decision 3 is that a counter
+  // nobody can query is not a completion contract.
+  if (stats.runStatus != null
+      && await columnExists('audit_runs', 'run_status', many, isCloudEnabled)) {
+    update.run_status = stats.runStatus;
+  }
   try {
-    await updateWhere('audit_runs', update, { id: runId });
+    const res = await updateWhere('audit_runs', update, { id: runId });
+    // An UPDATE that matched nothing is NOT a completed write. Postgres reports
+    // success for a WHERE that selected zero rows, so a replayed completion
+    // against a run row that never existed (or was deleted) would otherwise
+    // return a receipt saying it applied — the unverified-write-success class
+    // this plan exists to remove, reproduced inside its own reporting path.
+    if ((res?.rowCount ?? 0) === 0) {
+      return { applied: false, rows: 0, reason: 'run-row-absent' };
+    }
+    return { applied: true, rows: res.rowCount };
   } catch (err) {
     process.stderr.write(`  [learning] recordRunComplete failed: ${err.message}\n`);
+    return { applied: false, rows: 0, reason: 'write-failed', error: err };
   }
 }
 
@@ -467,9 +496,21 @@ function normaliseBucket(b) {
  *   transaction) instead of grabbing its own pool connection. This lets a
  *   caller make a delete+insert atomic (final-review replace-persistence). The
  *   default `{}` preserves every existing call site byte-for-byte.
+ *
+ * **Returns a RECEIPT** (durability plan Phase 3). Every existing caller ignores
+ * the return value, so this is additive — but `durableWrite`'s contract is that
+ * a replay PROVES it applied, and `undefined` (what a cloud-off early return
+ * produces) is read as *not* applied. Without a receipt the drain could not tell
+ * "written" from "declined", which is the exact defect the plan's gate caught.
+ * The `error` field carries the original error object, NOT a message: the drain
+ * classifies on `err.code` (SQLSTATE / errno), and a string cannot be
+ * classified.
+ *
+ * @returns {Promise<{applied: boolean, rows: number, reason?: string, error?: unknown}>}
  */
 export async function recordFindings(runId, findings, passName, round, opts = {}) {
-  if (!runId || !await isCloudEnabled()) return;
+  if (!runId) return { applied: false, rows: 0, reason: 'no-run-id' };
+  if (!await isCloudEnabled()) return { applied: false, rows: 0, reason: 'cloud-off' };
   const hasClassification = await detectClassificationColumns();
   // Final-review attribution columns (migration 20260610120000) — written
   // only when present so the path degrades cleanly on an un-migrated store.
@@ -488,7 +529,33 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
   // Prospective semantic re-raise suppression (record-time hook). Fail-open:
   // returns every finding when disabled or on any error. Only `merged` findings
   // (the code-audit path that carries the measured churn) are considered.
-  const { kept: keptFindings, vectorByFinding } = await applyRecordTimeSuppression(runId, findings, passName);
+  const { kept: suppressionKept, vectorByFinding } = await applyRecordTimeSuppression(runId, findings, passName);
+  // ── Intra-batch fingerprint dedup (durability plan Phase 3) ───────────────
+  // `audit_findings_run_fingerprint_uniq_full` (migration 20260812070000) makes
+  // `(run_id, finding_fingerprint)` unique, and a multi-row INSERT carrying the
+  // same fingerprint twice would now abort the WHOLE batch (23505) where it
+  // previously wrote two rows. `ON CONFLICT DO UPDATE` does not rescue it
+  // either — Postgres refuses to affect one row twice in a single command
+  // (21000). So the collapse has to happen before the statement is built.
+  //
+  // Keep the FIRST occurrence: the batch is ordered, and a later duplicate of an
+  // already-seen fingerprint carries no information the first does not. Never
+  // silent — a dropped finding is exactly what this plan exists to make visible.
+  const keptFindings = [];
+  const seenFingerprints = new Set();
+  let intraBatchDuplicates = 0;
+  for (const f of suppressionKept) {
+    const fp = f._hash || 'unknown';
+    if (seenFingerprints.has(fp)) { intraBatchDuplicates++; continue; }
+    seenFingerprints.add(fp);
+    keptFindings.push(f);
+  }
+  if (intraBatchDuplicates > 0) {
+    process.stderr.write(
+      `  [learning] ${intraBatchDuplicates} ${passName} finding(s) shared a fingerprint with an earlier one in the `
+      + 'same batch and were collapsed — (run_id, finding_fingerprint) is unique, so they could not both be rows.\n'
+    );
+  }
   const mappedRows = keptFindings.map((f) => {
     const base = {
       run_id: runId,
@@ -570,12 +637,15 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
       + 'never fabricated. These findings are NOT persisted.\n'
     );
   }
-  if (rows.length === 0) return;
+  // Terminal, not pending: this payload will map to zero rows however often it
+  // is replayed (the drops above are deterministic in the payload), so a spilled
+  // artifact that lands here must be retired rather than retried forever.
+  if (rows.length === 0) return { applied: true, rows: 0, reason: 'no-persistable-rows' };
   // Bulk INSERT — homogeneous rows by construction. Use the caller's tx client
   // when provided (atomic delete+insert); otherwise grab a pool connection.
   try {
     const exec = opts.client ?? await getPool();
-    if (!exec) return;
+    if (!exec) return { applied: false, rows: 0, reason: 'no-pool' };
     const cols = Object.keys(rows[0]);
     const params = [];
     const valueGroups = rows.map((row) => {
@@ -585,8 +655,25 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
       });
       return `(${placeholders.join(', ')})`;
     });
+    // UPSERT, not INSERT (durability plan Phase 3). A spilled batch is replayed
+    // by a later drain, and a plain INSERT would abort on any row the first
+    // attempt already committed — the partial-write case is precisely what the
+    // spill exists to finish. `audit_findings_run_fingerprint_uniq_full` is the
+    // arbiter; it is a FULL unique index, so a bare conflict target resolves it
+    // (the partial index in 20260812060000 could not — measured 42P10).
+    //
+    // DO UPDATE rather than DO NOTHING for two reasons: `RETURNING` yields a row
+    // for conflicting keys too, which the embedding persistence below needs to
+    // map fingerprint→id; and a re-record of the same finding should refresh the
+    // columns this statement owns. Adjudication columns are NOT in `cols`, so a
+    // replay cannot overwrite a human ruling.
+    const updatable = cols.filter((c) => c !== 'run_id' && c !== 'finding_fingerprint');
+    const conflict = updatable.length > 0
+      ? `ON CONFLICT (run_id, finding_fingerprint) DO UPDATE SET ${updatable.map((c) => `"${c}" = EXCLUDED."${c}"`).join(', ')}`
+      : 'ON CONFLICT (run_id, finding_fingerprint) DO NOTHING';
     const sql = `INSERT INTO audit_findings (${cols.map((c) => `"${c}"`).join(', ')})
                  VALUES ${valueGroups.join(', ')}
+                 ${conflict}
                  RETURNING id, finding_fingerprint`;
     const inserted = await exec.query(sql, params);
     // Persist embeddings for the kept findings so they become future dedup
@@ -598,6 +685,7 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
         process.stderr.write(`  [semantic-suppress] embedding persistence: ${embedResult.persisted} ok, ${embedResult.failed} failed this batch\n`);
       }
     }
+    return { applied: true, rows: rows.length };
   } catch (err) {
     process.stderr.write(`  [learning] recordFindings failed: ${err.message}\n`);
     // RETHROW when running inside a caller-supplied transaction (2026-07-26).
@@ -610,6 +698,10 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
     // Surfacing it lets the caller decide (and, for the final review, keep the
     // primary's rows even when the shadow's are unwritable).
     if (opts.client) throw err;
+    // The error object, not its message: `durableWrite`'s classifier reads
+    // `err.code` to tell a store outage (abort the drain, charge nothing) from a
+    // bad row (quarantine it). A stringified error is unclassifiable.
+    return { applied: false, rows: 0, reason: 'write-failed', error: err };
   }
 }
 
@@ -1120,7 +1212,8 @@ export async function getFinalReviewStats(repoName, { queueLimit = 50 } = {}) {
  *   behaviour (WS1 §1.3a).
  */
 export async function recordPassStats(runId, passName, stats, round) {
-  if (!runId || !await isCloudEnabled()) return;
+  if (!runId) return { applied: false, rows: 0, reason: 'no-run-id' };
+  if (!await isCloudEnabled()) return { applied: false, rows: 0, reason: 'cloud-off' };
   const hasRound = await detectPassStatsRoundColumn();
   // Model-A/B/C per-arm-execution columns (migration 20260701120000): written
   // only when present AND the caller supplied them, so the normal audit path is
@@ -1150,8 +1243,12 @@ export async function recordPassStats(runId, passName, stats, round) {
       ...(hasRound && Number.isInteger(round) ? { round } : {}),
       ...armCols,
     });
+    return { applied: true, rows: 1 };
   } catch (err) {
     process.stderr.write(`  [learning] recordPassStats failed: ${err.message}\n`);
+    // Receipt, same contract as recordFindings: the caller cannot otherwise tell
+    // a persisted stat row from a swallowed failure.
+    return { applied: false, rows: 0, reason: 'write-failed', error: err };
   }
 }
 
@@ -1496,7 +1593,8 @@ export async function getRunMeta(runId, deps = {}) {
  * Record both suppressed-and-reopened events from an R2+ post-processing pass.
  */
 export async function recordSuppressionEvents(runId, suppressionResult) {
-  if (!runId || !await isCloudEnabled()) return;
+  if (!runId) return { applied: false, rows: 0, reason: 'no-run-id' };
+  if (!await isCloudEnabled()) return { applied: false, rows: 0, reason: 'cloud-off' };
   const rows = [
     ...suppressionResult.suppressed.map((s) => ({
       run_id: runId,
@@ -1515,10 +1613,12 @@ export async function recordSuppressionEvents(runId, suppressionResult) {
       reason: 'Scope changed',
     })),
   ];
-  if (rows.length === 0) return;
+  // Terminal for a replayed artifact: a suppression result with no suppressed
+  // and no reopened findings maps to zero rows on every attempt.
+  if (rows.length === 0) return { applied: true, rows: 0, reason: 'no-rows' };
   try {
     const pool = await getPool();
-    if (!pool) return;
+    if (!pool) return { applied: false, rows: 0, reason: 'no-pool' };
     const cols = Object.keys(rows[0]);
     const params = [];
     const valueGroups = rows.map((row) => {
@@ -1531,8 +1631,10 @@ export async function recordSuppressionEvents(runId, suppressionResult) {
     const sql = `INSERT INTO suppression_events (${cols.map((c) => `"${c}"`).join(', ')})
                  VALUES ${valueGroups.join(', ')}`;
     await pool.query(sql, params);
+    return { applied: true, rows: rows.length };
   } catch (err) {
     process.stderr.write(`  [learning] recordSuppressionEvents failed: ${err.message}\n`);
+    return { applied: false, rows: 0, reason: 'write-failed', error: err };
   }
 }
 
