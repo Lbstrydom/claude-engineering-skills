@@ -1405,6 +1405,20 @@
           "is_nullable": "YES",
           "column_default": null,
           "ordinal_position": 53
+        },
+        {
+          "column_name": "write_outcomes",
+          "data_type": "jsonb",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 54
+        },
+        {
+          "column_name": "run_status",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 55
         }
       ]
     },
@@ -8873,6 +8887,12 @@
     },
     {
       "table_name": "audit_runs",
+      "constraint_name": "audit_runs_run_status_check",
+      "constraint_type": "CHECK",
+      "definition": "CHECK (((run_status IS NULL) OR (run_status = ANY (ARRAY['complete'::text, 'incomplete'::text, 'fallback_legacy'::text, 'skipped_no_eligible_files'::text, 'failed_invalid_diff_input'::text]))))"
+    },
+    {
+      "table_name": "audit_runs",
       "constraint_name": "audit_runs_stage_type_chk",
       "constraint_type": "CHECK",
       "definition": "CHECK (((stage_type IS NULL) OR (stage_type = ANY (ARRAY['plan'::text, 'audit-plan'::text, 'audit-code'::text])))) NOT VALID"
@@ -10258,6 +10278,11 @@
       "tablename": "audit_findings",
       "indexname": "audit_findings_pkey",
       "indexdef": "CREATE UNIQUE INDEX audit_findings_pkey ON public.audit_findings USING btree (id)"
+    },
+    {
+      "tablename": "audit_findings",
+      "indexname": "audit_findings_run_fingerprint_uniq_full",
+      "indexdef": "CREATE UNIQUE INDEX audit_findings_run_fingerprint_uniq_full ON public.audit_findings USING btree (run_id, finding_fingerprint)"
     },
     {
       "tablename": "audit_findings",
