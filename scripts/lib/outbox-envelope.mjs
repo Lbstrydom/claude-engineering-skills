@@ -63,6 +63,13 @@ export const REJECTED_SUBDIR = 'rejected';
  * @returns {object|null}
  */
 export function parseEnvelopeFrame(text, { version, validatePayload } = {}) {
+  // A caller that forgets `version` used to get `parsed.v !== undefined`, which
+  // a frame with no `v` at all satisfies — so the version gate silently let
+  // through exactly the artifacts it exists to quarantine. The check is only
+  // meaningful if the expected version is mandatory.
+  if (!Number.isInteger(version)) {
+    throw new TypeError(`parseEnvelopeFrame: version must be an integer; got ${JSON.stringify(version)}`);
+  }
   let parsed;
   try { parsed = JSON.parse(text); } catch { return null; }
   if (!parsed || typeof parsed !== 'object') return null;
@@ -102,8 +109,13 @@ export function writeEnvelope(dir, envelope) {
  * @param {unknown} fingerprint
  */
 export function assertSafeFingerprint(fingerprint) {
+  // Windows resolves these as DEVICES wherever they appear as a basename, so
+  // `CON.json` is not a file. The docstring above claimed this was handled
+  // before the code did — the audit caught the overclaim.
+  const RESERVED = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i;
   if (typeof fingerprint !== 'string' || !/^[A-Za-z0-9._-]{1,128}$/.test(fingerprint)
-      || fingerprint === '.' || fingerprint === '..') {
+      || fingerprint === '.' || fingerprint === '..'
+      || RESERVED.test(String(fingerprint).split('.')[0])) {
     throw new TypeError(
       `outbox: fingerprint must be a safe basename ([A-Za-z0-9._-], 1-128 chars); got ${JSON.stringify(fingerprint)}`,
     );

@@ -141,9 +141,13 @@ test('an EMPTY REGISTRY is a bootstrap failure, not an empty queue', async () =>
 test('drain refuses to run with the store off, rather than churning', async () => {
   const root = mkTmp('ces-dw-cloudoff-');
   try {
-    registerWriter('w', { schemaVersion: 1, rowKey: (r) => r.id, replay: async () => ({ applied: true }) });
-    await durableWrite('w', { id: 1 }, { repoRoot: root }).catch(() => {});
+    // The writer must FAIL, or durableWrite returns `written`, deletes its
+    // envelope, and the drain has an empty queue to leave untouched — the
+    // assertion below then compares 0 to 0 and holds however the guard behaves.
+    registerWriter('w', { schemaVersion: 1, rowKey: (r) => r.id, replay: async () => { throw new Error('down'); } });
+    await durableWrite('w', { id: 1 }, { repoRoot: root });
     const before = queued(root).length;
+    assert.equal(before, 1, 'the test needs a real artifact to protect, or it proves nothing');
     const res = await drainSpill({ repoRoot: root, isCloudEnabled: () => false });
     assert.equal(res.state, 'unavailable');
     assert.equal(queued(root).length, before, 'the queue is untouched');

@@ -333,3 +333,29 @@ test('an artifact the reclaim could NOT recover makes the drain unavailable', as
     assert.equal(res.drained, 0, 'and nothing is drained while the queue is not fully visible');
   } finally { _internals.reclaimClaimed = real; rmTmp(dir); }
 });
+
+test('a missing expected version is refused, not silently matched', () => {
+  // The version gate compared `parsed.v !== undefined` when the caller omitted
+  // `version`, which a frame carrying no `v` at all satisfies — so the check
+  // passed exactly the artifacts it exists to quarantine.
+  assert.throws(() => parseEnvelopeFrame('{}', {}), /version must be an integer/);
+  assert.throws(() => parseEnvelopeFrame('{}'), /version must be an integer/);
+  const versionless = JSON.stringify({ fingerprint: 'f', payload: {} });
+  assert.equal(parseEnvelopeFrame(versionless, { version: 1 }), null,
+    'and a versionless frame is still unusable when a version IS supplied');
+});
+
+test('a Windows reserved device name is not a safe basename', () => {
+  // The docstring claimed this before the code did.
+  for (const bad of ['CON', 'con', 'PRN.json', 'AUX', 'NUL', 'COM1', 'LPT9']) {
+    assert.throws(() => writeEnvelope('/tmp/never', { v: V, fingerprint: bad, payload: {} }),
+      /safe basename/, `${bad} resolves as a device on Windows`);
+  }
+  // And the shapes real producers emit are still fine.
+  assert.doesNotThrow(() => assertSafeFingerprintOk('a1b2c3'), 'sha-like names unaffected');
+});
+
+function assertSafeFingerprintOk(fp) {
+  const dir = mkTmp('ces-env-ok-');
+  try { writeEnvelope(dir, { v: V, fingerprint: fp, payload: {} }); } finally { rmTmp(dir); }
+}
