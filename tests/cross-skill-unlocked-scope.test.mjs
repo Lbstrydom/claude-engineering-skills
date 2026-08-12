@@ -39,6 +39,26 @@ const cliSrc = [
   'scripts/lib/cross-skill/scope.mjs',
 ].map((f) => fs.readFileSync(path.join(repoRoot, f), 'utf-8')).join('\n');
 
+/**
+ * Every `*.mjs` under `scripts/lib/store/`, as `{file, src}`.
+ *
+ * RETARGETED (command-registry Cluster E, and deliberately NOT to a new
+ * filename). The three static scans below read the store source; all three
+ * were pinned to `plans-ship.mjs`, and Phase 6 moved the nudge readers out of
+ * it into `ship-nudges.mjs`. Re-pinning to the new name would have restored
+ * coverage while leaving the property that failed: **a reader added to, or
+ * moved into, a file the scan does not name is unrepresentable to it.** That is
+ * AGENTS.md defect shape #3 — ask which side you are iterating and what cannot
+ * be seen from it. The answer here is to iterate the DIRECTORY, which is the
+ * side that can see a file no list mentions, so the next move cannot blind
+ * these scans either. (The barrel is included and contributes nothing: an
+ * `export * from` line carries no SQL.)
+ */
+const STORE_DIR = path.join(repoRoot, 'scripts', 'lib', 'store');
+const storeFiles = fs.readdirSync(STORE_DIR)
+  .filter((f) => f.endsWith('.mjs'))
+  .map((f) => ({ file: `scripts/lib/store/${f}`, src: fs.readFileSync(path.join(STORE_DIR, f), 'utf-8') }));
+
 describe('unlocked-fix store boundary — global access must be ASKED for', () => {
   // Each of these used to mean "every repository". The whole point of the fix
   // is that a caller can no longer reach cross-tenant rows by omission.
@@ -63,6 +83,27 @@ describe('unlocked-fix store boundary — global access must be ASKED for', () =
       await assert.rejects(() => getUnremediatedAcceptances(arg), /explicit scope is required/);
     });
   }
+
+  // Audit CE-r2-H5. `allRepos` was tested for TRUTHINESS, so any non-boolean
+  // truthy value authorised a cross-repo read. No caller passes one today —
+  // every producer is `ctx.hasFlag('all-repos')` or the literal `true` — but
+  // this is the fence whose entire premise is that global access must be ASKED
+  // for, and "truthy counts as yes" is the wrong default to leave armed on a
+  // tenant boundary. A JSON payload carrying `{"allRepos": "false"}` is the
+  // shape that turns a string into a global read.
+  for (const bogus of ['yes', 'false', 1, {}, []]) {
+    it(`a non-boolean allRepos (${JSON.stringify(bogus)}) is refused, never read as global`, async () => {
+      await assert.rejects(() => getUnlockedFixes({ allRepos: bogus }), /explicit scope is required/);
+    });
+  }
+
+  it('a real {allRepos:true} is still honoured — the fix narrows the type, not the capability', async () => {
+    // Without this the H5 fix could have been "reject everything", which also
+    // makes the five assertions above pass. Reaches the store (cloud may be off,
+    // in which case the reader returns []); what matters is that it does NOT
+    // throw the explicit-scope error.
+    await getUnlockedFixes({ allRepos: true });
+  });
 
   it('rejects an ambiguous {repoId, allRepos} pair rather than picking one', async () => {
     await assert.rejects(
@@ -229,8 +270,6 @@ describe('the fence covers the whole view family, not just the reported one', ()
   // `getUnremediatedAcceptances` queried a sibling view, skipped the fence, and
   // reproduced the identical defect one /ship step later. Enumerating readers by
   // hand is what missed it, so enumerate mechanically instead.
-  const storeSrc = fs.readFileSync(
-    path.join(repoRoot, 'scripts', 'lib', 'store', 'plans-ship.mjs'), 'utf-8');
   // The `_all` base views are listed explicitly: `\b` after `unlocked_fixes`
   // does NOT match `unlocked_fixes_all` (the next char is a word char), so an
   // aged-visibility reader would otherwise be invisible to this scan.
@@ -239,10 +278,11 @@ describe('the fence covers the whole view family, not just the reported one', ()
     'unremediated_acceptances', 'unremediated_acceptances_all',
   ];
 
-  // Split on function declarations so each body can be attributed to its owner.
-  const parts = storeSrc.split(/(?=^(?:export\s+)?(?:async\s+)?function\s+\w+)/m);
-  const readers = parts
-    .map((body) => ({ name: (body.match(/^(?:export\s+)?(?:async\s+)?function\s+(\w+)/) || [])[1], body }))
+  // Split on function declarations so each body can be attributed to its owner
+  // — across every store module, not one named file (see `storeFiles`).
+  const readers = storeFiles.flatMap(({ file, src }) => src
+    .split(/(?=^(?:export\s+)?(?:async\s+)?function\s+\w+)/m)
+    .map((body) => ({ file, name: (body.match(/^(?:export\s+)?(?:async\s+)?function\s+(\w+)/) || [])[1], body })))
     .filter((f) => f.name && NUDGE_VIEWS.some((v) => new RegExp(`FROM\\s+${v}\\b`).test(f.body)));
 
   // The floor TRACKS REALITY rather than sitting under it. It read `>= 3` while
@@ -251,15 +291,23 @@ describe('the fence covers the whole view family, not just the reported one', ()
   // out — leaving exactly 3, so this passed and the fence quietly covered half
   // of what it claimed. A floor with slack in it cannot report the loss it exists
   // to report. Raise it deliberately when a reader is added or removed.
+  //
+  // RAISED 7 → 8 (Cluster E). Measuring the split against HEAD found the floor
+  // already carried one notch of slack: `countAcceptedPermanent` joined the
+  // family with the disposition migration on 2026-08-11 and the floor was not
+  // raised with it, so eight readers existed under a floor of seven. One reader
+  // could have dropped out — the exact loss this is here to report — and it
+  // would still have passed. Found only because the retarget forced a re-count,
+  // which is the argument for re-measuring a floor rather than porting it.
   it('finds the readers at all (guards against the regex silently matching nothing)', () => {
-    assert.ok(readers.length >= 7,
-      `expected >=7 nudge-view readers, found ${readers.length} (${readers.map((r) => r.name).join(', ')}) ` +
+    assert.ok(readers.length >= 8,
+      `expected >=8 nudge-view readers, found ${readers.length} (${readers.map((r) => r.name).join(', ')}) ` +
       '— if this dropped, the scan below is passing vacuously. A reader whose view name is ' +
       'INTERPOLATED rather than written out is invisible here and will show up as a missing reader.');
   });
 
-  for (const { name, body } of readers) {
-    it(`${name} has no repo-unfiltered read of a nudge view`, () => {
+  for (const { file, name, body } of readers) {
+    it(`${name} (${file}) has no repo-unfiltered read of a nudge view`, () => {
       // Per-STATEMENT, deliberately. A body-wide "does a repo_id predicate
       // appear anywhere?" check passes the exact bug being guarded: the broken
       // getUnremediatedAcceptances had a filtered branch AND an unfiltered one,
@@ -310,9 +358,7 @@ describe('a capped nudge reader must impose its OWN total order', () => {
   // that while this test was being written.) Interpolating the clause into a
   // `const` is still invisible here, and that is intended — the source must
   // keep its SQL literal for a static scan to mean anything.
-  const storeSrc = fs.readFileSync(
-    path.join(repoRoot, 'scripts', 'lib', 'store', 'plans-ship.mjs'), 'utf-8')
-    .replace(/`\s*\+\s*`/g, '');
+  const storeSrc = storeFiles.map((f) => f.src).join('\n').replace(/`\s*\+\s*`/g, '');
   const NUDGE_VIEWS = [
     'unlocked_fixes', 'unlocked_fixes_all',
     'unremediated_acceptances', 'unremediated_acceptances_all',
@@ -443,8 +489,7 @@ describe('a capped nudge reader must ship a counter, and the CLI must emit it', 
     { reader: 'getUnlockedFixes', counter: 'countUnlockedFixes' },
     { reader: 'getUnremediatedAcceptances', counter: 'countUnremediatedAcceptances' },
   ];
-  const storeSrc = fs.readFileSync(
-    path.join(repoRoot, 'scripts', 'lib', 'store', 'plans-ship.mjs'), 'utf-8');
+  const storeSrc = storeFiles.map((f) => f.src).join('\n');
   // RETARGETED (Cluster D): this block-scoped binding SHADOWED the module-level
   // one and still pointed at scripts/cross-skill.mjs, whose dispatch map is now
   // empty — so the reader/counter pairing would have gone unchecked while

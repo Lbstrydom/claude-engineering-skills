@@ -70,6 +70,38 @@ describe('validatePlanPath — containment is repo-relative, not cwd-relative', 
     assert.deepEqual(fromDeep, fromRoot);
   });
 
+  it('a differently-cased repoRoot yields the SAME identifier, not a traversal key', () => {
+    // Audit CE-r2-M6. On a case-INSENSITIVE platform (win32, darwin) the
+    // containment check folds case, so a root spelled `/Users/foo/repo` admits
+    // an abs path under `/Users/Foo/repo`. `path.relative` does NOT fold case on
+    // POSIX — darwin included — so it answered `../../Foo/repo/docs/...`: a
+    // traversal-shaped string that passes containment and is then stored as
+    // `plans.path` and used as the `getPlanIdByPath` key. Two spellings, two
+    // rows, on a unique index that was supposed to prevent exactly that.
+    //
+    // **THIS ASSERTION CANNOT FAIL ON WIN32, AND THAT WAS MEASURED, NOT
+    // ASSUMED.** Negative-controlled 2026-08-12 by reverting the fix: it still
+    // passed. Node's win32 `path.relative` folds case itself, so the two halves
+    // agreed here by accident of the platform implementation; on darwin
+    // `path.relative` is the POSIX one and does not fold, which is the only
+    // place the defect is reachable. So on Windows this is a statement of the
+    // invariant, not evidence for it — the evidence has to come from a darwin
+    // run. Recorded rather than deleted: the invariant is real, and a reader
+    // who sees it green here must not read that as coverage.
+    //
+    // Skipped on case-sensitive platforms, where the two roots really are
+    // different directories and refusal is correct.
+    if (process.platform !== 'win32' && process.platform !== 'darwin') return;
+    const swapped = REPO_ROOT.replace(/([a-z])/, (c) => c.toUpperCase())
+      .replace(/([A-Z])(?![a-zA-Z]*$)/, (c) => c.toLowerCase());
+    assert.notEqual(swapped, REPO_ROOT, 'the probe must actually differ in case, or this asserts nothing');
+    const r = validatePlanPath(PLAN_ABS, { repoRoot: swapped });
+    assert.equal(r.ok, true, 'a case-variant root must still be admitted (that is what `ci` is for)');
+    assert.equal(r.path, PLAN_REL,
+      'the identifier must be derived by the same comparison that admitted the path');
+    assert.ok(!r.path.startsWith('..'), 'a traversal-shaped identifier must never be stored');
+  });
+
   it('an explicit repoRoot still wins over the resolved default', () => {
     process.chdir(path.join(REPO_ROOT, 'scripts'));
     _resetRepoRootCache();

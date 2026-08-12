@@ -1,0 +1,79 @@
+/**
+ * @fileoverview `ship_events` — the /ship outcome record.
+ *
+ * Split out of `plans-ship.mjs` (cross-skill-command-registry Phase 6). That
+ * module is now a re-export barrel and remains the import name every consumer
+ * uses; this file is where the ship-event domain actually lives.
+ *
+ * @module scripts/lib/store/ship-events
+ */
+
+import { isCloudEnabled } from './repo.mjs';
+import { many, insertReturning } from '../db/query.mjs';
+
+// ── ship_events ────────────────────────────────────────────────────────────
+
+/**
+ * Record a /ship outcome.
+ *
+ * Returns a discriminated status for the same reason as
+ * `recordRegressionSpecRun` (now `./regression-specs.mjs`) — it used to swallow
+ * write errors and return `undefined` while its sole caller emitted an
+ * unconditional `{ok:true}`.
+ *
+ * @returns {Promise<{ok:boolean, cloud:boolean, reason?:string, error?:string}>}
+ */
+export async function recordShipEvent(repoId, event) {
+  if (!event?.outcome) return { ok: false, cloud: false, reason: 'missing-outcome' };
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, reason: 'cloud-off' };
+  try {
+    await insertReturning('ship_events', {
+      repo_id: repoId || null,
+      commit_sha: event.commitSha || null,
+      branch: event.branch || null,
+      outcome: event.outcome,
+      block_reasons: event.blockReasons || [], // jsonb — serialized by the db-layer seam
+      open_p0_count: event.openP0Count || 0,
+      open_p1_count: event.openP1Count || 0,
+      missing_spec_count: event.missingSpecCount || 0,
+      overridden_by_user: !!event.overriddenByUser,
+      override_flag: event.overrideFlag || null,
+      stack_detected: event.stackDetected || null,
+      framework: event.framework || null,
+      duration_ms: event.durationMs || null,
+    });
+    return { ok: true, cloud: true };
+  } catch (err) {
+    process.stderr.write(`  [learning] recordShipEvent failed: ${err.message}\n`);
+    return { ok: false, cloud: true, reason: 'write-failed', error: err.message };
+  }
+}
+
+/**
+ * Read ship-event health for a repo (Cluster D / Phase 7 dashboard).
+ * Returns per-outcome counts + the most recent events, or null when cloud is
+ * off / the query fails. Repo-scoped (the caller resolves the canonical id).
+ *
+ * @param {string} repoId
+ * @param {{limit?: number}} [opts]
+ * @returns {Promise<{byOutcome: Array<{outcome:string,count:number}>, recent: object[]}|null>}
+ */
+export async function readShipEvents(repoId, { limit = 10 } = {}) {
+  if (!repoId || !await isCloudEnabled()) return null;
+  try {
+    const byOutcome = await many(
+      `SELECT outcome, count(*)::int AS count FROM ship_events
+        WHERE repo_id = $1 GROUP BY outcome ORDER BY count DESC`,
+      [repoId],
+    );
+    const recent = await many(
+      `SELECT outcome, branch, commit_sha, overridden_by_user, created_at
+         FROM ship_events WHERE repo_id = $1 ORDER BY created_at DESC LIMIT $2`,
+      [repoId, limit],
+    );
+    return { byOutcome, recent };
+  } catch (err) {
+    process.stderr.write(`  [learning] readShipEvents failed: ${err.message}\n`);
+    return null;
+  }
+}

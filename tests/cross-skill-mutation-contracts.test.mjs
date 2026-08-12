@@ -224,7 +224,9 @@ test('no call site reintroduces the uuid-as-repoId confusion', () => {
 });
 
 test('C4: updatePlanStatus carries repo_id as a SQL predicate', () => {
-  const src = fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'lib', 'store', 'plans-ship.mjs'), 'utf-8');
+  // RETARGETED (command-registry Cluster E): the plans domain moved out of
+  // plans-ship.mjs, now a re-export barrel with no SQL in it.
+  const src = fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'lib', 'store', 'plans.mjs'), 'utf-8');
   assert.match(src, /\{ id: planId, repo_id: repoId \}/,
     'tenant scope must be in the WHERE clause, not merely resolved in the CLI');
   assert.match(src, /updatePlanStatus\(\{ repoId, planId, status \}\)/);

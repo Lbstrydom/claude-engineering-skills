@@ -565,8 +565,11 @@ test('the store-inventory close-out assertion (R1-M3): zero findings, zero unres
     diagnostics.filter((d) => d.kind === 'unresolved-conflict-key-nullability').length, 0,
     'the one live unresolved-conflict-key-nullability instance (bandit-fp.mjs context_bucket) must be pragma-adjudicated',
   );
+  // The file moved in Cluster E (plans-ship.mjs -> regression-specs.mjs); the
+  // diagnostic is the same unresolved ternary onConflict, in its new home. The
+  // lint itself already enumerates the store DIRECTORY, so nothing was lost.
   const remaining = new Set(diagnostics.map((d) => `${d.kind}::${d.file}`));
-  assert.deepEqual(remaining, new Set(['unresolved-conflict-target::scripts/lib/store/plans-ship.mjs']));
+  assert.deepEqual(remaining, new Set(['unresolved-conflict-target::scripts/lib/store/regression-specs.mjs']));
 });
 
 // ── 7. Fail-closed coverage guard for the recognized write boundary (R1-M2) ──

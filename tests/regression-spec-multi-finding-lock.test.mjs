@@ -86,8 +86,11 @@ describe('the writer sends a predicate matching each partial arbiter', () => {
   // without a matching WHERE — it raises 42P10 instead. The writer's catch
   // swallows that into a `null` return, so a missing predicate would degrade
   // to "silently records nothing", the same invisible-failure shape as the bug.
+  // RETARGETED (command-registry Cluster E): the regression-spec domain moved
+  // out of plans-ship.mjs, now a re-export barrel. The conflict targets asserted
+  // below are literals in the writer, so the scan has to read the writer's file.
   const src = fs.readFileSync(
-    path.resolve(import.meta.dirname, '../scripts/lib/store/plans-ship.mjs'), 'utf8');
+    path.resolve(import.meta.dirname, '../scripts/lib/store/regression-specs.mjs'), 'utf8');
 
   it("the unit-test branch carries source_finding_id in its conflict target", () => {
     assert.match(src, /onConflict = \['repo_id', 'spec_path', 'source_finding_id'\]/);

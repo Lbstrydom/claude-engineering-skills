@@ -799,14 +799,47 @@ the legacy map no longer exists. Files:
 `tests/cross-skill-registry-ratchet.test.mjs` (modify),
 `tests/cross-skill-cli-integrity.test.mjs` (modify).
 
-**Phase 6 — plans-ship split**: mechanical domain split behind the barrel —
-five modules for the five domains. Files: `scripts/lib/store/plans.mjs` (create),
+**Phase 6 — plans-ship split**: mechanical domain split behind the barrel.
+**Shipped as SEVEN modules, not five** — the two extras are not scope creep,
+they are what the file actually contained:
+
+- **`ship-nudges.mjs`** — the `unlocked_fixes` / `unremediated_acceptances`
+  view families belong to none of the five TABLES (each spans two of them).
+  Filing them under the table they most resemble would have split
+  `resolveExplicitRepoScope` in two, and that fence being ONE shared function
+  is the whole reason the 207-vs-0 cross-tenant leak has not recurred. A
+  mechanical refactor that duplicates a single-oracle fence is not mechanical.
+- **`run-row-fallback.mjs`** — `insertRunRowWithPolicyFallback` is called by
+  BOTH `*_runs` writers and belongs to neither domain. Leaving it in
+  `regression-specs.mjs` would have manufactured a
+  regression-specs → plan-verification dependency that means nothing.
+
+Files: `scripts/lib/store/plans.mjs` (create),
 `scripts/lib/store/regression-specs.mjs` (create),
+`scripts/lib/store/ship-nudges.mjs` (create),
+`scripts/lib/store/run-row-fallback.mjs` (create),
 `scripts/lib/store/plan-verification.mjs` (create),
 `scripts/lib/store/ship-events.mjs` (create),
 `scripts/lib/store/persona-correlations.mjs` (create),
 `scripts/lib/store/plans-ship.mjs` (modify → barrel),
-`tests/learning-store-exports.test.mjs` (modify, comment-only).
+`tests/store-module-free-variables.test.mjs` (create — see below),
+`tests/cross-skill-unlocked-scope.test.mjs` (modify — the three static scans
+iterate the store DIRECTORY, not a filename), `tests/plans-ship-failure-contract.test.mjs`,
+`tests/cross-skill-mutation-contracts.test.mjs`,
+`tests/regression-spec-multi-finding-lock.test.mjs`,
+`tests/on-conflict-lint.test.mjs`, `tests/plan-path-repo-root.test.mjs` (modify).
+
+> **The hazard this phase actually carries, recorded because it fired.** A
+> mechanical move breaks TWO things that no compiler checks. (1) **Static source
+> scans pinned to a filename** — five suites assert properties of this domain by
+> READING it, and a barrel contains no SQL and no return statements. They failed
+> loudly, which is them working; the fix is to iterate the store DIRECTORY, since
+> "a reader in a file the scan does not name" is otherwise unrepresentable to it.
+> (2) **Intra-file references that cross a cut.** Import blocks derived from the
+> ORIGINAL file cannot know about them, so the reference becomes a free variable
+> — legal syntax, thrown only at call time, and here swallowed by the writer's own
+> catch into the same `null` it returns for cloud-off. `npm test` was 11,582 green
+> with it live. `tests/store-module-free-variables.test.mjs` locks the class.
 
 **Phase 6b — Result-contract integrity (§2b F1–F4)**: widen the durability
 writer-set oracle to every `scripts/lib/store/**` module and register-or-exempt

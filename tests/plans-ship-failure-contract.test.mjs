@@ -71,7 +71,7 @@ describe('the four variants are distinguishable', () => {
     // DB-free suite. Guarded at all because a NULL repo_id is DISTINCT from
     // every other NULL on the (repo_id, path) unique index, so it would INSERT a
     // duplicate plan row on every call instead of updating.
-    const src = fs.readFileSync(path.join(REPO, 'scripts/lib/store/plans-ship.mjs'), 'utf-8');
+    const src = fs.readFileSync(path.join(REPO, 'scripts/lib/store/plans.mjs'), 'utf-8');
     assert.match(src, /if \(!repoId\) \{[\s\S]{0,600}?reason: 'invalid-input'/,
       'a null repoId must be reported, not written through');
   });
@@ -81,7 +81,13 @@ describe('a DB failure and an absent row are not the same value', () => {
   // This is the contract test the plan names. It is asserted on SOURCE rather
   // than by standing up a failing pool, because the distinction lives in the
   // return statements and a live DSN is forbidden here (INC-002).
-  const SRC = fs.readFileSync(path.join(REPO, 'scripts/lib/store/plans-ship.mjs'), 'utf-8');
+  //
+  // RETARGETED (command-registry Cluster E): the plans domain moved out of
+  // plans-ship.mjs, which is now a re-export barrel. A barrel carries no return
+  // statements, so a scan left pointing at it would have found no `upsertPlan`
+  // body and failed loudly — which is the guard working. The behavioural half of
+  // this suite (the imports above) still comes through the barrel unchanged.
+  const SRC = fs.readFileSync(path.join(REPO, 'scripts/lib/store/plans.mjs'), 'utf-8');
   const body = SRC.slice(SRC.indexOf('export async function upsertPlan'), SRC.indexOf('export async function getPlanIdByPath'));
 
   test('the catch returns write-failed, carrying the error', () => {
