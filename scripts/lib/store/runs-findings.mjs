@@ -697,19 +697,50 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
     // UPSERT, not INSERT (durability plan Phase 3). A spilled batch is replayed
     // by a later drain, and a plain INSERT would abort on any row the first
     // attempt already committed — the partial-write case is precisely what the
-    // spill exists to finish. `audit_findings_run_fingerprint_uniq_full` is the
-    // arbiter; it is a FULL unique index, so a bare conflict target resolves it
-    // (the partial index in 20260812060000 could not — measured 42P10).
+    // spill exists to finish. `audit_findings_run_fingerprint_pass_bucket_uniq`
+    // is the arbiter; it is a FULL (non-partial) unique index, so a bare
+    // conflict target resolves it (the partial index in 20260812060000 could
+    // not — measured 42P10).
+    //
+    // SCOPED BY pass_name AND bucket (20260812090000 then 20260812100000,
+    // fixing two increasingly narrow versions of the same defect). The SAME
+    // fingerprint legitimately recurs: across pass_names
+    // (`recordFinalReviewFindings` writes primary under pass_name='final-review'
+    // and shadow under pass_name='final-review-shadow'), AND within ONE
+    // pass_name, distinguished only by `bucket` — `resolveFindingBucket`
+    // (the function `adjudicateFinalReviewFinding`/`recordFinalReviewFix`
+    // depend on) resolves purely on `(run_id, finding_fingerprint, bucket)`,
+    // no pass_name in its WHERE clause, so pass_name alone was NOT sufficient:
+    // measured live, a same-pass_name same-fingerprint pair differing only in
+    // bucket still hit 23505 under the pass_name-only key. Only the 'merged'
+    // pass_name (the durability plan's own replay target) ever needed strict
+    // cross-batch fingerprint idempotency; scoping by pass_name AND bucket
+    // gives it that without constraining every other writer of this table.
+    //
+    // `bucket` is COALESCE'd to '' in the index (and must be here, identically,
+    // for the conflict target to resolve against an EXPRESSION index) because
+    // it is nullable — NULL for every 'merged'-pass row — and Postgres treats
+    // NULL as distinct within a unique index, so a raw (uncoalesced) bucket
+    // column would not have deduplicated 'merged' findings at all, reopening
+    // the exact defect 070000 fixed (706 duplicate rows, measured then).
+    //
+    // Conditional on `hasBucket` (an un-migrated store lacks the column
+    // entirely — referencing it in SQL would be an undefined-column error, not
+    // a graceful degrade) — matches every other `hasX`-guarded column in this
+    // function.
     //
     // DO UPDATE rather than DO NOTHING for two reasons: `RETURNING` yields a row
     // for conflicting keys too, which the embedding persistence below needs to
     // map fingerprint→id; and a re-record of the same finding should refresh the
     // columns this statement owns. Adjudication columns are NOT in `cols`, so a
     // replay cannot overwrite a human ruling.
-    const updatable = cols.filter((c) => c !== 'run_id' && c !== 'finding_fingerprint');
+    const conflictTarget = hasBucket
+      ? `run_id, finding_fingerprint, pass_name, (COALESCE(bucket, ''))`
+      : `run_id, finding_fingerprint, pass_name`;
+    const updatable = cols.filter((c) => c !== 'run_id' && c !== 'finding_fingerprint' && c !== 'pass_name' && c !== 'bucket');
     const conflict = updatable.length > 0
-      ? `ON CONFLICT (run_id, finding_fingerprint) DO UPDATE SET ${updatable.map((c) => `"${c}" = EXCLUDED."${c}"`).join(', ')}`
-      : 'ON CONFLICT (run_id, finding_fingerprint) DO NOTHING';
+      ? `ON CONFLICT (${conflictTarget}) DO UPDATE SET ${updatable.map((c) => `"${c}" = EXCLUDED."${c}"`).join(', ')}`
+      : `ON CONFLICT (${conflictTarget}) DO NOTHING`;
     const sql = `INSERT INTO audit_findings (${cols.map((c) => `"${c}"`).join(', ')})
                  VALUES ${valueGroups.join(', ')}
                  ${conflict}

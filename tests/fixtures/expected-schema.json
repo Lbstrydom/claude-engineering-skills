@@ -10281,8 +10281,8 @@
     },
     {
       "tablename": "audit_findings",
-      "indexname": "audit_findings_run_fingerprint_uniq_full",
-      "indexdef": "CREATE UNIQUE INDEX audit_findings_run_fingerprint_uniq_full ON public.audit_findings USING btree (run_id, finding_fingerprint)"
+      "indexname": "audit_findings_run_fingerprint_pass_bucket_uniq",
+      "indexdef": "CREATE UNIQUE INDEX audit_findings_run_fingerprint_pass_bucket_uniq ON public.audit_findings USING btree (run_id, finding_fingerprint, pass_name, COALESCE(bucket, ''::text))"
     },
     {
       "tablename": "audit_findings",

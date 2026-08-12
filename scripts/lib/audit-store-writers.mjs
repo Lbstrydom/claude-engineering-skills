@@ -102,15 +102,23 @@ export function registerAuditStoreWriters() {
   // Be precise about what this function DOES, because the honest answer is
   // narrower than it looks: `durableWrite` reads its PRESENCE (that is what
   // makes this writer spill-eligible) and never invokes it. The idempotency it
-  // declares is enforced by the database — `audit_findings_run_fingerprint_uniq_full`
+  // declares is enforced by the database — `audit_findings_run_fingerprint_pass_uniq`
   // — and applied by `recordFindings`'s upsert and its intra-batch collapse,
   // neither of which calls back into here. So this is a DECLARATION of the key,
   // not the mechanism that applies it. `tests/audit-store-durability-call-site.test.mjs`
   // pins it to the same column tuple as the index so the declaration and the
   // constraint cannot drift apart silently.
+  //
+  // Includes `pass_name` (added 20260812090000, fixing a defect the 2-column
+  // version introduced): this writer's own payload always carries
+  // `passName: 'merged'`, so the third column never changes VALUE for it — but
+  // the DB constraint the row-identity claims to describe now has three
+  // columns, and the declaration must say so or the two drift apart the exact
+  // way a prior session incident (INC in AGENTS.md's prose↔code seam section)
+  // warns about.
   registerWriter('audit.findings', {
     schemaVersion: 1,
-    rowKey: (row) => `${row.run_id}:${row.finding_fingerprint}`,
+    rowKey: (row) => `${row.run_id}:${row.finding_fingerprint}:${row.pass_name}`,
     replay: (payload) => receipt(
       recordFindings(payload.runId, payload.findings, payload.passName, payload.round),
     ),
