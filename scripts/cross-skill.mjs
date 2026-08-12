@@ -71,6 +71,7 @@ import {
   upsertRepoByUuid,
   getRepoIdByUuid,
   resolveRepoForStore,
+  resolveRepoForStoreResult,
   getRepoIdByName,
   listRepoIds,
   openRefreshRun,
@@ -211,6 +212,8 @@ const KNOWN_FLAGS = [
   // (--title, --body, --severity, --commit, --state, --limit, --out, --worksheet
   //  are already declared above and shared with other subcommands)
   '--affected-path', '--id', '--note', '--before',
+  // ── write-spill <status|drain> (durable audit-store writes) ───────────────
+  '--cap',
   // `--paths` is deliberately NOT here. An older acceptance criterion
   // (docs/plans/security/PLAN.md) shows `get-incident-neighbourhood --paths a,b`,
   // but `arch-memory-planning-anchor.md` R3-M1 later fixed the interface as
@@ -329,11 +332,48 @@ async function resolveRepoId(payload) {
         {}, 1,
       );
     }
-    return repo?.id ?? null;
+    // A repoUuid that resolves to NOTHING is a wrong assertion, not "no scope".
+    // Returning null here handed an unscoped `repo_id` to writers that accept
+    // one — so a caller who named a specific repository, and named it wrongly,
+    // got a successfully-written row belonging to no repository, reported as
+    // `{ok:true}`. Same reasoning as `resolveShipNudgeScope`'s unknown-repo-id
+    // branch: the operator asserted something specific and it is wrong, so say
+    // so. (The transient-failure branch above already fails closed; this is the
+    // not-found half it left open.)
+    if (!repo?.id) {
+      return emitError(
+        'UNKNOWN_REPO',
+        `repoUuid ${payload.repoUuid} does not resolve to any audit_repos row — refusing to write an unscoped row `
+        + 'for an explicitly named repository. It is NOT "no repo scope"; the identity you supplied is unknown.',
+        {}, 1,
+      );
+    }
+    return repo.id;
   }
   // No explicit identity → resolve from the current repo (mints/finds canonical).
-  const ref = await resolveRepoForStore({}).catch(() => null);
-  return ref?.repoRowId ?? null;
+  //
+  // Use the DISCRIMINATED resolver. The null-returning `resolveRepoForStore`
+  // collapses three different facts into one value — cloud-off, genuinely
+  // unresolvable, and a thrown DB error — and this function's result goes
+  // straight into writers. Treating the third as "no repo scope" writes a row
+  // with `repo_id = NULL` that no repo-scoped read will ever return again, and
+  // reports it as `{ok:true}`: a permanent, silent data loss caused by a
+  // transient failure. That is the same defect the explicit-`repoUuid` branch
+  // above already fails closed on; this branch simply had not been fixed yet.
+  const ref = await resolveRepoForStoreResult({}).catch(
+    (err) => ({ kind: 'error', error: err?.message ?? String(err) }),
+  );
+  if (ref.kind === 'error') {
+    return emitError(
+      'REPO_RESOLVE_FAILED',
+      `repo identity lookup failed (${ref.error}) — refusing an unscoped write rather than silently dropping repo scope. `
+      + 'This is a transient store failure, NOT a repo without an identity; retry once the store is reachable.',
+      {}, 1,
+    );
+  }
+  // 'cloud-off' and 'unresolved' are genuine absences: the cross-skill tables all
+  // accept a NULL repo_id, and callers that require a scope check for it.
+  return ref.kind === 'resolved' ? ref.repoRowId : null;
 }
 
 // ── Subcommands ─────────────────────────────────────────────────────────────
@@ -387,7 +427,14 @@ async function cmdUpdatePlanStatus() {
   const repoId = await resolveRepoId(p);
   if (!planId) {
     const found = await getPlanIdByPath(repoId, p.path);
-    if (!found.ok) return emitError('PLAN_NOT_RESOLVED', found.message, {}, 1);
+    if (!found.ok) {
+      // Carry the reason: `not-found` (the plan really is not registered) and
+      // `lookup-failed` (the store could not be queried) are different facts and
+      // used to arrive under one label, so a store outage read as "run the /plan
+      // flow first" and invited a duplicate registration.
+      const code = found.reason === 'lookup-failed' ? 'PLAN_LOOKUP_FAILED' : 'PLAN_NOT_RESOLVED';
+      return emitError(code, found.message, { reason: found.reason ?? null }, 1);
+    }
     planId = found.planId;
     resolvedPath = found.path;
   }
@@ -445,7 +492,10 @@ async function cmdRecordRegressionSpecRun() {
   }
   await initLearningStore();
   if (!await isCloudEnabled()) return emit({ ok: true, cloud: false });
-  await recordRegressionSpecRun(p.specId, {
+  // Report the STORE's answer. This emitted an unconditional `{ok:true}` while
+  // the writer swallowed every error and returned undefined, so a run that never
+  // reached the store reported as persisted.
+  const res = await recordRegressionSpecRun(p.specId, {
     passed: p.passed,
     commitSha: p.commitSha || currentCommitSha(),
     capturedRegression: p.capturedRegression,
@@ -453,6 +503,11 @@ async function cmdRecordRegressionSpecRun() {
     errorMessage: p.errorMessage,
     runContext: p.runContext,
   });
+  if (!res.ok) {
+    return emitError('WRITE_FAILED',
+      `regression spec run not persisted: ${res.reason ?? 'unknown'}${res.error ? ` (${res.error})` : ''}`,
+      { reason: res.reason ?? null }, 1);
+  }
   emit({ ok: true, cloud: true });
 }
 
@@ -581,7 +636,8 @@ async function cmdRecordShipEvent() {
   await initLearningStore();
   if (!await isCloudEnabled()) return emit({ ok: true, cloud: false });
   const repoId = await resolveRepoId(p);
-  await recordShipEvent(repoId, {
+  // Same unverified-write-success fix as record-regression-spec-run above.
+  const res = await recordShipEvent(repoId, {
     commitSha: p.commitSha || currentCommitSha(),
     branch: p.branch || currentBranch(),
     outcome: p.outcome,
@@ -595,6 +651,11 @@ async function cmdRecordShipEvent() {
     framework: p.framework,
     durationMs: p.durationMs,
   });
+  if (!res.ok) {
+    return emitError('WRITE_FAILED',
+      `ship event not persisted: ${res.reason ?? 'unknown'}${res.error ? ` (${res.error})` : ''}`,
+      { reason: res.reason ?? null }, 1);
+  }
   emit({ ok: true, cloud: true });
 }
 
@@ -664,7 +725,17 @@ async function resolveShipNudgeScope() {
     // An explicitly-named repo that does not exist is an ERROR: the operator
     // asserted something specific and it is wrong. Silently widening (or
     // silently returning zero) is how the original bug read as plausible.
-    const rowId = await getRepoIdByName(slugArg).catch(() => null);
+    // A thrown lookup is a FAILURE, not an unknown repo — reporting the second
+    // for the first tells the operator their correct slug is wrong because the
+    // store is down. `measured:false` either way, but the reason must be honest.
+    let rowId;
+    try {
+      rowId = await getRepoIdByName(slugArg);
+    } catch (err) {
+      return { mode: 'unresolved', repoId: null, slug: slugArg, measured: false, reason: 'repo-lookup-failed',
+        error: `could not resolve repo "${slugArg}" (${err.message}) — the store was unreachable. `
+          + 'This is NOT an unknown repo and NOT an empty backlog; nothing was measured.' };
+    }
     if (!rowId) {
       return { mode: 'unresolved', repoId: null, slug: slugArg, measured: false, reason: 'unknown-repo',
         error: `unknown repo "${slugArg}" — expected an owner/repo slug present in audit_repos.` };
@@ -1154,7 +1225,13 @@ async function cmdArmEvalRun() {
   const task = argOption('task');
   if (!experimentType || !task) return emitError('BAD_INPUT', '--experiment <plan-authoring|brainstorm> --task "<text>" required');
   const budgetFlag = Number.parseFloat(argOption('budget-eur'));
-  const repoId = argOption('repo-id') || null;
+  // Was `argOption('repo-id') || null` — no ambient fallback, unlike the sibling
+  // `arm-eval-maybe-capture`, so a manual run without `--repo-id` persisted
+  // `arm_eval_sessions.repo_id = NULL` and every repo-scoped leaderboard read
+  // then missed the session it had just paid to produce.
+  const _scope = await resolveScopedRepoId();
+  if (!_scope.ok) return emitError(_scope.code, _scope.message);
+  const repoId = _scope.repoId;
   const phase = argOption('phase') || 'prospective';
   const seed = argOption('seed') ? Number.parseInt(argOption('seed'), 10) : null;
   try {
@@ -1339,6 +1416,72 @@ async function cmdArmEvalMaybeCapture() {
  *   before. `ok:false` distinguishes unknown-repo and lookup-failure, which must NEVER
  *   render as an empty-but-clean result.
  */
+/**
+ * Resolve the repo scope for a command whose DOCUMENTED flag is `--repo <name>`,
+ * so that flag actually decides which repo is read or written.
+ *
+ * The bug this replaces, found in TWO commands independently: the repo was read
+ * from two unrelated sources — `repoName` from `--repo`, and `repoId` from
+ * `resolveScopedRepoId()` / `resolveRepoForStore({})`, neither of which ever
+ * looks at `--repo`. Both stores then prefer the id:
+ *
+ *   - `persona-outcomes` (`store/persona-outcomes.mjs`) uses `repo_id` when
+ *     non-null and only falls back to `repo_name`, so `--repo other/repo`
+ *     queried THIS repo and labelled the answer with the other repo's name.
+ *     `backfill-hash` is MUTATING, so it would migrate this repo's rows under
+ *     the other repo's name in its log line.
+ *   - `get-persona-sessions-by-repo` (`store/persona.mjs`) requires BOTH
+ *     (`WHERE repo_name = $1 AND (repo_id = $3 OR repo_id IS NULL)`), so a
+ *     foreign `--repo` returned `rows: []` **with `scopedByRepoId: true`** —
+ *     an authoritative empty result, for a repo that has sessions, wearing a
+ *     field that asserts it was correctly scoped. Measured 2026-08-12 against
+ *     the live store from a `claude-engineering-skills` checkout.
+ *
+ * ONE resolver for both: a second copy is how the two drifted in the first
+ * place. Precedence is explicit-beats-ambient, and the two explicit forms may
+ * not disagree — a conflict is an error, never a silent winner.
+ *
+ * @param {string} repoName - the value of `--repo` (already required by caller)
+ * @returns {Promise<{ok:true, repoId:string|null} | {ok:false, code:string, message:string}>}
+ */
+async function resolveRequestedRepoScope(repoName) {
+  const explicitId = argOption('repo-id');
+  // Cloud-off resolves nothing by name; report that as the callers' documented
+  // `cloud:false` path rather than as an unknown repo.
+  if (!await isCloudEnabled()) return { ok: true, repoId: explicitId || null };
+
+  // A thrown lookup is NOT "this repo does not exist". Swallowing it to null
+  // sent the caller `UNKNOWN_REPO — expected an owner/repo slug present in
+  // audit_repos`, i.e. told them their correct repo name was wrong because the
+  // store was unreachable. Same failure-state collapse as F7/F9, reproduced in
+  // the fix for F4 — which is exactly how this family keeps regenerating.
+  let byName;
+  try {
+    byName = await getRepoIdByName(repoName);
+  } catch (err) {
+    return { ok: false, code: 'REPO_LOOKUP_FAILED',
+      message: `could not resolve repo "${repoName}" (${err.message}) — the store was unreachable, `
+        + 'so this is NOT an unknown repo and NOT an empty result; nothing was measured.' };
+  }
+
+  if (explicitId && byName && explicitId !== byName) {
+    return { ok: false, code: 'REPO_SCOPE_CONFLICT',
+      message: `--repo "${repoName}" resolves to ${byName} but --repo-id says ${explicitId} — `
+        + 'these name different repositories; pass only one.' };
+  }
+  // An unresolvable `--repo` is an error EVEN WITH a valid `--repo-id`. Letting
+  // the id win silently accepted a `--repo` naming a repo that does not exist,
+  // which is the same "asserted something specific, and it was wrong" case the
+  // conflict branch above refuses. (Audit r2 caught this in the first version
+  // of this very function.)
+  if (!byName) {
+    return { ok: false, code: 'UNKNOWN_REPO',
+      message: `unknown repo "${repoName}" — expected an owner/repo slug present in audit_repos. `
+        + 'It is NOT an empty result; nothing was measured.' };
+  }
+  return { ok: true, repoId: explicitId || byName };
+}
+
 async function resolveScopedRepoId() {
   const scope = await resolveRepoScope({
     explicitRepoId: argOption('repo-id') || null,
@@ -1436,8 +1579,18 @@ async function cmdFinalizeOutcomes() {
   // `argOption` returns null when --round is absent, and Number(null) is 0 —
   // an integer — so coercing first made the `result.round || 1` fallback
   // unreachable and silently finalised round 0. Only coerce what was supplied.
+  // A SUPPLIED --round must be a positive integer. `Number.isInteger` alone
+  // accepted `0` and negatives, so `--round 0` finalised round 0 — the very
+  // outcome the null-coercion fix above was written to prevent, reached by a
+  // different input. And an invalid supplied value must be REFUSED, not quietly
+  // swapped for `result.round`: silently finalising a different round than the
+  // operator named is worse than stopping.
   const roundArg = roundOpt == null ? null : Number(roundOpt);
-  const round = Number.isInteger(roundArg) ? roundArg : (result.round || 1);
+  if (roundArg !== null && (!Number.isInteger(roundArg) || roundArg < 1)) {
+    return emitError('BAD_INPUT',
+      `--round must be a positive integer, got "${roundOpt}" — refusing rather than finalising a different round`);
+  }
+  const round = roundArg ?? (result.round || 1);
 
   await initLearningStore().catch(() => { /* cloud optional */ });
   const cloud = await isCloudEnabled();
@@ -1496,13 +1649,28 @@ async function cmdFinalizeOutcomes() {
     `  [finalize-outcomes] run ${runId}: ${labelled}/${result.findings.length} labelled · `
     + `${needsTriage} needs_triage · ${autoDismissed} auto_dismissed · cloud=${cloudOk ? 'ok' : 'failed'}\n`,
   );
+  const needsTriageFindings = pending.map(f => ({
+    id: f.id, fingerprint: f._hash || semanticId(f),
+    severity: f.severity, section: f.section,
+  }));
+  // `ok:true` alongside `cloudOk:false` is self-contradictory — the line above
+  // has already printed `cloud=failed`, and the whole purpose of this command is
+  // to finalise the round INTO the store. A caller checking `.ok` was told the
+  // finalize succeeded while the adjudications never reached the cloud. The
+  // counts travel with the error so the local work is not lost from the report.
+  if (!cloudOk) {
+    return emitError('CLOUD_FINALIZE_FAILED',
+      `run ${runId} round ${round}: outcomes were computed but the cloud write FAILED — `
+      + 'this round is not finalised in the store; fix connectivity and re-run (the write is idempotent).',
+      {
+        cloud: true, cloudOk: false, runId, round,
+        labelled, total: result.findings.length, needsTriage, autoDismissed, needsTriageFindings,
+      }, 1);
+  }
   emit({
     ok: true, cloud: true, runId, round,
     labelled, total: result.findings.length, needsTriage, autoDismissed, cloudOk,
-    needsTriageFindings: pending.map(f => ({
-      id: f.id, fingerprint: f._hash || semanticId(f),
-      severity: f.severity, section: f.section,
-    })),
+    needsTriageFindings,
     // NOTE: passCounts was dropped when cmdFinalizeOutcomes was refactored onto the
     // shared finalizeRoundOutcomes (which doesn't return it) — referencing it here
     // ReferenceError'd. The per-pass counts live in audit_pass_stats; not needed in this echo.
@@ -1618,8 +1786,31 @@ async function cmdRecordPersonaSession() {
   // Filling only the MISSING field split identity across two repos: a caller
   // supplying repoName for repo A from a checkout of repo B kept A's name and
   // took B's id, and the two joins above then disagreed. Reconcile instead.
-  if (!data.repoId || !data.repoName) {
-    const ref = await resolveRepoForStore({}).catch(() => null);
+  //
+  // Reconcile UNCONDITIONALLY. This was gated on `if (!data.repoId ||
+  // !data.repoName)`, so a caller supplying BOTH skipped reconciliation
+  // entirely — which is precisely the input reconciliation exists to check, and
+  // it made the REPO_IDENTITY_CONFLICT branch below unreachable for it. A
+  // payload naming repo A's id with repo B's name was written verbatim.
+  {
+    // Fail closed on a RESOLVER ERROR. `reconcileRepoIdentity` can only detect a
+    // cross-repo payload by comparing against the ambient identity, so a
+    // swallowed lookup failure (`ref = null`) makes both of its conflict guards
+    // short-circuit and waves the payload through unchecked — the reconciliation
+    // silently becomes a no-op precisely when the store is unhealthy. A genuine
+    // `cloud-off`/`unresolved` still passes through (the CI escape hatch); only
+    // a real error refuses.
+    const refResult = await resolveRepoForStoreResult({}).catch(
+      (err) => ({ kind: 'error', error: err?.message ?? String(err) }),
+    );
+    if (refResult.kind === 'error') {
+      return emitError('REPO_RESOLVE_FAILED',
+        `cannot verify this session's repo identity (${refResult.error}) — refusing rather than recording an `
+        + 'unreconciled repoId/repoName pair that could put the two on different repositories.');
+    }
+    const ref = refResult.kind === 'resolved'
+      ? { repoRowId: refResult.repoRowId, repoUuid: refResult.repoUuid, name: refResult.name }
+      : null;
     const merged = reconcileRepoIdentity(data, ref);
     if (!merged.ok) {
       return emitError('REPO_IDENTITY_CONFLICT',
@@ -1749,14 +1940,14 @@ async function cmdPersonaOutcomes() {
   if (process.argv.includes('--worksheet')) {
     const repoName = argOption('repo');
     if (!repoName) return emitError('BAD_INPUT', '--repo <name> is required for --worksheet');
-    // 88bc75e1/8993b96f: repoName alone is an ambiguous, caller-supplied
-    // display string — resolve the stable repoId (same mechanism used
-    // elsewhere in this file) so session selection can't land on a
-    // different repo that happens to share the name. --repo-id overrides
-    // when supplied; otherwise best-effort from the current git remote.
-    const _scope = await resolveScopedRepoId();
-        if (!_scope.ok) return emitError(_scope.code, _scope.message);
-        const repoId = _scope.repoId;
+    // 88bc75e1/8993b96f: repoName alone is an ambiguous, caller-supplied display
+    // string — resolve the stable repoId so session selection can't land on a
+    // different repo that happens to share the name. Resolution is from `--repo`
+    // itself (see resolveRequestedRepoScope); it used to come from the AMBIENT
+    // checkout, which silently overrode the flag.
+    const _scope = await resolveRequestedRepoScope(repoName);
+    if (!_scope.ok) return emitError(_scope.code, _scope.message);
+    const repoId = _scope.repoId;
     const res = await getActionablePersonaOutcomeItems({ repoName, repoId });
     if (!res.ok) return emitError('STORE_ERROR', res.error || 'worksheet query failed');
     if (!res.cloud) return emit({ ok: true, cloud: false, count: 0 });
@@ -1794,9 +1985,9 @@ async function cmdPersonaOutcomes() {
     const repoName = argOption('repo') || process.env.PERSONA_TEST_REPO_NAME;
     if (!repoName) return emitError('BAD_INPUT', '--repo <name> is required (or set PERSONA_TEST_REPO_NAME)');
     // 88bc75e1/8993b96f: same repoId-primary resolution as --worksheet above.
-    const _scope = await resolveScopedRepoId();
-        if (!_scope.ok) return emitError(_scope.code, _scope.message);
-        const repoId = _scope.repoId;
+    const _scope = await resolveRequestedRepoScope(repoName);
+    if (!_scope.ok) return emitError(_scope.code, _scope.message);
+    const repoId = _scope.repoId;
     const res = await getPersonaOutcomesSummary({ repoName, repoId });
     return emit(res);
   }
@@ -1830,9 +2021,11 @@ async function cmdPersonaOutcomes() {
   if (sub === 'backfill-hash') {
     const repoName = argOption('repo');
     if (!repoName) return emitError('BAD_INPUT', '--repo <name> is required for backfill-hash');
-    const _scope = await resolveScopedRepoId();
-        if (!_scope.ok) return emitError(_scope.code, _scope.message);
-        const repoId = _scope.repoId;
+    // MUTATING path — the `--repo`-vs-ambient split mattered most here: this
+    // would migrate the AMBIENT repo's rows while the log line named `--repo`.
+    const _scope = await resolveRequestedRepoScope(repoName);
+    if (!_scope.ok) return emitError(_scope.code, _scope.message);
+    const repoId = _scope.repoId;
     if (!repoId) return emitError('BAD_INPUT', 'could not resolve a repoId — pass --repo-id explicitly');
     const dryRun = process.argv.includes('--dry-run');
     const reportPath = argOption('report-path');
@@ -1897,12 +2090,17 @@ async function cmdGetPersonaSessionsByRepo() {
   if (!cloud) return emit({ ok: true, cloud: false, rows: [] });
 
   // Pass the CANONICAL repo id alongside the caller's name, so a row whose two
-  // identity fields disagree is rejected rather than served. Best-effort: an
-  // unresolvable checkout leaves repoId null and the read stays name-scoped,
-  // which is the pre-existing behaviour — this tightens where it can and
-  // degrades to where it was, never below it.
-  const ref = await resolveRepoForStore({}).catch(() => null);
-  const repoId = ref?.repoRowId || null;
+  // identity fields disagree is rejected rather than served.
+  //
+  // The id must come from the REQUESTED name, not the ambient checkout. It used
+  // to be `resolveRepoForStore({})`, and the store's predicate is
+  // `WHERE repo_name = $1 AND (repo_id = $3 OR repo_id IS NULL)` — so asking
+  // for another repo returned `rows: []` alongside `scopedByRepoId: true`, an
+  // authoritative empty result that actively asserted it had been scoped
+  // correctly. Same defect as persona-outcomes, same resolver now.
+  const _scope = await resolveRequestedRepoScope(parsed.data.repoName);
+  if (!_scope.ok) return emitError(_scope.code, _scope.message);
+  const repoId = _scope.repoId;
   const rows = await getPersonaSessionsByRepo({ ...parsed.data, repoId });
   emit({ ok: true, cloud: true, rows, scopedByRepoId: Boolean(repoId) });
 }
@@ -2042,12 +2240,21 @@ function gitChangedFiles() {
 // unknown — the skill treats `[]` as "no audit context", never an error.
 async function cmdGetRecentFindings() {
   const repoFlag = argOption('repo');
+  const repoIdFlag = argOption('repo-id');
   const limitFlag = argOption('limit');
   const severityFlag = argOption('severity'); // CSV, e.g. "HIGH,MEDIUM"
 
-  const p = (repoFlag || limitFlag || severityFlag)
+  // `--repo-id` is globally allowlisted, and the store honours a `repoId` in the
+  // payload — but the argv branch below never read the flag, so
+  // `get-recent-findings --repo-id <uuid>` passed validation, built a payload
+  // with NO scope, and fell through to cwd auto-resolution: the explicitly
+  // requested repo silently replaced by whichever repo the caller happened to
+  // stand in. Accepted-and-inert, the shape this CLI has now been bitten by
+  // four times.
+  const p = (repoFlag || repoIdFlag || limitFlag || severityFlag)
     ? {
         ...(repoFlag ? { repoName: repoFlag } : {}),
+        ...(repoIdFlag ? { repoId: repoIdFlag } : {}),
         ...(limitFlag ? { limit: Number(limitFlag) } : {}),
         ...(severityFlag ? { severities: severityFlag.split(',').map(s => s.trim()).filter(Boolean) } : {}),
       }
@@ -2400,6 +2607,76 @@ async function cmdUpstream() {
   } catch (err) {
     return emitError('EXCEPTION', err.message);
   }
+}
+
+// ── Durable audit-store writes (plan: audit-store-write-durability.md) ──────
+
+/**
+ * `write-spill status | drain` — the operator surface over the write-spill queue.
+ *
+ * The queue holds audit-store writes that failed with the store unreachable. It
+ * drains on its own at the start of the next audit run; this command exists for
+ * the case where the operator wants to see the backlog, or clear it without
+ * running an audit.
+ *
+ * TWO THINGS MAKE THIS MORE THAN A WRAPPER:
+ *
+ *  1. The registry is PROCESS-LOCAL, and this is a fresh process. Without
+ *     importing `audit-store-writers.mjs` here the drain would find zero
+ *     handlers and quarantine every artifact it was asked to replay — the
+ *     bootstrap contradiction the plan's R2 gate caught. `drainSpill` refuses to
+ *     start on an empty registry, so the failure is loud either way, but the
+ *     import is what makes it work.
+ *  2. `unavailable` is NOT `drained: 0`. An explicit drain that could not run is
+ *     an error to the caller who asked for it, not a footnote on a success
+ *     envelope — the same rule `upstream drain` above follows.
+ */
+async function cmdWriteSpill() {
+  const sub = rest[0];
+  const VERBS = ['status', 'drain'];
+  if (!sub || !VERBS.includes(sub)) {
+    return emitError('BAD_INPUT', `usage: write-spill <${VERBS.join('|')}> [--cap N]`);
+  }
+
+  // Importing the registration module IS the registry bootstrap (decision 1b).
+  await import('./lib/audit-store-writers.mjs');
+  const { drainSpill, spillSummary, registeredWriters, DRAIN_CAP } = await import('./lib/durable-write.mjs');
+  await initLearningStore();
+  const cloud = await isCloudEnabled();
+
+  if (sub === 'status') {
+    const summary = spillSummary();
+    // `unavailable` is reported as a non-ok result: "I could not read the queue"
+    // must never render as "the queue is empty", which is the distinction this
+    // whole subsystem is built around.
+    if (summary.state === 'unavailable') {
+      return emitError('SPILL_UNREADABLE', summary.reason, { cloud });
+    }
+    return emit({
+      ok: true,
+      cloud,
+      spilled: summary.spilled,
+      lost: summary.lost,
+      oldestAgeMs: summary.oldestAgeMs,
+      writers: registeredWriters(),
+      drainCap: DRAIN_CAP,
+      // Naming what `lost` means at the point of reporting: an operator seeing a
+      // non-zero count needs to know nothing will ever replay it.
+      note: summary.lost > 0
+        ? `${summary.lost} artifact(s) in lost/ are evidence only — no writer declared an idempotency key, so they are never replayed`
+        : undefined,
+    });
+  }
+
+  const cap = argOption('cap') ? Number.parseInt(argOption('cap'), 10) : undefined;
+  if (argOption('cap') && !(Number.isInteger(cap) && cap > 0)) {
+    return emitError('BAD_INPUT', `--cap must be a positive integer; got ${JSON.stringify(argOption('cap'))}`);
+  }
+  const res = await drainSpill({ cap, isCloudEnabled });
+  if (res.state === 'unavailable') {
+    return emitError('DRAIN_UNAVAILABLE', res.reason, { cloud, ...res });
+  }
+  return emit({ ok: true, cloud, ...res });
 }
 
 async function cmdGetFrictionNeighbourhood() {
@@ -2788,6 +3065,21 @@ async function cmdPublishRefreshRun() {
   await initLearningStore();
   try {
     const r = await publishRefreshRun({ repoId: p.repoId, refreshId: p.refreshId });
+    // ASSERT the success rather than assume it, mirroring cmdAbortRefreshRun.
+    //
+    // The three real failure modes (run not found, run belongs to another repo,
+    // status not `running`) are `RAISE EXCEPTION` in the live
+    // `publish_refresh_run` definition, so they arrive at the catch below and
+    // this branch genuinely means "published" — that was verified against
+    // `pg_proc`, not against the first migration. But the sibling above now
+    // fails closed and this one did not, and an asymmetry between two lifecycle
+    // commands is how the next reader concludes the unchecked one is fine.
+    // Checking the RPC's own `ok` costs nothing and removes the question.
+    if (!r || r.ok !== true) {
+      return emitError('PUBLISH_NOT_CONFIRMED',
+        `publish_refresh_run returned no confirmation for refresh ${p.refreshId} — treating an unconfirmed publish as a failure`,
+        { cloud: true, result: r ?? null }, 1);
+    }
     emit({ ok: true, cloud: true, result: r });
   } catch (err) {
     emitError(err.code || 'EXCEPTION', err.message);
@@ -2805,6 +3097,19 @@ async function cmdAbortRefreshRun() {
     // another skill) that aborts a wrong-repo or already-terminal run must
     // be told so, not given an unconditional {ok:true}.
     const { aborted } = await abortRefreshRun({ refreshId: p.refreshId, repoId: p.repoId, reason: p.reason });
+    // The comment above states the contract; this line did not implement it.
+    // `abortRefreshRun` was fixed at the STORE layer to return `aborted:false`
+    // for a wrong-repo or already-terminal run (proved by
+    // tests/refresh-runs-repo-scoping.test.mjs), and the CLI then wrapped that
+    // honest false in an unconditional `ok:true` — surfacing the real outcome as
+    // a data field that a shell caller checking `.ok` never reads. A comment
+    // claiming a fix that was only half-made is this file's signature defect.
+    if (!aborted) {
+      return emitError('ABORT_NOT_APPLIED',
+        `refresh run ${p.refreshId} was not aborted — no running row for that id under repo ${p.repoId} `
+        + '(wrong repo, already published, or already terminal). Nothing was changed.',
+        { cloud: true, aborted: false }, 1);
+    }
     emit({ ok: true, cloud: true, aborted });
   } catch (err) {
     emitError(err.code || 'EXCEPTION', err.message);
@@ -2831,7 +3136,17 @@ async function cmdRecordSymbolIndex() {
   await initLearningStore();
   try {
     const n = await recordSymbolIndex(p.refreshId, p.repoId, p.rows);
-    emit({ ok: true, cloud: true, inserted: n });
+    // These use ON CONFLICT DO UPDATE, so a successful chunk's rowCount equals
+    // the rows attempted (the store warns on any mismatch). A ZERO against a
+    // non-empty request is therefore anomalous — an RLS-filtered or otherwise
+    // silently-dropped batch — and reporting it as `{ok:true}` is the
+    // unverified-write-success shape. An empty request stays a legitimate no-op.
+    if (p.rows.length > 0 && n === 0) {
+      return emitError('NO_ROWS_WRITTEN',
+        `recordSymbolIndex was given ${p.rows.length} row(s) and wrote 0 — refusing to report a write that did not happen`,
+        { cloud: true, requested: p.rows.length, inserted: 0 }, 1);
+    }
+    emit({ ok: true, cloud: true, inserted: n, requested: p.rows.length });
   } catch (err) {
     emitError(err.code || 'EXCEPTION', err.message);
   }
@@ -2859,7 +3174,13 @@ async function cmdRecordLayeringViolations() {
   await initLearningStore();
   try {
     const n = await recordLayeringViolations(p.refreshId, p.repoId, p.violations);
-    emit({ ok: true, cloud: true, inserted: n });
+    // Same zero-against-non-empty check as record-symbol-index above.
+    if (p.violations.length > 0 && n === 0) {
+      return emitError('NO_ROWS_WRITTEN',
+        `recordLayeringViolations was given ${p.violations.length} row(s) and wrote 0 — refusing to report a write that did not happen`,
+        { cloud: true, requested: p.violations.length, inserted: 0 }, 1);
+    }
+    emit({ ok: true, cloud: true, inserted: n, requested: p.violations.length });
   } catch (err) {
     emitError(err.code || 'EXCEPTION', err.message);
   }
@@ -2949,10 +3270,18 @@ async function cmdLearningRecord() {
     ? `${p.auditRunId}:${p.decisionType}:r${p.round}:s${p.sequence}`
     : `${p.decisionType}:${p.externalId}`;
 
-  // Compute context_hash deterministically (same algorithm as decision-logger).
-  const crypto = await import('node:crypto');
-  const canonical = JSON.stringify(p.context, Object.keys(p.context).sort());
-  const contextHash = crypto.createHash('sha256').update(canonical).digest('hex');
+  // Compute context_hash via decision-logger's oracle — do NOT re-implement.
+  //
+  // This line used to read `JSON.stringify(p.context, Object.keys(p.context).sort())`
+  // under a comment claiming it was decision-logger's algorithm. The second
+  // argument to JSON.stringify is a replacer ARRAY — a recursive property
+  // allowlist, not a key sort — so every nested object serialised EMPTY
+  // (`{passName:'x',meta:{model:'gpt'}}` → `{"meta":{},"passName":"x"}`) and two
+  // contexts differing only below the top level produced an identical sha256.
+  // decision-logger fixed exactly this bug in its own copy; this one kept it, so
+  // the column had two writers producing different hashes for the same context.
+  const { contextHash: computeContextHash } = await import('./lib/learning/decision-logger.mjs');
+  const contextHash = computeContextHash(p.context);
 
   const result = await insertLearningDecision({
     decisionKey,
@@ -3211,6 +3540,7 @@ const commands = {
   'get-friction-neighbourhood':       cmdGetFrictionNeighbourhood,
   // Upstream issue reports (plan: upstream-issue-reports.md)
   'upstream':                         cmdUpstream,
+  'write-spill':                      cmdWriteSpill,
 };
 
 async function main() {

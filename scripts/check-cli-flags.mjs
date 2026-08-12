@@ -159,7 +159,15 @@ export const BASELINE = new Set([
   // removed on the strength of a negative control (`--dry-runn` now exits 2),
   // not on the detector's say-so.
   'scripts/tiered-shadow-report.mjs',
-  'scripts/ux-lock-run.mjs',
+  // 'scripts/ux-lock-run.mjs' — FIXED 2026-08-12, baseline paid down
+  // (cross-skill-cli-integrity; raised by the shadow final reviewer). It
+  // hand-rolled `opt`/`flag` with no name validation, and the flag it silently
+  // dropped is load-bearing: a typo'd `--strict-selector` (singular) left
+  // `scanSelectorPolicy` in warn mode, so the command reported success on a run
+  // it had been asked to GATE, exit 6 never fired. Removed on the strength of a
+  // negative control, per the sync-to-repos precedent above and NOT on the
+  // detector's say-so: `ux-lock-run.mjs spec --strict-selector` now exits 2 with
+  // "unknown flag", and `--selfcheck-relocation` still prints OK.
   'scripts/verify-anchor-contract.mjs',
   'scripts/visual-audit.mjs',
   'scripts/write-code-outcomes.mjs',

@@ -178,11 +178,42 @@ export async function upsertRepo(profile, _repoName) {
  * @param {object} [opts]
  * @param {string} [opts.cwd] - repo root to resolve identity from (default cwd)
  * @param {object} [opts.profile] - generateRepoProfile() output (optional)
+ * **Null collapses three different facts** — store disabled, no row resolvable,
+ * and a thrown DB error all return `null`. That is fine for a caller whose only
+ * question is "do I have an id"; it is NOT fine for a caller about to WRITE,
+ * because a transient failure then lands a permanently unscoped row that no
+ * repo-scoped read will ever return. Those callers use
+ * {@link resolveRepoForStoreResult} and fail closed on `kind:'error'`.
+ *
+ * @param {object} [opts]
+ * @param {string} [opts.cwd] - repo root to resolve identity from (default cwd)
+ * @param {object} [opts.profile] - generateRepoProfile() output (optional)
  * @returns {Promise<{repoRowId: string, repoUuid: string, name: string} | null>}
- *   null when the store is disabled.
+ *   null when the store is disabled, unresolvable, OR erroring.
  */
-export async function resolveRepoForStore({ cwd, profile } = {}) {
-  if (!await isCloudEnabled()) return null;
+export async function resolveRepoForStore(opts = {}) {
+  const r = await resolveRepoForStoreResult(opts);
+  return r.kind === 'resolved'
+    ? { repoRowId: r.repoRowId, repoUuid: r.repoUuid, name: r.name }
+    : null;
+}
+
+/**
+ * The discriminated form of {@link resolveRepoForStore} — same resolution, but
+ * it says WHY it failed instead of collapsing every failure to `null`.
+ *
+ * This is the single implementation; `resolveRepoForStore` is a thin wrapper so
+ * the ~50 existing call sites that only want an id keep their contract exactly.
+ *
+ * @param {object} [opts] - as {@link resolveRepoForStore}
+ * @returns {Promise<
+ *   | {kind:'resolved', repoRowId:string, repoUuid:string, name:string}
+ *   | {kind:'cloud-off'}
+ *   | {kind:'unresolved', repoUuid:string, name:string}
+ *   | {kind:'error', error:string, repoUuid:string, name:string}>}
+ */
+export async function resolveRepoForStoreResult({ cwd, profile } = {}) {
+  if (!await isCloudEnabled()) return { kind: 'cloud-off' };
   const { repoUuid, name } = resolveRepoIdentity(cwd);
   const profileCols = profile ? {
     stack:          profile.stack,
@@ -214,7 +245,7 @@ export async function resolveRepoForStore({ cwd, profile } = {}) {
           process.stderr.write(`  [learning] resolveRepoForStore profile-refresh skipped: ${e.message}\n`);
         }
       }
-      return { repoRowId: existing.id, repoUuid, name };
+      return { kind: 'resolved', repoRowId: existing.id, repoUuid, name };
     }
     // 2. No canonical row yet → plain INSERT (fingerprint no longer unique).
     //    Same guard as the UPDATE branch above: a profile-less call vivifying
@@ -230,19 +261,19 @@ export async function resolveRepoForStore({ cwd, profile } = {}) {
         },
         { returning: ['id'] },
       );
-      if (row?.id) return { repoRowId: row.id, repoUuid, name };
+      if (row?.id) return { kind: 'resolved', repoRowId: row.id, repoUuid, name };
     } catch (insErr) {
       // Race: a concurrent process inserted the canonical row between our SELECT
       // and INSERT. The partial unique index on repo_uuid rejects the loser —
       // re-SELECT and return the winner's id rather than failing the audit.
       const raced = await one(`SELECT id FROM audit_repos WHERE repo_uuid = $1 LIMIT 1`, [repoUuid]).catch(() => null);
-      if (raced?.id) return { repoRowId: raced.id, repoUuid, name };
+      if (raced?.id) return { kind: 'resolved', repoRowId: raced.id, repoUuid, name };
       throw insErr;
     }
-    return null;
+    return { kind: 'unresolved', repoUuid, name };
   } catch (err) {
     process.stderr.write(`  [learning] resolveRepoForStore failed: ${err.message}\n`);
-    return null;
+    return { kind: 'error', error: err.message, repoUuid, name };
   }
 }
 

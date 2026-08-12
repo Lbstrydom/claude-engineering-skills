@@ -153,14 +153,20 @@ class DecisionLoggerError extends Error {
  * dropping a function from them was already the behaviour of the cloud insert
  * long before the eviction spill existed.
  *
- * **Known residual (documented, not fixed — right-sizing).** Entries hold the
- * caller's object by reference, so a caller that mutates `choice` into
- * something unserialisable AFTER admission can still produce an unspillable
- * head, and the §2 table will then correctly refuse admissions until it
- * clears. The alternative — snapshotting the serialised form for every
- * decision at admission — doubles the stringify cost and memory on a
- * fire-and-forget hot path to defend against a caller bug that the throttled
- * `cap-reject:` warning already names on stderr.
+ * **Residual CLOSED 2026-08-12 (cross-skill-cli-integrity F19).** This block
+ * used to read "Known residual (documented, not fixed — right-sizing)": entries
+ * held the caller's object by reference, so post-admission mutation could
+ * produce an unspillable head, silently change a queued row, and falsify the
+ * `contextHash` computed here from the pre-mutation value — i.e. what was
+ * VALIDATED and what was PERSISTED were not the same value, while the returned
+ * decision key is documented as a receipt that the decision was admitted.
+ *
+ * `recordDecision` and `backfillOutcome` (the second door into the same queue)
+ * now both `structuredClone` the caller's `context`/`choice`/`outcome` at
+ * admission. The old cost argument was against snapshotting the SERIALISED form
+ * — "doubles the stringify cost" — which is not what this does: `structuredClone`
+ * is a structured copy, not a second `JSON.stringify`, and `assertJsonSerialisable`
+ * has already proved the value is cloneable, so it cannot throw on these inputs.
  */
 function assertJsonSerialisable(value, fieldName) {
   try {
@@ -269,11 +275,23 @@ function _canonicalise(value) {
   return out;
 }
 
-function canonicaliseContext(context) {
+export function canonicaliseContext(context) {
   return JSON.stringify(_canonicalise(context));
 }
 
-function contextHash(context) {
+/**
+ * The ONE oracle for `learning_decisions.context_hash`.
+ *
+ * Promoted from private to a named export 2026-08-12: `cross-skill.mjs`'s
+ * `learning-record` had its own copy of the pre-audit-fix implementation
+ * (`JSON.stringify(ctx, Object.keys(ctx).sort())`) under a comment claiming it
+ * was "the same algorithm as decision-logger". It was not — that form is a
+ * recursive property ALLOWLIST, so it emptied every nested object and two
+ * contexts differing only below the top level hashed identically. Two writers of
+ * one column, disagreeing, one of them lossy. Any new writer of that column
+ * calls this; do not re-implement it.
+ */
+export function contextHash(context) {
   return crypto.createHash('sha256').update(canonicaliseContext(context)).digest('hex');
 }
 
@@ -308,6 +326,18 @@ export function recordDecision(input) {
   const decisionKey = buildDecisionKey(input);
   const ctxHash = contextHash(input.context);
 
+  // SNAPSHOT the caller's payload at admission.
+  //
+  // These three fields were retained BY REFERENCE, so what got validated and
+  // what eventually got persisted were not guaranteed to be the same value: a
+  // caller that mutated or reused its `context`/`choice`/`outcome` object after
+  // `recordDecision` returned — and the returned key is documented as a receipt
+  // that the decision was admitted — silently rewrote a queued row before the
+  // flush. It also falsified `contextHash`, which is computed here from the
+  // pre-mutation value. `validateInput` has already proved all three are
+  // JSON-serialisable, so a structured clone cannot throw on them.
+  const snapshot = (v) => (v === null || typeof v !== 'object' ? v : structuredClone(v));
+
   const entry = {
     decisionKey,
     decisionType: input.decisionType,
@@ -316,10 +346,10 @@ export function recordDecision(input) {
     sequence: input.sequence ?? null,
     externalId: input.externalId ?? null,
     repoId: input.repoId ?? null,
-    context: input.context,
+    context: snapshot(input.context),
     contextHash: ctxHash,
-    choice: input.choice,
-    outcome: input.outcome ?? null,
+    choice: snapshot(input.choice),
+    outcome: snapshot(input.outcome ?? null),
     enqueuedAt: new Date().toISOString(),
   };
 
@@ -385,13 +415,18 @@ export function backfillOutcome({ decisionKey, outcome }) {
   // so an unserialisable outcome here wedges the queue exactly as one passed
   // to recordDecision would. Same gate, same reason.
   assertJsonSerialisable(outcome, 'outcome');
+  // …and the same SNAPSHOT, for the same reason. `recordDecision` was fixed to
+  // stop retaining caller-owned objects by reference; this door reached the very
+  // same queue entries and was still storing the live reference, so the fix was
+  // only half-applied. Cloned once here and used on both branches below.
+  const outcomeSnapshot = structuredClone(outcome);
 
   // Find the entry in the queue and mutate; if already flushed, enqueue an
   // outcome-only update (the store layer translates this into an UPDATE).
   for (const queue of _queues.values()) {
     for (const entry of queue) {
       if (entry.decisionKey === decisionKey) {
-        entry.outcome = outcome;
+        entry.outcome = outcomeSnapshot;
         entry._isOutcomeOnly = false; // still a fresh-insert candidate
         return;
       }
@@ -402,7 +437,7 @@ export function backfillOutcome({ decisionKey, outcome }) {
   const updateEntry = {
     decisionKey,
     decisionType: '_outcome_update', // sentinel; routed differently by flush
-    outcome,
+    outcome: outcomeSnapshot,
     _isOutcomeOnly: true,
     enqueuedAt: new Date().toISOString(),
   };

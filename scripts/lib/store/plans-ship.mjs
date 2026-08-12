@@ -85,12 +85,30 @@ export function validatePlanPath(rawPath, opts = {}) {
   // changes nothing. Outside a git checkout the resolver falls back to the same
   // directory this used before, so nothing regresses.
   const root = path.resolve(opts.repoRoot ?? findRepoRootFromCwd());
-  const abs = path.resolve(root, raw);
+  // Normalise separators BEFORE containment, so the check and the returned
+  // identifier read the same string.
+  //
+  // They used to disagree on POSIX: `path.resolve` treats `\` as an ordinary
+  // filename character there, so `..\scratch.md` resolved to `<root>/..\scratch.md`
+  // and PASSED containment — while the `rel` computed below converts `\`→`/` and
+  // handed back `../scratch.md`, a traversal-shaped key that is then stored as
+  // `plans.path` and used as the `getPlanIdByPath` lookup key. Verified on POSIX
+  // semantics 2026-08-12. On Windows `path.resolve` already treats `\` as a
+  // separator, so this is a no-op there; this file's tooling syncs to Linux
+  // consumers, which is where the two spellings diverged.
+  const normalised = raw.replace(/\\/g, '/');
+  const abs = path.resolve(root, normalised);
   // Windows drive-letter and path casing vary between callers (`C:/GIT/...`
   // vs `c:/git/...`), so containment compares case-insensitively there. The
   // RETURNED path is still derived from the real resolve, never the lowered
   // copy — we normalise the comparison, not the data.
-  const ci = process.platform === 'win32';
+  // darwin included since 2026-08-12: macOS filesystems are case-INSENSITIVE by
+  // default, so a win32-only test rejected a valid in-repo plan whenever the
+  // caller's spelling of the root differed in case from the resolved one
+  // (`/Users/Foo/repo/docs/x.md` under a root read as `/Users/foo/repo`), and
+  // conversely let two spellings of one file produce two distinct `rel` keys —
+  // two `plans` rows for the same document. Same reasoning that put win32 here.
+  const ci = process.platform === 'win32' || process.platform === 'darwin';
   const cmp = (s) => (ci ? s.toLowerCase() : s);
   if (cmp(abs) !== cmp(root) && !cmp(abs).startsWith(cmp(root) + path.sep)) {
     return {
@@ -187,7 +205,14 @@ export async function getPlanIdByPath(repoId, rawPath) {
     }
     return { ok: true, planId: row.id, path: row.path };
   } catch (err) {
-    return { ok: false, reason: 'not-found', message: `plan lookup failed: ${err.message}` };
+    // NOT 'not-found'. A thrown query is a LOOKUP FAILURE — the plan may well
+    // exist. Labelling it `not-found` told the operator "no plan registered at
+    // <path> — run the /plan flow first", i.e. blamed their input for the store
+    // being unreachable, and invited them to re-register a plan that is already
+    // there. Same failure-state collapse as `resolveRepoForStore` returning null
+    // for both absence and error (cross-skill-cli-integrity F7); the caller can
+    // now tell the two apart.
+    return { ok: false, reason: 'lookup-failed', message: `plan lookup failed: ${err.message}` };
   }
 }
 
@@ -375,9 +400,20 @@ export async function insertRunRowWithPolicyFallback(table, row, opts = undefine
   }
 }
 
-/** Append a run outcome for a regression spec. */
+/**
+ * Append a run outcome for a regression spec.
+ *
+ * Returns a discriminated status rather than `undefined`: this used to swallow
+ * every write error to stderr and return nothing, and `cross-skill.mjs`'s
+ * `record-regression-spec-run` emitted `{ok:true, cloud:true}` regardless — so a
+ * run that never reached the store reported as persisted. Reporting a write you
+ * did not verify is the "unverified write success" class this repo audits for.
+ *
+ * @returns {Promise<{ok:boolean, cloud:boolean, reason?:string, error?:string}>}
+ */
 export async function recordRegressionSpecRun(specId, run) {
-  if (!specId || !await isCloudEnabled()) return;
+  if (!specId) return { ok: false, cloud: false, reason: 'missing-spec-id' };
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, reason: 'cloud-off' };
   const row = {
     spec_id: specId,
     commit_sha: run.commitSha || null,
@@ -391,8 +427,10 @@ export async function recordRegressionSpecRun(specId, run) {
   if (run.selectorPolicyViolations != null) row.selector_policy_violations = run.selectorPolicyViolations;
   try {
     await insertRunRowWithPolicyFallback('regression_spec_runs', row);
+    return { ok: true, cloud: true };
   } catch (err) {
     process.stderr.write(`  [learning] recordRegressionSpecRun failed: ${err.message}\n`);
+    return { ok: false, cloud: true, reason: 'write-failed', error: err.message };
   }
 }
 
@@ -1426,9 +1464,16 @@ export async function readPersistentPlanFailures(planId) {
 
 /**
  * Record a /ship outcome.
+ *
+ * Returns a discriminated status for the same reason as
+ * `recordRegressionSpecRun` above — it used to swallow write errors and return
+ * `undefined` while its sole caller emitted an unconditional `{ok:true}`.
+ *
+ * @returns {Promise<{ok:boolean, cloud:boolean, reason?:string, error?:string}>}
  */
 export async function recordShipEvent(repoId, event) {
-  if (!event?.outcome || !await isCloudEnabled()) return;
+  if (!event?.outcome) return { ok: false, cloud: false, reason: 'missing-outcome' };
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, reason: 'cloud-off' };
   try {
     await insertReturning('ship_events', {
       repo_id: repoId || null,
@@ -1445,8 +1490,10 @@ export async function recordShipEvent(repoId, event) {
       framework: event.framework || null,
       duration_ms: event.durationMs || null,
     });
+    return { ok: true, cloud: true };
   } catch (err) {
     process.stderr.write(`  [learning] recordShipEvent failed: ${err.message}\n`);
+    return { ok: false, cloud: true, reason: 'write-failed', error: err.message };
   }
 }
 

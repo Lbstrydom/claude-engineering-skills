@@ -30,9 +30,9 @@ import {
   resolveRepoRoot, exitCodeForStatus, RUN_STATUS, RUN_CONTEXTS, mapCriteriaToItems,
 } from './lib/playwright-runner.mjs';
 import { parseAcceptanceCriteria } from './lib/plan-criteria-parser.mjs';
-import { emit } from './lib/cli-io.mjs';
+import { emit, assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 import {
-  initLearningStore, isCloudEnabled, resolveRepoForStore,
+  initLearningStore, isCloudEnabled, resolveRepoForStoreResult,
   recordRegressionSpec, recordRegressionSpecRun,
   recordPlanVerificationRun, recordPlanVerificationItems,
 } from './learning-store.mjs';
@@ -41,6 +41,25 @@ import {
 } from './lib/ux-lock/selector-policy.mjs';
 
 const [subcommand, ...rest] = process.argv.slice(2);
+
+/**
+ * Every flag any subcommand of this CLI reads.
+ *
+ * Added 2026-08-12 (cross-skill-cli-integrity, shadow final review). This CLI
+ * hand-rolled `opt`/`flag` with NO name validation, so a typo was silently
+ * dropped — and the flags it drops are not cosmetic: a mistyped
+ * `--strict-selector` (singular) left `scanSelectorPolicy` in warn mode, so the
+ * run reported success with unjustified selector violations instead of exiting
+ * 6. That is precisely the `--dry-runn` failure `assertKnownFlags` was written
+ * for in cross-skill.mjs, one file over, in a command that had just been given
+ * an honest `recorded` field — a truthful result computed from a silently
+ * wrong request.
+ */
+const KNOWN_FLAGS = [
+  '--alias', '--commit', '--no-register', '--plan', '--plan-id', '--run-context',
+  '--source-kind', '--spec', '--specs', '--strict-selectors', '--test-root', '--url',
+  '--selfcheck-relocation', '--help',
+];
 
 function opt(name) {
   const i = rest.indexOf(`--${name}`);
@@ -61,9 +80,39 @@ function fail(code, message, exitCode = 2) {
 }
 
 /** Resolve the cloud repo row id, or null when cloud is off / unresolved. */
-async function resolveRepoId() {
-  const ref = await resolveRepoForStore({}).catch(() => null);
-  return ref?.repoRowId ?? null;
+/**
+ * Resolve the repo scope for recording, REPORTING an outage rather than hiding
+ * one behind a null.
+ *
+ * `resolveRepoForStore` returns null for cloud-off, genuinely-unresolved AND a
+ * thrown DB error alike, and this command's contract reads a null `repoId` as
+ * "recording is intentionally unavailable". So a broken store looked exactly
+ * like a deliberately-disabled one: the Playwright specs ran, their results were
+ * never written, and the envelope said so in the same words it uses for a
+ * correctly unconfigured machine.
+ *
+ * Logging to stderr and still returning a bare null was NOT enough — the audit
+ * was right about that. The distinction has to reach the RESULT the caller
+ * emits, or the consumer still cannot tell the two apart.
+ *
+ * @returns {Promise<{repoId: string|null, identityFailed: boolean, error: string|null}>}
+ */
+async function resolveRepoScopeForRun() {
+  const ref = await resolveRepoForStoreResult({}).catch(
+    (err) => ({ kind: 'error', error: err?.message ?? String(err) }),
+  );
+  if (ref.kind === 'error') {
+    process.stderr.write(
+      `  [ux-lock-run] repo identity lookup FAILED (${ref.error}) — this is a store outage, `
+      + 'not an unconfigured store; spec runs will NOT be recorded for this invocation\n',
+    );
+    return { repoId: null, identityFailed: true, error: ref.error };
+  }
+  return {
+    repoId: ref.kind === 'resolved' ? ref.repoRowId : null,
+    identityFailed: false,
+    error: null,
+  };
 }
 
 // ── selector-policy lint (plan: docs/plans/ux-lock-selector-policy.md) ──────
@@ -255,9 +304,11 @@ async function cmdSpec() {
 
   await initLearningStore().catch(() => {});
   const cloud = await isCloudEnabled();
-  const repoId = cloud ? await resolveRepoId() : null;
+  const scope = cloud ? await resolveRepoScopeForRun() : { repoId: null, identityFailed: false, error: null };
+  const repoId = scope.repoId;
 
   const specSummaries = [];
+  let specRunPersistFailures = 0;
   for (const [specPath, specTests] of bySpec) {
     const passed = specTests.length > 0 && specTests.every(t => statusToPassed(t.status).passed);
     const durationMs = specTests.reduce((s, t) => s + (t.durationMs || 0), 0);
@@ -279,12 +330,16 @@ async function cmdSpec() {
       });
     }
     if (specId) {
-      await recordRegressionSpecRun(specId, {
+      const runRes = await recordRegressionSpecRun(specId, {
         commitSha: commit, passed, durationMs, runContext,
         // Per-spec attribution (this spec + its helper closure) — NEVER the
         // run-global total, which would inflate an N-spec suite ×N in the DB.
         selectorPolicyViolations: policy.counts.get(path.resolve(repoRoot, specPath)) ?? null,
       });
+      // The writer reports its own outcome as of 2026-08-12; count what actually
+      // failed so the `recorded` field below can stop being an alias for
+      // "the store was configured".
+      if (runRes && runRes.ok === false) specRunPersistFailures += 1;
     }
   }
   if (orphans.length) {
@@ -296,7 +351,22 @@ async function cmdSpec() {
     ok: true, mode: 'spec', cloud, runContext,
     specs: specSummaries, orphans: [...new Set(orphans)],
     selectorPolicyViolations: policy.total,
-    recorded: cloud, hint: cloud ? undefined : 'AUDIT_DB_URL unset — ran specs, skipped recording',
+    // `recorded` used to be a bare alias for `cloud` — i.e. "a store is
+    // CONFIGURED", asserted as "the runs were RECORDED". Every swallowed write
+    // error, and every repo-identity outage, still reported `recorded: true`.
+    // It now means what it says.
+    recorded: cloud && !scope.identityFailed && specRunPersistFailures === 0,
+    specRunPersistFailures,
+    // A store OUTAGE and an unconfigured machine both leave `repoId` null and
+    // skip recording; only this field separates them for the consumer.
+    repoIdentityFailed: scope.identityFailed,
+    hint: !cloud
+      ? 'AUDIT_DB_URL unset — ran specs, skipped recording'
+      : (scope.identityFailed
+        ? `repo identity lookup FAILED (${scope.error}) — the store is configured but unreachable, so NOTHING was recorded; this is an outage, not disabled recording`
+        : (specRunPersistFailures > 0
+          ? `${specRunPersistFailures} spec-run row(s) failed to persist — see [learning] lines on stderr`
+          : undefined)),
   });
   if (strictSelectors && policy.total > 0) {
     // Glob-discovered (post-run) violations under --strict-selectors: the run
@@ -394,6 +464,15 @@ async function cmdVerify() {
 
 async function main() {
   if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
+  // Refuse an unknown flag BEFORE any subcommand runs — a silently-dropped
+  // `--strict-selectors` typo makes this command report success on a run it was
+  // asked to gate.
+  try {
+    assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'ux-lock-run.mjs' });
+  } catch (err) {
+    if (err instanceof ArgvError) { process.stderr.write(`${err.message}\n`); process.exit(2); }
+    throw err;
+  }
   if (subcommand === 'spec') return cmdSpec();
   if (subcommand === 'verify') return cmdVerify();
   process.stderr.write('Usage: node scripts/ux-lock-run.mjs <spec|verify> [options]\n'

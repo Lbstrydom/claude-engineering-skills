@@ -84,14 +84,40 @@ describe('cross-skill finalize-outcomes — --round resolution', () => {
     assert.equal(out.round, 3);
   });
 
-  it('accepts --round 0 when it is actually supplied', () => {
+  // ── Contract TIGHTENED 2026-08-12 (cross-skill-cli-integrity, audit r5) ────
+  //
+  // These two cases previously asserted that `--round 0` was honoured ("an
+  // explicit 0 is a caller decision") and that `--round abc` silently fell back
+  // to `result.round`. Both are now refusals, because the older expectation
+  // contradicted this suite's OWN header: *"Round is a real key:
+  // `finalizeRoundOutcomes` stamps it onto outcome records, so round 0 mislabels
+  // the whole round."* Audit rounds are 1-based (`--round <n>`, R2+ mode at
+  // `>= 2`); there is no round 0 to finalise, so honouring it writes the exact
+  // mislabelled record the original defect produced — just reached through a
+  // different input.
+  //
+  // The fallback case is the same principle: quietly finalising round 7 because
+  // the operator typed `abc` is a silently-different answer to the one they
+  // asked for. That is the failure this CLI's flag guard exists to prevent
+  // (a typo'd `--dry-runn` silently dropped while the real write ran).
+  it('REFUSES an explicit --round 0 — the system has no round 0', () => {
     const out = finalize({ round: 7, findings: [] }, ['--round', '0']);
-    assert.equal(out.round, 0, 'an explicit 0 is a caller decision, unlike a null coerced into one');
+    assert.equal(out.ok, false);
+    assert.equal(out.error?.code, 'BAD_INPUT');
+    assert.match(out.error.message, /positive integer/);
   });
 
-  it('falls back rather than propagating NaN for a non-numeric --round', () => {
+  it('REFUSES a non-numeric --round rather than silently finalising another round', () => {
     const out = finalize({ round: 7, findings: [] }, ['--round', 'abc']);
-    assert.equal(out.round, 7);
+    assert.equal(out.ok, false);
+    assert.equal(out.error?.code, 'BAD_INPUT');
+    assert.notEqual(out.round, 7, 'must not quietly finalise a round the caller never named');
+  });
+
+  it('REFUSES a negative --round', () => {
+    const out = finalize({ round: 7, findings: [] }, ['--round', '-2']);
+    assert.equal(out.ok, false);
+    assert.equal(out.error?.code, 'BAD_INPUT');
   });
 });
 

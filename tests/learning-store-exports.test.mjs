@@ -27,12 +27,20 @@ const EXPECTED_EXPORTS = [
   'isPersonaCloudEnabled',
 
   // ── frozen 93-function persistence contract ──────────────────────────────
-  // repo (5 — initLearningStore + isCloudEnabled live above)
+  // repo (6 — initLearningStore + isCloudEnabled live above)
   'getRepoIdByName',
   'getRepoIdByUuid',
   'upsertRepo',
   'upsertRepoByUuid',
   'resolveRepoForStore', // signal-recovery Cluster A §2.1 — stable repoRowId resolver
+  // Added 2026-08-12 (cross-skill-cli-integrity F7). `resolveRepoForStore`
+  // returns null for THREE different facts — cloud-off, unresolvable, and a
+  // thrown DB error — so a WRITE caller could not tell a repo that genuinely has
+  // no identity from a transient failure, and wrote a permanently unscoped row
+  // on the second. This is the discriminated form (`kind:'resolved'|'cloud-off'|
+  // 'unresolved'|'error'`) and is now the single implementation; the older name
+  // is a thin wrapper over it so existing call sites are untouched.
+  'resolveRepoForStoreResult',
 
   // runs-findings (15, incl. _resetClassificationColumnCache + _resetPassStatsRoundColumnCache test seams)
   '_resetClassificationColumnCache',
@@ -409,6 +417,9 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // count would expire the guarantee exactly when the dumping ground becomes
     // worth auditing. Measured the day it landed: 36 of 231 rows in this repo
     // were already decided and still being reported as open.
-    assert.equal(EXPECTED_EXPORTS.length, 182);
+    // 182 → 183: +resolveRepoForStoreResult (cross-skill-cli-integrity F7 — the
+    // discriminated repo resolver that lets a write caller fail closed on a
+    // transient lookup failure instead of silently writing repo_id NULL).
+    assert.equal(EXPECTED_EXPORTS.length, 183);
   });
 });
