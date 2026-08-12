@@ -23,7 +23,7 @@ import path from 'node:path';
 
 import {
   registerWriter, durableWrite, drainSpill, spillSummary,
-  registeredWriters, _resetRegistry, SPILL_DIR, LOST_SUBDIR,
+  registeredWriters, _resetRegistry, isConnectionScoped, checkAdmission, SPILL_DIR, LOST_SUBDIR,
 } from '../scripts/lib/durable-write.mjs';
 
 const mkTmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), p));
@@ -244,6 +244,163 @@ test('spillSummary counts the queue and the evidence drawer separately', async (
     assert.equal(s.spilled, 1, 'only the replayable one is in the queue');
     assert.equal(s.lost, 1, 'the other is evidence');
     assert.ok(s.oldestAgeMs !== null && s.oldestAgeMs >= 0);
+  } finally { rmTmp(root); }
+});
+
+// ── Phase 2: attempts lifecycle, bounds, lock ───────────────────────────────
+
+const pgErr = (code) => Object.assign(new Error(`pg ${code}`), { code });
+const readQueued = (root) => {
+  const f = queued(root)[0];
+  return f ? JSON.parse(fs.readFileSync(path.join(spill(root), f), 'utf-8')) : null;
+};
+const rejected = (root) => {
+  try { return fs.readdirSync(path.join(spill(root), 'rejected')); } catch { return []; }
+};
+
+test('a PERMANENT error quarantines on the FIRST failure, not after three', async () => {
+  // A constraint violation fails identically forever; burning the budget to
+  // reach the same place just delays the operator seeing it.
+  const root = mkTmp('ces-dw-perm-');
+  try {
+    registerWriter('w', {
+      schemaVersion: 1, rowKey: (r) => r.id,
+      replay: async () => { throw pgErr('23505'); },   // integrity → non-retryable
+    });
+    await durableWrite('w', { id: 1 }, { repoRoot: root });
+    const res = await drainSpill({ repoRoot: root, isCloudEnabled: () => true });
+
+    assert.equal(res.drained, 0);
+    assert.deepEqual(queued(root), [], 'a poison artifact must not stay in the queue');
+    assert.equal(rejected(root).length, 1);
+    const q = JSON.parse(fs.readFileSync(path.join(spill(root), 'rejected', rejected(root)[0]), 'utf-8'));
+    assert.match(q.lastError, /permanent/, 'and it records WHY, or the operator has to guess');
+  } finally { rmTmp(root); }
+});
+
+test('a RETRYABLE artifact error increments attempts DURABLY across drains', async () => {
+  // The counter has to survive the process: a drain is a fresh invocation, so
+  // an in-memory count would reset every time and the budget never be reached.
+  const root = mkTmp('ces-dw-attempts-');
+  try {
+    registerWriter('w', {
+      schemaVersion: 1, rowKey: (r) => r.id,
+      replay: async () => { throw pgErr('40001'); },   // serialization failure → retryable
+    });
+    await durableWrite('w', { id: 1 }, { repoRoot: root });
+
+    await drainSpill({ repoRoot: root, isCloudEnabled: () => true });
+    assert.equal(readQueued(root)?.attempts, 1, 'attempt 1 persisted');
+
+    await drainSpill({ repoRoot: root, isCloudEnabled: () => true });
+    assert.equal(readQueued(root)?.attempts, 2, 'and it accumulates, not resets');
+
+    await drainSpill({ repoRoot: root, isCloudEnabled: () => true });
+    assert.deepEqual(queued(root), [], 'the third exhausts the budget');
+    assert.equal(rejected(root).length, 1);
+  } finally { rmTmp(root); }
+});
+
+test('an OUTAGE aborts the drain and charges NOTHING to the backlog', async () => {
+  // The Gemini-gate HIGH. ECONNREFUSED is a fact about the store; charging it
+  // to each artifact means three outage-time drains retire a healthy queue.
+  const root = mkTmp('ces-dw-outage-');
+  try {
+    let calls = 0;
+    registerWriter('w', {
+      schemaVersion: 1, rowKey: (r) => r.id,
+      replay: async () => { calls++; throw pgErr('ECONNREFUSED'); },
+    });
+    for (const id of [1, 2, 3]) await durableWrite('w', { id }, { repoRoot: root });
+    assert.equal(queued(root).length, 3);
+
+    calls = 0;
+    const res = await drainSpill({ repoRoot: root, isCloudEnabled: () => true });
+    assert.equal(res.state, 'unavailable', 'an outage is not a drained queue');
+    assert.equal(calls, 1, 'it stops at the first connection failure');
+    assert.equal(queued(root).length, 3, 'every artifact survives');
+    for (const f of queued(root)) {
+      const e = JSON.parse(fs.readFileSync(path.join(spill(root), f), 'utf-8'));
+      assert.ok(!e.attempts, `${f} must not have burned an attempt`);
+    }
+  } finally { rmTmp(root); }
+});
+
+test('isConnectionScoped separates a store outage from a lost transaction', () => {
+  // The distinction the whole retry policy turns on, asserted directly because
+  // the obvious implementation gets it WRONG: normalizePostgresError marks both
+  // ECONNREFUSED and 40001 `transient`, so keying on that reads a deadlock as
+  // an outage and aborts a drain that should have continued.
+  for (const c of ['ECONNREFUSED', 'ETIMEDOUT', 'EPIPE']) {
+    assert.equal(isConnectionScoped(pgErr(c)), true, `${c} is the CONNECTION`);
+  }
+  for (const c of ['08006', '08003', '57P01']) {
+    assert.equal(isConnectionScoped(pgErr(c)), true, `${c} means the store went away`);
+  }
+  for (const c of ['40001', '40P01', '23505', '22P02']) {
+    assert.equal(isConnectionScoped(pgErr(c)), false,
+      `${c} is about THIS statement — retryable or not, it is the artifact's`);
+  }
+  assert.equal(isConnectionScoped(new Error('no code')), false, 'unclassifiable is not an outage');
+});
+
+test('the admission cap REFUSES rather than evicting undelivered data', () => {
+  // `spillConfig` is frozen at first import, so an env var set mid-suite cannot
+  // reach it — the first version of this test asserted an override that never
+  // took effect. `checkAdmission` takes its limits as a parameter for exactly
+  // this reason, so the bound is asserted directly rather than through a
+  // configuration side-channel that does not work.
+  const root = mkTmp('ces-dw-cap-');
+  try {
+    fs.mkdirSync(spill(root), { recursive: true });
+    const write = (n, bytes) => fs.writeFileSync(path.join(spill(root), `f${n}.json`), 'x'.repeat(bytes));
+
+    assert.equal(checkAdmission(root, { maxFiles: 2, maxBytes: 1e9 }).ok, true, 'empty queue admits');
+    write(0, 10); write(1, 10);
+    const full = checkAdmission(root, { maxFiles: 2, maxBytes: 1e9 });
+    assert.equal(full.ok, false, 'at the file ceiling it REFUSES');
+    assert.match(full.reason, /files >= 2/);
+    assert.equal(queued(root).length, 2, 'and evicts nothing — refusing is the point');
+
+    // The byte ceiling binds independently: few files, lots of bytes.
+    assert.equal(checkAdmission(root, { maxFiles: 1000, maxBytes: 15 }).ok, false,
+      'the byte ceiling binds even when the file count is fine');
+
+    // `*.tmp` is atomicWriteFileSync's scratch, not queue content.
+    fs.writeFileSync(path.join(spill(root), 'scratch.tmp'), 'x'.repeat(10_000));
+    assert.equal(checkAdmission(root, { maxFiles: 3, maxBytes: 1e9 }).ok, true,
+      'a temp file must not count toward the cap');
+  } finally { rmTmp(root); }
+});
+
+test('two concurrent drains do not both process the queue', async () => {
+  // The operator drain and the run-start drain are two writers over one
+  // directory — the self-contradiction the audit caught in decision 4.
+  const root = mkTmp('ces-dw-lock-');
+  try {
+    let concurrent = 0, maxConcurrent = 0;
+    registerWriter('w', {
+      schemaVersion: 1, rowKey: (r) => r.id,
+      replay: async () => {
+        concurrent++; maxConcurrent = Math.max(maxConcurrent, concurrent);
+        await new Promise((r) => setTimeout(r, 40));
+        concurrent--;
+        return { applied: true };
+      },
+    });
+    for (const id of [1, 2]) await durableWrite('w', { id }, { repoRoot: root }).catch(() => {});
+    fs.mkdirSync(spill(root), { recursive: true });
+    for (const id of [1, 2]) {
+      fs.writeFileSync(path.join(spill(root), `w-l${id}.json`), `${JSON.stringify({
+        v: 1, fingerprint: `w-l${id}`, writerId: 'w', schemaVersion: 1, payload: { id },
+      })}\n`);
+    }
+
+    await Promise.all([
+      drainSpill({ repoRoot: root, isCloudEnabled: () => true }),
+      drainSpill({ repoRoot: root, isCloudEnabled: () => true }),
+    ]);
+    assert.equal(maxConcurrent, 1, 'the lock must serialise the two drains');
   } finally { rmTmp(root); }
 });
 

@@ -256,7 +256,12 @@ export async function drainEnvelopes({ dir, apply, parse, cap, isConnectionError
     }
 
     try {
-      const applied = await apply(envelope);
+      // The CLAIMED path is passed through: a consumer doing its own
+      // disposition (retry bookkeeping, quarantine) must act on the file the
+      // drain actually holds, not on the producer-facing name — which no longer
+      // exists at this point. Rewriting the claimed file is preserved by the
+      // hand-back below; moving it away is respected too.
+      const applied = await apply(envelope, { file: claimed });
       // `=== true`, not truthy. The contract says a handler PROVES application;
       // an adapter returning a status object before its write is durable would
       // otherwise satisfy `if (applied)` and the envelope would be deleted.
@@ -274,12 +279,15 @@ export async function drainEnvelopes({ dir, apply, parse, cap, isConnectionError
         // envelope there, that one wins and this claim is dropped: it is a
         // strict predecessor of what now sits in the queue.
         try {
-          if (fs.existsSync(file)) {
+          // The consumer may have dispositioned the claim itself (quarantined
+          // it). Absent claim ⇒ nothing to hand back, and that is not an error.
+          if (!fs.existsSync(claimed)) { /* consumer took ownership */ }
+          else if (fs.existsSync(file)) {
             fs.rmSync(claimed, { force: true, recursive: true, maxRetries: 3, retryDelay: 50 });
           } else {
             fs.renameSync(claimed, file);
           }
-        } catch { /* leave the claim file; the sweep below reclaims it */ }
+        } catch { /* leave the claim file; the reclaim sweep picks it up */ }
         failed++;   // sink declined or unavailable — leave it for next time
       }
     } catch (err) {

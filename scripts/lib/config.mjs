@@ -237,6 +237,38 @@ export const finalReviewConfig = Object.freeze({
 // reviewers' findings are matched into buckets. Every numeric key goes through
 // clampConfigNumber (clamp-and-warn, never NaN-through) — a bound a typo can
 // disable is not a bound.
+/**
+ * Bounds for the durable-write spill queue (`.audit/write-spill/`).
+ *
+ * Plan: docs/plans/audit-store-write-durability.md, decision 4. The audit
+ * flagged "admission cap / bounded batch" as labels rather than contracts, so
+ * the numbers live here with the other audit knobs and are env-overridable.
+ *
+ * **Refuse, never evict.** When the queue is full a new write is REFUSED and
+ * counted, rather than making room by deleting an older undelivered artifact.
+ * Silent deletion of data that never reached the store is precisely the failure
+ * this whole plan exists to stop — a bound that discards is worse than no bound,
+ * because it looks like it is working.
+ */
+export const spillConfig = Object.freeze({
+  // Two ceilings, whichever binds first: a pathological writer can blow the byte
+  // budget with a handful of huge payloads, or the file budget with many tiny
+  // ones. Either alone leaves the other unbounded.
+  maxFiles: clampConfigNumber(process.env.AUDIT_SPILL_MAX_FILES, {
+    fallback: 1000, min: 1, max: 1_000_000, parser: Number.parseInt, envVar: 'AUDIT_SPILL_MAX_FILES',
+  }),
+  maxBytes: clampConfigNumber(process.env.AUDIT_SPILL_MAX_BYTES, {
+    fallback: 64 * 1024 * 1024, min: 1024, max: 8 * 1024 * 1024 * 1024,
+    parser: Number.parseInt, envVar: 'AUDIT_SPILL_MAX_BYTES',
+  }),
+  // Retry budget per artifact. Exists to retire a POISON message — one the
+  // store will reject however often it is offered — not to punish downtime; a
+  // connection-scoped failure aborts the drain and increments nothing.
+  maxAttempts: clampConfigNumber(process.env.AUDIT_SPILL_MAX_ATTEMPTS, {
+    fallback: 3, min: 1, max: 100, parser: Number.parseInt, envVar: 'AUDIT_SPILL_MAX_ATTEMPTS',
+  }),
+});
+
 export const findingMatchConfig = Object.freeze({
   // Jaccard floor for the text half of the file-AND-similarity conjunction.
   //
