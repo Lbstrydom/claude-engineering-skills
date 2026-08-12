@@ -291,6 +291,18 @@ function retainOrLose(spec, file, repoRoot, writerId, why) {
  * admits (the write-ahead attempt will fail loudly on its own) rather than
  * refusing work on a stat error.
  *
+ * **Deliberately SYNCHRONOUS, and the cost is measured** (verification gate G1,
+ * which called for an async rewrite on the grounds that this "will stall audit
+ * runs and cause severe CPU spikes"). Measured 2026-08-12 on this platform with
+ * the queue at its full 1000-file cap across `spill/`, `lost/` and `rejected/`:
+ * **8.3 ms per call** (82.7 ms for 10). An audit run makes roughly ten of these
+ * and each one precedes a store round trip of 10–1000 ms, so the worst case is
+ * ~80 ms per run and the ordinary case — an empty queue — is a single failed
+ * `stat`. Converting an exported, synchronously-tested helper to async to
+ * recover 80 ms in the pathological case is the over-engineering side of the
+ * right-sizing gate. Re-measure before revisiting: the number, not the shape of
+ * the code, is what would justify the change.
+ *
  * @returns {{ok: true} | {ok: false, reason: string}}
  */
 export function checkAdmission(repoRoot, limits = spillConfig) {
@@ -352,6 +364,16 @@ export function isConnectionScoped(err) {
   //
   // So discriminate on the SCOPE the code describes:
   const code = String(err?.code || '');
+  // NO CODE AT ALL is not "not a connection error" (verification gate G2).
+  // `normalizePostgresError` deliberately supports legacy `pg` wrappers that
+  // strip `err.code` by matching the message instead — measured: a bare
+  // `new Error('connect ECONNREFUSED 127.0.0.1:5432')` classifies `transient`
+  // there while every branch below returns false for it. That gap sends a real
+  // outage down the artifact-scoped path, which is the one thing this function
+  // exists to prevent. Defer to the canonical classifier rather than growing a
+  // second set of message patterns here: two spellings of "is the store down"
+  // is how they drift apart.
+  if (!code) return normalizePostgresError(err).reason === 'transient';
   // `[A-Z_]`, not `[A-Z]` (final gate G4): `EAI_AGAIN` — a DNS resolution
   // timeout, i.e. the store could not even be looked up — carries an
   // underscore and fell through to the artifact-scoped branch, where a

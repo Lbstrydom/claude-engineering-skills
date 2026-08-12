@@ -351,6 +351,22 @@ describe('final gate (A+B+C union diff)', () => {
       'a constraint violation is about THIS row');
     assert.equal(isConnectionScoped(Object.assign(new Error('x'), { code: '22P02' })), false);
   });
+
+  test('G2 (verification round) — a CODE-LESS outage is still an outage', async () => {
+    const { isConnectionScoped } = await import('../scripts/lib/durable-write.mjs');
+    // Legacy `pg` wrappers strip `err.code`, and `normalizePostgresError`
+    // supports that by matching the message. Every branch of isConnectionScoped
+    // keys on `code`, so a stripped ECONNREFUSED returned false and sent a real
+    // outage down the artifact-scoped path — burning the whole backlog's retry
+    // budget during exactly the event the split exists for.
+    assert.equal(isConnectionScoped(new Error('connect ECONNREFUSED 127.0.0.1:5432')), true,
+      'a code-less connection refusal must still abort the drain');
+    // The other direction, so the fallback cannot become "anything without a
+    // code is an outage": a code-less error the classifier does NOT call
+    // transient stays artifact-scoped.
+    assert.equal(isConnectionScoped(new Error('some unrelated failure')), false,
+      'an unclassifiable error is about the artifact, not the connection');
+  });
 });
 
 // ── Provenance: decision 2e, which had no implementation until Phase 3 ──────
