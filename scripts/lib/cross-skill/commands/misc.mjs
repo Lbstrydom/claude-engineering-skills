@@ -60,9 +60,17 @@ export async function recordNavAuditRunCmd(ctx) {
     verifySummary: p.verifySummary ?? null,
     toolVersion: p.toolVersion ?? null,
   });
-  // Legacy `ok: result.status !== 'failed'` — declared softFail so the
-  // dispatcher's validator cannot fire on the store's own failure shape.
-  return { ok: result.status !== 'failed', cloud: true, ...result };
+  // §2b F2 (completed in Phase 7-8): the store ALREADY reported its own
+  // outcome — `{status:'failed', error}` — so `ok: status !== 'failed'` was
+  // never inferring from a swallowed null; it was letting the store's failure
+  // ride the envelope at exit 0. A failed nav-audit persistence now exits 1
+  // with the store's message, which retires the last softFail of the
+  // "legacy ok = the store's shape" family.
+  if (result.status === 'failed') {
+    throw new CommandError('WRITE_FAILED',
+      `nav audit run not persisted: ${result.error ?? 'unknown'}`, { status: result.status }, 1);
+  }
+  return { ok: true, cloud: true, ...result };
 }
 
 /**

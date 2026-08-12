@@ -224,7 +224,7 @@ jobs:
             tests/regression-spec-multi-finding-lock.test.mjs \
             tests/repo-identity-store.test.mjs \
             tests/repo-last-audited-at.test.mjs \
-            tests/setup-postgres-surface-precondition.test.mjs \
+            tests/setup-postgres-surface-precondition.test.mjs \n            tests/store-ownership-db.test.mjs \
             tests/symbol-embeddings-rowcount.test.mjs \
             tests/symbol-file-imports.test.mjs \
             tests/symbol-index-drift-justification.test.mjs \

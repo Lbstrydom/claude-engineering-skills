@@ -17,6 +17,7 @@
 
 import { isCloudEnabled } from './repo.mjs';
 import { many, one, upsert, deleteWhere, withTx } from '../db/query.mjs';
+import { assertParentOwnership } from './ownership.mjs';
 import { PERSONA_FINDING_HASH_VERSION, PERSONA_FINDING_HASH_SHAPE } from '../persona/audit-correlator.mjs';
 
 // ── persona_audit_correlations ─────────────────────────────────────────────
@@ -30,7 +31,7 @@ import { PERSONA_FINDING_HASH_VERSION, PERSONA_FINDING_HASH_SHAPE } from '../per
  * is `ok: false`.
  * @returns {Promise<{ok: boolean, error?: string}>}
  */
-export async function recordPersonaAuditCorrelation(personaSessionId, correlation) {
+export async function recordPersonaAuditCorrelation(personaSessionId, correlation, opts = {}) {
   if (!personaSessionId || !await isCloudEnabled()) return { ok: true };
   if (!correlation?.personaFindingHash || !correlation?.correlationType || !correlation?.personaSeverity) {
     return { ok: true };
@@ -52,8 +53,33 @@ export async function recordPersonaAuditCorrelation(personaSessionId, correlatio
       error: `personaFindingHash must be a 64-hex (v2) hash — got ${JSON.stringify(correlation.personaFindingHash)}`,
     };
   }
+  // Declared OUTSIDE the try so the catch can tell a deliberate ownership
+  // rollback from a genuine database failure — the throw is how the
+  // transaction is aborted, not what the caller should be told.
+  let refusal = null;
   try {
     await withTx(async () => {
+      // PARENT OWNERSHIP (D7 / Phase 7). `personaSessionId` is an opaque uuid
+      // the caller supplies, and this used to write against it without proving
+      // the session exists or belongs to any resolvable repo.
+      //
+      // Transaction-scoped rather than the join form the other three writers
+      // use, and the reason is recorded in ownership.mjs: this is an UPSERT
+      // whose two conflict targets are PARTIAL indexes reached through the
+      // shared `upsert()` helper, and scripts/lib/lint/on-conflict.mjs finds
+      // upsert sites by CALLEE NAME. Raw CTE SQL here would remove the store's
+      // highest-leverage write from that lint's coverage — trading one guard
+      // for another rather than adding one. Inside this transaction there is no
+      // TOCTOU window, and the check lives in the WRITER, where a caller cannot
+      // forget it. `one()` is transaction-scoped here via withTx's async store.
+      const owned = await assertParentOwnership(
+        { parentTable: 'persona_test_sessions', parentId: personaSessionId, repoId: opts.repoId ?? null },
+        (text, values) => one(text, values),
+      );
+      if (!owned.ok) {
+        refusal = owned;
+        throw new Error(owned.message);
+      }
       // Retire any auto-emitted `audit_missed` (NULL audit_finding_id) row
       // for this exact (session, hash) pair FIRST — a manual repair that
       // corrects a false miss into a real match must not leave BOTH rows
@@ -115,6 +141,12 @@ export async function recordPersonaAuditCorrelation(personaSessionId, correlatio
     });
     return { ok: true };
   } catch (err) {
+    // An ownership refusal is a REFUSAL, not a crash: it rolled the transaction
+    // back deliberately, so it is reported with its own reason rather than as an
+    // opaque write failure. A caller can then tell a dangling session id from a
+    // cross-tenant one from a database outage — three causes that produced one
+    // indistinguishable `{ok:false, error}` before D7.
+    if (refusal) return { ok: false, reason: refusal.reason, error: refusal.message };
     process.stderr.write(`  [learning] recordPersonaAuditCorrelation failed: ${err.message}\n`);
     return { ok: false, error: err.message };
   }

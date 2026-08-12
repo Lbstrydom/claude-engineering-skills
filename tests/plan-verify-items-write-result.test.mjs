@@ -74,7 +74,17 @@ describe('record-plan-verify-items — reports persistence, not intent', () => {
   it('an unreachable store is a failure, not a successful write of items.length', () => {
     const out = recordItems({ dbUrl: 'postgresql://u:p@127.0.0.1:1/postgres' });
     assert.equal(out.ok, false, 'a write that never reached the database cannot report ok');
-    assert.equal(out.error?.code, 'WRITE_FAILED');
+    // WRITE_FAILED → REPO_RESOLVE_FAILED (D7 / Phase 8), and the change is an
+    // improvement rather than a relabelling. The handler now resolves scope
+    // BEFORE writing, to thread a repoId into the parent-ownership join — so an
+    // unreachable store is caught one step earlier, by the first thing that
+    // touches it. That the resolver REFUSES here is the point: treating a failed
+    // lookup as "unresolved" would hand the writer a null repoId, which legally
+    // RELAXES the tenant predicate — i.e. ownership checking would quietly
+    // weaken exactly when the store is unhealthy. Both codes mean "the store is
+    // unreachable" and both exit non-zero; this one says which step found out.
+    assert.ok(['WRITE_FAILED', 'REPO_RESOLVE_FAILED'].includes(out.error?.code),
+      `expected a store-unreachable refusal, got ${out.error?.code}`);
     // 2 → 1 (§2b F2, 2026-08-12). The assertion this test cares about is
     // NON-ZERO — "a caller reading only the exit code must still see the
     // failure" — and 2 was simply CommandError's default, not a decision. The

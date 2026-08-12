@@ -468,6 +468,13 @@ export async function recordRegressionSpecRunCmd(ctx) {
     throw new CommandError('BAD_INPUT', 'specId and passed (bool) are required');
   }
   if (!ctx.cloud.enabled) return ctx.degrade();
+  // D7 / Phase 8: thread the RESOLVED repo into the writer's parent join.
+  // `null` for unresolved/none scope relaxes the TENANT predicate only —
+  // the parent-existence join always applies, so a dangling id is refused
+  // either way. The registry's `parent:` declaration is for conformance;
+  // the SQL is the enforcement.
+  const scope = await ctx.resolveScope();
+  const repoId = scope.kind === 'scoped' ? scope.repoId : null;
   const res = await ctx.deps.recordRegressionSpecRun(p.specId, {
     passed: p.passed,
     commitSha: p.commitSha || ctx.git.commitSha(),
@@ -475,7 +482,7 @@ export async function recordRegressionSpecRunCmd(ctx) {
     durationMs: p.durationMs,
     errorMessage: p.errorMessage,
     runContext: p.runContext,
-  });
+  }, { repoId });
   if (!res.ok) {
     throw new CommandError('WRITE_FAILED',
       `regression spec run not persisted: ${res.reason ?? 'unknown'}${res.error ? ` (${res.error})` : ''}`,

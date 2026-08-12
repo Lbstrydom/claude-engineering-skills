@@ -678,6 +678,42 @@ reached — so the only path the change touches had no coverage at all.
 against a stub store on the cloud path and is negative-controlled against the
 pre-F2 handler shape.
 
+
+### Phases 7–8 as landed (2026-08-12) — three places D7 met the schema
+
+1. **Not every parent carries `repo_id`.** D7 was written as though they all do;
+   `plan_verification_runs` does not (measured against the committed schema
+   fixture — `plan_id` and `spec_id` only). Its tenant is one hop away, in
+   `plans`. Rather than silently exempt that one child from the tenant
+   predicate — which would make the weakest link invisible — the allowlist
+   declares the hop (`repoVia`) and the CTE joins it.
+2. **One of the four writers uses the transaction-scoped form, knowingly.**
+   `recordPersonaAuditCorrelation` is an UPSERT whose two conflict targets are
+   PARTIAL indexes reached through the shared `upsert()` helper, and
+   `scripts/lib/lint/on-conflict.mjs` finds upsert sites by CALLEE NAME. Raw CTE
+   SQL there would delete the store's highest-leverage write from that lint's
+   coverage — trading one guard for another rather than adding one. It uses
+   `assertParentOwnership` inside the transaction it already opens: no TOCTOU
+   window, and the check lives in the WRITER where a caller cannot forget it,
+   which is the second half of D7's objection. The trade is recorded in
+   `ownership.mjs`, not left for a reader to infer from its absence.
+3. **The audit found two defects in the first cut, both real.** The inserted id
+   was read back with `ORDER BY created_at DESC LIMIT 1` — a concurrent verify
+   run for the same plan returns another invocation's row; it now comes out of
+   the statement as `inserted_id`. And `recordPlanVerificationItems` joined its
+   parent on `runId` while writing the caller's separately-supplied `planId`
+   into every child, so a run and its rows could name DIFFERENT plans; `plan_id`
+   now comes from the parent (`fromParent`), which makes the mismatch
+   unrepresentable rather than merely unchecked.
+
+**softFail population: 18 → 8.** Ten were provably stale — F3 made cloud-off
+report `{ok:true}` and the weekly-review forwarder now throws, so those
+declarations excused an envelope that no longer exists. The eight kept describe
+real paths that are not hermetically capturable, each with a reason still true.
+The plan's "empty" acceptance criterion is NOT met and should not be claimed:
+`lock-with-test`'s refusals and `arm-eval-run`'s declined-run are consumer-visible
+envelopes, and changing them needs the same census-and-recapture ceremony F3 had.
+
 ## 3. Execution Model (Phase 1.5)
 
 Dependencies are real and ordered:

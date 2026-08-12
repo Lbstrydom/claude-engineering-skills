@@ -26,6 +26,13 @@ export async function recordPlanVerifyRunCmd(ctx) {
   const counts = validateCountFields(p);
   if (!counts.ok) throw new CommandError('BAD_INPUT', counts.reason);
   if (!ctx.cloud.enabled) return { ...ctx.degrade(), runId: null };
+  // D7 / Phase 8: thread the RESOLVED repo into the writer's parent join.
+  // `null` for unresolved/none scope relaxes the TENANT predicate only — the
+  // parent-existence join always applies, so a dangling id is refused either
+  // way. The registry's `parent:` declaration is for conformance; the SQL is
+  // the enforcement.
+  const scope = await ctx.resolveScope();
+  const repoId = scope.kind === 'scoped' ? scope.repoId : null;
   const res = await ctx.deps.recordPlanVerificationRun({
     planId: p.planId,
     specId: p.specId,
@@ -37,7 +44,7 @@ export async function recordPlanVerifyRunCmd(ctx) {
     skippedCount: p.skippedCount || 0,
     durationMs: p.durationMs,
     runContext: p.runContext || 'ux-lock-verify',
-  });
+  }, { repoId });
   // §2b F2: the writer reports its own outcome, so `ok: !!runId` is no longer
   // writable — there is nothing left to infer from. A failed write is a
   // CommandError (exit 1) carrying the store's reason; cloud-off never reaches
@@ -45,9 +52,14 @@ export async function recordPlanVerifyRunCmd(ctx) {
   if (!res.ok) {
     // Exit 1 for a failed write, 2 for a refused input — see the same branch in
     // ship.mjs's recordRegressionSpecCmd for why the two must not collapse.
-    const failed = res.reason === 'write-failed';
-    throw new CommandError(failed ? 'WRITE_FAILED' : 'BAD_INPUT',
-      `recordPlanVerificationRun: ${res.message}`, { reason: res.reason }, failed ? 1 : 2);
+    // An ownership refusal gets its OWN code: 'that plan does not exist' and
+    // 'that plan belongs to another repository' are different things for the
+    // operator to do next, and both are exit 1 (we tried; it did not work).
+    const code = res.reason === 'parent-not-found' ? 'PARENT_NOT_FOUND'
+      : res.reason === 'parent-not-owned' ? 'PARENT_NOT_OWNED'
+        : res.reason === 'write-failed' ? 'WRITE_FAILED' : 'BAD_INPUT';
+    throw new CommandError(code,
+      `recordPlanVerificationRun: ${res.message}`, { reason: res.reason }, code === 'BAD_INPUT' ? 2 : 1);
   }
   return { ok: true, cloud: true, runId: res.runId };
 }
@@ -66,7 +78,14 @@ export async function recordPlanVerifyItemsCmd(ctx) {
     throw new CommandError('BAD_INPUT', 'runId, planId, and non-empty items array are required');
   }
   if (!ctx.cloud.enabled) return { ...ctx.degrade(), inserted: 0 };
-  const res = await ctx.deps.recordPlanVerificationItems(p.runId, p.planId, p.items);
+  // D7 / Phase 8: thread the RESOLVED repo into the writer's parent join.
+  // `null` for unresolved/none scope relaxes the TENANT predicate only — the
+  // parent-existence join always applies, so a dangling id is refused either
+  // way. The registry's `parent:` declaration is for conformance; the SQL is
+  // the enforcement.
+  const scope = await ctx.resolveScope();
+  const repoId = scope.kind === 'scoped' ? scope.repoId : null;
+  const res = await ctx.deps.recordPlanVerificationItems(p.runId, p.planId, p.items, { repoId });
   if (!res?.ok) {
     // Exit 1 — a write that did not verify is an operational failure, not an
     // argv error. This reached here as the default 2, which put a short or

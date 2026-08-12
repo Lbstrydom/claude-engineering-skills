@@ -158,15 +158,19 @@ export const REGISTRY = Object.freeze([
   {
     name: 'record-regression-spec-run',
     flags: [], positionals: 'none', payload: 'json',
-    // scope:'none' — addressed purely by specId. Cluster F adds
-    // `parent: {table:'regression_specs', idField:'specId'}`.
-    scope: 'none', kind: 'write', cloud: 'degrade-noop', degradeShape: {},
+    // scope became 'ambient-ok' with the D7 parent join (Phase 8): the write is
+    // still ADDRESSED by specId, but the resolved repo is what the join uses as
+    // its tenant predicate. Unresolvable scope relaxes that predicate; it never
+    // relaxes the existence check.
+    scope: 'ambient-ok', kind: 'write', cloud: 'degrade-noop', degradeShape: {},
+    parent: { table: 'regression_specs', idField: 'specId' },
     load: () => import('./commands/ship.mjs').then((m) => m.recordRegressionSpecRunCmd),
   },
   {
     name: 'record-correlation',
     flags: [], positionals: 'none', payload: 'json',
-    scope: 'none', kind: 'write', cloud: 'degrade-noop', degradeShape: {},
+    scope: 'ambient-ok', kind: 'write', cloud: 'degrade-noop', degradeShape: {},
+    parent: { table: 'persona_test_sessions', idField: 'personaSessionId' },
     load: () => import('./commands/persona.mjs').then((m) => m.recordCorrelationCmd),
   },
   {
@@ -174,13 +178,17 @@ export const REGISTRY = Object.freeze([
     flags: [], positionals: 'none', payload: 'json',
     scope: 'ambient-ok', kind: 'write', cloud: 'degrade-noop',
     degradeShape: {},
-    softFail: { all: true, reason: 'legacy ok = (result.status !== "failed") — the store\'s own failure shape rides the envelope. Owned by Cluster F.' },
+    // softFail RETIRED (Phase 7–8): the store already reported its own outcome
+    // (`{status:'failed', error}`), so this was never inferring from a swallowed
+    // null — it was letting the store's failure ride the envelope at exit 0.
+    // The handler throws now. Last of the "legacy ok = the store's shape" family.
     load: () => import('./commands/misc.mjs').then((m) => m.recordNavAuditRunCmd),
   },
   {
     name: 'record-plan-verify-run',
     flags: [], positionals: 'none', payload: 'json',
-    scope: 'none', kind: 'write', cloud: 'degrade-noop',
+    scope: 'ambient-ok', kind: 'write', cloud: 'degrade-noop',
+    parent: { table: 'plans', idField: 'planId' },
     // softFail RETIRED (§2b F2): recordPlanVerificationRun reports its own
     // outcome, so the handler throws rather than inferring from a null runId.
     degradeShape: { runId: null },
@@ -189,8 +197,11 @@ export const REGISTRY = Object.freeze([
   {
     name: 'record-plan-verify-items',
     flags: [], positionals: 'none', payload: 'json',
-    scope: 'none', kind: 'write', cloud: 'degrade-noop',
+    scope: 'ambient-ok', kind: 'write', cloud: 'degrade-noop',
     degradeShape: { inserted: 0 },
+    // The parent is the RUN, not the plan - runId is what addresses it, and
+    // plan_verification_runs reaches its repo through plans (see ownership.mjs).
+    parent: { table: 'plan_verification_runs', idField: 'runId' },
     load: () => import('./commands/plan-verify.mjs').then((m) => m.recordPlanVerifyItemsCmd),
   },
   {
@@ -220,7 +231,11 @@ export const REGISTRY = Object.freeze([
     positionals: 'none', payload: 'none',
     scope: 'none', kind: 'write', cloud: 'degrade-noop',
     // Frozen quirk: cloud-off emits {ok:false, cloud:false, updated:0} at exit 0.
-    degradeShape: {}, softFail: { all: true, reason: 'FIXTURE-PINNED (fr-adj-cloud-off): cloud-off emits {ok:false, cloud:false, updated:0} at exit 0.' },
+    // softFail RETIRED (§2b F3/F4): this declaration described a cloud-off
+    // envelope that no longer exists — cloud-off reports {ok:true, cloud:false}
+    // now. An exemption that outlives what it excused silently shrinks the set
+    // the validator checks, which is the same defect the durability oracle's
+    // stale-exemption test exists to catch.
     load: () => import('./commands/final-review.mjs').then((m) => m.finalReviewAdjudicateCmd),
   },
   {
@@ -228,7 +243,11 @@ export const REGISTRY = Object.freeze([
     flags: ['run-id', 'fingerprint', 'bucket', 'commit', 'state'],
     positionals: 'none', payload: 'none',
     scope: 'none', kind: 'write', cloud: 'degrade-noop',
-    degradeShape: {}, softFail: { all: true, reason: 'FIXTURE-PINNED (fr-fix-cloud-off): cloud-off emits {ok:false, cloud:false, updated:0} at exit 0.' },
+    // softFail RETIRED (§2b F3/F4): this declaration described a cloud-off
+    // envelope that no longer exists — cloud-off reports {ok:true, cloud:false}
+    // now. An exemption that outlives what it excused silently shrinks the set
+    // the validator checks, which is the same defect the durability oracle's
+    // stale-exemption test exists to catch.
     load: () => import('./commands/final-review.mjs').then((m) => m.finalReviewRecordFixCmd),
   },
   {
@@ -539,7 +558,10 @@ export const REGISTRY = Object.freeze([
     flags: ['repo', 'format', { name: 'dry-run', kind: 'boolean' }],
     positionals: 'none', payload: 'none',
     scope: 'none', kind: 'read', cloud: 'none',
-    softFail: { all: true, reason: 'forwards runWeeklyReview’s result verbatim, which emits {ok:false, error:{…}} at EXIT 0 when repoName is unresolvable (measured: learning-weekly-dry). A 6th instance of the same forwarded-result question §2b F3/F4 settles.' },
+    // softFail RETIRED (§2b F3/F4): the envelope it described no longer exists
+    // — cloud-off reports {ok:true, cloud:false}, and the weekly-review
+    // forwarder throws. An exemption that outlives what it excused silently
+    // shrinks the set the validator checks.
     load: () => import('./commands/learning.mjs').then((m) => m.learningWeeklyReviewCmd),
   },
   {
@@ -577,14 +599,22 @@ export const REGISTRY = Object.freeze([
     name: 'model-ab-stats',
     flags: ['run-id'], positionals: 'none', payload: 'none',
     scope: 'none', kind: 'read', cloud: 'degrade-noop', degradeShape: { rows: [] },
-    softFail: { all: true, reason: 'cloud-off emits {ok:false, cloud:false, rows:[]} at exit 0 — a SUPPORTED mode reported as a failure. One of the 5 measured F3 cases in plan §2b; fixed there with a consumer census and a deliberate fixture re-capture.' },
+    // softFail RETIRED (§2b F3/F4): this declaration described a cloud-off
+    // envelope that no longer exists — cloud-off reports {ok:true, cloud:false}
+    // now. An exemption that outlives what it excused silently shrinks the set
+    // the validator checks, which is the same defect the durability oracle's
+    // stale-exemption test exists to catch.
     load: () => import('./commands/model-eval.mjs').then((m) => m.modelAbStatsCmd),
   },
   {
     name: 'model-ab-decision',
     flags: ['run-id'], positionals: 'none', payload: 'none',
     scope: 'none', kind: 'read', cloud: 'degrade-noop', degradeShape: {},
-    softFail: { all: true, reason: 'cloud-off emits {ok:false, cloud:false} at exit 0 — a supported mode reported as a failure. Plan §2b F3.' },
+    // softFail RETIRED (§2b F3/F4): this declaration described a cloud-off
+    // envelope that no longer exists — cloud-off reports {ok:true, cloud:false}
+    // now. An exemption that outlives what it excused silently shrinks the set
+    // the validator checks, which is the same defect the durability oracle's
+    // stale-exemption test exists to catch.
     load: () => import('./commands/model-eval.mjs').then((m) => m.modelAbDecisionCmd),
   },
   {
@@ -593,7 +623,10 @@ export const REGISTRY = Object.freeze([
       { name: 'json', kind: 'boolean' }],
     positionals: 'none', payload: 'none',
     scope: 'none', kind: 'write', cloud: 'degrade-noop', degradeShape: {},
-    softFail: { all: true, reason: 'cloud-off emits {ok:false, cloud:false} at exit 0 — a supported mode reported as a failure. Plan §2b F3 (one of the 5 measured cases).' },
+    // softFail RETIRED (§2b F3/F4): the envelope it described no longer exists
+    // — cloud-off reports {ok:true, cloud:false}, and the weekly-review
+    // forwarder throws. An exemption that outlives what it excused silently
+    // shrinks the set the validator checks.
     load: () => import('./commands/model-eval.mjs').then((m) => m.modelAbAdjudicateCmd),
   },
   {
@@ -605,7 +638,10 @@ export const REGISTRY = Object.freeze([
     // silent widening. Declaring global-optin would imply the dispatcher
     // resolves it, which it must not.
     scope: 'none', kind: 'read', cloud: 'degrade-noop', degradeShape: {},
-    softFail: { all: true, reason: 'cloud-off emits {ok:false, cloud:false} at exit 0 — a supported mode reported as a failure. Plan §2b F3.' },
+    // softFail RETIRED (§2b F3/F4): the envelope it described no longer exists
+    // — cloud-off reports {ok:true, cloud:false}, and the weekly-review
+    // forwarder throws. An exemption that outlives what it excused silently
+    // shrinks the set the validator checks.
     load: () => import('./commands/model-eval.mjs').then((m) => m.armEvalDecisionCmd),
   },
   {
@@ -613,14 +649,21 @@ export const REGISTRY = Object.freeze([
     flags: ['experiment', 'repo-id', { name: 'all-repos', kind: 'boolean' }],
     positionals: 'none', payload: 'none',
     scope: 'none', kind: 'read', cloud: 'degrade-noop', degradeShape: { rows: [] },
-    softFail: { all: true, reason: 'cloud-off emits {ok:false, cloud:false, rows:[]} at exit 0 — a supported mode reported as a failure. Plan §2b F3.' },
+    // softFail RETIRED (§2b F3/F4): the envelope it described no longer exists
+    // — cloud-off reports {ok:true, cloud:false}, and the weekly-review
+    // forwarder throws. An exemption that outlives what it excused silently
+    // shrinks the set the validator checks.
     load: () => import('./commands/model-eval.mjs').then((m) => m.armEvalStatsCmd),
   },
   {
     name: 'arm-eval-adjudicate',
     flags: ['session-id', 'ranked', 'reviewer'], positionals: 'none', payload: 'none',
     scope: 'none', kind: 'write', cloud: 'degrade-noop', degradeShape: {},
-    softFail: { all: true, reason: 'cloud-off emits {ok:false, cloud:false} at exit 0 — a supported mode reported as a failure. Plan §2b F3 (measured).' },
+    // softFail RETIRED (§2b F3/F4): this declaration described a cloud-off
+    // envelope that no longer exists — cloud-off reports {ok:true, cloud:false}
+    // now. An exemption that outlives what it excused silently shrinks the set
+    // the validator checks, which is the same defect the durability oracle's
+    // stale-exemption test exists to catch.
     load: () => import('./commands/model-eval.mjs').then((m) => m.armEvalAdjudicateCmd),
   },
   {
@@ -628,7 +671,10 @@ export const REGISTRY = Object.freeze([
     flags: ['session-id', 'repo-id', { name: 'all', kind: 'boolean' }, { name: 'all-repos', kind: 'boolean' }],
     positionals: 'none', payload: 'none',
     scope: 'ambient-ok', kind: 'write', cloud: 'degrade-noop', degradeShape: {},
-    softFail: { all: true, reason: 'cloud-off emits {ok:false, cloud:false} at exit 0 — a supported mode reported as a failure. Plan §2b F3 (measured). Also returns ok:r.written for a single-session export.' },
+    // softFail RETIRED (§2b F3/F4): the envelope it described no longer exists
+    // — cloud-off reports {ok:true, cloud:false}, and the weekly-review
+    // forwarder throws. An exemption that outlives what it excused silently
+    // shrinks the set the validator checks.
     load: () => import('./commands/model-eval.mjs').then((m) => m.armEvalExportCmd),
   },
   {

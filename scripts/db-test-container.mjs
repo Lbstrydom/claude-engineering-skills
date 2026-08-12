@@ -70,6 +70,11 @@ export const ISOLATED_SUITE_FILES = Object.freeze([
   'tests/candidate-audit-findings-window.test.mjs',
   'tests/db-schema-realization-live.test.mjs',
   'tests/regression-spec-multi-finding-lock.test.mjs',
+  // Enrolled 2026-08-12 with the D7 ownership joins (Phase 7). It needs an
+  // intact, fully migrated schema: it seeds two repos and two plans, then
+  // proves the parent-not-found / parent-not-owned refusals against real
+  // Postgres. Two edits, always — this list AND postgres-parity.yml.
+  'tests/store-ownership-db.test.mjs',
   'tests/symbol-index-drift-justification.test.mjs',
   // ── Enrolled 2026-08-11 ──────────────────────────────────────────────────
   // Every entry below was `AUDIT_DB_TEST_URL`-gated and named by NO runner, so
@@ -113,6 +118,10 @@ export const ISOLATED_SUITE_FILES = Object.freeze([
  * three: a stale exemption is how a list quietly stops meaning anything.
  */
 export const DB_SUITE_ENROLMENT_EXEMPT = Object.freeze([
+  {
+    file: 'tests/store-ownership.test.mjs',
+    reason: 'The PURE tier of the D7 ownership work: it exercises the SQL builder and the count-classifier as plain functions and reads no database. The token appears once, in a docstring naming its DB-gated sibling (tests/store-ownership-db.test.mjs, enrolled above) and explaining why both tiers exist — the pure one cannot prove the statement is VALID.',
+  },
   {
     file: 'tests/db-config-resolver.test.mjs',
     reason: 'Pure unit tests over DSN resolution. The token appears once, in a docstring sentence describing where the INTEGRATION half of that seam lives; this file reads no database.',

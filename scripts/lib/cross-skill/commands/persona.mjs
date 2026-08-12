@@ -376,6 +376,13 @@ export async function recordCorrelationCmd(ctx) {
     throw new CommandError('BAD_INPUT', 'personaSessionId, personaFindingHash, personaSeverity, correlationType required');
   }
   if (!ctx.cloud.enabled) return ctx.degrade();
+  // D7 / Phase 8: thread the RESOLVED repo into the writer's parent join.
+  // `null` for unresolved/none scope relaxes the TENANT predicate only —
+  // the parent-existence join always applies, so a dangling id is refused
+  // either way. The registry's `parent:` declaration is for conformance;
+  // the SQL is the enforcement.
+  const scope = await ctx.resolveScope();
+  const repoId = scope.kind === 'scoped' ? scope.repoId : null;
   const result = await ctx.deps.recordPersonaAuditCorrelation(p.personaSessionId, {
     personaFindingHash: p.personaFindingHash,
     personaSeverity: p.personaSeverity,
@@ -384,8 +391,15 @@ export async function recordCorrelationCmd(ctx) {
     correlationType: p.correlationType,
     matchScore: p.matchScore,
     matchRationale: p.matchRationale,
-  });
-  if (!result.ok) throw new CommandError('WRITE_FAILED', result.error || 'correlation write failed');
+  }, { repoId });
+  if (!result.ok) {
+    // An ownership refusal is exit 1 with its own code, not a generic
+    // WRITE_FAILED: 'that session does not exist' and 'that session belongs to
+    // another repository' are different things for the operator to do next.
+    const code = result.reason === 'parent-not-found' ? 'PARENT_NOT_FOUND'
+      : result.reason === 'parent-not-owned' ? 'PARENT_NOT_OWNED' : 'WRITE_FAILED';
+    throw new CommandError(code, result.error || 'correlation write failed', { reason: result.reason }, 1);
+  }
   return { ok: true, cloud: true };
 }
 

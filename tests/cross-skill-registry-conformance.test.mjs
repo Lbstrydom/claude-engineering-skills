@@ -250,4 +250,46 @@ describe('import-graph bans — the port is the only way into the store (D5b)', 
       assert.ok(checks(src), `${f}: home-rolled path containment — use classifyReadPath/classifyTestPath (INC-001)`);
     }
   });
+  // ── D7 / Phase 8 — parent-scoped child writes ─────────────────────────────
+
+  it('every `parent:` declaration names a table on the CLOSED ownership allowlist', async () => {
+    // The registry's `parent:` metadata is for conformance; the SQL is the
+    // enforcement. This is what keeps the two from drifting: a declaration
+    // naming a table `ownership.mjs` does not know about would be a claim with
+    // nothing behind it.
+    const { PARENT_TABLES } = await import('../scripts/lib/store/ownership.mjs');
+    const declared = REGISTRY.filter((e) => e.parent);
+    assert.ok(declared.length >= 4,
+      `expected >=4 parent-scoped commands, found ${declared.length} — if this dropped, the checks below are vacuous`);
+    for (const e of declared) {
+      assert.ok(e.parent.table in PARENT_TABLES,
+        `${e.name}: parent table "${e.parent.table}" is not on the ownership allowlist (${Object.keys(PARENT_TABLES).join(', ')})`);
+      assert.ok(typeof e.parent.idField === 'string' && e.parent.idField,
+        `${e.name}: parent declaration needs the payload field that carries the parent id`);
+    }
+  });
+
+  it('a parent-scoped write can RESOLVE a repo — scope:none would make the tenant predicate dead', () => {
+    // The join relaxes its tenant predicate when repoId is null. A command
+    // declared `scope:'none'` can never produce one, so the predicate would be
+    // permanently relaxed and the declaration would assert nothing about
+    // ownership — only about existence.
+    for (const e of REGISTRY.filter((x) => x.parent)) {
+      assert.notEqual(e.scope, 'none',
+        `${e.name} declares a parent but scope:'none' — it could never thread a repoId, so the tenant half of the join would be permanently relaxed`);
+    }
+  });
+
+  it('every parent-scoped handler THREADS the resolved repo into the writer', () => {
+    // The declaration is inert unless the handler passes `{repoId}`. Asserted
+    // on source because the threading is one argument at one call site, and a
+    // dropped argument is silent: the writer defaults to null, which is a
+    // legal (relaxed) mode rather than an error.
+    const bodies = files.map((f) => stripComments(fs.readFileSync(path.join(COMMANDS_DIR, f), 'utf8'))).join('\n');
+    assert.match(bodies, /\{ repoId \}/,
+      'no handler passes { repoId } — the parent declarations would be inert');
+    const threaded = (bodies.match(/\{ repoId \}/g) || []).length;
+    assert.ok(threaded >= REGISTRY.filter((e) => e.parent).length,
+      `${threaded} handler(s) thread { repoId } but ${REGISTRY.filter((e) => e.parent).length} commands declare a parent`);
+  });
 });

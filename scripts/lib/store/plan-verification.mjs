@@ -12,7 +12,7 @@
 import { getPool } from '../db/client.mjs';
 import { isCloudEnabled } from './repo.mjs';
 import { many, one } from '../db/query.mjs';
-import { insertRunRowWithPolicyFallback } from './run-row-fallback.mjs';
+import { buildOwnedInsert, classifyOwnedWrite } from './ownership.mjs';
 
 // ── plan_verification_runs / plan_verification_items ───────────────────────
 
@@ -30,7 +30,7 @@ import { insertRunRowWithPolicyFallback } from './run-row-fallback.mjs';
  *            reason:'cloud-off'|'invalid-input'|'write-failed',
  *            message:string, error?:Error}>}
  */
-export async function recordPlanVerificationRun(run) {
+export async function recordPlanVerificationRun(run, opts = {}) {
   if (!run?.planId) {
     return { ok: false, cloud: true, runId: null, reason: 'invalid-input', message: 'recordPlanVerificationRun requires run.planId' };
   }
@@ -51,16 +51,51 @@ export async function recordPlanVerificationRun(run) {
   };
   // Optional selector-policy telemetry (plan: ux-lock-selector-policy).
   if (run.selectorPolicyViolations != null) row.selector_policy_violations = run.selectorPolicyViolations;
+  // Parent-joined since D7 / Phase 7: `planId` is an opaque uuid the caller
+  // supplies, and this used to INSERT against it without proving the plan
+  // exists or belongs to any resolvable repo. The `plans` parent carries
+  // `repo_id` directly, so the tenant predicate needs no extra hop.
+  const write = async (omitPolicy) => {
+    const cols = Object.keys(row).filter((c) => !(omitPolicy && c === 'selector_policy_violations'));
+    const { text, values } = buildOwnedInsert({
+      parentTable: 'plans',
+      childTable: 'plan_verification_runs',
+      columns: cols,
+      rows: [cols.map((c) => row[c])],
+      parentId: run.planId,
+      repoId: opts.repoId ?? null,
+    });
+    // The id comes OUT of the statement (`inserted_id`), not from a follow-up
+    // SELECT. The first version read it back with
+    // `ORDER BY created_at DESC LIMIT 1`, which hands back a CONCURRENT
+    // invocation's row whenever two verify runs for the same plan overlap —
+    // caught by the Phase-7 audit, and a shortcut around a RETURNING the
+    // statement already performed.
+    const counts = await one(text, values);
+    const res = classifyOwnedWrite(counts, 1);
+    if (!res.ok) return res;
+    return counts?.inserted_id
+      ? { ok: true, inserted: 1, runId: counts.inserted_id }
+      : { ok: false, inserted: 1, reason: 'write-failed', message: 'row written but the statement returned no id' };
+  };
   try {
-    const out = await insertRunRowWithPolicyFallback('plan_verification_runs', row, { returning: ['id'] });
-    const runId = out?.id ?? null;
-    if (!runId) {
-      const message = 'insert returned no row — the write did not verify';
-      process.stderr.write(`  [learning] recordPlanVerificationRun: ${message}\n`);
-      return { ok: false, cloud: true, runId: null, reason: 'write-failed', message };
-    }
-    return { ok: true, cloud: true, runId };
+    const res = await write(false);
+    return res.ok
+      ? { ok: true, cloud: true, runId: res.runId }
+      : { ok: false, cloud: true, runId: null, reason: res.reason, message: res.message };
   } catch (err) {
+    if (err?.code === '42703' && 'selector_policy_violations' in row) {
+      process.stderr.write('  [learning] plan_verification_runs.selector_policy_violations missing — run setup-postgres --migrate; recording without it\n');
+      try {
+        const retry = await write(true);
+        return retry.ok
+          ? { ok: true, cloud: true, runId: retry.runId }
+          : { ok: false, cloud: true, runId: null, reason: retry.reason, message: retry.message };
+      } catch (retryErr) {
+        process.stderr.write(`  [learning] recordPlanVerificationRun failed: ${retryErr.message}\n`);
+        return { ok: false, cloud: true, runId: null, reason: 'write-failed', message: retryErr.message, error: retryErr };
+      }
+    }
     process.stderr.write(`  [learning] recordPlanVerificationRun failed: ${err.message}\n`);
     return { ok: false, cloud: true, runId: null, reason: 'write-failed', message: err.message, error: err };
   }
@@ -75,7 +110,7 @@ export async function recordPlanVerificationRun(run) {
  * which is exactly what `cross-skill.mjs record-plan-verify-items` did. `inserted`
  * is the row count Postgres accepted, not the row count we asked it to accept.
  */
-export async function recordPlanVerificationItems(runId, planId, items) {
+export async function recordPlanVerificationItems(runId, planId, items, opts = {}) {
   if (!runId || !planId || !Array.isArray(items) || items.length === 0) {
     return { ok: false, inserted: 0, reason: 'bad-input' };
   }
@@ -90,53 +125,74 @@ export async function recordPlanVerificationItems(runId, planId, items) {
     description: item.description,
     setup_text: item.setupText || null,
     assert_text: item.assertText || null,
-    passed: !!item.passed,
-    skipped: !!item.skipped,
+    // `=== true`, not `!!`. Truthiness turns the STRING "false" — which a JSON
+    // payload from a shell pipeline routinely carries — into `true`, silently
+    // inverting a criterion's outcome in the durable record. A non-boolean is
+    // treated as not-passed / not-skipped rather than accepted as passed, which
+    // is the safe direction: under-reporting a pass is visible, a fabricated
+    // pass is not. (Phase 7-8 audit H5.)
+    passed: item.passed === true,
+    skipped: item.skipped === true,
     error_message: item.errorMessage || null,
     duration_ms: item.durationMs || null,
   }));
   const pool = await getPool();
   if (!pool) return { ok: false, inserted: 0, reason: 'no-pool' };
+  // Parent-joined since D7 / Phase 7. The parent here is the RUN, not the plan:
+  // `plan_verification_runs` is what `runId` addresses, and attaching criterion
+  // rows to a run that does not exist is the defect. That table carries no
+  // `repo_id` of its own — measured against the committed schema fixture — so
+  // the allowlist reaches its tenant through `plans` (`repoVia`). Declaring the
+  // hop rather than exempting this one child is what keeps the weakest link
+  // visible.
   const insertItems = async (omitSkipped) => {
     const cols = Object.keys(rows[0]).filter((c) => !(omitSkipped && c === 'skipped'));
-    const params = [];
-    const valueGroups = rows.map((row) => {
-      const placeholders = cols.map((c) => {
-        params.push(row[c]);
-        return `$${params.length}`;
-      });
-      return `(${placeholders.join(', ')})`;
+    const { text, values } = buildOwnedInsert({
+      parentTable: 'plan_verification_runs',
+      childTable: 'plan_verification_items',
+      columns: cols,
+      rows: rows.map((row) => cols.map((c) => row[c])),
+      parentId: runId,
+      repoId: opts.repoId ?? null,
+      // `plan_id` comes from the PARENT RUN, never from the caller. The
+      // ownership join proves the RUN is owned; writing a separately-supplied
+      // planId into each child let the run and its criterion rows name
+      // different plans — the join proved one thing and the row recorded
+      // another (Phase-7 audit H2/H7). Sourcing it from the parent makes the
+      // mismatch unrepresentable rather than merely unchecked.
+      fromParent: { plan_id: 'plan_id' },
     });
-    const res = await pool.query(
-      `INSERT INTO plan_verification_items (${cols.map((c) => `"${c}"`).join(', ')})
-       VALUES ${valueGroups.join(', ')}`,
-      params
-    );
-    return res?.rowCount ?? 0;
+    const res = await pool.query(text, values);
+    const out = classifyOwnedWrite(res?.rows?.[0], rows.length);
+    // `planId` is no longer WRITTEN (it comes from the parent), which left it a
+    // vestigial argument a caller could get wrong and never hear about — the
+    // write would silently be "corrected" to the parent's plan. Reconciling it
+    // turns that into a reported caller bug. Read after the write because the
+    // parent row is only known to exist once the join has run; on a refusal the
+    // ownership reason is the more specific answer and wins. (Audit H4.)
+    if (out.ok) {
+      const parent = await one('SELECT plan_id FROM plan_verification_runs WHERE id = $1', [runId]);
+      if (parent && parent.plan_id !== planId) {
+        return {
+          ok: false, inserted: out.inserted, reason: 'plan-id-mismatch',
+          message: `run ${runId} belongs to plan ${parent.plan_id}, not the supplied ${planId} — the rows were written against the RUN's plan`,
+        };
+      }
+    }
+    return out;
   };
-  // A short write is a FAILED write (§2b F2, raised in both Cluster F audit
-  // rounds). `inserted` was already honest — it is the count Postgres accepted,
-  // never the count requested — but `ok: true` rode alongside it regardless, so
-  // a caller checking `ok` and a caller comparing `inserted` to `items.length`
-  // reached opposite conclusions from the same result. That is the
-  // unverified-write-success shape this cluster exists to remove, and the fix
-  // is the one the sibling writers already carry: compare, then report.
-  const verify = (inserted) => (inserted === rows.length
-    ? { ok: true, inserted }
-    : {
-      ok: false,
-      inserted,
-      reason: inserted === 0 ? 'no-rows-written' : 'row-count-mismatch',
-      message: `INSERT affected ${inserted} of ${rows.length} plan_verification_items row(s)`,
-    });
+  // The short-write check (§2b F2, raised in both Cluster F audit rounds) now
+  // lives in `classifyOwnedWrite`, alongside the two ownership refusals — one
+  // place that turns the statement's counts into an outcome, rather than two
+  // that could disagree about what a partial write means.
   try {
-    return verify(await insertItems(false));
+    return await insertItems(false);
   } catch (err) {
     // 42703-only: consumer DB predates the `skipped` column (migration
     // 20260704…) — retry once without it so the per-criterion rows aren't lost.
     if (err?.code === '42703' && 'skipped' in rows[0]) {
       process.stderr.write('  [learning] plan_verification_items.skipped missing — run setup-postgres --migrate; recording without it\n');
-      try { return verify(await insertItems(true)); }
+      try { return await insertItems(true); }
       catch (retryErr) {
         process.stderr.write(`  [learning] recordPlanVerificationItems failed: ${retryErr.message}\n`);
         return { ok: false, inserted: 0, reason: retryErr.message };

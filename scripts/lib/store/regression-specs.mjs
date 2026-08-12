@@ -17,8 +17,8 @@
 
 import path from 'node:path';
 import { isCloudEnabled } from './repo.mjs';
-import { upsert } from '../db/query.mjs';
-import { insertRunRowWithPolicyFallback } from './run-row-fallback.mjs';
+import { one, upsert } from '../db/query.mjs';
+import { buildOwnedInsert, classifyOwnedWrite } from './ownership.mjs';
 
 // ── regression_specs ───────────────────────────────────────────────────────
 
@@ -168,9 +168,22 @@ export async function recordRegressionSpec(repoId, spec) {
  * run that never reached the store reported as persisted. Reporting a write you
  * did not verify is the "unverified write success" class this repo audits for.
  *
+ * **Parent-joined since D7 / Phase 7.** `specId` is an opaque uuid supplied by
+ * the caller, and this used to INSERT against it without proving the spec
+ * exists or belongs to any resolvable repo — a dangling id attached a run row
+ * to nothing (or FK-errored late), and a spec belonging to another repository
+ * was written to happily. The INSERT now selects through the parent in ONE
+ * statement, so there is no window and no check a caller can forget.
+ *
+ * `repoId` is additive and optional: `null` relaxes the TENANT predicate only.
+ * The existence join always applies.
+ *
+ * @param {string} specId
+ * @param {object} run
+ * @param {{repoId?: string|null}} [opts]
  * @returns {Promise<{ok:boolean, cloud:boolean, reason?:string, error?:string}>}
  */
-export async function recordRegressionSpecRun(specId, run) {
+export async function recordRegressionSpecRun(specId, run, opts = {}) {
   if (!specId) return { ok: false, cloud: false, reason: 'missing-spec-id' };
   if (!await isCloudEnabled()) return { ok: true, cloud: false, reason: 'cloud-off' };
   const row = {
@@ -184,10 +197,35 @@ export async function recordRegressionSpecRun(specId, run) {
   };
   // Optional selector-policy telemetry (plan: ux-lock-selector-policy).
   if (run.selectorPolicyViolations != null) row.selector_policy_violations = run.selectorPolicyViolations;
+  const write = async (omitPolicy) => {
+    const cols = Object.keys(row).filter((c) => !(omitPolicy && c === 'selector_policy_violations'));
+    const { text, values } = buildOwnedInsert({
+      parentTable: 'regression_specs',
+      childTable: 'regression_spec_runs',
+      columns: cols,
+      rows: [cols.map((c) => row[c])],
+      parentId: specId,
+      repoId: opts.repoId ?? null,
+    });
+    return classifyOwnedWrite(await one(text, values), 1);
+  };
   try {
-    await insertRunRowWithPolicyFallback('regression_spec_runs', row);
-    return { ok: true, cloud: true };
+    const res = await write(false);
+    return res.ok ? { ok: true, cloud: true } : { ok: false, cloud: true, reason: res.reason, error: res.message };
   } catch (err) {
+    // Same 42703 fallback insertRunRowWithPolicyFallback provided, preserved
+    // through the join rewrite: a consumer DB predating migration 20260703200000
+    // must still get its run row rather than losing it to one optional column.
+    if (err?.code === '42703' && 'selector_policy_violations' in row) {
+      process.stderr.write('  [learning] regression_spec_runs.selector_policy_violations missing — run setup-postgres --migrate; recording without it\n');
+      try {
+        const retry = await write(true);
+        return retry.ok ? { ok: true, cloud: true } : { ok: false, cloud: true, reason: retry.reason, error: retry.message };
+      } catch (retryErr) {
+        process.stderr.write(`  [learning] recordRegressionSpecRun failed: ${retryErr.message}\n`);
+        return { ok: false, cloud: true, reason: 'write-failed', error: retryErr.message };
+      }
+    }
     process.stderr.write(`  [learning] recordRegressionSpecRun failed: ${err.message}\n`);
     return { ok: false, cloud: true, reason: 'write-failed', error: err.message };
   }
