@@ -25,6 +25,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertKnownFlags, ArgvError } from '../lib/cli-io.mjs';
+
+const KNOWN_FLAGS = ['--recapture', '--selfcheck-relocation', '--help'];
 
 const CLI_PATH = fileURLToPath(new URL('../cross-skill.mjs', import.meta.url));
 export const FIXTURE_PATH = fileURLToPath(
@@ -81,6 +84,12 @@ export function runCase(c, { tmpRoot }) {
 
 async function main() {
   if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
+  try {
+    assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'capture-cross-skill-envelopes.mjs' });
+  } catch (err) {
+    if (err instanceof ArgvError) { process.stderr.write(`${err.message}\n`); process.exit(2); }
+    throw err;
+  }
   // EXISTING cases are preserved, never silently re-captured (audit CA-r1):
   // after a command migrates, this tool runs the MIGRATED implementation, so
   // re-capturing an existing case would overwrite the legacy-captured oracle
