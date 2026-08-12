@@ -28,7 +28,7 @@ import path from 'node:path';
 
 import {
   parseEnvelopeFrame, writeEnvelope, drainEnvelopes, listEnvelopesOldestFirst,
-  REJECTED_SUBDIR,
+  REJECTED_SUBDIR, _internals,
 } from '../scripts/lib/outbox-envelope.mjs';
 
 const V = 1;
@@ -309,4 +309,27 @@ test('drain: an ARTIFACT-scoped failure is charged to that artifact and the batc
     assert.equal(attempts, 2, 'a per-artifact error must not stop the batch');
     assert.equal(res.failed, 2);
   } finally { rmTmp(dir); }
+});
+
+test('an artifact the reclaim could NOT recover makes the drain unavailable', async () => {
+  // The vacuous-pass guard: `.claimed` files are excluded from the `.json`
+  // listing, so a swallowed reclaim failure lets the drain report `empty` over
+  // work that is still on disk.
+  //
+  // Driven through the `_internals` seam because the failure is unreachable
+  // from the filesystem here — `rmSync` succeeds through an open handle on this
+  // platform, and a guard nobody can drive red is indistinguishable from one
+  // that does nothing.
+  const dir = mkTmp('ces-env-unreclaimed-');
+  const real = _internals.reclaimClaimed;
+  try {
+    writeEnvelope(dir, env('present'));
+    _internals.reclaimClaimed = () => 1;   // one artifact stuck as `.claimed`
+
+    const res = await drainEnvelopes({ dir, apply: async () => true, parse, cap: 10 });
+    assert.equal(res.state, 'unavailable',
+      'stuck claimed work must never read as an empty or drained queue');
+    assert.match(res.reason, /could not be reclaimed/);
+    assert.equal(res.drained, 0, 'and nothing is drained while the queue is not fully visible');
+  } finally { _internals.reclaimClaimed = real; rmTmp(dir); }
 });

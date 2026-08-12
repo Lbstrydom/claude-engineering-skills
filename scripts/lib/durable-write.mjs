@@ -118,11 +118,20 @@ function lostDir(repoRoot) { return path.join(spillDir(repoRoot), LOST_SUBDIR); 
  * Content-derived artifact name. Stable for one payload, so a retry of the same
  * write reuses its envelope rather than accumulating duplicates.
  */
-function fingerprintFor(writerId, payload) {
+function fingerprintFor(writerId, payload, spec) {
   const h = crypto.createHash('sha256')
     .update(JSON.stringify([writerId, payload]))
     .digest('hex').slice(0, 32);
-  return `${writerId.replace(/[^A-Za-z0-9._-]/g, '-')}-${h}`;
+  const base = `${writerId.replace(/[^A-Za-z0-9._-]/g, '-')}-${h}`;
+  // A KEYED writer is idempotent by declaration, so content identity is the
+  // right identity: a retry of the same write reuses its envelope instead of
+  // accumulating duplicates.
+  if (spec?.rowKey) return base;
+  // A KEYLESS writer has no such guarantee. Two independent operations that
+  // happen to carry equal payloads — two identical pass-stat batches, say — are
+  // DIFFERENT operations, and collapsing them onto one filename silently
+  // discards one piece of evidence. Disambiguate.
+  return `${base}-${Date.now().toString(36)}${crypto.randomBytes(3).toString('hex')}`;
 }
 
 /**
@@ -153,7 +162,7 @@ export async function durableWrite(writerId, payload, { repoRoot = process.cwd()
     );
   }
 
-  const fingerprint = fingerprintFor(writerId, payload);
+  const fingerprint = fingerprintFor(writerId, payload, spec);
   assertSafeFingerprint(fingerprint);
   const envelope = {
     v: AUDIT_ENVELOPE_VERSION,
@@ -195,7 +204,22 @@ export async function durableWrite(writerId, payload, { repoRoot = process.cwd()
   try {
     const res = await spec.replay(payload);
     if (res?.applied === true) {
-      fs.rmSync(file, { force: true, recursive: true, maxRetries: 3, retryDelay: 50 });
+      // Cleanup is OUTSIDE the attempt's failure path. If the write committed
+      // and only the envelope removal failed, the operation SUCCEEDED — calling
+      // it a failure would spill (or worse, `lost`) a write that is already in
+      // the store. A leftover envelope is harmless: it is idempotent for a keyed
+      // writer, and the drain's reclaim handles it.
+      // NOTE: deliberately UNTESTED, and that is a disposition rather than an
+      // oversight. `rmSync` with `force: true` does not throw for a missing
+      // path, and on this platform Node opens with FILE_SHARE_DELETE so an open
+      // handle does not block removal either — no injection reaches this catch.
+      // The guard is kept because the classification it protects is important
+      // (a committed write must not be reported as a failure) and it costs
+      // nothing; the TEST for it was deleted, because one that passes with the
+      // guard reverted is a false signal, not coverage.
+      try {
+        fs.rmSync(file, { force: true, recursive: true, maxRetries: 3, retryDelay: 50 });
+      } catch { /* the write landed; the envelope is swept later */ }
       return { outcome: 'written', writerId };
     }
     return retainOrLose(spec, file, repoRoot, writerId, 'not applied');
@@ -232,17 +256,31 @@ function retainOrLose(spec, file, repoRoot, writerId, why) {
  * @returns {{ok: true} | {ok: false, reason: string}}
  */
 export function checkAdmission(repoRoot, limits = spillConfig) {
+  // The queue AND its two evidence directories. `lost/` and `rejected/` are
+  // append-only and nothing ever drains them, so counting only the top level —
+  // as the first version did — leaves the actual unbounded growth invisible to
+  // the very check meant to bound it (audit H9). Whatever the operator has to
+  // clear by hand is what the cap must see.
   let files = 0, bytes = 0;
-  try {
-    for (const n of fs.readdirSync(spillDir(repoRoot))) {
-      if (!n.endsWith('.json')) continue;   // skips *.tmp and the lost/ dir
+  const tally = (dir, recurse) => {
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (e.isDirectory()) {
+        if (recurse && (e.name === LOST_SUBDIR || e.name === REJECTED_SUBDIR)) tally(path.join(dir, e.name), false);
+        continue;
+      }
+      if (!e.name.endsWith('.json')) continue;   // skips *.tmp
       files++;
-      try { bytes += fs.statSync(path.join(spillDir(repoRoot), n)).size; } catch { /* raced */ }
+      try { bytes += fs.statSync(path.join(dir, e.name)).size; } catch { /* raced */ }
     }
-  } catch (err) {
-    if (err?.code !== 'ENOENT') return { ok: true };   // unreadable — do not refuse on a stat error
-    return { ok: true };
+  };
+  try {
+    fs.statSync(spillDir(repoRoot));
+  } catch {
+    return { ok: true };   // absent or unreadable — do not refuse work on a stat error
   }
+  tally(spillDir(repoRoot), true);
   if (files >= limits.maxFiles) {
     return { ok: false, reason: `spill queue full: ${files} files >= ${limits.maxFiles}` };
   }

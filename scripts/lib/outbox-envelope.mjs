@@ -138,6 +138,38 @@ export function listEnvelopesOldestFirst(dir, cap) {
 }
 
 /**
+ * Restore `.claimed` leftovers from a drain that died mid-flight.
+ *
+ * @returns {number} how many could NOT be recovered
+ */
+function reclaimClaimed(dir) {
+  let unreclaimed = 0;
+  for (const n of fs.readdirSync(dir)) {
+    if (!n.endsWith('.claimed')) continue;
+    const orig = path.join(dir, n.slice(0, -'.claimed'.length));
+    try {
+      if (fs.existsSync(orig)) fs.rmSync(path.join(dir, n), { force: true, recursive: true, maxRetries: 3, retryDelay: 50 });
+      else fs.renameSync(path.join(dir, n), orig);
+    } catch { unreclaimed++; }
+  }
+  return unreclaimed;
+}
+
+/**
+ * Test seam (mirrors the `_internals` pattern in file-io.mjs / shared.mjs).
+ *
+ * The unreclaimed-artifact guard is a VACUOUS-PASS guard — it exists so a
+ * drain cannot report `empty` over work it failed to recover — and the only
+ * way to prove it fires is to make a reclaim fail. That turned out to be
+ * unreachable from the filesystem on this platform: `rmSync` succeeds through
+ * an open handle (Node opens with FILE_SHARE_DELETE), and every other
+ * injection tried was equally cheerful. A guard nobody can drive red is
+ * indistinguishable from one that does nothing, so the seam is the honest
+ * alternative to leaving it unproven.
+ */
+export const _internals = { reclaimClaimed };
+
+/**
  * Drain pending envelopes.
  *
  * Deliberately tolerant of a concurrent winner: two invocations can drain the
@@ -186,16 +218,22 @@ export async function drainEnvelopes({ dir, apply, parse, cap, isConnectionError
   // Reclaim `.claimed` leftovers from a drain that died mid-flight. Without
   // this they are invisible to the `.json` filter below and leak permanently —
   // the same silent-loss shape this module exists to prevent.
+  let unreclaimed = 0;
   try {
-    for (const n of fs.readdirSync(dir)) {
-      if (!n.endsWith('.claimed')) continue;
-      const orig = path.join(dir, n.slice(0, -'.claimed'.length));
-      try {
-        if (fs.existsSync(orig)) fs.rmSync(path.join(dir, n), { force: true, recursive: true, maxRetries: 3, retryDelay: 50 });
-        else fs.renameSync(path.join(dir, n), orig);
-      } catch { /* next run */ }
-    }
-  } catch { /* listing handles the real error below */ }
+    unreclaimed = _internals.reclaimClaimed(dir);
+  } catch {
+    // An unreadable directory is ONE fact, and `listEnvelopesOldestFirst` below
+    // fails on it identically and owns the canonical `readdir failed` reason.
+    // Returning here too would give one condition two different messages.
+  }
+  // A `.claimed` file the sweep could NOT recover is invisible to the `.json`
+  // listing below, so continuing would report `empty` over work that is still
+  // there — the vacuous pass this module exists to remove (audit H4). Swallowing
+  // it, as the first version did, is what made that state reachable.
+  if (unreclaimed > 0) {
+    return { state: 'unavailable', drained: 0, rejected: 0, failed: 0,
+      reason: `${unreclaimed} claimed artifact(s) could not be reclaimed` };
+  }
 
   const listed = listEnvelopesOldestFirst(dir, limit);
   if (!listed.ok) {

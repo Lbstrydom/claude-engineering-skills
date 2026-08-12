@@ -409,3 +409,58 @@ test('registeredWriters reports the ids the call-site oracle checks', () => {
   registerWriter('b', { schemaVersion: 1, replay: async () => ({ applied: true }) });
   assert.deepEqual(registeredWriters().sort(), ['a', 'b']);
 });
+
+// ── Cluster A audit round 1 fixes ───────────────────────────────────────────
+
+test('a KEYLESS writer does not collapse two operations onto one envelope', async () => {
+  // H3/H8. Identity was hash(writerId, payload). A keyed writer is idempotent by
+  // declaration so content identity is right for it — but a keyless writer has
+  // no such guarantee, and two independent operations carrying equal payloads
+  // are DIFFERENT operations. Collapsing them discards one piece of evidence.
+  const root = mkTmp('ces-dw-ident-');
+  try {
+    registerWriter('keyless', { schemaVersion: 1, replay: async () => { throw new Error('x'); } });
+    await durableWrite('keyless', { same: 'payload' }, { repoRoot: root });
+    await durableWrite('keyless', { same: 'payload' }, { repoRoot: root });
+    const names = fs.readdirSync(lost(root));
+    assert.equal(names.length, 2, 'both operations must be preserved');
+    // The count alone does NOT discriminate: retainOrLose de-collides with a
+    // `.1` suffix, so a collapsed identity still yields two files. The names are
+    // what tell the two apart — distinct fingerprints vs one plus a suffix.
+    assert.equal(names.filter((n) => /\.\d+$/.test(n)).length, 0,
+      'a suffixed name means the two operations collided onto one identity');
+    assert.equal(new Set(names.map((n) => n.replace(/\.json.*$/, ''))).size, 2,
+      'two independent keyless operations must have two identities');
+  } finally { rmTmp(root); }
+});
+
+test('a KEYED writer still reuses its envelope for the same payload', async () => {
+  // The other half — without it, "2 files" above could just mean identity is
+  // random for everyone, which would defeat idempotent retry.
+  const root = mkTmp('ces-dw-ident2-');
+  try {
+    registerWriter('keyed', { schemaVersion: 1, rowKey: (r) => r.id, replay: async () => { throw new Error('x'); } });
+    await durableWrite('keyed', { id: 1 }, { repoRoot: root });
+    await durableWrite('keyed', { id: 1 }, { repoRoot: root });
+    assert.equal(queued(root).length, 1, 'a retry of the same write reuses its envelope');
+  } finally { rmTmp(root); }
+});
+
+
+test('the admission cap SEES the evidence directories, which nothing drains', () => {
+  // H9. lost/ and rejected/ are append-only and no drain ever clears them, so
+  // counting only the top level left the real unbounded growth invisible to the
+  // check meant to bound it.
+  const root = mkTmp('ces-dw-evidence-');
+  try {
+    fs.mkdirSync(path.join(spill(root), LOST_SUBDIR), { recursive: true });
+    fs.mkdirSync(path.join(spill(root), 'rejected'), { recursive: true });
+    fs.writeFileSync(path.join(spill(root), LOST_SUBDIR, 'a.json'), 'x'.repeat(10));
+    fs.writeFileSync(path.join(spill(root), 'rejected', 'b.json'), 'x'.repeat(10));
+
+    assert.equal(checkAdmission(root, { maxFiles: 2, maxBytes: 1e9 }).ok, false,
+      'evidence files must count toward the ceiling');
+    assert.equal(checkAdmission(root, { maxFiles: 99, maxBytes: 15 }).ok, false,
+      'and toward the byte ceiling too');
+  } finally { rmTmp(root); }
+});
