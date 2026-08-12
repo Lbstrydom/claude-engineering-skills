@@ -169,3 +169,74 @@ describe('computeCovered — all-or-nothing per file', () => {
     assert.deepEqual(covered, ['b.mjs']);
   });
 });
+
+// ── Tiered escalation: a single top-level declaration bigger than the budget ─
+//
+// The whole-repo run hit this for real: `legacy-production-audit.mjs`'s
+// `runLegacyProductionAudit` is a single ~1,600-line `export async function`
+// declaration, well over budget on its own. Tier 1 (top-level declarations)
+// legitimately finds NO further boundary inside it — there is exactly one.
+// Splitting has to escalate to a coarser tier or the file is unsplittable
+// again, just one level down from where it was fixed.
+describe('splitOversizedFile — escalates past a single oversized declaration', () => {
+  it('a declaration with internal SECTION BANNERS splits at them (tier 2)', () => {
+    // Each SECTION must fit the budget on its own (~43 tok here) while the
+    // WHOLE declaration does not (~265 tok at budget 100) — otherwise the test
+    // cannot tell "split at banners" from "couldn't split at all", which is
+    // exactly the failure mode a badly-tuned fixture produced on the first
+    // write: a section too dense to fit even after splitting made this test
+    // fail for the RIGHT mechanism (tier 3 correctly finding nothing) and the
+    // WRONG reason (the fixture, not the splitter).
+    const banner = (n) => `  // ── Section ${n} ──────────────`;
+    const filler = () => Array.from({ length: 6 }, (_, j) => `  const v${j} = ${j}; // pad`).join('\n');
+    const body = `export async function big() {\n${[0, 1, 2, 3, 4, 5].map((n) => `${banner(n)}\n${filler()}`).join('\n')}\n}`;
+    const parts = splitOversizedFile({ file: 'a.mjs', body }, 100);
+    assert.ok(parts.length > 1, 'must actually split — this is the regression case');
+    for (const p of parts) assert.ok(estimateTokens(p.body) <= 100, `part ${p.part} still over budget`);
+    assert.equal(parts.map((p) => p.body).join('\n'), body, 'must stay lossless through the escalation');
+  });
+
+  it('with NO banners either, falls back to blank-line boundaries (tier 3)', () => {
+    // Same sizing discipline as the tier-2 fixture above: one blank-delimited
+    // block fits (~35 tok), the whole declaration does not (~216 tok at 100).
+    const filler = () => Array.from({ length: 6 }, (_, j) => `  const v${j} = ${j}; // pad`).join('\n');
+    const body = `export async function big() {\n${Array.from({ length: 6 }, filler).join('\n\n')}\n}`;
+    const parts = splitOversizedFile({ file: 'a.mjs', body }, 100);
+    assert.ok(parts.length > 1);
+    for (const p of parts) assert.ok(estimateTokens(p.body) <= 100);
+    assert.equal(parts.map((p) => p.body).join('\n'), body);
+  });
+
+  it('an individually oversized chunk found among several is ITSELF escalated', () => {
+    // Distinct from the tier-2 test above: there, ONE PASS of banner-splitting
+    // already produced all-under-budget chunks, so the per-chunk recursive
+    // call (`splitBody(c, budget, tier+1)` inside the loop, as opposed to the
+    // "this tier found nothing at all" escalation) was never exercised — a
+    // mutation deleting it survived on that fixture alone.
+    //
+    // Two top-level declarations: one tiny, one over budget with two banner
+    // sections. Tier 0 (top-level) finds the boundary between them — TWO
+    // chunks, so this does NOT take the "found nothing" path — but the first
+    // chunk (the whole big function) is itself still oversized and must be
+    // escalated to tier 1 (banners) on its own, independently of the second.
+    const block = (n) => Array.from({ length: 6 }, (_, j) => `  const v${n}_${j} = ${j}; // pad`).join('\n');
+    const func1 = `export function f1() {\n  // ── A ──\n${block('a')}\n  // ── B ──\n${block('b')}\n}`; // ~88 tok
+    const func2 = 'export const tiny = 1;'; // trivially fits; must survive un-split
+    const body = `${func1}\n${func2}`;
+    const budget = 60; // between one banner section (~41) and func1 whole (~88)
+    const parts = splitOversizedFile({ file: 'a.mjs', body }, budget);
+    assert.ok(parts.length >= 3, 'func1 must be split into its two sections, plus func2');
+    for (const p of parts) assert.ok(estimateTokens(p.body) <= budget, `part ${p.part} still over budget — the per-chunk escalation did not run`);
+    assert.equal(parts.map((p) => p.body).join('\n'), body);
+  });
+
+  it('a single line/statement bigger than the budget still throws loudly, never silently truncates', () => {
+    const body = `export const x = "${'a'.repeat(200000)}";`; // one line, no boundary of any tier
+    const parts = splitOversizedFile({ file: 'a.mjs', body }, 400);
+    // splitOversizedFile itself does not throw (the caller decides); it
+    // reports failure by returning the WHOLE oversized body as one part, which
+    // the caller's own stillOver check turns into the loud error.
+    assert.equal(parts.length, 1);
+    assert.ok(estimateTokens(parts[0].body) > 400, 'the caller must see this as still-over-budget, not as success');
+  });
+});

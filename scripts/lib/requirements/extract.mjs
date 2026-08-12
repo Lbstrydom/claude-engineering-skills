@@ -110,6 +110,83 @@ export function mergeRequirements(runResults, totalRuns) {
 }
 
 /**
+ * Boundary detectors, coarsest-safe-first. Each is tried only after the finer
+ * one above it has already failed to shrink a chunk below budget — the
+ * escalation exists because a single TOP-LEVEL declaration can itself be
+ * larger than the budget (measured: `legacy-production-audit.mjs`'s
+ * `runLegacyProductionAudit` is ~1,600 lines, a single `export async function`
+ * declaration, well over 18K tokens on its own — the file that motivated this
+ * escalation in the first place, on the whole-repo run this was built for).
+ *
+ *  1. TOP-LEVEL — a line starting in column 0 with `export`, `function`,
+ *     `const`, `class`, … A part is a set of whole declarations, because the
+ *     extractor is reading for invariants and half a function has none.
+ *  2. SECTION BANNER — `// ── … ──` at ANY indentation. These are seams a
+ *     HUMAN already marked as invariant-bearing inside a large function; using
+ *     them is not an arbitrary cut, it is reusing an existing decision.
+ *  3. BLANK LINE — the coarsest fallback: split before any non-blank line
+ *     immediately following a blank one. Used only when a declaration has
+ *     neither a further top-level boundary nor a single banner comment.
+ */
+const BOUNDARY_TIERS = [
+  (line) => /^(export\s|async\s+function\s|function\s|const\s|let\s|var\s|class\s|\/\*\*)/.test(line),
+  (line) => /^\s*\/\/ [─-]{2,}/.test(line),
+  (line, prevLine) => prevLine !== undefined && prevLine.trim() === '' && line.trim() !== '',
+];
+
+/** One pass: chunk `lines` at the given tier's boundaries, respecting `budget`. */
+function chunkAtTier(lines, tier, budget) {
+  const isBoundary = BOUNDARY_TIERS[tier];
+  const parts = [];
+  let cur = [];
+  let prevLine;
+  const flush = () => { if (cur.length) { parts.push(cur.join('\n')); cur = []; } };
+  for (const line of lines) {
+    // Start a new part only AT a boundary, and only once the current one is
+    // already large enough to be worth closing. Deliberately generous: a
+    // missed boundary only makes a part larger, and the size check is what
+    // actually bounds it.
+    if (cur.length && isBoundary(line, prevLine) && estimateTokens(cur.join('\n')) > budget * 0.6) flush();
+    cur.push(line);
+    prevLine = line;
+  }
+  flush();
+  return parts;
+}
+
+/**
+ * Split ONE body under `budget`, escalating through `BOUNDARY_TIERS` only for
+ * the regions that still need it. Pure line-partitioning — LOSSLESS by
+ * construction, since every tier partitions `lines` into consecutive,
+ * non-overlapping runs and `join('\n')` of the result always reconstructs the
+ * input exactly.
+ *
+ * @returns {string[]|null} parts, or `null` if no tier could shrink a region —
+ *   a single line/statement that alone exceeds the budget, which real source
+ *   essentially never produces.
+ */
+function splitBody(body, budget, tier = 0) {
+  if (estimateTokens(body) <= budget) return [body];
+  if (tier >= BOUNDARY_TIERS.length) return null;
+  const chunks = chunkAtTier(body.split('\n'), tier, budget);
+  if (chunks.length <= 1) return splitBody(body, budget, tier + 1); // this tier found nothing — escalate
+  const out = [];
+  for (const c of chunks) {
+    if (estimateTokens(c) <= budget) { out.push(c); continue; }
+    // A chunk THIS tier produced is still oversized (one huge declaration, or
+    // one section with no banner inside it) — escalate only that region, one
+    // tier coarser. Re-trying the SAME tier would find the same boundaries and
+    // loop forever; skipping straight to tier+1 is also correct because a
+    // finer tier's regex (column-0 declarations) structurally cannot match
+    // inside an already-indented region.
+    const sub = splitBody(c, budget, tier + 1);
+    if (sub === null) return null;
+    out.push(...sub);
+  }
+  return out;
+}
+
+/**
  * Split ONE oversized file into parts that each fit the budget.
  *
  * **Why this exists.** The budget is sound — it is derived from
@@ -124,31 +201,14 @@ export function mergeRequirements(runResults, totalRuns) {
  * reason alone. That is selection bias, not a rounding error, and raising the
  * cap would only move the cliff.
  *
- * Splits at TOP-LEVEL boundaries (a line starting in column 0 with `export`,
- * `function`, `const`, `class`, …) so a part is a set of whole declarations
- * rather than an arbitrary byte range — the extractor is reading for
- * invariants, and half a function has none. Each part keeps the REAL file path,
- * so provenance and `appliesTo` are unaffected; only the prompt header says
- * which part it is.
+ * See `BOUNDARY_TIERS` for the escalation this delegates to. Each part keeps
+ * the REAL file path, so provenance and `appliesTo` are unaffected; only the
+ * prompt header says which part it is.
  *
  * @returns {{file: string, body: string, part: number, parts: number}[]}
  */
 export function splitOversizedFile(fb, budget = CHUNK_TOKEN_BUDGET) {
-  const lines = fb.body.split('\n');
-  // Boundary = a plausible top-level declaration start. Deliberately generous:
-  // a missed boundary only makes a part larger, and the size check below is
-  // what actually bounds it.
-  const isBoundary = (l) => /^(export\s|async\s+function\s|function\s|const\s|let\s|var\s|class\s|\/\*\*)/.test(l);
-  const parts = [];
-  let cur = [];
-  const flush = () => { if (cur.length) { parts.push(cur.join('\n')); cur = []; } };
-  for (const line of lines) {
-    // Start a new part only AT a boundary, and only once the current one is
-    // already large enough to be worth closing.
-    if (cur.length && isBoundary(line) && estimateTokens(cur.join('\n')) > budget * 0.6) flush();
-    cur.push(line);
-  }
-  flush();
+  const parts = splitBody(fb.body, budget) ?? [fb.body]; // null → caller's over-budget check reports it
   return parts.map((body, i) => ({ file: fb.file, body, part: i + 1, parts: parts.length }));
 }
 
