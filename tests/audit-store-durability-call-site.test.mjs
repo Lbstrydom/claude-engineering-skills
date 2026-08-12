@@ -131,21 +131,69 @@ describe('writer-set oracle — derived from the store modules, not enumerated',
     // The declaration in audit-store-writers.mjs and the unique index in the
     // migration are two statements of ONE key, in two languages, with nothing
     // between them that would notice a divergence. Pin them to each other.
+    //
+    // FOUR parts as of 20260812100000 (three plain columns + one expression),
+    // via two increasingly narrow corrections of the same original defect —
+    // both discovered live, not by inspection:
+    //
+    //   (run_id, finding_fingerprint)                        — the original,
+    //     2-column key. Broke `recordFinalReviewFindings`, which legitimately
+    //     writes the SAME fingerprint under different pass_names
+    //     ('final-review' primary vs 'final-review-shadow'). Measured 23505.
+    //   (run_id, finding_fingerprint, pass_name)              — 090000's fix.
+    //     Still broke `resolveFindingBucket`, which resolves purely on
+    //     (run_id, finding_fingerprint, bucket) with NO pass_name filter — so
+    //     a SAME-pass_name pair differing only in `bucket` still collided.
+    //     Measured 23505 again, same error, narrower cause.
+    //   (run_id, finding_fingerprint, pass_name, COALESCE(bucket, ''))
+    //     — 100000's fix, verified against the real fixture end to end.
+    //
+    // `bucket` must be COALESCE'd: it is NULL for every 'merged'-pass row, and
+    // Postgres treats NULL as distinct within a unique index, so a raw bucket
+    // column would silently stop deduplicating 'merged' findings — reopening
+    // the defect 070000 fixed (706 duplicate rows, measured then).
     const writersSrc = read('scripts/lib/audit-store-writers.mjs');
-    const key = /rowKey:\s*\(row\)\s*=>\s*`\$\{row\.run_id\}:\$\{row\.finding_fingerprint\}`/.test(writersSrc);
-    assert.ok(key, 'audit.findings must declare its key as (run_id, finding_fingerprint)');
+    const key = /rowKey:\s*\(row\)\s*=>\s*`\$\{row\.run_id\}:\$\{row\.finding_fingerprint\}:\$\{row\.pass_name\}`/.test(writersSrc);
+    assert.ok(key, 'audit.findings must declare its key as (run_id, finding_fingerprint, pass_name) — bucket is intentionally NOT in the row-identity string (it is a DB-level disambiguator, not part of the spill artifact\'s own identity)');
 
-    const migration = read('supabase/migrations/20260812070000_audit_findings_fingerprint_unique_full.sql');
+    // Both superseded migrations are untouched history — migrations are never
+    // edited after being applied — checked only for what they demonstrably
+    // were, not for what is live now.
+    for (const [file, indexName, cols] of [
+      ['20260812070000_audit_findings_fingerprint_unique_full.sql', 'audit_findings_run_fingerprint_uniq_full', 'run_id, finding_fingerprint'],
+      ['20260812090000_audit_findings_fingerprint_scoped_by_pass.sql', 'audit_findings_run_fingerprint_pass_uniq', 'run_id, finding_fingerprint, pass_name'],
+    ]) {
+      const src = read(`supabase/migrations/${file}`);
+      assert.match(
+        src,
+        new RegExp(`CREATE UNIQUE INDEX IF NOT EXISTS ${indexName}\\s*\\n?\\s*ON audit_findings \\(${cols.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\)`),
+      );
+    }
+
+    // The CURRENT arbiter: a full (non-partial) expression index.
+    const migration = read('supabase/migrations/20260812100000_audit_findings_fingerprint_pass_bucket_scoped.sql');
     assert.match(
       migration,
-      /CREATE UNIQUE INDEX IF NOT EXISTS audit_findings_run_fingerprint_uniq_full\s*\n?\s*ON audit_findings \(run_id, finding_fingerprint\)/,
-      'the arbiter must be a FULL unique index on exactly the declared key — a partial one cannot serve a bare ON CONFLICT (measured 42P10)',
+      /CREATE UNIQUE INDEX IF NOT EXISTS audit_findings_run_fingerprint_pass_bucket_uniq\s*\n?\s*ON audit_findings \(run_id, finding_fingerprint, pass_name, \(COALESCE\(bucket, ''\)\)\)/,
+      'the live arbiter must be a FULL unique index on exactly the declared key — a partial one cannot serve a bare ON CONFLICT (measured 42P10)',
     );
-    // …and that the upsert actually targets it.
+    assert.match(
+      migration,
+      /DROP INDEX IF EXISTS audit_findings_run_fingerprint_pass_uniq/,
+      'the superseded 3-column index must actually be dropped, or two indexes both claim to arbitrate this key',
+    );
+    // …and that the upsert actually targets the CURRENT arbiter, with the
+    // SAME expression (an ON CONFLICT target must match an expression index
+    // byte-for-byte to resolve against it).
     assert.match(
       read('scripts/lib/store/runs-findings.mjs'),
-      /ON CONFLICT \(run_id, finding_fingerprint\) DO UPDATE SET/,
-      'recordFindings must upsert on the declared key, or a replayed batch aborts on rows the first attempt committed',
+      /ON CONFLICT \(\$\{conflictTarget\}\) DO UPDATE SET/,
+      'recordFindings must upsert on the declared key via conflictTarget, or a replayed batch aborts on rows the first attempt committed',
+    );
+    assert.match(
+      read('scripts/lib/store/runs-findings.mjs'),
+      /`run_id, finding_fingerprint, pass_name, \(COALESCE\(bucket, ''\)\)`/,
+      'the hasBucket branch of conflictTarget must match the live index expression exactly',
     );
   });
 });
