@@ -1,6 +1,67 @@
 # Project Status Log
 
-## 2026-08-11 (latest) — the candidate promotion path is gone, and the ratchet it leaves behind
+## 2026-08-11 (latest) — a decision recorded was still an obligation open
+
+`user_action = 'accepted-permanent'` has been this repo's "declined on the
+merits" disposition since the adaptive-learning migration — in the CHECK
+constraint, written by `adjudicateFinalReviewFinding` alongside
+`adjudication_outcome` and `decided_at`. **No view consulted it**, so a properly
+recorded decision reported as an open obligation on every push, forever.
+Measured: **36 of 231** rows for this repo, 15.6%. `ed41ec78`.
+
+The base view gained one derived column, `is_open_disposition`. Every reader
+that answers *"how many obligations"* consumes it; only the census view and the
+new `countAcceptedPermanent` see past it. Live after the change: **132 open · 36
+permanently accepted**.
+
+**`IS DISTINCT FROM`, never `<>`** — 190 of those 231 rows have `user_action IS
+NULL`, and `NULL <> 'accepted-permanent'` is NULL rather than true, so a bare
+`<>` drops every one of them and silently empties the nag. Proven by reverting
+exactly that one character on a disposable Postgres: the NULL test went red and
+six others stayed green.
+
+**The filter applies at EVERY age, not just in the nag window.** `--all-ages`
+means "ignore the time bounds", not "include work that was decided". Filtering
+one side only would silently add a non-temporal term to the
+`allAges − windowed` gap, which the aged-visibility suite asserts *is* the
+temporally-excluded set. Two of its assertions were extended for the new
+dimension rather than relaxed — the slice test now names `is_open_disposition`
+as a third flag (its invariant was "no parallel re-derivation", which stands).
+
+**The plan was overtaken while it sat Approved.** Re-measured before
+implementing: D3 (aged cohort), D5/M1 (base view) and D6 (retrieval) had all
+shipped from another session, *better* than specified — plus `notYetDue`,
+`prePractice` and a `practiceStart` anchor this plan never conceived of, and the
+window moved 7–30d → 14d. Every figure in the plan was stale (201→158, 44→36).
+Re-scoped to D1+D2 rather than implementing against fiction.
+
+**`/cycle`'s preflight earned its keep twice.** It refused a `Files: no fixed
+set` cluster — a 157-row burn-down has no file scope, so `--autonomous`
+structurally cannot execute it — and `ship-commit` refused a commit missing
+`--expect-head`, during a run in which another session rebased `main` underneath
+it.
+
+**The audit found a live crash unrelated to the change** (`be2996a5`):
+`lock-with-test --worksheet` threw `allAges is not defined` on every
+invocation — the exact command `/ship` 0.5b prints for operators. Fixed under
+the impact-not-authorship rule: a hard crash in a file this change touches.
+
+Also this session: the `--files-from` manifest was the only lossy hop in an
+otherwise NUL-clean chain (`ba231fbb`); `--files` was a filter over the plan and
+never a source of files, so a changed file could reach no pass at all
+(`a6d31ab6` — measured: `duplication-detector.mjs` in scope for 15 consecutive
+rounds, in zero rounds' `code_files`); and `/ship` 0.5e told operators to count
+capped `rows` for three days after the CLI began emitting a real total
+(`1c076eb9` — the instruction produced 20 against an actual 201).
+
+**Left open, deliberately**: the §6 follow-on campaign (~190 genuinely-open
+rows) is human-judgement work with no file scope. It is now unblocked — the
+nudge can finally tell *decided* from *open*. And `cross-skill.mjs` carries ~10
+pre-existing HIGHs from the audit (tenant scoping, unverified writes,
+non-deterministic context hash) that are independent of this change and want
+their own pass.
+
+## 2026-08-11 — the candidate promotion path is gone, and the ratchet it leaves behind
 
 Full removal of the persona-consistency candidate/promotion path: the promoter
 (959 lines), `ux-lock/candidate-spec.mjs`, `store/candidate-pagination.mjs`,

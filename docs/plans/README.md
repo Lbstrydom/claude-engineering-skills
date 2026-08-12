@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**9 active · 179 terminal · 27 audit summaries · 4 reference docs**
+**8 active · 180 terminal · 27 audit summaries · 4 reference docs**
 
 ---
 
@@ -29,7 +29,6 @@ This is the list to read when asking "what is in flight?".
 | [A transactional commit boundary for `ship-commit`](./ship-commit-transaction.md) | `Draft` | not started; trigger-gated; Phase 1 answered in §2.1 and the cost widened |
 | [Standing Queue Burndown — the three gates that fire on every ship](./standing-queue-burndown.md) | `In Progress` | Q1 38 code rows, Q2 unknown (reader reports no total), Q3 68 actionable; measured 2026-08-09 |
 | [Tiered Recall-Weighted Audit Pipeline](./tiered-recall-audit-pipeline.md) | `In Progress` | implementation complete (Clusters A-F implemented |
-| [Unremediated acceptances — honour the disposition that already exists](./unremediated-acceptance-backlog.md) | `Approved` |  |
 
 ## Superseded / abandoned
 
@@ -49,7 +48,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 176 completed plans</summary>
+<summary>Show all 177 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -219,6 +218,7 @@ source comments that no docs linter sees — stays valid.
 | [Decompose `tiered-pipeline.mjs` and `refresh.mjs::main()` God-Modules](./tiered-pipeline-refresh-god-module-decomposition.md) | `Complete` | implemented autonomously via `/cycle --autonomous` |
 | [Tiered-shadow cloud persistence + report CLI cross-repo aggregation](./tiered-shadow-cloud-persistence.md) | `Complete` |  |
 | [Distinguish "nothing to clean up" from "cleanup failed" in the install WAL](./transaction-wal-cleanup-failure-distinction.md) | `Complete` |  |
+| [Unremediated acceptances — honour the disposition that already exists](./unremediated-acceptance-backlog.md) | `Complete` | shipped 2026-08-11, `ed41ec78`) — the §6 follow-on |
 | [Upstream Issue Reports (consumer → source bug channel)](./upstream-issue-reports.md) | `Complete` | all 4 phases shipped 2026-07-31 — see Audit Trail + Implementation Log |
 | [/ux-lock selector policy — locate semantically, lint the drift](./ux-lock-selector-policy.md) | `Complete` | implemented + code-audited 2026-07-04; consolidated |
 | [Harden vcs.mjs's git-output parsing and find-rmsync-sites.mjs's scope resolution](./vcs-parsing-and-rmsync-scope-hardening.md) | `Complete` |  |

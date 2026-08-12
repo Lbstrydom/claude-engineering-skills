@@ -1,7 +1,8 @@
 # Plan: Unremediated acceptances — honour the disposition that already exists
 
 - **Date**: 2026-08-09 · **re-scoped 2026-08-11**
-- **Status**: Approved
+- **Status**: Complete (shipped 2026-08-11, `ed41ec78`) — the §6 follow-on
+  campaign is deliberately unstarted and is NOT a phase of this plan
 - **Author**: Claude + Louis
 - **Scope**: backend
 - **Target domain(s)**: `stores`, `supabase`, `cross-skill-bridge`, `skills-content`
