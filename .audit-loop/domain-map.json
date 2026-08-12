@@ -30,6 +30,10 @@
       "domain": "install"
     },
     {
+      "pattern": "scripts/lib/cross-skill/**",
+      "domain": "cross-skill-bridge"
+    },
+    {
       "pattern": "scripts/lib/store/**",
       "domain": "stores"
     },
