@@ -42,10 +42,27 @@ import crypto from 'node:crypto';
  * @param {{softFail?: boolean, reason?: string}} [opts]
  */
 export function emit(obj, opts = {}) {
-  process.stdout.write(JSON.stringify(obj) + '\n');
+  // `JSON.stringify(undefined)` returns the VALUE undefined, so the old
+  // `JSON.stringify(obj) + '\n'` wrote the literal string "undefined\n" to
+  // stdout — invalid JSON on the one channel that is contractually
+  // machine-readable, and silent. Same for a value whose `toJSON` returns
+  // undefined. Refusing is the only honest option: a consumer parsing stdout
+  // cannot recover from it, and writing nothing would look like a command that
+  // produced no output.
+  const line = JSON.stringify(obj);
+  if (line === undefined) {
+    throw new TypeError(
+      'emit() was given a value that does not serialise to JSON (undefined, a function, or a symbol). '
+      + 'stdout is the machine-readable channel — writing "undefined" there is invalid JSON a consumer cannot parse.',
+    );
+  }
+  process.stdout.write(`${line}\n`);
   if (obj && typeof obj === 'object' && obj.ok === false) {
     if (opts.softFail === true) {
-      if (!opts.reason) {
+      // A non-empty STRING, not any truthy value: `{}`, `[]` and `'   '` all
+      // pass a bare `!opts.reason` while explaining nothing, which is the
+      // silencer this requirement exists to prevent.
+      if (typeof opts.reason !== 'string' || !opts.reason.trim()) {
         throw new Error(
           'emit({ok:false}, {softFail:true}) requires a written `reason` — an unexplained '
           + 'exemption from the exit-code coupling is exactly the silence §2b F4 removes.',
@@ -102,9 +119,33 @@ export function sha(buf, len = 12) {
  * @returns {string|null}
  */
 export function argOption(name, dflt = null) {
-  const i = process.argv.indexOf(`--${name}`);
-  const next = i >= 0 ? process.argv[i + 1] : undefined;
-  return next !== undefined && !next.startsWith('--') ? next : dflt;
+  // `--name=value` as well as `--name value`. The two halves of this seam
+  // DISAGREED until 2026-08-12: `assertKnownFlags` explicitly accepts the `=`
+  // form (it validates the name half), so `--limit=10` passed the guard and
+  // then landed here, where `indexOf('--limit')` found nothing and the DEFAULT
+  // was returned. Accepted, validated, and silently dropped — the
+  // accepted-and-inert class `cli:flags:gate` exists to catch, one layer below
+  // the gate. Found by the consolidated Gemini gate and confirmed by executing
+  // it, not by reading.
+  // LAST occurrence wins — see hasFlag. A wrapper appending an override to an
+  // inherited argument list is the case that makes first-wins surprising.
+  // Stops at the POSIX `--` terminator, matching the cross-skill dispatcher's
+  // flagRegion. The two DISAGREED, which is the same validated-vs-consumed
+  // drift Cluster D fixed inside the dispatcher: a literal `--limit` after
+  // `--` is a positional, and reading it as a flag is how a value meant for a
+  // sub-command gets consumed by its wrapper.
+  const stop = process.argv.indexOf('--');
+  const region = stop < 0 ? process.argv : process.argv.slice(0, stop);
+  let found;
+  for (let i = 0; i < region.length; i++) {
+    const a = region[i];
+    if (a.startsWith(`--${name}=`)) found = a.slice(name.length + 3);
+    else if (a === `--${name}`) {
+      const next = region[i + 1];
+      if (next !== undefined && !next.startsWith('--')) found = next;
+    }
+  }
+  return found !== undefined ? found : dflt;
 }
 
 /**
@@ -113,7 +154,33 @@ export function argOption(name, dflt = null) {
  * @returns {boolean}
  */
 export function hasFlag(name) {
-  return process.argv.includes(`--${name}`);
+  // `--name=<v>` is honoured for the same reason argOption had to learn it:
+  // assertKnownFlags accepts the `=` form, so a boolean written that way would
+  // otherwise be accepted and inert. The explicit falsy spellings mean OFF —
+  // `--dry-run=false` reading as "dry-run enabled" is the one interpretation
+  // nobody expects.
+  //
+  // LAST occurrence wins, which is the standard CLI convention and what a
+  // wrapper script relies on when it appends an override to an inherited
+  // argument list. The first cut returned true for a bare `--name` found
+  // ANYWHERE, so a later `--name=false` was silently ignored — an override that
+  // validates and does nothing, which is the very class this seam was being
+  // fixed for.
+  // Stops at the POSIX `--` terminator, matching the cross-skill dispatcher's
+  // flagRegion. The two DISAGREED, which is the same validated-vs-consumed
+  // drift Cluster D fixed inside the dispatcher: a literal `--limit` after
+  // `--` is a positional, and reading it as a flag is how a value meant for a
+  // sub-command gets consumed by its wrapper.
+  const stop = process.argv.indexOf('--');
+  const region = stop < 0 ? process.argv : process.argv.slice(0, stop);
+  let present = false;
+  for (const a of region) {
+    if (a === `--${name}`) present = true;
+    else if (a.startsWith(`--${name}=`)) {
+      present = !['false', '0', 'no', 'off', ''].includes(a.slice(name.length + 3).toLowerCase());
+    }
+  }
+  return present;
 }
 
 /**

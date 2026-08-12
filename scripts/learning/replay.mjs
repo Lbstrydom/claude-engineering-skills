@@ -23,6 +23,7 @@
  */
 import 'dotenv/config';
 import path from 'node:path';
+import { assertKnownFlags, ArgvError } from '../lib/cli-io.mjs';
 import { pathToFileURL } from 'node:url';
 
 import {
@@ -117,8 +118,41 @@ const isMain = (() => {
   } catch { return false; }
 })();
 
+/**
+ * Every flag here takes a VALUE, so the token after it is not a positional.
+ *
+ * Declared rather than inferred, because the alternative — "anything not
+ * starting with `--`" — silently swallowed the flag's value: measured
+ * 2026-08-12, `replay --repo owner/repo pass_selection` took `owner/repo` as
+ * the decision type and failed with "no built-in rewardFn for
+ * decision_type='owner/repo'", which reads as a bad decision type rather than a
+ * misparsed argument. Found by the consolidated Gemini gate, confirmed by
+ * executing it.
+ */
+const VALUED_FLAGS = new Set(['policy', 'baseline', 'since', 'repo', 'repo-id', 'format']);
+
+/** Accepted flags — refused rather than ignored (assertKnownFlags at the entry). */
+const KNOWN_FLAGS = [...VALUED_FLAGS].map((f) => `--${f}`).concat(['--help', '--selfcheck-relocation']);
+
+/** Positionals, skipping each valued flag's value. `--name=value` consumes nothing extra. */
+export function replayPositionals(args) {
+  const out = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a.startsWith('--')) {
+      const name = a.slice(2).split('=')[0];
+      // A `--name=value` token carries its own value; only the space form
+      // consumes the NEXT token.
+      if (!a.includes('=') && VALUED_FLAGS.has(name)) i += 1;
+      continue;
+    }
+    out.push(a);
+  }
+  return out;
+}
+
 export async function runReplayCli(args) {
-  const positional = args.filter(a => !a.startsWith('--'));
+  const positional = replayPositionals(args);
   const decisionType = positional[0];
   if (!decisionType) {
     process.stderr.write('Usage: replay <decision_type> [--policy <path>] [--baseline <path>] [--since 30d] [--repo <name>] [--format json|markdown]\n');
@@ -170,6 +204,18 @@ export async function runReplayCli(args) {
 }
 
 if (isMain) {
+  // Flag validation was ABSENT, which is what made the positional misparse
+  // reachable in the first place: an unknown valued flag (`--nope value`)
+  // could not be refused, so its value fell through as the decision type.
+  // Adding the guard closes the class; VALUED_FLAGS only has to be right for
+  // flags that survive it. (Consolidated Gemini gate, round 2.)
+  try {
+    assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'learning/replay' });
+  } catch (err) {
+    if (err instanceof ArgvError) { process.stderr.write(`${err.message}
+`); process.exit(2); }
+    throw err;
+  }
   const result = await runReplayCli(process.argv.slice(2));
   process.exit(result.ok === false ? 1 : 0);
 }

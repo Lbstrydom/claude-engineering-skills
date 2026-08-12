@@ -25,7 +25,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { emit, assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
+import { emit, hasFlag, assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 
 const KNOWN_FLAGS = ['--json', '--update', '--selfcheck-relocation', '--help'];
 
@@ -72,12 +72,31 @@ function listJs(dir, out = []) {
  * is measuring its own documentation. The `reason` string inside a genuine
  * opt-out is stripped too, harmlessly: `softFail: true` sits outside it.
  */
-function stripCommentsAndStrings(src) {
+/** Replace a multi-line construct with its own newlines, so line numbers hold. */
+const blankOut = (m) => m.replace(/[^\n]/g, '');
+const STR_SQ = /'(?:\\.|[^'\\])*'/g;
+const STR_DQ = /"(?:\\.|[^"\\])*"/g;
+const STR_TPL = /`(?:\\.|[^`\\])*`/g;
+const BLOCK_COMMENT = /\/\*[\s\S]*?\*\//g;
+const LINE_COMMENT = /\/\/.*$/gm;
+
+function stripStringsFirst(src) {
   return src
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/^\s*\/\/.*$/gm, '')
-    .replace(/'(?:\\.|[^'\\])*'/g, "''")
-    .replace(/"(?:\\.|[^"\\])*"/g, '""');
+    .replace(BLOCK_COMMENT, blankOut)
+    .replace(STR_SQ, "''")
+    .replace(STR_DQ, '""')
+    .replace(STR_TPL, blankOut)
+    .replace(LINE_COMMENT, '');
+}
+
+/** The other ordering — comments before strings. See the union note in scanOptOuts. */
+function stripCommentsFirst(src) {
+  return src
+    .replace(BLOCK_COMMENT, blankOut)
+    .replace(LINE_COMMENT, '')
+    .replace(STR_SQ, "''")
+    .replace(STR_DQ, '""')
+    .replace(STR_TPL, blankOut);
 }
 
 export function scanOptOuts(repoRoot = REPO) {
@@ -95,18 +114,59 @@ export function scanOptOuts(repoRoot = REPO) {
       // narrower and more honest rule than trying to parse JavaScript with a
       // regex — and a genuine opt-out could never live in either file.
       if (rel === 'scripts/lib/cli-io.mjs' || rel === 'scripts/check-emit-exit-agreement.mjs') continue;
-      const src = stripCommentsAndStrings(fs.readFileSync(file, 'utf8'));
-      for (const m of src.matchAll(OPT_OUT_RE)) {
-        hits.push({ file: rel, line: src.slice(0, m.index).split('\n').length });
+      // Scanned under BOTH strip orderings, and the UNION is taken. A regex
+      // cannot lex JavaScript: strings-then-comments mis-handles an apostrophe
+      // in a line comment, comments-then-strings mis-handles a `//` inside a
+      // string. Either ordering alone can therefore MISS a real opt-out, and a
+      // false negative is the silent direction — the gate would under-report
+      // growth it exists to catch. A false positive is a loud DRIFT message
+      // someone corrects in a minute, so the union is the right trade.
+      const raw = fs.readFileSync(file, 'utf8');
+      const seen = new Map();
+      for (const src of [stripStringsFirst(raw), stripCommentsFirst(raw)]) {
+        for (const m of src.matchAll(OPT_OUT_RE)) {
+          const line = src.slice(0, m.index).split('\n').length;
+          // Keyed on line + COLUMN, not line alone. Two opt-outs on one line is
+          // pathological, but the failure direction is what decides it: keying
+          // on the line collapses them to one, and a ratchet that UNDER-counts
+          // silently admits the growth it exists to refuse.
+          const col = m.index - (src.lastIndexOf('\n', m.index) + 1);
+          const key = `${line}:${col}`;
+          if (!seen.has(key)) seen.set(key, { file: rel, line });
+        }
       }
+      hits.push(...seen.values());
     }
   }
   return hits.sort((a, b) => (a.file === b.file ? a.line - b.line : a.file.localeCompare(b.file)));
 }
 
+/**
+ * Read the baseline, FAILING CLOSED on anything that is not a well-formed one.
+ *
+ * It was a bare `JSON.parse`, and the consequence was measured: a baseline of
+ * `{}` or `[]` yields `base.count === undefined`, and `hits.length > undefined`
+ * is FALSE — so a corrupted or emptied baseline made the gate pass with real
+ * opt-outs live. A gate that goes green on a damaged input is worse than no
+ * gate, because it reports coverage it does not have. Treating a malformed
+ * baseline as `count: 0` makes any opt-out at all read as growth, which is the
+ * safe direction: loud and fixable rather than silent.
+ */
 function readBaseline() {
   if (!fs.existsSync(BASELINE_PATH)) return { count: 0, files: {} };
-  return JSON.parse(fs.readFileSync(BASELINE_PATH, 'utf8'));
+  let parsed;
+  try {
+    parsed = JSON.parse(fs.readFileSync(BASELINE_PATH, 'utf8'));
+  } catch (err) {
+    process.stderr.write(`  [emit-exit] baseline is not valid JSON (${err.message}) — treating it as 0\n`);
+    return { count: 0, files: {} };
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)
+      || !Number.isInteger(parsed.count) || parsed.count < 0) {
+    process.stderr.write('  [emit-exit] baseline is malformed (expected {count:<int>, files:{}}) — treating it as 0\n');
+    return { count: 0, files: {} };
+  }
+  return { count: parsed.count, files: parsed.files && typeof parsed.files === 'object' ? parsed.files : {} };
 }
 
 function main() {
@@ -129,7 +189,12 @@ function main() {
   const byFile = {};
   for (const h of hits) byFile[h.file] = (byFile[h.file] || 0) + 1;
 
-  if (process.argv.includes('--update')) {
+  // `hasFlag`, not `.includes` — assertKnownFlags accepts `--update=true`, so a
+  // bare includes() check would let the equals form pass validation and then
+  // silently run the GATING path instead of re-baselining. That is the same
+  // accepted-and-inert defect this gate's sibling fix closed in cli-io.mjs,
+  // reproduced inside a gate (consolidated Gemini gate, round 2).
+  if (hasFlag('update')) {
     fs.mkdirSync(path.dirname(BASELINE_PATH), { recursive: true });
     fs.writeFileSync(BASELINE_PATH, `${JSON.stringify({ count: hits.length, files: byFile }, null, 2)}\n`);
     process.stderr.write(`  [emit-exit] baseline re-written: ${hits.length} declared opt-out(s)\n`);
@@ -140,7 +205,7 @@ function main() {
   const grew = hits.length > base.count;
   const shrank = hits.length < base.count;
 
-  if (process.argv.includes('--json')) {
+  if (hasFlag('json')) {
     emit({ ok: !grew, count: hits.length, baseline: base.count, grew, shrank, files: byFile });
     return;
   }
