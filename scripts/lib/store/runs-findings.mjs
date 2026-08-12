@@ -106,7 +106,7 @@ export async function persistKeptEmbeddings(exec, keptFindings, vectorByFinding,
   for (const f of keptFindings) {
     const vec = vectorByFinding.get(f);
     if (!vec) continue;
-    const id = idByFingerprint.get(f._hash || 'unknown');
+    const id = idByFingerprint.get(fingerprintOf(f));
     if (!id) continue;
     try {
       const text = (typeof f.detail === 'string' ? f.detail : '').slice(0, 500);
@@ -376,7 +376,19 @@ export async function recordRunComplete(runId, stats) {
     // return a receipt saying it applied — the unverified-write-success class
     // this plan exists to remove, reproduced inside its own reporting path.
     if ((res?.rowCount ?? 0) === 0) {
-      return { applied: false, rows: 0, reason: 'run-row-absent' };
+      // Carries an ERROR, not just a reason (final gate G2). Without it the
+      // drain reads a non-throwing `{applied:false}` as a clean decline — not
+      // the artifact's fault, so `attempts` is not incremented — and because
+      // `audit.runComplete` is KEYED, the artifact stays queued and is retried
+      // on every drain for ever. A plain Error classifies `retryable: false`
+      // (measured), so it quarantines on the FIRST failure, which is right: a
+      // run row that does not exist now will not exist later.
+      return {
+        applied: false,
+        rows: 0,
+        reason: 'run-row-absent',
+        error: new Error(`recordRunComplete: no audit_runs row with id ${runId} — nothing to complete`),
+      };
     }
     return { applied: true, rows: res.rowCount };
   } catch (err) {
@@ -475,6 +487,31 @@ const VALID_BUCKETS = new Set(['both', 'primary-only', 'shadow-only']);
  */
 const MISSING_CATEGORY_MARKER = '(missing — producer omitted category)';
 
+/**
+ * The row identity for a finding — `_hash` when the producer supplied one, a
+ * DERIVED digest when it did not.
+ *
+ * The fallback used to be the literal `'unknown'` for every hashless finding,
+ * which the final gate caught (G5/G3): `(run_id, finding_fingerprint)` is
+ * unique, so N hashless findings in one batch collapse onto ONE row — silent
+ * loss of N-1 real findings. Writing NULL instead is not available: the column
+ * is `NOT NULL` (verified against the live schema), so the gate's suggested
+ * "skip the dedup for unknowns" would have raised 23505 on the second row, or
+ * 21000 under the upsert.
+ *
+ * A content digest keeps every distinct finding distinct and keeps two IDENTICAL
+ * ones collapsing, which is what the fingerprint means everywhere else. The
+ * `missing-hash-` prefix keeps it visibly derived, so nobody reads it as a
+ * producer-supplied semantic hash.
+ */
+function fingerprintOf(f) {
+  if (f?._hash) return f._hash;
+  const digest = crypto.createHash('sha256')
+    .update(JSON.stringify([f?.severity ?? '', f?.category ?? '', f?.section ?? '', f?._primaryFile ?? '', f?.detail ?? '']))
+    .digest('hex').slice(0, 24);
+  return `missing-hash-${digest}`;
+}
+
 /** Coerce a bucket value to the valid domain or null (logs unexpected values). */
 function normaliseBucket(b) {
   if (b == null) return null;
@@ -545,7 +582,7 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
   const seenFingerprints = new Set();
   let intraBatchDuplicates = 0;
   for (const f of suppressionKept) {
-    const fp = f._hash || 'unknown';
+    const fp = fingerprintOf(f);
     if (seenFingerprints.has(fp)) { intraBatchDuplicates++; continue; }
     seenFingerprints.add(fp);
     keptFindings.push(f);
@@ -559,7 +596,9 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
   const mappedRows = keptFindings.map((f) => {
     const base = {
       run_id: runId,
-      finding_fingerprint: f._hash || 'unknown',
+      // Same oracle as the dedup above and the embedding lookup — three
+      // spellings of one identity is how a key silently stops matching itself.
+      finding_fingerprint: fingerprintOf(f),
       pass_name: passName,
       severity: f.severity,
       category: f.category,
@@ -1598,7 +1637,7 @@ export async function recordSuppressionEvents(runId, suppressionResult) {
   const rows = [
     ...suppressionResult.suppressed.map((s) => ({
       run_id: runId,
-      finding_fingerprint: s.finding?._hash || 'unknown',
+      finding_fingerprint: fingerprintOf(s.finding),
       matched_topic_id: s.matchedTopic,
       match_score: s.matchScore,
       action: 'suppressed',
@@ -1606,7 +1645,7 @@ export async function recordSuppressionEvents(runId, suppressionResult) {
     })),
     ...suppressionResult.reopened.map((f) => ({
       run_id: runId,
-      finding_fingerprint: f._hash || 'unknown',
+      finding_fingerprint: fingerprintOf(f),
       matched_topic_id: f._matchedTopic,
       match_score: f._matchScore,
       action: 'reopened',

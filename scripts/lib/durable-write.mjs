@@ -352,16 +352,28 @@ export function isConnectionScoped(err) {
   //
   // So discriminate on the SCOPE the code describes:
   const code = String(err?.code || '');
-  if (/^E[A-Z]+$/.test(code)) {
+  // `[A-Z_]`, not `[A-Z]` (final gate G4): `EAI_AGAIN` — a DNS resolution
+  // timeout, i.e. the store could not even be looked up — carries an
+  // underscore and fell through to the artifact-scoped branch, where a
+  // name-server blip would burn every queued artifact's retry budget. Measured:
+  // the classifier calls it `transient`, so only this regex stood between it
+  // and the right answer.
+  if (/^E[A-Z_]+$/.test(code)) {
     // Node syscall code — the socket never got there. Defer to the classifier
     // for whether it is retryable at all (EACCES is not an outage).
     return normalizePostgresError(err).reason === 'transient';
   }
   // SQLSTATE class 08 is `connection_exception`; 57P01/02/03 are the server
-  // telling us it is shutting down or terminating the backend. Both are "the
-  // store went away". Class 40 (40001 serialisation, 40P01 deadlock), class 23
-  // (integrity) and class 22 (data) are all about THIS statement.
-  return code.startsWith('08') || /^57P0[123]$/.test(code);
+  // telling us it is shutting down or terminating the backend. Class 53 is
+  // `insufficient_resources` — 53100 disk full, 53200 out of memory, 53300 too
+  // many connections, 53400 configuration limit — added by the final gate (G4).
+  // Every one of those is a statement about the SERVER's capacity that will be
+  // identical for every artifact behind it, which is the precise definition of
+  // connection-scoped here; charging them to the data is how a capacity
+  // incident quarantines a healthy backlog. Class 40 (40001 serialisation,
+  // 40P01 deadlock), class 23 (integrity) and class 22 (data) remain about THIS
+  // statement.
+  return code.startsWith('08') || code.startsWith('53') || /^57P0[123]$/.test(code);
 }
 
 /**
@@ -517,9 +529,24 @@ async function drainLocked({ repoRoot, cap, isConnectionError, isTracked }) {
       // `git add -f`, so it is not ours and schema validity says nothing about
       // that. Refusing it is cheap and keys on a property an attacker
       // committing a file cannot avoid producing.
-      if (isTracked?.(path.join(spillDir(repoRoot), name))) return false;
+      // QUARANTINE it, do not merely decline (final gate G5). Returning false
+      // hands the artifact back to the queue under its own name, so a planted
+      // file would be re-examined and re-refused on every drain for ever —
+      // occupying admission capacity and reading, in the counters, exactly like
+      // a store that keeps failing. "Refused" has to be a terminal state or it
+      // is not a control, just a delay.
+      if (isTracked?.(path.join(spillDir(repoRoot), name))) {
+        quarantine(repoRoot, held, name, envelope, 'git-tracked artifact refused: not written by a runtime drain');
+        return false;
+      }
       const spec = _registry.get(envelope.writerId);
-      if (!spec) return false;
+      // Same reasoning: an unknown writerId is not going to become known by
+      // being asked again. The parse step above already quarantines version and
+      // id mismatches; this is the belt for a registry that changed mid-drain.
+      if (!spec) {
+        quarantine(repoRoot, held, name, envelope, `unknown writerId "${envelope.writerId}"`);
+        return false;
+      }
 
       try {
         const res = await spec.replay(envelope.payload);

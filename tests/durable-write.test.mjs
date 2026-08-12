@@ -25,6 +25,7 @@ import {
   registerWriter, durableWrite, drainSpill, spillSummary,
   registeredWriters, _resetRegistry, isConnectionScoped, checkAdmission, SPILL_DIR, LOST_SUBDIR,
 } from '../scripts/lib/durable-write.mjs';
+import { REJECTED_SUBDIR } from '../scripts/lib/outbox-envelope.mjs';
 
 const mkTmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), p));
 const rmTmp = (d) => {
@@ -212,8 +213,21 @@ test('drain refuses a git-TRACKED artifact — provenance, not just shape', asyn
     assert.equal(replayed, 0, 'a tracked artifact must never reach replay');
     assert.equal(refused.drained, 0);
 
-    // Positive control: the SAME artifact drains once it is not tracked. Without
-    // this, "0 drained" could equally mean the drain never ran.
+    // Refusal is TERMINAL as of the final gate (G5): a tracked artifact is
+    // quarantined rather than handed back, because an artifact that is refused
+    // and requeued is re-refused on every drain for ever. So assert that, and
+    // note the consequence for this test — the positive control below needs a
+    // FRESH artifact, since this one is no longer in the queue.
+    assert.ok(fs.existsSync(path.join(spill(root), REJECTED_SUBDIR, 'w-seed.json')),
+      'the refused artifact must be quarantined');
+    assert.ok(!fs.existsSync(path.join(spill(root), 'w-seed.json')),
+      'and must not stay in the replay queue to be refused again');
+
+    // Positive control: an equivalent artifact drains once it is not tracked.
+    // Without this, "0 drained" could equally mean the drain never ran.
+    fs.writeFileSync(path.join(spill(root), 'w-seed2.json'), `${JSON.stringify({
+      v: 1, fingerprint: 'w-seed2', writerId: 'w', schemaVersion: 1, payload: { id: 1 },
+    })}\n`);
     const allowed = await drainSpill({ repoRoot: root, isCloudEnabled: () => true, isTracked: () => false });
     assert.equal(replayed, 1, 'and an untracked one does reach replay');
     assert.equal(allowed.drained, 1);

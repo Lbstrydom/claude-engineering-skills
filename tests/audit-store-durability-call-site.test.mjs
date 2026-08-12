@@ -274,6 +274,7 @@ describe('a declined write is `skipped`, not `lost`', () => {
       'no-persistable-rows': 'terminal success: the payload maps to zero rows on every attempt',
       'no-rows': 'terminal success: the payload maps to zero rows on every attempt',
       'repo-identity-unresolved': 'a REFUSAL, not a decline — the sync would have mislabelled repo-scoped patterns as cross-repo GLOBAL, so it must be counted, not passed over',
+      'no-pool': 'final gate G1: classified as a FAILURE deliberately. getPool() returning null means no DSN resolved, which looks like a decline — but the state is barely reachable, so no test can pin the reading down, and mistaking a real failure for a decline DELETES the envelope while the converse only spills one.',
     };
 
     // Match the RECEIPT shape specifically — `{applied, rows, reason}` — not any
@@ -302,6 +303,53 @@ describe('a declined write is `skipped`, not `lost`', () => {
       assert.ok(emitted.has(r), `'${r}' is treated as a decline but no store function returns it`);
       assert.ok(!FAILURES[r], `'${r}' cannot be both a decline and a failure`);
     }
+  });
+});
+
+// ── The consolidated final gate's findings, pinned ──────────────────────────
+
+describe('final gate (A+B+C union diff)', () => {
+  test('G2 — an absent run row is terminal, not retried for ever', async () => {
+    // `audit.runComplete` is KEYED, so a non-throwing {applied:false} spills and
+    // is replayed on every drain with `attempts` never incrementing: an
+    // un-completable payload that outlives the run it describes. Carrying an
+    // error makes it artifact-scoped; a plain Error classifies retryable:false
+    // (measured), so it quarantines on the first failure.
+    const src = read('scripts/lib/store/runs-findings.mjs');
+    const block = src.slice(src.indexOf("reason: 'run-row-absent'") - 800, src.indexOf("reason: 'run-row-absent'") + 300);
+    assert.match(block, /error: new Error\(/,
+      'run-row-absent must carry an error, or a keyed writer retries it for ever');
+  });
+
+  test('G3 — two hashless findings do not collapse onto one row', () => {
+    // `finding_fingerprint` is NOT NULL (verified against the live schema), so
+    // the shared 'unknown' literal made every hashless finding the same row
+    // under the unique index. A derived digest keeps distinct findings distinct.
+    const src = read('scripts/lib/store/runs-findings.mjs');
+    assert.ok(!/finding_fingerprint: f\._hash \|\| 'unknown'/.test(src),
+      'the shared unknown literal collapses every hashless finding onto one row');
+    assert.match(src, /function fingerprintOf\(f\)/);
+    // One oracle, not three: the dedup key, the written column and the
+    // embedding lookup must all be the same expression.
+    const uses = [...src.matchAll(/fingerprintOf\(/g)];
+    assert.ok(uses.length >= 5, `every fingerprint site must route through the oracle (found ${uses.length})`);
+  });
+
+  test('G4 — the connection classifier sees EAI_AGAIN and capacity limits', async () => {
+    const { isConnectionScoped } = await import('../scripts/lib/durable-write.mjs');
+    // Store-level: the drain must abort and charge NOTHING to the artifacts.
+    assert.equal(isConnectionScoped(Object.assign(new Error('dns'), { code: 'EAI_AGAIN' })), true,
+      'a DNS timeout is the store being unreachable, not a bad row');
+    assert.equal(isConnectionScoped(Object.assign(new Error('x'), { code: '53300' })), true,
+      'too_many_connections is server capacity — identical for every artifact behind it');
+    assert.equal(isConnectionScoped(Object.assign(new Error('x'), { code: '08006' })), true);
+    // Artifact-level: these must NOT abort the drain, or one poison row stalls
+    // the whole queue. This half is what stops the fix over-reaching.
+    assert.equal(isConnectionScoped(Object.assign(new Error('x'), { code: '40001' })), false,
+      'a serialisation failure is about THIS transaction');
+    assert.equal(isConnectionScoped(Object.assign(new Error('x'), { code: '23505' })), false,
+      'a constraint violation is about THIS row');
+    assert.equal(isConnectionScoped(Object.assign(new Error('x'), { code: '22P02' })), false);
   });
 });
 
@@ -345,8 +393,16 @@ describe('git-tracked artifacts are refused', () => {
       const res = await drainSpill({ repoRoot: root, isCloudEnabled: () => true });
       assert.equal(replayed, 0, 'a tracked artifact must never reach replay');
       assert.equal(res.drained, 0);
-      assert.ok(fs.existsSync(path.join(dir, 'planted.json')) || fs.existsSync(path.join(dir, 'rejected', 'planted.json')),
-        'refused, not deleted — evidence is kept either way');
+      // QUARANTINED, specifically. The first version of this assertion was
+      // `exists(spill/planted.json) || exists(rejected/planted.json)`, which
+      // passed whether the artifact was quarantined or handed straight back to
+      // the queue — and handing it back is an infinite re-refusal loop, which
+      // the final gate (G5) found and this test could not. An `||` across the
+      // two outcomes asserts only that the file still exists somewhere.
+      assert.ok(fs.existsSync(path.join(dir, 'rejected', 'planted.json')),
+        'a refused artifact must be quarantined, not returned to the queue to be refused again for ever');
+      assert.ok(!fs.existsSync(path.join(dir, 'planted.json')),
+        'and must not remain in the replay queue');
     } finally {
       fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }

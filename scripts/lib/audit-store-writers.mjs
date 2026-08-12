@@ -58,7 +58,16 @@ import { syncBanditArms, syncFalsePositivePatterns } from './store/bandit-fp.mjs
  *    That IS a failure of this write, and it keeps the normal spilled/lost
  *    treatment so the artifact survives for the next drain.
  */
-const DECLINED_REASONS = new Set(['cloud-off', 'no-pool', 'no-run-id']);
+// `no-pool` is deliberately NOT here (final gate G1). The gate's stated
+// mechanism is false — `getPool()` returns null only when no DSN resolves, and
+// pool exhaustion THROWS from `pool.query`, reaching the catch as
+// `write-failed`. But the classification is unfalsifiable in place (that state
+// is barely reachable, so no test can distinguish the two readings) and the two
+// errors are not symmetric: calling a real failure a decline DELETES the
+// envelope and loses the write, while calling a decline a failure only spills
+// an artifact a later drain retires. When a classification cannot be pinned
+// down, take the side whose mistake is recoverable.
+const DECLINED_REASONS = new Set(['cloud-off', 'no-run-id']);
 
 async function receipt(promise) {
   const r = await promise;
