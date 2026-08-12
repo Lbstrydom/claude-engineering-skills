@@ -57,7 +57,48 @@ export function deriveIndex(ledger) {
   }));
 }
 
-function statusFor({ req, gap, override, ambiguous }) {
+/**
+ * Was this entry's CURRENT `needs-review` status caused by identity ambiguity
+ * (a split/merge/reword collision detected during a prior `reconcile`), as
+ * opposed to gap severity?
+ *
+ * **Why this has to be inferred rather than read.** `ambiguous` is a
+ * transient input to `statusFor` — computed fresh from the candidate-matching
+ * pass inside `reconcile`, fed straight into `statusFor`, and never persisted
+ * on the entry. Only its EFFECT (the resulting `status`) survives. But
+ * `statusFor`'s branches are exhaustive and mutually exclusive: `needs-review`
+ * comes from EXACTLY `ambiguous` OR a `contradictory`/`observed-but-unintended`
+ * gap — never both, never neither (an override-accept always wins to
+ * `active` first). So if an entry is already `needs-review` and its gap is
+ * NOT one of those two classes, ambiguity is the only remaining branch that
+ * could have produced it, and that inference is sound and complete — not a
+ * heuristic.
+ *
+ * **Why it matters.** A standalone pass that re-assesses only the GAP half of
+ * an entry (`requirements.mjs reassess-gaps`) must not silently drop this: a
+ * naive `ambiguous: false` recompute would demote every ambiguity-driven
+ * `needs-review` entry the moment its (unrelated, degraded) gap got
+ * reassessed — discarding a real split/merge-identity warning under the guise
+ * of fixing a different pass. Found live 2026-08-12: 7 of 14 current
+ * `needs-review` entries carried `gap:'none', <degraded-placeholder-rationale>`
+ * — exactly this shape.
+ *
+ * @param {{status: string, gap: {gap?: string}|null}} req
+ * @returns {boolean}
+ */
+export function inferAmbiguousFromStatus(req) {
+  return req.status === 'needs-review'
+    && !['contradictory', 'observed-but-unintended'].includes(req.gap?.gap);
+}
+
+/**
+ * Exported so a standalone gap-reassessment pass (`requirements.mjs
+ * reassess-gaps`) can recompute a ledger entry's status through the SAME rule
+ * `reconcile` uses, rather than re-deriving it — two copies of this precedence
+ * chain is exactly the two-oracle defect AGENTS.md's single-oracle rule exists
+ * to prevent.
+ */
+export function statusFor({ req, gap, override, ambiguous }) {
   if (override?.decision === 'accept') return 'active';
   if (ambiguous) return 'needs-review';            // split/merge/ambiguous identity (audit R2-M3)
   if (gap && (gap.gap === 'contradictory' || gap.gap === 'observed-but-unintended')) {

@@ -22,8 +22,8 @@ import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { withFileLock } from './lib/file-lock.mjs';
 import { extractRequirements } from './lib/requirements/extract.mjs';
-import { classifyGaps } from './lib/requirements/gap-challenge.mjs';
-import { loadLedger, writeLedger, reconcile, deriveIndex } from './lib/requirements/ledger.mjs';
+import { classifyGaps, classifyGapsBatched, isDegradedGapAssessment } from './lib/requirements/gap-challenge.mjs';
+import { loadLedger, writeLedger, reconcile, deriveIndex, statusFor, inferAmbiguousFromStatus } from './lib/requirements/ledger.mjs';
 import { renderRequirementsMap } from './lib/requirements/render.mjs';
 import { CandidatesFileSchema, GapsFileSchema, OverridesSchema } from './lib/requirements/schema.mjs';
 
@@ -38,6 +38,7 @@ const HELP = `requirements — extract / reconcile / index / render the de-facto
 
   node scripts/requirements.mjs extract --files <a,b,...> [--runs 2]
   node scripts/requirements.mjs reconcile
+  node scripts/requirements.mjs reassess-gaps [--dry-run]
   node scripts/requirements.mjs index [--json]
   node scripts/requirements.mjs render [--out docs/requirements-map.md]
 `;
@@ -58,6 +59,8 @@ const KNOWN_FLAGS = [
   '--json',
   // render
   '--out', '--check',
+  // reassess-gaps: preview the tally without writing the ledger
+  '--dry-run',
   // global
   '--help',
 ];
@@ -176,6 +179,85 @@ async function cmdReconcile(argv, baseDir) {
   }
 }
 
+/**
+ * Re-run the gap-challenge pass over EXISTING ledger entries whose prior
+ * assessment was a degraded placeholder — never a whole re-extract, and never
+ * over entries already genuinely assessed.
+ *
+ * **Why this command exists.** `classifyGaps` is called exactly once, inline,
+ * inside `cmdExtract`, over that single call's freshly-extracted candidates —
+ * there is no path to gap-challenge requirements already sitting in the
+ * ledger. Extraction is the expensive step (real LLM spend across every
+ * source file); re-running it just to get a second shot at gap assessment
+ * would waste that spend to fix a defect in a DIFFERENT, decoupled pass. This
+ * command targets only the pass that actually failed.
+ *
+ * Recomputes `status` through the exact same `statusFor` `reconcile` uses —
+ * `ambiguous: false` is correct here (no new candidates are being merged, so
+ * no split/merge identity question exists); `override` is read from
+ * `overrides.json` so a human accept-decision on a requirement cannot be
+ * silently overwritten by a gap re-assessment.
+ */
+async function cmdReassessGaps(argv, baseDir) {
+  const dryRun = argv.includes('--dry-run');
+  try {
+    await withFileLock(path.join(baseDir, LOCK), {}, async () => {
+      const ledger = loadLedger({ baseDir });
+      const overrides = (() => {
+        if (!fs.existsSync(path.join(baseDir, OVERRIDES))) return {};
+        try { return OverridesSchema.parse(JSON.parse(fs.readFileSync(path.join(baseDir, OVERRIDES), 'utf-8'))); }
+        catch (e) {
+          // Same fail-closed reasoning as cmdReconcile: overrides encode HUMAN
+          // intent, so an invalid file must block rather than silently apply
+          // no overrides (which could demote a human-accepted requirement).
+          throw new Error(`${OVERRIDES} is present but invalid — fix or remove it (operator overrides must not be silently dropped): ${e.message}`);
+        }
+      })();
+
+      const toReassess = ledger.requirements.filter((r) => isDegradedGapAssessment(r.gap));
+      if (toReassess.length === 0) {
+        process.stdout.write(`reassess-gaps: 0/${ledger.requirements.length} requirement(s) need reassessment — nothing to do\n`);
+        return;
+      }
+
+      const assessments = await classifyGapsBatched(toReassess);
+      // classifyGaps's own contract guarantees one assessment per candidate
+      // (defaulting to a 'not assessed' placeholder for anything the LLM
+      // missed) — so this can only diverge if that contract breaks. A loud
+      // check here rather than a silent `byId.get(id) ?? skip`, because
+      // silently skipping entries is the exact failure class this command
+      // exists to fix.
+      if (assessments.length !== toReassess.length) {
+        throw new Error(`classifyGapsBatched returned ${assessments.length} assessments for ${toReassess.length} candidates — contract violation`);
+      }
+      const byId = new Map(assessments.map((a) => [a.requirementId, a]));
+
+      const byStatusBefore = ledger.requirements.reduce((m, r) => ((m[r.status] = (m[r.status] || 0) + 1), m), {});
+      for (const req of toReassess) {
+        // Computed on the OLD gap, before it is overwritten below — see
+        // `inferAmbiguousFromStatus`'s docstring for why this must not be a
+        // hardcoded `false`.
+        const wasAmbiguous = inferAmbiguousFromStatus(req);
+        const a = byId.get(req.id);
+        req.gap = { ...a, requirementId: req.id };
+        req.status = statusFor({ req, gap: req.gap, override: overrides[req.id], ambiguous: wasAmbiguous });
+      }
+      const byStatusAfter = ledger.requirements.reduce((m, r) => ((m[r.status] = (m[r.status] || 0) + 1), m), {});
+      const stillDegraded = ledger.requirements.filter((r) => isDegradedGapAssessment(r.gap)).length;
+
+      if (!dryRun) writeLedger(ledger, { baseDir });
+      process.stdout.write(
+        `reassess-gaps: ${toReassess.length}/${ledger.requirements.length} reassessed`
+        + `${dryRun ? ' (DRY RUN — not written)' : ''} → before ${JSON.stringify(byStatusBefore)} `
+        + `after ${JSON.stringify(byStatusAfter)} (still degraded: ${stillDegraded})\n`,
+      );
+    });
+  } catch (e) {
+    process.stderr.write(`Error: ${e.message}\n`);
+    process.exit(1);
+  }
+}
+
 function cmdIndex(argv, baseDir) {
   const idx = deriveIndex(loadLedger({ baseDir }));
   if (argv.includes('--json')) {
@@ -255,11 +337,12 @@ async function main() {
   if (!mode || mode === '--help' || mode === '-h') { process.stdout.write(HELP); process.exit(mode ? 0 : 1); }
   // Ensure `.requirements/` exists before any `withFileLock` — the lock
   // file lives inside it.
-  if (mode === 'extract' || mode === 'reconcile') {
+  if (mode === 'extract' || mode === 'reconcile' || mode === 'reassess-gaps') {
     fs.mkdirSync(path.join(baseDir, REQ_DIR), { recursive: true });
   }
   if (mode === 'extract') return cmdExtract(argv.slice(1), baseDir);
   if (mode === 'reconcile') return cmdReconcile(argv.slice(1), baseDir);
+  if (mode === 'reassess-gaps') return cmdReassessGaps(argv.slice(1), baseDir);
   if (mode === 'index') return cmdIndex(argv.slice(1), baseDir);
   if (mode === 'render') return cmdRender(argv.slice(1), baseDir);
   process.stderr.write(`Error: unknown command '${mode}'\n\n${HELP}`);

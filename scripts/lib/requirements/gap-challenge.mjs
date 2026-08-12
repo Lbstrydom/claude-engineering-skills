@@ -113,3 +113,91 @@ export async function classifyGaps(candidates, { timeoutMs = 120_000 } = {}) {
     requirementId: c.id, gap: 'none', conflictsWith: [], rationale: 'not assessed',
   });
 }
+
+/**
+ * True when a persisted `gap` assessment is a DEGRADED placeholder, never a
+ * genuine LLM judgement — i.e. it came from one of `classifyGaps`'s `benign()`
+ * fallbacks, not from a parsed response.
+ *
+ * **Why this exists.** `classifyGaps` makes ONE unbatched LLM call over every
+ * candidate handed to it, and the module's own comment already named the
+ * ceiling: "~50-70 output tokens per assessment; 16k comfortably covers a few
+ * hundred candidates... an over-large set degrades loudly to all-`none`."
+ * Measured against the 2026-08-12 whole-repo extract: 8 of 10 tranches (up to
+ * 1,460 candidates each) exceeded that ceiling, and `gap:'none'` — the SAME
+ * value a genuinely sound, LLM-assessed invariant gets — is indistinguishable
+ * from "never assessed" without reading `rationale`. Of 4,051 ledger entries,
+ * 2,083 (51%) carried exactly this placeholder. `needs-review` in the ledger
+ * (14 entries) was therefore drawn from the ~2,000 candidates small enough to
+ * actually get assessed, not from the whole ledger — a believable false zero
+ * hiding behind a real-looking status count.
+ *
+ * Matched on RATIONALE, not on `gap: 'none'` alone, because `'none'` is also
+ * the correct, genuine verdict for a sound invariant — collapsing the two
+ * would either flag every clean requirement for re-review (false positives
+ * drowning the real signal) or, read the other way round, do nothing at all.
+ * The degraded markers are exact strings `classifyGaps` itself emits — no
+ * genuine LLM rationale can collide with them, since the prompt's own example
+ * output never uses the literal phrase "gap-challenge" and the code coerces
+ * every other malformed case to one of these same fixed strings.
+ *
+ * @param {{gap?: string, rationale?: string}|null|undefined} gap
+ * @returns {boolean}
+ */
+export function isDegradedGapAssessment(gap) {
+  if (!gap) return true; // no assessment at all — never ran
+  const r = String(gap.rationale ?? '');
+  return r === 'not assessed'
+    || r === 'coerced — malformed assessment'
+    || r.startsWith('gap-challenge ');
+}
+
+/**
+ * `GAP_BATCH_SIZE` is derived the same way `CHUNK_TOKEN_BUDGET` is in
+ * `extract.mjs`: `GAP_MAX_OUTPUT_TOKENS` (16,000) divided by the per-assessment
+ * cost the module's own docstring states (~50-70 tokens), giving a realistic
+ * ceiling of ~228-320 candidates per call. 180 leaves margin for JSON
+ * structural overhead and the longer end of that per-assessment range —
+ * conservative on purpose, since the failure mode on the wrong side (silent
+ * `none`-degrade) is the whole reason this constant exists.
+ */
+export const GAP_BATCH_SIZE = 180;
+
+/**
+ * Split candidates into `GAP_BATCH_SIZE`-sized groups. Pure, so it is
+ * unit-testable without touching the network — the thing that actually needs
+ * verifying here is the arithmetic, not the LLM call.
+ *
+ * @param {object[]} candidates
+ * @returns {object[][]}
+ */
+export function chunkForGapChallenge(candidates, batchSize = GAP_BATCH_SIZE) {
+  const batches = [];
+  for (let i = 0; i < candidates.length; i += batchSize) batches.push(candidates.slice(i, i + batchSize));
+  return batches;
+}
+
+/**
+ * `classifyGaps`, batched to stay under the ceiling that caused the whole
+ * class of degradation `isDegradedGapAssessment` exists to detect.
+ *
+ * **Named limitation, not a silent one**: `gap: 'contradictory'` requires
+ * `conflictsWith` to name a REAL peer id, and `classifyGaps` only ever sees
+ * peers within the SAME call — so a contradiction between two requirements
+ * placed in different batches is structurally undetectable here. That is a
+ * real ceiling on this pass, not a bug; `classifyGaps`'s own per-item
+ * validation (dropping a `conflictsWith` id absent from ITS batch) already
+ * enforces it defensively, this docstring just names it as a property of
+ * batching rather than leaving it implicit.
+ *
+ * @param {object[]} candidates
+ * @param {{timeoutMs?: number, batchSize?: number}} [opts]
+ * @returns {Promise<object[]>}
+ */
+export async function classifyGapsBatched(candidates, { timeoutMs, batchSize = GAP_BATCH_SIZE } = {}) {
+  const out = [];
+  for (const batch of chunkForGapChallenge(candidates, batchSize)) {
+    out.push(...await classifyGaps(batch, { timeoutMs }));
+  }
+  return out;
+}

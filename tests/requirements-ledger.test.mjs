@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { loadLedger, writeLedger, reconcile, deriveIndex } from '../scripts/lib/requirements/ledger.mjs';
+import { loadLedger, writeLedger, reconcile, deriveIndex, statusFor, inferAmbiguousFromStatus } from '../scripts/lib/requirements/ledger.mjs';
 
 function cand(over = {}) {
   return {
@@ -108,5 +108,88 @@ describe('loadLedger / writeLedger / deriveIndex', () => {
     const l = reconcile({ candidates: [cand()], coveredFiles: COVERED, gapAssessments: [] });
     const idx = deriveIndex(l);
     assert.deepEqual(Object.keys(idx[0]).sort(), ['assertion', 'id', 'kind', 'status']);
+  });
+});
+
+describe('statusFor — exported for reassess-gaps to reuse, not re-derive', () => {
+  // Newly exported (2026-08-12) so a standalone gap-reassessment pass can
+  // recompute status through the SAME precedence `reconcile` uses. These pin
+  // that precedence directly, independent of the full reconcile() pipeline.
+  const req = (over = {}) => ({ seenInRuns: 2, ...over });
+
+  it('an override accept wins over everything, even a contradictory gap', () => {
+    assert.equal(statusFor({
+      req: req(), override: { decision: 'accept' },
+      gap: { gap: 'contradictory' }, ambiguous: true,
+    }), 'active');
+  });
+
+  it('ambiguous identity forces needs-review, even with a clean gap', () => {
+    assert.equal(statusFor({ req: req(), gap: { gap: 'none' }, ambiguous: true }), 'needs-review');
+  });
+
+  it('contradictory or observed-but-unintended forces needs-review', () => {
+    assert.equal(statusFor({ req: req(), gap: { gap: 'contradictory' }, ambiguous: false }), 'needs-review');
+    assert.equal(statusFor({ req: req(), gap: { gap: 'observed-but-unintended' }, ambiguous: false }), 'needs-review');
+  });
+
+  it('"untested" does NOT force needs-review — a real invariant with no linked test still activates', () => {
+    // Documented precedence, not an oversight: `untested` is advisory-visible
+    // in the map but does not gate status the way the other two gap classes
+    // do.
+    assert.equal(statusFor({ req: req(), gap: { gap: 'untested' }, ambiguous: false }), 'active');
+  });
+
+  it('seenInRuns < 2 is inferred-only, once gap/ambiguous/override are all clear', () => {
+    assert.equal(statusFor({ req: req({ seenInRuns: 1 }), gap: { gap: 'none' }, ambiguous: false }), 'inferred-only');
+  });
+
+  it('a clean gap seen twice is active', () => {
+    assert.equal(statusFor({ req: req(), gap: { gap: 'none' }, ambiguous: false }), 'active');
+  });
+
+  it('a MISSING gap (never assessed) behaves like a clean one for status purposes', () => {
+    // statusFor only demotes on an EXPLICIT contradictory/observed-but-unintended
+    // verdict — `gap: null` (never assessed) must not itself demote a
+    // requirement, or every degraded-placeholder entry would read as
+    // needs-review, masking the real signal with noise.
+    assert.equal(statusFor({ req: req(), gap: null, ambiguous: false }), 'active');
+  });
+});
+
+describe('inferAmbiguousFromStatus — reconstructing a dropped signal', () => {
+  // `ambiguous` is never persisted — only its effect (status) survives past
+  // the reconcile() call that computed it. This is the inference a standalone
+  // gap-reassessment pass needs to avoid silently demoting an
+  // ambiguity-driven needs-review entry the moment its UNRELATED gap gets
+  // reassessed. Found live: 7 of 14 real needs-review entries had this exact
+  // shape (gap:'none', a degraded-placeholder rationale).
+  it('needs-review + a non-severity gap ⇒ must have been ambiguity', () => {
+    assert.equal(inferAmbiguousFromStatus({ status: 'needs-review', gap: { gap: 'none' } }), true);
+    assert.equal(inferAmbiguousFromStatus({ status: 'needs-review', gap: null }), true);
+    assert.equal(inferAmbiguousFromStatus({ status: 'needs-review', gap: { gap: 'untested' } }), true);
+  });
+
+  it('needs-review + a SEVERITY gap ⇒ the gap explains it, not ambiguity', () => {
+    assert.equal(inferAmbiguousFromStatus({ status: 'needs-review', gap: { gap: 'contradictory' } }), false);
+    assert.equal(inferAmbiguousFromStatus({ status: 'needs-review', gap: { gap: 'observed-but-unintended' } }), false);
+  });
+
+  it('any other status is never ambiguity-driven', () => {
+    assert.equal(inferAmbiguousFromStatus({ status: 'active', gap: { gap: 'none' } }), false);
+    assert.equal(inferAmbiguousFromStatus({ status: 'inferred-only', gap: null }), false);
+  });
+
+  it('END-TO-END: an entry survives a gap reassessment without losing its needs-review status', () => {
+    // The regression this whole function exists to prevent, driven through
+    // the ACTUAL statusFor call a reassessment performs — not just the
+    // inference helper in isolation.
+    const req = { status: 'needs-review', gap: { gap: 'none', rationale: 'not assessed' }, seenInRuns: 2 };
+    const wasAmbiguous = inferAmbiguousFromStatus(req);
+    // Simulate the reassessment landing a genuinely CLEAN verdict.
+    req.gap = { gap: 'none', rationale: 'A sound, intentional invariant.' };
+    req.status = statusFor({ req, gap: req.gap, override: undefined, ambiguous: wasAmbiguous });
+    assert.equal(req.status, 'needs-review',
+      'a hardcoded ambiguous:false here would have demoted this entry — the exact bug this test pins');
   });
 });

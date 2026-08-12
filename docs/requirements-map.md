@@ -16,25 +16,29 @@ pie title Active invariants by kind
 | Status | Count |
 |---|---|
 | 🟢 active — enforced by /audit-code | 431 |
-| 🟡 needs-review — awaiting your call | 14 |
-| ⚪ inferred-only — refine backlog | 3606 |
+| 🟡 needs-review — awaiting your call | 18 |
+| ⚪ inferred-only — refine backlog | 3602 |
 
-## 🟡 Needs review (14)
+## 🟡 Needs review (18)
 
 | Gap | Assertion | Files |
 |---|---|---|
+| contradictory | Plan discovery must scan both docs/plans and docs/completed, include a Markdown file when it has a Status line or a first H1 matching "Plan:", and exclude filenames matching -audit-summary regardless | scripts/lib/dashboard/collect-reference.mjs |
+| contradictory | Plan discovery must scan both docs/plans and docs/completed, exclude Markdown files whose names match -audit-summary, and include a document as a plan only when it has a parseable Status-line presence | scripts/lib/dashboard/collect-reference.mjs |
 | observed-but-unintended | The shared glob matcher must preserve its current `**` behavior in which `**/` requires a slash and therefore does not match an empty directory segment. | scripts/lib/glob-match.mjs |
 | observed-but-unintended | The shared glob matcher must preserve its current `**/` semantics in which the slash remains mandatory and therefore `src/**/*.js` does not match `src/file.js`. | scripts/lib/glob-match.mjs |
-| none | When inserting a run row fails specifically because selector_policy_violations is an undefined column, the insert must be retried once without that field, while all other errors must propagate. | scripts/lib/store/plans-ship.mjs |
-| none | Every persisted finding must have a deterministic fingerprint derived from its supplied `_hash` or from its severity, category, section, primary file, and detail, so distinct hashless findings do not | scripts/lib/store/runs-findings.mjs |
+| untested | When inserting a run row fails specifically because selector_policy_violations is an undefined column, the insert must be retried once without that field, while all other errors must propagate. | scripts/lib/store/plans-ship.mjs |
+| untested | Every persisted finding must have a deterministic fingerprint derived from its supplied `_hash` or from its severity, category, section, primary file, and detail, so distinct hashless findings do not | scripts/lib/store/runs-findings.mjs |
 | contradictory | A modified, renamed, or copied symbol must be considered changed only when a base-side symbol with the same file identity, name, and kind has a different body-aware signature hash. | scripts/lib/audit/duplication-detector.mjs |
 | contradictory | A modified, renamed, or copied symbol must be considered a duplication candidate only when no base symbol with the same name and kind exists or its body-aware signature hash differs from the current s | scripts/lib/audit/duplication-detector.mjs |
-| none | A persisted false-positive pattern must set auto_suppress only when its accepted plus dismissed count meets learningConfig.minFpSamples and its EMA is below 0.15. | scripts/lib/store/bandit-fp.mjs |
-| none | A false-positive pattern may be marked auto_suppress only when its accepted-plus-dismissed sample count meets learningConfig.minFpSamples and its EMA is below 0.15. | scripts/lib/store/bandit-fp.mjs |
-| none | A pass-selection decision with findings but no adjudicated findings must remain unresolved, while a zero-finding run must resolve as `low-yield` with reward zero. | scripts/learning/backfill-outcomes.mjs |
+| untested | A persisted false-positive pattern must set auto_suppress only when its accepted plus dismissed count meets learningConfig.minFpSamples and its EMA is below 0.15. | scripts/lib/store/bandit-fp.mjs |
+| untested | A false-positive pattern may be marked auto_suppress only when its accepted-plus-dismissed sample count meets learningConfig.minFpSamples and its EMA is below 0.15. | scripts/lib/store/bandit-fp.mjs |
+| untested | A pass-selection decision with findings but no adjudicated findings must remain unresolved, while a zero-finding run must resolve as `low-yield` with reward zero. | scripts/learning/backfill-outcomes.mjs |
 | contradictory | Purpose-health query windows must be finite integer day counts clamped to the inclusive range 1 through 365, defaulting to 30 days for invalid input. | scripts/lib/store/purpose-health.mjs |
-| none | recordPlanVerificationItems must retry once without the skipped column only when the initial insert fails with PostgreSQL error code 42703, preserving per-criterion persistence for databases predating | scripts/lib/store/plans-ship.mjs |
-| none | recordPlanVerificationItems may retry without the skipped column only when the initial insert fails with PostgreSQL undefined-column error 42703, preserving all other criterion fields for older schema | scripts/lib/store/plans-ship.mjs |
+| untested | recordPlanVerificationItems must retry once without the skipped column only when the initial insert fails with PostgreSQL error code 42703, preserving per-criterion persistence for databases predating | scripts/lib/store/plans-ship.mjs |
+| contradictory | Human overrides must be appended as separate adjudication events that reference the overridden agent event and must not supersede or delete that agent event. | scripts/lib/store/campaign.mjs |
+| untested | recordPlanVerificationItems may retry without the skipped column only when the initial insert fails with PostgreSQL undefined-column error 42703, preserving all other criterion fields for older schema | scripts/lib/store/plans-ship.mjs |
+| contradictory | An adjudication event must delete prior finding_adjudication_events, insert the replacement event, and update the corresponding audit_findings denormalized outcome patch within one transaction. | scripts/lib/store/runs-findings.mjs |
 | contradictory | Purpose-health windowDays must be converted to a floored integer bounded from 1 through 365 before it is used in database queries. | scripts/lib/store/purpose-health.mjs |
 | untested | A quickfix pattern may be skipped only when its numeric acceptance rate is below the configured threshold and its total hit count is at least the configured minimum. | scripts/lib/learning/quickfix-stats.mjs |
 
@@ -707,7 +711,7 @@ pie title Active invariants by kind
 | `scripts/lib/dashboard/collect-cli.mjs` | 0 | 0 | 4 |
 | `scripts/lib/dashboard/collect-nav.mjs` | 2 | 0 | 1 |
 | `scripts/lib/dashboard/collect-purposes.mjs` | 0 | 0 | 5 |
-| `scripts/lib/dashboard/collect-reference.mjs` | 2 | 0 | 17 |
+| `scripts/lib/dashboard/collect-reference.mjs` | 2 | 2 | 15 |
 | `scripts/lib/dashboard/collect-telemetry.mjs` | 2 | 0 | 27 |
 | `scripts/lib/dashboard/collect-visual.mjs` | 0 | 0 | 1 |
 | `scripts/lib/dashboard/helpers.mjs` | 2 | 0 | 0 |
@@ -936,7 +940,7 @@ pie title Active invariants by kind
 | `scripts/lib/store/arch/symbols.mjs` | 1 | 0 | 10 |
 | `scripts/lib/store/arm-eval.mjs` | 1 | 0 | 4 |
 | `scripts/lib/store/bandit-fp.mjs` | 0 | 2 | 16 |
-| `scripts/lib/store/campaign.mjs` | 1 | 0 | 29 |
+| `scripts/lib/store/campaign.mjs` | 1 | 1 | 28 |
 | `scripts/lib/store/debt.mjs` | 1 | 0 | 2 |
 | `scripts/lib/store/friction.mjs` | 1 | 0 | 4 |
 | `scripts/lib/store/learning-decisions.mjs` | 1 | 0 | 6 |
@@ -949,7 +953,7 @@ pie title Active invariants by kind
 | `scripts/lib/store/plans-ship.mjs` | 4 | 3 | 53 |
 | `scripts/lib/store/purpose-health.mjs` | 0 | 2 | 6 |
 | `scripts/lib/store/repo.mjs` | 0 | 0 | 8 |
-| `scripts/lib/store/runs-findings.mjs` | 4 | 1 | 54 |
+| `scripts/lib/store/runs-findings.mjs` | 4 | 2 | 53 |
 | `scripts/lib/store/security.mjs` | 0 | 0 | 4 |
 | `scripts/lib/store/tiered-shadow.mjs` | 0 | 0 | 5 |
 | `scripts/lib/store/upstream-issues.mjs` | 0 | 0 | 12 |
