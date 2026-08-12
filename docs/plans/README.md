@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**9 active · 180 terminal · 27 audit summaries · 4 reference docs**
+**8 active · 181 terminal · 27 audit summaries · 4 reference docs**
 
 ---
 
@@ -21,7 +21,6 @@ This is the list to read when asking "what is in flight?".
 
 | Plan | Status | Notes |
 |---|---|---|
-| [Audit-store write durability and failure contract](./audit-store-write-durability.md) | `Draft` |  |
 | [cross-skill.mjs CLI integrity remediation](./cross-skill-cli-integrity.md) | `In Progress` | all 21 fixes landed + Gemini gate APPROVE; NOT `Complete` because the stated `/audit-code` bar (HIGH == 0) … |
 | [Event-Wiring Symmetry Check](./event-wiring-symmetry.md) | `Draft` |  |
 | [Final-Review Shadow Bake-Off (marginal-value re-test)](./final-review-shadow-bakeoff.md) | `In Progress` | activated 2026-07-31 — see §0 Activation Addendum |
@@ -49,7 +48,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 177 completed plans</summary>
+<summary>Show all 178 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -82,6 +81,7 @@ source comments that no docs linter sees — stays valid.
 | [Split `/audit-loop` into `/audit-plan` + `/audit-code`](./audit-loop-skill-split.md) | `Complete` | all 6 phases shipped 2026-04-27 |
 | [Claude Audit Loop v1.0](./audit-loop-v1.md) | `Complete` |  |
 | [Audit Orchestrator Hardening](./audit-orchestrator-hardening.md) | `Complete` | implemented (9 phases, 5 clusters), audit-code |
+| [Audit-store write durability and failure contract](./audit-store-write-durability.md) | `Complete` | all 6 phases shipped; the final gate ran twice over the union diff (`CONCERNS_REMAINING`, every finding act… |
 | [Plan — Consumer-side audit-tool staleness check (Option A)](./audit-tool-staleness-check.md) | `Complete` |  |
 | [Azure Embedding-Deployment Discovery + Provenance Truth](./azure-embed-deployment-discovery.md) | `Complete` | 2026-07-17) — all 3 clusters implemented + audited; consolidated Gemini gate APPROVE (0 findings); live-ver… |
 | [Azure AI Foundry Work Profile](./azure-work-profile.md) | `Complete` |  |

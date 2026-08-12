@@ -1,7 +1,7 @@
 # Plan: Audit-store write durability and failure contract
 
 - **Date**: 2026-08-11
-- **Status**: Draft
+- **Status**: Complete — all 6 phases shipped; the final gate ran twice over the union diff (`CONCERNS_REMAINING`, every finding acted on or dismissed with evidence). See "Code-audit trail" below, including one confirmed defect deliberately left for a separate change.
 - **Author**: Claude + Louis
 - **Scope**: backend
 - **Stack**: `js-ts` (detect-stack: `{stack:"js-ts", detectedFrom:["package.json"]}`)
@@ -56,6 +56,78 @@
 > `spill/` is the queue, `lost/` is an evidence drawer. The second HIGH —
 > a DB outage burning every artifact's retry budget — was a real queue-design
 > defect.
+
+> **Code-audit trail** (implementation, 2026-08-12 — distinct from the plan
+> audit above, which judged this document)
+>
+> | Gate | Verdict | Findings | Disposition |
+> |---|---|---|---|
+> | Cluster A `/audit-code` R1–R2 | `SIGNIFICANT_ISSUES` | H:14→0 in-cluster, M:23 | fixed / declined with named independence; 3 deferred-declared to B |
+> | Cluster B `/audit-code` R1 | `SIGNIFICANT_ISSUES` | H:10 M:22 L:2 | 4 in-cluster fixed, 3 dismissed with evidence, 1 confirmed-not-fixed (see below), rest out-of-cluster |
+> | Final gate R1 (union diff A+B+C) | `CONCERNS` | 5 new, 0 wrongly-dismissed, 0 over-engineering | 5/5 acted on |
+> | Final gate R2 (verification) | `CONCERNS_REMAINING` | 2 new | 1 fixed, 1 dismissed with a measurement |
+>
+> Architectural coherence: **"Strong"** at both final-gate rounds.
+>
+> **The three deferred-declared Cluster A items are closed**: `audit-store-writers.mjs`
+> exists and is the registry's only bootstrap; the `audit_runs` write-outcomes
+> migration (`20260812080000`) is applied; `lost` is signalled on the run result
+> and in `audit_runs.run_status`.
+>
+> **Three things the design got wrong, found by running it rather than reading it:**
+>
+> - **The plan traced FOUR fire-and-forget writes; there were FIVE.**
+>   `syncFalsePositivePatterns` was in the same cloud block, un-awaited, and
+>   would have survived a commit whose message claimed the block no longer was.
+>   Registered keyless as `learning.fpPatterns`.
+> - **Three outcomes were not enough.** With the store off, a keyless writer's
+>   decline was filed as `lost` — six artifacts accumulated in `lost/` within
+>   minutes of the migration, and every local-only run would have reported
+>   `runStatus: incomplete` with nothing wrong. A write never attempted is not a
+>   write that failed: `skipped` is the fourth outcome.
+> - **`spilled` had to count as incomplete too.** Only `lost` did at first, on
+>   the reasoning that a spill is recoverable — true, and beside the point: at
+>   the moment the row is written the data is not in the store.
+>
+> **Phase 1's migration made the pre-existing write path fragile, and Phase 3 is
+> what closes it.** Measured against the live store: with the unique index in
+> place a plain INSERT raises 23505 both for a duplicate within one statement
+> and for a replay of a committed row, while `ON CONFLICT DO UPDATE` succeeds.
+> So `recordFindings` becoming an upsert (plus an intra-batch collapse) is not a
+> refinement — without it, any run re-recording a fingerprint aborts its whole
+> batch.
+>
+> **Confirmed and deliberately NOT fixed**: `reasoningLevelForPass()` returns
+> `'high'` for the structure and wiring passes while both dispatch with
+> `reasoning: 'low'` (verified at both dispatch sites), so
+> `audit_pass_stats.reasoning_effort` records a guess that this plan now
+> persists durably. A real fabricated-telemetry defect, but fixing it properly
+> means deriving the level from the dispatch rather than substituting a better
+> guess — its own change, with its own oracle. **Trigger**: any work touching
+> pass dispatch or `audit_pass_stats`.
+>
+> **Dismissed with evidence, not argument** (each was checked, not reasoned
+> about): a "missing" fingerprint-unique migration that exists twice; the claim
+> that `audit.runComplete` cannot report its own delivery (true and inherent —
+> and already visible, since the outcome is tallied onto the returned
+> `writeOutcomes` and the artifact is spill-eligible); a request for a
+> spill/lost retention framework (§7 refuses auto-eviction by design); a
+> connection-pool data-loss path whose stated mechanism does not exist
+> (`getPool()` returns null only for an unresolved DSN) — **fixed anyway**,
+> because the classification could not be falsified in place and the two
+> mistakes are not symmetric; a NULL-fingerprint fix that would raise 23505
+> (the column is `NOT NULL`, verified live) — **the concern underneath was real
+> and fixed differently**, with a derived digest; and an async rewrite of
+> `checkAdmission`, measured at 8.3 ms per call with the queue at its full cap
+> against store round trips of 10–1000 ms.
+>
+> **Method note.** Every guard was mutation-tested individually — the fix
+> reverted, the test confirmed red, the fix restored. That caught one
+> half-vacuous check of my own: the decline-reason test iterated
+> `DECLINED_REASONS` and asserted each was really emitted, which is one
+> direction only, so deleting `'cloud-off'` from the set sailed through it. It
+> now iterates the receipts the store actually returns. A weak `||` assertion in
+> the tracked-artifact test hid the gate's G5 the same way.
 
 ---
 
