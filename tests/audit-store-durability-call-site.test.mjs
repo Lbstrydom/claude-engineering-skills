@@ -178,8 +178,17 @@ describe('orchestrator call sites', () => {
     const src = read(ORCH);
     assert.match(src, /import '\.\.\/audit-store-writers\.mjs'/,
       'without this import durableWrite throws for every id — the orchestrator half of the bootstrap');
-    const cli = read('scripts/cross-skill.mjs');
-    assert.match(cli, /await import\('\.\/lib\/audit-store-writers\.mjs'\)/,
+    // RETARGETED (command-registry Cluster D): write-spill migrated to the
+    // registry, so the operator CLI's registration import now lives in its
+    // command module. The invariant is unchanged and still load-bearing: a
+    // fresh process without this import finds zero handlers and quarantines
+    // every artifact it was asked to replay.
+    const cli = read('scripts/lib/cross-skill/commands/misc.mjs');
+    // Matched on the SPECIFIER TAIL, not the full relative path: the module
+    // moved two directories deeper, so `./lib/…` became `../../…`. Pinning the
+    // prefix would have made this assertion fail on a correct move — and worse,
+    // a future move could make it pass while importing something else.
+    assert.match(cli, /await import\('[^']*audit-store-writers\.mjs'\)/,
       'the operator CLI runs in a FRESH process: without this import the drain finds zero handlers and quarantines every artifact it was asked to replay');
     assert.match(src, /durableWrite\('audit\.findings'/);
     assert.match(src, /durableWrite\('audit\.passStats'/);

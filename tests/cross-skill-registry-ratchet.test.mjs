@@ -44,7 +44,15 @@ const CLI_PATH = fileURLToPath(new URL('../scripts/cross-skill.mjs', import.meta
 //     get-persona-sessions-by-url · get-reachability-evidence ·
 //     get-recent-findings · final-review-stats · final-review-pending ·
 //     shadow-overlap                                             → 33 − 8 = 25
-const LEGACY_PIN = 25;
+//   Cluster D rest (Phase 5) — nudge readers, learning, forwarders,
+//     model-eval/arm-eval, and the final four
+//     (finalize-outcomes · lock-with-test · quality · upstream) → 25 − 25 = 0
+//
+// ZERO is the end state, and the ratchet flips meaning here: from "legacy may
+// only shrink" to "legacy must not come BACK". A new command belongs in the
+// registry; re-introducing a second dispatch surface is the two-oracles defect
+// this migration removed.
+const LEGACY_PIN = 0;
 
 describe('cross-skill registry ratchet', () => {
   it(`legacy command count is exactly ${LEGACY_PIN} (decrease-only; update WITH the cohort that moves it)`, () => {
@@ -58,5 +66,10 @@ describe('cross-skill registry ratchet', () => {
       `legacy shrank past the pin (${legacy.length} < ${LEGACY_PIN}) — a cohort migrated without moving the pin; `
       + 'update LEGACY_PIN in the same commit so the ratchet stays a measurement');
     assert.equal(registry.length + legacy.length, 71, 'conservation (see conformance suite for the full law)');
+    // At the end state the conservation law collapses: EVERY inventory command
+    // is a registry command. Asserted directly so a future entry that lands
+    // outside the registry cannot hide behind the union still summing to 71.
+    assert.equal(registry.length, 71,
+      'migration complete — every command must dispatch through the registry');
   });
 });

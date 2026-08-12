@@ -27,7 +27,17 @@ import {
 } from '../scripts/lib/store/plans-ship.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const cliSrc = fs.readFileSync(path.join(repoRoot, 'scripts', 'cross-skill.mjs'), 'utf-8');
+// RETARGETED (command-registry Cluster D): every command this suite inspects
+// migrated out of scripts/cross-skill.mjs into the registry command modules,
+// and the legacy dispatch map is gone. The haystack is now the concatenation
+// of the modules that own those handlers, so `fnBody` keeps finding real
+// bodies instead of failing on a stale anchor. The ASSERTIONS are unchanged —
+// what they guard (explicit-before-ambient scope precedence, the cross-tenant
+// write fence, the capped-reader counter) is the same contract in its new home.
+const cliSrc = [
+  'scripts/lib/cross-skill/commands/ship.mjs',
+  'scripts/lib/cross-skill/scope.mjs',
+].map((f) => fs.readFileSync(path.join(repoRoot, f), 'utf-8')).join('\n');
 
 describe('unlocked-fix store boundary — global access must be ASKED for', () => {
   // Each of these used to mean "every repository". The whole point of the fix
@@ -86,8 +96,8 @@ describe('unlocked-fix store boundary — global access must be ASKED for', () =
  * confusing message, and every `assert.ok(!/…/)` pass vacuously.
  */
 function fnBody(name) {
-  const start = cliSrc.indexOf(`async function ${name}()`);
-  assert.ok(start > -1, `could not find "async function ${name}()" in cross-skill.mjs — the test anchor is stale`);
+  const start = cliSrc.indexOf(`async function ${name}(`);
+  assert.ok(start > -1, `could not find "async function ${name}(" in the cross-skill command modules — the test anchor is stale`);
   const after = cliSrc.indexOf('\nasync function ', start + 1);
   const end = after > -1 ? after : cliSrc.length;
   const body = cliSrc.slice(start, end);
@@ -96,19 +106,31 @@ function fnBody(name) {
 }
 
 describe('CLI scope precedence — explicit intent before ambient inference', () => {
+  // RETARGETED (command-registry Cluster D). `resolveShipNudgeScope` became the
+  // `global-optin` MODE of the one scope resolver (scripts/lib/cross-skill/scope.mjs
+  // → globalOptin), and the three nudge handlers now DECLARE that policy in the
+  // registry instead of each calling a shared function. Every assertion below
+  // guards the same contract; only where the contract lives has moved.
   const chain = cliSrc.slice(
-    cliSrc.indexOf('async function resolveShipNudgeScope()'),
-    cliSrc.indexOf('const storeScopeFor'),
+    cliSrc.indexOf('async function globalOptin('),
+    cliSrc.length,
   );
 
-  it('resolveShipNudgeScope exists and is used by EVERY nudge handler', () => {
-    assert.ok(chain.length > 0, 'the scope chain must be one shared function, not duplicated per handler');
-    const uses = cliSrc.match(/await resolveShipNudgeScope\(\)/g) || [];
-    assert.equal(uses.length, 3,
-      'cmdListUnlockedFixes, cmdLockWithTestWorksheet and cmdListUnremediatedAcceptances must all ' +
-      'scope. The worksheet is the command /ship PRINTS as its remediation, and the acceptance ' +
-      'backlog is a second /ship step that shipped unscoped for three days — leaving any of them ' +
-      'unscoped hands the operator another repository\'s findings');
+  it('the nudge handlers all DECLARE the global-optin scope policy', async () => {
+    assert.ok(chain.length > 0, 'the scope chain must be one shared resolver mode, not duplicated per handler');
+    const { REGISTRY } = await import('../scripts/lib/cross-skill/registry.mjs');
+    // The worksheet is a MODE of lock-with-test (--worksheet), so it inherits
+    // that command's declaration — three declaring commands, same three
+    // surfaces as before.
+    const declared = ['list-unlocked-fixes', 'list-unremediated-acceptances', 'lock-with-test']
+      .map((n) => REGISTRY.find((e) => e.name === n));
+    for (const e of declared) {
+      assert.ok(e, 'a nudge command vanished from the registry');
+      assert.equal(e.scope, 'global-optin',
+        `${e.name} must scope. The worksheet is the command /ship PRINTS as its remediation, and the `
+        + 'acceptance backlog is a second /ship step that shipped unscoped for three days — leaving any '
+        + 'of them unscoped hands the operator another repository\'s findings');
+    }
   });
 
   it('--all-repos is evaluated BEFORE ambient identity, or it is unreachable', () => {
@@ -129,8 +151,8 @@ describe('CLI scope precedence — explicit intent before ambient inference', ()
     // pasteable per-repo `lock-with-test` command that the write fence would then
     // refuse. Emitting instructions that cannot be followed is the same
     // plausible-but-wrong output class as the original bug.
-    const ws = fnBody('cmdLockWithTestWorksheet');
-    const iGuard = ws.indexOf("scope.mode === 'all-repos'");
+    const ws = fnBody('lockWithTestWorksheet');
+    const iGuard = ws.indexOf("scope.kind === 'global'");
     const iStore = ws.indexOf('getUnlockedFixes(');
     assert.ok(iGuard > -1, 'the worksheet must reject --all-repos explicitly');
     assert.ok(iStore > -1, 'the worksheet must read the view');
@@ -140,20 +162,20 @@ describe('CLI scope precedence — explicit intent before ambient inference', ()
 
     // ...and the reader must NOT have grown the same restriction, or the
     // capability is silently lost rather than deliberately scoped.
-    const reader = fnBody('cmdListUnlockedFixes');
+    const reader = fnBody('listUnlockedFixesCmd');
     assert.ok(!/all-repos-unsupported/.test(reader),
       'list-unlocked-fixes must keep --all-repos — it is a read-only reporting question');
   });
 
   it('--repo and --repo-id are both honoured (--repo was the ignored one)', () => {
-    assert.match(chain, /argOption\('repo-id'\)/);
-    assert.match(chain, /argOption\('repo'\)/);
+    assert.match(chain, /explicitRepoId/, '--repo-id must reach the resolver');
+    assert.match(chain, /explicitRepoName/, '--repo must reach the resolver');
     assert.match(chain, /getRepoIdByName/, '--repo takes a slug and must be resolved to an id');
   });
 
   it('an unknown --repo slug is an ERROR, never a silent widening or a bare zero', () => {
-    assert.match(chain, /unknown-repo/);
-    assert.ok(!/allRepos: true/.test(chain.slice(chain.indexOf('unknown-repo'))),
+    assert.match(chain, /UNKNOWN_REPO/, 'an unknown slug must be a typed refusal');
+    assert.ok(!/allRepos: true/.test(chain.slice(chain.indexOf('UNKNOWN_REPO'))),
       'an unknown slug must never fall back to global');
   });
 
@@ -165,13 +187,15 @@ describe('CLI scope precedence — explicit intent before ambient inference', ()
     // measured backlog — so a `warned` ship event was "corrected" to `shipped`.
     assert.match(chain, /listRepoIds\(\)/,
       '--repo-id must be checked against audit_repos, not trusted verbatim');
-    assert.match(chain, /unknown-repo-id/);
+    assert.match(chain, /UNKNOWN_REPO_ID/);
     assert.match(chain, /repo-id-unverifiable/,
       'an unreadable audit_repos must refuse to report a count, not fall through to one');
 
-    const branch = chain.slice(chain.indexOf('if (repoIdArg) {'), chain.indexOf('if (slugArg) {'));
-    assert.ok(!/measured: true[\s\S]*unknown-repo-id/.test(branch.slice(branch.indexOf('unknown-repo-id'))),
-      'the unknown-id exit must be measured:false');
+    // The branch bounds moved with the resolver: `repoIdArg`/`slugArg` became
+    // `explicitRepoId`/`explicitRepoName` in scope.mjs's globalOptin.
+    const branch = chain.slice(chain.indexOf('if (explicitRepoId) {'), chain.indexOf('if (explicitRepoName) {'));
+    assert.ok(!/kind: 'scoped'[\s\S]*UNKNOWN_REPO_ID/.test(branch.slice(branch.indexOf('UNKNOWN_REPO_ID'))),
+      'the unknown-id exit must NOT resolve to a scoped read — it is an error, not a zero');
     assert.match(branch, /getRepoIdByUuid/,
       'the arch-memory uuid names the same repo (a sibling column) — translate it rather than ' +
       'rejecting the id an operator most plausibly has to hand');
@@ -179,7 +203,17 @@ describe('CLI scope precedence — explicit intent before ambient inference', ()
 
   it('an unresolvable ambient identity is measured:false, not global', () => {
     assert.match(chain, /repo-identity-unresolvable/);
-    assert.match(chain, /measured: false/);
+    // `measured:false` moved from the resolver's return into the HANDLER's
+    // envelope (ship.mjs `unmeasured()`), because the resolver is now shared
+    // across policies and only the handler knows the reporting shape. The
+    // guarantee is unchanged: unresolvable ambient identity never becomes a
+    // global read, and never becomes a bare zero.
+    assert.match(chain, /kind: 'unresolved'/,
+      'ambient-unresolvable must be its own discriminated kind, never a silent global');
+    assert.ok(!/kind: 'global'/.test(chain.slice(chain.indexOf('repo-identity-unresolvable'))),
+      'the unresolvable exit must never fall through to a global read');
+    assert.match(cliSrc, /measured: false/,
+      'the handler must still report measured:false rather than an empty-but-clean row set');
   });
 
   it('measured:false is distinguishable from a genuine zero', () => {
@@ -334,11 +368,26 @@ describe('a capped nudge reader must impose its OWN total order', () => {
     for (const sql of pagedStatements) {
       assert.match(sql, /OFFSET/i, `paged read cannot advance past its first page:\n  ${sql}`);
     }
-    assert.match(cliSrc, /pageArgsFromFlags/,
+    // RETARGETED (Cluster D): `pageArgsFromFlags` became `pageArgs(ctx)` in
+    // ship.mjs, and `--offset` moved from the global KNOWN_FLAGS union into
+    // each paged command's own `flags` declaration — where it is strictly
+    // safer: the dispatcher's accessor THROWS on an undeclared read, so the
+    // flag cannot be accepted-and-inert the way the global list allowed.
+    assert.match(cliSrc, /pageArgs\(ctx\)/,
       'the CLI must pass --limit/--offset to the readers, not merely accept the flags');
-    assert.match(cliSrc, /argOption\('offset'\)/);
-    assert.match(cliSrc, /'--offset'/,
-      '--offset must be in KNOWN_FLAGS or assertKnownFlags rejects it before any handler runs');
+    assert.match(cliSrc, /ctx\.flag\('offset'\)/);
+  });
+
+  it('every paged command DECLARES --limit/--offset (else the dispatcher refuses them)', async () => {
+    const { REGISTRY, normalizeFlag } = await import('../scripts/lib/cross-skill/registry.mjs');
+    for (const name of ['list-unlocked-fixes', 'list-unremediated-acceptances']) {
+      const entry = REGISTRY.find((e) => e.name === name);
+      const declared = (entry.flags ?? []).map(normalizeFlag).map((d) => d.name);
+      for (const f of ['limit', 'offset']) {
+        assert.ok(declared.includes(f),
+          `${name} must declare --${f} — an undeclared flag is REFUSED at exit 2, so the tail becomes unreachable again`);
+      }
+    }
   });
 
   it('the CLI echoes the RESOLVED page, so a clamp is visible to the caller', () => {
@@ -396,7 +445,13 @@ describe('a capped nudge reader must ship a counter, and the CLI must emit it', 
   ];
   const storeSrc = fs.readFileSync(
     path.join(repoRoot, 'scripts', 'lib', 'store', 'plans-ship.mjs'), 'utf-8');
-  const cliSrc = fs.readFileSync(path.join(repoRoot, 'scripts', 'cross-skill.mjs'), 'utf-8');
+  // RETARGETED (Cluster D): this block-scoped binding SHADOWED the module-level
+  // one and still pointed at scripts/cross-skill.mjs, whose dispatch map is now
+  // empty — so the reader/counter pairing would have gone unchecked while
+  // reading a file that can no longer contain either call. Named differently
+  // from the outer `cliSrc` so the shadowing cannot silently return.
+  const nudgeSrc = fs.readFileSync(
+    path.join(repoRoot, 'scripts', 'lib', 'cross-skill', 'commands', 'ship.mjs'), 'utf-8');
 
   for (const { reader, counter } of PAIRS) {
     it(`${reader} exists and caps its rows (vacuous-pass guard)`, () => {
@@ -426,10 +481,10 @@ describe('a capped nudge reader must ship a counter, and the CLI must emit it', 
         `${reader} caps its rows but ${counter}() is missing`);
     });
 
-    it(`cross-skill.mjs calls ${counter} wherever it calls ${reader}`, () => {
-      assert.match(cliSrc, new RegExp(`\\b${reader}\\s*\\(`), `CLI must call ${reader} (else vacuous)`);
-      assert.match(cliSrc, new RegExp(`\\b${counter}\\s*\\(`),
-        `the CLI calls ${reader} without ${counter} — the payload would carry capped rows and no total`);
+    it(`the nudge handlers call ${counter} wherever they call ${reader}`, () => {
+      assert.match(nudgeSrc, new RegExp(`\\b${reader}\\s*\\(`), `handler must call ${reader} (else vacuous)`);
+      assert.match(nudgeSrc, new RegExp(`\\b${counter}\\s*\\(`),
+        `the handler calls ${reader} without ${counter} — the payload would carry capped rows and no total`);
     });
   }
 

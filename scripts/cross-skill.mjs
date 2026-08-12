@@ -424,76 +424,7 @@ const NAV_AUDIT_RUN_SCOPES = ['full', 'diff'];
  *
  * @returns {Promise<{mode:'repo'|'all-repos'|'unresolved', repoId:string|null, slug:string|null, measured:boolean, reason:string|null, error?:string}>}
  */
-async function resolveShipNudgeScope() {
-  const allRepos = hasFlag('all-repos');
-  const repoIdArg = argOption('repo-id');
-  const slugArg = argOption('repo');
-
-  if (allRepos && (repoIdArg || slugArg)) {
-    return { mode: 'unresolved', repoId: null, slug: null, measured: false, reason: 'conflicting-scope',
-      error: '--all-repos cannot be combined with --repo/--repo-id — pick one.' };
-  }
-  if (allRepos) return { mode: 'all-repos', repoId: null, slug: null, measured: true, reason: null };
-
-  if (repoIdArg) {
-    // An id absent from `audit_repos` used to be trusted verbatim, so it read
-    // as `measured:true` with a count of ZERO — an authoritative "no
-    // obligations" for a repo that was never queried. That false zero is not
-    // hypothetical either: it is how the consumer incident got its final
-    // number. The operator had passed the ARCH-MEMORY repo uuid (the v5 id in
-    // `.audit-loop/repo-id`, e.g. 25aa2cdf-…) while these views key on
-    // `audit_repos.id` (a v4 row id, e.g. 22865de8-…). Both name the same repo
-    // — they are two columns of the same row — so the id looked entirely
-    // plausible and the zero it produced was believed.
-    const known = await listRepoIds().catch(() => []);
-    if (known.length === 0) {
-      // Cannot confirm the id against the store; refuse to report a number
-      // rather than emit one we cannot stand behind.
-      return { mode: 'unresolved', repoId: null, slug: null, measured: false, reason: 'repo-id-unverifiable',
-        error: 'could not read audit_repos to verify --repo-id — refusing to report a count that cannot be attributed.' };
-    }
-    if (known.includes(repoIdArg)) {
-      return { mode: 'repo', repoId: repoIdArg, slug: null, measured: true, reason: null };
-    }
-    // Accept the arch-memory uuid too, translated — it is the id an operator
-    // most plausibly has to hand, and silently rejecting it teaches nothing.
-    const viaUuid = await getRepoIdByUuid(repoIdArg).catch(() => null);
-    if (viaUuid?.id) {
-      return { mode: 'repo', repoId: viaUuid.id, slug: viaUuid.name ?? null, measured: true, reason: null };
-    }
-    return { mode: 'unresolved', repoId: null, slug: null, measured: false, reason: 'unknown-repo-id',
-      error: `unknown --repo-id "${repoIdArg}" — not an audit_repos.id nor a known repo_uuid. ` +
-        'It is NOT an empty backlog; nothing was measured.' };
-  }
-
-  if (slugArg) {
-    // An explicitly-named repo that does not exist is an ERROR: the operator
-    // asserted something specific and it is wrong. Silently widening (or
-    // silently returning zero) is how the original bug read as plausible.
-    // A thrown lookup is a FAILURE, not an unknown repo — reporting the second
-    // for the first tells the operator their correct slug is wrong because the
-    // store is down. `measured:false` either way, but the reason must be honest.
-    let rowId;
-    try {
-      rowId = await getRepoIdByName(slugArg);
-    } catch (err) {
-      return { mode: 'unresolved', repoId: null, slug: slugArg, measured: false, reason: 'repo-lookup-failed',
-        error: `could not resolve repo "${slugArg}" (${err.message}) — the store was unreachable. `
-          + 'This is NOT an unknown repo and NOT an empty backlog; nothing was measured.' };
-    }
-    if (!rowId) {
-      return { mode: 'unresolved', repoId: null, slug: slugArg, measured: false, reason: 'unknown-repo',
-        error: `unknown repo "${slugArg}" — expected an owner/repo slug present in audit_repos.` };
-    }
-    return { mode: 'repo', repoId: rowId, slug: slugArg, measured: true, reason: null };
-  }
-
-  // Ambient identity. Unresolvable is a NON-error (nothing was asserted), but it
-  // is `measured:false` — never a zero that reads as "no obligations".
-  const ref = await resolveRepoForStore({}).catch(() => null);
-  if (ref?.repoRowId) return { mode: 'repo', repoId: ref.repoRowId, slug: ref.name ?? null, measured: true, reason: null };
-  return { mode: 'unresolved', repoId: null, slug: null, measured: false, reason: 'repo-identity-unresolvable' };
-}
+// resolveShipNudgeScope moved to scripts/lib/cross-skill/commands/ship.mjs (registry).
 
 /** The store-scope argument for a resolved scope (D18 explicit-scope contract). */
 const storeScopeFor = (scope) => (scope.mode === 'all-repos' ? { allRepos: true } : { repoId: scope.repoId });
@@ -510,112 +441,9 @@ const storeScopeFor = (scope) => (scope.mode === 'all-repos' ? { allRepos: true 
  */
 const pageArgsFromFlags = () => ({ limit: argOption('limit'), offset: argOption('offset') });
 
-async function cmdListUnlockedFixes() {
-  await initLearningStore();
-  if (!await isCloudEnabled()) {
-    return emit({ ok: true, cloud: false, scope: { mode: 'unresolved', repoId: null, slug: null },
-      measured: false, reason: 'cloud-off', rows: [], shown: 0, total: 0, byMode: { total: 0, code: 0, plan: 0 } });
-  }
-  const scope = await resolveShipNudgeScope();
-  if (scope.error) return emit({ ok: false, cloud: true, error: scope.error, reason: scope.reason });
+// cmdListUnlockedFixes moved to scripts/lib/cross-skill/commands/ship.mjs (registry).
 
-  // `measured:false` is NOT "zero obligations" — it is "nothing was measured".
-  // Collapsing the two is exactly how a foreign 207 and a local 0 both looked
-  // like ordinary numbers.
-  if (!scope.measured) {
-    return emit({ ok: true, cloud: true, scope: { mode: scope.mode, repoId: null, slug: scope.slug },
-      measured: false, reason: scope.reason, rows: [], shown: 0, total: 0, byMode: { total: 0, code: 0, plan: 0 } });
-  }
-
-  const storeScope = storeScopeFor(scope);
-  // `--all-ages` opts out of the 14-day window. The window stays the default:
-  // an unbounded ship-time nudge becomes noise and earns `--no-verify`. Same
-  // precedent as `--all-repos` — the wider read is ASKED for, never inherited.
-  const allAges = rest.includes('--all-ages');
-  const page = { ...pageArgsFromFlags(), allAges };
-  const rows = await getUnlockedFixes(storeScope, page);
-  // `rows` is ONE PAGE, so its length is NOT the obligation count — reporting it
-  // as one undercounted 232 as "20" for weeks.
-  // `byMode.plan` is surfaced separately because a plan finding can never carry
-  // a regression spec; folding it into one total makes an unactionable half of
-  // the backlog read as work.
-  const byMode = await countUnlockedFixes(storeScope, { allAges });
-  // What the WINDOW dropped, reported beside what it kept — the same obligation
-  // `shown`/`total` discharges for the row cap. Without it, "not shown" and
-  // "not owed" are one state and an obligation is discharged by waiting.
-  // `agedOut` is the number that matters (expired under a live locking
-  // practice); `prePractice` predates this repo's first lock and is not an
-  // obligation it ever had.
-  const aged = await countAgedUnlockedFixes(storeScope);
-  const { limit, offset } = resolveNudgePage(page);
-  emit({
-    ok: true, cloud: true,
-    scope: { mode: scope.mode, repoId: scope.repoId, slug: scope.slug },
-    measured: true, reason: null,
-    rows, shown: rows.length, total: byMode.total, byMode,
-    allAges,
-    agedOut: aged.agedOut, agedOutByMode: aged.byMode,
-    prePractice: aged.prePractice, practiceStart: aged.practiceStart,
-    // Echo the RESOLVED page, not the raw flags: the store clamps, so a caller
-    // that asked for 10_000 and a caller that asked for nothing must be able to
-    // tell what they actually received before concluding the tail is empty.
-    limit, offset,
-  });
-}
-
-async function cmdListUnremediatedAcceptances() {
-  await initLearningStore();
-  if (!await isCloudEnabled()) {
-    return emit({ ok: true, cloud: false, scope: { mode: 'unresolved', repoId: null, slug: null },
-      measured: false, reason: 'cloud-off', rows: [] });
-  }
-  // Same scope chain as list-unlocked-fixes. This handler read `--repo-id`
-  // alone until 2026-07-30, so a flagless /ship Step 0.5e — which is exactly
-  // how the skill invokes it — reported another repo's accepted-but-unfixed
-  // findings as this one's.
-  const scope = await resolveShipNudgeScope();
-  if (scope.error) return emit({ ok: false, cloud: true, error: scope.error, reason: scope.reason });
-  if (!scope.measured) {
-    return emit({ ok: true, cloud: true, scope: { mode: scope.mode, repoId: null, slug: scope.slug },
-      measured: false, reason: scope.reason, rows: [], shown: 0, total: 0, byMode: { total: 0, code: 0, plan: 0 } });
-  }
-  const storeScope = storeScopeFor(scope);
-  // `--all-ages` drops BOTH age bounds — see cmdListUnlockedFixes for why the
-  // wider read is asked for rather than defaulted.
-  const allAges = rest.includes('--all-ages');
-  const page = { ...pageArgsFromFlags(), allAges };
-  const rows = await getUnremediatedAcceptances(storeScope, page);
-  // `rows` is ONE PAGE. Emitting only it let /ship report "20" against a real
-  // 129 (2026-07-31) — the same undercount `countUnlockedFixes` fixed for the
-  // sibling view two days earlier. `shown` vs `total` makes the cap explicit
-  // instead of letting a saturated array masquerade as a complete count, and
-  // `--limit`/`--offset` make the rows past `shown` reachable at all: a consumer
-  // measured 44 total / 20 shown with 24 rows no CLI invocation could reach.
-  const byMode = await countUnremediatedAcceptances(storeScope, { allAges });
-  // What the two bounds EXCLUDED. `notYetDue` (under the 7-day maturity floor)
-  // is reported beside `agedOut` but is NOT a loss — those rows appear on their
-  // own once they mature. Conflating them is the specific error this view
-  // invites, because both read as "not shown".
-  const aged = await countAgedUnremediatedAcceptances(storeScope);
-  // Rows dispositioned `accepted-permanent` are excluded from the nag (they were
-  // decided, not forgotten) — so the count has to stay visible, or the
-  // disposition becomes a silence button. `open` is `total` under a second name:
-  // one number, two names, and the test asserts they never diverge.
-  const acceptedPermanent = await countAcceptedPermanent(storeScope);
-  const { limit, offset } = resolveNudgePage(page);
-  emit({
-    ok: true, cloud: true,
-    scope: { mode: scope.mode, repoId: scope.repoId, slug: scope.slug },
-    measured: true, reason: null,
-    rows, shown: rows.length, total: byMode.total, byMode,
-    byDisposition: { open: byMode.total, acceptedPermanent },
-    allAges,
-    agedOut: aged.agedOut, agedOutByMode: aged.byMode, agedOutBySeverity: aged.bySeverity,
-    notYetDue: aged.notYetDue,
-    prePractice: aged.prePractice, practiceStart: aged.practiceStart,
-    limit, offset,
-  });
-}
+// cmdListUnremediatedAcceptances moved to scripts/lib/cross-skill/commands/ship.mjs (registry).
 
 // cmdAuditEffectiveness moved to scripts/lib/cross-skill/commands/misc.mjs (registry).
 
@@ -684,192 +512,26 @@ async function cmdListUnremediatedAcceptances() {
  * writes the outcome (`accepted|dismissed|duplicate|not-actionable`);
  * `duplicate` needs --canonical <fingerprint>.
  */
-async function cmdModelAbAdjudicate() {
-  await initLearningStore();
-  if (!await isCloudEnabled()) return emit({ ok: false, cloud: false });
-  const action = argOption('action');
-  if (!action) {
-    // Present the blinded queue.
-    const runId = argOption('run-id');
-    const limit = Number(argOption('limit')) || 50;
-    const q = await getModelAbAdjudicationQueue({ runId, limit });
-    // Adjudication is a HUMAN activity by design (the scorer's anti-circularity),
-    // so the human surface is the DEFAULT: the listing writes the paste-ready
-    // markdown worksheet. `--json` is the escape hatch for scripts. (The raw-JSON
-    // default failed the operator twice — see lib/adjudication-worksheet.mjs.)
-    if (!process.argv.includes('--json')) {
-      const { renderAdjudicationWorksheet } = await import('./lib/adjudication-worksheet.mjs');
-      const { writeFileSync, mkdirSync, existsSync, readFileSync } = await import('node:fs');
-      // --suggestions <file>: advisory pre-judgments (blinded-adjudicator output),
-      // a JSON map { fingerprint: {action, why, canonical?} }. Rendered per item
-      // with the command pre-filled to the suggestion — the human confirms by
-      // pasting or overrides by editing; the file itself never writes rulings.
-      let suggestions = {};
-      const sugPath = argOption('suggestions');
-      if (sugPath) {
-        try { suggestions = JSON.parse(readFileSync(sugPath, 'utf8')); }
-        catch (err) { return emitError('BAD_INPUT', `--suggestions ${sugPath}: ${err.message}`); }
-      }
-      const md = renderAdjudicationWorksheet({
-        title: `Model-A/B/C blinded adjudication${runId ? ` — run ${runId.slice(0, 8)}…` : ''}`,
-        introLines: [
-          'Blinded: arm identity is hidden; the `stage` tag (oss-gen/gpt-round/gemini) is a pipeline stage, not an arm.',
-          'Your confirmed rulings are the scorer\'s ONLY ground truth (anti-circularity).',
-          ...(sugPath ? [`Suggested verdicts loaded from ${sugPath} — advisory only, you confirm or override each.`] : []),
-        ],
-        items: q.items.map((f) => ({
-          runId: f.run_id, fingerprint: f.finding_fingerprint, severity: f.severity,
-          stage: f.stage, category: f.category, file: f.primary_file, detail: f.detail_snapshot,
-          suggestion: suggestions[f.finding_fingerprint] || undefined,
-        })),
-        actions: ['accepted', 'dismissed', 'not-actionable', 'duplicate'],
-        duplicateHowTo: { action: 'duplicate', canonicalHint: '--canonical ROOT_FINGERPRINT' },
-        commandFor: (it, a, canonical) => `node scripts/cross-skill.mjs model-ab-adjudicate --run-id ${it.runId} --fingerprint ${it.fingerprint} --action ${a}${canonical ? ` --canonical ${canonical}` : ''}`,
-        generatedAt: new Date().toISOString(),
-      });
-      // Discoverable home next to the arm-eval session archives (gitignored —
-      // Category-A volatile state); .audit/ fallback for repos without docs/arm-eval.
-      const dir = existsSync('docs/arm-eval') ? 'docs/arm-eval/worksheets' : '.audit';
-      const out = argOption('out') || `${dir}/model-ab-adjudication-worksheet.md`;
-      mkdirSync(dir, { recursive: true });
-      writeFileSync(out, md);
-      process.stderr.write(`  [model-ab-adjudicate] worksheet: ${q.items.length} pending finding(s) → ${out}\n  (raw queue JSON: add --json)\n`);
-      return emit({ ok: true, cloud: q.cloud, blinded: true, count: q.items.length, worksheet: out });
-    }
-    return emit({ ok: true, cloud: q.cloud, blinded: true, count: q.items.length, queue: q.items });
-  }
-  const validActions = new Set(['accepted', 'dismissed', 'duplicate', 'not-actionable']);
-  if (!validActions.has(action)) {
-    return emitError('BAD_INPUT', `--action must be one of ${[...validActions].join('|')}, got '${action}'`);
-  }
-  const runId = argOption('run-id');
-  const fingerprint = argOption('fingerprint');
-  if (!runId || !fingerprint) return emitError('BAD_INPUT', '--run-id and --fingerprint are required with --action');
-  const canonicalFingerprint = argOption('canonical');
-  if (action === 'duplicate' && !canonicalFingerprint) {
-    return emitError('BAD_INPUT', "--action duplicate requires --canonical <fingerprint>");
-  }
-  try {
-    const res = await applyModelAbAdjudication({ runId, fingerprint, action, canonicalFingerprint, actor: argOption('actor') });
-    emit({ ok: true, ...res });
-  } catch (err) {
-    emitError('EXCEPTION', err.message);
-  }
-}
+// cmdModelAbAdjudicate moved to scripts/lib/cross-skill/commands/model-eval.mjs (registry).
 
 /** Aggregate scorer rows + the cost–quality FRONTIER + cumulative spend vs budget (D7). */
-async function cmdModelAbStats() {
-  await initLearningStore();
-  if (!await isCloudEnabled()) return emit({ ok: false, cloud: false, rows: [] });
-  const runId = argOption('run-id');
-  const eff = await getModelAbEffectiveness({ runId });
-  const findings = await getModelAbFindingScores({ runId });
-  const costs = await getModelAbArmCost({});
-  // Reuse the decision evaluator purely for its per-arm frontier + recall
-  // (the efficiency headlines: €/accepted-weighted, €/accepted-HIGH).
-  const decision = evaluateDecision(findings.rows, costs.rows, DECISION_CONSTANTS);
-  const spentEur = await cumulativeSpendEur({ activeTtlMs: auditShadowConfig.reservationTtlMs });
-  emit({
-    ok: true, cloud: eff.cloud, rows: eff.rows,
-    frontier: decision.arms,          // per-arm score/recall/€-frontier
-    status: decision.status,
-    distinctAssignments: decision.distinctAssignments,
-    budget: { spentEur, capEur: auditShadowConfig.budgetEur },
-  });
-}
+// cmdModelAbStats moved to scripts/lib/cross-skill/commands/model-eval.mjs (registry).
 
 // ── Unified arm-evaluation framework (plan-authoring + brainstorm) ───────────
 // Thin handlers over scripts/lib/arm-eval/* (orchestration lives there, not in
 // this facade). All graceful no-op when cloud is off.
 
 /** Run ONE arm-eval session (produce → judge → cross-check → persist). Spends. */
-async function cmdArmEvalRun() {
-  await initLearningStore();
-  const experimentType = argOption('experiment');
-  const task = argOption('task');
-  if (!experimentType || !task) return emitError('BAD_INPUT', '--experiment <plan-authoring|brainstorm> --task "<text>" required');
-  const budgetFlag = Number.parseFloat(argOption('budget-eur'));
-  // Was `argOption('repo-id') || null` — no ambient fallback, unlike the sibling
-  // `arm-eval-maybe-capture`, so a manual run without `--repo-id` persisted
-  // `arm_eval_sessions.repo_id = NULL` and every repo-scoped leaderboard read
-  // then missed the session it had just paid to produce.
-  const _scope = await resolveScopedRepoId();
-  if (!_scope.ok) return emitError(_scope.code, _scope.message);
-  const repoId = _scope.repoId;
-  const phase = argOption('phase') || 'prospective';
-  const seed = argOption('seed') ? Number.parseInt(argOption('seed'), 10) : null;
-  try {
-    // --budget-eur omitted → config default (€300, ARM_EVAL_BUDGET_EUR to
-    // override). The library seam still refuses null — the CLI is where the
-    // operator-facing default lives.
-    const { armEvalConfig } = await import('./lib/config.mjs');
-    const budgetCapEur = Number.isFinite(budgetFlag) && budgetFlag > 0 ? budgetFlag : armEvalConfig.budgetEur;
-    const { runArmEvalSession } = await import('./lib/arm-eval/run.mjs');
-    const r = await runArmEvalSession({ experimentType, task, repoId, phase, seed, budgetCapEur });
-    emit({ ok: r.state === 'ran', ...r });
-  } catch (err) { emitError('EXCEPTION', err.message); }
-}
+// cmdArmEvalRun moved to scripts/lib/cross-skill/commands/model-eval.mjs (registry).
 
 /** Two-level verdict for an experiment (gate → paired-delta rank + τ anchor + frontier). */
-async function cmdArmEvalDecision() {
-  await initLearningStore();
-  if (!await isCloudEnabled()) return emit({ ok: false, cloud: false });
-  const experimentType = argOption('experiment');
-  if (!experimentType) return emitError('BAD_INPUT', '--experiment required');
-  const repoId = argOption('repo-id') || null;
-  const allRepos = hasFlag('all-repos');
-  const phase = argOption('phase') || 'prospective';
-  try {
-    const { getSessionsForDecision } = await import('./lib/store/arm-eval.mjs');
-    const { evaluateArmEval } = await import('./lib/arm-eval/decision.mjs');
-    const { getExperiment } = await import('./lib/arm-eval/experiments.mjs');
-    const exp = getExperiment(experimentType);
-    const { sessions, cloud } = await getSessionsForDecision({ experimentType, repoId, allRepos, phase });
-    const decision = evaluateArmEval({ experimentType, baselineArm: exp.baselineArm, sessions });
-    emit({ ok: true, cloud, ...decision });
-  } catch (err) { emitError('EXCEPTION', err.message); }
-}
+// cmdArmEvalDecision moved to scripts/lib/cross-skill/commands/model-eval.mjs (registry).
 
 /** Leaderboard aggregate rows (repo-scoped unless --all-repos). */
-async function cmdArmEvalStats() {
-  await initLearningStore();
-  if (!await isCloudEnabled()) return emit({ ok: false, cloud: false, rows: [] });
-  const experimentType = argOption('experiment') || null;
-  const repoId = argOption('repo-id') || null;
-  const allRepos = hasFlag('all-repos');
-  try {
-    const { getArmEvalLeaderboard } = await import('./lib/store/arm-eval.mjs');
-    const lb = await getArmEvalLeaderboard({ experimentType, repoId, allRepos });
-    emit({ ok: true, cloud: lb.cloud, rows: lb.rows });
-  } catch (err) { emitError('EXCEPTION', err.message); }
-}
+// cmdArmEvalStats moved to scripts/lib/cross-skill/commands/model-eval.mjs (registry).
 
 /** Blinded human spot-check: present a session's outputs (arm hidden), or record a ranking. */
-async function cmdArmEvalAdjudicate() {
-  await initLearningStore();
-  if (!await isCloudEnabled()) return emit({ ok: false, cloud: false });
-  const sessionId = argOption('session-id');
-  if (!sessionId) return emitError('BAD_INPUT', '--session-id required');
-  const ranked = argOption('ranked');   // comma-separated labels best→worst
-  try {
-    const store = await import('./lib/store/arm-eval.mjs');
-    if (ranked) {
-      const rankedLabels = ranked.split(',').map((s) => s.trim()).filter(Boolean);
-      const r = await store.recordHumanRanking({ sessionId, rankedLabels, reviewer: argOption('reviewer') || null });
-      // Ranking recorded → the committed archive upgrades blinded → full
-      // attribution (best-effort; the DB row is canonical).
-      let archived = null;
-      try {
-        const { exportSession } = await import('./lib/arm-eval/export.mjs');
-        const ex = await exportSession(sessionId);
-        archived = ex.written ? ex.file : null;
-      } catch { /* non-fatal */ }
-      return emit({ ok: true, ...r, recorded: rankedLabels, archived });
-    }
-    const q = await store.getBlindedSessionOutputs(sessionId);
-    emit({ ok: true, cloud: q.cloud, blinded: true, outputs: q.outputs });
-  } catch (err) { emitError('EXCEPTION', err.message); }
-}
+// cmdArmEvalAdjudicate moved to scripts/lib/cross-skill/commands/model-eval.mjs (registry).
 
 /**
  * (Re)generate the committed session archive under docs/arm-eval/sessions/.
@@ -877,27 +539,7 @@ async function cmdArmEvalAdjudicate() {
  * every session. Blinding rule lives in lib/arm-eval/export.mjs — a
  * prospective session without a human ranking exports BLINDED.
  */
-async function cmdArmEvalExport() {
-  await initLearningStore();
-  if (!await isCloudEnabled()) return emit({ ok: false, cloud: false });
-  const { exportSession } = await import('./lib/arm-eval/export.mjs');
-  const store = await import('./lib/store/arm-eval.mjs');
-  const one = argOption('session-id');
-  try {
-    if (one) {
-      const r = await exportSession(one);
-      return emit({ ok: r.written, ...r });
-    }
-    if (!hasFlag('all')) return emitError('BAD_INPUT', '--session-id <id> or --all required');
-    const _scope = await resolveScopedRepoId();
-        if (!_scope.ok) return emitError(_scope.code, _scope.message);
-        const repoId = _scope.repoId;
-    const { ids } = await store.listSessionIds({ repoId, allRepos: hasFlag('all-repos') });
-    const results = [];
-    for (const sid of ids) results.push(await exportSession(sid));
-    emit({ ok: true, exported: results.filter((r) => r.written).length, total: ids.length, files: results.filter((r) => r.written).map((r) => r.file) });
-  } catch (err) { emitError('EXCEPTION', err.message); }
-}
+// cmdArmEvalExport moved to scripts/lib/cross-skill/commands/model-eval.mjs (registry).
 
 /**
  * One-command experiment toggle: `arm-eval-toggle on|off|status [--budget-eur N]`.
@@ -905,32 +547,7 @@ async function cmdArmEvalExport() {
  * /brainstorm start capturing arm-eval sessions. `off` → everything inert.
  * Explicit AUDIT_MODEL_SHADOW env always wins over the toggle (kill switch).
  */
-async function cmdArmEvalToggle() {
-  const sub = rest.find((a) => !a.startsWith('--')) || 'status';
-  const { readToggle, writeToggle, resolveShadowArmsWithToggle } = await import('./lib/arm-eval/toggle.mjs');
-  if (sub === 'on' || sub === 'off') {
-    const budgetFlag = Number.parseFloat(argOption('budget-eur'));
-    const { armEvalConfig } = await import('./lib/config.mjs');
-    const budgetEur = Number.isFinite(budgetFlag) && budgetFlag > 0 ? budgetFlag : armEvalConfig.budgetEur;
-    const state = writeToggle({ enabled: sub === 'on', budgetEur: sub === 'on' ? budgetEur : null });
-    const arms = resolveShadowArmsWithToggle();
-    return emit({
-      ok: true, toggle: state,
-      activates: sub === 'on' ? {
-        auditShadowArms: arms.enabled ? arms.requested : [],
-        planCapture: 'plan-authoring', brainstormCapture: 'brainstorm',
-        budgetEur,
-      } : null,
-      note: sub === 'on'
-        ? 'Shadow arms + plan/brainstorm capture ACTIVE for this repo. Turn off: arm-eval-toggle off'
-        : 'All experiment capture INERT for this repo.',
-    });
-  }
-  if (sub !== 'status') return emitError('BAD_INPUT', 'usage: arm-eval-toggle on|off|status [--budget-eur N]');
-  const t = readToggle();
-  const arms = resolveShadowArmsWithToggle();
-  emit({ ok: true, toggle: t, shadowArms: { enabled: arms.enabled, requested: arms.requested, source: arms.source } });
-}
+// cmdArmEvalToggle moved to scripts/lib/cross-skill/commands/model-eval.mjs (registry).
 
 /**
  * Conditional capture hook for /plan and /brainstorm (toggle-gated, silent
@@ -938,25 +555,7 @@ async function cmdArmEvalToggle() {
  * toggle is on, runs ONE arm-eval session for the given experiment + task
  * under the toggle's budget.
  */
-async function cmdArmEvalMaybeCapture() {
-  const { readToggle } = await import('./lib/arm-eval/toggle.mjs');
-  const t = readToggle();
-  if (!t.enabled) return emit({ ok: true, captured: false, reason: 'toggle-off' });
-  const experimentType = argOption('experiment');
-  const task = argOption('task');
-  if (!experimentType || !task) return emitError('BAD_INPUT', '--experiment <plan-authoring|brainstorm> --task "<text>" required');
-  await initLearningStore();
-  const { armEvalConfig } = await import('./lib/config.mjs');
-  const budgetCapEur = t.budgetEur ?? armEvalConfig.budgetEur;
-  const _scope = await resolveScopedRepoId();
-        if (!_scope.ok) return emitError(_scope.code, _scope.message);
-        const repoId = _scope.repoId;
-  try {
-    const { runArmEvalSession } = await import('./lib/arm-eval/run.mjs');
-    const r = await runArmEvalSession({ experimentType, task, repoId, phase: 'prospective', seed: null, budgetCapEur });
-    emit({ ok: r.state === 'ran', captured: r.state === 'ran', ...r });
-  } catch (err) { emitError('EXCEPTION', err.message); }
-}
+// cmdArmEvalMaybeCapture moved to scripts/lib/cross-skill/commands/model-eval.mjs (registry).
 
 /** Best-effort repo UUID for capture attribution; null when unresolvable. */
 /**
@@ -1074,28 +673,7 @@ async function resolveRepoUuidQuiet() {
 }
 
 /** Two-level decision: quality GATE → weighted-quality RANK + recall + frontier (D5–D8). */
-async function cmdModelAbDecision() {
-  await initLearningStore();
-  if (!await isCloudEnabled()) return emit({ ok: false, cloud: false });
-  const runId = argOption('run-id');
-  const findings = await getModelAbFindingScores({ runId });
-  const costs = await getModelAbArmCost({});
-  const decision = evaluateDecision(findings.rows, costs.rows, DECISION_CONSTANTS);
-  const spentEur = await cumulativeSpendEur({ activeTtlMs: auditShadowConfig.reservationTtlMs });
-  const capEur = auditShadowConfig.budgetEur;
-  emit({
-    ok: true, cloud: findings.cloud,
-    constants: decision.constants,
-    status: decision.status,
-    reason: decision.reason,
-    baselineArm: decision.baselineArm,
-    distinctAssignments: decision.distinctAssignments,
-    totalAcceptedClusters: decision.totalAcceptedClusters,
-    arms: decision.arms,
-    ranking: decision.ranking,
-    budget: { spentEur, capEur, exhausted: capEur != null && spentEur != null && spentEur >= capEur },
-  });
-}
+// cmdModelAbDecision moved to scripts/lib/cross-skill/commands/model-eval.mjs (registry).
 
 /**
  * Deterministic outcome capture (Determinism follow-ups WS1 Phase 2). The
@@ -1117,129 +695,7 @@ async function cmdModelAbDecision() {
  * unconditionally). Cloud configured but the run_id genuinely absent → hard
  * error (the orchestrator threaded a bad id).
  */
-async function cmdFinalizeOutcomes() {
-  const runId = argOption('run-id');
-  const ledgerPath = argOption('ledger');
-  const resultPath = argOption('result');
-  const roundOpt = argOption('round');
-  if (!runId || !ledgerPath || !resultPath) {
-    return emitError('BAD_INPUT', '--run-id <id> --ledger <path> --result <path> are all required');
-  }
-
-  let result, ledgerRaw;
-  try { result = JSON.parse(readFileSync(resultPath, 'utf8')); }
-  catch (e) { return emitError('BAD_INPUT', `cannot read --result (${resultPath}): ${e.message}`); }
-  try { ledgerRaw = JSON.parse(readFileSync(ledgerPath, 'utf8')); }
-  catch (e) { return emitError('BAD_INPUT', `cannot read --ledger (${ledgerPath}): ${e.message}`); }
-
-  if (!result || typeof result !== 'object' || !Array.isArray(result.findings)) {
-    return emitError('BAD_INPUT', 'result file must be an object with a "findings" array');
-  }
-  // Ledger is { entries: [...] }; tolerate a bare array (matches write-code-outcomes).
-  const ledger = Array.isArray(ledgerRaw) ? { entries: ledgerRaw } : ledgerRaw;
-  if (!ledger || !Array.isArray(ledger.entries)) {
-    return emitError('BAD_INPUT', 'ledger file must have an "entries" array');
-  }
-  // `argOption` returns null when --round is absent, and Number(null) is 0 —
-  // an integer — so coercing first made the `result.round || 1` fallback
-  // unreachable and silently finalised round 0. Only coerce what was supplied.
-  // A SUPPLIED --round must be a positive integer. `Number.isInteger` alone
-  // accepted `0` and negatives, so `--round 0` finalised round 0 — the very
-  // outcome the null-coercion fix above was written to prevent, reached by a
-  // different input. And an invalid supplied value must be REFUSED, not quietly
-  // swapped for `result.round`: silently finalising a different round than the
-  // operator named is worse than stopping.
-  const roundArg = roundOpt == null ? null : Number(roundOpt);
-  if (roundArg !== null && (!Number.isInteger(roundArg) || roundArg < 1)) {
-    return emitError('BAD_INPUT',
-      `--round must be a positive integer, got "${roundOpt}" — refusing rather than finalising a different round`);
-  }
-  const round = roundArg ?? (result.round || 1);
-
-  await initLearningStore().catch(() => { /* cloud optional */ });
-  const cloud = await isCloudEnabled();
-
-  // §R2-H2: cloud off → local-only no-op. Delegate to the shared finalize with
-  // store=null so it degrades to the local `.audit/outcomes.jsonl` write.
-  //
-  // `isCloudEnabled()` swallows pool-construction failures and returns false, so
-  // "no DSN configured" and "DSN configured, server unreachable" arrive here
-  // identically. Both still degrade to the local write — that is the graceful
-  // degradation this branch exists for — but they are NOT the same event, and
-  // reporting the second as the first told operators their config was missing
-  // when their database was merely down, while this round's adjudications
-  // silently never reached the store.
-  if (!cloud) {
-    const configured = Boolean(dbConfig.url);
-    const status = await finalizeRoundOutcomes({ result, ledger, round, store: null, sid: null });
-    return emit({
-      ok: true, cloud: false, degraded: configured, runId: null, round,
-      labelled: status.labelled, total: status.total, needsTriage: 0, autoDismissed: 0,
-      reason: configured ? 'store-unreachable' : 'not-configured',
-      hint: configured
-        ? 'AUDIT_DB_URL is SET but the store was unreachable — captured locally only, so these outcomes are NOT in the cloud store. Fix connectivity and re-run to finalize this round.'
-        : 'AUDIT_DB_URL unset — local-only capture; run npm run setup:cloud to enable cloud finalize',
-    });
-  }
-
-  // §R2-H2: cloud on but the run_id does not exist → hard error (bad threaded id).
-  // Tri-state: null means the probe itself failed. Reporting that as UNKNOWN_RUN
-  // blamed the operator's --run-id for the store being unreachable.
-  const runExists = await auditRunExists(runId);
-  if (runExists === null) {
-    return emitError('STORE_UNAVAILABLE',
-      `cannot verify run_id ${runId}: AUDIT_DB_URL is configured but the store could not be queried. Not treating this as an unknown run — fix connectivity and re-run.`);
-  }
-  if (!runExists) {
-    return emitError('UNKNOWN_RUN',
-      `run_id ${runId} not found in audit_runs (cloud is configured) — was --run-id threaded correctly?`);
-  }
-
-  // Delegate to the single shared finalize (same logic as the orchestrator +
-  // write-code-outcomes). Inject the explicit --run-id as the cloud key.
-  const store = { recordAdjudicationEvent, updatePassStatsPostDeliberation, updateRunMeta };
-  const status = await finalizeRoundOutcomes(
-    { result: { ...result, _cloudRunId: runId }, ledger, round, store, sid: runId },
-  );
-  const { enriched, cloudOk, needsTriage, autoDismissed } = status;
-  // Control-marker findings (e.g. ADJACENCY_INCOMPLETE) are routed to
-  // auto_dismissed, not needs_triage — exclude them from the echoed list so
-  // it doesn't claim a human needs to look at machine-generated coverage
-  // noise. Mirrors the split the DB write is driven by (splitPendingFindings).
-  const pending = enriched.filter(f => f.adjudicationOutcome === 'pending' && !isControlMarkerDetail(f.detail));
-
-  const labelled = status.labelled;
-  process.stderr.write(
-    `  [finalize-outcomes] run ${runId}: ${labelled}/${result.findings.length} labelled · `
-    + `${needsTriage} needs_triage · ${autoDismissed} auto_dismissed · cloud=${cloudOk ? 'ok' : 'failed'}\n`,
-  );
-  const needsTriageFindings = pending.map(f => ({
-    id: f.id, fingerprint: f._hash || semanticId(f),
-    severity: f.severity, section: f.section,
-  }));
-  // `ok:true` alongside `cloudOk:false` is self-contradictory — the line above
-  // has already printed `cloud=failed`, and the whole purpose of this command is
-  // to finalise the round INTO the store. A caller checking `.ok` was told the
-  // finalize succeeded while the adjudications never reached the cloud. The
-  // counts travel with the error so the local work is not lost from the report.
-  if (!cloudOk) {
-    return emitError('CLOUD_FINALIZE_FAILED',
-      `run ${runId} round ${round}: outcomes were computed but the cloud write FAILED — `
-      + 'this round is not finalised in the store; fix connectivity and re-run (the write is idempotent).',
-      {
-        cloud: true, cloudOk: false, runId, round,
-        labelled, total: result.findings.length, needsTriage, autoDismissed, needsTriageFindings,
-      }, 1);
-  }
-  emit({
-    ok: true, cloud: true, runId, round,
-    labelled, total: result.findings.length, needsTriage, autoDismissed, cloudOk,
-    needsTriageFindings,
-    // NOTE: passCounts was dropped when cmdFinalizeOutcomes was refactored onto the
-    // shared finalizeRoundOutcomes (which doesn't return it) — referencing it here
-    // ReferenceError'd. The per-pass counts live in audit_pass_stats; not needed in this echo.
-  });
-}
+// cmdFinalizeOutcomes moved to scripts/lib/cross-skill/commands/plans.mjs (registry).
 
 // ── Persona-test subcommands (replace curl blocks in persona-test SKILL.md) ──
 
@@ -1345,50 +801,7 @@ const GetPersonaSessionsByRepoSchema = z.object({
  * possibly-empty recommendation set + a human card. Deterministic, nudge-not-gate,
  * silent when nothing fits.
  */
-async function cmdRecommendSkills() {
-  const csv = (s) => (s ? s.split(',').map((x) => x.trim()).filter(Boolean) : []);
-  const changedFiles = argOption('changed') ? csv(argOption('changed')) : gitChangedFiles();
-  // `PERSONA_TEST_APP_URL` unset is not the same fact as "no live target" — a repo
-  // that only sets the env var for CI/PR-preview but runs a normal local dev server
-  // otherwise has a runnable URL this env-only check would miss. `--url` lets a
-  // caller (e.g. /cycle with --persona-url) pass the actual target explicitly,
-  // mirroring how every other persona-test-adjacent subcommand resolves its URL.
-  const hasLiveUrl = Boolean(argOption('url') || process.env.PERSONA_TEST_APP_URL);
-  const justRan = argOption('just-ran') || null;
-  const max = Number.isFinite(Number(argOption('max'))) && argOption('max') ? Number(argOption('max')) : 2;
-  const planLenses = csv(argOption('plan-lenses'));
-
-  // Audit findings (tier-1 signal) from a `--findings <file>` (the `/audit-code` --out).
-  let auditFindings = [];
-  const findingsFile = argOption('findings');
-  if (findingsFile) {
-    try {
-      const raw = JSON.parse(readFileSync(findingsFile, 'utf8'));
-      auditFindings = Array.isArray(raw) ? raw
-        : (Array.isArray(raw.findings) ? raw.findings
-          : (Array.isArray(raw.allFindings) ? raw.allFindings : []));
-    } catch (e) { process.stderr.write(`  [recommend] could not read --findings ${findingsFile}: ${e.message}\n`); }
-  }
-
-  // Idempotent ux-lock signal: a HIGH/P0 fix without a /ux-lock spec. Graceful when
-  // cloud is off (no signal, not an error).
-  let unlockedHighFix = false;
-  try {
-    await initLearningStore();
-    const ref = await resolveRepoForStore({}).catch(() => null);
-    if (ref?.repoRowId) {
-      const rows = await getUnlockedFixes({ repoId: ref.repoRowId });
-      unlockedHighFix = Array.isArray(rows) && rows.length > 0;
-    }
-  } catch { /* cloud off / store error → no ux-lock signal, proceed */ }
-
-  const recommendations = recommendSkills({ changedFiles, hasLiveUrl, auditFindings, planLenses, unlockedHighFix, justRan, max });
-  const card = renderRecommendationCard(recommendations);
-  // The pool now exits-on-idle (db/client.mjs allowExitOnIdle), so this one-shot
-  // CLI ends promptly without an explicit teardown.
-  if (argOption('format') === 'human') { process.stdout.write(card); return; }
-  emit({ ok: true, hasLiveUrl, recommendations, card });
-}
+// cmdRecommendSkills moved to scripts/lib/cross-skill/commands/ship.mjs (registry).
 
 /**
  * preview-gate — resolve the deploy-topology gate for /cycle Step 5 from `PREVIEW_GATE_MODE`
@@ -1398,15 +811,7 @@ async function cmdRecommendSkills() {
 // cmdPreviewGate moved to scripts/lib/cross-skill/commands/ship.mjs (registry).
 
 /** Changed files vs HEAD (tracked) + untracked. Empty on any git failure. */
-function gitChangedFiles() {
-  const run = (cmd) => {
-    try {
-      return execSync(cmd, { stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf8' })
-        .split('\n').map((s) => s.trim()).filter(Boolean);
-    } catch { return []; }
-  };
-  return [...new Set([...run('git diff --name-only HEAD'), ...run('git ls-files --others --exclude-standard')])];
-}
+// gitChangedFiles moved to scripts/lib/cross-skill/commands/ship.mjs (registry).
 
 // /persona-test Phase 0d pre-test enrichment: recent HIGH/MEDIUM audit
 // findings for a repo, so the persona explores known-fragile flows with
@@ -1438,56 +843,7 @@ const GetPersonaSessionsByUrlSchema = z.object({
 // implementations live in lib/friction/commands.mjs (thin-dispatcher discipline,
 // R1-MED). Every command returns the C8 shape; ok:false = argv/contract error.
 
-async function cmdQuality() {
-  const sub = rest[0];
-  if (!sub || sub.startsWith('--')) {
-    return emitError('BAD_INPUT', 'usage: quality <add|mirror|digest|link|session-review> [flags]');
-  }
-  await initLearningStore();
-  const m = await import('./lib/friction/commands.mjs');
-  let payload = {};
-  try { payload = parsePayload(); } catch { payload = {}; }
-  let result;
-  switch (sub) {
-    case 'add':
-      result = await m.frictionAdd({
-        title: payload.title ?? argOption('title'),
-        scopeTags: payload.scopeTags ?? [...argList('scope-tags'), ...argAll('scope-tag')],
-        cost: payload.cost ?? argOption('cost') ?? undefined,
-        name: payload.name ?? argOption('name') ?? undefined,
-        files: payload.files ?? [...argList('files'), ...argAll('file')],
-        symbols: payload.symbols ?? [...argList('symbols'), ...argAll('symbol')],
-        body: payload.body ?? argOption('body') ?? undefined,
-      });
-      break;
-    case 'mirror':
-      result = await m.frictionMirror({});
-      break;
-    case 'digest':
-      result = await m.frictionDigest({
-        repoScoped: hasFlag('repo-scoped') || payload.repoScoped === true,
-        windowDays: payload.windowDays ?? (argOption('window-days') ? Number(argOption('window-days')) : undefined),
-        minSimilarity: payload.minSimilarity ?? (argOption('min-similarity') ? Number(argOption('min-similarity')) : undefined),
-      });
-      break;
-    case 'link':
-      result = await m.frictionLink({
-        memory: payload.memory ?? argOption('memory'),
-        kind: payload.kind ?? argOption('kind'),
-        ref: payload.ref ?? argOption('ref'),
-      });
-      break;
-    case 'session-review':
-      result = await m.frictionSessionReview({
-        windowHours: payload.windowHours ?? (argOption('window-hours') ? Number(argOption('window-hours')) : undefined),
-      });
-      break;
-    default:
-      return emitError('BAD_INPUT', `unknown quality subcommand: ${sub}`);
-  }
-  emit(result);
-  if (result && result.ok === false) process.exit(2);
-}
+// cmdQuality moved to scripts/lib/cross-skill/commands/quality.mjs (registry).
 
 // ── Upstream issue reports (plan: upstream-issue-reports.md) ────────────────
 // `upstream` sub-dispatches to report/list/ack/fix/wont-fix/drain; the
@@ -1495,136 +851,9 @@ async function cmdQuality() {
 // discipline, same shape as `quality`).
 
 /** Read the report body from stdin — multiline prose must never be an argv string. */
-async function readStdinBody() {
-  if (process.stdin.isTTY) return '';
-  const chunks = [];
-  for await (const c of process.stdin) chunks.push(c);
-  return Buffer.concat(chunks).toString('utf-8');
-}
+// readStdinBody moved to scripts/lib/cross-skill/commands/quality.mjs (registry).
 
-async function cmdUpstream() {
-  const sub = rest[0];
-  const VERBS = ['report', 'list', 'ack', 'fix', 'wont-fix', 'drain'];
-  if (!sub || !VERBS.includes(sub)) {
-    return emitError('BAD_INPUT', `usage: upstream <${VERBS.join('|')}> [flags]`);
-  }
-
-  const m = await import('./lib/upstream/commands.mjs');
-  const store = await import('./lib/store/upstream-issues.mjs');
-  await initLearningStore();
-  const cloud = await isCloudEnabled();
-  // NOT process.cwd(). Every provenance fact on a report hangs off this path —
-  // the sync manifest (`<root>/scripts/.sync-manifest.json`), the write-ahead
-  // envelope directory, and the repo identity. Run the CLI from a
-  // subdirectory and readBundleStamp finds nothing, so the report is stamped
-  // `bundle_sha: null` + `path_recognised: null` — indistinguishable from a
-  // consumer that genuinely has no manifest. Verified 2026-08-11 against
-  // wine-cellar-app: from its root the same report resolves
-  // `path_recognised: true, sha 2222ccdb`; from `src/` all three go null, and
-  // that is how report d6849e0b was filed. `findRepoRootFromCwd` is the
-  // existing resolver for exactly this question ("which repo is the caller
-  // WORKING in"); do not hand-roll a second one.
-  const { findRepoRootFromCwd } = await import('./lib/assert-repo-root.mjs');
-  const repoRoot = findRepoRootFromCwd();
-
-  // Best-effort drain on EVERY verb: gated on the directory existing, so a run
-  // with nothing pending costs one stat. Triggering only on report/list would
-  // mean the outbox never drains on a consumer — `list` is a source-side
-  // command consumers never run, and `report` is by definition rare.
-  // Returns `{error}` rather than swallowing: an explicit `upstream drain` must
-  // never report a success shape when the drain actually failed — that is the
-  // "green having done nothing" class this repo audits its success paths for.
-  // A failure on the piggybacked path is still non-fatal (it is housekeeping),
-  // but it is always *reported*.
-  const drainIfPending = async () => {
-    if (!cloud) return { drained: 0, rejected: 0, failed: 0, skipped: 'cloud-off' };
-    try {
-      return await m.drainOutbox({
-        repoRoot,
-        recordFn: async (p) => store.recordUpstreamIssue({
-          ...p, repoId: p.repoId ?? await resolveRepoId({}),
-        }),
-      });
-    } catch (err) {
-      process.stderr.write(`  [upstream] outbox drain failed: ${err.message}\n`);
-      return { drained: 0, rejected: 0, failed: 0, error: err.message };
-    }
-  };
-
-  try {
-    if (sub === 'drain') {
-      const r = await drainIfPending();
-      // An explicit drain that hit an error is NOT ok — the caller asked for
-      // this work specifically, so a failure is the answer, not a footnote.
-      if (r.error) return emitError('DRAIN_FAILED', r.error, { cloud, ...r });
-      return emit({ ok: true, cloud, ...r });
-    }
-
-    const drain = await drainIfPending();
-
-    if (sub === 'report') {
-      const body = argOption('body') ?? await readStdinBody();
-      const res = await m.upstreamReport({
-        repoRoot,
-        repoUuid: resolveRepoIdentity(repoRoot).repoUuid,
-        repoId: cloud ? await resolveRepoId({}) : null,
-        title: argOption('title'),
-        body,
-        severity: (argOption('severity') || 'MEDIUM').toUpperCase(),
-        affectedPath: argOption('affected-path'),
-        actor: argOption('actor') || null,
-        cloudEnabled: cloud,
-        recordFn: (p) => store.recordUpstreamIssue(p),
-      });
-      if (!res.ok) return emitError(res.code || 'BAD_INPUT', res.errors.join('; '), { errors: res.errors });
-      return emit({ ...res, drain });
-    }
-
-    if (sub === 'list') {
-      const state = argOption('state') || 'open';
-      const before = argOption('before')
-        ? JSON.parse(Buffer.from(argOption('before'), 'base64url').toString('utf-8'))
-        : null;
-      const res = await m.upstreamList({
-        repoRoot, state, before,
-        limit: argOption('limit') ? Number(argOption('limit')) : undefined,
-        repoId: argOption('repo-id') || null,
-        listFn: (o) => store.listUpstreamIssues(o),
-        priorFixesFn: (p, id) => store.findPriorFixes(p, id),
-      });
-      if (process.argv.includes('--worksheet')) {
-        process.stdout.write(m.renderWorksheet(res.items || [], { state }) + '\n');
-        return;
-      }
-      // The cursor is opaque + base64url so an operator can paste it back
-      // without shell-quoting a JSON object.
-      const nextCursor = res.nextCursor
-        ? Buffer.from(JSON.stringify(res.nextCursor), 'utf-8').toString('base64url')
-        : null;
-      return emit({ ...res, nextCursor, drain });
-    }
-
-    // ack | fix | wont-fix
-    const to = sub === 'ack' ? 'acknowledged' : sub === 'fix' ? 'fixed' : 'wont_fix';
-    const res = await m.upstreamTransition({
-      repoRoot, to,
-      id: argOption('id'),
-      note: argOption('note'),
-      commit: argOption('commit'),
-      actor: argOption('actor') || null,
-      transitionFn: (a) => store.transitionUpstreamIssue(a),
-    });
-    if (!res.ok) {
-      const code = res.code || (res.illegal ? 'ILLEGAL_TRANSITION'
-        : res.notFound ? 'NOT_FOUND' : res.ambiguous ? 'AMBIGUOUS_ID'
-          : res.conflict ? 'CONFLICT' : 'EXCEPTION');
-      return emitError(code, res.errors ? res.errors.join('; ') : res.error, res);
-    }
-    return emit(res);
-  } catch (err) {
-    return emitError('EXCEPTION', err.message);
-  }
-}
+// cmdUpstream moved to scripts/lib/cross-skill/commands/quality.mjs (registry).
 
 // ── Durable audit-store writes (plan: audit-store-write-durability.md) ──────
 
@@ -1648,70 +877,9 @@ async function cmdUpstream() {
  *     an error to the caller who asked for it, not a footnote on a success
  *     envelope — the same rule `upstream drain` above follows.
  */
-async function cmdWriteSpill() {
-  const sub = rest[0];
-  const VERBS = ['status', 'drain'];
-  if (!sub || !VERBS.includes(sub)) {
-    return emitError('BAD_INPUT', `usage: write-spill <${VERBS.join('|')}> [--cap N]`);
-  }
+// cmdWriteSpill moved to scripts/lib/cross-skill/commands/misc.mjs (registry).
 
-  // Importing the registration module IS the registry bootstrap (decision 1b).
-  await import('./lib/audit-store-writers.mjs');
-  const { drainSpill, spillSummary, registeredWriters, DRAIN_CAP } = await import('./lib/durable-write.mjs');
-  await initLearningStore();
-  const cloud = await isCloudEnabled();
-
-  if (sub === 'status') {
-    const summary = spillSummary();
-    // `unavailable` is reported as a non-ok result: "I could not read the queue"
-    // must never render as "the queue is empty", which is the distinction this
-    // whole subsystem is built around.
-    if (summary.state === 'unavailable') {
-      return emitError('SPILL_UNREADABLE', summary.reason, { cloud });
-    }
-    return emit({
-      ok: true,
-      cloud,
-      spilled: summary.spilled,
-      lost: summary.lost,
-      oldestAgeMs: summary.oldestAgeMs,
-      writers: registeredWriters(),
-      drainCap: DRAIN_CAP,
-      // Naming what `lost` means at the point of reporting: an operator seeing a
-      // non-zero count needs to know nothing will ever replay it.
-      note: summary.lost > 0
-        ? `${summary.lost} artifact(s) in lost/ are evidence only — no writer declared an idempotency key, so they are never replayed`
-        : undefined,
-    });
-  }
-
-  // `/^\d+$/` before parseInt, not parseInt alone: parseInt takes the numeric
-  // PREFIX, so `--cap 1junk` would parse as 1 and run a cap the operator never
-  // asked for. A malformed bound on a queue-draining command is exactly the
-  // "silently does something other than what you asked" class assertKnownFlags
-  // refuses one level up.
-  const capRaw = argOption('cap');
-  const cap = capRaw ? Number.parseInt(capRaw, 10) : undefined;
-  if (capRaw && !(/^\d+$/.test(String(capRaw).trim()) && Number.isInteger(cap) && cap > 0)) {
-    return emitError('BAD_INPUT', `--cap must be a positive integer; got ${JSON.stringify(capRaw)}`);
-  }
-  const res = await drainSpill({ cap, isCloudEnabled });
-  if (res.state === 'unavailable') {
-    return emitError('DRAIN_UNAVAILABLE', res.reason, { cloud, ...res });
-  }
-  return emit({ ok: true, cloud, ...res });
-}
-
-async function cmdGetFrictionNeighbourhood() {
-  const p = parsePayload();
-  await initLearningStore();
-  const { frictionNeighbourhood } = await import('./lib/friction/commands.mjs');
-  const result = await frictionNeighbourhood({
-    prompt: p.prompt ?? p.intentDescription ?? argOption('prompt') ?? '',
-    k: p.k ?? (argOption('k') ? Number(argOption('k')) : undefined),
-  });
-  emit(result);
-}
+// cmdGetFrictionNeighbourhood moved to scripts/lib/cross-skill/commands/misc.mjs (registry).
 
 // cmdComputeTargetDomains moved to scripts/lib/cross-skill/commands/arch-query.mjs (registry).
 
@@ -1748,78 +916,7 @@ async function cmdGetFrictionNeighbourhood() {
  * --description (what the test pins). Angle-bracket syntax is avoided even
  * here so a copied line stays PowerShell-safe.
  */
-async function cmdLockWithTest() {
-  await initLearningStore();
-  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, locked: false });
-
-  if (hasFlag('worksheet')) return cmdLockWithTestWorksheet();
-
-  const findingId = argOption('finding');
-  const testPath = argOption('test');
-  const description = argOption('description');
-  if (!findingId || !testPath || !description) {
-    // Concrete example, not `<angle-bracket>` syntax: PowerShell reserves `<`,
-    // so a bracketed usage line is unpasteable on this repo's dev platform
-    // (operator-doc convention, bit twice before 2026-07-02).
-    return emit({ ok: false, error: 'lock-with-test needs --finding, --test and --description. Example: '
-      + 'node scripts/cross-skill.mjs lock-with-test --finding a4969127-d5d0-47bb-8b2e-0acb0ed71546 '
-      + '--test tests/foo.test.mjs --description "pins the NUL-delimited parse path". '
-      + 'The description is mandatory: an unexplained lock is an unverifiable claim. '
-      + 'Run --worksheet for the reviewed queue.' });
-  }
-
-  const { realpathSync } = await import('node:fs');
-  const repoRoot = realpathSync(process.cwd());
-  // Delegate to the one canonical realpath+containment oracle. The previous check was
-  // boundary-safe (it appended the separator) but never RESOLVED the target, so a
-  // symlink at an in-repo path pointing outside was accepted; and `existsSync` accepts
-  // a DIRECTORY, so a lock could name a directory and read as evidence.
-  // Reason strings map 1:1 to the policy table in the plan (§2 dec. 3).
-  const verdict = classifyTestPath({ repoRoot, testPath });
-  if (!verdict.ok) {
-    const why = {
-      'path-escapes-repo': `"${testPath}" resolves outside the repo`,
-      'not-a-file': `"${testPath}" is not a regular file`,
-      'test-file-not-found': `test file "${testPath}" does not exist — a lock naming a missing file is a fake check`,
-      'path-unresolvable': `"${testPath}" could not be resolved (broken symlink or permission error)`,
-      'sensitive-path': `"${testPath}" is a sensitive path`,
-      'empty-path': 'a test path is required',
-    }[verdict.reason] ?? verdict.reason;
-    return emit({ ok: false, error: `refusing: ${why}`, reason: verdict.reason });
-  }
-  const abs = verdict.canonical;
-
-  // CROSS-TENANT WRITE FENCE. This used to scan `getUnlockedFixes(null)` — an
-  // arbitrary 20 cross-repo rows out of hundreds — and then adopt whatever
-  // `repo_id` the matched row carried. Two defects in one line: a legitimate
-  // finding usually was NOT among those 20 (so the lookup silently missed and
-  // fell through), and a foreign row's repo_id could be written straight into a
-  // regression spec. That is a cross-tenant MUTATION, strictly worse than the
-  // cross-tenant read this change set started from.
-  //
-  // Now: resolve identity FIRST, look the finding up scoped to it, and take the
-  // repo_id from the resolved identity — never from the fetched row.
-  const ref = await resolveRepoForStore({}).catch(() => null);
-  const repoId = ref?.repoRowId || null;
-  if (!repoId) {
-    return emit({ ok: false, error: 'refusing: repo identity unresolvable — a regression spec must be attributed to a repo, and guessing one is how another repo\'s findings got recorded.' });
-  }
-  const finding = await findUnlockedFixInRepo({ repoId, findingId });
-  if (!finding) {
-    return emit({ ok: false, error: `refusing: no unlocked finding "${findingId}" in THIS repo. If it exists elsewhere it belongs to another repository — locking it here would attribute the fix to the wrong repo.` });
-  }
-
-  const spec = await recordRegressionSpec(repoId, {
-    specPath: testPath,
-    description,
-    sourceKind: 'unit-test',
-    sourceFindingId: findingId,
-    sourceFindingType: 'audit',
-    assertionCount: 0,
-    domContractTypes: [],
-  });
-  return emit({ ok: !!spec, cloud: true, locked: !!spec, findingId, testPath });
-}
+// cmdLockWithTest moved to scripts/lib/cross-skill/commands/ship.mjs (registry).
 
 /**
  * Operator worksheet for the unlocked-code backlog.
@@ -1840,98 +937,7 @@ async function cmdLockWithTest() {
  * write one" for findings whose test already existed, and following the
  * worksheet would have produced duplicate suites.
  */
-async function cmdLockWithTestWorksheet() {
-  const { findTestFilesFor, classifyTestMatch } = await import('./lib/test-file-search.mjs');
-  // Same scope chain as list-unlocked-fixes — this is the command Step 0.5b
-  // PRINTS as its own remediation, so an unscoped worksheet would hand the
-  // operator another repo's findings to "fix".
-  const scope = await resolveShipNudgeScope();
-  if (scope.error) return emit({ ok: false, error: scope.error, reason: scope.reason });
-  // PER-COMMAND SCOPE CAPABILITY (plan D21). `--all-repos` is legitimate on the
-  // read-only `list-unlocked-fixes` — "show me every repo's backlog" is a real
-  // operator question. It is NOT legitimate here: every row this worksheet prints
-  // carries a pasteable `lock-with-test` command, and `lock-with-test` refuses a
-  // finding outside the current repo (the cross-tenant write fence). A global
-  // worksheet would therefore be a queue of instructions that cannot be followed
-  // — the same "plausible output nobody questions" shape as the original bug.
-  // Refused BEFORE any store call, so an unscoped read is never even attempted.
-  if (scope.mode === 'all-repos') {
-    return emit({ ok: false, reason: 'all-repos-unsupported',
-      error: '--all-repos is not supported by lock-with-test --worksheet: every row it emits is a ' +
-        'per-repo lock command, and lock-with-test refuses findings from another repo. ' +
-        'Scope it (--repo/--repo-id, or run inside the repo), or use list-unlocked-fixes --all-repos to browse.' });
-  }
-  if (!scope.measured) {
-    return emit({ ok: true, measured: false, reason: scope.reason, worksheet: '',
-      note: 'repo scope unresolved — nothing was measured (this is NOT "no unlocked fixes").' });
-  }
-  // `mode` is applied in SQL, BEFORE the 20-row cap. Filtering in JS afterwards
-  // took an arbitrary subset of an arbitrary subset — code rows past the cap
-  // were invisible and the page membership changed between identical calls.
-  const storeScope = storeScopeFor(scope);
-  const rows = await getUnlockedFixes(storeScope, { mode: 'code' });
-  // `allAges: false` — spelled out rather than inherited. This line read
-  // `{ allAges }` against no such binding in this function, so the worksheet
-  // threw `allAges is not defined` on every invocation: a hard crash in the
-  // exact command /ship Step 0.5b tells operators to run. The windowed count is
-  // the right denominator here anyway — the worksheet lists rows the DEFAULT
-  // read returned, and a denominator from a wider population would report a
-  // cap that does not match the rows shown.
-  const byMode = await countUnlockedFixes(storeScope, { allAges: false });
-  const capped = byMode.code > rows.length;
-
-  const lines = ['# Unlocked code fixes — regression-lock worksheet', '',
-    `${rows.length} shown of ${byMode.code} code obligations`
-      + `${capped ? ' (page caps at 20 — re-run after locking these)' : ''}`
-      + `${byMode.plan ? `; ${byMode.plan} plan finding(s) excluded — they can never carry a spec` : ''}.`,
-    '',
-    'The suggested test is a **filename heuristic only** — it does not prove the',
-    'test covers this finding. Confirm by reading the test, then run its command.',
-    'If no test covers it, write one; do NOT lock it to an unrelated file.',
-    '',
-    'One test file may lock SEVERAL findings — run every command below, including',
-    'repeats of the same path.', ''];
-
-  for (const r of rows) {
-    const matches = findTestFilesFor(r.primary_file, process.cwd());
-    const guess = matches[0] ?? null;
-    // A rendered command is READ AS EVIDENCE that the lock is sound — that is
-    // the whole reason it saves the operator typing. So it is withheld when the
-    // only candidate's own directories contradict the source's: the operator
-    // must then name the path deliberately, which is the accountability the
-    // mandatory --description already assumes.
-    const verdict = guess ? classifyTestMatch(r.primary_file, guess) : null;
-    const others = matches.length > 1 ? ` (+${matches.length - 1} other same-named match(es))` : '';
-    lines.push(`## ${r.audit_finding_id}`);
-    lines.push(`- file: \`${r.primary_file}\``);
-    lines.push(`- category: ${r.category}`);
-    if (!guess) {
-      lines.push('- suggested test: **none found — write one**');
-    } else if (verdict === 'unrelated') {
-      lines.push(`- suggested test: **none confident**. Closest basename match is \`${guess}\`${others}, `
-        + 'but it lives under a different module — a same-named file from elsewhere is not coverage. '
-        + 'Read it, or write a test; then run `lock-with-test` with the path spelled out.');
-    } else {
-      lines.push(`- suggested test: \`${guess}\`${others} (exists — READ IT before locking)`);
-      // Every interpolated value is shell-quoted. `guess` is discovered by
-      // globbing the repo's test tree and `category` is model-generated text,
-      // and the previous rendering put the latter inside DOUBLE quotes with
-      // only `"` escaped — which still expands `$(...)`, backticks and `$VAR`.
-      // Nothing is exec'd here, so the hazard is the operator pasting it; that
-      // is precisely what a rendered command is FOR, which is what made it
-      // worth closing rather than noting.
-      lines.push('', '```bash',
-        'node scripts/cross-skill.mjs lock-with-test'
-        + ` --finding ${shellQuoteSingle(r.audit_finding_id)}`
-        + ` --test ${shellQuoteSingle(guess)}`
-        + ` --description ${shellQuoteLabel(`pins: ${r.category}`)}`,
-        '```');
-    }
-    lines.push('');
-  }
-  process.stdout.write(`${lines.join('\n')}\n`);
-  return undefined;
-}
+// cmdLockWithTestWorksheet moved to scripts/lib/cross-skill/commands/ship.mjs (registry).
 
 // cmdGetNeighbourhood moved to scripts/lib/cross-skill/commands/arch-query.mjs (registry).
 
@@ -1973,18 +979,7 @@ async function cmdLockWithTestWorksheet() {
  * counts of pending_triage_findings + no_brainer_recommendations + stale
  * clusters per repo.  Phase 2 extends with quickfix-pattern stats.
  */
-async function cmdLearningStats() {
-  const p = parsePayload();
-  // Thin wrapper over the shared accessor — argv/env/stdout concerns only.
-  // The CLI (not the pure lib) owns the LEARNING_REPO_NAME env fallback.
-  const r = await getLearningStats({
-    repoId: p.repoId || null,
-    repoName: p.repoName || process.env.LEARNING_REPO_NAME || null,
-  });
-  if (!r.cloud) return emit({ ok: true, cloud: false, stats: null });
-  if (!r.stats) return emit({ ok: true, cloud: true, repoId: null, stats: { unknownRepo: true } });
-  emit({ ok: true, cloud: true, repoId: r.repoId, repoName: r.repoName, stats: r.stats });
-}
+// cmdLearningStats moved to scripts/lib/cross-skill/commands/learning.mjs (registry).
 
 /**
  * Weekly review — delegates to scripts/learning/weekly-review.mjs.
@@ -1992,15 +987,7 @@ async function cmdLearningStats() {
  * the GH workflow can invoke `cross-skill.mjs learning-weekly-review`
  * uniformly.
  */
-async function cmdLearningWeeklyReview() {
-  const { runWeeklyReview } = await import('./learning/weekly-review.mjs');
-  const result = await runWeeklyReview({
-    repoName: argOption('repo') || process.env.LEARNING_REPO_NAME || null,
-    dryRun: rest.includes('--dry-run'),
-    format: argOption('format') || 'json',
-  });
-  emit(result);
-}
+// cmdLearningWeeklyReview moved to scripts/lib/cross-skill/commands/learning.mjs (registry).
 
 /**
  * Backfill quickfix outcomes — Phase 2.  Drains the local hits JSONL into
@@ -2008,161 +995,38 @@ async function cmdLearningWeeklyReview() {
  * than 30 minutes by examining current file state.  Optionally rebuilds
  * the `quickfix-pattern-stats.json` cache afterward (--rebuild-stats).
  */
-async function cmdLearningBackfillOutcomes() {
-  const { runBackfill } = await import('./learning/backfill-outcomes.mjs');
-  const result = await runBackfill({
-    // `--repo` is accepted as well as `--repo-id`: the two entry points to
-    // runBackfill disagreed on the spelling, and `--repo` is globally
-    // allowlisted here for other subcommands — so
-    // `learning-backfill-outcomes --repo X` passed the flag guard, resolved to
-    // null, and ran the backfill UNSCOPED. Silently wrong scope on a mutating
-    // command, which is the failure this file's guard is meant to prevent and
-    // could not: the flag is known, just read under a different name.
-    // Reproduced 2026-07-20 before the fix. The standalone
-    // backfill-outcomes.mjs has always mapped `--repo` to repoId, so this makes
-    // the two agree rather than inventing a third convention.
-    repoId:       argOption('repo-id') || argOption('repo') || null,
-    dryRun:       rest.includes('--dry-run'),
-    skipDrain:    rest.includes('--skip-drain'),
-    skipResolve:  rest.includes('--skip-resolve'),
-    rebuildStats: rest.includes('--rebuild-stats'),
-  });
-  emit(result);
-}
+// cmdLearningBackfillOutcomes moved to scripts/lib/cross-skill/commands/learning.mjs (registry).
 
 /**
  * Friction-log capture — `audit:wtf <message>`.  Quick-write CLI for
  * real-time operator annoyance.  Plan: friction-log-and-digest-v1.md.
  */
-async function cmdFrictionLog() {
-  const { runFrictionLog } = await import('./friction-log.mjs');
-  const result = await runFrictionLog(rest);
-  emit(result);
-  if (!result.ok) process.exit(1);
-}
+// cmdFrictionLog moved to scripts/lib/cross-skill/commands/misc.mjs (registry).
 
 /**
  * Replay CLI bridge — Phase 3.  Wraps `scripts/learning/replay.mjs` so
  * package.json + workflow scripts can route through cross-skill.mjs
  * uniformly.  Forwards all positional + flag args to the CLI runner.
  */
-async function cmdLearningReplay() {
-  const { runReplayCli } = await import('./learning/replay.mjs');
-  const result = await runReplayCli(rest);
-  // runReplayCli already wrote stdout; we just propagate the exit code via emit.
-  if (result && result.ok === false) {
-    emit({ ok: false, error: result.error || 'replay failed' });
-    process.exit(1);
-  }
-}
+// cmdLearningReplay moved to scripts/lib/cross-skill/commands/learning.mjs (registry).
 
 /**
  * Quickfix-stats CLI bridge — Phase 2.  Wraps
  * `scripts/lib/learning/quickfix-stats.mjs` so package.json + workflow
  * scripts route through cross-skill.mjs uniformly.
  */
-async function cmdLearningQuickfixStats() {
-  const mod = await import('./lib/learning/quickfix-stats.mjs');
-  const action = argOption('action') || 'stats';
-  const repoId = argOption('repo-id') || null;
-  // An unrecognised --action used to fall through to the stats reader, so a
-  // typo'd `--action rebuidl` printed a successful stats card and exited 0 —
-  // reporting success for a command that never ran. Reject it by name.
-  if (action !== 'rebuild' && action !== 'stats') {
-    emitError(
-      'BAD_INPUT',
-      `unknown --action "${action}" for learning-quickfix-stats; expected "rebuild" or "stats"`,
-      { action },
-    );
-    return; // unreachable — emitError exits.
-  }
-  if (action === 'rebuild') {
-    const bootstrap = rest.includes('--bootstrap');
-    if (bootstrap) {
-      // The bootstrap rebuild is RETIRED (plan §2 items 2+3). Surface the
-      // refusal as a typed error with a non-zero exit rather than an
-      // `{ok:false}` on exit 0 — an automation consumer that only checks the
-      // exit code must not read "did nothing" as "rebuilt".
-      const result = await mod.rebuildFromBootstrap();
-      emitError(
-        'BOOTSTRAP_RETIRED',
-        'the bootstrap rebuild is retired and writes nothing; outcome detection is owned by backfill-outcomes',
-        { action: 'rebuild', mode: 'bootstrap', hint: result.hint, retiredError: result.error },
-      );
-      return; // unreachable — emitError exits.
-    }
-    const result = await mod.rebuildFromCloud({ repoId });
-    if (!result.ok) {
-      // Same failure contract as the retired path above: a rebuild that did
-      // not happen must not exit 0. `rebuildFromCloud` already declines to
-      // overwrite a good cache on a read failure, so exiting 0 here told an
-      // automation consumer "rebuilt" about a run that deliberately wrote
-      // nothing.
-      emitError(
-        'REBUILD_FAILED',
-        `quickfix stats rebuild did not complete: ${result.error}`,
-        { action: 'rebuild', mode: 'cloud', ...result },
-      );
-      return; // unreachable — emitError exits.
-    }
-    emit({ ok: true, action: 'rebuild', mode: 'cloud', ...result });
-    return;
-  }
-  // Default: read the cache and emit the stats summary.
-  const stats = mod.loadStats();
-  const skipMap = {};
-  for (const name of Object.keys(stats.patterns || {})) {
-    skipMap[name] = mod.shouldSkipPattern(name, stats);
-  }
-  emit({
-    ok: true,
-    action: 'stats',
-    cacheExists: !!stats._generatedAt,
-    generatedAt: stats._generatedAt || null,
-    patterns: stats.patterns || {},
-    wouldSkip: skipMap,
-  });
-}
+// cmdLearningQuickfixStats moved to scripts/lib/cross-skill/commands/learning.mjs (registry).
 
 // ── Dispatcher ──────────────────────────────────────────────────────────────
 
-const commands = {
-  // Phase 3 WS-PIPE1 — persona_test_candidates aggregation table.
-  'list-unlocked-fixes': cmdListUnlockedFixes,
-  'list-unremediated-acceptances': cmdListUnremediatedAcceptances,
-  'finalize-outcomes': cmdFinalizeOutcomes,
-  // Model-A/B/C experiment harness (Cluster C)
-  'model-ab-adjudicate': cmdModelAbAdjudicate,
-  'model-ab-stats': cmdModelAbStats,
-  'model-ab-decision': cmdModelAbDecision,
-  // Unified arm-evaluation framework (plan-authoring + brainstorm)
-  'arm-eval-run': cmdArmEvalRun,
-  'arm-eval-decision': cmdArmEvalDecision,
-  'arm-eval-stats': cmdArmEvalStats,
-  'arm-eval-adjudicate': cmdArmEvalAdjudicate,
-  'arm-eval-toggle': cmdArmEvalToggle,
-  'arm-eval-maybe-capture': cmdArmEvalMaybeCapture,
-  'arm-eval-export': cmdArmEvalExport,
-  'recommend-skills': cmdRecommendSkills,
-  'lock-with-test':     cmdLockWithTest,
-  // Architectural memory
-  // Phase 1 — adaptive-learning-v1
-  'learning-stats':                   cmdLearningStats,
-  'learning-weekly-review':           cmdLearningWeeklyReview,
-  // Phase 2 — live quickfix learner
-  'learning-backfill-outcomes':       cmdLearningBackfillOutcomes,
-  'learning-quickfix-stats':          cmdLearningQuickfixStats,
-  // Phase 3 — replay framework + remaining telemetry
-  'learning-replay':                  cmdLearningReplay,
-  // Friction log (plan: friction-log-and-digest-v1.md)
-  'friction-log':                     cmdFrictionLog,
-  // Friction-feedback loop (plan: friction-feedback-loop.md)
-  'quality':                          cmdQuality,
-  'get-friction-neighbourhood':       cmdGetFrictionNeighbourhood,
-  // Upstream issue reports (plan: upstream-issue-reports.md)
-  'upstream':                         cmdUpstream,
-  'write-spill':                      cmdWriteSpill,
-};
+// ── Dispatch ────────────────────────────────────────────────────────────────
+//
+// The legacy `commands` map is GONE (Phase 5). Every one of the 71 subcommands
+// is a registry entry now, so this file no longer holds a second dispatch
+// surface that could disagree with the first. The conservation law the
+// migration ran under (`registry ∪ legacy = INVENTORY`, disjoint) collapses to
+// `registry === INVENTORY`, which is what the ratchet asserts from here on.
+const commands = Object.freeze({});
 
 async function main() {
   // Global flag validation stays for EVERY invocation during migration: it is

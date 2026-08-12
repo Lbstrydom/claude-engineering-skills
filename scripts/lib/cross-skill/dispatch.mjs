@@ -212,6 +212,11 @@ export async function dispatch(argv, overrides = {}) {
     // close (audit CA-r1). A handler that needs more than the verb needs a
     // richer declaration, not a side door.
     verb: bare[0] ?? null,
+    // The raw argv tail, exposed ONLY to `forward:` commands (conformance
+    // enforces that pairing). A forwarder's whole contract is "hand this to
+    // the target CLI verbatim", so it needs the tail the declaration-checked
+    // accessors deliberately withhold from everyone else.
+    forwardArgs: cmd.forward ? rest : undefined,
     cloud,
     deps,
     git: { commitSha: currentCommitSha, branch: currentBranch },
@@ -228,6 +233,23 @@ export async function dispatch(argv, overrides = {}) {
           `handler for "${name}" read --${n}, which its registry entry does not declare — declare it or stop reading it`, {}, 1);
       }
       return flagRegion.includes(`--${n}`);
+    },
+    /** Comma-split a single `--name a,b,c` into a trimmed list. */
+    flagList(n) {
+      const v = ctx.flag(n);
+      return v ? v.split(',').map((s) => s.trim()).filter(Boolean) : [];
+    },
+    /** Collect EVERY occurrence of a repeatable `--name v`. */
+    flagAll(n) {
+      if (!declared.has(n)) {
+        throw new CommandError('UNDECLARED_FLAG',
+          `handler for "${name}" read --${n}, which its registry entry does not declare — declare it or stop reading it`, {}, 1);
+      }
+      const out = [];
+      for (let i = 0; i < flagRegion.length; i += 1) {
+        if (flagRegion[i] === `--${n}` && flagRegion[i + 1] != null) out.push(flagRegion[i + 1]);
+      }
+      return out;
     },
     payload() {
       if (cmd.payload === 'none') return {};
@@ -296,6 +318,15 @@ export async function dispatch(argv, overrides = {}) {
     // with there, so the validator does not apply; but the ABSENCE must be
     // DECLARED (`okless`), or a handler that simply forgot to return `ok`
     // would slip through under the same exemption.
+    // FORWARDERS emit the sub-CLI's result VERBATIM and take their exit code
+    // from it. That is not an exemption — it is the §2b F4 invariant already
+    // holding: `friction-log` and `learning-replay` exit 1 on `ok:false`
+    // today, which is exactly what F4 will make universal. Expressing it as a
+    // declaration means the dispatcher still owns the exit code, and a
+    // forwarder cannot silently start returning a failure at exit 0.
+    if (cmd.forward) {
+      return { envelope, exitCode: envelope.ok === false ? 1 : 0 };
+    }
     if (!('ok' in envelope)) {
       if (cmd.okless?.reason) return { envelope, exitCode: 0 };
       return {

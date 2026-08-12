@@ -170,3 +170,75 @@ export async function getNavFirstSeenCmd(ctx) {
   for (const key of p.driftKeys) { const v = lookup(key); if (v) firstSeen[key] = v; }
   return { ok: true, cloud: true, firstSeen, truncated: history.truncated };
 }
+
+// ── Cluster D (Phase 5) — durability + friction surfaces ──────────────────
+
+/**
+ * `write-spill <status|drain>` — the durable-write spill queue.
+ *
+ * `audit-store-writers.mjs` is the registry's ONLY bootstrap, so it must be
+ * imported before `registeredWriters()` can answer — both this command and the
+ * orchestrator import it for that reason.
+ */
+export async function writeSpillCmd(ctx) {
+  const sub = ctx.verb;
+  const VERBS = ['status', 'drain'];
+  if (!sub || !VERBS.includes(sub)) {
+    throw new CommandError('BAD_INPUT', `usage: write-spill <${VERBS.join('|')}> [--cap N]`);
+  }
+  await import('../../audit-store-writers.mjs');
+  const { drainSpill, spillSummary, registeredWriters, DRAIN_CAP } = await import('../../durable-write.mjs');
+  const cloud = ctx.cloud.enabled;
+
+  if (sub === 'status') {
+    const summary = spillSummary();
+    if (summary.state === 'unavailable') {
+      throw new CommandError('SPILL_UNREADABLE', summary.reason, { cloud });
+    }
+    return {
+      ok: true,
+      cloud,
+      spilled: summary.spilled,
+      lost: summary.lost,
+      oldestAgeMs: summary.oldestAgeMs,
+      writers: registeredWriters(),
+      drainCap: DRAIN_CAP,
+      // `lost/` is an evidence drawer the drain never replays — a writer with
+      // no idempotency key cannot be safely retried, so saying so beats a
+      // number the operator would read as a replay backlog.
+      note: summary.lost > 0
+        ? `${summary.lost} artifact(s) in lost/ are evidence only — no writer declared an idempotency key, so they are never replayed`
+        : undefined,
+    };
+  }
+
+  const capRaw = ctx.flag('cap');
+  const cap = capRaw ? Number.parseInt(capRaw, 10) : undefined;
+  if (capRaw && !(/^\d+$/.test(String(capRaw).trim()) && Number.isInteger(cap) && cap > 0)) {
+    throw new CommandError('BAD_INPUT', `--cap must be a positive integer; got ${JSON.stringify(capRaw)}`);
+  }
+  const res = await drainSpill({ cap, isCloudEnabled: () => ctx.deps.isCloudEnabled() });
+  if (res.state === 'unavailable') {
+    throw new CommandError('DRAIN_UNAVAILABLE', res.reason, { cloud, ...res });
+  }
+  return { ok: true, cloud, ...res };
+}
+
+/** `friction-log` — `audit:wtf <message>`; forwards argv to friction-log.mjs. */
+export async function frictionLogCmd(ctx) {
+  const { runFrictionLog } = await import('../../../friction-log.mjs');
+  // The sub-CLI's result IS the envelope (a flat `{ok, errors:[…]}` on
+  // failure, not this CLI's {code,message} shape) and its `ok` drives the exit
+  // code — both preserved by the forwarder contract in dispatch.mjs.
+  return runFrictionLog(ctx.forwardArgs);
+}
+
+/** `get-friction-neighbourhood` — similar past friction for an intent. */
+export async function getFrictionNeighbourhoodCmd(ctx) {
+  const p = ctx.payload();
+  const { frictionNeighbourhood } = await import('../../friction/commands.mjs');
+  return frictionNeighbourhood({
+    prompt: p.prompt ?? p.intentDescription ?? ctx.flag('prompt') ?? '',
+    k: p.k ?? (ctx.flag('k') ? Number(ctx.flag('k')) : undefined),
+  });
+}

@@ -1738,6 +1738,122 @@
           "message": "cannot read --result (nope.json): ENOENT: no such file or directory, open 'C:\\Users\\User\\AppData\\Local\\Temp\\xskill-capture-k0KkLe\\finalize-outcomes-ba-DmBOEU\\nope.json'"
         }
       }
+    },
+    "friction-log-no-msg": {
+      "args": [
+        "friction-log"
+      ],
+      "status": 1,
+      "envelope": {
+        "ok": false,
+        "errors": [
+          "message is required (positional argument)"
+        ]
+      }
+    },
+    "write-spill-no-verb": {
+      "args": [
+        "write-spill"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "usage: write-spill <status|drain> [--cap N]"
+        }
+      }
+    },
+    "write-spill-bad-verb": {
+      "args": [
+        "write-spill",
+        "bogus"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "usage: write-spill <status|drain> [--cap N]"
+        }
+      }
+    },
+    "write-spill-status": {
+      "args": [
+        "write-spill",
+        "status"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false,
+        "spilled": 0,
+        "lost": 0,
+        "oldestAgeMs": null,
+        "writers": [
+          "audit.findings",
+          "audit.runComplete",
+          "audit.passStats",
+          "audit.suppressionEvents",
+          "learning.banditArms",
+          "learning.fpPatterns"
+        ],
+        "drainCap": 100
+      }
+    },
+    "learning-weekly-dry": {
+      "args": [
+        "learning-weekly-review",
+        "--dry-run"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "repoName required (LEARNING_REPO_NAME env or --repo flag)"
+        }
+      }
+    },
+    "learning-backfill-dry": {
+      "args": [
+        "learning-backfill-outcomes",
+        "--dry-run",
+        "--skip-drain",
+        "--skip-resolve"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "drain": {
+          "processed": 0,
+          "inserted": 0,
+          "errors": 0
+        },
+        "resolve": {
+          "examined": 0,
+          "resolved": 0,
+          "stillPending": 0,
+          "errors": 0
+        },
+        "rebuild": {
+          "ran": false,
+          "ok": null,
+          "totalDecisions": null
+        },
+        "cloud": false,
+        "reason": "cloud-disabled"
+      }
+    },
+    "learning-replay-no-type": {
+      "args": [
+        "learning-replay"
+      ],
+      "status": 1,
+      "envelope": {
+        "ok": false,
+        "error": "missing-decision-type"
+      }
     }
   }
 }

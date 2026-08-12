@@ -462,6 +462,236 @@ export const REGISTRY = Object.freeze([
     degradeShape: { hint: 'cloud disabled — overlap is unmeasurable locally' },
     load: () => import('./commands/final-review.mjs').then((m) => m.shadowOverlapCmd),
   },
+
+  // ── Cohort: nudge readers, learning, durability, friction (Cluster D) ────
+  {
+    name: 'list-unlocked-fixes',
+    flags: ['repo', 'repo-id', 'limit', 'offset',
+      { name: 'all-repos', kind: 'boolean' }, { name: 'all-ages', kind: 'boolean' }],
+    positionals: 'none', payload: 'none',
+    scope: 'global-optin', kind: 'read', cloud: 'degrade-noop',
+    degradeShape: {
+      scope: { mode: 'unresolved', repoId: null, slug: null },
+      measured: false, reason: 'cloud-off', rows: [], shown: 0, total: 0,
+      byMode: { total: 0, code: 0, plan: 0 },
+    },
+    load: () => import('./commands/ship.mjs').then((m) => m.listUnlockedFixesCmd),
+  },
+  {
+    name: 'list-unremediated-acceptances',
+    flags: ['repo', 'repo-id', 'limit', 'offset',
+      { name: 'all-repos', kind: 'boolean' }, { name: 'all-ages', kind: 'boolean' }],
+    positionals: 'none', payload: 'none',
+    scope: 'global-optin', kind: 'read', cloud: 'degrade-noop',
+    degradeShape: {
+      scope: { mode: 'unresolved', repoId: null, slug: null },
+      measured: false, reason: 'cloud-off', rows: [],
+    },
+    load: () => import('./commands/ship.mjs').then((m) => m.listUnremediatedAcceptancesCmd),
+  },
+  {
+    name: 'recommend-skills',
+    flags: ['changed', 'url', 'just-ran', 'max', 'plan-lenses', 'findings', 'format'],
+    positionals: 'none', payload: 'none',
+    scope: 'none', kind: 'read', cloud: 'degrade-noop',
+    degradeShape: {},
+    load: () => import('./commands/ship.mjs').then((m) => m.recommendSkillsCmd),
+  },
+  {
+    name: 'write-spill',
+    flags: ['cap'], positionals: { verbs: ['status', 'drain'] }, payload: 'none',
+    scope: 'none', kind: 'write', cloud: 'degrade-noop', degradeShape: {},
+    load: () => import('./commands/misc.mjs').then((m) => m.writeSpillCmd),
+  },
+  {
+    name: 'get-friction-neighbourhood',
+    flags: ['prompt', 'k'], positionals: 'none', payload: 'json',
+    scope: 'none', kind: 'read', cloud: 'degrade-noop', degradeShape: {},
+    softFail: { all: true, reason: 'forwards frictionNeighbourhood’s result verbatim, whose cloud-off/error shape can be ok:false at exit 0 — the same forwarded-result question as final-review-stats, owned by Cluster F §2b.' },
+    load: () => import('./commands/misc.mjs').then((m) => m.getFrictionNeighbourhoodCmd),
+  },
+  {
+    name: 'learning-stats',
+    flags: [], positionals: 'none', payload: 'json',
+    scope: 'none', kind: 'read', cloud: 'none',
+    load: () => import('./commands/learning.mjs').then((m) => m.learningStatsCmd),
+  },
+  {
+    name: 'learning-quickfix-stats',
+    flags: ['action', 'repo-id', { name: 'bootstrap', kind: 'boolean' }],
+    positionals: 'none', payload: 'none',
+    scope: 'none', kind: 'read', cloud: 'none',
+    load: () => import('./commands/learning.mjs').then((m) => m.learningQuickfixStatsCmd),
+  },
+  {
+    name: 'learning-weekly-review',
+    flags: ['repo', 'format', { name: 'dry-run', kind: 'boolean' }],
+    positionals: 'none', payload: 'none',
+    scope: 'none', kind: 'read', cloud: 'none',
+    softFail: { all: true, reason: 'forwards runWeeklyReview’s result verbatim, which emits {ok:false, error:{…}} at EXIT 0 when repoName is unresolvable (measured: learning-weekly-dry). A 6th instance of the same forwarded-result question §2b F3/F4 settles.' },
+    load: () => import('./commands/learning.mjs').then((m) => m.learningWeeklyReviewCmd),
+  },
+  {
+    name: 'learning-backfill-outcomes',
+    flags: ['repo', 'repo-id', { name: 'dry-run', kind: 'boolean' },
+      { name: 'skip-drain', kind: 'boolean' }, { name: 'skip-resolve', kind: 'boolean' },
+      { name: 'rebuild-stats', kind: 'boolean' }],
+    positionals: 'none', payload: 'none',
+    scope: 'none', kind: 'write', cloud: 'none',
+    load: () => import('./commands/learning.mjs').then((m) => m.learningBackfillOutcomesCmd),
+  },
+  // Forwarders: the target CLI owns its own grammar, so flag validation is
+  // delegated and the sub-CLI's envelope + ok-derived exit code travel verbatim.
+  {
+    name: 'friction-log',
+    forward: { to: 'scripts/friction-log.mjs' }, portExempt: true,
+    positionals: 'none', payload: 'none',
+    scope: 'none', kind: 'write', cloud: 'none',
+    load: () => import('./commands/misc.mjs').then((m) => m.frictionLogCmd),
+  },
+  {
+    name: 'learning-replay',
+    forward: { to: 'scripts/learning/replay.mjs' }, portExempt: true,
+    positionals: 'none', payload: 'none',
+    scope: 'none', kind: 'read', cloud: 'none',
+    load: () => import('./commands/learning.mjs').then((m) => m.learningReplayCmd),
+  },
+
+  // ── Cohort: model-A/B/C + arm-eval (Cluster D) ───────────────────────────
+  // The cloud-off `{ok:false}` shape on these five is the MEASURED set behind
+  // plan §2b F3: it reports a supported mode as a failure, and 55 of 60 other
+  // commands already use {ok:true, cloud:false}. Fixed in Cluster F with a
+  // consumer census + deliberate re-capture, not silently here.
+  {
+    name: 'model-ab-stats',
+    flags: ['run-id'], positionals: 'none', payload: 'none',
+    scope: 'none', kind: 'read', cloud: 'degrade-noop', degradeShape: { rows: [] },
+    softFail: { all: true, reason: 'cloud-off emits {ok:false, cloud:false, rows:[]} at exit 0 — a SUPPORTED mode reported as a failure. One of the 5 measured F3 cases in plan §2b; fixed there with a consumer census and a deliberate fixture re-capture.' },
+    load: () => import('./commands/model-eval.mjs').then((m) => m.modelAbStatsCmd),
+  },
+  {
+    name: 'model-ab-decision',
+    flags: ['run-id'], positionals: 'none', payload: 'none',
+    scope: 'none', kind: 'read', cloud: 'degrade-noop', degradeShape: {},
+    softFail: { all: true, reason: 'cloud-off emits {ok:false, cloud:false} at exit 0 — a supported mode reported as a failure. Plan §2b F3.' },
+    load: () => import('./commands/model-eval.mjs').then((m) => m.modelAbDecisionCmd),
+  },
+  {
+    name: 'model-ab-adjudicate',
+    flags: ['run-id', 'fingerprint', 'action', 'canonical', 'actor', 'limit', 'suggestions', 'out',
+      { name: 'json', kind: 'boolean' }],
+    positionals: 'none', payload: 'none',
+    scope: 'none', kind: 'write', cloud: 'degrade-noop', degradeShape: {},
+    softFail: { all: true, reason: 'cloud-off emits {ok:false, cloud:false} at exit 0 — a supported mode reported as a failure. Plan §2b F3 (one of the 5 measured cases).' },
+    load: () => import('./commands/model-eval.mjs').then((m) => m.modelAbAdjudicateCmd),
+  },
+  {
+    name: 'arm-eval-decision',
+    flags: ['experiment', 'repo-id', 'phase', { name: 'all-repos', kind: 'boolean' }],
+    positionals: 'none', payload: 'none',
+    // scope:'none' — this command passes repoId/allRepos straight to a store
+    // that REFUSES an unscoped read, so the refusal is the store's, not a
+    // silent widening. Declaring global-optin would imply the dispatcher
+    // resolves it, which it must not.
+    scope: 'none', kind: 'read', cloud: 'degrade-noop', degradeShape: {},
+    softFail: { all: true, reason: 'cloud-off emits {ok:false, cloud:false} at exit 0 — a supported mode reported as a failure. Plan §2b F3.' },
+    load: () => import('./commands/model-eval.mjs').then((m) => m.armEvalDecisionCmd),
+  },
+  {
+    name: 'arm-eval-stats',
+    flags: ['experiment', 'repo-id', { name: 'all-repos', kind: 'boolean' }],
+    positionals: 'none', payload: 'none',
+    scope: 'none', kind: 'read', cloud: 'degrade-noop', degradeShape: { rows: [] },
+    softFail: { all: true, reason: 'cloud-off emits {ok:false, cloud:false, rows:[]} at exit 0 — a supported mode reported as a failure. Plan §2b F3.' },
+    load: () => import('./commands/model-eval.mjs').then((m) => m.armEvalStatsCmd),
+  },
+  {
+    name: 'arm-eval-adjudicate',
+    flags: ['session-id', 'ranked', 'reviewer'], positionals: 'none', payload: 'none',
+    scope: 'none', kind: 'write', cloud: 'degrade-noop', degradeShape: {},
+    softFail: { all: true, reason: 'cloud-off emits {ok:false, cloud:false} at exit 0 — a supported mode reported as a failure. Plan §2b F3 (measured).' },
+    load: () => import('./commands/model-eval.mjs').then((m) => m.armEvalAdjudicateCmd),
+  },
+  {
+    name: 'arm-eval-export',
+    flags: ['session-id', 'repo-id', { name: 'all', kind: 'boolean' }, { name: 'all-repos', kind: 'boolean' }],
+    positionals: 'none', payload: 'none',
+    scope: 'ambient-ok', kind: 'write', cloud: 'degrade-noop', degradeShape: {},
+    softFail: { all: true, reason: 'cloud-off emits {ok:false, cloud:false} at exit 0 — a supported mode reported as a failure. Plan §2b F3 (measured). Also returns ok:r.written for a single-session export.' },
+    load: () => import('./commands/model-eval.mjs').then((m) => m.armEvalExportCmd),
+  },
+  {
+    name: 'arm-eval-toggle',
+    flags: ['budget-eur'], positionals: { verbs: ['on', 'off', 'status'] }, payload: 'none',
+    scope: 'none', kind: 'local', cloud: 'none',
+    load: () => import('./commands/model-eval.mjs').then((m) => m.armEvalToggleCmd),
+  },
+  {
+    name: 'arm-eval-maybe-capture',
+    flags: ['experiment', 'task', 'repo-id'], positionals: 'none', payload: 'none',
+    scope: 'ambient-ok', kind: 'write', cloud: 'none',
+    softFail: { all: true, reason: 'returns ok:(r.state===\'ran\') — a session the runner declined (budget, toggle race) is a legitimate non-run, not an error, and the `captured` field carries the fact. Plan §2b F2 decides whether declined-vs-failed needs separating.' },
+    load: () => import('./commands/model-eval.mjs').then((m) => m.armEvalMaybeCaptureCmd),
+  },
+  {
+    name: 'arm-eval-run',
+    flags: ['experiment', 'task', 'budget-eur', 'repo-id', 'phase', 'seed'],
+    positionals: 'none', payload: 'none',
+    // NO cloud gate, by design: this is the entry point that AUTHORISES a paid
+    // run (tiered-pipeline `allowTiered` doctrine — env flags say the window is
+    // open, only an explicit CLI call spends). Consequence: its degrade path is
+    // deliberately NOT golden-covered, because capturing it means paying.
+    scope: 'ambient-ok', kind: 'write', cloud: 'none',
+    softFail: { all: true, reason: 'returns ok:(r.state===\'ran\'); a declined run is a legitimate non-run. Plan §2b F2.' },
+    load: () => import('./commands/model-eval.mjs').then((m) => m.armEvalRunCmd),
+  },
+
+  // ── Cohort: the last four (Cluster D) — legacy map empties here ──────────
+  {
+    name: 'finalize-outcomes',
+    flags: ['run-id', 'ledger', 'result', 'round'], positionals: 'none', payload: 'none',
+    scope: 'none', kind: 'write', cloud: 'degrade-noop',
+    // Its cloud-off branch is NOT the canonical degrade shape — it runs the
+    // local finalize and reports counts — so the handler builds it, and
+    // degradeShape stays empty rather than pretending to describe it.
+    degradeShape: {},
+    load: () => import('./commands/plans.mjs').then((m) => m.finalizeOutcomesCmd),
+  },
+  {
+    name: 'lock-with-test',
+    flags: ['finding', 'test', 'description', 'repo', 'repo-id',
+      { name: 'worksheet', kind: 'boolean' }, { name: 'all-repos', kind: 'boolean' }],
+    positionals: 'none', payload: 'none',
+    scope: 'global-optin', kind: 'write', cloud: 'degrade-noop',
+    degradeShape: { locked: false },
+    // Legacy returns {ok:false, error:'refusing: …'} at EXIT 0 for every
+    // refusal (missing args, bad path, unresolvable repo, foreign finding) —
+    // fixture-pinned by lock-with-test-missing. These are REFUSALS, which the
+    // §2b F4 invariant says should exit non-zero; folded into that decision
+    // rather than changed piecemeal here.
+    softFail: { all: true, reason: 'every refusal path returns {ok:false, error:"refusing: …"} at exit 0 — fixture-pinned (lock-with-test-missing). A refusal is exactly what F4 says must exit non-zero; changing it is a consumer-visible break that belongs with the other four.' },
+    load: () => import('./commands/ship.mjs').then((m) => m.lockWithTestCmd),
+  },
+  {
+    name: 'quality',
+    flags: ['title', 'scope-tags', { name: 'scope-tag', kind: 'repeatable' }, 'cost', 'name',
+      'files', { name: 'file', kind: 'repeatable' }, 'symbols', { name: 'symbol', kind: 'repeatable' },
+      'body', 'memory', 'kind', 'ref', 'window-days', 'min-similarity', 'window-hours',
+      { name: 'repo-scoped', kind: 'boolean' }],
+    positionals: { verbs: ['add', 'mirror', 'digest', 'link', 'session-review'] },
+    payload: 'both',
+    scope: 'none', kind: 'write', cloud: 'none',
+    load: () => import('./commands/quality.mjs').then((m) => m.qualityCmd),
+  },
+  {
+    name: 'upstream',
+    flags: ['title', 'body', 'severity', 'affected-path', 'actor', 'id', 'note', 'commit',
+      'state', 'before', 'limit', 'repo-id', { name: 'worksheet', kind: 'boolean' }],
+    positionals: { verbs: ['report', 'list', 'ack', 'fix', 'wont-fix', 'drain'] },
+    payload: 'none',
+    scope: 'ambient-ok', kind: 'write', cloud: 'degrade-noop', degradeShape: {},
+    load: () => import('./commands/quality.mjs').then((m) => m.upstreamCmd),
+  },
 ]);
 
 const _byName = new Map(REGISTRY.map((e) => [e.name, e]));

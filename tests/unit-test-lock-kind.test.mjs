@@ -65,7 +65,10 @@ describe('regression_specs accepts unit-test as a lock kind', () => {
 });
 
 describe('lock-with-test refusals (the anti-fake-check surface)', () => {
-  const cli = fs.readFileSync(path.resolve(import.meta.dirname, '../scripts/cross-skill.mjs'), 'utf8');
+  // RETARGETED (command-registry Cluster D): lock-with-test migrated to the
+  // registry; its refusal surface — the anti-fake-check that makes a lock a
+  // claim rather than a row — now lives in the ship command module.
+  const cli = fs.readFileSync(path.resolve(import.meta.dirname, '../scripts/lib/cross-skill/commands/ship.mjs'), 'utf8');
 
   it('refuses a test path that does not exist', () => {
     assert.match(cli, /does not exist — a lock naming a missing file is a fake check/,

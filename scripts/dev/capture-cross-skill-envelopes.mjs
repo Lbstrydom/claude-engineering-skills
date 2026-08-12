@@ -204,6 +204,17 @@ export const CASES = [
   // Volatile paths are dotted for exactly this: the contract being pinned is
   // `{ok:false, error.code:'BAD_INPUT'}` at exit 2, not the OS's phrasing.
   { id: 'finalize-outcomes-bad-round', args: ['finalize-outcomes', '--run-id', 'r', '--ledger', 'nope.json', '--result', 'nope.json', '--round', '0'], volatile: ['error.message'] },
+  // The last five uncovered commands, captured before their migration. The
+  // wrappers (friction-log, learning-*, write-spill) hand off to a
+  // self-contained sub-CLI, so what is pinned here is the ENVELOPE THIS CLI
+  // returns for the handoff — which is the only part the registry owns.
+  { id: 'friction-log-no-msg', args: ['friction-log'] },
+  { id: 'write-spill-no-verb', args: ['write-spill'] },
+  { id: 'write-spill-bad-verb', args: ['write-spill', 'bogus'] },
+  { id: 'write-spill-status', args: ['write-spill', 'status'] },
+  { id: 'learning-weekly-dry', args: ['learning-weekly-review', '--dry-run'] },
+  { id: 'learning-backfill-dry', args: ['learning-backfill-outcomes', '--dry-run', '--skip-drain', '--skip-resolve'] },
+  { id: 'learning-replay-no-type', args: ['learning-replay'] },
 ];
 
 /** Run one case hermetically. Shared by capture (here) and replay (the test). */

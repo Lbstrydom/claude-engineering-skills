@@ -52,7 +52,13 @@ test('isCloudEnabled() is always awaited (a bare call is a truthy Promise)', () 
         // un-awaited despite the line literally starting with `await` — an
         // instrument defect, not a finding.
         .replace(/await\s+(?:[\w$]+\.)*isCloudEnabled\(\)/g, '')
-        .replace(/return\s+isCloudEnabled\(\)/g, '');            // async wrapper returns the Promise
+        .replace(/return\s+(?:[\w$]+\.)*isCloudEnabled\(\)/g, '') // wrapper returns the Promise
+        // Concise-arrow thunk: `() => deps.isCloudEnabled()` is an implicit
+        // RETURN of the promise, handed to a callee that awaits it — the same
+        // legitimate form as the explicit `return` above, which the pattern
+        // list already exempted. Without this the scanner flagged a correct
+        // dependency injection as an un-awaited call.
+        .replace(/=>\s*(?:[\w$]+\.)*isCloudEnabled\(\)/g, '');
       if (/\bisCloudEnabled\(\)/.test(stripped)) {
         offenders.push(`${path.relative(SCRIPTS_DIR, file)}:${i + 1}: ${code}`);
       }

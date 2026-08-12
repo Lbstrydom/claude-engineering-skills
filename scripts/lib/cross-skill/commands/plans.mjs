@@ -120,6 +120,133 @@ export async function updatePlanStatusCmd(ctx) {
 }
 
 /**
+ * `finalize-outcomes` — deterministic outcome capture after an audit converges.
+ *
+ * The orchestrator calls this ONCE with the unified `--run-id`, the final
+ * adjudicated `--ledger` and the final-round `--result`. It joins ledger →
+ * findings by fingerprint, drives the shared outcome sync, then reconciles:
+ * any finding the ledger never adjudicated is flagged `needs_triage`, never
+ * silently dark-dropped.
+ *
+ * Idempotent by construction — the underlying writes set state by
+ * (run_id, fingerprint) / delete+insert, so a retry after a crash converges.
+ */
+export async function finalizeOutcomesCmd(ctx) {
+  const { readFileSync } = await import('node:fs');
+  const { finalizeRoundOutcomes } = await import('../../finalize-outcomes.mjs');
+  const { isControlMarkerDetail } = await import('../../audit/control-markers.mjs');
+  const { semanticId } = await import('../../findings.mjs');
+  const { dbConfig } = await import('../../config.mjs');
+
+  const runId = ctx.flag('run-id');
+  const ledgerPath = ctx.flag('ledger');
+  const resultPath = ctx.flag('result');
+  const roundOpt = ctx.flag('round');
+  if (!runId || !ledgerPath || !resultPath) {
+    throw new CommandError('BAD_INPUT', '--run-id <id> --ledger <path> --result <path> are all required');
+  }
+
+  let result; let ledgerRaw;
+  try { result = JSON.parse(readFileSync(resultPath, 'utf8')); }
+  catch (e) { throw new CommandError('BAD_INPUT', `cannot read --result (${resultPath}): ${e.message}`); }
+  try { ledgerRaw = JSON.parse(readFileSync(ledgerPath, 'utf8')); }
+  catch (e) { throw new CommandError('BAD_INPUT', `cannot read --ledger (${ledgerPath}): ${e.message}`); }
+
+  if (!result || typeof result !== 'object' || !Array.isArray(result.findings)) {
+    throw new CommandError('BAD_INPUT', 'result file must be an object with a "findings" array');
+  }
+  // Ledger is { entries: [...] }; tolerate a bare array (matches write-code-outcomes).
+  const ledger = Array.isArray(ledgerRaw) ? { entries: ledgerRaw } : ledgerRaw;
+  if (!ledger || !Array.isArray(ledger.entries)) {
+    throw new CommandError('BAD_INPUT', 'ledger file must have an "entries" array');
+  }
+  // A SUPPLIED --round must be a positive integer. `Number.isInteger` alone
+  // accepted 0 and negatives, so `--round 0` finalised round 0 — the outcome
+  // the null-coercion fix was written to prevent, reached by another input.
+  // An invalid supplied value is REFUSED, never quietly swapped for
+  // result.round: silently finalising a different round than the operator
+  // named is worse than stopping.
+  const roundArg = roundOpt == null ? null : Number(roundOpt);
+  if (roundArg !== null && (!Number.isInteger(roundArg) || roundArg < 1)) {
+    throw new CommandError('BAD_INPUT',
+      `--round must be a positive integer, got "${roundOpt}" — refusing rather than finalising a different round`);
+  }
+  const round = roundArg ?? (result.round || 1);
+
+  if (!ctx.cloud.enabled) {
+    // Cloud off → local-only no-op. `isCloudEnabled()` swallows
+    // pool-construction failures, so "no DSN configured" and "DSN configured,
+    // server unreachable" arrive identically. Both degrade to the local write —
+    // that is the graceful degradation this branch exists for — but they are
+    // NOT the same event, and reporting the second as the first told operators
+    // their config was missing when their database was merely down.
+    const configured = Boolean(dbConfig.url);
+    const status = await finalizeRoundOutcomes({ result, ledger, round, store: null, sid: null });
+    return {
+      ok: true, cloud: false, degraded: configured, runId: null, round,
+      labelled: status.labelled, total: status.total, needsTriage: 0, autoDismissed: 0,
+      reason: configured ? 'store-unreachable' : 'not-configured',
+      hint: configured
+        ? 'AUDIT_DB_URL is SET but the store was unreachable — captured locally only, so these outcomes are NOT in the cloud store. Fix connectivity and re-run to finalize this round.'
+        : 'AUDIT_DB_URL unset — local-only capture; run npm run setup:cloud to enable cloud finalize',
+    };
+  }
+
+  // Tri-state: null means the PROBE failed. Reporting that as UNKNOWN_RUN
+  // blamed the operator's --run-id for the store being unreachable.
+  const runExists = await ctx.deps.auditRunExists(runId);
+  if (runExists === null) {
+    throw new CommandError('STORE_UNAVAILABLE',
+      `cannot verify run_id ${runId}: AUDIT_DB_URL is configured but the store could not be queried. Not treating this as an unknown run — fix connectivity and re-run.`);
+  }
+  if (!runExists) {
+    throw new CommandError('UNKNOWN_RUN',
+      `run_id ${runId} not found in audit_runs (cloud is configured) — was --run-id threaded correctly?`);
+  }
+
+  const store = {
+    recordAdjudicationEvent: ctx.deps.recordAdjudicationEvent,
+    updatePassStatsPostDeliberation: ctx.deps.updatePassStatsPostDeliberation,
+    updateRunMeta: ctx.deps.updateRunMeta,
+  };
+  const status = await finalizeRoundOutcomes(
+    { result: { ...result, _cloudRunId: runId }, ledger, round, store, sid: runId },
+  );
+  const { enriched, cloudOk, needsTriage, autoDismissed } = status;
+  // Control-marker findings (e.g. ADJACENCY_INCOMPLETE) route to
+  // auto_dismissed, not needs_triage — excluded from the echoed list so it
+  // doesn't claim a human must look at machine-generated coverage noise.
+  const pending = enriched.filter((f) => f.adjudicationOutcome === 'pending' && !isControlMarkerDetail(f.detail));
+  const labelled = status.labelled;
+  process.stderr.write(
+    `  [finalize-outcomes] run ${runId}: ${labelled}/${result.findings.length} labelled · `
+    + `${needsTriage} needs_triage · ${autoDismissed} auto_dismissed · cloud=${cloudOk ? 'ok' : 'failed'}\n`,
+  );
+  const needsTriageFindings = pending.map((f) => ({
+    id: f.id, fingerprint: f._hash || semanticId(f),
+    severity: f.severity, section: f.section,
+  }));
+  // `ok:true` alongside `cloudOk:false` is self-contradictory — the line above
+  // has already printed `cloud=failed`, and the whole purpose of this command
+  // is to finalise the round INTO the store. The counts travel with the error
+  // so the local work is not lost from the report.
+  if (!cloudOk) {
+    throw new CommandError('CLOUD_FINALIZE_FAILED',
+      `run ${runId} round ${round}: outcomes were computed but the cloud write FAILED — `
+      + 'this round is not finalised in the store; fix connectivity and re-run (the write is idempotent).',
+      {
+        cloud: true, cloudOk: false, runId, round,
+        labelled, total: result.findings.length, needsTriage, autoDismissed, needsTriageFindings,
+      }, 1);
+  }
+  return {
+    ok: true, cloud: true, runId, round,
+    labelled, total: result.findings.length, needsTriage, autoDismissed, cloudOk,
+    needsTriageFindings,
+  };
+}
+
+/**
  * `plan-satisfaction` — the /ux-lock verify rollup for one plan (Cluster C).
  *
  * Note the legacy ORDER, preserved deliberately: the cloud-off degrade is

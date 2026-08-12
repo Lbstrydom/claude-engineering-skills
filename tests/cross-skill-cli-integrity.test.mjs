@@ -369,15 +369,22 @@ describe('F4/F5 — a flag that is accepted must decide something', () => {
     assert.ok(/resolveRepoForStoreResult/.test(src));
   });
 
-  it('arm-eval-run no longer writes an unscoped session', () => {
-    // Scoped to cmdArmEvalRun's body. A file-global ban on this expression was
-    // wrong: `arm-eval-decision`/`arm-eval-stats`/`upstream list` use the same
-    // spelling for READ scope, and their store functions already fail closed
-    // (`throw` unless repoId or allRepos:true), so a null there is refused, not
-    // silently widened. Only the WRITE path could persist repo_id NULL.
-    assert.ok(!/argOption\('repo-id'\) \|\| null/.test(functionBody('cmdArmEvalRun')),
-      'arm-eval-run must fall back to ambient identity like its sibling, not write repo_id NULL');
-    assert.ok(/resolveScopedRepoId\(\)/.test(functionBody('cmdArmEvalRun')));
+  it('arm-eval-run no longer writes an unscoped session', async () => {
+    // RETARGETED (command-registry Cluster D): migrated to
+    // commands/model-eval.mjs, where the guarantee is STRUCTURAL — the entry
+    // declares `scope: 'ambient-ok'`, so the dispatcher resolves identity and
+    // the handler cannot fall back to a bare null the way
+    // `argOption('repo-id') || null` did.
+    const { REGISTRY } = await import('../scripts/lib/cross-skill/registry.mjs');
+    const entry = REGISTRY.find((e) => e.name === 'arm-eval-run');
+    assert.ok(entry, 'arm-eval-run must be a registry command');
+    assert.equal(entry.scope, 'ambient-ok',
+      'scope:none here reintroduces the unscoped arm_eval_sessions row (F5)');
+    const src = stripComments(fs.readFileSync(
+      fileURLToPath(new URL('../scripts/lib/cross-skill/commands/model-eval.mjs', import.meta.url)), 'utf8',
+    ));
+    assert.ok(/armEvalRunCmd[\s\S]*?await ctx\.resolveScope\(\)/.test(src),
+      'the handler must resolve scope through the dispatcher');
   });
 
   // ── The census's LIMIT, stated so it is not over-claimed ──────────────────
@@ -400,19 +407,17 @@ describe('F4/F5 — a flag that is accepted must decide something', () => {
     // the dispatcher's declaration-checked accessor makes an undeclared read
     // THROW, so a registry declaration cannot be inert the way a grep-checked
     // legacy handler could.
-    const REQUIRED = [
-      ['resolveRequestedRepoScope', 'repo-id', 'F4/F11 — explicit id must beat ambient, and conflict must be caught'],
-      ['resolveShipNudgeScope', 'all-repos', 'explicit global must be evaluated BEFORE ambient inference'],
-      ['cmdArmEvalRun', 'experiment', 'the subcommand does nothing meaningful without it'],
-    ];
-    const missing = [];
-    for (const [fn, flag, why] of REQUIRED) {
-      const body = functionBody(fn);
-      const reads = new RegExp(`(argOption|hasFlag|argList|argAll)\\('${flag}'\\)`).test(body);
-      if (!reads) missing.push(`${fn} does not read --${flag} (${why})`);
-    }
-    assert.deepEqual(missing, [],
-      'a subcommand accepts a flag it never reads — the accepted-and-inert class');
+    // RETIRED as a legacy-side check (command-registry Cluster D): the legacy
+    // dispatch map is GONE, so there is no `cmdX` body left to grep. Every row
+    // that lived here moved to the registry-side assertion below, where the
+    // guarantee is strictly stronger — the dispatcher's declaration-checked
+    // accessor makes an undeclared read THROW, so the accepted-and-inert class
+    // is structurally unrepresentable rather than grep-detected.
+    //
+    // The scope resolvers this used to name are now exercised behaviourally by
+    // tests/cross-skill-scope-resolver.test.mjs (mode × failure-state matrix).
+    assert.ok(!/const commands = \{\n\s*'/.test(CODE),
+      'the legacy dispatch map is back — a second dispatch surface is the two-oracles defect this migration removed');
   });
 
   it('MIGRATED commands declare the flags whose inertness caused a real defect', async () => {

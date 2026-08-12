@@ -72,11 +72,23 @@ describe('registry entries — every policy tuple is valid', () => {
     }
   });
 
-  it('--all-repos declared ⇔ scope global-optin (policy/flag coherence)', () => {
+  it('scope global-optin ⇒ --all-repos is declared (the policy must be reachable)', () => {
+    // Only the FORWARD direction is enforceable. The reverse ("declares
+    // --all-repos ⇒ scope is global-optin") was too strict and rejected a real
+    // shape: `arm-eval-decision`/`-stats`/`-export` pass the flag to a store
+    // that REFUSES an unscoped read, so the flag is honoured — just not by the
+    // dispatcher's scope policy. Declaring them global-optin would make the
+    // dispatcher resolve ambient identity where legacy passed null, a
+    // behaviour change disguised as a conformance fix.
+    //
+    // The reverse direction is not unguarded: an undeclared flag READ throws
+    // (dispatch.mjs), so a declared --all-repos that nothing reads cannot go
+    // unnoticed the way a KNOWN_FLAGS row could — which is the actual
+    // inert-flag risk this rule was reaching for.
     for (const e of REGISTRY) {
+      if (e.scope !== 'global-optin') continue;
       const hasAllRepos = (e.flags ?? []).map(normalizeFlag).some((d) => d.name === 'all-repos');
-      if (hasAllRepos) assert.equal(e.scope, 'global-optin', `${e.name}: declares --all-repos without global-optin`);
-      if (e.scope === 'global-optin') assert.ok(hasAllRepos, `${e.name}: global-optin without --all-repos`);
+      assert.ok(hasAllRepos, `${e.name}: global-optin without --all-repos — the policy is unreachable`);
     }
   });
 
@@ -87,12 +99,18 @@ describe('registry entries — every policy tuple is valid', () => {
     }
   });
 
-  it('payload flags are DERIVED, never hand-declared (audit R1-H2)', () => {
+  it('payload flags are DERIVED, never DOUBLE-declared (audit R1-H2)', () => {
+    // The defect this guards is a command declaring a flag its `payload:`
+    // already derives — two sources for one name. It is NOT "the string
+    // --json may never appear": `model-ab-adjudicate` is `payload:'none'` and
+    // uses `--json` as a MODE flag (raw queue vs the default human worksheet),
+    // which derives nothing and must be declared to be readable at all.
     for (const e of REGISTRY) {
+      const derived = new Set(payloadFlags(e.payload).map((f) => f.slice(2)));
       for (const f of e.flags ?? []) {
         const d = normalizeFlag(f);
-        assert.ok(!['json', 'stdin'].includes(d.name),
-          `${e.name}: --${d.name} is payload-derived (payloadFlags), never declared`);
+        assert.ok(!derived.has(d.name),
+          `${e.name}: --${d.name} is already derived from payload:'${e.payload}' — declaring it too is two sources for one flag`);
       }
     }
     assert.deepEqual(payloadFlags('none'), [], 'payload none admits no payload flags');
