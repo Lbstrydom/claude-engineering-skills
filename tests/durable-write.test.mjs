@@ -20,6 +20,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 import {
   registerWriter, durableWrite, drainSpill, spillSummary,
@@ -185,6 +186,34 @@ test('drain quarantines an artifact whose schemaVersion this build does not spea
   } finally { rmTmp(root); }
 });
 
+test('a DECLINED write is `skipped` even when the queue is full', async () => {
+  // The two early branches (admission refused, envelope unwritable) returned
+  // `lost` for any non-applied result, so the SAME cloud-off write was
+  // `skipped` normally and `lost` once the queue filled — a classification
+  // that depended on queue state rather than on what happened to the write
+  // (final-review shadow, LOW).
+  //
+  // Child process because the admission cap is read from env at config import
+  // and frozen; `durableWrite` calls `checkAdmission` with no injectable limit.
+  const root = mkTmp('ces-dw-fullq-');
+  try {
+    fs.mkdirSync(spill(root), { recursive: true });
+    fs.writeFileSync(path.join(spill(root), 'filler.json'), '{}');
+    const out = execFileSync(process.execPath, ['-e', `
+      const { registerWriter, durableWrite } = await import('./scripts/lib/durable-write.mjs');
+      registerWriter('w', { schemaVersion: 1, replay: async () => ({ applied: false, declined: true, reason: 'cloud-off' }) });
+      const r = await durableWrite('w', { id: 1 }, { repoRoot: ${JSON.stringify(root)} });
+      process.stdout.write('OUTCOME=' + r.outcome);
+    `], {
+      encoding: 'utf-8',
+      cwd: 'C:/GIT/claude-engineering-skills',
+      env: { ...process.env, AUDIT_SPILL_MAX_FILES: '1' },
+    });
+    assert.match(out, /OUTCOME=skipped/,
+      'a declined write must not become `lost` merely because the queue was full');
+  } finally { rmTmp(root); }
+});
+
 test('drain refuses a git-TRACKED artifact — provenance, not just shape', async () => {
   // .gitignore does not stop `git add -f`, so a valid-shaped artifact can be
   // committed into the repo. A real spill artifact is written at runtime into a
@@ -212,6 +241,14 @@ test('drain refuses a git-TRACKED artifact — provenance, not just shape', asyn
     const refused = await drainSpill({ repoRoot: root, isCloudEnabled: () => true, isTracked: () => true });
     assert.equal(replayed, 0, 'a tracked artifact must never reach replay');
     assert.equal(refused.drained, 0);
+    // The COUNTERS must agree with the disk (final-review shadow, MEDIUM). The
+    // core counts every falsy `apply` as `failed` and only its own frame-parse
+    // rejections as `rejected`, so a consumer-side quarantine was reported as a
+    // retryable failure and the run's "N quarantined" line undercounted by
+    // exactly the cases the consumer handled. Asserting BOTH counters, because
+    // asserting only `rejected` would pass while `failed` also incremented.
+    assert.equal(refused.rejected, 1, 'a consumer-quarantined artifact is REJECTED');
+    assert.equal(refused.failed, 0, 'and is not also counted as a retryable failure');
 
     // Refusal is TERMINAL as of the final gate (G5): a tracked artifact is
     // quarantined rather than handed back, because an artifact that is refused

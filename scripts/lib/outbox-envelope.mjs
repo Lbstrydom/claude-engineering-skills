@@ -190,9 +190,12 @@ export const _internals = { reclaimClaimed };
  *
  * @param {object} opts
  * @param {string} opts.dir - absolute outbox directory
- * @param {(envelope: object) => Promise<boolean>} opts.apply - MUST resolve
- *   `true` only when the write is durably applied. A falsy resolution leaves
- *   the envelope on disk — silence is not success.
+ * @param {(envelope: object) => Promise<boolean|{quarantined: true}>} opts.apply -
+ *   MUST resolve `true` only when the write is durably applied. A falsy
+ *   resolution leaves the envelope on disk — silence is not success. A consumer
+ *   that dispositioned the artifact ITSELF (moved it to `rejected/`) resolves
+ *   `{quarantined: true}` so it is counted as `rejected`, not as a retryable
+ *   `failed`; the core then leaves the claim alone, since the consumer owns it.
  * @param {(text: string) => object|null} opts.parse - frame parser, usually a
  *   `parseEnvelopeFrame` closure carrying this consumer's version + validator.
  * @param {number} opts.cap - max envelopes this invocation may process.
@@ -312,6 +315,16 @@ export async function drainEnvelopes({ dir, apply, parse, cap, isConnectionError
       // exists at this point. Rewriting the claimed file is preserved by the
       // hand-back below; moving it away is respected too.
       const applied = await apply(envelope, { file: claimed });
+      // A consumer that DISPOSITIONED the artifact itself says so, and it is
+      // counted as `rejected` rather than `failed`. Without this every
+      // consumer-side quarantine (git-tracked refusal, unknown writerId,
+      // poison message) was reported as a retryable failure, so the operator's
+      // "N quarantined" line undercounted by exactly the cases the consumer
+      // handled — the counters disagreeing with the disk.
+      if (applied && applied.quarantined === true) {
+        rejected++;
+        continue;   // the consumer owns the claim; nothing to hand back
+      }
       // `=== true`, not truthy. The contract says a handler PROVES application;
       // an adapter returning a status object before its write is durable would
       // otherwise satisfy `if (applied)` and the envelope would be deleted.

@@ -310,10 +310,25 @@ export async function syncFalsePositivePatterns(repoId, patterns) {
         `(would mislabel ${Object.keys(patterns || {}).length} repo-scoped patterns as cross-repo GLOBAL)\n`
       );
     }
-    // An unresolved repo identity is a REFUSAL, not a decline: the sync would
-    // have mislabelled repo-scoped patterns as GLOBAL. Reported as a failed
-    // write so it is counted rather than passing as a normal outcome.
-    return { applied: false, rows: 0, reason: 'repo-identity-unresolved' };
+    // TWO CASES, and collapsing them was a regression (final-review shadow,
+    // HIGH). The comment above already draws the line — `null` is the ordinary
+    // cloud-off / unresolved case, a non-null non-UUID is a mislabel attempt —
+    // but the return did not, so BOTH came back as a failure. Because this
+    // guard deliberately runs BEFORE `isCloudEnabled()`, a local-only run (no
+    // AUDIT_DB_URL, an explicitly supported mode) never reached the cloud-off
+    // return: every such run filed a `lost` artifact and reported
+    // `runStatus: incomplete` with nothing wrong. Reproduced before fixing.
+    //
+    // The refusal itself is unchanged and still unconditional — only the REASON
+    // differs, so the defence-in-depth ordering the docstring insists on is
+    // intact. Nothing is written on either path.
+    return repoId == null
+      // No identity at all: there is nothing to mislabel and, on a local-only
+      // run, nothing to write. A decline.
+      ? { applied: false, rows: 0, reason: 'no-repo-identity' }
+      // An identity that exists but is not a UUID: a genuine mislabel attempt,
+      // and a failure worth counting.
+      : { applied: false, rows: 0, reason: 'repo-identity-unresolved' };
   }
   if (!await isCloudEnabled()) return { applied: false, rows: 0, reason: 'cloud-off' };
   const rows = buildFpPatternRows(repoId, patterns);

@@ -169,10 +169,18 @@ describe('orchestrator call sites', () => {
     }
   });
 
-  test('the orchestrator imports the registration module, which is the registry bootstrap', () => {
+  test('BOTH entry points import the registration module — that is the whole of decision 1b', () => {
+    // This asserted only the orchestrator, with a comment claiming "the
+    // registry has no other bootstrap" — while decision 1b exists precisely
+    // because there are TWO processes, and the CLI is the one that would
+    // quarantine every artifact if it forgot (final-review shadow, MEDIUM).
+    // Half a two-sided contract is the shape that reads as covered.
     const src = read(ORCH);
     assert.match(src, /import '\.\.\/audit-store-writers\.mjs'/,
-      'without this import durableWrite throws for every id — the registry has no other bootstrap');
+      'without this import durableWrite throws for every id — the orchestrator half of the bootstrap');
+    const cli = read('scripts/cross-skill.mjs');
+    assert.match(cli, /await import\('\.\/lib\/audit-store-writers\.mjs'\)/,
+      'the operator CLI runs in a FRESH process: without this import the drain finds zero handlers and quarantines every artifact it was asked to replay');
     assert.match(src, /durableWrite\('audit\.findings'/);
     assert.match(src, /durableWrite\('audit\.passStats'/);
     assert.match(src, /durableWrite\('audit\.suppressionEvents'/);
@@ -253,6 +261,24 @@ describe('a declined write is `skipped`, not `lost`', () => {
     } finally { fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
+  test('a LOCAL-ONLY run does not file the FP sync as lost', async () => {
+    // The regression the final-review shadow caught (HIGH), reproduced before
+    // fixing: `syncFalsePositivePatterns` guards repo identity BEFORE the cloud
+    // check, so with no AUDIT_DB_URL — a supported mode — it never reached the
+    // cloud-off return. Every local-only run filed a `lost` artifact and
+    // reported runStatus: incomplete with nothing wrong.
+    const { syncFalsePositivePatterns } = await import('../scripts/lib/store/bandit-fp.mjs');
+    // A NULL identity is the ordinary local-only case → a decline.
+    const nullId = await syncFalsePositivePatterns(null, { p: { type: 'x', value: 'y' } });
+    assert.equal(nullId.applied, false);
+    assert.equal(nullId.reason, 'no-repo-identity');
+    // A non-null NON-UUID is a genuine mislabel attempt → still a failure. This
+    // half is what stops the fix over-reaching into "any identity problem is
+    // fine".
+    const badId = await syncFalsePositivePatterns('not-a-uuid', { p: { type: 'x', value: 'y' } });
+    assert.equal(badId.reason, 'repo-identity-unresolved');
+  });
+
   test('EVERY reason the store emits is classified — decline or failure, never unclassified', () => {
     // The mapping is a string set on one side of a module boundary and literal
     // return values on the other, with no compiler between them (the prose↔code
@@ -273,7 +299,7 @@ describe('a declined write is `skipped`, not `lost`', () => {
       'run-row-absent': 'the UPDATE ran and matched no row — attempted, not declined',
       'no-persistable-rows': 'terminal success: the payload maps to zero rows on every attempt',
       'no-rows': 'terminal success: the payload maps to zero rows on every attempt',
-      'repo-identity-unresolved': 'a REFUSAL, not a decline — the sync would have mislabelled repo-scoped patterns as cross-repo GLOBAL, so it must be counted, not passed over',
+      'repo-identity-unresolved': 'a non-null, non-UUID identity is a genuine mislabel attempt — the sync would have written repo-scoped patterns as cross-repo GLOBAL. A failure worth counting. (A NULL identity is `no-repo-identity`, a decline.)',
       'no-pool': 'final gate G1: classified as a FAILURE deliberately. getPool() returning null means no DSN resolved, which looks like a decline — but the state is barely reachable, so no test can pin the reading down, and mistaking a real failure for a decline DELETES the envelope while the converse only spills one.',
     };
 

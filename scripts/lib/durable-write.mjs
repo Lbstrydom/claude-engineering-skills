@@ -211,6 +211,12 @@ export async function durableWrite(writerId, payload, { repoRoot = process.cwd()
     try {
       const res = await spec.replay(payload);
       if (res?.applied === true) return { outcome: 'written', writerId };
+      // A DECLINE is a decline on every path (final-review shadow, LOW). These
+      // two early branches used to return `lost` for any non-applied result,
+      // so the same cloud-off write was `skipped` normally and `lost` once the
+      // queue filled — the classification depending on queue state rather than
+      // on what happened to the write.
+      if (res?.declined === true) return { outcome: 'skipped', writerId, error: res.reason };
     } catch { /* fall through */ }
     return { outcome: 'lost', writerId, error: admission.reason };
   }
@@ -225,6 +231,9 @@ export async function durableWrite(writerId, payload, { repoRoot = process.cwd()
     try {
       const res = await spec.replay(payload);
       if (res?.applied === true) return { outcome: 'written', writerId };
+      // Same rule as the admission branch above: a declined write is `skipped`
+      // however we got here.
+      if (res?.declined === true) return { outcome: 'skipped', writerId, error: res.reason };
     } catch { /* fall through to lost */ }
     return { outcome: 'lost', writerId, error: `spill unavailable: ${err?.code || err?.message}` };
   }
@@ -559,7 +568,12 @@ async function drainLocked({ repoRoot, cap, isConnectionError, isTracked }) {
       // is not a control, just a delay.
       if (isTracked?.(path.join(spillDir(repoRoot), name))) {
         quarantine(repoRoot, held, name, envelope, 'git-tracked artifact refused: not written by a runtime drain');
-        return false;
+        // `quarantined: true`, not a bare false. The core counts every false as
+        // `failed`, and only ITS OWN frame-parse rejections as `rejected` — so
+        // an artifact a consumer quarantined was reported as a retryable
+        // failure, and the run's "N quarantined" line undercounted by exactly
+        // the cases the consumer handled (final-review shadow, MEDIUM).
+        return { quarantined: true };
       }
       const spec = _registry.get(envelope.writerId);
       // Same reasoning: an unknown writerId is not going to become known by
@@ -567,7 +581,7 @@ async function drainLocked({ repoRoot, cap, isConnectionError, isTracked }) {
       // id mismatches; this is the belt for a registry that changed mid-drain.
       if (!spec) {
         quarantine(repoRoot, held, name, envelope, `unknown writerId "${envelope.writerId}"`);
-        return false;
+        return { quarantined: true };
       }
 
       try {
@@ -591,7 +605,7 @@ async function drainLocked({ repoRoot, cap, isConnectionError, isTracked }) {
         if (permanent || attempts >= spillConfig.maxAttempts) {
           quarantine(repoRoot, held, name, { ...envelope, attempts },
             `${permanent ? 'permanent' : `exhausted after ${attempts}`}: ${norm.operatorHint || err?.message}`);
-          return false;
+          return { quarantined: true };
         }
         // Retryable and budget remains: persist the incremented count so the
         // next drain — a different process — can see it. An in-memory counter

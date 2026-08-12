@@ -67,7 +67,7 @@ import { syncBanditArms, syncFalsePositivePatterns } from './store/bandit-fp.mjs
 // envelope and loses the write, while calling a decline a failure only spills
 // an artifact a later drain retires. When a classification cannot be pinned
 // down, take the side whose mistake is recoverable.
-const DECLINED_REASONS = new Set(['cloud-off', 'no-run-id']);
+const DECLINED_REASONS = new Set(['cloud-off', 'no-run-id', 'no-repo-identity']);
 
 async function receipt(promise) {
   const r = await promise;
