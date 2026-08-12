@@ -44,7 +44,6 @@ import {
   recordPersonaAuditCorrelation,
   getCandidateAuditFindings,
   getExistingCorrelationHashesForSession,
-  recordShipEvent,
   recordPlanVerificationRun,
   recordPlanVerificationItems,
   readPlanSatisfaction,
@@ -132,8 +131,8 @@ import { cycleConfig, dbConfig } from './lib/config.mjs';
 import { decideCorrelations, isP0OrP1, MATCHER_VERSION, personaFindingHash } from './lib/persona/audit-correlator.mjs';
 import { buildPersonaSessionId } from './lib/persona-test/session-id.mjs';
 import { recordNavAuditRun, listNavAuditRunHistory } from './lib/store/nav-audit.mjs';
-import { upsertPersonaFindingOutcome, getPersonaOutcomesSummary, getActionablePersonaOutcomeItems, resolveLabelTarget } from './lib/store/persona-outcomes.mjs';
-import { backfillPersonaFindingHashV2 } from './lib/store/persona-outcomes-hash-backfill.mjs';
+import { getCommand, registryCommandNames } from './lib/cross-skill/registry.mjs';
+import { dispatch } from './lib/cross-skill/dispatch.mjs';
 import { computeShadowOverlap } from './lib/model-eval/shadow-overlap.mjs';
 import { firstSeenFromHistory } from './lib/nav/drift.mjs';
 import { z } from 'zod';
@@ -162,6 +161,9 @@ const [subcommand, ...rest] = process.argv.slice(2);
 const KNOWN_FLAGS = [
   // ── Global / payload ──────────────────────────────────────────────────────
   '--json', '--stdin', '--help', '--selfcheck-relocation',
+  // Registry introspection (conformance/ratchet suites read the running CLI's
+  // registry-vs-legacy split through this; same family as selfcheck).
+  '--inventory-json',
   // ── Shared identity / scoping flags (many subcommands) ────────────────────
   '--repo', '--repo-id', '--repo-uuid', '--limit', '--offset', '--format', '--out', '--cwd',
   // ── plan-satisfaction ─────────────────────────────────────────────────────
@@ -645,34 +647,7 @@ async function cmdGetNavFirstSeen() {
   emit({ ok: true, cloud: true, firstSeen, truncated: history.truncated });
 }
 
-async function cmdRecordShipEvent() {
-  const p = parsePayload();
-  if (!p.outcome) return emitError('BAD_INPUT', 'outcome is required');
-  await initLearningStore();
-  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false });
-  const repoId = await resolveRepoId(p);
-  // Same unverified-write-success fix as record-regression-spec-run above.
-  const res = await recordShipEvent(repoId, {
-    commitSha: p.commitSha || currentCommitSha(),
-    branch: p.branch || currentBranch(),
-    outcome: p.outcome,
-    blockReasons: p.blockReasons,
-    openP0Count: p.openP0Count,
-    openP1Count: p.openP1Count,
-    missingSpecCount: p.missingSpecCount,
-    overriddenByUser: p.overriddenByUser,
-    overrideFlag: p.overrideFlag,
-    stackDetected: p.stackDetected,
-    framework: p.framework,
-    durationMs: p.durationMs,
-  });
-  if (!res.ok) {
-    return emitError('WRITE_FAILED',
-      `ship event not persisted: ${res.reason ?? 'unknown'}${res.error ? ` (${res.error})` : ''}`,
-      { reason: res.reason ?? null }, 1);
-  }
-  emit({ ok: true, cloud: true });
-}
+// cmdRecordShipEvent moved to scripts/lib/cross-skill/commands/ship.mjs (registry).
 
 /**
  * Resolve the repository scope for the /ship-nudge readers — the unlocked-fix
@@ -1941,126 +1916,7 @@ async function runAutoCorrelate(data, sessionId) {
   }
 }
 
-// ── WS4 — durable persona-finding outcome labels ───────────────────────────
-// docs/plans/persona-nav-feedback-recovery.md. Single subcommand, three
-// modes (summary | label | --worksheet), mirroring the `quality <verb>`
-// dispatch pattern already established in this CLI.
-
-const PERSONA_OUTCOME_VALUES = ['fixed', 'dismissed', 'wont_fix', 'stale'];
-
-async function cmdPersonaOutcomes() {
-  const sub = rest[0];
-  await initLearningStore();
-
-  if (process.argv.includes('--worksheet')) {
-    const repoName = argOption('repo');
-    if (!repoName) return emitError('BAD_INPUT', '--repo <name> is required for --worksheet');
-    // 88bc75e1/8993b96f: repoName alone is an ambiguous, caller-supplied display
-    // string — resolve the stable repoId so session selection can't land on a
-    // different repo that happens to share the name. Resolution is from `--repo`
-    // itself (see resolveRequestedRepoScope); it used to come from the AMBIENT
-    // checkout, which silently overrode the flag.
-    const _scope = await resolveRequestedRepoScope(repoName);
-    if (!_scope.ok) return emitError(_scope.code, _scope.message);
-    const repoId = _scope.repoId;
-    const res = await getActionablePersonaOutcomeItems({ repoName, repoId });
-    if (!res.ok) return emitError('STORE_ERROR', res.error || 'worksheet query failed');
-    if (!res.cloud) return emit({ ok: true, cloud: false, count: 0 });
-    const { renderAdjudicationWorksheet } = await import('./lib/adjudication-worksheet.mjs');
-    const { writeFileSync, mkdirSync, existsSync } = await import('node:fs');
-    const md = renderAdjudicationWorksheet({
-      title: `Persona-finding outcome labels — repo ${repoName}`,
-      introLines: [
-        'Actionable P0/P1 persona findings: never labeled, OR labeled fixed/stale but' +
-        ' reappearing in the latest session (a regression). Labeling a finding' +
-        ' dismissed/wont_fix requires --rationale and retires any auto-emitted' +
-        ' audit_missed ground truth for the same hash.',
-        res.truncated
-          ? `Showing 50 of more actionable findings — re-run after labeling to see the rest.`
-          : '',
-      ].filter(Boolean),
-      items: res.items.map((it) => ({
-        runId: it.sessionId, fingerprint: it.personaFindingHash, severity: it.severity,
-        category: it.outcome ? `relabel (was: ${it.outcome})` : 'unlabeled',
-        file: it.element, detail: it.observed,
-      })),
-      actions: ['fixed', 'dismissed', 'wont_fix', 'stale'],
-      commandFor: (it, a) => `node scripts/cross-skill.mjs persona-outcomes label --session ${it.runId} --hash ${it.fingerprint} --outcome ${a}${(a === 'dismissed' || a === 'wont_fix') ? ' --rationale "<why>"' : ''}`,
-      generatedAt: new Date().toISOString(),
-    });
-    const dir = existsSync('docs/arm-eval') ? 'docs/arm-eval/worksheets' : '.audit';
-    const out = argOption('out') || `${dir}/persona-outcomes-worksheet.md`;
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(out, md);
-    process.stderr.write(`  [persona-outcomes] worksheet: ${res.items.length} actionable finding(s) → ${out}\n`);
-    return emit({ ok: true, cloud: true, count: res.items.length, truncated: res.truncated, worksheet: out });
-  }
-
-  if (sub === 'summary') {
-    const repoName = argOption('repo') || process.env.PERSONA_TEST_REPO_NAME;
-    if (!repoName) return emitError('BAD_INPUT', '--repo <name> is required (or set PERSONA_TEST_REPO_NAME)');
-    // 88bc75e1/8993b96f: same repoId-primary resolution as --worksheet above.
-    const _scope = await resolveRequestedRepoScope(repoName);
-    if (!_scope.ok) return emitError(_scope.code, _scope.message);
-    const repoId = _scope.repoId;
-    const res = await getPersonaOutcomesSummary({ repoName, repoId });
-    return emit(res);
-  }
-
-  if (sub === 'label') {
-    const p = parsePayload();
-    const sessionId = p.sessionId ?? argOption('session');
-    const hash = p.personaFindingHash ?? argOption('hash');
-    const outcome = p.outcome ?? argOption('outcome');
-    const rationale = p.rationale ?? argOption('rationale') ?? null;
-    const labeledBy = p.labeledBy ?? argOption('by') ?? 'agent';
-    if (!sessionId || !hash || !outcome) {
-      return emitError('BAD_INPUT', '--session <id> --hash <h> --outcome <fixed|dismissed|wont_fix|stale> are all required');
-    }
-    if (!PERSONA_OUTCOME_VALUES.includes(outcome)) {
-      return emitError('BAD_INPUT', `--outcome must be one of ${PERSONA_OUTCOME_VALUES.join('|')}, got "${outcome}"`);
-    }
-    if ((outcome === 'dismissed' || outcome === 'wont_fix') && !(rationale && rationale.trim())) {
-      return emitError('BAD_INPUT', `--rationale is required for outcome "${outcome}"`);
-    }
-    const target = await resolveLabelTarget({ sessionId, personaFindingHash: hash });
-    if (!target.ok) return emitError('BAD_INPUT', target.error);
-    const result = await upsertPersonaFindingOutcome({
-      repoId: target.repoId, personaFindingHash: hash, outcome,
-      lastSeenSessionId: sessionId, labeledBy, rationale,
-    });
-    if (!result.ok) return emitError('WRITE_FAILED', result.error || 'label write failed');
-    return emit({ ok: true, cloud: true });
-  }
-
-  if (sub === 'backfill-hash') {
-    const repoName = argOption('repo');
-    if (!repoName) return emitError('BAD_INPUT', '--repo <name> is required for backfill-hash');
-    // MUTATING path — the `--repo`-vs-ambient split mattered most here: this
-    // would migrate the AMBIENT repo's rows while the log line named `--repo`.
-    const _scope = await resolveRequestedRepoScope(repoName);
-    if (!_scope.ok) return emitError(_scope.code, _scope.message);
-    const repoId = _scope.repoId;
-    if (!repoId) return emitError('BAD_INPUT', 'could not resolve a repoId — pass --repo-id explicitly');
-    const dryRun = process.argv.includes('--dry-run');
-    const reportPath = argOption('report-path');
-    const res = await backfillPersonaFindingHashV2({ repoId, dryRun, reportPath });
-    if (res.alreadyCurrent) {
-      process.stderr.write(`  [persona-outcomes backfill-hash] repo ${repoName}: already current, nothing to migrate\n`);
-    } else {
-      process.stderr.write(
-        `  [persona-outcomes backfill-hash] repo ${repoName}${dryRun ? ' (dry-run)' : ''}: ` +
-        `scanned=${res.scanned} recoveredThisRun=${res.recoveredThisRun} ` +
-        `reconciledThisRun=${res.reconciledThisRun} ` +
-        `targetAlreadyExists=${res.targetAlreadyExists} unrecoverable=${res.unrecoverable} ` +
-        `ambiguous=${res.ambiguousCount}${res.ambiguousReportPath ? ` (report: ${res.ambiguousReportPath})` : ''}\n`,
-      );
-    }
-    return emit({ ok: true, ...res });
-  }
-
-  return emitError('BAD_INPUT', 'usage: persona-outcomes <summary|label|backfill-hash> [flags] | persona-outcomes --worksheet --repo <name>');
-}
+// cmdPersonaOutcomes (WS4 outcome labels) moved to scripts/lib/cross-skill/commands/persona.mjs (registry).
 
 // ── Persona session readers (post-RLS-hardening — service-role only) ──────
 //
@@ -2352,21 +2208,7 @@ async function cmdDetectStack() {
   emit(parsed.data);
 }
 
-async function cmdWhoami() {
-  await initLearningStore();
-  // M4: a single Postgres store (AUDIT_DB_URL) backs every feature. `cloud`
-  // is the one source of truth — isCloudEnabled() is async (pool-presence),
-  // so it MUST be awaited or it serialises as a pending Promise (`{}`). The
-  // legacy supabaseConfigured/serviceRoleConfigured fields keyed off the
-  // sunset SUPABASE_AUDIT_* vars (no runtime code reads them) and were
-  // dropped.
-  emit({
-    ok: true,
-    cloud: await isCloudEnabled(),
-    commitSha: currentCommitSha(),
-    branch: currentBranch(),
-  });
-}
+// cmdWhoami moved to scripts/lib/cross-skill/commands/misc.mjs (registry).
 
 // ── Architectural Memory subcommands (Phase A) ──────────────────────────────
 
@@ -3487,10 +3329,8 @@ const commands = {
   'record-regression-spec-run': cmdRecordRegressionSpecRun,
   // Phase 3 WS-PIPE1 — persona_test_candidates aggregation table.
   'record-correlation': cmdRecordCorrelation,
-  'record-ship-event': cmdRecordShipEvent,
   'record-nav-audit-run': cmdRecordNavAuditRun,
   'get-nav-first-seen': cmdGetNavFirstSeen,
-  'persona-outcomes': cmdPersonaOutcomes,
   'record-plan-verify-run': cmdRecordPlanVerifyRun,
   'record-plan-verify-items': cmdRecordPlanVerifyItems,
   'plan-satisfaction': cmdPlanSatisfaction,
@@ -3526,7 +3366,6 @@ const commands = {
   'get-recent-findings': cmdGetRecentFindings,
   'shadow-overlap':     cmdShadowOverlap,
   'lock-with-test':     cmdLockWithTest,
-  'whoami': cmdWhoami,
   // Architectural memory
   'resolve-repo-identity':            cmdResolveRepoIdentity,
   'get-active-refresh-id':            cmdGetActiveRefreshId,
@@ -3565,6 +3404,11 @@ const commands = {
 };
 
 async function main() {
+  // Global flag validation stays for EVERY invocation during migration: it is
+  // a superset acceptor (registry commands' flags remain listed in
+  // KNOWN_FLAGS until Phase 5 retires it), and the registry path then applies
+  // the STRICTER per-command validation inside dispatch(). Deleted with the
+  // legacy map in Phase 5.
   try {
     assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'cross-skill.mjs' });
   } catch (err) {
@@ -3573,17 +3417,43 @@ async function main() {
   }
   if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
   if (!subcommand || subcommand === '--help' || subcommand === '-h') {
+    // Sorted union of both dispatch surfaces — a migrated command must not
+    // vanish from help. (Sorted, not map-order: names MOVE between the maps
+    // during migration, and a stable order beats an order that shuffles per
+    // cohort. The help listing is a human surface; nothing parses it.)
+    const names = [...Object.keys(commands), ...registryCommandNames()].sort();
     process.stdout.write(
       'Usage: node scripts/cross-skill.mjs <subcommand> [--json <payload>|--stdin]\n\n' +
       'Subcommands:\n' +
-      Object.keys(commands).map(k => `  ${k}`).join('\n') + '\n'
+      names.map(k => `  ${k}`).join('\n') + '\n'
     );
     process.exit(0);
+  }
+  // Introspection for the registry conformance/ratchet suites: the registry
+  // and legacy name sets, as the RUNNING CLI sees them — the conservation law
+  // (`registry ∪ legacy = INVENTORY`, disjoint) is asserted against this, not
+  // against source text. Diagnostic surface, same family as
+  // --selfcheck-relocation.
+  if (process.argv.includes('--inventory-json')) {
+    process.stdout.write(`${JSON.stringify({
+      registry: registryCommandNames().sort(),
+      legacy: Object.keys(commands).sort(),
+    })}\n`);
+    process.exit(0);
+  }
+  // Registry path (docs/plans/cross-skill-command-registry.md D1): a name in
+  // the registry is served here ONLY — a loader failure is a hard error,
+  // never a fallback to the legacy map (falling back would mask a real loader
+  // defect as working legacy behaviour).
+  if (getCommand(subcommand)) {
+    const r = await dispatch(process.argv, {});
+    if (r.envelope) emit(r.envelope);
+    process.exit(r.exitCode);
   }
   const handler = commands[subcommand];
   if (!handler) {
     emitError('UNKNOWN_SUBCOMMAND', `Unknown subcommand: ${subcommand}`, {
-      validSubcommands: Object.keys(commands),
+      validSubcommands: [...Object.keys(commands), ...registryCommandNames()].sort(),
     });
     // emitError exited — unreachable, but kept as belt-and-braces
     return;

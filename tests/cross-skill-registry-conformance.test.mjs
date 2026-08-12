@@ -1,0 +1,209 @@
+/**
+ * @fileoverview Registry conformance — universal assertions quantified over
+ * REGISTRY + the frozen inventory (docs/plans/cross-skill-command-registry.md §9).
+ *
+ * These are the checks a per-command census cannot be: they hold for every
+ * entry that exists and every entry that will ever be added, because they
+ * iterate the registry and the inventory — the enumerable truths — not a
+ * hand-kept list. A new command cannot be born outside them.
+ *
+ * The conservation law (audit R2-H1) is asserted against the RUNNING CLI
+ * (`--inventory-json`), not source text: quantifying only over source
+ * declarations proves nothing about a command that was deleted instead of
+ * migrated, and a count-based ratchet would read that deletion as progress.
+ */
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { REGISTRY, normalizeFlag, UNIVERSAL_FLAGS, payloadFlags } from '../scripts/lib/cross-skill/registry.mjs';
+
+const CLI_PATH = fileURLToPath(new URL('../scripts/cross-skill.mjs', import.meta.url));
+const INVENTORY = JSON.parse(fs.readFileSync(
+  fileURLToPath(new URL('./fixtures/cross-skill-inventory.json', import.meta.url)), 'utf8',
+)).commands;
+
+const COMMANDS_DIR = fileURLToPath(new URL('../scripts/lib/cross-skill/commands', import.meta.url));
+
+// Comments stripped before any source-text match — module docstrings NAME the
+// banned identifiers while explaining the ban, and a raw-source regex then
+// reads the explanation as a violation (the instrument defect that appeared
+// twice in tests/cross-skill-cli-integrity.test.mjs). Reused from
+// check-cli-flags.mjs rather than a local copy — the duplication wave flagged
+// the copy at 0.85 similarity, and two comment-strippers that can disagree is
+// the two-oracles defect.
+import { stripComments } from '../scripts/check-cli-flags.mjs';
+
+const SCOPES = new Set(['none', 'ambient-ok', 'explicit-required', 'global-optin']);
+const KINDS = new Set(['read', 'write', 'local']);
+const CLOUDS = new Set(['none', 'degrade-noop', 'require']);
+const PAYLOADS = new Set(['json', 'flags', 'both', 'none']);
+const FLAG_KINDS = new Set(['valued', 'boolean', 'repeatable']);
+
+describe('registry entries — every policy tuple is valid', () => {
+  it('names are unique and every field is from its closed set', () => {
+    const seen = new Set();
+    for (const e of REGISTRY) {
+      assert.ok(!seen.has(e.name), `duplicate registry entry: ${e.name}`);
+      seen.add(e.name);
+      assert.ok(SCOPES.has(e.scope), `${e.name}: bad scope ${e.scope}`);
+      assert.ok(KINDS.has(e.kind), `${e.name}: bad kind ${e.kind}`);
+      assert.ok(CLOUDS.has(e.cloud), `${e.name}: bad cloud ${e.cloud}`);
+      assert.ok(PAYLOADS.has(e.payload), `${e.name}: bad payload ${e.payload}`);
+      assert.equal(typeof e.load, 'function', `${e.name}: load must be a lazy function`);
+      for (const f of e.flags ?? []) {
+        const d = normalizeFlag(f);
+        assert.match(d.name, /^[a-z0-9-]+$/, `${e.name}: bad flag name ${d.name}`);
+        assert.ok(FLAG_KINDS.has(d.kind), `${e.name}: flag --${d.name} has bad kind ${d.kind}`);
+      }
+      assert.ok(e.positionals === 'none' || Array.isArray(e.positionals?.verbs),
+        `${e.name}: positionals must be 'none' or {verbs:[…]}`);
+      if (e.forward) {
+        assert.equal(typeof e.forward.to, 'string', `${e.name}: forward.to must name the target CLI`);
+        assert.ok(!(e.flags ?? []).length,
+          `${e.name}: forward entries delegate their grammar — they must not also declare flags`);
+      }
+      if (e.portExempt) {
+        assert.ok(e.forward,
+          `${e.name}: portExempt is only legal on forward/wrapper commands — a plain write cannot claim the exemption`);
+      }
+    }
+  });
+
+  it('--all-repos declared ⇔ scope global-optin (policy/flag coherence)', () => {
+    for (const e of REGISTRY) {
+      const hasAllRepos = (e.flags ?? []).map(normalizeFlag).some((d) => d.name === 'all-repos');
+      if (hasAllRepos) assert.equal(e.scope, 'global-optin', `${e.name}: declares --all-repos without global-optin`);
+      if (e.scope === 'global-optin') assert.ok(hasAllRepos, `${e.name}: global-optin without --all-repos`);
+    }
+  });
+
+  it('every loader resolves to a function (no entry points at a missing module)', async () => {
+    for (const e of REGISTRY) {
+      const h = await e.load();
+      assert.equal(typeof h, 'function', `${e.name}: loader did not resolve to a handler`);
+    }
+  });
+
+  it('payload flags are DERIVED, never hand-declared (audit R1-H2)', () => {
+    for (const e of REGISTRY) {
+      for (const f of e.flags ?? []) {
+        const d = normalizeFlag(f);
+        assert.ok(!['json', 'stdin'].includes(d.name),
+          `${e.name}: --${d.name} is payload-derived (payloadFlags), never declared`);
+      }
+    }
+    assert.deepEqual(payloadFlags('none'), [], 'payload none admits no payload flags');
+    assert.deepEqual(payloadFlags('json'), ['--json', '--stdin']);
+  });
+
+  it('UNIVERSAL_FLAGS stays the measured minimal set', () => {
+    assert.deepEqual([...UNIVERSAL_FLAGS].sort(), ['--help', '--selfcheck-relocation'],
+      'growing the universal set re-creates the accepted-but-inert class (audit R1-H2) — declare per-command instead');
+  });
+
+  it('every degrade-noop command has ≥1 golden cloud-off case (the policy is ENFORCED by coverage)', async () => {
+    // `cloud:'degrade-noop'` is data; the handler applies it in its own legacy
+    // order (byte-compat). What makes it a CONTRACT rather than a convention
+    // each handler must remember (audit CA-r1) is this rule: the golden suite
+    // exercises the command hermetically cloud-off, so a handler that forgets
+    // its degrade path fails a fixture, not a code review.
+    const { CASES } = await import('../scripts/dev/capture-cross-skill-envelopes.mjs');
+    const covered = new Set(CASES.map((c) => c.args[0]));
+    for (const e of REGISTRY) {
+      if (e.cloud === 'degrade-noop') {
+        assert.ok(covered.has(e.name),
+          `${e.name}: cloud is degrade-noop but no capture case invokes it — add cases to `
+          + 'scripts/dev/capture-cross-skill-envelopes.mjs BEFORE migrating the command');
+      }
+    }
+  });
+
+  it('softFail is a boolean or verb-scoped {verbs:[…]}, never broader than declared', () => {
+    for (const e of REGISTRY) {
+      if (e.softFail === undefined) continue;
+      assert.ok(e.softFail === true || Array.isArray(e.softFail?.verbs),
+        `${e.name}: softFail must be true or {verbs:[…]}`);
+      if (Array.isArray(e.softFail?.verbs)) {
+        assert.ok(Array.isArray(e.positionals?.verbs), `${e.name}: verb-scoped softFail needs declared verbs`);
+        for (const v of e.softFail.verbs) {
+          assert.ok(e.positionals.verbs.includes(v), `${e.name}: softFail verb "${v}" is not a declared verb`);
+        }
+      }
+    }
+  });
+});
+
+describe('the conservation law — registry ∪ legacy = INVENTORY (audit R2-H1)', () => {
+  it('holds on the RUNNING CLI, disjoint, no losses, no phantoms', () => {
+    const r = spawnSync(process.execPath, [CLI_PATH, '--inventory-json'], { encoding: 'utf8', timeout: 60_000 });
+    assert.equal(r.status, 0, r.stderr);
+    const line = r.stdout.split('\n').filter((l) => l.trim().startsWith('{')).pop();
+    const { registry, legacy } = JSON.parse(line);
+
+    const overlap = registry.filter((n) => legacy.includes(n));
+    assert.deepEqual(overlap, [], 'a command must live in exactly ONE dispatch surface');
+
+    const union = [...registry, ...legacy].sort();
+    assert.deepEqual(union, [...INVENTORY].sort(),
+      'a command moved OUT of the inventory (deleted instead of migrated?) or appeared unaccounted — '
+      + 'editing tests/fixtures/cross-skill-inventory.json in the same commit is the reviewed way to change the surface');
+  });
+
+  it('REGISTRY (source) agrees with the running registry surface', () => {
+    const r = spawnSync(process.execPath, [CLI_PATH, '--inventory-json'], { encoding: 'utf8', timeout: 60_000 });
+    const line = r.stdout.split('\n').filter((l) => l.trim().startsWith('{')).pop();
+    const { registry } = JSON.parse(line);
+    assert.deepEqual(registry, REGISTRY.map((e) => e.name).sort());
+  });
+});
+
+describe('import-graph bans — the port is the only way into the store (D5b)', () => {
+  const files = fs.existsSync(COMMANDS_DIR)
+    ? fs.readdirSync(COMMANDS_DIR).filter((f) => f.endsWith('.mjs'))
+    : [];
+
+  it('commands/*.mjs never imports the store barrel or scripts/lib/store/**', () => {
+    assert.ok(files.length > 0, 'no command modules found — wrong directory?');
+    const offenders = [];
+    for (const f of files) {
+      const src = stripComments(fs.readFileSync(path.join(COMMANDS_DIR, f), 'utf8'));
+      for (const m of src.matchAll(/from\s+['"]([^'"]+)['"]|import\(\s*['"]([^'"]+)['"]\s*\)/g)) {
+        const spec = m[1] ?? m[2];
+        if (/learning-store\.mjs$/.test(spec) || /\/store\//.test(spec)) {
+          offenders.push(`${f} → ${spec}`);
+        }
+      }
+    }
+    assert.deepEqual(offenders, [],
+      'store access goes through ctx.deps (the composed port) — a direct import bypasses the store-call goldens');
+  });
+
+  it('commands/*.mjs never calls initLearningStore directly (shadow R1-M2)', () => {
+    // whoami is the sanctioned exception: cloud:'none', it REPORTS cloud state
+    // as data and owns its own init — via the PORT (ctx.deps), which is what
+    // this ban is actually about; the regex below catches a bare call, not
+    // the ctx.deps.initLearningStore() form.
+    for (const f of files) {
+      const src = stripComments(fs.readFileSync(path.join(COMMANDS_DIR, f), 'utf8'));
+      assert.ok(!/(?<!deps\.)initLearningStore\s*\(/.test(src),
+        `${f}: init belongs to the dispatcher (or ctx.deps for cloud:'none' self-reporters)`);
+    }
+  });
+
+  it('path-consuming commands import the INC-001 oracle when they touch paths', () => {
+    // Cluster A's trio consumes no repo paths; this asserts the rule is
+    // ready for lock-with-test (Cluster B): any command module that mentions
+    // realpathSync/containment must import path-validation.mjs. Vacuous-pass
+    // guard: the assertion itself is exercised against a synthetic offender.
+    const offender = `import { realpathSync } from 'node:fs';\nconst x = realpathSync('.');`;
+    const checks = (src) => !/realpathSync|startsWith\(repoRoot/.test(src) || /path-validation\.mjs/.test(src);
+    assert.equal(checks(offender), false, 'the tripwire must be able to fail');
+    for (const f of files) {
+      const src = stripComments(fs.readFileSync(path.join(COMMANDS_DIR, f), 'utf8'));
+      assert.ok(checks(src), `${f}: home-rolled path containment — use classifyReadPath/classifyTestPath (INC-001)`);
+    }
+  });
+});

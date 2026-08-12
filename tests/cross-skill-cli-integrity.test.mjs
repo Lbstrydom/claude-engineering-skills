@@ -207,8 +207,16 @@ describe('F2/F3 — writers report their own outcome', () => {
   });
 
   it('both CLI handlers branch on the returned status', () => {
-    assert.ok(/ship event not persisted/.test(CROSS_SKILL_SRC),
-      'cmdRecordShipEvent must fail closed on a failed write');
+    // RETARGETED (command-registry Cluster A): record-ship-event moved to the
+    // registry — its fail-closed branch now lives in commands/ship.mjs, and
+    // the guarantee is additionally behavioural in
+    // tests/cross-skill-store-calls.test.mjs (the store's {ok:false} becomes
+    // a thrown CommandError). record-regression-spec-run is still legacy.
+    const shipSrc = fs.readFileSync(
+      fileURLToPath(new URL('../scripts/lib/cross-skill/commands/ship.mjs', import.meta.url)), 'utf8',
+    );
+    assert.ok(/ship event not persisted/.test(shipSrc),
+      'recordShipEventCmd must fail closed on a failed write');
     assert.ok(/regression spec run not persisted/.test(CROSS_SKILL_SRC),
       'cmdRecordRegressionSpecRun must fail closed on a failed write');
   });
@@ -276,14 +284,21 @@ describe('F7 — repo resolution failure is distinguishable from absence', () =>
 });
 
 describe('F4/F5 — a flag that is accepted must decide something', () => {
-  it('persona-outcomes resolves scope from --repo, not from the ambient checkout', () => {
+  it('persona-outcomes resolves scope from --repo, not from the ambient checkout', async () => {
+    // RETARGETED (command-registry Cluster A): cmdPersonaOutcomes migrated to
+    // the registry, where the F4 guarantee is now STRUCTURAL — the entry
+    // declares `scope: 'explicit-required'`, whose resolver (scope.mjs) is
+    // `--repo`-authoritative by construction, and the behavioural half lives
+    // in tests/cross-skill-store-calls.test.mjs ("the ambient checkout must
+    // play NO part in an explicitly-named read"). This case pins the
+    // declaration so a future re-declaration to an ambient policy is loud.
+    const { REGISTRY } = await import('../scripts/lib/cross-skill/registry.mjs');
+    const entry = REGISTRY.find((e) => e.name === 'persona-outcomes');
+    assert.ok(entry, 'persona-outcomes must be a registry command');
+    assert.equal(entry.scope, 'explicit-required',
+      'the F4 fix IS this declaration — an ambient policy here reintroduces the silently-overridden --repo');
+    // The legacy resolver survives for the not-yet-migrated reader below.
     assert.ok(/async function resolveRequestedRepoScope/.test(CODE));
-    // All three modes must use it — the ambient resolver silently overrode the
-    // documented flag in every one of them. Count CALL sites only: the
-    // declaration matches the same text and made this read 4.
-    const uses = functionBody('cmdPersonaOutcomes')
-      .match(/await resolveRequestedRepoScope\(repoName\)/g) || [];
-    assert.equal(uses.length, 3, 'summary, --worksheet and backfill-hash must all use it');
   });
 
   it('get-persona-sessions-by-repo resolves the REQUESTED repo, not the ambient one', () => {
@@ -371,7 +386,7 @@ describe('F4/F5 — a flag that is accepted must decide something', () => {
       'a subcommand accepts a flag it never reads — the accepted-and-inert class');
   });
 
-  it('every declared flag has a reader, and every read flag is declared', () => {
+  it('every declared flag has a reader, and every read flag is declared', async () => {
     // Both directions. The one-directional version of this check is what let
     // `--report-path` be read-but-unregistered (rejected before its handler saw
     // it) while `--limit` was declared-but-unread (validated, then ignored).
@@ -392,6 +407,18 @@ describe('F4/F5 — a flag that is accepted must decide something', () => {
     for (const re of [/includes\('(--[a-z0-9-]+)'\)/g, /indexOf\('(--[a-z0-9-]+)'\)/g,
       /===\s*'(--[a-z0-9-]+)'/g]) {
       for (const m of body.matchAll(re)) read.add(m[1]);
+    }
+    // Registry-migrated commands read their flags through ctx accessors in
+    // commands/*.mjs, but their names MUST stay in KNOWN_FLAGS until Phase 5
+    // (main()'s global assert runs before registry dispatch, so removing
+    // `--hash` would REJECT `persona-outcomes --hash` at the door). Their
+    // declarations count as readers — and more strongly than a grep: the
+    // dispatcher's declaration-checked accessor makes an undeclared read
+    // throw, so a registry declaration cannot be inert the way a KNOWN_FLAGS
+    // row could.
+    const { REGISTRY, normalizeFlag } = await import('../scripts/lib/cross-skill/registry.mjs');
+    for (const entry of REGISTRY) {
+      for (const f of entry.flags ?? []) read.add(`--${normalizeFlag(f).name}`);
     }
 
     // Forwarded wholesale to another CLI, which reads them (see KNOWN_FLAGS).

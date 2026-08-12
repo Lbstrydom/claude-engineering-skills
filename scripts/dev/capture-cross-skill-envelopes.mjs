@@ -1,0 +1,125 @@
+#!/usr/bin/env node
+/**
+ * @fileoverview Golden-envelope capture for the cross-skill command registry
+ * migration (docs/plans/cross-skill-command-registry.md, Phase 2).
+ *
+ * Runs a fixed table of HERMETIC invocations against the CURRENT
+ * `scripts/cross-skill.mjs` and records {status, envelope} per case into
+ * `tests/fixtures/cross-skill-envelopes.json`. The fixtures are captured from
+ * the LIVE legacy CLI — never hand-written (a hand-written fixture encodes the
+ * author's expectations, which is the assumption under test; the
+ * `severity`-vs-`code` incident is the canonical case).
+ *
+ * Hermetic means: no AUDIT_DB_URL, HOME/USERPROFILE redirected to a temp dir
+ * (so `~/.audit-loop.env` cannot leak cloud config in), shared-config load
+ * disabled, and cwd set to a NON-git temp directory so `currentCommitSha()`
+ * degrades to null deterministically. The golden test replays each case with
+ * the SAME runner (imported from here), so capture and comparison cannot
+ * drift apart.
+ *
+ * Re-run to regenerate: node scripts/dev/capture-cross-skill-envelopes.mjs
+ * A regeneration on unchanged behaviour must be a no-op diff.
+ */
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const CLI_PATH = fileURLToPath(new URL('../cross-skill.mjs', import.meta.url));
+export const FIXTURE_PATH = fileURLToPath(
+  new URL('../../tests/fixtures/cross-skill-envelopes.json', import.meta.url),
+);
+
+/**
+ * The invocation table. One row per behaviour worth freezing: the happy path,
+ * each BAD_INPUT refusal, and the cloud-off degrade, per migrated command.
+ * `expectEnvelope: false` marks rows whose contract is "no JSON envelope at
+ * all" (the unknown-flag ArgvError path writes prose to stderr only).
+ *
+ * Rows are appended as commands migrate — never rewritten for an already-
+ * migrated command (that would re-capture from the NEW implementation and
+ * defeat the point).
+ */
+export const CASES = [
+  // ── whoami ────────────────────────────────────────────────────────────────
+  { id: 'whoami-cloud-off', args: ['whoami'] },
+  { id: 'whoami-unknown-flag', args: ['whoami', '--not-a-real-flag'], expectEnvelope: false },
+  // ── record-ship-event ────────────────────────────────────────────────────
+  { id: 'ship-event-missing-outcome', args: ['record-ship-event', '--json', '{}'] },
+  { id: 'ship-event-cloud-off-happy', args: ['record-ship-event', '--json', '{"outcome":"success"}'] },
+  // ── persona-outcomes ─────────────────────────────────────────────────────
+  { id: 'po-no-verb', args: ['persona-outcomes'] },
+  { id: 'po-bogus-verb', args: ['persona-outcomes', 'bogus-verb'] },
+  { id: 'po-summary-no-repo', args: ['persona-outcomes', 'summary'] },
+  { id: 'po-summary-cloud-off', args: ['persona-outcomes', 'summary', '--repo', 'owner/repo'] },
+  { id: 'po-label-missing-args', args: ['persona-outcomes', 'label', '--session', 's'] },
+  { id: 'po-label-bad-outcome', args: ['persona-outcomes', 'label', '--session', 's', '--hash', 'h', '--outcome', 'bogus'] },
+  { id: 'po-label-cloud-off', args: ['persona-outcomes', 'label', '--session', 's', '--hash', 'h', '--outcome', 'fixed'] },
+  { id: 'po-worksheet-no-repo', args: ['persona-outcomes', '--worksheet'] },
+  { id: 'po-backfill-no-repo', args: ['persona-outcomes', 'backfill-hash'] },
+];
+
+/** Run one case hermetically. Shared by capture (here) and replay (the test). */
+export function runCase(c, { tmpRoot }) {
+  const dir = fs.mkdtempSync(path.join(tmpRoot, `${c.id.slice(0, 20)}-`));
+  const env = { ...process.env, HOME: dir, USERPROFILE: dir, AUDIT_LOOP_DISABLE_SHARED: '1' };
+  delete env.DOTENV_CONFIG_PATH;
+  delete env.AUDIT_DB_URL;
+  delete env.PERSONA_TEST_REPO_NAME;
+  delete env.LEARNING_REPO_NAME;
+  const r = spawnSync(process.execPath, [CLI_PATH, ...c.args], {
+    encoding: 'utf8', env, cwd: dir, timeout: 60_000,
+  });
+  const line = (r.stdout || '').split('\n').filter((l) => l.trim().startsWith('{')).pop();
+  return {
+    status: r.status,
+    envelope: line ? JSON.parse(line) : null,
+    stderrSample: (r.stderr || '').split('\n').filter(Boolean).slice(-1)[0] ?? null,
+  };
+}
+
+async function main() {
+  if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
+  // EXISTING cases are preserved, never silently re-captured (audit CA-r1):
+  // after a command migrates, this tool runs the MIGRATED implementation, so
+  // re-capturing an existing case would overwrite the legacy-captured oracle
+  // with the thing it exists to check — the golden test would then compare
+  // the new implementation against itself. Only NEW case ids are appended.
+  // `--recapture <id>` re-captures one named case deliberately (for a
+  // documented, reviewed contract change), and says so on stderr.
+  const recaptureIdx = process.argv.indexOf('--recapture');
+  const recaptureId = recaptureIdx >= 0 ? process.argv[recaptureIdx + 1] : null;
+  const existing = fs.existsSync(FIXTURE_PATH)
+    ? JSON.parse(fs.readFileSync(FIXTURE_PATH, 'utf8')).cases
+    : {};
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'xskill-capture-'));
+  const out = { _comment: 'Captured from the live legacy CLI by scripts/dev/capture-cross-skill-envelopes.mjs — never hand-edit an entry; existing entries are preserved on re-run (see --recapture).', cases: {} };
+  let captured = 0;
+  try {
+    for (const c of CASES) {
+      if (existing[c.id] && c.id !== recaptureId) {
+        out.cases[c.id] = existing[c.id];
+        continue;
+      }
+      const res = runCase(c, { tmpRoot });
+      if (c.expectEnvelope !== false && !res.envelope) {
+        process.stderr.write(`  [capture] ${c.id}: NO envelope (status ${res.status}) — refusing to record a case that produced nothing\n`);
+        process.exitCode = 1;
+        return;
+      }
+      out.cases[c.id] = { args: c.args, status: res.status, envelope: res.envelope };
+      captured += 1;
+      process.stderr.write(`  [capture] ${c.id}: status ${res.status}${c.id === recaptureId ? ' (RE-captured deliberately)' : ''}\n`);
+    }
+    fs.mkdirSync(path.dirname(FIXTURE_PATH), { recursive: true });
+    fs.writeFileSync(FIXTURE_PATH, `${JSON.stringify(out, null, 2)}\n`);
+    process.stderr.write(`  [capture] ${captured} new / ${CASES.length - captured} preserved → ${FIXTURE_PATH}\n`);
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  }
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main();
+}

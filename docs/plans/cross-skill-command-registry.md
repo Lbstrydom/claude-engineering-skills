@@ -1,7 +1,7 @@
 # Plan: cross-skill CLI — declarative command registry
 
 - **Date**: 2026-08-12
-- **Status**: Draft
+- **Status**: In Progress — approved 2026-08-12; Cluster A started via /cycle --autonomous
 - **Author**: Claude + Louis
 - **Scope**: backend
 - **Target domain(s)**: `cross-skill-bridge`, `shared-lib`, `stores`
@@ -709,7 +709,7 @@ DB-gated suite (two-edit enrolment rule). Files:
 `scripts/lib/store/persona-correlations.mjs` (modify — the correlation writer
 lives HERE after Phase 6's split, not in `store/persona.mjs`; shadow G2-M
 caught the stale reference),
-`tests/store-ownership.test.mjs` (create), `scripts/lib/db-test-container.mjs` (modify),
+`tests/store-ownership.test.mjs` (create), `scripts/db-test-container.mjs` (modify — path corrected from `scripts/lib/…`, audit CA-r1),
 `.github/workflows/postgres-parity.yml` (modify).
 
 **Phase 8 — Ownership adoption (CLI)**: `parent:` declarations on the four

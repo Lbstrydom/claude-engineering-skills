@@ -1,0 +1,191 @@
+{
+  "_comment": "Captured from the live legacy CLI by scripts/dev/capture-cross-skill-envelopes.mjs — never hand-edit an entry.",
+  "cases": {
+    "whoami-cloud-off": {
+      "args": [
+        "whoami"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false,
+        "commitSha": null,
+        "branch": null
+      }
+    },
+    "whoami-unknown-flag": {
+      "args": [
+        "whoami",
+        "--not-a-real-flag"
+      ],
+      "status": 2,
+      "envelope": null
+    },
+    "ship-event-missing-outcome": {
+      "args": [
+        "record-ship-event",
+        "--json",
+        "{}"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "outcome is required"
+        }
+      }
+    },
+    "ship-event-cloud-off-happy": {
+      "args": [
+        "record-ship-event",
+        "--json",
+        "{\"outcome\":\"success\"}"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false
+      }
+    },
+    "po-no-verb": {
+      "args": [
+        "persona-outcomes"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "usage: persona-outcomes <summary|label|backfill-hash> [flags] | persona-outcomes --worksheet --repo <name>"
+        }
+      }
+    },
+    "po-bogus-verb": {
+      "args": [
+        "persona-outcomes",
+        "bogus-verb"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "usage: persona-outcomes <summary|label|backfill-hash> [flags] | persona-outcomes --worksheet --repo <name>"
+        }
+      }
+    },
+    "po-summary-no-repo": {
+      "args": [
+        "persona-outcomes",
+        "summary"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "--repo <name> is required (or set PERSONA_TEST_REPO_NAME)"
+        }
+      }
+    },
+    "po-summary-cloud-off": {
+      "args": [
+        "persona-outcomes",
+        "summary",
+        "--repo",
+        "owner/repo"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false,
+        "sessionId": null
+      }
+    },
+    "po-label-missing-args": {
+      "args": [
+        "persona-outcomes",
+        "label",
+        "--session",
+        "s"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "--session <id> --hash <h> --outcome <fixed|dismissed|wont_fix|stale> are all required"
+        }
+      }
+    },
+    "po-label-bad-outcome": {
+      "args": [
+        "persona-outcomes",
+        "label",
+        "--session",
+        "s",
+        "--hash",
+        "h",
+        "--outcome",
+        "bogus"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "--outcome must be one of fixed|dismissed|wont_fix|stale, got \"bogus\""
+        }
+      }
+    },
+    "po-label-cloud-off": {
+      "args": [
+        "persona-outcomes",
+        "label",
+        "--session",
+        "s",
+        "--hash",
+        "h",
+        "--outcome",
+        "fixed"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "cloud not configured"
+        }
+      }
+    },
+    "po-worksheet-no-repo": {
+      "args": [
+        "persona-outcomes",
+        "--worksheet"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "--repo <name> is required for --worksheet"
+        }
+      }
+    },
+    "po-backfill-no-repo": {
+      "args": [
+        "persona-outcomes",
+        "backfill-hash"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "--repo <name> is required for backfill-hash"
+        }
+      }
+    }
+  }
+}

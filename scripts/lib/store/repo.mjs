@@ -23,6 +23,7 @@
 import { getPool, dbIdentity, classifyDbConnectionError } from '../db/client.mjs';
 import { one, insertReturning, updateWhere, many, pgArray } from '../db/query.mjs';
 import { resolveRepoIdentity } from '../repo-identity.mjs';
+import { _recordInitFailure, _clearInitFailure } from './client-state.mjs';
 
 // ── Lifecycle helpers ──────────────────────────────────────────────────────
 
@@ -43,6 +44,11 @@ export async function initLearningStore() {
   try {
     pool = await getPool();
   } catch (err) {
+    // Feed the advisory cloud-state classifier (client-state.mjs) so a
+    // configured-but-unreachable store stops reading identically to an
+    // unconfigured one at the envelope layer. Advisory only — this function's
+    // boolean contract and every caller of it are unchanged.
+    _recordInitFailure(err);
     process.stderr.write(`  [learning] Cloud store init failed: ${err.message}\n`);
     return false;
   }
@@ -74,6 +80,7 @@ export async function initLearningStore() {
     // whitespace-only line back in its place, so it is emitted only when it
     // actually says something.
     const raw = String(err?.message ?? '').trim();
+    _recordInitFailure(err);
     process.stderr.write(
       `  [learning] Postgres store unavailable at ${where} (${cause})\n` +
       `             ${hint}\n` +
@@ -81,6 +88,7 @@ export async function initLearningStore() {
     );
     return false;
   }
+  _clearInitFailure();
   process.stderr.write('  [learning] Cloud store connected\n');
   return true;
 }
@@ -152,9 +160,20 @@ export async function upsertRepo(profile, _repoName) {
   // legacy callers re-fragmenting, and (b) survives the unify migration — the
   // old `onConflict: 'fingerprint'` upsert would now throw (the fingerprint
   // UNIQUE constraint was dropped). `repoName` is ignored: identity derives the
-  // name. Return shape (id | null) is preserved for the frozen contract.
-  const ref = await resolveRepoForStore({ profile });
-  return ref?.repoRowId ?? null;
+  // name. Return shape (id | null) is preserved for the frozen contract — but
+  // the null is no longer SILENT for failures: collapsing a thrown lookup into
+  // the same null as "cloud off" is the F7 class, and this shim was the last
+  // caller-visible spot doing it. The contract stays null (its callers are
+  // frozen); the stderr line makes the two nulls distinguishable to operators.
+  const ref = await resolveRepoForStoreResult({ profile });
+  if (ref.kind === 'error') {
+    process.stderr.write(
+      `  [learning] upsertRepo: repo identity lookup FAILED (${ref.error}) — returning null per the frozen `
+      + 'contract, but this is a store failure, NOT an unconfigured store\n',
+    );
+    return null;
+  }
+  return ref.kind === 'resolved' ? ref.repoRowId : null;
 }
 
 /**

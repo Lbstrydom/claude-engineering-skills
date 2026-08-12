@@ -46,7 +46,12 @@ test('isCloudEnabled() is always awaited (a bare call is a truthy Promise)', () 
       if (code.includes('export async function isCloudEnabled')) return;
       // Strip the legitimate forms, then see if any *call* survives.
       const stripped = raw
-        .replace(/await\s+(?:[\w$]+\.)?isCloudEnabled\(\)/g, '') // awaited (direct or via handle)
+        // Awaited — direct, or via ANY dotted handle. `(?:[\w$]+\.)?` matched
+        // one segment only, so `await ctx.deps.isCloudEnabled()` (two
+        // segments, introduced by the cross-skill store port) was flagged as
+        // un-awaited despite the line literally starting with `await` — an
+        // instrument defect, not a finding.
+        .replace(/await\s+(?:[\w$]+\.)*isCloudEnabled\(\)/g, '')
         .replace(/return\s+isCloudEnabled\(\)/g, '');            // async wrapper returns the Promise
       if (/\bisCloudEnabled\(\)/.test(stripped)) {
         offenders.push(`${path.relative(SCRIPTS_DIR, file)}:${i + 1}: ${code}`);
