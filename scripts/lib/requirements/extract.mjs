@@ -109,6 +109,78 @@ export function mergeRequirements(runResults, totalRuns) {
   });
 }
 
+/**
+ * Split ONE oversized file into parts that each fit the budget.
+ *
+ * **Why this exists.** The budget is sound — it is derived from
+ * `EXTRACT_MAX_OUTPUT_TOKENS`, because extraction output scales with input and a
+ * length-truncated response is unusable — but its UNIT was the whole file, so a
+ * file's SIZE decided whether its invariants could be represented at all. Size
+ * correlates with invariant density, so the modules most worth indexing were
+ * exactly the ones refused: on 2026-08-12 `store/runs-findings.mjs` (~23.6K
+ * tokens) and `store/plans-ship.mjs` (~20.0K) — which between them own the
+ * findings upsert, the write receipts, the fingerprint oracle and the
+ * `upsertPlan` result contract — were absent from a 269-entry ledger for that
+ * reason alone. That is selection bias, not a rounding error, and raising the
+ * cap would only move the cliff.
+ *
+ * Splits at TOP-LEVEL boundaries (a line starting in column 0 with `export`,
+ * `function`, `const`, `class`, …) so a part is a set of whole declarations
+ * rather than an arbitrary byte range — the extractor is reading for
+ * invariants, and half a function has none. Each part keeps the REAL file path,
+ * so provenance and `appliesTo` are unaffected; only the prompt header says
+ * which part it is.
+ *
+ * @returns {{file: string, body: string, part: number, parts: number}[]}
+ */
+export function splitOversizedFile(fb, budget = CHUNK_TOKEN_BUDGET) {
+  const lines = fb.body.split('\n');
+  // Boundary = a plausible top-level declaration start. Deliberately generous:
+  // a missed boundary only makes a part larger, and the size check below is
+  // what actually bounds it.
+  const isBoundary = (l) => /^(export\s|async\s+function\s|function\s|const\s|let\s|var\s|class\s|\/\*\*)/.test(l);
+  const parts = [];
+  let cur = [];
+  const flush = () => { if (cur.length) { parts.push(cur.join('\n')); cur = []; } };
+  for (const line of lines) {
+    // Start a new part only AT a boundary, and only once the current one is
+    // already large enough to be worth closing.
+    if (cur.length && isBoundary(line) && estimateTokens(cur.join('\n')) > budget * 0.6) flush();
+    cur.push(line);
+  }
+  flush();
+  return parts.map((body, i) => ({ file: fb.file, body, part: i + 1, parts: parts.length }));
+}
+
+/**
+ * Which files are genuinely covered by a run — ALL-OR-NOTHING per file.
+ *
+ * Pure and exported because this is where splitting could cause silent data
+ * loss: `reconcile` scoped-REPLACES a covered file's requirements, so marking a
+ * file covered after only some of its parts came back would delete the
+ * invariants the failed parts carry. That is the same shape as the existing
+ * per-batch coverage rule (a failed batch's files are not covered, Gemini
+ * wrongly_dismissed H1) — splitting just made it possible one level down.
+ *
+ * @param {Map<string, number>} required - parts needed per file
+ * @param {Map<string, number>} succeeded - parts that came back per file
+ * @returns {string[]} files safe to mark covered
+ */
+export function computeCovered(required, succeeded) {
+  const covered = [];
+  for (const [file, need] of required) {
+    const got = succeeded.get(file) ?? 0;
+    if (got >= need) covered.push(file);
+    else if (got > 0) {
+      process.stderr.write(
+        `  [requirements] WARN: ${file} extracted ${got}/${need} part(s) — NOT marked covered, `
+        + 'so its existing requirements are preserved rather than replaced by a partial set\n',
+      );
+    }
+  }
+  return covered;
+}
+
 /** Split files into batches whose combined token estimate fits the budget. */
 function batchFiles(fileBodies) {
   const batches = [];
@@ -135,11 +207,27 @@ async function extractOneRun(batches, model, timeoutMs) {
   const items = [];
   const covered = new Set();
   let batchesFailed = 0;
+  // A split file is covered only when EVERY part succeeded. Counting parts
+  // required vs parts succeeded, rather than adding to `covered` per batch, is
+  // the whole safety of splitting: `reconcile` scoped-REPLACES a covered file's
+  // requirements, so marking a file covered on a partial extraction would
+  // delete the invariants its failed parts carry — the same silent-loss shape
+  // the per-batch coverage rule already exists to prevent, one level down.
+  const partsRequired = new Map();
+  const partsSucceeded = new Map();
+  for (const batch of batches) {
+    for (const fb of batch) partsRequired.set(fb.file, Math.max(partsRequired.get(fb.file) ?? 0, fb.parts ?? 1));
+  }
   for (let bi = 0; bi < batches.length; bi++) {
     const batch = batches[bi];
     const tag = `batch ${bi + 1}/${batches.length}`;
     try {
-      const code = batch.map((fb) => `\n### ${fb.file}\n\`\`\`\n${fb.body}\n\`\`\``).join('\n');
+      const code = batch.map((fb) => {
+        // Name the part in the header so the model knows it is reading a
+        // fragment and does not assert invariants about "the whole file".
+        const header = (fb.parts ?? 1) > 1 ? `${fb.file} (part ${fb.part}/${fb.parts})` : fb.file;
+        return `\n### ${header}\n\`\`\`\n${fb.body}\n\`\`\``;
+      }).join('\n');
       const r = await callOpenAI({ topic: `${EXTRACTION_PROMPT}\n\nFILES:${code}`, model, maxTokens: EXTRACT_MAX_OUTPUT_TOKENS, timeoutMs });
       if (r.state !== 'success') throw new Error(`LLM call ${r.state}: ${r.errorMessage || ''}`);
       let parsed;
@@ -168,8 +256,10 @@ async function extractOneRun(batches, model, timeoutMs) {
       if (dropped > 0) {
         process.stderr.write(`  [requirements] WARN: dropped ${dropped} malformed extraction item(s) from ${tag}\n`);
       }
-      // The batch succeeded — its files are genuinely covered by this run.
-      for (const fb of batch) covered.add(fb.file);
+      // The batch succeeded — record each part. Coverage is decided below,
+      // once every batch has run, so a file split across batches is only
+      // covered when all of its parts got through.
+      for (const fb of batch) partsSucceeded.set(fb.file, (partsSucceeded.get(fb.file) ?? 0) + 1);
     } catch (err) {
       // A batch failure must NOT discard items already collected from earlier
       // batches in this run (audit M4) — count it and carry on. The run only
@@ -182,6 +272,7 @@ async function extractOneRun(batches, model, timeoutMs) {
   if (batchesFailed > 0 && batchesFailed === batches.length) {
     throw new Error(`all ${batches.length} extraction batch(es) failed`);
   }
+  for (const f of computeCovered(partsRequired, partsSucceeded)) covered.add(f);
   return { items, covered };
 }
 
@@ -207,7 +298,7 @@ export async function extractRequirements({ files, baseDir = process.cwd(), runs
     catch { return path.resolve(baseDir); }
   })();
   const escapesRoot = (p) => p !== repoRoot && !p.startsWith(repoRoot + path.sep);
-  const fileBodies = [];
+  let fileBodies = [];
   for (const f of files) {
     const rel = String(f).replace(/\\/g, '/');
     // Lexical containment FIRST — reject `../` escapes before any FS access.
@@ -236,15 +327,30 @@ export async function extractRequirements({ files, baseDir = process.cwd(), runs
     fileBodies.push({ file: rel, body: redactSecrets(fs.readFileSync(abs, 'utf-8')) });
   }
 
-  // A single file larger than the chunk budget cannot be batched away
-  // (audit M10) — fail fast with a clear, actionable message.
-  const overBudget = fileBodies.filter((fb) => estimateTokens(fb.body) > CHUNK_TOKEN_BUDGET);
-  if (overBudget.length) {
-    throw new Error(
-      `file(s) exceed the ${CHUNK_TOKEN_BUDGET}-token extraction budget — `
-      + `split or exclude them: ${overBudget.map((fb) => fb.file).join(', ')}`,
-    );
+  // A single file larger than the chunk budget used to fail the whole run with
+  // "split or exclude them" (audit M10). Refusing beat truncating, but it made
+  // FILE SIZE the thing that decides whether a module's invariants can exist in
+  // the ledger — and the biggest modules are the invariant-dense ones. So split
+  // it here instead: the budget still binds (it protects the output ceiling),
+  // the unit is just no longer a whole file.
+  const expanded = [];
+  for (const fb of fileBodies) {
+    if (estimateTokens(fb.body) <= CHUNK_TOKEN_BUDGET) { expanded.push({ ...fb, part: 1, parts: 1 }); continue; }
+    const parts = splitOversizedFile(fb);
+    // A single top-level declaration bigger than the budget cannot be split
+    // further without cutting mid-construct, which would hand the extractor a
+    // fragment with no invariants in it. That still fails fast, loudly.
+    const stillOver = parts.filter((p) => estimateTokens(p.body) > CHUNK_TOKEN_BUDGET);
+    if (stillOver.length) {
+      throw new Error(
+        `${fb.file}: a single top-level declaration exceeds the ${CHUNK_TOKEN_BUDGET}-token `
+        + 'extraction budget and cannot be split at a declaration boundary — split the FUNCTION, or exclude the file',
+      );
+    }
+    process.stderr.write(`  [requirements] ${fb.file} split into ${parts.length} part(s) to fit the extraction budget\n`);
+    expanded.push(...parts);
   }
+  fileBodies = expanded;
 
   await refreshModelCatalog().catch(() => {});
   const model = resolveModel('latest-gpt');

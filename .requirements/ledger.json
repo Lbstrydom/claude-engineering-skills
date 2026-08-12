@@ -1,7 +1,7 @@
 {
-  "generatedAt": "2026-08-12T08:04:55.445Z",
-  "commitSha": "96b96de189f1cf2dfc4b1e9f42961e4226244696",
-  "extractionSourceSha": "96b96de189f1cf2dfc4b1e9f42961e4226244696",
+  "generatedAt": "2026-08-12T08:17:43.213Z",
+  "commitSha": "9074e3c914f9ae10bcae34027a695f005af7ab04",
+  "extractionSourceSha": "9074e3c914f9ae10bcae34027a695f005af7ab04",
   "coveredFiles": [
     "scripts/brainstorm-round.mjs",
     "scripts/learning/backfill-outcomes.mjs",
@@ -30,6 +30,8 @@
     "scripts/lib/sensitive-egress-gate.mjs",
     "scripts/lib/store/arch/symbols.mjs",
     "scripts/lib/store/bandit-fp.mjs",
+    "scripts/lib/store/plans-ship.mjs",
+    "scripts/lib/store/runs-findings.mjs",
     "scripts/lib/symbol-index/stale-pragma-sweep.mjs",
     "scripts/memory-health.mjs",
     "scripts/persona-consistency-promote.mjs",
@@ -95,6 +97,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended review status invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-behavioural-08afb038",
+      "assertion": "Run findings must be returned in deterministic order by HIGH, then MEDIUM, then other severity, followed by round, pass, primary file with nulls last, and ID.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "getRunFindings"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs#getRunFindings"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-08afb038",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended deterministic findings ordering invariant with no linked test."
       }
     },
     {
@@ -347,6 +379,66 @@
           "REQ-behavioural-de6191ea"
         ],
         "rationale": "It requires byte-stable system prompts across rounds while the conflicting requirements require Round 2 system prompt mutation."
+      }
+    },
+    {
+      "id": "REQ-behavioural-348a0757",
+      "assertion": "Unremediated-acceptance pages must include only open dispositions, prioritize HIGH severity, and use accepted time plus finding ID as a deterministic ordering key.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "getUnremediatedAcceptances"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#getUnremediatedAcceptances"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-348a0757",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended acceptance-page filtering and ordering invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-behavioural-3822057c",
+      "assertion": "Regression specs with source kind persona-consistency-candidate must not be persisted.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "recordRegressionSpec"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#recordRegressionSpec"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-3822057c",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended retired-source exclusion invariant with no linked test."
       }
     },
     {
@@ -631,6 +723,66 @@
       }
     },
     {
+      "id": "REQ-behavioural-8a9f10a7",
+      "assertion": "getCandidateAuditFindings must distinguish a database read failure with ok:false from a successful search with no candidate findings represented as ok:true and rows:[] .",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "getCandidateAuditFindings"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#getCandidateAuditFindings"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-8a9f10a7",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended candidate-read failure distinction invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-behavioural-91c3b5d4",
+      "assertion": "recordShipEvent must not persist an event without an outcome and must distinguish cloud-disabled non-persistence from a cloud write failure in its returned status.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "recordShipEvent"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#recordShipEvent"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-91c3b5d4",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended ship-event validation and outcome distinction invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-behavioural-9861a034",
       "assertion": "A finding must be hard-suppressed when its normalized category and primary file match at least three resolved ledger entries ruled overrule or dismissed.",
       "kind": "behavioural",
@@ -790,6 +942,36 @@
         "gap": "observed-but-unintended",
         "conflictsWith": [],
         "rationale": "The assertion is visibly truncated and looks like an extraction artifact rather than a stable invariant."
+      }
+    },
+    {
+      "id": "REQ-behavioural-b99a8d8e",
+      "assertion": "Control-marker findings must be auto-dismissed only when they have no adjudication_outcome and their user_action is null, needs_triage, or auto_dismissed, with the supplied or default dismissal reason",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "markRunFindingsAutoDismissed"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs#markRunFindingsAutoDismissed"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-b99a8d8e",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended constrained control-marker dismissal invariant with no linked test."
       }
     },
     {
@@ -1206,6 +1388,36 @@
       }
     },
     {
+      "id": "REQ-behavioural-ff88bdbf",
+      "assertion": "Audit-run existence probing must distinguish a genuinely absent or empty run ID (false) from cloud-disabled or database-probe failure (null).",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "auditRunExists"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs: auditRunExists"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-ff88bdbf",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended tri-state existence-result invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-014a061e",
       "assertion": "Cited-entity extraction must select only a token adjacent to a missing-claim phrase in detail or section and must return null when no single such token is found.",
       "kind": "correctness",
@@ -1273,6 +1485,66 @@
       }
     },
     {
+      "id": "REQ-correctness-051db660",
+      "assertion": "countAgedUnremediatedAcceptances must classify only open dispositions excluded from the mature-and-recent window into notYetDue, agedOut, or prePractice, with agedOut limited to mature non-recent acce",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "countAgedUnremediatedAcceptances"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#countAgedUnremediatedAcceptances"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-051db660",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended aged-acceptance classification invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-correctness-055dd7b7",
+      "assertion": "Plan creation must validate the path before evaluating cloud availability, so invalid paths are reported as invalid input even when the cloud store is disabled.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "upsertPlan"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#upsertPlan"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-055dd7b7",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended validation-before-availability invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-0847f3f1",
       "assertion": "The impact set consists of normalized changed files plus normalized scanned files whose contents import a changed file via a matching './basename' or './normalizedPath' substring, returned sorted.",
       "kind": "correctness",
@@ -1300,6 +1572,73 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended impact-set computation invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-0c9b0239",
+      "assertion": "Final-review adjudication must reject any action other than \"accepted\" or \"dismissed\" and must persist accepted actions as user_action \"accepted-permanent\" with adjudication_outcome \"accepted\" or dism",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "adjudicateFinalReviewFinding"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs#adjudicateFinalReviewFinding"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-0c9b0239",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended adjudication action-validation invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-correctness-0cf9914c",
+      "assertion": "Final-review adjudication and remediation writes must report failure when their target update affects zero rows rather than reporting success.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "adjudicateFinalReviewFinding"
+        },
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "recordFinalReviewFix"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs: adjudicateFinalReviewFinding",
+          "scripts/lib/store/runs-findings.mjs: recordFinalReviewFix",
+          "scripts/lib/store/runs-findings.mjs#adjudicateFinalReviewFinding",
+          "scripts/lib/store/runs-findings.mjs#recordFinalReviewFix"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-correctness-0cf9914c",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended zero-row target-update invariant with no linked test."
       }
     },
     {
@@ -1404,6 +1743,36 @@
       }
     },
     {
+      "id": "REQ-correctness-1619a714",
+      "assertion": "Final-review experiment run-rate aggregates must exclude runs carrying an experiment tag while separately returning counts grouped by those excluded tags.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "getFinalReviewStats"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs: getFinalReviewStats"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-1619a714",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended experiment aggregation invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-168cda5d",
       "assertion": "Existence-claim verification treats scoped packages and bare module specifiers without symbol context as external dependencies and always returns requires_verification for them.",
       "kind": "correctness",
@@ -1467,6 +1836,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended inferred-only status invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-1889bdd2",
+      "assertion": "countAgedUnremediatedAcceptances must derive the remediation-practice boundary and all age classifications in one database statement so rows cannot be classified against a separately read practice bou",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "countAgedUnremediatedAcceptances"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#countAgedUnremediatedAcceptances"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-1889bdd2",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended single-statement age-classification invariant with no linked test."
       }
     },
     {
@@ -1535,6 +1934,36 @@
       }
     },
     {
+      "id": "REQ-correctness-1c60173c",
+      "assertion": "Final-review experiment run-rate aggregates must exclude audit runs with a non-null experiment_tag when that column is available, while separately returning counts grouped by excluded experiment tags.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "getFinalReviewStats"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs#getFinalReviewStats"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-1c60173c",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended experiment-tag aggregation invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-1daf104c",
       "assertion": "Memory-health metric triggers must remain unfired when the finding count in the reporting window is below the configured minimum sample size.",
       "kind": "correctness",
@@ -1595,6 +2024,67 @@
       }
     },
     {
+      "id": "REQ-correctness-1f435177",
+      "assertion": "Final-review adjudication must reject an omitted bucket when the same run ID and finding fingerprint exist in multiple buckets rather than updating any bucket.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "resolveFindingBucket"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs: resolveFindingBucket",
+          "scripts/lib/store/runs-findings.mjs: adjudicateFinalReviewFinding"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-1f435177",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended ambiguous-bucket rejection invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-correctness-2a342354",
+      "assertion": "countAcceptedPermanent must reject an invalid explicit repository scope, return 0 when cloud storage is disabled or its query fails, and otherwise count only non-open dispositions from unremediated_ac",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "countAcceptedPermanent"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#countAcceptedPermanent"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-2a342354",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended accepted-permanent count outcome invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-2cb3a9fe",
       "assertion": "Finding verification must classify existence claims by testing category, section, and detail against the centralized EXISTENCE_CLAIM_SIGNAL regex list.",
       "kind": "correctness",
@@ -1627,6 +2117,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended existence-claim classification invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-2eb7a1ef",
+      "assertion": "Unremediated-acceptance pages must retain only open dispositions, prioritize HIGH severity, and use accepted_at plus audit_finding_id as a stable ordering before applying pagination.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "getUnremediatedAcceptances"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#getUnremediatedAcceptances"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-2eb7a1ef",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended disposition filter and ordering invariant with no linked test."
       }
     },
     {
@@ -1689,6 +2209,36 @@
         "gap": "observed-but-unintended",
         "conflictsWith": [],
         "rationale": "The assertion is visibly truncated and looks like an extraction artifact rather than a stable invariant."
+      }
+    },
+    {
+      "id": "REQ-correctness-33740d62",
+      "assertion": "readShipEvents must return outcome aggregates and recent events scoped to the requested repository, with recent events ordered newest first and bounded by the requested limit.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "readShipEvents"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#readShipEvents"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-correctness-33740d62",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended repository-scoped ship-event read invariant with no linked test."
       }
     },
     {
@@ -1818,6 +2368,67 @@
       }
     },
     {
+      "id": "REQ-correctness-464447d8",
+      "assertion": "Plan lookup must normalize and validate the requested path before querying and must distinguish an absent plan from a failed database lookup.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "getPlanIdByPath"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#getPlanIdByPath",
+          "scripts/lib/store/plans-ship.mjs#validatePlanPath"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-464447d8",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended validated lookup outcome invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-correctness-473f329b",
+      "assertion": "Unlocked-fix pages must apply repository and optional audit-mode filters in SQL before limiting results and must order rows by newest fixed time and finding ID for stable pagination.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "getUnlockedFixes"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#getUnlockedFixes"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-473f329b",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended SQL filtering and stable pagination invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-4a410cea",
       "assertion": "The reported count of persisted duplicate justifications must equal the number of symbol-index rows actually updated rather than the number of requested definition IDs.",
       "kind": "correctness",
@@ -1845,6 +2456,38 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This persisted-row counting invariant has no linked test."
+      }
+    },
+    {
+      "id": "REQ-correctness-4b5c16f5",
+      "assertion": "getCandidateAuditFindings must select at most the requested number of newest audit runs for the repository that have findings and are either within sinceDays or exactly match exactCommitSha, then retu",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "getCandidateAuditFindings"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#getCandidateAuditFindings"
+        ],
+        "tests": [
+          "tests/candidate-audit-findings-window.test.mjs"
+        ]
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-correctness-4b5c16f5",
+        "gap": "none",
+        "conflictsWith": [],
+        "rationale": "This intended candidate-selection invariant has a linked test."
       }
     },
     {
@@ -1949,6 +2592,66 @@
       }
     },
     {
+      "id": "REQ-correctness-5005d675",
+      "assertion": "Concurrent creation attempts using the same explicit run ID must treat a primary-key conflict as idempotent reuse only after applying the same repository-scoping check.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "recordRunStart"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs#recordRunStart"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-5005d675",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended idempotent-concurrency invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-correctness-51771229",
+      "assertion": "Regression-spec run recording must report a cloud write failure as unsuccessful rather than reporting the run as persisted.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "recordRegressionSpecRun"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#recordRegressionSpecRun"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-51771229",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended regression-run write-failure invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-56f2ba01",
       "assertion": "A false-positive pattern must be marked auto_suppress only when its accepted plus dismissed count meets learningConfig.minFpSamples and its EMA is below 0.15.",
       "kind": "correctness",
@@ -2006,6 +2709,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This appears to be an intended discovery invariant but has no linked test."
+      }
+    },
+    {
+      "id": "REQ-correctness-59f1e530",
+      "assertion": "countAcceptedPermanent must count all non-open-disposition rows from unremediated_acceptances_all within the explicitly resolved repository scope, without applying the nag-window view.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "countAcceptedPermanent"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#countAcceptedPermanent"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-59f1e530",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended permanent-acceptance counting invariant with no linked test."
       }
     },
     {
@@ -2208,6 +2941,127 @@
       }
     },
     {
+      "id": "REQ-correctness-654e04ae",
+      "assertion": "Each persisted finding must have a deterministic fingerprint derived from its supplied hash or from its severity, category, section, primary file, and detail, so distinct hashless findings do not coll",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "fingerprintOf"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs#fingerprintOf"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-654e04ae",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended deterministic fingerprint invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-correctness-65ce1b44",
+      "assertion": "A plan upsert must report success only when the database returns a plan ID, and database failures or empty write results must remain distinguishable from cloud-disabled and invalid-input outcomes.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "upsertPlan"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#upsertPlan"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-65ce1b44",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended plan-upsert outcome distinction invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-correctness-676bd0a4",
+      "assertion": "Plan lookups by path must use the same path normalization as plan writes and must report query failures separately from an absent plan.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "getPlanIdByPath"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#getPlanIdByPath",
+          "scripts/lib/store/plans-ship.mjs#validatePlanPath"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-676bd0a4",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended normalized plan lookup invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-correctness-686457b6",
+      "assertion": "countAgedUnremediatedAcceptances must classify only open dispositions excluded from the mature-and-recent window into notYetDue, agedOut, or prePractice, where agedOut requires a remediation practice ",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "countAgedUnremediatedAcceptances"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#countAgedUnremediatedAcceptances"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-686457b6",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended aged-acceptance classification invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-6985dafb",
       "assertion": "Only active ledger requirements may be emitted as enforceable in-scope invariants; non-active requirements may appear only in the informational index.",
       "kind": "correctness",
@@ -2267,6 +3121,41 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Valid contradiction-shape invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-6de9e5ff",
+      "assertion": "Findings lacking severity must not be persisted, while findings lacking category must be persisted with the visible `(missing — producer omitted category)` marker.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "MISSING_CATEGORY_MARKER"
+        },
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "recordFindings"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs:MISSING_CATEGORY_MARKER",
+          "scripts/lib/store/runs-findings.mjs:recordFindings"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-6de9e5ff",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended finding validation and category-marker invariant with no linked test."
       }
     },
     {
@@ -2331,6 +3220,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This focal-artifact policy scoping invariant has no linked test evidence."
+      }
+    },
+    {
+      "id": "REQ-correctness-704b5151",
+      "assertion": "Final-review bucket statistics must count distinct finding fingerprints per source model, bucket, and severity, while shadow-only adjudication queue rows are ordered newest-first and limited independe",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "getFinalReviewStats"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs#getFinalReviewStats"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-704b5151",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended bucket-statistics and queue-ordering invariant with no linked test."
       }
     },
     {
@@ -2458,6 +3377,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This envelope schema-validation invariant has no linked test evidence."
+      }
+    },
+    {
+      "id": "REQ-correctness-789d164f",
+      "assertion": "When inserting a run row containing selector_policy_violations fails solely because that column is undefined (PostgreSQL 42703), the insert must retry once without that field, while all other insertio",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "insertRunRowWithPolicyFallback"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#insertRunRowWithPolicyFallback"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-correctness-789d164f",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended narrowly scoped schema-compatibility retry invariant with no linked test."
       }
     },
     {
@@ -2597,6 +3546,41 @@
       }
     },
     {
+      "id": "REQ-correctness-89850c19",
+      "assertion": "Remediation lifecycle updates must reject entries without a finding fingerprint or a resolvable terminal state, and terminal states must be limited to \"fixed\", \"verified\", and \"regressed\".",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "normalizeRemediationUpdates"
+        },
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "TERMINAL_REMEDIATION"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs#normalizeRemediationUpdates",
+          "scripts/lib/store/runs-findings.mjs#TERMINAL_REMEDIATION"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-89850c19",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended remediation lifecycle validation invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-8b4b42b4",
       "assertion": "Every recorded learning decision must use a recognized decision type and must be bound either to a valid audit-run ID plus non-negative integer round and sequence or to a non-empty colon-free external",
       "kind": "correctness",
@@ -2726,6 +3710,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This debate execution precondition has no linked test evidence."
+      }
+    },
+    {
+      "id": "REQ-correctness-9cd3ebce",
+      "assertion": "Unlocked-fix pages must be filtered by requested repository and audit mode before pagination and ordered by fixed_at descending then audit_finding_id.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "getUnlockedFixes"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#getUnlockedFixes"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-9cd3ebce",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended filtered stable-pagination invariant with no linked test."
       }
     },
     {
@@ -2920,6 +3934,36 @@
       }
     },
     {
+      "id": "REQ-correctness-ac331781",
+      "assertion": "countUnremediatedAcceptances must return total, code, and plan counts for open dispositions, using unremediated_acceptances_all only when allAges is requested and otherwise using the windowed unremedi",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "countUnremediatedAcceptances"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#countUnremediatedAcceptances"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-correctness-ac331781",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended acceptance-count source-selection invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-ac6b768e",
       "assertion": "Persisted candidates, gap assessments, and ledger requirements must reject duplicate requirement identifiers within their respective collections.",
       "kind": "correctness",
@@ -2953,6 +3997,36 @@
       }
     },
     {
+      "id": "REQ-correctness-acec4ef4",
+      "assertion": "A unique-key race while creating an explicitly identified run must resolve by reusing the concurrently created run only when its repository is compatible with the requested repository.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "recordRunStart"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs:recordRunStart"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-acec4ef4",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended concurrent run-creation compatibility invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-adad7dce",
       "assertion": "Single-entry ledger writes refuse to write entries that fail LedgerEntrySchema validation and emit a stderr validation message instead of mutating the ledger.",
       "kind": "correctness",
@@ -2980,6 +4054,41 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended single-entry validation invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-afe52e18",
+      "assertion": "Each persisted finding must have a deterministic fingerprint, using a content-derived `missing-hash-` digest when the producer does not supply `_hash`, so distinct hashless findings in the same run do",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "fingerprintOf"
+        },
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "recordFindings"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs:fingerprintOf",
+          "scripts/lib/store/runs-findings.mjs:recordFindings"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-afe52e18",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended hashless finding fingerprint invariant with no linked test."
       }
     },
     {
@@ -3113,6 +4222,37 @@
       }
     },
     {
+      "id": "REQ-correctness-bc2bff8b",
+      "assertion": "Plan upserts must reject invalid paths and missing repo IDs rather than create plan rows, and must identify database failures separately from cloud-disabled and invalid-input outcomes.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "upsertPlan"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#upsertPlan",
+          "scripts/lib/store/plans-ship.mjs#validatePlanPath"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-bc2bff8b",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended plan-upsert validation and outcome invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-be519938",
       "assertion": "Quickfix statistics aggregation must count accept outcomes as positive evidence, suppress and ignore outcomes as negative evidence, and no_action or unknown outcomes as neither while retaining every v",
       "kind": "correctness",
@@ -3143,6 +4283,66 @@
       }
     },
     {
+      "id": "REQ-correctness-bf4156cb",
+      "assertion": "countAgedUnremediatedAcceptances must derive the remediation-practice start and age classifications in one SQL statement so both are evaluated from the same database snapshot.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "countAgedUnremediatedAcceptances"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#countAgedUnremediatedAcceptances"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-bf4156cb",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended single-snapshot classification invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-correctness-c3af515c",
+      "assertion": "A final-review adjudication must update only the finding row matching the specified or resolved bucket, treating a null bucket as a distinct primary bucket value.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "adjudicateFinalReviewFinding"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs: adjudicateFinalReviewFinding"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-c3af515c",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended bucket-targeting invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-c5303755",
       "assertion": "Gap classification must discard hallucinated conflict ids and self-conflicts, keeping only ids belonging to peer candidates.",
       "kind": "correctness",
@@ -3170,6 +4370,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended conflict-id sanitization invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-c6850b82",
+      "assertion": "getExistingCorrelationHashesForSession must return the distinct existing persona_finding_hash values for only the supplied persona session and must represent query failure as ok:false rather than as a",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "getExistingCorrelationHashesForSession"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#getExistingCorrelationHashesForSession"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-c6850b82",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended session-scoped correlation hash read invariant with no linked test."
       }
     },
     {
@@ -3262,6 +4492,86 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This is a sound pass-selection resolution invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-correctness-cee2704f",
+      "assertion": "Schema-capability probes may cache a missing-column result only after an authoritative undefined-column or undefined-table result, while transient probe failures must be retried once and must not pois",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "isUndefinedColumnError"
+        },
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "probeColumn"
+        },
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "detectClassificationColumns"
+        },
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "detectPassStatsRoundColumn"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs#isUndefinedColumnError",
+          "scripts/lib/store/runs-findings.mjs#probeColumn",
+          "scripts/lib/store/runs-findings.mjs#detectClassificationColumns",
+          "scripts/lib/store/runs-findings.mjs#detectPassStatsRoundColumn"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-cee2704f",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended probe-cache correctness invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-correctness-d022ce63",
+      "assertion": "Findings without severity must not be persisted, whereas findings without category must remain persisted with the explicit missing-category marker rather than aborting the batch.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "MISSING_CATEGORY_MARKER"
+        },
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "recordFindings"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs#MISSING_CATEGORY_MARKER",
+          "scripts/lib/store/runs-findings.mjs#recordFindings"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-d022ce63",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended validation and missing-category handling invariant with no linked test."
       }
     },
     {
@@ -3454,6 +4764,46 @@
       }
     },
     {
+      "id": "REQ-correctness-d797ea8b",
+      "assertion": "A transient failure while probing optional database columns must not be cached as evidence that those columns are absent, while a successful probe or definitive missing-column/table error may be cache",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "probeColumn"
+        },
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "detectClassificationColumns"
+        },
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "detectPassStatsRoundColumn"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs:probeColumn",
+          "scripts/lib/store/runs-findings.mjs:detectClassificationColumns",
+          "scripts/lib/store/runs-findings.mjs:detectPassStatsRoundColumn"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-d797ea8b",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended optional-column probe-cache invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-d9c65f14",
       "assertion": "Policy-pack ledger requirements must be scoped to attached artifact paths, while configured AGENTS.md policy sections must be considered regardless of artifact-path scope.",
       "kind": "correctness",
@@ -3545,6 +4895,41 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This repository-wide pragma discovery invariant has no linked test."
+      }
+    },
+    {
+      "id": "REQ-correctness-e1930bd7",
+      "assertion": "Remediation reconciliation must consider every recent accepted or severity-adjusted finding whose persisted remediation state differs from the ledger's terminal state, including terminal-to-terminal d",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "selectReconcileTargets"
+        },
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "reconcileRemediationProjection"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs: selectReconcileTargets",
+          "scripts/lib/store/runs-findings.mjs: reconcileRemediationProjection"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-e1930bd7",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended remediation reconciliation coverage invariant with no linked test."
       }
     },
     {
@@ -3670,6 +5055,43 @@
       }
     },
     {
+      "id": "REQ-correctness-ee3e0ea0",
+      "assertion": "Recording a final-review fix must reject dismissed findings and must only persist terminal remediation states of fixed, verified, or regressed.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "recordFinalReviewFix"
+        },
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "TERMINAL_REMEDIATION"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs: recordFinalReviewFix",
+          "scripts/lib/store/runs-findings.mjs: TERMINAL_REMEDIATION",
+          "scripts/lib/store/runs-findings.mjs#TERMINAL_REMEDIATION",
+          "scripts/lib/store/runs-findings.mjs#recordFinalReviewFix"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-correctness-ee3e0ea0",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended remediation-state validation invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-f0e614a8",
       "assertion": "Topic IDs must be deterministic 12-character lowercase SHA-256 hex prefixes derived from normalized file, normalized principle prefix, normalized category with bracket tags removed, pass name, and the",
       "kind": "correctness",
@@ -3699,6 +5121,41 @@
         "gap": "observed-but-unintended",
         "conflictsWith": [],
         "rationale": "The assertion is visibly truncated and looks like an extraction artifact rather than a stable invariant."
+      }
+    },
+    {
+      "id": "REQ-correctness-f14dce07",
+      "assertion": "Remediation reconciliation must consider recent findings with accepted or severity_adjusted adjudication outcomes regardless of their current remediation state and project every ledger-indexed termina",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "selectReconcileTargets"
+        },
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "reconcileRemediationProjection"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs#selectReconcileTargets",
+          "scripts/lib/store/runs-findings.mjs#reconcileRemediationProjection"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-f14dce07",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended remediation reconciliation coverage invariant with no linked test."
       }
     },
     {
@@ -3738,6 +5195,36 @@
       }
     },
     {
+      "id": "REQ-correctness-f7a614ae",
+      "assertion": "A transient failure while probing an optional database column must not be cached as evidence that the column is absent.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "columnExists"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs: columnExists"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-f7a614ae",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended transient probe failure invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-fb29e05a",
       "assertion": "If fewer extraction runs succeed than were requested, any candidate confidence of high must be demoted to medium.",
       "kind": "correctness",
@@ -3765,6 +5252,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended confidence-demotion invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-persistence-01068559",
+      "assertion": "Marking omitted ledger findings as needs_triage must only modify findings with null adjudication_outcome and a null or already needs_triage user_action, preserving all other adjudications and actions.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "markRunFindingsNeedsTriage"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs#markRunFindingsNeedsTriage"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-01068559",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended needs-triage reconciliation constraint with no linked test."
       }
     },
     {
@@ -3886,6 +5403,127 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended topicId upsert invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-persistence-099ccd5d",
+      "assertion": "Audit-missed correlations with null audit_finding_id must be deduplicated by persona_session_id and persona_finding_hash through the partial conflict target restricted to audit_finding_id IS NULL.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "recordPersonaAuditCorrelation"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#recordPersonaAuditCorrelation"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-099ccd5d",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended partial-conflict deduplication invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-persistence-0a9eff52",
+      "assertion": "Plan records must upsert idempotently by the normalized pair of repo_id and path and only report success when the write returns a plan ID.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "upsertPlan"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#upsertPlan"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-0a9eff52",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended normalized plan identity invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-persistence-0ab0cbee",
+      "assertion": "Recording a regression-spec run must report cloud persistence success only after the run row is inserted and must return a write-failed result when insertion fails.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "recordRegressionSpecRun"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#recordRegressionSpecRun",
+          "scripts/lib/store/plans-ship.mjs#insertRunRowWithPolicyFallback"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-0ab0cbee",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended run-write success reporting invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-persistence-0d1e16ea",
+      "assertion": "Remediation projection must update only the newest matching finding for the repository within the preceding 14 days and must not count an update unless audit_findings returned an affected row.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "markFindingsRemediation"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs#markFindingsRemediation"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-0d1e16ea",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended newest-recent remediation projection invariant with no linked test."
       }
     },
     {
@@ -4056,6 +5694,71 @@
       }
     },
     {
+      "id": "REQ-persistence-2e28fd32",
+      "assertion": "When audit_pass_stats supports rounds, post-deliberation accepted, dismissed, and compromised counts must be written only to the highest round row for each run and pass.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "updatePassStatsPostDeliberation"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs#updatePassStatsPostDeliberation"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-2e28fd32",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended highest-round pass-statistics invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-persistence-30eacf45",
+      "assertion": "Adjudication-event persistence must delete prior events and insert the replacement event and denormalized audit_findings outcome patch within one transaction, and may update remediation_state only whe",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "buildFindingAdjudicationPatch"
+        },
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "recordAdjudicationEvent"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs#buildFindingAdjudicationPatch",
+          "scripts/lib/store/runs-findings.mjs#recordAdjudicationEvent"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-30eacf45",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended transactional event replacement invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-persistence-32e2caf2",
       "assertion": "Importing the audit-store writer bootstrap module must register the same replay handlers used by live writes so a fresh-process drain can replay supported artifacts.",
       "kind": "persistence",
@@ -4089,6 +5792,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This bootstrap replay-handler registration requirement has no linked test."
+      }
+    },
+    {
+      "id": "REQ-persistence-3493993e",
+      "assertion": "Finding batches must collapse duplicate fingerprints before insertion, retaining the first occurrence so no SQL statement attempts to affect the same (run_id, finding_fingerprint) row more than once.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "recordFindings"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs#recordFindings"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-3493993e",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended duplicate-collapse invariant with no linked test."
       }
     },
     {
@@ -4179,6 +5912,66 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This is a sound outbox replay-retention invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-persistence-3fa1c15a",
+      "assertion": "Within a single `recordFindings` batch, only the first finding for each fingerprint may be persisted, preventing a duplicate `(run_id, finding_fingerprint)` from aborting the entire batch.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "recordFindings"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs:recordFindings"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-3fa1c15a",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended batch fingerprint deduplication invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-persistence-40d77b57",
+      "assertion": "Accepting or dismissing a final-review finding must persist the corresponding user action, adjudication outcome, and decision timestamp together.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "adjudicateFinalReviewFinding"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs: adjudicateFinalReviewFinding"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-40d77b57",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended atomic adjudication persistence invariant with no linked test."
       }
     },
     {
@@ -4278,6 +6071,66 @@
       }
     },
     {
+      "id": "REQ-persistence-4cf4a09d",
+      "assertion": "recordPlanVerificationItems must report the database-accepted row count as inserted rather than assuming all requested items were persisted.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "recordPlanVerificationItems"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#recordPlanVerificationItems"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-4cf4a09d",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended accepted-row-count reporting invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-persistence-4fe59d3a",
+      "assertion": "Writing a correlation with an auditFindingId must transactionally remove any null-audit_finding_id audit-missed correlation for the same persona session and finding hash before upserting the real matc",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "recordPersonaAuditCorrelation"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#recordPersonaAuditCorrelation"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-persistence-4fe59d3a",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended correlation replacement invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-persistence-519ddbb4",
       "assertion": "Each successful duplicate-justification persistence operation must atomically clear all justification fields for the specified refresh and repository before applying only the currently resolved justif",
       "kind": "persistence",
@@ -4305,6 +6158,66 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This atomic persistence behavior has no linked test."
+      }
+    },
+    {
+      "id": "REQ-persistence-52252d2b",
+      "assertion": "When recording an audit-missed correlation with no auditFindingId, recordPersonaAuditCorrelation must upsert by persona session and finding hash using a conflict predicate restricted to audit_finding_",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "recordPersonaAuditCorrelation"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#recordPersonaAuditCorrelation"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-52252d2b",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended audit-missed partial-conflict upsert invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-persistence-522bfd34",
+      "assertion": "recordPlanVerificationItems must retry once without the skipped column only when the initial insert fails with PostgreSQL undefined-column error 42703, preserving all other per-item fields.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "recordPlanVerificationItems"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#recordPlanVerificationItems"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-persistence-522bfd34",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended narrowly scoped insert retry invariant with no linked test."
       }
     },
     {
@@ -4365,6 +6278,66 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended scoped reconciliation invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-persistence-60e68372",
+      "assertion": "Reconciliation to needs_triage must only affect listed findings with no adjudication outcome whose user action is unset or already needs_triage, preserving all other user actions.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "markRunFindingsNeedsTriage"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs: markRunFindingsNeedsTriage"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-60e68372",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended reconciliation scope invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-persistence-634b8d08",
+      "assertion": "Control-marker findings must be auto-dismissed only when unadjudicated and currently unset, needs_triage, or auto_dismissed, with a dismissal reason recorded.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "markRunFindingsAutoDismissed"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs: markRunFindingsAutoDismissed"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-634b8d08",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended constrained auto-dismissal invariant with no linked test."
       }
     },
     {
@@ -4507,6 +6480,36 @@
       }
     },
     {
+      "id": "REQ-persistence-731ab139",
+      "assertion": "Replaying a finding batch must upsert by (run_id, finding_fingerprint) while updating only insertion-owned fields and never overwriting adjudication fields.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "recordFindings"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs#recordFindings"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-731ab139",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended upsert field-preservation invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-persistence-7a0d56d8",
       "assertion": "False-positive pattern synchronization must upsert by repo_id, pattern_type, and pattern_value and must not write when the supplied dirty-pattern subset is empty.",
       "kind": "persistence",
@@ -4534,6 +6537,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This false-positive upsert identity and empty-subset behavior has no linked test."
+      }
+    },
+    {
+      "id": "REQ-persistence-7b1ba47d",
+      "assertion": "Every correlation persisted by recordPersonaAuditCorrelation must be stamped with PERSONA_FINDING_HASH_VERSION regardless of caller-provided correlation fields.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "recordPersonaAuditCorrelation"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#recordPersonaAuditCorrelation"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-7b1ba47d",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended authoritative correlation version-stamping invariant with no linked test."
       }
     },
     {
@@ -4570,6 +6603,66 @@
       }
     },
     {
+      "id": "REQ-persistence-84c2d219",
+      "assertion": "Regression-spec writes must require a resolved repo ID, spec path, description, and source kind, and unit-test specs must additionally name a source finding ID.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "recordRegressionSpec"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#recordRegressionSpec"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-84c2d219",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended regression-spec required-field invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-persistence-8cd71df1",
+      "assertion": "Final-review replacement must atomically delete and replace only final-review and final-review-shadow rows for the run before recording primary findings, without deleting findings from other passes.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "recordFinalReviewFindings"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs#recordFinalReviewFindings"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-8cd71df1",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended scoped atomic replacement invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-persistence-8f26669f",
       "assertion": "Reconciliation must merge `seenInRuns` and `confidence` using high-water marks rather than allowing a fresh extraction to lower prior evidence strength.",
       "kind": "persistence",
@@ -4598,6 +6691,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended high-water evidence invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-persistence-91b622b3",
+      "assertion": "`recordRunComplete` must report completion as unapplied with an error when its run-ID update affects zero rows, rather than reporting a successful completion for a missing run.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "recordRunComplete"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs:recordRunComplete"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-91b622b3",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended missing-run completion reporting invariant with no linked test."
       }
     },
     {
@@ -4742,6 +6865,41 @@
       }
     },
     {
+      "id": "REQ-persistence-9dcf64ac",
+      "assertion": "Recording an adjudication event must transactionally replace prior events for the resolved finding and update that finding's denormalized adjudication outcome, decision timestamp, and any supplied rem",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "recordAdjudicationEvent"
+        },
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "buildFindingAdjudicationPatch"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs: recordAdjudicationEvent",
+          "scripts/lib/store/runs-findings.mjs: buildFindingAdjudicationPatch"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-9dcf64ac",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended transactional adjudication-event invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-persistence-a943f941",
       "assertion": "Session appends must assign a unique next round number while holding the per-session lock and must validate the completed version-2 envelope before it is persisted.",
       "kind": "persistence",
@@ -4769,6 +6927,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This is a sound locked session-round persistence invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-persistence-a9e98e27",
+      "assertion": "An adjudication event without a remediation state must not clear an existing finding remediation state.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "buildFindingAdjudicationPatch"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs: buildFindingAdjudicationPatch"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-a9e98e27",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended remediation-state preservation invariant with no linked test."
       }
     },
     {
@@ -4804,6 +6992,126 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended frozen-id preservation invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-persistence-b03bc22c",
+      "assertion": "Plan upserts must require a resolved repository ID and use the normalized repo-relative path as the conflict identity, preventing duplicate plan rows caused by null repository IDs or alternate path sp",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "upsertPlan"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#upsertPlan"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-b03bc22c",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended normalized plan conflict-identity invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-persistence-b9c920f9",
+      "assertion": "Re-recording a finding with the same run ID and fingerprint must update persistence fields owned by the finding insert while preserving adjudication fields that are not included in the insert columns.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "recordFindings"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs:recordFindings"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-b9c920f9",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended finding upsert field-preservation invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-persistence-bd3fc1e2",
+      "assertion": "recordPlanVerificationItems must report the number of rows actually accepted by PostgreSQL and must not report successful persistence merely because items were supplied.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "recordPlanVerificationItems"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#recordPlanVerificationItems"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-bd3fc1e2",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended accepted-row-count reporting invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-persistence-c2046c0e",
+      "assertion": "Every correlation written by recordPersonaAuditCorrelation must be stamped with PERSONA_FINDING_HASH_VERSION rather than a caller-provided hash version.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "recordPersonaAuditCorrelation"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#recordPersonaAuditCorrelation"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-c2046c0e",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended authoritative hash-version stamping invariant with no linked test."
       }
     },
     {
@@ -4909,6 +7217,126 @@
       }
     },
     {
+      "id": "REQ-persistence-d1d2ce76",
+      "assertion": "Regression-spec writes must require a resolved repository ID, description, and spec path, and must refuse the retired persona-consistency-candidate source kind.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "recordRegressionSpec"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#recordRegressionSpec"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-d1d2ce76",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended regression-spec validation invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-persistence-d29bcbb5",
+      "assertion": "Run completion must report success only when its update affects an existing audit_runs row, and a zero-row completion update must return a non-retryable error receipt.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "recordRunComplete"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs#recordRunComplete"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-d29bcbb5",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended zero-row write handling invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-persistence-d3054065",
+      "assertion": "Final-review replacement must delete and reinsert only `final-review` and `final-review-shadow` findings for the run within one primary transaction, so retries do not double-count and cannot delete fi",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "recordFinalReviewFindings"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs:recordFinalReviewFindings"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-d3054065",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended transactional final-review replacement invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-persistence-d325c252",
+      "assertion": "Post-deliberation pass statistics for a run with round support must update only the highest-round row for each pass.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "updatePassStatsPostDeliberation"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs: updatePassStatsPostDeliberation"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-d325c252",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended highest-round update invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-persistence-d347f5bc",
       "assertion": "When targetMetaPath and meta are provided, meta updates must acquire a proper-lockfile lock, merge new meta fields into the existing meta object, preserve the existing entries array, and write atomica",
       "kind": "persistence",
@@ -5005,6 +7433,36 @@
       }
     },
     {
+      "id": "REQ-persistence-dcdb72d0",
+      "assertion": "Fix-lifecycle projection must update remediation state only for a finding within the repository's most recent 14 days and must not create a remediation event when the finding update affects no row.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "markFindingsRemediation"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs: markFindingsRemediation"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-dcdb72d0",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended bounded remediation projection invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-persistence-dfa4776c",
       "assertion": "Ledger writes must schema-validate the full ledger before atomically writing `.requirements/ledger.json`.",
       "kind": "persistence",
@@ -5041,6 +7499,36 @@
       }
     },
     {
+      "id": "REQ-persistence-e28ca78a",
+      "assertion": "recordShipEvent must not report a successful cloud write when inserting the ship event fails, and must instead return ok:false, cloud:true, and reason write-failed.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "recordShipEvent"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#recordShipEvent"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-e28ca78a",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended ship-event write-failure reporting invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-persistence-e2d0034c",
       "assertion": "A brainstorm round with no successful provider response must not be appended to the session ledger and must emit round 0 in its envelope.",
       "kind": "persistence",
@@ -5069,6 +7557,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This failed-round ledger behavior has no linked test evidence."
+      }
+    },
+    {
+      "id": "REQ-persistence-e65651fe",
+      "assertion": "Unit-test regression specs must require a source finding ID and must upsert by repository ID, spec path, and source finding ID, while non-unit-test specs upsert by repository ID and spec path.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "recordRegressionSpec"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#recordRegressionSpec"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-e65651fe",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended regression-spec identity invariant with no linked test."
       }
     },
     {
@@ -5190,6 +7708,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This exact-true envelope deletion rule has no linked test."
+      }
+    },
+    {
+      "id": "REQ-persistence-f4d1d53c",
+      "assertion": "Regression-spec identity must be repo_id plus spec_path for non-unit-test rows and repo_id plus spec_path plus source_finding_id for unit-test rows.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "recordRegressionSpec"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#recordRegressionSpec"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-f4d1d53c",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended regression-spec identity invariant with no linked test."
       }
     },
     {
@@ -5418,6 +7966,41 @@
       }
     },
     {
+      "id": "REQ-safety-06c9eb3a",
+      "assertion": "getCandidateAuditFindings and getExistingCorrelationHashesForSession must distinguish database read failure from a genuine empty result by returning ok:false on failure and ok:true with an empty colle",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "getCandidateAuditFindings"
+        },
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "getExistingCorrelationHashesForSession"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#getCandidateAuditFindings",
+          "scripts/lib/store/plans-ship.mjs#getExistingCorrelationHashesForSession"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-06c9eb3a",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended read-failure distinction invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-safety-14eac142",
       "assertion": "Ambiguous or unresolved duplicate-justification pragmas must not exclude declarations from the drift score and must be surfaced only as advisory report findings.",
       "kind": "safety",
@@ -5450,6 +8033,38 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This is a sound ambiguity-preserving drift-scoring invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-safety-1522cf47",
+      "assertion": "Unlocked-fix and unremediated-acceptance nudge readers must use a positive bounded page size with a default of 20 and a maximum of 200.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "resolveNudgePage"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#resolveNudgePage",
+          "scripts/lib/store/plans-ship.mjs#getUnlockedFixes",
+          "scripts/lib/store/plans-ship.mjs#getUnremediatedAcceptances"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-safety-1522cf47",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended bounded pagination invariant with no linked test."
       }
     },
     {
@@ -5602,6 +8217,67 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This refresh-run cleanup invariant has no linked test."
+      }
+    },
+    {
+      "id": "REQ-safety-24ab4b05",
+      "assertion": "Durable plan paths must be non-empty .md paths that do not begin with '-' and resolve within the repository root as non-empty repo-relative POSIX paths.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "validatePlanPath"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#validatePlanPath"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-24ab4b05",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended durable-path validation invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-safety-2c13bda8",
+      "assertion": "A shadow final-review persistence failure must not roll back or remove successfully persisted primary final-review findings, and shadow findings must not be written when primary replacement fails.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "recordFinalReviewFindings"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs#recordFinalReviewFindings",
+          "scripts/lib/store/runs-findings.mjs:recordFinalReviewFindings"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-safety-2c13bda8",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended primary-versus-shadow failure isolation invariant with no linked test."
       }
     },
     {
@@ -6077,6 +8753,46 @@
       }
     },
     {
+      "id": "REQ-safety-59c93b97",
+      "assertion": "A final-review adjudication or fix write must target exactly one resolved bucket for its run ID and fingerprint, refusing omitted-bucket requests when multiple buckets match and refusing explicitly re",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "resolveFindingBucket"
+        },
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "adjudicateFinalReviewFinding"
+        },
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "recordFinalReviewFix"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs#resolveFindingBucket",
+          "scripts/lib/store/runs-findings.mjs#adjudicateFinalReviewFinding",
+          "scripts/lib/store/runs-findings.mjs#recordFinalReviewFix"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-59c93b97",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended exactly-one-bucket targeting invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-safety-5a11baa5",
       "assertion": "Single-entry ledger writes back up an existing malformed or unparsable ledger to a .bak file before starting from a fresh ledger shape.",
       "kind": "safety",
@@ -6259,6 +8975,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "These drain precondition refusals have no linked test."
+      }
+    },
+    {
+      "id": "REQ-safety-68472e1d",
+      "assertion": "When `recordFindings` executes through a caller-supplied transaction client, a database write failure must be rethrown to the transaction owner rather than converted into a best-effort failure receipt",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "recordFindings"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs:recordFindings"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-68472e1d",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended caller-transaction error propagation invariant with no linked test."
       }
     },
     {
@@ -6651,6 +9397,37 @@
       }
     },
     {
+      "id": "REQ-safety-8a426fab",
+      "assertion": "Record-time semantic suppression must only exclude merged-pass findings that are semantic re-raises of open findings from another run in the same repository, and any suppression failure or unavailable",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "applyRecordTimeSuppression"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs#applyRecordTimeSuppression",
+          "scripts/lib/store/runs-findings.mjs:applyRecordTimeSuppression"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-safety-8a426fab",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended safety invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-safety-8abce6cb",
       "assertion": "File locks must be acquired by an atomic exclusive create containing pid, token, and acquisition timestamp in a single write operation.",
       "kind": "safety",
@@ -6679,6 +9456,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended atomic lock acquisition invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-8befec75",
+      "assertion": "When recordFindings executes through a caller-supplied transaction client, database write failures must be rethrown so the transaction owner cannot mistake an aborted transaction for successful persis",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "recordFindings"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs#recordFindings"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-8befec75",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended transaction failure-propagation invariant with no linked test."
       }
     },
     {
@@ -7405,6 +10212,46 @@
       }
     },
     {
+      "id": "REQ-safety-d4d1a901",
+      "assertion": "Acceptance-count functions must return zero-valued result structures rather than throw when cloud storage is disabled or their database query fails, while invalid explicit repository scope remains val",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "countAcceptedPermanent"
+        },
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "countUnremediatedAcceptances"
+        },
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "countAgedUnremediatedAcceptances"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#countAcceptedPermanent",
+          "scripts/lib/store/plans-ship.mjs#countUnremediatedAcceptances",
+          "scripts/lib/store/plans-ship.mjs#countAgedUnremediatedAcceptances"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-d4d1a901",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended graceful count-failure invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-safety-d648ae19",
       "assertion": "Persona-consistency promotion must refuse to overwrite a pre-existing finalized spec with different content.",
       "kind": "safety",
@@ -7599,6 +10446,36 @@
       }
     },
     {
+      "id": "REQ-safety-e823abe9",
+      "assertion": "Durable plan paths must be non-empty Markdown files that are contained within the repository root, reject flag-like inputs, and be stored as repo-relative POSIX paths.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "validatePlanPath"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#validatePlanPath"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-e823abe9",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended durable Markdown path invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-safety-ea7bff30",
       "assertion": "Memory-health threshold environment overrides that are absent, empty, non-finite, or otherwise invalid must use their documented fallback values rather than silently disabling trigger comparisons.",
       "kind": "safety",
@@ -7631,6 +10508,66 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This is a sound configuration-fallback invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-safety-eb59d24e",
+      "assertion": "A failed optional-column probe must not be cached as absent unless it returns PostgreSQL undefined-column or undefined-table error code 42703 or 42P01.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "columnExists"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs#columnExists"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-eb59d24e",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended authoritative-error-only cache invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-safety-ecdc828c",
+      "assertion": "countUnremediatedAcceptances must return zeroed counts when cloud storage is disabled or its query fails rather than propagating an error.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "countUnremediatedAcceptances"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#countUnremediatedAcceptances"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-ecdc828c",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended zeroed count-failure invariant with no linked test."
       }
     },
     {
@@ -7858,6 +10795,36 @@
       }
     },
     {
+      "id": "REQ-security-325973b8",
+      "assertion": "Finding embeddings must only be inserted or updated when the target finding ID belongs to the supplied run ID, preventing an embedding write from attaching to a finding in another run or repository.",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "persistKeptEmbeddings"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs:persistKeptEmbeddings"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-security-325973b8",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended embedding ownership invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-security-39e1397d",
       "assertion": "A failed false-positive pattern scope query must be represented as status failed with no patterns rather than as an empty successful result, and its returned error data must expose only the error name",
       "kind": "security",
@@ -7918,6 +10885,68 @@
       }
     },
     {
+      "id": "REQ-security-501b6921",
+      "assertion": "Plan status updates must accept only normalized members of DB_PLAN_STATUSES and must mutate a plan only when both its plan ID and owning repo ID match.",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "updatePlanStatus"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#updatePlanStatus",
+          "scripts/lib/status-vocabulary.mjs#DB_PLAN_STATUSES",
+          "scripts/lib/status-vocabulary.mjs#toDbPlanStatus"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-security-501b6921",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended plan mutation authorization invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-security-5c2d9827",
+      "assertion": "recordPersonaAuditCorrelation must reject a supplied personaFindingHash unless it matches the current 64-hex PERSONA_FINDING_HASH_SHAPE and must report that rejection as ok:false without writing a cor",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "recordPersonaAuditCorrelation"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#recordPersonaAuditCorrelation"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-security-5c2d9827",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended hash-shape validation invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-security-5c746aa9",
       "assertion": "External dependency claims, symbol/export claims, sensitive-path claims, and absolute-path claims must always receive requires_verification rather than refuted or confirmed.",
       "kind": "security",
@@ -7947,6 +10976,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended conservative verification invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-security-62fed388",
+      "assertion": "recordPersonaAuditCorrelation must refuse to persist a correlation whose personaFindingHash is not a 64-character hexadecimal current-version hash and report that rejection as ok:false.",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "recordPersonaAuditCorrelation"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#recordPersonaAuditCorrelation"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-security-62fed388",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended current-version correlation hash validation invariant with no linked test."
       }
     },
     {
@@ -7981,6 +11040,66 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This git-tracked artifact quarantine behavior has no linked test."
+      }
+    },
+    {
+      "id": "REQ-security-77000278",
+      "assertion": "A single unlocked fix may be retrieved only by a query constrained to both the requesting repo ID and the audit finding ID.",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "findUnlockedFixInRepo"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#findUnlockedFixInRepo"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-security-77000278",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended repository-scoped single-item access invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-security-874204f9",
+      "assertion": "Plan status updates must accept only normalized members of the shared plan-status vocabulary and must constrain the mutation by both plan ID and repository ID.",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "updatePlanStatus"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#updatePlanStatus"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-security-874204f9",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended repository-scoped plan status mutation invariant with no linked test."
       }
     },
     {
@@ -8186,6 +11305,36 @@
       }
     },
     {
+      "id": "REQ-security-b22dcd9f",
+      "assertion": "retireMissedCorrelationsForHash must delete only audit-missed correlations whose sessions belong to the supplied repository, leaving matching hashes in other repositories and correlations with non-nul",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "retireMissedCorrelationsForHash"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#retireMissedCorrelationsForHash"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-security-b22dcd9f",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended repository-scoped missed-correlation deletion invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-security-b6cfe447",
       "assertion": "Extraction must reject both lexically sensitive paths and symlink targets that resolve to sensitive paths before sending content to the LLM.",
       "kind": "security",
@@ -8226,6 +11375,40 @@
       }
     },
     {
+      "id": "REQ-security-b8213834",
+      "assertion": "Cross-repository backlog readers must require an explicit choice of either one repository scope or all-repositories scope, and must reject omitted or ambiguous scope arguments.",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "resolveExplicitRepoScope"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#resolveExplicitRepoScope",
+          "scripts/lib/store/plans-ship.mjs#getUnlockedFixes",
+          "scripts/lib/store/plans-ship.mjs#countUnlockedFixes",
+          "scripts/lib/store/plans-ship.mjs#countAgedUnlockedFixes",
+          "scripts/lib/store/plans-ship.mjs#getUnremediatedAcceptances"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-security-b8213834",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended explicit backlog-scope invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-security-b976680e",
       "assertion": "Quickfix-hit context sent from the local JSONL log to cloud storage must redact secrets in both the recorded file path and snippet.",
       "kind": "security",
@@ -8253,6 +11436,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This is a sound secret-redaction invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-security-bcff87bb",
+      "assertion": "An embedding may be inserted or updated only when its finding ID belongs to the supplied run ID, and a zero-row embedding write must be counted as failed rather than reported as persisted.",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "persistKeptEmbeddings"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs#persistKeptEmbeddings"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-security-bcff87bb",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended ownership and write-result invariant with no linked test."
       }
     },
     {
@@ -8613,6 +11826,70 @@
       }
     },
     {
+      "id": "REQ-security-e8590d0c",
+      "assertion": "When an explicit run ID already exists, `recordRunStart` must reuse it without inserting or overwriting the existing run, but must refuse reuse if both existing and requested repository IDs are presen",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "recordRunStart"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs:recordRunStart"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-security-e8590d0c",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended explicit-run reuse isolation invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-security-f1af844f",
+      "assertion": "Cross-repository unlocked-fix and unremediated-acceptance readers must reject omitted or ambiguous scope and permit global reads only through {allRepos:true}.",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "resolveExplicitRepoScope"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#resolveExplicitRepoScope",
+          "scripts/lib/store/plans-ship.mjs#getUnlockedFixes",
+          "scripts/lib/store/plans-ship.mjs#countUnlockedFixes",
+          "scripts/lib/store/plans-ship.mjs#countAgedUnlockedFixes",
+          "scripts/lib/store/plans-ship.mjs#getUnremediatedAcceptances"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-security-f1af844f",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended explicit repository-scope invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-security-f477d380",
       "assertion": "Duplicate-justification rows may be applied only to symbol-index rows whose definition ID, refresh ID, and repository ID all match the requested persistence scope.",
       "kind": "security",
@@ -8670,6 +11947,66 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended absolute-path safety invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-security-fda37c8e",
+      "assertion": "Reusing an explicit audit run ID must return the existing run only when its repository matches the requested repository, and a cross-repository ID collision must refuse reuse rather than attach findin",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/runs-findings.mjs",
+          "anchor": "recordRunStart"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/runs-findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/runs-findings.mjs#recordRunStart"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-security-fda37c8e",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended cross-repository isolation invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-security-fdccc471",
+      "assertion": "retireMissedCorrelationsForHash must delete only null-audit_finding_id correlations whose sessions belong to the specified repository and whose persona finding hash matches the requested hash.",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/plans-ship.mjs",
+          "anchor": "retireMissedCorrelationsForHash"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/plans-ship.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/plans-ship.mjs#retireMissedCorrelationsForHash"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-security-fdccc471",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is an intended repository-scoped correlation deletion invariant with no linked test."
       }
     }
   ],

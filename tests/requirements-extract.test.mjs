@@ -8,7 +8,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { assignId, mergeRequirements, extractRequirements } from '../scripts/lib/requirements/extract.mjs';
+import { assignId, mergeRequirements, extractRequirements, splitOversizedFile, computeCovered } from '../scripts/lib/requirements/extract.mjs';
+import { estimateTokens } from '../scripts/lib/repo-context.mjs';
 
 function raw(over = {}) {
   return {
@@ -96,5 +97,75 @@ describe('extractRequirements — input guards (audit H2/H4/M8)', () => {
   });
   it('rejects an empty file set', async () => {
     await assert.rejects(extractRequirements({ files: [], baseDir, runs: 1 }), /files required/);
+  });
+});
+
+// ── Oversized files: split, never refuse, never partially cover ─────────────
+//
+// The budget refused any single file over 18K tokens with "split or exclude
+// them". Refusing beat truncating, but it made FILE SIZE decide whether a
+// module's invariants could exist in the ledger at all — and size correlates
+// with invariant density. Measured 2026-08-12: store/runs-findings.mjs (~23.6K)
+// and store/plans-ship.mjs (~20.0K), which between them own the findings
+// upsert, the write receipts, the fingerprint oracle and the upsertPlan result
+// contract, were absent from a 269-entry ledger for that reason alone.
+describe('splitOversizedFile', () => {
+  const build = (decls) => decls.map((d, i) => `export function f${i}() {\n${d}\n}`).join('\n');
+
+  it('is LOSSLESS — rejoining the parts reproduces the file exactly', () => {
+    // The assertion that matters most: a lossy split silently drops code, and
+    // the invariants in the dropped region simply never appear. Nothing
+    // downstream could detect that.
+    const body = build(Array.from({ length: 60 }, (_, i) => `  const x${i} = ${i}; // ${'pad '.repeat(40)}`));
+    const parts = splitOversizedFile({ file: 'a.mjs', body }, 500);
+    assert.ok(parts.length > 1, 'the fixture must actually split');
+    assert.equal(parts.map((p) => p.body).join('\n'), body);
+  });
+
+  it('every part fits the budget, which is the point of splitting', () => {
+    const body = build(Array.from({ length: 60 }, (_, i) => `  const x${i} = ${i}; // ${'pad '.repeat(40)}`));
+    const parts = splitOversizedFile({ file: 'a.mjs', body }, 500);
+    for (const p of parts) assert.ok(estimateTokens(p.body) <= 500, `part ${p.part} still over budget`);
+  });
+
+  it('parts keep the REAL file path, so provenance is unaffected', () => {
+    const body = build(Array.from({ length: 60 }, (_, i) => `  const x${i} = ${i}; // ${'pad '.repeat(40)}`));
+    const parts = splitOversizedFile({ file: 'scripts/lib/store/big.mjs', body }, 500);
+    for (const p of parts) assert.equal(p.file, 'scripts/lib/store/big.mjs');
+    assert.deepEqual([...new Set(parts.map((p) => p.parts))], [parts.length]);
+  });
+
+  it('splits AT declaration boundaries, not mid-construct', () => {
+    // A fragment cut through a function body carries no invariant, so the
+    // extractor would be reading noise. Each part must start at a top-level
+    // declaration (or be the first part).
+    const body = build(Array.from({ length: 60 }, (_, i) => `  const x${i} = ${i}; // ${'pad '.repeat(40)}`));
+    const parts = splitOversizedFile({ file: 'a.mjs', body }, 500);
+    for (const p of parts.slice(1)) {
+      assert.match(p.body.split('\n')[0], /^(export|function|const|class|\/\*\*)/,
+        `part ${p.part} starts mid-construct`);
+    }
+  });
+});
+
+describe('computeCovered — all-or-nothing per file', () => {
+  it('a file whose parts ALL succeeded is covered', () => {
+    const covered = computeCovered(new Map([['a.mjs', 3]]), new Map([['a.mjs', 3]]));
+    assert.deepEqual(covered, ['a.mjs']);
+  });
+
+  it('a PARTIALLY extracted file is NOT covered — that is silent data loss', () => {
+    // reconcile scoped-REPLACES a covered file's requirements, so marking this
+    // covered would delete the invariants the missing part carries.
+    const covered = computeCovered(new Map([['a.mjs', 3]]), new Map([['a.mjs', 2]]));
+    assert.deepEqual(covered, [], 'a 2-of-3 extraction must not replace the file\'s requirements');
+  });
+
+  it('one file failing does not un-cover an unrelated file that succeeded', () => {
+    const covered = computeCovered(
+      new Map([['a.mjs', 2], ['b.mjs', 1]]),
+      new Map([['a.mjs', 1], ['b.mjs', 1]]),
+    );
+    assert.deepEqual(covered, ['b.mjs']);
   });
 });
