@@ -1,13 +1,13 @@
 # Requirements Map — claude-engineering-skills
 
-_Generated from `.requirements/ledger.json` — 215 requirement(s) across 28 file(s). Do not hand-edit; regenerate with `node scripts/requirements.mjs render`._
+_Generated from `.requirements/ledger.json` — 269 requirement(s) across 32 file(s). Do not hand-edit; regenerate with `node scripts/requirements.mjs render`._
 
 ## At a glance
 
 ```mermaid
 pie title Active invariants by kind
-  "security" : 5
-  "safety" : 6
+  "security" : 6
+  "safety" : 7
   "correctness" : 5
   "behavioural" : 3
   "persistence" : 6
@@ -15,11 +15,11 @@ pie title Active invariants by kind
 
 | Status | Count |
 |---|---|
-| 🟢 active — enforced by /audit-code | 25 |
-| 🟡 needs-review — awaiting your call | 13 |
-| ⚪ inferred-only — refine backlog | 177 |
+| 🟢 active — enforced by /audit-code | 27 |
+| 🟡 needs-review — awaiting your call | 16 |
+| ⚪ inferred-only — refine backlog | 226 |
 
-## 🟡 Needs review (13)
+## 🟡 Needs review (16)
 
 | Gap | Assertion | Files |
 |---|---|---|
@@ -34,22 +34,26 @@ pie title Active invariants by kind
 | observed-but-unintended | Topic IDs must be deterministic 12-character lowercase SHA-256 hex prefixes derived from normalized file, normalized principle prefix, normalized category with bracket tags removed, pass name, and the | scripts/lib/ledger.mjs |
 | observed-but-unintended | Batch upserts of an existing topicId must preserve the existing adjudicationOutcome, remediationState, ruling, rulingRationale, and firstSeenRound while updating latest finding detail, severity, lates | scripts/lib/ledger.mjs |
 | observed-but-unintended | Topic IDs are generated as 12-character SHA-256 hex prefixes from normalized primary file, normalized principle prefix, normalized category with bracket tags removed, pass name, and semantic content h | scripts/lib/ledger.mjs |
+| contradictory | False-positive pattern rows must use GLOBAL_REPO_ID rather than null whenever the supplied repository identity is absent or not a UUID. | scripts/lib/store/bandit-fp.mjs |
 | untested | The quickfix-hit drain cursor must not advance beyond an incomplete trailing JSONL record or the first record whose parsing or cloud insertion fails. | scripts/learning/backfill-outcomes.mjs |
 | untested | A quickfix pattern may be skipped only when its acceptance rate is strictly below the configured skip threshold and its total hit count is at least the configured minimum hit count. | scripts/lib/learning/quickfix-stats.mjs |
+| contradictory | False-positive pattern synchronization must refuse to write unless `repoId` is a UUID, preventing unresolved repository identities from being persisted under the global repository sentinel. | scripts/lib/store/bandit-fp.mjs |
+| contradictory | False-positive pattern synchronization must refuse to write any patterns unless repoId is a UUID, preventing unresolved repository data from being persisted as global data. | scripts/lib/store/bandit-fp.mjs |
 
 ## 🟢 Active invariants — by kind
 
-### security (5)
+### security (6)
 
 | ID | Assertion | Governs |
 |---|---|---|
 | `REQ-security-9967f76c` | Artifact content must be read from the canonical path approved by the sensitivity gate rather than from the user-visible path. | scripts/lib/brainstorm/artifact-context.mjs |
+| `REQ-security-9bf959ef` | Envelope fingerprints used as filenames must be safe basenames limited to 128 characters of `[A-Za-z0-9._-]` and must reject path traversal and Windows reserved device names. | scripts/lib/outbox-envelope.mjs |
 | `REQ-security-b0b533cc` | Extraction must redact secret-shaped content from every file body before including it in an LLM request. | scripts/lib/requirements/extract.mjs, scripts/lib/sensitive-egress-gate.mjs |
 | `REQ-security-b6cfe447` | Extraction must reject both lexically sensitive paths and symlink targets that resolve to sensitive paths before sending content to the LLM. | scripts/lib/requirements/extract.mjs, scripts/lib/sensitive-egress-gate.mjs |
 | `REQ-security-d55680e9` | Extraction must reject any requested file path that escapes the repo root before reading or sending file content. | scripts/lib/requirements/extract.mjs |
 | `REQ-security-dbe740a4` | The file-state outcome detector must not read a path that is absolute, drive-qualified, contains a parent-directory segment, or resolves outside the repository root. | scripts/learning/backfill-outcomes.mjs |
 
-### safety (6)
+### safety (7)
 
 | ID | Assertion | Governs |
 |---|---|---|
@@ -57,6 +61,7 @@ pie title Active invariants by kind
 | `REQ-safety-582db962` | Loading the requirements ledger must never throw and must return an empty ledger when the persisted file is absent, unreadable, invalid JSON, or schema-invalid. | scripts/lib/requirements/ledger.mjs |
 | `REQ-safety-61f6d34b` | CLAUDE.md auto-fix must modify only fixable `stale/file-ref` findings whose referenced markdown link occupies the entire line or list-item line, and must leave embedded prose references unchanged. | scripts/lib/claudemd/autofix.mjs |
 | `REQ-safety-6c77c203` | Promoting a persona-consistency candidate must validate its witness snapshot, contradiction payload, and non-empty journey steps before rendering or persisting a locked regression spec. | scripts/persona-consistency-promote.mjs |
+| `REQ-safety-6df1ce27` | False-positive pattern reads must request one row beyond the configured per-scope limit and mark atLimit true only when more rows than the limit are returned. | scripts/lib/store/bandit-fp.mjs |
 | `REQ-safety-7cae6bdc` | The memory-health process must exit with code 1 when any metric trigger fires, when an alarming protected friction cluster exists, or when the friction subsystem fails unexpectedly. | scripts/memory-health.mjs |
 | `REQ-safety-9272a416` | Session loading must exclude malformed, structurally invalid, and unsupported future-schema records from returned rounds while preserving them in a capped quarantine ledger on a best-effort basis. | scripts/lib/brainstorm/session-store.mjs |
 
@@ -95,6 +100,7 @@ pie title Active invariants by kind
 |---|--:|--:|--:|
 | `scripts/brainstorm-round.mjs` | 1 | 0 | 10 |
 | `scripts/learning/backfill-outcomes.mjs` | 1 | 1 | 15 |
+| `scripts/lib/audit-store-writers.mjs` | 0 | 0 | 5 |
 | `scripts/lib/audit/finding-verification.mjs` | 0 | 2 | 18 |
 | `scripts/lib/audit/prompt-builder.mjs` | 0 | 1 | 2 |
 | `scripts/lib/brainstorm/artifact-context.mjs` | 1 | 0 | 10 |
@@ -103,11 +109,13 @@ pie title Active invariants by kind
 | `scripts/lib/brainstorm/session-store.mjs` | 1 | 0 | 3 |
 | `scripts/lib/claudemd/autofix.mjs` | 1 | 0 | 0 |
 | `scripts/lib/duplicate-justification-pragma.mjs` | 0 | 0 | 8 |
+| `scripts/lib/durable-write.mjs` | 0 | 0 | 19 |
 | `scripts/lib/file-io.mjs` | 1 | 0 | 2 |
 | `scripts/lib/file-lock.mjs` | 0 | 0 | 5 |
 | `scripts/lib/learning/decision-logger.mjs` | 1 | 0 | 6 |
 | `scripts/lib/learning/quickfix-stats.mjs` | 3 | 2 | 4 |
 | `scripts/lib/ledger.mjs` | 2 | 7 | 26 |
+| `scripts/lib/outbox-envelope.mjs` | 1 | 0 | 11 |
 | `scripts/lib/requirements/context.mjs` | 0 | 0 | 4 |
 | `scripts/lib/requirements/extract.mjs` | 6 | 0 | 9 |
 | `scripts/lib/requirements/gap-challenge.mjs` | 0 | 0 | 6 |
@@ -116,6 +124,7 @@ pie title Active invariants by kind
 | `scripts/lib/requirements/schema.mjs` | 0 | 0 | 11 |
 | `scripts/lib/sensitive-egress-gate.mjs` | 2 | 0 | 0 |
 | `scripts/lib/store/arch/symbols.mjs` | 0 | 0 | 5 |
+| `scripts/lib/store/bandit-fp.mjs` | 1 | 3 | 23 |
 | `scripts/lib/symbol-index/stale-pragma-sweep.mjs` | 0 | 0 | 0 |
 | `scripts/memory-health.mjs` | 2 | 0 | 5 |
 | `scripts/persona-consistency-promote.mjs` | 2 | 0 | 7 |
