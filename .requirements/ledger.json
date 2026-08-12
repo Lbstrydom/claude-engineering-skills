@@ -1,10 +1,11 @@
 {
-  "generatedAt": "2026-07-19T09:22:31.538Z",
-  "commitSha": "807a407cea611f6be7b7cf14dc3829303bee0c89",
-  "extractionSourceSha": "807a407cea611f6be7b7cf14dc3829303bee0c89",
+  "generatedAt": "2026-08-12T08:04:55.445Z",
+  "commitSha": "96b96de189f1cf2dfc4b1e9f42961e4226244696",
+  "extractionSourceSha": "96b96de189f1cf2dfc4b1e9f42961e4226244696",
   "coveredFiles": [
     "scripts/brainstorm-round.mjs",
     "scripts/learning/backfill-outcomes.mjs",
+    "scripts/lib/audit-store-writers.mjs",
     "scripts/lib/audit/finding-verification.mjs",
     "scripts/lib/audit/prompt-builder.mjs",
     "scripts/lib/brainstorm/artifact-context.mjs",
@@ -13,11 +14,13 @@
     "scripts/lib/brainstorm/session-store.mjs",
     "scripts/lib/claudemd/autofix.mjs",
     "scripts/lib/duplicate-justification-pragma.mjs",
+    "scripts/lib/durable-write.mjs",
     "scripts/lib/file-io.mjs",
     "scripts/lib/file-lock.mjs",
     "scripts/lib/learning/decision-logger.mjs",
     "scripts/lib/learning/quickfix-stats.mjs",
     "scripts/lib/ledger.mjs",
+    "scripts/lib/outbox-envelope.mjs",
     "scripts/lib/requirements/context.mjs",
     "scripts/lib/requirements/extract.mjs",
     "scripts/lib/requirements/gap-challenge.mjs",
@@ -26,6 +29,7 @@
     "scripts/lib/requirements/schema.mjs",
     "scripts/lib/sensitive-egress-gate.mjs",
     "scripts/lib/store/arch/symbols.mjs",
+    "scripts/lib/store/bandit-fp.mjs",
     "scripts/lib/symbol-index/stale-pragma-sweep.mjs",
     "scripts/memory-health.mjs",
     "scripts/persona-consistency-promote.mjs",
@@ -91,6 +95,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended review status invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-behavioural-09971795",
+      "assertion": "A persisted false-positive pattern may be marked `auto_suppress` only when its accepted-plus-dismissed sample count meets `learningConfig.minFpSamples` and its EMA is below 0.15.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/bandit-fp.mjs",
+          "anchor": "buildFpPatternRows"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/bandit-fp.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/bandit-fp.mjs:buildFpPatternRows"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-09971795",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This auto-suppress sample and EMA threshold behavior has no linked test."
       }
     },
     {
@@ -376,6 +410,36 @@
       }
     },
     {
+      "id": "REQ-behavioural-50353b55",
+      "assertion": "When cloud access is disabled, loadFalsePositivePatterns must return skipped status envelopes for both repository and global scopes instead of treating them as successfully empty.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/bandit-fp.mjs",
+          "anchor": "loadFalsePositivePatterns"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/bandit-fp.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/bandit-fp.mjs:loadFalsePositivePatterns"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-50353b55",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This disabled-cloud skipped-status behavior has no linked test."
+      }
+    },
+    {
       "id": "REQ-behavioural-5903639b",
       "assertion": "When --with-artifact is used, the output envelope must distinguish an unrequested artifact context from a requested context whose artifacts were all refused by emitting null only when the option was n",
       "kind": "behavioural",
@@ -406,6 +470,36 @@
       }
     },
     {
+      "id": "REQ-behavioural-6616211e",
+      "assertion": "A durable write explicitly declined by its writer must report `skipped` and delete its write-ahead envelope rather than retaining it for replay or loss evidence.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/durable-write.mjs",
+          "anchor": "durableWrite"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/durable-write.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/durable-write.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-6616211e",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This declined-write envelope disposal behavior has no linked test."
+      }
+    },
+    {
       "id": "REQ-behavioural-7329dcf7",
       "assertion": "Outcome backfill may only examine unresolved decisions of the supported decision types that are at least 30 minutes old, optionally scoped to the requested repository.",
       "kind": "behavioural",
@@ -433,6 +527,42 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This is a sound outcome-backfill eligibility invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-behavioural-7b9e7648",
+      "assertion": "A write explicitly declined without application must be reported as skipped and must not retain an envelope for replay or loss evidence.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/durable-write.mjs",
+          "anchor": "durableWrite"
+        },
+        {
+          "file": "scripts/lib/audit-store-writers.mjs",
+          "anchor": "receipt"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/durable-write.mjs",
+        "scripts/lib/audit-store-writers.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/durable-write.mjs#durableWrite",
+          "scripts/lib/audit-store-writers.mjs#receipt"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-7b9e7648",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This explicitly declined write disposition has no linked test."
       }
     },
     {
@@ -693,6 +823,42 @@
       }
     },
     {
+      "id": "REQ-behavioural-c42c2529",
+      "assertion": "Replay drains must process at most the configured positive cap of pending JSON envelopes in oldest-first modification-time order.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/outbox-envelope.mjs",
+          "anchor": "listEnvelopesOldestFirst"
+        },
+        {
+          "file": "scripts/lib/outbox-envelope.mjs",
+          "anchor": "drainEnvelopes"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/outbox-envelope.mjs",
+        "scripts/lib/durable-write.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/outbox-envelope.mjs",
+          "scripts/lib/durable-write.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-c42c2529",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This capped oldest-first drain ordering has no linked test."
+      }
+    },
+    {
       "id": "REQ-behavioural-ccf69ea1",
       "assertion": "A missing provider API key must produce a per-provider misconfigured result instead of aborting the entire round.",
       "kind": "behavioural",
@@ -750,6 +916,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This is a sound drift-sweep skip and exit-code invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-behavioural-d2681ee7",
+      "assertion": "False-positive pattern synchronization with a null repository identity must return reason no-repo-identity, while a non-null non-UUID identity must return reason repo-identity-unresolved.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/bandit-fp.mjs",
+          "anchor": "syncFalsePositivePatterns"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/bandit-fp.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/bandit-fp.mjs:syncFalsePositivePatterns"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-d2681ee7",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This invalid repository identity reason distinction has no linked test."
       }
     },
     {
@@ -974,6 +1170,42 @@
       }
     },
     {
+      "id": "REQ-behavioural-ff424ccb",
+      "assertion": "A drain must process at most a positive configured cap of pending JSON envelopes, selecting the oldest artifacts first with filename ordering as the timestamp tie-breaker.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/outbox-envelope.mjs",
+          "anchor": "listEnvelopesOldestFirst"
+        },
+        {
+          "file": "scripts/lib/outbox-envelope.mjs",
+          "anchor": "drainEnvelopes"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/outbox-envelope.mjs",
+        "scripts/lib/durable-write.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/outbox-envelope.mjs#listEnvelopesOldestFirst",
+          "scripts/lib/outbox-envelope.mjs#drainEnvelopes"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-ff424ccb",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This capped drain ordering and tie-break rule has no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-014a061e",
       "assertion": "Cited-entity extraction must select only a token adjacent to a missing-claim phrase in detail or section and must return null when no single such token is found.",
       "kind": "correctness",
@@ -1003,6 +1235,41 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended cited-token extraction invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-0400f580",
+      "assertion": "Loading false-positive patterns must preserve per-scope outcomes as `ok`, `failed`, or `skipped` rather than representing failed or unqueried scopes as healthy empty pattern lists.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/bandit-fp.mjs",
+          "anchor": "readFpScope"
+        },
+        {
+          "file": "scripts/lib/store/bandit-fp.mjs",
+          "anchor": "loadFalsePositivePatterns"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/bandit-fp.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/bandit-fp.mjs:readFpScope",
+          "scripts/lib/store/bandit-fp.mjs:loadFalsePositivePatterns"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-0400f580",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This per-scope loading outcome preservation has no linked test."
       }
     },
     {
@@ -1036,6 +1303,46 @@
       }
     },
     {
+      "id": "REQ-correctness-1065ce13",
+      "assertion": "Connection-scoped replay failures must abort the current drain without consuming retry attempts for remaining artifacts, whereas permanent artifact-scoped failures must be quarantined immediately and ",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/durable-write.mjs",
+          "anchor": "isConnectionScoped"
+        },
+        {
+          "file": "scripts/lib/durable-write.mjs",
+          "anchor": "drainLocked"
+        },
+        {
+          "file": "scripts/lib/outbox-envelope.mjs",
+          "anchor": "drainEnvelopes"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/durable-write.mjs",
+        "scripts/lib/outbox-envelope.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/durable-write.mjs",
+          "scripts/lib/outbox-envelope.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-1065ce13",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This scoped failure handling behavior has no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-10e7435e",
       "assertion": "Audit prompt construction must reject non-string required prompt fields and non-string optional prompt fields that affect prompt shape.",
       "kind": "correctness",
@@ -1063,6 +1370,37 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended prompt-field validation invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-11e3b791",
+      "assertion": "Bandit-arm rows must assign GLOBAL_CONTEXT_BUCKET whenever an arm has a missing or empty contextBucket, so every upsert conflict-key column is non-null.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/bandit-fp.mjs",
+          "anchor": "buildBanditArmRows"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/bandit-fp.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/bandit-fp.mjs:buildBanditArmRows",
+          "scripts/lib/store/bandit-fp.mjs:syncBanditArms"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-11e3b791",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This bandit context-bucket normalization invariant has no linked test."
       }
     },
     {
@@ -1129,6 +1467,71 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended inferred-only status invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-1a830ea5",
+      "assertion": "Bandit-arm rows must assign `GLOBAL_CONTEXT_BUCKET` when an arm's `contextBucket` is missing or empty, so `context_bucket` is never null in synchronized rows.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/bandit-fp.mjs",
+          "anchor": "buildBanditArmRows"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/bandit-fp.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/bandit-fp.mjs:buildBanditArmRows"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-1a830ea5",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This bandit context-bucket normalization invariant has no linked test."
+      }
+    },
+    {
+      "id": "REQ-correctness-1b965fc8",
+      "assertion": "Repository-scope false-positive pattern reads must include all patterns regardless of auto_suppress, while global-scope reads must restrict results to auto_suppress = true.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/bandit-fp.mjs",
+          "anchor": "buildFpReadQuery"
+        },
+        {
+          "file": "scripts/lib/store/bandit-fp.mjs",
+          "anchor": "loadFalsePositivePatterns"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/bandit-fp.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/bandit-fp.mjs:buildFpReadQuery",
+          "scripts/lib/store/bandit-fp.mjs:loadFalsePositivePatterns"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-1b965fc8",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This repository versus global auto-suppress filtering rule has no linked test."
       }
     },
     {
@@ -1380,6 +1783,41 @@
       }
     },
     {
+      "id": "REQ-correctness-40e535fe",
+      "assertion": "Persisted false-positive pattern identity must retain the supplied tracker key as `pattern_value` rather than reconstructing it from the pattern dimensions.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/bandit-fp.mjs",
+          "anchor": "buildFpPatternRows"
+        },
+        {
+          "file": "scripts/lib/store/bandit-fp.mjs",
+          "anchor": "FP_PATTERN_READ_COLUMNS"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/bandit-fp.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/bandit-fp.mjs:buildFpPatternRows",
+          "scripts/lib/store/bandit-fp.mjs:FP_PATTERN_READ_COLUMNS"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-40e535fe",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This tracker-key pattern_value persistence rule has no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-4a410cea",
       "assertion": "The reported count of persisted duplicate justifications must equal the number of symbol-index rows actually updated rather than the number of requested definition IDs.",
       "kind": "correctness",
@@ -1446,6 +1884,37 @@
       }
     },
     {
+      "id": "REQ-correctness-4dc5f571",
+      "assertion": "Every registered durable writer must have a non-empty string ID, a positive integer schema version, and a replay function, while any declared rowKey must be a function.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/durable-write.mjs",
+          "anchor": "registerWriter"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit-store-writers.mjs",
+        "scripts/lib/durable-write.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/durable-write.mjs#registerWriter"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-4dc5f571",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This durable writer registration validation has no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-4f5da7b9",
       "assertion": "Learning decisions must use only recognized decision types and must have either a complete audit-bound identity or a non-empty external identity whose caller-controlled key components contain no colon",
       "kind": "correctness",
@@ -1480,6 +1949,36 @@
       }
     },
     {
+      "id": "REQ-correctness-56f2ba01",
+      "assertion": "A false-positive pattern must be marked auto_suppress only when its accepted plus dismissed count meets learningConfig.minFpSamples and its EMA is below 0.15.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/bandit-fp.mjs",
+          "anchor": "buildFpPatternRows"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/bandit-fp.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/bandit-fp.mjs:buildFpPatternRows"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-56f2ba01",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This auto-suppress learning threshold rule has no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-59444f0c",
       "assertion": "Duplicate-justification pragmas must be discovered repository-wide in tracked and non-ignored untracked files while excluding Markdown files and tests, and only syntactically valid pragmas with non-te",
       "kind": "correctness",
@@ -1507,6 +2006,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This appears to be an intended discovery invariant but has no linked test."
+      }
+    },
+    {
+      "id": "REQ-correctness-5e90294b",
+      "assertion": "Loading bandit arms must normalize a missing persisted `context_bucket` to `GLOBAL_CONTEXT_BUCKET` before constructing the in-memory arm key.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/bandit-fp.mjs",
+          "anchor": "loadBanditArms"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/bandit-fp.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/bandit-fp.mjs:loadBanditArms"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-5e90294b",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This loaded bandit context normalization behavior has no linked test."
       }
     },
     {
@@ -1606,6 +2135,44 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended malformed-response handling invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-5f4b155d",
+      "assertion": "A replay result counts as durably written only when it resolves with applied exactly equal to true.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/durable-write.mjs",
+          "anchor": "durableWrite"
+        },
+        {
+          "file": "scripts/lib/outbox-envelope.mjs",
+          "anchor": "drainEnvelopes"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/durable-write.mjs",
+        "scripts/lib/outbox-envelope.mjs",
+        "scripts/lib/audit-store-writers.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/durable-write.mjs#durableWrite",
+          "scripts/lib/outbox-envelope.mjs#drainEnvelopes",
+          "scripts/lib/audit-store-writers.mjs#receipt"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-5f4b155d",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This exact-applied durable-write criterion has no linked test."
       }
     },
     {
@@ -1767,6 +2334,38 @@
       }
     },
     {
+      "id": "REQ-correctness-76e0cb45",
+      "assertion": "A durable write invoked with an unregistered writer identifier must throw rather than silently recording an unreplayable write failure.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/durable-write.mjs",
+          "anchor": "durableWrite"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/durable-write.mjs",
+        "scripts/lib/audit-store-writers.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/durable-write.mjs",
+          "scripts/lib/audit-store-writers.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-76e0cb45",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This unregistered-writer error behavior has no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-76f349a6",
       "assertion": "Finding metadata population extracts affected files from the section text using a fresh file-reference regex per call and normalizes all extracted paths.",
       "kind": "correctness",
@@ -1893,6 +2492,71 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This is a sound canonical nested-context hash invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-correctness-7a37b581",
+      "assertion": "A durable write whose replay explicitly returns `{applied: true}` must report `written` and must not be classified as spilled or lost even if cleanup of its envelope fails.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/durable-write.mjs",
+          "anchor": "durableWrite"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/durable-write.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/durable-write.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-7a37b581",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This applied-write cleanup-failure outcome has no linked test."
+      }
+    },
+    {
+      "id": "REQ-correctness-7c21062d",
+      "assertion": "False-positive pattern reads for a valid repository must include all repository patterns without filtering on `auto_suppress`, while global-scope reads must filter to `auto_suppress = true`.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/bandit-fp.mjs",
+          "anchor": "buildFpReadQuery"
+        },
+        {
+          "file": "scripts/lib/store/bandit-fp.mjs",
+          "anchor": "loadFalsePositivePatterns"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/bandit-fp.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/bandit-fp.mjs:buildFpReadQuery",
+          "scripts/lib/store/bandit-fp.mjs:loadFalsePositivePatterns"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-7c21062d",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This per-scope auto-suppress filtering rule has no linked test."
       }
     },
     {
@@ -2319,6 +2983,67 @@
       }
     },
     {
+      "id": "REQ-correctness-b486515d",
+      "assertion": "Loading bandit arms must normalize missing persisted context_bucket values to GLOBAL_CONTEXT_BUCKET when constructing local arm identities.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/bandit-fp.mjs",
+          "anchor": "loadBanditArms"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/bandit-fp.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/bandit-fp.mjs:loadBanditArms",
+          "scripts/lib/store/bandit-fp.mjs:buildBanditArmRows"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-b486515d",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This persisted bandit context normalization behavior has no linked test."
+      }
+    },
+    {
+      "id": "REQ-correctness-b53dc0b5",
+      "assertion": "A drain must atomically claim an envelope before applying it and must delete only the claimed file after confirmed application so that concurrent producers cannot have newer envelopes deleted.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/outbox-envelope.mjs",
+          "anchor": "drainEnvelopes"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/outbox-envelope.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/outbox-envelope.mjs#drainEnvelopes"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-b53dc0b5",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This atomic claim and claimed-file deletion behavior has no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-b751155f",
       "assertion": "Requirement merge clustering must only merge items of the same kind whose normalized assertions have Jaccard similarity of at least 0.6.",
       "kind": "correctness",
@@ -2476,6 +3201,37 @@
         "gap": "observed-but-unintended",
         "conflictsWith": [],
         "rationale": "The assertion is visibly truncated and looks like an extraction artifact rather than a stable invariant."
+      }
+    },
+    {
+      "id": "REQ-correctness-cc334d0b",
+      "assertion": "Persisted false-positive pattern identity must be read from pattern_value rather than reconstructed from category, severity, and principle.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/bandit-fp.mjs",
+          "anchor": "FP_PATTERN_READ_COLUMNS"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/bandit-fp.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/bandit-fp.mjs:FP_PATTERN_READ_COLUMNS",
+          "scripts/lib/store/bandit-fp.mjs:buildFpReadQuery"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-cc334d0b",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This persisted pattern identity loading rule has no linked test."
       }
     },
     {
@@ -3300,6 +4056,42 @@
       }
     },
     {
+      "id": "REQ-persistence-32e2caf2",
+      "assertion": "Importing the audit-store writer bootstrap module must register the same replay handlers used by live writes so a fresh-process drain can replay supported artifacts.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit-store-writers.mjs",
+          "anchor": "registerAuditStoreWriters"
+        },
+        {
+          "file": "scripts/lib/audit-store-writers.mjs",
+          "anchor": "registerAuditStoreWriters()"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit-store-writers.mjs",
+        "scripts/lib/durable-write.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit-store-writers.mjs",
+          "scripts/lib/durable-write.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-32e2caf2",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This bootstrap replay-handler registration requirement has no linked test."
+      }
+    },
+    {
       "id": "REQ-persistence-35f58f95",
       "assertion": "When batch-updating an existing topicId, the ledger preserves existing adjudicationOutcome, remediationState, ruling, and rulingRationale while refreshing latest finding fields and lastSeenRound.",
       "kind": "persistence",
@@ -3456,6 +4248,36 @@
       }
     },
     {
+      "id": "REQ-persistence-4af1ac96",
+      "assertion": "Audit findings and run-completion writes must remain replay-eligible, while pass statistics, suppression events, bandit-arm snapshots, and false-positive pattern snapshots must remain non-replayable u",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit-store-writers.mjs",
+          "anchor": "registerAuditStoreWriters"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit-store-writers.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit-store-writers.mjs#registerAuditStoreWriters"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-4af1ac96",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This writer replay-eligibility classification has no linked test."
+      }
+    },
+    {
       "id": "REQ-persistence-519ddbb4",
       "assertion": "Each successful duplicate-justification persistence operation must atomically clear all justification fields for the specified refresh and repository before applying only the currently resolved justif",
       "kind": "persistence",
@@ -3483,6 +4305,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This atomic persistence behavior has no linked test."
+      }
+    },
+    {
+      "id": "REQ-persistence-58d0fa82",
+      "assertion": "Every durable audit-store write with a registered writer must attempt to persist a write-ahead envelope before invoking the writer replay function when the payload is serializable and queue admission ",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/durable-write.mjs",
+          "anchor": "durableWrite"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/durable-write.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/durable-write.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-58d0fa82",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This write-ahead ordering invariant has no linked test."
       }
     },
     {
@@ -3553,6 +4405,135 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended coveredFiles persistence invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-persistence-66efaf6c",
+      "assertion": "False-positive pattern rows must use GLOBAL_REPO_ID rather than null whenever the supplied repository identity is absent or not a UUID.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/bandit-fp.mjs",
+          "anchor": "buildFpPatternRows"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/bandit-fp.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/bandit-fp.mjs:buildFpPatternRows"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "needs-review",
+      "gap": {
+        "requirementId": "REQ-persistence-66efaf6c",
+        "gap": "contradictory",
+        "conflictsWith": [
+          "REQ-security-c17614be",
+          "REQ-safety-c2c048db"
+        ],
+        "rationale": "It permits fallback global writes for invalid repository IDs while the conflicting requirements prohibit such writes."
+      }
+    },
+    {
+      "id": "REQ-persistence-6b2af2c9",
+      "assertion": "Bandit-arm synchronization must upsert rows using the composite identity `(pass_name, variant_id, context_bucket)`.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/bandit-fp.mjs",
+          "anchor": "syncBanditArms"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/bandit-fp.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/bandit-fp.mjs:syncBanditArms"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-6b2af2c9",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This bandit composite upsert identity has no linked test."
+      }
+    },
+    {
+      "id": "REQ-persistence-6bfb4b44",
+      "assertion": "A failed write from a writer declaring rowKey must retain its envelope in the spill queue for replay, whereas a failed write from a writer without rowKey must be preserved as lost evidence and never b",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/durable-write.mjs",
+          "anchor": "retainOrLose"
+        },
+        {
+          "file": "scripts/lib/audit-store-writers.mjs",
+          "anchor": "registerAuditStoreWriters"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/durable-write.mjs",
+        "scripts/lib/audit-store-writers.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/durable-write.mjs#retainOrLose",
+          "scripts/lib/audit-store-writers.mjs#registerAuditStoreWriters"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-6bfb4b44",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This rowKey-based failure retention policy has no linked test."
+      }
+    },
+    {
+      "id": "REQ-persistence-7a0d56d8",
+      "assertion": "False-positive pattern synchronization must upsert by repo_id, pattern_type, and pattern_value and must not write when the supplied dirty-pattern subset is empty.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/bandit-fp.mjs",
+          "anchor": "syncFalsePositivePatterns"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/bandit-fp.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/bandit-fp.mjs:syncFalsePositivePatterns"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-7a0d56d8",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This false-positive upsert identity and empty-subset behavior has no linked test."
       }
     },
     {
@@ -3647,6 +4628,42 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended topicId replacement invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-persistence-944be7dd",
+      "assertion": "For a serializable payload admitted to the queue, a write-ahead envelope containing the writer ID, schema version, fingerprint, enqueue time, and payload must be persisted before its replay function i",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/durable-write.mjs",
+          "anchor": "durableWrite"
+        },
+        {
+          "file": "scripts/lib/outbox-envelope.mjs",
+          "anchor": "writeEnvelope"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/durable-write.mjs",
+        "scripts/lib/outbox-envelope.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/durable-write.mjs#durableWrite",
+          "scripts/lib/outbox-envelope.mjs#writeEnvelope"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-944be7dd",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This admitted write-ahead envelope content and ordering rule has no linked test."
       }
     },
     {
@@ -3787,6 +4804,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended frozen-id preservation invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-persistence-c5dcce2d",
+      "assertion": "Bandit-arm synchronization must upsert by pass_name, variant_id, and context_bucket, and must perform no database write for an empty arm map.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/bandit-fp.mjs",
+          "anchor": "syncBanditArms"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/bandit-fp.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/bandit-fp.mjs:syncBanditArms"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-c5dcce2d",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This bandit upsert identity and empty-map behavior has no linked test."
       }
     },
     {
@@ -4025,6 +5072,36 @@
       }
     },
     {
+      "id": "REQ-persistence-ed9a1fcf",
+      "assertion": "False-positive pattern synchronization must upsert rows using the composite identity `(repo_id, pattern_type, pattern_value)`.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/bandit-fp.mjs",
+          "anchor": "syncFalsePositivePatterns"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/bandit-fp.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/bandit-fp.mjs:syncFalsePositivePatterns"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-ed9a1fcf",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This false-positive composite upsert identity has no linked test."
+      }
+    },
+    {
       "id": "REQ-persistence-f1fdcaf0",
       "assertion": "A persona-consistency spec must not be finalized at its target path unless the candidate-to-locked persistence transition succeeds and reports at least one affected row.",
       "kind": "persistence",
@@ -4083,6 +5160,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended id preservation invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-persistence-f37491f9",
+      "assertion": "An envelope may be deleted by a drain only when its apply handler resolves exactly `true`, while falsy or non-true results must leave it available for a later drain unless the handler explicitly quara",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/outbox-envelope.mjs",
+          "anchor": "drainEnvelopes"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/outbox-envelope.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/outbox-envelope.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-f37491f9",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This exact-true envelope deletion rule has no linked test."
       }
     },
     {
@@ -4346,6 +5453,36 @@
       }
     },
     {
+      "id": "REQ-safety-173f0147",
+      "assertion": "Admission control must reject new envelopes when the combined JSON artifact count or byte total across spill, lost, and rejected directories reaches its configured limit, excluding temporary files.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/durable-write.mjs",
+          "anchor": "checkAdmission"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/durable-write.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/durable-write.mjs#checkAdmission"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-173f0147",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This aggregate artifact admission-control rule has no linked test."
+      }
+    },
+    {
       "id": "REQ-safety-1eef0492",
       "assertion": "Policy sections that cannot be loaded or cannot fit within the policy token budget must be recorded in missingSections rather than silently omitted.",
       "kind": "safety",
@@ -4373,6 +5510,37 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This missing policy-section reporting invariant has no linked test evidence."
+      }
+    },
+    {
+      "id": "REQ-safety-201e9516",
+      "assertion": "A durable write using an unregistered writer ID must throw rather than silently attempt or discard the write.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/durable-write.mjs",
+          "anchor": "durableWrite"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/durable-write.mjs",
+        "scripts/lib/audit-store-writers.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/durable-write.mjs#durableWrite"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-201e9516",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This unregistered writer rejection behavior has no linked test."
       }
     },
     {
@@ -4494,6 +5662,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This is a sound malformed-statistics-cache fail-safe invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-safety-2f0e3ba5",
+      "assertion": "False-positive pattern read limits must be clamped through `clampFpReadLimit` even when a caller explicitly supplies a limit.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/bandit-fp.mjs",
+          "anchor": "loadFalsePositivePatterns"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/bandit-fp.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/bandit-fp.mjs:loadFalsePositivePatterns"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-2f0e3ba5",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This explicit caller-limit clamping behavior has no linked test."
       }
     },
     {
@@ -4653,6 +5851,47 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This strict sweep error-handling policy has no linked test."
+      }
+    },
+    {
+      "id": "REQ-safety-4eeb29aa",
+      "assertion": "A connection-scoped replay failure must abort the drain without consuming retry attempts for remaining artifacts, while artifact-scoped retryable failures must persist incremented attempts and permane",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/durable-write.mjs",
+          "anchor": "isConnectionScoped"
+        },
+        {
+          "file": "scripts/lib/durable-write.mjs",
+          "anchor": "drainLocked"
+        },
+        {
+          "file": "scripts/lib/outbox-envelope.mjs",
+          "anchor": "drainEnvelopes"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/durable-write.mjs",
+        "scripts/lib/outbox-envelope.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/durable-write.mjs#isConnectionScoped",
+          "scripts/lib/durable-write.mjs#drainLocked",
+          "scripts/lib/outbox-envelope.mjs#drainEnvelopes"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-4eeb29aa",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This connection and artifact failure retry handling has no linked test."
       }
     },
     {
@@ -4993,6 +6232,36 @@
       }
     },
     {
+      "id": "REQ-safety-653bf8b5",
+      "assertion": "Replay drains must refuse to run when no writers are registered, when cloud persistence is disabled, or when git-tracked provenance cannot be verified.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/durable-write.mjs",
+          "anchor": "drainSpill"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/durable-write.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/durable-write.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-653bf8b5",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "These drain precondition refusals have no linked test."
+      }
+    },
+    {
       "id": "REQ-safety-69e854ad",
       "assertion": "A refresh must skip duplicate-justification persistence entirely when its strict repository pragma sweep fails, preserving the existing justification state rather than treating the failure as an empty",
       "kind": "safety",
@@ -5055,6 +6324,42 @@
       }
     },
     {
+      "id": "REQ-safety-6a7bf224",
+      "assertion": "Failed writes may remain in the replay queue only for writers declaring a row-level idempotency key, while failures from keyless writers must be moved to loss evidence and never be replayed.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/durable-write.mjs",
+          "anchor": "retainOrLose"
+        },
+        {
+          "file": "scripts/lib/audit-store-writers.mjs",
+          "anchor": "registerAuditStoreWriters"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/durable-write.mjs",
+        "scripts/lib/audit-store-writers.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/durable-write.mjs",
+          "scripts/lib/audit-store-writers.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-6a7bf224",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This row-key-dependent replay safety rule has no linked test."
+      }
+    },
+    {
       "id": "REQ-safety-6c77c203",
       "assertion": "Promoting a persona-consistency candidate must validate its witness snapshot, contradiction payload, and non-empty journey steps before rendering or persisting a locked regression spec.",
       "kind": "safety",
@@ -5082,6 +6387,42 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This is a sound persona-promotion validation invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-safety-6df1ce27",
+      "assertion": "False-positive pattern reads must request one row beyond the configured per-scope limit and mark atLimit true only when more rows than the limit are returned.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/bandit-fp.mjs",
+          "anchor": "buildFpReadQuery"
+        },
+        {
+          "file": "scripts/lib/store/bandit-fp.mjs",
+          "anchor": "readFpScope"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/bandit-fp.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/bandit-fp.mjs:buildFpReadQuery",
+          "scripts/lib/store/bandit-fp.mjs:readFpScope",
+          "scripts/lib/store/bandit-fp.mjs:loadFalsePositivePatterns"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-safety-6df1ce27",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This one-extra-row limit detection behavior has no linked test."
       }
     },
     {
@@ -5117,6 +6458,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended all-failed extraction invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-70149b41",
+      "assertion": "loadFalsePositivePatterns must clamp both configured and caller-supplied read limits before issuing either scope query.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/bandit-fp.mjs",
+          "anchor": "loadFalsePositivePatterns"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/bandit-fp.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/bandit-fp.mjs:loadFalsePositivePatterns"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-70149b41",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This read-limit clamping requirement has no linked test."
       }
     },
     {
@@ -5644,6 +7015,42 @@
       }
     },
     {
+      "id": "REQ-safety-ad546bd2",
+      "assertion": "Unreadable outbox directories, unrecoverable claims, unverifiable git provenance, an empty writer registry, disabled cloud storage, and unavailable drain locks must be reported as unavailable rather t",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/outbox-envelope.mjs",
+          "anchor": "drainEnvelopes"
+        },
+        {
+          "file": "scripts/lib/durable-write.mjs",
+          "anchor": "drainSpill"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/outbox-envelope.mjs",
+        "scripts/lib/durable-write.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/outbox-envelope.mjs#drainEnvelopes",
+          "scripts/lib/durable-write.mjs#drainSpill"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-ad546bd2",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This unavailable-status handling for drain prerequisites has no linked test."
+      }
+    },
+    {
       "id": "REQ-safety-b3f9d7c9",
       "assertion": "If two or more pragmas resolve to the same declaration, none of those pragmas may exclude that declaration from duplicate-drift scoring.",
       "kind": "safety",
@@ -5801,6 +7208,78 @@
       }
     },
     {
+      "id": "REQ-safety-c2c048db",
+      "assertion": "False-positive pattern synchronization must refuse to write unless `repoId` is a UUID, preventing unresolved repository identities from being persisted under the global repository sentinel.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/bandit-fp.mjs",
+          "anchor": "isSyncableRepoId"
+        },
+        {
+          "file": "scripts/lib/store/bandit-fp.mjs",
+          "anchor": "syncFalsePositivePatterns"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/bandit-fp.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/bandit-fp.mjs:isSyncableRepoId",
+          "scripts/lib/store/bandit-fp.mjs:syncFalsePositivePatterns"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "needs-review",
+      "gap": {
+        "requirementId": "REQ-safety-c2c048db",
+        "gap": "contradictory",
+        "conflictsWith": [
+          "REQ-persistence-66efaf6c"
+        ],
+        "rationale": "It prohibits invalid-repository writes that the conflicting requirement permits using GLOBAL_REPO_ID."
+      }
+    },
+    {
+      "id": "REQ-safety-c80117c1",
+      "assertion": "A drain must reclaim leftover claimed artifacts before listing work and report unavailable rather than empty if any claimed artifact cannot be reclaimed.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/outbox-envelope.mjs",
+          "anchor": "reclaimClaimed"
+        },
+        {
+          "file": "scripts/lib/outbox-envelope.mjs",
+          "anchor": "drainEnvelopes"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/outbox-envelope.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/outbox-envelope.mjs#reclaimClaimed",
+          "scripts/lib/outbox-envelope.mjs#drainEnvelopes"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-c80117c1",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This claimed-artifact reclamation behavior has no linked test."
+      }
+    },
+    {
       "id": "REQ-safety-ca1e0c13",
       "assertion": "Gap challenge must return exactly one schema-valid assessment per candidate and degrade to `gap:\"none\"` for every candidate on LLM failure, malformed top-level response, or missing individual assessme",
       "kind": "safety",
@@ -5893,6 +7372,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended symbol-claim safety invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-d47f92fb",
+      "assertion": "When the repository ID is not a UUID, false-positive pattern loading must skip the repository-scoped query and return that scope with status `skipped`, while still independently reading the global sco",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/bandit-fp.mjs",
+          "anchor": "loadFalsePositivePatterns"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/bandit-fp.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/bandit-fp.mjs:loadFalsePositivePatterns"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-d47f92fb",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This non-UUID repository query skip behavior has no linked test."
       }
     },
     {
@@ -6191,6 +7700,66 @@
       }
     },
     {
+      "id": "REQ-safety-f5697dd9",
+      "assertion": "When repoId is not a UUID, loadFalsePositivePatterns must skip the repository query with non-uuid-repo-id status while still independently querying the global scope.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/bandit-fp.mjs",
+          "anchor": "loadFalsePositivePatterns"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/bandit-fp.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/bandit-fp.mjs:loadFalsePositivePatterns"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-f5697dd9",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This non-UUID repository skip with independent global read has no linked test."
+      }
+    },
+    {
+      "id": "REQ-safety-fa548618",
+      "assertion": "Failure to serialize a payload, create its write-ahead envelope, or admit it under queue limits must still attempt the live replay once and report lost unless that replay applies or explicitly decline",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/durable-write.mjs",
+          "anchor": "durableWrite"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/durable-write.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/durable-write.mjs#durableWrite"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-fa548618",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This fallback live-replay behavior after admission failure has no linked test."
+      }
+    },
+    {
       "id": "REQ-security-07c679f2",
       "assertion": "Malformed provider payloads written for debugging must be secret-redacted and stored under .claude/tmp with file mode 0600.",
       "kind": "security",
@@ -6289,6 +7858,66 @@
       }
     },
     {
+      "id": "REQ-security-39e1397d",
+      "assertion": "A failed false-positive pattern scope query must be represented as status failed with no patterns rather than as an empty successful result, and its returned error data must expose only the error name",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/bandit-fp.mjs",
+          "anchor": "readFpScope"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/bandit-fp.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/bandit-fp.mjs:readFpScope"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-security-39e1397d",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This failed-scope status and error-redaction behavior has no linked test."
+      }
+    },
+    {
+      "id": "REQ-security-4d9637fd",
+      "assertion": "Database failures while reading a false-positive scope must not throw or expose the error message in the returned status envelope.",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/bandit-fp.mjs",
+          "anchor": "readFpScope"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/bandit-fp.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/bandit-fp.mjs:readFpScope"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-security-4d9637fd",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This database read failure redaction behavior has no linked test."
+      }
+    },
+    {
       "id": "REQ-security-5c746aa9",
       "assertion": "External dependency claims, symbol/export claims, sensitive-path claims, and absolute-path claims must always receive requires_verification rather than refuted or confirmed.",
       "kind": "security",
@@ -6318,6 +7947,40 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended conservative verification invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-security-70f7c7c3",
+      "assertion": "A git-tracked spill artifact must be quarantined without replaying it and counted as rejected rather than retried as a store failure.",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/durable-write.mjs",
+          "anchor": "drainLocked"
+        },
+        {
+          "file": "scripts/lib/durable-write.mjs",
+          "anchor": "readTrackedSpillArtifacts"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/durable-write.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/durable-write.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-security-70f7c7c3",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This git-tracked artifact quarantine behavior has no linked test."
       }
     },
     {
@@ -6411,6 +8074,45 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This redaction and count invariant has no linked test evidence."
+      }
+    },
+    {
+      "id": "REQ-security-9bf959ef",
+      "assertion": "Envelope fingerprints used as filenames must be safe basenames limited to 128 characters of `[A-Za-z0-9._-]` and must reject path traversal and Windows reserved device names.",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/outbox-envelope.mjs",
+          "anchor": "assertSafeFingerprint"
+        },
+        {
+          "file": "scripts/lib/outbox-envelope.mjs",
+          "anchor": "writeEnvelope"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/outbox-envelope.mjs",
+        "scripts/lib/durable-write.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/outbox-envelope.mjs",
+          "scripts/lib/durable-write.mjs",
+          "scripts/lib/outbox-envelope.mjs#assertSafeFingerprint",
+          "scripts/lib/outbox-envelope.mjs#writeEnvelope",
+          "scripts/lib/durable-write.mjs#fingerprintFor"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-security-9bf959ef",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This fingerprint filename validation requirement has no linked test."
       }
     },
     {
@@ -6554,6 +8256,44 @@
       }
     },
     {
+      "id": "REQ-security-c17614be",
+      "assertion": "False-positive pattern synchronization must refuse to write any patterns unless repoId is a UUID, preventing unresolved repository data from being persisted as global data.",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/bandit-fp.mjs",
+          "anchor": "isSyncableRepoId"
+        },
+        {
+          "file": "scripts/lib/store/bandit-fp.mjs",
+          "anchor": "syncFalsePositivePatterns"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/bandit-fp.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/bandit-fp.mjs:isSyncableRepoId",
+          "scripts/lib/store/bandit-fp.mjs:syncFalsePositivePatterns",
+          "scripts/lib/store/bandit-fp.mjs:buildFpPatternRows"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "needs-review",
+      "gap": {
+        "requirementId": "REQ-security-c17614be",
+        "gap": "contradictory",
+        "conflictsWith": [
+          "REQ-persistence-66efaf6c"
+        ],
+        "rationale": "It prohibits invalid-repository writes that the conflicting requirement redirects to GLOBAL_REPO_ID."
+      }
+    },
+    {
       "id": "REQ-security-c5a057de",
       "assertion": "Before quickfix-hit file paths and snippets are sent from local JSONL telemetry to the cloud decision store, both values must be passed through secret redaction.",
       "kind": "security",
@@ -6679,6 +8419,47 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended repo-root path-safety invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-security-d7192239",
+      "assertion": "Malformed envelopes, unsupported envelope versions or writer schemas, unknown writers, and git-tracked spill artifacts must be quarantined with preserved evidence rather than replayed, deleted, or lef",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/outbox-envelope.mjs",
+          "anchor": "drainEnvelopes"
+        },
+        {
+          "file": "scripts/lib/durable-write.mjs",
+          "anchor": "drainLocked"
+        },
+        {
+          "file": "scripts/lib/durable-write.mjs",
+          "anchor": "quarantine"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/outbox-envelope.mjs",
+        "scripts/lib/durable-write.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/outbox-envelope.mjs#drainEnvelopes",
+          "scripts/lib/durable-write.mjs#drainLocked",
+          "scripts/lib/durable-write.mjs#quarantine"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-security-d7192239",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This invalid-envelope quarantine policy has no linked test."
       }
     },
     {
