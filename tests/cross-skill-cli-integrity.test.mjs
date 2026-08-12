@@ -312,15 +312,24 @@ describe('F4/F5 — a flag that is accepted must decide something', () => {
     assert.ok(/async function resolveRequestedRepoScope/.test(CODE));
   });
 
-  it('get-persona-sessions-by-repo resolves the REQUESTED repo, not the ambient one', () => {
-    // The same defect, found one command over by the round-2 audit. Its store
-    // predicate is `repo_name = $1 AND (repo_id = $3 OR repo_id IS NULL)`, so an
-    // ambient id produced `rows: []` WITH `scopedByRepoId: true` — a false zero
-    // wearing a field that asserts correct scoping.
-    const body = functionBody('cmdGetPersonaSessionsByRepo');
-    assert.ok(/resolveRequestedRepoScope\(parsed\.data\.repoName\)/.test(body));
-    assert.ok(!/resolveRepoForStore\(\{\}\)/.test(body),
-      'the ambient resolver must not decide the scope of an explicitly-named repo');
+  it('get-persona-sessions-by-repo resolves the REQUESTED repo, not the ambient one', async () => {
+    // RETARGETED (command-registry Cluster D): migrated to commands/persona.mjs,
+    // where the guarantee is now STRUCTURAL — the registry declares
+    // `scope: 'explicit-required'`, whose resolver is `--repo`-authoritative by
+    // construction. Its store predicate is
+    // `repo_name = $1 AND (repo_id = $3 OR repo_id IS NULL)`, so an ambient id
+    // produced `rows: []` WITH `scopedByRepoId: true` — a false zero wearing a
+    // field that asserts correct scoping.
+    const { REGISTRY } = await import('../scripts/lib/cross-skill/registry.mjs');
+    const entry = REGISTRY.find((e) => e.name === 'get-persona-sessions-by-repo');
+    assert.ok(entry, 'must be a registry command');
+    assert.equal(entry.scope, 'explicit-required',
+      'an ambient policy here reintroduces the false zero (F10)');
+    const src = stripComments(fs.readFileSync(
+      fileURLToPath(new URL('../scripts/lib/cross-skill/commands/persona.mjs', import.meta.url)), 'utf8',
+    ));
+    assert.ok(/resolveScope\(\{ explicitRepoName: parsed\.data\.repoName \}\)/.test(src),
+      'the handler must resolve from the REQUESTED name');
   });
 
   it('an unresolvable --repo is refused even when --repo-id is valid', () => {
@@ -386,11 +395,12 @@ describe('F4/F5 — a flag that is accepted must decide something', () => {
   // defect. It is a regression lock over known pairs, not a general prover —
   // the dispatch is dynamic and no static check enumerates it.
   it('a documented per-subcommand flag is actually read by that subcommand', () => {
+    // Only handlers still in the LEGACY file. As each migrates, its row moves
+    // to the registry-side assertion below — where the guarantee is stronger:
+    // the dispatcher's declaration-checked accessor makes an undeclared read
+    // THROW, so a registry declaration cannot be inert the way a grep-checked
+    // legacy handler could.
     const REQUIRED = [
-      // [handler, flag, why it matters]
-      ['cmdGetRecentFindings', 'repo-id', 'F16 — accepted, never read; ambient repo silently substituted'],
-      ['cmdGetRecentFindings', 'repo', 'the documented cross-repo override'],
-      ['cmdGetPersonaSessionsByRepo', 'repo', 'F10 — false zero for the requested repo'],
       ['resolveRequestedRepoScope', 'repo-id', 'F4/F11 — explicit id must beat ambient, and conflict must be caught'],
       ['resolveShipNudgeScope', 'all-repos', 'explicit global must be evaluated BEFORE ambient inference'],
       ['cmdArmEvalRun', 'experiment', 'the subcommand does nothing meaningful without it'],
@@ -403,6 +413,30 @@ describe('F4/F5 — a flag that is accepted must decide something', () => {
     }
     assert.deepEqual(missing, [],
       'a subcommand accepts a flag it never reads — the accepted-and-inert class');
+  });
+
+  it('MIGRATED commands declare the flags whose inertness caused a real defect', async () => {
+    // The registry-side half of the row above. F10 and F16 were both "flag
+    // accepted, never read"; a migrated command that dropped the declaration
+    // would make the flag unknown (exit 2) rather than inert — a different,
+    // louder failure — so what this pins is that the documented flag is still
+    // ADMITTED, and the dispatcher's accessor guarantees a read cannot be
+    // undeclared.
+    const { REGISTRY, normalizeFlag } = await import('../scripts/lib/cross-skill/registry.mjs');
+    const REQUIRED = [
+      ['get-recent-findings', 'repo-id', 'F16 — accepted, never read; ambient repo silently substituted'],
+      ['get-recent-findings', 'repo', 'the documented cross-repo override'],
+      ['get-persona-sessions-by-repo', 'repo', 'F10 — false zero for the requested repo'],
+      ['persona-outcomes', 'repo', 'F4 — silently overridden by the ambient checkout'],
+    ];
+    const missing = [];
+    for (const [name, flag, why] of REQUIRED) {
+      const entry = REGISTRY.find((e) => e.name === name);
+      if (!entry) { missing.push(`${name} is not a registry command (${why})`); continue; }
+      const declared = (entry.flags ?? []).map(normalizeFlag).some((d) => d.name === flag);
+      if (!declared) missing.push(`${name} no longer declares --${flag} (${why})`);
+    }
+    assert.deepEqual(missing, []);
   });
 
   it('every declared flag has a reader, and every read flag is declared', async () => {

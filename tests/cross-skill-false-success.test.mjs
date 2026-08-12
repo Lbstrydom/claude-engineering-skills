@@ -86,14 +86,21 @@ describe('get-reachability-evidence — a schema failure is not an empty success
   });
 
   it('the handler emits an error on schema failure, never ok:true with an empty list', () => {
-    const src = fs.readFileSync(CLI_PATH, 'utf-8');
+    // RETARGETED (command-registry Cluster D): get-reachability-evidence
+    // migrated to commands/persona.mjs. The guarantee is unchanged — a
+    // malformed reader payload is reported as UNMEASURED, never as a clean
+    // empty success — only the failure now travels as a thrown CommandError
+    // that the dispatcher maps to the same PROTOCOL_VIOLATION envelope.
+    const src = fs.readFileSync(
+      fileURLToPath(new URL('../scripts/lib/cross-skill/commands/persona.mjs', import.meta.url)), 'utf-8',
+    );
     const at = src.indexOf('ReachabilityEvidenceResponseSchema.safeParse');
     assert.ok(at > 0, 'the validation site must exist (vacuous-pass guard)');
     const branch = src.slice(at, at + 900);
-    assert.match(branch, /emitError\('PROTOCOL_VIOLATION'/,
+    assert.match(branch, /CommandError\('PROTOCOL_VIOLATION'/,
       'an unmeasurable reachability result must be reported as unmeasured');
     assert.ok(
-      !/return emit\(\{ ok: true, cloud: true, personas: \[\] \}\)/.test(branch),
+      !/return \{ ok: true, cloud: true, personas: \[\] \}/.test(branch),
       'the empty-success degrade must be gone, not merely reworded',
     );
   });

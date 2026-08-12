@@ -43,8 +43,16 @@ function stripAdditive(envelope, caseId, volatileFields = []) {
   // Environment-derived fields (see `volatile` in the capture table): compared
   // for PRESENCE and TYPE, never for value. Dropping them entirely would let a
   // field silently disappear, which is the drift this suite exists to catch.
+  // Dotted paths are supported because the volatile value is sometimes NESTED
+  // — an ENOENT message carries the absolute temp path inside `error.message`.
   for (const field of volatileFields) {
-    if (field in out) out[field] = `<volatile:${typeof out[field]}>`;
+    const parts = field.split('.');
+    let node = out;
+    for (let i = 0; i < parts.length - 1 && node; i += 1) node = node[parts[i]];
+    const leaf = parts[parts.length - 1];
+    if (node && typeof node === 'object' && leaf in node) {
+      node[leaf] = `<volatile:${typeof node[leaf]}>`;
+    }
   }
   return out;
 }

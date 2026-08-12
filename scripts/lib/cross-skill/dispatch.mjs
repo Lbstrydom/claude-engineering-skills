@@ -188,9 +188,21 @@ export async function dispatch(argv, overrides = {}) {
 
   // ── ctx ──────────────────────────────────────────────────────────────────
   const declared = new Set(decls.map((d) => d.name));
+  // Flag reads stop at the POSIX `--` terminator, exactly as assertKnownFlags
+  // and findPositionals do (audit CD-r1). Cluster A aligned the positional
+  // scanner and left the flag ACCESSORS scanning the whole tail — so the
+  // dispatcher's own three readers disagreed about where flags end, which is
+  // the validated-vs-consumed drift this dispatcher exists to kill, reproduced
+  // inside it. (parsePayload deliberately does NOT honour `--`: it is the
+  // legacy algorithm verbatim under the R3-H1 frozen-precedence mandate, and
+  // legacy scanned the full tail — that divergence is declared, not accidental.)
+  const flagRegion = (() => {
+    const stop = rest.indexOf('--');
+    return stop < 0 ? rest : rest.slice(0, stop);
+  })();
   const flagValue = (n) => {
-    const idx = rest.indexOf(`--${n}`);
-    return idx < 0 ? null : (rest[idx + 1] ?? null);
+    const idx = flagRegion.indexOf(`--${n}`);
+    return idx < 0 ? null : (flagRegion[idx + 1] ?? null);
   };
   let payloadCache;
   const ctx = {
@@ -215,7 +227,7 @@ export async function dispatch(argv, overrides = {}) {
         throw new CommandError('UNDECLARED_FLAG',
           `handler for "${name}" read --${n}, which its registry entry does not declare — declare it or stop reading it`, {}, 1);
       }
-      return rest.includes(`--${n}`);
+      return flagRegion.includes(`--${n}`);
     },
     payload() {
       if (cmd.payload === 'none') return {};
@@ -277,6 +289,21 @@ export async function dispatch(argv, overrides = {}) {
     const softFailApplies = cmd.softFail === true
       || cmd.softFail?.all === true
       || (Array.isArray(cmd.softFail?.verbs) && cmd.softFail.verbs.includes(bare[0]));
+    // An envelope with NO `ok` field at all is a distinct, legitimate shape —
+    // `final-review-pending` carries its outcome in `state`
+    // (ready|disabled|unavailable) and deliberately exits 0 for all three,
+    // because /ship must continue through every one. There is no `ok` to lie
+    // with there, so the validator does not apply; but the ABSENCE must be
+    // DECLARED (`okless`), or a handler that simply forgot to return `ok`
+    // would slip through under the same exemption.
+    if (!('ok' in envelope)) {
+      if (cmd.okless?.reason) return { envelope, exitCode: 0 };
+      return {
+        envelope: { ok: false, error: { code: 'CONTRACT_VIOLATION',
+          message: `handler for "${name}" returned an envelope with no \`ok\` field — declare \`okless\` with a reason if that is deliberate` } },
+        exitCode: 1,
+      };
+    }
     if (envelope.ok !== true && !softFailApplies) {
       return {
         envelope: { ok: false, error: { code: 'CONTRACT_VIOLATION',

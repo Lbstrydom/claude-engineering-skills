@@ -1466,6 +1466,278 @@
         "freshnessWarning": null,
         "hint": "cloud disabled — security memory unavailable"
       }
+    },
+    "fr-stats-cloud-off": {
+      "args": [
+        "final-review-stats",
+        "--repo",
+        "owner/repo"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false,
+        "repoId": null,
+        "buckets": [],
+        "shadowOnlyQueue": [],
+        "actionablePairs": [],
+        "runs": [],
+        "experimentRuns": []
+      }
+    },
+    "shadow-overlap-no-runids": {
+      "args": [
+        "shadow-overlap",
+        "--json",
+        "{}"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false,
+        "hint": "cloud disabled — overlap is unmeasurable locally"
+      }
+    },
+    "recommend-skills-json": {
+      "args": [
+        "recommend-skills"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "hasLiveUrl": false,
+        "recommendations": [],
+        "card": ""
+      }
+    },
+    "mab-stats-cloud-off": {
+      "args": [
+        "model-ab-stats"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": false,
+        "cloud": false,
+        "rows": []
+      }
+    },
+    "mab-decision-cloud-off": {
+      "args": [
+        "model-ab-decision"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": false,
+        "cloud": false
+      }
+    },
+    "mab-adj-bad-action": {
+      "args": [
+        "model-ab-adjudicate",
+        "--action",
+        "bogus"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": false,
+        "cloud": false
+      }
+    },
+    "arm-decision-no-exp": {
+      "args": [
+        "arm-eval-decision"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": false,
+        "cloud": false
+      }
+    },
+    "arm-stats-cloud-off": {
+      "args": [
+        "arm-eval-stats"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": false,
+        "cloud": false,
+        "rows": []
+      }
+    },
+    "arm-adj-no-session": {
+      "args": [
+        "arm-eval-adjudicate"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": false,
+        "cloud": false
+      }
+    },
+    "arm-export-no-args": {
+      "args": [
+        "arm-eval-export"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": false,
+        "cloud": false
+      }
+    },
+    "arm-capture-no-exp": {
+      "args": [
+        "arm-eval-maybe-capture"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "captured": false,
+        "reason": "toggle-off"
+      }
+    },
+    "learning-stats-cloud-off": {
+      "args": [
+        "learning-stats"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false,
+        "stats": null
+      }
+    },
+    "learning-qf-stats": {
+      "args": [
+        "learning-quickfix-stats",
+        "--action",
+        "stats"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "action": "stats",
+        "cacheExists": false,
+        "generatedAt": null,
+        "patterns": {},
+        "wouldSkip": {}
+      }
+    },
+    "learning-qf-bad-action": {
+      "args": [
+        "learning-quickfix-stats",
+        "--action",
+        "bogus"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "unknown --action \"bogus\" for learning-quickfix-stats; expected \"rebuild\" or \"stats\"",
+          "action": "bogus"
+        }
+      }
+    },
+    "quality-no-verb": {
+      "args": [
+        "quality"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "usage: quality <add|mirror|digest|link|session-review> [flags]"
+        }
+      }
+    },
+    "quality-bad-verb": {
+      "args": [
+        "quality",
+        "bogus-verb"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "unknown quality subcommand: bogus-verb"
+        }
+      }
+    },
+    "upstream-no-verb": {
+      "args": [
+        "upstream"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "usage: upstream <report|list|ack|fix|wont-fix|drain> [flags]"
+        }
+      }
+    },
+    "upstream-bad-verb": {
+      "args": [
+        "upstream",
+        "bogus-verb"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "usage: upstream <report|list|ack|fix|wont-fix|drain> [flags]"
+        }
+      }
+    },
+    "friction-neighbourhood-empty": {
+      "args": [
+        "get-friction-neighbourhood",
+        "--json",
+        "{\"prompt\":\"x\"}"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false,
+        "records": []
+      }
+    },
+    "finalize-outcomes-missing": {
+      "args": [
+        "finalize-outcomes"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "--run-id <id> --ledger <path> --result <path> are all required"
+        }
+      }
+    },
+    "finalize-outcomes-bad-round": {
+      "args": [
+        "finalize-outcomes",
+        "--run-id",
+        "r",
+        "--ledger",
+        "nope.json",
+        "--result",
+        "nope.json",
+        "--round",
+        "0"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "cannot read --result (nope.json): ENOENT: no such file or directory, open 'C:\\Users\\User\\AppData\\Local\\Temp\\xskill-capture-k0KkLe\\finalize-outcomes-ba-DmBOEU\\nope.json'"
+        }
+      }
     }
   }
 }

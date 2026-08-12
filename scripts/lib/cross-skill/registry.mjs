@@ -392,6 +392,76 @@ export const REGISTRY = Object.freeze([
     },
     load: () => import('./commands/arch-query.mjs').then((m) => m.getIncidentNeighbourhoodCmd),
   },
+
+  // ── Cohort: remaining readers (Cluster D, Phase 5) ───────────────────────
+  {
+    name: 'list-personas',
+    flags: ['url'], positionals: 'none', payload: 'both',
+    scope: 'none', kind: 'read', cloud: 'degrade-noop',
+    degradeShape: { rows: [] },
+    load: () => import('./commands/persona.mjs').then((m) => m.listPersonasCmd),
+  },
+  {
+    name: 'get-persona-sessions-by-repo',
+    flags: ['repo', 'repo-id', 'limit', 'select', { name: 'p0-only', kind: 'boolean' }],
+    positionals: 'none', payload: 'both',
+    scope: 'explicit-required', kind: 'read', cloud: 'degrade-noop',
+    degradeShape: { rows: [] },
+    load: () => import('./commands/persona.mjs').then((m) => m.getPersonaSessionsByRepoCmd),
+  },
+  {
+    name: 'get-persona-sessions-by-url',
+    flags: ['url', 'limit', 'select'], positionals: 'none', payload: 'both',
+    scope: 'none', kind: 'read', cloud: 'degrade-noop',
+    degradeShape: { rows: [] },
+    load: () => import('./commands/persona.mjs').then((m) => m.getPersonaSessionsByUrlCmd),
+  },
+  {
+    name: 'get-reachability-evidence',
+    flags: ['repo', 'limit', 'since-days'], positionals: 'none', payload: 'both',
+    scope: 'none', kind: 'read', cloud: 'degrade-noop',
+    degradeShape: { personas: [] },
+    load: () => import('./commands/persona.mjs').then((m) => m.getReachabilityEvidenceCmd),
+  },
+  {
+    name: 'get-recent-findings',
+    flags: ['repo', 'repo-id', 'limit', 'severity'], positionals: 'none', payload: 'both',
+    scope: 'none', kind: 'read', cloud: 'degrade-noop',
+    degradeShape: { findings: [] },
+    load: () => import('./commands/persona.mjs').then((m) => m.getRecentFindingsCmd),
+  },
+  {
+    name: 'final-review-stats',
+    flags: ['repo', 'queue-limit', 'out', { name: 'worksheet', kind: 'boolean' }],
+    positionals: 'none', payload: 'none',
+    scope: 'none', kind: 'read', cloud: 'none',
+    // The store's result travels verbatim (legacy `emit(res)`), error shape
+    // included — the same forwarded-result quirk as persona-outcomes summary.
+    softFail: { all: true, reason: 'legacy forwards getFinalReviewStats’s result VERBATIM, so its {ok:false, error} shape reaches the envelope at exit 0. Cluster F §2b decides whether a forwarded store error should exit non-zero; it is the same question as the other forwarded-result commands, not a per-command judgement.' },
+    load: () => import('./commands/final-review.mjs').then((m) => m.finalReviewStatsCmd),
+  },
+  {
+    name: 'final-review-pending',
+    flags: ['repo', 'commit', 'page-size', { name: 'render', kind: 'boolean' }],
+    positionals: 'none', payload: 'none',
+    scope: 'none', kind: 'read', cloud: 'degrade-noop',
+    // Three states, exit 0 for ALL of them — /ship must continue through every
+    // one, because a credit nudge that can FAIL a ship is worse than no nudge.
+    // The envelope carries its outcome in `state`, not `ok`, so it is declared
+    // okless rather than softFail: there is no `ok` to lie with, and the
+    // declaration is what stops a handler that merely FORGOT `ok` from
+    // inheriting the same exemption.
+    okless: { reason: 'the envelope is {schemaVersion, state: ready|disabled|unavailable, …} — outcome rides `state`, and all three states are exit 0 by contract so /ship can never be failed by its own credit nudge.' },
+    degradeShape: {},
+    load: () => import('./commands/final-review.mjs').then((m) => m.finalReviewPendingCmd),
+  },
+  {
+    name: 'shadow-overlap',
+    flags: [], positionals: 'none', payload: 'json',
+    scope: 'none', kind: 'read', cloud: 'degrade-noop',
+    degradeShape: { hint: 'cloud disabled — overlap is unmeasurable locally' },
+    load: () => import('./commands/final-review.mjs').then((m) => m.shadowOverlapCmd),
+  },
 ]);
 
 const _byName = new Map(REGISTRY.map((e) => [e.name, e]));

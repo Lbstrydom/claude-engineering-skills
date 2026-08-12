@@ -380,3 +380,174 @@ export async function recordCorrelationCmd(ctx) {
   if (!result.ok) throw new CommandError('WRITE_FAILED', result.error || 'correlation write failed');
   return { ok: true, cloud: true };
 }
+
+// ── Cluster D (Phase 5) — persona readers ─────────────────────────────────
+// Post-RLS-hardening these ARE the supported read path: anon curl reads are
+// blocked at the policy boundary, so the SKILL.md files call these commands.
+
+const ListPersonasRequestSchema = z.object({ url: z.url() });
+
+const GetPersonaSessionsByRepoSchema = z.object({
+  repoName: z.string().min(1),
+  limit: z.number().int().positive().max(100).optional(),
+  p0Only: z.boolean().optional(),
+  select: z.array(z.string().min(1)).optional(),
+});
+
+const GetPersonaSessionsByUrlSchema = z.object({
+  url: z.string().min(1),
+  limit: z.number().int().positive().max(100).optional(),
+  select: z.array(z.string().min(1)).optional(),
+});
+
+const csv = (s) => s.split(',').map((x) => x.trim()).filter(Boolean);
+
+/** `list-personas` — registered personas for an app URL. */
+export async function listPersonasCmd(ctx) {
+  const urlFlag = ctx.flag('url');
+  const parsed = ListPersonasRequestSchema.safeParse(urlFlag ? { url: urlFlag } : ctx.payload());
+  if (!parsed.success) {
+    throw new CommandError('BAD_INPUT', '--url <app_url> is required', { issues: parsed.error.issues });
+  }
+  if (!await ctx.deps.isPersonaCloudEnabled()) return { ...ctx.degrade(), rows: [] };
+  const rows = await ctx.deps.listPersonasForApp(parsed.data.url);
+  return { ok: true, cloud: true, rows };
+}
+
+/**
+ * `get-persona-sessions-by-repo` — sessions for a named repo.
+ *
+ * The repoId comes from the REQUESTED name, never the ambient checkout: the
+ * store predicate is `repo_name = $1 AND (repo_id = $3 OR repo_id IS NULL)`,
+ * so an ambient id made the two clauses name different repos and returned
+ * `rows: []` alongside `scopedByRepoId: true` — a false zero wearing a field
+ * that asserts correct scoping (F10).
+ */
+export async function getPersonaSessionsByRepoCmd(ctx) {
+  const repoFlag = ctx.flag('repo');
+  const limitFlag = ctx.flag('limit');
+  const selectFlag = ctx.flag('select');
+  const p = repoFlag
+    ? {
+        repoName: repoFlag,
+        ...(limitFlag ? { limit: Number(limitFlag) } : {}),
+        ...(ctx.hasFlag('p0-only') ? { p0Only: true } : {}),
+        ...(selectFlag ? { select: csv(selectFlag) } : {}),
+      }
+    : ctx.payload();
+
+  const parsed = GetPersonaSessionsByRepoSchema.safeParse(p);
+  if (!parsed.success) {
+    throw new CommandError('BAD_INPUT', '--repo <name> required (optional: --limit <n>, --p0-only, --select <csv>)', { issues: parsed.error.issues });
+  }
+  if (!await ctx.deps.isPersonaCloudEnabled()) return { ...ctx.degrade(), rows: [] };
+  const scope = await ctx.resolveScope({ explicitRepoName: parsed.data.repoName });
+  const repoId = scope.repoId;
+  const rows = await ctx.deps.getPersonaSessionsByRepo({ ...parsed.data, repoId });
+  return { ok: true, cloud: true, rows, scopedByRepoId: Boolean(repoId) };
+}
+
+/** `get-persona-sessions-by-url` — sessions for an app URL (no repo scope). */
+export async function getPersonaSessionsByUrlCmd(ctx) {
+  const urlFlag = ctx.flag('url');
+  const limitFlag = ctx.flag('limit');
+  const selectFlag = ctx.flag('select');
+  const p = urlFlag
+    ? {
+        url: urlFlag,
+        ...(limitFlag ? { limit: Number(limitFlag) } : {}),
+        ...(selectFlag ? { select: csv(selectFlag) } : {}),
+      }
+    : ctx.payload();
+
+  const parsed = GetPersonaSessionsByUrlSchema.safeParse(p);
+  if (!parsed.success) {
+    throw new CommandError('BAD_INPUT', '--url <app_url> required (optional: --limit <n>, --select <csv>)', { issues: parsed.error.issues });
+  }
+  if (!await ctx.deps.isPersonaCloudEnabled()) return { ...ctx.degrade(), rows: [] };
+  const rows = await ctx.deps.getPersonaSessionsByUrl(parsed.data);
+  return { ok: true, cloud: true, rows };
+}
+
+/**
+ * `get-reachability-evidence` — per-persona reached destinations for
+ * /nav-audit --bootstrap.
+ *
+ * The response is schema-validated BEFORE emission: it used to degrade a
+ * malformed payload to `{ok:true, personas:[]}`, which withheld the bad data
+ * (right) while calling that outcome a success (wrong) — the consumer cannot
+ * tell "this repo has no evidence" from "the reader is broken", and reads the
+ * second as the first.
+ */
+export async function getReachabilityEvidenceCmd(ctx) {
+  const { ReachabilityEvidenceRequestSchema, ReachabilityEvidenceResponseSchema } = await import('../../schemas.mjs');
+  const repoFlag = ctx.flag('repo');
+  const limitFlag = ctx.flag('limit');
+  const sinceDaysFlag = ctx.flag('since-days');
+  const p = repoFlag
+    ? {
+        repoName: repoFlag,
+        ...(limitFlag ? { limit: Number(limitFlag) } : {}),
+        ...(sinceDaysFlag ? { sinceDays: Number(sinceDaysFlag) } : {}),
+      }
+    : ctx.payload();
+
+  const parsed = ReachabilityEvidenceRequestSchema.safeParse(p);
+  if (!parsed.success) {
+    throw new CommandError('BAD_INPUT', '--repo <name> required (optional: --limit <n> per-persona, --since-days <d>)', { issues: parsed.error.issues });
+  }
+  if (!await ctx.deps.isPersonaCloudEnabled()) return { ...ctx.degrade(), personas: [] };
+
+  const { personas } = await ctx.deps.getReachabilityEvidence({
+    repoName: parsed.data.repoName,
+    ...(parsed.data.limit ? { perPersona: parsed.data.limit } : {}),
+    ...(parsed.data.sinceDays ? { sinceDays: parsed.data.sinceDays } : {}),
+  });
+  const validated = ReachabilityEvidenceResponseSchema.safeParse({ ok: true, cloud: true, personas });
+  if (!validated.success) {
+    throw new CommandError('PROTOCOL_VIOLATION',
+      'reachability evidence failed its response schema — withholding the payload rather than reporting an empty success',
+      { issues: validated.error.issues });
+  }
+  return validated.data;
+}
+
+/**
+ * `get-recent-findings` — recent HIGH/MEDIUM audit findings for a repo,
+ * for /persona-test Phase 0d enrichment.
+ *
+ * An explicit `--repo` is a deliberate cross-repo override and WINS: cwd
+ * auto-resolution is skipped entirely when either identity field is supplied,
+ * because checking only `!p.repoId` let cwd resolution clobber an explicit
+ * `--repo` every time (the flag only ever populates `repoName`). `--repo-id`
+ * is read here too (F16 — it was allowlisted but never read).
+ */
+export async function getRecentFindingsCmd(ctx) {
+  const repoFlag = ctx.flag('repo');
+  const repoIdFlag = ctx.flag('repo-id');
+  const limitFlag = ctx.flag('limit');
+  const severityFlag = ctx.flag('severity');
+  const p = (repoFlag || repoIdFlag || limitFlag || severityFlag)
+    ? {
+        ...(repoFlag ? { repoName: repoFlag } : {}),
+        ...(repoIdFlag ? { repoId: repoIdFlag } : {}),
+        ...(limitFlag ? { limit: Number(limitFlag) } : {}),
+        ...(severityFlag ? { severities: csv(severityFlag) } : {}),
+      }
+    : ctx.payload();
+
+  if (!ctx.cloud.enabled) return { ...ctx.degrade(), findings: [] };
+
+  if (!p.repoId && !p.repoName) {
+    const { resolveRepoIdentity } = await import('../../repo-identity.mjs');
+    const repoUuid = resolveRepoIdentity(process.cwd())?.repoUuid;
+    const row = repoUuid ? await ctx.deps.getRepoIdByUuid(repoUuid).catch(() => null) : null;
+    if (row?.id) p.repoId = row.id;
+  }
+  if (!p.repoId && !p.repoName) {
+    throw new CommandError('BAD_INPUT',
+      'no repo identity — run from a repo root or pass --repo <name> (optional: --limit <n>, --severity HIGH,MEDIUM)');
+  }
+  const findings = await ctx.deps.getRecentFindingsByRepo(p);
+  return { ok: true, cloud: true, findings };
+}

@@ -631,69 +631,9 @@ async function cmdListUnremediatedAcceptances() {
  * @param {{primary_file?: string, detail_snapshot?: string}} f
  * @returns {string} note, or '' when the finding is clean / uncheckable
  */
-function groundingNoteFor(f) {
-  try {
-    const root = process.cwd();
-    const res = checkFindingGrounding({
-      detail: f.detail_snapshot || '',
-      primaryFile: f.primary_file || '',
-      readFile: (rel) => {
-        // `primary_file` is model-authored text — an untrusted path source that we
-        // then READ and feed into an audit prompt bound for a third-party LLM.
-        //
-        // The previous check was `p.startsWith(path.resolve(root))`, which is wrong
-        // twice: no separator, so `/repo-evil/x` passes containment for `/repo`
-        // (demonstrated 2026-07-31); and no symlink resolution, so an in-repo symlink
-        // pointing at `~/.ssh/id_rsa` passed and was read. That is the INC-001
-        // symlink-bypass class landing on the sensitive-egress seam.
-        const verdict = classifyReadPath({ repoRoot: root, candidate: rel });
-        if (!verdict.ok) return null;
-        return readFileSync(verdict.canonical, 'utf8');
-      },
-    });
-    return formatGroundingNote(res);
-  } catch { return ''; }
-}
+// groundingNoteFor moved to scripts/lib/cross-skill/commands/final-review.mjs (registry).
 
-async function cmdFinalReviewStats() {
-  await initLearningStore();
-  const repoName = argOption('repo');
-  if (!repoName) return emitError('BAD_INPUT', '--repo <name> is required');
-  const limitFlag = argOption('queue-limit');
-  const res = await getFinalReviewStats(repoName, limitFlag ? { queueLimit: Number(limitFlag) } : {});
-  // --worksheet: same human-grade surface as model-ab-adjudicate (this queue was
-  // the FIRST raw-JSON adjudication failure — see lib/adjudication-worksheet.mjs).
-  if (process.argv.includes('--worksheet') && res.ok) {
-    const { renderAdjudicationWorksheet } = await import('./lib/adjudication-worksheet.mjs');
-    const { writeFileSync, mkdirSync, existsSync } = await import('node:fs');
-    const pending = (res.shadowOnlyQueue || []).filter((f) => !f.user_action);
-    const md = renderAdjudicationWorksheet({
-      title: `Final-review shadow-only spot-check — repo ${repoName}`,
-      introLines: [
-        'Findings the SHADOW final reviewer raised that the primary did not. Accepting one is evidence the second gate earns its keep (pre-registered stopping rule in AGENTS.md).',
-      ],
-      items: pending.map((f) => ({
-        runId: f.run_id, fingerprint: f.finding_fingerprint, severity: f.severity,
-        category: f.category, file: f.primary_file, detail: f.detail_snapshot,
-        groundingNote: groundingNoteFor(f),
-      })),
-      actions: ['accepted', 'dismissed'],
-      // `--bucket shadow-only` is explicit, not implied: this queue is
-      // shadow-only by construction, and stating it means the documented
-      // operator flow can never hit the ambiguous-bucket refusal if the same
-      // fingerprint later also appears as a primary finding.
-      commandFor: (it, a) => `node scripts/cross-skill.mjs final-review-adjudicate --run-id ${it.runId} --fingerprint ${it.fingerprint} --action ${a} --bucket shadow-only`,
-      generatedAt: new Date().toISOString(),
-    });
-    const dir = existsSync('docs/arm-eval') ? 'docs/arm-eval/worksheets' : '.audit';
-    const out = argOption('out') || `${dir}/final-review-adjudication-worksheet.md`;
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(out, md);
-    process.stderr.write(`  [final-review-stats] worksheet: ${pending.length} pending finding(s) → ${out}\n`);
-    return emit({ ok: true, cloud: res.cloud, count: pending.length, worksheet: out });
-  }
-  emit(res);
-}
+// cmdFinalReviewStats moved to scripts/lib/cross-skill/commands/final-review.mjs (registry).
 
 // cmdFinalReviewAdjudicate moved to scripts/lib/cross-skill/commands/final-review.mjs (registry).
 
@@ -717,54 +657,7 @@ async function cmdFinalReviewStats() {
  * The `unavailable` diagnostic is a CODE from a closed set — never `err.message`,
  * whose contents can include a DSN or key.
  */
-async function cmdFinalReviewPending() {
-  const repoName = argOption('repo');
-  if (!repoName) return emitError('BAD_INPUT', '--repo <name> is required');
-  const wantRender = process.argv.includes('--render');
-  const commitSha = argOption('commit') || null;
-  const pageSize = Math.min(Math.max(Number(argOption('page-size') || 10) || 10, 1), 50);
-
-  const done = (result) => {
-    if (!wantRender) return emit(result);
-    const text = renderFinalReviewCard(result, { commitSha });
-    if (text) process.stdout.write(`${text}\n`);
-    return undefined; // exit 0 with no JSON — the card IS the output
-  };
-
-  let res;
-  try {
-    await initLearningStore();
-    if (!await isCloudEnabled()) return done({ schemaVersion: 1, state: 'disabled' });
-    res = await getFinalReviewStats(repoName, { queueLimit: 50 });
-  } catch {
-    // Boundary classifier: any thrown failure becomes ONE literal. The error
-    // object never reaches the result.
-    return done({ schemaVersion: 1, state: 'unavailable', diagnostic: 'CLOUD_UNREACHABLE' });
-  }
-  if (!res?.ok) {
-    const diagnostic = res?.error === 'NOT_MIGRATED' ? 'NOT_MIGRATED' : 'CLOUD_UNREACHABLE';
-    return done({ schemaVersion: 1, state: 'unavailable', diagnostic });
-  }
-  if (!Array.isArray(res.shadowOnlyQueue) || !Array.isArray(res.actionablePairs)) {
-    return done({ schemaVersion: 1, state: 'unavailable', diagnostic: 'MALFORMED_RESPONSE' });
-  }
-
-  const counts = summariseCounts(res.actionablePairs);
-  const items = orderItems(res.shadowOnlyQueue)
-    .map((r) => ({ ...r, classification: classifyFinalReviewOutcome(r) }))
-    .filter((r) => isActionable(r.classification))
-    .slice(0, pageSize)
-    // Display-safe projection ONLY — `detail_snapshot` is deliberately dropped:
-    // it is free-form model prose and has no place in a ship card.
-    .map((r) => ({
-      run_id: r.run_id, finding_fingerprint: r.finding_fingerprint, bucket: 'shadow-only',
-      classification: r.classification, severity: r.severity, category: r.category,
-      user_action: r.user_action ?? null, remediation_state: r.remediation_state ?? null,
-      primary_file: r.primary_file ?? null, created_at: r.created_at ?? null,
-    }));
-
-  return done({ schemaVersion: 1, state: 'ready', cloud: true, repo: repoName, counts, shownCount: items.length, items });
-}
+// cmdFinalReviewPending moved to scripts/lib/cross-skill/commands/final-review.mjs (registry).
 
 /**
  * Record that an accepted final-review finding was actually FIXED.
@@ -1354,18 +1247,7 @@ const ListPersonasRequestSchema = z.object({
   url: z.url(),
 });
 
-async function cmdListPersonas() {
-  const urlFlag = argOption('url');
-  const p = urlFlag ? { url: urlFlag } : parsePayload();
-  const parsed = ListPersonasRequestSchema.safeParse(p);
-  if (!parsed.success) return emitError('BAD_INPUT', '--url <app_url> is required', { issues: parsed.error.issues });
-
-  const cloud = await isPersonaCloudEnabled();
-  if (!cloud) return emit({ ok: true, cloud: false, rows: [] });
-
-  const rows = await listPersonasForApp(parsed.data.url);
-  emit({ ok: true, cloud: true, rows });
-}
+// cmdListPersonas moved to scripts/lib/cross-skill/commands/persona.mjs (registry).
 
 const AddPersonaRequestSchema = z.object({
   name: z.string().min(1),
@@ -1446,96 +1328,14 @@ const GetPersonaSessionsByRepoSchema = z.object({
   select: z.array(z.string().min(1)).optional(),
 });
 
-async function cmdGetPersonaSessionsByRepo() {
-  const repoFlag = argOption('repo');
-  const limitFlag = argOption('limit');
-  const p0OnlyFlag = rest.includes('--p0-only');
-  const selectFlag = argOption('select');
-
-  let p;
-  if (repoFlag) {
-    p = {
-      repoName: repoFlag,
-      ...(limitFlag ? { limit: Number(limitFlag) } : {}),
-      ...(p0OnlyFlag ? { p0Only: true } : {}),
-      ...(selectFlag ? { select: selectFlag.split(',').map(s => s.trim()).filter(Boolean) } : {}),
-    };
-  } else {
-    p = parsePayload();
-  }
-
-  const parsed = GetPersonaSessionsByRepoSchema.safeParse(p);
-  if (!parsed.success) {
-    return emitError('BAD_INPUT', '--repo <name> required (optional: --limit <n>, --p0-only, --select <csv>)', { issues: parsed.error.issues });
-  }
-
-  const cloud = await isPersonaCloudEnabled();
-  if (!cloud) return emit({ ok: true, cloud: false, rows: [] });
-
-  // Pass the CANONICAL repo id alongside the caller's name, so a row whose two
-  // identity fields disagree is rejected rather than served.
-  //
-  // The id must come from the REQUESTED name, not the ambient checkout. It used
-  // to be `resolveRepoForStore({})`, and the store's predicate is
-  // `WHERE repo_name = $1 AND (repo_id = $3 OR repo_id IS NULL)` — so asking
-  // for another repo returned `rows: []` alongside `scopedByRepoId: true`, an
-  // authoritative empty result that actively asserted it had been scoped
-  // correctly. Same defect as persona-outcomes, same resolver now.
-  const _scope = await resolveRequestedRepoScope(parsed.data.repoName);
-  if (!_scope.ok) return emitError(_scope.code, _scope.message);
-  const repoId = _scope.repoId;
-  const rows = await getPersonaSessionsByRepo({ ...parsed.data, repoId });
-  emit({ ok: true, cloud: true, rows, scopedByRepoId: Boolean(repoId) });
-}
+// cmdGetPersonaSessionsByRepo moved to scripts/lib/cross-skill/commands/persona.mjs (registry).
 
 /**
  * get-reachability-evidence — per-persona reached destinations for /nav-audit
  * --bootstrap seeding. Cloud-off / reader-error both degrade to `{personas:[]}`
  * (the store already swallows DB errors), so --bootstrap never aborts (R1-M5/R2-H2).
  */
-async function cmdGetReachabilityEvidence() {
-  const repoFlag = argOption('repo');
-  const limitFlag = argOption('limit');
-  const sinceDaysFlag = argOption('since-days');
-
-  const p = repoFlag
-    ? {
-        repoName: repoFlag,
-        ...(limitFlag ? { limit: Number(limitFlag) } : {}),
-        ...(sinceDaysFlag ? { sinceDays: Number(sinceDaysFlag) } : {}),
-      }
-    : parsePayload();
-
-  const parsed = ReachabilityEvidenceRequestSchema.safeParse(p);
-  if (!parsed.success) {
-    return emitError('BAD_INPUT', '--repo <name> required (optional: --limit <n> per-persona, --since-days <d>)', { issues: parsed.error.issues });
-  }
-
-  const cloud = await isPersonaCloudEnabled();
-  if (!cloud) return emit({ ok: true, cloud: false, personas: [] });
-
-  const { personas } = await getReachabilityEvidence({
-    repoName: parsed.data.repoName,
-    ...(parsed.data.limit ? { perPersona: parsed.data.limit } : {}),
-    ...(parsed.data.sinceDays ? { sinceDays: parsed.data.sinceDays } : {}),
-  });
-  // Guarantee the structural contract before emission (R2-M2) — a reader drift
-  // never ships a malformed payload to the nav-audit consumer.
-  //
-  // It used to degrade to `{ok:true, cloud:true, personas:[]}`. Withholding the
-  // malformed payload was right; calling that OUTCOME a success was not — the
-  // consumer cannot distinguish "this repo has no reachability evidence" from
-  // "the reader is broken", and reads the second as the first. Same shape as
-  // `measured:false` vs a genuine zero elsewhere in this file: an unmeasurable
-  // condition is reported as unmeasured, never as a clean empty result.
-  const validated = ReachabilityEvidenceResponseSchema.safeParse({ ok: true, cloud: true, personas });
-  if (!validated.success) {
-    return emitError('PROTOCOL_VIOLATION',
-      'reachability evidence failed its response schema — withholding the payload rather than reporting an empty success',
-      { issues: validated.error.issues });
-  }
-  emit(validated.data);
-}
+// cmdGetReachabilityEvidence moved to scripts/lib/cross-skill/commands/persona.mjs (registry).
 
 /**
  * À-la-carte "what's worth running next" advisor (skill-recommender.mjs). Gathers
@@ -1613,51 +1413,7 @@ function gitChangedFiles() {
 // sharper Reflect judgement. Replaces the dead PostgREST curl (M4 removed
 // supabase-js). Graceful empty result when cloud is off or the repo is
 // unknown — the skill treats `[]` as "no audit context", never an error.
-async function cmdGetRecentFindings() {
-  const repoFlag = argOption('repo');
-  const repoIdFlag = argOption('repo-id');
-  const limitFlag = argOption('limit');
-  const severityFlag = argOption('severity'); // CSV, e.g. "HIGH,MEDIUM"
-
-  // `--repo-id` is globally allowlisted, and the store honours a `repoId` in the
-  // payload — but the argv branch below never read the flag, so
-  // `get-recent-findings --repo-id <uuid>` passed validation, built a payload
-  // with NO scope, and fell through to cwd auto-resolution: the explicitly
-  // requested repo silently replaced by whichever repo the caller happened to
-  // stand in. Accepted-and-inert, the shape this CLI has now been bitten by
-  // four times.
-  const p = (repoFlag || repoIdFlag || limitFlag || severityFlag)
-    ? {
-        ...(repoFlag ? { repoName: repoFlag } : {}),
-        ...(repoIdFlag ? { repoId: repoIdFlag } : {}),
-        ...(limitFlag ? { limit: Number(limitFlag) } : {}),
-        ...(severityFlag ? { severities: severityFlag.split(',').map(s => s.trim()).filter(Boolean) } : {}),
-      }
-    : parsePayload();
-
-  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, findings: [] });
-
-  // Identity-first: resolve the CANONICAL repo_id (stable repo_uuid →
-  // audit_repos.id) from the runner's cwd, so enrichment matches the audit
-  // findings regardless of the bare-vs-owner/repo display name. An explicit
-  // --repo <name> is a deliberate cross-repo override and always wins — skip
-  // cwd auto-resolution entirely so getRecentFindingsByRepo's own
-  // repoId-then-repoName fallback resolves the REQUESTED repo, not whichever
-  // repo the cwd happens to be (the bug: checking `!p.repoId` here let cwd
-  // resolution silently clobber an explicit `--repo` every time, since the
-  // flag only ever populates `p.repoName`).
-  if (!p.repoId && !p.repoName) {
-    const repoUuid = resolveRepoIdentity(process.cwd())?.repoUuid;
-    const row = repoUuid ? await getRepoIdByUuid(repoUuid).catch(() => null) : null;
-    if (row?.id) p.repoId = row.id;
-  }
-  if (!p.repoId && !p.repoName) {
-    return emitError('BAD_INPUT', 'no repo identity — run from a repo root or pass --repo <name> (optional: --limit <n>, --severity HIGH,MEDIUM)');
-  }
-
-  const findings = await getRecentFindingsByRepo(p);
-  emit({ ok: true, cloud: true, findings });
-}
+// cmdGetRecentFindings moved to scripts/lib/cross-skill/commands/persona.mjs (registry).
 
 const GetPersonaSessionsByUrlSchema = z.object({
   url: z.string().min(1),
@@ -1665,33 +1421,7 @@ const GetPersonaSessionsByUrlSchema = z.object({
   select: z.array(z.string().min(1)).optional(),
 });
 
-async function cmdGetPersonaSessionsByUrl() {
-  const urlFlag = argOption('url');
-  const limitFlag = argOption('limit');
-  const selectFlag = argOption('select');
-
-  let p;
-  if (urlFlag) {
-    p = {
-      url: urlFlag,
-      ...(limitFlag ? { limit: Number(limitFlag) } : {}),
-      ...(selectFlag ? { select: selectFlag.split(',').map(s => s.trim()).filter(Boolean) } : {}),
-    };
-  } else {
-    p = parsePayload();
-  }
-
-  const parsed = GetPersonaSessionsByUrlSchema.safeParse(p);
-  if (!parsed.success) {
-    return emitError('BAD_INPUT', '--url <app_url> required (optional: --limit <n>, --select <csv>)', { issues: parsed.error.issues });
-  }
-
-  const cloud = await isPersonaCloudEnabled();
-  if (!cloud) return emit({ ok: true, cloud: false, rows: [] });
-
-  const rows = await getPersonaSessionsByUrl(parsed.data);
-  emit({ ok: true, cloud: true, rows });
-}
+// cmdGetPersonaSessionsByUrl moved to scripts/lib/cross-skill/commands/persona.mjs (registry).
 
 // cmdDetectStack moved to scripts/lib/cross-skill/commands/misc.mjs (registry).
 
@@ -1995,15 +1725,7 @@ async function cmdGetFrictionNeighbourhood() {
  *
  * Payload: {"runIds": ["<uuid>", ...], "shadowPass": "final-review-shadow"}
  */
-async function cmdShadowOverlap() {
-  const p = parsePayload();
-  await initLearningStore();
-  if (!await isCloudEnabled()) {
-    return emit({ ok: true, cloud: false, hint: 'cloud disabled — overlap is unmeasurable locally' });
-  }
-  const res = await computeShadowOverlap({ runIds: p.runIds, shadowPass: p.shadowPass || 'final-review-shadow' });
-  return emit({ cloud: true, ...res });
-}
+// cmdShadowOverlap moved to scripts/lib/cross-skill/commands/final-review.mjs (registry).
 
 /**
  * Record a unit/integration test as the regression lock for an audit finding.
@@ -2408,8 +2130,6 @@ const commands = {
   // Phase 3 WS-PIPE1 — persona_test_candidates aggregation table.
   'list-unlocked-fixes': cmdListUnlockedFixes,
   'list-unremediated-acceptances': cmdListUnremediatedAcceptances,
-  'final-review-stats': cmdFinalReviewStats,
-  'final-review-pending': cmdFinalReviewPending,
   'finalize-outcomes': cmdFinalizeOutcomes,
   // Model-A/B/C experiment harness (Cluster C)
   'model-ab-adjudicate': cmdModelAbAdjudicate,
@@ -2423,13 +2143,7 @@ const commands = {
   'arm-eval-toggle': cmdArmEvalToggle,
   'arm-eval-maybe-capture': cmdArmEvalMaybeCapture,
   'arm-eval-export': cmdArmEvalExport,
-  'list-personas': cmdListPersonas,
-  'get-persona-sessions-by-repo': cmdGetPersonaSessionsByRepo,
-  'get-reachability-evidence': cmdGetReachabilityEvidence,
   'recommend-skills': cmdRecommendSkills,
-  'get-persona-sessions-by-url': cmdGetPersonaSessionsByUrl,
-  'get-recent-findings': cmdGetRecentFindings,
-  'shadow-overlap':     cmdShadowOverlap,
   'lock-with-test':     cmdLockWithTest,
   // Architectural memory
   // Phase 1 — adaptive-learning-v1

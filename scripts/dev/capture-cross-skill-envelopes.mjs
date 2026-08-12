@@ -174,6 +174,36 @@ export const CASES = [
   { id: 'drift-score-cloud-off', args: ['compute-drift-score', '--json', '{"repoId":"p","refreshId":"r"}'] },
   { id: 'neighbourhood-cloud-off', args: ['get-neighbourhood', '--json', '{"targetPaths":["scripts/cross-skill.mjs"],"intentDescription":"x"}'] },
   { id: 'incident-neighbourhood-cloud-off', args: ['get-incident-neighbourhood', '--json', '{"targetPaths":["scripts/cross-skill.mjs"],"intentDescription":"x"}'] },
+
+  // ── Cluster D (Phase 5) — remaining readers, model-eval, learning,
+  //    forwarders, legacy retirement ─────────────────────────────────────────
+  // Same rule as every cohort: captured from LEGACY before migration.
+  // `arm-eval-run` stays refusal-only (no cloud gate → paid LLM calls).
+  { id: 'fr-stats-cloud-off', args: ['final-review-stats', '--repo', 'owner/repo'] },
+  { id: 'shadow-overlap-no-runids', args: ['shadow-overlap', '--json', '{}'] },
+  { id: 'recommend-skills-json', args: ['recommend-skills'] },
+  { id: 'mab-stats-cloud-off', args: ['model-ab-stats'] },
+  { id: 'mab-decision-cloud-off', args: ['model-ab-decision'] },
+  { id: 'mab-adj-bad-action', args: ['model-ab-adjudicate', '--action', 'bogus'] },
+  { id: 'arm-decision-no-exp', args: ['arm-eval-decision'] },
+  { id: 'arm-stats-cloud-off', args: ['arm-eval-stats'] },
+  { id: 'arm-adj-no-session', args: ['arm-eval-adjudicate'] },
+  { id: 'arm-export-no-args', args: ['arm-eval-export'] },
+  { id: 'arm-capture-no-exp', args: ['arm-eval-maybe-capture'] },
+  { id: 'learning-stats-cloud-off', args: ['learning-stats'] },
+  { id: 'learning-qf-stats', args: ['learning-quickfix-stats', '--action', 'stats'] },
+  { id: 'learning-qf-bad-action', args: ['learning-quickfix-stats', '--action', 'bogus'] },
+  { id: 'quality-no-verb', args: ['quality'] },
+  { id: 'quality-bad-verb', args: ['quality', 'bogus-verb'] },
+  { id: 'upstream-no-verb', args: ['upstream'] },
+  { id: 'upstream-bad-verb', args: ['upstream', 'bogus-verb'] },
+  { id: 'friction-neighbourhood-empty', args: ['get-friction-neighbourhood', '--json', '{"prompt":"x"}'] },
+  { id: 'finalize-outcomes-missing', args: ['finalize-outcomes'] },
+  // The ENOENT message embeds the ABSOLUTE path of the randomised temp cwd, so
+  // the message is environment-derived even though the error code is not.
+  // Volatile paths are dotted for exactly this: the contract being pinned is
+  // `{ok:false, error.code:'BAD_INPUT'}` at exit 2, not the OS's phrasing.
+  { id: 'finalize-outcomes-bad-round', args: ['finalize-outcomes', '--run-id', 'r', '--ledger', 'nope.json', '--result', 'nope.json', '--round', '0'], volatile: ['error.message'] },
 ];
 
 /** Run one case hermetically. Shared by capture (here) and replay (the test). */

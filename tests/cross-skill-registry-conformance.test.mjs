@@ -121,6 +121,19 @@ describe('registry entries — every policy tuple is valid', () => {
     }
   });
 
+  it('every okless declaration carries a WRITTEN reason (same discipline as softFail)', () => {
+    // `okless` exempts a command from the "envelope must carry ok:true" rule.
+    // Like softFail it is a licence, so it is only legal with a stated reason —
+    // otherwise a handler that simply FORGOT to return `ok` would inherit the
+    // exemption meant for a deliberately state-shaped envelope.
+    for (const e of REGISTRY) {
+      if (e.okless === undefined) continue;
+      assert.equal(typeof e.okless?.reason, 'string',
+        `${e.name}: okless must be {reason} — a bare flag hides which envelopes are deliberately ok-less`);
+      assert.ok(e.okless.reason.length > 40, `${e.name}: okless reason must explain the envelope's shape`);
+    }
+  });
+
   it('every softFail is verb-scoped or carries a WRITTEN reason — the debt is enumerable, not a bare flag', () => {
     // `softFail` exempts a command from the ok:true validator, i.e. it is a
     // licence to emit a failure at exit 0. A bare boolean makes that licence
