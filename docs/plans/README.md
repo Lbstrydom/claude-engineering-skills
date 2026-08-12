@@ -22,7 +22,7 @@ This is the list to read when asking "what is in flight?".
 | Plan | Status | Notes |
 |---|---|---|
 | [cross-skill.mjs CLI integrity remediation](./cross-skill-cli-integrity.md) | `In Progress` | all 21 fixes landed + Gemini gate APPROVE; NOT `Complete` because the stated `/audit-code` bar (HIGH == 0) … |
-| [cross-skill CLI — declarative command registry](./cross-skill-command-registry.md) | `Draft` |  |
+| [cross-skill CLI — declarative command registry](./cross-skill-command-registry.md) | `In Progress` | approved 2026-08-12; Cluster A started via /cycle --autonomous |
 | [Event-Wiring Symmetry Check](./event-wiring-symmetry.md) | `Draft` |  |
 | [Final-Review Shadow Bake-Off (marginal-value re-test)](./final-review-shadow-bakeoff.md) | `In Progress` | activated 2026-07-31 — see §0 Activation Addendum |
 | [Learning / Persona / Quickfix Reliability Debt (2026-07-26 triage)](./refactor-learning-persona-quickfix-2026-07.md) | `Draft` | re-scoped to the 7 entries that are still real. |
