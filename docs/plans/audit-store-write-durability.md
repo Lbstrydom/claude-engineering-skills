@@ -737,9 +737,19 @@ of them:
   were carried on a label alone, and inventing specifications for files this plan
   never traced would be worse than deferring them. **Trigger**: a follow-up plan
   that traces each file first — same principle, separate scope.
-- **`resolveLabelTarget` scoping** — untraced. Its sibling `updatePlanStatus`
-  turned out to be already fixed (§1), so the finding's premise needs verifying
-  before any change. **Trigger**: read it; if unscoped, fold into the follow-up.
+- **`resolveLabelTarget` scoping — TRACED 2026-08-12, premise false, closed.**
+  Same outcome as its sibling `updatePlanStatus`: not a live defect.
+  `resolveLabelTarget(scripts/lib/store/persona-outcomes.mjs:53)` accepts no
+  tenant-scope input at all (only `sessionId`/`personaFindingHash`); `repoId`
+  is an OUTPUT derived from a PK-anchored lookup
+  (`SELECT ... FROM persona_test_sessions WHERE id = $1`), never a caller
+  variable that could name the wrong repo. The caller
+  (`scripts/lib/cross-skill/commands/persona.mjs:153-156`) threads the
+  RETURNED `target.repoId` into the write, not an ambient one, and the write
+  (`upsertPersonaFindingOutcome`) enforces it as a real SQL predicate — the
+  upsert's conflict target is `(repo_id, persona_finding_hash)`, confirmed
+  against `supabase/migrations/20260713180000_persona_finding_outcomes.sql`.
+  Tenant scope is a constraint here, not a label. No follow-up needed.
 - **The god-module / layering family** (26 rows, 2 HIGH) — architectural
   refactoring; bundling it would prevent convergence.
 - Retry policy, backoff, ordering, dead-letter queue.
