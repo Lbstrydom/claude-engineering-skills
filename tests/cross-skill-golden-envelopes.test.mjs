@@ -33,12 +33,18 @@ const ADDITIVE_FIELDS = new Map([
 
 const fixtures = JSON.parse(fs.readFileSync(FIXTURE_PATH, 'utf8'));
 
-function stripAdditive(envelope, caseId) {
+function stripAdditive(envelope, caseId, volatileFields = []) {
   if (!envelope || typeof envelope !== 'object') return envelope;
   const out = structuredClone(envelope);
   for (const fieldPath of ADDITIVE_FIELDS.keys()) {
     const [caseGlob, field] = fieldPath.split(':');
     if (caseGlob === '*' || caseGlob === caseId) delete out[field];
+  }
+  // Environment-derived fields (see `volatile` in the capture table): compared
+  // for PRESENCE and TYPE, never for value. Dropping them entirely would let a
+  // field silently disappear, which is the drift this suite exists to catch.
+  for (const field of volatileFields) {
+    if (field in out) out[field] = `<volatile:${typeof out[field]}>`;
   }
   return out;
 }
@@ -75,8 +81,8 @@ describe('cross-skill golden envelopes — migrated commands match the legacy ca
       assert.equal(actual.status, expected.status,
         `exit code drifted (stderr tail: ${actual.stderrSample})`);
       assert.deepEqual(
-        stripAdditive(actual.envelope, c.id),
-        stripAdditive(expected.envelope, c.id),
+        stripAdditive(actual.envelope, c.id, c.volatile),
+        stripAdditive(expected.envelope, c.id, c.volatile),
         'envelope drifted from the legacy capture',
       );
     });

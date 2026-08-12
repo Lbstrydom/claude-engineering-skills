@@ -119,6 +119,61 @@ export const CASES = [
   { id: 'rec-layering-missing', args: ['record-layering-violations', '--json', '{}'] },
   { id: 'set-embed-model-missing', args: ['set-active-embedding-model', '--json', '{}'] },
   { id: 'lock-with-test-missing', args: ['lock-with-test'] },
+
+  // ── Cluster C (Phase 4) — readers ────────────────────────────────────────
+  // Captured from the LEGACY handlers before migration. Readers degrade rather
+  // than refuse, so most rows here are the cloud-off shape — which is exactly
+  // the contract that must not drift (a reader's empty result and its
+  // "unmeasured" result are different facts, and several of these commands
+  // exist to keep them apart).
+  { id: 'plan-satisfaction-no-id', args: ['plan-satisfaction'] },
+  { id: 'audit-effectiveness-no-repo', args: ['audit-effectiveness'] },
+  { id: 'list-unlocked-cloud-off', args: ['list-unlocked-fixes'] },
+  { id: 'list-unremediated-cloud-off', args: ['list-unremediated-acceptances'] },
+  { id: 'preview-gate-json', args: ['preview-gate'] },
+  { id: 'detect-stack-json', args: ['detect-stack'] },
+  { id: 'list-personas-no-url', args: ['list-personas'] },
+  { id: 'list-personas-cloud-off', args: ['list-personas', '--url', 'https://e.test'] },
+  { id: 'sessions-by-repo-no-repo', args: ['get-persona-sessions-by-repo'] },
+  { id: 'sessions-by-repo-cloud-off', args: ['get-persona-sessions-by-repo', '--repo', 'owner/repo'] },
+  { id: 'sessions-by-url-no-url', args: ['get-persona-sessions-by-url'] },
+  { id: 'sessions-by-url-cloud-off', args: ['get-persona-sessions-by-url', '--url', 'https://e.test'] },
+  { id: 'reachability-no-repo', args: ['get-reachability-evidence'] },
+  { id: 'reachability-cloud-off', args: ['get-reachability-evidence', '--repo', 'owner/repo'] },
+  { id: 'recent-findings-cloud-off', args: ['get-recent-findings', '--repo', 'owner/repo'] },
+  { id: 'nav-first-seen-no-keys', args: ['get-nav-first-seen', '--json', '{}'] },
+  { id: 'nav-first-seen-cloud-off', args: ['get-nav-first-seen', '--json', '{"driftKeys":["k1"]}'] },
+  { id: 'fr-stats-no-repo', args: ['final-review-stats'] },
+  { id: 'fr-pending-no-repo', args: ['final-review-pending'] },
+  { id: 'fr-pending-cloud-off', args: ['final-review-pending', '--repo', 'owner/repo'] },
+  { id: 'shadow-overlap-cloud-off', args: ['shadow-overlap', '--json', '{"runIds":["r1"]}'] },
+  // `volatile` names fields whose value is derived from the ENVIRONMENT rather
+  // than from the command's contract. Here the repo name comes from the cwd,
+  // and every run gets a fresh randomised temp dir — so the field differs on
+  // every invocation by construction. Pinning it would make the fixture fail
+  // spuriously forever, and a golden that cries wolf gets deleted, taking its
+  // real coverage with it. Normalised on BOTH sides instead, so the rest of the
+  // envelope (ok, repoUuid shape, persisted) stays pinned.
+  // Both fields derive from the randomised temp cwd: `name` is its basename and
+  // `repoUuid` is a v5 uuid hashed FROM the path (the envelope says so —
+  // `source: 'path-fallback'`). What stays pinned is everything that IS the
+  // contract: ok, persisted, remoteUrl, source, and the presence + type of the
+  // two volatile fields.
+  { id: 'resolve-identity-json', args: ['resolve-repo-identity'], volatile: ['name', 'repoUuid'] },
+  { id: 'active-refresh-no-uuid', args: ['get-active-refresh-id'] },
+  { id: 'active-refresh-cloud-off', args: ['get-active-refresh-id', '--repo-uuid', 'u1'] },
+  { id: 'target-domains-no-paths', args: ['compute-target-domains', '--json', '{}'] },
+  { id: 'target-domains-ok', args: ['compute-target-domains', '--json', '{"targetPaths":["scripts/cross-skill.mjs"]}'] },
+  { id: 'callers-no-path', args: ['get-callers-for-file', '--json', '{}'] },
+  { id: 'callers-cloud-off', args: ['get-callers-for-file', '--json', '{"path":"scripts/cross-skill.mjs"}'] },
+  { id: 'list-symbols-no-refresh', args: ['list-symbols-for-snapshot', '--json', '{}'] },
+  { id: 'list-symbols-cloud-off', args: ['list-symbols-for-snapshot', '--json', '{"refreshId":"r1"}'] },
+  { id: 'list-layering-no-refresh', args: ['list-layering-violations-for-snapshot'] },
+  { id: 'list-layering-cloud-off', args: ['list-layering-violations-for-snapshot', '--refresh-id', 'r1'] },
+  { id: 'drift-score-missing', args: ['compute-drift-score', '--json', '{}'] },
+  { id: 'drift-score-cloud-off', args: ['compute-drift-score', '--json', '{"repoId":"p","refreshId":"r"}'] },
+  { id: 'neighbourhood-cloud-off', args: ['get-neighbourhood', '--json', '{"targetPaths":["scripts/cross-skill.mjs"],"intentDescription":"x"}'] },
+  { id: 'incident-neighbourhood-cloud-off', args: ['get-incident-neighbourhood', '--json', '{"targetPaths":["scripts/cross-skill.mjs"],"intentDescription":"x"}'] },
 ];
 
 /** Run one case hermetically. Shared by capture (here) and replay (the test). */

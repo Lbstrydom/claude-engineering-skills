@@ -112,3 +112,61 @@ export async function learningRecordCmd(ctx) {
   if (!result.ok) throw new CommandError('STORE_ERROR', result.error || 'insert failed', { decisionKey });
   return { ok: true, cloud: true, decisionKey };
 }
+
+// ── Cluster C (Phase 4) readers ───────────────────────────────────────────
+
+/** `audit-effectiveness` — the dashboard precision/recall rollup. */
+export async function auditEffectivenessCmd(ctx) {
+  if (!ctx.cloud.enabled) return { ...ctx.degrade(), row: null };
+  const repoId = ctx.flag('repo-id');
+  if (!repoId) throw new CommandError('BAD_INPUT', '--repo-id is required');
+  const row = await ctx.deps.readAuditEffectiveness(repoId);
+  return { ok: true, cloud: true, row };
+}
+
+/** `detect-stack` — local repo-stack detection, schema-validated before emit. */
+export async function detectStackCmd(ctx) {
+  const { detectRepoStack, detectPythonEnvironmentManager } = await import('../../repo-stack.mjs');
+  const { StackProfileSchema } = await import('../../schemas.mjs');
+  const cwd = ctx.flag('cwd') || process.cwd();
+  const includeEnvManager = ctx.hasFlag('include-env-manager');
+  const { stack, pythonFramework, detectedFrom, stackKinds } = detectRepoStack(cwd);
+  const profile = {
+    ok: true,
+    stack,
+    pythonFramework,
+    environmentManager: includeEnvManager ? detectPythonEnvironmentManager(cwd) : null,
+    detectedFrom,
+    stackKinds: stackKinds ?? [],
+  };
+  const parsed = StackProfileSchema.safeParse(profile);
+  if (!parsed.success) {
+    throw new CommandError('SCHEMA_VIOLATION', 'detect-stack produced invalid profile', { issues: parsed.error.issues });
+  }
+  return parsed.data;
+}
+
+/**
+ * `get-nav-first-seen` — when each drift key was first observed.
+ *
+ * `truncated` rides the envelope so a caller can tell a complete history from
+ * a capped one; the empty-history degrade keeps `firstSeen: {}` rather than
+ * omitting the field.
+ */
+export async function getNavFirstSeenCmd(ctx) {
+  const p = ctx.payload();
+  if (!Array.isArray(p.driftKeys) || p.driftKeys.length === 0) {
+    throw new CommandError('BAD_INPUT', 'driftKeys (non-empty array) is required');
+  }
+  if (!ctx.cloud.enabled) return { ...ctx.degrade(), firstSeen: {} };
+  const scope = await ctx.resolveScope();
+  const repoId = scope.kind === 'scoped' ? scope.repoId : null;
+  if (!repoId) return { ok: true, cloud: true, firstSeen: {} };
+  const history = await ctx.deps.listNavAuditRunHistory({ repoId, sinceDays: p.sinceDays ?? undefined });
+  if (!history.ok) return { ok: false, cloud: true, firstSeen: {}, error: history.error };
+  const { firstSeenFromHistory } = await import('../../nav/drift.mjs');
+  const lookup = firstSeenFromHistory(history.rows);
+  const firstSeen = {};
+  for (const key of p.driftKeys) { const v = lookup(key); if (v) firstSeen[key] = v; }
+  return { ok: true, cloud: true, firstSeen, truncated: history.truncated };
+}

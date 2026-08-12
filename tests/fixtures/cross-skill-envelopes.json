@@ -923,6 +923,549 @@
         "cloud": false,
         "locked": false
       }
+    },
+    "plan-satisfaction-no-id": {
+      "args": [
+        "plan-satisfaction"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false,
+        "row": null,
+        "persistentFailures": []
+      }
+    },
+    "audit-effectiveness-no-repo": {
+      "args": [
+        "audit-effectiveness"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false,
+        "row": null
+      }
+    },
+    "list-unlocked-cloud-off": {
+      "args": [
+        "list-unlocked-fixes"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false,
+        "scope": {
+          "mode": "unresolved",
+          "repoId": null,
+          "slug": null
+        },
+        "measured": false,
+        "reason": "cloud-off",
+        "rows": [],
+        "shown": 0,
+        "total": 0,
+        "byMode": {
+          "total": 0,
+          "code": 0,
+          "plan": 0
+        }
+      }
+    },
+    "list-unremediated-cloud-off": {
+      "args": [
+        "list-unremediated-acceptances"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false,
+        "scope": {
+          "mode": "unresolved",
+          "repoId": null,
+          "slug": null
+        },
+        "measured": false,
+        "reason": "cloud-off",
+        "rows": []
+      }
+    },
+    "preview-gate-json": {
+      "args": [
+        "preview-gate"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "mode": "not_applicable",
+        "action": "none",
+        "message": ""
+      }
+    },
+    "detect-stack-json": {
+      "args": [
+        "detect-stack"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "stack": "unknown",
+        "pythonFramework": null,
+        "environmentManager": null,
+        "detectedFrom": [],
+        "stackKinds": []
+      }
+    },
+    "list-personas-no-url": {
+      "args": [
+        "list-personas"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "--url <app_url> is required",
+          "issues": [
+            {
+              "expected": "string",
+              "code": "invalid_type",
+              "path": [
+                "url"
+              ],
+              "message": "Invalid input: expected string, received undefined"
+            }
+          ]
+        }
+      }
+    },
+    "list-personas-cloud-off": {
+      "args": [
+        "list-personas",
+        "--url",
+        "https://e.test"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false,
+        "rows": []
+      }
+    },
+    "sessions-by-repo-no-repo": {
+      "args": [
+        "get-persona-sessions-by-repo"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "--repo <name> required (optional: --limit <n>, --p0-only, --select <csv>)",
+          "issues": [
+            {
+              "expected": "string",
+              "code": "invalid_type",
+              "path": [
+                "repoName"
+              ],
+              "message": "Invalid input: expected string, received undefined"
+            }
+          ]
+        }
+      }
+    },
+    "sessions-by-repo-cloud-off": {
+      "args": [
+        "get-persona-sessions-by-repo",
+        "--repo",
+        "owner/repo"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false,
+        "rows": []
+      }
+    },
+    "sessions-by-url-no-url": {
+      "args": [
+        "get-persona-sessions-by-url"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "--url <app_url> required (optional: --limit <n>, --select <csv>)",
+          "issues": [
+            {
+              "expected": "string",
+              "code": "invalid_type",
+              "path": [
+                "url"
+              ],
+              "message": "Invalid input: expected string, received undefined"
+            }
+          ]
+        }
+      }
+    },
+    "sessions-by-url-cloud-off": {
+      "args": [
+        "get-persona-sessions-by-url",
+        "--url",
+        "https://e.test"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false,
+        "rows": []
+      }
+    },
+    "reachability-no-repo": {
+      "args": [
+        "get-reachability-evidence"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "--repo <name> required (optional: --limit <n> per-persona, --since-days <d>)",
+          "issues": [
+            {
+              "expected": "string",
+              "code": "invalid_type",
+              "path": [
+                "repoName"
+              ],
+              "message": "Invalid input: expected string, received undefined"
+            }
+          ]
+        }
+      }
+    },
+    "reachability-cloud-off": {
+      "args": [
+        "get-reachability-evidence",
+        "--repo",
+        "owner/repo"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false,
+        "personas": []
+      }
+    },
+    "recent-findings-cloud-off": {
+      "args": [
+        "get-recent-findings",
+        "--repo",
+        "owner/repo"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false,
+        "findings": []
+      }
+    },
+    "nav-first-seen-no-keys": {
+      "args": [
+        "get-nav-first-seen",
+        "--json",
+        "{}"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "driftKeys (non-empty array) is required"
+        }
+      }
+    },
+    "nav-first-seen-cloud-off": {
+      "args": [
+        "get-nav-first-seen",
+        "--json",
+        "{\"driftKeys\":[\"k1\"]}"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false,
+        "firstSeen": {}
+      }
+    },
+    "fr-stats-no-repo": {
+      "args": [
+        "final-review-stats"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "--repo <name> is required"
+        }
+      }
+    },
+    "fr-pending-no-repo": {
+      "args": [
+        "final-review-pending"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "--repo <name> is required"
+        }
+      }
+    },
+    "fr-pending-cloud-off": {
+      "args": [
+        "final-review-pending",
+        "--repo",
+        "owner/repo"
+      ],
+      "status": 0,
+      "envelope": {
+        "schemaVersion": 1,
+        "state": "disabled"
+      }
+    },
+    "shadow-overlap-cloud-off": {
+      "args": [
+        "shadow-overlap",
+        "--json",
+        "{\"runIds\":[\"r1\"]}"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false,
+        "hint": "cloud disabled — overlap is unmeasurable locally"
+      }
+    },
+    "resolve-identity-json": {
+      "args": [
+        "resolve-repo-identity"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "repoUuid": "c7a51720-c873-5202-b6e1-6996991756c7",
+        "name": "resolve-identity-jso-6dePPs",
+        "remoteUrl": null,
+        "source": "path-fallback",
+        "persisted": false
+      }
+    },
+    "active-refresh-no-uuid": {
+      "args": [
+        "get-active-refresh-id"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false,
+        "refreshId": null
+      }
+    },
+    "active-refresh-cloud-off": {
+      "args": [
+        "get-active-refresh-id",
+        "--repo-uuid",
+        "u1"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false,
+        "refreshId": null
+      }
+    },
+    "target-domains-no-paths": {
+      "args": [
+        "compute-target-domains",
+        "--json",
+        "{}"
+      ],
+      "status": 1,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "targetPaths array required"
+        }
+      }
+    },
+    "target-domains-ok": {
+      "args": [
+        "compute-target-domains",
+        "--json",
+        "{\"targetPaths\":[\"scripts/cross-skill.mjs\"]}"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "domains": [],
+        "untaggedPaths": [
+          "scripts/cross-skill.mjs"
+        ],
+        "crossDomain": false,
+        "ruleCount": 0
+      }
+    },
+    "callers-no-path": {
+      "args": [
+        "get-callers-for-file",
+        "--json",
+        "{}"
+      ],
+      "status": 1,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "path required"
+        }
+      }
+    },
+    "callers-cloud-off": {
+      "args": [
+        "get-callers-for-file",
+        "--json",
+        "{\"path\":\"scripts/cross-skill.mjs\"}"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false,
+        "callers": [],
+        "callerDomains": [],
+        "snapshotProvenance": "cloud-disabled"
+      }
+    },
+    "list-symbols-no-refresh": {
+      "args": [
+        "list-symbols-for-snapshot",
+        "--json",
+        "{}"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "refreshId required"
+        }
+      }
+    },
+    "list-symbols-cloud-off": {
+      "args": [
+        "list-symbols-for-snapshot",
+        "--json",
+        "{\"refreshId\":\"r1\"}"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false,
+        "rows": []
+      }
+    },
+    "list-layering-no-refresh": {
+      "args": [
+        "list-layering-violations-for-snapshot"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "--refresh-id required"
+        }
+      }
+    },
+    "list-layering-cloud-off": {
+      "args": [
+        "list-layering-violations-for-snapshot",
+        "--refresh-id",
+        "r1"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false,
+        "rows": []
+      }
+    },
+    "drift-score-missing": {
+      "args": [
+        "compute-drift-score",
+        "--json",
+        "{}"
+      ],
+      "status": 2,
+      "envelope": {
+        "ok": false,
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "repoId and refreshId required"
+        }
+      }
+    },
+    "drift-score-cloud-off": {
+      "args": [
+        "compute-drift-score",
+        "--json",
+        "{\"repoId\":\"p\",\"refreshId\":\"r\"}"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false,
+        "drift": null
+      }
+    },
+    "neighbourhood-cloud-off": {
+      "args": [
+        "get-neighbourhood",
+        "--json",
+        "{\"targetPaths\":[\"scripts/cross-skill.mjs\"],\"intentDescription\":\"x\"}"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false,
+        "refreshId": null,
+        "records": [],
+        "totalCandidatesConsidered": 0,
+        "truncated": false,
+        "hint": "cloud disabled — run `npm run arch:refresh` to enable"
+      }
+    },
+    "incident-neighbourhood-cloud-off": {
+      "args": [
+        "get-incident-neighbourhood",
+        "--json",
+        "{\"targetPaths\":[\"scripts/cross-skill.mjs\"],\"intentDescription\":\"x\"}"
+      ],
+      "status": 0,
+      "envelope": {
+        "ok": true,
+        "cloud": false,
+        "records": [],
+        "totalCandidatesConsidered": 0,
+        "freshnessWarning": null,
+        "hint": "cloud disabled — security memory unavailable"
+      }
     }
   }
 }

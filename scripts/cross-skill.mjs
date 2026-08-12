@@ -394,38 +394,13 @@ async function resolveRepoId(payload) {
 
 // cmdRecordPlanVerifyItems moved to scripts/lib/cross-skill/commands/plan-verify.mjs (registry).
 
-async function cmdPlanSatisfaction() {
-  await initLearningStore();
-  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, row: null, persistentFailures: [] });
-  const planId = argOption('plan-id');
-  if (!planId) return emitError('BAD_INPUT', '--plan-id is required');
-  const [row, persistent] = await Promise.all([
-    readPlanSatisfaction(planId),
-    readPersistentPlanFailures(planId),
-  ]);
-  emit({ ok: true, cloud: true, row, persistentFailures: persistent });
-}
+// cmdPlanSatisfaction moved to scripts/lib/cross-skill/commands/plans.mjs (registry).
 
 const NAV_AUDIT_RUN_SCOPES = ['full', 'diff'];
 
 // cmdRecordNavAuditRun moved to scripts/lib/cross-skill/commands/misc.mjs (registry).
 
-async function cmdGetNavFirstSeen() {
-  const p = parsePayload();
-  if (!Array.isArray(p.driftKeys) || p.driftKeys.length === 0) {
-    return emitError('BAD_INPUT', 'driftKeys (non-empty array) is required');
-  }
-  await initLearningStore();
-  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, firstSeen: {} });
-  const repoId = await resolveRepoId(p);
-  if (!repoId) return emit({ ok: true, cloud: true, firstSeen: {} });
-  const history = await listNavAuditRunHistory({ repoId, sinceDays: p.sinceDays ?? undefined });
-  if (!history.ok) return emit({ ok: false, cloud: true, firstSeen: {}, error: history.error });
-  const lookup = firstSeenFromHistory(history.rows);
-  const firstSeen = {};
-  for (const key of p.driftKeys) { const v = lookup(key); if (v) firstSeen[key] = v; }
-  emit({ ok: true, cloud: true, firstSeen, truncated: history.truncated });
-}
+// cmdGetNavFirstSeen moved to scripts/lib/cross-skill/commands/misc.mjs (registry).
 
 // cmdRecordShipEvent moved to scripts/lib/cross-skill/commands/ship.mjs (registry).
 
@@ -642,14 +617,7 @@ async function cmdListUnremediatedAcceptances() {
   });
 }
 
-async function cmdAuditEffectiveness() {
-  await initLearningStore();
-  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, row: null });
-  const repoId = argOption('repo-id');
-  if (!repoId) return emitError('BAD_INPUT', '--repo-id is required');
-  const row = await readAuditEffectiveness(repoId);
-  emit({ ok: true, cloud: true, row });
-}
+// cmdAuditEffectiveness moved to scripts/lib/cross-skill/commands/misc.mjs (registry).
 
 // ── Shadow final-review A/B (docs/plans/final-review-shadow-reviewer.md) ──────
 
@@ -1627,15 +1595,7 @@ async function cmdRecommendSkills() {
  * (config SSoT). The executable seam the cycle SKILL CALLS (never re-implements the decision in
  * prose). Prints {mode, action, message}; `--format human` prints a one-line directive.
  */
-async function cmdPreviewGate() {
-  const gate = resolvePreviewGate(cycleConfig);
-  if (argOption('format') === 'human') {
-    const tag = gate.action === 'halt' ? 'HALT' : gate.action === 'warn' ? 'WARN' : 'OK';
-    process.stdout.write(gate.message ? `[${tag}] ${gate.message}\n` : `[OK] preview gate not_applicable — no action.\n`);
-    return;
-  }
-  emit({ ok: true, ...gate });
-}
+// cmdPreviewGate moved to scripts/lib/cross-skill/commands/ship.mjs (registry).
 
 /** Changed files vs HEAD (tracked) + untracked. Empty on any git failure. */
 function gitChangedFiles() {
@@ -1733,89 +1693,15 @@ async function cmdGetPersonaSessionsByUrl() {
   emit({ ok: true, cloud: true, rows });
 }
 
-async function cmdDetectStack() {
-  const cwd = argOption('cwd') || process.cwd();
-  const includeEnvManager = rest.includes('--include-env-manager');
-  const { stack, pythonFramework, detectedFrom, stackKinds } = detectRepoStack(cwd);
-  const profile = {
-    ok: true,
-    stack,
-    pythonFramework,
-    environmentManager: includeEnvManager ? detectPythonEnvironmentManager(cwd) : null,
-    detectedFrom,
-    stackKinds: stackKinds ?? [],
-  };
-  const parsed = StackProfileSchema.safeParse(profile);
-  if (!parsed.success) {
-    return emitError('SCHEMA_VIOLATION', 'detect-stack produced invalid profile', { issues: parsed.error.issues });
-  }
-  emit(parsed.data);
-}
+// cmdDetectStack moved to scripts/lib/cross-skill/commands/misc.mjs (registry).
 
 // cmdWhoami moved to scripts/lib/cross-skill/commands/misc.mjs (registry).
 
 // ── Architectural Memory subcommands (Phase A) ──────────────────────────────
 
-async function cmdGetActiveRefreshId() {
-  await initLearningStore();
-  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, refreshId: null });
-  const repoUuid = argOption('repo-uuid');
-  if (!repoUuid) return emitError('BAD_INPUT', '--repo-uuid required');
-  const repo = await getRepoIdByUuid(repoUuid);
-  if (!repo) return emit({ ok: true, cloud: true, repoFound: false, refreshId: null });
-  const snap = await getActiveSnapshot(repo.id);
-  emit({
-    ok: true,
-    cloud: true,
-    repoFound: true,
-    refreshId: snap?.refreshId || null,
-    activeEmbeddingModel: snap?.activeEmbeddingModel || null,
-    activeEmbeddingDim: snap?.activeEmbeddingDim || null,
-  });
-}
+// cmdGetActiveRefreshId moved to scripts/lib/cross-skill/commands/arch-query.mjs (registry).
 
-async function cmdGetIncidentNeighbourhood() {
-  const p = parsePayload();
-  await initLearningStore();
-  if (!await isCloudEnabled()) {
-    return emit({
-      ok: true, cloud: false, records: [], totalCandidatesConsidered: 0,
-      freshnessWarning: null,
-      hint: 'cloud disabled — security memory unavailable',
-    });
-  }
-  // Same provider-absent degrade as cmdGetNeighbourhood (see comment there).
-  {
-    const { isEmbedProviderAvailable } = await import('./lib/embed-text.mjs');
-    if (!await isEmbedProviderAvailable()) {
-      return emit({
-        ok: true, cloud: true, records: [], totalCandidatesConsidered: 0,
-        freshnessWarning: null, degraded: 'no-embed-provider',
-        hint: 'no embedding provider — set GEMINI_API_KEY (or activate the Azure profile) to enable incident consultation',
-      });
-    }
-  }
-  // Resolve repoUuid: explicit takes precedence; else derive from cwd
-  let repoUuid = p.repoUuid;
-  if (!repoUuid) repoUuid = resolveRepoIdentity(process.cwd()).repoUuid;
-  try {
-    const { getIncidentNeighbourhoodForIntent } = await import('./lib/neighbourhood-query.mjs');
-    const { callIncidentNeighbourhoodRpc, getMaxIncidentRefreshAt } = await import('./learning-store.mjs');
-    const wrapped = await getIncidentNeighbourhoodForIntent(
-      {
-        getRepoIdByUuid,
-        getActiveSnapshot,
-        callIncidentNeighbourhoodRpc: (args) => callIncidentNeighbourhoodRpc(args),
-        getMaxIncidentRefreshAt: (repoId) => getMaxIncidentRefreshAt(repoId),
-      },
-      { ...p, repoUuid },
-    );
-    // R-Gemini-G4: unwrap .result for flat CLI JSON shape
-    emit({ ok: true, cloud: true, ...wrapped.result, _usage: wrapped.usage, _latencyMs: wrapped.latencyMs });
-  } catch (err) {
-    emitError(err.code || 'EXCEPTION', err.message, { issues: err.issues });
-  }
-}
+// cmdGetIncidentNeighbourhood moved to scripts/lib/cross-skill/commands/arch-query.mjs (registry).
 
 // ── Friction-feedback loop (plan: friction-feedback-loop.md) ────────────────
 // `quality` sub-dispatches to add/mirror/digest/link/session-review; the
@@ -2097,84 +1983,9 @@ async function cmdGetFrictionNeighbourhood() {
   emit(result);
 }
 
-async function cmdComputeTargetDomains() {
-  const p = parsePayload();
-  if (!p.targetPaths || !Array.isArray(p.targetPaths)) {
-    return emitError('BAD_INPUT', 'targetPaths array required', {}, 1);
-  }
-  // Lazy import — keeps cross-skill cold-start cheap
-  const { tagDomain, loadDomainRules, computeTargetDomains } =
-    await import('./lib/symbol-index/domain-tagger.mjs');
-  void tagDomain;
-  const rules = loadDomainRules(process.cwd());
-  const result = computeTargetDomains(p.targetPaths, rules);
-  emit({ ok: true, ...result, ruleCount: rules.length });
-}
+// cmdComputeTargetDomains moved to scripts/lib/cross-skill/commands/arch-query.mjs (registry).
 
-async function cmdGetCallersForFile() {
-  const p = parsePayload();
-  if (typeof p.path !== 'string' || p.path.length === 0) {
-    return emitError('BAD_INPUT', 'path required', {}, 1);
-  }
-  await initLearningStore();
-  if (!await isCloudEnabled()) {
-    return emit({
-      ok: true, cloud: false, callers: [], callerDomains: [],
-      snapshotProvenance: 'cloud-disabled',
-    });
-  }
-  const repoUuid = resolveRepoIdentity(process.cwd()).repoUuid;
-  const repo = await getRepoIdByUuid(repoUuid);
-  if (!repo) {
-    return emit({
-      ok: true, cloud: true, callers: [], callerDomains: [],
-      snapshotProvenance: 'repo-not-indexed',
-    });
-  }
-  const snap = await getActiveSnapshot(repo.id);
-  if (!snap?.refreshId) {
-    return emit({
-      ok: true, cloud: true, callers: [], callerDomains: [],
-      snapshotProvenance: 'no-active-snapshot',
-    });
-  }
-  // Provenance check (R1-H2 / R2-H1) — only emit caller data when the
-  // snapshot's import graph is fully populated; otherwise zero-importers
-  // is ambiguous and /explain should skip cross-domain reach analysis.
-  const populated = snap.importGraphPopulated === true;
-  if (!populated) {
-    return emit({
-      ok: true, cloud: true, callers: [], callerDomains: [],
-      snapshotProvenance: 'pre-feature-snapshot',
-    });
-  }
-  // Reuse loadDomainRules per R2-M3 (no inline rule reading)
-  const { tagDomain, loadDomainRules } =
-    await import('./lib/symbol-index/domain-tagger.mjs');
-  const rules = loadDomainRules(process.cwd());
-
-  let importers;
-  try {
-    const { getImportersForFiles } = await import('./learning-store.mjs');
-    importers = await getImportersForFiles({
-      refreshId: snap.refreshId, paths: [p.path],
-    });
-  } catch (err) {
-    return emitError('RPC_ERROR', `getImportersForFiles failed: ${err.message}`);
-  }
-  const importerPaths = importers.get(p.path) || [];
-  const callers = importerPaths.map(ip => ({
-    importer_path: ip,
-    domain: tagDomain(ip, rules),
-  }));
-  const callerDomains = Array.from(new Set(
-    callers.map(c => c.domain).filter(d => d != null)
-  )).sort();
-  emit({
-    ok: true, cloud: true, callers, callerDomains,
-    snapshotProvenance: 'import-graph-populated',
-  });
-}
+// cmdGetCallersForFile moved to scripts/lib/cross-skill/commands/arch-query.mjs (registry).
 
 /**
  * Same-run overlap between a shadow reviewer and the pipeline's own audit
@@ -2400,51 +2211,7 @@ async function cmdLockWithTestWorksheet() {
   return undefined;
 }
 
-async function cmdGetNeighbourhood() {
-  const p = parsePayload();
-  await initLearningStore();
-  if (!await isCloudEnabled()) {
-    return emit({
-      ok: true, cloud: false, refreshId: null, records: [], totalCandidatesConsidered: 0,
-      truncated: false, hint: 'cloud disabled — run `npm run arch:refresh` to enable',
-    });
-  }
-  // Provider-ABSENT (deterministic config state) degrades exactly like
-  // cloud-disabled above — the consultation contract is "log a hint,
-  // proceed greenfield", and a fresh install with a DSN but no embedding
-  // provider must not read as a fatal error. Provider-ERRORS (a real call
-  // failing) still surface via emitError below (2026-07-14 installer audit).
-  {
-    const { isEmbedProviderAvailable } = await import('./lib/embed-text.mjs');
-    if (!await isEmbedProviderAvailable()) {
-      return emit({
-        ok: true, cloud: true, refreshId: null, records: [], totalCandidatesConsidered: 0,
-        truncated: false, degraded: 'no-embed-provider',
-        hint: 'no embedding provider — set GEMINI_API_KEY (or activate the Azure profile) to enable neighbourhood consultation',
-      });
-    }
-  }
-  // Resolve repoUuid: explicit takes precedence; else derive from cwd
-  let repoUuid = p.repoUuid;
-  if (!repoUuid) {
-    repoUuid = resolveRepoIdentity(process.cwd()).repoUuid;
-  }
-  try {
-    const out = await getNeighbourhoodForIntent({
-      getRepoIdByUuid,
-      getActiveSnapshot,
-      getBandCalibration,
-      callNeighbourhoodRpc: (args) => callNeighbourhoodRpc(args),
-    }, { ...p, repoUuid });
-    emit({ ok: true, cloud: true, ...out });
-  } catch (err) {
-    emitError(err.code || 'EXCEPTION', err.message, {
-      issues: err.issues,
-      expected: err.expected,
-      available: err.available,
-    });
-  }
-}
+// cmdGetNeighbourhood moved to scripts/lib/cross-skill/commands/arch-query.mjs (registry).
 
 // cmdOpenRefreshRun moved to scripts/lib/cross-skill/commands/arch-refresh.mjs (registry).
 
@@ -2462,52 +2229,13 @@ async function cmdGetNeighbourhood() {
 
 // cmdSetActiveEmbeddingModel moved to scripts/lib/cross-skill/commands/arch-refresh.mjs (registry).
 
-async function cmdListSymbolsForSnapshot() {
-  const p = parsePayload();
-  if (!p.refreshId) return emitError('BAD_INPUT', 'refreshId required');
-  await initLearningStore();
-  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, rows: [] });
-  try {
-    const rows = await listSymbolsForSnapshot(p);
-    emit({ ok: true, cloud: true, rows, count: rows.length });
-  } catch (err) {
-    emitError(err.code || 'EXCEPTION', err.message);
-  }
-}
+// cmdListSymbolsForSnapshot moved to scripts/lib/cross-skill/commands/arch-query.mjs (registry).
 
-async function cmdListLayeringViolationsForSnapshot() {
-  const refreshId = argOption('refresh-id');
-  if (!refreshId) return emitError('BAD_INPUT', '--refresh-id required');
-  await initLearningStore();
-  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, rows: [] });
-  try {
-    const rows = await listLayeringViolationsForSnapshot(refreshId);
-    emit({ ok: true, cloud: true, rows });
-  } catch (err) {
-    emitError(err.code || 'EXCEPTION', err.message);
-  }
-}
+// cmdListLayeringViolationsForSnapshot moved to scripts/lib/cross-skill/commands/arch-query.mjs (registry).
 
-async function cmdComputeDriftScore() {
-  const p = parsePayload();
-  if (!p.repoId || !p.refreshId) return emitError('BAD_INPUT', 'repoId and refreshId required');
-  await initLearningStore();
-  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, drift: null });
-  try {
-    const drift = await computeDriftScore(p);
-    emit({ ok: true, cloud: true, drift });
-  } catch (err) {
-    emitError(err.code || 'EXCEPTION', err.message);
-  }
-}
+// cmdComputeDriftScore moved to scripts/lib/cross-skill/commands/arch-query.mjs (registry).
 
-async function cmdResolveRepoIdentity() {
-  const cwd = argOption('cwd') || process.cwd();
-  const persist = rest.includes('--persist');
-  const id = resolveRepoIdentity(cwd);
-  if (persist) persistRepoIdentity(id.repoUuid, cwd);
-  emit({ ok: true, ...id, persisted: persist });
-}
+// cmdResolveRepoIdentity moved to scripts/lib/cross-skill/commands/arch-query.mjs (registry).
 
 // ── Phase 1 — adaptive-learning-v1 subcommands ─────────────────────────────
 
@@ -2678,11 +2406,8 @@ async function cmdLearningQuickfixStats() {
 
 const commands = {
   // Phase 3 WS-PIPE1 — persona_test_candidates aggregation table.
-  'get-nav-first-seen': cmdGetNavFirstSeen,
-  'plan-satisfaction': cmdPlanSatisfaction,
   'list-unlocked-fixes': cmdListUnlockedFixes,
   'list-unremediated-acceptances': cmdListUnremediatedAcceptances,
-  'audit-effectiveness': cmdAuditEffectiveness,
   'final-review-stats': cmdFinalReviewStats,
   'final-review-pending': cmdFinalReviewPending,
   'finalize-outcomes': cmdFinalizeOutcomes,
@@ -2698,26 +2423,15 @@ const commands = {
   'arm-eval-toggle': cmdArmEvalToggle,
   'arm-eval-maybe-capture': cmdArmEvalMaybeCapture,
   'arm-eval-export': cmdArmEvalExport,
-  'detect-stack': cmdDetectStack,
   'list-personas': cmdListPersonas,
   'get-persona-sessions-by-repo': cmdGetPersonaSessionsByRepo,
   'get-reachability-evidence': cmdGetReachabilityEvidence,
   'recommend-skills': cmdRecommendSkills,
-  'preview-gate': cmdPreviewGate,
   'get-persona-sessions-by-url': cmdGetPersonaSessionsByUrl,
   'get-recent-findings': cmdGetRecentFindings,
   'shadow-overlap':     cmdShadowOverlap,
   'lock-with-test':     cmdLockWithTest,
   // Architectural memory
-  'resolve-repo-identity':            cmdResolveRepoIdentity,
-  'get-active-refresh-id':            cmdGetActiveRefreshId,
-  'get-neighbourhood':                cmdGetNeighbourhood,
-  'get-incident-neighbourhood':       cmdGetIncidentNeighbourhood,
-  'compute-target-domains':           cmdComputeTargetDomains,
-  'get-callers-for-file':             cmdGetCallersForFile,
-  'list-symbols-for-snapshot':        cmdListSymbolsForSnapshot,
-  'list-layering-violations-for-snapshot': cmdListLayeringViolationsForSnapshot,
-  'compute-drift-score':              cmdComputeDriftScore,
   // Phase 1 — adaptive-learning-v1
   'learning-stats':                   cmdLearningStats,
   'learning-weekly-review':           cmdLearningWeeklyReview,

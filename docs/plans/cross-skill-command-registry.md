@@ -524,6 +524,115 @@ via a dev script run per cohort; the script is committed because the fixtures
 must be regenerable at review time (`node scripts/dev/capture-cross-skill-envelopes.mjs`),
 but its output is committed test fixtures, not runtime state.
 
+## 2b. Result-contract integrity (Cluster F, designed 2026-08-12)
+
+Cluster B's audit pressed four rounds on commands that emit a **failure-shaped
+envelope at exit 0**. "Defer to F" was a postponement, not a design; this
+section is the design, and it starts from measurement rather than from the
+audit's framing.
+
+### What the measurement actually showed
+
+Across the **60 captured golden invocations** (real runs, not a grep):
+
+| | count |
+|---|---|
+| `ok:false` with a non-zero exit (correct) | 37 |
+| **`ok:false` at exit 0** | **5** |
+
+All five are `final-review-adjudicate`, `final-review-record-fix`,
+`model-ab-adjudicate`, `arm-eval-adjudicate`, `arm-eval-export` — and every one
+is the **cloud-off** path, not a failed write. That inverts the diagnosis: the
+defect there is not a missing exit code, it is calling a **supported mode** a
+failure. AGENTS.md states it directly — *"`skipped` (the store declined — cloud
+off is a supported mode, not a failure)"* — and 55 of the 60 measured
+invocations already report `{ok:true, cloud:false}`.
+
+So "softFail" was conflating three different problems, which need three
+different fixes in a specific order.
+
+### The repo-wide root cause (found by census, not by the audit)
+
+`scripts/lib/audit-store-writers.mjs` + `tests/audit-store-durability-call-site.test.mjs`
+already encode this repo's answer to "a store write must report its outcome":
+a registry, a four-outcome contract (`written`/`spilled`/`lost`/`skipped`), and
+a writer-set oracle **derived** from the store modules so a new `record*` export
+cannot land unregistered.
+
+But that oracle's `STORE_MODULES` lists **2 modules** (`runs-findings.mjs`,
+`bandit-fp.mjs`) out of ~11 under `scripts/lib/store/`. Every cross-skill
+writer — `recordRegressionSpec`, `recordPlanVerificationRun`,
+`recordPersonaSession`, `upsertPlan`, `recordNavAuditRun`, … — is therefore
+**unrepresentable to the gate**: not exempted, not registered, simply invisible.
+Measured: 0 of 5 sampled cross-skill writers appear in the registry.
+
+That is AGENTS.md's own defect shape #3 — *"a check verifying one direction
+only: ask of any set comparison, which side am I iterating, and what is
+unrepresentable from it?"* — and the same class as the 15 DB suites that were
+enrolled nowhere and had never run.
+
+**The `ok: !!id` handler shape is a SYMPTOM of that gap.** A handler writes
+`ok: !!id` because its writer returns a bare `null` for both "cloud off" and
+"write failed". Fix the writers and the symptom cannot be written.
+
+### Cluster F — ordered, root cause first
+
+**F1 — widen the writer-set oracle (repo-wide).** `STORE_MODULES` becomes every
+module under `scripts/lib/store/**`. Each newly-visible `record*`/`sync*` export
+must then be registered as a durable write **or exempted with a written reason**
+(the existing `NOT_A_DURABLE_WRITE` mechanism, which is a claim that has to stay
+true, not a silencer). This census — not the audit's list — is what determines
+which writers genuinely swallow. Expect it to surface writers outside
+cross-skill too; those are in scope for F1's exemption pass, out of scope for a
+behaviour change.
+
+**F2 — writers report their outcome; handlers stop inferring from a null.**
+For each writer F1 shows swallowing, return the discriminated
+`{ok, cloud, reason, error?}` shape. **In-repo precedent, same file**:
+`recordShipEvent` and `recordRegressionSpecRun` were converted exactly this way
+on 2026-08-12 (`plans-ship.mjs`), and their CLI callers now fail closed. With
+the writer reporting, each handler maps `{ok:false}` → `throw CommandError`, and
+`ok: !!id` **becomes unwritable**. The `softFail` set retires as a *consequence*
+of the root fix rather than by decree — which is the difference between fixing
+the class and fixing seven instances.
+
+**F3 — cloud-off stops being a failure (the 5 measured cases).**
+`{ok:false, cloud:false, updated:0}` → `{ok:true, cloud:false, updated:0}`.
+This IS a byte-compat break on a fixture-pinned path, so it carries the full
+ceremony: (a) a consumer census of `skills/**` for those five subcommands and
+any `.ok` read; (b) a deliberate `--recapture <id>` of exactly those five
+fixtures, with the reason recorded in the commit and the capture table; (c) the
+change listed in this plan's changed-envelope register. Without (a) this is the
+prose↔code seam breaking silently, which is the failure mode the D6 freeze
+exists to prevent.
+
+**F4 — the invariant, enforced at the one seam.** After F2 and F3 there is no
+legitimate `ok:false at exit 0` left in the migrated surface, so it becomes an
+enforceable rule rather than an aspiration: `emit()` in `scripts/lib/cli-io.mjs`
+(the single emission primitive — today a bare `stdout.write` with no exit
+coupling at all) sets `process.exitCode ||= 1` when `ok === false`, with an
+explicit `emit(env, {softFail, reason})` opt-out. A drift-only gate baselines
+the remaining legacy offenders and ratchets down, matching `cli:flags:gate` /
+`knip:gate` / `docs:refs:gate`.
+
+**Ordering is load-bearing**: F4 before F2/F3 would start failing CI on paths
+that are *correctly* reporting a failure and merely have the wrong exit code —
+a cried-wolf gate that earns `--no-verify`. F1 before F2 because the census
+decides F2's worklist. F3 is independent of F1/F2 and can land first if the
+consumer census clears.
+
+**Right-sizing.** *Band-aid*: tighten the seven registry entries (fixes
+instances; the next unregistered writer re-creates them). *Over-built*: a new
+durability framework for the CLI (the repo already has one, and a second would
+be the two-oracles defect). *Chosen*: widen the existing oracle so the writers
+become visible, convert the ones that swallow, and let the symptom retire —
+then enforce the invariant that stops it recurring.
+
+**Acceptance**: `REGISTRY.filter(e => e.softFail?.all)` is empty; the durability
+oracle iterates every store module; a measured re-capture shows 0 of 60
+invocations emitting `ok:false` at exit 0; the `emit` coupling is live with a
+baseline that only shrinks.
+
 ## 3. Execution Model (Phase 1.5)
 
 Dependencies are real and ordered:
@@ -698,6 +807,27 @@ five modules for the five domains. Files: `scripts/lib/store/plans.mjs` (create)
 `scripts/lib/store/persona-correlations.mjs` (create),
 `scripts/lib/store/plans-ship.mjs` (modify → barrel),
 `tests/learning-store-exports.test.mjs` (modify, comment-only).
+
+**Phase 6b — Result-contract integrity (§2b F1–F4)**: widen the durability
+writer-set oracle to every `scripts/lib/store/**` module and register-or-exempt
+what it surfaces (F1); convert the swallowing writers to the discriminated
+`{ok, reason}` shape and map them to `CommandError` in their handlers, retiring
+the `softFail` set by construction (F2); make cloud-off report `ok:true` on the
+five measured commands, after a `skills/**` consumer census and a deliberate
+five-fixture `--recapture` (F3); couple `emit()` to the exit code with a
+drift-only baseline (F4). Files: `tests/audit-store-durability-call-site.test.mjs` (modify),
+`scripts/lib/audit-store-writers.mjs` (modify), `scripts/lib/store/plans-ship.mjs` (modify),
+`scripts/lib/store/persona.mjs` (modify), `scripts/lib/store/nav-audit.mjs` (modify),
+`scripts/lib/cross-skill/commands/plans.mjs` (modify),
+`scripts/lib/cross-skill/commands/plan-verify.mjs` (modify),
+`scripts/lib/cross-skill/commands/ship.mjs` (modify),
+`scripts/lib/cross-skill/commands/persona.mjs` (modify),
+`scripts/lib/cross-skill/commands/misc.mjs` (modify),
+`scripts/lib/cross-skill/commands/final-review.mjs` (modify),
+`scripts/lib/cross-skill/registry.mjs` (modify),
+`scripts/lib/cli-io.mjs` (modify), `scripts/check-emit-exit-agreement.mjs` (create),
+`tests/fixtures/cross-skill-envelopes.json` (modify — the five re-captured cases),
+`tests/cross-skill-registry-conformance.test.mjs` (modify).
 
 **Phase 7 — Ownership joins (store)**: the shared join-clause builder +
 closed parent allowlist, **and the four child-write INSERTs rewritten to the
@@ -876,8 +1006,15 @@ either fixed in this document or dismissed with filesystem evidence.
   - Coupling: the plans-ship split is one mechanical refactor behind one
     barrel; splitting it across commits would leave the barrel lying about
     where functions live.
-- **Cluster F** — Phases 7–8 — fix-gate: final
-  - Coupling: the store predicate and its CLI adoption are one behaviour
-    change; the refusal tests only mean something once both halves exist.
+- **Cluster F** — Phases 6b–8 — fix-gate: final
+  - Coupling: all three are the same seam — **what a store write reports, and
+    whether the CLI's envelope and exit code agree with it**. The ownership
+    join (7–8) and the result contract (6b) both change what a writer returns
+    and how its handler maps that to an envelope; landing them apart would
+    convert the same handlers twice and re-capture the same fixtures twice.
+    They are also this plan's ONLY deliberate behaviour changes, so grouping
+    them puts every consumer-visible change behind one gate and one consumer
+    census. Ordered within the cluster: F1 census → F2 writers → F3 cloud-off
+    → F4 the enforced invariant → 7/8 ownership (see §2b for why F4 last).
 - **Final gate**: consolidated Gemini review over the union diff of all
   clusters (mandatory), shadow reviewer observed per standing config.

@@ -44,6 +44,26 @@ export async function recordShipEventCmd(ctx) {
 }
 
 /**
+ * `preview-gate` — resolve the /cycle Step 5 deploy-topology gate.
+ *
+ * The executable seam the cycle SKILL calls rather than re-deciding in prose.
+ * `--format human` prints a one-line directive and emits no envelope, which is
+ * why the handler returns undefined on that branch (the dispatcher's
+ * documented "the text IS the output" contract).
+ */
+export async function previewGateCmd(ctx) {
+  const { resolvePreviewGate } = await import('../../cycle/topology.mjs');
+  const { cycleConfig } = await import('../../config.mjs');
+  const gate = resolvePreviewGate(cycleConfig);
+  if (ctx.flag('format') === 'human') {
+    const tag = gate.action === 'halt' ? 'HALT' : gate.action === 'warn' ? 'WARN' : 'OK';
+    process.stdout.write(gate.message ? `[${tag}] ${gate.message}\n` : '[OK] preview gate not_applicable — no action.\n');
+    return undefined;
+  }
+  return { ok: true, ...gate };
+}
+
+/**
  * `record-regression-spec` — /ux-lock writes a new Playwright spec.
  *
  * Moved from `cmdRecordRegressionSpec`. The `!repoId` refusal is load-bearing

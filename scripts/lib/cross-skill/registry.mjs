@@ -281,6 +281,117 @@ export const REGISTRY = Object.freeze([
     scope: 'none', kind: 'write', cloud: 'none',
     load: () => import('./commands/arch-refresh.mjs').then((m) => m.setActiveEmbeddingModelCmd),
   },
+
+  // ── Cohort: readers (Cluster C, Phase 4) ─────────────────────────────────
+  // No softFail in this cohort: a reader's job is to keep "empty" and
+  // "unmeasured" apart, and every one of these already does it with a named
+  // field (repoFound, snapshotProvenance, degraded, measured) rather than a
+  // failure-shaped envelope.
+  {
+    name: 'plan-satisfaction',
+    flags: ['plan-id'], positionals: 'none', payload: 'none',
+    scope: 'none', kind: 'read', cloud: 'degrade-noop',
+    degradeShape: { row: null, persistentFailures: [] },
+    load: () => import('./commands/plans.mjs').then((m) => m.planSatisfactionCmd),
+  },
+  {
+    name: 'audit-effectiveness',
+    flags: ['repo-id'], positionals: 'none', payload: 'none',
+    scope: 'none', kind: 'read', cloud: 'degrade-noop',
+    degradeShape: { row: null },
+    load: () => import('./commands/misc.mjs').then((m) => m.auditEffectivenessCmd),
+  },
+  {
+    name: 'detect-stack',
+    flags: ['cwd', { name: 'include-env-manager', kind: 'boolean' }],
+    positionals: 'none', payload: 'none',
+    scope: 'none', kind: 'local', cloud: 'none',
+    load: () => import('./commands/misc.mjs').then((m) => m.detectStackCmd),
+  },
+  {
+    name: 'get-nav-first-seen',
+    flags: [], positionals: 'none', payload: 'json',
+    scope: 'ambient-ok', kind: 'read', cloud: 'degrade-noop',
+    degradeShape: { firstSeen: {} },
+    // Legacy emits {ok:false, cloud:true, firstSeen:{}, error} when the history
+    // read fails — a reader reporting its own unmeasurability, at exit 0.
+    softFail: { all: true, reason: 'legacy history-read failure emits ok:false with firstSeen:{} at exit 0 — a reader saying "unmeasured". Cluster F §2b F4 decides whether an unmeasured READ should exit non-zero or become {ok:true, measured:false}; the latter is likely correct and is NOT the same question as a failed write.' },
+    load: () => import('./commands/misc.mjs').then((m) => m.getNavFirstSeenCmd),
+  },
+  {
+    name: 'preview-gate',
+    flags: ['format'], positionals: 'none', payload: 'none',
+    scope: 'none', kind: 'local', cloud: 'none',
+    load: () => import('./commands/ship.mjs').then((m) => m.previewGateCmd),
+  },
+  {
+    name: 'resolve-repo-identity',
+    flags: ['cwd', { name: 'persist', kind: 'boolean' }],
+    positionals: 'none', payload: 'none',
+    scope: 'none', kind: 'local', cloud: 'none',
+    load: () => import('./commands/arch-query.mjs').then((m) => m.resolveRepoIdentityCmd),
+  },
+  {
+    name: 'get-active-refresh-id',
+    flags: ['repo-uuid'], positionals: 'none', payload: 'none',
+    scope: 'none', kind: 'read', cloud: 'degrade-noop',
+    degradeShape: { refreshId: null },
+    load: () => import('./commands/arch-query.mjs').then((m) => m.getActiveRefreshIdCmd),
+  },
+  {
+    name: 'compute-target-domains',
+    flags: [], positionals: 'none', payload: 'json',
+    scope: 'none', kind: 'local', cloud: 'none',
+    load: () => import('./commands/arch-query.mjs').then((m) => m.computeTargetDomainsCmd),
+  },
+  {
+    name: 'get-callers-for-file',
+    flags: [], positionals: 'none', payload: 'json',
+    scope: 'none', kind: 'read', cloud: 'degrade-noop',
+    degradeShape: { callers: [], callerDomains: [], snapshotProvenance: 'cloud-disabled' },
+    load: () => import('./commands/arch-query.mjs').then((m) => m.getCallersForFileCmd),
+  },
+  {
+    name: 'list-symbols-for-snapshot',
+    flags: [], positionals: 'none', payload: 'json',
+    scope: 'none', kind: 'read', cloud: 'degrade-noop',
+    degradeShape: { rows: [] },
+    load: () => import('./commands/arch-query.mjs').then((m) => m.listSymbolsForSnapshotCmd),
+  },
+  {
+    name: 'list-layering-violations-for-snapshot',
+    flags: ['refresh-id'], positionals: 'none', payload: 'none',
+    scope: 'none', kind: 'read', cloud: 'degrade-noop',
+    degradeShape: { rows: [] },
+    load: () => import('./commands/arch-query.mjs').then((m) => m.listLayeringViolationsForSnapshotCmd),
+  },
+  {
+    name: 'compute-drift-score',
+    flags: [], positionals: 'none', payload: 'json',
+    scope: 'none', kind: 'read', cloud: 'degrade-noop',
+    degradeShape: { drift: null },
+    load: () => import('./commands/arch-query.mjs').then((m) => m.computeDriftScoreCmd),
+  },
+  {
+    name: 'get-neighbourhood',
+    flags: [], positionals: 'none', payload: 'json',
+    scope: 'none', kind: 'read', cloud: 'degrade-noop',
+    degradeShape: {
+      refreshId: null, records: [], totalCandidatesConsidered: 0, truncated: false,
+      hint: 'cloud disabled — run `npm run arch:refresh` to enable',
+    },
+    load: () => import('./commands/arch-query.mjs').then((m) => m.getNeighbourhoodCmd),
+  },
+  {
+    name: 'get-incident-neighbourhood',
+    flags: [], positionals: 'none', payload: 'json',
+    scope: 'none', kind: 'read', cloud: 'degrade-noop',
+    degradeShape: {
+      records: [], totalCandidatesConsidered: 0, freshnessWarning: null,
+      hint: 'cloud disabled — security memory unavailable',
+    },
+    load: () => import('./commands/arch-query.mjs').then((m) => m.getIncidentNeighbourhoodCmd),
+  },
 ]);
 
 const _byName = new Map(REGISTRY.map((e) => [e.name, e]));

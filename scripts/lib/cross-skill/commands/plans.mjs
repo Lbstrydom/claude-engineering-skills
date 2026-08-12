@@ -48,6 +48,15 @@ export async function upsertPlanCmd(ctx) {
       `upsertPlan failed with an unhandled reason "${res.reason ?? 'unknown'}"${res.message ? `: ${res.message}` : ''}`,
       { cloud: true, reason: res.reason ?? null });
   }
+  // An `ok:true` receipt carrying no id is a MALFORMED receipt, not a
+  // successful write (audit CC-r1). Without this, a store regression that
+  // returned `{ok:true, planId:null}` would surface as `ok:false` at exit 0 —
+  // re-creating the exact shape this handler just closed, one field over.
+  if (!res.planId) {
+    throw new CommandError('PLAN_WRITE_UNVERIFIED',
+      'upsertPlan reported success but returned no planId — refusing to report a write it cannot evidence',
+      { cloud: true });
+  }
   const planId = res.planId;
   // Deterministic arm-eval capture (toggle-gated; detached) — fires when the
   // plan skill includes the original task text in this upsert payload, so
@@ -108,4 +117,23 @@ export async function updatePlanStatusCmd(ctx) {
       { reason: res.reason ?? null }, 1);
   }
   return { ok: true, cloud: true, planId, path: resolvedPath, status: p.status };
+}
+
+/**
+ * `plan-satisfaction` — the /ux-lock verify rollup for one plan (Cluster C).
+ *
+ * Note the legacy ORDER, preserved deliberately: the cloud-off degrade is
+ * checked BEFORE `--plan-id` is validated, so a cloud-off invocation with no
+ * plan id degrades rather than refusing. Reordering would be a silent
+ * contract change on a path /ship reads.
+ */
+export async function planSatisfactionCmd(ctx) {
+  if (!ctx.cloud.enabled) return { ...ctx.degrade(), row: null, persistentFailures: [] };
+  const planId = ctx.flag('plan-id');
+  if (!planId) throw new CommandError('BAD_INPUT', '--plan-id is required');
+  const [row, persistent] = await Promise.all([
+    ctx.deps.readPlanSatisfaction(planId),
+    ctx.deps.readPersistentPlanFailures(planId),
+  ]);
+  return { ok: true, cloud: true, row, persistentFailures: persistent };
 }

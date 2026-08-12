@@ -32,7 +32,14 @@ const CLI_PATH = fileURLToPath(new URL('../scripts/cross-skill.mjs', import.meta
 //     publish-refresh-run · abort-refresh-run · record-symbol-definitions ·
 //     record-symbol-index · record-symbol-embedding ·
 //     record-layering-violations · set-active-embedding-model → 68 − 21 = 47
-const LEGACY_PIN = 47;
+//   Cluster C (Phase 4) — readers (14):
+//     plan-satisfaction · audit-effectiveness · detect-stack ·
+//     get-nav-first-seen · preview-gate · resolve-repo-identity ·
+//     get-active-refresh-id · compute-target-domains · get-callers-for-file ·
+//     list-symbols-for-snapshot · list-layering-violations-for-snapshot ·
+//     compute-drift-score · get-neighbourhood ·
+//     get-incident-neighbourhood                                → 47 − 14 = 33
+const LEGACY_PIN = 33;
 
 describe('cross-skill registry ratchet', () => {
   it(`legacy command count is exactly ${LEGACY_PIN} (decrease-only; update WITH the cohort that moves it)`, () => {
