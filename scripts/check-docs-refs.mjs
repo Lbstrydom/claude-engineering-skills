@@ -318,6 +318,13 @@ export const BASELINE = new Set([
   'docs/plans/audit-effectiveness-experiment.md→docs/experiments/audit-effectiveness/phase5-decision.md',
   'docs/plans/audit-effectiveness-experiment.md→docs/experiments/audit-effectiveness/README.md',
   'package.json→docs/experiments/audit-effectiveness/phase1-ledger-decomposition.md',
+  // Synthetic CLI payloads, not documentation references: the golden-envelope
+  // capture table invokes `upsert-plan` / `update-plan-status` with a made-up
+  // plan path to pin their refusal + cloud-off envelopes. The path must never
+  // resolve (a real plan would make the fixture depend on repo contents), and
+  // it cannot be rewritten to a `<placeholder>` — the string is an argument the
+  // CLI parses, and the fixture pins the exact argv it was captured with.
+  'scripts/dev/capture-cross-skill-envelopes.mjs→docs/plans/x.md',
   // tool-owned output cited from a runbook
   'docs/research/runbooks/model-ab-experiment.md→docs/arm-eval/worksheets/model-ab-adjudication-worksheet.md',
   // illustrative `// auth (docs/auth.md, …)` comment
