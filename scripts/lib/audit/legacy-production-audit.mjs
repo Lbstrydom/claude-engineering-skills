@@ -2686,11 +2686,21 @@ export async function runLegacyProductionAudit(ctx) {
   // This resolves the narrower, real complaint instead: recordPassStats used
   // to keep its OWN independent copy of this name->reasoning guess, so the
   // two could silently drift apart. There is now exactly one definition.
-  function reasoningLevelForPass(name) {
-    if (name === 'sustainability' || name === 'architecture') return 'medium';
-    if (name === 'quickfix' || name === 'orphan-introduced') return 'low';
-    return 'high';
-  }
+  // `reasoningLevelForPass` is GONE (2026-08-12). It mapped a pass NAME to a
+  // level and returned 'high' for everything it did not special-case — while
+  // the structure and wiring passes both dispatch `reasoning: 'low'`, and the
+  // mechanical passes (duplication, adjacency, orphan-introduced) dispatch no
+  // LLM call at all. So `audit_pass_stats.reasoning_effort` recorded a guess,
+  // and the durability work then made that guess durable, which is what forced
+  // the issue: a fabricated value that survives is worse than one that scrolls
+  // away. Substituting a *better* guess would have repeated the defect one
+  // table row over.
+  //
+  // The effort now comes back from the call that sent it (`reasoningEffort` on
+  // the callGPT result), so there is exactly one source and it cannot drift
+  // from the request. A pass with no LLM call, or one whose result never
+  // arrived, reports `null` — an honest absence, and distinguishable from a
+  // measured level, which 'high' never was.
 
   const passRegistry = [
     { name: 'structure', ran: runStructure, result: structureResult, displayPrefix: 'Structure' },
@@ -2725,7 +2735,10 @@ export async function runLegacyProductionAudit(ctx) {
       // file's `_hash`/`_pass`/`_mapUnit` convention for internal-only data.
       _displayPrefix: displayPrefix,
       _result: result,
-      _reasoning: reasoningLevelForPass(name),
+      // Measured, not guessed — `null` when this pass made no LLM call (the
+      // mechanical detectors) or produced no result. `?? null` rather than a
+      // default, because a default here is exactly the fabrication removed.
+      _reasoning: result?.reasoningEffort ?? null,
     };
   });
 
@@ -3398,9 +3411,11 @@ export async function runLegacyProductionAudit(ctx) {
           inputTokens: entry.usage?.input_tokens,
           outputTokens: entry.usage?.output_tokens,
           latencyMs: entry.latencyMs,
-          // 6ae952bf: read from the single reasoningLevelForPass definition
-          // (attached to each entry as _reasoning above) instead of a second,
-          // independently-maintained copy of the same name->level guess.
+          // The effort the pass ACTUALLY dispatched with, carried back from the
+          // call itself (`_reasoning` above). 6ae952bf removed a second copy of
+          // a name→level guess here; 2026-08-12 removed the guess entirely,
+          // because both copies had been wrong for structure and wiring. Null
+          // for a pass that made no LLM call — an absence, not a level.
           reasoning: entry._reasoning,
         },
       }));

@@ -322,7 +322,14 @@ export async function _callGPTOnce(openai, opts) {
       process.stderr.write(`  [${passName}] Done in ${(latencyMs / 1000).toFixed(1)}s (${usage.input_tokens} in / ${usage.output_tokens} out)\n`);
     }
 
-    return { result, usage, latencyMs };
+    // `reasoningEffort` is the effort ACTUALLY SENT, carried back so telemetry
+    // never has to guess it. `audit_pass_stats.reasoning_effort` used to be
+    // filled by a name→level lookup in the orchestrator that returned 'high'
+    // for the structure and wiring passes while both dispatch 'low' — a
+    // fabricated measurement, and one this line is the only honest source for:
+    // the fallback to `REASONING_EFFORT` is resolved here, so a call site that
+    // passes no `reasoning` at all cannot be reconstructed anywhere else.
+    return { result, usage, latencyMs, reasoningEffort: effort };
 
   } catch (err) {
     clearTimeout(timer);
@@ -407,6 +414,11 @@ export async function safeCallGPT(openai, opts, emptyResult) {
       usage: { input_tokens: 0, cached_tokens: 0, output_tokens: 0, reasoning_tokens: 0, latency_ms: 0 },
       latencyMs: 0,
       failed: true,
+      // Stamped on the degraded path too: the effort WAS requested — the call
+      // was made and failed — so recording it is a fact about what we asked
+      // for, not a claim that it ran. Omitting it here would leave a failed
+      // pass indistinguishable from one that never dispatched.
+      reasoningEffort: opts.reasoning ?? REASONING_EFFORT,
       error: err.message
     };
   }

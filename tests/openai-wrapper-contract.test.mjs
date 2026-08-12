@@ -259,3 +259,83 @@ describe('safeCallGPT — fail-fast / graceful policy', () => {
     assert.equal(typeof r.usage.latency_ms, 'number');
   });
 });
+
+// ── reasoning_effort telemetry: measured, never inferred ────────────────────
+//
+// `audit_pass_stats.reasoning_effort` was filled by a name→level lookup in the
+// orchestrator (`reasoningLevelForPass`) that returned 'high' for anything it
+// did not special-case — while the structure and wiring passes both dispatch
+// `reasoning: 'low'`. Measured against the live store on 2026-08-12: 706
+// structure/wiring rows, every one recording 'high'. A wrong number in a
+// telemetry column does not read as broken, it reads as a measurement, and the
+// durability work had just made that number durable.
+//
+// The fix is that the effort is carried back from the call that SENT it. These
+// tests pin that, because the alternative — a better guess — is the same defect.
+describe('reasoningEffort is reported by the call, not inferred from the pass name', () => {
+  it('a successful call reports the effort it was given', async () => {
+    const r = await _callGPTOnce(makeStubOk(), { ...VALID_LEGACY, reasoning: 'low' });
+    assert.equal(r.reasoningEffort, 'low',
+      'the value recorded must be the value dispatched');
+  });
+
+  it('an UNSPECIFIED effort resolves to the CONFIGURED default, not a literal', async () => {
+    // This is the half a call-site scan could never recover: when a pass passes
+    // no `reasoning`, the effort is decided by the `?? REASONING_EFFORT`
+    // fallback inside the wrapper. Any reconstruction elsewhere has to guess it.
+    //
+    // Run in a CHILD PROCESS with the config driven to a NON-DEFAULT value. The
+    // first version of this test asserted `r.reasoningEffort === openaiConfig.reasoning`
+    // in-process, and the mutation harness caught it as vacuous: the default IS
+    // 'high', so hardcoding `?? 'high'` in the wrapper satisfied it — the test
+    // compared two values that are equal for the wrong reason. Config is frozen
+    // at import, so the env has to be set before the module loads, which a
+    // child process is the honest way to do.
+    const { execFileSync } = await import('node:child_process');
+    const out = execFileSync(process.execPath, ['-e', `
+      process.env.AUDIT_EXPORTS_FOR_TESTS = '1';
+      process.env.OPENAI_AUDIT_REASONING = 'low';
+      const { z } = await import('zod');
+      const audit = await import('./scripts/openai-audit.mjs');
+      const { _callGPTOnce } = audit.__testExports;
+      const stub = { responses: { parse: async () => ({
+        status: 'completed', output: [], output_parsed: { findings: [] },
+        usage: { input_tokens: 1, output_tokens: 1,
+          prompt_tokens_details: { cached_tokens: 0 },
+          output_tokens_details: { reasoning_tokens: 0 } },
+      }) } };
+      const r = await _callGPTOnce(stub, {
+        systemPrompt: 'sys', userPrompt: 'usr',
+        schema: z.object({ findings: z.array(z.any()).default([]) }),
+        schemaName: 'test', passName: 'test-pass', maxRetries: 0,
+      });
+      process.stdout.write('EFFORT=' + r.reasoningEffort);
+    `], { encoding: 'utf-8', input: '', env: { ...process.env, OPENAI_AUDIT_REASONING: 'low' } });
+    assert.match(out, /EFFORT=low/,
+      'the unspecified-effort fallback must read the configured value, not a hardcoded level');
+  });
+
+  it('a DEGRADED call still reports the effort that was requested', async () => {
+    // The call was made and failed, so the effort is a fact about the request.
+    // Without this a failed pass would be indistinguishable from one that never
+    // dispatched — both null.
+    const stub = makeStubThrow(new Error('boom'));
+    const r = await safeCallGPT(stub, { ...VALID_LEGACY, reasoning: 'medium' }, { findings: [] });
+    assert.equal(r.failed, true);
+    assert.equal(r.reasoningEffort, 'medium');
+  });
+
+  it('the orchestrator reads the reported value and keeps no name→level table', async () => {
+    const fs = await import('node:fs');
+    const src = fs.readFileSync('scripts/lib/audit/legacy-production-audit.mjs', 'utf-8');
+    assert.match(src, /_reasoning: result\?\.reasoningEffort \?\? null/,
+      'the registry entry must read the effort the call reported');
+    // The defect itself: a function mapping pass NAMES to reasoning levels.
+    // Matched on the shape rather than the old name, so reintroducing it under
+    // a different name is caught too.
+    assert.ok(
+      !/function \w*[Rr]easoning\w*\(\s*name\s*\)\s*\{[\s\S]{0,300}?return '(high|medium|low)'/.test(src),
+      'a name→level reasoning table is a guess; the effort must come from the call that sent it',
+    );
+  });
+});
