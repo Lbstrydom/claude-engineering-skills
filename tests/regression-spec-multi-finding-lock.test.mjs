@@ -151,15 +151,26 @@ describe('two findings, one test file — both locks survive', { skip }, () => {
     }
   });
 
-  const lock = (findingId, description) => recordRegressionSpec(REPO_ID, {
-    specPath: SPEC_PATH,
-    description,
-    sourceKind: 'unit-test',
-    sourceFindingId: findingId,
-    sourceFindingType: 'audit',
-    assertionCount: 0,
-    domContractTypes: [],
-  });
+  // §2b F2 (2026-08-12): recordRegressionSpec returns {ok, cloud, specId, reason}
+  // instead of a bare id, so a DB outage is no longer indistinguishable from the
+  // five input refusals and the unverified upsert that all returned the same
+  // null. This helper unwraps, so the assertions below stay about the BEHAVIOUR
+  // they were written for (two findings, one path, both rows survive) — and it
+  // asserts `ok` on the way through, so a failed write surfaces as a named
+  // failure here instead of as an undefined id three lines later.
+  const lock = async (findingId, description) => {
+    const res = await recordRegressionSpec(REPO_ID, {
+      specPath: SPEC_PATH,
+      description,
+      sourceKind: 'unit-test',
+      sourceFindingId: findingId,
+      sourceFindingType: 'audit',
+      assertionCount: 0,
+      domContractTypes: [],
+    });
+    assert.equal(res.ok, true, `lock failed: ${res.reason} — ${res.message}`);
+    return res.specId;
+  };
 
   it('the second lock ADDS a row instead of evicting the first', async () => {
     const idA = await lock(FINDING_A, 'pins the first finding');
@@ -187,10 +198,15 @@ describe('two findings, one test file — both locks survive', { skip }, () => {
   });
 
   it('a unit-test lock naming no finding is refused, not written with a NULL key', async () => {
-    const id = await recordRegressionSpec(REPO_ID, {
+    const res = await recordRegressionSpec(REPO_ID, {
       specPath: SPEC_PATH, description: 'pins nothing', sourceKind: 'unit-test',
       sourceFindingType: 'audit', assertionCount: 0, domContractTypes: [],
     });
-    assert.equal(id, null, 'a lock that names no finding asserts nothing');
+    // The refusal is NAMED now. `null` alone was the whole answer before §2b F2,
+    // which is exactly why it read the same as a store outage.
+    assert.equal(res.ok, false, 'a lock that names no finding asserts nothing');
+    assert.equal(res.specId, null);
+    assert.equal(res.reason, 'invalid-input');
+    assert.match(res.message, /sourceFindingId/);
   });
 });

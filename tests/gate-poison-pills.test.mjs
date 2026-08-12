@@ -316,6 +316,13 @@ const MANDATORY = {
   // the whole point of this gate is that a check nobody can see fail is
   // indistinguishable from no check at all.
   'db:enrolment:gate': ['db-enrolment-gate-detects-a-suite-no-runner-names'],
+  // Added 2026-08-12 with the emit() exit-code coupling (cross-skill-command-
+  // registry §2b F4). Post-2026-07-31, so a pill is mandatory. The gate does not
+  // re-check the runtime coupling — that is one seam, owned by
+  // tests/emit-exit-coupling.test.mjs — it ratchets the population of DECLARED
+  // opt-outs, which is the part no runtime test can see because each opt-out is
+  // individually legitimate API.
+  'emit:exit:gate': ['emit-exit-gate-detects-a-new-declared-opt-out'],
 };
 
 test('every gate the plan made mandatory is contracted — not quietly exempted', () => {

@@ -632,7 +632,7 @@
       ],
       "status": 0,
       "envelope": {
-        "ok": false,
+        "ok": true,
         "cloud": false,
         "updated": 0
       }
@@ -647,7 +647,7 @@
       ],
       "status": 0,
       "envelope": {
-        "ok": false,
+        "ok": true,
         "cloud": false,
         "updated": 0
       }
@@ -659,7 +659,7 @@
       ],
       "status": 0,
       "envelope": {
-        "ok": false,
+        "ok": true,
         "cloud": false
       }
     },
@@ -734,7 +734,7 @@
       ],
       "status": 0,
       "envelope": {
-        "ok": false,
+        "ok": true,
         "cloud": false
       }
     },
@@ -746,7 +746,7 @@
       ],
       "status": 0,
       "envelope": {
-        "ok": false,
+        "ok": true,
         "cloud": false
       }
     },
@@ -1516,7 +1516,7 @@
       ],
       "status": 0,
       "envelope": {
-        "ok": false,
+        "ok": true,
         "cloud": false,
         "rows": []
       }
@@ -1527,7 +1527,7 @@
       ],
       "status": 0,
       "envelope": {
-        "ok": false,
+        "ok": true,
         "cloud": false
       }
     },
@@ -1537,20 +1537,26 @@
         "--action",
         "bogus"
       ],
-      "status": 0,
+      "status": 2,
       "envelope": {
         "ok": false,
-        "cloud": false
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "--action must be one of accepted|dismissed|duplicate|not-actionable, got 'bogus'"
+        }
       }
     },
     "arm-decision-no-exp": {
       "args": [
         "arm-eval-decision"
       ],
-      "status": 0,
+      "status": 2,
       "envelope": {
         "ok": false,
-        "cloud": false
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "--experiment required"
+        }
       }
     },
     "arm-stats-cloud-off": {
@@ -1559,7 +1565,7 @@
       ],
       "status": 0,
       "envelope": {
-        "ok": false,
+        "ok": true,
         "cloud": false,
         "rows": []
       }
@@ -1568,20 +1574,26 @@
       "args": [
         "arm-eval-adjudicate"
       ],
-      "status": 0,
+      "status": 2,
       "envelope": {
         "ok": false,
-        "cloud": false
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "--session-id required"
+        }
       }
     },
     "arm-export-no-args": {
       "args": [
         "arm-eval-export"
       ],
-      "status": 0,
+      "status": 2,
       "envelope": {
         "ok": false,
-        "cloud": false
+        "error": {
+          "code": "BAD_INPUT",
+          "message": "--session-id <id> or --all required"
+        }
       }
     },
     "arm-capture-no-exp": {
@@ -1806,12 +1818,19 @@
         "learning-weekly-review",
         "--dry-run"
       ],
-      "status": 0,
+      "status": 2,
       "envelope": {
         "ok": false,
         "error": {
           "code": "BAD_INPUT",
-          "message": "repoName required (LEARNING_REPO_NAME env or --repo flag)"
+          "message": "repoName required (LEARNING_REPO_NAME env or --repo flag)",
+          "forwarded": {
+            "ok": false,
+            "error": {
+              "code": "BAD_INPUT",
+              "message": "repoName required (LEARNING_REPO_NAME env or --repo flag)"
+            }
+          }
         }
       }
     },

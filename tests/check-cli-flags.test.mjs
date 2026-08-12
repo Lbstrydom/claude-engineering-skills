@@ -90,6 +90,53 @@ describe('detection — helper OR message text', () => {
   it('an unguarded CLI does not', () => {
     assert.equal(rejectsUnknownFlags(UNGUARDED), false);
   });
+
+  // ── Calling the helper WRONG is not being guarded (2026-08-12) ─────────────
+  //
+  // "Calls assertKnownFlags" was the whole test, so three scripts that called it
+  // ineffectively were reported as PROTECTED. Two shapes compile, run, and
+  // validate nothing — both found in gate scripts, all three verified by
+  // executing them with a bogus flag and watching them proceed:
+  //
+  //   check-emit-exit-agreement.mjs  (new, this cluster)  --bogus → exit 0
+  //   check-db-suite-enrolment.mjs                        --bogus → exit 0
+  //   check-gate-poison-pills.mjs    (carries safety flags) --bogus → exit 0
+  //
+  // That is the accepted-and-inert defect this gate exists to catch, occurring
+  // inside the gates themselves — the guard was satisfied by its own presence.
+  for (const [label, src] of [
+    ['pre-sliced argv with the default from:2 (skips the first two flags)',
+      "assertKnownFlags(process.argv.slice(2), KNOWN_FLAGS, { cli: 'x' });"],
+    ['options passed as a bare string instead of {cli} (destructured to nothing)',
+      "assertKnownFlags(process.argv, KNOWN_FLAGS, 'x');"],
+    ['both at once — the real defect as shipped',
+      "assertKnownFlags(process.argv.slice(2), KNOWN_FLAGS, 'check-emit-exit-agreement');"],
+    ['pre-sliced with only two arguments',
+      "assertKnownFlags(process.argv.slice(2), ['--json']);"],
+  ]) {
+    it(`a MISCALL is not a guard: ${label}`, () => {
+      assert.equal(rejectsUnknownFlags(`const x = process.argv.includes('--a');\n${src}`), false);
+    });
+  }
+
+  // The other direction, and it is the one that matters more: a false positive
+  // pushes someone to "fix" correct code. The array case is not hypothetical —
+  // the first regex version flagged knip-gate.mjs, whose inline flag array
+  // supplies the commas and quotes a "third argument is a string" pattern wants.
+  for (const [label, src] of [
+    ['the ordinary correct form',
+      "assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'x' });"],
+    ['pre-sliced WITH an explicit from:0',
+      "assertKnownFlags(process.argv.slice(2), KNOWN_FLAGS, { cli: 'x', from: 0 });"],
+    ["campaign.mjs's legitimate from:3 (a sub-verb CLI)",
+      "assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'campaign', from: 3 });"],
+    ['knip-gate.mjs — an INLINE ARRAY of flags (the false positive that killed the regex)',
+      "assertKnownFlags(process.argv, ['--report', '--update-baseline', '--baseline', '--help'], { cli: 'knip-gate' });"],
+  ]) {
+    it(`a correct call is still a guard: ${label}`, () => {
+      assert.equal(rejectsUnknownFlags(`const x = process.argv.includes('--a');\n${src}`), true);
+    });
+  }
   it('a plain library is not a flag-parsing CLI at all', () => {
     assert.equal(parsesFlags(NOT_A_CLI), false);
   });

@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "gate": "emit:exit:gate",
+  "guards": "the population of declared `emit(env, {softFail:true, reason})` exit-code opt-outs does not grow without a deliberate re-baseline",
+  "gates": [
+    {
+      "id": "emit-exit-gate-detects-a-new-declared-opt-out",
+      "kind": "executable",
+      "statedIn": "AGENTS.md",
+      "stated": "npm run emit:exit:gate",
+      "implementation": "scripts/check-emit-exit-agreement.mjs",
+      "tests": ["tests/gate-poison-pills.test.mjs"],
+      "proof": "process",
+      "oracle": "poison-pill",
+      "poisonPill": {
+        "isolation": "tmpdir",
+        "argv": ["scripts/check-emit-exit-agreement.mjs"],
+        "overlay": {
+          "scripts/lib/cross-skill/commands/misc.mjs": "tests/fixtures/poison/emit-exit-optout.mjs.txt"
+        },
+        "expectExit": 1,
+        "expectStderr": "DRIFT",
+        "why": "`emit({ok:false})` sets a non-zero exit code since 2026-08-12 (plan §2b F4); before the coupling, 13 of 124 captured cross-skill invocations reported a failure in the envelope and still exited 0, which every caller that checks $? — shell scripts, CI steps, the pre-push hook — read as success. The runtime coupling is enforced at one seam and owned by tests/emit-exit-coupling.test.mjs. What NO runtime test can see is the population of declared opt-outs, because each one is individually legitimate: `{softFail:true, reason}` is real API for the cases where ok:false genuinely is not a process failure. An exemption mechanism nobody counts becomes the default, so this gate counts them and fails on GROWTH. The pill adds exactly one, in the shape a future author would write it, and the gate must exit 1 rather than absorbing it. It also fails on a REDUCTION, deliberately: a retired opt-out should be recorded in the baseline diff, not silently pocketed."
+      }
+    }
+  ]
+}

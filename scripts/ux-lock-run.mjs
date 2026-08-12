@@ -309,6 +309,7 @@ async function cmdSpec() {
 
   const specSummaries = [];
   let specRunPersistFailures = 0;
+  let specRegisterFailures = 0;
   for (const [specPath, specTests] of bySpec) {
     const passed = specTests.length > 0 && specTests.every(t => statusToPassed(t.status).passed);
     const durationMs = specTests.reduce((s, t) => s + (t.durationMs || 0), 0);
@@ -321,13 +322,22 @@ async function cmdSpec() {
     // or the register call no-ops. --no-register skips registration entirely.
     let specId = null;
     if (!noRegister) {
-      specId = await recordRegressionSpec(repoId, {
+      // Discriminated since §2b F2: a failed registration is REPORTED, not read
+      // as "no spec". Previously a DB outage and `--no-register` produced the
+      // same `specId === null`, so the run row was silently skipped too and the
+      // summary said nothing had needed recording.
+      const specRes = await recordRegressionSpec(repoId, {
         sourceKind,
         specPath,
         description: `Regression spec ${path.basename(specPath)}`,
         commitSha: commit,
         assertionCount: specTests.length,
       });
+      specId = specRes.ok ? specRes.specId : null;
+      if (!specRes.ok) {
+        specRegisterFailures += 1;
+        process.stderr.write(`  [ux-lock-run] regression spec NOT registered (${specRes.reason}): ${specRes.message}\n`);
+      }
     }
     if (specId) {
       const runRes = await recordRegressionSpecRun(specId, {
@@ -355,8 +365,12 @@ async function cmdSpec() {
     // CONFIGURED", asserted as "the runs were RECORDED". Every swallowed write
     // error, and every repo-identity outage, still reported `recorded: true`.
     // It now means what it says.
-    recorded: cloud && !scope.identityFailed && specRunPersistFailures === 0,
+    recorded: cloud && !scope.identityFailed && specRunPersistFailures === 0 && specRegisterFailures === 0,
     specRunPersistFailures,
+    // A spec whose REGISTRATION failed also skips its run row, so the two
+    // counters answer different questions and folding them would hide the
+    // first behind a zero in the second.
+    specRegisterFailures,
     // A store OUTAGE and an unconfigured machine both leave `repoId` null and
     // skip recording; only this field separates them for the consumer.
     repoIdentityFailed: scope.identityFailed,
@@ -364,9 +378,11 @@ async function cmdSpec() {
       ? 'AUDIT_DB_URL unset — ran specs, skipped recording'
       : (scope.identityFailed
         ? `repo identity lookup FAILED (${scope.error}) — the store is configured but unreachable, so NOTHING was recorded; this is an outage, not disabled recording`
-        : (specRunPersistFailures > 0
-          ? `${specRunPersistFailures} spec-run row(s) failed to persist — see [learning] lines on stderr`
-          : undefined)),
+        : (specRegisterFailures > 0
+          ? `${specRegisterFailures} regression spec(s) failed to REGISTER — their run rows were skipped too; see [learning] lines on stderr`
+          : specRunPersistFailures > 0
+            ? `${specRunPersistFailures} spec-run row(s) failed to persist — see [learning] lines on stderr`
+            : undefined)),
   });
   if (strictSelectors && policy.total > 0) {
     // Glob-discovered (post-run) violations under --strict-selectors: the run
@@ -428,18 +444,29 @@ async function cmdVerify() {
   await initLearningStore().catch(() => {});
   const cloud = await isCloudEnabled();
   let runId = null;
+  let verifyPersistFailed = null;
   if (cloud) {
     // The plan id is resolved by the caller (plans table); pass via --plan-id when known.
     const planId = opt('plan-id');
     if (planId) {
-      runId = await recordPlanVerificationRun({
+      const runRes = await recordPlanVerificationRun({
         planId, commitSha: commit, url,
         totalCriteria: items.length, passedCount, failedCount, skippedCount,
         durationMs, runContext: 'ux-lock-verify',
         // One row per run → the run total is the correct granularity here.
         selectorPolicyViolations: policy.total,
       });
-      if (runId) await recordPlanVerificationItems(runId, planId, items);
+      // Discriminated since §2b F2. A failed run insert used to yield `null`,
+      // which silently skipped the per-criterion rows AND still emitted
+      // `{ok:true, runId:null}` — a verify run reporting success having
+      // persisted nothing.
+      runId = runRes.ok ? runRes.runId : null;
+      if (!runRes.ok) {
+        verifyPersistFailed = runRes.reason;
+        process.stderr.write(`  [ux-lock-run] plan verification run NOT recorded (${runRes.reason}): ${runRes.message}\n`);
+      } else {
+        await recordPlanVerificationItems(runId, planId, items);
+      }
     } else {
       process.stderr.write('  [ux-lock-run] no --plan-id — recorded nothing (plan_verification_* require a plan id)\n');
     }
@@ -447,6 +474,9 @@ async function cmdVerify() {
 
   emit({
     ok: true, mode: 'verify', cloud, runId,
+    // `runId: null` alone cannot say WHY nothing was recorded — no --plan-id,
+    // cloud off, or a failed insert all produced it. This names the third.
+    ...(verifyPersistFailed ? { persistFailed: verifyPersistFailed } : {}),
     totalCriteria: items.length, passedCount, failedCount, skippedCount,
     selectorPolicyViolations: policy.total,
     orphanTests: orphanTests.length,

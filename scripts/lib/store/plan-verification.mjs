@@ -17,10 +17,26 @@ import { insertRunRowWithPolicyFallback } from './run-row-fallback.mjs';
 // ── plan_verification_runs / plan_verification_items ───────────────────────
 
 /**
- * Record one /ux-lock-verify run; returns the run UUID.
+ * Record one /ux-lock-verify run.
+ *
+ * **Returns a discriminated result** (plan §2b F2, 2026-08-12). It returned a
+ * bare `null` for a missing planId, for cloud-off, for an insert that produced
+ * no id, and for any caught DB failure — and its CLI caller wrote `ok: !!runId`.
+ * Cluster E made the cost concrete: a free variable inside the `try` returned
+ * that same `null`, and nothing anywhere could tell it from "no plan".
+ *
+ * @returns {Promise<{ok:true, cloud:boolean, runId:string}
+ *          |{ok:false, cloud:boolean, runId:null,
+ *            reason:'cloud-off'|'invalid-input'|'write-failed',
+ *            message:string, error?:Error}>}
  */
 export async function recordPlanVerificationRun(run) {
-  if (!run?.planId || !await isCloudEnabled()) return null;
+  if (!run?.planId) {
+    return { ok: false, cloud: true, runId: null, reason: 'invalid-input', message: 'recordPlanVerificationRun requires run.planId' };
+  }
+  if (!await isCloudEnabled()) {
+    return { ok: false, cloud: false, runId: null, reason: 'cloud-off', message: 'cloud store is disabled' };
+  }
   const row = {
     plan_id: run.planId,
     spec_id: run.specId || null,
@@ -37,10 +53,16 @@ export async function recordPlanVerificationRun(run) {
   if (run.selectorPolicyViolations != null) row.selector_policy_violations = run.selectorPolicyViolations;
   try {
     const out = await insertRunRowWithPolicyFallback('plan_verification_runs', row, { returning: ['id'] });
-    return out?.id ?? null;
+    const runId = out?.id ?? null;
+    if (!runId) {
+      const message = 'insert returned no row — the write did not verify';
+      process.stderr.write(`  [learning] recordPlanVerificationRun: ${message}\n`);
+      return { ok: false, cloud: true, runId: null, reason: 'write-failed', message };
+    }
+    return { ok: true, cloud: true, runId };
   } catch (err) {
     process.stderr.write(`  [learning] recordPlanVerificationRun failed: ${err.message}\n`);
-    return null;
+    return { ok: false, cloud: true, runId: null, reason: 'write-failed', message: err.message, error: err };
   }
 }
 
@@ -92,14 +114,29 @@ export async function recordPlanVerificationItems(runId, planId, items) {
     );
     return res?.rowCount ?? 0;
   };
+  // A short write is a FAILED write (§2b F2, raised in both Cluster F audit
+  // rounds). `inserted` was already honest — it is the count Postgres accepted,
+  // never the count requested — but `ok: true` rode alongside it regardless, so
+  // a caller checking `ok` and a caller comparing `inserted` to `items.length`
+  // reached opposite conclusions from the same result. That is the
+  // unverified-write-success shape this cluster exists to remove, and the fix
+  // is the one the sibling writers already carry: compare, then report.
+  const verify = (inserted) => (inserted === rows.length
+    ? { ok: true, inserted }
+    : {
+      ok: false,
+      inserted,
+      reason: inserted === 0 ? 'no-rows-written' : 'row-count-mismatch',
+      message: `INSERT affected ${inserted} of ${rows.length} plan_verification_items row(s)`,
+    });
   try {
-    return { ok: true, inserted: await insertItems(false) };
+    return verify(await insertItems(false));
   } catch (err) {
     // 42703-only: consumer DB predates the `skipped` column (migration
     // 20260704…) — retry once without it so the per-criterion rows aren't lost.
     if (err?.code === '42703' && 'skipped' in rows[0]) {
       process.stderr.write('  [learning] plan_verification_items.skipped missing — run setup-postgres --migrate; recording without it\n');
-      try { return { ok: true, inserted: await insertItems(true) }; }
+      try { return verify(await insertItems(true)); }
       catch (retryErr) {
         process.stderr.write(`  [learning] recordPlanVerificationItems failed: ${retryErr.message}\n`);
         return { ok: false, inserted: 0, reason: retryErr.message };

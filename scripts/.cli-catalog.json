@@ -149,6 +149,14 @@
       "description": "The DRIFT-gate form of cli:flags (part of `npm run check`): fails only on a NET-NEW CLI that parses flags but ignores unknown ones. The 24 pre-existing ones are baselined so the gate is a ratchet, not a wall. Origin: refresh.mjs --full --dry-run silently discarded --dry-run and ran a real full refresh.",
       "category": "diagnostic"
     },
+    "emit:exit:gate": {
+      "description": "Drift gate for the emit() exit-code coupling (part of `npm run check`). `emit({ok:false})` sets a non-zero exit code since 2026-08-12; the declared opt-out `emit(env,{softFail:true,reason})` is legitimate but must not accumulate, so this counts them and fails when the count GROWS. Measured before the coupling landed: 13 of 124 captured cross-skill invocations reported ok:false at exit 0. Baseline: .emit-exit-baseline.json.",
+      "category": "diagnostic"
+    },
+    "emit:exit:baseline": {
+      "description": "Re-write the emit:exit:gate baseline deliberately, after reviewing a new declared opt-out (or after retiring one — the ratchet fails in BOTH directions so a reduction is recorded rather than silently absorbed).",
+      "category": "maintenance"
+    },
     "context:check": {
       "description": "Detect drift between CLAUDE.md / AGENTS.md and the live codebase.",
       "category": "diagnostic"

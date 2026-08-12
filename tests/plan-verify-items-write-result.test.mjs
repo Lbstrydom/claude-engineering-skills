@@ -75,7 +75,16 @@ describe('record-plan-verify-items — reports persistence, not intent', () => {
     const out = recordItems({ dbUrl: 'postgresql://u:p@127.0.0.1:1/postgres' });
     assert.equal(out.ok, false, 'a write that never reached the database cannot report ok');
     assert.equal(out.error?.code, 'WRITE_FAILED');
-    assert.equal(out._status, 2, 'a caller reading only the exit code must still see the failure');
+    // 2 → 1 (§2b F2, 2026-08-12). The assertion this test cares about is
+    // NON-ZERO — "a caller reading only the exit code must still see the
+    // failure" — and 2 was simply CommandError's default, not a decision. The
+    // cluster gave the two codes distinct meanings across every converted
+    // handler: 2 is "you asked wrong" (argv/contract), 1 is "we tried and it
+    // did not work". An unreachable store is squarely the second, and leaving
+    // it on 2 would put a DB outage in the same bucket as a malformed payload —
+    // the exact conflation this whole conversion removes.
+    assert.equal(out._status, 1, 'a caller reading only the exit code must still see the failure');
+    assert.notEqual(out._status, 0, 'and it must never be zero');
     assert.ok(
       !JSON.stringify(out).includes('"inserted":1'),
       'the request size must never be reported as an insert count',

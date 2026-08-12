@@ -34,10 +34,26 @@ import { insertRunRowWithPolicyFallback } from './run-row-fallback.mjs';
  *
  * Pre-egress redaction applies to the three JSONB columns (witness_snapshot,
  * contradiction_payload, journey_context) on locked rows (Gemini-R6-G3).
+ *
+ * **Returns a discriminated result** (plan §2b F2, 2026-08-12). It returned a
+ * bare `null` for EIGHT distinct causes — cloud-off, five separate input
+ * refusals, an upsert that returned no row, and a caught DB failure — and its
+ * CLI caller wrote `ok: !!specId`, so a store outage and a missing description
+ * were the same envelope. Cloud-off is `{ok:false, cloud:false, reason:'cloud-off'}`
+ * so a caller can report a supported mode as such rather than as a failure.
+ *
+ * @returns {Promise<{ok:true, cloud:boolean, specId:string}
+ *          |{ok:false, cloud:boolean, specId:null,
+ *            reason:'cloud-off'|'invalid-input'|'retired-kind'|'write-failed',
+ *            message:string, error?:Error}>}
  */
 export async function recordRegressionSpec(repoId, spec) {
-  if (!await isCloudEnabled()) return null;
-  if (!spec?.sourceKind) return null;
+  if (!await isCloudEnabled()) {
+    return { ok: false, cloud: false, specId: null, reason: 'cloud-off', message: 'cloud store is disabled' };
+  }
+  if (!spec?.sourceKind) {
+    return { ok: false, cloud: true, specId: null, reason: 'invalid-input', message: 'recordRegressionSpec requires spec.sourceKind' };
+  }
   // RETIRED 2026-08-11: refuse the candidate kind outright rather than let it
   // fall through to the spec_path branch, where it would be rejected for a
   // MISLEADING reason ("spec_path is required") on a stale consumer still
@@ -48,11 +64,11 @@ export async function recordRegressionSpec(repoId, spec) {
       + 'was retired 2026-08-11 with the promotion path; re-sync the bundle '
       + '(npm run sync) — this row was NOT written\n',
     );
-    return null;
+    return { ok: false, cloud: true, specId: null, reason: 'retired-kind', message: 'source_kind persona-consistency-candidate was retired 2026-08-11 with the promotion path — re-sync the bundle (npm run sync)' };
   }
   if (!spec.specPath) {
     process.stderr.write('  [learning] recordRegressionSpec: spec_path is required\n');
-    return null;
+    return { ok: false, cloud: true, specId: null, reason: 'invalid-input', message: 'spec_path is required' };
   }
   if (!repoId) {
     // The (repo_id, spec_path) unique constraint is a FULL index; a NULL
@@ -60,7 +76,7 @@ export async function recordRegressionSpec(repoId, spec) {
     // would silently INSERT a duplicate on every re-run instead of updating.
     // Refuse rather than accrue dupes.
     process.stderr.write('  [learning] recordRegressionSpec: rows require a resolved repoId (NULL would duplicate on the (repo_id, spec_path) unique index)\n');
-    return null;
+    return { ok: false, cloud: true, specId: null, reason: 'invalid-input', message: 'rows require a resolved repoId (a NULL would duplicate on the (repo_id, spec_path) unique index)' };
   }
   if (spec.sourceKind === 'unit-test' && !spec.sourceFindingId) {
     // A unit-test lock's identity IS the finding it pins: without one the row
@@ -68,9 +84,11 @@ export async function recordRegressionSpec(repoId, spec) {
     // could not dedupe it. Refused here rather than left to the CHECK so the
     // caller gets a reason instead of a raised constraint name.
     process.stderr.write('  [learning] recordRegressionSpec: unit-test rows require sourceFindingId — a lock that names no finding pins nothing\n');
-    return null;
+    return { ok: false, cloud: true, specId: null, reason: 'invalid-input', message: 'unit-test rows require sourceFindingId — a lock that names no finding pins nothing' };
   }
-  if (!spec.description) return null;
+  if (!spec.description) {
+    return { ok: false, cloud: true, specId: null, reason: 'invalid-input', message: 'spec.description is required' };
+  }
 
   const row = {
     repo_id: repoId || null,
@@ -125,10 +143,19 @@ export async function recordRegressionSpec(repoId, spec) {
     const rows = await upsert('regression_specs', [row], {
       onConflict, conflictWhere, update: 'all', returning: ['id'],
     });
-    return rows[0]?.id ?? null;
+    const specId = rows[0]?.id ?? null;
+    if (!specId) {
+      // Postgres reports success for an upsert that affected nothing, so a
+      // missing returned id is an UNVERIFIED write, not an absent spec. Same
+      // branch upsertPlan grew in Cluster B, for the same reason.
+      const message = 'upsert returned no row — the write did not verify';
+      process.stderr.write(`  [learning] recordRegressionSpec: ${message}\n`);
+      return { ok: false, cloud: true, specId: null, reason: 'write-failed', message };
+    }
+    return { ok: true, cloud: true, specId };
   } catch (err) {
     process.stderr.write(`  [learning] recordRegressionSpec failed: ${err.message}\n`);
-    return null;
+    return { ok: false, cloud: true, specId: null, reason: 'write-failed', message: err.message, error: err };
   }
 }
 

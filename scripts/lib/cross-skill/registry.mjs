@@ -149,7 +149,10 @@ export const REGISTRY = Object.freeze([
     name: 'record-regression-spec',
     flags: [], positionals: 'none', payload: 'json',
     scope: 'ambient-ok', kind: 'write', cloud: 'degrade-noop',
-    degradeShape: { specId: null }, softFail: { all: true, reason: 'legacy `ok: !!specId` — same swallowed-null shape as upsert-plan. Owned by Cluster F.' },
+    // softFail RETIRED (§2b F2): recordRegressionSpec returns {ok, reason} now,
+    // so the handler throws on a refused or failed write. `ok: !!specId` is
+    // unwritable — there is no null left to infer from.
+    degradeShape: { specId: null },
     load: () => import('./commands/ship.mjs').then((m) => m.recordRegressionSpecCmd),
   },
   {
@@ -178,7 +181,9 @@ export const REGISTRY = Object.freeze([
     name: 'record-plan-verify-run',
     flags: [], positionals: 'none', payload: 'json',
     scope: 'none', kind: 'write', cloud: 'degrade-noop',
-    degradeShape: { runId: null }, softFail: { all: true, reason: 'legacy `ok: !!runId` — same swallowed-null shape. Owned by Cluster F.' },
+    // softFail RETIRED (§2b F2): recordPlanVerificationRun reports its own
+    // outcome, so the handler throws rather than inferring from a null runId.
+    degradeShape: { runId: null },
     load: () => import('./commands/plan-verify.mjs').then((m) => m.recordPlanVerifyRunCmd),
   },
   {
@@ -200,7 +205,13 @@ export const REGISTRY = Object.freeze([
     flags: [], positionals: 'none', payload: 'json',
     scope: 'none', kind: 'write', cloud: 'degrade-noop',
     degradeShape: { sessionId: null, existed: false, statsUpdated: false },
-    softFail: { all: true, reason: 'legacy ok = !!result.sessionId — a throw would DISCARD the correlationSummary payload that names why (reason: session-write-failed), so this one needs a payload-preserving design. Owned by Cluster F.' },
+    // softFail KEPT, and now for a designed reason rather than a legacy one
+    // (§2b F2). recordPersonaSession reports {ok, reason} and the handler spreads
+    // it, so the envelope is honest — but this command must NOT throw: a throw
+    // discards `correlationSummary`, the field that names why the correlation
+    // pass did nothing (`reason: 'session-write-failed'`). Trading the diagnosis
+    // for the signal is not an improvement, so the failure rides the envelope.
+    softFail: { all: true, reason: 'DESIGNED (§2b F2): the store reports {ok,reason} and the handler spreads it; a throw would discard correlationSummary, which is the payload that explains the failure.' },
     load: () => import('./commands/persona.mjs').then((m) => m.recordPersonaSessionCmd),
   },
   {

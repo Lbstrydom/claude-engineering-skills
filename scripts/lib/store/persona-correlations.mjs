@@ -142,7 +142,18 @@ export async function recordPersonaAuditCorrelation(personaSessionId, correlatio
  * @returns {Promise<number>} rows deleted
  */
 export async function retireMissedCorrelationsForHash(repoId, personaFindingHash) {
-  if (!repoId || !personaFindingHash || !await isCloudEnabled()) return 0;
+  // Discriminated since plan §2b F2 (2026-08-12), raised twice by the Cluster E
+  // audit. A bare `0` meant "nothing matched" AND "the DELETE failed" — and the
+  // two have opposite meanings here: the first says the stale `audit_finding_id
+  // IS NULL` rows are gone, the second says they are still there and will keep
+  // being counted as missed correlations. `retired` carries the count, so a
+  // caller reading only that number is unaffected.
+  if (!repoId || !personaFindingHash) {
+    return { ok: false, cloud: true, retired: 0, reason: 'invalid-input', message: 'repoId and personaFindingHash are both required' };
+  }
+  if (!await isCloudEnabled()) {
+    return { ok: false, cloud: false, retired: 0, reason: 'cloud-off', message: 'cloud store is disabled' };
+  }
   try {
     const rows = await many(
       `DELETE FROM persona_audit_correlations pac
@@ -154,10 +165,10 @@ export async function retireMissedCorrelationsForHash(repoId, personaFindingHash
         RETURNING pac.id`,
       [repoId, personaFindingHash],
     );
-    return rows.length;
+    return { ok: true, cloud: true, retired: rows.length };
   } catch (err) {
     process.stderr.write(`  [learning] retireMissedCorrelationsForHash failed: ${err.message}\n`);
-    return 0;
+    return { ok: false, cloud: true, retired: 0, reason: 'write-failed', message: err.message, error: err };
   }
 }
 

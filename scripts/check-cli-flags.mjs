@@ -333,8 +333,85 @@ export function stripComments(src) {
  */
 export function rejectsUnknownFlags(src) {
   const code = stripComments(src);
-  if (/assertKnownFlags\s*\(/.test(code)) return true;
+  if (/assertKnownFlags\s*\(/.test(code)) return !miscalledAssertKnownFlags(code);
   return /unknown flag|unknown option|unrecognis|unrecogniz|Unknown argument/i.test(code);
+}
+
+/**
+ * Two ways to call `assertKnownFlags` that COMPILE, RUN, and validate nothing.
+ *
+ * Found 2026-08-12 in a brand-new gate script — `check-emit-exit-agreement.mjs`
+ * shipped with `assertKnownFlags(process.argv.slice(2), KNOWN, 'name')`, and
+ * `--bogus-flag` ran happily at exit 0. This census reported it as PROTECTED,
+ * because "calls the helper" was the whole test. That is the accepted-and-inert
+ * defect this gate exists to catch, reintroduced one level up: the call site was
+ * present, so the guard was satisfied by its own presence.
+ *
+ *   1. **Pre-sliced argv with the default offset.** The signature is
+ *      `(argv, known, {from = 2})` and `from` indexes into `argv`, so passing
+ *      `process.argv.slice(2)` without `from: 0` silently skips the first TWO
+ *      real flags. `cmd --a --b --bogus` validates only `--bogus`.
+ *   2. **A bare-string third argument.** The options are an OBJECT (`{cli}`);
+ *      a string is destructured to nothing, so `cli` stays 'cli' AND — more
+ *      importantly — any intended `from` is lost.
+ *
+ * Deliberately narrow: it matches the two literal shapes rather than trying to
+ * type-check JavaScript. A miscall it misses reports as protected, which is the
+ * status quo; a false positive would push someone to "fix" correct code, which
+ * is worse. `campaign.mjs`'s legitimate `{cli, from: 3}` is untouched — an
+ * explicit `from` is the mechanism working, not a miscall.
+ */
+export function miscalledAssertKnownFlags(code) {
+  for (const args of assertKnownFlagsArgs(code)) {
+    const [argvArg = '', , optsArg = ''] = args;
+    // (1) sliced argv without an explicit `from`
+    if (/argv\s*\.slice\s*\(/.test(argvArg) && !/\bfrom\s*:/.test(optsArg)) return true;
+    // (2) options passed as a string literal instead of an object
+    if (/^\s*['"`]/.test(optsArg)) return true;
+  }
+  return false;
+}
+
+/**
+ * Split every `assertKnownFlags(...)` call into its TOP-LEVEL arguments.
+ *
+ * Bracket-balancing, not a regex, and that is not gold-plating — the regex
+ * version reported `knip-gate.mjs` as miscalled because it passes its known-flag
+ * list as an INLINE ARRAY: `assertKnownFlags(process.argv, ['--report',
+ * '--baseline'], {cli})`. The commas and quotes inside that array satisfied a
+ * "third argument is a string" pattern, and the call is entirely correct.
+ *
+ * A false positive here is worse than a miss, because it pushes someone to
+ * "fix" working code — so the split has to actually understand nesting.
+ */
+function assertKnownFlagsArgs(code) {
+  const calls = [];
+  const re = /assertKnownFlags\s*\(/g;
+  for (let m = re.exec(code); m; m = re.exec(code)) {
+    let depth = 1;
+    let cur = '';
+    const args = [];
+    let quote = null;
+    for (let i = m.index + m[0].length; i < code.length && depth > 0; i++) {
+      const ch = code[i];
+      if (quote) {
+        if (ch === '\\') { cur += ch + code[++i]; continue; }
+        if (ch === quote) quote = null;
+        cur += ch;
+        continue;
+      }
+      if (ch === "'" || ch === '"' || ch === '`') { quote = ch; cur += ch; continue; }
+      if ('([{'.includes(ch)) depth++;
+      else if (')]}'.includes(ch)) {
+        depth--;
+        if (depth === 0) { args.push(cur); break; }
+      }
+      if (ch === ',' && depth === 1) { args.push(cur); cur = ''; continue; }
+      cur += ch;
+    }
+    if (args.length) calls.push(args);
+  }
+  return calls;
 }
 
 /**

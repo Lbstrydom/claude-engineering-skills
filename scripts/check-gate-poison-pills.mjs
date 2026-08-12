@@ -38,7 +38,7 @@ import { runWithConcurrency } from './lib/concurrency.mjs';
 // Shared with prepush-check.mjs since 2026-08-11 — the same worktree defect was
 // found there. One walk, so there is one place to regress it.
 import { findNodeModules } from './lib/node-modules-resolver.mjs';
-import { assertKnownFlags } from './lib/cli-io.mjs';
+import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 
 const SELF = fileURLToPath(import.meta.url);
 const REPO_ROOT = path.resolve(path.dirname(SELF), '..');
@@ -692,7 +692,19 @@ const KNOWN_FLAGS = ['--selfcheck-relocation', WORKER_FLAG];
 
 async function main() {
   if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
-  assertKnownFlags(process.argv.slice(2), KNOWN_FLAGS, { cli: 'gates:poison' });
+  // `process.argv` whole with the default `from: 2` — it passed a PRE-SLICED
+  // argv, so the offset skipped the first two real flags and an unknown flag ran
+  // at exit 0 (verified 2026-08-12). This CLI carries safety flags, so a dropped
+  // typo is not cosmetic: the operator asks for one thing and gets another.
+  try {
+    assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'gates:poison' });
+  } catch (err) {
+    // Handled rather than thrown: an unhandled ArgvError prints a stack trace
+    // over the diagnostic the helper wrote precisely so the operator can read
+    // it. Exit 2 is this repo's argv-error code.
+    if (err instanceof ArgvError) { process.stderr.write(`${err.message}\n`); process.exit(2); }
+    throw err;
+  }
 
   // Fork mode: this process is one pill, driven over IPC by the parent below.
   // Branch before any of the parent's own work — a worker that re-ran the

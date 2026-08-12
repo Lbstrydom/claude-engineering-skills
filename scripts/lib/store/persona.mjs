@@ -241,8 +241,17 @@ export async function upsertPersona(persona) {
  * @returns {Promise<{sessionId: string|null, existed: boolean, statsUpdated: boolean}>}
  */
 export async function recordPersonaSession(session) {
-  if (!session?.sessionId || !await isCloudEnabled()) {
-    return { sessionId: null, existed: false, statsUpdated: false };
+  // Discriminated since plan §2b F2 (2026-08-12). `{sessionId: null}` was
+  // returned for a missing sessionId, for cloud-off, AND for a caught write
+  // failure, and the CLI wrote `ok: !!result.sessionId` — so a store outage read
+  // as "no session was recorded", which is also what a legitimate local-only run
+  // looks like. `ok`/`cloud`/`reason` are ADDITIVE: every existing field is
+  // still present and unchanged, so a caller reading `.sessionId` is unaffected.
+  if (!session?.sessionId) {
+    return { ok: false, cloud: true, reason: 'invalid-input', message: 'recordPersonaSession requires session.sessionId', sessionId: null, existed: false, statsUpdated: false };
+  }
+  if (!await isCloudEnabled()) {
+    return { ok: false, cloud: false, reason: 'cloud-off', message: 'cloud store is disabled', sessionId: null, existed: false, statsUpdated: false };
   }
   let sessionId = null;
   let clickPathMeta = null;
@@ -284,9 +293,14 @@ export async function recordPersonaSession(session) {
     const rows = await upsert('persona_test_sessions', [row],
       { onConflict: 'session_id', update: 'all', returning: ['id'] });
     sessionId = rows[0]?.id || null;
+    if (!sessionId) {
+      const message = 'upsert returned no row — the write did not verify';
+      process.stderr.write(`  [persona] recordPersonaSession: ${message}\n`);
+      return { ok: false, cloud: true, reason: 'write-failed', message, sessionId: null, existed: false, statsUpdated: false };
+    }
   } catch (err) {
     process.stderr.write(`  [persona] recordPersonaSession failed: ${err.message}\n`);
-    return { sessionId: null, existed: false, statsUpdated: false };
+    return { ok: false, cloud: true, reason: 'write-failed', message: err.message, error: err, sessionId: null, existed: false, statsUpdated: false };
   }
 
   // Best-effort persona-stats refresh — separate failure mode from the
@@ -310,6 +324,8 @@ export async function recordPersonaSession(session) {
   }
 
   return {
+    ok: true,
+    cloud: true,
     sessionId,
     existed: false,
     statsUpdated,

@@ -36,18 +36,45 @@ const read = (rel) => fs.readFileSync(path.join(REPO, rel), 'utf-8');
 // ── The derived writer set ──────────────────────────────────────────────────
 
 /**
- * Store modules whose writer exports the audit orchestrator's cloud block draws
- * on. Named here because THIS is the boundary the plan's decision 6 draws
- * ("every audit-store write in legacy-production-audit.mjs's cloud block"), not
- * because the writer names are known.
+ * EVERY module under `scripts/lib/store/**` (cross-skill-command-registry
+ * §2b F1, 2026-08-12).
+ *
+ * It was a hand-written pair — `runs-findings.mjs` and `bandit-fp.mjs` — chosen
+ * because decision 6 draws its boundary at the orchestrator's cloud block. But
+ * naming two modules is the same defect the DERIVED writer set was built to fix,
+ * one level up: a writer in a THIRD module is not exempted and not registered,
+ * it is **unrepresentable**. Measured before the widening: 2 modules of ~11
+ * visible, and 0 of 5 sampled cross-skill writers appearing anywhere in the
+ * oracle. Same shape as the 15 DB suites enrolled nowhere.
+ *
+ * "Which side am I iterating, and what is unrepresentable from it?" — the
+ * answer has to be the DIRECTORY, because it is the only side that can see a
+ * module no list mentions.
  */
-const STORE_MODULES = [
-  'scripts/lib/store/runs-findings.mjs',
-  'scripts/lib/store/bandit-fp.mjs',
-];
+const STORE_DIR = 'scripts/lib/store';
+const STORE_MODULES = (function listStoreModules(rel = STORE_DIR) {
+  const out = [];
+  for (const e of fs.readdirSync(path.join(REPO, rel), { withFileTypes: true })) {
+    const child = `${rel}/${e.name}`;
+    if (e.isDirectory()) out.push(...listStoreModules(child));
+    else if (e.name.endsWith('.mjs')) out.push(child);
+  }
+  return out;
+}());
 
-/** A write-shaped export: `record*` or `sync*`. */
-const WRITER_NAME = /^(record|sync)[A-Z]/;
+/**
+ * A write-shaped export.
+ *
+ * `^(record|sync)[A-Z]` until 2026-08-12, and the two missing verbs were not
+ * hypothetical: widening it surfaced `upsertPersona`, `upsertRepoByUuid`,
+ * `upsertDomainSummary`, `deleteRefreshRuns` and
+ * `retireMissedCorrelationsForHash` — the last of which the Cluster E audit had
+ * independently flagged as a swallowing writer, twice, while this oracle
+ * reported the tree clean. A verb list is a second place to be incomplete;
+ * it is kept deliberately broad, and a name that is write-shaped but harmless
+ * costs one exemption line.
+ */
+const WRITER_NAME = /^(record|sync|upsert|save|persist|write|delete|retire|mark)[A-Z]/;
 
 /**
  * Exports that are write-shaped but are NOT durable audit-store writes, each
@@ -62,6 +89,91 @@ const NOT_A_DURABLE_WRITE = {
   recordFinalReviewFix: 'Operator-initiated CLI write (cross-skill.mjs final-review-record-fix). Synchronous, awaited, and its failure reaches the operator as a non-zero exit.',
   recordAdjudicationEvent: 'Operator/ledger-initiated, awaited by its caller, and the ledger on disk is the durable copy — a spill would be a second queue over the same evidence.',
   recordConvergenceState: 'Gate-evidence write with its own try/catch and explicit stderr report at the call site; the local evidence marker is the durable copy.',
+
+  // ── F1 exemption pass (§2b F1, 2026-08-12) ────────────────────────────────
+  //
+  // Widening STORE_MODULES from two named files to the directory made 51 more
+  // writers visible. Two of them are called by the orchestrator's cloud block
+  // (`upsertPlan`, `markFindingsRemediation`) and are exempted on the SAME
+  // ground the pre-existing entries use — an on-disk artifact is already the
+  // durable copy, so a spill queue would be a second queue over the same
+  // evidence. The other 49 are outside decision 6's boundary entirely.
+  //
+  // These are claims, not silencers. The claim each one makes is: **this write
+  // is not on the fire-and-forget path the spill/replay contract exists for**,
+  // because either (a) it is not in the orchestrator's cloud block, or (b) its
+  // failure is already representable to a caller that acts on it. Where a
+  // writer ALSO swallows its failure, that is a separate defect and is named
+  // here rather than hidden by the exemption.
+
+  // (a) The `arch:refresh` / `symbol-index` pipeline. Written by their own
+  // CLIs, never by the orchestrator. A refresh is re-runnable end to end and
+  // rows are keyed to a `refresh_id`, so replaying one fragment of a snapshot
+  // whose siblings never landed would produce a half-populated index that reads
+  // as complete — strictly worse than the failed refresh the operator sees.
+  recordSymbolIndex: 'arch:refresh pipeline, not the orchestrator cloud block. Snapshot-scoped by refresh_id; a partial replay is worse than a failed refresh (the index would read as complete).',
+  recordSymbolDefinitions: 'arch:refresh pipeline; same refresh_id snapshot semantics as recordSymbolIndex.',
+  recordSymbolEmbedding: 'arch:refresh pipeline; a missing embedding degrades to the `unscored` band, which is already a represented state ("no embedding", never "checked and rejected").',
+  recordSymbolEmbeddings: 'arch:refresh pipeline; batch form of recordSymbolEmbedding, same reasoning.',
+  recordSymbolFileImports: 'arch:refresh pipeline; the observed import graph is regenerated every render and gitignored, so a lost row is recomputed rather than replayed.',
+  markImportGraphPopulated: 'arch:refresh pipeline; a marker over rows the same refresh wrote — replaying it against an absent graph would assert a population that never happened.',
+  recordLayeringViolations: 'arch:refresh pipeline; snapshot-scoped, and the coverage envelope reports absence as `unknown` rather than clean.',
+  recordDuplicateJustifications: 'arch:refresh pipeline; re-derived from source pragmas on every refresh.',
+  recordSummaryOutcomes: 'arch:refresh pipeline, and it THROWS — the failure is already representable to its caller.',
+  recordGraphCoverage: 'arch:refresh pipeline; returns {recorded, reason} and the reader treats an absent envelope as `unknown`, never as clean coverage.',
+  recordBandCalibration: 'arch:refresh pipeline; returns a discriminated result, and an uncalibrated repo bands `review` only — an honest degraded state, not a silent one.',
+  upsertDomainSummary: 'arch:refresh pipeline; LLM-authored summaries regenerated per refresh.',
+  deleteRefreshRuns: 'symbol-index prune CLI, not the orchestrator. NOTE: it swallows a failed DELETE to 0, which is indistinguishable from "nothing matched" — real, out of §2b F2 scope (F2 is scoped to cross-skill writers), and carried as declared debt rather than hidden by this exemption.',
+
+  // (b) Experiment harnesses (arm-eval, campaign). Operator-initiated from
+  // their own CLIs, each returns a discriminated result its caller checks, and
+  // a lost experiment row invalidates that experiment rather than corrupting an
+  // audit — the failure is loud where it matters.
+  recordSession: 'arm-eval harness CLI; discriminated result, checked by its caller. Not in the orchestrator cloud block.',
+  recordRun: 'arm-eval harness CLI; discriminated result, checked by its caller.',
+  recordOutput: 'arm-eval harness CLI; discriminated result, checked by its caller.',
+  recordJudgment: 'arm-eval harness CLI; discriminated result, checked by its caller.',
+  recordCrossCheck: 'arm-eval harness CLI; discriminated result, checked by its caller.',
+  recordHumanRanking: 'arm-eval harness CLI; operator-initiated, discriminated result.',
+  upsertSnapshot: 'campaign harness CLI; the snapshot is re-derivable from the committed source it describes.',
+  upsertWorksheetRows: 'campaign harness CLI; rows are rebuilt from the snapshot on re-run.',
+  recordArmRun: 'campaign harness CLI; discriminated result, checked by its caller.',
+  recordAgentVerdict: 'campaign harness CLI; discriminated result, checked by its caller.',
+  recordHumanOverride: 'campaign harness CLI; operator-initiated and awaited — a failure reaches the operator as a non-zero exit.',
+  recordAdjudicationAttempt: 'campaign harness CLI; discriminated result, checked by its caller.',
+  writeClusterSet: 'campaign harness CLI; derived clustering, recomputed per adjudication run.',
+
+  // (c) Operator-initiated cross-skill CLI writes. Synchronous and awaited, and
+  // since §2b F2 every one of them reports a discriminated outcome that its
+  // handler maps to a non-zero exit — so the failure reaches the operator in
+  // the same breath rather than needing a replay queue.
+  upsertPlan: 'Called by the orchestrator, but deliberately NOT spill-registered: there is no envelope to replay (the plan row is re-created from --plan on the next run) and a lost linkage is already counted and reported under its own id in `byWriter`.',
+  markFindingsRemediation: 'Called by the orchestrator, but the adjudication LEDGER ON DISK is the durable copy — applyLifecycleUpdates commits the transitions locally before this projects them. Same ground as recordAdjudicationEvent: a spill would be a second queue over the same evidence.',
+  markRunFindingsNeedsTriage: 'finalize-outcomes CLI (operator-initiated, awaited); the triage ledger on disk is the durable copy.',
+  markRunFindingsAutoDismissed: 'finalize-outcomes CLI; same ledger-on-disk reasoning as markRunFindingsNeedsTriage.',
+  persistKeptEmbeddings: 'Semantic-suppression side table. Fail-open by design (AUDIT_SEMANTIC_SUPPRESS_ENABLED) — a missing embedding costs a re-raise, never a lost finding.',
+  recordRegressionSpec: 'Operator/ux-lock CLI write. Returns {ok, reason} since §2b F2 and its handler exits 1 on a failed write, so the failure reaches the caller synchronously.',
+  recordRegressionSpecRun: 'Operator/ux-lock CLI write; discriminated since 2026-08-12 and its caller counts persist failures into the run summary.',
+  recordPlanVerificationRun: 'Operator/ux-lock-verify CLI write. Returns {ok, reason} since §2b F2 and its handler exits 1 on a failed write.',
+  recordPlanVerificationItems: 'Operator/ux-lock-verify CLI write; already reports {ok, inserted} — the row count Postgres accepted, not the count requested.',
+  recordShipEvent: 'Operator /ship CLI write; discriminated since 2026-08-12 and its handler fails closed.',
+  recordPersonaSession: 'Operator /persona-test CLI write. Returns {ok, reason} since §2b F2; the envelope carries the failure (it deliberately does not throw — that would discard correlationSummary, which names why).',
+  recordPersonaAuditCorrelation: 'Operator /persona-test CLI write; already discriminated so the auto-correlator can count writeFailed separately from missed.',
+  retireMissedCorrelationsForHash: 'Operator /persona-test CLI write. Returns {ok, reason} since §2b F2, and its caller now ROLLS BACK the outcome upsert in the same transaction rather than leaving the two disagreeing.',
+  upsertPersonaFindingOutcome: 'Operator /persona-test CLI write; returns {ok, error} and asserts exactly one affected row before claiming success.',
+  upsertPersona: 'Operator /persona-test CLI write; the persona registry is re-derivable from the persona files that define it.',
+  recordNavAuditRun: 'Operator /nav-audit CLI write; returns {status, error} which its handler maps to the envelope.',
+  recordUpstreamIssue: 'Consumer-side upstream report. It ALREADY has its own durability mechanism — a write-ahead outbox on disk drained on every subsequent upstream verb — which is a stronger guarantee than the spill queue, not a weaker one.',
+  recordFindingResolution: 'Learning telemetry. Telemetry failures never crash a run by design, and the learning outbox (.audit/learning-outbox/) is that subsystem\'s own spill path.',
+  upsertDebtEntries: 'Debt ledger projection; recomputed from the findings that produced it on every audit run.',
+  upsertFrictionRow: 'Friction-log CLI; THROWS, so the failure is already representable to its caller.',
+
+  // (d) Identity prerequisites and the security kit.
+  upsertRepo: 'Repo identity prerequisite. A failure disables the operation that needed the row — every caller null-checks and aborts — so there is nothing to replay INTO.',
+  upsertRepoByUuid: 'Repo identity prerequisite; same abort-on-null contract as upsertRepo. NOTE: it swallows to null rather than reporting a reason — real, outside §2b F2\'s cross-skill scope, carried as declared debt rather than hidden by this exemption.',
+  recordSecurityIncidents: 'security:refresh CLI, and it THROWS — the failure is representable, and the incident source of truth is docs/security-strategy.md on disk.',
+  recordSecurityEvents: 'security:refresh CLI; THROWS. Governance evidence whose source is the committed strategy doc.',
+  markIncidentsHistorical: 'security:refresh CLI; THROWS, and the marker is re-derived from the strategy doc on every refresh.',
 };
 
 /**

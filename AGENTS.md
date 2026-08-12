@@ -611,8 +611,22 @@ connection string. **Load-bearing invariants** (the rest is in the docs below):
   store. A writer is spill-eligible only by declaring a `rowKey`, and that key
   needs a real DB constraint — a logical key is not an `ON CONFLICT` target
   (measured: a PARTIAL unique index answers `42P10`). `npm test` derives the
-  writer set from the store modules, so a new `record*`/`sync*` export must be
-  registered or exempted **with a reason**. Plan: [audit-store-write-durability.md](docs/plans/audit-store-write-durability.md).
+  writer set from **every module under `scripts/lib/store/**`** (it named TWO
+  until 2026-08-12 — a writer in a third was neither exempt nor registered but
+  *unrepresentable*, 0 of 5 sampled cross-skill writers visible), so a new
+  write-shaped export must be registered or exempted **with a reason**. The verb
+  set is `record|sync|upsert|save|persist|write|delete|retire|mark` — widening it
+  from `record|sync` alone surfaced five more writers, one of which an audit had
+  independently flagged as swallowing while this oracle read the tree clean.
+  Plan: [audit-store-write-durability.md](docs/plans/audit-store-write-durability.md).
+- **`emit({ok:false})` sets a non-zero exit code** ([cli-io.mjs](scripts/lib/cli-io.mjs),
+  2026-08-12). It was a bare `stdout.write` with no exit coupling, so a CLI could
+  report a failure in its envelope and exit 0 — which every caller checking `$?`
+  reads as success (13 of 124 captured cross-skill invocations did exactly that).
+  Opt out only with `emit(env, {softFail:true, reason})`; the reason is
+  **required** (a bare boolean throws), and `npm run emit:exit:gate` ratchets the
+  opt-out population — it fails on growth AND on an unrecorded reduction.
+  Design: [cross-skill-command-registry.md](docs/plans/cross-skill-command-registry.md) §2b F4.
 - **"Disposable" is an ALLOWLIST of loopback hosts, and it fails CLOSED.**
   `isDisposableDbHost` / `assertDisposableDbUrl` (`scripts/lib/db/client.mjs`)
   guard the `db-setup`/`db-withtx` suites (they `DROP SCHEMA public CASCADE`) and

@@ -1,0 +1,18 @@
+// POISON PILL for `npm run emit:exit:gate` (scripts/check-emit-exit-agreement.mjs).
+//
+// Overlaid onto a tracked scripts/** module in an isolated tmpdir copy. It adds
+// ONE undeclared-in-baseline `emit(..., {softFail:true, reason})` — the exact
+// shape a future author would write to opt a command out of the exit-code
+// coupling. The gate must notice the population grew and exit 1.
+//
+// Why this is the variant worth pilling: the opt-out is *legitimate* API, so it
+// draws no attention in review, reads as a considered decision, and needs no
+// justification anyone outside the diff will ever see. That is how an exemption
+// mechanism becomes the default — which is the failure this ratchet exists to
+// make visible, not to prevent.
+import { emit } from '../../cli-io.mjs';
+
+export function poisonProbe() {
+  emit({ ok: false, error: 'this failed but is not a process failure' },
+    { softFail: true, reason: 'a plausible-sounding reason nobody will re-read' });
+}

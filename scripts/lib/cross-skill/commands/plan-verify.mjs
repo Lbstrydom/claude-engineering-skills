@@ -26,7 +26,7 @@ export async function recordPlanVerifyRunCmd(ctx) {
   const counts = validateCountFields(p);
   if (!counts.ok) throw new CommandError('BAD_INPUT', counts.reason);
   if (!ctx.cloud.enabled) return { ...ctx.degrade(), runId: null };
-  const runId = await ctx.deps.recordPlanVerificationRun({
+  const res = await ctx.deps.recordPlanVerificationRun({
     planId: p.planId,
     specId: p.specId,
     commitSha: p.commitSha || ctx.git.commitSha(),
@@ -38,11 +38,18 @@ export async function recordPlanVerifyRunCmd(ctx) {
     durationMs: p.durationMs,
     runContext: p.runContext || 'ux-lock-verify',
   });
-  // Legacy `ok: !!runId` — the store returns null on a swallowed failure.
-  // Declared softFail so the ok:true validator cannot fire on that legacy
-  // shape; tightening it to a throw is Cluster F's call (it changes an
-  // envelope the /ux-lock skill reads).
-  return { ok: !!runId, cloud: true, runId };
+  // §2b F2: the writer reports its own outcome, so `ok: !!runId` is no longer
+  // writable — there is nothing left to infer from. A failed write is a
+  // CommandError (exit 1) carrying the store's reason; cloud-off never reaches
+  // here (the degrade branch above returns first).
+  if (!res.ok) {
+    // Exit 1 for a failed write, 2 for a refused input — see the same branch in
+    // ship.mjs's recordRegressionSpecCmd for why the two must not collapse.
+    const failed = res.reason === 'write-failed';
+    throw new CommandError(failed ? 'WRITE_FAILED' : 'BAD_INPUT',
+      `recordPlanVerificationRun: ${res.message}`, { reason: res.reason }, failed ? 1 : 2);
+  }
+  return { ok: true, cloud: true, runId: res.runId };
 }
 
 /**
@@ -61,7 +68,12 @@ export async function recordPlanVerifyItemsCmd(ctx) {
   if (!ctx.cloud.enabled) return { ...ctx.degrade(), inserted: 0 };
   const res = await ctx.deps.recordPlanVerificationItems(p.runId, p.planId, p.items);
   if (!res?.ok) {
-    throw new CommandError('WRITE_FAILED', `plan verification items not persisted: ${res?.reason ?? 'unknown'}`);
+    // Exit 1 — a write that did not verify is an operational failure, not an
+    // argv error. This reached here as the default 2, which put a short or
+    // failed INSERT in the same bucket as a malformed payload.
+    throw new CommandError('WRITE_FAILED',
+      `plan verification items not persisted: ${res?.message ?? res?.reason ?? 'unknown'}`,
+      { reason: res?.reason, inserted: res?.inserted ?? 0, requested: p.items.length }, 1);
   }
   return { ok: true, cloud: true, inserted: res.inserted, requested: p.items.length };
 }

@@ -169,7 +169,16 @@ export async function upsertPersonaFindingOutcome(rawArgs) {
         throw new Error(`upsertPersonaFindingOutcome: expected exactly 1 affected row, got ${rowCount}`);
       }
       if (DISMISSIVE.has(args.outcome)) {
-        await retireMissedCorrelationsForHash(args.repoId, args.personaFindingHash);
+        // Inside the same withTx as the outcome upsert, so a failed retirement
+        // must ROLL BACK the outcome rather than leave the two disagreeing: the
+        // outcome would say "dismissed" while the stale `audit_finding_id IS
+        // NULL` correlations it was supposed to retire are still counted as
+        // missed. The writer reports its own outcome as of §2b F2; before that
+        // it returned 0 for a failed DELETE and this call could not tell.
+        const retired = await retireMissedCorrelationsForHash(args.repoId, args.personaFindingHash);
+        if (!retired.ok && retired.reason !== 'cloud-off') {
+          throw new Error(`retireMissedCorrelationsForHash: ${retired.message}`);
+        }
       }
     });
     return { ok: true };

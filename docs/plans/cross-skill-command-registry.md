@@ -633,6 +633,51 @@ oracle iterates every store module; a measured re-capture shows 0 of 60
 invocations emitting `ok:false` at exit 0; the `emit` coupling is live with a
 baseline that only shrinks.
 
+### F1–F4 as landed (2026-08-12) — three places the design was wrong
+
+Recorded because each was found by MEASURING rather than by reading, and each
+changed what the work was:
+
+1. **The census's own verb pattern had the same defect it was built to fix.**
+   `^(record|sync)[A-Z]` cannot see an `upsert*` writer. Widening the oracle to
+   the store DIRECTORY while keeping that pattern would have left
+   `upsertPlan`, `upsertPersona`, `upsertRepoByUuid`, `upsertDomainSummary` and
+   `deleteRefreshRuns` unrepresentable — one level down from the gap being
+   closed. The wider verb set independently surfaced
+   `retireMissedCorrelationsForHash`, which the Cluster E audit had flagged as
+   swallowing *twice* while this oracle read the tree clean. Final census: **63**
+   write-shaped exports (2 modules' worth → the whole directory), 6 registered,
+   51 newly exempted with written reasons, **3** genuinely swallowing.
+2. **"7 softFail entries" was never the worklist; 3 writers were.** The audit's
+   framing counted registry declarations; the census counted writers. F2
+   converted `recordRegressionSpec` (a bare `null` for EIGHT causes),
+   `recordPlanVerificationRun`, `recordPersonaSession`, plus
+   `retireMissedCorrelationsForHash`, and `ok: !!id` became unwritable at five
+   handlers.
+3. **The F3 set was 13, not 5, and 4 of them were not cloud-off at all.** The
+   plan's figure was measured over 60 fixtures; the set is now 124. Worse, four
+   fixtures recorded as refusals (`mab-adj-bad-action`, `arm-decision-no-exp`,
+   `arm-adj-no-session`, `arm-export-no-args`) were nothing of the kind — the
+   handlers checked the CLOUD GATE BEFORE validating argv, so with cloud off an
+   invalid `--action` was never validated. Flipping cloud-off to `ok:true`
+   without noticing would have turned a wrong exit code into a **wrong answer**:
+   `--action bogus` reporting success. Argv validation now precedes the cloud
+   gate in four handlers, because an argument contract does not depend on store
+   availability.
+
+**Measured after**: `ok:false` at exit 0 → **0 of 124** (from 13). Thirteen
+fixtures re-captured deliberately, each id typed out; `--recapture` now takes a
+comma list and hard-errors on an unknown id, since a typo'd id would otherwise
+look exactly like a successful re-capture that preserved the old value.
+
+**Coverage note, stated because it nearly passed unnoticed**: the full suite was
+**0 failures** against the F2 conversion. Every golden for those commands is a
+cloud-off or bad-input case, and `degrade-noop` returns before the writer is
+reached — so the only path the change touches had no coverage at all.
+`tests/cross-skill-write-outcome-contract.test.mjs` drives the real dispatcher
+against a stub store on the cloud path and is negative-controlled against the
+pre-F2 handler shape.
+
 ## 3. Execution Model (Phase 1.5)
 
 Dependencies are real and ordered:

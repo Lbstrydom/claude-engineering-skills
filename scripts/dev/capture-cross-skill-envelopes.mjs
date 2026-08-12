@@ -249,10 +249,29 @@ async function main() {
   // re-capturing an existing case would overwrite the legacy-captured oracle
   // with the thing it exists to check — the golden test would then compare
   // the new implementation against itself. Only NEW case ids are appended.
-  // `--recapture <id>` re-captures one named case deliberately (for a
-  // documented, reviewed contract change), and says so on stderr.
+  // `--recapture <id>[,<id>…]` re-captures named cases deliberately (for a
+  // documented, reviewed contract change), and says so on stderr per case.
+  //
+  // A COMMA LIST, not a single id, since 2026-08-12: plan §2b F3 changes one
+  // envelope shape across twelve fixtures at once, and the alternative was
+  // twelve full capture passes over all 124 cases. The safety property is
+  // unchanged — every id still has to be TYPED OUT, so a case is never
+  // re-captured by being merely stale. An unrecognised id is a hard error
+  // rather than a silent no-op: a typo'd id would otherwise look exactly like
+  // a successful re-capture that preserved the old value, which is the shape
+  // this whole merge-on-recapture design exists to prevent.
   const recaptureIdx = process.argv.indexOf('--recapture');
-  const recaptureId = recaptureIdx >= 0 ? process.argv[recaptureIdx + 1] : null;
+  const recaptureIds = new Set(
+    recaptureIdx >= 0
+      ? String(process.argv[recaptureIdx + 1] ?? '').split(',').map((s) => s.trim()).filter(Boolean)
+      : [],
+  );
+  const unknownIds = [...recaptureIds].filter((id) => !CASES.some((c) => c.id === id));
+  if (unknownIds.length) {
+    process.stderr.write(`  [capture] --recapture names unknown case id(s): ${unknownIds.join(', ')}\n`);
+    process.exitCode = 2;
+    return;
+  }
   const existing = fs.existsSync(FIXTURE_PATH)
     ? JSON.parse(fs.readFileSync(FIXTURE_PATH, 'utf8')).cases
     : {};
@@ -261,7 +280,7 @@ async function main() {
   let captured = 0;
   try {
     for (const c of CASES) {
-      if (existing[c.id] && c.id !== recaptureId) {
+      if (existing[c.id] && !recaptureIds.has(c.id)) {
         out.cases[c.id] = existing[c.id];
         continue;
       }
@@ -273,7 +292,7 @@ async function main() {
       }
       out.cases[c.id] = { args: c.args, status: res.status, envelope: res.envelope };
       captured += 1;
-      process.stderr.write(`  [capture] ${c.id}: status ${res.status}${c.id === recaptureId ? ' (RE-captured deliberately)' : ''}\n`);
+      process.stderr.write(`  [capture] ${c.id}: status ${res.status}${recaptureIds.has(c.id) ? ' (RE-captured deliberately)' : ''}\n`);
     }
     fs.mkdirSync(path.dirname(FIXTURE_PATH), { recursive: true });
     fs.writeFileSync(FIXTURE_PATH, `${JSON.stringify(out, null, 2)}\n`);

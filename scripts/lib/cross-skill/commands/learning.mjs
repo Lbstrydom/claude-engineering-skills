@@ -35,11 +35,26 @@ export async function learningStatsCmd(ctx) {
 /** `learning-weekly-review` — wrapper over scripts/learning/weekly-review.mjs. */
 export async function learningWeeklyReviewCmd(ctx) {
   const { runWeeklyReview } = await import('../../../learning/weekly-review.mjs');
-  return runWeeklyReview({
+  const res = await runWeeklyReview({
     repoName: ctx.flag('repo') || process.env.LEARNING_REPO_NAME || null,
     dryRun: ctx.hasFlag('dry-run'),
     format: ctx.flag('format') || 'json',
   });
+  // §2b F3/F4. This forwarded the sub-command's result VERBATIM, so its
+  // `{ok:false, error:{code:'BAD_INPUT'}}` for an unresolvable repoName reached
+  // the operator at EXIT 0 — the last `ok:false at exit 0` left in the captured
+  // set, and the one that would have made F4's invariant unenforceable. A
+  // forwarded refusal is still a refusal: the sub-command's own code and
+  // message are preserved, only the exit code is corrected.
+  //
+  // LEARNING_REPO_NAME must be the `owner/repo` slug; a bare repo name misses
+  // the lookup silently, which is how weekly-review sat broken for weeks in
+  // every consumer. Exiting 0 on that is what let it stay unnoticed.
+  if (res && res.ok === false) {
+    throw new CommandError(res.error?.code || 'BAD_INPUT',
+      res.error?.message || 'weekly review failed', { forwarded: res });
+  }
+  return res;
 }
 
 /**

@@ -304,7 +304,18 @@ export async function lockWithTestCmd(ctx) {
     assertionCount: 0,
     domContractTypes: [],
   });
-  return { ok: !!spec, cloud: true, locked: !!spec, findingId, testPath };
+  // §2b F2. `locked` was `!!spec` — the same bare null that meant cloud-off,
+  // five input refusals, and a DB outage. This command's whole job is to report
+  // whether the finding IS locked, so an unverified write reporting
+  // `locked:false` at exit 0 is the worst available answer: indistinguishable
+  // from a refusal the operator can act on. It stays inside lock-with-test's
+  // existing `{ok:false, error:'refusing: …'}` shape rather than throwing,
+  // because this command reports refusals as data (its softFail declaration is
+  // about the refusal paths, not about the write).
+  if (!spec.ok) {
+    return { ok: false, cloud: spec.cloud, locked: false, findingId, testPath, reason: spec.reason, error: `regression spec NOT written: ${spec.message}` };
+  }
+  return { ok: true, cloud: true, locked: true, specId: spec.specId, findingId, testPath };
 }
 
 /**
@@ -414,7 +425,7 @@ export async function recordRegressionSpecCmd(ctx) {
     throw new CommandError('BAD_INPUT',
       'regression specs require a resolved repoId — run resolve-repo-identity --persist first');
   }
-  const specId = await ctx.deps.recordRegressionSpec(repoId, {
+  const res = await ctx.deps.recordRegressionSpec(repoId, {
     specPath: p.specPath ?? null,
     description: p.description,
     commitSha: p.commitSha || ctx.git.commitSha(),
@@ -424,9 +435,20 @@ export async function recordRegressionSpecCmd(ctx) {
     sourceFindingId: p.sourceFindingId,
     sourceFindingType: p.sourceFindingType,
   });
-  // Legacy `ok: !!specId` (the store returns null on a swallowed failure) —
-  // declared softFail; tightening it changes an envelope /ux-lock reads.
-  return { ok: !!specId, cloud: true, specId };
+  // §2b F2: the writer reports its own outcome, so `ok: !!specId` is no longer
+  // writable. `/ux-lock` reads `.specId` on success, which is unchanged; what
+  // changes is that a REFUSED or FAILED write is now exit 1 with a reason
+  // instead of `{ok:false}` at exit 0.
+  if (!res.ok) {
+    // Exit 1 for a write that FAILED, 2 for one the store REFUSED on its input.
+    // The repo's convention is "you asked wrong" (2) vs "we tried and it did not
+    // work" (1), and collapsing them would put a DB outage in the same bucket as
+    // a typo — which is the distinction this whole conversion exists to restore.
+    const failed = res.reason === 'write-failed';
+    throw new CommandError(failed ? 'WRITE_FAILED' : 'BAD_INPUT',
+      `recordRegressionSpec: ${res.message}`, { reason: res.reason }, failed ? 1 : 2);
+  }
+  return { ok: true, cloud: true, specId: res.specId };
 }
 
 /**

@@ -44,7 +44,11 @@ function bucketHint(res, extraReason, extraText) {
  * finding "adjudicated" fine and nothing changed.
  */
 export async function finalReviewAdjudicateCmd(ctx) {
-  if (!ctx.cloud.enabled) return { ok: false, cloud: false, updated: 0 };
+  // §2b F3: cloud-off is a SUPPORTED MODE, not a failure — AGENTS.md says so
+  // outright, and 55 of the 60 originally-measured invocations already reported
+  // it as {ok:true, cloud:false}. Reporting it as a failure made a machine that
+  // simply has no store indistinguishable from one whose write broke.
+  if (!ctx.cloud.enabled) return { ok: true, cloud: false, updated: 0 };
   const runId = ctx.flag('run-id');
   const fingerprint = ctx.flag('fingerprint');
   const action = ctx.flag('action');
@@ -73,7 +77,11 @@ export async function finalReviewAdjudicateCmd(ctx) {
  * fix pending" unrepresentable.
  */
 export async function finalReviewRecordFixCmd(ctx) {
-  if (!ctx.cloud.enabled) return { ok: false, cloud: false, updated: 0 };
+  // §2b F3: cloud-off is a SUPPORTED MODE, not a failure — AGENTS.md says so
+  // outright, and 55 of the 60 originally-measured invocations already reported
+  // it as {ok:true, cloud:false}. Reporting it as a failure made a machine that
+  // simply has no store indistinguishable from one whose write broke.
+  if (!ctx.cloud.enabled) return { ok: true, cloud: false, updated: 0 };
   const runId = ctx.flag('run-id');
   const fingerprint = ctx.flag('fingerprint');
   if (!runId || !fingerprint) {

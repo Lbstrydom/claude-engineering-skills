@@ -254,9 +254,17 @@ export async function recordPersonaSessionCmd(ctx) {
 
   const result = await ctx.deps.recordPersonaSession(data);
   const correlationSummary = await runAutoCorrelate(ctx.deps, data, result.sessionId);
+  // §2b F2. `ok: !!result.sessionId` is gone — the writer reports its own
+  // outcome now, so there is nothing to infer. This one does NOT throw, and the
+  // reason is in its softFail declaration: a throw would DISCARD
+  // `correlationSummary`, which is the field that names WHY the correlation
+  // pass did nothing (`reason: 'session-write-failed'`). Losing the diagnosis
+  // to signal the failure would trade one silence for another. So the envelope
+  // carries the store's own `ok`/`reason` and the payload survives.
+  //
   // `sessionKey` is the persona_test_sessions.session_id TEXT (the idempotency
   // key); `sessionId` is the row's uuid PK, which downstream correlation calls take.
-  return { ok: !!result.sessionId, cloud: true, ...result, sessionKey: data.sessionId, correlationSummary };
+  return { cloud: true, ...result, sessionKey: data.sessionId, correlationSummary };
 }
 
 /**

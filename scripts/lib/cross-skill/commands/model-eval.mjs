@@ -38,7 +38,11 @@ async function decisionInputs(ctx, runId) {
 
 /** `model-ab-stats` — scorer rows + the cost–quality frontier + spend vs budget. */
 export async function modelAbStatsCmd(ctx) {
-  if (!ctx.cloud.enabled) return { ok: false, cloud: false, rows: [] };
+  // §2b F3: cloud-off is a SUPPORTED MODE, not a failure — AGENTS.md says so
+  // outright, and 55 of the 60 originally-measured invocations already reported
+  // it as {ok:true, cloud:false}. Reporting it as a failure made a machine that
+  // simply has no store indistinguishable from one whose write broke.
+  if (!ctx.cloud.enabled) return { ok: true, cloud: false, rows: [] };
   const runId = ctx.flag('run-id');
   const eff = await ctx.deps.getModelAbEffectiveness({ runId });
   const { decision, spentEur, capEur } = await decisionInputs(ctx, runId);
@@ -53,7 +57,11 @@ export async function modelAbStatsCmd(ctx) {
 
 /** `model-ab-decision` — two-level verdict: quality GATE → weighted RANK. */
 export async function modelAbDecisionCmd(ctx) {
-  if (!ctx.cloud.enabled) return { ok: false, cloud: false };
+  // §2b F3: cloud-off is a SUPPORTED MODE, not a failure — AGENTS.md says so
+  // outright, and 55 of the 60 originally-measured invocations already reported
+  // it as {ok:true, cloud:false}. Reporting it as a failure made a machine that
+  // simply has no store indistinguishable from one whose write broke.
+  if (!ctx.cloud.enabled) return { ok: true, cloud: false };
   const runId = ctx.flag('run-id');
   const { findings, decision, spentEur, capEur } = await decisionInputs(ctx, runId);
   return {
@@ -78,8 +86,31 @@ export async function modelAbDecisionCmd(ctx) {
  * because confirmed human rulings are the scorer's ONLY ground truth.
  */
 export async function modelAbAdjudicateCmd(ctx) {
-  if (!ctx.cloud.enabled) return { ok: false, cloud: false };
   const action = ctx.flag('action');
+  // ARGV VALIDATION BEFORE THE CLOUD GATE (§2b F3). An argument contract does
+  // not depend on store availability, and the old order made that concrete:
+  // with cloud off, `--action bogus` returned the cloud-off envelope having
+  // never been validated. Under F3 that envelope became `ok:true`, so a typo'd
+  // action would have reported SUCCESS — the flip would have turned a wrong
+  // exit code into a wrong answer. Found by the F3 fixture census, not by the
+  // audit: four fixtures named as "refusals" were nothing of the kind.
+  if (action) {
+    const validActions = new Set(['accepted', 'dismissed', 'duplicate', 'not-actionable']);
+    if (!validActions.has(action)) {
+      throw new CommandError('BAD_INPUT', `--action must be one of ${[...validActions].join('|')}, got '${action}'`);
+    }
+    if (!ctx.flag('run-id') || !ctx.flag('fingerprint')) {
+      throw new CommandError('BAD_INPUT', '--run-id and --fingerprint are required with --action');
+    }
+    if (action === 'duplicate' && !ctx.flag('canonical')) {
+      throw new CommandError('BAD_INPUT', "--action duplicate requires --canonical <fingerprint>");
+    }
+  }
+  // §2b F3: cloud-off is a SUPPORTED MODE, not a failure — AGENTS.md says so
+  // outright, and 55 of the 60 originally-measured invocations already reported
+  // it as {ok:true, cloud:false}. Reporting it as a failure made a machine that
+  // simply has no store indistinguishable from one whose write broke.
+  if (!ctx.cloud.enabled) return { ok: true, cloud: false };
 
   if (!action) {
     const runId = ctx.flag('run-id');
@@ -147,9 +178,14 @@ export async function modelAbAdjudicateCmd(ctx) {
 
 /** `arm-eval-decision` — gate → paired-delta rank + τ anchor + frontier. */
 export async function armEvalDecisionCmd(ctx) {
-  if (!ctx.cloud.enabled) return { ok: false, cloud: false };
+  // §2b F3: cloud-off is a SUPPORTED MODE, not a failure — AGENTS.md says so
+  // outright, and 55 of the 60 originally-measured invocations already reported
+  // it as {ok:true, cloud:false}. Reporting it as a failure made a machine that
+  // simply has no store indistinguishable from one whose write broke.
+  // ARGV VALIDATION BEFORE THE CLOUD GATE (§2b F3) — see modelAbAdjudicateCmd.
   const experimentType = ctx.flag('experiment');
   if (!experimentType) throw new CommandError('BAD_INPUT', '--experiment required');
+  if (!ctx.cloud.enabled) return { ok: true, cloud: false };
   return passthroughErrors(async () => {
     const { evaluateArmEval } = await import('../../arm-eval/decision.mjs');
     const { getExperiment } = await import('../../arm-eval/experiments.mjs');
@@ -165,7 +201,11 @@ export async function armEvalDecisionCmd(ctx) {
 
 /** `arm-eval-stats` — leaderboard rows (repo-scoped unless --all-repos). */
 export async function armEvalStatsCmd(ctx) {
-  if (!ctx.cloud.enabled) return { ok: false, cloud: false, rows: [] };
+  // §2b F3: cloud-off is a SUPPORTED MODE, not a failure — AGENTS.md says so
+  // outright, and 55 of the 60 originally-measured invocations already reported
+  // it as {ok:true, cloud:false}. Reporting it as a failure made a machine that
+  // simply has no store indistinguishable from one whose write broke.
+  if (!ctx.cloud.enabled) return { ok: true, cloud: false, rows: [] };
   return passthroughErrors(async () => {
     // The store REFUSES an unscoped read (throw unless repoId or allRepos), so
     // a flagless call fails loudly rather than silently widening.
@@ -180,9 +220,14 @@ export async function armEvalStatsCmd(ctx) {
 
 /** `arm-eval-adjudicate` — present a blinded session, or record a ranking. */
 export async function armEvalAdjudicateCmd(ctx) {
-  if (!ctx.cloud.enabled) return { ok: false, cloud: false };
+  // §2b F3: cloud-off is a SUPPORTED MODE, not a failure — AGENTS.md says so
+  // outright, and 55 of the 60 originally-measured invocations already reported
+  // it as {ok:true, cloud:false}. Reporting it as a failure made a machine that
+  // simply has no store indistinguishable from one whose write broke.
+  // ARGV VALIDATION BEFORE THE CLOUD GATE (§2b F3) — see modelAbAdjudicateCmd.
   const sessionId = ctx.flag('session-id');
   if (!sessionId) throw new CommandError('BAD_INPUT', '--session-id required');
+  if (!ctx.cloud.enabled) return { ok: true, cloud: false };
   const ranked = ctx.flag('ranked'); // comma-separated labels best→worst
   return passthroughErrors(async () => {
     if (ranked) {
@@ -212,15 +257,22 @@ export async function armEvalAdjudicateCmd(ctx) {
  * with no human ranking exports BLINDED.
  */
 export async function armEvalExportCmd(ctx) {
-  if (!ctx.cloud.enabled) return { ok: false, cloud: false };
-  const { exportSession } = await import('../../arm-eval/export.mjs');
+  // §2b F3: cloud-off is a SUPPORTED MODE, not a failure — AGENTS.md says so
+  // outright, and 55 of the 60 originally-measured invocations already reported
+  // it as {ok:true, cloud:false}. Reporting it as a failure made a machine that
+  // simply has no store indistinguishable from one whose write broke.
+  // ARGV VALIDATION BEFORE THE CLOUD GATE (§2b F3) — see modelAbAdjudicateCmd.
   const one = ctx.flag('session-id');
+  if (!one && !ctx.hasFlag('all')) {
+    throw new CommandError('BAD_INPUT', '--session-id <id> or --all required');
+  }
+  if (!ctx.cloud.enabled) return { ok: true, cloud: false };
+  const { exportSession } = await import('../../arm-eval/export.mjs');
   return passthroughErrors(async () => {
     if (one) {
       const r = await exportSession(one);
       return { ok: r.written, ...r };
     }
-    if (!ctx.hasFlag('all')) throw new CommandError('BAD_INPUT', '--session-id <id> or --all required');
     const scope = await ctx.resolveScope();
     const { ids } = await ctx.deps.listSessionIds({
       repoId: scope.kind === 'scoped' ? scope.repoId : null,

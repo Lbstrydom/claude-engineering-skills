@@ -147,7 +147,11 @@ export function analyse({ testFiles, readFile, enrolled, exempt }) {
 
 function main() {
   try {
-    assertKnownFlags(process.argv.slice(2), ['--json']);
+    // `process.argv` whole with the default `from: 2`. It passed a PRE-SLICED
+    // argv, so the offset skipped the first two real flags and
+    // `--definitely-not-a-real-flag` ran at exit 0 (verified 2026-08-12). Also
+    // adds --selfcheck-relocation/--help, which the CLI already honours.
+    assertKnownFlags(process.argv, ['--json', '--selfcheck-relocation', '--help'], { cli: 'check-db-suite-enrolment' });
   } catch (e) {
     if (e instanceof ArgvError) { process.stderr.write(`${e.message}\n`); process.exit(1); }
     throw e;

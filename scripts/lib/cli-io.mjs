@@ -15,10 +15,46 @@ import crypto from 'node:crypto';
  * Write a JSON object to stdout followed by a newline. The standard
  * machine-readable output line for the repo's CLIs (stderr stays free
  * for human progress logging).
+ *
+ * **`ok:false` sets a non-zero exit code** (cross-skill-command-registry §2b
+ * F4, 2026-08-12). This was a bare `stdout.write` with no exit coupling at all,
+ * so a CLI could report a failure in its envelope and still exit 0 — and a
+ * caller that checks `$?` (every shell script, every CI step, the pre-push
+ * hook) would read that as success. Measured across the 124 captured
+ * cross-skill invocations before the coupling landed: 13 emitted `ok:false` at
+ * exit 0. F2 and F3 took that to 0, which is what makes this enforceable
+ * rather than aspirational — the ordering is load-bearing, since coupling
+ * first would have failed CI on paths that were *correctly* reporting a
+ * failure and merely had the wrong exit code.
+ *
+ * `process.exitCode ||= 1` never LOWERS an already-set code: a CLI that has
+ * chosen a specific exit (2 for argv errors, 6 for strict-selector violations)
+ * keeps it. Nothing here calls `process.exit` — the process still ends on its
+ * own terms.
+ *
+ * **The opt-out is a declaration, not a flag to reach for.** `{softFail:true,
+ * reason}` requires a written reason for the same purpose the registry's
+ * `softFail` serves: an exemption that has to be justified in place is a claim
+ * a reader can check, and a bare boolean is a silencer. Use it only where
+ * `ok:false` is genuinely not a process failure.
+ *
  * @param {unknown} obj
+ * @param {{softFail?: boolean, reason?: string}} [opts]
  */
-export function emit(obj) {
+export function emit(obj, opts = {}) {
   process.stdout.write(JSON.stringify(obj) + '\n');
+  if (obj && typeof obj === 'object' && obj.ok === false) {
+    if (opts.softFail === true) {
+      if (!opts.reason) {
+        throw new Error(
+          'emit({ok:false}, {softFail:true}) requires a written `reason` — an unexplained '
+          + 'exemption from the exit-code coupling is exactly the silence §2b F4 removes.',
+        );
+      }
+      return;
+    }
+    process.exitCode ||= 1;
+  }
 }
 
 /**
