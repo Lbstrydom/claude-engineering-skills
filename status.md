@@ -1,5 +1,58 @@
 # Project Status Log
 
+## 2026-08-13 — the post-fix measurement, which corrects the entry below it
+
+The previous entry reported "four fixed" with **no post-fix measurement**. Round 2
+was confounded, so I reran clean — same base, same 46 files, same invocation as
+round 1, nothing touched while it ran (HEAD identical before and after, zero
+dirty files). The result corrects the impression that entry left:
+
+| | R1 (before fixes) | R3 (after, clean) |
+|---|---|---|
+| HIGH | 8 | **8** |
+| MEDIUM | 19 | 16 |
+| quickFix | 2 | 2 |
+
+**The four fixes landed — and the HIGH count did not move.** The R1 HIGHs they
+targeted are gone; two new ones took their place, and **both are about the fix
+itself**:
+
+- **`reconcileCompletionRow` is partial, and the audit was right to say so.** It
+  narrows the window where `audit_runs` reads `complete` over a stale tally but
+  does not close it, and if the *correction* write fails the row stays stale. The
+  residual is bounded — the correction goes through `durableWrite`, so its own
+  failure is tallied and spill-eligible — but the complete fix is the run-tail
+  reorder deliberately declined as out-of-scope.
+- **The spend-cap fix was a MITIGATION, not a cure.** Reconciling `unmeterable`
+  on a timed-out gemini call stops the budget being freed while the request may
+  still bill. The root cause — `withTimeout` never cancels the request — is
+  untouched, and remains the AbortController the module's own docstring calls a
+  v2 refinement.
+
+So *"fixed four of 27"* was true about the edits and misleading about the code.
+Recording it because the gap between those two is the thing this session kept
+falling into, and an unmeasured fix is a claim, not a result.
+
+**A fourth false positive in the same area.** R3's `H5` claims the audit-plan
+prompt "sends the unredacted plan content to the model" via
+`buildPlanAuditUserPrompt(subject || planContent)`. Verified false: whichever
+branch produces the prompt, the very next statement is
+`assertEgressSafe(userPrompt)`. Same class as the earlier egress finding whose
+"fix" was written and reverted — this area has now produced one real defect and
+two confident wrong ones.
+
+**Recommendation on the record: stop fixing in this file.** Across R1→R3 each fix
+surfaces adjacent findings while HIGH stays level — which is
+`audit-store-write-durability.md` §9's *"bundling it would prevent convergence"*
+playing out on the file it predicted it about. The eight remaining HIGHs are: 2
+the partial-ness of the above, 1 the god-module SYSTEMIC finding, 1 the spend-cap
+root cause, 1 the verified false positive, 3 genuinely pre-existing (cluster
+identity fallback, decision-input coercion, a cross-file shadow-persistence
+edge). None is a regression — MEDIUM is down 3, HIGH is level, and four real
+defects including a live spend-cap hole are gone. Convergence needs the
+decomposition and the AbortController, which are exactly what this plan scoped
+out; both belong to the fresh session.
+
 ## 2026-08-13 — audited the session's own work; four real defects, three of them mine
 
 Ran a real `/audit-code` over the session's union diff now the tree is quiet.
