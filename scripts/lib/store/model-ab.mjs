@@ -21,7 +21,7 @@
 
 import { one, many, query, withTx, upsert, pgArray } from '../db/query.mjs';
 import { isCloudEnabled } from './repo.mjs';
-import { CANONICAL_ARMS, stagesForArm } from '../audit-arms.mjs';
+import { CANONICAL_ARMS, stagesForArm } from '../arm-vocabulary.mjs';
 
 // ── Schema preflight (decision 13) ───────────────────────────────────────────
 
@@ -95,10 +95,62 @@ const REQUIRED_SCHEMA = Object.freeze([
 ]);
 
 /**
+ * The relations this module WRITES. Existence is not permission (audit H3).
+ *
+ * `relOrColExists` proves a relation is `SELECT`-able, and the invariant it
+ * guards is *"no spend without persistence"* — i.e. that the writes will
+ * SUCCEED. A role holding SELECT but not INSERT passes every existence probe
+ * and then fails at the first write, which is the exact shape the preflight
+ * exists to prevent: a green check that cannot fail on the operation it guards.
+ *
+ * Derived from REQUIRED_SCHEMA rather than hand-listed: a relation with a
+ * column is a table this module writes; a `null` column marks a scorer VIEW,
+ * which is read-only and must NOT be write-probed.
+ */
+const WRITTEN_TABLES = Object.freeze([...new Set(
+  REQUIRED_SCHEMA.filter(([, col]) => col != null).map(([table]) => table),
+)]);
+
+/**
+ * Can the runtime role actually write these relations?
+ *
+ * Uses `has_table_privilege`, which asks the catalog rather than attempting a
+ * write — no test row, no transaction to roll back, and it answers for the
+ * CURRENT role, which is the one that will do the writing. A privilege the role
+ * lacks is definitive; an error here is inconclusive and, like `relOrColExists`,
+ * fails CLOSED (refuse to spend).
+ *
+ * @param {string[]} tables
+ * @returns {Promise<string[]>} `"table.PRIVILEGE"` for each missing grant
+ */
+async function missingWritePrivileges(tables) {
+  const missing = [];
+  for (const table of tables) {
+    if (!SAFE_IDENT.test(table)) throw new Error(`missingWritePrivileges: unsafe identifier ${JSON.stringify(table)}`);
+    try {
+      const rows = await many(
+        'SELECT has_table_privilege($1, \'INSERT\') AS ins, has_table_privilege($1, \'UPDATE\') AS upd',
+        [table],
+      );
+      const r = rows?.[0];
+      if (!r) { missing.push(`${table}.PRIVILEGE_UNKNOWN`); continue; }
+      if (r.ins !== true) missing.push(`${table}.INSERT`);
+      if (r.upd !== true) missing.push(`${table}.UPDATE`);
+    } catch (err) {
+      process.stderr.write(`  [model-ab] write-privilege probe ${table} inconclusive (${err.code || err.message}) — treating as not-ready\n`);
+      missing.push(`${table}.PRIVILEGE_UNKNOWN`);
+    }
+  }
+  return missing;
+}
+
+/**
  * @returns {Promise<{ready:boolean, cloud:boolean, missing:string[]}>}
- * `ready` is true only when EVERY required column/table/view exists. When cloud
- * is off, `ready:false, cloud:false` — the shadow layer treats off-cloud as a
- * graceful skip (not a hard failure), decision 13's off→degrade path.
+ * `ready` is true only when EVERY required column/table/view exists **and the
+ * runtime role can INSERT/UPDATE every relation this module writes** (audit H3
+ * — existence is not permission). When cloud is off, `ready:false, cloud:false`
+ * — the shadow layer treats off-cloud as a graceful skip (not a hard failure),
+ * decision 13's off→degrade path.
  */
 export async function modelAbSchemaReady() {
   if (!await isCloudEnabled()) return { ready: false, cloud: false, missing: [] };
@@ -106,6 +158,10 @@ export async function modelAbSchemaReady() {
   for (const [table, col] of REQUIRED_SCHEMA) {
     if (!await relOrColExists(table, col)) missing.push(col ? `${table}.${col}` : table);
   }
+  // Only probe privileges on relations we established exist — a missing table
+  // is already reported, and has_table_privilege would just error on it.
+  const present = WRITTEN_TABLES.filter(t => !missing.includes(t) && !missing.some(m => m.startsWith(`${t}.`)));
+  missing.push(...await missingWritePrivileges(present));
   return { ready: missing.length === 0, cloud: true, missing };
 }
 
@@ -193,6 +249,40 @@ export async function reserveSpend({ runId = null, armId = null, stage = null, r
   if (!(reservedEur >= 0)) throw new Error(`reserveSpend: reservedEur must be ≥ 0, got ${reservedEur}`);
   return withTx(async (client) => {
     await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [SPEND_LOCK_KEY]);
+    // `activeSpendSql` counts a `reserved` row only while it is younger than the
+    // TTL — so a reservation that outlives the window silently contributes ZERO
+    // to the cap while its operation may still be running and still spending
+    // (audit H2). The TTL is bound to no execution deadline: it defaults to 30
+    // minutes while a single call may take `callTimeoutMs` (5 min) and a run
+    // makes many, so a long run can drop out of its own ceiling.
+    //
+    // The system already has an EXPLICIT reclamation path
+    // (`releaseOrphanedReservations`, run at shadow startup), which means a row
+    // that is still `reserved` past the TTL is in an *undefined* state, not a
+    // reclaimed one. Counting it as zero is the silent part, so: surface it and
+    // fail CLOSED. This never blocks the healthy path — the next startup
+    // releases orphans — and it makes an under-count impossible to hit quietly.
+    const staleRes = await client.query(
+      `SELECT COUNT(*)::int AS n, COALESCE(SUM(reserved_eur), 0) AS eur
+         FROM model_ab_spend_ledger
+        WHERE status = 'reserved'
+          AND reserved_at <= now() - ($1 * interval '1 millisecond')`,
+      [activeTtlMs],
+    );
+    const staleCount = Number(staleRes.rows[0].n) || 0;
+    if (staleCount > 0) {
+      const staleEur = Number(staleRes.rows[0].eur) || 0;
+      return {
+        ok: false,
+        reason: 'stale-reservations',
+        staleCount,
+        staleEur,
+        capEur,
+        hint: `${staleCount} reservation(s) worth €${staleEur.toFixed(2)} are past the ${activeTtlMs}ms TTL but still 'reserved'. `
+          + 'They contribute 0 to the cap, so admitting more spend now could breach it. '
+          + 'Release them (releaseOrphanedReservations) or reconcile them, then retry.',
+      };
+    }
     const sumRes = await client.query(
       `SELECT ${activeSpendSql(1)} AS spent FROM model_ab_spend_ledger`, [activeTtlMs],
     );

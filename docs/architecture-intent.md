@@ -115,8 +115,16 @@ directly. Other domains should call `learning-store` rather than constructing
 their own Supabase clients.
 
 ### `cross-skill-bridge`
-`scripts/cross-skill.mjs` — the CLI facade invoked by skills. Routes commands
-to learning-store / arch-intent / persona-test stores.
+`scripts/cross-skill.mjs` **and `scripts/lib/cross-skill/**`** — the CLI facade
+invoked by skills, plus the command registry the CLI dispatches through. Routes
+commands to learning-store / arch-intent / persona-test stores.
+
+The `lib/cross-skill/**` half joined this domain in `a146bb7b` (2026-08-12) when
+the command-registry migration finished: 15 modules extracted out of
+`cross-skill.mjs` had been landing in `shared-lib` via the `scripts/lib/**`
+catch-all, splitting one subsystem across two domains. Note the standing tension
+AGENTS.md records — this domain is described as *a thin facade* and already
+declares 11 deps; the retag made its real size visible rather than adding to it.
 
 ### `install`
 `install*.mjs`, `sync-to-repos.mjs`, the new `arch-intent-bootstrap.mjs`. Owns
@@ -151,10 +159,19 @@ shown inside the `shared-lib` box in the C4 view below, labelled "NEW — this
 PR"; that placement is now stale — see the updated diagram).
 
 ### `stores`
-`scripts/lib/store/**`, `scripts/lib/db/**` — the Postgres persistence layer
-(the `db/` seam + per-feature store modules). Owns the write/read boundary
+`scripts/lib/store/**`, `scripts/lib/db/**` **except `db/errors.mjs`** — the
+Postgres persistence layer (the `db/` seam + per-feature store modules). Owns
+the write/read boundary
 to the cloud learning store's tables. Distinct from `learning-store`, which
 is the higher-level orchestration/client domain that calls into `stores`.
+
+`db/errors.mjs` is deliberately **`shared-lib`**, not `stores`: it has zero
+imports and exports one pure SQLSTATE classifier (`normalizePostgresError`) with
+no I/O, connection or schema knowledge. A primitive that happens to be *about*
+Postgres is not part of the persistence layer, and tagging it here manufactured a
+`shared-lib -> stores` edge from `durable-write.mjs`. Likewise
+`scripts/lib/audit-store-writers.mjs` is **`audit-orchestration`** — it is the
+audit store's writer-registry bootstrap, not a store module.
 
 ### `dashboard`
 `scripts/build-dashboard.mjs`, `scripts/lib/dashboard/**`, `dashboard/**` —
@@ -208,11 +225,14 @@ git-history + plan synthesis for "why is this code here") and
 `scripts/ship*.mjs` (the `/ship` skill's commit/push/provenance-trailer
 mechanics).
 
-### `root-scripts`, `scripts`, `skills-content`, `docs`, `supabase`
-Structural/catch-all domains, not feature domains: `root-scripts` (repo-root
-`*.mjs`/`*.js` entry points like `install.mjs`/`setup.mjs`), `scripts`
-(the `scripts/**` catch-all for anything not matched by a more specific
-rule), `skills-content` (`skills/**` — the skill source-of-truth this
+### `scripts`, `skills-content`, `docs`, `supabase`
+Structural/catch-all domains, not feature domains: `scripts` (the
+`scripts/**` catch-all for anything not matched by a more specific rule,
+**plus the repo-root `*.mjs`/`*.js` net** — `root-scripts` was retired
+2026-08-12 once both of its members, `install.mjs` and `setup.mjs`, were
+retagged to `install`; the catch-all rules were repointed rather than
+deleted, because an untagged file is skipped by the layering analyser and
+dropping them would hide any future repo-root script), `skills-content` (`skills/**` — the skill source-of-truth this
 repo's own product IS), `docs` (`docs/**`, including this file), `supabase`
 (`supabase/**` — SQL migrations for the cloud learning store).
 

@@ -42,7 +42,7 @@
  */
 
 import { EUR_PER_USD } from './model-pricing.mjs';
-import { ARM_IDS } from './audit-arms.mjs';
+import { ARM_IDS } from './arm-vocabulary.mjs';
 
 /** Pinned pre-registered constants — calibrate-then-freeze (plan §3 H3 / §4 R2-M3). */
 export const DECISION_CONSTANTS = Object.freeze({
@@ -60,6 +60,43 @@ export const DECISION_CONSTANTS = Object.freeze({
 });
 
 const VALID_SEVERITIES = new Set(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']);
+
+/**
+ * Count the decision inputs the scorer had to COERCE rather than understand.
+ *
+ * `normalizeSeverity` and `qualMult` both fall back to a meaningful scoring
+ * value (MEDIUM / `pending`) for input outside their domain. That is the right
+ * behaviour — a scorer that throws mid-run turns a data problem into an outage
+ * — but it was invisible, so a verdict computed over rows the scorer could not
+ * read looked exactly like one computed over clean data (audit M8).
+ *
+ * Pure and read-only: this changes no score. It only lets a caller ask *"how
+ * much of this did you actually understand?"* before acting on the verdict.
+ *
+ * @param {Array<object>} findingRows
+ * @param {typeof DECISION_CONSTANTS} [C]
+ * @returns {{rows:number, unknownSeverity:number, unknownRemediationState:number, clean:boolean}}
+ */
+export function auditDecisionInputs(findingRows, C = DECISION_CONSTANTS) {
+  let unknownSeverity = 0;
+  let unknownRemediationState = 0;
+  const rows = Array.isArray(findingRows) ? findingRows : [];
+  for (const r of rows) {
+    const sev = r?.severity;
+    const canon = typeof sev === 'string'
+      ? (() => { let s = sev.toUpperCase().trim(); if (s === 'MED') s = 'MEDIUM'; if (s === 'CRIT') s = 'CRITICAL'; return s; })()
+      : null;
+    if (canon === null || !VALID_SEVERITIES.has(canon)) unknownSeverity += 1;
+    const rs = r?.remediation_state ?? r?.remediationState;
+    if (rs != null && !Object.hasOwn(C.QUAL_BASE, rs)) unknownRemediationState += 1;
+  }
+  return {
+    rows: rows.length,
+    unknownSeverity,
+    unknownRemediationState,
+    clean: unknownSeverity === 0 && unknownRemediationState === 0,
+  };
+}
 
 /** Normalize a raw severity to the weight-table domain (default MEDIUM). */
 export function normalizeSeverity(sev) {
@@ -254,6 +291,13 @@ export function evaluateDecision(findingRows, costRows = [], constants = DECISIO
     distinctAssignments,
     baselineArm: 'A',
     totalAcceptedClusters,
+    // How much of this verdict rests on COERCED input (audit M8). `normalizeSeverity`
+    // maps an unrecognised severity to MEDIUM and `qualMult` maps an unrecognised
+    // remediation state to `pending` — both are deliberate (a scorer must not throw
+    // mid-run), but silently: a decision computed over rows the scorer did not
+    // understand was indistinguishable from one computed over clean data. The
+    // coercion is unchanged; it is now COUNTED, so a caller can tell.
+    inputQuality: auditDecisionInputs(findingRows, C),
     arms: {},
     ranking: [],
   };

@@ -1,7 +1,7 @@
 # Plan: God-module and layering debt — two problems, two answers
 
 - **Date**: 2026-08-12
-- **Status**: Draft
+- **Status**: In Progress — Cluster 1 (Phases 0–3) shipped 2026-08-13: 14 violations → 0. Clusters 2–3 pending.
 - **Author**: Claude + Louis
 - **Scope**: backend
 - **Stack**: `js-ts` (detect-stack: `{stack:"js-ts", stackKinds:["js-ts","postgres"]}`)

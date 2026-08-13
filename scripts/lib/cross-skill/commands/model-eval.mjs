@@ -298,9 +298,26 @@ export async function armEvalToggleCmd(ctx) {
   const sub = ctx.verb || 'status';
   const { readToggle, writeToggle, resolveShadowArmsWithToggle } = await import('../../arm-eval/toggle.mjs');
   if (sub === 'on' || sub === 'off') {
-    const budgetFlag = Number.parseFloat(ctx.flag('budget-eur'));
     const { armEvalConfig } = await import('../../config.mjs');
-    const budgetEur = Number.isFinite(budgetFlag) && budgetFlag > 0 ? budgetFlag : armEvalConfig.budgetEur;
+    // REJECT a bad --budget-eur; never coerce it to the default (audit M11).
+    // `t.budgetEur ?? armEvalConfig.budgetEur` below means a null budget is the
+    // €300 DEFAULT, not a refusal — so the old `isFinite && > 0 ? flag : default`
+    // turned `--budget-eur 0` (or `abc`) into a €300 ceiling the operator never
+    // asked for. Absent flag ⇒ default (deliberate); present-but-invalid ⇒ error.
+    const rawBudget = ctx.flag('budget-eur');
+    let budgetEur = armEvalConfig.budgetEur;
+    if (rawBudget !== undefined && rawBudget !== null && String(rawBudget).trim() !== '') {
+      const parsed = Number(String(rawBudget).trim());
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        throw new CommandError(
+          'BAD_INPUT',
+          `--budget-eur must be a positive number, got ${JSON.stringify(String(rawBudget))}. `
+          + 'Omit the flag to use the configured default '
+          + `(€${armEvalConfig.budgetEur}); an invalid value is refused rather than silently defaulted.`,
+        );
+      }
+      budgetEur = parsed;
+    }
     const state = writeToggle({ enabled: sub === 'on', budgetEur: sub === 'on' ? budgetEur : null });
     const arms = resolveShadowArmsWithToggle();
     return {

@@ -42,25 +42,38 @@ import { isSentinel, SENTINEL_TO_TIER } from './model-resolver.mjs';
 // "no env side effects" header claim — audit-shadow.mjs's live shadow
 // experiment relies on that guarantee).
 import { CandidateSpecSchema } from './model-eval/contracts.mjs';
+// Internal uses of the vocabulary (the re-export above is the PUBLIC surface;
+// a re-export is not an in-scope binding, so the internal reads need this).
+// `stagesForArm` is in this list because `attributeStageToArms` (:259, :272)
+// CALLS it. A re-export creates no in-scope binding, so omitting it here throws
+// `stagesForArm is not defined` at runtime while the module still type-checks
+// and still exports the symbol correctly — caught by tests/audit-arms.test.mjs,
+// which is why the moved-set contract is asserted on BEHAVIOUR and not on the
+// export list alone.
+import {
+  CANONICAL_ARMS, ARM_IDS, SHARED_STAGES, ARM_SPECIFIC_STAGES, STAGES, stagesForArm,
+} from './arm-vocabulary.mjs';
 
-// ── Stage taxonomy (SSoT — the store, view, and shadow all reference these) ──
-export const STAGES = Object.freeze(['gpt-gen', 'oss-gen', 'gpt-round', 'gemini']);
-
-// Attribution class split (plan H1) — the hybrid rule's SSoT.
-//   SHARED       : one execution serves ≥1 arm; membership DERIVED from stage.
-//   ARM_SPECIFIC : each execution belongs to ONE arm; requires an explicit `arm`
-//                  tag (null ⇒ hard error, fail-closed — §4 R2-H1).
-export const SHARED_STAGES = Object.freeze(['gpt-gen', 'oss-gen']);
-export const ARM_SPECIFIC_STAGES = Object.freeze(['gpt-round', 'gemini']);
-
-// Valid arm ids (the CHECK domain mirrored in the migration).
-export const ARM_IDS = Object.freeze(['A', 'B', 'C']);
-
-// Stages a SHADOW execution can produce (arms B/C): oss-gen (shared), gpt-round
-// (B only), gemini (B + C, arm-specific). The baseline arm A runs in the
-// PRODUCTION pipeline (gpt-gen + its own gemini), never the shadow.
-export const SHADOW_STAGES = Object.freeze(['oss-gen', 'gpt-round', 'gemini']);
-export const BASELINE_STAGES = Object.freeze(['gpt-gen', 'gemini']);
+// ── Vocabulary: RE-EXPORTED from shared-lib ─────────────────────────────────
+//
+// The stage taxonomy, arm ids, CANONICAL_ARMS, `stagesForArm` and `resolveArms`
+// moved to `scripts/lib/arm-vocabulary.mjs` (shared-lib) — see that module's
+// header for why. They are re-exported here so this module's public surface is
+// unchanged and its 13 importers need no edit; the DEFINITION lives there.
+//
+// Do not re-declare any of these below. A second definition of a vocabulary is
+// the drift the single-oracle rule exists to prevent.
+export {
+  STAGES,
+  SHARED_STAGES,
+  ARM_SPECIFIC_STAGES,
+  ARM_IDS,
+  SHADOW_STAGES,
+  BASELINE_STAGES,
+  CANONICAL_ARMS,
+  stagesForArm,
+  resolveArms,
+} from './arm-vocabulary.mjs';
 
 // ── Arm schema ───────────────────────────────────────────────────────────────
 //
@@ -163,32 +176,6 @@ export const ArmSchema = z.object({
 // rather than a config file: only A/B/C are a CURRENT requirement, so an
 // arms.json loader would be the over-engineering cliff (§ Right-sizing gate).
 
-export const CANONICAL_ARMS = Object.freeze([
-  Object.freeze({
-    id: 'A',
-    label: 'GPT audit → Gemini review (production control)',
-    generation: Object.freeze({ kind: 'sentinel', modelSentinel: 'latest-gpt', provider: 'openai' }),
-    gptRound: false,
-    geminiGate: true,
-    isBaseline: true,
-  }),
-  Object.freeze({
-    id: 'B',
-    label: 'OSS audit → 1 GPT round → Gemini review (does the GPT round earn its keep?)',
-    generation: Object.freeze({ kind: 'oss-role', modelSentinel: 'latest-oss-reasoner', provider: 'oss', role: 'reasoner' }),
-    gptRound: true,
-    geminiGate: true,
-    isBaseline: false,
-  }),
-  Object.freeze({
-    id: 'C',
-    label: 'OSS audit → Gemini review (can OSS+Gemini replace GPT+Gemini?)',
-    generation: Object.freeze({ kind: 'oss-role', modelSentinel: 'latest-oss-reasoner', provider: 'oss', role: 'reasoner' }),
-    gptRound: false,
-    geminiGate: true,
-    isBaseline: false,
-  }),
-]);
 
 // Fail-fast: a bad edit to CANONICAL_ARMS surfaces at import, not at spend time.
 for (const arm of CANONICAL_ARMS) {
@@ -208,24 +195,6 @@ export function parseArm(raw) {
   return { ok: false, error: r.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ') };
 }
 
-/**
- * Derive the ordered set of stages an arm's config produces findings at.
- * The scorer view derives arm membership from the SAME rule (plan decision 10).
- * Branches on `generation.kind` (model-swap-eval-harness Phase 3), not
- * `generation.provider` — `resolved-route` arms carry no `provider` field.
- * A `resolved-route` arm is treated as `gpt-gen`-shaped: like `sentinel`, it
- * is driven through an OpenAI-SDK-shaped client (`createOpenAIClient`,
- * arm-generation.mjs), unlike `oss-role`'s distinct OSS-pool call path —
- * only `oss-role` is a genuinely different generation stage.
- * @param {z.infer<typeof ArmSchema>} arm
- * @returns {string[]}
- */
-export function stagesForArm(arm) {
-  const stages = [arm.generation.kind === 'oss-role' ? 'oss-gen' : 'gpt-gen'];
-  if (arm.gptRound) stages.push('gpt-round');
-  if (arm.geminiGate) stages.push('gemini');
-  return stages;
-}
 
 /**
  * Construct a `kind:'resolved-route'` arm from route-catalog.mjs's
@@ -326,45 +295,3 @@ export function executionPlan(arms) {
   return { wantsOssGen, wantsGptGen, wantsGptRound, wantsGemini };
 }
 
-/**
- * Parse `AUDIT_MODEL_SHADOW` into the selected observation-only arm set.
- *
- * Contract:
- *   - unset/empty → `{enabled:false, arms:[]}` (byte-identical-to-today path).
- *   - unknown arm id → THROW (validation error — never silently drop; the
- *     operator asked to spend on an arm that doesn't exist).
- *   - the baseline arm (A) → THROW (it's the production audit, not a shadow
- *     target — shadowing it would double-run the real audit).
- *
- * @param {Record<string,string|undefined>} [env=process.env]
- * @returns {{enabled:boolean, requested:string[], arms:Array<z.infer<typeof ArmSchema>>, all:ReadonlyArray<object>}}
- */
-export function resolveArms(env = process.env) {
-  const raw = (env.AUDIT_MODEL_SHADOW || '').trim();
-  if (!raw) return { enabled: false, requested: [], arms: [], all: CANONICAL_ARMS };
-
-  const ids = raw.split(',').map((s) => s.trim()).filter(Boolean);
-  // A delimiter-only value (`,` / `,,`) is neither a real enabled experiment nor
-  // the documented disabled state — treat it as disabled (audit R1 M5).
-  if (ids.length === 0) return { enabled: false, requested: [], arms: [], all: CANONICAL_ARMS };
-  const byId = new Map(CANONICAL_ARMS.map((a) => [a.id, a]));
-
-  const unknown = ids.filter((id) => !byId.has(id));
-  if (unknown.length) {
-    throw new Error(
-      `AUDIT_MODEL_SHADOW: unknown arm id(s) [${unknown.join(', ')}]; valid: ${[...byId.keys()].join(', ')}`,
-    );
-  }
-  // De-dup while preserving first-seen order.
-  const uniqueIds = [...new Set(ids)];
-  const selected = uniqueIds.map((id) => byId.get(id));
-
-  const baselineReq = selected.filter((a) => a.isBaseline);
-  if (baselineReq.length) {
-    throw new Error(
-      `AUDIT_MODEL_SHADOW: arm(s) [${baselineReq.map((a) => a.id).join(', ')}] are the production baseline and cannot be shadowed ` +
-      `(they run in the real audit, not the observation-only shadow).`,
-    );
-  }
-  return { enabled: true, requested: uniqueIds, arms: selected, all: CANONICAL_ARMS };
-}
