@@ -125,3 +125,54 @@ describe('observation-only mode reaches debt memory, not just learning state', (
       'selectEventSource must receive the observation-only capability, not just the --read-only-debt flag');
   });
 });
+
+// ── One definition of --files scope (R1 "Scope-matching duplication") ───────
+//
+// The bidirectional-substring predicate was written out at SIX call sites
+// (backend, frontend, routes, services, sustainability, quickfix). Six copies of
+// a scope rule are six things to keep in step, and a scope predicate that
+// disagrees with itself across passes audits different file sets per pass —
+// which no per-pass test catches, because each site looks locally correct.
+//
+// These pin the EXACT prior semantics, because the refactor's whole claim is
+// that it changed nothing: tightening the match to equality or a suffix here
+// would silently narrow every pass's scope, which is a behaviour change wearing
+// a refactor's clothes.
+describe('scopeToFileFilter — the one --files scope predicate', () => {
+  const { scopeToFileFilter } = lpa.__testExports;
+  const FILES = ['src/routes/wines.js', 'src/services/wine/parser.js', 'src/util/misc.js'];
+
+  it('no filter → identity, not an empty set', () => {
+    assert.deepEqual(scopeToFileFilter(null)(FILES), FILES);
+  });
+
+  it('a full path matches itself', () => {
+    assert.deepEqual(scopeToFileFilter(['src/util/misc.js'])(FILES), ['src/util/misc.js']);
+  });
+
+  it('a FRAGMENT matches (file contains filter) — the common --files usage', () => {
+    assert.deepEqual(scopeToFileFilter(['routes/'])(FILES), ['src/routes/wines.js']);
+  });
+
+  it('and the reverse direction too (filter contains file) — bidirectional by design', () => {
+    // A caller passing a longer absolute path than the discovered relative one
+    // still matches; this is the half that a "tightening" refactor would drop.
+    assert.deepEqual(
+      scopeToFileFilter(['/abs/repo/src/util/misc.js'])(FILES),
+      ['src/util/misc.js'],
+    );
+  });
+
+  it('a filter matching nothing yields an empty set, not everything', () => {
+    // The direction that must NOT fire: a typo'd --files must scope to zero
+    // files loudly, never fall back to auditing the whole set.
+    assert.deepEqual(scopeToFileFilter(['does/not/exist'])(FILES), []);
+  });
+
+  it('an EMPTY filter array is still a filter — matches nothing', () => {
+    // `[]` is falsy-adjacent but not null; `.some()` on it is always false.
+    // Pinned because the old inline form (`fileFilter ? … : all`) treated `[]`
+    // as a live filter too, and this must not silently become identity.
+    assert.deepEqual(scopeToFileFilter([])(FILES), []);
+  });
+});

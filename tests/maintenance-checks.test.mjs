@@ -395,3 +395,42 @@ describe('maintenance-checks — CLI: manual mode on lock contention (round-3 au
     assert.doesNotMatch(r.stdout, /Local maintenance checks/);
   });
 });
+
+// ── CHECKS ↔ workflow drift (R1 "Configuration drift") ─────────────────────
+//
+// The finding: the CLI keeps a hand-authored inventory of the weekly commands
+// with no verification against the GitHub workflow definitions it replicates.
+// A full command-level diff is not buildable — the local replica deliberately
+// differs (arch-maintenance runs the INCREMENTAL refresh because CI is
+// stateless, and four checks replicate no workflow at all) — so a "the two must
+// match" test would be false by construction.
+//
+// What IS mechanically checkable is the claim each entry makes about itself:
+// every `// .github/workflows/X.yml` citation must name a file that exists.
+// That is the half that rots silently — a renamed or deleted workflow leaves a
+// comment pointing at nothing, and the operator reading it believes a CI job
+// still covers what the local check replicates.
+describe('maintenance CHECKS — workflow citations resolve', () => {
+  const SRC = fs.readFileSync(path.resolve(import.meta.dirname, '..', 'scripts', 'maintenance-checks.mjs'), 'utf-8');
+
+  it('every cited .github/workflows file exists', () => {
+    const cited = [...SRC.matchAll(/\.github\/workflows\/([\w.-]+\.yml)/g)].map((m) => m[1]);
+    assert.ok(cited.length >= 5, `expected the workflow citations to still be present, found ${cited.length}`);
+    const repoRoot = path.resolve(import.meta.dirname, '..');
+    for (const wf of new Set(cited)) {
+      assert.ok(fs.existsSync(path.join(repoRoot, '.github', 'workflows', wf)),
+        `maintenance-checks.mjs cites .github/workflows/${wf}, which does not exist — a stale citation claims CI coverage that is gone`);
+    }
+  });
+
+  it('every check whose key names no workflow is marked ad hoc in the header', () => {
+    // The inverse direction: a check with no workflow must be DECLARED as such,
+    // so "no citation" is a stated fact rather than an omission.
+    const adHoc = ['cache-hitrate', 'debt-health', 'context-staleness', 'slice-recurrence'];
+    for (const key of adHoc) {
+      assert.ok(CHECKS.some((c) => c.key === key), `${key} must still exist for this assertion to mean anything`);
+    }
+    assert.match(SRC, /ad hoc[^\n]*no dedicated workflow file/,
+      'the header must state that some checks replicate no workflow, or their missing citation reads as drift');
+  });
+});

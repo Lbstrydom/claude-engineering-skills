@@ -102,6 +102,25 @@ const SCRIPTS_DIR = import.meta.dirname;
 const STATE_DIR = process.env.AUDIT_LOOP_STATE_DIR || path.join(REPO_ROOT, '.audit-loop');
 const HEARTBEAT_PATH = path.join(STATE_DIR, 'last-maintenance.json');
 const LOCK_PATH = path.join(STATE_DIR, '.maintenance.lock');
+
+// The override moves BOTH the single-instance lock and the heartbeat, so an
+// invocation that has it set shares neither with one that does not: two runs
+// can then execute the same DB-mutating checks concurrently — the exact failure
+// the lock exists to prevent — and a redirected heartbeat makes
+// `--opportunistic` believe every run is overdue (final-review shadow, LOW).
+//
+// Deliberately NOT "force the lock repo-relative": this seam exists because
+// concurrent TEST processes were deleting each other's fixture and seeing no
+// lock at all, so pinning the lock would reintroduce the defect it was added to
+// fix. Nor a second, canonical lock alongside it — that is real complexity for
+// a hazard that only arises when an operator exports the variable by hand.
+// A run whose state is not the shared state says so, once, and an operator who
+// sees this line beside a concurrent push knows why two runs overlapped.
+if (process.env.AUDIT_LOOP_STATE_DIR) {
+  process.stderr.write(
+    `  [maintenance] AUDIT_LOOP_STATE_DIR override active (${STATE_DIR}) — this run does NOT share the repo's lock or heartbeat\n`,
+  );
+}
 const DEFAULT_INTERVAL_DAYS = 7;
 
 /**

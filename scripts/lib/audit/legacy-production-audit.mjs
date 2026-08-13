@@ -251,6 +251,29 @@ Severity floor: any mechanical violation defaults to MEDIUM unless you can justi
 
 let _cacheDir = null;
 
+/**
+ * The one definition of "is this file inside `--files` scope".
+ *
+ * The bidirectional-substring predicate was written out at SIX call sites
+ * (backend, frontend, routes, services, sustainability, quickfix). Six copies
+ * of a scope rule are six things to keep in step, and a scope predicate that
+ * disagrees with itself across passes silently audits different file sets per
+ * pass — which no test would catch, because each pass looks locally correct.
+ *
+ * Semantics are preserved EXACTLY, deliberately: matching is bidirectional
+ * (`f.includes(ff) || ff.includes(f)`) so a caller may pass either a full path
+ * or a fragment. Tightening it to equality or a suffix match here would silently
+ * narrow every pass's scope, which is a behaviour change wearing a refactor's
+ * clothes.
+ *
+ * @param {string[]|null} fileFilter
+ * @returns {(files: string[]) => string[]} identity when no filter is set
+ */
+function scopeToFileFilter(fileFilter) {
+  if (!fileFilter) return (files) => files;
+  return (files) => files.filter((f) => fileFilter.some((ff) => f.includes(ff) || ff.includes(f)));
+}
+
 function initResultCache(outFile) {
   const base = outFile
     ? path.dirname(path.resolve(outFile))
@@ -262,7 +285,16 @@ function initResultCache(outFile) {
     // than the filesystem's default dir mode for a cache holding audit
     // pass results.
     fs.mkdirSync(_cacheDir, { recursive: true, mode: 0o700 });
-  } catch { _cacheDir = null; }
+  } catch (err) {
+    // Fail-open (a cache is an optimisation, never a precondition) but NOT
+    // silent — `cleanupCache` below already had this treatment and this,
+    // its sibling, was missed. Without the line, recovery-cache disablement is
+    // invisible: every subsequent `cachePassResult` becomes a no-op and a
+    // crashed run has nothing to resume from, with no signal that the cache was
+    // never there.
+    process.stderr.write(`  [cache] disabled — cannot create ${_cacheDir}: ${err.code || err.message}\n`);
+    _cacheDir = null;
+  }
 }
 
 function cachePassResult(passName, result) {
@@ -281,6 +313,12 @@ function cachePassResult(passName, result) {
 function cacheWaveResults(passNames, results) {
   for (let i = 0; i < passNames.length; i++) {
     if (results[i]) cachePassResult(passNames[i], results[i]);
+  }
+  // Reported what it INTENDED, not what happened: with the cache disabled this
+  // printed "N pass results cached to null" — a success line over zero writes.
+  if (!_cacheDir) {
+    process.stderr.write(`  [cache] ${passNames.length} pass result(s) NOT cached — cache disabled\n`);
+    return;
   }
   process.stderr.write(`  [cache] ${passNames.length} pass results cached to ${_cacheDir}\n`);
 }
@@ -1486,9 +1524,16 @@ async function runDuplicationPass({
       dupSummary = `Duplication: ${dupFindings.length} finding(s) (${deterministic.length} deterministic, ${semanticFindings.length} semantic).`;
     }
   } catch (err) {
-    process.stderr.write(`  Duplication: unexpected error — ${err.message}\n`);
-    dupFindings = [buildDetectorFailedFinding(err.message)];
-    dupSummary = 'Duplication: unexpected error — see finding.';
+    // Still fail-open — a wave must never abort the audit — but the error is no
+    // longer flattened to a message. A TypeError from a bad injected seam and a
+    // detector I/O failure produced identical output, so a programming bug in
+    // this pass was indistinguishable from the environment being unavailable,
+    // and read as an ordinary "detector failed" finding. `err.name` + the stack
+    // are what tell those apart; the finding text keeps the message so the
+    // report is unchanged.
+    process.stderr.write(`  Duplication: unexpected ${err?.name || 'Error'} — ${err?.message}\n${err?.stack ? `${err.stack}\n` : ''}`);
+    dupFindings = [buildDetectorFailedFinding(`${err?.name || 'Error'}: ${err?.message}`)];
+    dupSummary = `Duplication: unexpected ${err?.name || 'Error'} — see finding.`;
   }
   return {
     result: { pass_name: 'duplication', findings: dupFindings, summary: dupSummary },
@@ -1589,9 +1634,12 @@ async function runAdjacencyPass({
       + `${coverage.statementsJudged} statement(s) judged, ${composed.result.candidates.length} candidate(s).`;
     process.stderr.write(`  ${adjSummary}\n`);
   } catch (err) {
-    process.stderr.write(`  Adjacency: unexpected error — ${err.message}\n`);
-    adjFindings = [buildAdjacencyFailedFinding(err.message)];
-    adjSummary = 'Adjacency: unexpected error — see finding.';
+    // Same reasoning as runDuplicationPass's catch above: fail-open, but name
+    // the error CLASS so a programming bug is not reported as a detector
+    // failure.
+    process.stderr.write(`  Adjacency: unexpected ${err?.name || 'Error'} — ${err?.message}\n${err?.stack ? `${err.stack}\n` : ''}`);
+    adjFindings = [buildAdjacencyFailedFinding(`${err?.name || 'Error'}: ${err?.message}`)];
+    adjSummary = `Adjacency: unexpected ${err?.name || 'Error'} — see finding.`;
   }
   return {
     result: { pass_name: 'adjacency', findings: adjFindings, summary: adjSummary },
@@ -2357,10 +2405,11 @@ export async function runLegacyProductionAudit(ctx) {
 
   // When --files is specified, scope quality passes to those files + their shared deps
   // This enables delta-only auditing on Round 2+
-  const scopedBackend = fileFilter ? backend.filter(f => fileFilter.some(ff => f.includes(ff) || ff.includes(f))) : backend;
-  const scopedFrontend = fileFilter ? frontend.filter(f => fileFilter.some(ff => f.includes(ff) || ff.includes(f))) : frontend;
-  const scopedBackendRoutes = fileFilter ? backendRoutes.filter(f => fileFilter.some(ff => f.includes(ff) || ff.includes(f))) : backendRoutes;
-  const scopedBackendServices = fileFilter ? backendServices.filter(f => fileFilter.some(ff => f.includes(ff) || ff.includes(f))) : backendServices;
+  const inScope = scopeToFileFilter(fileFilter);
+  const scopedBackend = inScope(backend);
+  const scopedFrontend = inScope(frontend);
+  const scopedBackendRoutes = inScope(backendRoutes);
+  const scopedBackendServices = inScope(backendServices);
 
   if (fileFilter) {
     process.stderr.write(`  File scope: ${fileFilter.length} files → ${scopedBackend.length} BE + ${scopedFrontend.length} FE in scope\n`);
@@ -2830,7 +2879,7 @@ export async function runLegacyProductionAudit(ctx) {
   let sustainResult;
   const runSustainability = shouldRunPass('sustainability');
   if (runSustainability) {
-    const sustainFiles = fileFilter ? found.filter(f => fileFilter.some(ff => f.includes(ff) || ff.includes(f))) : found;
+    const sustainFiles = inScope(found);
 
     process.stderr.write(`\n── Wave 3: Sustainability (reasoning: medium) ──\n`);
 
@@ -2891,7 +2940,7 @@ export async function runLegacyProductionAudit(ctx) {
   const EMPTY_QUICKFIX = { pass_name: 'quickfix', findings: [], summary: 'Pass skipped.' };
   const runQuickfix = shouldRunPass('quickfix');
   if (runQuickfix) {
-    const qfFiles = fileFilter ? found.filter(f => fileFilter.some(ff => f.includes(ff) || ff.includes(f))) : found;
+    const qfFiles = inScope(found);
     process.stderr.write(`\n── Wave 4: Quickfix design-shortcuts (reasoning: low) ──\n`);
     const PASS_QUICKFIX_SYSTEM_LOCAL = getPassPrompt('quickfix');
     const qfRubric = PASS_QUICKFIX_SYSTEM_LOCAL;  // pass full prompt for low-reasoning consistency
@@ -4574,7 +4623,19 @@ export async function buildAuditRunContext(cliArgs) {
   // a hard crash for runs that never even reach the tiered pipeline.
   let diffText = null;
   if (diffFile) {
-    try { diffText = fs.readFileSync(diffFile, 'utf-8'); } catch { /* legacy path's own read surfaces this loudly */ }
+    try {
+      diffText = fs.readFileSync(diffFile, 'utf-8');
+    } catch (err) {
+      // Still fail-open — the comment above says why throwing HERE would crash
+      // runs that never reach the tiered pipeline — but no longer silent. The
+      // "legacy path surfaces it loudly" claim is true TODAY only because the
+      // legacy read runs for every audit; when the tiered pipeline runs instead
+      // (`AUDIT_TIERED_PIPELINE_ENABLED`), nothing else reads this file and
+      // `diffText: null` reaches adjacency-detector / evidence-triage as an
+      // ABSENT diff rather than an unreadable one. One line makes those two
+      // states distinguishable in the log without changing control flow.
+      process.stderr.write(`  [ctx] --diff "${diffFile}" unreadable (${err.code || err.message}) — diffText degraded to null\n`);
+    }
   }
 
   return {
@@ -4604,6 +4665,10 @@ export const __testExports = process.env.AUDIT_EXPORTS_FOR_TESTS === '1'
       // Pure, and the ONE place the orphan wave's range policy lives — the
       // clean-tree arm is a regression guard, not a symmetry (see its docblock).
       resolveOrphanScopeRefs,
+      // Now the single definition of --files scope for all six quality passes,
+      // so its semantics are worth pinning directly rather than inferring from
+      // six call sites.
+      scopeToFileFilter,
       // buildSuppressionStats: pure, and every honesty rule in the
       // suppression_stats shape (R1 → null, unavailable ≠ zeroed, counts not
       // arrays) is invisible from the store side. Tier-1 unit.
