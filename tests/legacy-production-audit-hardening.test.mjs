@@ -57,7 +57,7 @@ const {
 } = lpa.__testExports;
 
 const { clampConfigNumber } = await import('../scripts/lib/config.mjs');
-const { FindingSchema, LedgerEntrySchema } = await import('../scripts/lib/schemas.mjs');
+const { FindingSchema, LedgerEntrySchema, ReduceStatus, REDUCE_STATUS_VALUES, reduceStatusFromErrorCategory, ExecutionMetaSchema } = await import('../scripts/lib/schemas.mjs');
 
 // ═══════════════════════════════════════════════════════════════════════
 // Phase 1 — Atomic artifact writes
@@ -354,6 +354,199 @@ describe('Phase 4 — runMapReducePass mapUnitStatus', () => {
       assert.equal(result.unitsFailed, 1);
       assert.ok(result.result.findings.length > 0, 'real survivor findings must be present, not discarded');
     } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// reduceStatus is DERIVED from the real failure, not inferred from a boolean
+// ═══════════════════════════════════════════════════════════════════════
+//
+// `runMapReducePass` computed `reduceResult.failed ? MODEL_ERROR : OK`, so three
+// of the six declared REDUCE_STATUS_VALUES — parse_error, timeout,
+// budget_exceeded — could never be produced by any input. `safeCallGPT` had the
+// classification (`classifyLlmError`) and threw it away, keeping only
+// `err.message`; the plan (audit-loop-improvements.md:68) asked for status "from
+// the actual error classification" and only the READ side had landed.
+//
+// These drive the REAL producer (`runMapReducePass`) and let the REAL
+// classifier run: the stub returns genuine provider response shapes rather than
+// hand-thrown LlmErrors, so `llm-helpers.mjs` derives the category itself. Each
+// assertion fails against the old boolean inference, which answered
+// `model_error` for every one of them.
+describe('runMapReducePass — reduceStatus reflects the actual failure category', () => {
+  function mkFixtureFiles(n) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lpa-reducestatus-'));
+    const files = [];
+    for (let i = 0; i < n; i++) {
+      const p = path.join(dir, `unit${i}.mjs`);
+      fs.writeFileSync(p, `export const unit${i} = ${i};\n`, 'utf-8');
+      files.push(p);
+    }
+    return { dir, files };
+  }
+  const buildPromptForUnit = (unit, i, total, unitLabel) =>
+    ({ system: 'sys', messages: [{ role: 'user', content: unitLabel }] });
+
+  const CLASSIFICATION = { sonarType: 'CODE_SMELL', effort: 'EASY', sourceKind: 'MODEL', sourceName: 'test-stub' };
+  const mkFinding = (o = {}) => ({
+    id: 'H1', severity: 'HIGH', category: 'Test', section: 'unit0.mjs:1', detail: 'a finding',
+    risk: 'risk', recommendation: 'rec', is_quick_fix: false, is_mechanical: false, principle: 'p',
+    classification: CLASSIFICATION, ...o,
+  });
+  const OK_USAGE = {
+    input_tokens: 10, output_tokens: 5,
+    prompt_tokens_details: { cached_tokens: 0 }, output_tokens_details: { reasoning_tokens: 1 },
+  };
+
+  /**
+   * MAP units always succeed with one finding each (the reduce-failure branch
+   * requires survivors). `reduce` is a thunk returning a raw provider response
+   * or throwing — so the category is produced by llm-helpers, not asserted into
+   * existence here.
+   */
+  function makeStub(reduce) {
+    return {
+      responses: {
+        parse: async (params) => {
+          const name = params?.text?.format?.name;
+          if (name.startsWith('map_')) {
+            const i = Number(name.split('_').pop());
+            return {
+              status: 'completed', output: [], usage: OK_USAGE,
+              output_parsed: {
+                pass_name: 'mrtest', quick_fix_warnings: [], summary: 'ok',
+                findings: [mkFinding({ id: `H${i}`, section: `unit${i}.mjs:1`, detail: `finding from unit ${i}` })],
+              },
+            };
+          }
+          if (name.startsWith('reduce_')) return reduce();
+          throw new Error(`unexpected schemaName: ${name}`);
+        },
+      },
+    };
+  }
+
+  async function reduceStatusFor(reduce) {
+    const { dir, files } = mkFixtureFiles(2);
+    try {
+      const r = await runMapReducePass(makeStub(reduce), files, 'mrtest', buildPromptForUnit, 1);
+      // Whatever it says, it must be a legal block — a status is worthless if
+      // the envelope carrying it is malformed.
+      assert.ok(ExecutionMetaSchema.safeParse(r.result._executionMeta).success,
+        `_executionMeta must satisfy its schema, got ${JSON.stringify(r.result._executionMeta)}`);
+      return r.result._executionMeta?.reduceStatus;
+    } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+  }
+
+  it('a schema violation in the REDUCE response is parse_error, not model_error', async () => {
+    // `findings` non-array -> llm-helpers throws LlmError{category:'schema'}.
+    const status = await reduceStatusFor(() => ({
+      status: 'completed', output: [], usage: OK_USAGE,
+      output_parsed: { pass_name: 'mrtest', findings: 'not-an-array', quick_fix_warnings: [], summary: 's' },
+    }));
+    assert.equal(status, ReduceStatus.PARSE_ERROR);
+  });
+
+  it('an unparseable REDUCE response is parse_error, not model_error', async () => {
+    // No `output_parsed` and no repairable text -> LlmError{category:'empty'}.
+    const status = await reduceStatusFor(() => ({
+      status: 'completed', output: [], usage: OK_USAGE, output_parsed: null,
+    }));
+    assert.equal(status, ReduceStatus.PARSE_ERROR);
+  });
+
+  it('output truncated at max_tokens is budget_exceeded, not model_error', async () => {
+    const status = await reduceStatusFor(() => ({
+      status: 'completed', usage: OK_USAGE, output_parsed: null,
+      output: [{ status: 'incomplete', incomplete_details: { reason: 'max_tokens' } }],
+    }));
+    assert.equal(status, ReduceStatus.BUDGET_EXCEEDED);
+  });
+
+  it('an aborted REDUCE call is timeout, not model_error', async () => {
+    const status = await reduceStatusFor(() => {
+      const err = new Error('The operation was aborted');
+      err.name = 'AbortError';
+      throw err;
+    });
+    assert.equal(status, ReduceStatus.TIMEOUT);
+  });
+
+  it('negative control — a genuinely unclassifiable failure is still model_error', async () => {
+    // Guards the opposite error: a mapping so eager that everything acquires a
+    // specific status. A bare Error classifies as `permanent` and must stay
+    // model_error.
+    const status = await reduceStatusFor(() => { throw new Error('provider exploded'); });
+    assert.equal(status, ReduceStatus.MODEL_ERROR);
+  });
+
+  it('skipping REDUCE because most MAP units failed reports skipped, not a failure', async () => {
+    // >50% (MAP_FAILURE_THRESHOLD) of units fail, survivors carry findings:
+    // REDUCE is never attempted. This path emitted NO _executionMeta at all, so
+    // a run whose synthesis never ran looked identical to a clean one.
+    const { dir, files } = mkFixtureFiles(4);
+    try {
+      const stub = {
+        responses: {
+          parse: async (params) => {
+            const name = params?.text?.format?.name;
+            const i = Number(name.split('_').pop());
+            if (name.startsWith('reduce_')) throw new Error('REDUCE must not be called on the skip path');
+            // 3 of 4 fail. NOT 2 of 4: the gate is `failureRate >
+            // MAP_FAILURE_THRESHOLD` and the threshold is 0.5, so an even split
+            // is strictly-not-greater and falls through to a normal REDUCE.
+            if (i < 3) throw new Error('simulated MAP failure');
+            return {
+              status: 'completed', output: [], usage: OK_USAGE,
+              output_parsed: {
+                pass_name: 'mrtest', quick_fix_warnings: [], summary: 'ok',
+                findings: [mkFinding({ id: `H${i}`, section: `unit${i}.mjs:1`, detail: `finding from unit ${i}` })],
+              },
+            };
+          },
+        },
+      };
+      const r = await runMapReducePass(stub, files, 'mrtest', buildPromptForUnit, 1);
+      assert.equal(r.result._executionMeta?.reduceStatus, ReduceStatus.SKIPPED);
+      assert.equal(r.result._executionMeta?.reduceSkipped, true);
+      assert.ok(r.result.findings.length > 0, 'the raw survivors must still be returned');
+    } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+  });
+
+  it('a successful REDUCE emits no _executionMeta at all', async () => {
+    // Absence still means "nothing degraded" — guards an always-on block.
+    const { dir, files } = mkFixtureFiles(2);
+    try {
+      const stub = makeStub(() => ({
+        status: 'completed', output: [], usage: OK_USAGE,
+        output_parsed: { pass_name: 'mrtest', findings: [mkFinding({ detail: 'reduced' })], quick_fix_warnings: [], summary: 'reduced' },
+      }));
+      const r = await runMapReducePass(stub, files, 'mrtest', buildPromptForUnit, 1);
+      assert.equal(r.result._executionMeta, undefined);
+    } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+  });
+
+  it('every declared REDUCE_STATUS_VALUE is reachable from some real input', () => {
+    // The defect this block exists to prevent, stated as a property: a value
+    // nobody can produce is documentation, and it looks identical to a value
+    // that merely has not happened yet. `ok` and `skipped` come from control
+    // flow (asserted above); the rest must come from the classifier.
+    const fromClassifier = new Set(
+      ['schema', 'empty', 'timeout', 'truncated', 'incomplete', 'network', 'permanent', 'http-429', 'http-400', 'sensitive']
+        .map(reduceStatusFromErrorCategory),
+    );
+    const reachable = new Set([...fromClassifier, ReduceStatus.OK, ReduceStatus.SKIPPED]);
+    const orphans = REDUCE_STATUS_VALUES.filter(v => !reachable.has(v));
+    assert.deepEqual(orphans, [], `declared but unreachable ReduceStatus values: ${orphans.join(', ')}`);
+  });
+
+  it('an unknown category falls back to model_error rather than minting a new value', () => {
+    // Widening classifyLlmError must never silently produce a status the enum
+    // has not declared.
+    for (const c of ['brand-new-category', '', undefined, null]) {
+      assert.equal(reduceStatusFromErrorCategory(c), ReduceStatus.MODEL_ERROR);
+      assert.ok(REDUCE_STATUS_VALUES.includes(reduceStatusFromErrorCategory(c)));
+    }
   });
 });
 

@@ -340,6 +340,21 @@ export async function _callGPTOnce(openai, opts) {
       ? `[${passName ?? 'call'}] Timeout after ${(timeout / 1000).toFixed(0)}s`
       : `[${passName ?? 'call'}] ${err.message} (${(latencyMs / 1000).toFixed(1)}s)`;
     process.stderr.write(`  [${passName ?? 'call'}] FAILED: ${msg}\n`);
+    // A detected abort must leave here as a STRUCTURED timeout. This threw a
+    // bare `new Error(msg)`, so the one thing this block had just established —
+    // `isAbort` — was destroyed on the way out, and every downstream consumer
+    // saw category `permanent`. `classifyLlmError` has an AbortError branch, but
+    // it could never fire: the name was gone and matching "Timeout after" out of
+    // the prose is exactly the message-string matching that function exists to
+    // avoid. This is why `ReduceStatus.TIMEOUT` was unreachable.
+    //
+    // `retryable: false` PRESERVES today's behaviour deliberately — an abort is
+    // currently classified `permanent` and therefore never retried, and this is
+    // a labelling fix, not a retry-policy change. Note `classifyLlmError`'s own
+    // AbortError branch would say `retryable: true`; flipping it would make
+    // every timed-out pass re-dispatch a full attempt, which is a cost decision
+    // that deserves its own change.
+    if (isAbort) throw new LlmError(msg, { category: 'timeout', retryable: false });
     throw new Error(msg);
   }
 }
@@ -414,6 +429,14 @@ export async function safeCallGPT(openai, opts, emptyResult) {
       usage: { input_tokens: 0, cached_tokens: 0, output_tokens: 0, reasoning_tokens: 0, latency_ms: 0 },
       latencyMs: 0,
       failed: true,
+      // WHY the call failed, not just THAT it did. `failed: true` collapses
+      // every cause into one bit, and a caller left holding only `error`
+      // (a message string) can recover the cause solely by matching on prose —
+      // which is exactly what `classifyLlmError` exists to avoid. Callers that
+      // report a typed status (`runMapReducePass` → `reduceStatusFromErrorCategory`)
+      // read this; without it, `_executionMeta.reduceStatus` could only ever
+      // say `model_error`.
+      errorCategory: classifyLlmError(err).category,
       // Stamped on the degraded path too: the effort WAS requested — the call
       // was made and failed — so recording it is a fact about what we asked
       // for, not a claim that it ran. Omitting it here would leave a failed

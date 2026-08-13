@@ -41,7 +41,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { z } from 'zod';
-import { FindingSchema, ProducerFindingSchema, WiringIssueSchema, LedgerEntrySchema, BatchLedgerEntrySchema, ReduceStatus, buildExecutionMeta, DuplicationBouncerResponseSchema, AdjacencyBouncerResponseSchema } from '../schemas.mjs';
+import { FindingSchema, ProducerFindingSchema, WiringIssueSchema, LedgerEntrySchema, BatchLedgerEntrySchema, ReduceStatus, reduceStatusFromErrorCategory, buildExecutionMeta, DuplicationBouncerResponseSchema, AdjacencyBouncerResponseSchema } from '../schemas.mjs';
 import { gitDiffWithWorkingTree } from '../vcs.mjs';
 import { runDuplicationAnalysis } from './duplication-detector.mjs';
 import { classifyProviderReadiness } from './provider-readiness.mjs';
@@ -670,7 +670,12 @@ async function runMapReducePass(openai, files, passName, buildPromptForUnit, max
     const normalized = normalizeFindingsForOutput(allFindings);
     return {
       result: { pass_name: passName, findings: normalized, quick_fix_warnings: [],
-        summary: `Map-reduce: ${effectiveFailures}/${units.length} units failed. Returning ${normalized.length} raw findings (REDUCE skipped).` },
+        summary: `Map-reduce: ${effectiveFailures}/${units.length} units failed. Returning ${normalized.length} raw findings (REDUCE skipped).`,
+        // REDUCE was deliberately not attempted — that is `skipped`, not a
+        // failure and emphatically not `ok`. This path returned no
+        // `_executionMeta` at all until 2026-08-13, leaving a run whose
+        // synthesis never ran indistinguishable downstream from a clean one.
+        _executionMeta: buildExecutionMeta({ reduceStatus: ReduceStatus.SKIPPED, reduceSkipped: true }) },
       usage: mapUsage,
       latencyMs: Date.now() - mapStart,
       _mapFailureRate: failureRate,
@@ -688,7 +693,11 @@ async function runMapReducePass(openai, files, passName, buildPromptForUnit, max
     process.stderr.write(`  [${passName}] REDUCE payload could not fit budget — skipping REDUCE\n`);
     return {
       result: { pass_name: passName, findings: normalizeFindingsForOutput(allFindings), quick_fix_warnings: [],
-        summary: `REDUCE skipped: findings exceeded budget after normalization.` },
+        summary: `REDUCE skipped: findings exceeded budget after normalization.`,
+        // The findings could not be made to fit the REDUCE payload budget —
+        // `budget_exceeded` is the literal cause, and this is the site that
+        // makes that enum value reachable at all.
+        _executionMeta: buildExecutionMeta({ reduceStatus: ReduceStatus.BUDGET_EXCEEDED, reduceSkipped: true }) },
       usage: mapUsage, latencyMs: Date.now() - mapStart, _reduceSkipped: true,
       mapUnitStatus, unitsAttempted, unitsFailed,
     };
@@ -713,7 +722,14 @@ async function runMapReducePass(openai, files, passName, buildPromptForUnit, max
 
   // Status-gated fallback: if safeCallGPT returned the empty-result sentinel (failed=true),
   // classify the failure and preserve raw MAP findings rather than silently discarding them.
-  const reduceStatus = reduceResult._reduceStatus ?? (reduceResult.failed ? ReduceStatus.MODEL_ERROR : ReduceStatus.OK);
+  // Was `reduceResult.failed ? MODEL_ERROR : OK` — a status inferred from one
+  // boolean, so `parse_error`/`timeout`/`budget_exceeded` were declared and
+  // unreachable. `_reduceStatus` is still honoured first (nothing sets it today;
+  // kept as the explicit-override seam the plan named), then the real category
+  // `safeCallGPT` now carries decides. This is read by humans: `reduceStatus` is
+  // interpolated into the pass summary below, which flows into `overall_reasoning`.
+  const reduceStatus = reduceResult._reduceStatus
+    ?? (reduceResult.failed ? reduceStatusFromErrorCategory(reduceResult.errorCategory) : ReduceStatus.OK);
   if (reduceStatus !== ReduceStatus.OK && allFindings.length > 0) {
     process.stderr.write(`  [${passName}] REDUCE failed (${reduceStatus}) — preserving ${allFindings.length} raw MAP findings\n`);
     const totalLatency = Date.now() - mapStart;

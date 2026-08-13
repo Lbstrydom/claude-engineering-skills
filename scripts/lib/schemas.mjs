@@ -737,6 +737,51 @@ export const ReduceStatus = Object.freeze({
 });
 
 /**
+ * Map a `classifyLlmError()` category onto the ReduceStatus it represents.
+ *
+ * Lives beside the enum on purpose: "which of these six values can a real
+ * failure actually produce" is a question about the enum, and keeping the map
+ * here makes it answerable — and testable — in one place. Until 2026-08-13 it
+ * was answerable only by reading the caller, and the answer was "two":
+ * `runMapReducePass` inferred `failed ? MODEL_ERROR : OK` from a boolean,
+ * because `safeCallGPT` discarded the classification and returned only
+ * `err.message`. `parse_error`, `timeout` and `budget_exceeded` were declared
+ * and unreachable — the plan (audit-loop-improvements.md:68) asked for status
+ * "from the actual error classification", and only the READ side had landed.
+ *
+ * Categories are those `classifyLlmError` can yield: the `LlmError` categories
+ * constructed in `lib/audit/llm-helpers.mjs` (`incomplete`, `truncated`,
+ * `empty`, `schema`, `config`, `sensitive`) plus its own fallbacks
+ * (`http-<status>`, `timeout`, `network`, `permanent`).
+ *
+ * `incomplete` deliberately does NOT map to `budget_exceeded`. The Responses
+ * API reports `status:'incomplete'` for several reasons — `max_output_tokens`
+ * but also `content_filter` — so claiming "budget" would be a precision the
+ * category does not carry. `truncated` is unambiguous (an output item cut at
+ * max_tokens) and does map. Unknown categories fall through to `model_error`
+ * rather than a new value, so widening the classifier can never silently mint
+ * a status this enum has not declared.
+ *
+ * @param {string|undefined} category A `classifyLlmError()` category.
+ * @returns {string} A ReduceStatus value.
+ */
+export function reduceStatusFromErrorCategory(category) {
+  switch (category) {
+    // Model replied, but nothing usable could be parsed out of it.
+    case 'schema':
+    case 'empty':
+      return ReduceStatus.PARSE_ERROR;
+    case 'timeout':
+      return ReduceStatus.TIMEOUT;
+    // Output cut at max_tokens — the token budget genuinely ran out.
+    case 'truncated':
+      return ReduceStatus.BUDGET_EXCEEDED;
+    default:
+      return ReduceStatus.MODEL_ERROR;
+  }
+}
+
+/**
  * Optional execution-meta block added to audit result objects.
  *
  * Typed SSOT — all execution status flags live here, not as ad-hoc top-level
