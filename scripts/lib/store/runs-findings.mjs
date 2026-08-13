@@ -1872,9 +1872,14 @@ export function normalizeRemediationUpdates(updates) {
  * @returns {Promise<{updated:number}>}
  */
 export async function markFindingsRemediation(repoId, updates) {
-  if (!repoId || !await isCloudEnabled()) return { updated: 0 };
+  if (!repoId || !await isCloudEnabled()) return { updated: 0, attempted: 0 };
   const { valid } = normalizeRemediationUpdates(updates);
-  if (valid.length === 0) return { updated: 0 };
+  if (valid.length === 0) return { updated: 0, attempted: 0 };
+  // `attempted` is returned alongside `updated` (audit 2026-08-13) so a caller
+  // can see a SHORTFALL without re-deriving it. This is fail-open PER ROW: a
+  // throw is caught, logged, and the loop continues — so `updated` alone cannot
+  // distinguish "projected all 5" from "projected 2 of 5 and logged 3 failures",
+  // and the on-disk ledger then diverges from the store with nobody counting.
   let updated = 0;
   for (const { fingerprint: fp, state, resolvedRound } of valid) {
     try {
@@ -1918,7 +1923,7 @@ export async function markFindingsRemediation(repoId, updates) {
       process.stderr.write(`  [lifecycle] markFindingsRemediation(${fp}) failed: ${err.message}\n`);
     }
   }
-  return { updated };
+  return { updated, attempted: valid.length };
 }
 
 /**
@@ -1934,9 +1939,9 @@ export async function markFindingsRemediation(repoId, updates) {
  * @returns {Promise<{reconciled:number}>}
  */
 export async function reconcileRemediationProjection(repoId, ledger) {
-  if (!repoId || !await isCloudEnabled()) return { reconciled: 0 };
+  if (!repoId || !await isCloudEnabled()) return { reconciled: 0, attempted: 0, ok: true, reason: 'cloud-off' };
   const index = buildLedgerTerminalIndex(ledger);
-  if (index.size === 0) return { reconciled: 0 };
+  if (index.size === 0) return { reconciled: 0, attempted: 0, ok: true, reason: 'empty-ledger' };
   try {
     const rows = await many(
       `SELECT f.finding_fingerprint, f.remediation_state
@@ -1946,11 +1951,19 @@ export async function reconcileRemediationProjection(repoId, ledger) {
       [repoId]
     );
     const targets = selectReconcileTargets(rows, index);
-    if (targets.length === 0) return { reconciled: 0 };
-    const { updated } = await markFindingsRemediation(repoId, targets);
-    return { reconciled: updated };
+    if (targets.length === 0) return { reconciled: 0, attempted: 0, ok: true, reason: 'already-consistent' };
+    const { updated, attempted } = await markFindingsRemediation(repoId, targets);
+    return { reconciled: updated, attempted, ok: true, reason: null };
   } catch (err) {
     process.stderr.write(`  [lifecycle] reconcileRemediationProjection failed: ${err.message}\n`);
-    return { reconciled: 0 };
+    // `ok:false` is the whole point of this return (audit 2026-08-13). This used
+    // to be a bare `{reconciled: 0}` — byte-identical to the HEALTHY
+    // "already-consistent" case above. A sweep that THREW and a projection that
+    // needed no healing are opposite facts, and the caller could not tell them
+    // apart: the self-heal silently not running looked exactly like the
+    // self-heal having nothing to do. That is the believable-false-zero shape
+    // the durability work exists to eliminate, in the very function whose job
+    // is to repair divergence.
+    return { reconciled: 0, attempted: 0, ok: false, reason: err.message };
   }
 }

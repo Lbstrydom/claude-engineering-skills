@@ -1,5 +1,60 @@
 # Project Status Log
 
+## 2026-08-13 — Cluster 2, re-cut on contact with the code
+
+Cluster 2 was planned as "delete the failure swallows in five un-seamed writes
+and route them through `durableWrite`". Re-deriving at HEAD before editing
+falsified most of that, and the cluster shipped much smaller.
+
+**The swallows were already gone.** All five sites now check their result and
+log; the file contains **zero** `.catch(() => {})`. Another session fixed them
+(`4235a115` among others) while this plan was being written.
+
+**And the plan's own source of authority was stale.** Cluster 2's scope was
+derived from `writeLearningState`'s docstring, quoted as evidence — *"several of
+which also silently discard failures (`.catch(() => {})`)"*. That sentence was
+the last `.catch(() => {})` in the file: a claim that had outlived its fix and
+was still being cited as a premise. Corrected in place, with why it matters — a
+stale docstring is a false premise other plans build on, the same class as the
+stale line-pins §11 warns about.
+
+**`durableWrite` turned out to be the wrong seam**, and the repo already said so:
+`tests/audit-store-durability-call-site.test.mjs` exempts `markFindingsRemediation`
+because *"the adjudication LEDGER ON DISK is the durable copy — a spill would be a
+second queue over the same evidence."* Both functions are also fail-open by
+design and never throw, so wrapping them would have reported `written` on a run
+that projected nothing — a false success in the seam built to prevent them.
+
+**What was actually wrong, and is now fixed.** `reconcileRemediationProjection`
+returned a bare `{reconciled: 0}` from **both** its healthy "nothing diverged"
+path and its `catch`. A self-heal that never ran was byte-identical to one with
+nothing to heal — the believable-false-zero shape, inside the function whose job
+is repairing divergence. It now returns `{reconciled, attempted, ok, reason}`.
+`markFindingsRemediation` returns `attempted` alongside `updated`, because it is
+fail-open **per row**: committing 5 ledger transitions while projecting 2 left
+the on-disk ledger and the store silently disagreeing. The orchestrator had been
+discarding both return values; it now reports a failed sweep and a shortfall.
+
+**Phase 5 closed the oracle's missing direction.** The existing writer-set oracle
+iterates the STORE modules, so an orchestrator reaching a writer directly is
+*unrepresentable from that side* — §1.2's own rule, unapplied to the test
+enforcing it. Added an orchestrator-side check over the same derived set, on the
+**import graph** rather than call syntax (R1-M1 killed the regex approach once),
+covering **dynamic** imports because `recordConvergenceState` arrives via
+`await import(...)` and a static check would miss it. Mutation-tested: removing
+the `markFindingsRemediation` exemption makes it fail by name, then pass again.
+
+**Deliberately not done**: the three telemetry writes (`recordDiffComplexity`,
+`recordConvergenceState`, `backfillLearningOutcome`) stay logged-only rather than
+registered. Their failures are visible, the ledger is not at stake, and three
+`registerWriter` entries with rowKey-or-lost-only decisions is registry churn for
+no recoverable state. Recorded as a decision, not an oversight.
+
+**Consumer-side verification**: `unverified` — no second checkout on this machine
+to clone the pushed sha into. Producer side: 43 targeted tests green; the 3
+whole-suite failures are another session's uncommitted `skills.manifest.json`
+desync, untouched here.
+
 ## 2026-08-13 (latest) — four things that were declared and enforced nothing, and a fix nobody else could see
 
 `388e0339`, `0a91de91`, `2e6bb67f`, merged and pushed as `1d3f2d21`.

@@ -88,7 +88,10 @@ test('markFindingsRemediation is a no-op when cloud is disabled (fail-open)', as
   delete process.env.AUDIT_DB_URL;
   try {
     const r = await markFindingsRemediation('repo-1', [{ findingFingerprint: 'a', state: 'fixed' }]);
-    assert.deepEqual(r, { updated: 0 });
+    // `attempted` accompanies `updated` so a caller can see a SHORTFALL: this
+    // writer is fail-open PER ROW, so `updated` alone cannot distinguish
+    // "projected all of them" from "projected some and logged the rest".
+    assert.deepEqual(r, { updated: 0, attempted: 0 });
   } finally { if (prev !== undefined) process.env.AUDIT_DB_URL = prev; }
 });
 
@@ -96,7 +99,10 @@ test('reconcileRemediationProjection no-ops on empty ledger index / cloud-off', 
   const prev = process.env.AUDIT_DB_URL;
   delete process.env.AUDIT_DB_URL;
   try {
-    assert.deepEqual(await reconcileRemediationProjection('repo-1', { entries: [] }), { reconciled: 0 });
+    // `ok` distinguishes a HEALTHY no-op from a sweep that threw — both used to
+    // answer a bare `{reconciled: 0}`.
+    assert.deepEqual(await reconcileRemediationProjection('repo-1', { entries: [] }),
+      { reconciled: 0, attempted: 0, ok: true, reason: 'cloud-off' });
   } finally { if (prev !== undefined) process.env.AUDIT_DB_URL = prev; }
 });
 
@@ -243,5 +249,62 @@ describe('markFindingsRemediation — DB write shape (integration)', { skip }, (
     assert.equal(res.updated, 1, 'a missing sibling event row must not roll back the audit_findings projection');
     const finding = await q.one(`SELECT remediation_state FROM audit_findings WHERE id = $1`, [findingIdNoEventRow]);
     assert.equal(finding.remediation_state, 'fixed');
+  });
+});
+
+// ── The believable false zero this pair used to produce (audit 2026-08-13) ────
+//
+// `reconcileRemediationProjection` answered a bare `{reconciled: 0}` from BOTH
+// its healthy "nothing diverged" path and its `catch`. Those are opposite
+// facts — a self-heal with nothing to do, versus a self-heal that never ran —
+// and the orchestrator, which discarded the value entirely, could not have told
+// them apart even if it had looked. That is the exact shape the durability work
+// exists to eliminate, sitting inside the function whose job is repairing
+// divergence.
+describe('remediation projection reports its own failure', () => {
+  it('a THROWN sweep is distinguishable from a clean one', async () => {
+    // Drive the real function with a ledger index that is non-empty (so it gets
+    // past the early returns) while cloud is off in a way that makes the query
+    // throw rather than short-circuit — the `catch` branch is the subject.
+    const prev = process.env.AUDIT_DB_URL;
+    process.env.AUDIT_DB_URL = 'postgresql://nobody@127.0.0.1:1/nonexistent';
+    try {
+      const r = await reconcileRemediationProjection('repo-1', {
+        entries: [{ topicId: 't1', semanticHash: 'abc', remediationState: 'fixed', adjudicationOutcome: 'accepted' }],
+      });
+      // Whatever the failure mode, the two states must not be the same VALUE.
+      const healthy = { reconciled: 0, attempted: 0, ok: true, reason: 'already-consistent' };
+      assert.notDeepEqual(r, healthy,
+        'a failed sweep returned the healthy no-op value — the caller cannot tell them apart');
+      if (r.ok === false) {
+        assert.ok(r.reason, 'a failed sweep must carry a reason, not just ok:false');
+      }
+    } finally {
+      if (prev === undefined) delete process.env.AUDIT_DB_URL; else process.env.AUDIT_DB_URL = prev;
+    }
+  });
+
+  it('NEGATIVE CONTROL: the healthy no-op still reports ok:true', async () => {
+    // Without this, a function hard-wired to ok:false passes the test above
+    // while reporting every clean run as a failure.
+    const prev = process.env.AUDIT_DB_URL;
+    delete process.env.AUDIT_DB_URL;
+    try {
+      const r = await reconcileRemediationProjection('repo-1', { entries: [] });
+      assert.equal(r.ok, true, 'a clean no-op must not be reported as a failure');
+    } finally { if (prev !== undefined) process.env.AUDIT_DB_URL = prev; }
+  });
+
+  it('markFindingsRemediation reports attempted so a SHORTFALL is computable', async () => {
+    const prev = process.env.AUDIT_DB_URL;
+    delete process.env.AUDIT_DB_URL;
+    try {
+      const r = await markFindingsRemediation('repo-1', [
+        { findingFingerprint: 'a', state: 'fixed' },
+        { findingFingerprint: 'b', state: 'regressed' },
+      ]);
+      assert.ok('attempted' in r, 'without `attempted`, updated<attempted is not computable by the caller');
+      assert.equal(typeof r.attempted, 'number');
+    } finally { if (prev !== undefined) process.env.AUDIT_DB_URL = prev; }
   });
 });

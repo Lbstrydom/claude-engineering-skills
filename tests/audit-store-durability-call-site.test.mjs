@@ -315,6 +315,73 @@ describe('writer-set oracle — derived from the store modules, not enumerated',
 describe('orchestrator call sites', () => {
   const ORCH = 'scripts/lib/audit/legacy-production-audit.mjs';
 
+  // ── The direction the store-side oracle structurally cannot see ────────────
+  //
+  // The oracle above iterates the STORE MODULES: it proves every write-shaped
+  // export is registered or exempted. What is UNREPRESENTABLE from that side is
+  // the orchestrator reaching a store writer directly — the export is dutifully
+  // registered, and the call simply does not go through the seam. "Which side am
+  // I iterating, and what is unrepresentable from it?" is this plan's own
+  // headline rule (§1.2), and the test enforcing it was one-directional.
+  //
+  // Checked on the IMPORT GRAPH rather than by scanning for call syntax: to call
+  // a store writer you must first import it, and an import is structural where a
+  // call-site regex is guesswork (R1-M1 killed the regex approach once already).
+  // Both import forms count — `recordConvergenceState` arrives through a DYNAMIC
+  // `await import('../store/learning-decisions.mjs')`, which a static-import
+  // check would miss entirely, one blind spot below the one being fixed.
+  test('every store writer the ORCHESTRATOR imports is registered or exempted', async () => {
+    await import('../scripts/lib/audit-store-writers.mjs');
+    const writersSrc = read('scripts/lib/audit-store-writers.mjs');
+    const src = read(ORCH);
+
+    // Every writer-shaped symbol declared anywhere under scripts/lib/store.
+    const storeWriters = new Set();
+    for (const mod of STORE_MODULES) {
+      for (const m of read(mod).matchAll(new RegExp(WRITER_DECL.source, WRITER_DECL.flags))) {
+        if (WRITER_NAME.test(m[1])) storeWriters.add(m[1]);
+      }
+    }
+    assert.ok(storeWriters.size > 0,
+      'derived zero store writers — the inventory is broken, and a pass over an empty set proves nothing');
+
+    // Names the orchestrator pulls in, from BOTH import forms.
+    const imported = new Set();
+    const collect = (clause) => {
+      for (const raw of clause.split(',')) {
+        const name = raw.split(' as ')[0].trim();
+        if (name) imported.add(name);
+      }
+    };
+    for (const m of src.matchAll(/import\s*\{([^}]*)\}\s*from\s*'[^']*'/g)) collect(m[1]);
+    for (const m of src.matchAll(/(?:const|let|var)\s*\{([^}]*)\}\s*=\s*await\s+import\(/g)) collect(m[1]);
+
+    const unaccounted = [];
+    for (const name of imported) {
+      if (!storeWriters.has(name)) continue;
+      if (NOT_A_DURABLE_WRITE[name]) continue;
+      if (new RegExp(String.raw`\b${name}\(`).test(writersSrc)) continue; // registered
+      unaccounted.push(name);
+    }
+    assert.deepEqual(
+      unaccounted, [],
+      'the orchestrator imports a store writer that is neither registered in audit-store-writers.mjs '
+      + 'nor exempted in NOT_A_DURABLE_WRITE. Importing it is how it gets CALLED outside the seam — '
+      + 'the store-side oracle cannot see this, because from there the export looks correctly handled.',
+    );
+  });
+
+  test('the dynamic-import form is actually matched (guard against a silent blind spot)', () => {
+    // If this regex ever stops matching, the test above still passes — having
+    // checked one import form instead of two. A guard that quietly narrows its
+    // own scope is the failure this whole suite is about.
+    const src = read(ORCH);
+    const dynamic = [...src.matchAll(/(?:const|let|var)\s*\{([^}]*)\}\s*=\s*await\s+import\(/g)];
+    assert.ok(dynamic.length > 0,
+      'no destructured dynamic import found in the orchestrator — either the file changed shape or the '
+      + 'pattern rotted; recordConvergenceState arrives this way and must stay visible to the check above');
+  });
+
   test('no audit-store write in the orchestrator is fire-and-forget any more', () => {
     const src = read(ORCH);
     // The literal defect: a store writer called with a trailing `.catch(` and no

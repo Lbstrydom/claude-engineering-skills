@@ -1123,13 +1123,27 @@ async function classifyShadowFailureSafe(err, importShadowModule = () => import(
  * later audit (H1-H4, 2026-07-24) correctly found OTHER cloud-write/telemetry
  * sites this wrapper does not cover: `recordDiffComplexity(...)`,
  * `backfillLearningOutcome(...)`, debt-memory writes, ledger writes, and
- * session writes, several of which also silently discard failures
- * (`.catch(() => {})`). Those are real, pre-existing gaps, deliberately
- * deferred — see docs/plans/audit-backlog-triage-hardening.md item 1's
+ * session writes. See docs/plans/audit-backlog-triage-hardening.md item 1's
  * "Explicitly NOT in scope" framing (item 5's God-orchestrator decomposition
  * covers the eventual real fix). Full lint-level enforcement of even the 5
  * sites this wrapper DOES cover (forbidding a raw store call outside it) is
  * also out of scope here.
+ *
+ * **CORRECTED 2026-08-13 — this paragraph used to end "several of which also
+ * silently discard failures (`.catch(() => {})`)", and that is no longer
+ * true.** Every one of those sites now checks its result and logs; the file
+ * contains zero `.catch(() => {})` swallows. The claim outlived its fix by
+ * long enough that `docs/plans/god-module-and-layering-debt.md` cited THIS
+ * DOCSTRING as the authority for a whole cluster of work, and the cluster had
+ * to be re-cut on contact with the code. A stale docstring is not a cosmetic
+ * defect — it is a false premise other plans build on, which is the same
+ * class as the stale line-pins the plan's own §11 warns about.
+ *
+ * What remains true, and is the reason these sites still matter: a logged
+ * failure is not a REPRESENTED one. None of them reaches `writeOutcomes`, so
+ * the run still reports complete. `reconcileRemediationProjection` and
+ * `markFindingsRemediation` now return enough for their caller to say so;
+ * the telemetry writes deliberately do not (see the plan's Cluster 2 note).
  * @param {boolean} allowed
  * @param {() => any} fn
  */
@@ -3129,7 +3143,21 @@ export async function runLegacyProductionAudit(ctx) {
       // transitions would re-project from this same pre-transition snapshot and
       // REVERT a just-applied regression/fix in the DB. This matches the plan's
       // B2: "before computing new transitions, reconcile."
-      if (cloudRepoId) await reconcileRemediationProjection(cloudRepoId, mergedLedger);
+      // READ the sweep's result (audit 2026-08-13). This was `await …` with the
+      // return value discarded, and the function used to answer `{reconciled:0}`
+      // for BOTH "already consistent" and "the sweep threw" — so a self-heal
+      // that never ran was indistinguishable from one with nothing to heal.
+      // It now reports `ok`, and a failure is said out loud: the ledger on disk
+      // stays the durable copy, so this is recoverable on the next round, but
+      // "recoverable" is only true if somebody knows it happened.
+      if (cloudRepoId) {
+        const sweep = await reconcileRemediationProjection(cloudRepoId, mergedLedger);
+        if (!sweep.ok) {
+          process.stderr.write(`  [lifecycle] self-heal sweep FAILED (${sweep.reason}) — store may still diverge from the ledger; next round retries\n`);
+        } else if (sweep.reconciled > 0) {
+          process.stderr.write(`  [lifecycle] self-heal reconciled ${sweep.reconciled}/${sweep.attempted} divergent projection(s)\n`);
+        }
+      }
       // Then compute + apply + project THIS round's fresh transitions.
       const { updates } = computeFixLifecycleUpdates(mergedLedger, allFindings, changedFiles, round);
       if (updates.length > 0) {
@@ -3138,7 +3166,19 @@ export async function runLegacyProductionAudit(ctx) {
           const nFixed = committed.filter(u => u.action === 'mark-fixed').length;
           const nReg = committed.filter(u => u.action === 'mark-regressed').length;
           process.stderr.write(`  [lifecycle] ${committed.length} transition(s): ${nFixed} fixed, ${nReg} regressed\n`);
-          if (cloudRepoId) await markFindingsRemediation(cloudRepoId, committed);
+          // Compare INTENDED against PROJECTED (audit 2026-08-13). The return
+          // value was discarded, and this writer is fail-open per row — it
+          // catches, logs and continues — so committing 5 ledger transitions
+          // while projecting only 2 left the on-disk ledger and the store
+          // silently disagreeing. A shortfall is not fatal (the ledger is the
+          // durable copy and the sweep above heals it next round), but it must
+          // be COUNTED rather than inferred from stderr noise.
+          if (cloudRepoId) {
+            const proj = await markFindingsRemediation(cloudRepoId, committed);
+            if (proj.updated < proj.attempted) {
+              process.stderr.write(`  [lifecycle] projected ${proj.updated}/${proj.attempted} transition(s) — ${proj.attempted - proj.updated} did NOT reach the store; the ledger is ahead until the next self-heal\n`);
+            }
+          }
         }
       }
     } catch (err) {
