@@ -67,6 +67,8 @@ export const ReduceStatus = Object.freeze({
 
 `runMapReducePass()` sets `_reduceStatus` on the returned object from the actual error classification rather than inferring it from finding count.
 
+**AMENDED 2026-08-13 — the intent shipped, the named channel did not.** Nothing ever wrote `_reduceStatus`; only the READ side (`reduceResult._reduceStatus ?? …`) landed, so the fallback WAS the implementation and `runMapReducePass` inferred `failed ? MODEL_ERROR : OK` from a boolean — leaving `parse_error`, `timeout` and `budget_exceeded` declared and unreachable. The classification now travels as `errorCategory`, stamped by `safeCallGPT` from `classifyLlmError` and mapped by `reduceStatusFromErrorCategory()` in `schemas.mjs`. The `_reduceStatus ??` override was DELETED rather than kept as a seam: a branch no input can take is the same declared-not-real defect one level down. See `0a91de91`.
+
 **Fix A2 — Bracket-balance JSON repair** (in `robustness.mjs`):
 
 Replace the brittle suffix-guessing approach with a deterministic bracket-balance algorithm that walks the raw string and closes any open brackets/strings:

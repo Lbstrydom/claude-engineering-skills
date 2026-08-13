@@ -397,6 +397,30 @@ function validateLedgerForR2(ledgerPath, round) {
   }
 }
 
+/**
+ * Collect per-pass REDUCE degradation off a built passRegistry.
+ *
+ * Only degraded passes carry an `_executionMeta` (a clean REDUCE emits none) and
+ * only map-reduce passes have one at all, so the result contains exactly the
+ * passes worth an operator's attention. Returns `undefined` — not `{}` — when
+ * nothing degraded, keeping the omit-vs-zero convention the rest of the block
+ * follows: absence means "no map-reduce pass degraded", never "measured zero".
+ *
+ * Pure and separately exported because the alternative is asserting it through
+ * a full audit run; the run-level wiring is proved separately.
+ *
+ * @param {Array<{name: string, _result?: object}>} passRegistry
+ * @returns {Record<string, string>|undefined}
+ */
+function collectReducePassStatuses(passRegistry) {
+  const statuses = {};
+  for (const entry of passRegistry ?? []) {
+    const status = entry?._result?.result?._executionMeta?.reduceStatus;
+    if (status) statuses[entry.name] = status;
+  }
+  return Object.keys(statuses).length > 0 ? statuses : undefined;
+}
+
 // ── Map-Reduce Pass ──────────────────────────────────────────────────────────
 
 /**
@@ -724,12 +748,16 @@ async function runMapReducePass(openai, files, passName, buildPromptForUnit, max
   // classify the failure and preserve raw MAP findings rather than silently discarding them.
   // Was `reduceResult.failed ? MODEL_ERROR : OK` — a status inferred from one
   // boolean, so `parse_error`/`timeout`/`budget_exceeded` were declared and
-  // unreachable. `_reduceStatus` is still honoured first (nothing sets it today;
-  // kept as the explicit-override seam the plan named), then the real category
-  // `safeCallGPT` now carries decides. This is read by humans: `reduceStatus` is
-  // interpolated into the pass summary below, which flows into `overall_reasoning`.
-  const reduceStatus = reduceResult._reduceStatus
-    ?? (reduceResult.failed ? reduceStatusFromErrorCategory(reduceResult.errorCategory) : ReduceStatus.OK);
+  // unreachable. Now derived from the category `safeCallGPT` carries.
+  //
+  // The `reduceResult._reduceStatus ??` override this used to lead with is GONE
+  // (2026-08-13). The plan named `_reduceStatus` as the channel, but nothing has
+  // ever written it, so the fallback WAS the implementation and the override was
+  // a branch no input could take — the same declared-not-real defect this line
+  // exists to fix, one level down. A seam with no writer is not extensibility.
+  const reduceStatus = reduceResult.failed
+    ? reduceStatusFromErrorCategory(reduceResult.errorCategory)
+    : ReduceStatus.OK;
   if (reduceStatus !== ReduceStatus.OK && allFindings.length > 0) {
     process.stderr.write(`  [${passName}] REDUCE failed (${reduceStatus}) — preserving ${allFindings.length} raw MAP findings\n`);
     const totalLatency = Date.now() - mapStart;
@@ -3366,6 +3394,11 @@ export async function runLegacyProductionAudit(ctx) {
     _executionMeta: buildExecutionMeta({
       suppressionUnavailable: suppressionUnavailable || undefined,
       ledgerInvalidEntryCount: ledgerInvalidEntryCount > 0 ? ledgerInvalidEntryCount : undefined,
+      // Per-pass REDUCE degradation, which until 2026-08-13 was emitted on the
+      // pass result and then dropped here — this block was built from
+      // suppression state alone, so a degraded REDUCE reached the run only as
+      // prose inside `overall_reasoning`.
+      reducePassStatuses: collectReducePassStatuses(passRegistry),
     }),
   };
 
@@ -4179,7 +4212,8 @@ export async function buildAuditRunContext(cliArgs) {
 // export is `undefined` and the test scaffolding is dead code at runtime.
 export const __testExports = process.env.AUDIT_EXPORTS_FOR_TESTS === '1'
   ? {
-      validateLedgerForR2, deriveFindingsFromReport, runMapReducePass, initResultCache, cachePassResult,
+      validateLedgerForR2, deriveFindingsFromReport, runMapReducePass, collectReducePassStatuses,
+      initResultCache, cachePassResult,
       writeLearningState, cleanupCache, classifyShadowFailureSafe, runOrphanIntroducedPass, dedupReplacementId,
       // decideSeed: its eligibility-before-env-flag ordering is what gives the
       // cache-seed A/B a control arm, and that ordering is invisible from the

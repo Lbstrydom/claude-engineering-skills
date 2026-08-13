@@ -813,6 +813,21 @@ const ExecutionMetaFieldsSchema = z.strictObject({
   // downstream from a clean one. Emitted only when > 0: absent means a complete
   // ledger, and a hard 0 would be a measurement nobody took.
   ledgerInvalidEntryCount: z.number().int().nonnegative().optional(),
+  // Per-pass REDUCE degradation, propagated onto the RUN result — `{passName:
+  // status}`, and only for passes that degraded (a clean REDUCE emits no block
+  // at all, so an entry here always means something went wrong and an absent
+  // field means no map-reduce pass degraded).
+  //
+  // A map, not a single `reduceStatus`, because a run has N passes and any
+  // collapse of N statuses into one loses which pass degraded — the only part
+  // an operator can act on. Added 2026-08-13: `reduceStatus` was emitted on the
+  // PASS result and never propagated (`mergedResult` builds its own block from
+  // suppression state alone), so it reached a human only as prose inside
+  // `overall_reasoning`. Nothing else carries this: `mapReduceFailureReason`
+  // flags only `total_failure` and partial-with-zero-findings, so a pass whose
+  // REDUCE parse-errored while its raw MAP findings survived reports
+  // `succeeded` with no failureReason.
+  reducePassStatuses: z.record(z.string(), z.enum(REDUCE_STATUS_VALUES)).optional(),
   // DECLARED, NOT YET EMITTED (verified 2026-08-13 by repo-wide grep: no
   // producer writes either field, no consumer reads one). They belong to P0-D
   // of docs/plans/audit-loop-improvements.md — pass prediction/skipping — which
