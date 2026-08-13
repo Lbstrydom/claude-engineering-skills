@@ -1,5 +1,64 @@
 # Project Status Log
 
+## 2026-08-13 — closed the stale layering backlog, and reverted a "fix" that would have hidden a gate
+
+Follow-on to Cluster 1 (`455e7cca`). Three items: close the backlog, run the
+plan's close-out, and take the small deferred findings.
+
+**172 of 225 open `[Architecture]` rows were describing edges that no longer
+exist** — the oracle read 0 while the store read 225. Closed through
+`recordFinalReviewFix` (the sanctioned writer, never raw SQL), with **honest
+per-file attribution**: the `scripts/lib/cross-skill/**` edges to `a146bb7b`,
+the rest to `455e7cca`. Stamping one sha across all 172 would have put a lie in
+`fix_commit_sha`. Result 172 fixed / 0 failed; the category is now **53 open
+(7 HIGH)**, and what remains names genuinely different subjects.
+
+**Close-out ran**: `arch:refresh` (169 symbols, 0 violations, coverage verified)
+then `arch:render`. That also settled a dismissal on evidence rather than
+argument — the `[Duplication]` finding against `arm-vocabulary.mjs` was called a
+stale-index artifact at the time; against a fresh index it is simply gone.
+
+### The one that mattered: a finding that was true in form and wrong in direction
+
+An audit HIGH read *"sensitive data egress bypass — the stated redaction
+boundary protects only `redactedContext`, but the prompt builders also
+interpolate `planContent` directly."* Literally accurate. The fix — run the plan
+through `redactSecrets` — was written, and then **reverted**, because writing a
+test for it revealed the opposite:
+
+`assertEgressSafe` already scans the **assembled** prompt at `audit-shadow.mjs`
+`runStage`, and its own contract is that it does not trust `redactedContext`'s
+provenance. The plan was already covered — by a **gate**, not a scrubber. And
+the two are not interchangeable: redacting first would have converted a loud,
+correct **refusal** into a silent pass, denying the operator the one signal that
+their plan document contains a credential. Measured both ways: `redactSecrets`
+does not even match the DSN used in the test, so the change was inert for that
+case *and* latent for every case the redactor does catch.
+
+Kept the test, inverted: a secret in the plan must **abort the run** (asserted on
+the gate's identity, not its prose), plus a negative control that a clean plan
+still reaches the provider — without which a gate stuck closed would pass.
+The reasoning is in the source so the finding cannot be "fixed" again by a
+future reader.
+
+**`mermaidId` widened 8 → 16 hex.** It called itself collision-free on a 32-bit
+suffix; at this repo's ~4.3k symbols that is a ~0.2% chance of Mermaid silently
+merging two nodes — the exact failure the function exists to prevent. 64 bits
+puts the birthday bound above 5×10⁹, and the docstring now states the real
+guarantee instead of a false one.
+
+**Deferred, with the reason rather than a label**: the `withTimeout`
+AbortController (the module's own docstring already declares it a v2 refinement
+and each call carries an SDK-level timeout); `getModelAbArmCost({})` scoping (the
+view is keyed by `assignmentId`, not `runId` — schema work, not a parameter);
+the cloud-off mutation envelope (a deliberate `§2b F3` decision in another
+session's active design); `REQUIRED_SCHEMA` and `store/model-ab.mjs` coupling
+(medium/architectural).
+
+**Consumer-side verification**: `unverified` — blocked prerequisite: no second
+checkout of this repo on this machine to clone the pushed sha into. Producer
+side: `npm run check` exits 0, 11,876 tests pass, 0 fail.
+
 ## 2026-08-13 (latest) — a plan path written one subtree short hid 8 files from the audit
 
 `extractPlanPaths` ([plan-paths.mjs:126](scripts/lib/plan-paths.mjs:126)) decided
@@ -352,65 +411,6 @@ prompt-cache cost; it needs a measurement plan, not a diff. Deliberately not
 done here.
 
 ---
-
-## 2026-08-13 — closed the stale layering backlog, and reverted a "fix" that would have hidden a gate
-
-Follow-on to Cluster 1 (`455e7cca`). Three items: close the backlog, run the
-plan's close-out, and take the small deferred findings.
-
-**172 of 225 open `[Architecture]` rows were describing edges that no longer
-exist** — the oracle read 0 while the store read 225. Closed through
-`recordFinalReviewFix` (the sanctioned writer, never raw SQL), with **honest
-per-file attribution**: the `scripts/lib/cross-skill/**` edges to `a146bb7b`,
-the rest to `455e7cca`. Stamping one sha across all 172 would have put a lie in
-`fix_commit_sha`. Result 172 fixed / 0 failed; the category is now **53 open
-(7 HIGH)**, and what remains names genuinely different subjects.
-
-**Close-out ran**: `arch:refresh` (169 symbols, 0 violations, coverage verified)
-then `arch:render`. That also settled a dismissal on evidence rather than
-argument — the `[Duplication]` finding against `arm-vocabulary.mjs` was called a
-stale-index artifact at the time; against a fresh index it is simply gone.
-
-### The one that mattered: a finding that was true in form and wrong in direction
-
-An audit HIGH read *"sensitive data egress bypass — the stated redaction
-boundary protects only `redactedContext`, but the prompt builders also
-interpolate `planContent` directly."* Literally accurate. The fix — run the plan
-through `redactSecrets` — was written, and then **reverted**, because writing a
-test for it revealed the opposite:
-
-`assertEgressSafe` already scans the **assembled** prompt at `audit-shadow.mjs`
-`runStage`, and its own contract is that it does not trust `redactedContext`'s
-provenance. The plan was already covered — by a **gate**, not a scrubber. And
-the two are not interchangeable: redacting first would have converted a loud,
-correct **refusal** into a silent pass, denying the operator the one signal that
-their plan document contains a credential. Measured both ways: `redactSecrets`
-does not even match the DSN used in the test, so the change was inert for that
-case *and* latent for every case the redactor does catch.
-
-Kept the test, inverted: a secret in the plan must **abort the run** (asserted on
-the gate's identity, not its prose), plus a negative control that a clean plan
-still reaches the provider — without which a gate stuck closed would pass.
-The reasoning is in the source so the finding cannot be "fixed" again by a
-future reader.
-
-**`mermaidId` widened 8 → 16 hex.** It called itself collision-free on a 32-bit
-suffix; at this repo's ~4.3k symbols that is a ~0.2% chance of Mermaid silently
-merging two nodes — the exact failure the function exists to prevent. 64 bits
-puts the birthday bound above 5×10⁹, and the docstring now states the real
-guarantee instead of a false one.
-
-**Deferred, with the reason rather than a label**: the `withTimeout`
-AbortController (the module's own docstring already declares it a v2 refinement
-and each call carries an SDK-level timeout); `getModelAbArmCost({})` scoping (the
-view is keyed by `assignmentId`, not `runId` — schema work, not a parameter);
-the cloud-off mutation envelope (a deliberate `§2b F3` decision in another
-session's active design); `REQUIRED_SCHEMA` and `store/model-ab.mjs` coupling
-(medium/architectural).
-
-**Consumer-side verification**: `unverified` — blocked prerequisite: no second
-checkout of this repo on this machine to clone the pushed sha into. Producer
-side: `npm run check` exits 0, 11,876 tests pass, 0 fail.
 
 ## 2026-08-13 — two dead imports pointed at a gate that runs elsewhere
 
