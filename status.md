@@ -66,11 +66,15 @@ step as a real prerequisite), and `check-stale-skill-surface.mjs` is genuinely
 invoked against consumer roots at `sync-to-repos.mjs:785,844` (so a categorical rule
 added there would have fired inside consumer repos). Both held.
 
-**Consumer-side verification**: `unverified` for the pushed commit — no consumer
-checkout was re-synced in this session, and `sync-isolation-verify` must run *in* the
-consumer to be authoritative. `npm run sync:dry` from here is the pre-check only, and
-it reported `update: 90 · unchanged: 1256 · 0 errors` with `.vscode/mcp.json` among
-the updates for both consumers.
+**Consumer-side verification**: `verified`. The pre-push hook ran the real sync
+(`Targets: 2/2 · Updated: 90 · Unchanged: 1256 · Errors: 0`), so the authoritative
+check was available and was run *in* each consumer rather than inferred from here:
+`node scripts/.claude-skills/lib/sync-isolation-verify.mjs` passes all gates in both
+`wine-cellar-app` and `ai-organiser`. Reading the delivered artifact back,
+`.vscode/mcp.json` → `servers.playwright.args` is
+`["-y","@playwright/mcp@latest","--headless"]` in both — the defect this commit fixes
+is gone at the receiver, not merely at the source. Pushed sha `2e1a2be6`; remote ref
+confirmed by `git ls-remote` rather than by the push command's exit code.
 
 
 ## 2026-08-13 — the one absence class the gate cannot reach, closed at the prompt
