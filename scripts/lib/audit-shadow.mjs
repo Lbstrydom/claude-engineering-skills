@@ -537,9 +537,28 @@ export async function runGenerationShadow({
       // Stamp the arm on gemini pass-stats (per-arm cost — B-gemini vs C-gemini).
       if (g && Array.isArray(g.passStats)) { for (const st of g.passStats) { st.arm = arm.id; } allStats.push(...g.passStats); }
     } catch (err) {
-      await d.releaseSpend({ ledgerId: gRes.ledgerId });   // call didn't complete → free it (R2 H2)
-      process.stderr.write(`  [shadow] gemini stage for arm ${arm.id} failed/timed out (unverified): ${err.message}\n`);
-      allStats.push({ stage: 'gemini', arm: arm.id, unverified: true, error: err.message });
+      // A TIMEOUT is not "the call didn't happen" (audit 2026-08-13 H1/H5).
+      // `withTimeout` races a timer against the provider promise and does NOT
+      // abort it, so when the timer wins the request is very likely still in
+      // flight — and will be billed. Releasing the reservation there frees
+      // budget for another call while the timed-out one is still spending:
+      // a spend-cap bypass, in the mechanism whose whole job is the cap.
+      //
+      // This file already has the right vocabulary for it and simply took the
+      // wrong branch. Its own rule: `reconcile-unmeterable` KEEPS the
+      // conservative pre-flight estimate and is "reserved for a SUCCESSFUL
+      // response merely missing its usage block — the call happened and may
+      // have cost, so keep conservatively". A timeout is exactly that case.
+      // RELEASE stays correct for a genuine non-call (egress refusal, a
+      // connect-time 5xx/429) where nothing was sent.
+      const timedOut = typeof err?.message === 'string' && err.message.includes('[shadow-timeout]');
+      if (timedOut) {
+        await d.reconcileSpend({ ledgerId: gRes.ledgerId, actualEur: 0, unmeterable: true });
+      } else {
+        await d.releaseSpend({ ledgerId: gRes.ledgerId });   // call didn't complete → free it (R2 H2)
+      }
+      process.stderr.write(`  [shadow] gemini stage for arm ${arm.id} ${timedOut ? 'TIMED OUT (reservation kept — the call may still bill)' : 'failed'} (unverified): ${err.message}\n`);
+      allStats.push({ stage: 'gemini', arm: arm.id, unverified: true, timedOut, error: err.message });
     }
   }
 

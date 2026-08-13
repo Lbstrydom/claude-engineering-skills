@@ -1,5 +1,67 @@
 # Project Status Log
 
+## 2026-08-13 — audited the session's own work; four real defects, three of them mine
+
+Ran a real `/audit-code` over the session's union diff now the tree is quiet.
+The first attempt was a **vacuous pass** and worth recording: `--diff` +
+`--changed` do NOT select scope (they are line-annotation and reopen-detection
+inputs), so `--scope diff` inferred its own range and audited another session's
+five dirty files — returning `PASS · H:0 M:1` on a finding about `.vscode/mcp.json`.
+The scope selector is `--base`. A green from the wrong subject is the exact
+"can this return green without having checked anything?" shape; catching it
+needed only reading which files the log said it audited.
+
+Scoped properly (`--base 6bd99fe0 --files …`, 46 files): **SIGNIFICANT_ISSUES,
+H:8 M:19**. Four fixed:
+
+- **H2 — I reintroduced a false zero.** `audit.runComplete` serialises
+  `writeOutcomes` at ITS call time, and my `learning.outcome` write lands after
+  it, so a failure there could never reach `audit_runs.write_outcomes` — a row
+  reading `complete` over a run that lost a write. Fixed with
+  `reconcileCompletionRow`: a second idempotent completion write when the tally
+  moved, rather than REORDERING the run tail in a 2,700-line function I do not
+  own.
+- **H1/H5 — a spend-cap bypass, and the file already had the right vocabulary.**
+  `withTimeout` races a timer against the provider promise without aborting it,
+  and the catch called `releaseSpend` under the comment "call didn't complete →
+  free it". On a timeout the call is very likely still in flight and will bill,
+  so the budget was freed for another call while the first was still spending.
+  Now reconciles `unmeterable` — which this file already defines as "the call
+  happened and may have cost, so keep conservatively". RELEASE stays for a
+  genuine non-call, with a negative control so always-reconcile can't pass.
+- **M16 — the coercion counter missed its most common case.** `auditDecisionInputs`
+  counted only non-null unrecognised remediation states, while `qualMult` coerces
+  a MISSING state to `pending` too. A verdict computed entirely over rows with no
+  state reported `clean: true`.
+- **M15 —** `_registered` was set before the registrations ran, so a throw left a
+  partial registry looking initialised. Moved to the end.
+
+**A test pinned a count where it meant an invariant.** The runStatus derivation
+test asserted exactly 2 occurrences; my third (correct) site failed it. Rewritten
+to assert what matters — every derivation byte-identical, at least two sites.
+
+**Not fixed, and why.** Round 2's numbers are **confounded** — I edited three of
+the audited files while it ran, so its H:5 M:15 is not a clean measurement and is
+not reported as one. Its `H5` is a verified **false positive**: it claimed
+`audit-arms.mjs` re-exports non-existent local bindings and "will fail before"
+loading — the source uses `export { … } from '…'`, which needs no local binding,
+and the module loads with all 15 exports. Third manufactured finding this session.
+`M9` (guards use `git ls-files`, omitting untracked files) is a documented
+deliberate decision with ~20 lines of rationale in the test header.
+
+**One note on provenance.** The `reconcileCompletionRow` fix (H2) is not in this
+commit — a concurrent session committed `legacy-production-audit.mjs` in
+`33343bc2` while that edit sat uncommitted in the shared tree, sweeping it in.
+Verified present and behaving; recorded here because the commit that carries a
+change and the commit whose message explains it are otherwise different rows,
+and blame would send the next reader to the wrong one. The hazard I spent the
+session avoiding in one direction found me in the other.
+
+Still open and genuinely pre-existing: the arm-cost `runId`/`assignmentId`
+scoping mismatch (needs schema work), the semantic-suppression fail-open catch,
+and the god-module SYSTEMIC finding — which is the decomposition, already
+deferred and already owned by `audit-backlog-triage-hardening.md` item 5.
+
 ## 2026-08-13 — a reviewer's top finding was their own untracked file; the gate it argued for is planned
 
 An external VS Code/Copilot user reviewed this repo and filed ten improvements.

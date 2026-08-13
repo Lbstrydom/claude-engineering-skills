@@ -93,7 +93,14 @@ let _registered = false;
  */
 export function registerAuditStoreWriters() {
   if (_registered) return registeredWriters();
-  _registered = true;
+  // The flag is set at the END, not here (audit 2026-08-13 M15). Setting it
+  // first means a throw from any `registerWriter` below leaves `_registered`
+  // true over a PARTIAL registry — and every later caller then short-circuits
+  // on the guard above and gets that partial registry as if it were complete.
+  // The failure surfaces later and elsewhere, as `durableWrite` throwing
+  // "unregistered id" for a writer whose registration merely never ran, or as
+  // a drain quarantining artifacts it should have replayed. An exception here
+  // must leave the registry visibly UNinitialised so the next call retries.
 
   // ── audit.findings ────────────────────────────────────────────────────────
   // The only batch writer with a real idempotency key, and the reason Phase 1
@@ -237,6 +244,7 @@ export function registerAuditStoreWriters() {
     replay: (payload) => receipt(syncFalsePositivePatterns(payload.repoId, payload.patterns)),
   });
 
+  _registered = true;
   return registeredWriters();
 }
 

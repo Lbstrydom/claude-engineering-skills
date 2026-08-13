@@ -375,3 +375,56 @@ describe('egress: a secret in the PLAN aborts the run', () => {
       'the plan body must reach the prompt — it is the audit subject');
   });
 });
+
+describe('spend cap: a TIMED-OUT gemini call keeps its reservation', () => {
+  // Audit 2026-08-13 (H1/H5). `withTimeout` races a timer against the provider
+  // promise and does NOT abort it, so when the timer wins the request is very
+  // likely still in flight and will be billed. The catch released the
+  // reservation under the comment "call didn't complete → free it" — freeing
+  // budget for another call while the timed-out one is still spending. A
+  // spend-cap bypass inside the mechanism whose whole job is the cap.
+  //
+  // RELEASE stays correct for a genuine non-call; only the timeout branch moved.
+  function harnessFor(callGemini) {
+    const calls = { release: [], reconcile: [] };
+    const deps = {
+      modelAbSchemaReady: async () => ({ ready: true, cloud: true, missing: [] }),
+      ensureArmSet: async () => {}, updateRunMeta: async () => {},
+      releaseOrphanedReservations: async () => 0,
+      reserveSpend: async () => ({ ok: true, ledgerId: 'L1', spentEur: 0 }),
+      reconcileSpend: async (r) => { calls.reconcile.push(r); },
+      releaseSpend: async (r) => { calls.release.push(r); },
+      recordFindings: async () => {}, recordPassStats: async () => {},
+      callModel: async () => ({
+        result: { findings: [] }, conformant: true, failed: false,
+        usage: { input_tokens: 1, output_tokens: 1, latency_ms: 1, usageMissing: false },
+      }),
+      callGemini,
+    };
+    return { deps, calls };
+  }
+
+  it('a timeout RECONCILES unmeterable — it does not release the budget', async () => {
+    const { deps, calls } = harnessFor(async () => {
+      throw new Error('[shadow-timeout] stage:gemini:B exceeded 1ms');
+    });
+    await runGenerationShadow({ ...BASE, arms: ARMS_B, deps });
+    const geminiRelease = calls.release.filter((r) => r.ledgerId === 'L1');
+    assert.equal(geminiRelease.length, 0,
+      'a timed-out gemini call must NOT release its reservation — the request may still be billing');
+    assert.ok(calls.reconcile.some((r) => r.unmeterable === true),
+      'a timed-out call must reconcile UNMETERABLE, keeping the conservative pre-flight estimate');
+  });
+
+  it('NEGATIVE CONTROL: a genuine non-call still RELEASES', async () => {
+    // Without this, always-reconcile passes the test above while permanently
+    // draining the cap on provider outages — the defect the release branch
+    // exists to prevent.
+    const { deps, calls } = harnessFor(async () => {
+      throw new Error('connect ECONNREFUSED — provider unreachable');
+    });
+    await runGenerationShadow({ ...BASE, arms: ARMS_B, deps });
+    assert.ok(calls.release.length > 0,
+      'a call that never happened must free its reservation, or an outage drains the € cap');
+  });
+});

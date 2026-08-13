@@ -87,8 +87,15 @@ export function auditDecisionInputs(findingRows, C = DECISION_CONSTANTS) {
       ? (() => { let s = sev.toUpperCase().trim(); if (s === 'MED') s = 'MEDIUM'; if (s === 'CRIT') s = 'CRITICAL'; return s; })()
       : null;
     if (canon === null || !VALID_SEVERITIES.has(canon)) unknownSeverity += 1;
+    // An ABSENT state counts too (audit 2026-08-13 M16). `qualMult` resolves
+    // `C.QUAL_BASE[rs] ?? C.QUAL_BASE.pending`, so a missing state is coerced to
+    // `pending` exactly like an unrecognised one — and `pending` carries a real
+    // scoring weight. Counting only the non-null unrecognised case meant this
+    // function, written to make coercion visible, was blind to its most common
+    // form: a verdict computed entirely over rows with no remediation state
+    // reported `clean: true`.
     const rs = r?.remediation_state ?? r?.remediationState;
-    if (rs != null && !Object.hasOwn(C.QUAL_BASE, rs)) unknownRemediationState += 1;
+    if (rs == null || !Object.hasOwn(C.QUAL_BASE, rs)) unknownRemediationState += 1;
   }
   return {
     rows: rows.length,
