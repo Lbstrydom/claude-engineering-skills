@@ -1,5 +1,272 @@
 # Project Status Log
 
+## 2026-08-13 (latest) — the ledger never healed, and the predicate that would have healed it was wrong
+
+Follow-on from `9cbec6d8` (below). Three deferrals from that entry, investigated;
+one of my three statements to the operator was wrong, and the requested fix
+turned out to sit on top of a worse bug.
+
+**The store leg needed no migration — I said it did.** `audit_runs.suppression_stats
+jsonb` has existed since [`20260417120000_outcome_data_loop.sql:12`](supabase/migrations/20260417120000_outcome_data_loop.sql:12).
+Live store, queried 2026-08-13 (`select count(*), count(suppression_stats) from audit_runs`):
+**741 rows, 0 populated** — declared, then written by nothing and read by nothing
+for four months. Now written by `recordRunComplete`, columnExists-probe-guarded
+like its six siblings; probe verified live (`true` for the column, `42703` for a
+nonexistent one as a negative control).
+
+**What it carries is a denominator.** `_suppression` recorded kept/suppressed/
+reopened and never the size of the ruling set they were matched against, and
+`recordSuppressionEvents` writes one row per match — zero rows when there were
+none. So "suppression matched against **0** rulings" was byte-identical
+downstream to "matched against 9 and none hit". That is the state behind the
+2026-08-08 "R2+ suppression never engages" consumer report, and the stderr NOTE
+was the only thing that ever said so. `buildSuppressionStats` is pure and
+test-exported; R1 returns `null` (absent ≠ a measured zero) and an unavailable
+ledger reports `{unavailable:true}` rather than zeroed counts (a zero denominator
+would claim a measurement nobody took).
+
+**`pendingEntryCount` stays unpropagated**, as before — expected residue, not
+degradation. Convergence still is **not** gated on ledger degradation, and now
+for a better reason than the original one (below).
+
+### The bug under the requested fix
+
+The ask was: malformed ledger entries persist forever, so make the ledger
+self-heal. Both halves of that were true — `readLedgerJson`
+([ledger.mjs:169](scripts/lib/ledger.mjs:169)) validates only that `entries` is an
+array, and `batchWriteLedger` read every resident entry raw into a topicId map and
+wrote them all back; only INCOMING entries were ever validated.
+
+But the predicate that defines "malformed" was wrong, and a prune built on it
+**deletes real data**. `validateLedgerForR2` knew two of the **three** schemas
+that legitimately live in this file. Proven by writing one through the real
+production writer and reading it back:
+
+```
+[ledger] WARNING: entry 0 failed schema validation (source: Invalid input: expected "session")
+{adjudicated: 0, pending: 0, invalid: 1}
+```
+
+Stage-1 mechanical dismissals — written by `writeStage1MechanicalLedgerEntry`,
+consumed by a `suppressReRaises` filter built specifically to route them
+([ledger.mjs:385-404](scripts/lib/ledger.mjs:385), which also excludes them from
+`overruleCountIndex` by `source`) — were counted as corruption **and withheld
+from suppression entirely**. Latent only because the tiered pipeline defaults
+off; it becomes live data loss the moment Phase 14 flips.
+
+### Then the suite caught the second draft
+
+The first classifier keyed its third bucket on `adjudicationOutcome === 'pending'`.
+[`shared.test.mjs:803`](tests/shared.test.mjs:803) failed with `inserted: 1,
+expected 0` — the tell that an entry had been pruned and reinserted. `upsertEntry`
+validates incoming entries against `BatchLedgerEntrySchema` **and nothing
+stronger**, so that is the shape `batchWriteLedger` itself writes; adjudicate one
+to `accepted`/`fixed` without the full ruling fields and the prune ate the
+ledger's own normal output. Two questions had been conflated: *"is this safe to
+delete?"* (fails all three schemas) and *"is this usable for suppression?"* (is a
+complete ruling). The bucket is now keyed on the **schema**, never the outcome.
+
+### What shipped
+
+`classifyLedgerEntry` — one exported oracle returning
+`adjudicated | incomplete | unrecognised`, used by both `validateLedgerForR2` and
+`batchWriteLedger`'s prune so the two spellings cannot drift apart again.
+Pruned entries are **quarantined, not deleted** (`<ledger>.quarantine.json`,
+appending), because this tooling syncs to consumers that may run an older bundle
+where a newer schema is indistinguishable from corruption; and a failed
+quarantine write **aborts the prune**, since losing entries you could not
+preserve is the defect, not the fix. `.bak` on the file-level path
+(`writeSingleLedgerEntry`) is the same instinct one granularity up — extended,
+not duplicated.
+
+End-to-end on the real writer path:
+
+```
+AFTER FIX:   {adjudicated: 1, pending: 0, invalid: 0}
+PRUNE:       pruned [corrupt-1], remaining [s1m-1]
+QUARANTINED: [corrupt-1]
+NEXT ROUND:  {adjudicated: 1, invalid: 0}
+```
+
+That last line is the point: `invalid` was previously stuck at 1 forever, which
+would have pinned `9cbec6d8`'s new degradation signal permanently on and turned
+it into background noise. Self-healing is also why convergence gating is now
+unnecessary rather than merely unsafe — a permanently-stuck count is no longer
+reachable.
+
+**Measured:** `npm test` → **11,854 pass / 0 fail / 26 skipped** (242s).
+
+**Residual risk, stated rather than papered over.** The four-line wiring that
+puts `suppressionStats` on the completion payload is executed by **no test** —
+the harness runs cloud-off and there is no eslint, so `no-undef` would not have
+covered it either. Verified two ways short of execution: `ledgerStats` is
+declared at function scope beside `suppressionUnavailable`, which
+[legacy-production-audit.mjs:3756](scripts/lib/audit/legacy-production-audit.mjs:3756)
+documents as the correct scope for that exact site (`ledgerValidation` is
+block-scoped and unusable there); and the columnExists probe was confirmed live.
+First real R2+ cloud run is the actual proof.
+
+**Also worth knowing:** [`suppression-call-site.test.mjs:142`](tests/suppression-call-site.test.mjs:142)
+pins `fpSuppressed` as a removed local via a whole-file scan. It caught a new
+payload key using that name, then caught the comment explaining the rename. The
+key is `falsePositiveSuppressed`; the guard was not weakened, and the token must
+not appear in this file even in prose.
+
+**Consumer-side verification** (Step 6.8): recorded against the pushed sha in the
+next entry's terms — clone-back at the pushed commit, `npm ci`, affected suites
+re-run in the clone. Result reported in-session.
+
+## 2026-08-13 — three ways the audit loop indicted code that was fine
+
+Shipped as `20b8feeb` + `78f0897a`. A consumer reported that `/audit-code` emits
+HIGH findings asserting files do not exist, and proposed suppressing
+non-existence claims whenever the adjacency wave's `ADJACENCY_INCOMPLETE`
+marker is present. **The report's evidence was real and its mechanism was
+wrong**, which is the part worth recording.
+
+**The proposed cause does not correlate.** Cross-tabbing all 29 code-audit
+result files in `wine-cellar-app/.audit/` (measured 2026-08-13) against the
+presence of the marker:
+
+| | absence claims | none |
+|---|---|---|
+| marker present | 3 | 1 |
+| marker absent | **14** | 11 |
+
+Gating on the marker would have suppressed nothing in 14 of the 17 affected
+runs. The two are unrelated by mechanism: adjacency enumeration bounds
+constrain an AST walk, while the false claims come from `--scope diff` context,
+which
+[finding-verification.mjs:5](scripts/lib/audit/finding-verification.mjs:5)
+(at `78f0897a`) already names in its own header. The reporter had flagged one
+clean run as weakening their case and asked that it not be read as a
+refutation — the right instinct, but the coincidence was the whole signal.
+
+**Three real defects instead, each reproduced by feeding the gate its own field
+prose before changing anything** (the red observations are recorded against the
+pre-fix tree at `2305b7f8`; the five strings are now fixtures in
+`tests/finding-verification.test.mjs`):
+
+1. **`missing` is predicative as well as attributive.** "`x` is missing **from**
+   the repository inventory" made `CLAIM_AFTER` capture `from`, and the gate
+   answered `"from" looks like an external dependency, not a repo file` — an
+   extractor failure wearing a considered adjudication's clothes, and a direct
+   violation of the *name the mismatch distinctly* rule in AGENTS.md. Two runs
+   made the same claim about the same file; only the attributive phrasing was
+   refuted. Fixed with a negative lookbehind on the copula, a function-word
+   stoplist, and an optional entity noun in `CLAIM_BEFORE`.
+2. **Plural and list-shaped prose never reached the gate.** "modules … are
+   absent: `a`, `b`" and "None of the three planned verification files exists:
+   …" matched no signal, so two findings naming **14 existing files** were
+   emitted unadjudicated. Adds the plural signals plus `extractCitedEntityList`
+   with all-or-nothing adjudication. A MIXED list stays at the model's severity
+   and names which paths exist — refuting it would bury the members that really
+   are absent, which is the failure direction the gate exists to prevent. Also
+   adds unique segment-boundary suffix resolution, so a cited
+   `zone/zoneChat.js` resolves to `src/services/zone/zoneChat.js`; that
+   asymmetry is why one run refuted a true claim and the next did not.
+3. **The adjacency wave's own false positives, misattributed to GPT.** At
+   `wine-cellar-app/scripts/reconcile-zone-allocations.mjs:393` (read
+   2026-08-13) an `if (AS_JSON) {…} else {…}` format switch produced four HIGH
+   candidates at lines 396/399/419/422 — every one a `console.log`. By
+   construction every statement in the else-arm of a format switch reads
+   nothing the condition tests, so the mechanical rule admits the whole arm,
+   and the bouncer then graded them HIGH against its own rubric, which names a
+   log line as the canonical DROP and reserves HIGH for "a consumer outside the
+   branch reads the effect". New `reports-only` dependence class decides this
+   mechanically instead of paying an LLM call to get it wrong. The Gemini final
+   gate flagged the same four independently
+   (`deliberation_quality.gpt_false_positive_count: 5`, in
+   `.audit/audit-final-1786601174-gemini.json`) and attributed them to GPT —
+   they are this wave's own deterministic output, and both the reviewer and the
+   consumer report inherited that misattribution.
+
+**The MIRROR test earned its keep.** The first draft checked `reports-only`
+first in `classifyStatementDependence`, where it preempted `consumes-in-branch`
+on a ``process.stderr.write(`Kept: ${kept.length}`)`` that genuinely reads an
+in-branch binding — caught by `tests/adjacency-detector.test.mjs`'s *MIRROR:
+genuinely dependent statements are NOT flagged*, which exists precisely to stop
+a rule passing by calling everything harmless. It is a candidate **exclusion**,
+not a dependence fact, so it now runs last, after every real dependence rule.
+
+**Why a working gate still let a false HIGH through to a human.** A `refuted`
+finding keeps its original severity by design (audit M2 — the model's claim is
+immutable), only the verdict count honoured `verdictSeverity`, and
+`skills/audit-code/SKILL.md` never mentioned the `verification` field while
+telling the reader to fix ALL HIGH. So Cluster B's H1 was correctly refuted and
+then triaged and fixed as a HIGH anyway. `effectiveSeverity` /
+`countsTowardVerdict` / `isRefuted` are now exported accessors replacing the
+orchestrator's inline lambdas (the duplicate-spelling smell AGENTS.md warns
+about at the prose↔code seam), the stderr line names the refuted IDs and their
+demotion, and Step 4 of the skill states the rule.
+
+**Accepted limitation, stated because no test will show it.** `reports-only`
+narrows what the wave reports, so if it is wrong it is wrong in the
+false-negative direction: a genuinely trapped statement consisting only of
+output calls is now dropped silently. Output has no consumer outside the branch
+by definition — that is an argument, not a measurement.
+
+**Tests.** `npm test` in this tree → 11,867 tests, 11,840 pass, 26 skipped,
+**1 fail**: `tests/skills-artifact-freshness-wiring.test.mjs`'s *every manifest
+entry matches the sha of the file as COMMITTED*, which compares
+`skills.manifest.json` against `git show HEAD:` and therefore fails by
+construction while a SKILL.md edit is uncommitted. Confirmed the manifest sha
+matched the working-tree file exactly, so manifest and source were consistent;
+the pre-push sandbox runs `check` in a clean checkout at the commit being
+pushed, where both land together and it passed. The 26 skips are the
+`AUDIT_DB_TEST_URL`-gated suites — no baseline was taken for that count, so it
+is reported, not vouched for.
+
+**Consumer-side verification: `verified`** — after the push, at `78f0897a`.
+Ran `wine-cellar-app`'s **own** synced copy
+(`scripts/.claude-skills/lib/audit/finding-verification.mjs`) against the exact
+Cluster C prose that had shipped there as an unrefuted HIGH: now `refuted`,
+HIGH→LOW, resolving `zone/zoneChat.js` to `src/services/zone/zoneChat.js`.
+Producer-side green was not inherited.
+
+**Gate-honesty follow-up (`78f0897a`).** The new Step 4 triage block tripped the
+D6 enforcement-verb check on `gate` and three uses of `never`. All four were
+dispositioned in `skills/audit-code/gate-contract.json` rather than reworded —
+rewording to dodge a deliberately broad verb net is how the net stops working.
+
+**Two operational notes from the push, both already cost a retry.** The
+pre-push hook here takes ~12 minutes (full `check` in a sandbox worktree plus a
+bundle sync to two consumers), which exceeds the agent shell's 10-minute
+ceiling; a foreground push is killed mid-hook having changed nothing. And that
+window is long enough for a concurrent session to take the ref: the first
+completed attempt reported exit 0 while git had actually been rejected with
+`cannot lock ref`, because the exit belonged to the `tail` it was piped
+through. Verify `git ls-remote origin main` against the sha you pushed, never
+`$?`.
+
+**Shared-tree scoping.** Both commits were made with `ship-commit --path`
+naming exactly their files, and pushed by cherry-picking onto a throwaway
+`origin/main` worktree — a plain `git push` would have published a concurrent
+session's then-unpushed `3e1e02bb` (since landed by them as `455e7cca`), which
+was theirs to publish. This entry is spliced onto the pushed copy of
+`status.md` for the same reason and was written after the fact; it was owed
+from `20b8feeb` and deferred while the file carried another session's
+uncommitted log.
+
+**Follow-on, not mine.** A concurrent session is extracting the suffix matcher
+added here into a shared `resolveUniqueSuffix` in `repo-inventory.mjs` so this
+gate and `extractPlanPaths` cannot drift into two notions of "exists" — the
+single-oracle move, and the right one; the version shipped here was a local
+loop a second caller would have re-implemented.
+
+**Still open.** `PASS_STRUCTURE_SYSTEM`
+([prompt-seeds.mjs:29](scripts/lib/prompt-seeds.mjs:29), at `78f0897a`) is four
+lines asking "Do planned files exist?" with no obligation to state how absence
+was established — the generator of this whole finding class. The block that
+would fix it (`EVIDENCE_CONTRACT_BLOCK`: *"where you looked for it → why you
+conclude it is absent"*) exists but is composed only at the V2 boundary, and
+the tiered pipeline is default-off, so it has never run in production. Wiring
+it into the byte-stable legacy prompts reverses a deliberate decision and has a
+prompt-cache cost; it needs a measurement plan, not a diff. Deliberately not
+done here.
+
+---
+
 ## 2026-08-13 — closed the stale layering backlog, and reverted a "fix" that would have hidden a gate
 
 Follow-on to Cluster 1 (`455e7cca`). Three items: close the backlog, run the
@@ -145,6 +412,7 @@ consumer-side retrieval could be performed. `plan-paths.mjs` and `repo-inventory
 are synced modules; `npm run sync` + `sync-isolation-verify.mjs` in a consumer is the
 outstanding check before consumers pick this up.
 
+
 ## 2026-08-13 — two dead imports pointed at a gate that runs elsewhere
 
 `scripts/openai-audit.mjs` imported `listRepoFiles` (`./lib/repo-inventory.mjs`)
@@ -177,14 +445,31 @@ tree) and are unchanged in kind by this edit: neither removed import had a side
 effect — both modules export pure functions and are still loaded on the same code
 path via `legacy-production-audit.mjs`.
 
-**Consumer-side verification: `unverified`.** Blocked prerequisite — no consumer
-checkout on this machine for `sync-isolation-verify.mjs`, and the pushed sha was
-not re-cloned. `npm run sync:dry` was not run either; the pre-push hook's sync ran
-in its own sandbox. Producer-side green is not inherited here.
+**Consumer-side verification: `verified`** — at `ce73cc25`, after the push.
+(This paragraph first shipped in `ce73cc25` reading `unverified — no consumer
+checkout on this machine`. That was written before the push and was false: the
+pre-push sync reported `Targets: 2/2 reached · Updated: 176` in the same output,
+which names two consumer checkouts. Corrected here rather than left standing —
+an `unverified` whose stated blocker does not exist is worse than no claim.)
+
+Retrieval and result, per consumer:
+`node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run **in** the
+consumer → **8/8 gates pass** in both `wine-cellar-app` and `ai-organiser`, zero
+unexpected diffs, no orphans.
+
+The subject check that mattered is the transitive-closure claim above, and it was
+asserted **on the receiver, not reasoned from the sender**:
+`scripts/.claude-skills/lib/repo-inventory.mjs` and
+`scripts/.claude-skills/lib/audit/finding-verification.mjs` are both present in
+the consumer bundle after this change, and gate 2C (disk→manifest orphan walk)
+passes, so both are manifest-tracked rather than stranded. The consumer's
+`openai-audit.mjs` carries the deletion. Removing the two imports dropped nothing
+from a consumer.
 
 **Scope.** One file, two deletions, no behaviour change. `status.md` also carries
 a `(latest)` marker demotion from the 2026-08-13 Azure-credential entry — the one
 this entry displaces; stale markers further down belong to other sessions.
+
 
 ## 2026-08-13 — a degraded ledger and a complete one produced identical rounds
 

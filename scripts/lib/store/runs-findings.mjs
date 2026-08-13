@@ -360,6 +360,15 @@ export async function recordRunComplete(runId, stats) {
       && await columnExists('audit_runs', 'write_outcomes', many, isCloudEnabled)) {
     update.write_outcomes = stats.writeOutcomes;
   }
+  // Suppression provenance (migration 20260417120000 — the column predates this
+  // writer by four months and was populated on 0 of 741 rows until 2026-08-13).
+  // Carries the ruling-set denominator, so a round that had nothing to suppress
+  // WITH stops reading like one that found nothing to suppress. Passed RAW —
+  // the jsonb write seam serialises it. Same probe-guard as its siblings.
+  if (stats.suppressionStats != null
+      && await columnExists('audit_runs', 'suppression_stats', many, isCloudEnabled)) {
+    update.suppression_stats = stats.suppressionStats;
+  }
   // `run_status` carries the honest completion state. A run that produced
   // findings it could not record is `incomplete`, and that has to be a column
   // rather than a log line — the whole point of decision 3 is that a counter
