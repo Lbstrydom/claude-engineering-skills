@@ -230,6 +230,7 @@ const EXPECTED_EXPORTS = [
   'auditRunExists',             // determinism WS1 Phase 2 — finalize run-existence probe
   'markRunFindingsNeedsTriage', // determinism WS1 Phase 2 — finalize reconciliation writeback
   'markRunFindingsAutoDismissed', // 2026-07-22 — control-marker findings sibling writer (scripts/lib/audit/control-markers.mjs)
+  'buildFindingRow',            // 2026-08-13 — pure finding→row mapper (existence-gate persistence, migration 20260813120000)
   // fix-lifecycle projection (docs/plans/remediation-state-fix-lifecycle.md)
   'buildFindingAdjudicationPatch', // gap #2 — remediation_state → audit_findings (pure seam)
   'markFindingsRemediation',       // repo-scoped fingerprint writer for fixed/regressed
@@ -434,6 +435,13 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // cutoff derived from the repo's own distribution) — only the LABEL may
     // come from a model, because the unit key is what a caller filters and
     // diffs on.
-    assert.equal(EXPECTED_EXPORTS.length, 184);
+    // 184 → 185: +buildFindingRow (2026-08-13). The finding→row mapper, lifted
+    // out of `recordFindings` with the existence-gate persistence leg
+    // (migration 20260813120000). A test seam, same class as
+    // buildFindingAdjudicationPatch / normalizeRemediationUpdates above: the
+    // invariant worth pinning — that `severity` keeps the MODEL's value while
+    // the gate's verdict lands in `verdict_severity` — was unreachable by any
+    // test while the mapping was an inline closure.
+    assert.equal(EXPECTED_EXPORTS.length, 185);
   });
 });

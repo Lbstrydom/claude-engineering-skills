@@ -521,12 +521,104 @@ function fingerprintOf(f) {
   return `missing-hash-${digest}`;
 }
 
+/**
+ * Coerce a value to a closed column domain, or to null (logging the reject).
+ *
+ * Every CHECK-constrained nullable column on this table needs this, and for a
+ * sharper reason than tidiness: a constraint violation inside a caller-supplied
+ * transaction poisons the tx, so the COMMIT silently degrades to ROLLBACK and
+ * the ENTIRE batch disappears with no error reaching the caller (the same
+ * mechanism documented at the NOT-NULL write boundary below). One bad value must
+ * cost one field, never the batch.
+ */
+function normaliseEnum(value, valid, label) {
+  if (value == null) return null;
+  if (valid.has(value)) return value;
+  process.stderr.write(`  [learning] unexpected ${label} value '${value}' coerced to null\n`);
+  return null;
+}
+
 /** Coerce a bucket value to the valid domain or null (logs unexpected values). */
 function normaliseBucket(b) {
-  if (b == null) return null;
-  if (VALID_BUCKETS.has(b)) return b;
-  process.stderr.write(`  [learning] unexpected bucket value '${b}' coerced to null\n`);
-  return null;
+  return normaliseEnum(b, VALID_BUCKETS, 'bucket');
+}
+
+/** The closed domain `verifyExistenceFindings` emits, mirroring the DB CHECK in
+ *  20260813120000. App-layer enforced for the same reason `bucket` is: an
+ *  out-of-domain value would fail the CHECK, and a constraint violation inside a
+ *  caller-supplied transaction poisons the tx — so the whole batch would vanish
+ *  on one bad value, which is the failure this boundary exists to prevent. */
+const VALID_VERIFICATIONS = new Set(['refuted', 'confirmed', 'requires_verification']);
+
+/** The severity vocabulary — the same domain `severity` has always carried
+ *  (`audit_findings_severity_check`) and the same one `schemas.mjs` declares for
+ *  `verdictSeverity`. `verdict_severity` was the only one of the three new
+ *  columns without a guard until the round-1 audit (M1) named the asymmetry. */
+const VALID_SEVERITIES = new Set(['HIGH', 'MEDIUM', 'LOW']);
+
+/**
+ * Map ONE finding to its `audit_findings` row. Pure — every schema-dependent
+ * choice arrives in `columns`, so no probe runs here.
+ *
+ * Exported undecorated (like `buildFindingAdjudicationPatch` /
+ * `normalizeRemediationUpdates` below) so the column contract is directly
+ * unit-testable without a live DB. It was inline in `recordFindings`, where the
+ * one invariant most worth pinning — that `severity` keeps the MODEL's value
+ * while the gate's verdict lands in its own column — was unreachable by any test.
+ *
+ * @param {object} f - the finding, optionally carrying the gate's `.verification`
+ * @param {{runId:string, passName:string, round:number, columns:object}} ctx
+ * @returns {object} the row, ready for the bulk INSERT
+ */
+export function buildFindingRow(f, { runId, passName, round, columns = {} }) {
+  const base = {
+    run_id: runId,
+    // Same oracle as the dedup above and the embedding lookup — three
+    // spellings of one identity is how a key silently stops matching itself.
+    finding_fingerprint: fingerprintOf(f),
+    pass_name: passName,
+    // The MODEL's severity, never the gate-effective one. Same rule the
+    // no-severity drop below states: this is the metric the A/B stopping rule
+    // counts, so it is never fabricated — and audit M2 makes the model's claim
+    // immutable. The gate's verdict goes to `verdict_severity` instead.
+    severity: f.severity,
+    category: f.category,
+    primary_file: f._primaryFile || f.section,
+    detail_snapshot: f.detail?.slice(0, 600),
+    round_raised: round,
+  };
+  if (columns.hasClassification) {
+    base.sonar_type = f.classification?.sonarType ?? null;
+    base.effort = f.classification?.effort ?? null;
+    base.source_kind = f.classification?.sourceKind ?? null;
+    base.source_name = f.classification?.sourceName ?? null;
+  }
+  // f._sourceModel / f._bucket are stamped by the final-review diff; absent
+  // (null) for normal audit-pass findings, which is the correct value.
+  if (columns.hasSourceModel) base.source_model = f._sourceModel ?? null;
+  // App-layer validation of the bucket domain (plan R3 M5 / cluster-A M5,M7,M10:
+  // the migration deliberately has no DB CHECK — Postgres lacks idempotent
+  // ADD CONSTRAINT — so the write boundary enforces the literal domain here).
+  // An unexpected value is coerced to null + logged rather than silently
+  // persisting drift.
+  if (columns.hasBucket) base.bucket = normaliseBucket(f._bucket);
+  if (columns.hasStage) base.stage = f._stage ?? null;
+  // v2 hybrid attribution: `arm` is stamped by the shadow ONLY on arm-specific
+  // stages (gemini/gpt-round); null for shared/production findings (the view
+  // derives those). is_quick_fix comes straight off the finding object.
+  if (columns.hasArm) base.arm = f._arm ?? null;
+  if (columns.hasIsQuickFix) base.is_quick_fix = f.is_quick_fix ?? null;
+  // Deterministic existence-gate verdict (migration 20260813120000). Read
+  // straight off the sibling object the gate attaches — NOT re-derived, so this
+  // module cannot become a second spelling of `effectiveSeverity`. A finding the
+  // gate never looked at keeps NULL in all three, which is deliberately distinct
+  // from `requires_verification` ("looked, could not decide").
+  if (columns.hasVerification) {
+    base.verification = normaliseEnum(f.verification?.verification, VALID_VERIFICATIONS, 'verification');
+    base.verification_reason = f.verification?.verificationReason ?? null;
+    base.verdict_severity = normaliseEnum(f.verification?.verdictSeverity, VALID_SEVERITIES, 'verdict_severity');
+  }
+  return base;
 }
 
 /**
@@ -572,6 +664,11 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
   // is byte-identical.
   const hasArm = await columnExists('audit_findings', 'arm', many, isCloudEnabled);
   const hasIsQuickFix = await columnExists('audit_findings', 'is_quick_fix', many, isCloudEnabled);
+  // Deterministic existence-gate verdict (migration 20260813120000). One probe
+  // covers all three columns — they land in a single migration, so a store with
+  // `verification` has the other two. Probe-guarded like every column above, so
+  // an un-migrated store writes byte-identical rows rather than failing.
+  const hasVerification = await columnExists('audit_findings', 'verification', many, isCloudEnabled);
   // Prospective semantic re-raise suppression (record-time hook). Fail-open:
   // returns every finding when disabled or on any error. Only `merged` findings
   // (the code-audit path that carries the measured churn) are considered.
@@ -602,42 +699,8 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
       + 'same batch and were collapsed — (run_id, finding_fingerprint) is unique, so they could not both be rows.\n'
     );
   }
-  const mappedRows = keptFindings.map((f) => {
-    const base = {
-      run_id: runId,
-      // Same oracle as the dedup above and the embedding lookup — three
-      // spellings of one identity is how a key silently stops matching itself.
-      finding_fingerprint: fingerprintOf(f),
-      pass_name: passName,
-      severity: f.severity,
-      category: f.category,
-      primary_file: f._primaryFile || f.section,
-      detail_snapshot: f.detail?.slice(0, 600),
-      round_raised: round,
-    };
-    if (hasClassification) {
-      base.sonar_type = f.classification?.sonarType ?? null;
-      base.effort = f.classification?.effort ?? null;
-      base.source_kind = f.classification?.sourceKind ?? null;
-      base.source_name = f.classification?.sourceName ?? null;
-    }
-    // f._sourceModel / f._bucket are stamped by the final-review diff; absent
-    // (null) for normal audit-pass findings, which is the correct value.
-    if (hasSourceModel) base.source_model = f._sourceModel ?? null;
-    // App-layer validation of the bucket domain (plan R3 M5 / cluster-A M5,M7,M10:
-    // the migration deliberately has no DB CHECK — Postgres lacks idempotent
-    // ADD CONSTRAINT — so the write boundary enforces the literal domain here).
-    // An unexpected value is coerced to null + logged rather than silently
-    // persisting drift.
-    if (hasBucket) base.bucket = normaliseBucket(f._bucket);
-    if (hasStage) base.stage = f._stage ?? null;
-    // v2 hybrid attribution: `arm` is stamped by the shadow ONLY on arm-specific
-    // stages (gemini/gpt-round); null for shared/production findings (the view
-    // derives those). is_quick_fix comes straight off the finding object.
-    if (hasArm) base.arm = f._arm ?? null;
-    if (hasIsQuickFix) base.is_quick_fix = f.is_quick_fix ?? null;
-    return base;
-  });
+  const columns = { hasClassification, hasSourceModel, hasBucket, hasStage, hasArm, hasIsQuickFix, hasVerification };
+  const mappedRows = keptFindings.map((f) => buildFindingRow(f, { runId, passName, round, columns }));
 
   // ── NOT-NULL write-boundary guard (2026-07-26) ────────────────────────────
   // `finding_fingerprint` has always had a `|| 'unknown'` fallback; `severity`

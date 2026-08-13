@@ -1,5 +1,88 @@
 # Project Status Log
 
+## 2026-08-13 — the existence gate's verdict now reaches the store
+
+The gate has resolved "file/module X is missing" claims against the real repo
+inventory since it shipped, and attached a `verification` sibling to each. That
+verdict went nowhere: `recordFindings` never mapped it, so it lived only in a
+gitignored `.audit/*-result.json` and one stderr line. Two consequences, the
+second worse than the first.
+
+**`audit_findings` recorded refuted findings at the model's severity.** That is
+correct and deliberate for `severity` itself — the model's claim is immutable
+(audit M2), and this module already refuses to fabricate a severity because it is
+the metric the A/B stopping rule counts. But with no sibling verdict column, a
+HIGH the gate had **proved false** was stored indistinguishably from a real one.
+Anything counting HIGH/MEDIUM off this table counts findings known to be wrong.
+
+**And it made yesterday's own prompt fix unfalsifiable.** `NO_MANIFEST_ABSENCE_VERDICTS`
+(d6741c00) declared its success metric as *"count the findings the gate labels
+`looks like an external dependency` per run; it should go to zero without
+`confirmed` moving"*. That string lives in `verificationReason`. The rule that
+already shipped could not be checked outside the one machine holding the local
+artifacts.
+
+Migration `20260813120000` adds `verification`, `verification_reason`,
+`verdict_severity` — additive, nullable, probe-guarded, so an un-migrated store
+writes byte-identical rows. NULL means *the gate never looked*, deliberately
+distinct from `requires_verification` (*looked, could not decide*). `severity` is
+untouched; the triage value goes to `verdict_severity` and readers apply
+`effectiveSeverity` themselves.
+
+**The question that prompted this was whether the two remaining absence classes
+deserve the same prompt treatment. Measured answer: no, for opposite reasons.**
+FILE absence is decidable and the gate already adjudicates it — the base rate is
+16 true / 5 false / 1 ambiguous, so a prompt-level reticence nudge risks 16 true
+findings to recover 5 false, 3 of which the gate already refutes with zero false
+refutations. SYMBOL absence has no oracle at all, which looked like the stronger
+case until it was counted: **0 of 22 unique existence claims, and 1 of 382
+findings** by an independent lexical scan written without reference to the gate's
+regexes (a LOW, substantively true, not classified as an existence claim). The
+premise "every symbol claim escapes at the model's severity" is true and vacuous.
+Positive control passed — three synthetic symbol claims classify correctly — so
+the zero is a measurement, not a dead instrument. Corpus was one JS/React
+consumer; a TS-heavy repo could differ, since interfaces/types/enums are exactly
+the AST-index gap audit G1 names. Re-measure there before generalising.
+
+`buildFindingRow` was lifted out of `recordFindings` as an exported pure function,
+because the invariant most worth pinning — `severity` keeps the model's value
+while the verdict lands beside it — was unreachable by any test while the mapping
+was an inline closure. Its fixtures come from the **real gate**, not hand-written
+objects, so a rename on either side of the seam fails the suite. Proven
+red-then-green: wiring `effectiveSeverity` into `severity` fails two tests,
+including the un-migrated path where that break would downgrade severity on stores
+without the new columns.
+
+Round-1 audit raised M1 — `verdict_severity` was the only one of the three columns
+with no domain guard, while its sibling `severity` has carried
+`audit_findings_severity_check` since the table existed and `schemas.mjs` already
+declares the enum. Fixed with a CHECK plus app-layer coercion through a shared
+`normaliseEnum`. The cross-column half (`refuted` ⇒ `LOW`) was overruled: that
+encodes gate policy in the schema, and a stale constraint would reject the row —
+which, inside a caller-supplied transaction, discards the whole batch. Round 2
+PASS, Gemini APPROVE (0 new, 0 wrongly dismissed).
+
+The Opus shadow returned 4 shadow-only findings, all declined on inspection. Its
+MEDIUM claimed a parallel parity surface (`scripts/lib/stores/sql/*.pg.sql`) had
+been missed — that path does not exist in the live tree; the only `.pg.sql` files
+sit under `docs/plans/security/files/`, the corporate kit AGENTS.md records as
+**not ported**, and `schema-realization.mjs` hardcodes no columns at all. The two
+sizing findings (missing index, ACCESS EXCLUSIVE lock) were declined against a
+measurement: `audit_findings` is **5,674 rows / 16 MB**. `countsTowardVerdict`
+was declined on design — it is a pure function of `verification`, so persisting it
+creates a field that can disagree with its own source.
+
+**`AI-Gate: not-run`, and the audit did in fact run.** A concurrent session's
+commit `f177de2b` (15:44:26Z) landed after this session's audit evidence
+(15:36:58Z), which ages the marker out and makes `passed` and `waived` both
+illegal. Re-running the loop purely to populate the column would be forging the
+receipt. Recording the real state here instead.
+
+**Consumer-side verification: `unverified`** — blocked prerequisite named: this
+change ships no consumer bundle artifact (migration + store module + tests only),
+and the receiver-side check that would apply, `sync-isolation-verify.mjs`, must
+run inside a consumer checkout against a synced bundle this push does not produce.
+
 ## 2026-08-13 — the post-fix measurement, which corrects the entry below it
 
 The previous entry reported "four fixed" with **no post-fix measurement**. Round 2

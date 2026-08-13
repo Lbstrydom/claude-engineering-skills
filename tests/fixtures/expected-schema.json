@@ -727,6 +727,27 @@
           "is_nullable": "YES",
           "column_default": null,
           "ordinal_position": 28
+        },
+        {
+          "column_name": "verification",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 29
+        },
+        {
+          "column_name": "verification_reason",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 30
+        },
+        {
+          "column_name": "verdict_severity",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 31
         }
       ]
     },
@@ -8794,6 +8815,18 @@
       "constraint_name": "audit_findings_user_action_check",
       "constraint_type": "CHECK",
       "definition": "CHECK ((user_action = ANY (ARRAY['fix-now'::text, 'deferred'::text, 'dismissed'::text, 'needs_triage'::text, 'accepted-permanent'::text, 'auto_dismissed'::text])))"
+    },
+    {
+      "table_name": "audit_findings",
+      "constraint_name": "audit_findings_verdict_severity_check",
+      "constraint_type": "CHECK",
+      "definition": "CHECK (((verdict_severity IS NULL) OR (verdict_severity = ANY (ARRAY['HIGH'::text, 'MEDIUM'::text, 'LOW'::text]))))"
+    },
+    {
+      "table_name": "audit_findings",
+      "constraint_name": "audit_findings_verification_check",
+      "constraint_type": "CHECK",
+      "definition": "CHECK (((verification IS NULL) OR (verification = ANY (ARRAY['refuted'::text, 'confirmed'::text, 'requires_verification'::text]))))"
     },
     {
       "table_name": "audit_findings",
