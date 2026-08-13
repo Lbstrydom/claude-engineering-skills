@@ -19,7 +19,7 @@
  * @module scripts/lib/arm-eval/toggle
  */
 
-import { readFileSync, existsSync, mkdirSync } from 'node:fs';
+import { readFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { atomicWriteFileSync } from '../file-io.mjs';
 import { resolveArms } from '../arm-vocabulary.mjs';
@@ -98,9 +98,17 @@ export function readToggle({ repoRoot = process.cwd() } = {}) {
 
   let text;
   try {
-    if (!existsSync(p)) return closed('absent', null);
     text = readFileSync(p, 'utf8');
   } catch (err) {
+    // ENOENT is `absent`, decided from the ERROR rather than from a prior
+    // `existsSync` probe. The probe-then-read form has a real window between the
+    // two calls, and this module's own writer opens it: `atomicWriteFileSync`
+    // replaces the path by rename, so a concurrent `arm-eval-toggle on` could
+    // make a plain "no toggle configured" read report `unreadable` — i.e. "the
+    // operator's configuration is broken". Those are the two states this
+    // function exists to keep apart, so deciding them from a race would undo
+    // the point of separating them.
+    if (err?.code === 'ENOENT') return closed('absent', null);
     return closed('unreadable', `cannot read ${TOGGLE_RELPATH}: ${err.message}`);
   }
 

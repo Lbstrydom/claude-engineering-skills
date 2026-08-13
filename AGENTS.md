@@ -58,6 +58,22 @@
 > **Coverage honesty**: the envelope also carries a `coverage` verdict counting what
 > the graph DROPPED; absent reads `unknown`, never clean. `npm run arch:coverage-gate`
 > owns the exit code — in `check`, NOT `dashboard:setup`. [Design](docs/plans/observed-graph-coverage-honesty.md)
+>
+> **RETAGGING A MODULE CHANGES EVERY EDGE *INTO* IT — re-baseline BOTH
+> directions.** Moving a file to another domain changes the `from` domain of
+> everything it imports *and* the `to` domain of everything that imports it. The
+> second half is the one that gets forgotten, because it is invisible from the
+> file you are editing. **Three retags in four days made this exact error**:
+> `d5e66d35` (2026-08-10) cleared `shared-lib`'s outbound grant and created four
+> inbound violations, its own commit message showing the one-sided check
+> (*"adds no new edge: model-eval → audit-orchestration was already declared"* —
+> that is what the file IMPORTS, never who imports IT); `a146bb7b` (08-12)
+> repeated it, retagging `lib/cross-skill/**` and creating four
+> `tests → cross-skill-bridge` violations. Do not verify this by grep — a
+> docstring mention reads as an import. Run the mechanical check:
+> `tests/arm-vocabulary-layering.test.mjs` re-derives the whole violation set and
+> is in `npm test`, so a retag that breaks the inbound half fails at push.
+> Detail: [god-module-and-layering-debt.md](docs/plans/god-module-and-layering-debt.md) §1.2.
 
 > **Generated-artifact policy (invariant — avoid the "messy middle").** Every
 > generated file lands in exactly ONE of two categories; never tracked-but-

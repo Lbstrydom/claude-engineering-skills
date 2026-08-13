@@ -750,8 +750,44 @@ of them:
   upsert's conflict target is `(repo_id, persona_finding_hash)`, confirmed
   against `supabase/migrations/20260713180000_persona_finding_outcomes.sql`.
   Tenant scope is a constraint here, not a label. No follow-up needed.
-- **The god-module / layering family** (26 rows, 2 HIGH) — architectural
-  refactoring; bundling it would prevent convergence.
+- **The god-module / layering family — SCOPED AND PARTLY SHIPPED 2026-08-13.**
+  The deferral was right; **its figures were not**, and they were wrong in both
+  directions. Traced in
+  [`god-module-and-layering-debt.md`](god-module-and-layering-debt.md).
+
+  | This bullet said | Measured at `581fea0b` |
+  |---|---|
+  | "26 rows, 2 HIGH" | **194 open rows, 10 HIGH** (later 225, as audits kept re-raising) |
+  | implied ≈26 distinct issues | **14 file edges / 9 domain edges** — a ~14:1 re-raise ratio |
+  | one "family" | **two problems** with different root causes and different fixes |
+
+  **The layering half is closed and self-defending**: 14 violations → **0**, via
+  one vocabulary extraction, four retags and two documented grants. It is now
+  gated at push (`tests/arm-vocabulary-layering.test.mjs` runs in `npm test`,
+  which is the last step of `npm run check`), so the ratchet cannot silently
+  slip. **172 of the 225 open rows were then closed as provably stale** — they
+  described edges that no longer existed; the category now stands at **53
+  (7 HIGH)**, all naming genuinely different subjects.
+
+  **Only 4 of the 14 were ever code debt**, and they were days old: `d5e66d35`
+  re-baselined `allowedDeps` for the edges its retag REMOVED and never checked
+  the edges it CREATED inbound. `a146bb7b` then repeated it. Three retags in
+  four days, the same one-directional error — which is why the fix is a
+  mechanical two-direction check rather than a rule anyone is expected to
+  remember.
+
+  **The god module is a separate problem and is NOT closed.** It emits no
+  `[Architecture]` findings at all; its cost surfaces as a `[backend]` /
+  `[be-services]` tail. It is one **2,624-line function**, not a big file, and
+  it is still growing: **~1,650 (07-09) → ~2,227 (07-23) → 2,602 (08-12) →
+  4,389 lines of file today.** Cluster 2 of that plan routed the five un-seamed
+  persistence writes through the durable-write seam — including
+  `recordConvergenceState`, which turned out to be this plan's own gate-evidence
+  cross-check rather than the telemetry it looked like. The decomposition itself
+  remains deferred, and its boundary list already exists in
+  `audit-backlog-triage-hardening.md` item 5 — **start there rather than
+  re-deriving it**, which is the mistake the follow-up plan made and had to
+  correct.
 - Retry policy, backoff, ordering, dead-letter queue.
 
 ---

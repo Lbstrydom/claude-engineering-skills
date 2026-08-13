@@ -1,7 +1,7 @@
 # Plan: God-module and layering debt — two problems, two answers
 
 - **Date**: 2026-08-12
-- **Status**: In Progress — Cluster 1 (Phases 0–3) shipped 2026-08-13: 14 violations → 0. Clusters 2–3 pending.
+- **Status**: Complete — all three clusters shipped 2026-08-13. Cluster 1 (Phases 0–3): 14 layering violations → 0, now gated at push. Cluster 2 (Phases 4–5): five un-seamed persistence writes routed, oracle closed in both directions. Cluster 3 (Phase 6): the record corrected. **The god-module DECOMPOSITION itself remains open and is deliberately not in this plan** — see §10.
 - **Author**: Claude + Louis
 - **Scope**: backend
 - **Stack**: `js-ts` (detect-stack: `{stack:"js-ts", stackKinds:["js-ts","postgres"]}`)
@@ -518,6 +518,24 @@ correction is not "do them together carefully"; it is **two gates**.
    graceful-degradation path into a silent data loss. The correct move is
    subtraction, not addition: **no third mechanism.**
 
+> ⚠ **SUPERSEDED BY IMPLEMENTATION — do not follow decision 7b/7c as written.**
+> Re-deriving at HEAD before editing falsified three of its premises, and this
+> plan's own subject is prescriptive text that outlives its facts, so the
+> corrections are recorded here rather than quietly applied:
+>
+> | 7b said | What shipped |
+> |---|---|
+> | line pins `:1589 :3000 :3009 :3699 :3804` | all five had MOVED (`:1703 :3132 :3141 :3852 :3967`) and moved again after |
+> | *"delete the failure swallow"* at each | **already done** by another session — the file had zero `.catch(() => {})` |
+> | *"all five route to `durableWrite`"* | **three did.** `reconcileRemediationProjection` / `markFindingsRemediation` stay OUT: the on-disk ledger is their durable copy, and `tests/audit-store-durability-call-site.test.mjs` already exempted the latter for exactly that reason. Both are fail-open and never throw, so the seam would have reported `written` for a run that projected nothing. |
+> | the three telemetry writes as `lost`-only | **all three registered.** They are idempotent `UPDATE`s on a natural key — two on the same table+key as `audit.runComplete`. Idempotency is the test, not importance. One of them (`recordConvergenceState`) is the gate-evidence forgery cross-check, not telemetry. |
+>
+> The defect actually fixed was neither in 7b's list nor its framing:
+> `reconcileRemediationProjection` returned `{reconciled: 0}` from **both** its
+> healthy path and its `catch`, so a self-heal that never ran was
+> indistinguishable from one with nothing to heal. See the implementation trail
+> at the top of this document.
+
 7b. **The slice is the writes NEITHER seam covers** *(#15 Error Handling, #19)*.
    The set is not invented here — `writeLearningState`'s docstring (`:1009–1015`)
    points at it, and R2-H1 correctly refused the docstring's *categories* as a
@@ -762,6 +780,9 @@ re-export from `audit-arms.mjs`, re-point the three importers. Files:
 `dashboard → model-eval` and `solo-control → model-eval`; label the
 `Layering violations` counter. Files: `.audit-loop/domain-map.json` (modify),
 `scripts/lib/arch-render.mjs` (modify).
+
+> ⚠ **Superseded — see the decision-7b banner above.** Three of the five
+> routed to `durableWrite`; the two remediation writes deliberately did not.
 
 **Phase 4 — Route the five un-seamed writes**: the set is exactly decision 7b's
 table (`:1589`, `:3000`, `:3009`, `:3699`, `:3804`) — the docstring is provenance
@@ -1021,6 +1042,23 @@ test (§7), and it is measured after the fact, not asserted here.
 ---
 
 ## 12. Audit trail
+
+**Implementation trail** (distinct from the plan audit below, which judged this document)
+
+| Cluster | Shipped | Outcome |
+|---|---|---|
+| 1 — Phases 0–3 | `455e7cca` | 14 → 0 violations. Oracle built FIRST and seen red at 14/9. |
+| follow-on | `f82c0a07` | 172 stale rows closed (225 → 53); `arch:refresh`/`render` close-out; `mermaidId` 32→64 bit; an egress "fix" written then **reverted** as a latent regression. |
+| 2 — Phases 4–5 | `77d65c57`, `6834a929` | Re-cut on contact: the swallows were already fixed and the docstring the scope came from was itself stale. Landed the real defect (a false-zero self-heal) + 3 more writers. |
+| 3 — Phase 6 | this commit | §9's figures corrected; the two-direction rule promoted to AGENTS.md. |
+
+**What the implementation falsified about this plan** — recorded because the
+pattern is the plan's own subject: Cluster 2's scope came from a docstring that
+had outlived its fix; `durableWrite` turned out to be the wrong seam for two of
+the five writes (the repo's own test already said so); and three writes deferred
+as "telemetry" were idempotent keyed UPDATEs, one of them this repo's
+gate-evidence forgery cross-check. Every one was caught by re-deriving before
+editing rather than by trusting the plan.
 
 | Gate | Verdict | Findings | Disposition |
 |---|---|---|---|

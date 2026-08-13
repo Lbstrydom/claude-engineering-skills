@@ -1,5 +1,57 @@
 # Project Status Log
 
+## 2026-08-13 — Cluster 3: the record corrected, and the plan closed
+
+Final cluster of [god-module-and-layering-debt.md](docs/plans/god-module-and-layering-debt.md).
+Documentation-only, `fix-gate: final`, followed by the mandatory consolidated
+Gemini review over the union diff of all three clusters.
+
+**`audit-store-write-durability.md` §9 corrected.** Its deferral was right; its
+figures were wrong in both directions — "26 rows, 2 HIGH" against a measured
+**194 open rows / 10 HIGH**, describing **14 file edges** rather than 26 issues.
+It now records what closed (14 → **0** violations, gated at push; 172 stale rows
+retired, category 225 → **53**), what was only ever 4 edges of real code debt,
+and what remains: the god-module decomposition, still open, still growing
+(~1,650 → ~2,227 → 2,602 lines of function; the file is **4,389** today).
+
+**The two-direction rule is now in AGENTS.md**, with the evidence: three retags
+in four days made the same one-sided error, `d5e66d35`'s own commit message
+showing it (*"adds no new edge: model-eval → audit-orchestration was already
+declared"* — that is what the file imports, never who imports it). It points at
+the mechanical check rather than asking anyone to remember, and warns off grep:
+a docstring mention reads as an import.
+
+**Gemini final gate: `APPROVE`** — 0 new findings, 0 wrongly-dismissed, 0
+over-engineering flags, coherence **Strong**.
+
+**The observation-only shadow then found four more, and three were worth acting
+on** — consistent with this repo's KEEP verdict on the shadow, and with its 5/5
+record earlier today:
+
+- **Its best catch was this cluster's own job.** §9 of the *durability* plan was
+  corrected while **§2 decision 7b and §5b Phase 4 of THIS plan still prescribed
+  the abandoned Cluster 2 design** — five writes to `durableWrite`, delete the
+  swallows, stale line pins. A plan about prescriptive text outliving its facts,
+  leaving prescriptive text that had outlived its facts. Superseded-banners added
+  rather than silent edits, so the plan-vs-outcome distinction survives.
+- `docs/architecture-intent.md`'s C4 diagram still rendered `cross-skill-bridge`
+  as a lone `cross-skill.mjs` CLI facade — the identical stale claim the prose
+  edit one screen below existed to retire.
+- `readToggle` decided `absent` from an `existsSync` probe before the read. The
+  window is real and this module's own writer opens it (`atomicWriteFileSync`
+  renames), so a concurrent `arm-eval-toggle on` could report a plain "not
+  configured" as `unreadable`. Now decided from `err.code === 'ENOENT'`.
+
+Not acted on: `writeToggle`'s bare `RangeError` reaching the registry's
+non-`CommandError` catch-all. Correct in principle, unreachable in practice —
+the CLI validates with `CommandError('BAD_INPUT')` before calling it, so the
+`RangeError` only fires for a programmatic caller bug, which is the right
+library contract.
+
+**Consumer-side verification**: `unverified` — no second checkout on this
+machine. Producer side: 11,913 pass / 1 fail, that one being another session's
+uncommitted `skills.manifest.json` desync, absent from the clean pre-push tree.
+
 ## 2026-08-13 — Cluster 2 finished: the three "telemetry" writes were not telemetry
 
 The previous entry deferred three writes as telemetry not worth registering —

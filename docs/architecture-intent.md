@@ -54,7 +54,7 @@ graph TB
   end
 
   subgraph "cross-skill-bridge"
-    cs["cross-skill.mjs<br/>CLI facade"]
+    cs["cross-skill.mjs + lib/cross-skill/**<br/>CLI facade + command registry"]
   end
 
   subgraph "install"
