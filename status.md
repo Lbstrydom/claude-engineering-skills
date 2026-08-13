@@ -1,5 +1,70 @@
 # Project Status Log
 
+## 2026-08-14 — the 31 remaining rows: 22 closed with real fixes, 96 → 74
+
+Follow-on to 2026-08-13's triage pass below: the 31 rows that verified as
+genuinely still-reproducing got worked through for real, not just re-flagged.
+Commit `f7d0b08b18513c0bf3eb159d34e061aaae2d7407` (`fix(audit): 16 findings
+from the unremediated-acceptances backlog, verified live`) touches 9 source
+files + 6 test files.
+
+**18 findings fixed with code**, each with a test proving the fix (existing
+suite extended, or new): whitespace-only pragma reasons now rejected;
+`git grep` scans gained an explicit 64 MiB `maxBuffer`; `vcs.mjs` tree-id
+validation accepts SHA-256 (64-hex) alongside SHA-1; `observed-deps.mjs`'s
+coverage-accounting bucket now agrees with what `deps` actually contains for
+a dangerous-key edge, from either direction; the digest-ambiguity guard in
+`tiered-shadow-contract-digest.mjs` now fires where the AST walk would
+actually overwrite a match, not in dead code after the fact (verified: the
+real pinned source has no current ambiguity, and a new test proves the guard
+throws on an injected one); `upsertPlan` normalizes `status` the same way
+`updatePlanStatus` already did; `legacy-production-audit.mjs`'s `debtRunId`
+gained a pid + random suffix (Date.now() alone collided), a failed local
+ledger write now folds into `runStatus` at all three derivation sites (kept
+byte-identical per the existing durability test's own invariant — extended,
+not weakened), and `writeGateEvidence`'s return value is captured instead of
+discarded; `stage0-relevance-context.mjs`'s silent catch now logs; and
+`arch/coverage.mjs`'s `copyForwardCoverage` refuses a source/destination pair
+resolving to different repos via `refresh_runs.repo_id` — the one coverage
+operation that takes two refresh ids, so the one place cross-repo mixing was
+actually reachable.
+
+**Verified against a real disposable Postgres, not just unit tests.** The
+`copyForwardCoverage` fix is a DB-integration test
+(`tests/graph-coverage-db.test.mjs`, gated on `AUDIT_DB_TEST_URL`, silently
+skipped in the default run). Brought up a local container via `npm run
+db:local` (`postgres/pgvector:pg16`, migrated), ran the full suite including
+the new cross-repo test against it — 11/11 passed — then tore it down. This
+is the difference between "the code reads correctly" and "the code IS
+correct": a syntax slip in the SQL or a wrong column name would have passed
+every static check and only shown up here.
+
+**4 more dismissed as already-documented debt**, not silently left pending:
+the colon-in-target-path grammar gap in `duplicate-justification-pragma.mjs`
+carries its own source TODO with rationale; the whitespace-collapse in the
+contract-digest function is a deliberate design choice explained in its own
+comments, and touching a function that backs `AI-Gate: passed` for a cosmetic
+finding isn't a trade worth making ad hoc; the module-global `_cacheDir` in
+`legacy-production-audit.mjs` is the same accepted-debt class AGENTS.md's own
+table already carries for other module-global caches ("safe in a CLI-per-
+invocation model").
+
+**8 rows deliberately NOT attempted, left open (not dismissed).** The
+god-orchestrator decomposition of `legacy-production-audit.mjs` (4 rows) and
+its SYSTEMIC error-observability survey (1 row) are real gaps, but the file
+is 4,682 lines and gates every push in this repo — decomposing it safely is
+a `/plan`-sized project, not a triage-session fix. `stage0-relevance-
+context.mjs`'s N+1-queries and hardcoded-concurrency findings (2 rows) need
+a backend RPC-batching design decision; its `process.cwd()`-coupling finding
+(1 row) needs `repoRoot` threaded through call sites this file doesn't own
+alone. All 8 stay genuinely open in the store — recommending a dedicated
+`/plan` cycle for the orchestrator decomposition specifically, given its
+blast radius.
+
+Full `npm test`: 12114 passed, 0 failed, 27 skipped (DB-gated, no disposable
+DSN in the default run — the coverage suite above is the one exception,
+verified separately). `total` moved 96 → 74; `agedOut` stayed 0.
+
 ## 2026-08-13 — unremediated-acceptances backlog: 125 → 96, and the one class write-off
 
 Triaged the top 8 concentration files in `unremediated_acceptances` (60 of the
