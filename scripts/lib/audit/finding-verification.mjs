@@ -155,14 +155,35 @@ const CLAIM_AFTER = new RegExp(
 );
 
 /** Intro phrase of a LIST-shaped absence claim, terminated by the delimiter
- *  that opens the list. Everything after it is scanned for quoted paths. */
+ *  that opens the list. The members are the quoted paths that follow it — up to
+ *  the end of that SENTENCE (see `SENTENCE_GAP`), not the end of the detail.
+ *  Global: one detail may carry more than one list claim. */
 const LIST_INTRO = new RegExp(
   `(?:are absent|are missing|are not present|do not exist|were not (?:created|added|found)|` +
   `none of the[^:.]{0,80}?exists?)\\s*[:—-]`,
-  'i',
+  'gi',
 );
 /** Quoted, path-shaped tokens — the members of a list claim. */
 const QUOTED_PATH = new RegExp('[`\'"](' + TOKEN + ')[`\'"]', 'g');
+
+/**
+ * A sentence boundary occurring in the GAP between two cited tokens — the end
+ * of a list claim.
+ *
+ * Matching only on the gap is what makes this safe against paths: `a.js` has a
+ * dot, but a dot INSIDE a quoted token is never in a gap, so no separator can
+ * be mistaken for a terminator (`, ` and `, and ` both pass through).
+ *
+ * Measured 2026-08-13 over 22 unique absence claims in wine-cellar-app's
+ * `.audit` artifacts: without this bound the scan ran to the end of `detail`,
+ * and the sentence AFTER a "these are missing:" list is routinely where the
+ * model names the files that DO exist. Three of the 22 hit it; on two the gate
+ * answered "N of M cited path(s) DO exist — the claim is at least partly false"
+ * about a TRUE HIGH finding, citing as its evidence a path the model had
+ * reported as present one sentence earlier. Casting doubt on correct findings
+ * is this gate's inverse, so the bound is a soundness fix, not a tidy-up.
+ */
+const SENTENCE_GAP = /[.;!?](?:\s|$)|\n/;
 
 const EXT_RE = new RegExp(`(${RESOLVABLE_EXTENSIONS.map((e) => '\\' + e).join('|')}|\\.jsx|\\.ts|\\.tsx|\\.md)$`, 'i');
 
@@ -243,21 +264,44 @@ export function extractCitedEntity(finding) {
  */
 export function extractCitedEntityList(finding) {
   const detail = String(finding?.detail || '');
-  const intro = detail.match(LIST_INTRO);
-  if (!intro) return null;
-
-  const tail = detail.slice(intro.index + intro[0].length);
   const names = [];
+  // Defence-in-depth only, and deliberately NOT claimed as tested: this loop
+  // always runs to exhaustion, and a failing `exec` resets `lastIndex` itself,
+  // so no test can distinguish this line's presence. It earns its keep against
+  // a future early `break`/`return` here — which is exactly the edit that made
+  // `collectListMembers`'s own reset load-bearing (that one IS guarded).
+  LIST_INTRO.lastIndex = 0;
+  for (let intro = LIST_INTRO.exec(detail); intro; intro = LIST_INTRO.exec(detail)) {
+    collectListMembers(detail.slice(intro.index + intro[0].length), names);
+  }
+  if (names.length < 2) return null;
+  return names.map((name) => ({ kind: 'file', name, fromFile: null, exportName: null }));
+}
+
+/**
+ * Append one list claim's members to `out`, stopping at the sentence that ends
+ * the list. `tail` starts immediately after the intro's delimiter.
+ *
+ * A non-path-shaped token (`(\`HistoryView\`)`, an export name in parentheses)
+ * is skipped but still advances the cursor — it is punctuation within the list,
+ * not a terminator.
+ */
+function collectListMembers(tail, out) {
+  // Load-bearing: the sentence bound below `break`s, so unlike every earlier
+  // version of this scan the loop can exit with `lastIndex` mid-string, and a
+  // second list claim in the same detail would resume from there. Guarded by
+  // the three list-scoping tests (they fail if this line is removed).
   QUOTED_PATH.lastIndex = 0;
+  let cursor = 0;
   for (let m = QUOTED_PATH.exec(tail); m; m = QUOTED_PATH.exec(tail)) {
+    if (SENTENCE_GAP.test(tail.slice(cursor, m.index))) break;
+    cursor = m.index + m[0].length;
     const name = m[1].trim().replace(/\\/g, '/').replace(/^\.\//, '');
     // Members of a file list must LOOK like files — a bare word in the tail
     // is prose, not a cited path, and guessing costs a false verdict.
     if (!name.includes('/') && !EXT_RE.test(name)) continue;
-    if (!names.includes(name)) names.push(name);
+    if (!out.includes(name)) out.push(name);
   }
-  if (names.length < 2) return null;
-  return names.map((name) => ({ kind: 'file', name, fromFile: null, exportName: null }));
 }
 
 /**

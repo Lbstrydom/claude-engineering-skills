@@ -624,3 +624,36 @@ Backend scope — behavioural pass/fail contracts:
 - **Series complete**: Phases 1–3 shipped (`b14a3e6`, `52b21b9`, this).
   The deterministic gate + the four-tier blast-radius context layer are
   live across `/audit-code`, `/audit-plan`, and `gemini-review`.
+
+### 2026-08-13 — post-ship fix: a list claim ran past its own sentence
+
+- **Defect**: `extractCitedEntityList` sliced from the list intro to the END
+  of `detail`, so every quoted path in every LATER sentence was absorbed as a
+  list member. The sentence after a "these are missing:" list is routinely
+  where the model names what DOES exist, so the gate answered *"N of M cited
+  path(s) DO exist — the claim is at least partly false"* about **true** HIGH
+  findings, citing as evidence a path the model had reported as present one
+  sentence earlier. A gate that manufactures doubt about correct findings is
+  this module's own purpose pointed backwards.
+- **Measured** (`wine-cellar-app/.audit`, 29 artifacts → 26 unique, 385
+  findings, 25 absence claims → 22 unique after removing 3 byte-identical
+  `consolidated-*` copies; each claim resolved against the wine tree **at its
+  own run's commit**, since these audits drove the creation of the files they
+  named): 3 of 22 hit the defect. Base rate of the absence claims themselves:
+  16 true / 5 false / 1 ambiguous.
+- **Fix**: members are the path-shaped tokens in the SAME sentence as the
+  intro. `SENTENCE_GAP` matches only the gap BETWEEN cited tokens, which is
+  what makes it safe against paths — `a.js` has a dot, but a dot inside a
+  quoted token is never in a gap. `LIST_INTRO` became global so a detail
+  carrying two list claims still yields both.
+- **Effect on the corpus**: three true HIGH findings moved
+  `requires_verification` → `confirmed` (`cluster1-r2` H3, `cluster1-r3` H3,
+  `cluster2-r2` H1 — every cited path verified as landing *after* its run
+  date), and one count corrected (12 → 11 cited paths, dropping a `/dist/`
+  build output named in a consequence sentence). **Nothing moved toward
+  `refuted`**; the 3 correct refutations and the 1 correct confirmation are
+  byte-unchanged. 8 new tests, 4 of them red before the fix.
+- **Not changed, deliberately**: the intro vocabulary stays as-is ("are also
+  absent" still does not match). The one field case affected reaches the same
+  verdict either way, so widening it has no measured need — and a second list
+  silently dropped is the conservative direction (`requires_verification`).

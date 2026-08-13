@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import {
   classifyFinding,
   extractCitedEntity,
+  extractCitedEntityList,
   verifyExistenceFindings,
   effectiveSeverity,
   countsTowardVerdict,
@@ -347,6 +348,117 @@ describe('transitive "is missing <object>" is not an existence claim', () => {
       const v = verifyExistenceFindings([finding({ detail })], { repoFiles: REPO2 })[0].verification;
       assert.equal(v.verification, 'refuted', `lost the predicative reading of: ${detail}`);
     }
+  });
+});
+
+describe('a list claim ends at its SENTENCE, not at the end of the detail', () => {
+  // Field measurement (2026-08-13, 22 unique absence claims over wine-cellar-app's
+  // .audit artifacts): `extractCitedEntityList` sliced from the list intro to the
+  // END of `detail`, so every quoted path in every LATER sentence joined the list.
+  // Three of the 22 hit it, and the shape is the worst possible one — the sentence
+  // after a "these are missing:" list is routinely the model naming what DOES
+  // exist. The gate then answered "N of M cited path(s) DO exist — the claim is at
+  // least partly false" about a TRUE finding, using as its evidence a path the
+  // model had itself reported as present. A gate manufacturing doubt about correct
+  // findings is worse than no gate: it is the failure direction this module exists
+  // to prevent, pointed backwards.
+  const SHELL = [
+    'public/js/app.js', 'public/js/grid.js',
+    'src/routes/index.js',
+  ];
+
+  it('excludes a path the model cited as PRESENT in a following sentence', () => {
+    // Verbatim from audit-code-cluster1-1786200157-r3-result.json H3 (finding #12).
+    // Every one of the four listed modules was genuinely absent at that commit
+    // (they landed 08-09/08-10; the run is 08-08 17:11) — a TRUE HIGH.
+    const f = finding({
+      category: '[Structure] Missing shell integration modules',
+      detail: 'The shell integration modules required by the plan are missing: '
+        + '`public/js/shared/inventoryStore.js`, `public/js/shared/reactSliceSelector.js`, '
+        + '`public/js/shared/wineListViewLoader.js`, and `public/js/shared/historyViewLoader.js`. '
+        + '`public/js/app.js` imports existing pairing-lab and scan-lookup loaders, but its '
+        + 'supplied signature has no imports for the missing Wine List/History loaders.',
+    });
+    const list = extractCitedEntityList(f);
+    // Vacuous-pass guard: a null/empty list would satisfy the exclusion below
+    // for the wrong reason.
+    assert.ok(Array.isArray(list) && list.length === 4, `expected the 4 listed members, got ${list?.length}`);
+    assert.ok(!list.some((e) => e.name === 'public/js/app.js'), 'swallowed a path from the next sentence');
+
+    const v = verifyExistenceFindings([f], { repoFiles: SHELL })[0].verification;
+    assert.equal(v.verification, 'confirmed', 'all four listed modules really are absent');
+    assert.equal(v.verdictSeverity, 'HIGH', 'a confirmed absence keeps the model severity');
+  });
+
+  it('excludes paths from a sentence two hops later', () => {
+    // Verbatim from the same cluster's r2 H3 (finding #9): the list, then a
+    // contracts sentence, THEN "`public/js/app.js` and `public/js/grid.js` exist".
+    const f = finding({
+      detail: 'The planned shell integration modules are absent: '
+        + '`public/js/shared/inventoryStore.js`, `public/js/shared/reactSliceSelector.js`, '
+        + '`public/js/shared/wineListViewLoader.js`, and `public/js/shared/historyViewLoader.js`. '
+        + 'Their required contracts—inventory `get`/`set`/`subscribe`—therefore have no '
+        + 'implementation. `public/js/app.js` and `public/js/grid.js` exist, but the planned '
+        + 'one-data-seam wiring cannot be present without these modules.',
+    });
+    const list = extractCitedEntityList(f);
+    assert.equal(list?.length, 4);
+    const names = list.map((e) => e.name);
+    assert.ok(!names.includes('public/js/app.js') && !names.includes('public/js/grid.js'));
+  });
+
+  it('excludes a derived artifact named in the consequence sentence', () => {
+    // audit-code-cluster1-…-r3 H1 (finding #10): the trailing sentence cites the
+    // BUILD OUTPUT `/dist/wine-list/main.js`, which was never a list member.
+    const list = extractCitedEntityList(finding({
+      detail: 'All planned slice files are missing: `web/wine-list/vite.config.js`, '
+        + '`main.jsx`, `WineListView.jsx`. Consequently, the planned public '
+        + '`/dist/wine-list/main.js` implementation does not exist.',
+    }));
+    assert.equal(list?.length, 3);
+    assert.ok(!list.some((e) => e.name.startsWith('/dist/')));
+  });
+
+  it('a parenthetical bare token does NOT end the list', () => {
+    // "`HistoryView.jsx` (`HistoryView`), `Timeline.jsx`" — the export name in
+    // parentheses is skipped as non-path-shaped, but must not truncate the list.
+    const list = extractCitedEntityList(finding({
+      detail: 'The planned view and supporting exports are absent: `HistoryView.jsx` '
+        + '(`HistoryView`), `Timeline.jsx`, and `useHistory.js`.',
+    }));
+    assert.deepEqual(list?.map((e) => e.name), ['HistoryView.jsx', 'Timeline.jsx', 'useHistory.js']);
+  });
+
+  it('collects EVERY list in a detail that carries two of them', () => {
+    // Scoping to one sentence must not silently drop a second list claim — the
+    // coverage regression the sentence bound could otherwise introduce.
+    const list = extractCitedEntityList(finding({
+      detail: 'None of the required build entry files exist: `web/a/vite.config.js` '
+        + 'and `web/a/main.jsx`. The planned suites do not exist: `tests/x.test.js`, '
+        + '`tests/y.test.js`.',
+    }));
+    assert.deepEqual(list?.map((e) => e.name),
+      ['web/a/vite.config.js', 'web/a/main.jsx', 'tests/x.test.js', 'tests/y.test.js']);
+  });
+
+  it('negative control — a list with no trailing prose is unchanged', () => {
+    const list = extractCitedEntityList(finding({
+      detail: 'The production modules are absent: `src/config/grapeColourMap.js`, '
+        + '`src/routes/index.js`, and `src/routes/cellarZoneLayout.js`.',
+    }));
+    assert.deepEqual(list?.map((e) => e.name),
+      ['src/config/grapeColourMap.js', 'src/routes/index.js', 'src/routes/cellarZoneLayout.js']);
+  });
+
+  it('negative control — truncating never invents a refutation', () => {
+    // The soundness direction: dropping later-sentence paths must not flip a
+    // genuinely-mixed claim into `refuted`.
+    const v = verifyExistenceFindings([finding({
+      detail: 'The planned modules are absent: `src/routes/index.js`, `src/nope/gone.js`. '
+        + 'Meanwhile `public/js/app.js` is fine.',
+    })], { repoFiles: SHELL })[0].verification;
+    assert.equal(v.verification, 'requires_verification');
+    assert.match(v.verificationReason, /1 of 2 cited path\(s\) DO exist/);
   });
 });
 
