@@ -220,6 +220,59 @@ no codemod.
   remaining ~10-concern decomposition is deferred, not silently dropped, at
   the audit-code step below.
 
+#### Slice log — decomposition taken against the boundary list above
+
+Kept HERE, appended, because this item is the boundary list's owner and both
+successor plans point back to it *"so the next person doesn't have to
+re-derive"*. One row per slice; **the growth column is the point** — every plan
+that has touched this function has watched it grow during the work.
+
+| Date | Concern (from the list above) | Function lines | Tokens (budget 18,000) | Commit |
+|---|---|---|---|---|
+| 2026-07-09 | — (baseline) | ~1,650 | — | — |
+| 2026-07-23 | *(this plan: `writeLearningState` only)* | ~2,227 | — | — |
+| 2026-08-12 | *(god-module plan measured, no decomposition)* | 2,602 | 34,312 | — |
+| 2026-08-13 | **provider execution + telemetry** — Waves 5/6 (`runDuplicationPass`, `runAdjacencyPass`) | 2,662 → **2,506** | 35,257 → **33,135** | `a7db0baf` |
+
+**Why that concern, and not a bigger one.** Driven by finding evidence, not
+aesthetics: of the 104 open `[backend]`/`[be-services]` rows on this file, the
+largest *live* non-meta cluster was usage/cost accounting, and executing each
+row found the mechanism. Both waves make a real `safeCallGPT` bouncer call and
+built their pass result ~40 lines later with a hard-coded
+`usage: { input_tokens: 0, … }`, which `totalUsage` reduces into
+`_usage.costUsd` and `cacheMetrics.hitRate`. **The asymmetry is the causal
+claim**: every wave already extracted into a top-level pass function
+(`runArchitecturePass`, `runOrphanIntroducedPass`) carries usage correctly;
+only the two left INLINE fabricate zeros. Inline, there is no function boundary
+to carry the `{result, usage, latencyMs}` contract — so this is size *causing*
+a defect class, not merely correlating with one.
+
+**Falsifiable prediction (measure, do not assert).** If size-driven accretion
+is the mechanism, the usage-accounting cluster on this file stops recurring.
+Re-measure ~4 weeks out — the same trigger §10 of
+[`god-module-and-layering-debt.md`](god-module-and-layering-debt.md) sets for
+its own Cluster 2. If new usage-accounting rows appear against an *extracted*
+pass, the diagnosis was wrong and slice 2 should not follow this reasoning.
+
+**One slice does not reach the budget, by design** — 1.96× → 1.84×. That is
+decision 8 of the god-module plan (*"line count is a consequence, not the
+goal"*), restated here so slice 2 is not measured against the wrong number.
+
+**Triage before treating findings as work — 14 of 15 rows closed were STALE.**
+Of the 104 open rows, the usage cluster had produced 10 since 2026-07-17 and
+**9 described already-fixed code**; a 5-row `reasoningLevelForPass` cluster
+described a function *deleted* on 2026-08-12. All were closed through
+`recordFinalReviewFix` with per-commit attribution (`6b3fd620` REDUCE-success
+zero usage, `56296ccf` MAP `cached_tokens`, `c4d4b175` reasoning effort,
+`a7db0baf` the waves), taking the tail 104 → 89. Two traps worth naming: the
+`cd77d84e`/`d96b1e86` identifiers in that code comment are **finding
+fingerprints, not commit shas** (they resolve to no commit — do not report
+that as a stale citation); and the `noCloudRecording` "persistence leak"
+cluster is **defended at both call sites**, which set
+`{noLedger, noDebtLedger, readOnlyDebt, noCloudRecording, shadowMode}`
+together under an existing test — a fix inside the orchestrator there would
+have been a no-op at best.
+
 ### Item 6 — `on-conflict.mjs` write-recognition is hardcoded, silently blind to new wrappers
 
 - **File**: `scripts/lib/lint/on-conflict.mjs:62,390`
