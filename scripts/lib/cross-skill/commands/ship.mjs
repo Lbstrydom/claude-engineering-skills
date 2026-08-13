@@ -140,7 +140,7 @@ export async function listUnremediatedAcceptancesCmd(ctx) {
   const aged = await ctx.deps.countAgedUnremediatedAcceptances(storeScope);
   const acceptedPermanent = await ctx.deps.countAcceptedPermanent(storeScope);
   const { limit, offset } = ctx.deps.resolveNudgePage(page);
-  return {
+  const base = {
     ok: true, cloud: true,
     scope: { mode: scope.kind === 'global' ? 'all-repos' : 'repo', repoId: scope.repoId ?? null, slug: scope.slug ?? null },
     measured: true, reason: null,
@@ -151,6 +151,93 @@ export async function listUnremediatedAcceptancesCmd(ctx) {
     notYetDue: aged.notYetDue,
     prePractice: aged.prePractice, practiceStart: aged.practiceStart,
     limit, offset,
+  };
+
+  const groupBy = ctx.flag ? ctx.flag('group-by') : null;
+  const wantUnit = ctx.flag ? ctx.flag('work-unit') : null;
+  if (groupBy !== 'work-unit' && !wantUnit) return base;
+
+  return { ...base, ...(await groupIntoWorkUnits(ctx, rows, { total: byMode.total, wantUnit })) };
+}
+
+/**
+ * Group the fetched rows into work units — refactor-sized batches, so a backlog
+ * can be worked a THEME at a time instead of a row at a time.
+ *
+ * Membership is deterministic (embeddings + a cutoff derived from this repo's
+ * own similarity distribution). Nothing here calls a model: the unit key is what
+ * a caller filters and counts on, so it must be reproducible. Labels default to
+ * the canonical row's category and are marked `labelSource` so a model-written
+ * label can replace them later without changing what the key means.
+ *
+ * Two honesty properties, both load-bearing:
+ *  - `partial` is true when the page is smaller than `total`. Clustering a page
+ *    and presenting it as the grouping would understate every unit's size, and
+ *    a short page reads exactly like an exhausted one.
+ *  - `unclustered` counts rows with NO embedding. They were never compared, so
+ *    they are neither merged into a unit nor dropped from the tally.
+ */
+async function groupIntoWorkUnits(ctx, rows, { total, wantUnit }) {
+  const { clusterWorkUnits } = await import('../../work-units.mjs');
+  const { labelWorkUnits } = await import('../../work-unit-labels.mjs');
+  const ids = rows.map((r) => r.audit_finding_id).filter(Boolean);
+  const vecOf = await ctx.deps.getFindingEmbeddings(ids);
+
+  const findings = rows.map((r) => ({
+    id: r.audit_finding_id,
+    primaryFile: r.primary_file,
+    category: String(r.category || '').replace(/^\[[^\]]*\]\s*/, ''),
+    createdAt: r.accepted_at,
+    severity: r.severity,
+    embedding: vecOf.get(r.audit_finding_id),
+  }));
+
+  const { units: rawUnits, unclustered, cutoff } = clusterWorkUnits(findings);
+
+  // Labels only — membership above is already fixed. Advisory by construction:
+  // `labelWorkUnits` never throws and reports `labelSource` per unit, so an
+  // unavailable model degrades to the category fallback instead of failing a
+  // backlog listing. `--no-llm-labels` forces it off.
+  const labelling = await labelWorkUnits(rawUnits, { enabled: !ctx.hasFlag('no-llm-labels') });
+  const units = labelling.units;
+
+  const shaped = units.map((u) => ({
+    key: u.key, label: u.label, labelSource: u.labelSource, size: u.size,
+    files: u.files, canonicalId: u.canonicalId,
+    severities: u.members.reduce((a, m) => { a[m.severity] = (a[m.severity] || 0) + 1; return a; }, {}),
+    memberIds: u.members.map((m) => m.id),
+  }));
+
+  const grouping = {
+    basis: 'work-unit',
+    cutoff: cutoff.cutoff, cutoffSource: cutoff.source, cutoffSamples: cutoff.samples,
+    population: rows.length,
+    clustered: rows.length - unclustered.length,
+    unclustered: unclustered.length,
+    unclusteredIds: unclustered.map((u) => u.id),
+    units: shaped.length,
+    multiRowUnits: shaped.filter((u) => u.size > 1).length,
+    partial: rows.length < total,
+    // Label provenance, so a caller can tell a model-written name from the
+    // deterministic category fallback rather than assuming every label is good.
+    labels: {
+      llm: labelling.labelled, cached: labelling.cached,
+      fallback: labelling.failed, reason: labelling.reason,
+    },
+  };
+
+  if (!wantUnit) return { workUnits: shaped, grouping };
+
+  // `--work-unit <key>` pulls one unit's rows for a focused refactor.
+  const unit = shaped.find((u) => u.key === wantUnit);
+  if (!unit) {
+    return { workUnits: shaped, grouping, rows: [], shown: 0, workUnitFilter: { key: wantUnit, found: false } };
+  }
+  const member = new Set(unit.memberIds);
+  const filtered = rows.filter((r) => member.has(r.audit_finding_id));
+  return {
+    workUnits: [unit], grouping, rows: filtered, shown: filtered.length,
+    workUnitFilter: { key: wantUnit, found: true, label: unit.label },
   };
 }
 

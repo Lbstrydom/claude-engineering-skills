@@ -22,8 +22,10 @@ import { retrySync } from './retry-transient-fs.mjs';
  */
 export function atomicWriteFileSyncImpl(filePath, data, {
   mode,
+  exclusive = false,
   renameFn = fs.renameSync,
   unlinkFn = fs.unlinkSync,
+  linkFn = fs.linkSync,
 } = {}) {
   let absPath = path.resolve(filePath);
   // Gemini-r3-r2 G1: symlink preservation. If the target is a symlink
@@ -47,7 +49,19 @@ export function atomicWriteFileSyncImpl(filePath, data, {
   const writeOpts = mode !== undefined ? { encoding: 'utf-8', mode } : 'utf-8';
   try {
     fs.writeFileSync(tmpPath, data, writeOpts);
-    retrySync(() => renameFn(tmpPath, absPath));
+    if (exclusive) {
+      // No-clobber enforced by the FILESYSTEM, not by a prior existence check.
+      // `link` fails EEXIST atomically if the destination already exists, so
+      // there is no window between the test and the write. A caller that does
+      // `if (!existsSync(f)) atomicWrite(f)` has exactly that window, and
+      // `rename` then clobbers whatever appeared in it — the guarantee reads as
+      // enforced while being advisory. `link` keeps both properties: the
+      // content is complete before it is ever visible under the final name.
+      retrySync(() => linkFn(tmpPath, absPath));
+      unlinkFn(tmpPath);      // the link is the file now; drop the temp name
+    } else {
+      retrySync(() => renameFn(tmpPath, absPath));
+    }
   } catch (err) {
     try { unlinkFn(tmpPath); } catch (cleanupErr) {
       process.stderr.write(`  [atomic-write] Temp file cleanup failed: ${cleanupErr.message}\n`);
@@ -56,8 +70,15 @@ export function atomicWriteFileSyncImpl(filePath, data, {
   }
 }
 
-export function atomicWriteFileSync(filePath, data, { mode } = {}) {
-  atomicWriteFileSyncImpl(filePath, data, { mode });
+/**
+ * @param {string} filePath
+ * @param {string} data
+ * @param {{mode?: number, exclusive?: boolean}} [opts] - `exclusive: true` makes
+ *   the write fail with `EEXIST` rather than replace an existing file, without a
+ *   check-then-write race. Default (false) is today's atomic replace.
+ */
+export function atomicWriteFileSync(filePath, data, { mode, exclusive } = {}) {
+  atomicWriteFileSyncImpl(filePath, data, { mode, exclusive });
 }
 
 export const _internals = { atomicWriteFileSyncImpl };

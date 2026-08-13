@@ -182,6 +182,60 @@ export function toVectorLiteral(vec) {
   return `[${vec.join(',')}]`;
 }
 
+/** Sort directions the retrospective reconciler's cap may take. */
+export const CAP_ORDERS = Object.freeze(['oldest', 'newest']);
+
+/**
+ * Build the retrospective reconciler's open-findings query.
+ *
+ * Extracted from `scripts/semantic-suppress.mjs` so the two properties that
+ * matter here are ASSERTABLE without a live store — both were violated by the
+ * original inline SQL, and neither is visible in the CLI's output:
+ *
+ *  1. **The cap must not be biased against the aging population.** It was
+ *     `ROW_NUMBER() OVER (ORDER BY created_at DESC) <= cap`, i.e. it kept the
+ *     NEWEST rows. Measured on this repo 2026-08-13: of **991** eligible
+ *     findings older than 14 days — the exact population `/ship`'s
+ *     unremediated-acceptance gate counts, whose rows are about to cross the
+ *     30-day ceiling and never be shown again — **0** fell inside the default
+ *     cap of 400, which reached back only to the previous day. The rows nearest
+ *     permanent expiry were the ones this reconciler could never examine.
+ *     Default is now `oldest`; the prospective record-time hook already covers
+ *     new arrivals, so this one's job is the backlog.
+ *  2. **A cap must say what it dropped.** `count(*) OVER ()` rides along as
+ *     `eligible`, so the caller can report `examined` vs `notExamined`. A
+ *     bounded read that reports only what it kept is indistinguishable from one
+ *     that covered everything — which is precisely why (1) went unnoticed.
+ *
+ * `order` is interpolated rather than bound because a sort direction is not a
+ * bindable parameter in Postgres; it is validated against {@link CAP_ORDERS}
+ * first, so only the literals `ASC`/`DESC` can reach the SQL.
+ *
+ * @param {{repoId: string, windowDays: number, cap: number, order?: 'oldest'|'newest'}} args
+ * @returns {{sql: string, params: [string, number, number]}}
+ */
+export function buildOpenFindingsQuery({ repoId, windowDays, cap, order = 'oldest' }) {
+  if (!CAP_ORDERS.includes(order)) {
+    throw new TypeError(`buildOpenFindingsQuery: order must be one of ${CAP_ORDERS.join('|')} (got ${JSON.stringify(order)})`);
+  }
+  const direction = order === 'oldest' ? 'ASC' : 'DESC';
+  return {
+    sql: `
+    WITH base AS (
+      SELECT f.id, LEFT(f.detail_snapshot,500) AS snap, f.primary_file, f.category, f.created_at,
+             ROW_NUMBER() OVER (ORDER BY f.created_at ${direction}) AS rn,
+             count(*) OVER () AS eligible
+      FROM audit_findings f JOIN audit_runs r ON r.id=f.run_id
+      WHERE r.repo_id=$1 AND f.created_at >= now() - ($2 || ' days')::interval
+        AND f.detail_snapshot IS NOT NULL AND length(f.detail_snapshot) >= 30
+        AND NOT starts_with(f.detail_snapshot, 'ADJACENCY_INCOMPLETE')
+        AND NOT EXISTS (SELECT 1 FROM finding_adjudication_events ev
+          WHERE ev.finding_id=f.id AND (ev.adjudication_outcome='dismissed' OR ev.remediation_state IN ('fixed','verified'))))
+    SELECT id, snap, primary_file, category, created_at, eligible FROM base WHERE rn <= $3`,
+    params: [repoId, windowDays, cap],
+  };
+}
+
 /**
  * Find the nearest OPEN finding for a repo by cosine over finding_embeddings,
  * using the pgvector `<=>` operator. Returns the single best match at/above

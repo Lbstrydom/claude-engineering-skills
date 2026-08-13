@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  decideReRaise, cosine, greedyReRaiseClusters, toVectorLiteral,
+  decideReRaise, cosine, greedyReRaiseClusters, toVectorLiteral, buildOpenFindingsQuery, CAP_ORDERS,
   partitionRecordTimeReRaises,
 } from '../scripts/lib/semantic-suppression.mjs';
 
@@ -153,4 +153,45 @@ test('record-time: a too-short detail is kept without embedding (nothing to comp
   const r = await partitionRecordTimeReRaises({ pool, repoId: 'r', embed: async () => { embedCalls++; return [1, 0]; }, findings, ...RT });
   assert.equal(r.kept.length, 1);
   assert.equal(embedCalls, 0, 'no embed call for sub-threshold-length detail');
+});
+
+// ── The retrospective reconciler's cap ───────────────────────────────────────
+// Regression origin (2026-08-13). The cap was `ROW_NUMBER() OVER (ORDER BY
+// created_at DESC) <= cap`, so it kept the NEWEST rows. Measured on this repo:
+// of 991 eligible findings older than 14 days — the population /ship's
+// unremediated-acceptance gate counts, and the one whose rows are days from
+// crossing the 30-day ceiling and never being surfaced again — ZERO fell inside
+// the default cap of 400, which reached back only to the previous day. The
+// reconciler structurally could not see the backlog it exists to collapse.
+//
+// Asserted on the generated SQL rather than against a store because the defect
+// IS the SQL, and it is invisible in the CLI's output either way.
+
+test('the cap keeps the OLDEST findings by default — the aging backlog is reachable', () => {
+  const { sql, params } = buildOpenFindingsQuery({ repoId: 'r1', windowDays: 30, cap: 400 });
+  assert.match(sql, /ROW_NUMBER\(\)\s+OVER\s+\(ORDER BY f\.created_at ASC\)/,
+    'default must order oldest-first; DESC is the defect that hid 991 rows');
+  assert.deepEqual(params, ['r1', 30, 400]);
+});
+
+test('--order newest is still available, and is the only other direction', () => {
+  const { sql } = buildOpenFindingsQuery({ repoId: 'r1', windowDays: 30, cap: 10, order: 'newest' });
+  assert.match(sql, /ORDER BY f\.created_at DESC/);
+  assert.deepEqual(CAP_ORDERS, ['oldest', 'newest']);
+});
+
+test('the cap cannot truncate silently — the eligible total rides along', () => {
+  const { sql } = buildOpenFindingsQuery({ repoId: 'r1', windowDays: 30, cap: 400 });
+  assert.match(sql, /count\(\*\) OVER \(\) AS eligible/,
+    'without the window total, a capped read is indistinguishable from a complete one');
+  assert.match(sql, /SELECT id, snap, primary_file, category, created_at, eligible FROM base/,
+    'the total must survive into the projection, not just the CTE');
+});
+
+test('an unknown order is rejected before it can reach the SQL', () => {
+  // A sort direction cannot be a bound parameter, so it is interpolated —
+  // validation is what keeps that safe.
+  assert.throws(() => buildOpenFindingsQuery({ repoId: 'r1', windowDays: 30, cap: 5, order: 'ASC; DROP TABLE audit_findings' }),
+    /order must be one of oldest\|newest/);
+  assert.throws(() => buildOpenFindingsQuery({ repoId: 'r1', windowDays: 30, cap: 5, order: 'random' }), TypeError);
 });

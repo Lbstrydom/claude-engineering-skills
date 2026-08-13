@@ -114,6 +114,12 @@ const EXPECTED_EXPORTS = [
   // them AND its foreign repo_id could be written into a regression spec.
   'findUnlockedFixInRepo',
   'getUnremediatedAcceptances', // accepted-but-never-remediated /ship nudge (2026-07-27)
+  // Read-time work-unit grouping for the two nudge readers above. Public
+  // because the grouping is computed at READ time — deliberately not persisted
+  // yet — so the command handler needs the vectors, and a caller that cannot
+  // tell "no embedding" from "not returned" would fold uncompared rows into a
+  // unit (2026-08-13).
+  'getFindingEmbeddings',
   // The page clamp for BOTH nudge readers above. Public because the CLI must
   // echo the RESOLVED limit/offset back to the caller, and one owner of the
   // bounds beats the CLI re-deriving them and drifting (2026-08-10).
@@ -420,6 +426,14 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // 182 → 183: +resolveRepoForStoreResult (cross-skill-cli-integrity F7 — the
     // discriminated repo resolver that lets a write caller fail closed on a
     // transient lookup failure instead of silently writing repo_id NULL).
-    assert.equal(EXPECTED_EXPORTS.length, 183);
+    // 183 → 184: +getFindingEmbeddings (2026-08-13). Backs `--group-by
+    // work-unit` on the acceptance nudge: 132 open rows carried 99 distinct
+    // `category` strings, so the field that looks like a grouping key is very
+    // nearly a unique one, and the backlog could only be worked a row at a
+    // time. Membership is deterministic by design (cosine over these vectors,
+    // cutoff derived from the repo's own distribution) — only the LABEL may
+    // come from a model, because the unit key is what a caller filters and
+    // diffs on.
+    assert.equal(EXPECTED_EXPORTS.length, 184);
   });
 });

@@ -138,6 +138,14 @@ export function bootstrapContract({ surfaceSelectors = [] } = {}) {
  */
 export function writeContract(root, contract, { force = false, allowDraft = false } = {}) {
   const file = path.join(root, CONTRACT_FILE);
+  // NOTE: deliberately NOT `if (!force && existsSync(file)) return`. That was a
+  // time-of-check/time-of-use race against the advertised no-clobber guarantee:
+  // another process (a concurrent `--bootstrap`, a second session in a shared
+  // tree) could create the contract between the check and the write, and the
+  // rename-based atomic write would then silently replace it. The exclusive
+  // write below asks the filesystem instead, so there is no window. The early
+  // return survives only as a cheap, non-authoritative fast path for the common
+  // case — the EEXIST handler at the write is what actually enforces it.
   if (!force && fs.existsSync(file)) {
     return { ok: false, path: file, error: `${CONTRACT_FILE} already exists — pass force to replace` };
   }
@@ -153,6 +161,15 @@ export function writeContract(root, contract, { force = false, allowDraft = fals
   // Persist the validated, Zod-normalized result — not the raw caller-owned
   // `contract` object — so what's on disk is exactly what was validated
   // (defaults applied, unknown-key stripping already enforced by `.strict()`).
-  atomicWriteFileSync(file, `${JSON.stringify(result.data, null, 2)}\n`);
+  try {
+    atomicWriteFileSync(file, `${JSON.stringify(result.data, null, 2)}\n`, { exclusive: !force });
+  } catch (err) {
+    // The authoritative no-clobber answer: another writer won the race between
+    // the fast-path check above and this write.
+    if (err.code === 'EEXIST') {
+      return { ok: false, path: file, error: `${CONTRACT_FILE} already exists — pass force to replace` };
+    }
+    throw err;
+  }
   return { ok: true, path: file };
 }

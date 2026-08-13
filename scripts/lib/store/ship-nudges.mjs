@@ -658,3 +658,42 @@ export async function countAgedUnremediatedAcceptances(scope) {
     return empty;
   }
 }
+
+/**
+ * Embeddings for a set of findings, for read-time work-unit grouping.
+ *
+ * Returns a Map so a caller can tell "this finding has no embedding" from "this
+ * finding is not in the result" — the two are the same thing here, and both must
+ * surface as `unclustered` rather than being dropped. A finding with no
+ * embedding was never COMPARED to anything; treating that as "belongs to no
+ * unit" would be indistinguishable from "compared and found unrelated".
+ *
+ * Scoping: `finding_embeddings` carries no `repo_id` of its own, so this is
+ * scoped by the caller supplying ids it already read under a repo scope — the
+ * same unit `persistKeptEmbeddings` trusts. It reads nothing the caller could
+ * not already read.
+ *
+ * @param {string[]} findingIds
+ * @returns {Promise<Map<string, number[]>>}
+ */
+export async function getFindingEmbeddings(findingIds) {
+  const out = new Map();
+  if (!Array.isArray(findingIds) || findingIds.length === 0) return out;
+  if (!await isCloudEnabled()) return out;
+  try {
+    const rows = await many(
+      `SELECT finding_id, embedding::text AS vec
+         FROM finding_embeddings
+        WHERE finding_id = ANY($1::uuid[]) AND embedding IS NOT NULL`,
+      [findingIds]);
+    for (const r of rows) {
+      const vec = String(r.vec).slice(1, -1).split(',').map(Number);
+      if (vec.length > 0 && vec.every(Number.isFinite)) out.set(r.finding_id, vec);
+    }
+  } catch (err) {
+    // Degrade to "nothing embedded" → every row reports `unclustered`, which is
+    // honest (we compared nothing) and never blocks the gate it serves.
+    process.stderr.write(`  [learning] getFindingEmbeddings failed: ${err.message}\n`);
+  }
+  return out;
+}

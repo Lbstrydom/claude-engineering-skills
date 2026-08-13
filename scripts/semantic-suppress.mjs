@@ -26,6 +26,7 @@
  *   node scripts/semantic-suppress.mjs --repo <name> --apply      # dismiss duplicates
  *   node scripts/semantic-suppress.mjs --repo <name> --threshold 0.94
  *   node scripts/semantic-suppress.mjs --repo <name> --window-days 30 --cap 400
+ *   node scripts/semantic-suppress.mjs --repo <name> --order newest   # see CAP_ORDERS
  *
  * @module scripts/semantic-suppress
  */
@@ -36,11 +37,16 @@ import { isCloudEnabled } from './lib/store/repo.mjs';
 import { initLearningStore, recordAdjudicationEvent } from './learning-store.mjs';
 import { embedText } from './lib/embed-text.mjs';
 import { symbolIndexConfig, semanticSuppressConfig } from './lib/config.mjs';
-import { greedyReRaiseClusters, toVectorLiteral } from './lib/semantic-suppression.mjs';
+import { greedyReRaiseClusters, toVectorLiteral, buildOpenFindingsQuery, CAP_ORDERS } from './lib/semantic-suppression.mjs';
 
 export const KNOWN_FLAGS = Object.freeze([
   '--selfcheck-relocation', '--repo', '--apply', '--threshold', '--window-days', '--cap', '--concurrency',
+  '--order',
 ]);
+
+// `--order` (default `oldest`) decides which end of the window the cap keeps.
+// The rationale, and the measurement that motivated flipping the default, live
+// with `buildOpenFindingsQuery` in lib/semantic-suppression.mjs.
 
 const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', D = '\x1b[2m', X = '\x1b[0m', B = '\x1b[1m';
 const arg = (argv, n, d) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : d; };
@@ -86,6 +92,11 @@ async function main() {
   const requireSameFile = semanticSuppressConfig.requireSameFile;
   const windowDays = Number(arg(argv, '--window-days', '30'));
   const cap = Number(arg(argv, '--cap', '400'));
+  const order = arg(argv, '--order', 'oldest');
+  if (!CAP_ORDERS.includes(order)) {
+    console.error(`--order must be one of ${CAP_ORDERS.join('|')} (got "${order}")`);
+    process.exit(2);
+  }
   const concurrency = Number(arg(argv, '--concurrency', '6'));
   const model = symbolIndexConfig.embedModel, dim = symbolIndexConfig.embedDim;
   const log = (m) => process.stderr.write(m + '\n');
@@ -97,20 +108,18 @@ async function main() {
   if (!rr.rows[0]) { console.error(`repo not found: ${repoName}`); process.exit(1); }
   const repoId = rr.rows[0].id;
 
-  // Open findings (the population the memory-health metric counts).
-  const { rows: open } = await pool.query(`
-    WITH base AS (
-      SELECT f.id, LEFT(f.detail_snapshot,500) AS snap, f.primary_file, f.category, f.created_at,
-             ROW_NUMBER() OVER (ORDER BY f.created_at DESC) AS rn
-      FROM audit_findings f JOIN audit_runs r ON r.id=f.run_id
-      WHERE r.repo_id=$1 AND f.created_at >= now() - ($2 || ' days')::interval
-        AND f.detail_snapshot IS NOT NULL AND length(f.detail_snapshot) >= 30
-        AND NOT starts_with(f.detail_snapshot, 'ADJACENCY_INCOMPLETE')
-        AND NOT EXISTS (SELECT 1 FROM finding_adjudication_events ev
-          WHERE ev.finding_id=f.id AND (ev.adjudication_outcome='dismissed' OR ev.remediation_state IN ('fixed','verified'))))
-    SELECT id, snap, primary_file, category, created_at FROM base WHERE rn <= $3`,
-    [repoId, windowDays, cap]);
+  // Open findings (the population the memory-health metric counts). The query
+  // lives in the pure module so its two load-bearing properties — an unbiased
+  // cap, and a cap that reports what it dropped — are testable without a store.
+  const { sql, params } = buildOpenFindingsQuery({ repoId, windowDays, cap, order });
+  const { rows: open } = await pool.query(sql, params);
+  const eligible = open.length > 0 ? Number(open[0].eligible) : 0;
+  const notExamined = Math.max(0, eligible - open.length);
   log(`${B}semantic-suppress${X} — ${repoName}: ${open.length} open finding(s), τ=${threshold}, same-file=${requireSameFile}, ${apply ? R + 'APPLY' + X : Y + 'DRY-RUN' + X}`);
+  log(`  window=${windowDays}d · eligible=${eligible} · examined=${open.length} (${order}-first)`
+    + (notExamined > 0
+      ? ` · ${Y}${notExamined} NOT examined${X} — raise --cap or re-run with --order ${order === 'oldest' ? 'newest' : 'oldest'}`
+      : ` · ${G}full window covered${X}`));
   if (open.length < 2) { console.log('too few findings'); await pool.end(); process.exit(0); }
 
   const withHash = open.map((r) => ({ ...r, hash: crypto.createHash('sha256').update(r.snap).digest('hex').slice(0, 16) }));

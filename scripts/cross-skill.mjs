@@ -166,6 +166,10 @@ const KNOWN_FLAGS = [
   '--inventory-json',
   // ── Shared identity / scoping flags (many subcommands) ────────────────────
   '--repo', '--repo-id', '--repo-uuid', '--limit', '--offset', '--format', '--out', '--cwd',
+  // ── backlog grouping (list-unremediated-acceptances) ──────────────────────
+  // `--group-by work-unit` clusters the page into refactor-sized units;
+  // `--work-unit <key>` pulls one unit's rows.
+  '--group-by', '--work-unit', '--no-llm-labels',
   // ── plan-satisfaction ─────────────────────────────────────────────────────
   '--plan-id',
   // ── final-review-stats / final-review-adjudicate / final-review-record-fix ─

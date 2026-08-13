@@ -198,3 +198,49 @@ test('CLI: --bootstrap writes an allowDraft draft; a subsequent normal run rejec
   assert.equal(code, 2, `expected the normal run to reject the un-edited draft (exit 2), stderr: ${stderr}`);
   assert.match(stderr, /sourceGlobs/, `stderr should name the missing field, got: ${stderr}`);
 });
+
+// ── No-clobber is enforced by the filesystem, not by a prior check ───────────
+// Regression origin: an accepted-but-unremediated HIGH finding (2026-07-30,
+// still live at HEAD 2026-08-13). `writeContract` implemented its advertised
+// no-clobber guarantee as `existsSync(file)` followed later by a rename-based
+// atomic write. Between the two, a concurrent `--bootstrap` or a second session
+// in a shared tree can create the contract, and `rename` replaces it silently:
+// the guarantee reads as enforced while being purely advisory.
+
+test('writeContract() refuses to replace an existing contract without force', (t) => {
+  const root = mkRoot(t);
+  assert.equal(writeContract(root, FIXTURES.valid, { force: true }).ok, true);
+  const second = writeContract(root, FIXTURES.valid);
+  assert.equal(second.ok, false);
+  assert.match(second.error, /already exists/);
+});
+
+test('the refusal survives a file that appears AFTER the fast-path check', (t) => {
+  // The race itself. The early `existsSync` cannot see this file (it does not
+  // exist when the check runs), so only an exclusive write can refuse — which
+  // is the whole point of the fix.
+  const root = mkRoot(t);
+  const file = contractPath(root);
+  let created = false;
+  const realExists = fs.existsSync;
+  t.mock.method(fs, 'existsSync', (p) => {
+    if (path.resolve(p) === path.resolve(file) && !created) {
+      created = true;                                   // report absent ONCE...
+      fs.writeFileSync(file, '{"raced":true}\n');       // ...then let a rival win
+      return false;
+    }
+    return realExists(p);
+  });
+  const res = writeContract(root, FIXTURES.valid);
+  assert.equal(res.ok, false, 'must not clobber the file that appeared mid-flight');
+  assert.match(res.error, /already exists/);
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).raced, true, "the rival's content must survive");
+});
+
+test('force still replaces, and leaves no temp file behind', (t) => {
+  const root = mkRoot(t);
+  assert.equal(writeContract(root, FIXTURES.valid, { force: true }).ok, true);
+  assert.equal(writeContract(root, FIXTURES.valid, { force: true }).ok, true);
+  assert.deepEqual(fs.readdirSync(root).filter((f) => f.startsWith('.tmp-')), [],
+    'the exclusive/replace paths must both clean up their temp file');
+});
