@@ -28,6 +28,13 @@
       "id": "consolidated-gemini-gate-mandatory",
       "kind": "document-only",
       "reason": "'The consolidated Gemini gate is mandatory after clustered execution, regardless of per-cluster convergence' is an orchestration invariant /cycle enacts by always running the union-diff Gemini review. No /cycle CLI, no exit code — the mandatory-ness is agent flow the model performs, not a mechanical gate."
+    },
+    {
+      "id": "cluster-scope-preflight-exits-nonzero",
+      "kind": "document-only",
+      "statedIn": "skills/cycle/SKILL.md",
+      "stated": "#    writes the patch. EXITS NON-ZERO on an out-of-scope edit, an unadmittable",
+      "reason": "DOCUMENT-ONLY here for the same reason as cluster-start-ref-validated-on-use: /cycle is an orchestrator and emits no exit code of its own, so there is nothing for the cli-exit oracle to assert against and asserting one would be the fake-check class this registry exists to catch. The claim is NOT unbacked — the mechanical half is scripts/cycle-cluster-scope.mjs, which owns the exit code and returns non-zero on (a) a changed path belonging to no declared cluster scope, (b) a declared path that would not be admitted and is not explained by this cluster having deleted it, and (c) a comma-unsafe path that --files cannot transport. Pinned by tests/cycle-audit-scope-contract.test.mjs against REAL throwaway git repos — rename (both operands), delete, untracked, typo, space-bearing and comma-bearing paths — because the defect it replaces was invisible to every check that read tool config instead of running it (measured 2026-08-13: 52 files audited against 11 declared, 26 of 31 findings about untouched code). Added 2026-08-14 under docs/plans/cycle-cluster-audit-scope.md KD-2/KD-3."
     }
   ],
   "ignoredCandidates": [
@@ -94,6 +101,38 @@
     {
       "line": "**A per-cluster fix-gate scores IN-CLUSTER findings only** (Step 4a). Scoring the whole plan against one cluster's diff makes every gate but the last unpassable; deferral is bounded to *later*-cluster scopes and settled at 3C.2. Never widen it to \"pre-existing\" — that is authorship, not schedule.",
       "reason": "Step 3C in-cluster fix-gate rule (2026-08-08). /cycle is a THIN ORCHESTRATOR: the loop is executed by the model, not by code, so none of these lines claims an enforcing script — they instruct the agent, and the enforcement they describe belongs to /audit-code (convergence thresholds, contracted in skills/audit-code/gate-contract.json) and to gemini-review.mjs (the consolidated gate). Contracting them here would assert an oracle that does not exist, which is the fake-check class this registry exists to catch. Added when the fix-gate wording was corrected: the old text demanded whole-plan convergence per cluster, which no cluster but the last could reach (measured 6->5->3 total HIGH against 2->2->0 in-cluster). See docs/plans/gate-honesty-adjudicated-defects.md 11.1."
+    },
+    {
+      "line": "**Audit envelope**: capture `clusterStartRef` (`vcs.gitCommitSha`) when implementation begins, write the cluster's derived scope one-path-per-line to a scope file, then run the two commands below. On a resume with no recorded `clusterStartRef`, require `--baseline-ref <sha>` or fall back to union-diff — **never** default the base to HEAD (empty diff = silent skip). Round policy is `/audit-code`'s own cap — no new policy here.",
+      "reason": "Caller-behaviour instruction, not a gate /cycle enforces with an exit code. The one mechanically-backed claim inside it — that a non-ancestor base is refused rather than demoted — is already dispositioned by the cluster-start-ref-validated-on-use gate, whose enforcement is scripts/lib/worktree-identity.mjs::resolveRangeSnapshot. 'require --baseline-ref' describes what the operator must supply on a resume; there is no /cycle exit code behind it."
+    },
+    {
+      "line": "> session, and 26 of 31 findings were about code the cluster never touched.",
+      "reason": "Prose describing the measured 2026-08-13 incident that motivated the rewrite. A statement about what happened, not a rule being asserted."
+    },
+    {
+      "line": "FILES=$(node -p \"require('./$SCOPE_JSON').filesCsv\")",
+      "reason": "Scanner false positive: the matched verb is Node's `require()` function inside a shell command substitution, not an enforcement 'require'. Reading a JSON field, no rule asserted."
+    },
+    {
+      "line": "PATCH=$(node -p \"require('./$SCOPE_JSON').diffPath\")",
+      "reason": "Scanner false positive: Node's `require()` function, not an enforcement verb. Same command block as the FILES= line."
+    },
+    {
+      "line": "INFRA=$(node -p \"require('./$SCOPE_JSON').allowInfraScopeRequired ? '--allow-infra-scope' : ''\")",
+      "reason": "Scanner false positive on both `require()` (the Node function) and the `allowInfraScopeRequired` field NAME. Reading a boolean the pre-flight computed; the rule it reflects lives in scripts/cycle-cluster-scope.mjs and is dispositioned by cluster-scope-preflight-exits-nonzero."
+    },
+    {
+      "line": "#   --diff    : annotation context only — does NOT scope; must be a real file",
+      "reason": "Describes what openai-audit.mjs's --diff flag IS (a materialised patch path, per openai-audit.mjs:618-620), not a gate /cycle enforces. The 'must' is documenting the flag's input contract so a caller does not pass a range expression."
+    },
+    {
+      "line": "including them guarantees a shortfall). The script returns both and never",
+      "reason": "Continuation of the two-sets explanation; same disposition as cluster-scope-preflight-exits-nonzero, which owns the enforceable half. Describes why deleted paths belong in one set and not the other."
+    },
+    {
+      "line": "to the consolidated Gemini gate over the union diff, where the deletion IS",
+      "reason": "Continuation of the deletion-only-cluster routing note. The consolidated gate itself is separately dispositioned by consolidated-gemini-gate-mandatory; this line only says where such a cluster goes."
     }
   ]
 }

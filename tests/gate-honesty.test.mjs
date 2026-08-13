@@ -141,7 +141,12 @@ const PINNED_DOCUMENT_ONLY = {
   // +1 cluster-start-ref-validated-on-use (worktree-identity-guards Phase 5):
   // document-only because /cycle delegates and emits no exit code of its own —
   // the enforcing refusal lives in the audit resolver and IS bound there.
-  cycle: ['cluster-start-ref-validated-on-use', 'preview-gate-halt-blocks-ship', 'fix-gate-convergence-before-next-cluster', 'author-tier-never-routes', 'consolidated-gemini-gate-mandatory'],
+  // +1 cluster-scope-preflight-exits-nonzero (cycle-cluster-audit-scope, 2026-08-14):
+  // document-only for the same reason as its sibling — /cycle orchestrates and
+  // emits no exit code; the enforcing non-zero exit lives in
+  // scripts/cycle-cluster-scope.mjs and is pinned against real git repos by
+  // tests/cycle-audit-scope-contract.test.mjs.
+  cycle: ['cluster-scope-preflight-exits-nonzero', 'cluster-start-ref-validated-on-use', 'preview-gate-halt-blocks-ship', 'fix-gate-convergence-before-next-cluster', 'author-tier-never-routes', 'consolidated-gemini-gate-mandatory'],
   plan: ['gate-1-phase-triggers', 'never-a-lone-phase-1', 'warnings-never-block-plan-generation', 'section-10-graded-by-ux-lock-verify'],
 };
 const PINNED_CONTRACTED_SKILLS = ['ai-context-management', 'audit-code', 'audit-plan', 'brainstorm', 'click-test', 'cycle', 'explain', 'investigate', 'nav-audit', 'persona-test', 'plan', 'security-strategy', 'ship', 'skills', 'ux-lock', 'visual-audit'];
@@ -212,7 +217,12 @@ describe('gate-honesty — real skills/', () => {
     // 41 → 43: +2 persona-test (finding-severity-literal-p0-p3 and
     //   p0p1-shape-mismatch-never-benign, 2026-08-11 — see the comment on the
     //   persona-test row in PINNED_DOCUMENT_ONLY for why neither is executable).
-    assert.equal(totalDocOnly, 43);   // +2 ux-lock, +5 ship, +4 cycle, +4 plan (Phase C final — ALL 15 contracted); +1 cycle cluster-start-ref (Phase 5)
+    // 43 → 44: +1 cycle (cluster-scope-preflight-exits-nonzero, Step 3C, 2026-08-14).
+    //   Document-only for the sibling's reason: /cycle orchestrates and emits no
+    //   exit code of its own; the enforcing non-zero exit is in
+    //   scripts/cycle-cluster-scope.mjs, pinned against real git repos by
+    //   tests/cycle-audit-scope-contract.test.mjs.
+    assert.equal(totalDocOnly, 44);   // +2 ux-lock, +5 ship, +4 cycle, +4 plan (Phase C final — ALL 15 contracted); +1 cycle cluster-start-ref (Phase 5)
 
     const allSkillNames = listSkillNames(skillsRoot);
     const expectedUncontracted = allSkillNames.filter((n) => !PINNED_CONTRACTED_SKILLS.includes(n));
