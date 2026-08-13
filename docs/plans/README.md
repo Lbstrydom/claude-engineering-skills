@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**9 active · 181 terminal · 27 audit summaries · 4 reference docs**
+**8 active · 182 terminal · 27 audit summaries · 4 reference docs**
 
 ---
 
@@ -22,7 +22,6 @@ This is the list to read when asking "what is in flight?".
 | Plan | Status | Notes |
 |---|---|---|
 | [cross-skill.mjs CLI integrity remediation](./cross-skill-cli-integrity.md) | `In Progress` | all 21 fixes landed + Gemini gate APPROVE; NOT `Complete` because the stated `/audit-code` bar (HIGH == 0) … |
-| [cross-skill CLI — declarative command registry](./cross-skill-command-registry.md) | `In Progress` | approved 2026-08-12; Cluster A started via /cycle --autonomous |
 | [Event-Wiring Symmetry Check](./event-wiring-symmetry.md) | `Draft` |  |
 | [Final-Review Shadow Bake-Off (marginal-value re-test)](./final-review-shadow-bakeoff.md) | `In Progress` | activated 2026-07-31 — see §0 Activation Addendum |
 | [Learning / Persona / Quickfix Reliability Debt (2026-07-26 triage)](./refactor-learning-persona-quickfix-2026-07.md) | `Draft` | re-scoped to the 7 entries that are still real. |
@@ -49,7 +48,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 178 completed plans</summary>
+<summary>Show all 179 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -94,6 +93,7 @@ source comments that no docs linter sees — stays valid.
 | [Audit Context Brief Generator](./context-brief.md) | `Complete` | shipped — `scripts/lib/context.mjs` (`readProjectContextForPass`, `readRepoProfile`, `generateBriefViaGemin… |
 | [VS Code GitHub Copilot compatibility audit + fixes](./copilot-compat-audit.md) | `Complete` |  |
 | [Cross-Model Finding Matching](./cross-model-finding-matching.md) | `Complete` | implemented + audited |
+| [cross-skill CLI — declarative command registry](./cross-skill-command-registry.md) | `Complete` | shipped 2026-08-12 across six clusters |
 | [Read-only Audit-Run Findings Viewer (dashboard module)](./dashboard-audit-run-viewer.md) | `Complete` | implemented + audited — see Implementation Log |
 | [Dashboard "Purpose" view — v2 (coverage, reverse-link, live health)](./dashboard-purpose-view-v2.md) | `Complete` |  |
 | [Dashboard "Purpose" view — v3 (per-domain health + outcome×domain matrix)](./dashboard-purpose-view-v3.md) | `Complete` |  |

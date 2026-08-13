@@ -1,7 +1,24 @@
 # Plan: cross-skill CLI — declarative command registry
 
 - **Date**: 2026-08-12
-- **Status**: In Progress — approved 2026-08-12; Cluster A started via /cycle --autonomous
+- **Status**: **Complete** — shipped 2026-08-12 across six clusters
+  (`67189e99` A · `87c1a19c` B · `29b93ddc` C · `c40a4fd7`+`ef1220c1` D ·
+  `773d946b` E · `f593b40a`+`5c952bc6` F) plus close-out `a146bb7b`,
+  the consolidated-gate fixes `ae8246db`, and `fa7ef2c4` (softFail retirement +
+  read-path tenancy). Every acceptance criterion below was verified
+  MECHANICALLY before this line was written, not from recollection:
+  `softFail` set empty (0 declared) · durability oracle iterates the store
+  DIRECTORY · **0 of 124** captured invocations emit `ok:false` at exit 0 ·
+  `emit()` couples `ok:false` to a non-zero exit with a committed 0-opt-out
+  baseline · registry 71 / inventory 71 with the legacy dispatch map deleted ·
+  `ownership.mjs` present with 4 parent-scoped commands · the DB-gated
+  ownership suite enrolled in BOTH required places · `plans-ship.mjs` reduced
+  to a re-export barrel.
+  **Two things this plan did NOT settle**, recorded so the status is not read
+  as more than it is: the `-h` short-flag question the final gate raised is
+  declined (not in the flag contract), and the read-path census found 15
+  id-addressed readers of which only the REPORTING ones were scoped — the
+  scope-deriving ones are correct unscoped and say so in place.
 - **Author**: Claude + Louis
 - **Scope**: backend
 - **Target domain(s)**: `cross-skill-bridge`, `shared-lib`, `stores`
