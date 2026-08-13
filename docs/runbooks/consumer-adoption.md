@@ -392,6 +392,114 @@ and you can start using `/audit-code`, `/persona-test`, etc.
 
 ---
 
+## Linked git worktrees — the tooling tree is not there
+
+**Symptom.** Any synced command dies with a bare Node error carrying no
+diagnosis:
+
+```
+Error: Cannot find module 'C:\repo\.claude\worktrees\my-branch\scripts\.claude-skills\check-context-drift.mjs'
+  code: 'MODULE_NOT_FOUND'
+```
+
+**Why.** `scripts/.claude-skills/` is gitignored by design (consumers never
+commit synced files), and `git worktree add` never populates ignored paths.
+The tree is present in the main checkout and absent in every linked worktree.
+
+What makes it a trap rather than an inconvenience is an asymmetry: Claude Code
+creates worktrees under `.claude/worktrees/` and copies `.claude/` into them,
+so the synced **SKILL.md arrives and the tooling it instructs does not**. Same
+class as the `check-cli-flags` / `check-npm-run-args` gaps recorded above — the
+instruction ships, the tool does not — on a new axis: *location* rather than
+bundle contents. Reported by a consumer 2026-08-13.
+
+It affects the whole synced surface, not one script: every
+`scripts/.claude-skills/*.mjs` that an npm script or a SKILL.md step names
+(`check-context-drift`, `ship-commit`, `cross-skill`, `visual-audit`,
+`symbol-index/*`, …). `/ship` fails on its **first** command — Phase 0's
+`detect-stack` — before reaching the `context:check` most people notice.
+
+### Do NOT sync into a worktree
+
+`npm run sync -- --target-path <worktree>` looks like the remedy and is not.
+Verified 2026-08-13 against a live consumer worktree: it aborts with
+`would ABORT — 1 unowned collision(s)`, because the ownership manifest
+(`scripts/.sync-manifest.json`) is itself gitignored and therefore absent
+there — so **every worktree reads as a fresh repo full of unowned files**.
+`--adopt-orphans` clears the abort by overwriting *tracked* files (in the
+reporting consumer, a committed `.audit-loop/expected-schema.json`). Don't.
+
+### Remedy 1 — hydrate the worktree (preferred when working there)
+
+Copy the main checkout's tree. The destination is gitignored in the worktree
+too, so nothing tracked is touched, and plain `npm run <script>` then works
+unchanged — which is why this beats rewiring every npm script to be
+worktree-aware.
+
+Add one script to the consumer's `package.json`. `package.json` is tracked, so
+it is present in every worktree — that is what makes this bootstrappable at all:
+
+```json
+"skills:hydrate": "node -e \"const{execFileSync}=require('node:child_process'),p=require('node:path'),f=require('node:fs');const main=p.dirname(execFileSync('git',['rev-parse','--path-format=absolute','--git-common-dir'],{encoding:'utf8'}).trim());const dir='scripts/.claude-skills';const src=p.join(main,dir);if(p.resolve(dir)===p.resolve(src)){console.log('[hydrate] main checkout - nothing to do');process.exit(0)}if(!f.existsSync(src)){console.error('[hydrate] no tooling at '+src+' - re-sync the main checkout first');process.exit(1)}f.cpSync(src,dir,{recursive:true});console.log('[hydrate] copied '+src)\""
+```
+
+Then, in the worktree:
+
+```bash
+npm run skills:hydrate
+```
+
+Three properties worth knowing, each verified by running the branch:
+
+- In the **main checkout** it is a no-op that says so — it never re-syncs, and
+  never masks a stale bundle as a fresh one.
+- With **no tooling in the main checkout** it exits **1** naming the path,
+  rather than leaving you with a half-populated tree.
+- It **copies, so it can go stale.** Re-run it in each worktree after a
+  re-sync from `claude-engineering-skills`.
+
+Node-only, single-quoted internals: it survives both `sh` and `cmd.exe`, which
+a `$(…)` shell substitution in an npm script does not. It assumes the common
+git dir's parent *is* the main checkout — true for a normal repo, wrong for a
+bare-repo-plus-worktrees layout.
+
+### Remedy 2 — one-off, without hydrating
+
+Run the main checkout's **script file** while keeping cwd in the worktree
+(bash / Git Bash; not `cmd.exe`):
+
+```bash
+node "$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")/scripts/.claude-skills/check-context-drift.mjs" --strict
+```
+
+### The cwd trap — do not `cd` to the main checkout
+
+Reaching for the main checkout by changing directory into it silently changes
+*what is being measured or written*:
+
+- `ship-commit.mjs` and `cross-skill.mjs` would read the main checkout's HEAD,
+  branch and `commit_sha` — committing and attributing the wrong tree.
+- `check-context-drift.mjs` takes its repo root from **cwd**
+  (`path.resolve(args.repo || '.')`), so a clean result obtained from the main
+  checkout describes the main checkout, not the branch you are shipping. Pass
+  `--repo <worktree>` if you must run it from elsewhere.
+
+### Pre-push hooks: fail loudly, do not skip
+
+A guard of the shape below — the natural thing to write, and present in a real
+consumer's `.githooks/pre-push.local` — degrades to a **pass** in a worktree:
+
+```sh
+if [ -f "$GATE" ]; then node "$GATE" --gating || exit $?; else echo "skipped"; fi
+```
+
+The push proceeds ungated and the run reads clean. That is the sandbox-honesty
+rule (AGENTS.md): a check that can go green having checked nothing needs to
+fail, not skip. Resolve the gate against the common git dir, or exit non-zero
+naming `npm run skills:hydrate`.
+
+---
+
 ## Main-branch protection (baseline-ratchet safety)
 
 **Why.** Any consumer that runs a **main-derived ratchet** — a Snyk baseline,

@@ -24,6 +24,47 @@ commits and pushes. Follow every step in order.
 
 ---
 
+## Phase 0a — Linked-worktree preflight (run BEFORE anything else)
+
+In a consumer repo the synced tooling tree `scripts/.claude-skills/` is
+gitignored, so `git worktree add` never populates it — while `.claude/` (this
+skill) *is* copied into the worktree. The instructions arrive, the tooling does
+not, and every step below that names `scripts/.claude-skills/…` dies on a bare
+`MODULE_NOT_FOUND`. **Phase 0's `detect-stack` is already one of them**, so
+check first:
+
+```bash
+git rev-parse --path-format=absolute --absolute-git-dir   # differs from below ⇒ linked worktree
+git rev-parse --path-format=absolute --git-common-dir     # <main>/.git
+```
+
+Equal ⇒ main checkout, proceed. Differ ⇒ linked worktree; if
+`scripts/.claude-skills/` is missing, hydrate it before Phase 0:
+
+```bash
+npm run skills:hydrate
+```
+
+If the consumer has no such script, add it — recipe and rationale in
+`docs/runbooks/consumer-adoption.md` §"Linked git worktrees" (in the
+claude-engineering-skills source repo). Two moves that look like fixes and are
+not:
+
+- **Never `cd` to the main checkout to run these.** `ship-commit.mjs` and
+  `cross-skill.mjs` would read the main checkout's HEAD, branch and
+  `commit_sha` — committing and attributing the wrong tree. `context:check`
+  (Step 4) takes its repo root from cwd, so a clean result from there says
+  nothing about the branch you are shipping.
+- **Never `npm run sync -- --target-path <worktree>`.** It aborts on unowned
+  collisions (the ownership manifest is gitignored, so a worktree reads as a
+  fresh repo), and `--adopt-orphans` clears the abort by overwriting tracked
+  files.
+
+Not applicable in the source repo (`claude-engineering-skills`), where
+`scripts/` is tracked and worktrees hydrate normally.
+
+---
+
 ## Phase 0 — Repo Stack Detection
 
 ```bash
