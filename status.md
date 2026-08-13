@@ -1,5 +1,58 @@
 # Project Status Log
 
+## 2026-08-13 — the god-module/layering deferral, scoped: 14 edges, 4 of them debt
+
+`audit-store-write-durability.md` §9 deferred "the god-module / layering family
+(26 rows, 2 HIGH)" as architectural refactoring that would prevent convergence.
+The deferral was right; every number in it was wrong. Plan:
+[god-module-and-layering-debt.md](docs/plans/god-module-and-layering-debt.md).
+
+**Measured, not recalled.** Ran `arch-intent`'s `analyseImports` over all tracked
+`.mjs`, cross-checked against the store: **14 `not-in-allowedDeps` violations / 9
+domain edges at `581fea0b`**, behind **194 open `[Architecture]` rows (10 HIGH)** —
+a ~14:1 re-raise ratio. `legacy-production-audit.mjs` is 4,152 lines, but the
+defect is **one 2,602-line function** (63%), 34,312 tokens against an 18,000
+budget, which is why `splitOversizedFile` exists.
+
+**Only 4 of the 14 are code debt, and they are days old.** `d5e66d35` (2026-08-10)
+retagged `audit-arms.mjs` and `model-ab-decision.mjs`, re-baselined `allowedDeps`
+for the edges it REMOVED, and never checked the edges the retag CREATED inbound —
+its own message shows the one-direction check. All four findings first appear in
+the store on the retag date.
+
+**Then `a146bb7b` did it again, and the plan audit caught it before the tree did.**
+The shadow reviewer noted the plan applied its two-direction rule to two small
+retags but not to the largest one it was proposing (`scripts/lib/cross-skill/**`,
+15 files). Re-measuring proved it: that retag closed 10 edges and opened 4 new
+`tests → cross-skill-bridge` ones. **Three retags in four days, same
+one-directional error.** That is now the plan's argument for making the check
+mechanical.
+
+**Two of the plan's own premises were falsified during its audit** and are recorded
+in it rather than quietly fixed: `if (cloudRunId)` is *transitively correct*
+(one assignment, inside a `!noCloudRecording` block), not the weak gate the draft
+claimed; and `audit-backlog-triage-hardening.md` item 5 already owned
+god-orchestrator decomposition and had already derived the boundary list. The
+draft concluded greenfield without grepping for the mechanism — the exact lesson
+it quotes in §1.3.
+
+**Audit trail**: 3 GPT plan-audit rounds (H:3M:1 → H:1M:3 → H:2M:2), **12/12
+accepted, 100% acceptance every round**; Gemini final gate **APPROVE**, 0 new
+findings, coherence Strong. The observation-only shadow (claude-opus-5) then
+returned CONCERNS with **5 shadow-only findings, all 5 verified true at source** —
+including the stale-baseline one above. **An APPROVE from the primary gate is not
+evidence the shadow is noise**; consistent with this repo's own shadow A/B verdict.
+
+**Consumer-side verification**: `unverified` — this is a docs-only commit adding
+one untracked plan file; the artifact has no consumer-side retrieval path
+distinct from the commit itself, and no second checkout of this repo exists on
+this machine to clone into. Blocked prerequisite named rather than inherited from
+the producer-side green.
+
+**Scope note**: committed by path. The working tree carries 11 modified + 3
+untracked files belonging to a concurrent session (work-units, semantic-suppression,
+visual-contract, ship-nudges); none were staged, stashed or touched.
+
 ## 2026-08-13 (latest) — an endpoint and its credential were resolved apart
 
 A consumer's Azure install failed on both LLM routes and filed a report. Live
