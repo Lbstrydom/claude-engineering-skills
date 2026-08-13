@@ -75,7 +75,7 @@ import { parseIntentDoc } from '../arch-intent/intent-doc-parser.mjs';
 import { ArchIntentConfigError } from '../arch-intent/errors.mjs';
 import { detectRepoStack } from '../repo-stack.mjs';
 import { listRepoFiles } from '../repo-inventory.mjs';
-import { verifyExistenceFindings } from './finding-verification.mjs';
+import { verifyExistenceFindings, effectiveSeverity, countsTowardVerdict, isRefuted } from './finding-verification.mjs';
 import { getRepoContext } from '../repo-context.mjs';
 import { evaluateConvergence, evaluateConvergenceWithDetectors, resolveDetectorResultForRound } from './convergence.mjs';
 import { checkDetectors } from './detector.mjs';
@@ -3198,9 +3198,16 @@ export async function runLegacyProductionAudit(ctx) {
     const verified = verifyExistenceFindings(allFindings, { repoFiles: inv.files, inventoryComplete: inv.complete });
     allFindings.length = 0;
     allFindings.push(...verified);
-    const refutedN = verified.filter(f => f.verification?.verification === 'refuted').length;
-    if (refutedN > 0) {
-      process.stderr.write(`  [verify-gate] ${refutedN} existence finding(s) refuted (entity exists in repo) — excluded from verdict\n`);
+    // Name the IDs. A bare count told the reader that SOME finding in the
+    // list was disproven without saying which, and `findings[]` still carries
+    // the model's original severity — so a refuted HIGH was indistinguishable
+    // from a real one at the point of triage (measured 2026-08-13: a refuted
+    // H1 was fixed as a HIGH in a consumer repo).
+    const refuted = verified.filter(isRefuted);
+    if (refuted.length > 0) {
+      process.stderr.write(
+        `  [verify-gate] ${refuted.length} existence finding(s) REFUTED — the cited entity exists. `
+        + `Excluded from the verdict; do NOT act on them: ${refuted.map(f => `${f.id} (${f.severity}→${effectiveSeverity(f)})`).join(', ')}\n`);
     }
   } catch (err) {
     process.stderr.write(`  [verify-gate] skipped (non-blocking) — ${err.message}\n`);
@@ -3214,9 +3221,10 @@ export async function runLegacyProductionAudit(ctx) {
   };
   // Effective severity respects the verification gate: a refuted finding
   // has countsTowardVerdict=false; confirmed / requires_verification keep
-  // the model's original severity (audit G2).
-  const effSeverity = (f) => f.verification ? f.verification.verdictSeverity : f.severity;
-  const countsTowardVerdict = (f) => (f.verification ? f.verification.countsTowardVerdict : true);
+  // the model's original severity (audit G2). Both predicates now come from
+  // `finding-verification.mjs` — they were inline lambdas here, the second
+  // spelling of a rule the consumer SKILL.md never learned at all.
+  const effSeverity = effectiveSeverity;
   const countFor = (strictLint ? allFindings : allFindings.filter(f => !isToolFinding(f)))
     .filter(countsTowardVerdict);
   const high = countFor.filter(f => effSeverity(f) === 'HIGH').length;

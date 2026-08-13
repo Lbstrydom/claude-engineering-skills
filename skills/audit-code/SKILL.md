@@ -417,6 +417,25 @@ and status card format: `references/debt-capture.md`.
 
 ALL HIGH must be fixed. MEDIUM until ≤2 remain. LOW if mechanical.
 
+> **Read `finding.verification` before you triage on `finding.severity`.**
+> The deterministic existence gate resolves every "file/module X is missing"
+> claim against the real repo inventory and attaches a sibling `verification`
+> object. `finding.severity` is the model's ORIGINAL claim and is deliberately
+> never rewritten — so a **`verification.verification === 'refuted'`** finding
+> still reads `HIGH` in `findings[]` while the audit verdict has already
+> discounted it to `verdictSeverity: 'LOW'`.
+>
+> - `refuted` — **do not fix.** The cited file exists; the claim is a
+>   `--scope diff` context artefact. Fixing it means editing a file that was
+>   never missing. The stderr log names these: `[verify-gate] … REFUTED`.
+> - `confirmed` / `requires_verification` — triage normally at `severity`.
+>   A `requires_verification` on a list claim may say "N of M cited path(s) DO
+>   exist" — the claim is partly false; verify the rest before acting.
+>
+> Triage on `effectiveSeverity(finding)` from
+> [`finding-verification.mjs`](../../scripts/lib/audit/finding-verification.mjs),
+> never on a hand-rolled copy of the rule.
+
 **Track which files you modify** — you'll need this for `--changed` in Step 5.
 
 ```
