@@ -48,6 +48,11 @@ describe('maintenance-checks — CHECKS manifest', () => {
       'memory-health',
       'migration-drift',
       'model-freshness',
+      // One-shot, and deliberately listed here anyway: this inventory is what
+      // makes its REMOVAL as deliberate as its addition. When slice-recurrence
+      // retires (see scripts/slice-recurrence-check.mjs's header), this line
+      // goes with it and the test turns red until someone does.
+      'slice-recurrence',
     ].sort());
   });
 

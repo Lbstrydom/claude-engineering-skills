@@ -172,6 +172,20 @@ export const CHECKS = [
     steps: [{ script: 'cache-hitrate-check.mjs', args: [] }],
   },
   {
+    // DISPOSABLE, one-shot — the only entry here that is not a standing
+    // concern. It answers whether god-module slice 1 (`a7db0baf`) stopped the
+    // usage-accounting cluster recurring, is a silent no-op until 2026-09-10,
+    // and carries a retirement predicate in its own header: delete this entry,
+    // the script, this key from tests/maintenance-checks.test.mjs's inventory,
+    // and its runbook row once it has reported a non-`unknown` verdict once.
+    // It lives here rather than in a scheduler because a date alone cannot
+    // distinguish "cluster stopped" from "nobody audited" — see its header.
+    key: 'slice-recurrence',
+    label: 'God-module slice 1 recurrence verdict (one-shot, retires after reporting)',
+    requiredEnv: ['AUDIT_DB_URL'],
+    steps: [{ script: 'slice-recurrence-check.mjs', args: [] }],
+  },
+  {
     // Git-only, so no requiredEnv — it runs everywhere, including offline.
     // Deliberately a REPORT: it exits 0 whether or not it flags anything, so it
     // can never block a push. See the module header for why a guessing lint

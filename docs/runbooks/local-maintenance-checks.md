@@ -8,8 +8,11 @@ one-paragraph pointer; this doc is the operational depth.
 
 ## What it replicates
 
-7 checks, run as independent subprocesses (never crashes the whole run when
-one is skipped or fails):
+9 checks, run as independent subprocesses (never crashes the whole run when
+one is skipped or fails). (The count read "7" until 2026-08-13 while the
+manifest already held 8 — `tests/maintenance-checks.test.mjs` pins the KEYS,
+which is the honest inventory; this sentence is prose beside it. Recount from
+`CHECKS` if they ever disagree again.)
 
 | Check | Source workflow | What it does | Required env |
 |---|---|---|---|
@@ -20,6 +23,23 @@ one is skipped or fails):
 | `learning-weekly-review` | `learning-weekly-review.yml` | Recurring-issue digest | `AUDIT_DB_URL`, `LEARNING_REPO_NAME` |
 | `cache-hitrate` | *(ad hoc weekly routine)* | `AUDIT_CACHE_SEED` payoff check | `AUDIT_DB_URL` |
 | `debt-health` | *(ad hoc weekly routine)* | `.audit/tech-debt.json` ledger health: stale entries (>`DEBT_HEALTH_TTL_DAYS`, default 180d), recurring entries (>=`DEBT_HEALTH_RECURRENCE_THRESHOLD` distinct audit runs, default 3), and any configured per-path budget violations (see `debt-review.mjs`/`debt-budget-check.mjs`) | none (local file only) |
+| `slice-recurrence` ⏳ **one-shot, retires** | *(none — answers one question about one commit)* | Did god-module slice 1 (`a7db0baf`) stop the usage-accounting finding cluster recurring on `legacy-production-audit.mjs`? **Silent no-op until 2026-09-10.** | `AUDIT_DB_URL` |
+
+**`slice-recurrence` is the only entry here that is not a standing concern, and
+it is meant to be deleted.** It sits in this runner rather than in a scheduler
+for the reason the next section gives, plus one specific to it: a date reminder
+cannot tell *"the cluster stopped"* apart from *"nobody audited this file for
+four weeks"*. So it carries a denominator — `audit_pass_stats` rows for the
+`duplication`/`adjacency` passes — and reports `unknown` rather than green when
+the window measured nothing. It has a hard zero baseline that makes it
+seen-to-fail by construction: before the fix, **0 of 779** stored rows for those
+two passes carried a non-zero `input_tokens`, while the already-extracted passes
+carried them on most runs. Verified live on the day it shipped: 24 pass runs and
+0 new findings still returned `unknown`, which is the false green it exists to
+refuse. **Retire it** (script + `CHECKS` entry + the key in
+`tests/maintenance-checks.test.mjs` + `tests/slice-recurrence-check.test.mjs` +
+this row) once it reports a non-`unknown` verdict and that verdict is recorded in
+the slice log of [`audit-backlog-triage-hardening.md`](../plans/audit-backlog-triage-hardening.md).
 
 `debt-health` is the periodic counterpart to `/audit-code`'s per-audit debt
 capture (Step 3.6, `skills/audit-code/references/debt-capture.md`): capture
