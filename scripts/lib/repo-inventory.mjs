@@ -30,21 +30,46 @@ const WALK_SKIP_DIRS = new Set([
 // fs-walk (audit M5).
 const GIT_MAX_BUFFER = 64 * 1024 * 1024;
 
+/**
+ * Run a `git ls-files`-family command and return pathnames VERBATIM.
+ *
+ * **`-z` is load-bearing, and so is the absence of `.trim()`.** Without `-z`,
+ * git quotes any path carrying non-ASCII or control characters
+ * (`core.quotePath` defaults on): `src/café.mjs` comes back as the literal
+ * `"src/caf\303\251.mjs"`. Newline-splitting then compounds it — a pathname
+ * containing a newline becomes two phantom entries — and trimming rewrites any
+ * name with leading/trailing whitespace into one that does not exist.
+ *
+ * Every consumer treats inventory membership as PROOF (the verification gate
+ * refutes "file is missing" findings on it; `extractPlanPaths` decides which
+ * files the audit reads from it), so a mangled entry is wrong in both
+ * directions at once: a real file reported absent, and a path that exists
+ * nowhere reported present. `-z` disables quoting entirely and NUL cannot occur
+ * in a pathname, making the split unambiguous. The caller passes `-z`.
+ */
 function runGit(cmd, cwd) {
   return execSync(cmd, {
     cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: GIT_MAX_BUFFER,
   })
-    .split('\n')
-    .map((l) => l.trim())
+    .split('\0')
     .filter(Boolean);
 }
 
-/** Resolve the git work-tree root, or null when not in a git checkout. */
+/**
+ * Resolve the git work-tree root, or null when not in a git checkout.
+ *
+ * Strips ONLY the command's terminating newline. A blanket `.trim()` here is
+ * the same defect `runGit` carries above, one function over: it rewrites a root
+ * whose directory name legitimately begins or ends with whitespace into a path
+ * that does not exist, and every inventory path is then resolved relative to
+ * that wrong root.
+ */
 function gitRoot(baseDir) {
   try {
-    return execSync('git rev-parse --show-toplevel', {
+    const out = execSync('git rev-parse --show-toplevel', {
       cwd: baseDir, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim() || null;
+    }).replace(/\r?\n$/, '');
+    return out || null;
   } catch {
     return null;
   }
@@ -60,9 +85,9 @@ function gitRoot(baseDir) {
  * Gemini-R2-G2).
  */
 function gitInventory(root) {
-  const tracked = runGit('git ls-files', root);
-  const untracked = runGit('git ls-files --others --exclude-standard', root);
-  const deleted = new Set(runGit('git ls-files --deleted', root));
+  const tracked = runGit('git ls-files -z', root);
+  const untracked = runGit('git ls-files --others --exclude-standard -z', root);
+  const deleted = new Set(runGit('git ls-files --deleted -z', root));
   return [...new Set([...tracked, ...untracked])].filter((f) => !deleted.has(f));
 }
 
@@ -111,6 +136,55 @@ function fsWalkInventory(baseDir, warnings) {
  *   (audit M7): false when a subtree was unreadable. `warnings` carries
  *   inventory-completeness context instead of silently swallowing it.
  */
+/**
+ * Resolve a CITED repo-relative path against the inventory.
+ *
+ * **Why this is one oracle and not two.** A plan (and a model) routinely cites
+ * a path SUFFIX — `zone/zoneChat.js` for `src/services/zone/zoneChat.js` — and
+ * exact membership answers "no" there. `finding-verification.mjs` learned that
+ * at the OUTPUT layer (it refutes a false "missing file" finding on a unique
+ * suffix hit); `extractPlanPaths` did not, at the INPUT layer, so the same path
+ * was classified missing, excluded from the audited set, AND announced to the
+ * model as `**Missing:** …` — which the structure pass then faithfully
+ * reported. Measured 2026-08-13 on one consumer plan: 18 of 25 paths called
+ * missing resolved to exactly one real file, and 8 of them were never read by
+ * the audit at all. Two notions of "exists" in one pipeline is what produced a
+ * finding and a coverage hole from the same defect, so both sides call this.
+ *
+ * Segment-boundary only (`/${cited}`): `oneChat.js` must never match
+ * `zoneChat.js`. Ambiguity is NOT resolved — several hits prove nothing about
+ * which file was meant, and guessing is how a false verdict is manufactured.
+ *
+ * @param {string} citedPath - repo-relative as written (back/forward slashes ok)
+ * @param {Set<string>|string[]} repoFiles - canonical inventory (`listRepoFiles().files`)
+ * @returns {{status: 'exact'|'suffix'|'ambiguous'|'absent', resolved: string|null,
+ *   matchCount: number}} `resolved` is the real inventory path for `exact` and
+ *   `suffix`, and null otherwise. `ambiguous` carries its `matchCount` so a
+ *   caller can report why it declined rather than reporting plain absence.
+ */
+export function resolveUniqueSuffix(citedPath, repoFiles) {
+  const norm = String(citedPath ?? '').replace(/\\/g, '/').replace(/^\.\//, '');
+  if (!norm) return { status: 'absent', resolved: null, matchCount: 0 };
+
+  const fileSet = repoFiles instanceof Set ? repoFiles : new Set(repoFiles || []);
+  if (fileSet.has(norm)) return { status: 'exact', resolved: norm, matchCount: 1 };
+
+  // Segment-boundary suffix. Stop at 2 — the caller only distinguishes
+  // "exactly one" from "more than one", so counting the rest is wasted work on
+  // a large inventory.
+  const suffix = `/${norm}`;
+  const hits = [];
+  for (const f of fileSet) {
+    if (f.endsWith(suffix)) {
+      hits.push(f);
+      if (hits.length > 1) break;
+    }
+  }
+  if (hits.length === 1) return { status: 'suffix', resolved: hits[0], matchCount: 1 };
+  if (hits.length > 1) return { status: 'ambiguous', resolved: null, matchCount: hits.length };
+  return { status: 'absent', resolved: null, matchCount: 0 };
+}
+
 export function listRepoFiles({ baseDir = process.cwd() } = {}) {
   const warnings = [];
   let raw;

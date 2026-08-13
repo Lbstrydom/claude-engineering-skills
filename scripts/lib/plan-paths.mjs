@@ -12,6 +12,7 @@ import { pathToFileURL } from 'node:url';
 import { ALL_EXTENSIONS_PATTERN, toExtensionAlternation } from './language-profiles.mjs';
 import { normalizePath } from './file-io.mjs';
 import { isSensitiveFile, isAuditInfraFile } from './audit-scope.mjs';
+import { listRepoFiles, resolveUniqueSuffix } from './repo-inventory.mjs';
 
 /**
  * Below this many REGEX-resolvable paths, Phase 2 fuzzy keyword discovery
@@ -123,10 +124,38 @@ export function mergeScopeFiles(planFound, scopeFiles, { allowInfraFiles = false
   return { files: [...base, ...addedFromScope], addedFromScope, rejected };
 }
 
-export function extractPlanPaths(planContent, { allowInfraFiles = false } = {}) {
+export function extractPlanPaths(planContent, { allowInfraFiles = false, repoFiles = null } = {}) {
   const paths = new Set();
   let match;
   const infraExcluded = (p) => !allowInfraFiles && isAuditInfraFile(p);
+
+  // ── Cited-path resolution (single oracle — see `resolveUniqueSuffix`) ──
+  // A plan writes paths as PROSE, routinely relative to a subtree it named a
+  // heading ago: `zone/zoneChat.js` for `src/services/zone/zoneChat.js`. A bare
+  // `fs.existsSync` calls that missing, which (a) hides an existing file from
+  // the audited set entirely and (b) announces it to the model as
+  // `**Missing:** …`. Ambiguity and true absence stay missing — resolving them
+  // would trade a false "missing" for a false "found", manufacturing coverage.
+  //
+  // The inventory is built LAZILY: a plan whose paths all resolve literally
+  // (this repo's own, mostly) never pays for the `git ls-files` call.
+  let _inventory = repoFiles;
+  const inventory = () => {
+    if (_inventory === null) _inventory = listRepoFiles({ baseDir: process.cwd() }).files;
+    return _inventory;
+  };
+  /** @returns {string|null} the real repo path, or null if unresolvable. */
+  const resolveCited = (p) => {
+    if (fs.existsSync(path.resolve(p))) return p;
+    const hit = resolveUniqueSuffix(p, inventory());
+    if (hit.status !== 'exact' && hit.status !== 'suffix') return null;
+    // Re-apply the infra guard to the RESOLVED path. The extraction-time check
+    // saw the cited string, and `isAuditInfraFile` keys on a `scripts/` prefix
+    // the citation may not carry — so without this, resolving `lib/schemas.mjs`
+    // to `scripts/lib/schemas.mjs` would be a way around the guard.
+    if (infraExcluded(hit.resolved)) return null;
+    return hit.resolved;
+  };
 
   // Longest-first via the shared builder — a hand-written `js|…|json` order
   // matches `config.json` as `config.js` (see toExtensionAlternation).
@@ -166,7 +195,11 @@ export function extractPlanPaths(planContent, { allowInfraFiles = false } = {}) 
   }
 
   // Phase 2: Fuzzy keyword discovery — only when Phase 1 found very few files.
-  const regexFoundCount = [...paths].filter(p => fs.existsSync(path.resolve(p))).length;
+  // Counted through the SAME resolver as the final split: a suffix-resolvable
+  // path is resolvable, and counting it as unresolved used to depress this
+  // number below FUZZY_DISCOVERY_THRESHOLD and fire keyword discovery — which
+  // measurably pulls in unrelated files (see that constant's note).
+  const regexFoundCount = [...paths].filter(p => resolveCited(p) !== null).length;
   let fuzzyAdded = 0;
   if (regexFoundCount < FUZZY_DISCOVERY_THRESHOLD) {
     const keywords = _extractPlanKeywords(planContent);
@@ -199,10 +232,26 @@ export function extractPlanPaths(planContent, { allowInfraFiles = false } = {}) 
 
   const found = [];
   const missing = [];
+  const suffixResolved = [];
+  const allPaths = new Set();
+  // Dedup on the REAL path: a plan that writes both `config/grapeColourMap.js`
+  // and `src/config/grapeColourMap.js` names one file, and counting it twice
+  // inflates `files_planned` with a phantom.
+  const seenReal = new Set();
   for (const p of [...resolved.values()].sort((a, b) => a.localeCompare(b))) {
-    (fs.existsSync(path.resolve(p)) ? found : missing).push(p);
+    const real = resolveCited(p);
+    if (real === null) {
+      missing.push(p);
+      allPaths.add(p);
+      continue;
+    }
+    if (real !== p) suffixResolved.push({ cited: p, resolved: real });
+    allPaths.add(real);
+    if (seenReal.has(real)) continue;
+    seenReal.add(real);
+    found.push(real);
   }
-  return { found, missing, allPaths: new Set(resolved.values()), regexFoundCount, fuzzyAdded };
+  return { found, missing, allPaths, regexFoundCount, fuzzyAdded, suffixResolved };
 }
 
 // ── Internal Helpers ──────────────────────────────────────────────────────

@@ -34,6 +34,7 @@
 import path from 'node:path';
 import { isSensitivePath } from '../quickfix-patterns.mjs';
 import { resolveSpecifier, RESOLVABLE_EXTENSIONS } from '../module-graph.mjs';
+import { resolveUniqueSuffix } from '../repo-inventory.mjs';
 
 /**
  * Regexes that mark a finding as an *existence claim* about the repo.
@@ -240,21 +241,18 @@ function resolveFileClaim(name, { fileSet, fromFile, inventoryComplete }) {
     };
   }
 
-  if (fileSet.has(norm)) return { status: 'present', resolved: norm, reason: '' };
-
-  // ── Suffix resolution ──
-  // A model routinely cites a path SUFFIX ("zone/zoneChat.js") for a file that
-  // exists at "src/services/zone/zoneChat.js". Exact membership answers "no"
-  // there, which is why the same true claim refuted in one run and not the
-  // next. A UNIQUE segment-boundary suffix match is equally sound proof of
-  // PRESENCE; several matches prove nothing and stay unknown.
-  const suffix = `/${norm}`;
-  const hits = [];
-  for (const f of fileSet) {
-    if (f.endsWith(suffix)) { hits.push(f); if (hits.length > 1) break; }
+  // Exact membership, then UNIQUE segment-boundary suffix — a model routinely
+  // cites "zone/zoneChat.js" for "src/services/zone/zoneChat.js", and exact
+  // membership answers "no" there, which is why the same true claim refuted in
+  // one run and not the next. Delegated to `resolveUniqueSuffix` so this gate
+  // and `extractPlanPaths` cannot drift into two notions of "exists" — the
+  // drift that let a resolvable path be called missing on the way IN and
+  // refuted on the way OUT (see that function's header).
+  const hit = resolveUniqueSuffix(norm, fileSet);
+  if (hit.status === 'exact' || hit.status === 'suffix') {
+    return { status: 'present', resolved: hit.resolved, reason: '' };
   }
-  if (hits.length === 1) return { status: 'present', resolved: hits[0], reason: '' };
-  if (hits.length > 1) {
+  if (hit.status === 'ambiguous') {
     return { status: 'unknown', reason: `"${norm}" matches more than one repository path as a suffix — ambiguous, not adjudicated` };
   }
 
