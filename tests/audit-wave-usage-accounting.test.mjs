@@ -245,3 +245,38 @@ describe('wave usage accounting — a bouncer call must reach _usage', () => {
     assert.equal(result._usage.output_tokens, 0, 'no call means no tokens');
   });
 });
+
+// ── callCount is a measurement, not a constant ──────────────────────────────
+//
+// `cacheMetrics.perPass[*].callCount` was hard-coded to 1 for every registry
+// entry, including passes that never dispatched. That made the pipeline's only
+// per-pass call counter unusable as a denominator — the final-review shadow's
+// point that nothing persisted distinguishes "the bouncer was not invoked"
+// (legitimate: it fires only on eligible candidates) from "usage is still
+// fabricated as 0". The two waves now report their own count, tracked
+// independently of the token values so it cannot be circular.
+describe('per-pass callCount distinguishes "no call" from "one call"', () => {
+  it('a wave whose bouncer fires reports callCount 1', async () => {
+    const { client } = countingStub({
+      adjacency_bouncer: { decisions: [{ candidateId: 'adj-synth1', decision: 'keep', severity: 'HIGH', rationale: 'r' }] },
+    });
+    const result = await runMultiPassCodeAudit(client, PLAN_CONTENT, '', false, null, '', {
+      ...baseOpts('adjacency'),
+      __runAdjacencyAnalysis: async () => syntheticAdjacencyFacts(),
+    });
+    assert.equal(result._cacheMetrics.perPass.adjacency.callCount, 1);
+  });
+
+  // The direction that makes it a denominator rather than decoration: a pass
+  // that ran but dispatched nothing must report 0, not 1.
+  it('a wave that ran but made no model call reports callCount 0', async () => {
+    const { client, state } = countingStub({});
+    const result = await runMultiPassCodeAudit(client, PLAN_CONTENT, '', false, null, '', {
+      ...baseOpts('adjacency'),
+      __runAdjacencyAnalysis: async () => syntheticAdjacencyFacts({ safe: false }),
+    });
+    assert.equal(state.calls, 0, 'vacuous-pass guard: no model call may have happened');
+    assert.equal(result._cacheMetrics.perPass.adjacency.callCount, 0,
+      'a hard-coded 1 here is what made the counter useless as a denominator');
+  });
+});

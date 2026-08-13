@@ -1392,6 +1392,10 @@ async function runDuplicationPass({
   // The bouncer's measured usage, or null when no model call was made. Null →
   // a zeroed envelope below, which is an honest "nothing was spent" rather
   // than the constant this extraction removes.
+  // Counted independently of the token values, so "the bouncer was not invoked"
+  // stays distinguishable from "it ran and reported nothing" — the shadow
+  // reviewer's finding that no persisted signal separated those two.
+  let bouncerCalls = 0;
   let bouncerUsage = null;
   let dupFindings = [];
   let dupSummary = '';
@@ -1466,6 +1470,7 @@ async function runDuplicationPass({
           // Captured whether or not the call succeeded: a failed bouncer still
           // burns tokens, and dropping them would re-open this defect on the
           // degraded path only — the harder half to notice.
+          bouncerCalls += 1;
           bouncerUsage = bouncerResult?.usage ?? null;
           const decisions = bouncerResult?.result?.decisions;
           const mapped = decisions ? mapBouncerDecisionsToFindings(decisions, included, includedIds) : { ok: false, reason: 'bouncer call failed or returned no decisions' };
@@ -1487,6 +1492,7 @@ async function runDuplicationPass({
   }
   return {
     result: { pass_name: 'duplication', findings: dupFindings, summary: dupSummary },
+    callCount: bouncerCalls,
     usage: bouncerUsage ?? { input_tokens: 0, cached_tokens: 0, output_tokens: 0, reasoning_tokens: 0, latency_ms: 0 },
     latencyMs: Date.now() - dupStart,
   };
@@ -1511,6 +1517,10 @@ async function runAdjacencyPass({
   focusBlock, planContent, historyBlock, ledgerFile, impactSet, isR2Plus,
 }) {
   const adjStart = Date.now();
+  // Counted independently of the token values, so "the bouncer was not invoked"
+  // stays distinguishable from "it ran and reported nothing" — the shadow
+  // reviewer's finding that no persisted signal separated those two.
+  let bouncerCalls = 0;
   let bouncerUsage = null;
   let adjFindings = [];
   let adjSummary = '';
@@ -1559,6 +1569,7 @@ async function runAdjacencyPass({
             ...adjLimits,
             passName: 'adjacency',
           }, null);
+          bouncerCalls += 1;
           if (res?.usage) bouncerUsage = addUsage(bouncerUsage, res.usage);
           return res?.result ?? null;
         },
@@ -1584,6 +1595,7 @@ async function runAdjacencyPass({
   }
   return {
     result: { pass_name: 'adjacency', findings: adjFindings, summary: adjSummary },
+    callCount: bouncerCalls,
     usage: bouncerUsage ?? { input_tokens: 0, cached_tokens: 0, output_tokens: 0, reasoning_tokens: 0, latency_ms: 0 },
     latencyMs: Date.now() - adjStart,
   };
@@ -3645,7 +3657,19 @@ export async function runLegacyProductionAudit(ctx) {
     const perPassEntry = { totalInputTokens: 0, totalCachedTokens: 0, hitRate: 0, callCount: 0, retryCount: 0 };
     perPassEntry.totalInputTokens = r?.usage?.input_tokens ?? 0;
     perPassEntry.totalCachedTokens = r?.usage?.cached_tokens ?? 0;
-    perPassEntry.callCount = 1;
+    // Was 1 for EVERY registry entry, including passes that never dispatched —
+    // so the only per-pass call counter in the pipeline could not distinguish
+    // "made one call" from "made none", and was useless as a denominator
+    // (final-review shadow, MEDIUM). Precedence, most specific first:
+    //   • a pass that reports its own count (the mechanical waves, whose
+    //     bouncer fires only when the detector yields eligible candidates)
+    //   • a map-reduce pass: one call per MAP unit, plus REDUCE unless skipped
+    //   • otherwise: 1 if it ran, 0 if it did not
+    // Retries are NOT folded in here — `retryCount` carries them separately, and
+    // adding them would double-count against `totalInputTokens`.
+    perPassEntry.callCount = Number.isInteger(r?.callCount) ? r.callCount
+      : Number.isInteger(r?.unitsAttempted) ? r.unitsAttempted + (r?._reduceSkipped ? 0 : 1)
+      : entry.ran ? 1 : 0;
     perPassEntry.retryCount = r?._retried ? (r._attempts ?? 2) - 1 : 0;
     perPassEntry.hitRate = perPassEntry.totalInputTokens > 0
       ? perPassEntry.totalCachedTokens / perPassEntry.totalInputTokens : 0;
