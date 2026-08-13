@@ -61,6 +61,33 @@ function currentBranch() {
 }
 
 /**
+ * Parse `source`'s JSON as a payload object, or fail as BAD INPUT.
+ *
+ * A bare `JSON.parse` here threw a `SyntaxError`, which dispatch()'s catch-all
+ * reported as `EXCEPTION` + stack at exit 1 — the "the tool broke" shape, for
+ * what is a typo in an argument. Every other bad-input rejection on this CLI
+ * (unknown flag, stray positional, unknown subcommand) is exit 2, so the two
+ * were indistinguishable to anything checking `$?`.
+ *
+ * A non-object is rejected for the same reason one level up: `JSON.parse('7')`
+ * succeeds, and then every `payload.x` read downstream is silently `undefined`.
+ */
+function parsePayloadJson(source, raw) {
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new CommandError('BAD_PAYLOAD',
+      `${source} is not valid JSON: ${err.message}`, {}, 2);
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new CommandError('BAD_PAYLOAD',
+      `${source} must be a JSON object, got ${Array.isArray(parsed) ? 'an array' : parsed === null ? 'null' : typeof parsed}`, {}, 2);
+  }
+  return parsed;
+}
+
+/**
  * The legacy parsePayload algorithm VERBATIM (audit R3-H1 — precedence
  * frozen): `--json <inline>` wins, else `--stdin` reads fd 0, else a
  * trailing `{`-prefixed bare arg parses, else `{}`.
@@ -68,15 +95,15 @@ function currentBranch() {
 function parsePayload(rest) {
   const jsonIdx = rest.indexOf('--json');
   if (jsonIdx >= 0) {
-    return JSON.parse(rest[jsonIdx + 1] || '{}');
+    return parsePayloadJson('--json', rest[jsonIdx + 1] || '{}');
   }
   const stdinIdx = rest.indexOf('--stdin');
   if (stdinIdx >= 0) {
     const raw = readFileSync(0, 'utf8');
-    return raw.trim() ? JSON.parse(raw) : {};
+    return raw.trim() ? parsePayloadJson('--stdin payload', raw) : {};
   }
   if (rest.length > 0 && rest[rest.length - 1].startsWith('{')) {
-    return JSON.parse(rest[rest.length - 1]);
+    return parsePayloadJson('the trailing bare-JSON argument', rest[rest.length - 1]);
   }
   return {};
 }
