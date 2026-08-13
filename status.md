@@ -1,5 +1,46 @@
 # Project Status Log
 
+## 2026-08-13 (latest) — two dead imports pointed at a gate that runs elsewhere
+
+`scripts/openai-audit.mjs` imported `listRepoFiles` (`./lib/repo-inventory.mjs`)
+and `verifyExistenceFindings` (`./lib/audit/finding-verification.mjs`) at lines
+57–58 (at `9cbec6d8`) and called neither. The orchestration body that used them
+was extracted to
+[legacy-production-audit.mjs:3197](scripts/lib/audit/legacy-production-audit.mjs:3197)
+(at `9cbec6d8`), which imports both itself at lines 77–78 and runs the
+deterministic existence gate there.
+
+**Why they were worth removing rather than leaving.** The cost was not bytes.
+Tracing which module runs the existence gate, the entry-point import reads as
+evidence the gate runs at the entry point — a false lead in exactly the file
+someone opens first. Same class as a stale docstring: it resolves, so nothing
+flags it.
+
+**Verified before editing, not after.** Grep over `openai-audit.mjs` returned
+those two lines and nothing else — no call sites, and no re-export, so the file
+was not acting as a barrel for either symbol. Both modules stay in the sync
+dependency closure because `openai-audit.mjs:93` imports
+`legacy-production-audit.mjs`, which pulls them transitively; removing these does
+not drop a module from a consumer bundle.
+
+**Tests (measured 2026-08-13, this tree).**
+`node --test tests/relocation-guard.test.mjs` → 4 pass / 0 fail, including *every
+library in LIB_IMPORT_SET resolves to an importable module exporting its required
+symbols*. `npm test` → 11,828 tests, 11,802 pass, 0 fail, 26 skipped, 138s. The
+26 skips are the `AUDIT_DB_TEST_URL`-gated suites (no disposable DSN in this
+tree) and are unchanged in kind by this edit: neither removed import had a side
+effect — both modules export pure functions and are still loaded on the same code
+path via `legacy-production-audit.mjs`.
+
+**Consumer-side verification: `unverified`.** Blocked prerequisite — no consumer
+checkout on this machine for `sync-isolation-verify.mjs`, and the pushed sha was
+not re-cloned. `npm run sync:dry` was not run either; the pre-push hook's sync ran
+in its own sandbox. Producer-side green is not inherited here.
+
+**Scope.** One file, two deletions, no behaviour change. `status.md` also carries
+a `(latest)` marker demotion from the 2026-08-13 Azure-credential entry — the one
+this entry displaces; stale markers further down belong to other sessions.
+
 ## 2026-08-13 — a degraded ledger and a complete one produced identical rounds
 
 Backlog row `09571813` (audit run `3b0b697c`), accepted 2026-07-27, re-verified
@@ -118,7 +159,7 @@ the producer-side green.
 untracked files belonging to a concurrent session (work-units, semantic-suppression,
 visual-contract, ship-nudges); none were staged, stashed or touched.
 
-## 2026-08-13 (latest) — an endpoint and its credential were resolved apart
+## 2026-08-13 — an endpoint and its credential were resolved apart
 
 A consumer's Azure install failed on both LLM routes and filed a report. Live
 probes against the tenant (an APIM front-end at `…azure-api.net/foundry`) settled
