@@ -300,6 +300,28 @@ describe('check-stale-skill-surface.mjs — .github/copilot-instructions.md is c
     });
   }
 
+  it('fires INSIDE the pre-push sandbox — where a committed file would actually be caught', async () => {
+    // The sandbox-honesty early-exit exists for the UNTRACKED-directory rule: a
+    // clean checkout cannot contain untracked debris, so claiming to have verified
+    // it would be a lie. This rule is the opposite case — a clean checkout can
+    // absolutely contain a COMMITTED .github/copilot-instructions.md, and the
+    // sandbox is exactly where it must be caught. The check was originally placed
+    // after that early-exit and was therefore inert in the pre-push run; the
+    // clean-worktree run caught it as 'Missing expected rejection'.
+    fs.mkdirSync(path.dirname(FORBIDDEN), { recursive: true });
+    fs.writeFileSync(FORBIDDEN, '# committed notes\n');
+    await assert.rejects(
+      execFileAsync(process.execPath, [CLI, '--gate', '--source-surfaces'], {
+        cwd: REPO_ROOT, env: { ...process.env, AUDIT_PREPUSH_SANDBOX_ACTIVE: '1' },
+      }),
+      (err) => {
+        assert.equal(err.code, 1);
+        assert.match(err.stderr, /surface\/copilot-instructions-present/);
+        return true;
+      },
+    );
+  });
+
   it('BOUNDARY: a consumer-scoped invocation PASSES with the same file present', async () => {
     // Consumer .github/ is theirs; the sync never writes there. Without the
     // explicit flag the rule must not fire, however the root resolves.
