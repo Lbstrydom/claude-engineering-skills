@@ -266,6 +266,8 @@ export function collectReadBindings(statementPath) {
  *                              Genuinely condition-dependent by definition.
  *  - `consumes-in-branch`    — reads a binding DECLARED INSIDE this branch.
  *                              Ambiguous; needs semantic judgement.
+ *  - `reports-only`          — every effect is output. Cannot be trapped: no
+ *                              consumer outside the branch reads it.
  *  - `independent`           — reads neither. Mechanically a candidate for
  *                              "merely nested".
  *
@@ -283,6 +285,94 @@ export function collectReadBindings(statementPath) {
  *  `if (n < min) { warn(…); return min; }` were the only two candidates — both
  *  false positives of exactly this shape. */
 const CONTROL_FLOW_TYPES = new Set(['ReturnStatement', 'ContinueStatement', 'BreakStatement', 'ThrowStatement']);
+
+/** Calls whose whole effect is writing to an output stream. Kept deliberately
+ *  narrow — a bare `log(…)` identifier is NOT here, because a locally-defined
+ *  `log` can do anything, and a false `reports-only` is a missed defect. */
+function isOutputSinkCallee(callee) {
+  if (!callee || callee.type !== 'MemberExpression' || callee.computed) return false;
+  const prop = callee.property?.name;
+  const obj = callee.object;
+  if (obj?.type === 'Identifier') {
+    if (obj.name === 'console') return true;                       // console.*
+    if (/^(?:log|logger)$/i.test(obj.name)) {                      // logger.info(…)
+      return ['log', 'warn', 'error', 'info', 'debug', 'trace'].includes(prop);
+    }
+    return false;
+  }
+  // process.stdout.write / process.stderr.write
+  return prop === 'write'
+    && obj?.type === 'MemberExpression'
+    && obj.object?.type === 'Identifier' && obj.object.name === 'process'
+    && ['stdout', 'stderr'].includes(obj.property?.name);
+}
+
+/** Statement types a reporting block may be built out of. A `for`/`if`
+ *  wrapping nothing but output is still output. */
+const REPORT_WRAPPER_TYPES = new Set([
+  'BlockStatement', 'IfStatement', 'ForStatement', 'ForOfStatement', 'ForInStatement',
+  'WhileStatement', 'DoWhileStatement', 'SwitchStatement', 'SwitchCase',
+  'ContinueStatement', 'BreakStatement', 'EmptyStatement', 'VariableDeclaration',
+]);
+
+/**
+ * Is every effect this statement produces confined to writing output?
+ *
+ * Calls in ARGUMENT position are unrestricted — `console.log(\`… ${sum('x')}\`)`
+ * has to compute its message — but every statement-position call must be an
+ * output sink, and nothing anywhere may assign, mutate, await or construct.
+ *
+ * Found by running the wave against a real consumer diff (wine-cellar-app,
+ * 2026-08-13): `if (AS_JSON) { … } else { <the whole human-readable report> }`
+ * produced FOUR HIGH candidates, every one a `console.log`. By construction
+ * every statement in the else-arm of a format switch reads nothing the
+ * condition tests, so the mechanical rule admits the entire arm — and the
+ * bouncer then graded them HIGH, against its own rubric, which names a log
+ * line as the canonical DROP and reserves HIGH for "a consumer outside the
+ * branch reads the effect". Output has no such consumer, so this decides
+ * mechanically what the rubric already stated in prose rather than paying an
+ * LLM call to get it wrong. Corroborated independently by the Gemini final
+ * gate on the same run (`gpt_false_positive_count: 5`), which misattributed
+ * the findings to GPT — they are this wave's own.
+ */
+export function isReportsOnlyStatement(statementPath) {
+  const node = statementPath?.node;
+  if (!node) return false;
+
+  let sawOutput = false;
+  let disqualified = false;
+
+  const visitExpressionStatement = (n) => {
+    if (n.expression?.type !== 'CallExpression' || !isOutputSinkCallee(n.expression.callee)) {
+      disqualified = true;
+      return;
+    }
+    sawOutput = true;
+  };
+
+  // Walk STATEMENTS only; expressions are inspected for banned effects below.
+  const walkStatement = (n) => {
+    if (disqualified || !n || typeof n.type !== 'string') return;
+    if (n.type === 'ExpressionStatement') { visitExpressionStatement(n); return; }
+    if (!REPORT_WRAPPER_TYPES.has(n.type)) { disqualified = true; return; }
+    for (const key of ['body', 'consequent', 'alternate', 'cases']) {
+      const child = n[key];
+      if (Array.isArray(child)) child.forEach(walkStatement);
+      else if (child && typeof child.type === 'string') walkStatement(child);
+    }
+  };
+  walkStatement(node);
+  if (disqualified || !sawOutput) return false;
+
+  // No effect may escape the statement: an assignment, mutation, await,
+  // generator yield or construction means this is not merely reporting.
+  let escapes = false;
+  const BANNED = new Set(['AssignmentExpression', 'UpdateExpression', 'AwaitExpression', 'YieldExpression', 'NewExpression']);
+  statementPath.traverse({
+    enter(p) { if (BANNED.has(p.node.type)) escapes = true; },
+  });
+  return !escapes;
+}
 
 export function classifyStatementDependence(statementPath, { conditionNode, branchPath }) {
   // A guard clause's terminator is condition-dependent by construction.
@@ -369,6 +459,15 @@ export function classifyStatementDependence(statementPath, { conditionNode, bran
       }
     }
   }
+
+  // ── REPORTS-ONLY, checked LAST ──
+  // This is a candidate EXCLUSION, not a dependence fact, so every real
+  // dependence rule above outranks it. Checked first (the first draft), it
+  // preempted `consumes-in-branch` on a `process.stderr.write(\`Kept:
+  // ${kept.length}\`)` that genuinely reads an in-branch binding — caught by
+  // the MIRROR test, which exists precisely to stop a rule from passing by
+  // calling everything harmless.
+  if (isReportsOnlyStatement(statementPath)) return 'reports-only';
 
   return 'independent';
 }

@@ -437,3 +437,98 @@ describe('runAdjacencyAnalysis — facts, not a state', () => {
     assert.ok(!('state' in r), 'a state computed here would be stale before it is used');
   });
 });
+
+describe('reports-only — output is never trapped', () => {
+  /** Classify the single top-level statement of the branch holding `line`. */
+  const classifyOne = (src, line) => {
+    const { ast } = parseSource(src);
+    const found = findEnclosingConditional(ast, line);
+    assert.ok(found, `no enclosing conditional at line ${line}`);
+    const stmt = enumerateBlockStatements(found.branchPath)
+      .find((s) => s.node.loc.start.line <= line && s.node.loc.end.line >= line);
+    assert.ok(stmt, `no statement at line ${line}`);
+    return classifyStatementDependence(stmt, { conditionNode: found.conditionNode, branchPath: found.branchPath });
+  };
+
+  // The field shape, reduced: `if (AS_JSON) { … } else { <human report> }`.
+  // Every statement in the else-arm of a format switch reads nothing the
+  // condition tests, so the mechanical rule admits the whole arm — and the
+  // bouncer graded four console.logs HIGH (wine-cellar-app, 2026-08-13).
+  const FORMAT_SWITCH = `
+    function main(report, COMMIT, sum) {
+      if (AS_JSON) {
+        console.log(JSON.stringify(report, null, 2));
+      } else {
+        console.log(COMMIT ? 'COMMITTED' : 'DRY RUN');
+        for (const c of report.cellars) {
+          if (!c.remap.length) continue;
+          console.log(\`  \${c.name} remap \${String(c.remap.length).padEnd(3)}\`);
+          for (const r of c.remap.slice(0, 5)) console.log(\`    \${r.row}\`);
+        }
+        console.log(\`TOTAL \${sum('remap')}\`);
+        if (sum('blocked') > 0) {
+          console.log('investigate before Cluster C');
+        }
+      }
+    }`;
+
+  test('a bare console.log in an else arm is reports-only', () => {
+    assert.equal(classifyOne(FORMAT_SWITCH, 6), 'reports-only');
+  });
+  test('a loop whose body is only output is reports-only', () => {
+    assert.equal(classifyOne(FORMAT_SWITCH, 7), 'reports-only');
+  });
+  test('output whose ARGUMENTS call helpers is still reports-only', () => {
+    assert.equal(classifyOne(FORMAT_SWITCH, 12), 'reports-only', 'sum() in argument position is message-building');
+  });
+  test('an if wrapping only output is reports-only', () => {
+    assert.equal(classifyOne(FORMAT_SWITCH, 13), 'reports-only');
+  });
+
+  // ── Negative controls. The class this wave exists to find must survive. ──
+  test('a real trapped call is STILL independent', () => {
+    const src = `
+      function f(allFindings, ctx) {
+        if (cloudOn) {
+          for (const x of allFindings) populateFindingMetadata(x, ctx);
+        }
+      }`;
+    assert.equal(classifyOne(src, 4), 'independent', 'the WS-C defect shape must not be swallowed');
+  });
+  test('output MIXED with an assignment is not reports-only', () => {
+    const src = `
+      function f(state) {
+        if (verbose) {
+          { console.log('tick'); state.count += 1; }
+        }
+      }`;
+    assert.equal(classifyOne(src, 4), 'independent');
+  });
+  test('an awaited log is not reports-only (the await may sequence real work)', () => {
+    const src = `
+      async function f(sink) {
+        if (verbose) {
+          { await console.log('tick'); }
+        }
+      }`;
+    assert.notEqual(classifyOne(src, 4), 'reports-only');
+  });
+  test('a bare log() identifier is not an output sink — it could do anything', () => {
+    const src = `
+      function f() {
+        if (verbose) {
+          log('tick');
+        }
+      }`;
+    assert.equal(classifyOne(src, 4), 'independent');
+  });
+  test('logger.info and process.stderr.write ARE sinks', () => {
+    const src = `
+      function f(payload) {
+        if (verbose) {
+          { logger.info(payload); process.stderr.write('x'); }
+        }
+      }`;
+    assert.equal(classifyOne(src, 4), 'reports-only');
+  });
+});

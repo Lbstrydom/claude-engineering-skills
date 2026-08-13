@@ -9,6 +9,9 @@ import {
   classifyFinding,
   extractCitedEntity,
   verifyExistenceFindings,
+  effectiveSeverity,
+  countsTowardVerdict,
+  isRefuted,
 } from '../scripts/lib/audit/finding-verification.mjs';
 
 const REPO = ['scripts/lib/brainstorm/schemas.mjs', 'scripts/lib/secret-patterns.mjs', 'AGENTS.md'];
@@ -153,5 +156,142 @@ describe('verifyExistenceFindings — the H1/H2/M2 regression', () => {
       { repoFiles: REPO },
     );
     assert.equal(out[0].verification.verification, 'requires_verification');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Field regressions, wine-cellar-app 2026-08-13. Every `detail` below is the
+// VERBATIM prose from a real `.audit/*-r1-result.json` finding that shipped
+// as an unrefuted HIGH/MEDIUM against files that all existed. Hand-written
+// fixtures encode what the reader expects; these encode what production
+// actually emits (AGENTS.md, prose↔code seam).
+// ─────────────────────────────────────────────────────────────────────────
+describe('field regressions — absence prose the gate used to miss', () => {
+  const WINE = [
+    'src/services/zone/zoneChat.js', 'src/routes/cellar.js',
+    'src/config/grapeColourMap.js', 'src/routes/index.js',
+  ];
+
+  it('extracts the cited path, not "from", out of "is missing FROM the inventory"', () => {
+    // The predicative use of `missing`: the entity PRECEDES the keyword.
+    // CLAIM_AFTER captured `from` and the gate answered
+    // '"from" looks like an external dependency' — an extractor failure
+    // dressed as an adjudication.
+    const f = finding({
+      category: '[Structure] Missing module / broken import',
+      section: 'src/routes/cellar.js; planned zone/zoneChat.js',
+      detail: '`src/routes/cellar.js` imports `reassignWineZone` from '
+        + '`../services/zone/zoneChat.js`, but the planned `zone/zoneChat.js` module is '
+        + 'missing from the repository inventory.',
+    });
+    const e = extractCitedEntity(f);
+    assert.notEqual(e?.name, 'from', 'captured an English function word as the entity');
+    assert.equal(e.kind, 'file');
+    const v = verifyExistenceFindings([f], { repoFiles: WINE })[0].verification;
+    assert.equal(v.verification, 'refuted');
+    assert.equal(v.verdictSeverity, 'LOW');
+  });
+
+  it('resolves a cited path SUFFIX to its unique repo path', () => {
+    const r = verifyExistenceFindings([finding({
+      detail: 'The `zone/zoneChat.js` module is missing.',
+    })], { repoFiles: WINE })[0].verification;
+    assert.equal(r.verification, 'refuted');
+    assert.match(r.verificationReason, /src\/services\/zone\/zoneChat\.js/);
+  });
+
+  it('an AMBIGUOUS suffix is never refuted', () => {
+    const r = verifyExistenceFindings([finding({
+      detail: 'The `index.js` file is missing.',
+    })], { repoFiles: ['a/index.js', 'b/index.js'] })[0].verification;
+    assert.equal(r.verification, 'requires_verification');
+    assert.match(r.verificationReason, /more than one/i);
+  });
+
+  it('classifies PLURAL absence prose ("modules … are absent")', () => {
+    assert.equal(classifyFinding(finding({
+      category: '[Structure] Planned production modules missing',
+      detail: 'The production modules planned for the registry-gate cutover are absent: '
+        + '`src/config/grapeColourMap.js`, `src/routes/index.js`.',
+    })), true);
+    assert.equal(classifyFinding(finding({
+      category: '[Structure] Missing contract and integration coverage',
+      detail: 'None of the three planned verification files exists: '
+        + '`tests/unit/contracts/a.test.js`, `tests/unit/contracts/b.test.js`.',
+    })), true);
+  });
+
+  it('REFUTES a list claim when every cited path exists', () => {
+    const v = verifyExistenceFindings([finding({
+      severity: 'MEDIUM',
+      category: '[Structure] Planned production modules missing',
+      detail: 'The production modules planned for the registry-gate cutover are absent: '
+        + '`src/config/grapeColourMap.js`, `src/routes/index.js`.',
+    })], { repoFiles: WINE })[0].verification;
+    assert.equal(v.verification, 'refuted');
+    assert.equal(v.verdictSeverity, 'LOW');
+    assert.equal(v.countsTowardVerdict, false);
+  });
+
+  it('CONFIRMS a list claim when no cited path exists', () => {
+    const v = verifyExistenceFindings([finding({
+      detail: 'None of the three planned verification files exists: '
+        + '`tests/unit/contracts/a.test.js`, `tests/unit/contracts/b.test.js`.',
+    })], { repoFiles: WINE })[0].verification;
+    assert.equal(v.verification, 'confirmed');
+    assert.equal(v.verdictSeverity, 'HIGH', 'a confirmed absence keeps the model severity');
+  });
+
+  it('a PARTLY false list claim keeps its severity and says which exist', () => {
+    // The failure direction that matters: refuting here would bury the
+    // members that really are absent.
+    const v = verifyExistenceFindings([finding({
+      detail: 'The planned modules are absent: `src/routes/index.js`, `src/nope/gone.js`.',
+    })], { repoFiles: WINE })[0].verification;
+    assert.equal(v.verification, 'requires_verification');
+    assert.equal(v.verdictSeverity, 'HIGH');
+    assert.match(v.verificationReason, /1 of 2 cited path\(s\) DO exist/);
+    assert.match(v.verificationReason, /src\/routes\/index\.js/);
+  });
+
+  it('a list claim does not confirm absence against an INCOMPLETE inventory', () => {
+    const v = verifyExistenceFindings([finding({
+      detail: 'The planned modules are absent: `x/a.js`, `x/b.js`.',
+    })], { repoFiles: WINE, inventoryComplete: false })[0].verification;
+    assert.equal(v.verification, 'requires_verification');
+  });
+
+  it('a sensitive path inside a LIST is still never probed', () => {
+    const v = verifyExistenceFindings([finding({
+      detail: 'The planned modules are absent: `src/routes/index.js`, `.env.production`.',
+    })], { repoFiles: WINE })[0].verification;
+    assert.equal(v.verification, 'requires_verification', 'must not confirm or refute a secret path');
+  });
+
+  it('still leaves ordinary findings alone (negative control)', () => {
+    const out = verifyExistenceFindings([
+      finding({ category: 'Perf', detail: 'The loop is quadratic over `src/routes/index.js`.' }),
+      finding({ category: 'Naming', detail: 'These helpers are absent-minded about errors.' }),
+    ], { repoFiles: WINE });
+    assert.equal(out[0].verification, undefined);
+    assert.equal(out[1].verification, undefined);
+  });
+});
+
+describe('effectiveSeverity / countsTowardVerdict — the single read accessor', () => {
+  it('reports the verdict severity for a refuted finding, not the model claim', () => {
+    const v = verifyExistenceFindings([finding({
+      detail: 'The module `scripts/lib/secret-patterns.mjs` is missing.',
+    })], { repoFiles: REPO })[0];
+    assert.equal(v.severity, 'HIGH', 'the model claim stays immutable (audit M2)');
+    assert.equal(effectiveSeverity(v), 'LOW');
+    assert.equal(countsTowardVerdict(v), false);
+    assert.equal(isRefuted(v), true);
+  });
+  it('passes an ungated finding straight through', () => {
+    const f = finding({ category: 'DRY', detail: 'duplicated' });
+    assert.equal(effectiveSeverity(f), 'HIGH');
+    assert.equal(countsTowardVerdict(f), true);
+    assert.equal(isRefuted(f), false);
   });
 });
