@@ -26,15 +26,48 @@ and is the only pass with the map. You MAY note real coupling as a design
 concern — but label the category EXACTLY \`Coupling concern\` (never an invented
 \`[Architecture] …\` label) and describe it as coupling, not as a rule violation.`;
 
+// Sibling of the rule above, and the same shape: a pass must not return a
+// verdict about a document it was not given. A dependency-manifest claim
+// asserts something about `package.json` / a lockfile, which a `--scope diff`
+// pass receives partially or not at all.
+//
+// Measured 2026-08-13 over wine-cellar-app's `.audit` artifacts (22 unique
+// absence claims, each adjudicated against the tree at its own run's commit):
+// THREE HIGH findings, in THREE DIFFERENT passes, said a package was undeclared
+// when it had been declared all along — `openai ^6.17.0` twice (be-services,
+// sustainability) and `zod ^4.3.6` alongside it once (structure). Every one of
+// them wrote "the SUPPLIED package.json" / "the supplied package dependency
+// list": the model knew it was reasoning from a partial view, and asserted
+// absence anyway.
+//
+// This is the ONE absence class where the prompt is the right layer, which is
+// why it earns prompt text at all rather than a gate. `finding-verification.mjs`
+// cannot reach it in principle: a bare specifier classifies as `external`
+// (`tokenKind`), and a repo FILE inventory has nothing to say about an npm
+// manifest — verified on all three, two landing `requires_verification` and the
+// third not classified as an existence claim at all. Deliberately a SCOPE
+// restriction, not a "prove absence" obligation: the measured base rate of the
+// passes' file-absence claims is 16 true / 5 false, so a general reticence nudge
+// would risk 16 true findings to recover these 3.
+const NO_MANIFEST_ABSENCE_VERDICTS = `
+DEPENDENCY MANIFESTS ARE OUT OF SCOPE FOR THIS PASS. You receive a diff-scoped
+subset of the repo, so any package.json or lockfile you were given may be
+partial, stale, or absent entirely. Do NOT raise a finding claiming a package is
+undeclared, missing from dependencies, or absent from a manifest — "not in the
+supplied package.json" is a statement about your context window, not about the
+repo. You MAY flag the IMPORT itself when it is wrong on its own terms (unused,
+wrong module, a runtime import in a build-only path); never the absence of its
+declaration.`;
+
 export const PASS_STRUCTURE_SYSTEM = `You are auditing CODE STRUCTURE against a plan.
 FOCUS ONLY on: Do planned files exist? Are key exports/functions present? Are dependencies correct?
 Do NOT check code quality, style, or logic — other passes handle that.
-Be precise: cite exact file paths and function names.${NO_DECLARED_ARCH_VERDICTS}`;
+Be precise: cite exact file paths and function names.${NO_DECLARED_ARCH_VERDICTS}${NO_MANIFEST_ABSENCE_VERDICTS}`;
 
 export const PASS_WIRING_SYSTEM = `You are auditing API WIRING between frontend and backend.
 FOCUS ONLY on: Does every frontend API call have a matching backend route? Do HTTP methods match?
 Are request/response shapes compatible? Are auth headers included (apiFetch, not raw fetch)?
-Do NOT check code quality or logic — other passes handle that.${NO_DECLARED_ARCH_VERDICTS}`;
+Do NOT check code quality or logic — other passes handle that.${NO_DECLARED_ARCH_VERDICTS}${NO_MANIFEST_ABSENCE_VERDICTS}`;
 
 const PASS_BACKEND_OBJECTIVE_R1 = `You are auditing BACKEND CODE quality against engineering principles.
 FOCUS ONLY on these files: routes, services, DB queries, config, schemas.
@@ -78,7 +111,7 @@ persistent state — a no-op that reports success is the signature of this class
 Do NOT check frontend files or wiring — other passes handle that.
 Every recommendation must be a PROPER sustainable solution, not a band-aid.
 
-SEVERITY: HIGH = bugs/security/data-loss. MEDIUM = quality/maintainability. LOW = hygiene.${NO_DECLARED_ARCH_VERDICTS}`;
+SEVERITY: HIGH = bugs/security/data-loss. MEDIUM = quality/maintainability. LOW = hygiene.${NO_DECLARED_ARCH_VERDICTS}${NO_MANIFEST_ABSENCE_VERDICTS}`;
 
 export const PASS_BACKEND_SYSTEM = PASS_BACKEND_OBJECTIVE_R1 + '\n\n' + PASS_BACKEND_RUBRIC;
 export { PASS_BACKEND_RUBRIC };
@@ -112,7 +145,7 @@ FREEZE-SEMANTICS (#5): if the change names an existing source/feed/endpoint as t
 value but does not prove its SEMANTICS match what's claimed (units, scope, filter, freshness),
 flag it — naming a source is not proving the source means what you assume.
 
-SEVERITY: HIGH = broken UX/accessibility OR an unverified cross-surface value. MEDIUM = degraded quality. LOW = polish.${NO_DECLARED_ARCH_VERDICTS}`;
+SEVERITY: HIGH = broken UX/accessibility OR an unverified cross-surface value. MEDIUM = degraded quality. LOW = polish.${NO_DECLARED_ARCH_VERDICTS}${NO_MANIFEST_ABSENCE_VERDICTS}`;
 
 export const PASS_FRONTEND_SYSTEM = PASS_FRONTEND_OBJECTIVE_R1 + '\n\n' + PASS_FRONTEND_RUBRIC;
 export { PASS_FRONTEND_RUBRIC };
@@ -133,7 +166,7 @@ SEVERITY:
   unless you can show a specific failure scenario. "Hard to maintain" is not HIGH.
 - MEDIUM = quality erosion, architectural debt, coupling that slows change.
   File-size, monolith, god-component, and coupling concerns belong here.
-- LOW = hygiene, style, naming, dead code.${NO_DECLARED_ARCH_VERDICTS}`;
+- LOW = hygiene, style, naming, dead code.${NO_DECLARED_ARCH_VERDICTS}${NO_MANIFEST_ABSENCE_VERDICTS}`;
 
 export const PASS_SUSTAINABILITY_SYSTEM = PASS_SUSTAINABILITY_OBJECTIVE_R1 + '\n\n' + PASS_SUSTAINABILITY_RUBRIC;
 export { PASS_SUSTAINABILITY_RUBRIC };

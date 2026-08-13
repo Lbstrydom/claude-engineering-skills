@@ -50,3 +50,58 @@ test('backend pass prompt carries the scope-completeness rule (built injection p
     'demands a concrete failing input');
   assert.ok(/deliberate, documented asymmetry is NOT this/.test(built), 'exempts justified asymmetry');
 });
+
+// ── Dependency-manifest scope rule (2026-08-13) ─────────────────────────────
+//
+// Measured over wine-cellar-app's `.audit` artifacts: THREE HIGH findings in THREE
+// different passes claimed a package was undeclared when it was declared all along
+// (`openai ^6.17.0` twice, `zod ^4.3.6` once). All three wrote "the SUPPLIED
+// package.json" — the model knew its view was partial and asserted absence anyway.
+// The deterministic gate cannot reach this class (a bare specifier is `external`;
+// a repo FILE inventory says nothing about an npm manifest), which is what makes
+// the prompt the correct layer here and nowhere else in the absence family.
+const MANIFEST_PASSES = ['structure', 'wiring', 'backend', 'frontend', 'sustainability'];
+const MECHANICAL_PASSES = ['quickfix', 'duplication', 'adjacency'];
+
+test('every generator pass carries the dependency-manifest scope rule (built injection path)', () => {
+  for (const pass of MANIFEST_PASSES) {
+    const built = PASS_PROMPTS[pass];
+    // Match on whitespace-normalised text: the prompt is hard-wrapped, so a
+    // phrase-level assertion against the raw string is really an assertion about
+    // where the line breaks fall — it would fail on a pure re-wrap and pass on a
+    // reworded rule, which is backwards.
+    const flat = built.replace(/\s+/g, ' ');
+    assert.ok(flat.includes('DEPENDENCY MANIFESTS ARE OUT OF SCOPE'),
+      `${pass}: rule header missing from the built prompt`);
+    // The REASON must survive, not just the prohibition — a bare "don't do that"
+    // degrades into a rule the model cannot apply to an unseen phrasing.
+    assert.ok(flat.includes('statement about your context window, not about the repo'),
+      `${pass}: the context-window reason was dropped`);
+    // The carve-out is load-bearing in the opposite direction: without it the rule
+    // reads as "never mention dependencies" and would suppress real import defects.
+    assert.ok(flat.includes('MAY flag the IMPORT itself'),
+      `${pass}: the import-is-still-in-scope carve-out was dropped`);
+  }
+});
+
+test('the manifest rule names the phrasings the field findings actually used', () => {
+  // Derived from the three real findings, not from what the rule's author expected:
+  // "absent from the supplied package.json dependencies", "absent from the supplied
+  // package dependency list", "not declared in the supplied `package.json` dependency
+  // inventory". A rule naming only one spelling would miss the other two.
+  const built = PASS_PROMPTS.structure;
+  for (const phrasing of ['undeclared', 'missing from dependencies', 'absent from a manifest']) {
+    assert.ok(built.includes(phrasing), `the rule does not name the "${phrasing}" shape`);
+  }
+  assert.ok(/lockfile/.test(built), 'lockfiles are covered alongside package.json');
+});
+
+test('the manifest rule is NOT sprayed onto the mechanical waves', () => {
+  // Scope assertion, and a real cost guard: quickfix/duplication/adjacency are
+  // bouncers over pre-computed candidates — they never author a dependency verdict,
+  // so the tokens would be pure waste. Mirrors MECHANICAL_WAVES in audit-shadow.mjs.
+  for (const pass of MECHANICAL_PASSES) {
+    assert.ok(!PASS_PROMPTS[pass].includes('DEPENDENCY MANIFESTS ARE OUT OF SCOPE'),
+      `${pass} is a mechanical wave and must not carry the rule`);
+  }
+});

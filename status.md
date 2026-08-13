@@ -1,5 +1,78 @@
 # Project Status Log
 
+## 2026-08-13 — the one absence class the gate cannot reach, closed at the prompt
+
+Third and last of today's absence-gate entries, and the only one that touches a
+**prompt**. The question asked was whether the legacy pass prompts should carry an
+evidence/grounding obligation for absence claims. The answer was **mostly no** —
+with one narrow exception, and the reasoning matters more than the diff.
+
+**Why mostly no.** Adjudicating all 22 unique absence claims by hand (ground truth
+at each run's own commit) put the base rate at **16 true / 5 false / 1 ambiguous**.
+The passes are right about absence roughly three times in four. A general "prove
+how you established absence" obligation is a **reticence nudge**: it would risk 16
+true findings to recover 5 false ones, and at n=22 no realistic measurement could
+detect the harm before it shipped to every consumer. Of those 5 false, the
+deterministic gate already refutes 3, with **zero false refutations**.
+
+**Why one exception.** The uncaught residual is not a random remainder — it is one
+coherent class: a claim about a **dependency manifest**. Three HIGH findings, in
+three *different* passes, said a package was undeclared when it was declared all
+along: `openai ^6.17.0` twice (be-services, sustainability) and `zod ^4.3.6`
+alongside it once (structure). Every one wrote *"the **supplied** package.json"* /
+*"the supplied package dependency list"* — the model knew it was reasoning from a
+partial view and asserted absence anyway.
+
+**This is the one place the prompt is the right layer**, because the gate cannot
+reach the class even in principle: `tokenKind` classifies a bare specifier as
+`external`, and a repo FILE inventory has nothing to say about an npm manifest.
+Verified against current `main`: two land `requires_verification`, and the third
+is **not classified as an existence claim at all**, so the gate never looks at it.
+
+**A correction to the first analysis.** That analysis proposed the rule for the
+*structure* pass, having traced the residual to two clusterc findings. Re-checking
+before implementing — the `_pass` field, which the first pass over the data never
+read — showed the class spans **three** passes and included a **third** instance
+(`clusterA-r1` H2) that the earlier count missed. A structure-only rule would have
+fixed one case in three. The rule now sits on all 5 generator passes, as
+`NO_MANIFEST_ABSENCE_VERDICTS`, a sibling of the existing
+`NO_DECLARED_ARCH_VERDICTS` — same shape: *a pass must not return a verdict about
+a document it was not given.*
+
+It is deliberately a **SCOPE restriction, not an evidence obligation**. A scope
+rule cannot suppress the file-absence findings that are 73% true; a reticence
+nudge can. The carve-out ("you MAY flag the IMPORT itself") is load-bearing in the
+other direction — without it the rule reads as "never mention dependencies" and
+starts eating real import defects. Both halves are pinned by tests.
+
+**`EVIDENCE_CONTRACT_BLOCK` was considered and rejected**, and not on cost:
+it is **schema-blocked**. The emitted JSON Schema for `ProducerFindingSchema`
+carries `additionalProperties: false` and has no `causalChain` property, so the
+model cannot emit the field the block demands — asking for it would be strictly
+worse than no change. Routing the chain into `detail` is also tight: `maxLength`
+600, p90 already 550, 10.4% of findings at ≥550.
+
+**Costs, measured rather than assumed** (the cache objection did not survive
+contact): the structure pass's real cache hit rate is **6.34%** — 21,262 of
+335,199 input tokens over 17 runs — because R1 runs mostly hit 0% and only repeat
+rounds (60%, 44%) benefit. So there was far less prefix caching to disturb than
+the byte-stability contract implies. The rule adds 141 tok/pass × 5 = 705/run ≈
+**$0.03 across those 17 runs (0.18% of $16.56 actual spend)**, plus a one-time
+invalidation under $0.02. Cost was never the reason to say no; the base rate was.
+
+Registry vehicle: **seed edit**, because `bootstrapFromConstants` re-promotes a
+changed seed when the active revision is `bootstrap`-sourced (verified: active
+`rev-112f336b2d6e` is; the new seed is `rev-9d3cc793fb81`), so it reaches every
+consumer with no promotion step. Shadow unaffected — `SHADOW_PASSES` keys on
+`Object.keys(PASS_PROMPTS)`, so a content edit enrols no arm (verified: 8 keys, 5
+shadow passes, unchanged). AGENTS.md's warning covers the add-a-key case only.
+
+**How we would know it worked**: the gate already labels this class distinctly
+(*"looks like an external dependency … not adjudicated"*). Count those per run;
+a rule that worked drives the count to zero **without moving `confirmed`**. If
+`confirmed` falls too, the rule is suppressing true findings and should be
+reverted — the residual is 3, and it is not worth one.
+
 ## 2026-08-13 — a list claim's members ran past the sentence that ended it
 
 Sibling of the refute bug below, found the same day while measuring how often the

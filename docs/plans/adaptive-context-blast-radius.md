@@ -657,3 +657,58 @@ Backend scope — behavioural pass/fail contracts:
   absent" still does not match). The one field case affected reaches the same
   verdict either way, so widening it has no measured need — and a second list
   silently dropped is the conservative direction (`requires_verification`).
+
+### 2026-08-13 — the one absence class the gate cannot reach, closed at the prompt
+
+This plan's §1 problem statement is *"GPT claimed X was a missing module purely
+because it was absent from its context window"*, and fix #1 — the deterministic
+gate — resolves it wherever the subject is a **repo file**. One sub-class is
+structurally out of the gate's reach, and it is closed here instead.
+
+- **The residual**: a **dependency-manifest** claim. `finding-verification.mjs`
+  cannot adjudicate one even in principle — `tokenKind` classifies a bare
+  specifier as `external`, and a repo FILE inventory has nothing to say about an
+  npm manifest. Verified on all three field cases against current `main`: two
+  land `requires_verification`, and the third is **not classified as an existence
+  claim at all**, so the gate never looks at it.
+- **Measured** (same 22-claim corpus as the entry above): 3 HIGH findings, in 3
+  DIFFERENT passes, asserted a package was undeclared when it was declared all
+  along — `openai ^6.17.0` twice (be-services, sustainability) and `zod ^4.3.6`
+  alongside it once (structure). Ground truth read from `package.json` at each
+  run's own commit. All three wrote *"the **supplied** package.json"*: the model
+  knew its view was partial and asserted absence anyway.
+- **Fix**: `NO_MANIFEST_ABSENCE_VERDICTS`, a sibling of the existing
+  `NO_DECLARED_ARCH_VERDICTS`, on the same 5 generator passes. Same shape — *a
+  pass must not return a verdict about a document it was not given.*
+- **A SCOPE restriction, not a "prove absence" obligation** — this is the whole
+  design decision. The base rate of these passes' file-absence claims is **16
+  true / 5 false**, so a general reticence nudge would risk 16 true findings to
+  recover 3. A scope rule cannot suppress the file-existence findings at all.
+- **`EVIDENCE_CONTRACT_BLOCK` was considered and REJECTED for the legacy passes.**
+  It is schema-blocked, not merely expensive: the emitted JSON Schema for
+  `ProducerFindingSchema` carries `additionalProperties: false` and has no
+  `causalChain` property, so the model cannot emit the field the block demands.
+  Routing the chain into `detail` instead is also constrained — `maxLength` 600,
+  with p90 already at 550 and 10.4% of findings at ≥550.
+- **Cost, measured not guessed**: +141 tok/pass × 5 = 705/run. Across the 17 runs
+  with cache telemetry that is ~11,985 tokens ≈ **$0.03 against $16.56 of actual
+  spend (0.18%)**, plus a one-time invalidation under $0.02. The structure pass's
+  measured cache hit rate is **6.34%** (21,262 / 335,199 input tokens), so there
+  was far less prefix caching to disturb than the cache-stability contract
+  implies — R1 runs mostly hit 0%, and only repeat rounds (60%, 44%) benefit.
+- **Vehicle: seed edit, not a minted revision.** `bootstrapFromConstants`
+  re-promotes a changed seed whenever the active revision's `source` is
+  `bootstrap` (verified: active `rev-112f336b2d6e` is bootstrap-sourced; the new
+  seed is `rev-9d3cc793fb81`), so it reaches every consumer on their next run
+  with no promotion step. A manually promoted revision would have been left
+  alone — which is what makes the registry the right vehicle for an *experiment*
+  and the seed the right one for a settled rule.
+- **Shadow: unaffected.** `SHADOW_PASSES` derives from `Object.keys(PASS_PROMPTS)`,
+  so a content edit enrols no new arm (verified: 8 keys, 5 shadow passes, both
+  unchanged). AGENTS.md's warning is scoped to the add-a-key case and does not
+  apply.
+- 3 new tests in `prompt-seeds-rules.test.mjs`, pinning the rule's REASON and its
+  import-still-in-scope carve-out (without which it degrades to "never mention
+  dependencies" and starts suppressing real import defects), plus a scope
+  assertion that it is not sprayed onto the mechanical waves. Negative control:
+  deleting the rule fails 2 of the 3.
