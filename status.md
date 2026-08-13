@@ -1,5 +1,111 @@
 # Project Status Log
 
+## 2026-08-13 (latest) — two dead imports pointed at a gate that runs elsewhere
+
+`scripts/openai-audit.mjs` imported `listRepoFiles` (`./lib/repo-inventory.mjs`)
+and `verifyExistenceFindings` (`./lib/audit/finding-verification.mjs`) at lines
+57–58 (at `9cbec6d8`) and called neither. The orchestration body that used them
+was extracted to
+[legacy-production-audit.mjs:3197](scripts/lib/audit/legacy-production-audit.mjs:3197)
+(at `9cbec6d8`), which imports both itself at lines 77–78 and runs the
+deterministic existence gate there.
+
+**Why they were worth removing rather than leaving.** The cost was not bytes.
+Tracing which module runs the existence gate, the entry-point import reads as
+evidence the gate runs at the entry point — a false lead in exactly the file
+someone opens first. Same class as a stale docstring: it resolves, so nothing
+flags it.
+
+**Verified before editing, not after.** Grep over `openai-audit.mjs` returned
+those two lines and nothing else — no call sites, and no re-export, so the file
+was not acting as a barrel for either symbol. Both modules stay in the sync
+dependency closure because `openai-audit.mjs:93` imports
+`legacy-production-audit.mjs`, which pulls them transitively; removing these does
+not drop a module from a consumer bundle.
+
+**Tests (measured 2026-08-13, this tree).**
+`node --test tests/relocation-guard.test.mjs` → 4 pass / 0 fail, including *every
+library in LIB_IMPORT_SET resolves to an importable module exporting its required
+symbols*. `npm test` → 11,828 tests, 11,802 pass, 0 fail, 26 skipped, 138s. The
+26 skips are the `AUDIT_DB_TEST_URL`-gated suites (no disposable DSN in this
+tree) and are unchanged in kind by this edit: neither removed import had a side
+effect — both modules export pure functions and are still loaded on the same code
+path via `legacy-production-audit.mjs`.
+
+**Consumer-side verification: `unverified`.** Blocked prerequisite — no consumer
+checkout on this machine for `sync-isolation-verify.mjs`, and the pushed sha was
+not re-cloned. `npm run sync:dry` was not run either; the pre-push hook's sync ran
+in its own sandbox. Producer-side green is not inherited here.
+
+**Scope.** One file, two deletions, no behaviour change. `status.md` also carries
+a `(latest)` marker demotion from the 2026-08-13 Azure-credential entry — the one
+this entry displaces; stale markers further down belong to other sessions.
+
+## 2026-08-13 — a degraded ledger and a complete one produced identical rounds
+
+Backlog row `09571813` (audit run `3b0b697c`), accepted 2026-07-27, re-verified
+against HEAD `2305b7f8` before touching anything — a real defect, not a stale
+hypothesis.
+
+`validateLedgerForR2` ([legacy-production-audit.mjs:347](scripts/lib/audit/legacy-production-audit.mjs:347),
+at `2305b7f8`) counts the ledger entries it drops as malformed and reports the
+count on **stderr only**. `invalidEntryCount` was returned and never read: the
+one call site read `.valid` and `.validEntries` and nothing else. So an R2+ round
+whose suppression ran against a **truncated ruling set** was indistinguishable
+downstream from one that ran against a complete one — nothing in
+`_executionMeta`, the result JSON, or the round card could tell them apart. The
+repo's own "a degraded run must not read as a clean run" class.
+
+**Fixed on the existing channel, not a new one.** The count now travels the exact
+path `suppressionUnavailable` already travels: captured at the call site into a
+function-scoped counter, emitted from the merged-result assembly as
+`_executionMeta.ledgerInvalidEntryCount`, declared in `ExecutionMetaSchema`, and
+read by `audit-loop.mjs`, which prints a `Ledger degraded` line on the round card.
+`_executionMeta` stays `undefined` on a clean round and each key is omitted rather
+than zeroed, so absence keeps meaning "nothing degraded" and a hard `0` can never
+read as a measurement nobody took.
+
+**It deliberately does not gate convergence.** `suppressionUnavailable` blocks
+because suppression did not run at all; this one ran, against partial input. Note
+the direction: dropped rulings *inflate* findings, so unlike `suppressionUnavailable`
+it cannot manufacture a false converged verdict. Gating on it would let one
+permanently-malformed legacy entry block every future round and burn the loop to
+`maxRounds` forever — a cried-wolf gate that earns `--no-verify`.
+
+**`pendingEntryCount` is left unpropagated, on purpose.** It is the other
+never-read field in the same return, but it is not degradation — the function's
+own docstring calls it expected pre-adjudication residue, and surfacing it as a
+degradation signal would recreate the `0 valid, N invalid` misreading a consumer
+reported in August. It is genuinely read by the classification tests.
+
+**Verified red-then-green.** The new harness test failed with
+`expected: 2, actual: undefined` while stderr showed both entries being dropped —
+the exact split the defect describes — then passed. It carries a negative control
+(a clean ledger emits no key) so a hardcoded or always-on value cannot pass, and
+it asserts the surviving valid entry still suppresses, so the new signal cannot
+disturb the suppression it reports on. Full suite measured after the fix:
+**11,828 pass / 0 fail / 26 skipped in 161s** (`npm test`).
+
+**Found while tracing, not fixed:** `ExecutionMetaSchema` is imported by
+`legacy-production-audit.mjs:44` and `openai-audit.mjs:34` and **applied nowhere**
+— the `.extend({_executionMeta: ExecutionMetaSchema})` its own plan called for
+never landed, so the live runtime contract is the permissive
+`z.record(z.string(), z.any())` at [schemas.mjs:778](scripts/lib/schemas.mjs:778).
+The schema edit here keeps the declared SSOT honest; the test is what actually
+holds the contract. Closing that is a decision (apply it, or delete the dead
+imports), not a mechanical change.
+
+**Still open from the row's consequence claim:** `_executionMeta` reaches the
+result JSON and `audit-loop.mjs` — exactly as far as `suppressionUnavailable`
+ever reached — but not the `audit_runs` row. `updateRunMeta` is a fixed column
+allowlist, so the store/dashboard leg needs a migration and was left out of scope.
+
+**Consumer-side verification** (Step 6.8): `npm run sync:dry` run pre-commit as
+the pre-check — 168 routine consumer updates pending, none attributable to these
+files. The clone-back at the pushed sha is `unverified` in this entry by
+construction (the sha does not exist when the line is written); it was run
+post-push and reported in-session.
+
 ## 2026-08-13 — Cluster 1 of the layering plan: 14 violations → 0
 
 Implements Phases 0–3 of [god-module-and-layering-debt.md](docs/plans/god-module-and-layering-debt.md).
@@ -149,7 +255,7 @@ the producer-side green.
 untracked files belonging to a concurrent session (work-units, semantic-suppression,
 visual-contract, ship-nudges); none were staged, stashed or touched.
 
-## 2026-08-13 (latest) — an endpoint and its credential were resolved apart
+## 2026-08-13 — an endpoint and its credential were resolved apart
 
 A consumer's Azure install failed on both LLM routes and filed a report. Live
 probes against the tenant (an APIM front-end at `…azure-api.net/foundry`) settled

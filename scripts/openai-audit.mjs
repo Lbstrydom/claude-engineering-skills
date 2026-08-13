@@ -54,8 +54,6 @@ import { loadArchIntentConfig } from './lib/arch-intent/load-config.mjs';
 import { parseIntentDoc } from './lib/arch-intent/intent-doc-parser.mjs';
 import { ArchIntentConfigError } from './lib/arch-intent/errors.mjs';
 import { detectRepoStack } from './lib/repo-stack.mjs';
-import { listRepoFiles } from './lib/repo-inventory.mjs';
-import { verifyExistenceFindings } from './lib/audit/finding-verification.mjs';
 import { getRepoContext } from './lib/repo-context.mjs';
 import { resolveRangeSnapshot, makeGitRunner } from './lib/worktree-identity.mjs';
 import { getRequirementsContext, getPlanRequirementsRubric } from './lib/requirements/context.mjs';

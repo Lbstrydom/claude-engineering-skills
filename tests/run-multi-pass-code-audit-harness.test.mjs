@@ -219,6 +219,68 @@ describe('runMultiPassCodeAudit harness — R2+ suppression', () => {
     assert.ok(result._suppression.suppressedCount >= 1, '_suppression.suppressedCount must reflect the dismissal');
     fs.rmSync(path.dirname(ledgerPath), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
+
+  // Regression: `validateLedgerForR2` counted entries it dropped as malformed
+  // and reported the count on stderr ONLY — the field was returned but never
+  // read, so a round whose suppression ran against a TRUNCATED ruling set was
+  // indistinguishable downstream from one that ran against a complete one.
+  // Same class as `suppressionUnavailable`, and it travels the same channel.
+  const DISMISSED_ENTRY = {
+    topicId: 'topic-dismissed-1', semanticHash: 'hash-1', severity: 'MEDIUM',
+    category: 'Dismissed Category', section: `${BACKEND_FILE}:5`,
+    detailSnapshot: 'a finding that was already dismissed in round 1',
+    affectedFiles: [BACKEND_FILE], affectedPrinciples: [], pass: 'backend',
+    source: 'session', adjudicationOutcome: 'dismissed', remediationState: 'pending',
+    originalSeverity: 'MEDIUM', ruling: 'sustain', rulingRationale: 'r', resolvedRound: 1,
+  };
+
+  async function runRound2WithLedger(entries) {
+    const ledgerPath = mkTmpFile('ledger.json', JSON.stringify({ version: 1, entries }));
+    try {
+      const stub = makeStubClient(defaultResponses({
+        backend_pass: {
+          ...EMPTY_BACKEND,
+          findings: [mkFinding({
+            severity: 'MEDIUM', category: DISMISSED_ENTRY.category,
+            section: DISMISSED_ENTRY.section, detail: DISMISSED_ENTRY.detailSnapshot,
+          })],
+        },
+      }));
+      return await runMultiPassCodeAudit(stub, PLAN_CONTENT, '', false, null, '', {
+        ...BASE_OPTS, round: 2, ledgerFile: ledgerPath, noLedger: false, changedFiles: [],
+      });
+    } finally {
+      fs.rmSync(path.dirname(ledgerPath), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  }
+
+  it('a ledger with entries dropped as malformed reports the count in _executionMeta.ledgerInvalidEntryCount', async () => {
+    // One adjudicated entry survives; two are genuinely malformed (neither
+    // LedgerEntrySchema nor the pre-adjudication BatchLedgerEntrySchema).
+    const result = await runRound2WithLedger([
+      DISMISSED_ENTRY,
+      { topicId: 'broken-1' },
+      { topicId: 'broken-2', adjudicationOutcome: 'pending' },
+    ]);
+    assert.equal(
+      result._executionMeta?.ledgerInvalidEntryCount, 2,
+      'a round that suppressed against a truncated ruling set must say so in _executionMeta',
+    );
+    // The degradation signal must not disturb the suppression it reports on:
+    // the one VALID entry still suppresses its finding.
+    assert.equal(
+      result.findings.some(f => f.detail === DISMISSED_ENTRY.detailSnapshot), false,
+      'the surviving valid entry must still suppress its finding',
+    );
+  });
+
+  it('negative control — a fully-valid ledger emits no ledgerInvalidEntryCount', async () => {
+    const result = await runRound2WithLedger([DISMISSED_ENTRY]);
+    assert.equal(
+      result._executionMeta?.ledgerInvalidEntryCount, undefined,
+      'a clean ledger must not report degradation (guards a hardcoded / always-on key)',
+    );
+  });
 });
 
 describe('runMultiPassCodeAudit harness — partial-failure resilience', () => {
