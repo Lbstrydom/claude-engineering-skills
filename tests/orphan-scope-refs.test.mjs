@@ -28,6 +28,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 
 process.env.AUDIT_EXPORTS_FOR_TESTS = '1';
 const lpa = await import('../scripts/lib/audit/legacy-production-audit.mjs');
@@ -77,5 +78,50 @@ describe('resolveOrphanScopeRefs — the orphan wave analyses the range the audi
         assert.ok(refs.headRef === null || refs.headRef === 'HEAD');
       }
     }
+  });
+});
+
+// ── Observation-only covers DEBT memory too (R2-H3) ─────────────────────────
+//
+// `noCloudRecording` is documented as an observation-only mode in which the
+// concurrent real audit is the sole writer. `learningWritesAllowed` gated the
+// learning-store writes and the CLOUD debt path, but `selectEventSource`
+// degrades to a LOCAL source with `canWrite: !readOnly` — so a shadow run still
+// appended local debt events and flipped escalation flags. The guarantee rested
+// on every caller remembering to also pass `readOnlyDebt`, which is the
+// "convention, not a capability boundary" shape this repo has already had to
+// fix once for learning writes.
+//
+// Asserted on `selectEventSource` directly, because the orchestrator's call is
+// buried in a 2,700-line function and the property under test is the one the
+// resolver exposes.
+describe('observation-only mode reaches debt memory, not just learning state', () => {
+  const load = async () => (await import('../scripts/lib/debt-memory.mjs')).selectEventSource;
+
+  it('an observation-only run cannot write debt events, even on the local fallback', async () => {
+    const selectEventSource = await load();
+    // learningWritesAllowed === false ⇒ the orchestrator passes readOnly: true.
+    const ctx = selectEventSource({ noDebtLedger: false, readOnly: true, repoId: null, cloudEnabled: false });
+    assert.equal(ctx.canWrite, false,
+      'the local fallback is exactly where the leak was — cloudEnabled:false already blocked the cloud path');
+  });
+
+  // THE DIRECTION IT MUST NOT FIRE. A normal run must keep writing debt, or
+  // this "fix" silently disables debt memory for every real audit — which would
+  // look like a clean pass while quietly dropping the escalation ledger.
+  it('a NORMAL run still writes debt events — the gate is not blanket', async () => {
+    const selectEventSource = await load();
+    const ctx = selectEventSource({ noDebtLedger: false, readOnly: false, repoId: null, cloudEnabled: false });
+    assert.equal(ctx.canWrite, true, 'a normal local-only run must retain debt writes');
+    const cloud = selectEventSource({ noDebtLedger: false, readOnly: false, repoId: 'r1', cloudEnabled: true });
+    assert.equal(cloud.canWrite, true);
+    assert.equal(cloud.source, 'cloud');
+  });
+
+  it('the orchestrator folds learningWritesAllowed into readOnly (static pin)', async () => {
+    // The wiring itself, since the resolver cannot see who called it.
+    const src = fs.readFileSync('scripts/lib/audit/legacy-production-audit.mjs', 'utf-8');
+    assert.match(src, /readOnly:\s*readOnlyDebt\s*\|\|\s*!learningWritesAllowed/,
+      'selectEventSource must receive the observation-only capability, not just the --read-only-debt flag');
   });
 });

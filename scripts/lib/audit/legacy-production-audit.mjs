@@ -1998,9 +1998,14 @@ export async function runLegacyProductionAudit(ctx) {
         }
       }
 
+      // R2-H2: no `.catch(() => null)`. `recordRunStart` never throws — every
+      // failure path logs `[learning] recordRunStart failed: …` and returns
+      // null itself — so the catch was DEAD CODE that advertised a swallow
+      // which was not happening, and would have masked a genuine future throw.
+      // Same removal, same reasoning, as the `recordDiffComplexity` call below.
       cloudRunId = await recordRunStart(cloudRepoId, planFile || 'ad-hoc', 'code', {
         scopeMode, commitSha, branch, planId, runId,
-      }).catch(() => null);
+      });
 
       // Phase 1 — adaptive-learning-v1 telemetry.  Compute diff_complexity
       // (file count, LOC, scope mode) and record pass_selection decision
@@ -2133,7 +2138,20 @@ export async function runLegacyProductionAudit(ctx) {
   // Runs every round (not just R2+) — debt is persistent across audit runs.
   const debtContext = selectEventSource({
     noDebtLedger,
-    readOnly: readOnlyDebt,
+    // R2-H3: `readOnly` now carries the observation-only capability too, not
+    // just the `--read-only-debt` flag. `cloudEnabled` below already blocked
+    // the CLOUD debt writes for such a run, but `selectEventSource` degrades to
+    // a LOCAL source with `canWrite: !readOnly` — so a shadow run still wrote
+    // local debt events and escalations, against a mode documented as "the
+    // concurrent real audit is the only writer".
+    //
+    // Production behaviour is UNCHANGED: both callers that set
+    // `noCloudRecording` (tiered-shadow-compare, verify-anchor-contract) also
+    // set `noDebtLedger` + `readOnlyDebt` already, and a test pins that the
+    // five flags travel together. That is exactly why this is worth closing —
+    // the guarantee rested on callers remembering, which is the "convention,
+    // not a capability boundary" shape `writeLearningState` exists to replace.
+    readOnly: readOnlyDebt || !learningWritesAllowed,
     repoId: cloudRepoId,
     // cloudRepoId is only set inside the `await isCloudEnabled()` block above,
     // so a non-null value proves cloud is on and the repo resolved.
