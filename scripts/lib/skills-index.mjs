@@ -30,21 +30,40 @@ import yaml from 'yaml';
  * Load a single SKILL.md file and parse its frontmatter into a structured
  * record. Returns null if no frontmatter is present or the file is unreadable
  * (so the caller can skip it gracefully rather than aborting the whole scan).
+ *
+ * **A bare null cannot say WHY.** Four unrelated causes collapse to it — an
+ * unreadable file, absent frontmatter, YAML that does not parse, and frontmatter
+ * whose `name`/`description` are missing or the wrong type. At `loadAllSkills`'
+ * call site the file is `existsSync`-gated first, so a null there is never
+ * "absent"; it is always a SKILL.md that is PRESENT and broken, and it used to
+ * be dropped in silence. A skill with one corrupt YAML line vanished from the
+ * dashboard and from skills-help, reading exactly like a skill nobody had
+ * written yet. `onSkip` is the diagnostic channel; the null return is unchanged,
+ * so every existing caller and test keeps working.
+ *
+ * @param {string} skillFile
+ * @param {{onSkip?: (info: {file: string, reason: string, detail?: string}) => void}} [opts]
+ *   `reason` ∈ 'unreadable' | 'no-frontmatter' | 'unparseable-yaml' | 'invalid-frontmatter'
  */
-export function parseSkill(skillFile) {
+export function parseSkill(skillFile, { onSkip } = {}) {
+  const skip = (reason, detail) => {
+    if (onSkip) onSkip(detail === undefined ? { file: skillFile, reason } : { file: skillFile, reason, detail });
+    return null;
+  };
+
   let raw;
   try { raw = fs.readFileSync(skillFile, 'utf-8'); }
-  catch { return null; }
+  catch (err) { return skip('unreadable', err.message); }
 
   // Normalise CRLF → LF before matching so the same regex works whether the
   // file was authored on Windows or Unix.
   raw = raw.replace(/\r\n/g, '\n').replace(/^﻿/, '');
   const m = raw.match(/^---\n([\s\S]*?)\n---/);
-  if (!m) return null;
+  if (!m) return skip('no-frontmatter');
 
   let fm;
   try { fm = yaml.parse(m[1]); }
-  catch { return null; }
+  catch (err) { return skip('unparseable-yaml', err.message); }
 
   // `name` must be a STRING, not merely truthy. YAML happily produces a number
   // (`name: 123`), boolean (`name: true`) or map (`name: {value: foo}`), and a
@@ -53,7 +72,10 @@ export function parseSkill(skillFile) {
   // contradicts this function's own contract two lines up ("so the caller can
   // skip it gracefully rather than aborting the whole scan"), and in the
   // dashboard it surfaced as an empty skills section, not an error.
-  if (!fm || typeof fm.name !== 'string' || !fm.name || typeof fm.description !== 'string') return null;
+  if (!fm || typeof fm.name !== 'string' || !fm.name || typeof fm.description !== 'string') {
+    return skip('invalid-frontmatter',
+      `name must be a non-empty string (got ${typeof fm?.name}), description must be a string (got ${typeof fm?.description})`);
+  }
 
   // Extract structured pieces from the description text. Frontmatter
   // descriptions in this repo follow a stable shape:
@@ -157,17 +179,31 @@ export function parseSkill(skillFile) {
 /**
  * Scan all skills/* directories for SKILL.md files. Returns sorted by name.
  * Excludes the .claude/skills/ mirror (regenerated, not authoritative).
+ *
+ * The SKILL.md is `existsSync`-gated before parsing, so anything `parseSkill`
+ * rejects here is present-and-broken rather than absent — never a silent drop.
+ * `onSkip` receives one `{file, reason, detail?}` per rejected skill; omit it
+ * and a one-line warning goes to stderr instead, which is what the dashboard
+ * and skills-help collectors get for free.
+ *
+ * @param {string} [skillsRoot]
+ * @param {{onSkip?: (info: {file: string, reason: string, detail?: string}) => void}} [opts]
  */
-export function loadAllSkills(skillsRoot = 'skills') {
+export function loadAllSkills(skillsRoot = 'skills', { onSkip } = {}) {
   const root = path.resolve(skillsRoot);
   if (!fs.existsSync(root)) return [];
   const entries = fs.readdirSync(root, { withFileTypes: true });
+  const report = onSkip ?? ((info) => {
+    process.stderr.write(
+      `  [skills-index] ${info.file}: skipped (${info.reason}${info.detail ? ` — ${info.detail}` : ''})\n`,
+    );
+  });
   const out = [];
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     const skillFile = path.join(root, entry.name, 'SKILL.md');
     if (!fs.existsSync(skillFile)) continue;
-    const parsed = parseSkill(skillFile);
+    const parsed = parseSkill(skillFile, { onSkip: report });
     if (parsed) out.push(parsed);
   }
   return out.sort((a, b) => a.name.localeCompare(b.name));

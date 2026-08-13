@@ -268,6 +268,56 @@ description: |
     assert.equal(skills[0].name, 'good');
   });
 
+  it('reports WHY a present SKILL.md was skipped, per cause', () => {
+    // `loadAllSkills` already existsSync-gates the file, so a null from
+    // parseSkill at that call site is NEVER "absent" — it is always a file that
+    // is present and unparseable. It was dropped with no diagnostic, so a skill
+    // with corrupt YAML simply vanished from the dashboard and from skills-help
+    // and read exactly like a skill that had not been written yet.
+    const root = mkTmpRepo();
+    writeSkill(root, 'badyaml', `---\nname: [unclosed\ndescription: x\n---\n`);
+    writeSkill(root, 'noframe', `# no frontmatter\n`);
+    writeSkill(root, 'numeric', `---\nname: 123\ndescription: |\n  x\n---\n`);
+    writeSkill(root, 'good', `---\nname: good\ndescription: |\n  Fine.\n  Triggers on: "x"\n---\n`);
+
+    const skipped = [];
+    const skills = loadAllSkills(path.join(root, 'skills'), { onSkip: (s) => skipped.push(s) });
+
+    assert.equal(skills.length, 1, 'the good skill is still returned');
+    assert.equal(skills[0].name, 'good');
+
+    const byReason = Object.fromEntries(skipped.map((s) => [s.reason, s]));
+    assert.deepEqual(
+      Object.keys(byReason).sort(),
+      ['invalid-frontmatter', 'no-frontmatter', 'unparseable-yaml'],
+      'the three causes must be distinguishable, not one undifferentiated null',
+    );
+    // Every report names the file, or it cannot be acted on.
+    for (const s of skipped) assert.match(s.file, /SKILL\.md$/);
+    // The YAML failure carries the parser's own message.
+    assert.ok(byReason['unparseable-yaml'].detail, 'a YAML failure must carry its error detail');
+  });
+
+  it('POSITIVE CONTROL: onSkip is not called when every skill parses', () => {
+    // Without this, the test above could pass against a function that reports
+    // everything as skipped.
+    const root = mkTmpRepo();
+    writeSkill(root, 'good', `---\nname: good\ndescription: |\n  Fine.\n  Triggers on: "x"\n---\n`);
+    const skipped = [];
+    const skills = loadAllSkills(path.join(root, 'skills'), { onSkip: (s) => skipped.push(s) });
+    assert.equal(skills.length, 1);
+    assert.deepEqual(skipped, []);
+  });
+
+  it('omitting onSkip keeps the existing signature working (no throw, same result)', () => {
+    const root = mkTmpRepo();
+    writeSkill(root, 'badyaml', `---\nname: [unclosed\ndescription: x\n---\n`);
+    writeSkill(root, 'good', `---\nname: good\ndescription: |\n  Fine.\n  Triggers on: "x"\n---\n`);
+    const skills = loadAllSkills(path.join(root, 'skills'));
+    assert.equal(skills.length, 1);
+    assert.equal(skills[0].name, 'good');
+  });
+
   it('accepts an explicit skills directory without chdir (the call-site contract)', () => {
     // §2.5: collect-reference.mjs passes path.join(root, 'skills') rather than
     // relying on cwd. Cover that path explicitly — nothing else did.
