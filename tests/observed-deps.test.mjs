@@ -306,10 +306,25 @@ test('E3: observed digest mismatches → rejected as stale-rules', () => {
   assert.deepEqual(r.deps, { 'arch-memory': ['shared-lib'] });
 });
 
-test('E4: observed JSON malformed → rejected as unreadable', () => {
+// E4/E4b are a PAIR, and only the pair is meaningful. `unreadable` used to
+// cover both of these, which told an operator nothing: a corrupt generated
+// file is fixed by `npm run arch:render`, an I/O fault is fixed by looking at
+// permissions/disk. The reader's own siblings in this file (`collectFlows`,
+// `collectArchitecture`) already split them, as does `nav/envelope.mjs`.
+test('E4: observed JSON malformed → rejected as malformed (content is corrupt, the file read fine)', () => {
   const root = makeFixtureRoot();
   writeDomainMap(root, {});
   fs.writeFileSync(path.join(root, OBSERVED_FILE), '{not valid json');
+  const r = readDomainDeps(root);
+  assert.equal(r.depsSource.observedRejectedReason, 'malformed');
+});
+
+test('E4b: observed file unreadable (EISDIR) → rejected as unreadable, NOT malformed', () => {
+  const root = makeFixtureRoot();
+  writeDomainMap(root, {});
+  // A directory where the file should be: readFileSync fails with a non-ENOENT
+  // code, which is the I/O-fault branch. Portable — verified EISDIR on Windows.
+  fs.mkdirSync(path.join(root, OBSERVED_FILE), { recursive: true });
   const r = readDomainDeps(root);
   assert.equal(r.depsSource.observedRejectedReason, 'unreadable');
 });

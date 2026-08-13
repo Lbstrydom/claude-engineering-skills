@@ -231,7 +231,7 @@ export const ReferenceDataSchema = z.object({
     // Plan: docs/plans/observed-domain-deps.md §6.
     depsSource: z.object({
       observedAvailable: z.boolean(),
-      observedRejectedReason: z.enum(['absent', 'unreadable', 'schema-invalid', 'stale-rules']).nullable(),
+      observedRejectedReason: z.enum(['absent', 'unreadable', 'malformed', 'schema-invalid', 'stale-rules']).nullable(),
       observedRefreshId: z.string().nullable(),
       observedGeneratedAt: z.string().nullable(),
       manualKeyCount: z.number().int().nonnegative(),

@@ -109,7 +109,10 @@ function formatDepsSourceLine(ds, ui) {
     'absent': 'run <code>npm run dashboard:setup</code> to enable observed deps',
     'stale-rules': 'observed deps rejected as stale; run <code>npm run arch:render</code>',
     'schema-invalid': 'observed deps file corrupt; check stderr',
-    'unreadable': 'observed deps file unreadable; check stderr',
+    // Two different remedies, so two different hints: `malformed` is corrupt
+    // CONTENT (regenerate), `unreadable` is an I/O fault (check the filesystem).
+    'malformed': 'observed deps file corrupt; run <code>npm run arch:render</code>',
+    'unreadable': 'observed deps file could not be read; check permissions and stderr',
   }[reason] || 'observed deps unavailable';
   return `<p class="section-note section-warn">${ui.escapeHtml(total)} edges (manual intent only — ${hint})</p>`;
 }

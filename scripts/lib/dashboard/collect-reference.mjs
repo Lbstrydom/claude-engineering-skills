@@ -186,7 +186,16 @@ export function discoverPlans(root = process.cwd()) {
  *
  * @param {string} root
  * @returns {{envelope: object|null, rejectedReason: string|null}}
- *   rejectedReason values: 'absent' | 'unreadable' | 'schema-invalid' | 'stale-rules' | null
+ *   rejectedReason values: 'absent' | 'unreadable' | 'malformed' | 'schema-invalid'
+ *   | 'stale-rules' | null
+ *
+ * `unreadable` and `malformed` are DISTINCT and must stay so: the first is an
+ * I/O fault on the read (permissions, EISDIR, a bad mount) and the operator
+ * fixes the filesystem; the second is a file that read back fine and whose
+ * CONTENT is corrupt, and the operator re-runs `npm run arch:render`. Both were
+ * reported as `unreadable` until 2026-08-13, which named neither remedy. The
+ * sibling readers in this module (`collectFlows`, `collectArchitecture`) and
+ * `scripts/lib/nav/envelope.mjs` already drew the same line.
  */
 function readObservedEnvelope(root) {
   let raw;
@@ -204,7 +213,7 @@ function readObservedEnvelope(root) {
     parsed = ObservedDepsSchema.safeParse(JSON.parse(raw));
   } catch (err) {
     process.stderr.write(`  [dashboard] ${OBSERVED_FILE}: JSON parse failed — ${err.message}; falling back to manual allowedDeps\n`);
-    return { envelope: null, rejectedReason: 'unreadable' };
+    return { envelope: null, rejectedReason: 'malformed' };
   }
   if (!parsed.success) {
     process.stderr.write(`  [dashboard] ${OBSERVED_FILE}: schema validation failed — ${parsed.error.issues[0]?.message || 'invalid'}; falling back to manual allowedDeps\n`);
