@@ -88,12 +88,18 @@ function keyDigest(k) {
  */
 function azureBaseUrl(purpose, cfg) {
   if (purpose === 'foundry-claude') {
-    if (!cfg.aiEndpoint) {
+    // The ORIGIN comes from the resolved Claude route, not from `aiEndpoint`
+    // directly: on an APIM-fronted tenant Claude lives behind the AOAI endpoint
+    // and there is no direct Foundry host to address. The route resolver has
+    // already rejected the impossible combinations.
+    const origin = cfg.claudeRoute?.origin || cfg.aiEndpoint;
+    if (!origin) {
       throw new Error(
-        '[openai-client] purpose "foundry-claude" requires AZURE_AI_ENDPOINT to be set.',
+        '[openai-client] purpose "foundry-claude" requires a resolvable Claude route ' +
+        '(AZURE_OPENAI_ENDPOINT, plus AZURE_AI_ENDPOINT when AZURE_CLAUDE_ROUTE=foundry).',
       );
     }
-    return `${trimTrailingSlash(cfg.aiEndpoint)}${normalizeApiPath(cfg.foundryApiPath)}`;
+    return `${trimTrailingSlash(origin)}${normalizeApiPath(cfg.foundryApiPath)}`;
   }
   return trimTrailingSlash(cfg.openaiEndpoint);
 }
@@ -209,13 +215,18 @@ export async function createOpenAIClient(options = {}) {
     // AzureOpenAI emits `api-key` from its own `authHeaders()`; we deliberately
     // do not also set a defaultHeaders entry, so there is exactly one writer.
   } else if (cfg.active) {
-    // ── Foundry-Claude (OpenAI-shaped surface) — UNCHANGED ─────────────────
+    // ── Foundry-Claude (OpenAI-shaped surface) ─────────────────────────────
+    // The credential comes from the resolved Claude route, so it can never be
+    // the AOAI key addressed at the direct Foundry host (the 2026-08-13
+    // incident). Falls back to `cfg.apiKey` — today's value — when no route
+    // resolved, keeping an inactive/synthetic config working.
     const baseURL = azureBaseUrl(purpose, cfg);
-    cacheKey = `azure:${baseURL}:${cfg.apiVersion}:${keyDigest(cfg.apiKey)}`;
+    const claudeKey = cfg.claudeRoute?.apiKey || cfg.apiKey;
+    cacheKey = `azure:${baseURL}:${cfg.apiVersion}:${keyDigest(claudeKey)}`;
     build = () => new OpenAI({
       baseURL,
-      apiKey: cfg.apiKey,
-      defaultHeaders: { 'api-key': cfg.apiKey },
+      apiKey: claudeKey,
+      defaultHeaders: { 'api-key': claudeKey },
       defaultQuery: { 'api-version': cfg.apiVersion },
       maxRetries: azureMaxRetries(),
       ...(options.fetch ? { fetch: options.fetch } : {}),

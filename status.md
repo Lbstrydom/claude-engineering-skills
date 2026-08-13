@@ -1,6 +1,96 @@
 # Project Status Log
 
-## 2026-08-12 (latest) — the deployment was never in the Azure URL
+## 2026-08-13 (latest) — an endpoint and its credential were resolved apart
+
+A consumer's Azure install failed on both LLM routes and filed a report. Live
+probes against the tenant (an APIM front-end at `…azure-api.net/foundry`) settled
+which half of it was real:
+
+| Route | Result |
+|---|---|
+| `{APIM}/openai/deployments/gpt-5.5/chat/completions` | 200 |
+| `{APIM}/openai/responses` | **200** |
+| `{APIM}/openai/v1/responses` | 404 |
+| `{APIM}/anthropic/v1/messages` + `api-key` | 200 |
+| `{APIM}/anthropic/v1/messages` + `Bearer` | 401 |
+| `{AIF}/anthropic/v1/messages` (either header) | 401 |
+
+**The GPT half needed no change — `8b284ec9` fixed it the day before.** At HEAD,
+`responses.parse()` with `zodTextFormat` — the exact auditor call — returns 200
+with parsed structured output against this APIM. The consumer is on a
+pre-`8b284ec9` bundle and needs a fast-forward + resync. The report's proposed
+"404 ⇒ fall back to chat completions" would have been dead code: `/openai/responses`
+answers here. **A field report is a claim about a bundle, not about HEAD.**
+
+**The Claude half was real, and worse than reported.** `claudeBaseUrl` was
+hard-wired to `AZURE_AI_ENDPOINT` while `anthropic-client.mjs` picked the
+credential by sniffing `AZURE_OPENAI_API_KEY` off the ambient env and always sent
+Bearer. Two different services, so every call shipped the APIM subscription key
+to the direct Foundry host for a bare 401 — and the APIM route was not
+misconfigured but **unrepresentable**: no combination of env vars reached it.
+
+`azureConfig.claudeRoute` now resolves `{origin, baseUrl, authMode, apiKey,
+credentialVar, credentialShared}` as one unit, selected by
+`AZURE_CLAUDE_ROUTE=apim|foundry` (default = today's behaviour, so working
+Foundry installs are untouched). Four call sites take the route instead of a bare
+`baseURL`; `assertAzureClaudeReady` stopped demanding `AZURE_AI_ENDPOINT`
+unconditionally. A cross-service key fallback stays legal — some tenants share one
+key — but is flagged `credentialShared` rather than silent. Generalised in
+AGENTS.md: *if a change can make one host receive another's credential, the two
+were resolved apart and must not be.*
+
+**Two diagnostics, because the failure was undiagnosable, not just wrong.** A bare
+401 named no endpoint, no credential variable and no auth header, so the consumer
+had to write a throwaway probe script — and reached the wrong first hypothesis
+(invalid key) for a whole investigation. `npm run azure:routes` prints every wire
+route + a live probe, reporting each credential's **source variable name and
+length, never its value**; exit 7 on failure. Transport failures now carry a
+classified code (`AUTH_ENDPOINT_MISMATCH` / `DEPLOYMENT_ROUTE_NOT_FOUND` /
+`CREDENTIAL_MISSING` / `TRANSPORT_UNAVAILABLE`) plus the route. And `ping`, the
+one command an operator reaches for when the reviewer is failing, ignored
+`--provider` and branched on `GEMINI_API_KEY`/`ANTHROPIC_API_KEY` — useless on an
+Azure-only box, where it answered with advice that is wrong for that install; it
+now walks the same path a review does.
+
+**Not built (deliberate):** the report's separate machine-readable blocked-gate
+artifact. The review path already never emits a verdict on transport failure
+(`console.error` + exit 1), so what was missing was attribution, not a schema.
+
+**Tests assert the emitted request, not the client config** —
+[azure-claude-route.test.mjs](tests/azure-claude-route.test.mjs), 16 tests. The
+Anthropic SDK binds its transport at CONSTRUCTION, so a post-hoc
+`globalThis.fetch` patch intercepts nothing and the request escapes to the real
+network (observed: 20s of live retries against a nonexistent host, `seen.url`
+undefined). `createAnthropicClient` took the same `options.fetch` seam
+`openai-client.mjs` already documents, never cached in either direction. Negative
+control run: reintroducing the defect fails 4 of them, including the emitted-URL
+assertion. One existing test asserted the *old* contract ("foundry-claude without
+`AZURE_AI_ENDPOINT` throws") — that was pinning the defect, and was rewritten.
+
+**Live Azure verification: `verified`** — closes the `unverified` left by the
+2026-08-12 entry below. With `AZURE_CLAUDE_ROUTE=apim` all three routes
+authenticate (`azure:routes` exit 0; `ping --provider azure-claude` → `ready`).
+Without it the 401 self-diagnoses. The `foundry` route still 401s on that tenant,
+correctly, and now names the shared credential.
+
+**A repo gate caught this change, as designed.** Adding `AZURE_CLAUDE_ROUTE` — a
+routing selector `config.mjs` reads — failed the hermeticity DRIFT GUARD until it
+was added to `SCRUBBED_ROUTING_ENV`; `AZURE_AI_API_KEY` went to the credential
+allowlist with its rationale (inert without an endpoint).
+
+Full suite **11743 pass / 0 fail** (26 skipped, all DB-gated). An interim run
+showed 5 failures — reproduced identically on a stashed clean tree, so *not* from
+this change: Azure credentials temporarily in `.env` activate the profile
+process-wide, and child processes re-load `.env` via dotenv, defeating the
+hermeticity scrub. One of them, the audit-plan rebuttal smoke test, expects a
+dummy-key auth failure and instead made a **real billed Azure call**. All five
+cleared once the vars left `.env`. Worth knowing before anyone puts Azure creds
+in a repo `.env` again.
+
+**Consumer-side verification (Step 6.8):** see the closing note on this entry
+after the sync run.
+
+## 2026-08-12 — the deployment was never in the Azure URL
 
 `createOpenAIClient`'s Azure branch pinned `baseURL = ${endpoint}/openai/v1` and
 emitted `…/openai/v1/embeddings`, carrying the deployment only as the body's

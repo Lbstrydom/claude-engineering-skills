@@ -275,9 +275,24 @@ describe('createOpenAIClient — Azure routing', () => {
     await assert.rejects(() => createOpenAIClient({ purpose: 'bogus', azure: INACTIVE }), /Invalid purpose/);
   });
 
-  it('foundry-claude without AZURE_AI_ENDPOINT throws', async () => {
+  // Was, until 2026-08-13: "foundry-claude without AZURE_AI_ENDPOINT throws".
+  // That asserted the defect — it made an APIM-fronted Claude route
+  // unrepresentable, since the only origin the purpose would accept was the
+  // direct Foundry host. The route resolver now owns that decision.
+  it('foundry-claude without AZURE_AI_ENDPOINT falls back to the APIM origin', async () => {
     const cfg = buildAzureConfig({ ...AZURE_ENV, AZURE_AI_ENDPOINT: '' });
-    await assert.rejects(() => createOpenAIClient({ purpose: 'foundry-claude', azure: cfg }), /AZURE_AI_ENDPOINT/);
+    assert.equal(cfg.claudeRoute.mode, 'apim');
+    assert.equal(
+      _internals.azureBaseUrl('foundry-claude', cfg),
+      `${AZURE_ENV.AZURE_OPENAI_ENDPOINT.replace(/\/+$/, '')}/openai/v1`,
+    );
+  });
+
+  it('AZURE_CLAUDE_ROUTE=foundry without AZURE_AI_ENDPOINT fails at config time', () => {
+    assert.throws(
+      () => buildAzureConfig({ ...AZURE_ENV, AZURE_AI_ENDPOINT: '', AZURE_CLAUDE_ROUTE: 'foundry' }),
+      /AZURE_AI_ENDPOINT/,
+    );
   });
 });
 

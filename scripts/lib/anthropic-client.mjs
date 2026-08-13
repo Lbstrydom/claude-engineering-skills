@@ -303,11 +303,22 @@ function reconcileBackendWithBaseUrl(backend, baseURL, backendWasExplicit) {
  * @param {object} [options]
  * @param {'sdk'|'cli'} [options.backend] - Override env-resolved backend (test injection)
  * @param {string} [options.apiKey] - Override `ANTHROPIC_API_KEY` (sdk backend only)
+ * @param {object} [options.azureRoute] - A resolved Azure Claude route
+ *   (`azureConfig.claudeRoute`): `{baseUrl, apiKey, authMode, credentialVar}`.
+ *   Supplying it is the ONLY correct way to reach an Azure-hosted Claude — it
+ *   pins the endpoint, the credential and the auth header together, so the
+ *   APIM subscription key can never be sent to the direct Foundry host (or
+ *   vice versa). Overrides `options.baseURL`.
  * @param {string} [options.claudeBin] - Override `CLAUDE_BIN` (cli backend only)
  * @param {number} [options.timeoutMs] - Per-call default subprocess timeout (cli backend)
  * @param {((text: string) => string)|null} [options.redactor] - Egress redactor.
  *   Defaults to `redactSecrets`. `null` disables redaction (NOT recommended).
  * @param {boolean} [options.fresh] - Bypass cache (for tests)
+ * @param {Function} [options.fetch] - Inject a transport so a test can capture the
+ *   exact URL and headers the INSTALLED SDK emits. The SDK binds its transport at
+ *   construction, so patching `globalThis.fetch` after the fact observes nothing.
+ *   A client built with an injected transport is never cached (either direction),
+ *   so it can never be handed to a production call site. sdk backend only.
  * @returns {Promise<{messages: {create: (params: object, requestOptions?: object) => Promise<object>}}>}
  */
 export async function createAnthropicClient(options = {}) {
@@ -321,7 +332,15 @@ export async function createAnthropicClient(options = {}) {
   // desktop) reads as ABSENT — see CANONICAL_ANTHROPIC_URL above for the three
   // downstream consumers this protects (cli guard, backend coercion, Azure-key
   // precedence).
-  const effectiveBaseURL = normalizeBaseUrl(options.baseURL || process.env.ANTHROPIC_BASE_URL || '');
+  // A resolved Azure Claude route (config.mjs `azureConfig.claudeRoute`) is the
+  // AUTHORITATIVE source for baseURL + credential + auth header when passed:
+  // the three belong to one service and are never separately overridable. Absent,
+  // we fall back to the legacy `options.baseURL` + env-sniff below, which is what
+  // every pre-2026-08-13 caller relied on.
+  const azureRoute = options.azureRoute || null;
+  const effectiveBaseURL = normalizeBaseUrl(
+    azureRoute?.baseUrl || options.baseURL || process.env.ANTHROPIC_BASE_URL || '',
+  );
   // A baseURL is unhonourable by the cli backend — reconcile before the cache
   // key is built, so a coerced call can never share an entry with a cli client.
   const backend = reconcileBackendWithBaseUrl(
@@ -329,11 +348,16 @@ export async function createAnthropicClient(options = {}) {
     effectiveBaseURL,
     options.backend != null,
   );
-  const azureKey = effectiveBaseURL ? (process.env.AZURE_OPENAI_API_KEY || '') : '';
+  const azureKey = azureRoute
+    ? (azureRoute.apiKey || '')
+    : (effectiveBaseURL ? (process.env.AZURE_OPENAI_API_KEY || '') : '');
   // When targeting an Azure/Foundry endpoint, the Azure key MUST win over a
   // stray public ANTHROPIC_API_KEY — otherwise we'd send the public key to the
   // corporate endpoint. An explicit options.apiKey still overrides everything.
   const effectiveApiKey = options.apiKey || (effectiveBaseURL ? azureKey : '') || process.env.ANTHROPIC_API_KEY || '';
+  // `bearer` reproduces the legacy behaviour exactly, so a caller that passes no
+  // route (or a foundry route) emits a byte-identical request to today's.
+  const azureAuthMode = azureRoute?.authMode || 'bearer';
   const effectiveClaudeBin = options.claudeBin || process.env.CLAUDE_BIN || 'claude';
   const effectiveTimeoutMs = resolveTimeoutMs(options.timeoutMs);
 
@@ -350,12 +374,20 @@ export async function createAnthropicClient(options = {}) {
   // because two distinct functions could collapse to one cache entry under
   // a string key, returning the wrong redactor to the second caller.
   const defaultRedactor = await getDefaultRedactor();
-  const cacheable = effectiveRedactor === null || effectiveRedactor === defaultRedactor;
+  // `options.fetch` (test transport) is never cacheable in EITHER direction: it
+  // must not be served a cached real client, and must not be stored as one.
+  const cacheable = !options.fetch
+    && (effectiveRedactor === null || effectiveRedactor === defaultRedactor);
   // Region is appended ONLY on the bedrock branch, so sdk/cli keys stay
   // byte-identical to today. Without it, two calls differing only by region
   // would share a client and silently target the first one's region.
+  // `authMode` is appended ONLY when it is not the legacy `bearer`, so every
+  // pre-existing key stays byte-identical. Without it two routes differing only
+  // by auth header would share one client and silently authenticate the second
+  // the first one's way.
   const cacheKey = `${backend}:${keyDigest(effectiveApiKey)}:${effectiveBaseURL}:${effectiveClaudeBin}:${effectiveTimeoutMs}:${effectiveRedactor === null ? 'n' : 'd'}`
-    + (backend === 'bedrock' ? `:${resolveAwsRegion()}` : '');
+    + (backend === 'bedrock' ? `:${resolveAwsRegion()}` : '')
+    + (azureAuthMode === 'bearer' ? '' : `:auth=${azureAuthMode}`);
   if (!options.fresh && cacheable && _clientCache.has(cacheKey)) {
     return _clientCache.get(cacheKey);
   }
@@ -397,22 +429,43 @@ export async function createAnthropicClient(options = {}) {
     }
     let anthropicOpts;
     if (effectiveBaseURL && azureKey) {
-      // Azure AI Foundry serves Claude as the NATIVE Anthropic API at
-      // `${baseURL}/v1/messages` with `Authorization: Bearer <key>` (verified
-      // against ai-organiser's azureClaudeAdapter). `authToken` is the SDK
-      // option that emits the Bearer header (NOT x-api-key / api-key).
-      // maxRetries: the SDK honours Retry-After on 429 (Azure's small quotas).
+      // Both Azure Claude transports serve the NATIVE Anthropic API at
+      // `${baseURL}/v1/messages`; they differ ONLY in which header carries the
+      // credential. maxRetries: the SDK honours Retry-After on 429 (Azure's
+      // small quotas).
       const { azureMaxRetries } = await import('./azure-throttle.mjs');
-      anthropicOpts = { baseURL: effectiveBaseURL, authToken: azureKey, maxRetries: azureMaxRetries() };
+      anthropicOpts = { baseURL: effectiveBaseURL, maxRetries: azureMaxRetries() };
+      if (azureAuthMode === 'api-key') {
+        // APIM subscription key. The SDK has no `api-key` option, so it is set
+        // as a default header. `apiKey` must ALSO be supplied — the SDK refuses
+        // to construct without one of apiKey/authToken ("Could not resolve
+        // authentication method"), and the resulting `x-api-key` is ignored by
+        // APIM. Bearer is rejected here with "Access denied due to missing
+        // subscription key" (measured 2026-08-13 against a live APIM front-end).
+        anthropicOpts.apiKey = azureKey;
+        anthropicOpts.defaultHeaders = { 'api-key': azureKey };
+      } else {
+        // Direct AI Foundry inference endpoint: `Authorization: Bearer <key>`.
+        // `authToken` is the SDK option that emits it (NOT x-api-key/api-key).
+        anthropicOpts.authToken = azureKey;
+      }
     } else if (effectiveBaseURL) {
       anthropicOpts = { apiKey: effectiveApiKey, baseURL: effectiveBaseURL };
     } else {
       anthropicOpts = { apiKey: effectiveApiKey };
     }
+    // Test-only transport injection; undefined in production. The SDK binds its
+    // transport at CONSTRUCTION, so a test cannot observe the emitted request by
+    // patching `globalThis.fetch` afterwards — it has to be handed in here.
+    if (options.fetch) anthropicOpts.fetch = options.fetch;
     const rawClient = new Anthropic(anthropicOpts);
     client = wrapSdkClient(rawClient, effectiveRedactor);
   }
 
+  // A client carrying an injected transport is a test artefact: never written to
+  // the shared cache, so it can never be handed to a real call site. Mirrors
+  // `openai-client.mjs`'s identical seam.
+  if (options.fetch) return client;
   if (cacheable) _clientCache.set(cacheKey, client);
   return client;
 }

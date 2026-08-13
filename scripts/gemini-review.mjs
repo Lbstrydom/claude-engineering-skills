@@ -39,6 +39,7 @@ import { normalizeGeminiUsage } from './lib/gemini-usage.mjs';
 import { readProjectContext, initAuditBrief, generateRepoProfile } from './lib/context.mjs';
 import { applyEnvSetting } from './lib/env-setting.mjs';
 import { geminiConfig, claudeConfig, azureConfig, shadowReviewConfig, finalReviewConfig, auditShadowConfig, findingMatchConfig, FINDING_MATCH_SCHEMA_VERSION } from './lib/config.mjs';
+import { describeAzureRoute, describeTransportFailure } from './lib/azure-route-report.mjs';
 import { recordFinalReviewFindings } from './learning-store.mjs';
 import { refreshModelCatalog, resolveModel } from './lib/model-resolver.mjs';
 import { createOpenAIClient } from './lib/openai-client.mjs';
@@ -999,9 +1000,13 @@ const PROVIDERS = {
     resolveModel: () => azureConfig.claudeDeployment,
     assertReady: () => assertAzureClaudeReady(),
     buildClient: async () => {
-      process.stderr.write(`  [final-review] Azure work profile — Opus via Foundry (${azureConfig.claudeApiShape} shape, ${azureConfig.claudeDeployment}).\n`);
+      const route = azureConfig.claudeRoute;
+      process.stderr.write(
+        `  [final-review] Azure work profile — Claude via ${route.mode} route ` +
+        `(${azureConfig.claudeApiShape} shape, ${azureConfig.claudeDeployment}, ` +
+        `auth ${route.authMode} from ${route.credentialVar}).\n`);
       if (azureConfig.claudeApiShape === 'anthropic') {
-        return createAnthropicClient({ baseURL: azureConfig.claudeBaseUrl });
+        return createAnthropicClient({ azureRoute: route });
       }
       return createOpenAIClient({ purpose: 'foundry-claude' });
     },
@@ -1487,7 +1492,7 @@ async function buildShadowClient(canonicalProvider) {
   }
   if (canonicalProvider === 'azure-claude') {
     if (azureConfig.claudeApiShape === 'anthropic') {
-      return createAnthropicClient({ baseURL: azureConfig.claudeBaseUrl });
+      return createAnthropicClient({ azureRoute: azureConfig.claudeRoute });
     }
     return createOpenAIClient({ purpose: 'foundry-claude' });
   }
@@ -1844,40 +1849,71 @@ async function refreshCatalogAndWarn() {
   } catch { /* ignore */ }
 }
 
-async function runPingGemini() {
-  try {
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-    const response = await ai.models.generateContent({ model: MODEL, contents: 'Reply with exactly: Gemini ready' });
-    console.log(`✓ ${MODEL}: ${response.text.trim()}`);
-    process.exit(0);
-  } catch (err) {
-    console.error(`✗ ${MODEL}: ${err.message}`);
-    process.exit(1);
-  }
-}
-
-async function runPingClaude() {
-  try {
-    const anthropic = await createAnthropicClient();
-    const response = await anthropic.messages.create({
-      model: CLAUDE_OPUS_MODEL,
-      max_tokens: 32,
-      messages: [{ role: 'user', content: 'Reply with exactly: Claude ready' }],
+/**
+ * Minimal reachability request per transport — the smallest call that proves the
+ * endpoint, the credential, the auth header AND the model/deployment name are
+ * all correct together. Keyed by the same `transportKind()` the real review
+ * dispatches on, so a ping can never exercise a different route than a review.
+ * @type {Record<string, (client: object, model: string) => Promise<string>>}
+ */
+const PING_TRANSPORTS = {
+  async gemini(client, model) {
+    const r = await client.models.generateContent({ model, contents: 'Reply with exactly: ready' });
+    return (r.text || '').trim();
+  },
+  async anthropic(client, model) {
+    const r = await client.messages.create({
+      model, max_tokens: 32, messages: [{ role: 'user', content: 'Reply with exactly: ready' }],
     });
-    const text = response.content?.[0]?.text?.trim() || '';
-    console.log(`✓ ${CLAUDE_OPUS_MODEL}: ${text}`);
-    process.exit(0);
-  } catch (err) {
-    console.error(`✗ ${CLAUDE_OPUS_MODEL}: ${err.message}`);
+    return (r.content?.[0]?.text || '').trim();
+  },
+  async openai(client, model) {
+    const r = await client.chat.completions.create({
+      model, max_completion_tokens: 32, messages: [{ role: 'user', content: 'Reply with exactly: ready' }],
+    });
+    return (r.choices?.[0]?.message?.content || '').trim();
+  },
+};
+
+/**
+ * `ping` — prove the CONFIGURED final reviewer is reachable.
+ *
+ * It used to ignore `--provider` entirely and branch on
+ * `GEMINI_API_KEY`/`ANTHROPIC_API_KEY`, which made it useless in exactly the
+ * situation it exists for: on an Azure-only machine neither variable is set, so
+ * the one diagnostic an operator reaches for when the reviewer is failing
+ * answered "Error: set GEMINI_API_KEY or ANTHROPIC_API_KEY" — advice that is
+ * wrong for that install and says nothing about the route actually in use.
+ *
+ * Now it walks the same path a review does: `--provider` (or the persisted
+ * `FINAL_REVIEW_PROVIDER`, or auto-detect) → `selectProvider` → the descriptor's
+ * own `assertReady` → its own `buildClient` → its own transport.
+ */
+async function runPing(args = []) {
+  const providerIdx = args.indexOf('--provider');
+  const providerOverride = providerIdx !== -1 && args[providerIdx + 1] ? args[providerIdx + 1] : null;
+  // selectProvider runs the descriptor's assertReady and exits non-zero, naming
+  // the missing variable, when the chosen provider is not configured.
+  const provider = selectProvider(providerOverride || resolveProviderSetting());
+  const descriptor = PROVIDERS[provider];
+  const model = descriptor.resolveModel();
+  const kind = descriptor.transportKind();
+  const ping = PING_TRANSPORTS[kind];
+  if (!ping) {
+    console.error(`Error: provider "${provider}" has no ping transport for kind "${kind}".`);
     process.exit(1);
   }
-}
-
-async function runPing() {
-  if (process.env.GEMINI_API_KEY) await runPingGemini();
-  if (process.env.ANTHROPIC_API_KEY) await runPingClaude();
-  console.error('Error: set GEMINI_API_KEY or ANTHROPIC_API_KEY');
-  process.exit(1);
+  // Report the route BEFORE the call, so a hang or a 401 is still attributable.
+  console.log(`ping ${descriptor.label} · provider=${provider} · transport=${kind} · model=${model}${describeAzureRoute(provider)}`);
+  try {
+    const client = await descriptor.buildClient();
+    const text = await ping(client, model);
+    console.log(`✓ ${model}: ${text}`);
+    process.exit(0);
+  } catch (err) {
+    console.error(`✗ ${model}: ${describeTransportFailure(err, provider)}`);
+    process.exit(1);
+  }
 }
 
 function parseReviewArgs(args) {
@@ -2027,17 +2063,26 @@ function runSetProvider(provider) {
 }
 
 /**
- * Fail-fast (Cluster-A audit H3): the azure-claude final reviewer needs the
- * Foundry endpoint + deployment regardless of which transport shape is used.
+ * Fail-fast (Cluster-A audit H3): the azure-claude final reviewer needs a
+ * resolvable route + deployment regardless of which transport shape is used.
+ *
+ * The endpoint requirement is ROUTE-SPECIFIC. It used to demand
+ * `AZURE_AI_ENDPOINT` unconditionally, which is the wrong variable for a tenant
+ * that serves Claude through APIM — the route resolver owns that decision now
+ * (it throws for `foundry` without an AI endpoint), so this only has to confirm
+ * a route resolved at all and that we have something to address.
  */
 function assertAzureClaudeReady() {
+  const route = azureConfig.claudeRoute;
   const missing = [];
-  if (!azureConfig.aiEndpoint) missing.push('AZURE_AI_ENDPOINT');
+  if (!route) missing.push('AZURE_OPENAI_ENDPOINT');
+  if (!route?.apiKey) missing.push(route?.credentialVar || 'AZURE_OPENAI_API_KEY');
   if (!azureConfig.claudeDeployment) missing.push('AZURE_FOUNDRY_CLAUDE_DEPLOYMENT');
   if (missing.length > 0) {
     console.error(
-      `Error: Azure final reviewer requires ${missing.join(' + ')}. ` +
-      `Set ${missing.length > 1 ? 'them' : 'it'} or unset AZURE_OPENAI_ENDPOINT to use Gemini/Claude.`,
+      `Error: Azure final reviewer (${route?.mode || 'unresolved'} route) requires ` +
+      `${missing.join(' + ')}. Set ${missing.length > 1 ? 'them' : 'it'} or unset ` +
+      `AZURE_OPENAI_ENDPOINT to use Gemini/Claude.`,
     );
     process.exit(1);
   }
@@ -2438,7 +2483,7 @@ async function main() {
 
   const args = process.argv.slice(2);
   const mode = args[0];
-  if (mode === 'ping') return runPing();
+  if (mode === 'ping') return runPing(args);
   if (mode === 'set-provider') return runSetProvider(args[1]);
 
   const { planFile, transcriptFile, jsonMode, outFile, providerOverride, auditMode, runId: cliRunId, role } = parseReviewArgs(args);
@@ -2540,7 +2585,12 @@ async function main() {
     recordGeminiOutcomes(result, primaryModel);
     await finishAndExit(0); // guarantee termination — never rely on natural drain
   } catch (err) {
-    console.error(`Error: ${err.message}`);
+    // Route-enriched for the Azure provider (a bare 401/404 there names neither
+    // the endpoint nor the credential variable); byte-identical `err.message`
+    // for every other provider. This path already avoids the worse failure —
+    // it never emits a review verdict — so what was missing was attribution,
+    // not a new artifact contract.
+    console.error(`Error: ${describeTransportFailure(err, provider)}`);
     await finishAndExit(1);
   }
 }
@@ -2560,6 +2610,7 @@ export const _internals = {
   runShadowAndPersist,
   callReviewer,
   REVIEW_TRANSPORTS,
+  PING_TRANSPORTS,
   PROVIDERS,
   resolveCompatCreds,
   resolveOpenRouterCreds,

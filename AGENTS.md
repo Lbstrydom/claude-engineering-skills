@@ -823,6 +823,23 @@ stay logical sentinels (dodges the `gpt-5.3 → latest-gpt` remap footgun);
   endpoint-qualified `resolveEmbedProfile()` identity; a deployment/resource switch
   is a distinct space and `refresh` auto-promotes to full so spaces can't mix. Unset
   `AZURE_OPENAI_EMBED_DEPLOYMENT` → guessed default may 400 → `npm run azure:doctor -- --fix` probes + locks the real name in. [Recipe](docs/runbooks/azure-work-profile.md) §3.
+- **An endpoint and the credential it is addressed with are ONE unit** (fixed
+  2026-08-13). Claude's base URL was hard-wired to `AZURE_AI_ENDPOINT` while
+  `anthropic-client.mjs` picked the credential by sniffing `AZURE_OPENAI_API_KEY`
+  off the ambient env and always sent it as Bearer — so on any APIM-fronted
+  tenant (two different services) every call shipped the APIM subscription key to
+  the direct Foundry host for a bare `401`, and the APIM route was
+  **unrepresentable**: no env combination reached it. Now `azureConfig.claudeRoute`
+  resolves `{origin, baseUrl, authMode, apiKey, credentialVar}` together, selected
+  by `AZURE_CLAUDE_ROUTE=apim|foundry`; pass it as `createAnthropicClient({azureRoute})`
+  — **never a bare `baseURL`**. Generalise it: *if a change can make one host
+  receive another's credential, the two were resolved apart and must not be.*
+  A cross-service key fallback stays legal but is flagged `credentialShared`, and
+  `npm run azure:routes` prints every route's credential **variable name** (never
+  its value) plus a live probe. Assert these on the **emitted request**, not the
+  client config ([azure-claude-route.test.mjs](tests/azure-claude-route.test.mjs));
+  the Anthropic SDK binds its transport at construction, so a post-hoc
+  `globalThis.fetch` patch observes nothing and the request escapes to the network.
 - **Final-reviewer precedence** (top wins): `--provider` → `FINAL_REVIEW_PROVIDER`
   → Gemini (if `GEMINI_API_KEY`) → Azure `azure-claude` (only when the profile is
   active) → public Opus. A stray `AZURE_OPENAI_ENDPOINT` no longer silently hijacks

@@ -18,6 +18,7 @@
  *     never blocks a valid config fix (M7).
  *
  * Usage: node scripts/azure-doctor.mjs [--fix] [--json] [--candidate <name>]... [--env-file <path>]
+ *        node scripts/azure-doctor.mjs --routes [--json]   # read-only route table + probes
  *
  * @module scripts/azure-doctor
  */
@@ -196,15 +197,59 @@ export async function runAzureDoctor(options, deps) {
 }
 
 function parseArgs(argv) {
-  const options = { fix: false, json: false, candidates: [], envFile: '.env' };
+  const options = { fix: false, json: false, routes: false, candidates: [], envFile: '.env' };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--fix') options.fix = true;
     else if (a === '--json') options.json = true;
+    // `--routes` is a read-only REPORT mode, never a writer: it reports every
+    // Azure wire route (endpoint, final path, deployment, api-version,
+    // credential SOURCE VARIABLE, auth header) and probes each one.
+    else if (a === '--routes') options.routes = true;
     else if (a === '--candidate') options.candidates.push(argv[++i]);
     else if (a === '--env-file') options.envFile = argv[++i];
   }
   return options;
+}
+
+/**
+ * `--routes`: build + probe the route table. Deliberately short-circuits before
+ * any of the embedding doctor's discovery/write machinery — it shares only the
+ * process adapter, and it can never mutate `.env`.
+ */
+async function runRoutesMode(options, out) {
+  const { runRouteDoctor } = await import('./lib/azure/route-doctor.mjs');
+  if (!azureConfig.active) {
+    const r = await runRouteDoctor(options, { azure: azureConfig, probes: {}, out });
+    return r.exitCode;
+  }
+  const { createOpenAIClient } = await import('./lib/openai-client.mjs');
+  const { createAnthropicClient } = await import('./lib/anthropic-client.mjs');
+  // Each probe is the smallest request that exercises the REAL route for that
+  // surface — same client factory, same purpose, same route the audit uses.
+  const probes = {
+    gpt: async () => {
+      const c = await createOpenAIClient({ purpose: 'gpt' });
+      // The GPT auditor calls `responses.*`; probe that surface, not chat, so a
+      // resource that serves only one of them is reported honestly.
+      return c.responses.create({ model: azureConfig.gptDeployment, input: 'ping', max_output_tokens: 16 });
+    },
+    embed: async () => {
+      const c = await createOpenAIClient({ purpose: 'embed' });
+      return c.embeddings.create({ model: azureConfig.embedDeployment, input: 'ping', dimensions: 768 });
+    },
+    claude: async () => {
+      // `backend:'sdk'` explicitly — the cli backend cannot target a custom
+      // endpoint, so it would prove nothing about this route.
+      const c = await createAnthropicClient({ backend: 'sdk', azureRoute: azureConfig.claudeRoute, redactor: null });
+      return c.messages.create({
+        model: azureConfig.claudeDeployment, max_tokens: 16,
+        messages: [{ role: 'user', content: 'ping' }],
+      });
+    },
+  };
+  const r = await runRouteDoctor(options, { azure: azureConfig, probes, out });
+  return r.exitCode;
 }
 
 /**
@@ -241,6 +286,8 @@ async function main() {
 
   const options = parseArgs(process.argv);
   const out = (s) => process.stdout.write(s + '\n');
+
+  if (options.routes) process.exit(await runRoutesMode(options, out));
 
   if (!azureConfig.active) {
     // Fast path — no client construction needed.

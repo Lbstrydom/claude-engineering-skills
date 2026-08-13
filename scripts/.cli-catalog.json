@@ -125,6 +125,10 @@
       "description": "Probe each Azure deployment and print its live TPM/RPM rate limits + reset windows.",
       "category": "diagnostic"
     },
+    "azure:routes": {
+      "description": "Print every Azure wire route (endpoint, path, deployment, auth header, credential VARIABLE — never its value) and probe each one.",
+      "category": "diagnostic"
+    },
     "cache:check": {
       "description": "Audit-loop cache hit-rate diagnostic.",
       "category": "diagnostic"

@@ -58,7 +58,7 @@ export const PROVIDER_ENV_VARS = Object.freeze([
   // Routing selectors the runner layer already scrubs — kept in sync by the
   // containment assertion in tests/provider-env-helper.test.mjs.
   'AZURE_FOUNDRY_SUMMARY_DEPLOYMENT', 'AZURE_OPENAI_API_VERSION',
-  'AZURE_CLAUDE_API_SHAPE', 'AZURE_FOUNDRY_API_PATH',
+  'AZURE_CLAUDE_API_SHAPE', 'AZURE_FOUNDRY_API_PATH', 'AZURE_CLAUDE_ROUTE',
   // Gemini
   'GEMINI_API_KEY',
   // Final-review routing

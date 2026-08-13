@@ -31,8 +31,38 @@ repos auto-inherit `~/.audit-loop.env`; see the "Shared cloud config" section of
 
 The minimum required when `AZURE_OPENAI_ENDPOINT` is set:
 `AZURE_OPENAI_API_KEY` + `AZURE_OPENAI_GPT_DEPLOYMENT`. The final reviewer also
-needs `AZURE_AI_ENDPOINT` + `AZURE_FOUNDRY_CLAUDE_DEPLOYMENT`. Missing any of
-these fails fast with a message naming the absent var (never echoing the key).
+needs `AZURE_FOUNDRY_CLAUDE_DEPLOYMENT` and — on the `foundry` route only —
+`AZURE_AI_ENDPOINT`. Missing any of these fails fast with a message naming the
+absent var (never echoing the key).
+
+#### Which Claude route? (`AZURE_CLAUDE_ROUTE`)
+
+Claude reaches your tenant one of two ways, and they are **different services**
+— different host, different credential, different auth header:
+
+| `AZURE_CLAUDE_ROUTE` | Base URL | Auth header | Credential |
+|---|---|---|---|
+| `apim` | `$AZURE_OPENAI_ENDPOINT/anthropic` | `api-key` | `AZURE_OPENAI_API_KEY` |
+| `foundry` | `$AZURE_AI_ENDPOINT/anthropic` | `Authorization: Bearer` | `AZURE_AI_API_KEY`, else `AZURE_OPENAI_API_KEY` |
+
+Unset, it defaults to `foundry` when `AZURE_AI_ENDPOINT` is present, else `apim`.
+
+**If your tenant fronts Foundry with API Management, set
+`AZURE_CLAUDE_ROUTE=apim` explicitly** — even though `AZURE_AI_ENDPOINT` is also
+set. Behind an APIM gateway the direct Foundry host will not accept the APIM
+subscription key, and a Bearer token is rejected there with *"Access denied due
+to missing subscription key"*.
+
+When the `foundry` route falls back to `AZURE_OPENAI_API_KEY` (no dedicated
+`AZURE_AI_API_KEY`), the credential is being sent to a service it may not belong
+to. That is legal — some tenants really do share one key — so it is permitted but
+flagged `[SHARED across services]` in `azure:routes` and in any 401 message.
+
+Check what you have configured, without sending a single secret to your terminal:
+
+```bash
+npm run azure:routes
+```
 
 ### 2. Stand up local Postgres
 
@@ -127,8 +157,26 @@ npm run security:refresh         # re-embeds incidents via Azure OpenAI
 ### 5. Smoke-test the live endpoints
 
 ```bash
-node scripts/gemini-review.mjs ping   # final-reviewer (Opus) connectivity
+npm run azure:routes
 ```
+
+That prints every wire route — endpoint origin, final path, wire deployment,
+api-version, the credential's **source variable name** (never its value) and the
+auth header — then probes each one. Exit `0` = all routes authenticated, `7` =
+at least one failed, with a classified reason (`AUTH_ENDPOINT_MISMATCH`,
+`DEPLOYMENT_ROUTE_NOT_FOUND`, `CREDENTIAL_MISSING`, `TRANSPORT_UNAVAILABLE`).
+Add `--json` for a machine-readable table.
+
+To smoke-test only the configured final reviewer, on whichever provider is
+actually selected:
+
+```bash
+node scripts/gemini-review.mjs ping --provider azure-claude
+```
+
+`ping` honours `--provider`, the persisted `FINAL_REVIEW_PROVIDER`, and the same
+auto-detect precedence a review uses — it does **not** require `GEMINI_API_KEY`
+or `ANTHROPIC_API_KEY`, neither of which exists on an Azure-only install.
 
 **Verified contract** (smoke-tested live against the work Azure resource, 2026-06-05;
 deployment selection refreshed 2026-06-08 as the Foundry quota expanded; GPT +
@@ -150,8 +198,11 @@ embedding routing changed 2026-08-12, see below):
   `AZURE_OPENAI_API_VERSION=preview` — but note the SDK still emits
   `/openai/deployments/…`, so a resource serving only `/openai/v1` needs the
   gateway to rewrite, not just a version pin.
-- Claude Opus/Sonnet → **native Anthropic** at `…/anthropic/v1/messages` with
-  `Authorization: Bearer` (this is the default `AZURE_CLAUDE_API_SHAPE=anthropic`).
+- Claude Opus/Sonnet → **native Anthropic** at `…/anthropic/v1/messages` (the
+  default `AZURE_CLAUDE_API_SHAPE=anthropic`). The auth header depends on the
+  route: `Authorization: Bearer` on `foundry`, `api-key` on `apim`. Both
+  measured live 2026-08-13 against an APIM-fronted tenant — the APIM host
+  rejects Bearer, the Foundry host rejects the APIM subscription key.
 - Deployments: `gpt-5.5` (auditor — replaces the deprecating `gpt-5.3-chat`,
   retires 2026-06-29), `claude-opus-4-7` (reviewer — 100K TPM, holds a full audit
   transcript; the older `claude-opus-4-6` at 10K TPM can 429 unrecoverably),

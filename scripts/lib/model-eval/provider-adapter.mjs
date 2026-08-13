@@ -129,12 +129,14 @@ async function invokeOpenAICompatible({ route, messages, schema, signal }) {
 async function invokeNativeAnthropic({ route, messages, schema, signal }) {
   let client, model;
   if (route.provider === 'azure') {
-    if (!azureConfig.active || !azureConfig.claudeBaseUrl) {
-      throw new Error('invokeStructured: route.provider is "azure" but Azure Anthropic (Foundry) routing is not configured (AZURE_AI_ENDPOINT unset)');
+    if (!azureConfig.active || !azureConfig.claudeRoute) {
+      throw new Error('invokeStructured: route.provider is "azure" but Azure Anthropic routing is not configured (AZURE_OPENAI_ENDPOINT unset)');
     }
-    // Explicit baseURL — createAnthropicClient() with NO args always targets
-    // the PUBLIC api.anthropic.com; it does not auto-detect azureConfig.
-    client = await createAnthropicClient({ baseURL: azureConfig.claudeBaseUrl });
+    // Explicit route — createAnthropicClient() with NO args always targets the
+    // PUBLIC api.anthropic.com; it does not auto-detect azureConfig. The route
+    // (not a bare baseURL) is what pairs the endpoint with its own credential
+    // and auth header.
+    client = await createAnthropicClient({ azureRoute: azureConfig.claudeRoute });
     model = route.deploymentId;
   } else {
     client = await createAnthropicClient();

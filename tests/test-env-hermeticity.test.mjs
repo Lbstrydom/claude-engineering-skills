@@ -92,7 +92,12 @@ describe('DRIFT GUARD: the scrub list tracks what config.mjs actually reads', ()
   // This pin makes the drift a test failure instead of a latent hole: every
   // `env.AZURE_*` token in config.mjs must be either scrubbed or an
   // explicitly-documented credential.
-  const CREDENTIAL_ALLOWLIST = new Set(['AZURE_OPENAI_API_KEY']);
+  // Credentials, not selectors: inert on their own — neither can activate the
+  // Azure profile or move a request, because only an ENDPOINT does that.
+  // `AZURE_AI_API_KEY` is the direct-Foundry credential; it is read only after
+  // `AZURE_CLAUDE_ROUTE`/`AZURE_AI_ENDPOINT` (both scrubbed) have already chosen
+  // the foundry route, so an ambient value cannot redirect anything by itself.
+  const CREDENTIAL_ALLOWLIST = new Set(['AZURE_OPENAI_API_KEY', 'AZURE_AI_API_KEY']);
 
   test('every AZURE_* var buildAzureConfig consumes is scrubbed or a documented credential', () => {
     const src = fs.readFileSync(path.join(ROOT, 'scripts/lib/config.mjs'), 'utf-8');

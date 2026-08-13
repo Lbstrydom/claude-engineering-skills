@@ -32,6 +32,7 @@
     "solo-control:score": "node scripts/solo-control-audit.mjs score",
     "azure:limits": "node scripts/azure-limits.mjs",
     "azure:doctor": "node scripts/azure-doctor.mjs",
+    "azure:routes": "node scripts/azure-doctor.mjs --routes",
     "audit:refine": "node scripts/refine-prompts.mjs",
     "audit:bandit": "node scripts/bandit.mjs stats",
     "audit:phase7": "node scripts/phase7-check.mjs",

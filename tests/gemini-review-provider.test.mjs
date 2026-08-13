@@ -16,7 +16,25 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
 const { selectProvider, _internals } = await import('../scripts/gemini-review.mjs');
-const { PROVIDERS, resolveCompatCreds, resolveOpenRouterCreds } = _internals;
+const { PROVIDERS, PING_TRANSPORTS, resolveCompatCreds, resolveOpenRouterCreds } = _internals;
+
+describe('ping covers every provider transport', () => {
+  // `ping` is the diagnostic an operator reaches for when the reviewer is
+  // failing, so a provider it cannot exercise is a hole exactly where it hurts.
+  // It used to branch on GEMINI_API_KEY/ANTHROPIC_API_KEY and ignore --provider
+  // entirely, which made it useless on an Azure-only install: neither variable
+  // is set there, so it answered "set GEMINI_API_KEY or ANTHROPIC_API_KEY" —
+  // advice that is wrong for that install and silent about the route in use.
+  for (const [id, descriptor] of Object.entries(PROVIDERS)) {
+    test(`provider "${id}" has a ping transport`, () => {
+      const kind = descriptor.transportKind();
+      assert.ok(
+        typeof PING_TRANSPORTS[kind] === 'function',
+        `provider "${id}" dispatches on transport "${kind}", which PING_TRANSPORTS does not implement`,
+      );
+    });
+  }
+});
 
 describe('PROVIDERS catalog', () => {
   test('every descriptor is internally consistent', () => {

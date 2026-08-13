@@ -816,6 +816,95 @@ export const dbConfig = Object.freeze({
 const VALID_CLAUDE_SHAPES = new Set(['openai', 'anthropic']);
 
 /**
+ * The two transports that can serve Claude in an Azure tenant. They are
+ * DIFFERENT SERVICES, not two spellings of one — different host, different
+ * credential, different auth header — so the endpoint and the key it is paired
+ * with must be resolved together or not at all.
+ *
+ *   - `apim`    — an API Management front-end in front of Foundry. Base is the
+ *                 AOAI/APIM endpoint + `/anthropic`; authenticates with the APIM
+ *                 subscription key in an **`api-key`** header. A Bearer token is
+ *                 rejected with "Access denied due to missing subscription key".
+ *   - `foundry` — the direct AI Foundry inference endpoint. Base is
+ *                 `AZURE_AI_ENDPOINT` + `/anthropic`; authenticates with the
+ *                 Foundry key as **`Authorization: Bearer`**.
+ */
+const VALID_CLAUDE_ROUTES = new Set(['apim', 'foundry']);
+
+/**
+ * Resolve the Claude transport as ONE unit: origin, path, credential, and the
+ * header that carries it.
+ *
+ * Why this exists (incident 2026-08-13). The route used to be assembled from
+ * two independent places that no code ever reconciled: `claudeBaseUrl` was
+ * hard-wired to `AZURE_AI_ENDPOINT`, while `anthropic-client.mjs` picked the
+ * credential by sniffing `AZURE_OPENAI_API_KEY` off the ambient env whenever a
+ * baseURL was set, and always sent it as Bearer. On any tenant where those two
+ * variables name different services — which is every tenant fronted by APIM —
+ * that ships the APIM subscription key to the direct Foundry host and gets a
+ * bare 401 naming neither the route nor the credential. It was also
+ * *unrepresentable* to point Claude at the APIM route at all: no combination of
+ * environment variables could express it.
+ *
+ * Selection: `AZURE_CLAUDE_ROUTE` when set (explicit always wins); otherwise
+ * `foundry` if `AZURE_AI_ENDPOINT` is present — which is exactly today's
+ * behaviour, so an existing working Foundry install is unaffected — else `apim`.
+ *
+ * The `foundry` route prefers a dedicated `AZURE_AI_API_KEY`. It still falls
+ * back to `AZURE_OPENAI_API_KEY` (tenants where one key really does serve both,
+ * which is the configuration the original Foundry path was verified against),
+ * but the fallback is recorded in `credentialShared` so the doctor and the
+ * failure message can name it rather than leaving a 401 unexplained.
+ *
+ * @param {Record<string,string|undefined>} env
+ * @param {{openaiEndpoint: string, aiEndpoint: string|null, apiKey: string|null}} endpoints
+ * @returns {Readonly<{mode:string, origin:string, baseUrl:string, authMode:string,
+ *   apiKey:string|null, credentialVar:string, credentialShared:boolean}>}
+ */
+function buildClaudeRoute(env, { openaiEndpoint, aiEndpoint, apiKey }) {
+  const requested = (env.AZURE_CLAUDE_ROUTE || '').trim();
+  if (requested && !VALID_CLAUDE_ROUTES.has(requested)) {
+    throw new Error(
+      `[config] Invalid AZURE_CLAUDE_ROUTE="${requested}". ` +
+      `Valid values: ${[...VALID_CLAUDE_ROUTES].join(', ')}.`,
+    );
+  }
+  const mode = requested || (aiEndpoint ? 'foundry' : 'apim');
+
+  if (mode === 'foundry') {
+    if (!aiEndpoint) {
+      throw new Error(
+        '[config] AZURE_CLAUDE_ROUTE=foundry requires AZURE_AI_ENDPOINT (the direct ' +
+        'AI Foundry inference endpoint). Set it, or use AZURE_CLAUDE_ROUTE=apim to serve ' +
+        'Claude through the API Management front-end on AZURE_OPENAI_ENDPOINT.',
+      );
+    }
+    const dedicated = (env.AZURE_AI_API_KEY || '').trim() || null;
+    const origin = aiEndpoint.replace(/\/+$/, '');
+    return Object.freeze({
+      mode: 'foundry',
+      origin,
+      baseUrl: `${origin}/anthropic`,
+      authMode: 'bearer',
+      apiKey: dedicated || apiKey,
+      credentialVar: dedicated ? 'AZURE_AI_API_KEY' : 'AZURE_OPENAI_API_KEY',
+      credentialShared: !dedicated,
+    });
+  }
+
+  const origin = openaiEndpoint.replace(/\/+$/, '');
+  return Object.freeze({
+    mode: 'apim',
+    origin,
+    baseUrl: `${origin}/anthropic`,
+    authMode: 'api-key',
+    apiKey,
+    credentialVar: 'AZURE_OPENAI_API_KEY',
+    credentialShared: false,
+  });
+}
+
+/**
  * Build the Azure config from an env-like object. Throws (fail-fast, redacted —
  * never echoes key material) when Azure is half-configured.
  * @param {Record<string,string|undefined>} env
@@ -845,7 +934,7 @@ export function buildAzureConfig(env = process.env) {
       gptDeployment: null, claudeDeployment: null,
       summaryDeployment: 'claude-sonnet-4-6',
       embedDeployment: 'text-embedding-3-large', claudeApiShape: 'anthropic',
-      claudeBaseUrl: null, foundryApiPath: '/openai/v1',
+      claudeRoute: null, claudeBaseUrl: null, foundryApiPath: '/openai/v1',
     });
   }
 
@@ -885,6 +974,7 @@ export function buildAzureConfig(env = process.env) {
   }
 
   const aiEndpoint = (env.AZURE_AI_ENDPOINT || '').trim() || null;
+  const claudeRoute = buildClaudeRoute(env, { openaiEndpoint, aiEndpoint, apiKey });
   return Object.freeze({
     active: true,
     openaiEndpoint,
@@ -923,9 +1013,14 @@ export function buildAzureConfig(env = process.env) {
     // pays one re-index; none of them silently corrupt.
     embedDeployment: (env.AZURE_OPENAI_EMBED_DEPLOYMENT || '').trim() || 'text-embedding-3-large',
     claudeApiShape,
-    // Native-Anthropic base for the Foundry Claude path — the SDK appends
-    // `/v1/messages`, yielding `…/anthropic/v1/messages`.
-    claudeBaseUrl: aiEndpoint ? `${aiEndpoint.replace(/\/+$/, '')}/anthropic` : null,
+    // The resolved Claude transport — endpoint, credential and auth header as
+    // ONE unit. See buildClaudeRoute for why they cannot be resolved apart.
+    claudeRoute,
+    // Native-Anthropic base for the Claude path — the SDK appends `/v1/messages`,
+    // yielding `…/anthropic/v1/messages`. Derived from `claudeRoute` so the base
+    // and the credential can never disagree; kept as a named field because four
+    // call sites and the test helpers read it.
+    claudeBaseUrl: claudeRoute.baseUrl,
     foundryApiPath: (env.AZURE_FOUNDRY_API_PATH || '/openai/v1').trim(),
   });
 }

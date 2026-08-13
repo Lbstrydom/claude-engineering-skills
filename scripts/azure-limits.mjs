@@ -62,7 +62,7 @@ async function probeClaude(deployment) {
   // is set; stating it here keeps this probe's requirement self-evident.)
   const client = await createAnthropicClient({
     backend: 'sdk',
-    baseURL: azureConfig.claudeBaseUrl,
+    azureRoute: azureConfig.claudeRoute,
     redactor: null,
   });
   const { response } = await client.messages.create(
