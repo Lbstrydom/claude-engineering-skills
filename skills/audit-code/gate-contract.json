@@ -281,6 +281,22 @@
     {
       "line": "writes. Never hand-assemble the JSON:",
       "reason": "Step 7 instruction to run build-audit-transcript.mjs rather than hand-rolling the transcript. It constrains what the AGENT does before invoking the gate; nothing in /audit-code exits non-zero on a hand-written transcript (gemini-review accepts any JSON by design, which is why the builder exists). The builder's own refusals — no rounds → exit 1, unresolvable mode → exit 2 — are asserted in tests/audit-transcript-build.test.mjs."
+    },
+    {
+      "line": "> The deterministic existence gate resolves every \"file/module X is missing\"",
+      "reason": "Describes the deterministic existence gate (scripts/lib/audit/finding-verification.mjs, verifyExistenceFindings) which ANNOTATES findings with a sibling verification object — it downgrades a refuted finding out of the verdict count but exits on nothing and blocks no round, so it is not a gate in this contract sense despite the word. Its universal claim IS mechanically enforced, by tests/finding-verification.test.mjs (field-prose fixtures for the refuted/confirmed/requires_verification branches, plus list and sensitive-path cases); the verb here is descriptive prose pointing the reader at that behaviour."
+    },
+    {
+      "line": "> never rewritten — so a **`verification.verification === 'refuted'`** finding",
+      "reason": "States the deliberate immutability of finding.severity (audit M2: the model claim is never overwritten, the gate attaches a sibling object instead). A statement about what the code declines to mutate, not a threshold or an exit condition; the actual read rule is effectiveSeverity() in finding-verification.mjs, covered by tests/finding-verification.test.mjs."
+    },
+    {
+      "line": ">   never missing. The stderr log names these: `[verify-gate] … REFUTED`.",
+      "reason": "Triage instruction to the reader: do not act on a refuted finding, because the cited file exists. Advice about how to read a field, enforced by nothing in this skill run — the audit already excluded the finding from its verdict before the human sees it."
+    },
+    {
+      "line": "> never on a hand-rolled copy of the rule.",
+      "reason": "Instruction to call the exported effectiveSeverity() accessor rather than re-implement the rule inline. The single-oracle discipline it names is a code-review convention (AGENTS.md prose-to-code seam), not something this skill exits on; the duplicate inline lambda it replaced lived in legacy-production-audit.mjs and was removed in the same commit."
     }
   ]
 }
