@@ -18,7 +18,7 @@
  * @module scripts/lib/store/arch/coverage
  */
 
-import { one, upsert } from '../../db/query.mjs';
+import { one, upsert, many } from '../../db/query.mjs';
 import { isCloudEnabled } from '../repo.mjs';
 import { CoverageSchema } from '../../coverage-schema.mjs';
 
@@ -171,6 +171,33 @@ export async function copyForwardCoverage({ fromRefreshId, toRefreshId } = {}) {
   // it. The function's whole contract is EARLIER run -> NEW refresh; the
   // same id on both sides is never a valid call.
   if (fromRefreshId === toRefreshId) return { copied: false, reason: 'invalid-input' };
+  // c08493e3/4e4b5875/74e2add2/8c3878c3: this is the one coverage operation
+  // that takes TWO refresh ids, so it is the one place a caller bug (or a
+  // stale id from another repo's refresh cycle) can blend two repos'
+  // measurements. `getGraphCoverage`/`recordGraphCoverage` take a single
+  // refresh_id each — a UUID PRIMARY KEY already resolves unambiguously to
+  // one row, so there is no analogous mixing risk there to guard against.
+  // Not a caller-supplied repoId check (same reason the WHERE-clause comment
+  // above rejects one): a CLI-resolved repoId is not a tenant boundary,
+  // subject to the same staleness a read-then-write race would have. Instead,
+  // both ids are independently resolved against `refresh_runs.repo_id` — the
+  // FK every refresh actually carries — and compared to each other.
+  if (await isCloudEnabled()) {
+    const scopes = await many(
+      `SELECT id, repo_id FROM refresh_runs WHERE id = ANY($1::uuid[])`,
+      [[fromRefreshId, toRefreshId]],
+    );
+    const repoIdOf = new Map(scopes.map((r) => [r.id, r.repo_id]));
+    const fromRepoId = repoIdOf.get(fromRefreshId);
+    const toRepoId = repoIdOf.get(toRefreshId);
+    // Either id not resolving to a refresh_runs row degrades to the existing
+    // `no-prior-coverage` reason below (getGraphCoverage will also find
+    // nothing) rather than a new failure mode — only a MISMATCH between two
+    // resolvable repo ids is the tenant violation this guards against.
+    if (fromRepoId && toRepoId && fromRepoId !== toRepoId) {
+      return { copied: false, reason: 'cross-repo-refresh-mismatch' };
+    }
+  }
   const prior = await getGraphCoverage(fromRefreshId);
   if (!prior) return { copied: false, reason: 'no-prior-coverage' };
 

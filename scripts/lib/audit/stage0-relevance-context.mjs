@@ -80,7 +80,15 @@ export async function buildStage0RelevanceContext(ctx, envelopes) {
   let repoUuid = null;
   try {
     repoUuid = resolveRepoIdentity(process.cwd())?.repoUuid ?? null;
-  } catch { /* no resolvable repo identity — every impact lookup degrades to null (unknown) */ }
+  } catch (err) {
+    // 9e392b57: degrading to null (every impact lookup reads as `unknown`) is
+    // the correct BEHAVIOUR — this is best-effort context, not a hard
+    // dependency — but a fully silent catch made "no git repo here" and "git
+    // is present but resolution broke in some unexpected way" indistinguishable
+    // from the outside. Logged, not thrown: the degrade-to-null contract for
+    // callers is unchanged.
+    process.stderr.write(`  [stage0] resolveRepoIdentity failed (${err?.message || err}) — impact lookups degrade to unknown\n`);
+  }
   // 5308a5d6: bounded-concurrency worker pool over the local Postgres RPC
   // (getFreshImportersOrNull), replacing a fully sequential for...of loop.
   // Not a semaphore around the same sequential loop — that shape provides

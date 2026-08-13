@@ -142,14 +142,32 @@ function extractNamedRegions(source, names) {
     throw new Error(`tiered-shadow-contract-digest: source has recovered parse errors, refusing to hash a partial tree: ${recoveredErrors.join('; ')}`);
   }
   const found = new Map();
+  // Track ambiguity HERE, at the point a second match actually overwrites the
+  // first — not later, by re-checking `out` in the loop below. `names` has no
+  // duplicate entries, so a per-name `out.has()` check in a loop that visits
+  // each name exactly once can never observe the collision; the silent
+  // overwrite already happened in `found.set()`. A pinned name matching twice
+  // (e.g. a nested local shadowing a targeted outer declaration — this
+  // module's own targets are all locals inside `summarize()`'s body) must
+  // fail loudly here, before `found` forgets the first match ever existed.
+  const setOrThrowOnAmbiguity = (name, range) => {
+    if (found.has(name)) {
+      throw new Error(
+        `tiered-shadow-contract-digest: "${name}" matched more than once — the digested `
+        + 'region would depend on traversal order. Rename the inner declaration, or narrow '
+        + 'SEMANTICS_REGIONS to an unambiguous target.',
+      );
+    }
+    found.set(name, range);
+  };
   walk(ast, (node) => {
     if (node.type === 'FunctionDeclaration' && node.id?.name && wanted.has(node.id.name)) {
-      found.set(node.id.name, { start: node.start, end: node.end });
+      setOrThrowOnAmbiguity(node.id.name, { start: node.start, end: node.end });
     } else if (
       node.type === 'VariableDeclarator' && node.id?.type === 'Identifier' &&
       wanted.has(node.id.name) && node.init
     ) {
-      found.set(node.id.name, { start: node.init.start, end: node.init.end });
+      setOrThrowOnAmbiguity(node.id.name, { start: node.init.start, end: node.init.end });
     }
   });
   const missing = names.filter((n) => !found.has(n));
@@ -179,19 +197,11 @@ function extractNamedRegions(source, names) {
     }
     // Collapse ALL whitespace runs (including the original line breaks) to a
     // single space: this is what makes the digest insensitive to reformatting
-    // and to the comment-blanking above leaving behind blank lines.
-    // A duplicate name (e.g. a nested function shadowing a targeted top-level
-    // one) would otherwise make the digest depend on TRAVERSAL ORDER: the last
-    // match silently wins and the pinned region is whichever the walker reached
-    // second. For a guard whose whole job is detecting semantic change, quietly
-    // digesting the wrong region is the worst available outcome — fail loudly.
-    if (out.has(name)) {
-      throw new Error(
-        `tiered-shadow-contract-digest: "${name}" matched more than once — the digested `
-        + 'region would depend on traversal order. Rename the inner declaration, or narrow '
-        + 'SEMANTICS_REGIONS to an unambiguous target.',
-      );
-    }
+    // and to the comment-blanking above leaving behind blank lines. (The
+    // duplicate-match case this used to re-check here — a nested declaration
+    // shadowing a targeted outer one — is now caught earlier, in the walk
+    // above, at the point the second match would actually overwrite the
+    // first; `found`/`names` never carry a duplicate by the time we get here.)
     out.set(name, slice.replace(/\s+/g, ' ').trim());
   }
   return out;

@@ -507,6 +507,24 @@ describe('semantics digest — the epoch must move when the measurement CONTRACT
     const backward = computeDigestFromSources(ALL_PINNED_SOURCES, reordered);
     assert.notEqual(backward, forward, 'the module doc warns order affects the digest — pin that behaviour, not just assert it in prose');
   });
+
+  // 4522f5cf: a pinned name matching twice must fail loudly, not silently
+  // digest whichever match the AST walk happened to visit last. Proves the
+  // guard actually bites — a second, unrelated local named `compared` (one of
+  // SUMMARY_FILE's pinned targets) injected elsewhere in the same file must
+  // be rejected rather than silently changing which region gets hashed.
+  test('a pinned name matching a second declaration in the same file throws, rather than silently hashing whichever the walk visited last', () => {
+    const summarySrc = ALL_PINNED_SOURCES[SUMMARY_FILE];
+    assert.match(summarySrc, /const compared\b/, 'precondition: `compared` is declared once in the real source');
+    // Appended, not spliced in — a regex-based insertion into arbitrary real
+    // source risks landing mid-expression and producing invalid JS (module
+    // top level tolerates a trailing function declaration anywhere).
+    const shadowed = `${summarySrc}\nfunction _unrelatedHelper() {\n  const compared = 1;\n  return compared;\n}\n`;
+    assert.throws(
+      () => computeDigestFromSources({ ...ALL_PINNED_SOURCES, [SUMMARY_FILE]: shadowed }),
+      /"compared" matched more than once/,
+    );
+  });
 });
 
 // ── shadowFailureReasons — the live cause breakdown ───────────────────────

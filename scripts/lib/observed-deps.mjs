@@ -129,6 +129,18 @@ export function computeObservedDomainDepsWithCoverage(edges, rules, { sampleCap 
     }
     const fromDomain = fastTag(e.importer);
     const toDomain = fastTag(e.imported);
+    // A rule tagging a file's domain as `__proto__`/`constructor`/`prototype`
+    // is a domain-map data defect, same class as `malformed` above — routing
+    // it there (rather than `attributed`) keeps the coverage-accounting
+    // boundary honest: `result[from] = [...]` filters these same keys out
+    // (see DANGEROUS_KEYS below), so counting the edge as `attributed` before
+    // that filter runs would let the bucket total overstate what actually
+    // reaches the output. Checked before the untagged/sameDomain branches
+    // because a dangerous match IS a truthy tag — it would otherwise fall
+    // through to `attributed` on both `from` and `to` sides.
+    if (DANGEROUS_KEYS.has(fromDomain) || DANGEROUS_KEYS.has(toDomain)) {
+      buckets.malformed++; continue;
+    }
     if (!fromDomain && !toDomain) {
       buckets.untaggedBoth++; sample(e.importer); sample(e.imported); continue;
     }

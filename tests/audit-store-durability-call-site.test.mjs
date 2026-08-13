@@ -445,9 +445,44 @@ describe('orchestrator call sites', () => {
       `runStatus must be derived for BOTH the returned result and audit_runs.run_status; found ${occurrences.length} site(s)`);
     assert.equal(new Set(occurrences.map((m) => m[0])).size, 1,
       'every runStatus derivation must be byte-identical — two spellings is how the result and the column drift');
-    assert.match(src, /runStatus: writeOutcomes\.lost > 0 \|\| writeOutcomes\.spilled > 0/);
     assert.ok(!/mergedResult\.runStatus = 'complete';/.test(src),
       'an unconditional complete is the false zero this plan exists to remove');
+
+    // 68583a69: a failed LOCAL ledger write (`batchWriteLedger`, stashed as
+    // `_ledgerWriteError`) is folded into the SAME verdict at all three sites
+    // — the pinned inner expression above is now always reached through this
+    // outer ternary, never bare, so this must ALSO be uniform for the same
+    // reason: a ledger failure that flips one site's runStatus to
+    // `incomplete` but not another's is the result-and-column drift this
+    // whole test exists to catch, one condition further out. Compared with
+    // whitespace collapsed (each site sits at a different object-literal
+    // nesting depth, so indentation legitimately differs) — the STRUCTURE
+    // must be identical, not the incidental formatting.
+    const LEDGER_EXPR = /typeof _ledgerWriteError !== 'undefined'\s*\? 'incomplete'\s*: \(writeOutcomes\.lost > 0 \|\| writeOutcomes\.spilled > 0 \? 'incomplete' : 'complete'\)/g;
+    const ledgerOccurrences = [...src.matchAll(LEDGER_EXPR)];
+    assert.equal(ledgerOccurrences.length, occurrences.length,
+      'every runStatus derivation must ALSO fold in the ledger-write-failure override — a site with the bare durability '
+      + 'expression but not the ledger wrapper would report `complete` on a run whose suppression state silently failed to persist');
+    const normalized = ledgerOccurrences.map((m) => m[0].replace(/\s+/g, ' '));
+    assert.equal(new Set(normalized).size, 1,
+      'the ledger-failure override must be structurally identical across sites too, for the same reason as the inner expression');
+  });
+
+  test('a4bf14de: writeGateEvidence\'s return value is captured, not discarded', () => {
+    // The writer itself never throws (every internal failure degrades to a
+    // `{written:false, reason}` return — see gate-evidence.mjs), so the gap
+    // was never an uncaught crash; it was that return being silently thrown
+    // away at the call site, leaving a failed local marker write visible only
+    // as an isolated stderr line with nothing recorded alongside it.
+    const src = read(ORCH);
+    const callIndex = src.indexOf('writeGateEvidence({');
+    assert.ok(callIndex !== -1, 'precondition: the call site exists');
+    const before = src.slice(Math.max(0, callIndex - 100), callIndex);
+    assert.match(before, /(?:const|let)\s+\w+\s*=\s*$/,
+      'the call must capture writeGateEvidence\'s return value, not discard it');
+    const after = src.slice(callIndex, callIndex + 800);
+    assert.match(after, /_gateEvidenceUnwritten/,
+      'an unwritten marker must be recorded on the result, same shape as _ledgerWriteError just above it');
   });
 
   test('the migration that receives the outcomes exists and admits the value the code writes', () => {

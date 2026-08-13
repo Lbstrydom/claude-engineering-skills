@@ -50,7 +50,8 @@ export function sanitizePath(filePath) {
 // Known safe patterns for long tokens (20+ chars) that should not be redacted
 const SAFE_LONG_TOKEN_PATTERNS = [
   /^rev-[a-f0-9]+$/,               // Prompt revision IDs (rev-abc123456789)
-  /^audit-\d+$/,                    // Session IDs (audit-1234567890)
+  /^audit-\d+$/,                    // Session IDs, legacy shape (audit-1234567890)
+  /^audit-\d+-\d+-[a-z0-9]+$/,      // Session IDs, collision-safe shape (audit-<ts>-<pid>-<rand>, 0342d9cc)
   /^[a-f0-9]{20,40}$/,             // Git commit hashes, SHA hashes (hex-only)
 ];
 

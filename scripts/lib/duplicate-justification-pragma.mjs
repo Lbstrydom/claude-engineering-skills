@@ -104,7 +104,12 @@ export function findRepoPragmas(repoRoot, { strict = false, env } = {}) {
     // ordinary source-line content, so splitting on it is unambiguous by
     // construction — no heuristic needed at all.
     output = execFileSync('git', ['grep', '--untracked', '-z', '-n', '-F', '@duplicate-justification:', '--', '.', ':(exclude)*.md', ':(exclude)tests/*'], {
-      cwd: repoRoot, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], ...(env ? { env } : {}),
+      // Explicit maxBuffer (matches the 64 MiB convention this repo already
+      // uses for other whole-repo `git grep`/`git ls-files` scans —
+      // check-docs-refs.mjs, cycle-cluster-scope.mjs, diff-scope-resolver.mjs):
+      // execFileSync's own default is 1 MiB, which a growing pragma count or
+      // long paths can exceed, truncating stdout rather than erroring loudly.
+      cwd: repoRoot, encoding: 'utf-8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'], ...(env ? { env } : {}),
     });
   } catch (err) {
     if (err.status === 1 && !err.stdout) return []; // genuine zero-match — safe either way
@@ -217,7 +222,13 @@ export function parseGitGrepPragmaRecord(record) {
   // instructional-string interpolation, not a real pragma on a real
   // declaration. No real file path contains these characters.
   if (/[<>${}]/.test(targetFile)) return null;
-  return { pragmaFile, pragmaLine: Number(lineField), targetFile, targetSymbol, reason: reason.trim() };
+  const trimmedReason = reason.trim();
+  // A whitespace-only reason satisfies PRAGMA_RE's `.+?` (it requires only
+  // one character, not one non-whitespace character) but trims to nothing —
+  // a justification with no actual justification. Treat it the same as a
+  // structurally invalid pragma rather than persist an empty reason string.
+  if (!trimmedReason) return null;
+  return { pragmaFile, pragmaLine: Number(lineField), targetFile, targetSymbol, reason: trimmedReason };
 }
 
 /** How many lines a pragma may sit above the declaration it justifies before

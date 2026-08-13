@@ -184,6 +184,21 @@ export async function upsertPlan(repoId, plan) {
     process.stderr.write(`  [learning] upsertPlan: ${validated.message}\n`);
     return { ok: false, reason: 'invalid-input', message: validated.message };
   }
+  // Same normalisation `updatePlanStatus` writes through (27caf508): the
+  // markdown surface and the `plans_status_check` CHECK constraint spell the
+  // same vocabulary two ways, and this was the one write path that skipped
+  // reconciling them — a caller passing the markdown spelling ("In Progress")
+  // hit a raw CHECK-constraint failure here while the exact same value
+  // succeeds through `updatePlanStatus`. Validated alongside the path above,
+  // BEFORE the cloud check, for the same reason: a caller bug costs the
+  // link whether or not the store is enabled, and a confusing driver-level
+  // CHECK-constraint error is worse than a clear one here.
+  const normalisedStatus = toDbPlanStatus(plan.status || 'draft');
+  if (!DB_PLAN_STATUSES.includes(normalisedStatus)) {
+    const message = `upsertPlan: '${plan.status}' is not a valid status (expected one of: ${DB_PLAN_STATUSES.join(', ')})`;
+    process.stderr.write(`  [learning] ${message}\n`);
+    return { ok: false, reason: 'invalid-input', message };
+  }
   if (!await isCloudEnabled()) {
     return { ok: false, reason: 'cloud-off', message: 'cloud store is disabled' };
   }
@@ -205,7 +220,7 @@ export async function upsertPlan(repoId, plan) {
       repo_id: repoId || null,
       path: validated.path,   // repo-relative POSIX — see validatePlanPath
       skill: plan.skill,
-      status: plan.status || 'draft',
+      status: normalisedStatus,
       principles_cited: plan.principlesCited || [],   // jsonb — serialized by the db-layer seam
       focus_areas: plan.focusAreas || [],
       commit_sha: plan.commitSha || null,

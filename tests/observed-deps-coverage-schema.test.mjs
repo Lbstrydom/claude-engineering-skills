@@ -225,6 +225,38 @@ describe('computeObservedDomainDepsWithCoverage — DANGEROUS_KEYS guard in the 
     const { deps } = computeObservedDomainDepsWithCoverage(edges, rules);
     assert.deepEqual(deps, { source: ['target'] });
   });
+
+  it('a dangerous-domain edge is counted as malformed, not attributed — the bucket total must match what deps actually contains', () => {
+    // Before this fix: buckets.attributed++ ran BEFORE the DANGEROUS_KEYS
+    // filter that drops the row from `deps`, so `attributed` overstated what
+    // the output actually held — the exact "coverage accounting" mismatch a
+    // round-2 audit flagged. Asserting both `deps` and `buckets` together in
+    // one test is what catches that mismatch; asserting either alone (as the
+    // three tests above do) cannot.
+    const edges = [{ importer: 'a.js', imported: 'b.js' }];
+    const rules = [
+      { pattern: 'a.js', domain: '__proto__' },
+      { pattern: 'b.js', domain: 'target' },
+    ];
+    const { deps, buckets } = computeObservedDomainDepsWithCoverage(edges, rules);
+    assert.deepEqual(deps, {});
+    assert.equal(buckets.attributed, 0);
+    assert.equal(buckets.malformed, 1);
+  });
+
+  it('a dangerous domain used only as a TARGET is also caught, not just as the source', () => {
+    // a8ba3b91: the guard must not be asymmetric — a safe `from` with a
+    // dangerous `to` is just as unsafe to leave in `out` as the reverse.
+    const edges = [{ importer: 'a.js', imported: 'b.js' }];
+    const rules = [
+      { pattern: 'a.js', domain: 'source' },
+      { pattern: 'b.js', domain: 'constructor' },
+    ];
+    const { deps, buckets } = computeObservedDomainDepsWithCoverage(edges, rules);
+    assert.deepEqual(deps, {});
+    assert.equal(buckets.attributed, 0);
+    assert.equal(buckets.malformed, 1);
+  });
 });
 
 describe('CoverageSchema — arithmetic coherence (runs before the precedence chain)', () => {

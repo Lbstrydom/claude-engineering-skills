@@ -49,6 +49,17 @@ describe('redactSecrets', () => {
     const text = 'Check the error handling in routes.js';
     assert.equal(redactSecrets(text), text);
   });
+
+  it('preserves a collision-safe audit session id (0342d9cc) instead of redacting it as a secret', () => {
+    // legacy-production-audit.mjs's debtRunId grew a pid + random suffix to
+    // stop two audits in the same millisecond sharing one session id — this
+    // is the sibling fix: the new shape must still survive redaction, or an
+    // outcome sanitized for an external LLM loses its session correlation.
+    const text = 'session sid=audit-1755100800000-4821-k3j9qz recorded';
+    const result = redactSecrets(text);
+    assert.ok(result.includes('audit-1755100800000-4821-k3j9qz'), `Should preserve the session id, got: ${result}`);
+    assert.ok(!result.includes('[REDACTED_TOKEN]'), `Should not redact it, got: ${result}`);
+  });
 });
 
 // ── recencyBucket ───────────────────────────────────────────────────────────

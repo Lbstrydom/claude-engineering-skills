@@ -17,6 +17,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+// A `git write-tree` object id: 40 hex chars under the default SHA-1 object
+// format, 64 under SHA-256 (`git init --object-format=sha256` / the
+// GIT_DEFAULT_HASH-configured repos this hardcodes-40-only regex used to
+// reject outright). Shared by gitWorktreeTree and gitIndexTree so the two
+// validators can't drift.
+const GIT_TREE_ID_RE = /^[0-9a-f]{40}$|^[0-9a-f]{64}$/;
+
 /**
  * @typedef {'GIT_BINARY_MISSING'
  *         | 'NOT_A_GIT_REPOSITORY'
@@ -260,7 +267,7 @@ export function gitWorktreeTree(cwd, opts = {}) {
     execSync('git add -A', { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
     const tree = execSync('git write-tree', { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] })
       .toString().trim();
-    if (!/^[0-9a-f]{40}$/.test(tree)) {
+    if (!GIT_TREE_ID_RE.test(tree)) {
       return { ok: false, error: { code: 'WORKING_TREE_UNREADABLE', message: `git write-tree returned an unexpected object id: ${tree.slice(0, 60)}` } };
     }
     return { ok: true, tree };
@@ -291,7 +298,7 @@ export function gitIndexTree(cwd, opts = {}) {
       cwd, stdio: ['ignore', 'pipe', 'pipe'], ...(opts.env ? { env: opts.env } : {}),
     })
       .toString().trim();
-    if (!/^[0-9a-f]{40}$/.test(tree)) {
+    if (!GIT_TREE_ID_RE.test(tree)) {
       return { ok: false, error: { code: 'WORKING_TREE_UNREADABLE', message: `git write-tree returned an unexpected object id: ${tree.slice(0, 60)}` } };
     }
     return { ok: true, tree };

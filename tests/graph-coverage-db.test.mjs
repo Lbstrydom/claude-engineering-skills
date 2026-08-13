@@ -253,6 +253,44 @@ describe('coverage.mjs — recordGraphCoverage/getGraphCoverage/copyForwardCover
     assert.equal(stillThere.stale, false);
     assert.equal(stillThere.verdict.status, 'verified');
   });
+
+  it('copyForwardCoverage refuses a source and destination that belong to DIFFERENT repos (c08493e3/4e4b5875/74e2add2/8c3878c3)', async () => {
+    // A second repo, minimal — this test only needs its id to exist as an
+    // audit_repos FK target for a refresh_runs row in a DIFFERENT repo_id
+    // than refreshIdA. Cleaned up in this test's own finally, not the shared
+    // `after`, since it is not one of the fixture repo's rows.
+    const otherRepo = await upsertRepoByUuid({
+      repoUuid: `test-graph-coverage-other-${crypto.randomUUID()}`, name: 'graph-coverage-db-test-other-repo', fingerprint: null,
+    });
+    const pool = await getPool();
+    const otherRefreshId = (await pool.query(
+      `INSERT INTO refresh_runs (repo_id, mode, status) VALUES ($1, 'incremental', 'published') RETURNING id`,
+      [otherRepo.id],
+    )).rows[0].id;
+    try {
+      // refreshIdA belongs to `repoId` (this describe block's fixture repo)
+      // and carries real coverage from the first test above; otherRefreshId
+      // belongs to a wholly different repo. Copying between them must be
+      // refused before ever reading/writing a row, regardless of which
+      // direction the mismatch runs.
+      const forward = await copyForwardCoverage({ fromRefreshId: refreshIdA, toRefreshId: otherRefreshId });
+      assert.equal(forward.copied, false);
+      assert.equal(forward.reason, 'cross-repo-refresh-mismatch');
+
+      const backward = await copyForwardCoverage({ fromRefreshId: otherRefreshId, toRefreshId: refreshIdA });
+      assert.equal(backward.copied, false);
+      assert.equal(backward.reason, 'cross-repo-refresh-mismatch');
+
+      // The real row must survive untouched — the guard must fire BEFORE
+      // any read/write, not just report failure after the fact.
+      const stillThere = await getGraphCoverage(refreshIdA);
+      assert.equal(stillThere.stale, false);
+      assert.equal(stillThere.verdict.status, 'verified');
+    } finally {
+      await pool.query(`DELETE FROM refresh_runs WHERE id = $1`, [otherRefreshId]);
+      await pool.query(`DELETE FROM audit_repos WHERE id = $1`, [otherRepo.id]);
+    }
+  });
 });
 
 // Pure argument-validation behavior — no DB needed, never gated (round-1

@@ -2237,8 +2237,14 @@ export async function runLegacyProductionAudit(ctx) {
     const alreadyEscalated = debtLedger.entries.filter(e => e.escalated).length;
     process.stderr.write(`  [debt] ${debtLedger.entries.length} debt entries loaded (${alreadyEscalated} escalated)\n`);
   }
-  // Audit session ID for event-log attribution
-  const debtRunId = `audit-${Date.now()}`;
+  // Audit session ID for event-log attribution. `Date.now()` alone is not
+  // collision-safe (0342d9cc): two audits started in the same process, or on
+  // the same machine in the same millisecond, would share one debt-event
+  // session id and one round-1 manifest filename. `process.pid` distinguishes
+  // concurrent processes; the random suffix distinguishes concurrent calls
+  // within one process (this session id is a log-attribution key, not a
+  // security token, so Math.random() is sufficient entropy here).
+  const debtRunId = `audit-${Date.now()}-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
 
   // Phase D.3 escalation gate: flip escalated=true on entries with
   // distinctRunCount >= threshold so they bypass suppression this round.
@@ -4070,7 +4076,18 @@ export async function runLegacyProductionAudit(ctx) {
     if (!Object.hasOwn(ctx, 'auditedBranch')) {
       process.stderr.write('  [gate-evidence] ctx.auditedBranch was never captured (wiring bug) — writing no marker; commit will read as not-run\n');
     } else {
-      writeGateEvidence({
+      // a4bf14de: the writer itself never throws (every internal failure —
+      // buildGateEvidence's throw, the file write itself — is caught inside
+      // writeGateEvidence and degraded to a `{written:false, reason}` return),
+      // but that return used to be discarded here. Its failure was therefore
+      // visible only as an isolated stderr line, with no coordinated record
+      // alongside the cloud convergence write immediately below — which DOES
+      // tally into `writeOutcomes`/`mergedResult`. Capturing it here doesn't
+      // fold it into `runStatus` (a local marker miss is a different kind of
+      // gap than undurable audit data — /ship's guard already degrades a
+      // missing marker to `not-run` on its own), just makes the failure
+      // queryable instead of stderr-only, same as `_ledgerWriteError` below.
+      const gateEvidenceResult = writeGateEvidence({
         repoRoot: process.cwd(),
         runId: cloudRunId,
         mode: 'code',
@@ -4080,6 +4097,9 @@ export async function runLegacyProductionAudit(ctx) {
         auditedTree: ctx.auditedTree ?? null,
         auditedBranch: ctx.auditedBranch,
       });
+      if (!gateEvidenceResult.written) {
+        mergedResult._gateEvidenceUnwritten = gateEvidenceResult.reason;
+      }
     }
 
     // (b) The store verdict — the ONLY thing that can license `passed`.
@@ -4233,7 +4253,13 @@ export async function runLegacyProductionAudit(ctx) {
       // its verdict says. Computed here rather than read from `mergedResult`
       // because this write happens BEFORE the tail sets `runStatus` — and the
       // two must agree, which is asserted in the durability test suite.
-      runStatus: writeOutcomes.lost > 0 || writeOutcomes.spilled > 0 ? 'incomplete' : 'complete',
+      // 68583a69: a failed local ledger write is the same failure shape one
+      // layer down (see the tail's fuller comment) — folded in here too, or
+      // this earlier write and the tail's would disagree on exactly the runs
+      // this override exists to catch.
+      runStatus: typeof _ledgerWriteError !== 'undefined'
+        ? 'incomplete'
+        : (writeOutcomes.lost > 0 || writeOutcomes.spilled > 0 ? 'incomplete' : 'complete'),
       // `suppression_stats` has existed since migration 20260417120000 and was
       // written by nothing for four months — 741 rows, 0 populated (measured
       // 2026-08-13). It carries the ruling-set denominator, without which a
@@ -4323,7 +4349,10 @@ export async function runLegacyProductionAudit(ctx) {
           stats: {
             ...completionStats,
             writeOutcomes,
-            runStatus: writeOutcomes.lost > 0 || writeOutcomes.spilled > 0 ? 'incomplete' : 'complete',
+            // 68583a69: same ledger-failure override as the other two sites.
+            runStatus: typeof _ledgerWriteError !== 'undefined'
+              ? 'incomplete'
+              : (writeOutcomes.lost > 0 || writeOutcomes.spilled > 0 ? 'incomplete' : 'complete'),
           },
         }),
       ]);
@@ -4447,8 +4476,26 @@ export async function runLegacyProductionAudit(ctx) {
   // produced while `run_status` says nothing is missing — the believable false
   // zero, one layer up. `write_outcomes` carries which of the two it was, so
   // "will be retried" and "never" stay distinguishable.
+  //
+  // 68583a69: a failed LOCAL ledger write (`batchWriteLedger`, caught above
+  // and stashed as `_ledgerWriteError`) is the same failure shape one layer
+  // down — data this run produced that did not durably land — and was
+  // previously invisible here: `mergedResult._ledgerWriteError` carried the
+  // message, but `runStatus` only ever looked at `writeOutcomes` (the CLOUD
+  // durableWrite tally), so a ledger write failure still reported `complete`.
+  // Folding it in means an R2+ round that silently lost its suppression state
+  // is no longer indistinguishable, from the outside, from one that recorded
+  // everything.
   mergedResult.writeOutcomes = writeOutcomes;
-  mergedResult.runStatus = writeOutcomes.lost > 0 || writeOutcomes.spilled > 0 ? 'incomplete' : 'complete';
+  // The ledger-failure override wraps the pinned durability expression rather
+  // than editing it in place, on purpose: that inline ternary is pinned
+  // byte-identical across every `runStatus`-deriving site by the durability
+  // test suite (tests/audit-store-durability-call-site.test.mjs), and a new
+  // spelling at only one site is exactly the drift-between-sites class that
+  // test exists to catch. Applied at all three sites this expression appears.
+  mergedResult.runStatus = typeof _ledgerWriteError !== 'undefined'
+    ? 'incomplete'
+    : (writeOutcomes.lost > 0 || writeOutcomes.spilled > 0 ? 'incomplete' : 'complete');
 
   // Say it where a human will see it. A count that only ever reaches a column
   // is better than stderr, but the operator running the audit is the one who

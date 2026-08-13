@@ -65,6 +65,30 @@ describe('the four variants are distinguishable', () => {
     assert.match(r.message, /outside the repo/i);
   });
 
+  test('an unnormalizable status is refused BEFORE the cloud check (27caf508)', async () => {
+    // Same ordering claim as the out-of-repo-path test above: with the store
+    // OFF this still returns the status reason rather than `cloud-off`. Before
+    // this fix, `status` was written verbatim (`plan.status || 'draft'`) with
+    // no normalisation or validation — the markdown spelling ("In Progress")
+    // that `updatePlanStatus` accepts would have hit a raw CHECK-constraint
+    // failure at the DB instead of this clear, pre-write rejection.
+    const r = await upsertPlan(REPO_ID, { path: 'docs/plans/example.md', skill: 'plan', status: 'not-a-real-status' });
+    assert.equal(r.ok, false);
+    assert.equal(r.reason, 'invalid-input');
+    assert.notEqual(r.reason, 'cloud-off');
+    assert.match(r.message, /not-a-real-status.*is not a valid status/);
+  });
+
+  test('a markdown-spelled status normalises to the DB spelling instead of being rejected', async () => {
+    // The other half of the same fix: `updatePlanStatus` already accepts
+    // "In Progress" by normalising it to `in_progress` before validating.
+    // `upsertPlan` must answer alike — reaching `cloud-off` here (not
+    // `invalid-input`) proves the markdown spelling passed validation.
+    const r = await upsertPlan(REPO_ID, { path: 'docs/plans/example.md', skill: 'plan', status: 'In Progress' });
+    assert.equal(r.ok, false);
+    assert.equal(r.reason, 'cloud-off');
+  });
+
   test('an unresolved repoId is invalid-input, not a silent skip', () => {
     // Asserted on source: the guard sits AFTER the cloud check (correctly — with
     // the store off there is no write to scope), so it is unreachable in this
