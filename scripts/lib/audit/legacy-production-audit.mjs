@@ -1298,6 +1298,44 @@ async function runOrphanIntroducedPass({ archReport, repoRoot, baseRef, headRef,
 }
 
 /**
+ * Pick the git range the orphan-introduced wave (Wave 1.5b) analyses.
+ *
+ * **Why a named function for four lines.** The call site hard-coded
+ * `{ baseRef: 'HEAD~1', headRef: 'HEAD' }` immediately beneath a comment
+ * describing working-tree mode as though it were reachable. It was not, so on a
+ * dirty tree — the normal `/audit-code` case — this wave analysed the previous
+ * COMMIT while every other wave scoped to `auditBaseCommit..worktree`. Four
+ * findings between 2026-07-22 and 2026-08-12. A literal cannot carry the
+ * reasoning below, and this policy is one decision, not two constants.
+ *
+ * **`headRef` must stay `'HEAD'` on a clean tree — this is not symmetry.**
+ * `resolveDiffScope`'s working-tree branch builds changed files from
+ * `git diff --name-status HEAD` ∪ untracked, against literal `HEAD`, **ignoring
+ * `baseRef`** (diff-scope-resolver.mjs). On a clean tree that set is EMPTY, so
+ * "audit my last commit" (`/cycle`: base `HEAD~1`, clean tree) would analyse
+ * nothing and report a healthy zero. Always-`null` is therefore a regression
+ * that reads as a pass; `tests/orphan-scope-refs.test.mjs` pins that direction
+ * explicitly.
+ *
+ * The two arms agree on the range because `auditBaseCommit` is already
+ * dirty-aware upstream (openai-audit.mjs: dirty → base at `HEAD`, clean →
+ * `HEAD~1`). Using it rather than a literal also stops this wave being the one
+ * consumer that silently ignored `--base` — AGENTS.md, "one range, one
+ * resolver": a consumer must not re-infer a base from working-tree state.
+ *
+ * @param {{auditBaseCommit: string|null|undefined, workingTreeDirty: boolean}} a
+ * @returns {{baseRef: string, headRef: string|null}}
+ */
+function resolveOrphanScopeRefs({ auditBaseCommit, workingTreeDirty }) {
+  return {
+    // `?? 'HEAD~1'` keeps library/test callers (ctx defaults it to null) on the
+    // exact prior behaviour rather than silently re-pointing them at the tree.
+    baseRef: auditBaseCommit ?? 'HEAD~1',
+    headRef: workingTreeDirty ? null : 'HEAD',
+  };
+}
+
+/**
  * Add one `safeCallGPT` usage envelope into an accumulator, treating a null
  * accumulator as "nothing measured yet".
  *
@@ -1792,6 +1830,10 @@ export async function runLegacyProductionAudit(ctx) {
     debtLedgerPath = undefined, debtEventsPath = undefined, escalateRecurring = null,
     sessionCacheHit = null, scopeMode = null, planFile = null, runId = null, allowInfraScope = false,
     outFile = null, providers = {}, noCloudRecording = false,
+    // Present in ctx since buildAuditRunContext, but never destructured until
+    // 2026-08-13 — which is why the orphan wave could not tell a dirty tree
+    // from a clean one and hard-coded its range. See resolveOrphanScopeRefs.
+    workingTreeDirty = false,
   } = ctx;
   const { openai } = providers;
 
@@ -2465,14 +2507,19 @@ export async function runLegacyProductionAudit(ctx) {
     // `{version:1, entries: validEntries}` in R2+ mode) rather than
     // re-reading the file — one validated ledger object, one consumer path.
     const ledgerForOrphan = isR2Plus ? ledger : null;
-    // Default: post-commit diff (HEAD~1 vs HEAD). This is the /cycle code workflow.
-    // For working-tree audits, headRef=null routes through the resolver's working-tree
-    // mode (Gemini-R3/H3 — tracked diff vs HEAD + untracked files).
+    // Scope this wave to the SAME range the rest of the audit uses: a clean tree
+    // means "audit my last commit" (base..HEAD); a dirty tree means "audit my
+    // uncommitted work", which routes through the resolver's working-tree mode
+    // (Gemini-R3/H3 — tracked diff vs HEAD + untracked files). This used to be
+    // two hard-coded literals below a comment describing the mode it never
+    // selected. resolveOrphanScopeRefs owns the decision and says why the clean
+    // arm must NOT be `null`.
+    const orphanScope = resolveOrphanScopeRefs({ auditBaseCommit, workingTreeDirty });
     const orphanOut = await runOrphanIntroducedPass({
       archReport: archReportForOrphan,
       repoRoot: process.cwd(),
-      baseRef: 'HEAD~1',
-      headRef: 'HEAD',
+      baseRef: orphanScope.baseRef,
+      headRef: orphanScope.headRef,
       runId: debtRunId,
       planContent,
       ledger: ledgerForOrphan,
@@ -4106,6 +4153,10 @@ export async function runLegacyProductionAudit(ctx) {
     tallyWriteOutcomes(writeOutcomes, [
       await durableWrite('audit.runComplete', { runId: cloudRunId, stats: completionStats }),
     ]);
+    // What the row now holds. Compared at the end of this block so a later
+    // durable write cannot leave the persisted tally silently behind the
+    // returned one — see `reconcileCompletionRow` below.
+    const completionTallySnapshot = JSON.stringify(writeOutcomes);
 
     // Phase 1 — adaptive-learning-v1.  Backfill the pass_selection decision
     // outcome with kept/dismissed counts and flush all queued telemetry to
@@ -4118,14 +4169,17 @@ export async function runLegacyProductionAudit(ctx) {
         sequence: 0,
       });
       // 4235a115: gated on learningWritesAllowed (previously unconditional).
-      // backfillLearningOutcome returns { ok, error? } — never throws — so
-      // `.catch()` was dead code; check the result and log a failure
-      // instead of silently discarding it.
       // Through the seam. Losing an outcome LABEL silently is not hypothetical
       // here — audit effectiveness went unmeasurable for a stretch precisely
       // because labels stopped arriving and nothing counted their absence.
       // Idempotent UPDATE keyed on `decision_key`, so a replay re-applies the
       // same label rather than appending a second one.
+      //
+      // This tally lands AFTER `audit.runComplete` was written, so the persisted
+      // column would miss it (audit 2026-08-13 H2) — a row reading `complete`
+      // over a run that lost a write, which is the exact false zero the
+      // durability plan exists to close, reintroduced by routing this write
+      // through the seam. `reconcileCompletionRow` below closes it.
       await writeLearningState(learningWritesAllowed, async () => {
         tallyWriteOutcomes(writeOutcomes, [await durableWrite('learning.outcome', {
           decisionKey,
@@ -4148,6 +4202,37 @@ export async function runLegacyProductionAudit(ctx) {
         );
       }
     } catch { /* best-effort telemetry */ }
+
+    // ── reconcileCompletionRow (audit 2026-08-13 H2) ─────────────────────────
+    //
+    // `audit.runComplete` serialises `writeOutcomes` at ITS call time, but two
+    // durable writes land after it (`learning.outcome` above, and anything a
+    // future edit adds to this tail). Their outcomes reach the RETURNED result
+    // — which the caller and `/audit-code` read — while the persisted
+    // `audit_runs.write_outcomes` / `run_status` keep the earlier snapshot. A
+    // row reading `complete` over a run that lost a write is the false zero
+    // this whole seam exists to prevent, so the two must not be allowed to
+    // disagree.
+    //
+    // Re-writing rather than REORDERING is deliberate: `audit.runComplete` is an
+    // idempotent UPDATE keyed on `run_id`, so a second write is safe and cheap,
+    // whereas moving the completion write past the telemetry tail would reorder
+    // a sequence this change does not own, in a 2,700-line function. Skipped
+    // entirely when nothing changed, so the healthy path costs one comparison.
+    const finalTally = JSON.stringify(writeOutcomes);
+    if (cloudRunId && finalTally !== completionTallySnapshot) {
+      tallyWriteOutcomes(writeOutcomes, [
+        await durableWrite('audit.runComplete', {
+          runId: cloudRunId,
+          run_id: cloudRunId,
+          stats: {
+            ...completionStats,
+            writeOutcomes,
+            runStatus: writeOutcomes.lost > 0 || writeOutcomes.spilled > 0 ? 'incomplete' : 'complete',
+          },
+        }),
+      ]);
+    }
   }
 
   // P0-B: Session manifest + meta (written by openai-audit.mjs, not audit-loop.mjs)
@@ -4470,6 +4555,9 @@ export const __testExports = process.env.AUDIT_EXPORTS_FOR_TESTS === '1'
       validateLedgerForR2, deriveFindingsFromReport, runMapReducePass, collectReducePassStatuses,
       initResultCache, cachePassResult,
       writeLearningState, cleanupCache, classifyShadowFailureSafe, runOrphanIntroducedPass, dedupReplacementId,
+      // Pure, and the ONE place the orphan wave's range policy lives — the
+      // clean-tree arm is a regression guard, not a symmetry (see its docblock).
+      resolveOrphanScopeRefs,
       // buildSuppressionStats: pure, and every honesty rule in the
       // suppression_stats shape (R1 → null, unavailable ≠ zeroed, counts not
       // arrays) is invisible from the store side. Tier-1 unit.
