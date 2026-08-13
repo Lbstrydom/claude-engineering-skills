@@ -1,5 +1,97 @@
 # Project Status Log
 
+## 2026-08-13 — the existence gate refuted true findings about files that exist
+
+Reported from an `/audit-code` run the same day: the deterministic existence gate
+([finding-verification.mjs](scripts/lib/audit/finding-verification.mjs)) treated
+`` `scripts/lib/repo-inventory.mjs` module is missing error handling around
+execSync `` as a claim that the *module* was absent. The file exists, so the gate
+resolved it, returned `verification: 'refuted'`, `verdictSeverity: 'LOW'`,
+`countsTowardVerdict: false` — and a real HIGH left the verdict while still
+reading HIGH in `findings[]`.
+
+`missing` has two readings and the gate admitted both. **Predicative** —
+"`x.mjs` is missing." — asserts the entity is absent, and is the only reading a
+file inventory can adjudicate. **Transitive** — "`x.mjs` is missing error
+handling." — asserts the entity EXISTS and a feature of it does not. This is the
+opposite direction from the false-absence problem the gate was built for, and it
+is the worse one: a false refute deletes a true finding and leaves no trace,
+whereas a false confirm merely wastes a reader's time.
+
+**Two doors, and closing one was not enough.** `EXISTENCE_CLAIM_SIGNAL[1]`/`[8]`
+both fired on the repro's *detail* — but a finding whose CATEGORY is an existence
+claim (`Missing Module`) reaches `extractCitedEntity` whatever its detail says.
+Measured before touching anything: under a neutral category the repro refuted via
+classification; under the factory's `Missing Module` category it refuted via
+extraction. A classification-only fix would have read green against a
+neutral-category fixture and left the realistic path live.
+
+`PREDICATIVE_TAIL` now guards both patterns and `CLAIM_BEFORE`. A direct object
+is a noun phrase, and a noun phrase cannot begin with punctuation, end-of-input,
+a preposition, a subordinator or a coordinator — so only those admit the
+predicative reading. **Deliberately an allowlist**: an unlisted continuation
+makes the gate skip the finding, which then survives at the model's own severity.
+That is this file's stated safe direction (only `refuted` downgrades); a denylist
+of object shapes fails toward the false refute, i.e. toward this bug.
+`ATTRIBUTIVE_TAIL` preserves pattern 8's "missing module `x`" coverage, which a
+bare predicative guard would have destroyed — that regression showed up in the
+first draft and is now a test.
+
+Red-then-green, one defect: exactly the 2 repro assertions failed and all 6
+controls passed **before and after** (that is what makes them controls, and both
+predicative controls — `confirmed`/HIGH for an absent file, `refuted`/LOW for a
+present one — are the gate's whole purpose, so they are the ones a fix must not
+buy its way past). **Negative control on the fix itself**: gutting the
+continuation allowlist fails the new over-tightening control AND the pre-existing
+"is missing FROM the inventory" field regression, so the guards bite rather than
+pass vacuously.
+
+**Landed against a diverged main, deliberately narrowly.** At 12:06 local `main`
+(`9fc87d4f`) and `origin/main` (`2406a09d`, 11:47) had forked at `ce73cc25` under
+two live sessions — 5 unpushed local commits against 6 remote, three subjects
+duplicated across both lines (two patch-identical, "Cluster 1" reworked). No push
+was possible without reconciling them, and reconciling would have published
+another session's work, so on the operator's instruction only this fix was
+cherry-picked. The other session then reconciled the fork itself over the next
+two hours; this landed on the settled `e8fc2879`.
+
+**Two pushes were rejected non-fast-forward after a full green pre-push check** —
+the hook takes ~12 minutes (full `check` in a sandbox + a bundle sync to two
+consumers) and the other session was pushing every few minutes, so each attempt
+lost the race it had just spent 12 minutes earning. The first rejection was
+`6def9c2b` landing — that session's own copy of local `4b54f3e2`, carrying the
+`resolveUniqueSuffix` refactor to *this same file*. Three things worth keeping:
+
+- **The harness reported the push as exit 0.** The command ended in
+  `echo "PUSH_EXIT=$?"`, so the shell's exit status was the `echo`'s, not git's.
+  A rejected push read as a successful one; only `git ls-remote origin main`
+  settled it. Same shape as [[feedback_pipe_masks_git_exit_code]] — **verify the
+  remote ref, never `$?`.**
+- **A clean textual merge is not semantic proof**, and this file was edited on
+  both lines. Rather than infer, the rebased blob was diffed against the tree
+  that actually passed 11,906 tests: byte-identical, so the verification
+  transfers rather than being assumed. (On the final rebase the file was
+  untouched between `6def9c2b` and `e8fc2879`, so it still holds.)
+- **Racing a live session with a 12-minute gate is a losing game.** Retrying is
+  cheap to *type* and costs 12 minutes plus a consumer re-sync each time. Wait
+  for the remote to go quiet, then push — the third attempt went in after the
+  other session had finished reconciling and `main == origin/main`.
+
+Note the pre-push hook **synced the bundle to both consumers (110, then 106 files
+updated) before** each push was rejected, so consumers briefly carried a bundle
+whose commit was not on `origin`. Self-healing on the next successful push, but
+the ordering is worth knowing: **the sync is not gated on the push succeeding.**
+
+The `(latest)` marker convention has lapsed — the three status commits before
+this one all carry an unmarked top heading, and one stale marker survives further
+down (another session's entry, not mine to rewrite). This entry follows current
+practice and adds no marker; the splice asserted heading counts before/after
+(340 → 341) rather than trusting the edit.
+
+`AI-Gate: not-run` — no audit ran this session, which is the honest value.
+
+
+
 ## 2026-08-13 — /brainstorm was unusable on Azure, and its second voice did not exist
 
 Reported from a consumer's Azure repo: the independent brainstorm step returned
