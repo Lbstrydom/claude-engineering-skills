@@ -322,6 +322,16 @@ async function main() {
     // Check convergence — skip stableCount increment when suppression was unavailable
     // (round can't be declared converged if we didn't have a valid ledger to suppress against)
     const suppressionUnavailable = results._executionMeta?.suppressionUnavailable === true;
+
+    // A DEGRADED ledger is not the same failure as an absent one: suppression
+    // still ran, just against a truncated ruling set. It does not gate
+    // convergence (one permanently-malformed legacy entry would then block
+    // every future round), but it must not read as a clean round either.
+    const ledgerInvalidEntries = results._executionMeta?.ledgerInvalidEntryCount ?? 0;
+    if (ledgerInvalidEntries > 0) {
+      console.log(`  ${Y}Ledger degraded${X}: ${ledgerInvalidEntries} malformed entr${ledgerInvalidEntries === 1 ? 'y was' : 'ies were'} dropped — R${round} suppression ran on partial input.`);
+    }
+
     if (isConverged(counts) && !suppressionUnavailable) {
       if (newFindings.length === 0 || round === 1) {
         stableCount++;

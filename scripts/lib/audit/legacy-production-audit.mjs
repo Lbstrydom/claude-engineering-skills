@@ -1756,6 +1756,11 @@ export async function runLegacyProductionAudit(ctx) {
   const isR2Plus = round >= 2;
   let ledger = null, diffMap = null, impactSet = [];
   let suppressionUnavailable = false;
+  // Entries validateLedgerForR2 drops as malformed. Travels into _executionMeta
+  // alongside suppressionUnavailable (see the merged-result assembly below):
+  // the stderr line it used to be reported on exclusively is not a channel the
+  // convergence verdict, the result JSON, or an operator reading either can see.
+  let ledgerInvalidEntryCount = 0;
 
   if (isR2Plus) {
     process.stderr.write(`\n═══ R${round} MODE ═══\n`);
@@ -1771,6 +1776,7 @@ export async function runLegacyProductionAudit(ctx) {
     // `entries` array as "valid," never a suppression-logic merge).
     const ledgerValidation = validateLedgerForR2(ledgerFile, round);
     if (!ledgerValidation.valid) suppressionUnavailable = true;
+    ledgerInvalidEntryCount = ledgerValidation.invalidEntryCount ?? 0;
 
     if (ledgerValidation.valid && ledgerFile) {
       // Re-wrap as {version:1, entries: validEntries} (Gemini gate fix G2,
@@ -3328,7 +3334,16 @@ export async function runLegacyProductionAudit(ctx) {
     _failed_passes: failedPasses.length > 0 ? failedPasses : undefined,
     _usage: totalUsage,
     _cacheMetrics: cacheMetrics,
-    _executionMeta: suppressionUnavailable ? { suppressionUnavailable: true } : undefined,
+    // Typed shape: ExecutionMetaSchema (schemas.mjs). Stays `undefined` on a
+    // clean round so absence keeps meaning "nothing degraded"; each key is
+    // omitted rather than zeroed, so a hard 0 can never read as a measurement
+    // nobody took.
+    _executionMeta: (suppressionUnavailable || ledgerInvalidEntryCount > 0)
+      ? {
+        ...(suppressionUnavailable ? { suppressionUnavailable: true } : {}),
+        ...(ledgerInvalidEntryCount > 0 ? { ledgerInvalidEntryCount } : {}),
+      }
+      : undefined,
   };
 
   // Attach data accumulated before mergedResult was defined (var hoisting avoids TDZ)

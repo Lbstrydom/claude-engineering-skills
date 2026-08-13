@@ -1161,6 +1161,12 @@ export const ExecutionMetaSchema = z.object({
   reduceStatus: z.enum(REDUCE_STATUS_VALUES).optional(),
   reduceSkipped: z.boolean().optional(),
   suppressionUnavailable: z.boolean().optional(),
+  // Entries `validateLedgerForR2` dropped as malformed. `suppressionUnavailable`
+  // says suppression could not run AT ALL; this says it ran against a TRUNCATED
+  // ruling set — a degraded round that would otherwise be indistinguishable
+  // downstream from a clean one. Emitted only when > 0: absent means a complete
+  // ledger, and a hard 0 would be a measurement nobody took.
+  ledgerInvalidEntryCount: z.number().int().nonnegative().optional(),
   passesSkipped: z.array(z.string()).optional(),
   predictionUsed: z.boolean().optional(),
 }).optional();

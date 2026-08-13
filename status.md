@@ -1,5 +1,70 @@
 # Project Status Log
 
+## 2026-08-13 — a degraded ledger and a complete one produced identical rounds
+
+Backlog row `09571813` (audit run `3b0b697c`), accepted 2026-07-27, re-verified
+against HEAD `2305b7f8` before touching anything — a real defect, not a stale
+hypothesis.
+
+`validateLedgerForR2` ([legacy-production-audit.mjs:347](scripts/lib/audit/legacy-production-audit.mjs:347),
+at `2305b7f8`) counts the ledger entries it drops as malformed and reports the
+count on **stderr only**. `invalidEntryCount` was returned and never read: the
+one call site read `.valid` and `.validEntries` and nothing else. So an R2+ round
+whose suppression ran against a **truncated ruling set** was indistinguishable
+downstream from one that ran against a complete one — nothing in
+`_executionMeta`, the result JSON, or the round card could tell them apart. The
+repo's own "a degraded run must not read as a clean run" class.
+
+**Fixed on the existing channel, not a new one.** The count now travels the exact
+path `suppressionUnavailable` already travels: captured at the call site into a
+function-scoped counter, emitted from the merged-result assembly as
+`_executionMeta.ledgerInvalidEntryCount`, declared in `ExecutionMetaSchema`, and
+read by `audit-loop.mjs`, which prints a `Ledger degraded` line on the round card.
+`_executionMeta` stays `undefined` on a clean round and each key is omitted rather
+than zeroed, so absence keeps meaning "nothing degraded" and a hard `0` can never
+read as a measurement nobody took.
+
+**It deliberately does not gate convergence.** `suppressionUnavailable` blocks
+because suppression did not run at all; this one ran, against partial input. Note
+the direction: dropped rulings *inflate* findings, so unlike `suppressionUnavailable`
+it cannot manufacture a false converged verdict. Gating on it would let one
+permanently-malformed legacy entry block every future round and burn the loop to
+`maxRounds` forever — a cried-wolf gate that earns `--no-verify`.
+
+**`pendingEntryCount` is left unpropagated, on purpose.** It is the other
+never-read field in the same return, but it is not degradation — the function's
+own docstring calls it expected pre-adjudication residue, and surfacing it as a
+degradation signal would recreate the `0 valid, N invalid` misreading a consumer
+reported in August. It is genuinely read by the classification tests.
+
+**Verified red-then-green.** The new harness test failed with
+`expected: 2, actual: undefined` while stderr showed both entries being dropped —
+the exact split the defect describes — then passed. It carries a negative control
+(a clean ledger emits no key) so a hardcoded or always-on value cannot pass, and
+it asserts the surviving valid entry still suppresses, so the new signal cannot
+disturb the suppression it reports on. Full suite measured after the fix:
+**11,828 pass / 0 fail / 26 skipped in 161s** (`npm test`).
+
+**Found while tracing, not fixed:** `ExecutionMetaSchema` is imported by
+`legacy-production-audit.mjs:44` and `openai-audit.mjs:34` and **applied nowhere**
+— the `.extend({_executionMeta: ExecutionMetaSchema})` its own plan called for
+never landed, so the live runtime contract is the permissive
+`z.record(z.string(), z.any())` at [schemas.mjs:778](scripts/lib/schemas.mjs:778).
+The schema edit here keeps the declared SSOT honest; the test is what actually
+holds the contract. Closing that is a decision (apply it, or delete the dead
+imports), not a mechanical change.
+
+**Still open from the row's consequence claim:** `_executionMeta` reaches the
+result JSON and `audit-loop.mjs` — exactly as far as `suppressionUnavailable`
+ever reached — but not the `audit_runs` row. `updateRunMeta` is a fixed column
+allowlist, so the store/dashboard leg needs a migration and was left out of scope.
+
+**Consumer-side verification** (Step 6.8): `npm run sync:dry` run pre-commit as
+the pre-check — 168 routine consumer updates pending, none attributable to these
+files. The clone-back at the pushed sha is `unverified` in this entry by
+construction (the sha does not exist when the line is written); it was run
+post-push and reported in-session.
+
 ## 2026-08-13 — the god-module/layering deferral, scoped: 14 edges, 4 of them debt
 
 `audit-store-write-durability.md` §9 deferred "the god-module / layering family
