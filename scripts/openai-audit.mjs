@@ -42,7 +42,7 @@ import { FindingSchema, ProducerFindingSchema, WiringIssueSchema } from './lib/s
 import {
   safeInt, readFileOrDie, readFilesAsContext, readFilesAsAnnotatedContext,
   writeOutput, normalizePath, parseDiffFile, extractPlanPaths, classifyFiles,
-  isAuditInfraFile, auditSubjectFileGuard
+  isAuditInfraFile, auditSubjectFileGuard, resolveEffectiveScope
 } from './lib/file-io.mjs';
 import {
   generateTopicId, populateFindingMetadata, jaccardSimilarity,
@@ -162,7 +162,17 @@ function loadExcludePatterns(cliPatterns = []) {
       const trimmed = line.trim();
       if (trimmed && !trimmed.startsWith('#')) patterns.push(trimmed);
     }
-  } catch { /* no .auditignore — that's fine */ }
+  } catch (err) {
+    // ENOENT is the expected "no .auditignore" case. Anything else — a
+    // permission error, a directory at that path, an I/O fault — means the file
+    // may exist with exclusions we failed to read, and silently proceeding would
+    // audit paths the operator asked to exclude. Surface it rather than treating
+    // every failure as absence.
+    if (err.code !== 'ENOENT') {
+      process.stderr.write(`  [scope] WARNING: .auditignore exists but could not be read (${err.code || err.message}) — `
+        + 'its exclusions are NOT applied to this run.\n');
+    }
+  }
   return patterns;
 }
 
@@ -759,10 +769,15 @@ async function main() {
   // Code mode → multi-pass parallel audit
   if (mode === 'code') {
     // Resolve scope: if --files not explicit AND --scope=diff (default), auto-detect from git
-    let effectiveFileFilter = fileFilter
-      ? (excludePatterns.length > 0 ? applyExclusions(fileFilter, excludePatterns) : fileFilter)
-      : null;
-    if (!effectiveFileFilter && scopeMode === 'diff') {
+    // Scope precedence lives in lib/audit-scope.mjs (resolveEffectiveScope), not
+    // inline here — it is the premise /cycle's per-cluster audit rests on and it
+    // needs to be assertable. `source === 'allowlist'` means an explicit --files
+    // was given, which suppresses the working-tree recompute below.
+    const scopeResolution = resolveEffectiveScope({
+      fileFilter, scopeMode, excludePatterns, applyExclusions,
+    });
+    let effectiveFileFilter = scopeResolution.files;
+    if (scopeResolution.source !== 'allowlist' && scopeMode === 'diff') {
       try {
         const { execFileSync } = await import('node:child_process');
         // Dirty-aware base resolution (only when --base was not explicit).

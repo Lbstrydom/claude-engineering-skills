@@ -12,7 +12,12 @@ test('refuses when a scoped audit reads 0 subject files (the field-test #A1 case
   const msg = auditSubjectFileGuard({ scopeMode: 'diff', subjectFileCount: 0, hasFileFilter: true, foundCount: 5, referencedCount: 7 });
   assert.ok(msg, 'returns a refusal message');
   assert.match(msg, /0 implementation files/);
-  assert.match(msg, /--changed/);            // actionable hint for the scoped case
+  // The hint must name `--files`, the allowlist that actually bounds the audited
+  // set. It said `--changed` until 2026-08-13 — the R2+ impact flag, which cannot
+  // fix a scope problem, offered at the exact moment an operator is fixing one.
+  // See docs/plans/cycle-cluster-audit-scope.md KD-1b.
+  assert.match(msg, /--files/);              // actionable hint for the scoped case
+  assert.doesNotMatch(msg, /Pass `--changed/);
   assert.match(msg, /5 referenced/);
 });
 

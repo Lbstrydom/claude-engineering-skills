@@ -61,10 +61,20 @@ export const AUDIT_INFRA_BASENAMES = new Set([
 export function isAuditInfraFile(relPath) {
   const norm = relPath.replaceAll('\\', '/');
   const basename = path.basename(norm);
-  // Must be directly under top-level scripts/ or scripts/lib/ — NOT nested
-  // under other directories (e.g. src/scripts/ is a legitimate consumer path).
-  if (!norm.startsWith('scripts/')) return false;
-  return AUDIT_INFRA_BASENAMES.has(basename);
+  if (!AUDIT_INFRA_BASENAMES.has(basename)) return false;
+  // Must be DIRECTLY under top-level `scripts/` or `scripts/lib/`. The comment
+  // has said this since the function was written; the code only checked
+  // `startsWith('scripts/')`, so any file anywhere under scripts/ sharing a
+  // basename was classified as audit infrastructure and silently excluded from
+  // every audit. Measured 2026-08-13: 9 tracked files were misclassified this
+  // way — `scripts/lib/persona-test/schemas.mjs`, `scripts/lib/requirements/ledger.mjs`
+  // and siblings, which are unrelated modules that merely share a basename with
+  // the audit's own `scripts/lib/schemas.mjs` / `ledger.mjs`. They were
+  // unauditable by accident, which is a coverage hole rather than a safeguard.
+  const parts = norm.split('/');
+  const directlyUnderScripts = parts.length === 2 && parts[0] === 'scripts';
+  const directlyUnderScriptsLib = parts.length === 3 && parts[0] === 'scripts' && parts[1] === 'lib';
+  return directlyUnderScripts || directlyUnderScriptsLib;
 }
 
 // ── Context Assembly ──────────────────────────────────────────────────────
@@ -88,9 +98,15 @@ export function safeReadFile(relPath, cwdBoundary) {
   const rel = path.relative(cwdBoundary, realPath);
   if (rel.startsWith('..' + path.sep) || rel.startsWith('../') || rel === '..' || path.isAbsolute(rel)) return null;
   try {
-    const stat = fs.statSync(absPath);
+    // stat and read the REALPATH — the path whose containment was just verified.
+    // Using `absPath` here reopened the symlink, so a link swapped between the
+    // realpathSync above and these calls resolved somewhere else entirely and the
+    // containment check governed a different file than the one read (TOCTOU).
+    // `absPath` is still returned as the caller-facing identity: it is the path
+    // the audit was asked about, and callers use it for display and dedup.
+    const stat = fs.statSync(realPath);
     if (!stat.isFile() || stat.size > MAX_FILE_SIZE) return null;
-    return { content: fs.readFileSync(absPath, 'utf-8'), absPath };
+    return { content: fs.readFileSync(realPath, 'utf-8'), absPath };
   } catch {
     return null;
   }
@@ -273,8 +289,55 @@ export function classifyFiles(filePaths) {
  */
 export function auditSubjectFileGuard({ scopeMode, subjectFileCount, hasFileFilter, foundCount = 0, referencedCount = 0 }) {
   if (scopeMode === 'full' || subjectFileCount > 0) return null;
+  // The remediation hint names `--files`, NOT `--changed`. Until 2026-08-13 it
+  // said "Pass `--changed <files>` explicitly", which is the flag that CANNOT
+  // fix a scope problem: `--changed` is the R2+ impact set (reopen detection),
+  // and the audited file set is `--files` (or, absent it, the git recompute).
+  // This message is read at the exact moment an operator is repairing scope, so
+  // sending them to the inert flag was the highest-leverage instance of the
+  // wrong-flag defect. See docs/plans/cycle-cluster-audit-scope.md KD-1b.
   const hint = hasFileFilter
-    ? `the scope matched none of the plan's ${foundCount} referenced file(s) on disk. Pass \`--changed <files>\` explicitly (with \`--diff <patch>\`), or \`--scope=plan|full\`.`
-    : `the plan referenced no implementation files that exist on disk (0 of ${referencedCount} resolved). Check the plan's file paths, or pass \`--changed <files>\`.`;
+    ? `the scope matched none of the plan's ${foundCount} referenced file(s) on disk. Pass \`--files <list>\` (the allowlist — it overrides --scope), or \`--scope=plan|full\`.`
+    : `the plan referenced no implementation files that exist on disk (0 of ${referencedCount} resolved). Check the plan's file paths, or pass \`--files <list>\`.`;
   return `audit aborted — 0 implementation files reached the prompt; refusing to emit a verdict over code that was never read. ${hint}`;
+}
+
+/**
+ * Resolve which files a code audit will actually read, and say WHERE that
+ * decision came from.
+ *
+ * Extracted from `openai-audit.mjs`'s `main()` (2026-08-13) because the branch
+ * it encodes is the load-bearing premise of `/cycle`'s per-cluster audit and was
+ * previously untestable inline. The premise: **an explicit `--files` allowlist
+ * wins, and suppresses the working-tree recompute entirely.** Without it, a
+ * per-cluster audit on a tree shared with a concurrent session silently widens
+ * to that session's files — measured 2026-08-13 at 52 files against 11 declared.
+ *
+ * Pure: no fs, no git, no process, no cwd. The caller runs the git block when
+ * told to.
+ *
+ * @param {object} a
+ * @param {string[]|null} a.fileFilter — explicit `--files` allowlist, or null
+ * @param {string|null} a.scopeMode — 'diff' | 'plan' | 'full' | null
+ * @param {string[]} [a.excludePatterns] — `--exclude-paths` / `.auditignore` globs
+ * @param {(files: string[], patterns: string[]) => string[]} [a.applyExclusions]
+ *   — injected so this module needs no glob dependency; omit to skip exclusions
+ * @returns {{files: string[]|null, source: 'allowlist'|'diff-recompute'|'none'}}
+ */
+export function resolveEffectiveScope({ fileFilter, scopeMode, excludePatterns = [], applyExclusions } = {}) {
+  if (Array.isArray(fileFilter) && fileFilter.length > 0) {
+    // De-duplicate, preserving first-seen order — a caller repeating a path must
+    // not inflate the count the admission comparison is made against.
+    const deduped = [...new Set(fileFilter)];
+    const files = (excludePatterns.length > 0 && typeof applyExclusions === 'function')
+      ? applyExclusions(deduped, excludePatterns)
+      : deduped;
+    // An allowlist emptied by exclusions stays `allowlist` with `files: []`.
+    // Degrading it to a working-tree recompute here would resurrect the exact
+    // widening this function exists to prevent; the empty result is caught
+    // downstream by auditSubjectFileGuard, which refuses a zero-subject run.
+    return { files, source: 'allowlist' };
+  }
+  if (scopeMode === 'diff') return { files: null, source: 'diff-recompute' };
+  return { files: null, source: 'none' };
 }

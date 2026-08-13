@@ -223,7 +223,54 @@ For each remaining cluster in declared order:
 1. **Implement** the cluster's member-file phases.
 2. **Budget**: no runtime splitting in v1 — invoke `/audit-code` on the cluster's derived scope and let its internal map-reduce handle large diffs. `/cycle` only enforces **never merge** across a declared boundary.
    - **Optional author-tier observation**: if the cluster carries an advisory `author-tier:` hint (§11 grammar), you MAY export `AUDIT_AUTHOR_TIER_HINT=<concrete model id or logical tier>` before invoking `/audit-code` so the audit's observation-only recorder captures actual-vs-suggested tier. This **does NOT change which model runs** — it is pure telemetry (`docs/plans/model-tier-observation.md`). Prefer a concrete model id (e.g. `claude-sonnet-4-6`) so the ladder partition key populates.
-3. **Audit envelope**: capture `clusterStartRef` (`vcs.gitCommitSha`) when implementation begins; invoke `/audit-code --scope=diff` with `--changed`=the derived scope and a `clusterStartRef..WORKTREE` `--diff`. Reconcile changed-files: a changed file belonging to **no** cluster's derived scope is an out-of-scope edit → **fail closed** (stop, summarize, ask to amend or take the union fallback). On a resume with no recorded `clusterStartRef`, require `--baseline-ref <sha>` or fall back to union-diff — **never** default `--diff` to HEAD (empty diff = silent skip). Round policy is `/audit-code`'s own cap — no new policy here.
+3. **Audit envelope**: capture `clusterStartRef` (`vcs.gitCommitSha`) when implementation begins, write the cluster's derived scope one-path-per-line to a scope file, then run the two commands below. On a resume with no recorded `clusterStartRef`, require `--baseline-ref <sha>` or fall back to union-diff — **never** default the base to HEAD (empty diff = silent skip). Round policy is `/audit-code`'s own cap — no new policy here.
+
+   > **`--files` is the ONLY flag that scopes the audit.** `--changed` is the R2+
+   > impact set for reopen detection and `--diff` is annotation context; neither
+   > bounds what the model reads. Passing the derived scope as `--changed` and
+   > expecting it to scope is the defect this recipe was rewritten to fix —
+   > measured 2026-08-13, a per-cluster audit declaring 11 files audited **52**,
+   > because `--scope=diff` recomputed from a working tree shared with another
+   > session, and 26 of 31 findings were about code the cluster never touched.
+   > Do NOT hand-compute the change set or hand-apply the admission rules here:
+   > `cycle-cluster-scope.mjs` does that in code, because parsing NUL-delimited
+   > git output and applying `isAuditInfraFile` are not things to do in prose.
+
+<!-- cycle:cluster-audit-command -->
+```bash
+# 1. Deterministic half, in code. Resolves the base to an immutable OID, builds
+#    the reconciliation set (status-aware: deletes and BOTH rename operands),
+#    filters to on-disk paths for the allowlist, runs the admission pre-flight,
+#    writes the patch. EXITS NON-ZERO on an out-of-scope edit, an unadmittable
+#    path, or a comma-unsafe path — when it does, STOP and show its stderr.
+node scripts/cycle-cluster-scope.mjs --base "$CLUSTER_START" \
+  --scope-file "$SCOPE_FILE" --out-dir .audit --cluster "$ID" --json > "$SCOPE_JSON"
+
+# 2. Audit using ONLY values that call produced. Read them with node, not jq —
+#    node is guaranteed here; jq is not, and is absent from check-deps.mjs.
+FILES=$(node -p "require('./$SCOPE_JSON').filesCsv")
+PATCH=$(node -p "require('./$SCOPE_JSON').diffPath")
+INFRA=$(node -p "require('./$SCOPE_JSON').allowInfraScopeRequired ? '--allow-infra-scope' : ''")
+
+node scripts/openai-audit.mjs code "$PLAN" --scope diff \
+  --files "$FILES" --changed "$FILES" --diff "$PATCH" $INFRA
+#   --files   : THE scoping flag — an allowlist; makes --scope a no-op
+#   --changed : R2+ reopen/impact detection only — does NOT scope
+#   --diff    : annotation context only — does NOT scope; must be a real file
+```
+<!-- /cycle:cluster-audit-command -->
+
+   **Two sets, two purposes** — conflating them is unsatisfiable. The
+   *reconciliation set* includes deletes and both rename operands (that is how an
+   edit leaving the cluster is detected); the *allowlist* is that set filtered to
+   paths on disk (the audit's admission policy rejects off-disk paths, so
+   including them guarantees a shortfall). The script returns both and never
+   mixes them.
+
+   **A deletion-only cluster has an empty allowlist** and reports
+   `emptyAllowlist: true`. That is correct — there is no code to read. Route it
+   to the consolidated Gemini gate over the union diff, where the deletion IS
+   visible; do not record a vacuous per-cluster pass.
 4. **Fix-gate**: `fix-gate: yes` → reach `/audit-code` convergence (`HIGH==0 && MEDIUM<=2 && quickFix==0`) **over this cluster's IN-CLUSTER findings** (see 4a) before the next cluster; `none` skips; `final` defers to the consolidated gate. Within-cluster fixing is authorized; a fix needing files **outside** the cluster's scope → **stop** for confirmation (mark any touched `gate-clear` cluster `stale`). Persistent non-convergence → hand back with a summary.
    - **3a. `clusterStartRef` is validated ON USE, not just captured.** Run
      `git merge-base --is-ancestor <clusterStartRef> HEAD` before it becomes a

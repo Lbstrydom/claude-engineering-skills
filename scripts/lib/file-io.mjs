@@ -133,7 +133,19 @@ export function canonicalizeEol(buf) {
 export function normalizePath(p) {
   const resolved = path.resolve(p);
   const cwdPrefix = path.resolve('.');
-  return resolved.replace(cwdPrefix, '').replaceAll(/\\/g, '/').replace(/^\//, '').toLowerCase();
+  // `path.relative`, NOT a string strip. `resolved.replace(cwdPrefix, '')` is a
+  // plain substring removal, so a SIBLING directory sharing the cwd's name as a
+  // prefix was silently mangled: with cwd `/repo`, `/repo2/file.mjs` became
+  // `2/file.mjs` — a path that is not the input, not inside the repo, and looks
+  // like a valid relative path to every downstream consumer that uses this as a
+  // dedup key. Paths genuinely inside cwd are unaffected (path.relative returns
+  // the same value the strip did); only the mangled case changes, and it now
+  // stays recognisably outside via a leading `../`.
+  let rel = path.relative(cwdPrefix, resolved);
+  // A different Windows drive has no relative form — path.relative returns an
+  // absolute path. Keep it absolute rather than pretending it is repo-relative.
+  if (path.isAbsolute(rel)) rel = resolved;
+  return rel.replaceAll(/\\/g, '/').replace(/^\//, '').toLowerCase();
 }
 
 // ── Safe Parsing ────────────────────────────────────────────────────────────
@@ -179,6 +191,6 @@ export function writeOutput(data, outPath, summaryLine) {
 // ── Barrel Re-exports (backward compat) ─────────────────────────────────────
 // All 19+ importers of file-io.mjs continue working unchanged.
 
-export { isSensitiveFile, isAuditInfraFile, readFilesAsContext, classifyFiles, safeReadFile, auditSubjectFileGuard, AUDIT_INFRA_BASENAMES, MAX_FILE_SIZE } from './audit-scope.mjs';
+export { isSensitiveFile, isAuditInfraFile, readFilesAsContext, classifyFiles, safeReadFile, auditSubjectFileGuard, resolveEffectiveScope, AUDIT_INFRA_BASENAMES, MAX_FILE_SIZE } from './audit-scope.mjs';
 export { parseDiffFile, readFilesAsAnnotatedContext, getCommentStyle } from './diff-annotation.mjs';
 export { extractPlanPaths, mergeScopeFiles } from './plan-paths.mjs';

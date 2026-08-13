@@ -224,6 +224,10 @@ const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', D = '\x1b[2m', X = '\x1b[0
  */
 const CORE_ENTRY = [
   'scripts/openai-audit.mjs',
+  // /cycle Step 3C's per-cluster scope pre-flight. Shipped because the SKILL.md
+  // that names it is synced: a documented command whose tooling is absent where
+  // it runs is the shape AGENTS.md records as defect class (4).
+  'scripts/cycle-cluster-scope.mjs',
   'scripts/gemini-review.mjs',
   'scripts/bandit.mjs',
   'scripts/learning-store.mjs',
