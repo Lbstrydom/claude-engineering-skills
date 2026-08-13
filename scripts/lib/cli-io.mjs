@@ -265,3 +265,74 @@ export function assertKnownFlags(argv, known, { cli = 'cli', from = 2 } = {}) {
     );
   }
 }
+
+// ── Termination ─────────────────────────────────────────────────────────────
+
+/** Idempotence guard: `running` → `finishing` → `exited`. */
+let _terminalState = 'running';
+
+/**
+ * Finish a one-shot CLI: drain stdout (bounded), then exit.
+ *
+ * WHY THIS IS NOT JUST `process.exit(code)`. Two failure modes, both observed in
+ * this repo:
+ *
+ *  1. **Truncated output.** On Windows, `process.stdout` to a PIPE is async —
+ *     which is what `npm run x`, `x | tee`, and a CI capture all are.
+ *     `process.exit()` discards whatever has not flushed, so the tail of a
+ *     report can vanish with no error anywhere.
+ *  2. **The process outliving its work.** An SDK holding a keep-alive socket, a
+ *     `pg` pool, or an un-closed readline keeps the event loop alive. A CLI
+ *     whose only exit is a `process.exit()` on the happy path hangs on every
+ *     path that misses it — a consumer reported exactly this against
+ *     `azure:routes` on 2026-08-13.
+ *
+ * `gemini-review.mjs` already solved this for itself (its own `finishAndExit`,
+ * whose docstring calls it "the hang this whole change exists to remove"). This
+ * is that primitive, shared, so the next CLI does not have to rediscover it.
+ *
+ * The drain is RACED against a cap: a wedged or closed pipe must never
+ * re-introduce the hang the drain exists to avoid.
+ *
+ * @param {number} code
+ * @param {{drainCapMs?: number, stdout?: NodeJS.WriteStream}} [opts]
+ * @returns {Promise<void>} never resolves in practice — the process exits
+ */
+export async function finishAndExit(code, { drainCapMs = 2000, stdout = process.stdout } = {}) {
+  if (_terminalState !== 'running') return;   // a watchdog racing the happy path is a no-op
+  _terminalState = 'finishing';
+  try {
+    if (stdout.writableLength > 0) {
+      const { once } = await import('node:events');
+      let capTimer;
+      const cap = new Promise((r) => { capTimer = setTimeout(r, drainCapMs); });
+      await Promise.race([once(stdout, 'drain'), cap]);
+      clearTimeout(capTimer);
+    }
+  } catch { /* EPIPE / stream error — go straight to exit */ }
+  _terminalState = 'exited';
+  process.exit(code);
+}
+
+/**
+ * Arm a hard deadline for a one-shot CLI. On fire it exits with `code`, naming
+ * the deadline on stderr — a bounded wrong answer beats an unbounded wait,
+ * because a hung CLI in a script or CI blocks until something else kills it.
+ *
+ * NOT unref'd: an unref'd timer cannot fire once it is the only thing left
+ * holding the loop, which is precisely the state it exists to break.
+ *
+ * @param {number} ms
+ * @param {{label?: string, code?: number}} [opts]
+ * @returns {{disarm: () => void}}
+ */
+export function armExitWatchdog(ms, { label = 'cli', code = 124 } = {}) {
+  const timer = setTimeout(() => {
+    process.stderr.write(`  [${label}] hard deadline ${(ms / 1000).toFixed(0)}s exceeded — exiting ${code}\n`);
+    void finishAndExit(code);
+  }, ms);
+  return { disarm: () => clearTimeout(timer) };
+}
+
+/** Tests only — the module-level terminal state is process-global. */
+export function _resetTerminalState() { _terminalState = 'running'; }

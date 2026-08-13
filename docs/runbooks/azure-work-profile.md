@@ -167,6 +167,17 @@ at least one failed, with a classified reason (`AUTH_ENDPOINT_MISMATCH`,
 `DEPLOYMENT_ROUTE_NOT_FOUND`, `CREDENTIAL_MISSING`, `TRANSPORT_UNAVAILABLE`).
 Add `--json` for a machine-readable table.
 
+**It is bounded.** The whole probe sweep carries a hard deadline
+(`AZURE_ROUTES_DEADLINE_MS`, default 180s) and exits `124` if it expires — a
+diagnostic that never returns blocks whatever script or CI step invoked it. Exit
+also drains stdout first: a bare `process.exit()` truncates a piped stdout on
+Windows, so `npm run azure:routes | tee` could lose the tail of the report. Both
+come from the shared `finishAndExit`/`armExitWatchdog` in
+[`lib/cli-io.mjs`](../../scripts/lib/cli-io.mjs), and
+[`tests/azure-routes-lifecycle.test.mjs`](../../tests/azure-routes-lifecycle.test.mjs)
+drives the real CLI as a subprocess to assert it — an in-process test cannot
+observe whether a PROCESS would have exited.
+
 To smoke-test only the configured final reviewer, on whichever provider is
 actually selected:
 

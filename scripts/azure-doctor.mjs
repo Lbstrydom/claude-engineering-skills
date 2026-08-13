@@ -30,6 +30,7 @@ import { azureConfig } from './lib/config.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { applyEnvSetting, resolveEnvValue } from './lib/env-setting.mjs';
 import { selectEmbedDeployment as realSelect } from './lib/azure/embed-discovery.mjs';
+import { finishAndExit, armExitWatchdog } from './lib/cli-io.mjs';
 
 const ENV_KEY = 'AZURE_OPENAI_EMBED_DEPLOYMENT';
 const DOCTOR_COMMENT = '# Azure embedding deployment — verified + locked in by `npm run azure:doctor`.';
@@ -41,6 +42,14 @@ const DOCTOR_COMMENT = '# Azure embedding deployment — verified + locked in by
  * sent to Azure and rejects an obvious typo loudly instead of probing garbage.
  */
 const DEPLOYMENT_NAME_RE = /^[A-Za-z0-9._-]{1,64}$/;
+
+/**
+ * Hard deadline for the whole `--routes` probe sweep. Generous — each probe is a
+ * real call and the SDKs retry 429/5xx with backoff on Azure's small quotas — but
+ * FINITE, because a diagnostic that never returns blocks the script or CI step
+ * that invoked it until a human intervenes.
+ */
+const ROUTE_PROBE_DEADLINE_MS = Number(process.env.AZURE_ROUTES_DEADLINE_MS || 180_000);
 
 /** Exit codes — stable + distinct so a caller can tell the states apart (§2). */
 export const EXIT = Object.freeze({
@@ -223,6 +232,11 @@ async function runRoutesMode(options, out) {
     const r = await runRouteDoctor(options, { azure: azureConfig, probes: {}, out });
     return r.exitCode;
   }
+  // Hard deadline. Every probe is a network call against a corporate endpoint,
+  // and a doctor that hangs is worse than one that reports a failure: it blocks
+  // whatever script or CI step invoked it until a human notices. A bounded wrong
+  // answer beats an unbounded wait. Disarmed on the normal path below.
+  const watchdog = armExitWatchdog(ROUTE_PROBE_DEADLINE_MS, { label: 'azure-routes', code: 124 });
   const { createOpenAIClient } = await import('./lib/openai-client.mjs');
   const { createAnthropicClient } = await import('./lib/anthropic-client.mjs');
   // Each probe is the smallest request that exercises the REAL route for that
@@ -248,8 +262,12 @@ async function runRoutesMode(options, out) {
       });
     },
   };
-  const r = await runRouteDoctor(options, { azure: azureConfig, probes, out });
-  return r.exitCode;
+  try {
+    const r = await runRouteDoctor(options, { azure: azureConfig, probes, out });
+    return r.exitCode;
+  } finally {
+    watchdog.disarm();
+  }
 }
 
 /**
@@ -287,12 +305,12 @@ async function main() {
   const options = parseArgs(process.argv);
   const out = (s) => process.stdout.write(s + '\n');
 
-  if (options.routes) process.exit(await runRoutesMode(options, out));
+  if (options.routes) return finishAndExit(await runRoutesMode(options, out));
 
   if (!azureConfig.active) {
     // Fast path — no client construction needed.
     const r = await runAzureDoctor(options, { azure: azureConfig, out, client: null, isTTY: false, prompt: async () => 'n', readEnvFile: () => '', writeEnvFile: () => {}, envPath: '' });
-    process.exit(r.exitCode);
+    return finishAndExit(r.exitCode);
   }
 
   const { createOpenAIClient } = await import('./lib/openai-client.mjs');
@@ -337,11 +355,11 @@ async function main() {
       envPath, getActiveSnapshot, repoId, out,
     });
     rl.close();
-    process.exit(r.exitCode);
+    return finishAndExit(r.exitCode);
   } catch (err) {
     rl.close();
     process.stderr.write(`azure-doctor: ${err.message}\n`);
-    process.exit(1);
+    return finishAndExit(1);
   }
 }
 
