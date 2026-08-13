@@ -23,8 +23,13 @@ node --test tests/install/*.test.mjs        # Installer tests only
 
 ## Project Structure
 
-- `skills/` -- **canonical source of truth** for all 6 skill directories. Edit only here.
-- `.claude/skills/` -- **generated copy** — NEVER edit directly. Run `npm run skills:regenerate`.
+- `skills/` -- **canonical source of truth** for every skill directory. Edit only here.
+  (For the current roster, read the directory or `docs/reference/skill-roster.md` —
+  a count written down here is a number that goes stale silently.)
+- `.claude/skills/` -- **generated copy**, and the ONLY generated skill surface —
+  NEVER edit directly. Run `npm run skills:regenerate`. `.github/skills/` and
+  `.agents/skills/` are **retired**; do not re-introduce a generator for either
+  (see `docs/reference/skill-surface-ownership.md`).
 - `scripts/` -- CLI tools and core audit-loop scripts
 - `scripts/lib/` -- focused modules (schemas, file-io, stores, skill-packaging, skill-refs-parser, repo-stack)
 - `tests/` -- Node.js built-in test runner
@@ -45,10 +50,11 @@ node --test tests/install/*.test.mjs        # Installer tests only
 
 - [ ] Tests pass (`npm test`)
 - [ ] Skills lint clean (`npm run skills:check`) — reference-index + frontmatter drift detection
-- [ ] Skill copies in sync (included in `skills:check` — `.claude/` and `.github/` must equal `skills/`)
+- [ ] Skill copies in sync (included in `skills:check` — `.claude/skills/` must equal `skills/`)
 - [ ] Manifest is fresh (included in `skills:check`; standalone: `npm run skills:manifest:check`)
 - [ ] No new dependencies added without justification
-- [ ] CLAUDE.md updated if architecture changed
+- [ ] **AGENTS.md** updated if architecture changed (it is the canonical shared
+      surface; CLAUDE.md is a thin Claude-Code-only addendum that imports it)
 - [ ] New features have tests
 
 ### Git hooks
@@ -118,11 +124,11 @@ See `docs/reference/skill-reference-format.md` for the full spec + lint rules.
 ### Editing workflow
 
 1. Edit files under `skills/<name>/` only
-2. Run `npm run skills:regenerate` to propagate to `.claude/` and `.github/`
+2. Run `npm run skills:regenerate` to propagate to `.claude/skills/`
 3. Run `npm run skills:check` before committing — enforces:
    - Reference-file existence + frontmatter `summary:` exact-match
    - No orphan files in `references/` that aren't indexed
-   - Byte equality between `skills/` and the generated `.claude/` / `.github/` copies
+   - Byte equality between `skills/` and the generated `.claude/skills/` copies
 
 ### Allowlist
 

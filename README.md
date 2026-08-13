@@ -239,20 +239,27 @@ Per-repo symbol-index in Supabase (with embeddings) catches duplicate-function d
 2. **Ad-hoc-fix time** — `UserPromptSubmit` hook auto-fires on intent verbs (`fix`, `add`, `implement`, etc.) and prepends a consultation callout to Claude's context
 3. **Audit-time** — `/audit-code --scope=full` inlines the full symbol catalogue
 4. **Drift sweep** — weekly GH workflow opens a sticky issue when cosine-similar symbol pairs cluster
-5. **Render** — committed `docs/architecture-map.md` with Mermaid C4 diagrams per domain
+5. **Render** — locally-generated `docs/architecture-map.md` with Mermaid C4 diagrams per domain
 
 **Setup per consumer repo**:
 
 ```bash
 # Requires AUDIT_DB_URL (the cloud learning store DSN) in .env, then:
 npm run arch:refresh:full
-git add .audit-loop/repo-id docs/architecture-map.md package.json
+git add .audit-loop/repo-id package.json
 git commit -m "feat(arch-memory): initial index"
 ```
 
+> **Do not stage `docs/architecture-map.md`.** It is a Category A generated
+> artifact (gitignored): its header carries a timestamp + commit sha + refresh_id
+> and its body carries LLM-written domain summaries rendered from the cloud
+> symbol index, so two renders of the same commit differ. Regenerate it locally
+> with `npm run arch:render` whenever you need it. See the generated-artifact
+> policy in [AGENTS.md](AGENTS.md).
+
 **Cost**: ~$0.50 for first full refresh of a 1000-symbol repo (Haiku purpose summaries + Gemini `gemini-embedding-001`). Steady-state ~$0 thanks to signature-hash caching. Per-prompt hook consultation: ~$0.0003.
 
-**Tracked in consumer repos**: `.audit-loop/repo-id`, `.audit-loop/domain-map.json` (path-based domain rules), `docs/architecture-map.md`, `package.json` arch:* scripts. Synced runtime files (`scripts/lib/symbol-index/*`, `scripts/symbol-index/*`, `.claude/hooks/arch-memory-check.sh`) are gitignored — managed by `npm run sync` from the source repo.
+**Tracked in consumer repos**: `.audit-loop/repo-id`, `.audit-loop/domain-map.json` (path-based domain rules), `package.json` arch:* scripts. **Generated locally, never staged**: `docs/architecture-map.md` (see above). Synced runtime files (`scripts/lib/symbol-index/*`, `scripts/symbol-index/*`, `.claude/hooks/arch-memory-check.sh`) are gitignored — managed by `npm run sync` from the source repo.
 
 ## Browser Tools
 

@@ -1,5 +1,78 @@
 # Project Status Log
 
+## 2026-08-13 — a reviewer's top finding was their own untracked file; the gate it argued for is planned
+
+An external VS Code/Copilot user reviewed this repo and filed ten improvements.
+**Three did not survive verification, including their #1.** They reported
+`copilot-instructions.md` and `mermaid.instructions.md` as untracked-but-present
+and asked us to commit them. `git status -uall .github/` is empty here; `.github/`
+holds `ISSUE_TEMPLATE/`, `PULL_REQUEST_TEMPLATE.md`, `dependabot.yml`, `workflows/`
+and nothing else. Those files exist in **their** workspace, not this repo — we were
+being asked to commit files we do not have. Their "context:check reports clean while
+untracked files alter behaviour" finding rests on the same two files and falls with
+them. A third — the arch-memory hook's timeout "degrades to an unbounded synchronous
+command" — is overstated: `.claude/settings.json` sets a harness-level `"timeout": 12`,
+so a missing GNU `timeout` degrades the inner 8s bound to 12s, not to unbounded.
+
+**The generalisable bit**: they were auditing inside a live developer workspace and
+could not separate repo policy from local operator state. Their own closing note
+half-catches it ("operator cleanup issue") and it still drove their top
+recommendation. An agent reviewing a checkout it does not control has to distinguish
+`HEAD` from the working tree before asserting repo policy.
+
+**What survived, and shipped now.** The MCP drift was real: `.mcp.json` passed
+`-y` to playwright and `.vscode/mcp.json` did not, so on a cold machine `npx` prompts
+for install with no interactive terminal and the VS Code MCP server never starts.
+`npm run sync:dry` confirms **both consumers currently carry the broken form** — the
+fix propagates to them on the next sync. Also corrected: CONTRIBUTING.md claimed "all
+6 skill directories" against 16 real ones, still named the retired `.github/` as a
+generated-copy target, and still said to update CLAUDE.md when architecture changes
+(AGENTS.md is canonical); README instructed `git add docs/architecture-map.md` and
+called it "tracked in consumer repos" while it is Category A and gitignored at
+`.gitignore:159`; `.env.example` advertised concrete `gpt-5.4`/`gemini-3.1-pro-preview`
+IDs against the `latest-*` sentinel policy. The skill count is now *not* restated in
+prose — a number written down is the thing that went stale.
+
+**What is planned rather than built** — [cross-agent-delivery-parity.md](docs/plans/cross-agent-delivery-parity.md),
+`Approved`. An `mcp:parity:gate` (pill-mandatory: it postdates the 2026-07-31
+cutoff), the Copilot instruction-surface ownership decision, and the arch-memory
+host-neutrality corrections.
+
+**The plan audit is the part worth reading.** Four GPT rounds + two Gemini-gate
+rounds, 23/23 findings accepted, final verdict APPROVE with 0 false positives and 0
+over-engineering flags. Three of the findings were defects in my own reasoning, not
+omissions:
+
+- **The merge premise was wrong twice.** Draft 1 claimed a consumer's merged config
+  is "provably a pure function of our source". Draft 2 claimed top-level key
+  authority. Both were falsified by *executing* `deepMerge` rather than reading it:
+  consumer sibling keys survive on servers we own, and a declared object-valued key
+  (`env`) unions rather than replacing. Leaf-path authority is the third and measured
+  formulation — and it still carries the actual fix, because `args` is an array,
+  hence a leaf.
+- **A fix I made introduced a security defect.** Round 2 correctly closed a hole by
+  comparing `env` values instead of ignoring them; round 4 caught that MCP env values
+  routinely carry credentials, so a naive diff would print them to stderr and CI logs.
+  Diagnostics now name server + variable only — never values, and not a truncated
+  prefix.
+- **The Gemini gate corrected me on the last round.** I asserted an integration test
+  of the sync write path "is not observable". It is: `sync-to-repos.mjs` accepts
+  `--target-path`, so the real merge can run against a tmpdir consumer root. That
+  replaced the brittle static source assertion I had substituted.
+
+Two claims were verified against source before acceptance rather than taken on
+trust — `deepMerge` is genuinely non-exported (so the plan carries an extraction
+step as a real prerequisite), and `check-stale-skill-surface.mjs` is genuinely
+invoked against consumer roots at `sync-to-repos.mjs:785,844` (so a categorical rule
+added there would have fired inside consumer repos). Both held.
+
+**Consumer-side verification**: `unverified` for the pushed commit — no consumer
+checkout was re-synced in this session, and `sync-isolation-verify` must run *in* the
+consumer to be authoritative. `npm run sync:dry` from here is the pre-check only, and
+it reported `update: 90 · unchanged: 1256 · 0 errors` with `.vscode/mcp.json` among
+the updates for both consumers.
+
+
 ## 2026-08-13 — the one absence class the gate cannot reach, closed at the prompt
 
 Third and last of today's absence-gate entries, and the only one that touches a
