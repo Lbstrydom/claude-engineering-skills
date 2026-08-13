@@ -2,10 +2,19 @@
 /**
  * @fileoverview Local replica of the 5 weekly GitHub Actions maintenance
  * workflows (architectural-drift, migration-drift, model-freshness,
- * memory-health, learning-weekly-review) plus cache-hitrate-check and
- * debt-health (both ad hoc — no dedicated workflow file), for operators
- * whose org blocks GitHub-hosted Actions runners (or who just prefer
- * local-only). Opt-in, default-OFF — see docs/runbooks/local-maintenance-checks.md.
+ * memory-health, learning-weekly-review) plus cache-hitrate-check,
+ * debt-health and context-staleness (ad hoc — no dedicated workflow file),
+ * and one DISPOSABLE one-shot (slice-recurrence, which retires itself — see
+ * its script header), for operators whose org blocks GitHub-hosted Actions
+ * runners (or who just prefer local-only). Opt-in, default-OFF — see
+ * docs/runbooks/local-maintenance-checks.md.
+ *
+ * **`CHECKS` below is the inventory; this paragraph is prose beside it.** It
+ * had already drifted (context-staleness was missing) before slice-recurrence
+ * made it two short — the same drift the runbook's "7 checks" line carried.
+ * `tests/maintenance-checks.test.mjs` pins the KEY SET, which is what actually
+ * prevents a check being added or removed silently; if this sentence and that
+ * test ever disagree, the test is right.
  *
  * Deliberately NOT an OS-scheduled job (schtasks/launchd/cron). This repo's
  * standing local-first-CI convention treats calendar workflows as

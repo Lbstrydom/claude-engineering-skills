@@ -38,6 +38,21 @@
  * believable false `stopped`. Scoping fails CLOSED: if repo identity cannot be
  * resolved, the verdict is `unknown`, never green.
  *
+ * **Known limitation of the positive control (final-review shadow, MEDIUM).**
+ * `input_tokens > 0` cannot distinguish "the bouncer was not invoked" — which
+ * is legitimate and COMMON, since it only fires when the detector yields
+ * eligible candidates ("Duplication: clean — no candidates over threshold") —
+ * from "usage is still fabricated as 0". Nothing persisted separates them: the
+ * only per-pass call counter, `cacheMetrics.perPass.callCount`, is hard-coded
+ * to 1 for every pass and so cannot serve as the denominator. The consequence
+ * is bounded and deliberately fail-safe: that case lands in the SECOND
+ * `unknown` arm, so the check can only ever fail to conclude, never conclude
+ * wrongly. It is not merely theoretical either way — a run with real bouncer
+ * tokens was observed on 2026-08-13, so the arm is reachable. If this reports
+ * `unknown` for weeks, that is this limitation, not a dormant repo; the fix
+ * would be persisting a real per-pass call count, which is a change to the
+ * telemetry schema and out of scope for a disposable check.
+ *
  * **Retirement predicate (this file is DISPOSABLE — please honour it).** Delete
  * this script, its `CHECKS` entry in `maintenance-checks.mjs`, its key in
  * `tests/maintenance-checks.test.mjs`'s inventory,
