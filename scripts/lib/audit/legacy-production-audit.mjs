@@ -1298,6 +1298,256 @@ async function runOrphanIntroducedPass({ archReport, repoRoot, baseRef, headRef,
 }
 
 /**
+ * Add one `safeCallGPT` usage envelope into an accumulator, treating a null
+ * accumulator as "nothing measured yet".
+ *
+ * Deliberately NOT a shared export: `runMapReducePass` already sums usage
+ * inline over its MAP units, and collapsing the two would couple a hot
+ * map-reduce loop to a helper for a once-per-pass callback. Grepped for an
+ * existing summer first (`addUsage`/`sumUsage`/`mergeUsage`) — none existed.
+ *
+ * @param {object|null} acc
+ * @param {{input_tokens?:number, cached_tokens?:number, output_tokens?:number, reasoning_tokens?:number, latency_ms?:number}} next
+ */
+function addUsage(acc, next) {
+  const base = acc ?? { input_tokens: 0, cached_tokens: 0, output_tokens: 0, reasoning_tokens: 0, latency_ms: 0 };
+  return {
+    input_tokens: base.input_tokens + (next.input_tokens ?? 0),
+    cached_tokens: base.cached_tokens + (next.cached_tokens ?? 0),
+    output_tokens: base.output_tokens + (next.output_tokens ?? 0),
+    reasoning_tokens: base.reasoning_tokens + (next.reasoning_tokens ?? 0),
+    latency_ms: base.latency_ms + (next.latency_ms ?? 0),
+  };
+}
+
+/**
+ * Duplication audit pass (Wave 5) — mechanical detector → LLM bouncer →
+ * deterministic fallback, mirroring `runArchitecturePass`'s two-stage shape.
+ *
+ * **Extracted from `runLegacyProductionAudit`'s body (2026-08-13).** The wave
+ * had mirrored that shape since it landed, but not the `{result, usage,
+ * latencyMs}` return contract this repo's passes follow: inline, the result
+ * literal sat ~40 lines below its own `safeCallGPT` call and hard-coded
+ * `usage: { input_tokens: 0, ... }`. `runLegacyProductionAudit` reduces
+ * `allResults[].usage` into `totalUsage`, so the bouncer's tokens never
+ * reached `_usage.costUsd` (under-reported spend) or `cacheMetrics.hitRate`
+ * (whose denominator feeds the weekly `cache-hitrate-check`) — a fabricated
+ * zero reading as a measurement. The waves already extracted into functions
+ * (`runArchitecturePass`, `runOrphanIntroducedPass`) never had the bug,
+ * because a function boundary is what carries the contract.
+ *
+ * Guarded by tests/audit-wave-usage-accounting.test.mjs, which asserts the
+ * observable consequence (`result._usage`) and carries both a vacuous-pass
+ * guard and a no-call negative control.
+ *
+ * @returns {Promise<{result: object, usage: object, latencyMs: number}>}
+ */
+async function runDuplicationPass({
+  openai, ctx, passPrompt, changedFiles, auditBaseCommit,
+  focusBlock, planContent, historyBlock, ledgerFile, impactSet, isR2Plus,
+}) {
+  const dupStart = Date.now();
+  // The bouncer's measured usage, or null when no model call was made. Null →
+  // a zeroed envelope below, which is an honest "nothing was spent" rather
+  // than the constant this extraction removes.
+  let bouncerUsage = null;
+  let dupFindings = [];
+  let dupSummary = '';
+  try {
+    let report = { state: 'unavailable', reason: 'no auditBaseCommit resolved for this audit run', deterministicFindings: [], semanticCandidates: [] };
+    // Test-only injection point (round-1 code-audit M25/M26 fix): when set,
+    // bypasses Git resolution entirely and calls the override directly —
+    // a hermetic test harness can exercise the findings -> bouncer ->
+    // convergence path with a synthetic report, with no live Git/DB/
+    // embedding access and no need to also fake a real auditBaseCommit.
+    // Production callers never set this; it defaults to undefined.
+    if (ctx.__runDuplicationAnalysis) {
+      report = await ctx.__runDuplicationAnalysis({ repoRoot: process.cwd(), changedFiles: changedFiles || [], auditBaseCommit });
+    } else if (auditBaseCommit) {
+      const diff = gitDiffWithWorkingTree(process.cwd(), auditBaseCommit);
+      if (diff.ok) {
+        const scopeSet = new Set((changedFiles || []).map(normalizePath));
+        const inScope = (p) => scopeSet.size === 0 || scopeSet.has(normalizePath(p));
+        const richChangedFiles = [
+          ...diff.files.added.filter(inScope).map((p) => ({ status: 'added', currentPath: p })),
+          ...diff.files.modified.filter(inScope).map((p) => ({ status: 'modified', currentPath: p })),
+          ...diff.files.untracked.filter(inScope).map((p) => ({ status: 'added', currentPath: p })),
+          ...diff.files.renamed.filter((r) => inScope(r.to)).map((r) => ({ status: 'renamed', currentPath: r.to, previousPath: r.from })),
+        ];
+        report = await runDuplicationAnalysis({ repoRoot: process.cwd(), changedFiles: richChangedFiles, auditBaseCommit });
+      } else {
+        report = { state: 'unavailable', reason: `git diff failed: ${diff.error.message}`, deterministicFindings: [], semanticCandidates: [] };
+      }
+    }
+
+    if (report.state === 'clean') {
+      dupSummary = 'Duplication: clean — no candidates over threshold.';
+    } else if (report.state === 'unavailable') {
+      process.stderr.write(`  Duplication: SKIPPED (unavailable — ${report.reason})\n`);
+      dupSummary = `Duplication: SKIPPED (unavailable — ${report.reason})`;
+    } else if (report.state === 'failed') {
+      process.stderr.write(`  Duplication: FAILED — ${report.reason}\n`);
+      dupFindings = [buildDetectorFailedFinding(report.reason)];
+      dupSummary = 'Duplication: detector failed — see finding.';
+    } else {
+      // 'findings' — deterministicFindings always land unconditionally;
+      // semanticCandidates go through the bouncer (round-2 M3: never let a
+      // bouncer outcome affect the deterministic channel).
+      const deterministic = finalizeDeterministicFindings(report.deterministicFindings);
+      let semanticFindings = [];
+      if (report.semanticCandidates.length > 0) {
+        const { prompt, includedIds } = formatCandidatesForPrompt(report.semanticCandidates, { repoRoot: process.cwd() });
+        const included = report.semanticCandidates.filter((c) => includedIds.includes(c.id));
+        if (included.length === 0) {
+          semanticFindings = []; // every candidate refused by the egress scan — nothing to send
+        } else {
+          const dupLimits = computePassLimits(prompt.length, 'low');
+          const bouncerResult = await safeCallGPT(openai, {
+            ...passPrompt({
+              rubric: getPassPrompt('duplication'),
+              focusBlock,
+              passName: 'duplication',
+              planContent,
+              ledgerFile: isR2Plus ? ledgerFile : null,
+              impactSet,
+              isR2Plus,
+              historyBlock,
+              codeHeader: `## Candidates (${included.length})`,
+              code: prompt,
+            }),
+            schema: DuplicationBouncerResponseSchema,
+            schemaName: 'duplication_bouncer',
+            reasoning: 'low',
+            ...dupLimits,
+            passName: 'duplication',
+          }, null);
+          // Captured whether or not the call succeeded: a failed bouncer still
+          // burns tokens, and dropping them would re-open this defect on the
+          // degraded path only — the harder half to notice.
+          bouncerUsage = bouncerResult?.usage ?? null;
+          const decisions = bouncerResult?.result?.decisions;
+          const mapped = decisions ? mapBouncerDecisionsToFindings(decisions, included, includedIds) : { ok: false, reason: 'bouncer call failed or returned no decisions' };
+          if (mapped.ok) {
+            semanticFindings = mapped.findings;
+          } else {
+            process.stderr.write(`  Duplication bouncer failed (${mapped.reason}) — using deterministic fallback for ${included.length} candidate(s)\n`);
+            semanticFindings = deriveFindingsFromDuplicationReport(included);
+          }
+        }
+      }
+      dupFindings = [...deterministic, ...semanticFindings];
+      dupSummary = `Duplication: ${dupFindings.length} finding(s) (${deterministic.length} deterministic, ${semanticFindings.length} semantic).`;
+    }
+  } catch (err) {
+    process.stderr.write(`  Duplication: unexpected error — ${err.message}\n`);
+    dupFindings = [buildDetectorFailedFinding(err.message)];
+    dupSummary = 'Duplication: unexpected error — see finding.';
+  }
+  return {
+    result: { pass_name: 'duplication', findings: dupFindings, summary: dupSummary },
+    usage: bouncerUsage ?? { input_tokens: 0, cached_tokens: 0, output_tokens: 0, reasoning_tokens: 0, latency_ms: 0 },
+    latencyMs: Date.now() - dupStart,
+  };
+}
+
+/**
+ * Containment-adjacency audit pass (Wave 6) — deterministic detector enumerates,
+ * LLM bouncer only judges what it is handed.
+ *
+ * Extracted alongside `runDuplicationPass` (2026-08-13) and for the same
+ * reason: see that function's docblock for why the inline form could not carry
+ * the `{result, usage, latencyMs}` contract. This wave's bouncer usage arrives
+ * through a `callLlm` CALLBACK rather than a direct return, so it is captured
+ * into the enclosing scope — `runAdjacencyBouncer` invokes that callback at
+ * most once (adjacency-report.mjs), but the capture accumulates rather than
+ * overwrites so a future second call cannot silently drop the first's tokens.
+ *
+ * @returns {Promise<{result: object, usage: object, latencyMs: number}>}
+ */
+async function runAdjacencyPass({
+  openai, ctx, passPrompt, auditBaseCommit,
+  focusBlock, planContent, historyBlock, ledgerFile, impactSet, isR2Plus,
+}) {
+  const adjStart = Date.now();
+  let bouncerUsage = null;
+  let adjFindings = [];
+  let adjSummary = '';
+  try {
+    // No diff contract → NOT-APPLICABLE, not a failure. The wave is
+    // diff-triggered by construction (§D1), so on a `--scope full` or
+    // base-less run there is nothing it could ever have been asked. Skipping
+    // the detector entirely is what keeps that honest: running it would
+    // record "no safe auditBaseCommit" as INPUT_BOUND incompleteness, which
+    // emits a control finding — turning honest absence into a reported
+    // coverage failure, the exact conflation R1-H3 split apart.
+    // The test seam wins over Git resolution (mirroring Wave 5's), so a
+    // hermetic test can exercise this whole path without faking a commit.
+    const analysis = ctx.__runAdjacencyAnalysis
+      ? await ctx.__runAdjacencyAnalysis({ repoRoot: process.cwd(), auditBaseCommit, bounds: adjacencyConfig })
+      : !auditBaseCommit
+        ? { coverage: { containersEnumerated: 0, statementsJudged: 0 }, candidates: [], incompleteness: [], threw: null }
+        : await runAdjacencyAnalysis({ repoRoot: process.cwd(), auditBaseCommit, bounds: adjacencyConfig });
+
+    // The bouncer runs only when there is something to judge. Zero eligible
+    // candidates short-circuits without a model call.
+    let bouncer = null;
+    const eligible = (analysis.candidates ?? []).filter((c) => c.payload?.safe);
+    if (eligible.length > 0) {
+      bouncer = await runAdjacencyBouncer(analysis.candidates, {
+        bounds: adjacencyConfig,
+        rubric: getPassPrompt('adjacency'),
+        callLlm: async ({ prompt, rubric }) => {
+          const adjLimits = computePassLimits(prompt.length, 'low');
+          const res = await safeCallGPT(openai, {
+            ...passPrompt({
+              rubric,
+              focusBlock,
+              passName: 'adjacency',
+              planContent,
+              ledgerFile: isR2Plus ? ledgerFile : null,
+              impactSet,
+              isR2Plus,
+              historyBlock,
+              codeHeader: `## Adjacency candidates (${eligible.length})`,
+              code: prompt,
+            }),
+            schema: AdjacencyBouncerResponseSchema,
+            schemaName: 'adjacency_bouncer',
+            reasoning: 'low',
+            ...adjLimits,
+            passName: 'adjacency',
+          }, null);
+          if (res?.usage) bouncerUsage = addUsage(bouncerUsage, res.usage);
+          return res?.result ?? null;
+        },
+      });
+    }
+
+    // ONE composition point — the sole buildAdjacencyState call site.
+    const composed = composeAdjacencyResult({
+      analysis,
+      bouncer,
+      selected: true,
+      diffContractAvailable: Boolean(auditBaseCommit) || Boolean(ctx.__runAdjacencyAnalysis),
+    });
+    adjFindings = composed.findings;
+    const { state, coverage } = composed.result;
+    adjSummary = `Adjacency: ${state} — ${coverage.containersEnumerated} container(s), `
+      + `${coverage.statementsJudged} statement(s) judged, ${composed.result.candidates.length} candidate(s).`;
+    process.stderr.write(`  ${adjSummary}\n`);
+  } catch (err) {
+    process.stderr.write(`  Adjacency: unexpected error — ${err.message}\n`);
+    adjFindings = [buildAdjacencyFailedFinding(err.message)];
+    adjSummary = 'Adjacency: unexpected error — see finding.';
+  }
+  return {
+    result: { pass_name: 'adjacency', findings: adjFindings, summary: adjSummary },
+    usage: bouncerUsage ?? { input_tokens: 0, cached_tokens: 0, output_tokens: 0, reasoning_tokens: 0, latency_ms: 0 },
+    latencyMs: Date.now() - adjStart,
+  };
+}
+
+/**
  * Ground the LLM bouncer's findings to what the MECHANICAL analyser actually
  * flagged — "the bouncer only judges what it's handed."
  *
@@ -2598,109 +2848,21 @@ export async function runLegacyProductionAudit(ctx) {
   cachePassResult('quickfix', quickfixResult);
 
   // 4.6 Wave 5: Duplication detector (mechanical detection + low-reasoning LLM bouncer)
-  // Plan: docs/plans/audit-code-duplication-wave.md. Mirrors runArchitecturePass's
-  // two-stage shape (mechanical report → LLM bouncer → deterministic fallback).
-  // Attribution is pure Git (no DB dependency) — see duplication-detector.mjs's
-  // module docblock for the Gemini-round-3 decoupling this design is built on.
-  let duplicationResult;
+  // Plan: docs/plans/audit-code-duplication-wave.md. Extracted to runDuplicationPass
+  // (2026-08-13) so the pass carries the {result, usage, latencyMs} contract its
+  // bouncer call was silently dropping — see that function's docblock.
   const EMPTY_DUPLICATION = { pass_name: 'duplication', findings: [], summary: 'Pass skipped.' };
+  let duplicationResult;
+  // Bound once, not re-derived at the registry below: `ran` there reads this
+  // exact decision, and a second `shouldRunPass` call is a second source of
+  // truth for it.
   const runDuplication = shouldRunPass('duplication');
   if (runDuplication) {
     process.stderr.write(`\n── Wave 5: Duplication detector ──\n`);
-    const dupStart = Date.now();
-    let dupFindings = [];
-    let dupSummary = '';
-    try {
-      let report = { state: 'unavailable', reason: 'no auditBaseCommit resolved for this audit run', deterministicFindings: [], semanticCandidates: [] };
-      // Test-only injection point (round-1 code-audit M25/M26 fix): when set,
-      // bypasses Git resolution entirely and calls the override directly —
-      // a hermetic test harness can exercise the findings -> bouncer ->
-      // convergence path with a synthetic report, with no live Git/DB/
-      // embedding access and no need to also fake a real auditBaseCommit.
-      // Production callers never set this; it defaults to undefined.
-      if (ctx.__runDuplicationAnalysis) {
-        report = await ctx.__runDuplicationAnalysis({ repoRoot: process.cwd(), changedFiles: changedFiles || [], auditBaseCommit });
-      } else if (auditBaseCommit) {
-        const diff = gitDiffWithWorkingTree(process.cwd(), auditBaseCommit);
-        if (diff.ok) {
-          const scopeSet = new Set((changedFiles || []).map(normalizePath));
-          const inScope = (p) => scopeSet.size === 0 || scopeSet.has(normalizePath(p));
-          const richChangedFiles = [
-            ...diff.files.added.filter(inScope).map((p) => ({ status: 'added', currentPath: p })),
-            ...diff.files.modified.filter(inScope).map((p) => ({ status: 'modified', currentPath: p })),
-            ...diff.files.untracked.filter(inScope).map((p) => ({ status: 'added', currentPath: p })),
-            ...diff.files.renamed.filter((r) => inScope(r.to)).map((r) => ({ status: 'renamed', currentPath: r.to, previousPath: r.from })),
-          ];
-          report = await runDuplicationAnalysis({ repoRoot: process.cwd(), changedFiles: richChangedFiles, auditBaseCommit });
-        } else {
-          report = { state: 'unavailable', reason: `git diff failed: ${diff.error.message}`, deterministicFindings: [], semanticCandidates: [] };
-        }
-      }
-
-      if (report.state === 'clean') {
-        dupSummary = 'Duplication: clean — no candidates over threshold.';
-      } else if (report.state === 'unavailable') {
-        process.stderr.write(`  Duplication: SKIPPED (unavailable — ${report.reason})\n`);
-        dupSummary = `Duplication: SKIPPED (unavailable — ${report.reason})`;
-      } else if (report.state === 'failed') {
-        process.stderr.write(`  Duplication: FAILED — ${report.reason}\n`);
-        dupFindings = [buildDetectorFailedFinding(report.reason)];
-        dupSummary = 'Duplication: detector failed — see finding.';
-      } else {
-        // 'findings' — deterministicFindings always land unconditionally;
-        // semanticCandidates go through the bouncer (round-2 M3: never let a
-        // bouncer outcome affect the deterministic channel).
-        const deterministic = finalizeDeterministicFindings(report.deterministicFindings);
-        let semanticFindings = [];
-        if (report.semanticCandidates.length > 0) {
-          const { prompt, includedIds } = formatCandidatesForPrompt(report.semanticCandidates, { repoRoot: process.cwd() });
-          const included = report.semanticCandidates.filter((c) => includedIds.includes(c.id));
-          if (included.length === 0) {
-            semanticFindings = []; // every candidate refused by the egress scan — nothing to send
-          } else {
-            const dupLimits = computePassLimits(prompt.length, 'low');
-            const bouncerResult = await safeCallGPT(openai, {
-              ...passPrompt({
-                rubric: getPassPrompt('duplication'),
-                focusBlock,
-                passName: 'duplication',
-                planContent,
-                ledgerFile: isR2Plus ? ledgerFile : null,
-                impactSet,
-                isR2Plus,
-                historyBlock,
-                codeHeader: `## Candidates (${included.length})`,
-                code: prompt,
-              }),
-              schema: DuplicationBouncerResponseSchema,
-              schemaName: 'duplication_bouncer',
-              reasoning: 'low',
-              ...dupLimits,
-              passName: 'duplication',
-            }, null);
-            const decisions = bouncerResult?.result?.decisions;
-            const mapped = decisions ? mapBouncerDecisionsToFindings(decisions, included, includedIds) : { ok: false, reason: 'bouncer call failed or returned no decisions' };
-            if (mapped.ok) {
-              semanticFindings = mapped.findings;
-            } else {
-              process.stderr.write(`  Duplication bouncer failed (${mapped.reason}) — using deterministic fallback for ${included.length} candidate(s)\n`);
-              semanticFindings = deriveFindingsFromDuplicationReport(included);
-            }
-          }
-        }
-        dupFindings = [...deterministic, ...semanticFindings];
-        dupSummary = `Duplication: ${dupFindings.length} finding(s) (${deterministic.length} deterministic, ${semanticFindings.length} semantic).`;
-      }
-    } catch (err) {
-      process.stderr.write(`  Duplication: unexpected error — ${err.message}\n`);
-      dupFindings = [buildDetectorFailedFinding(err.message)];
-      dupSummary = 'Duplication: unexpected error — see finding.';
-    }
-    duplicationResult = {
-      result: { pass_name: 'duplication', findings: dupFindings, summary: dupSummary },
-      usage: { input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, latency_ms: 0 },
-      latencyMs: Date.now() - dupStart,
-    };
+    duplicationResult = await runDuplicationPass({
+      openai, ctx, passPrompt, changedFiles, auditBaseCommit,
+      focusBlock, planContent, historyBlock, ledgerFile, impactSet, isR2Plus,
+    });
   } else {
     process.stderr.write(`\n── Duplication SKIPPED (--passes) ──\n`);
     duplicationResult = { result: EMPTY_DUPLICATION, usage: { input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, latency_ms: 0 }, latencyMs: 0 };
@@ -2717,85 +2879,17 @@ export async function runLegacyProductionAudit(ctx) {
   // discards line numbers even when present, so a finding cannot carry an
   // anchor. A diff hunk always can, and a diff-driven trigger additionally
   // cannot self-trigger, so this wave can never churn on its own output.
-  let adjacencyResult;
+  //
+  // Extracted to runAdjacencyPass (2026-08-13) for the usage-contract reason
+  // recorded on runDuplicationPass.
   const EMPTY_ADJACENCY = { pass_name: 'adjacency', findings: [], summary: 'Pass skipped.' };
+  let adjacencyResult;
   const runAdjacency = shouldRunPass('adjacency');
   if (runAdjacency) {
-    const adjStart = Date.now();
-    let adjFindings = [];
-    let adjSummary = '';
-    try {
-      // No diff contract → NOT-APPLICABLE, not a failure. The wave is
-      // diff-triggered by construction (§D1), so on a `--scope full` or
-      // base-less run there is nothing it could ever have been asked. Skipping
-      // the detector entirely is what keeps that honest: running it would
-      // record "no safe auditBaseCommit" as INPUT_BOUND incompleteness, which
-      // emits a control finding — turning honest absence into a reported
-      // coverage failure, the exact conflation R1-H3 split apart.
-      // The test seam wins over Git resolution (mirroring Wave 5's), so a
-      // hermetic test can exercise this whole path without faking a commit.
-      const analysis = ctx.__runAdjacencyAnalysis
-        ? await ctx.__runAdjacencyAnalysis({ repoRoot: process.cwd(), auditBaseCommit, bounds: adjacencyConfig })
-        : !auditBaseCommit
-          ? { coverage: { containersEnumerated: 0, statementsJudged: 0 }, candidates: [], incompleteness: [], threw: null }
-          : await runAdjacencyAnalysis({ repoRoot: process.cwd(), auditBaseCommit, bounds: adjacencyConfig });
-
-      // The bouncer runs only when there is something to judge. Zero eligible
-      // candidates short-circuits without a model call.
-      let bouncer = null;
-      const eligible = (analysis.candidates ?? []).filter((c) => c.payload?.safe);
-      if (eligible.length > 0) {
-        bouncer = await runAdjacencyBouncer(analysis.candidates, {
-          bounds: adjacencyConfig,
-          rubric: getPassPrompt('adjacency'),
-          callLlm: async ({ prompt, rubric }) => {
-            const adjLimits = computePassLimits(prompt.length, 'low');
-            const res = await safeCallGPT(openai, {
-              ...passPrompt({
-                rubric,
-                focusBlock,
-                passName: 'adjacency',
-                planContent,
-                ledgerFile: isR2Plus ? ledgerFile : null,
-                impactSet,
-                isR2Plus,
-                historyBlock,
-                codeHeader: `## Adjacency candidates (${eligible.length})`,
-                code: prompt,
-              }),
-              schema: AdjacencyBouncerResponseSchema,
-              schemaName: 'adjacency_bouncer',
-              reasoning: 'low',
-              ...adjLimits,
-              passName: 'adjacency',
-            }, null);
-            return res?.result ?? null;
-          },
-        });
-      }
-
-      // ONE composition point — the sole buildAdjacencyState call site.
-      const composed = composeAdjacencyResult({
-        analysis,
-        bouncer,
-        selected: true,
-        diffContractAvailable: Boolean(auditBaseCommit) || Boolean(ctx.__runAdjacencyAnalysis),
-      });
-      adjFindings = composed.findings;
-      const { state, coverage } = composed.result;
-      adjSummary = `Adjacency: ${state} — ${coverage.containersEnumerated} container(s), `
-        + `${coverage.statementsJudged} statement(s) judged, ${composed.result.candidates.length} candidate(s).`;
-      process.stderr.write(`  ${adjSummary}\n`);
-    } catch (err) {
-      process.stderr.write(`  Adjacency: unexpected error — ${err.message}\n`);
-      adjFindings = [buildAdjacencyFailedFinding(err.message)];
-      adjSummary = 'Adjacency: unexpected error — see finding.';
-    }
-    adjacencyResult = {
-      result: { pass_name: 'adjacency', findings: adjFindings, summary: adjSummary },
-      usage: { input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, latency_ms: 0 },
-      latencyMs: Date.now() - adjStart,
-    };
+    adjacencyResult = await runAdjacencyPass({
+      openai, ctx, passPrompt, auditBaseCommit,
+      focusBlock, planContent, historyBlock, ledgerFile, impactSet, isR2Plus,
+    });
   } else {
     process.stderr.write(`\n── Adjacency SKIPPED (--passes) ──\n`);
     adjacencyResult = { result: EMPTY_ADJACENCY, usage: { input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, latency_ms: 0 }, latencyMs: 0 };
