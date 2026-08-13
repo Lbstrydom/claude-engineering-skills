@@ -278,6 +278,78 @@ describe('field regressions — absence prose the gate used to miss', () => {
   });
 });
 
+// ─────────────────────────────────────────────────────────────────────────
+// `missing` has two readings and the gate conflated them (field report,
+// 2026-08-13 — found by the final-review shadow reviewer, confirmed by
+// direct execution). PREDICATIVE "`x.mjs` is missing." says the entity is
+// absent; TRANSITIVE "`x.mjs` is missing error handling." says the entity
+// EXISTS and a feature of it does not. Resolving the path then "proves" the
+// claim false, and a real HIGH is dropped from the verdict while still
+// reading HIGH in findings[] — the opposite direction from the false-absence
+// problem the gate was built for, and it leaves no trace.
+// ─────────────────────────────────────────────────────────────────────────
+describe('transitive "is missing <object>" is not an existence claim', () => {
+  const REPO2 = ['scripts/lib/repo-inventory.mjs', 'scripts/lib/plan-paths.mjs', 'scripts/lib/schemas.mjs'];
+  const TRANSITIVE = 'The `scripts/lib/repo-inventory.mjs` module is missing error handling around execSync.';
+
+  it('does not classify a transitive claim as an existence claim', () => {
+    assert.equal(classifyFinding(finding({
+      category: '[Backend] Unhandled subprocess failure',
+      section: 'scripts/lib/repo-inventory.mjs',
+      detail: TRANSITIVE,
+    })), false, 'the entity exists; only a FEATURE of it is absent');
+  });
+
+  it('never refutes a transitive claim, even when the CATEGORY is an existence claim', () => {
+    // Defence in depth: `category: 'Missing Module'` classifies on its own, so
+    // the extractor must refuse the predicative reading too — otherwise the
+    // gate resolves the path and deletes the finding anyway.
+    const out = verifyExistenceFindings([finding({ detail: TRANSITIVE })], { repoFiles: REPO2 })[0];
+    assert.notEqual(out.verification?.verification, 'refuted');
+    assert.equal(effectiveSeverity(out), 'HIGH', 'a real HIGH must not be discounted to LOW');
+    assert.equal(countsTowardVerdict(out), true);
+  });
+
+  it('control: the bug was phrasing-dependent — no entity noun, still not classified', () => {
+    assert.equal(classifyFinding(finding({
+      category: '[Backend] Null deref',
+      section: 'scripts/lib/plan-paths.mjs',
+      detail: '`scripts/lib/plan-paths.mjs` is missing a null check on the inventory result.',
+    })), false);
+  });
+
+  it('control: a predicative claim about an ABSENT file still CONFIRMS at full severity', () => {
+    const v = verifyExistenceFindings([finding({
+      detail: 'The planned module `scripts/lib/totally-not-here.mjs` is missing.',
+    })], { repoFiles: REPO2 })[0].verification;
+    assert.equal(v.verification, 'confirmed');
+    assert.equal(v.verdictSeverity, 'HIGH');
+  });
+
+  it('control: a predicative claim about a PRESENT file still REFUTES — the gate\'s whole purpose', () => {
+    const v = verifyExistenceFindings([finding({
+      detail: 'The planned module `scripts/lib/schemas.mjs` is missing.',
+    })], { repoFiles: REPO2 })[0].verification;
+    assert.equal(v.verification, 'refuted');
+    assert.equal(v.verdictSeverity, 'LOW');
+    assert.equal(v.countsTowardVerdict, false);
+  });
+
+  it('control: predicative readings that continue past the keyword survive', () => {
+    // "missing" followed by a preposition, a coordinator or an adverb is still
+    // predicative — the entity itself is the thing said to be absent.
+    for (const detail of [
+      'The planned module `scripts/lib/schemas.mjs` is missing from the repository inventory.',
+      'The planned module `scripts/lib/schemas.mjs` is missing entirely.',
+      'The planned module `scripts/lib/schemas.mjs` is missing, so the import breaks.',
+      'The planned module `scripts/lib/schemas.mjs` is missing — the plan named it.',
+    ]) {
+      const v = verifyExistenceFindings([finding({ detail })], { repoFiles: REPO2 })[0].verification;
+      assert.equal(v.verification, 'refuted', `lost the predicative reading of: ${detail}`);
+    }
+  });
+});
+
 describe('effectiveSeverity / countsTowardVerdict — the single read accessor', () => {
   it('reports the verdict severity for a refuted finding, not the model claim', () => {
     const v = verifyExistenceFindings([finding({

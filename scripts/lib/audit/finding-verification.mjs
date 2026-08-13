@@ -36,13 +36,60 @@ import { isSensitivePath } from '../quickfix-patterns.mjs';
 import { resolveSpecifier, RESOLVABLE_EXTENSIONS } from '../module-graph.mjs';
 import { resolveUniqueSuffix } from '../repo-inventory.mjs';
 
+/** Token shape for a path/specifier/symbol cited in finding prose. */
+const TOKEN = '[\\w./@$-]{2,200}';
+
+/** An entity noun the prose may put between the cited token and the claim
+ *  phrase: "`zone/zoneChat.js` **module** is missing". Without this the
+ *  anchored CLAIM_BEFORE misses and CLAIM_AFTER takes over — badly (below). */
+const ENTITY_NOUN = '(?:module|file|script|test|spec|import|export|symbol|dependency|package|component|route|handler|service|helper)s?';
+
+/**
+ * `missing` is the one claim word here with two readings, and the gate
+ * conflated them (field report 2026-08-13):
+ *  - PREDICATIVE — "`x.mjs` is missing." — the ENTITY is absent. The only
+ *    reading this gate can adjudicate against a file inventory.
+ *  - TRANSITIVE — "`x.mjs` is missing error handling." — the entity EXISTS
+ *    and a FEATURE of it is absent. Resolving the path then "proves" the
+ *    claim false: a real HIGH is dropped from the verdict while still
+ *    reading HIGH in `findings[]`. That is the opposite direction from the
+ *    false-absence problem the gate was built for, and it leaves no trace.
+ *
+ * A direct object is a noun phrase, and a noun phrase cannot begin with
+ * punctuation, end-of-input, a preposition, a subordinator, a coordinator or
+ * a degree adverb — so the predicative reading is admitted only when one of
+ * those follows. Deliberately an ALLOWLIST: an unlisted continuation makes
+ * the gate skip the finding, which survives at the model's own severity.
+ * That is this file's stated safe direction (only `refuted` downgrades) —
+ * a denylist of object shapes would fail toward the false refute instead.
+ * Determiners/relativisers ("that", "which") are deliberately absent: "is
+ * missing that null check" is transitive.
+ */
+const PREDICATIVE_CONTINUATION =
+  'from|in|into|on|at|under|over|within|across|throughout|after|before|since|'
+  + 'for|despite|although|though|while|whereas|because|'
+  + 'and|or|but|so|yet|'
+  + 'entirely|completely|altogether|wholly|outright|still|also|too|again|here|there';
+const PREDICATIVE_TAIL =
+  '(?=\\s*(?:$|[.,;:!?)\\]}"\'`\\n\\r—–-]|(?:' + PREDICATIVE_CONTINUATION + ')\\b))';
+
+/** `missing` used ATTRIBUTIVELY — "the missing module `x`" — where the object
+ *  IS the cited entity rather than a feature of it. Keeps the plural/list
+ *  pattern below from losing its attributive coverage to PREDICATIVE_TAIL. */
+const ATTRIBUTIVE_TAIL = `(?=\\s+(?:${ENTITY_NOUN}\\b|[\`'"]))`;
+
 /**
  * Regexes that mark a finding as an *existence claim* about the repo.
  * Single source of truth (#5). Tested against category + section + detail.
  */
 export const EXISTENCE_CLAIM_SIGNAL = Object.freeze([
   /missing (?:module|file|import|dependency|export|symbol)/i,
-  /\b(?:module|file|import|export|symbol)s?\b[^.]{0,60}\b(?:does ?n[o']?t exist|do not exist|not found|is missing|are missing|is absent|are absent|cannot be found|is not present|are not present)/i,
+  new RegExp(
+    '\\b(?:module|file|import|export|symbol)s?\\b[^.]{0,60}\\b(?:does ?n[o\']?t exist|do not exist|not found|'
+    + '(?:is|are) missing' + PREDICATIVE_TAIL
+    + '|is absent|are absent|cannot be found|is not present|are not present)',
+    'i',
+  ),
   /no such (?:file|module)/i,
   /unresolved import/i,
   /cannot (?:find|resolve) (?:the )?(?:module|file|import|package)/i,
@@ -55,16 +102,12 @@ export const EXISTENCE_CLAIM_SIGNAL = Object.freeze([
   // between them named 14 files — all of which existed. Absence prose is
   // written in the plural at least as often as the singular.
   /\bnone of the\b[^.]{0,80}\b(?:exists?|are present|were (?:created|added|found))\b/i,
-  /\b(?:module|file|script|test|spec|dependenc|export|symbol)\w*\b[^.]{0,60}\bmissing\b/i,
+  new RegExp(
+    '\\b(?:module|file|script|test|spec|dependenc|export|symbol)\\w*\\b[^.]{0,60}\\bmissing\\b'
+    + '(?:' + PREDICATIVE_TAIL + '|' + ATTRIBUTIVE_TAIL + ')',
+    'i',
+  ),
 ]);
-
-/** Token shape for a path/specifier/symbol cited in finding prose. */
-const TOKEN = '[\\w./@$-]{2,200}';
-
-/** An entity noun the prose may put between the cited token and the claim
- *  phrase: "`zone/zoneChat.js` **module** is missing". Without this the
- *  anchored CLAIM_BEFORE misses and CLAIM_AFTER takes over — badly (below). */
-const ENTITY_NOUN = '(?:module|file|script|test|spec|import|export|symbol|dependency|package|component|route|handler|service|helper)s?';
 
 /** English function words that can never name a repo entity. CLAIM_AFTER
  *  anchors on a keyword and captures the NEXT token, which in
@@ -75,10 +118,19 @@ const NON_ENTITY_TOKENS = new Set([
   'it', 'its', 'this', 'that', 'these', 'those', 'any', 'all', 'both', 'here',
 ]);
 
-/** "<token> does not exist / is missing / not found / …" */
+/**
+ * "<token> does not exist / is missing / not found / …"
+ *
+ * `(?:is|are) missing` carries PREDICATIVE_TAIL because classification is not
+ * the only door in: a finding whose CATEGORY is an existence claim ("Missing
+ * Module") reaches the extractor whatever its detail says. Without the guard
+ * here, "`x.mjs` is missing error handling" still yields `x.mjs` as the cited
+ * entity, the inventory resolves it, and the gate refutes a true finding. No
+ * match ⇒ `requires_verification` at the model's severity — safe by design.
+ */
 const CLAIM_BEFORE = new RegExp(
   `[\`'"](${TOKEN})[\`'"]\\s*(?:\\([^)]*\\)\\s*)?(?:${ENTITY_NOUN}\\s+)?(?:was |is |were |are )?` +
-  `(?:does ?n[o']?t exist|doesn'?t exist|is missing|are missing|not found|` +
+  `(?:does ?n[o']?t exist|doesn'?t exist|(?:is|are) missing${PREDICATIVE_TAIL}|not found|` +
   `cannot be found|is absent|are absent|is not present|was not (?:provided|found))`,
   'i',
 );
