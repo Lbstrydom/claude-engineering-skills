@@ -32,10 +32,26 @@ tree) and are unchanged in kind by this edit: neither removed import had a side
 effect — both modules export pure functions and are still loaded on the same code
 path via `legacy-production-audit.mjs`.
 
-**Consumer-side verification: `unverified`.** Blocked prerequisite — no consumer
-checkout on this machine for `sync-isolation-verify.mjs`, and the pushed sha was
-not re-cloned. `npm run sync:dry` was not run either; the pre-push hook's sync ran
-in its own sandbox. Producer-side green is not inherited here.
+**Consumer-side verification: `verified`** — at `ce73cc25`, after the push.
+(This paragraph first shipped in `ce73cc25` reading `unverified — no consumer
+checkout on this machine`. That was written before the push and was false: the
+pre-push sync reported `Targets: 2/2 reached · Updated: 176` in the same output,
+which names two consumer checkouts. Corrected here rather than left standing —
+an `unverified` whose stated blocker does not exist is worse than no claim.)
+
+Retrieval and result, per consumer:
+`node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run **in** the
+consumer → **8/8 gates pass** in both `wine-cellar-app` and `ai-organiser`, zero
+unexpected diffs, no orphans.
+
+The subject check that mattered is the transitive-closure claim above, and it was
+asserted **on the receiver, not reasoned from the sender**:
+`scripts/.claude-skills/lib/repo-inventory.mjs` and
+`scripts/.claude-skills/lib/audit/finding-verification.mjs` are both present in
+the consumer bundle after this change, and gate 2C (disk→manifest orphan walk)
+passes, so both are manifest-tracked rather than stranded. The consumer's
+`openai-audit.mjs` carries the deletion. Removing the two imports dropped nothing
+from a consumer.
 
 **Scope.** One file, two deletions, no behaviour change. `status.md` also carries
 a `(latest)` marker demotion from the 2026-08-13 Azure-credential entry — the one
