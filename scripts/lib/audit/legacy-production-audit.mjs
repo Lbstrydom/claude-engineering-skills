@@ -41,7 +41,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { z } from 'zod';
-import { FindingSchema, ProducerFindingSchema, WiringIssueSchema, LedgerEntrySchema, BatchLedgerEntrySchema, ReduceStatus, reduceStatusFromErrorCategory, buildExecutionMeta, DuplicationBouncerResponseSchema, AdjacencyBouncerResponseSchema } from '../schemas.mjs';
+import { FindingSchema, ProducerFindingSchema, WiringIssueSchema, LedgerEntrySchema, BatchLedgerEntrySchema, ReduceStatus, reduceStatusFromErrorCategory, buildExecutionMeta, DuplicationBouncerResponseSchema, AdjacencyBouncerResponseSchema, ArchIntentPassSchema } from '../schemas.mjs';
 import { gitDiffWithWorkingTree } from '../vcs.mjs';
 import { runDuplicationAnalysis } from './duplication-detector.mjs';
 import { classifyProviderReadiness } from './provider-readiness.mjs';
@@ -80,7 +80,6 @@ import { getRepoContext } from '../repo-context.mjs';
 import { evaluateConvergence, evaluateConvergenceWithDetectors, resolveDetectorResultForRound } from './convergence.mjs';
 import { checkDetectors } from './detector.mjs';
 import { getRequirementsContext } from '../requirements/context.mjs';
-import { ArchIntentPassSchema } from '../schemas.mjs';
 import { detectOrphansIntroduced } from './orphan-introduced.mjs';
 import { resolveDiffScope } from './diff-scope-resolver.mjs';
 import { processFindings, computeAuditVerdict, normalizeArchCategory } from './findings-pipeline.mjs';
@@ -839,7 +838,12 @@ async function runMapReducePass(openai, files, passName, buildPromptForUnit, max
         summary: `REDUCE failed (${reduceStatus}) — ${allFindings.length} raw findings preserved`,
         _executionMeta: buildExecutionMeta({ reduceStatus, reduceSkipped: true }),
       },
-      usage: { ...mapUsage, latency_ms: totalLatency },
+      // A FAILED reduce still burns tokens, so its usage is folded in exactly
+      // as the success path does. Dropping it here was the same fabricated-zero
+      // class as the duplication/adjacency waves (a7db0baf), surviving on the
+      // one branch that fix did not touch — found by auditing the census rather
+      // than the instance.
+      usage: { ...addUsage(mapUsage, reduceResult?.usage ?? {}), latency_ms: totalLatency },
       latencyMs: totalLatency,
       mapUnitStatus, unitsAttempted, unitsFailed,
     };

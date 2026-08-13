@@ -424,9 +424,29 @@ export async function safeCallGPT(openai, opts, emptyResult) {
       throw err;
     }
     process.stderr.write(`  [${opts.passName}] Graceful degradation — using empty result\n`);
+    // Tokens a FAILED call already burned are reported, not zeroed. `callGPT`
+    // accumulates them from `err.llmUsage` across attempts and stamps
+    // `err._accumulatedUsage` before rethrowing (see its catch) — this seam used
+    // to drop that on the floor and return a hard-coded zero envelope, so a
+    // truncated or retried-then-failed pass billed real tokens that never
+    // reached `totalUsage`, `_usage.costUsd`, or `cacheMetrics`. Same
+    // fabricated-zero class as the duplication/adjacency waves (a7db0baf), but
+    // on the failure path of EVERY pass rather than two of them.
+    //
+    // This is the same argument the `reasoningEffort` comment below already
+    // makes — the call WAS dispatched, so what it consumed is a fact about what
+    // happened, not a claim that it succeeded. Zeros here are unmeasured, not
+    // measured-zero, and they are indistinguishable downstream.
+    const failedUsage = err._accumulatedUsage ?? {};
     return {
       result: emptyResult,
-      usage: { input_tokens: 0, cached_tokens: 0, output_tokens: 0, reasoning_tokens: 0, latency_ms: 0 },
+      usage: {
+        input_tokens: failedUsage.input_tokens ?? 0,
+        cached_tokens: failedUsage.cached_tokens ?? 0,
+        output_tokens: failedUsage.output_tokens ?? 0,
+        reasoning_tokens: failedUsage.reasoning_tokens ?? 0,
+        latency_ms: 0,
+      },
       latencyMs: 0,
       failed: true,
       // WHY the call failed, not just THAT it did. `failed: true` collapses

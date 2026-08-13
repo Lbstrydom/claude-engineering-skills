@@ -61,6 +61,18 @@ process.on('exit', () => {
 // by exactly that — an env-gated test silently proving the OFF path).
 const audit = await import('../scripts/openai-audit.mjs');
 const { runMultiPassCodeAudit } = audit.__testExports;
+const { safeCallGPT } = await import('../scripts/lib/audit/llm-helpers.mjs');
+const { LlmError } = await import('../scripts/lib/robustness.mjs');
+const { z } = await import('zod');
+
+/**
+ * A real Zod schema is REQUIRED even for a probe whose client always throws:
+ * `safeCallGPT` builds the structured-output format before dispatching, so a
+ * null schema fails inside zodTextFormat and the stub's throw never runs. The
+ * probe then fails for a reason that has nothing to do with what it is testing
+ * — which it did, twice, before this comment existed.
+ */
+const PROBE_SCHEMA = z.object({ ok: z.boolean() });
 
 const FIXTURE_DIR = 'tests/fixtures/harness-plan';
 const BACKEND_FILE = `${FIXTURE_DIR}/src/service.mjs`;
@@ -170,6 +182,57 @@ describe('wave usage accounting — a bouncer call must reach _usage', () => {
   // the same defect with a different constant. A wave that makes no model call
   // must report zero, and that zero has to be a measurement of nothing having
   // happened, evidenced by the call counter.
+  // The failure path of EVERY pass, found by auditing the census rather than
+  // the instance: `callGPT` accumulates tokens a failed call already burned and
+  // stamps `err._accumulatedUsage` before rethrowing; `safeCallGPT` used to
+  // discard it and return a hard-coded zero envelope. A first attempt at this
+  // fix was made one layer UP (in runMapReducePass's REDUCE-failure branch) and
+  // was a no-op, because the zeros were manufactured below it — which is why
+  // this asserts on `safeCallGPT` directly.
+  it('a FAILED call reports the tokens it already burned, not a zero envelope', async () => {
+    const burned = { input_tokens: 77, cached_tokens: 3, output_tokens: 11, reasoning_tokens: 5 };
+    // Must be an `LlmError`: only those carry `llmUsage`, and `_callGPTOnce`
+    // re-throws them intact while wrapping a raw provider throw in a bare Error
+    // (which legitimately has no usage to report). This is the shape a
+    // truncated / unparseable response produces after tokens were already
+    // billed — the case the fix exists for. Reaching for a plain Error here
+    // made the probe fail for the wrong reason first.
+    const throwingClient = {
+      responses: {
+        parse: async () => {
+          throw new LlmError('simulated truncation after billing', {
+            category: 'permanent', usage: burned, retryable: false,
+          });
+        },
+      },
+    };
+    const out = await safeCallGPT(throwingClient, {
+      system: 'sys', messages: [{ role: 'user', content: 'probe' }],
+      model: 'gpt-test', schema: PROBE_SCHEMA, schemaName: 'usage_probe', passName: 'usage-probe', maxRetries: 0,
+    }, { pass_name: 'usage-probe', findings: [], summary: 'empty' });
+
+    assert.equal(out.failed, true, 'vacuous-pass guard: the call must actually have failed');
+    assert.equal(out.usage.input_tokens, burned.input_tokens,
+      'a failed call still billed these tokens — zeroing them is unmeasured masquerading as measured-zero');
+    assert.equal(out.usage.output_tokens, burned.output_tokens);
+    assert.equal(out.usage.reasoning_tokens, burned.reasoning_tokens);
+    assert.equal(out.usage.cached_tokens, burned.cached_tokens);
+  });
+
+  // Negative control for the above: a failure that burned NOTHING must still
+  // report zero, so the assertion above cannot be satisfied by echoing a
+  // constant.
+  it('a failed call that burned no tokens reports zero — the honest case', async () => {
+    const throwingClient = { responses: { parse: async () => { throw new Error('immediate failure'); } } };
+    const out = await safeCallGPT(throwingClient, {
+      system: 'sys', messages: [{ role: 'user', content: 'probe' }],
+      model: 'gpt-test', schema: PROBE_SCHEMA, schemaName: 'usage_probe', passName: 'usage-probe', maxRetries: 0,
+    }, { pass_name: 'usage-probe', findings: [], summary: 'empty' });
+    assert.equal(out.failed, true);
+    assert.equal(out.usage.input_tokens, 0);
+    assert.equal(out.usage.output_tokens, 0);
+  });
+
   it('a wave that makes no bouncer call reports zero — an honest zero, not a constant', async () => {
     const { client, state } = countingStub({});
     const result = await runMultiPassCodeAudit(client, PLAN_CONTENT, '', false, null, '', {
