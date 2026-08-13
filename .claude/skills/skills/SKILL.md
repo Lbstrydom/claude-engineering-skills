@@ -23,6 +23,12 @@ each skill.
 
 This skill itself does NOT modify code. Pure read-and-render.
 
+> **Worktree preflight** — in a linked git worktree the synced tooling tree
+> `scripts/.claude-skills/` is absent — it is gitignored, so `git worktree add`
+> does not populate it, and every command below that uses it dies on a bare
+> `MODULE_NOT_FOUND`. Run `npm run skills:hydrate` first. Detail:
+> `docs/runbooks/consumer-adoption.md` §"Linked git worktrees".
+
 ---
 
 ## Step 0 — Pick the mode

@@ -21,6 +21,12 @@ findings stabilise or max 6 rounds.
 **Input**: `$ARGUMENTS` — plan file path (the spec the code is being audited
 against). Optional flags: `--scope diff|plan|full`.
 
+> **Worktree preflight** — in a linked git worktree the synced tooling tree
+> `scripts/.claude-skills/` is absent — it is gitignored, so `git worktree add`
+> does not populate it, and every command below that uses it dies on a bare
+> `MODULE_NOT_FOUND`. Run `npm run skills:hydrate` first. Detail:
+> `docs/runbooks/consumer-adoption.md` §"Linked git worktrees".
+
 ---
 
 ## Step 0 — Parse Input and Validate

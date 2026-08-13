@@ -55,7 +55,7 @@
     "models:check": "node scripts/check-model-freshness.mjs --strict",
     "maintenance:run": "node scripts/maintenance-checks.mjs",
     "maintenance:status": "node scripts/maintenance-checks.mjs --status",
-    "check": "npm run context:check && npm run docs:check && npm run docs:refs:gate && npm run docs:architecture-intent:check && npm run plans:status && npm run plans:index:check && npm run requirements:map:check && npm run skills:check && npm run plans:lint && npm run parity:check-coupling && npm run efficacy:check && npm run on-conflict:check && npm run arch:coverage-gate && npm run db:check-rls:gate && npm run cli:flags:gate && npm run emit:exit:gate && npm run knip:gate && npm run npm-args:gate && npm run db:enrolment:gate && npm run db:suites:gate && npm run gates:poison && npm test",
+    "check": "npm run context:check && npm run docs:check && npm run docs:refs:gate && npm run docs:architecture-intent:check && npm run plans:status && npm run plans:index:check && npm run requirements:map:check && npm run skills:check && npm run plans:lint && npm run parity:check-coupling && npm run efficacy:check && npm run on-conflict:check && npm run arch:coverage-gate && npm run db:check-rls:gate && npm run cli:flags:gate && npm run emit:exit:gate && npm run knip:gate && npm run npm-args:gate && npm run worktree:preflight:gate && npm run db:enrolment:gate && npm run db:suites:gate && npm run gates:poison && npm test",
     "prepush:check": "node scripts/prepush-check.mjs",
     "docs:refs:gate": "node scripts/check-docs-refs.mjs --gating",
     "on-conflict:check": "node scripts/on-conflict-lint.mjs",
@@ -159,7 +159,8 @@
     "docs:citations": "node scripts/check-doc-citations.mjs",
     "docs:citations:json": "node scripts/check-doc-citations.mjs --format json",
     "mutation": "node scripts/mutation-test.mjs",
-    "mutation:all": "node scripts/mutation-test.mjs --all"
+    "mutation:all": "node scripts/mutation-test.mjs --all",
+    "worktree:preflight:gate": "node scripts/check-worktree-preflight.mjs"
   },
   "keywords": [
     "claude",

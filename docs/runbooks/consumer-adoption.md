@@ -406,12 +406,29 @@ Error: Cannot find module 'C:\repo\.claude\worktrees\my-branch\scripts\.claude-s
 commit synced files), and `git worktree add` never populates ignored paths.
 The tree is present in the main checkout and absent in every linked worktree.
 
-What makes it a trap rather than an inconvenience is an asymmetry: Claude Code
-creates worktrees under `.claude/worktrees/` and copies `.claude/` into them,
-so the synced **SKILL.md arrives and the tooling it instructs does not**. Same
-class as the `check-cli-flags` / `check-npm-run-args` gaps recorded above — the
-instruction ships, the tool does not — on a new axis: *location* rather than
-bundle contents. Reported by a consumer 2026-08-13.
+What makes it a trap rather than an inconvenience is that **only tracked content
+is guaranteed to reach a worktree**, and the bundle straddles that line.
+Measured across three live worktrees of one consumer, 2026-08-13:
+
+| worktree | `.claude/skills/` | `.claude/hooks/` (ignored half) | `scripts/.claude-skills/` |
+|---|---|---|---|
+| harness-created | present | present | **absent** |
+| harness-created | present | present | **absent** |
+| `git worktree add` by hand | absent | absent | **absent** |
+
+Claude Code copies `.claude/` into the worktrees it creates, ignored files
+included; a hand-made `git worktree add` copies nothing ignored. So in a
+harness-created worktree the synced **SKILL.md arrives and the tooling it
+instructs does not** — same class as the `check-cli-flags` /
+`check-npm-run-args` gaps recorded above (the instruction ships, the tool does
+not), on a new axis: *location* rather than bundle contents. In a hand-made
+worktree neither arrives, which is less confusing but no more usable.
+
+The design consequence, and the reason the remedy below is shaped the way it
+is: **anything that has to be present in every worktree must ride on tracked
+content.** `package.json` qualifies. A synced script does not, and neither does
+a `.claude/` hook — which is why there is no auto-detector here. Reported by a
+consumer 2026-08-13.
 
 It affects the whole synced surface, not one script: every
 `scripts/.claude-skills/*.mjs` that an npm script or a SKILL.md step names

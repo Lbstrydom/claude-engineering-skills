@@ -323,6 +323,12 @@ const MANDATORY = {
   // opt-outs, which is the part no runtime test can see because each opt-out is
   // individually legitimate API.
   'emit:exit:gate': ['emit-exit-gate-detects-a-new-declared-opt-out'],
+  // Added 2026-08-13 with the gate itself. Post-2026-07-31, so a pill is
+  // mandatory. The class it closes has now shipped four times — the instruction
+  // reaches a consumer and the tool it names does not — and the worktree
+  // variant is the silent one: the SKILL.md is copied into the worktree while
+  // the gitignored tooling tree is not, so the skill reads as fully installed.
+  'worktree:preflight:gate': ['worktree-preflight-rejects-skill-without-marker'],
 };
 
 test('every gate the plan made mandatory is contracted — not quietly exempted', () => {

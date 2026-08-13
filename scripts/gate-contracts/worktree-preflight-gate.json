@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "gate": "worktree:preflight:gate",
+  "guards": "every skill documenting a command into scripts/.claude-skills/ warns that the tree is absent in a linked git worktree",
+  "gates": [
+    {
+      "id": "worktree-preflight-rejects-skill-without-marker",
+      "kind": "executable",
+      "statedIn": "AGENTS.md",
+      "stated": "Gate: `npm run worktree:preflight:gate`",
+      "implementation": "scripts/check-worktree-preflight.mjs",
+      "tests": ["tests/worktree-preflight-gate.test.mjs", "tests/gate-poison-pills.test.mjs"],
+      "proof": "process",
+      "oracle": "poison-pill",
+      "poisonPill": {
+        "isolation": "tmpdir",
+        "argv": ["scripts/check-worktree-preflight.mjs"],
+        "overlay": { "skills/skills/SKILL.md": "tests/fixtures/poison/worktree-preflight-skill-missing-marker.md" },
+        "expectExit": 1,
+        "expectStderr": "wtpf/marker-missing",
+        "why": "A SKILL.md that still documents `node scripts/…` — so it stays in the subject set — with the worktree-preflight block removed and nothing else changed. This is the silent variant: the file parses, every other skill check passes, and the only symptom is an agent in a linked worktree hitting a bare MODULE_NOT_FOUND on a command the skill told it to run. The fixture deliberately KEEPS the tooling command, because removing it would drop the skill out of scope and let the gate pass — a pill that proves nothing while appearing to work."
+      }
+    }
+  ]
+}

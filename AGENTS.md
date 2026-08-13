@@ -253,9 +253,10 @@ consumer instead of the named one. Verified 2026-07-20.)
 > upstream-owned. Here: `npm run upstream:issues` → `upstream ack|fix|wont-fix`. Worksheet + why prose
 > reports failed: [consumer-adoption.md](docs/runbooks/consumer-adoption.md) §Reporting an upstream bug.
 
-> **Three shapes consumers keep reporting — check for them when adding a gate or nudge (2026-08-08).**
+> **Four shapes consumers keep reporting — check for them when adding a gate or nudge (2026-08-08).**
 > Each is a general defect class; the incidents behind them are in
-> [consumer-adoption.md](docs/runbooks/consumer-adoption.md) §Three shapes.
+> [consumer-adoption.md](docs/runbooks/consumer-adoption.md) §Three shapes
+> and §Linked git worktrees.
 > *(1) A read handing back a key its writer rejects* — **a new close-this-row nudge means a new row in**
 > [`view-writer-key-contract.test.mjs`](tests/view-writer-key-contract.test.mjs).
 > *(2) A gate judging files the repo does not own* — the predicate is **ignored AND untracked**, not a
@@ -264,6 +265,10 @@ consumer instead of the named one. Verified 2026-07-20.)
 > that as "nothing disowned").
 > *(3) A check verifying one direction only* — ask of any set comparison: **which side am I iterating,
 > and what is unrepresentable from it?**
+> *(4) A documented command whose tooling cannot be present where it runs* (2026-08-13) — the synced
+> tree is gitignored, so it is absent from **every** linked worktree while the SKILL.md that names it
+> is copied in. **Only tracked content is guaranteed to reach a worktree**, so a remedy must ride on
+> `package.json`, never on a synced script or a `.claude/` hook. Gate: `npm run worktree:preflight:gate`.
 
 > **Upstream bug, but you're blocked? Source patch = forbidden; a labelled
 > runtime/env workaround is OK and must reconcile.** Editing upstream-owned

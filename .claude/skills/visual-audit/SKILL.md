@@ -23,6 +23,12 @@ physics, and affordance signifiers — deterministically, over computed-style ev
 > all assertable blind. "Is this the primary CTA?" / "would a user know to click?" require
 > intent → that's **persona-test**, not here.
 
+> **Worktree preflight** — in a linked git worktree the synced tooling tree
+> `scripts/.claude-skills/` is absent — it is gitignored, so `git worktree add`
+> does not populate it, and every command below that uses it dies on a bare
+> `MODULE_NOT_FOUND`. Run `npm run skills:hydrate` first. Detail:
+> `docs/runbooks/consumer-adoption.md` §"Linked git worktrees".
+
 ## Static-primary? No — verify-primary (read this first)
 
 Paint cannot be asserted without rendering. So unlike nav-audit (static-primary), visual-audit

@@ -591,6 +591,10 @@
     "mutation:all": {
       "description": "Run every mutation-guarded seam in sequence. Exit 1 when any score falls below its recorded floor — i.e. a test was weakened.",
       "category": "testing"
+    },
+    "worktree:preflight:gate": {
+      "description": "Fail when a skill documents a command into the synced tooling tree without warning that the tree is absent in a linked git worktree.",
+      "category": "gate"
     }
   }
 }
