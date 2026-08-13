@@ -23,6 +23,9 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {
   generateTopicId,
   ledgerFindingSimilarity,
@@ -31,6 +34,8 @@ import {
   computeImpactSet,
   buildR2SystemPrompt,
   R2_ROUND_MODIFIER,
+  classifyLedgerEntry,
+  batchWriteLedger,
 } from '../scripts/lib/ledger.mjs';
 
 // ── fixtures ────────────────────────────────────────────────────────────────
@@ -402,5 +407,173 @@ describe('buildR2SystemPrompt', () => {
     const out = buildR2SystemPrompt('R', '');
     assert.equal(typeof out, 'string');
     assert.ok(out.includes('R'));
+  });
+});
+
+// ── ledger self-healing ─────────────────────────────────────────────────────
+//
+// The ledger never pruned itself. `readLedgerJson` checks only that `entries`
+// is an array, and `batchWriteLedger` reads every resident entry raw into a
+// topicId map and writes them all back — so a malformed entry bearing a
+// topicId survived every round forever. It was re-skipped and re-warned on
+// each read, and (since ledgerInvalidEntryCount reached _executionMeta) would
+// have pinned the degradation signal permanently on, turning a real signal
+// into background noise.
+//
+// The dangerous half is the predicate. `validateLedgerForR2` knew only TWO of
+// the three schemas that legitimately live in this file, so it classified
+// stage1-mechanical entries — written by writeStage1MechanicalLedgerEntry and
+// consumed by suppressReRaises' own source-aware routing — as invalid.
+// Pruning on that predicate would have DELETED real data.
+
+const SESSION_ENTRY = {
+  topicId: 'sess-1', semanticHash: 'h1', severity: 'MEDIUM', category: 'cat',
+  section: 'a.mjs:1', detailSnapshot: 'd', affectedFiles: ['a.mjs'], affectedPrinciples: [],
+  pass: 'backend', source: 'session', adjudicationOutcome: 'dismissed',
+  remediationState: 'pending', originalSeverity: 'MEDIUM', ruling: 'sustain',
+  rulingRationale: 'r', resolvedRound: 1,
+};
+
+const STAGE1_ENTRY = {
+  topicId: 's1m-1', semanticHash: 'h2', severity: 'MEDIUM', category: 'Dead Code',
+  section: 'b.mjs:2', detailSnapshot: 'never called', affectedFiles: ['b.mjs'],
+  affectedPrinciples: [], pass: 'sustainability', source: 'stage1-mechanical',
+  adjudicationOutcome: 'dismissed', remediationState: 'pending',
+  disproof: 'grep confirms zero call sites', resolvedRound: 1,
+};
+
+const PENDING_ENTRY = {
+  topicId: 'pend-1', severity: 'HIGH', category: 'cat', section: 'c.mjs:3',
+  detail: 'd', adjudicationOutcome: 'pending', remediationState: 'pending', round: 1,
+};
+
+describe('classifyLedgerEntry — the single oracle for "is this a known ledger entry?"', () => {
+  it('a session ruling is adjudicated', () => {
+    assert.equal(classifyLedgerEntry(SESSION_ENTRY).kind, 'adjudicated');
+  });
+
+  // The regression that made pruning dangerous.
+  it('a stage1-mechanical dismissal is adjudicated, NOT unrecognised', () => {
+    const c = classifyLedgerEntry(STAGE1_ENTRY);
+    assert.equal(c.kind, 'adjudicated',
+      'suppressReRaises routes these deliberately — calling them corrupt would delete real data');
+    assert.equal(c.source, 'stage1-mechanical');
+  });
+
+  it('a pre-adjudication entry is incomplete, not adjudicated and not unrecognised', () => {
+    assert.equal(classifyLedgerEntry(PENDING_ENTRY).kind, 'incomplete');
+  });
+
+  // The shape `batchWriteLedger` itself writes, then a human adjudicates. It
+  // satisfies only BatchLedgerEntrySchema, so a prune keyed on
+  // `adjudicationOutcome === 'pending'` deleted it — caught by shared.test.mjs.
+  it('an ADJUDICATED batch-shape entry is incomplete, never unrecognised', () => {
+    const adjudicated = { ...PENDING_ENTRY, adjudicationOutcome: 'accepted', remediationState: 'fixed' };
+    assert.equal(classifyLedgerEntry(adjudicated).kind, 'incomplete',
+      'this is what the ledger itself writes, then a human adjudicates — deleting it is data loss');
+  });
+
+  it('genuine corruption is unrecognised and carries a reason', () => {
+    const c = classifyLedgerEntry({ topicId: 'broken' });
+    assert.equal(c.kind, 'unrecognised');
+    assert.ok(c.reason && c.reason.length > 0, 'a prune must be able to say why');
+  });
+
+  it('a stage1-mechanical entry missing its disproof degrades to incomplete, not corruption', () => {
+    // It still satisfies the batch shape, so it is unusable-for-suppression
+    // rather than unrecognisable — and must NOT be prunable.
+    assert.equal(classifyLedgerEntry({ ...STAGE1_ENTRY, disproof: undefined }).kind, 'incomplete');
+  });
+
+  it('only an entry failing ALL THREE schemas is unrecognised', () => {
+    // Breaks the batch shape too: severity is not a member of the enum.
+    assert.equal(classifyLedgerEntry({ ...STAGE1_ENTRY, severity: 'NOPE' }).kind, 'unrecognised');
+  });
+});
+
+describe('batchWriteLedger — self-healing without data loss', () => {
+  let dir, ledgerPath;
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-prune-'));
+    ledgerPath = path.join(dir, 'ledger.json');
+  });
+  afterEach(() => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }));
+
+  const seed = (entries) =>
+    fs.writeFileSync(ledgerPath, JSON.stringify({ version: 1, entries }), 'utf-8');
+  const readEntries = () => JSON.parse(fs.readFileSync(ledgerPath, 'utf-8')).entries;
+
+  it('prunes a resident entry that matches no known schema, and says so', () => {
+    seed([SESSION_ENTRY, { topicId: 'corrupt-1', severity: 'NOPE' }]);
+    const res = batchWriteLedger(ledgerPath, []);
+    assert.equal(res.prunedResident.length, 1);
+    assert.equal(res.prunedResident[0].entry.topicId, 'corrupt-1');
+    assert.ok(res.prunedResident[0].reason, 'a silent prune is the defect, not the fix');
+    assert.deepEqual(readEntries().map(e => e.topicId), ['sess-1']);
+  });
+
+  // The guard that matters most: a false prune is silent, permanent data loss.
+  it('NEVER prunes a resident stage1-mechanical entry', () => {
+    seed([SESSION_ENTRY, STAGE1_ENTRY]);
+    const res = batchWriteLedger(ledgerPath, []);
+    assert.deepEqual(res.prunedResident, []);
+    assert.deepEqual(readEntries().map(e => e.topicId).sort(), ['s1m-1', 'sess-1']);
+  });
+
+  it('NEVER prunes a resident pre-adjudication entry', () => {
+    seed([PENDING_ENTRY]);
+    const res = batchWriteLedger(ledgerPath, []);
+    assert.deepEqual(res.prunedResident, []);
+    assert.deepEqual(readEntries().map(e => e.topicId), ['pend-1']);
+  });
+
+  // The regression shared.test.mjs caught: an entry this very function wrote,
+  // then adjudicated by hand, must survive its own next write.
+  it('NEVER prunes an entry it wrote itself that was later adjudicated', () => {
+    batchWriteLedger(ledgerPath, [PENDING_ENTRY]);
+    const written = readEntries();
+    written[0].adjudicationOutcome = 'accepted';
+    written[0].remediationState = 'fixed';
+    fs.writeFileSync(ledgerPath, JSON.stringify({ version: 1, entries: written }), 'utf-8');
+
+    const res = batchWriteLedger(ledgerPath, [{ ...PENDING_ENTRY, round: 2 }]);
+    assert.deepEqual(res.prunedResident, []);
+    assert.equal(res.inserted, 0, 'a pruned-then-reinserted entry reads as inserted — the tell');
+    assert.equal(res.updated, 1);
+    assert.equal(readEntries()[0].adjudicationOutcome, 'accepted', 'the adjudication survives');
+  });
+
+  it('quarantines what it prunes, so a version-skew prune is recoverable', () => {
+    seed([{ topicId: 'corrupt-1', severity: 'NOPE' }]);
+    batchWriteLedger(ledgerPath, []);
+    const quarantine = JSON.parse(fs.readFileSync(`${ledgerPath}.quarantine.json`, 'utf-8'));
+    assert.equal(quarantine.quarantined.length, 1);
+    assert.equal(quarantine.quarantined[0].entry.topicId, 'corrupt-1');
+    assert.ok(quarantine.quarantined[0].ts, 'an undated quarantine cannot be reconciled later');
+  });
+
+  it('quarantine ACCUMULATES rather than overwriting a prior rescue', () => {
+    seed([{ topicId: 'corrupt-1', severity: 'NOPE' }]);
+    batchWriteLedger(ledgerPath, []);
+    seed([{ topicId: 'corrupt-2', severity: 'NOPE' }]);
+    batchWriteLedger(ledgerPath, []);
+    const quarantine = JSON.parse(fs.readFileSync(`${ledgerPath}.quarantine.json`, 'utf-8'));
+    assert.deepEqual(quarantine.quarantined.map(q => q.entry.topicId), ['corrupt-1', 'corrupt-2']);
+  });
+
+  it('negative control — a clean ledger prunes nothing and writes no quarantine file', () => {
+    seed([SESSION_ENTRY, STAGE1_ENTRY, PENDING_ENTRY]);
+    const res = batchWriteLedger(ledgerPath, []);
+    assert.deepEqual(res.prunedResident, []);
+    assert.equal(fs.existsSync(`${ledgerPath}.quarantine.json`), false,
+      'a sidecar on every clean run is noise that trains people to ignore it');
+    assert.equal(readEntries().length, 3);
+  });
+
+  it('the incoming-entry `rejected` channel is unchanged by resident pruning', () => {
+    seed([SESSION_ENTRY]);
+    const res = batchWriteLedger(ledgerPath, [{ topicId: 'incoming-bad' }]);
+    assert.equal(res.rejected.length, 1, 'incoming rejects stay in their own channel');
+    assert.deepEqual(res.prunedResident, []);
   });
 });

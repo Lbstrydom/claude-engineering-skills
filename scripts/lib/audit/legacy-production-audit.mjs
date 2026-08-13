@@ -60,7 +60,7 @@ import {
 import {
   generateTopicId, populateFindingMetadata, jaccardSimilarity,
   suppressReRaises, buildRulingsBlock, R2_ROUND_MODIFIER, buildR2SystemPrompt,
-  computeImpactSet, batchWriteLedger,
+  computeImpactSet, batchWriteLedger, classifyLedgerEntry,
   computeFixLifecycleUpdates, applyLifecycleUpdates
 } from '../ledger.mjs';
 import {
@@ -361,21 +361,29 @@ function validateLedgerForR2(ledgerPath, round) {
     let invalidEntryCount = 0;
     let pendingEntryCount = 0;
     for (let i = 0; i < raw.entries.length; i++) {
-      const parsed = LedgerEntrySchema.safeParse(raw.entries[i]);
-      if (parsed.success) {
+      // ONE oracle, shared with `batchWriteLedger`'s prune (ledger.mjs
+      // `classifyLedgerEntry`). This loop used to inline its own two-schema
+      // predicate and therefore never recognised stage1-mechanical
+      // dismissals — real entries, written by `writeStage1MechanicalLedgerEntry`
+      // and consumed by `suppressReRaises`' source-aware filter — counting them
+      // as corruption AND withholding them from suppression. A prune built on
+      // that narrower spelling would have deleted them outright.
+      const verdict = classifyLedgerEntry(raw.entries[i]);
+      if (verdict.kind === 'adjudicated') {
         validEntries.push(raw.entries[i]);
         continue;
       }
-      // Pre-adjudication residue, not corruption — see the doc comment above.
-      const entry = raw.entries[i];
-      if (entry?.adjudicationOutcome === 'pending' && BatchLedgerEntrySchema.safeParse(entry).success) {
+      // `incomplete` — a valid batch-shape entry that is not a complete ruling.
+      // Mostly pre-adjudication residue, but also an entry adjudicated without
+      // the full ruling fields; either way `suppressReRaises` cannot use it, and
+      // neither is corruption. Counted apart from `invalid` so a normal ledger
+      // does not light up the degradation signal.
+      if (verdict.kind === 'incomplete') {
         pendingEntryCount++;
         continue;
       }
       invalidEntryCount++;
-      const firstIssue = parsed.error.issues?.[0];
-      const issueDesc = firstIssue ? `${firstIssue.path.join('.')}: ${firstIssue.message}` : 'unknown validation issue';
-      process.stderr.write(`  [ledger] WARNING: entry ${i} failed schema validation (${issueDesc}) — skipped\n`);
+      process.stderr.write(`  [ledger] WARNING: entry ${i} failed schema validation (${verdict.reason}) — skipped\n`);
     }
     const parts = [`${validEntries.length} adjudicated`];
     if (pendingEntryCount > 0) parts.push(`${pendingEntryCount} awaiting adjudication`);
@@ -395,6 +403,68 @@ function validateLedgerForR2(ledgerPath, round) {
     process.stderr.write(`  [ledger] WARNING: Ledger corrupted (${err.message}) — running without suppression\n`);
     return { valid: false, suppressionUnavailable: true };
   }
+}
+
+/**
+ * Compact, store-shaped provenance for one round's suppression —
+ * `audit_runs.suppression_stats`.
+ *
+ * **The denominator is the point.** `_suppression` records how many findings
+ * were kept, suppressed and reopened; it has never recorded how many RULINGS
+ * they were matched against, and `recordSuppressionEvents` writes one row per
+ * match (zero rows when there were none). So a round that matched against an
+ * all-pending ledger — nothing to suppress WITH — was byte-identical downstream
+ * to one that matched against a full ruling set and found nothing to suppress.
+ * That is the state behind the 2026-08-08 "R2+ suppression never engages"
+ * report, and `validateLedgerForR2`'s stderr NOTE was the only thing that said
+ * so. Same unread-channel defect as `ledgerInvalidEntryCount`, one field over.
+ *
+ * Two honesty rules the shape encodes:
+ * - **R1 returns `null`.** Suppression does not run before round 2, and an
+ *   absent block must stay distinguishable from a measured `suppressed: 0`.
+ * - **An unavailable ledger reports `{unavailable: true}`, never zeroed
+ *   counts.** `adjudicated: 0` would claim a measurement of a ledger that was
+ *   never read.
+ *
+ * Counts only — the finding arrays belong in `suppression_events` rows, not in
+ * a column on the run.
+ *
+ * @param {{round?: number,
+ *          ledger?: {unavailable?: boolean, entryCount?: number, adjudicated?: number,
+ *                    pending?: number, invalid?: number} | null,
+ *          suppression?: {keptCount?: number, suppressedCount?: number,
+ *                         reopenedCount?: number, fpSuppressedCount?: number} | null}} args
+ * @returns {object|null} jsonb-ready block, or null when suppression did not run
+ */
+export function buildSuppressionStats({ round, ledger, suppression } = {}) {
+  if (!(round >= 2)) return null;
+  const stats = { round };
+  if (ledger?.unavailable) {
+    stats.ledger = { unavailable: true };
+  } else if (ledger) {
+    stats.ledger = {
+      entryCount: ledger.entryCount ?? 0,
+      adjudicated: ledger.adjudicated ?? 0,
+      pending: ledger.pending ?? 0,
+      invalid: ledger.invalid ?? 0,
+    };
+  }
+  // Read each counter individually rather than spreading `suppression`: that
+  // object also carries the full `suppressed`/`reopened` finding arrays, and a
+  // spread would put entire finding bodies in a column on every R2+ run.
+  if (suppression) {
+    if (suppression.suppressedCount != null) stats.suppressed = suppression.suppressedCount;
+    if (suppression.keptCount != null) stats.kept = suppression.keptCount;
+    if (suppression.reopenedCount != null) stats.reopened = suppression.reopenedCount;
+    // Spelled out rather than the natural short form: that bare token is pinned
+    // as a REMOVED LOCAL by tests/suppression-call-site.test.mjs, whose
+    // whole-file scan cannot tell a property name from the dangling reference
+    // that once crashed every cloud-enabled R2+ run. Renaming the key is the
+    // cheap side of that trade; weakening the guard is not. (The token must not
+    // appear here even in prose — a whole-file scan reads comments too.)
+    if (suppression.fpSuppressedCount != null) stats.falsePositiveSuppressed = suppression.fpSuppressedCount;
+  }
+  return stats;
 }
 
 // ── Map-Reduce Pass ──────────────────────────────────────────────────────────
@@ -1761,6 +1831,9 @@ export async function runLegacyProductionAudit(ctx) {
   // the stderr line it used to be reported on exclusively is not a channel the
   // convergence verdict, the result JSON, or an operator reading either can see.
   let ledgerInvalidEntryCount = 0;
+  // Ruling-set provenance for `audit_runs.suppression_stats` — see
+  // `buildSuppressionStats`. Stays null on R1, where suppression never runs.
+  let ledgerStats = null;
 
   if (isR2Plus) {
     process.stderr.write(`\n═══ R${round} MODE ═══\n`);
@@ -1777,6 +1850,15 @@ export async function runLegacyProductionAudit(ctx) {
     const ledgerValidation = validateLedgerForR2(ledgerFile, round);
     if (!ledgerValidation.valid) suppressionUnavailable = true;
     ledgerInvalidEntryCount = ledgerValidation.invalidEntryCount ?? 0;
+    ledgerStats = ledgerValidation.valid
+      ? {
+        entryCount: ledgerValidation.entryCount ?? 0,
+        // The denominator: how many RULINGS suppression had to match against.
+        adjudicated: ledgerValidation.validEntries?.length ?? 0,
+        pending: ledgerValidation.pendingEntryCount ?? 0,
+        invalid: ledgerInvalidEntryCount,
+      }
+      : { unavailable: true };
 
     if (ledgerValidation.valid && ledgerFile) {
       // Re-wrap as {version:1, entries: validEntries} (Gemini gate fix G2,
@@ -3804,6 +3886,16 @@ export async function runLegacyProductionAudit(ctx) {
       // because this write happens BEFORE the tail sets `runStatus` — and the
       // two must agree, which is asserted in the durability test suite.
       runStatus: writeOutcomes.lost > 0 || writeOutcomes.spilled > 0 ? 'incomplete' : 'complete',
+      // `suppression_stats` has existed since migration 20260417120000 and was
+      // written by nothing for four months — 741 rows, 0 populated (measured
+      // 2026-08-13). It carries the ruling-set denominator, without which a
+      // round that had nothing to suppress WITH is indistinguishable from one
+      // that found nothing to suppress. Null on R1: absent ≠ zero.
+      suppressionStats: buildSuppressionStats({
+        round,
+        ledger: ledgerStats,
+        suppression: mergedResult._suppression,
+      }),
     };
     tallyWriteOutcomes(writeOutcomes, [
       await durableWrite('audit.runComplete', { runId: cloudRunId, stats: completionStats }),
@@ -4166,6 +4258,10 @@ export const __testExports = process.env.AUDIT_EXPORTS_FOR_TESTS === '1'
   ? {
       validateLedgerForR2, deriveFindingsFromReport, runMapReducePass, initResultCache, cachePassResult,
       writeLearningState, cleanupCache, classifyShadowFailureSafe, runOrphanIntroducedPass, dedupReplacementId,
+      // buildSuppressionStats: pure, and every honesty rule in the
+      // suppression_stats shape (R1 → null, unavailable ≠ zeroed, counts not
+      // arrays) is invisible from the store side. Tier-1 unit.
+      buildSuppressionStats,
       // decideSeed: its eligibility-before-env-flag ordering is what gives the
       // cache-seed A/B a control arm, and that ordering is invisible from the
       // outside — an opted-out run looks the same either way until you read

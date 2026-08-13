@@ -54,6 +54,7 @@ const lpa = await import('../scripts/lib/audit/legacy-production-audit.mjs');
 const {
   validateLedgerForR2, deriveFindingsFromReport, runMapReducePass, initResultCache, cachePassResult,
   writeLearningState, cleanupCache, classifyShadowFailureSafe, runOrphanIntroducedPass, dedupReplacementId,
+  buildSuppressionStats,
 } = lpa.__testExports;
 
 const { clampConfigNumber } = await import('../scripts/lib/config.mjs');
@@ -221,6 +222,55 @@ describe('Phase 2 — validateLedgerForR2 per-entry schema validation', () => {
     } finally { fs.rmSync(path.dirname(ledgerPath), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
+  // Regression (2026-08-13): this loop inlined its own two-schema predicate and
+  // never recognised the THIRD schema that legitimately lives in this file.
+  // `writeStage1MechanicalLedgerEntry` writes stage1-mechanical dismissals here,
+  // and `suppressReRaises` has a source-aware filter built specifically to route
+  // them — but they were counted as corruption and withheld from suppression.
+  // Latent only because the tiered pipeline defaults off.
+  const STAGE1_ENTRY = {
+    topicId: 's1m-1', semanticHash: 'h2', severity: 'MEDIUM', category: 'Dead Code',
+    section: 'b.mjs:2', detailSnapshot: 'never called', affectedFiles: ['b.mjs'],
+    affectedPrinciples: [], pass: 'sustainability', source: 'stage1-mechanical',
+    adjudicationOutcome: 'dismissed', remediationState: 'pending',
+    disproof: 'grep confirms zero call sites', resolvedRound: 1,
+  };
+
+  it('a stage1-mechanical dismissal is adjudicated — it reaches suppression, and is NOT corruption', () => {
+    const ledgerPath = mkTmpLedger([VALID_ENTRY, STAGE1_ENTRY]);
+    try {
+      const result = validateLedgerForR2(ledgerPath, 2);
+      assert.equal(result.invalidEntryCount, 0, 'a supported writer\'s output is not corruption');
+      assert.equal(result.validEntries.length, 2);
+      assert.ok(
+        result.validEntries.some(e => e.source === 'stage1-mechanical'),
+        'suppressReRaises routes these deliberately — withholding them disables a designed path',
+      );
+    } finally { fs.rmSync(path.dirname(ledgerPath), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+  });
+
+  it('negative control — the stage1 branch does not launder corruption', () => {
+    // Fails all three schemas (severity is outside the enum, so not even the
+    // batch shape holds), which is the only thing that may count as invalid.
+    const ledgerPath = mkTmpLedger([{ ...STAGE1_ENTRY, severity: 'NOPE' }]);
+    try {
+      const result = validateLedgerForR2(ledgerPath, 2);
+      assert.equal(result.invalidEntryCount, 1, 'the new branch must not launder corruption');
+      assert.equal(result.validEntries.length, 0);
+    } finally { fs.rmSync(path.dirname(ledgerPath), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+  });
+
+  it('a stage1-mechanical entry missing its disproof is incomplete, NOT corruption', () => {
+    // It still satisfies the batch shape. Counting it invalid would light up the
+    // degradation signal on an entry that is merely unusable for suppression.
+    const ledgerPath = mkTmpLedger([{ ...STAGE1_ENTRY, disproof: undefined }]);
+    try {
+      const result = validateLedgerForR2(ledgerPath, 2);
+      assert.equal(result.invalidEntryCount, 0);
+      assert.equal(result.pendingEntryCount, 1);
+    } finally { fs.rmSync(path.dirname(ledgerPath), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+  });
+
   it('a missing entries array is UNCHANGED behavior — {valid:false, suppressionUnavailable:true}', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lpa-ledger-'));
     const ledgerPath = path.join(dir, 'ledger.json');
@@ -239,6 +289,105 @@ describe('Phase 2 — validateLedgerForR2 per-entry schema validation', () => {
   it('no --ledger (null path) is UNCHANGED behavior — {valid:false, suppressionUnavailable:true}', () => {
     const result = validateLedgerForR2(null, 2);
     assert.deepEqual(result, { valid: false, suppressionUnavailable: true });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Suppression provenance — the DENOMINATOR reaches the store
+// ═══════════════════════════════════════════════════════════════════════
+//
+// `_suppression` carries kept/suppressed/reopened and NOT the size of the
+// ruling set they were matched against, and `recordSuppressionEvents` writes
+// one row per match (zero rows when there were none). So "suppression matched
+// against 0 rulings" was byte-identical downstream to "matched against 9 and
+// none hit" — the state behind the 2026-08-08 "R2+ suppression never engages"
+// consumer report, visible only on stderr. `buildSuppressionStats` is what
+// makes the two distinguishable in `audit_runs.suppression_stats`.
+
+describe('buildSuppressionStats — suppression provenance', () => {
+  const LEDGER = { entryCount: 12, adjudicated: 9, pending: 2, invalid: 1 };
+  const SUPP = { keptCount: 20, suppressedCount: 3, reopenedCount: 1, fpSuppressedCount: 0 };
+
+  it('round 1 returns null — absence means "suppression did not run", never a measured zero', () => {
+    assert.equal(buildSuppressionStats({ round: 1, ledger: LEDGER, suppression: SUPP }), null);
+  });
+
+  it('an R2+ round carries the ruling-set size as the denominator', () => {
+    const stats = buildSuppressionStats({ round: 2, ledger: LEDGER, suppression: SUPP });
+    assert.equal(stats.round, 2);
+    assert.deepEqual(stats.ledger, { entryCount: 12, adjudicated: 9, pending: 2, invalid: 1 });
+    assert.equal(stats.suppressed, 3);
+    assert.equal(stats.kept, 20);
+    assert.equal(stats.reopened, 1);
+    // Spelled out, not `fpSuppressed` — that bare token is pinned as a removed
+    // local by tests/suppression-call-site.test.mjs's whole-file scan.
+    assert.equal(stats.falsePositiveSuppressed, 0);
+  });
+
+  // The whole point: these two rounds both report `suppressed: 0`, and before
+  // this block they were indistinguishable in the store.
+  it('"nothing to suppress WITH" and "nothing needed suppressing" are distinguishable', () => {
+    const nothingToSuppressWith = buildSuppressionStats({
+      round: 2,
+      ledger: { entryCount: 5, adjudicated: 0, pending: 5, invalid: 0 },
+      suppression: { keptCount: 8, suppressedCount: 0, reopenedCount: 0, fpSuppressedCount: 0 },
+    });
+    const nothingNeededSuppressing = buildSuppressionStats({
+      round: 2,
+      ledger: { entryCount: 9, adjudicated: 9, pending: 0, invalid: 0 },
+      suppression: { keptCount: 8, suppressedCount: 0, reopenedCount: 0, fpSuppressedCount: 0 },
+    });
+    assert.equal(nothingToSuppressWith.suppressed, 0);
+    assert.equal(nothingNeededSuppressing.suppressed, 0);
+    assert.notDeepEqual(
+      nothingToSuppressWith.ledger, nothingNeededSuppressing.ledger,
+      'the ruling-set denominator is the only thing that separates these two rounds',
+    );
+    assert.equal(nothingToSuppressWith.ledger.adjudicated, 0);
+    assert.equal(nothingToSuppressWith.ledger.pending, 5, 'pending explains WHY the denominator is 0');
+  });
+
+  it('an unavailable ledger reports `unavailable`, never zeroed counts', () => {
+    const stats = buildSuppressionStats({
+      round: 2, ledger: { unavailable: true }, suppression: SUPP,
+    });
+    assert.deepEqual(stats.ledger, { unavailable: true });
+    assert.equal('adjudicated' in stats.ledger, false,
+      'a zero denominator would claim a measurement nobody took — suppression could not run at all');
+  });
+
+  it('never carries the finding ARRAYS — this is a row, not a payload dump', () => {
+    const stats = buildSuppressionStats({
+      round: 2, ledger: LEDGER,
+      suppression: { ...SUPP, suppressed: [{ finding: { detail: 'x'.repeat(5000) } }], reopened: [{ a: 1 }] },
+    });
+    const serialized = JSON.stringify(stats);
+    assert.equal(serialized.includes('xxxx'), false, 'finding bodies belong in suppression_events rows');
+    assert.ok(serialized.length < 400, `row payload must stay compact, got ${serialized.length} chars`);
+  });
+
+  it('a missing suppression payload still records the ledger provenance', () => {
+    const stats = buildSuppressionStats({ round: 2, ledger: LEDGER, suppression: undefined });
+    assert.deepEqual(stats.ledger, { entryCount: 12, adjudicated: 9, pending: 2, invalid: 1 });
+    assert.equal(stats.suppressed, undefined, 'absent counters stay absent rather than becoming 0');
+  });
+});
+
+describe('suppression provenance — the write side', () => {
+  it('recordRunComplete maps suppressionStats onto the suppression_stats column, columnExists-guarded', () => {
+    const src = fs.readFileSync(path.resolve('scripts/lib/store/runs-findings.mjs'), 'utf-8');
+    const block = src.match(/if \(stats\.suppressionStats != null[\s\S]{0,320}?\n\s*}/);
+    assert.ok(block, 'recordRunComplete must map stats.suppressionStats — a builder nothing writes is inert');
+    assert.match(block[0], /columnExists\('audit_runs', 'suppression_stats'/,
+      'the write must degrade cleanly on a pre-migration store, like its six siblings');
+    assert.match(block[0], /update\.suppression_stats = stats\.suppressionStats/,
+      'pass the object RAW — the jsonb write seam serializes it (never hand-JSON.stringify)');
+  });
+
+  it('the orchestrator actually populates it on the completion payload', () => {
+    const src = fs.readFileSync(path.resolve('scripts/lib/audit/legacy-production-audit.mjs'), 'utf-8');
+    assert.match(src, /suppressionStats: buildSuppressionStats\(/,
+      'completionStats must carry the block, or the column stays as dead as it was for four months');
   });
 });
 

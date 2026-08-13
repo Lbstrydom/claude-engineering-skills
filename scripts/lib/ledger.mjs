@@ -165,6 +165,101 @@ export function writeStage1MechanicalLedgerEntry(ledgerPath, entry) {
  * @returns {{ inserted: number, updated: number, total: number, rejected: Array<{entry:object,reason:string}> }}
  * @throws {Error} on permission errors or corrupt ledger
  */
+/**
+ * The SINGLE oracle for "is this a known ledger entry, and what kind?"
+ *
+ * Three schemas legitimately live in one ledger file — session rulings
+ * (`LedgerEntrySchema`), Stage-1 mechanical dismissals
+ * (`Stage1MechanicalLedgerEntrySchema`), and pre-adjudication residue
+ * (`BatchLedgerEntrySchema` + `adjudicationOutcome: 'pending'`). Anything
+ * matching none of the three is genuine corruption.
+ *
+ * **Why one function rather than the predicate inlined at each site.**
+ * `validateLedgerForR2` knew only two of the three, so it classified every
+ * stage1-mechanical dismissal as `invalid` and dropped it from the entries
+ * handed to `suppressReRaises` — a function whose source-aware filter exists
+ * specifically to route them (see `suppressReRaises`, "stage1-mechanical
+ * entries suppress the same way session does"). Verified 2026-08-13 by writing
+ * one through the real `writeStage1MechanicalLedgerEntry` and reading it back:
+ * `0 adjudicated, 1 invalid`. Latent only because the tiered pipeline defaults
+ * off. Two spellings of "known entry" is what allowed that, and a prune built
+ * on the narrower one would have DELETED the data rather than merely ignoring
+ * it — so the oracle has to be shared before anything acts on it.
+ *
+ * @param {unknown} entry
+ * @returns {{kind: 'adjudicated'|'pending'|'unrecognised', source?: string, reason?: string}}
+ */
+export function classifyLedgerEntry(entry) {
+  const session = LedgerEntrySchema.safeParse(entry);
+  if (session.success) return { kind: 'adjudicated', source: 'session' };
+
+  if (Stage1MechanicalLedgerEntrySchema.safeParse(entry).success) {
+    return { kind: 'adjudicated', source: 'stage1-mechanical' };
+  }
+
+  // `incomplete` — a valid batch-shape entry that is not a complete ruling.
+  // This bucket is NOT just pre-adjudication residue, and getting that wrong is
+  // what a shared-oracle prune punishes hardest: `upsertEntry` validates every
+  // INCOMING entry against `BatchLedgerEntrySchema` and nothing stronger, so
+  // this is the shape `batchWriteLedger` itself writes — including after a human
+  // adjudicates one to `accepted`/`fixed` without filling in `ruling`,
+  // `originalSeverity` and the rest. Keyed on the SCHEMA rather than on
+  // `adjudicationOutcome === 'pending'` for exactly that reason: an earlier
+  // draft keyed on the outcome, and tests/shared.test.mjs caught it deleting
+  // a legitimately-adjudicated entry on the next write.
+  if (BatchLedgerEntrySchema.safeParse(entry).success) return { kind: 'incomplete' };
+
+  // Report the SESSION schema's first issue: it is the shape almost every entry
+  // is trying to be, so its complaint is the informative one for a human.
+  const firstIssue = session.error?.issues?.[0];
+  return {
+    kind: 'unrecognised',
+    reason: firstIssue
+      ? `${firstIssue.path.join('.')}: ${firstIssue.message}`
+      : 'unknown validation issue',
+  };
+}
+
+const QUARANTINE_SUFFIX = '.quarantine.json';
+
+/**
+ * Append pruned entries to `<ledger>.quarantine.json`, so a prune is
+ * recoverable rather than a deletion.
+ *
+ * APPENDS: a later prune must not overwrite an earlier rescue, or the second
+ * incident silently destroys the evidence of the first. Best-effort by design —
+ * failing to write the sidecar must never fail the ledger write itself, but it
+ * MUST abort the prune, since dropping entries we could not preserve is exactly
+ * the silent data loss this function exists to prevent.
+ *
+ * @param {string} absLedgerPath
+ * @param {Array<{entry: object, reason: string}>} pruned
+ * @returns {boolean} whether the quarantine was durably written
+ */
+function quarantineEntries(absLedgerPath, pruned) {
+  const quarantinePath = `${absLedgerPath}${QUARANTINE_SUFFIX}`;
+  let existing = { version: 1, quarantined: [] };
+  if (fs.existsSync(quarantinePath)) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(quarantinePath, 'utf-8'));
+      if (parsed && Array.isArray(parsed.quarantined)) existing = parsed;
+    } catch {
+      // A corrupt quarantine file is not a reason to lose the entries in hand;
+      // preserve it beside the new one rather than appending into garbage.
+      try { fs.copyFileSync(quarantinePath, `${quarantinePath}.bak`); } catch { /* ignore */ }
+    }
+  }
+  const ts = new Date().toISOString();
+  existing.quarantined.push(...pruned.map(p => ({ ts, reason: p.reason, entry: p.entry })));
+  try {
+    atomicWriteFileSync(quarantinePath, JSON.stringify(existing, null, 2));
+    return true;
+  } catch (err) {
+    process.stderr.write(`  [ledger] WARNING: could not write ${quarantinePath} (${err.message}) — keeping entries in place\n`);
+    return false;
+  }
+}
+
 /** Read ledger JSON from disk; returns default shape on ENOENT, throws on other errors. */
 function readLedgerJson(absPath) {
   try {
@@ -255,7 +350,47 @@ function mergeMetaLocked(absMetaPath, meta) {
 }
 
 export function batchWriteLedger(ledgerPath, entries, { meta = null, targetMetaPath = null } = {}) {
-  const ledger = readLedgerJson(path.resolve(ledgerPath));
+  const absLedgerPath = path.resolve(ledgerPath);
+  const ledger = readLedgerJson(absLedgerPath);
+
+  // Self-healing: drop RESIDENT entries that match no known ledger schema.
+  //
+  // Without this the ledger never healed. Only incoming entries were ever
+  // validated (`upsertEntry` below); a resident one was re-keyed by topicId and
+  // written straight back, so a single malformed entry survived every round
+  // forever — re-skipped and re-warned on each read, and pinning
+  // `ledgerInvalidEntryCount` permanently on, which turns a real degradation
+  // signal into background noise.
+  //
+  // Quarantined rather than deleted, because this tooling syncs to consumer
+  // repos that can run an OLDER bundle than the one that wrote the file: to a
+  // stale reader, an entry written by a newer schema is indistinguishable from
+  // corruption. A destructive prune would make that version skew silent and
+  // permanent. `.bak` on the file-level path (`writeSingleLedgerEntry`) is the
+  // same instinct one granularity up.
+  const prunedResident = [];
+  const survivors = [];
+  for (const e of ledger.entries) {
+    const verdict = classifyLedgerEntry(e);
+    if (verdict.kind === 'unrecognised') prunedResident.push({ entry: e, reason: verdict.reason });
+    else survivors.push(e);
+  }
+  if (prunedResident.length > 0) {
+    // Prune ONLY if the entries are safely preserved first. If the sidecar
+    // could not be written, keep them in the ledger and report nothing pruned:
+    // a prune whose evidence failed to land is the silent data loss this whole
+    // path exists to avoid, and a noisy stale entry is the cheaper failure.
+    if (quarantineEntries(absLedgerPath, prunedResident)) {
+      ledger.entries = survivors;
+      process.stderr.write(
+        `  [ledger] pruned ${prunedResident.length} unrecognised entr`
+        + `${prunedResident.length === 1 ? 'y' : 'ies'} → ${absLedgerPath}${QUARANTINE_SUFFIX}\n`,
+      );
+    } else {
+      prunedResident.length = 0;
+    }
+  }
+
   const byTopic = new Map(ledger.entries.map(e => [e.topicId, e]));
   const rejected = [];
   let inserted = 0, updated = 0;
@@ -271,13 +406,17 @@ export function batchWriteLedger(ledgerPath, entries, { meta = null, targetMetaP
   if (ledger.entries.some(e => !e.topicId)) {
     throw new Error('Ledger integrity check failed: entry without topicId');
   }
-  atomicWriteFileSync(path.resolve(ledgerPath), JSON.stringify(ledger, null, 2));
+  atomicWriteFileSync(absLedgerPath, JSON.stringify(ledger, null, 2));
 
   if (targetMetaPath && meta) {
     mergeMetaLocked(path.resolve(targetMetaPath), meta);
   }
 
-  return { inserted, updated, total: ledger.entries.length, rejected };
+  // `prunedResident` is deliberately a SEPARATE channel from `rejected`: one is
+  // "you handed me something bad", the other is "the file already held
+  // something bad". Collapsing them would make a caller's incoming-entry check
+  // fire on damage it did not cause.
+  return { inserted, updated, total: ledger.entries.length, rejected, prunedResident };
 }
 
 // ── Finding Metadata ────────────────────────────────────────────────────────

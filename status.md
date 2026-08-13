@@ -1,6 +1,122 @@
 # Project Status Log
 
-## 2026-08-13 (latest) — three ways the audit loop indicted code that was fine
+## 2026-08-13 (latest) — the ledger never healed, and the predicate that would have healed it was wrong
+
+Follow-on from `9cbec6d8` (below). Three deferrals from that entry, investigated;
+one of my three statements to the operator was wrong, and the requested fix
+turned out to sit on top of a worse bug.
+
+**The store leg needed no migration — I said it did.** `audit_runs.suppression_stats
+jsonb` has existed since [`20260417120000_outcome_data_loop.sql:12`](supabase/migrations/20260417120000_outcome_data_loop.sql:12).
+Live store, queried 2026-08-13 (`select count(*), count(suppression_stats) from audit_runs`):
+**741 rows, 0 populated** — declared, then written by nothing and read by nothing
+for four months. Now written by `recordRunComplete`, columnExists-probe-guarded
+like its six siblings; probe verified live (`true` for the column, `42703` for a
+nonexistent one as a negative control).
+
+**What it carries is a denominator.** `_suppression` recorded kept/suppressed/
+reopened and never the size of the ruling set they were matched against, and
+`recordSuppressionEvents` writes one row per match — zero rows when there were
+none. So "suppression matched against **0** rulings" was byte-identical
+downstream to "matched against 9 and none hit". That is the state behind the
+2026-08-08 "R2+ suppression never engages" consumer report, and the stderr NOTE
+was the only thing that ever said so. `buildSuppressionStats` is pure and
+test-exported; R1 returns `null` (absent ≠ a measured zero) and an unavailable
+ledger reports `{unavailable:true}` rather than zeroed counts (a zero denominator
+would claim a measurement nobody took).
+
+**`pendingEntryCount` stays unpropagated**, as before — expected residue, not
+degradation. Convergence still is **not** gated on ledger degradation, and now
+for a better reason than the original one (below).
+
+### The bug under the requested fix
+
+The ask was: malformed ledger entries persist forever, so make the ledger
+self-heal. Both halves of that were true — `readLedgerJson`
+([ledger.mjs:169](scripts/lib/ledger.mjs:169)) validates only that `entries` is an
+array, and `batchWriteLedger` read every resident entry raw into a topicId map and
+wrote them all back; only INCOMING entries were ever validated.
+
+But the predicate that defines "malformed" was wrong, and a prune built on it
+**deletes real data**. `validateLedgerForR2` knew two of the **three** schemas
+that legitimately live in this file. Proven by writing one through the real
+production writer and reading it back:
+
+```
+[ledger] WARNING: entry 0 failed schema validation (source: Invalid input: expected "session")
+{adjudicated: 0, pending: 0, invalid: 1}
+```
+
+Stage-1 mechanical dismissals — written by `writeStage1MechanicalLedgerEntry`,
+consumed by a `suppressReRaises` filter built specifically to route them
+([ledger.mjs:385-404](scripts/lib/ledger.mjs:385), which also excludes them from
+`overruleCountIndex` by `source`) — were counted as corruption **and withheld
+from suppression entirely**. Latent only because the tiered pipeline defaults
+off; it becomes live data loss the moment Phase 14 flips.
+
+### Then the suite caught the second draft
+
+The first classifier keyed its third bucket on `adjudicationOutcome === 'pending'`.
+[`shared.test.mjs:803`](tests/shared.test.mjs:803) failed with `inserted: 1,
+expected 0` — the tell that an entry had been pruned and reinserted. `upsertEntry`
+validates incoming entries against `BatchLedgerEntrySchema` **and nothing
+stronger**, so that is the shape `batchWriteLedger` itself writes; adjudicate one
+to `accepted`/`fixed` without the full ruling fields and the prune ate the
+ledger's own normal output. Two questions had been conflated: *"is this safe to
+delete?"* (fails all three schemas) and *"is this usable for suppression?"* (is a
+complete ruling). The bucket is now keyed on the **schema**, never the outcome.
+
+### What shipped
+
+`classifyLedgerEntry` — one exported oracle returning
+`adjudicated | incomplete | unrecognised`, used by both `validateLedgerForR2` and
+`batchWriteLedger`'s prune so the two spellings cannot drift apart again.
+Pruned entries are **quarantined, not deleted** (`<ledger>.quarantine.json`,
+appending), because this tooling syncs to consumers that may run an older bundle
+where a newer schema is indistinguishable from corruption; and a failed
+quarantine write **aborts the prune**, since losing entries you could not
+preserve is the defect, not the fix. `.bak` on the file-level path
+(`writeSingleLedgerEntry`) is the same instinct one granularity up — extended,
+not duplicated.
+
+End-to-end on the real writer path:
+
+```
+AFTER FIX:   {adjudicated: 1, pending: 0, invalid: 0}
+PRUNE:       pruned [corrupt-1], remaining [s1m-1]
+QUARANTINED: [corrupt-1]
+NEXT ROUND:  {adjudicated: 1, invalid: 0}
+```
+
+That last line is the point: `invalid` was previously stuck at 1 forever, which
+would have pinned `9cbec6d8`'s new degradation signal permanently on and turned
+it into background noise. Self-healing is also why convergence gating is now
+unnecessary rather than merely unsafe — a permanently-stuck count is no longer
+reachable.
+
+**Measured:** `npm test` → **11,854 pass / 0 fail / 26 skipped** (242s).
+
+**Residual risk, stated rather than papered over.** The four-line wiring that
+puts `suppressionStats` on the completion payload is executed by **no test** —
+the harness runs cloud-off and there is no eslint, so `no-undef` would not have
+covered it either. Verified two ways short of execution: `ledgerStats` is
+declared at function scope beside `suppressionUnavailable`, which
+[legacy-production-audit.mjs:3756](scripts/lib/audit/legacy-production-audit.mjs:3756)
+documents as the correct scope for that exact site (`ledgerValidation` is
+block-scoped and unusable there); and the columnExists probe was confirmed live.
+First real R2+ cloud run is the actual proof.
+
+**Also worth knowing:** [`suppression-call-site.test.mjs:142`](tests/suppression-call-site.test.mjs:142)
+pins `fpSuppressed` as a removed local via a whole-file scan. It caught a new
+payload key using that name, then caught the comment explaining the rename. The
+key is `falsePositiveSuppressed`; the guard was not weakened, and the token must
+not appear in this file even in prose.
+
+**Consumer-side verification** (Step 6.8): recorded against the pushed sha in the
+next entry's terms — clone-back at the pushed commit, `npm ci`, affected suites
+re-run in the clone. Result reported in-session.
+
+## 2026-08-13 — three ways the audit loop indicted code that was fine
 
 Shipped as `20b8feeb` + `78f0897a`. A consumer reported that `/audit-code` emits
 HIGH findings asserting files do not exist, and proposed suppressing
@@ -207,6 +323,7 @@ from a consumer.
 **Scope.** One file, two deletions, no behaviour change. `status.md` also carries
 a `(latest)` marker demotion from the 2026-08-13 Azure-credential entry — the one
 this entry displaces; stale markers further down belong to other sessions.
+
 
 ## 2026-08-13 — a degraded ledger and a complete one produced identical rounds
 
