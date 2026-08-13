@@ -87,8 +87,16 @@ dummy-key auth failure and instead made a **real billed Azure call**. All five
 cleared once the vars left `.env`. Worth knowing before anyone puts Azure creds
 in a repo `.env` again.
 
-**Consumer-side verification (Step 6.8):** see the closing note on this entry
-after the sync run.
+**Consumer-side verification (Step 6.8): `verified`.** Pushed as `a1340885`;
+confirmed by `git ls-remote origin refs/heads/main` (the authoritative remote
+ref, not the push exit code — the run printed "Everything up-to-date", which the
+exit code alone would have left ambiguous). Sync reached 2/2 targets; both
+consumers pass `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` — all
+8 gates, exit 0. `azure-route-report.mjs` landed in both under
+`scripts/.claude-skills/lib/` (transitive via `gemini-review.mjs`, which imports
+it). `azure-doctor.mjs` and `lib/azure/route-doctor.mjs` are deliberately NOT
+synced: consumers run the doctor from this repo, so `npm run azure:routes` is a
+source-repo command.
 
 ## 2026-08-12 — the deployment was never in the Azure URL
 
