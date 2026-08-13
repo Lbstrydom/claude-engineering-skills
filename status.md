@@ -1,6 +1,92 @@
 # Project Status Log
 
-## 2026-08-13 (latest) — the ledger never healed, and the predicate that would have healed it was wrong
+## 2026-08-13 (latest) — a plan path written one subtree short hid 8 files from the audit
+
+`extractPlanPaths` ([plan-paths.mjs:126](scripts/lib/plan-paths.mjs:126)) decided
+existence with a bare `fs.existsSync(path.resolve(p))`. Plans write paths as prose,
+routinely relative to a subtree named a heading earlier — `zone/zoneChat.js` for
+`src/services/zone/zoneChat.js` — so those resolved against the repo root, found
+nothing, and were classified missing.
+
+**Measured** on `wine-cellar-app`'s `placement-v1-registry-gate-fix.md` (2026-08-13,
+by executing the real extractor, not by reading it): **18 of 25** paths reported
+missing resolved to exactly one real file. Three consequences compounded, and only
+the first was visible:
+
+1. reported `missing` — `files_missing: 23` on the run;
+2. excluded from `found`, so **8 existing, plan-referenced files were never read by
+   the audit at all** — silently, and labelled "missing" so a reader concludes *not
+   written yet* rather than *not checked*;
+3. announced to the model as `**Missing:** …` in the cacheable prompt, which the
+   structure pass faithfully reported as HIGH "planned file absent" findings.
+
+`finding-verification.mjs` already refuted (3) at the OUTPUT layer via a unique
+segment-boundary suffix match — its header even cites this exact `zone/zoneChat.js`
+case. Nothing fixed (1) or (2). **Two notions of "exists" in one pipeline** is what
+produced a false finding and a coverage hole from one defect.
+
+**Fix — one oracle, both sides.** `resolveUniqueSuffix`
+([repo-inventory.mjs](scripts/lib/repo-inventory.mjs)) now owns exact-then-unique-suffix
+resolution; the gate delegates to it (28 existing tests green — behaviour-preserving)
+and `extractPlanPaths` calls it too. Ambiguity and true absence stay missing:
+resolving them would trade a false "missing" for a false "found", manufacturing
+coverage that never happened. After: **missing 25 → 7** (exactly the genuine
+absences), all 8 unaudited files recovered.
+
+Two things the implementation surfaced that the design did not predict:
+
+- **Suffix resolution would have been a hole in the infra guard.** `isAuditInfraFile`
+  keys on a `scripts/` prefix, so `lib/schemas.mjs` passes the extraction-time check
+  but resolves to `scripts/lib/schemas.mjs`, which IS infra. The guard is re-applied
+  to the RESOLVED path and pinned by a test.
+- **The phantoms were also firing fuzzy discovery.** They depressed `regexFoundCount`
+  below `FUZZY_DISCOVERY_THRESHOLD`, whose own note records it pulling in 21 unrelated
+  files. Counted through the same resolver now.
+
+**Found by the audit, in the module the fix newly depends on.** `extractPlanPaths`
+previously touched no inventory; it does now, which made two pre-existing
+`repo-inventory.mjs` defects load-bearing (impact, not authorship — AGENTS.md):
+
+- `runGit` ran `git ls-files` **without `-z`** and trimmed each line. Demonstrated:
+  git emits `"src/caf\303\251.mjs"` for `src/café.mjs`, so the inventory gained a path
+  that exists nowhere and lost the one that does — wrong in both directions for two
+  consumers that treat membership as *proof*. Now `-z` + NUL split, no trim.
+- `gitRoot` trimmed `rev-parse --show-toplevel` — the same defect one function over,
+  found in R2 only because the census asked. Now strips the terminating newline only.
+
+**Two audit findings rejected by execution, both false**: R1-H2 claimed the adaptive
+context layer was unimplemented ([repo-context.mjs](scripts/lib/repo-context.mjs)
+exists, tiered, 3 call sites); R2-H1 claimed `scripts/lib/schemas.mjs` was absent
+(1511 lines, exports the named symbol at :1380). Both are the diff-judged-against-whole-plan
+artifact — and the second is the very class this change exists to fix.
+
+**Accepted, not fixed** (R3, verdict PASS): fs-walk omits symlinks while still
+reporting `complete`; `execSync` UTF-8 vs POSIX non-UTF-8 pathname bytes. Neither is
+consulted by this change — it reads `.files` only and tries `fs.existsSync` first, so
+skipped subtrees behave exactly as before. Gemini's `over_engineering_flags`
+independently called the second over-engineering.
+
+**The most valuable finding came from the shadow reviewer, not the gate.** Claude
+Opus found, and direct execution confirmed, that a **transitive** "is missing" —
+*"the module is missing error handling"*, where the file exists and a FEATURE is
+absent — is classified as an existence claim, refuted, and downgraded to
+`verdictSeverity: LOW, countsTowardVerdict: false`. A genuine HIGH, silently
+deleted. That is the inverse of the bug fixed here and the more dangerous
+direction. Independent of this change (misclassification happens upstream of the
+resolver), so it is **not** in this commit — split to its own session with the repro
+and three passing controls.
+
+**Audit**: 3 rounds → PASS (H:0 M:2), Gemini final gate **APPROVE** (0 new, 0 wrongly
+dismissed). Scoped to these 5 files: the shared tree carried four other sessions'
+uncommitted files, and `--scope diff` would have audited their work as mine.
+
+**Consumer-side verification (Step 6.8): `unverified`** — blocked prerequisite: this
+change is upstream-only and no consumer re-sync was run in this session, so no
+consumer-side retrieval could be performed. `plan-paths.mjs` and `repo-inventory.mjs`
+are synced modules; `npm run sync` + `sync-isolation-verify.mjs` in a consumer is the
+outstanding check before consumers pick this up.
+
+## 2026-08-13 — the ledger never healed, and the predicate that would have healed it was wrong
 
 Follow-on from `9cbec6d8` (below). Three deferrals from that entry, investigated;
 one of my three statements to the operator was wrong, and the requested fix
@@ -325,93 +411,6 @@ session's active design); `REQUIRED_SCHEMA` and `store/model-ab.mjs` coupling
 **Consumer-side verification**: `unverified` — blocked prerequisite: no second
 checkout of this repo on this machine to clone the pushed sha into. Producer
 side: `npm run check` exits 0, 11,876 tests pass, 0 fail.
-
-## 2026-08-13 (latest) — a plan path written one subtree short hid 8 files from the audit
-
-`extractPlanPaths` ([plan-paths.mjs:126](scripts/lib/plan-paths.mjs:126)) decided
-existence with a bare `fs.existsSync(path.resolve(p))`. Plans write paths as prose,
-routinely relative to a subtree named a heading earlier — `zone/zoneChat.js` for
-`src/services/zone/zoneChat.js` — so those resolved against the repo root, found
-nothing, and were classified missing.
-
-**Measured** on `wine-cellar-app`'s `placement-v1-registry-gate-fix.md` (2026-08-13,
-by executing the real extractor, not by reading it): **18 of 25** paths reported
-missing resolved to exactly one real file. Three consequences compounded, and only
-the first was visible:
-
-1. reported `missing` — `files_missing: 23` on the run;
-2. excluded from `found`, so **8 existing, plan-referenced files were never read by
-   the audit at all** — silently, and labelled "missing" so a reader concludes *not
-   written yet* rather than *not checked*;
-3. announced to the model as `**Missing:** …` in the cacheable prompt, which the
-   structure pass faithfully reported as HIGH "planned file absent" findings.
-
-`finding-verification.mjs` already refuted (3) at the OUTPUT layer via a unique
-segment-boundary suffix match — its header even cites this exact `zone/zoneChat.js`
-case. Nothing fixed (1) or (2). **Two notions of "exists" in one pipeline** is what
-produced a false finding and a coverage hole from one defect.
-
-**Fix — one oracle, both sides.** `resolveUniqueSuffix`
-([repo-inventory.mjs](scripts/lib/repo-inventory.mjs)) now owns exact-then-unique-suffix
-resolution; the gate delegates to it (28 existing tests green — behaviour-preserving)
-and `extractPlanPaths` calls it too. Ambiguity and true absence stay missing:
-resolving them would trade a false "missing" for a false "found", manufacturing
-coverage that never happened. After: **missing 25 → 7** (exactly the genuine
-absences), all 8 unaudited files recovered.
-
-Two things the implementation surfaced that the design did not predict:
-
-- **Suffix resolution would have been a hole in the infra guard.** `isAuditInfraFile`
-  keys on a `scripts/` prefix, so `lib/schemas.mjs` passes the extraction-time check
-  but resolves to `scripts/lib/schemas.mjs`, which IS infra. The guard is re-applied
-  to the RESOLVED path and pinned by a test.
-- **The phantoms were also firing fuzzy discovery.** They depressed `regexFoundCount`
-  below `FUZZY_DISCOVERY_THRESHOLD`, whose own note records it pulling in 21 unrelated
-  files. Counted through the same resolver now.
-
-**Found by the audit, in the module the fix newly depends on.** `extractPlanPaths`
-previously touched no inventory; it does now, which made two pre-existing
-`repo-inventory.mjs` defects load-bearing (impact, not authorship — AGENTS.md):
-
-- `runGit` ran `git ls-files` **without `-z`** and trimmed each line. Demonstrated:
-  git emits `"src/caf\303\251.mjs"` for `src/café.mjs`, so the inventory gained a path
-  that exists nowhere and lost the one that does — wrong in both directions for two
-  consumers that treat membership as *proof*. Now `-z` + NUL split, no trim.
-- `gitRoot` trimmed `rev-parse --show-toplevel` — the same defect one function over,
-  found in R2 only because the census asked. Now strips the terminating newline only.
-
-**Two audit findings rejected by execution, both false**: R1-H2 claimed the adaptive
-context layer was unimplemented ([repo-context.mjs](scripts/lib/repo-context.mjs)
-exists, tiered, 3 call sites); R2-H1 claimed `scripts/lib/schemas.mjs` was absent
-(1511 lines, exports the named symbol at :1380). Both are the diff-judged-against-whole-plan
-artifact — and the second is the very class this change exists to fix.
-
-**Accepted, not fixed** (R3, verdict PASS): fs-walk omits symlinks while still
-reporting `complete`; `execSync` UTF-8 vs POSIX non-UTF-8 pathname bytes. Neither is
-consulted by this change — it reads `.files` only and tries `fs.existsSync` first, so
-skipped subtrees behave exactly as before. Gemini's `over_engineering_flags`
-independently called the second over-engineering.
-
-**The most valuable finding came from the shadow reviewer, not the gate.** Claude
-Opus found, and direct execution confirmed, that a **transitive** "is missing" —
-*"the module is missing error handling"*, where the file exists and a FEATURE is
-absent — is classified as an existence claim, refuted, and downgraded to
-`verdictSeverity: LOW, countsTowardVerdict: false`. A genuine HIGH, silently
-deleted. That is the inverse of the bug fixed here and the more dangerous
-direction. Independent of this change (misclassification happens upstream of the
-resolver), so it is **not** in this commit — split to its own session with the repro
-and three passing controls.
-
-**Audit**: 3 rounds → PASS (H:0 M:2), Gemini final gate **APPROVE** (0 new, 0 wrongly
-dismissed). Scoped to these 5 files: the shared tree carried four other sessions'
-uncommitted files, and `--scope diff` would have audited their work as mine.
-
-**Consumer-side verification (Step 6.8): `unverified`** — blocked prerequisite: this
-change is upstream-only and no consumer re-sync was run in this session, so no
-consumer-side retrieval could be performed. `plan-paths.mjs` and `repo-inventory.mjs`
-are synced modules; `npm run sync` + `sync-isolation-verify.mjs` in a consumer is the
-outstanding check before consumers pick this up.
-
 
 ## 2026-08-13 — two dead imports pointed at a gate that runs elsewhere
 
