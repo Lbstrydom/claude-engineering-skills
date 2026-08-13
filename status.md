@@ -59,6 +59,20 @@ the pre-push npm-args gate **skipping** in a worktree, where it was passing
 ungated and reading clean. Upstream issue `b5e44db7` filed from the consumer and
 closed `fixed`.
 
+**Landed — consumer-side verification: `verified`.** #329 squash-merged as
+wine `22a9dd89`. Retrieval was `git checkout main && git pull --ff-only origin
+main` in the consumer, not an inspection of the branch: `pre-push.local` carries
+the refuse-rather-than-skip branch and `package.json` carries `skills:hydrate`.
+Its red `Dependency audit` check was **not** this PR's doing — the diff touches
+0 dependency lines — but `npm-audit-gate` was failing on every branch, so it was
+fixed here rather than accepted: both net-new advisories were transitive with a
+fix available, `fast-uri` 3.1.2→3.1.5 and `nanoid` 3.3.15→3.3.18 (exactly the
+advisory minimums), after which `npm audit` reports 0 vulnerabilities and the
+baseline is rewritten EMPTY — also clearing four entries stale since earlier
+dependency work. The local-vs-CI disagreement (0 findings here, 6 in CI) was
+resolved on the lockfile diff, not on the audit output, because a clean local
+audit and a lying local audit look identical.
+
 ## 2026-08-13 — the existence gate's verdict now reaches the store
 
 The gate has resolved "file/module X is missing" claims against the real repo
