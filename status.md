@@ -1,5 +1,90 @@
 # Project Status Log
 
+## 2026-08-13 (latest) — four things that were declared and enforced nothing, and a fix nobody else could see
+
+`388e0339`, `0a91de91`, `2e6bb67f`, merged and pushed as `1d3f2d21`.
+
+**`ExecutionMetaSchema` called itself "Typed SSOT — all execution status flags
+live here" and was applied by nothing.** It was imported by
+`legacy-production-audit.mjs` and `openai-audit.mjs` and used by neither, so
+every field in it was a comment with Zod syntax. Not cosmetic: `audit-loop.mjs`
+reads `suppressionUnavailable` and `ledgerInvalidEntryCount` to decide whether a
+round counts toward convergence, so a typo'd key would let a round that
+suppressed against a truncated ruling set be counted as clean — defeating the
+guard `ledgerInvalidEntryCount` (`9cbec6d8`) had just been added to provide.
+
+**The wiring its own plan specified could not be built, which is likely why it
+never was.** `audit-loop-improvements.md:518` said to `.extend({_executionMeta:
+ExecutionMetaSchema})` onto `CodeAuditResultSchema` and `PlanAuditResultSchema`.
+Both targets are wrong: `PlanAuditResultSchema` is handed to `callGPT` and
+becomes the **OpenAI structured-output format**, so extending it would declare an
+internal telemetry field TO THE MODEL — and `_executionMeta` is assembled by our
+own code after the response returns; `CodeAuditResultSchema` is dead, defined and
+referenced nowhere. Enforcement went to the CONSTRUCTION boundary instead:
+`buildExecutionMeta()` is the single construction point and both producers call
+it. The plan is amended in place rather than left to mislead the next reader.
+
+**A plain `z.object` SILENTLY STRIPS an unknown key** — `z.object({a}).parse(
+{aa:1})` returns `{}`. So even at the right layer the permissive shape would have
+swallowed a typo'd field rather than rejecting it. `z.strictObject` is what makes
+a misspelling loud. Related: `AuditRunResultSchema` is never `.parse()`d anywhere
+(its one test reads `.shape.runStatus` statically), so "there is a schema for it"
+was never "it is validated".
+
+**Same shape, one level down: `reduceStatus` had six declared values and two
+reachable ones.** `runMapReducePass` computed `failed ? MODEL_ERROR : OK` from a
+boolean. Three separate discards fed it, each having established the answer and
+then thrown it away: `safeCallGPT` had `classifyLlmError` and returned only
+`err.message`; `_callGPTOnce` computed `isAbort`, formatted "Timeout after Ns",
+then threw a bare `Error` — so `classifyLlmError`'s AbortError branch could never
+fire, which is why `TIMEOUT` was unreachable **at the source, not in any
+mapping**; and two REDUCE-skip paths (MAP-failure threshold, payload-over-budget)
+emitted no `_executionMeta` at all, which is where `SKIPPED` and
+`BUDGET_EXCEEDED` actually live. `retryable: false` on the new timeout error is
+deliberate — it preserves today's no-retry behaviour, since `classifyLlmError`
+would say `true` and flipping it would re-dispatch every timed-out pass. That is
+a cost decision, not a labelling one.
+
+**`_executionMeta.reducePassStatuses` propagates per-pass degradation onto the
+run.** It was emitted on the pass result and dropped at the merge, reaching a
+human only as prose in `overall_reasoning`. Nothing else carried it:
+`mapReduceFailureReason` flags only `total_failure` and
+partial-with-zero-findings, so a pass whose REDUCE parse-errored while its raw
+MAP findings survived reported `succeeded` with a null `failureReason`. A map,
+not a scalar — collapsing N passes discards which one degraded. The
+`reduceResult._reduceStatus ??` override is DELETED: nothing has ever written
+it, so the fallback WAS the implementation and the override was a branch no
+input could take. A seam with no writer is not extensibility.
+
+**Falsified, not assumed.** Reverting the mapping turns 4 of 9 red — and
+specifically 4: the `model_error` negative control, the skip path, the success
+path and the two pure-unit tests stay green. Reverting ONLY the `isAbort` line
+turns exactly 1 red. Removing the run-level wiring turns exactly 1 red. Feeding
+a typo'd key through the real producer turns 2 red while the clean-ledger control
+stays green, because a clean round emits no block to validate. Tests use genuine
+provider response shapes so `llm-helpers` derives each category itself.
+
+### The part worth remembering: committed is not shared
+
+Another session reported this "still open" after it was fixed, and **they were
+right**. Every commit was local — `main` was 8 ahead / 6 behind `origin/main` —
+so from `origin` the old code was still the truth. Their worktree also sat on a
+branch based before the fix, and its `status.md` still carried the original
+"Found while tracing, not fixed" note, which reads exactly like current state.
+
+Reconciling took THREE merge rounds because `origin` moved twice mid-resolution,
+and every arrival was **the same change under a different SHA**
+(`4b54f3e2`/`6def9c2b`, `3e1e02bb`/`455e7cca`, `baf350f2`/`78f0897a`) — two
+sessions committing identical work from diverging bases. Merge, never rebase: a
+rebase replays conflicts already resolved upstream. Every code file auto-merged
+to byte-identical content; only this log genuinely collided. The `status.md`
+dedupe is guarded — it refuses unless two entries are identical ignoring
+whitespace, which earned its keep when a 86-vs-87-line "difference" turned out to
+be one trailing blank line. Conflicts kept BOTH `collectReducePassStatuses` and
+`buildSuppressionStats`, and took the `resolveUniqueSuffix` version of
+`finding-verification.mjs` so that gate and `extractPlanPaths` cannot drift into
+two notions of "exists".
+
 ## 2026-08-13 — closed the stale layering backlog, and reverted a "fix" that would have hidden a gate
 
 Follow-on to Cluster 1 (`455e7cca`). Three items: close the backlog, run the
@@ -59,7 +144,7 @@ session's active design); `REQUIRED_SCHEMA` and `store/model-ab.mjs` coupling
 checkout of this repo on this machine to clone the pushed sha into. Producer
 side: `npm run check` exits 0, 11,876 tests pass, 0 fail.
 
-## 2026-08-13 (latest) — a plan path written one subtree short hid 8 files from the audit
+## 2026-08-13 — a plan path written one subtree short hid 8 files from the audit
 
 `extractPlanPaths` ([plan-paths.mjs:126](scripts/lib/plan-paths.mjs:126)) decided
 existence with a bare `fs.existsSync(path.resolve(p))`. Plans write paths as prose,
