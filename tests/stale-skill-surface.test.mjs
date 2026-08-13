@@ -261,3 +261,60 @@ describe('check-stale-skill-surface.mjs CLI — malformed --repo is rejected, no
     );
   });
 });
+
+// ── Source-repo instruction-surface rule ────────────────────────────────────
+// docs/plans/cross-agent-delivery-parity.md KD-5. The boundary test is the
+// load-bearing one: an earlier design gated this on an INFERRED "am I the source
+// repo?" predicate ("no --repo, and the root is my own repo root"), which is
+// equally true of a bundle relocated into a consumer's scripts/.claude-skills/.
+// That would have fired the rule inside consumer repos, failing them for a file
+// they legitimately own.
+describe('check-stale-skill-surface.mjs — .github/copilot-instructions.md is categorically absent', () => {
+  const FORBIDDEN = path.join(REPO_ROOT, '.github', 'copilot-instructions.md');
+  const cleanup = () => { fs.rmSync(FORBIDDEN, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); };
+  afterEach(cleanup);
+
+  it('passes with --source-surfaces when the file is absent (negative control)', async () => {
+    cleanup();
+    const { stdout, stderr } = await execFileAsync(
+      process.execPath, [CLI, '--gate', '--source-surfaces'], { cwd: REPO_ROOT },
+    );
+    assert.doesNotMatch(`${stdout}${stderr}`, /copilot-instructions-present/);
+  });
+
+  for (const [label, write] of [
+    ['an untracked file', () => fs.writeFileSync(FORBIDDEN, '# local notes\n')],
+    ['an empty file', () => fs.writeFileSync(FORBIDDEN, '')],
+  ]) {
+    it(`fails on ${label} — content and tracked status are irrelevant`, async () => {
+      fs.mkdirSync(path.dirname(FORBIDDEN), { recursive: true });
+      write();
+      await assert.rejects(
+        execFileAsync(process.execPath, [CLI, '--gate', '--source-surfaces'], { cwd: REPO_ROOT }),
+        (err) => {
+          assert.equal(err.code, 1);
+          assert.match(err.stderr, /surface\/copilot-instructions-present/);
+          return true;
+        },
+      );
+    });
+  }
+
+  it('BOUNDARY: a consumer-scoped invocation PASSES with the same file present', async () => {
+    // Consumer .github/ is theirs; the sync never writes there. Without the
+    // explicit flag the rule must not fire, however the root resolves.
+    fs.mkdirSync(path.dirname(FORBIDDEN), { recursive: true });
+    fs.writeFileSync(FORBIDDEN, '# a consumer\'s own Copilot notes\n');
+    const { stdout, stderr } = await execFileAsync(
+      process.execPath, [CLI, '--gate', '--repo', REPO_ROOT], { cwd: REPO_ROOT },
+    );
+    assert.doesNotMatch(`${stdout}${stderr}`, /copilot-instructions-present/);
+  });
+
+  it('BOUNDARY: a bare invocation (no flags) PASSES — the relocated-copy case', async () => {
+    fs.mkdirSync(path.dirname(FORBIDDEN), { recursive: true });
+    fs.writeFileSync(FORBIDDEN, '# notes\n');
+    const { stdout, stderr } = await execFileAsync(process.execPath, [CLI, '--gate'], { cwd: REPO_ROOT });
+    assert.doesNotMatch(`${stdout}${stderr}`, /copilot-instructions-present/);
+  });
+});

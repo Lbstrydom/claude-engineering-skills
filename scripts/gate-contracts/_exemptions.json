@@ -82,10 +82,11 @@
       "gateAddedAt": "1970-01-01",
       "gateAddedAtSource": "unknown"
     },
-    "node scripts/check-stale-skill-surface.mjs --gate": {
-      "reason": "skills:check member. Asserts the ABSENCE of a .github/skills/ or .agents/skills/ tree that would shadow .claude/skills/. The tamper is creating a directory, which the overlay contract (whose destination must already exist, so a fixture can never be an orphan the gate never reads) cannot express; the behaviour is covered by the script own tests.",
-      "gateAddedAt": "1970-01-01",
-      "gateAddedAtSource": "unknown"
+    "node scripts/check-stale-skill-surface.mjs --gate --source-surfaces": {
+      "reason": "skills:check member. Asserts the ABSENCE of (a) a .github/skills/ or .agents/skills/ tree that would shadow .claude/skills/, and (b) .github/copilot-instructions.md in THIS repo (--source-surfaces; cross-agent-delivery-parity KD-5). The directory tamper cannot be expressed by the overlay contract, whose destination must already exist — so a fixture can never be an orphan the gate never reads. The file-shaped rule in (b) IS pillable and is a candidate contract; today both are covered by tests/stale-skill-surface.test.mjs, including the two boundary cases (consumer-scoped --repo, and a bare relocated-copy invocation) that a rule inferred rather than flag-gated would have failed.",
+      "gateAddedAt": "2026-08-13",
+      "gateAddedAtSource": "unknown",
+      "policyOverride": "Introduced by this change on 2026-08-13 (gateAddedAtSource is \"unknown\" because the date comes from authoring it, not from a git log -S derivation — the enum has no \"this-change\" value). It is a RE-KEY, not a new gate: the same command gained --source-surfaces, which added a categorical rule that .github/copilot-instructions.md must not exist in this repo. Post-cutoff and deliberately un-pilled. Every rule this command enforces is an ABSENCE (no .github/skills/, no .agents/skills/, no .github/copilot-instructions.md), so the tamper a pill would have to perform is file or directory CREATION — and BOTH tamper mechanisms in check-gate-poison-pills.mjs refuse a destination that does not already exist: overlay returns \"the fixture would be an orphan the gate never reads\" and applyMutation returns \"destination does not exist — nothing to tamper with\". Verified against the runner, not inherited from the prior entry prose. Negative evidence lives in tests/stale-skill-surface.test.mjs instead, which exercises the new rule in all four directions: absent+flag passes, present+flag fails with surface/copilot-instructions-present (tracked or untracked), and the two boundary cases — a consumer-scoped --repo invocation and a bare relocated-copy invocation — PASS with the file present. That last pair is the load-bearing one: an inferred source-repo predicate would have failed it and fired this rule inside consumer repos."
     }
   }
 }

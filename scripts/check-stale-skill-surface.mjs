@@ -47,6 +47,13 @@ import {
   listSurfaceNames, compareSkillSurfaces, classifyOrphans,
 } from './lib/skill-surface-identity.mjs';
 
+// Deliberately NOT in `lib/skill-surface-identity.mjs`. That module is the shared
+// SKILL-surface vocabulary, imported by gate 8, which is synced to consumers. This
+// is a source-repo-only INSTRUCTION-surface policy with no meaning in a consumer
+// (their `.github/` is theirs), so putting it there would ship a rule to repos it
+// must never apply to.
+const FORBIDDEN_INSTRUCTION_SURFACE = '.github/copilot-instructions.md';
+
 const R = '\x1b[31m', G = '\x1b[32m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0m';
 
 
@@ -142,6 +149,58 @@ function main() {
       process.stderr.write(`${Y}○ stale skill surface: ${msg}${X}\n`);
     }
     process.exit(0);
+  }
+
+  // ── Source-repo instruction-surface rule (opt-in, never inferred) ────────
+  //
+  // `.github/copilot-instructions.md` must not exist in THIS repo: AGENTS.md is
+  // the cross-agent surface, and a third instruction file would be a third thing
+  // to keep in sync while owning no content of its own. Presence fails,
+  // irrespective of content, documentation, or git-tracked status — an untracked
+  // file changes the local agent's behaviour exactly as a tracked one does, which
+  // is precisely how this gap surfaced (a reviewer's own untracked copies).
+  //
+  // Gated on an EXPLICIT flag rather than an inferred "am I the source repo?"
+  // predicate. Inference cannot work here: this script is invoked against consumer
+  // roots (`--repo <targetRoot>`, see sync-to-repos.mjs), AND its own bundle is
+  // relocated into a consumer's `scripts/.claude-skills/`, where "no --repo and
+  // the root is my own repo root" is equally true. Only this repo's `skills:check`
+  // passes `--source-surfaces`; no consumer invocation ever does, and a relocated
+  // copy run bare cannot accidentally acquire it.
+  //
+  // Consumer `.github/` is deliberately NOT governed — it is theirs, and the sync
+  // never writes there. Plan: docs/plans/cross-agent-delivery-parity.md KD-5.
+  if (argv.includes('--source-surfaces')) {
+    const forbidden = path.join(root, FORBIDDEN_INSTRUCTION_SURFACE);
+    let present;
+    try {
+      present = fs.statSync(forbidden).isFile();
+    } catch (err) {
+      // Absent is the expected state. Any OTHER error means we could not
+      // establish the fact, and a check that cannot see must not report clean.
+      if (err.code !== 'ENOENT') {
+        process.stderr.write(`${R}✗ cannot inspect ${FORBIDDEN_INSTRUCTION_SURFACE}: ${err.message}${X}\n`);
+        process.exit(1);
+      }
+      present = false;
+    }
+    if (present) {
+      if (json) {
+        process.stdout.write(JSON.stringify({
+          repo: root, finding: 'surface/copilot-instructions-present',
+          path: FORBIDDEN_INSTRUCTION_SURFACE, status: 'fail', exitCode: 1,
+        }, null, 2) + '\n');
+      } else {
+        process.stderr.write(
+          `${R}✗ surface/copilot-instructions-present${X}: ${FORBIDDEN_INSTRUCTION_SURFACE} exists in this repo.\n`
+          + `  AGENTS.md is the cross-agent instruction surface; a Copilot-only file is a third\n`
+          + `  surface to keep in sync. Move its content into AGENTS.md (cross-agent) or CLAUDE.md\n`
+          + `  (Claude-only), then delete the file. A genuine Copilot-only need is a plan, not an\n`
+          + `  override — there is deliberately no escape hatch.\n`,
+        );
+      }
+      process.exit(1);
+    }
   }
 
   // Advisory, before any exit path so it prints regardless of the verdict.

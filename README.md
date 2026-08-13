@@ -63,8 +63,9 @@ Atomic chain:
 Side-channels (anytime):
   /brainstorm   — second opinion with OpenAI/Gemini, manual convergence
   /explain      — read-only context synthesis from arch-memory + git
-  Arch-memory   — auto-fires on UserPromptSubmit when prompt contains "fix" /
-  consult hook    "add" / "implement" etc. — catches drift before it lands
+  Arch-memory   — Claude Code ONLY: auto-fires on UserPromptSubmit for "fix" /
+  consult hook    "add" / "implement" etc. Other hosts (Copilot, Cursor) have no
+                  hook — there the AGENTS.md rule is run by hand.
 ```
 
 ---
@@ -236,7 +237,7 @@ Per-repo symbol-index in Supabase (with embeddings) catches duplicate-function d
 
 **Catches drift via 5 surfaces**:
 1. **Plan-time** — `/plan` consults the index in Phase 0.5; near-duplicates appear as a "Neighbourhood considered" callout
-2. **Ad-hoc-fix time** — `UserPromptSubmit` hook auto-fires on intent verbs (`fix`, `add`, `implement`, etc.) and prepends a consultation callout to Claude's context
+2. **Ad-hoc-fix time (Claude Code only)** — a `UserPromptSubmit` hook auto-fires on intent verbs (`fix`, `add`, `implement`, etc.) and prepends a consultation callout to Claude's context. This is *acceleration, not cross-agent enforcement*: Copilot, Cursor and other hosts get no hook and must run the consultation command from AGENTS.md by hand
 3. **Audit-time** — `/audit-code --scope=full` inlines the full symbol catalogue
 4. **Drift sweep** — weekly GH workflow opens a sticky issue when cosine-similar symbol pairs cluster
 5. **Render** — locally-generated `docs/architecture-map.md` with Mermaid C4 diagrams per domain

@@ -126,7 +126,14 @@ function main() {
   if (fs.existsSync(path.join(REPO_ROOT, EXCEPTIONS))) {
     const contract = readJsonFile(EXCEPTIONS);
     if (!contract.ok) finish(shape('mcp/unreadable-contract', [contract.reason]));
-    exceptions = contract.value.exceptions;
+    // `JSON.parse` accepts `null`, `[]` and scalars as valid JSON, so a parse
+    // success does not mean an object. Reading `.exceptions` off `null` would
+    // throw a TypeError and crash instead of reporting the diagnostic.
+    const doc = contract.value;
+    if (doc === null || typeof doc !== 'object' || Array.isArray(doc)) {
+      finish(shape('mcp/unreadable-contract', [`${EXCEPTIONS}: must contain a JSON object`]));
+    }
+    exceptions = doc.exceptions;
     if (exceptions === undefined) {
       finish(shape('mcp/unreadable-contract', [`${EXCEPTIONS}: present but declares no "exceptions" array`]));
     }

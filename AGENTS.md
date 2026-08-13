@@ -197,7 +197,8 @@ skills/<name>/                   ← authoritative; edit ONLY here
 > Usage syntax into the body); no two skills may advertise the same **literal**
 > trigger phrase. Semantic overlap has no oracle — declare the discriminator in BOTH
 > descriptions (*topic* → `/explain --history`, *claim* → `/investigate`). Copilot also
-> reads `CLAUDE.md` + `AGENTS.md` + `.github/copilot-instructions.md`; VS Code reads
+> reads `CLAUDE.md` + `AGENTS.md`; this repo ships **no** `.github/copilot-instructions.md`
+> — a third surface to keep in sync, owning nothing. Absence enforced. VS Code reads
 > `.vscode/mcp.json`, **NOT** `.mcp.json` — keep the two mirrored when adding servers.
 
 Every reference file has `summary:` YAML frontmatter that must byte-match the
@@ -989,22 +990,25 @@ threshold is a property of *corpus × summary style × embedding model × compos
 template × normalizer*, not of the tool — and this tooling syncs to other repos,
 so shipping a constant would repeat the defect elsewhere. **An uncalibrated repo
 bands `review` only**: honest, not degraded — nothing has established what a
-meaningful score is there; run `npm run arch:refresh`. The three old band names
-are **retired**; seeing them means the tooling is stale.
+meaningful score is there; run `npm run arch:refresh`. The three old band names are
+**retired**; seeing them means stale tooling.
 
 **When NOT to consult**:
 
 - Pure bug fixes that change only an existing function's body (no new symbol introduced).
 - Trivial edits: typos, formatting, single-line conditional tweaks.
 - Doc-only or test-only changes (unless adding new test helpers).
-- When the cloud store is offline (`{"cloud": false}`) — log a hint that `npm run arch:refresh` would enable consultation, then proceed.
+- Cloud store offline (`{"cloud": false}`) — log an `npm run arch:refresh` hint, proceed.
 
-**Auto-fired** by `.claude/hooks/arch-memory-check.sh` on `UserPromptSubmit` when the
-prompt carries an intent verb (`fix`/`add`/`implement`/`refactor`/… — the list lives in
-the hook). A `> **Architectural-memory consultation**` callout means it fired: treat it as
-authoritative. It didn't fire (a question that became a fix mid-conversation)? Run the
-command above by hand. Disable with `ARCH_MEMORY_HOOK_DISABLE=1`. Cost is ~$0.0003 + one
-RPC, disk-cached 24h by `(intentDescription, model, dim)`.
+**The rule above is host-neutral and mandatory; the hook is Claude-Code-only
+ACCELERATION, not cross-agent enforcement.** `.claude/hooks/arch-memory-check.sh`
+auto-fires on `UserPromptSubmit` when the prompt carries an intent verb
+(`fix`/`add`/`implement`/… — list in the hook), and a
+`> **Architectural-memory consultation**` callout means it fired: treat it as
+authoritative. **Copilot, Cursor and every other host get no hook** — there you run
+the command above by hand, and so must Claude when the hook didn't fire (a question
+that became a fix mid-conversation). Disable with `ARCH_MEMORY_HOOK_DISABLE=1`. Cost
+~$0.0003 + one RPC, disk-cached 24h by `(intentDescription, model, dim)`.
 
 ## Security incident memory — Mandatory consultation
 
@@ -1050,11 +1054,9 @@ why the corporate Azure modules were not ported: [docs/plans/security/](docs/pla
 
 ---
 
-**Empirical effectiveness test** — run once per repo on deploy and after major
-prompt changes: A/B two fresh sessions on the same near-duplicate-rich prompt
-(`ARCH_MEMORY_HOOK_DISABLE=1` control vs hook enabled), over 5–10 prompts;
-"effective" is reuse-or-mention in ≥60%. Full recipe: the comment block at the
-bottom of `tests/hook-arch-memory-check.test.mjs`.
+**Empirical effectiveness test** — A/B the hook against an
+`ARCH_MEMORY_HOOK_DISABLE=1` control; recipe + threshold in the comment block at
+the bottom of `tests/hook-arch-memory-check.test.mjs`.
 
 ## Quick-fix detection — two-layer architecture
 

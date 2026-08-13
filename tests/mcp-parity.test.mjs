@@ -486,3 +486,49 @@ describe('deepMerge — production wiring (the seam Phase 0 created)', () => {
     }
   });
 });
+
+describe('mcp-parity — the vacuous-pass guard is ENFORCED, not merely reported', () => {
+  // The plan named `compared: 0 is a failure, not a clean pass` as a requirement.
+  // The first implementation surfaced `compared` in the output and left enforcement
+  // to a test that only ever ran against the live config, where it is non-zero —
+  // so two empty configs compared "equal" and exited 0 having verified nothing.
+  // Caught by the consolidated gate.
+  it('two empty configs FAIL with mcp/nothing-compared, not ok:true', () => {
+    const r = compareMcpSurfaces({ claude: { mcpServers: {} }, vscode: { servers: {} } });
+    assert.equal(r.ok, false);
+    assert.equal(r.code, 'mcp/nothing-compared');
+    assert.equal(r.compared, 0);
+    assert.ok(r.diagnostics.some(d => /verified nothing/.test(d)));
+  });
+
+  it('a real drift still outranks it — the guard does not mask a finding', () => {
+    const r = compareMcpSurfaces({
+      claude: { mcpServers: { a: { command: 'npx' } } },
+      vscode: { servers: {} },
+    });
+    assert.equal(r.code, 'mcp/parity-drift');
+  });
+});
+
+describe('mcp-parity CLI — a non-object exceptions file is reported, not a crash', () => {
+  it('JSON `null` is valid JSON but not a contract', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-parity-null-'));
+    try {
+      fs.cpSync(path.join(REPO_ROOT, 'scripts'), path.join(tmp, 'scripts'), { recursive: true });
+      fs.mkdirSync(path.join(tmp, '.vscode'), { recursive: true });
+      fs.writeFileSync(path.join(tmp, '.mcp.json'), JSON.stringify({ mcpServers: { a: { command: 'npx' } } }));
+      fs.writeFileSync(path.join(tmp, '.vscode', 'mcp.json'), JSON.stringify({ servers: { a: { command: 'npx' } } }));
+      fs.writeFileSync(path.join(tmp, 'scripts', 'gate-contracts', 'mcp-parity-exceptions.json'), 'null');
+      let out = '', err = '', status = 0;
+      try {
+        out = execFileSync(process.execPath, [path.join(tmp, 'scripts', 'check-mcp-parity.mjs'), '--json'],
+          { cwd: os.tmpdir(), encoding: 'utf8', stdio: 'pipe', timeout: 60_000 });
+      } catch (e) { out = e.stdout ?? ''; err = e.stderr ?? ''; status = e.status ?? -1; }
+      assert.equal(status, 1);
+      assert.equal(JSON.parse(out.trim()).code, 'mcp/unreadable-contract');
+      assert.doesNotMatch(err, /TypeError|Cannot read properties/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+});

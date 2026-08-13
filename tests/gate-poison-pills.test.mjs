@@ -116,7 +116,22 @@ const GRANDFATHERED_EXEMPTIONS = [
   'arch:coverage-gate', 'cli:flags:gate', 'db:check-rls:gate', 'db:suites:gate',
   'docs:check', 'docs:refs:gate', 'efficacy:check', 'gates:poison', 'knip:gate',
   'node scripts/check-gate-contracts.mjs', 'node scripts/check-skill-refs.mjs',
-  'node scripts/check-stale-skill-surface.mjs --gate',
+  // RE-KEYED, not new (2026-08-13, cross-agent-delivery-parity Cluster B): the same
+  // gate gained `--source-surfaces`, which added a categorical rule that
+  // `.github/copilot-instructions.md` must not exist in this repo. The command string
+  // changed, so the ratchet correctly saw an unrecognised key and demanded a pill.
+  //
+  // It still cannot be pilled, and the reason is verified against the runner rather
+  // than inherited from the old entry's prose: BOTH tamper mechanisms require the
+  // destination to already exist — `overlay` rejects a missing dest outright
+  // ("the fixture would be an orphan the gate never reads") and `applyMutation`
+  // returns "destination does not exist — nothing to tamper with". Every rule this
+  // command enforces is an ABSENCE, so the tamper is file/directory CREATION, which
+  // neither mechanism can express. Covered instead by tests/stale-skill-surface.test.mjs,
+  // which exercises the rule in all three directions — present+flag fails, absent
+  // passes, and the two boundary cases (consumer-scoped `--repo`, and a bare
+  // relocated-copy invocation) pass with the file present.
+  'node scripts/check-stale-skill-surface.mjs --gate --source-surfaces',
   'npm-args:gate', 'on-conflict:check', 'plans:lint', 'plans:status', 'test',
 ];
 

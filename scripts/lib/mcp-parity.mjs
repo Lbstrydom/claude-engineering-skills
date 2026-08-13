@@ -52,6 +52,7 @@ export const CODES = Object.freeze([
   'mcp/invalid-exception',
   'mcp/unsupported-descriptor',
   'mcp/parity-drift',
+  'mcp/nothing-compared',
 ]);
 
 /**
@@ -324,6 +325,16 @@ export function compareMcpSurfaces({ claude, vscode, exceptions } = {}) {
     if (differs) drifted.push(name);
   }
 
+  // VACUOUS-PASS GUARD, enforced and not merely reported. Two configs that both
+  // declare zero servers compare "equal" and would otherwise exit 0 having
+  // examined nothing — a gate reporting success for a run that checked nothing is
+  // the exact false green this module exists to refuse. An earlier version
+  // surfaced `compared` in the output and left the enforcement to a test, which
+  // only ever exercised the live config where it is non-zero.
+  if (compared === 0 && drifted.length === 0) {
+    diagnostics.push('no servers were compared — both configs declare none, so this run verified nothing');
+  }
+
   // Precedence: an unreadable/invalid input makes every later judgement
   // meaningless, and an invalid exception must never be masked by the drift it
   // was (wrongly) trying to excuse.
@@ -331,6 +342,7 @@ export function compareMcpSurfaces({ claude, vscode, exceptions } = {}) {
   if (ex.diagnostics.length > 0) code = 'mcp/invalid-exception';
   else if (descriptorDiagnostics.length > 0) code = 'mcp/unsupported-descriptor';
   else if (drifted.length > 0) code = 'mcp/parity-drift';
+  else if (compared === 0) code = 'mcp/nothing-compared';
 
   return {
     ok: code === null,
