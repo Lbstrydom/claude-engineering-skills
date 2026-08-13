@@ -35,6 +35,7 @@ import { untrackNewlyIgnored } from './lib/sync-untrack.mjs';
 import { computeEolPins, renderEolPinLines } from './lib/sync-eol-pins.mjs';
 import { getGitLocalEnvVarNames } from './lib/git-env-sanitize.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
+import { deepMerge } from './lib/json-merge.mjs';
 import { assertContainedDestination } from './lib/install/safe-destination.mjs';
 import { inspectLegacySurfaces, describeLegacySurfaces } from './lib/install/legacy-surfaces.mjs';
 import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
@@ -978,23 +979,10 @@ function unifiedDiff(srcPath, dstPath, relFile) {
 
 // ── Helpers (continued) ───────────────────────────────────────────────────
 
-/**
- * Deep merge two plain objects. Source keys overwrite target keys at every
- * level. Arrays are replaced (not concatenated). Non-object values use source.
- * Used to safely sync JSON config files without destroying local additions.
- */
-function deepMerge(target, source) {
-  const result = { ...target };
-  for (const [key, val] of Object.entries(source)) {
-    if (val !== null && typeof val === 'object' && !Array.isArray(val)
-        && typeof target[key] === 'object' && target[key] !== null && !Array.isArray(target[key])) {
-      result[key] = deepMerge(target[key], val);
-    } else {
-      result[key] = val;
-    }
-  }
-  return result;
-}
+// `deepMerge` moved to ./lib/json-merge.mjs (2026-08-13, cross-agent-delivery-parity
+// Phase 0). It was private here, so the merge contract the consumer sync depends on
+// could not be asserted without reimplementing it. Imported at the top of this file —
+// do NOT reintroduce a local copy; tests/mcp-parity.test.mjs asserts there isn't one.
 
 // ── Main ───────────────────────────────────────────────────────────────────
 

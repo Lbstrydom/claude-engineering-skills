@@ -751,6 +751,7 @@ takes the Tier-1 path per the testing doctrine.
   - Coupling: single-phase cluster; instruction-prose edits plus the
     `--source-surfaces` boundary work. Independent of Cluster A — no shared code
     path, no import between them.
+- **Final gate**: consolidated Gemini review over the union diff of Clusters A+B.
 
 ---
 
@@ -804,7 +805,3 @@ over `--target-path` is now the primary regression guard.
 **Stop decision**: gate closed after 1 round. The single finding was a concrete
 design defect, fixed rather than deferred; nothing remains outstanding. The
 2-round Gemini cap was not reached.
-  - Coupling: single-phase cluster; instruction-prose edits plus the absence-guard
-    extension. Independent of Cluster A — no shared code path, no import between
-    them — which is why it is a separate cluster rather than tacked onto A.
-- **Final gate**: consolidated Gemini review over the union diff of Clusters A+B.

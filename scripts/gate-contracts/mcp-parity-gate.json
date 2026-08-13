@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "gate": "mcp:parity:gate",
+  "guards": "semantic equivalence of .mcp.json (Claude Code) and .vscode/mcp.json (VS Code/Copilot) across their two deliberately-different schemas",
+  "gates": [
+    {
+      "id": "mcp-parity-rejects-missing-dash-y",
+      "kind": "executable",
+      "statedIn": "AGENTS.md",
+      "stated": "`.vscode/mcp.json`, **NOT** `.mcp.json` — keep the two mirrored when adding servers.",
+      "implementation": "scripts/check-mcp-parity.mjs",
+      "tests": [
+        "tests/mcp-parity.test.mjs"
+      ],
+      "proof": "process",
+      "oracle": "poison-pill",
+      "poisonPill": {
+        "isolation": "tmpdir",
+        "argv": [
+          "scripts/check-mcp-parity.mjs"
+        ],
+        "overlay": {
+          ".vscode/mcp.json": "tests/fixtures/poison/mcp-vscode-missing-dash-y.json"
+        },
+        "expectExit": 1,
+        "expectStderr": "mcp/parity-drift",
+        "why": "The VS Code config with `-y` stripped from @playwright/mcp — a counterpart of the CURRENT config differing only by that argument. This is the exact drift that was live at 4b54f3e2 and had already reached both consumer repos: without `-y`, npx prompts for package install, and with no interactive terminal the MCP server never starts, so the tools silently never appear. The overlay is kept in step with the live config (not frozen at 4b54f3e2) because a frozen fixture would eventually fail for the wrong reason — a server added later would be missing from it, still satisfying expectExit/expectStderr while no longer proving that stripping `-y` is what the gate detects. tests/mcp-parity.test.mjs asserts the sole semantic delta is that argument, and keeps the immutable 4b54f3e2 pair separately for the historical regression."
+      }
+    }
+  ]
+}
