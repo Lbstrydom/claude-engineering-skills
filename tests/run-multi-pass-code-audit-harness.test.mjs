@@ -59,6 +59,7 @@ process.on('exit', () => {
 
 const audit = await import('../scripts/openai-audit.mjs');
 const { LlmError } = await import('../scripts/lib/robustness.mjs');
+const { ExecutionMetaSchema, buildExecutionMeta } = await import('../scripts/lib/schemas.mjs');
 const { runMultiPassCodeAudit, buildAuditRunContext, runLegacyProductionAudit } = audit.__testExports;
 
 // ── Fixture plan + files ────────────────────────────────────────────────
@@ -279,6 +280,84 @@ describe('runMultiPassCodeAudit harness — R2+ suppression', () => {
     assert.equal(
       result._executionMeta?.ledgerInvalidEntryCount, undefined,
       'a clean ledger must not report degradation (guards a hardcoded / always-on key)',
+    );
+  });
+
+  // ── _executionMeta conforms to its declared contract ───────────────────
+  //
+  // `ExecutionMetaSchema` called itself the typed SSOT for this block while
+  // being applied by nothing: it was imported by two files and used by neither,
+  // so every field in it was documentation and a typo'd key reached
+  // `audit-loop.mjs` unchallenged. Enforcement now lives in
+  // `buildExecutionMeta()`, which both producers construct through.
+  //
+  // This assertion is the POSITIVE CONTROL for that wiring — it proves the
+  // strict contract accepts what the pipeline really emits, so the tightening
+  // did not simply move the divergence into a schema that rejects reality.
+  it('the _executionMeta a real run emits satisfies the strict schema', async () => {
+    const degraded = await runRound2WithLedger([
+      DISMISSED_ENTRY,
+      { topicId: 'broken-1' },
+    ]);
+    assert.ok(degraded._executionMeta, 'a degraded round must emit the block at all');
+    const parsed = ExecutionMetaSchema.safeParse(degraded._executionMeta);
+    assert.ok(
+      parsed.success,
+      `producer output must satisfy ExecutionMetaSchema, got: ${JSON.stringify(parsed.error?.issues)}`,
+    );
+
+    // Absence is also a legal value, and must stay legal — a clean round emits
+    // no block, and a schema that rejected that would fail every good run.
+    const clean = await runRound2WithLedger([DISMISSED_ENTRY]);
+    assert.equal(clean._executionMeta, undefined, 'a clean round emits no block');
+    assert.ok(ExecutionMetaSchema.safeParse(clean._executionMeta).success);
+  });
+});
+
+describe('buildExecutionMeta — the producers\' construction point rejects malformed blocks', () => {
+  // Red-then-green for the wiring above. These exercise the EXACT function both
+  // `_executionMeta` emit sites in legacy-production-audit.mjs call, so a
+  // rejection here is a rejection on the producer path.
+
+  it('rejects a typo\'d key rather than silently dropping it', () => {
+    // The load-bearing case. A plain `z.object` STRIPS an unknown key — it
+    // parses clean and returns `{}` — so the permissive schema would have
+    // accepted this and emitted a block missing the count entirely, leaving
+    // audit-loop.mjs to read `?? 0` and count a truncated round as clean.
+    assert.throws(
+      () => buildExecutionMeta({ ledgerInvalidEntryCounts: 2 }),
+      /ledgerInvalidEntryCounts|Unrecognized key/,
+      'a misspelled field name must fail loudly, not vanish',
+    );
+  });
+
+  it('rejects a wrong type on a declared field', () => {
+    assert.throws(() => buildExecutionMeta({ suppressionUnavailable: 'yes' }), /suppressionUnavailable/);
+    assert.throws(() => buildExecutionMeta({ ledgerInvalidEntryCount: 1.5 }), /ledgerInvalidEntryCount/);
+    assert.throws(() => buildExecutionMeta({ reduceStatus: 'exploded' }), /reduceStatus/);
+  });
+
+  it('accepts every field the producers actually emit', () => {
+    // Mirrors the two real emit sites: the reduce-failure pass block and the
+    // merged-run degradation block.
+    assert.deepEqual(
+      buildExecutionMeta({ reduceStatus: 'model_error', reduceSkipped: true }),
+      { reduceStatus: 'model_error', reduceSkipped: true },
+    );
+    assert.deepEqual(
+      buildExecutionMeta({ suppressionUnavailable: true, ledgerInvalidEntryCount: 2 }),
+      { suppressionUnavailable: true, ledgerInvalidEntryCount: 2 },
+    );
+  });
+
+  it('collapses an all-absent block to undefined, preserving omit-vs-zero', () => {
+    // The producers pass `undefined` for anything not degraded. A `{}` here
+    // would make every clean round carry an empty block, turning "nothing
+    // degraded" into a measurement someone took.
+    assert.equal(buildExecutionMeta({}), undefined);
+    assert.equal(
+      buildExecutionMeta({ suppressionUnavailable: undefined, ledgerInvalidEntryCount: undefined }),
+      undefined,
     );
   });
 });

@@ -31,7 +31,14 @@ import path from 'node:path';
 import { z } from 'zod';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';
 import { zodTextFormat } from 'openai/helpers/zod';
-import { FindingSchema, ProducerFindingSchema, WiringIssueSchema, LedgerEntrySchema, ReduceStatus, ExecutionMetaSchema } from './lib/schemas.mjs';
+// `LedgerEntrySchema`, `ReduceStatus` and `ExecutionMetaSchema` were imported
+// here and called nowhere (each appeared exactly once in this file — the import
+// itself). All three belong to the code-audit orchestration extracted to
+// `lib/audit/legacy-production-audit.mjs`, which imports them itself. Same class
+// as the `listRepoFiles`/`verifyExistenceFindings` removal: an entry-point
+// import reads as evidence the entry point does the work, and this one also made
+// `ExecutionMetaSchema` look wired when nothing applied it.
+import { FindingSchema, ProducerFindingSchema, WiringIssueSchema } from './lib/schemas.mjs';
 import {
   safeInt, readFileOrDie, readFilesAsContext, readFilesAsAnnotatedContext,
   writeOutput, normalizePath, parseDiffFile, extractPlanPaths, classifyFiles,

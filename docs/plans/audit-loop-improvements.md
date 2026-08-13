@@ -515,7 +515,14 @@ export class PredictiveStrategy {
 - Add and export `ExecutionMetaSchema` (typed block: `reduceStatus`, `suppressionUnavailable`, `passesSkipped`, `predictionUsed`)
 - Export `ReduceStatus` string literals (matching `ExecutionMetaSchema.reduceStatus` enum values)
 
-**What does NOT move here**: `CodeAuditResultSchema` and `PlanAuditResultSchema` remain in `openai-audit.mjs` — they are implementation-internal. `openai-audit.mjs` imports `ExecutionMetaSchema` from `schemas.mjs` and adds it as `.extend({ _executionMeta: ExecutionMetaSchema })` to both schemas.
+**What does NOT move here**: `CodeAuditResultSchema` and `PlanAuditResultSchema` remain in `openai-audit.mjs` — they are implementation-internal.
+
+**SUPERSEDED 2026-08-13 — the `.extend()` wiring this section specified was never landed, and must not be.** It read: "`openai-audit.mjs` imports `ExecutionMetaSchema` from `schemas.mjs` and adds it as `.extend({ _executionMeta: ExecutionMetaSchema })` to both schemas." Both targets are wrong:
+
+- `PlanAuditResultSchema` is not a validator of our result — it is handed to `callGPT` as `schema` and becomes the OpenAI structured-output format (`lib/llm-wrappers.mjs`, `zodTextFormat(schema, 'result')`). Extending it would declare `_executionMeta` to the MODEL, asking it to emit an internal telemetry field. `_executionMeta` is assembled by our own code after the model returns, so it can never appear in a model response.
+- `CodeAuditResultSchema` is dead: defined in `openai-audit.mjs` and referenced nowhere else. Extending it would enforce nothing.
+
+Enforcement instead lives at the CONSTRUCTION boundary: `buildExecutionMeta()` in `schemas.mjs` is the single construction point, and both producers in `lib/audit/legacy-production-audit.mjs` call it. The inner object is `z.strictObject` — a plain `z.object` silently STRIPS an unknown key, so even at the right layer the permissive shape would have swallowed a typo'd field name rather than rejecting it.
 
 **Why this file**: SSOT for the meta schema definition. Full result schemas are private to the auditor script.
 

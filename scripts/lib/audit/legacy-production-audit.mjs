@@ -41,7 +41,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { z } from 'zod';
-import { FindingSchema, ProducerFindingSchema, WiringIssueSchema, LedgerEntrySchema, BatchLedgerEntrySchema, ReduceStatus, ExecutionMetaSchema, DuplicationBouncerResponseSchema, AdjacencyBouncerResponseSchema } from '../schemas.mjs';
+import { FindingSchema, ProducerFindingSchema, WiringIssueSchema, LedgerEntrySchema, BatchLedgerEntrySchema, ReduceStatus, buildExecutionMeta, DuplicationBouncerResponseSchema, AdjacencyBouncerResponseSchema } from '../schemas.mjs';
 import { gitDiffWithWorkingTree } from '../vcs.mjs';
 import { runDuplicationAnalysis } from './duplication-detector.mjs';
 import { classifyProviderReadiness } from './provider-readiness.mjs';
@@ -723,7 +723,7 @@ async function runMapReducePass(openai, files, passName, buildPromptForUnit, max
         findings: normalizeFindingsForOutput(allFindings),
         quick_fix_warnings: [],
         summary: `REDUCE failed (${reduceStatus}) — ${allFindings.length} raw findings preserved`,
-        _executionMeta: { reduceStatus, reduceSkipped: true },
+        _executionMeta: buildExecutionMeta({ reduceStatus, reduceSkipped: true }),
       },
       usage: { ...mapUsage, latency_ms: totalLatency },
       latencyMs: totalLatency,
@@ -3342,16 +3342,15 @@ export async function runLegacyProductionAudit(ctx) {
     _failed_passes: failedPasses.length > 0 ? failedPasses : undefined,
     _usage: totalUsage,
     _cacheMetrics: cacheMetrics,
-    // Typed shape: ExecutionMetaSchema (schemas.mjs). Stays `undefined` on a
-    // clean round so absence keeps meaning "nothing degraded"; each key is
-    // omitted rather than zeroed, so a hard 0 can never read as a measurement
-    // nobody took.
-    _executionMeta: (suppressionUnavailable || ledgerInvalidEntryCount > 0)
-      ? {
-        ...(suppressionUnavailable ? { suppressionUnavailable: true } : {}),
-        ...(ledgerInvalidEntryCount > 0 ? { ledgerInvalidEntryCount } : {}),
-      }
-      : undefined,
+    // Typed shape: ExecutionMetaSchema (schemas.mjs), VALIDATED by the builder
+    // rather than merely resembling it. `undefined` inputs are dropped and an
+    // all-empty block collapses to `undefined`, so a clean round still carries
+    // no key at all — absence keeps meaning "nothing degraded", and a hard 0
+    // can never read as a measurement nobody took.
+    _executionMeta: buildExecutionMeta({
+      suppressionUnavailable: suppressionUnavailable || undefined,
+      ledgerInvalidEntryCount: ledgerInvalidEntryCount > 0 ? ledgerInvalidEntryCount : undefined,
+    }),
   };
 
   // Attach data accumulated before mergedResult was defined (var hoisting avoids TDZ)

@@ -712,6 +712,114 @@ export const AuditRunContextSchema = z.object({
   sessionCacheHit: z.unknown().nullable().optional(),
 });
 
+// ── Execution Meta Schema (P0 — audit pipeline status) ──────────────────────
+
+/**
+ * Canonical reduce execution status values — used by ReduceStatus constant and
+ * ExecutionMetaSchema. String literals so they work both as a Zod enum and as
+ * plain object properties without import coupling.
+ */
+export const REDUCE_STATUS_VALUES = /** @type {const} */ ([
+  'ok', 'parse_error', 'timeout', 'model_error', 'budget_exceeded', 'skipped'
+]);
+
+/**
+ * Explicit reduce execution status — avoids conflating success-with-zero vs failure.
+ * Import this constant instead of using raw strings.
+ */
+export const ReduceStatus = Object.freeze({
+  OK: 'ok',
+  PARSE_ERROR: 'parse_error',
+  TIMEOUT: 'timeout',
+  MODEL_ERROR: 'model_error',
+  BUDGET_EXCEEDED: 'budget_exceeded',
+  SKIPPED: 'skipped',
+});
+
+/**
+ * Optional execution-meta block added to audit result objects.
+ *
+ * Typed SSOT — all execution status flags live here, not as ad-hoc top-level
+ * booleans. ENFORCED as of 2026-08-13 by `buildExecutionMeta()` below, the only
+ * supported way to construct the block; both producers in
+ * `lib/audit/legacy-production-audit.mjs` go through it. Before that the SSOT
+ * claim was decoration: this schema was imported by two files and APPLIED by
+ * neither, so every field below was a comment with Zod syntax.
+ *
+ * STRICT on purpose. A plain `z.object` SILENTLY STRIPS an unknown key
+ * (`z.object({a}).parse({aa:true})` → `{}`), so wiring the permissive version in
+ * would still have passed a typo'd field name and then dropped it — the exact
+ * defect the schema existed to catch. Strictness is what makes a misspelling
+ * loud rather than invisible.
+ *
+ * Why loud matters here: `audit-loop.mjs` reads `suppressionUnavailable` and
+ * `ledgerInvalidEntryCount` to decide whether a round may count toward
+ * convergence. A mistyped key does not merely blur telemetry — it lets a round
+ * that suppressed against a truncated ruling set be counted as clean, defeating
+ * the guard `ledgerInvalidEntryCount` was added to provide.
+ */
+const ExecutionMetaFieldsSchema = z.strictObject({
+  reduceStatus: z.enum(REDUCE_STATUS_VALUES).optional(),
+  reduceSkipped: z.boolean().optional(),
+  suppressionUnavailable: z.boolean().optional(),
+  // Entries `validateLedgerForR2` dropped as malformed. `suppressionUnavailable`
+  // says suppression could not run AT ALL; this says it ran against a TRUNCATED
+  // ruling set — a degraded round that would otherwise be indistinguishable
+  // downstream from a clean one. Emitted only when > 0: absent means a complete
+  // ledger, and a hard 0 would be a measurement nobody took.
+  ledgerInvalidEntryCount: z.number().int().nonnegative().optional(),
+  // DECLARED, NOT YET EMITTED (verified 2026-08-13 by repo-wide grep: no
+  // producer writes either field, no consumer reads one). They belong to P0-D
+  // of docs/plans/audit-loop-improvements.md — pass prediction/skipping — which
+  // has not shipped. Kept rather than deleted so that design intent survives
+  // the strictness change; when that phase lands its producer must route
+  // through `buildExecutionMeta()` like the others.
+  passesSkipped: z.array(z.string()).optional(),
+  predictionUsed: z.boolean().optional(),
+});
+
+/**
+ * The `_executionMeta` block as it appears ON a result object: the strict shape
+ * above, or absent entirely. Exported for consumers that want to assert a
+ * result's block conforms (see tests/run-multi-pass-code-audit-harness.test.mjs).
+ */
+export const ExecutionMetaSchema = ExecutionMetaFieldsSchema.optional();
+
+/**
+ * Build a validated `_executionMeta` block — the single construction point.
+ *
+ * Keys whose value is `undefined` are dropped, and an all-empty block returns
+ * `undefined` rather than `{}`. That preserves the omit-vs-zero convention the
+ * producers already relied on: absence means "nothing degraded", whereas a hard
+ * `0`/`false` would read as a measurement someone actually took.
+ *
+ * Throws on an unknown key or a wrong type. Throwing is deliberate — every
+ * input is derived inside the pipeline, so a violation can only arise from a
+ * code edit, and the alternative (warn and continue) would emit exactly the
+ * silently-wrong telemetry this contract exists to prevent.
+ *
+ * @param {Record<string, unknown>} [fields] Candidate execution-meta fields.
+ * @returns {object|undefined} The validated block, or `undefined` if empty.
+ */
+export function buildExecutionMeta(fields = {}) {
+  const present = Object.fromEntries(
+    Object.entries(fields).filter(([, value]) => value !== undefined),
+  );
+  if (Object.keys(present).length === 0) return undefined;
+  const parsed = ExecutionMetaFieldsSchema.safeParse(present);
+  if (parsed.success) return parsed.data;
+  const detail = parsed.error.issues
+    .map(issue => {
+      const where = issue.path.length > 0 ? issue.path.join('.') : (issue.keys?.join(', ') ?? '(root)');
+      return `${where}: ${issue.message}`;
+    })
+    .join('; ');
+  throw new Error(
+    `_executionMeta violates its typed contract (ExecutionMetaSchema, scripts/lib/schemas.mjs) — ${detail}. `
+    + 'Add the field to ExecutionMetaSchema if it is genuinely new; do not bypass buildExecutionMeta().',
+  );
+}
+
 /**
  * Shared output contract. Fields always present on both orchestrators are
  * NOT `.optional()`; the historically-conditional fields (`_failed_passes`,
@@ -775,7 +883,17 @@ export const AuditRunResultSchema = z.object({
   }).optional(),
   // Conditional / historically-optional fields:
   _failed_passes: z.array(z.string()).optional(),
-  _executionMeta: z.record(z.string(), z.any()).optional(),
+  // Was `z.record(z.string(), z.any()).optional()` — "any key of any type",
+  // which declared the opposite of what ExecutionMetaSchema claimed two hundred
+  // lines below it. Surveyed 2026-08-13 before tightening: the only keys any
+  // producer emits are `reduceStatus`/`reduceSkipped` (the reduce-failure pass
+  // block) and `suppressionUnavailable`/`ledgerInvalidEntryCount` (the merged
+  // run block), and all four are declared, so the permissive record was not
+  // load-bearing for anything. The execution-meta section was moved ABOVE this
+  // schema in the same change purely so this reference resolves — a `const`
+  // declared below would be in the temporal dead zone when this object literal
+  // is evaluated at module load.
+  _executionMeta: ExecutionMetaSchema,
   _suppression: z.record(z.string(), z.any()).optional(),
   _debtMemory: z.record(z.string(), z.any()).optional(),
   _ledgerRejectedCount: z.number().optional(),
@@ -1128,48 +1246,6 @@ export const DebtReviewResultSchema = z.object({
   refactorPlan: z.array(RefactorCandidateSchema).max(10),
   reasoning: z.string().max(1500),
 });
-
-// ── Execution Meta Schema (P0 — audit pipeline status) ──────────────────────
-
-/**
- * Canonical reduce execution status values — used by ReduceStatus constant and
- * ExecutionMetaSchema. String literals so they work both as a Zod enum and as
- * plain object properties without import coupling.
- */
-export const REDUCE_STATUS_VALUES = /** @type {const} */ ([
-  'ok', 'parse_error', 'timeout', 'model_error', 'budget_exceeded', 'skipped'
-]);
-
-/**
- * Explicit reduce execution status — avoids conflating success-with-zero vs failure.
- * Import this constant instead of using raw strings.
- */
-export const ReduceStatus = Object.freeze({
-  OK: 'ok',
-  PARSE_ERROR: 'parse_error',
-  TIMEOUT: 'timeout',
-  MODEL_ERROR: 'model_error',
-  BUDGET_EXCEEDED: 'budget_exceeded',
-  SKIPPED: 'skipped',
-});
-
-/**
- * Optional execution-meta block added to audit result objects.
- * Typed SSOT — all execution status flags live here, not as ad-hoc top-level booleans.
- */
-export const ExecutionMetaSchema = z.object({
-  reduceStatus: z.enum(REDUCE_STATUS_VALUES).optional(),
-  reduceSkipped: z.boolean().optional(),
-  suppressionUnavailable: z.boolean().optional(),
-  // Entries `validateLedgerForR2` dropped as malformed. `suppressionUnavailable`
-  // says suppression could not run AT ALL; this says it ran against a TRUNCATED
-  // ruling set — a degraded round that would otherwise be indistinguishable
-  // downstream from a clean one. Emitted only when > 0: absent means a complete
-  // ledger, and a hard 0 would be a measurement nobody took.
-  ledgerInvalidEntryCount: z.number().int().nonnegative().optional(),
-  passesSkipped: z.array(z.string()).optional(),
-  predictionUsed: z.boolean().optional(),
-}).optional();
 
 // ── Repo Stack Detection (Phase A) ──────────────────────────────────────────
 
