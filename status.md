@@ -78,10 +78,36 @@ commit `f177de2b` (15:44:26Z) landed after this session's audit evidence
 illegal. Re-running the loop purely to populate the column would be forging the
 receipt. Recording the real state here instead.
 
-**Consumer-side verification: `unverified`** — blocked prerequisite named: this
-change ships no consumer bundle artifact (migration + store module + tests only),
-and the receiver-side check that would apply, `sync-isolation-verify.mjs`, must
-run inside a consumer checkout against a synced bundle this push does not produce.
+**Consumer-side verification: `verified`** (this line initially read `unverified`
+and was under-claimed — the bundle row does not apply, but the pushed-commit row
+did, and it was available). Retrieved the way a receiver gets it:
+`git clone --depth 1 --branch main <origin>` into `C:/tmp`, landing
+`316e732cc5435e9919e941598c2423d31cb2dfa9`. All five shipped files present;
+`git hash-object` byte-identical to the authored versions; `npm ci
+--ignore-scripts` then `node --test tests/store-finding-verification-persistence.test.mjs
+tests/learning-store-exports.test.mjs` → **15/15 pass in the clone**. That is the
+check that catches a tracked-vs-ignored fault, which mattered here because the
+migration and the new suite were both untracked until the commit.
+
+The bundle row genuinely does not apply: this push produces no consumer bundle
+artifact, so `sync-isolation-verify.mjs` has nothing to verify.
+
+**A shared-tree hazard worth recording — production got a half-finished migration.**
+`--check-drift` went red after the commit: production carried
+`audit_findings_verification_check` but not `audit_findings_verdict_severity_check`,
+and the ledger held a stale sha. Cause: a concurrent session ran a production
+`--migrate` at 15:26:10Z, and the runner applies **every** `.sql` in
+`supabase/migrations/` — so it swept up this migration while it was still
+uncommitted, then the round-1 audit fix edited the file afterwards. The ledger
+records the file as applied, so a later `--migrate` skips it and the missing CHECK
+would never land; `--migrate` also refuses to re-apply a sha-mismatch outright,
+deliberately, since an edit and tampering are indistinguishable to it. Resolved by
+the runbook's break-glass atomic apply (§Break-glass): the idempotent body plus an
+`ON CONFLICT … DO UPDATE` ledger upsert in ONE transaction. Verified after: both
+CHECKs present, ledger sha == on-disk sha, `--check-drift` exit 0. The general
+lesson is that an uncommitted migration in a shared tree is already reachable by
+anyone else's migrate run — it is not private until committed, it is private until
+nobody runs the tool.
 
 ## 2026-08-13 — the post-fix measurement, which corrects the entry below it
 
