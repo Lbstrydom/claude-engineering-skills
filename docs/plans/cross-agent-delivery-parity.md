@@ -1,7 +1,7 @@
 # Plan: Cross-Agent Delivery Parity
 
 - **Date**: 2026-08-13
-- **Status**: Approved
+- **Status**: Complete
 - **Author**: Claude + Louis
 - **Scope**: backend
 - **Target domain(s)**: `install`, `shared-lib`
@@ -805,3 +805,55 @@ over `--target-path` is now the primary regression guard.
 **Stop decision**: gate closed after 1 round. The single finding was a concrete
 design defect, fixed rather than deferred; nothing remains outstanding. The
 2-round Gemini cap was not reached.
+
+---
+
+## Implementation Log
+
+### 2026-08-13 — both clusters shipped
+
+- **Cluster A** (`2e1a2be6`) — Phases 0–2. `deepMerge` extracted to
+  `scripts/lib/json-merge.mjs`; the strict-validating oracle
+  `scripts/lib/mcp-parity.mjs`; the gate `scripts/check-mcp-parity.mjs` + contract
+  + live poison pill; 46 tests including the real-sync integration test over
+  `--target-path`. In-cluster fix-gate: HIGH 0 / MEDIUM 0.
+- **Cluster B** (`56edfb66`, `a89478bd`) — Phase 3. `--source-surfaces` enforces
+  the `.github/copilot-instructions.md` absence; AGENTS.md + README label the
+  arch-memory hook Claude-Code-only acceleration.
+- **Consolidated gate** — `APPROVE` on round 3 (claude-opus-5 fallback), 0 new
+  findings, 0 over-engineering flags. Rounds 1–2 found the vacuous-pass guard
+  unenforced, a `TypeError` on `JSON.parse`'d `null`, and a forged `gateAddedAt`
+  backdate on the re-keyed exemption.
+
+**Deviations from the plan, and why:**
+
+1. **KD-3's exception location was unimplementable.** The plan put the allowlist
+   inside `scripts/gate-contracts/mcp-parity-gate.json`, but `CliGateContractSchema`
+   is `.strict()` and owned by the gate-honesty subsystem — it rejected the key.
+   Widening a deliberately-closed contract for one gate is worse than a sibling
+   file, so exceptions live in `mcp-parity-exceptions.json` (absent today; there
+   are none). The oracle's exception logic is unchanged and fully tested.
+2. **`scripts/.cli-catalog.json` was outside Cluster A's declared scope.** An
+   existing gate requires every npm script to carry a catalog entry, so adding one
+   was mechanically mandatory rather than a design choice.
+3. **The KD-5 rule could not be poison-pilled.** Verified against the runner, not
+   inherited from prose: both `overlay` and `applyMutation` refuse a destination
+   that does not already exist, and every rule this command enforces is an
+   ABSENCE — so the tamper is file creation. Recorded as a `policyOverride` with
+   the real date, and covered by four-direction tests instead.
+
+**Empirical confirmation of KD-5's boundary.** Both consumer repos carry a
+`.github/copilot-instructions.md`. An unconditional rule — or the inferred
+"am I the source repo?" predicate the plan audit rejected — would have started
+failing both of them for a file they legitimately own. One correction to the
+plan's own reasoning: the relocated-copy scenario cited in KD-5 does not arise,
+because `check-stale-skill-surface.mjs` is not in the consumer bundle. The live
+risk was the `--repo <targetRoot>` invocation at `sync-to-repos.mjs:785,844`.
+
+**Known follow-up, not in this plan.** `/cycle` Step 3C's per-cluster audit
+envelope is `clusterStartRef..WORKTREE`, and `--scope=diff` recomputes the changed
+set from the working tree — so on a shared tree it cannot separate this cluster's
+edits from a concurrent session's. Measured here: 52 changed files reached the
+prompt against 11 declared, 44 of them another session's. `--changed` does not
+constrain it (`openai-audit.mjs:622` — it is an R2+ impact-set input). Needs its
+own plan.

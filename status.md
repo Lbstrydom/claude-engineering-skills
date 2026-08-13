@@ -1,5 +1,86 @@
 # Project Status Log
 
+## 2026-08-13 — the two MCP configs now check each other, and the pill proves it
+
+`/cycle --autonomous` over both clusters of
+[cross-agent-delivery-parity.md](docs/plans/cross-agent-delivery-parity.md),
+now `Complete`. Three commits: `2e1a2be6` (Cluster A), `56edfb66` + `a89478bd`
+(Cluster B). Consolidated Gemini gate **APPROVE** on round 3, 0 new findings,
+0 over-engineering flags. Both consumers pass `sync-isolation-verify`.
+
+**What shipped.** `mcp:parity:gate` compares `.mcp.json` and `.vscode/mcp.json`
+across their two deliberately-different schemas. It VALIDATES rather than
+projects — an unknown field or a non-stdio descriptor is a hard failure, so
+servers added later are covered rather than silently skipped. `env` values are
+compared but never emitted: MCP env entries carry credentials, so a mismatch
+names the server and the variable only. `deepMerge` moved to
+`scripts/lib/json-merge.mjs` so the merge contract the gate's justification rests
+on can be asserted against production rather than a second copy of it. Cluster B
+made the `.github/copilot-instructions.md` absence enforceable and re-labelled the
+arch-memory hook as Claude-Code-only acceleration in AGENTS.md and README.
+
+**Five defects the loop caught that would otherwise have shipped**, four of them
+in code the same session had just written:
+
+- **The gate's own failure path threw a `ReferenceError`** after printing its
+  diagnostic — a renamed constant left dangling. Exit stayed 1 and the stderr
+  token was already out, so the drift test AND the poison pill both passed while
+  the gate was crashing. A substring assertion cannot see this; the fix carries a
+  guard asserting the failure path terminates without a stack.
+- **The vacuous-pass guard was reported but never enforced.** The plan named
+  `compared: 0 is a failure` as a requirement; the implementation surfaced the
+  number and left enforcement to a test that only ever ran against the non-empty
+  live config. Two empty configs compared equal and exited 0 having verified
+  nothing.
+- **The new absence rule was inert in the pre-push sandbox** — placed after the
+  sandbox-honesty early-exit, so it never ran in the one place a *committed*
+  instruction file would be caught. Found by the pre-push run itself reporting
+  "Missing expected rejection" in the clean worktree while the same tests passed
+  in the working tree. That divergence is exactly why `check` runs in a sandbox.
+- **A forged provenance date.** Re-keying the gate exemption carried over
+  `gateAddedAt: 1970-01-01` from the entry it replaced; the command string was new
+  that day, so the backdate read as evading the post-cutoff pill policy. The gate
+  called it process evasion and was right.
+- **A literal NUL** used as a map-key separator, which makes the source file
+  binary to git.
+
+**KD-5's boundary was confirmed empirically, not just argued.** Both consumer
+repos carry a `.github/copilot-instructions.md`. An unconditional rule — or the
+inferred "am I the source repo?" predicate the plan audit talked us out of — would
+have started failing both for a file they legitimately own. One correction to the
+plan's own reasoning: the relocated-copy scenario it cites does not arise, because
+`check-stale-skill-surface.mjs` is not in the consumer bundle. The live risk was
+the `--repo <targetRoot>` invocation at `sync-to-repos.mjs:785,844`.
+
+**A diagnosis corrected mid-session, and the real finding underneath it.** The
+per-cluster audit returned 31 findings of which 26 concerned code this session had
+not touched, and that was first called an audit-instrument scope leak. It is not.
+`--scope=diff` recomputes the changed set from `git diff <base>..worktree` plus
+untracked files, so on a tree shared with a concurrent session it correctly scoped
+to "what changed" — and what changed included that session's 44 dirty files. Nor
+does `--changed` constrain it: `openai-audit.mjs:622` documents it as an R2+
+impact-set input, never a scope filter.
+
+The real defect is one layer up: **`/cycle` Step 3C's per-cluster audit envelope
+is unsound on a shared working tree.** It specifies `clusterStartRef..WORKTREE`
+and tells the caller to pass `--changed=<derived scope>`, then requires an
+out-of-scope changed file to fail closed — but the envelope cannot separate one
+cluster's edits from a concurrent session's, and the flag it names does not
+constrain the prompt, so the fail-closed reconciliation never receives accurate
+input. Measured: 52 files reached the prompt against 11 declared. Filed as a
+follow-up in the plan's implementation log; it needs its own design decision
+(constrain the audit to a real allowlist, or refuse a per-cluster audit when the
+tree carries changes outside the cluster) rather than a patch.
+
+**Two shared-tree hazards worth knowing.** `tests/requirements-map-freshness.test.mjs`
+mutates the committed `docs/requirements-map.md` and restores it, so two
+concurrent `npm test` runs left the file reading `# Requirements Map — tampered`
+twice; regenerated with `npm run requirements:map` both times. And `AI-Gate` is
+`not-run` on all three commits: an audit did run for Cluster A, but the concurrent
+session overwrote its evidence marker and findings were fixed after it, so
+`passed` was not earnable and the helper correctly refused `waived`.
+
+
 ## 2026-08-13 — the instruction reached the worktree, the tooling did not
 
 `72c98df8`, `3747941d`. A consumer reported that `/ship` Step 4's
