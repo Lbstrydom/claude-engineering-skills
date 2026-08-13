@@ -1,5 +1,84 @@
 # Project Status Log
 
+## 2026-08-13 — a list claim's members ran past the sentence that ended it
+
+Sibling of the refute bug below, found the same day while measuring how often the
+gate's *other* direction fires. `extractCitedEntityList` sliced from the list
+intro to the END of `detail`, so every quoted path in every LATER sentence joined
+the list. The sentence after a "these are missing:" list is routinely where the
+model names the files that DO exist — so the gate answered *"N of M cited path(s)
+DO exist — the claim is at least partly false"* about **true HIGH findings**,
+citing as its evidence a path the model had reported as present one sentence
+earlier. Casting doubt on correct findings is this module's own purpose pointed
+backwards: the same shape as the refute bug below, one function over.
+
+**The instrument needed fixing before the measurement meant anything.** Resolving
+cited paths against wine-cellar-app's tree *today* scored 16 of 22 claims false —
+but these audits **drove the creation of the files they named**, so "exists now"
+says nothing about "existed then". Resolving each claim against the tree **at its
+own run's commit** (`git rev-list -1 --all --before=<artifact mtime>`) flipped one
+verdict outright. A naive path-scan also mis-scored *"the plan references
+`routes/cellar.js`, but `src/routes/cellar.js` is what exists"* — a **correct**
+claim that happens to cite an existing path — so the final adjudication was done
+by hand over all 22.
+
+Corpus: 29 result files → **26 unique** (three `consolidated-*` files are
+byte-identical copies of earlier rounds, by md5), 385 findings, 25 absence claims
+→ **22 unique**. Base rate of the claims themselves: **16 true / 5 false / 1
+ambiguous** — the structure pass is right about absence roughly three times in
+four, which is the number that decides whether tightening the *prompt* is worth
+it (it is not; that analysis is separate and unshipped).
+
+**3 of the 22 hit the defect.** Members are now the path-shaped tokens in the SAME
+sentence as the intro. `SENTENCE_GAP` matches only the gap BETWEEN cited tokens,
+which is what makes it safe against paths: `a.js` has a dot, but a dot inside a
+quoted token is never in a gap, so no separator (`, ` / `, and `) can be mistaken
+for a terminator. `LIST_INTRO` became global so a detail carrying two list claims
+still yields both — previously the second was reached only by the bug's over-run,
+so that guard now passes by design rather than by accident.
+
+**Effect on the corpus**: three true HIGH findings move `requires_verification` →
+`confirmed` (`cluster1-r2` H3, `cluster1-r3` H3, `cluster2-r2` H1 — every cited
+path verified as first appearing in git *after* its run date), and one count
+corrected (12 → 11 cited paths, dropping a `/dist/` build output named in a
+consequence sentence). **Nothing moved toward `refuted`**: the 3 correct
+refutations and the 1 correct confirmation are byte-unchanged, so the change
+cannot have bought a false refute — the direction that matters here.
+
+Red-then-green: 4 of 8 new tests failed before the fix; 3 pass throughout as
+no-regression guards.
+
+**A test was written, checked, and deleted.** An idempotency test for the
+now-global `LIST_INTRO` was added, then verified by deleting the `lastIndex`
+reset — **it still passed**. `exec` self-resets on exhaustion, so no test can
+distinguish that line's presence, and shipping it would have been coverage
+theatre. Removed; the line is kept and labelled as untested defence-in-depth. The
+sibling reset in `collectListMembers` is the opposite — the sentence bound
+`break`s, so the loop can now exit mid-string — and three tests fail without it.
+Both lines now say which they are.
+
+**Orthogonal to the entry below** (`80a900af`, shipped hours earlier): that fix
+guards *classification*, this one bounds *list extraction*. Checked rather than
+assumed, since both edit the same file — the patches applied to each other
+cleanly, all 41 assertions pass together, and the field corpus yields identical
+verdicts with and without theirs.
+
+**Shared-tree note.** This landed from a throwaway `origin/main` worktree. The
+main checkout's `finding-verification.mjs` sat on a base predating `80a900af`,
+so committing that copy would have reverted a shipped fix — the working tree was
+edited before that commit existed and never picked it up. The first push attempt
+also failed *misleadingly*: the hook reported a *"stale `.github/skills/` tree"*
+when the real cause was `ERR_MODULE_NOT_FOUND` in a worktree with no
+`node_modules`, exactly as the push-worktree recipe warns.
+
+**Consumer-side verification: `verified`.** Pushed `2420fd52`; `git ls-remote
+origin main` returns that sha (checked directly, not through a pipe). In the
+wine-cellar-app consumer, `node scripts/.claude-skills/lib/sync-isolation-verify.mjs`
+passes all 8 gates, and the synced
+`scripts/.claude-skills/lib/audit/finding-verification.mjs` differs from source by
+exactly the 5-line upstream-ownership banner, carrying both this fix and
+`80a900af`.
+
 ## 2026-08-13 — the existence gate refuted true findings about files that exist
 
 Reported from an `/audit-code` run the same day: the deterministic existence gate
