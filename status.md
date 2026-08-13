@@ -122,6 +122,102 @@ files. The clone-back at the pushed sha is `unverified` in this entry by
 construction (the sha does not exist when the line is written); it was run
 post-push and reported in-session.
 
+## 2026-08-13 — Cluster 1 of the layering plan: 14 violations → 0
+
+Implements Phases 0–3 of [god-module-and-layering-debt.md](docs/plans/god-module-and-layering-debt.md).
+Baseline pinned at `581fea0b`: **14 `not-in-allowedDeps` violations / 9 domain
+edges**, measured by a derived oracle, not a hand list.
+
+**Phase 0 built the instrument and watched it fail first** —
+`tests/arm-vocabulary-layering.test.mjs` red at exactly 14/9 before any fix,
+then 14 → 4 (map rules/retags) → 2 (vocabulary extraction) → **0** (the earned
+retag). Its inventory is `git ls-files`, deliberately: `git add -N` makes a new
+module visible, whereas "tracked plus all untracked" would let a concurrent
+session's scratch files gate the suite, and the pre-push hook runs in a clean
+worktree where untracked files do not exist at all.
+
+**`scripts/lib/arm-vocabulary.mjs` (new, shared-lib, zero imports)** carries the
+frozen arm vocabulary; `audit-arms.mjs` re-exports it so all 13 importers are
+untouched. Only then was `model-ab-decision.mjs` retagged to `shared-lib` — the
+order is the point: the extraction makes the property true, so the retag *earns*
+it rather than asserting it. Same twice-shipped move as `status-vocabulary.mjs`
+and `preview-gate-vocabulary.mjs`.
+
+**Retagging `setup.mjs` emptied `root-scripts`.** `install.mjs` left in
+2026-07-31; this was the last member. The domain is retired, but its
+`*.mjs`/`*.js` catch-all was **repointed to `scripts` rather than deleted** —
+`analyseImports` skips untagged files, so deleting the net would have traded a
+dead domain for a permanent blind spot on every future repo-root script.
+
+### Audit findings fixed (17 findings, far fewer real defects)
+
+- **`arm-eval/toggle.mjs` — five findings, one defect.** Durable control-plane
+  state decoded by coercion. Traced `model-eval.mjs:339`
+  (`t.budgetEur ?? armEvalConfig.budgetEur`) and confirmed **`null` is the €300
+  default, not a refusal** — so `writeToggle(-5) → null` silently *widened* the
+  cap. The existing test asserted this was safe under the comment *"downstream
+  refusal still applies"*; that belief was false and is now corrected. Strict
+  decoder (fail-closed, but reports *which* failure: `absent`/`unreadable`/
+  `malformed`), writer refuses input it cannot honestly persist, CLI rejects a
+  bad `--budget-eur` instead of defaulting it.
+- **`store/model-ab.mjs` — two HIGHs.** Reservations past the 30-minute TTL
+  counted €0 toward the cap while possibly still spending; since an explicit
+  orphan-release path already exists, such a row is *undefined*, not reclaimed —
+  now fails closed and says so. The "no spend without persistence" preflight
+  proved only `SELECT … LIMIT 0`, so `has_table_privilege` INSERT/UPDATE probes
+  were added over the written tables (derived from `REQUIRED_SCHEMA`; views
+  excluded).
+- **`model-ab-decision.mjs`** — unknown severity/remediation still coerce (a
+  scorer must not throw mid-run), but the coercion is now COUNTED and reported
+  as `inputQuality`, so a verdict computed over unreadable rows is no longer
+  indistinguishable from a clean one.
+- **A new guard found six more of the same root cause.**
+  `tests/domain-map-subsystem-coverage.test.mjs` asserts no
+  `scripts/lib/<subsystem>/` reaches its domain via a catch-all — the exact
+  defect that split `lib/cross-skill/**` from `cross-skill.mjs`. It immediately
+  flagged `arch-memory`, `azure`, `browser`, `campaign`, `lint`, `upstream`. All
+  six verified as importing only primitives, so `shared-lib` was correct — but
+  undecided. Now explicit, **zero graph change**; adding a subsystem is two edits.
+
+**The guard then caught itself.** Round 2 flagged its own `CATCH_ALL_PATTERNS`
+as a four-literal **denylist** (missing a `lib/*/**` spelling) that sampled one
+file per directory. Both fixed: catch-all is detected structurally by probing
+invented subsystem names, and every file is checked. AGENTS.md's own
+denylist-vs-allowlist rule, violated inside the check written to enforce it.
+
+### Not fixed, and why
+
+**Round 2 came back HIGHER (H:5 vs H:3), and every one is on code this change
+never wrote.** Fixing findings properly pulled `audit-shadow.mjs` and
+`model-eval.mjs` into the diff, and the audit then surfaced their pre-existing
+defects — finding count tracks diff surface, not code quality. Two carried
+**fabricated attributions**: H5 describes "the collision repair" in `mermaidId`
+(untouched — the whole `arch-render` diff is three label strings), H2 describes
+"the new cloud-off success envelope" (never added). Verified against the diffs,
+not argued.
+
+Deferred with named independence, all pre-existing: `REQUIRED_SCHEMA` as a
+hand-maintained contract; `store/model-ab.mjs` owning three concerns;
+`audit-shadow.mjs` egress + unbounded in-flight providers; `getModelAbArmCost({})`
+unscoped vs `getModelAbFindingScores({runId})`; `mermaidId`'s 32-bit suffix.
+
+**`AI-Gate` is `waived`, deliberately** — and `ship-commit` was right to refuse
+`not-run`. A fresh audit-evidence marker exists and it belongs to *this* work, so
+`not-run` (which asserts no audit ran) would have been false, and the
+`--no-run-id` escape hatch asserts the audit was *unrelated*, which it also was
+not. `waived` is the value that actually describes what happened: a gate ran, it
+did not converge, and the change ships past it with the reasoning on the record.
+Re-run it against a fresh base once the tree is quiet.
+
+**Consumer-side verification**: `unverified` — blocked prerequisite: no second
+checkout of this repo exists on this machine to clone the pushed sha into, and
+the concurrent session's uncommitted `skills.manifest.json` desync makes a
+whole-suite clone check unattributable. Producer-side: 228 in-scope tests green.
+
+**Scope note**: committed by path. Eight files belonging to a concurrent session
+(`skills/audit-code/SKILL.md`, `skills.manifest.json`, `scripts/lib/audit/*`,
+their tests) were never staged, stashed or touched.
+
 ## 2026-08-13 — the god-module/layering deferral, scoped: 14 edges, 4 of them debt
 
 `audit-store-write-durability.md` §9 deferred "the god-module / layering family

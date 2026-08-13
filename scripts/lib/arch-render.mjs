@@ -204,7 +204,17 @@ export function renderHeader({ repoName, generatedAt, commitSha, refreshId, drif
     '',
     `- Generated: ${generatedAt}   commit: ${commitSha || 'unknown'}   refresh_id: ${refreshId || 'none'}`,
     `- Drift score: ${drift ?? 0} / threshold ${threshold}   status: \`${status || 'INSUFFICIENT_DATA'}\``,
-    `- Domains: ${domainCount}   Symbols: ${symbolCount}   Layering violations: ${violationCount}`,
+    // NAME THE MECHANISM. This counter is `symbol_layering_violations` —
+    // dependency-cruiser RULE hits — which is a different instrument from the
+    // `allowedDeps` domain-graph comparison in .audit-loop/domain-map.json
+    // (asserted by tests/arm-vocabulary-layering.test.mjs). On 2026-08-12 this
+    // line read `Layering violations: 0` while that comparison read 14: two
+    // numbers behind one word, the reassuring one unqualified. Naming the source
+    // is the whole fix — a three-state provenance contract (configured / empty /
+    // unavailable) would need a producer change, since renderHeader receives only
+    // a bare count and inferring `empty` from `0` is the exact conflation to
+    // avoid. Plan: docs/plans/god-module-and-layering-debt.md decision 6.
+    `- Domains: ${domainCount}   Symbols: ${symbolCount}   Layering violations (dep-cruiser rules): ${violationCount}`,
     '',
   ];
   return lines.join('\n');
@@ -295,10 +305,14 @@ export function renderArchitectureMap({
   // Layering violations
   out.push('---');
   out.push('');
-  out.push('## Layering violations');
+  out.push('## Layering violations (dependency-cruiser rules)');
   out.push('');
   if (violationCount === 0) {
-    out.push('_No violations detected on this snapshot._');
+    // Scoped to the mechanism deliberately: this says nothing about the
+    // `allowedDeps` domain-graph comparison, which is a separate instrument.
+    out.push('_No dependency-cruiser rule violations on this snapshot. This does NOT'
+      + ' cover the `allowedDeps` domain-graph check — see'
+      + ' `tests/arm-vocabulary-layering.test.mjs`._');
   } else {
     out.push('| Rule | From | To | Severity | Comment |');
     out.push('|---|---|---|---|---|');
@@ -322,7 +336,9 @@ export function renderArchitectureMap({
   out.push('');
   out.push('- Each domain has a Mermaid diagram (containers → components → symbols) and a flat table.');
   out.push('- **Duplication clusters** appear with `[DUP]` in the table and the `dup` class in Mermaid.');
-  out.push('- Layering violations appear in the dedicated section above.');
+  out.push('- Layering violations appear in the dedicated section above. That count is'
+    + ' dependency-cruiser RULE hits only; the `allowedDeps` domain-graph check is a'
+    + ' separate instrument, asserted by `tests/arm-vocabulary-layering.test.mjs`.');
   out.push('- Anchor links remain stable across regenerations as long as symbol names don\'t change.');
   if (importerMap !== null) {
     out.push('- The "File imported by" column lists the top files that import the file each symbol lives in (alphabetical, top 3, suffix `, +N more` if more exist). All symbols in the same file share the same list — the data is **file-level, not per-symbol** (Plan v6 §2.6).');
@@ -461,7 +477,7 @@ export function renderDriftIssue({ drift, threshold, status, clusters = [], viol
     `- **Commit:** ${commitSha || 'unknown'}   refresh_id: ${refreshId || 'unknown'}`,
     `- **Drift score:** ${drift?.score ?? 0} / threshold ${threshold}`,
     `- **Duplication pairs:** ${drift?.duplication_pairs ?? drift?.duplicationPairs ?? 0}`,
-    `- **Layering violations:** ${drift?.layering_violations ?? drift?.layeringViolations ?? 0}`,
+    `- **Layering violations (dep-cruiser rules):** ${drift?.layering_violations ?? drift?.layeringViolations ?? 0}`,
     '',
   ];
   if (top.length > 0) {
@@ -493,7 +509,7 @@ export function renderDriftIssue({ drift, threshold, status, clusters = [], viol
     lines.push('');
   }
   if (violations.length > 0) {
-    lines.push('## Layering violations');
+    lines.push('## Layering violations (dependency-cruiser rules)');
     lines.push('');
     lines.push('| Rule | From | To | Severity |');
     lines.push('|---|---|---|---|');

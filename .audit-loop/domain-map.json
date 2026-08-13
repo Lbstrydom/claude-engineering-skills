@@ -159,6 +159,11 @@
       "domain": "plan"
     },
     {
+      "_why": "NARROW RULE above the scripts/check-*.mjs -> install glob, same shape and same reason as check-plan-status.mjs directly below (2026-07-17). This is a DB test-container enrolment checker, not installation logic; the glob is a naming coincidence and manufactured a recurring install -> scripts violation out of it. That rule's own note predicted this: 'Other check-* CLIs are likely miscategorised too.' Retagged when its violation was observed, still not reshuffling the glob blind. Plan: docs/plans/god-module-and-layering-debt.md group (A).",
+      "pattern": "scripts/check-db-suite-enrolment.mjs",
+      "domain": "scripts"
+    },
+    {
       "pattern": "scripts/check-*.mjs",
       "domain": "install"
     },
@@ -236,6 +241,11 @@
       "domain": "learning-store"
     },
     {
+      "_why": "NARROW RULE above scripts/lib/db/** -> stores. Verified at source (581fea0b): this module has ZERO imports and exports one pure classifier, normalizePostgresError, over Postgres SQLSTATE codes — no I/O, no connection, no schema knowledge. A pure error classifier is a domain-neutral primitive, not the persistence layer, and tagging it `stores` manufactured a shared-lib -> stores edge from durable-write.mjs (audit-store-write-durability decision 2c, which deliberately reuses this classifier rather than writing a second one). REFACTOR > RETAG > DECLARE: nothing to refactor here, the tag was simply wrong. Resulting stores -> shared-lib edges from the rest of lib/db/** are already declared. Plan: docs/plans/god-module-and-layering-debt.md decision 4.",
+      "pattern": "scripts/lib/db/errors.mjs",
+      "domain": "shared-lib"
+    },
+    {
       "pattern": "scripts/lib/db/**",
       "domain": "stores"
     },
@@ -273,9 +283,39 @@
       "domain": "audit-orchestration"
     },
     {
+      "_why": "RETAG shared-lib, EARNED by the arm-vocabulary extraction — not a revert of d5e66d35. That commit (2026-08-10) moved this file to `model-eval` as a 'model-eval coordinator', and at the time it did import audit-orchestration: `ARM_IDS` from audit-arms.mjs. But it coordinates nothing — every export (DECISION_CONSTANTS, normalizeSeverity, sevW, qualMult, buildClusters, distinctCodeUnits, aggregateCost, evaluateDecision) is a PURE function with zero I/O, and its only feature-domain import was a frozen three-string array: a trapped vocabulary constant, the same shape as PREVIEW_GATE_MODES. Once that vocabulary moved to lib/arm-vocabulary.mjs (shared-lib), this file's imports are model-pricing.mjs + arm-vocabulary.mjs, both shared-lib. It now passes the same test d5e66d35 applied to config.mjs. ORDER IS LOAD-BEARING: the extraction lands FIRST, so this retag asserts a property the code already has rather than one we wish it had. Inbound (the direction d5e66d35 forgot, verified mechanically by tests/arm-vocabulary-layering.test.mjs, not by grep): cross-skill.mjs and cross-skill/commands/model-eval.mjs are cross-skill-bridge, audit/cost-budget.mjs is audit-orchestration, dashboard/collect-telemetry.mjs is dashboard, solo-control/scoring.mjs is solo-control, plus one test — every one of those already declares shared-lib. Clears dashboard -> model-eval and solo-control -> model-eval. Plan: docs/plans/god-module-and-layering-debt.md decision 3.",
       "pattern": "scripts/lib/model-ab-decision.mjs",
-      "domain": "model-eval",
-      "_why": "Same retag as the four audit coordinators above (2026-08-10). The model-A/B decision-rule evaluator (docs/plans/model-ab-harness-v2.md) is a model-eval coordinator, not a domain-neutral primitive; sitting at lib/ root it was swept into shared-lib by the catch-all, and its import of audit-arms.mjs then read as shared-lib -> audit-orchestration. Adds no new edge: model-eval -> audit-orchestration is already both declared and observed."
+      "domain": "shared-lib"
+    },
+    {
+      "_why": "RETAG, not declare (same shape as the five files d5e66d35 retagged 2026-08-10). This is the audit store's writer-registry bootstrap — audit-store-write-durability decision 1b makes it the registry's ONLY bootstrap, imported by both the orchestrator and the cross-skill CLI. It sits at scripts/lib/ root so the scripts/lib/** catch-all read it as shared-lib, and its two deliberate store imports then read as the base layer depending UP on persistence. Its LOCATION is fine; the TAG was wrong. Outbound: audit-orchestration -> stores is already declared AND observed. Inbound (the direction d5e66d35 forgot, checked mechanically by tests/arm-vocabulary-layering.test.mjs): legacy-production-audit.mjs is same-domain, cross-skill/commands/misc.mjs is cross-skill-bridge -> audit-orchestration (declared), the test file is tests -> audit-orchestration (declared). Plan: docs/plans/god-module-and-layering-debt.md decision 4.",
+      "pattern": "scripts/lib/audit-store-writers.mjs",
+      "domain": "audit-orchestration"
+    },
+    {
+      "_why": "EXPLICIT shared-lib claim, added 2026-08-13 so the domain is DECIDED rather than defaulted (audit M9, guarded by tests/domain-map-subsystem-coverage.test.mjs). Each of these six scripts/lib/<subsystem>/ directories previously reached shared-lib only via the scripts/lib/** catch-all below — the same silent default that filed scripts/lib/cross-skill/** (15 files, 4,408 lines) as shared-lib on 2026-08-12 and produced 10 layering violations including both HIGHs. VERIFIED at source before claiming, not assumed: every module in these six imports ONLY shared-lib primitives (cli-io, file-io, config, ast, path-validation, secret-patterns, azure-route-report) and no feature domain, so shared-lib is correct on the evidence and these rules change the resolved graph by ZERO edges. The point is not the domain, it is that adding a subsystem is now TWO edits — the directory and its rule — instead of one silent one. NOTE arch-memory: its files import only primitives too, so it stays shared-lib rather than moving to the same-named feature domain; retagging it would flip the `to` domain of every inbound edge (the d5e66d35 mistake) for no correctness gain.",
+      "pattern": "scripts/lib/arch-memory/**",
+      "domain": "shared-lib"
+    },
+    {
+      "pattern": "scripts/lib/azure/**",
+      "domain": "shared-lib"
+    },
+    {
+      "pattern": "scripts/lib/browser/**",
+      "domain": "shared-lib"
+    },
+    {
+      "pattern": "scripts/lib/campaign/**",
+      "domain": "shared-lib"
+    },
+    {
+      "pattern": "scripts/lib/lint/**",
+      "domain": "shared-lib"
+    },
+    {
+      "pattern": "scripts/lib/upstream/**",
+      "domain": "shared-lib"
     },
     {
       "pattern": "scripts/lib/**",
@@ -306,12 +346,19 @@
       "domain": "install"
     },
     {
+      "_why": "RETAG, finishing the job _adjudication_2026_07_31 started. That pass retagged install.mjs out of the *.mjs catch-all into `install` precisely so it would NOT have to declare tests -> root-scripts ('would have granted every test module access to the whole current and future root-scripts domain to express one narrow relationship; re-tagging removes the edge instead'). It never reached setup.mjs, its sibling installer, so tests/setup-access-routes.test.mjs -> setup.mjs survived as the last tests -> root-scripts edge. Same file class, same fix, same reason. Inbound: only that test, and tests -> install is already declared. Plan: docs/plans/god-module-and-layering-debt.md decision 4.",
+      "pattern": "setup.mjs",
+      "domain": "install"
+    },
+    {
       "pattern": "*.mjs",
-      "domain": "root-scripts"
+      "domain": "scripts",
+      "_why": "Catch-all for repo-root scripts, repointed root-scripts -> scripts 2026-08-12. `root-scripts` owned exactly two files: install.mjs (retagged to `install` by _adjudication_2026_07_31) and setup.mjs (retagged 2026-08-12, same reason — its sibling installer). With both gone the domain owned ZERO paths and tests/domain-map-dead-intent.test.mjs failed, correctly. The RULES are kept rather than deleted because they are a coverage net: analyseImports SKIPS an untagged file (`if (!fromDomain) continue`), so deleting the catch-all would make any future repo-root script invisible to the layering check — trading a dead domain for a blind spot. `scripts` is the other structural catch-all and docs/architecture-intent.md already groups the two together; a repo-root script is a script. tests -> scripts is already declared, so the one edge that lived here (setup-access-routes.test.mjs) stays legal."
     },
     {
       "pattern": "*.js",
-      "domain": "root-scripts"
+      "domain": "scripts",
+      "_why": "Catch-all for repo-root scripts, repointed root-scripts -> scripts 2026-08-12. `root-scripts` owned exactly two files: install.mjs (retagged to `install` by _adjudication_2026_07_31) and setup.mjs (retagged 2026-08-12, same reason — its sibling installer). With both gone the domain owned ZERO paths and tests/domain-map-dead-intent.test.mjs failed, correctly. The RULES are kept rather than deleted because they are a coverage net: analyseImports SKIPS an untagged file (`if (!fromDomain) continue`), so deleting the catch-all would make any future repo-root script invisible to the layering check — trading a dead domain for a blind spot. `scripts` is the other structural catch-all and docs/architecture-intent.md already groups the two together; a repo-root script is a script. tests -> scripts is already declared, so the one edge that lived here (setup-access-routes.test.mjs) stays legal."
     }
   ],
   "allowedDeps": {
@@ -430,9 +477,6 @@
       "plan",
       "shared-lib"
     ],
-    "root-scripts": [
-      "install"
-    ],
     "scripts": [
       "arch-intent",
       "arm-eval",
@@ -440,6 +484,7 @@
       "claudemd-management",
       "findings",
       "fit-check",
+      "install",
       "learning-store",
       "model-eval",
       "persona-test",
@@ -484,6 +529,7 @@
       "brainstorm",
       "claude-hooks",
       "claudemd-management",
+      "cross-skill-bridge",
       "dashboard",
       "explain",
       "findings",
@@ -688,9 +734,6 @@
     "install": [
       "platform-foundation"
     ],
-    "root-scripts": [
-      "platform-foundation"
-    ],
     "tests": [
       "platform-foundation"
     ]
@@ -729,5 +772,6 @@
     "sampleCap": 20
   },
   "_adjudication_2026_08_01": "Layering pass L5 (docs/plans/dashboard-skills-index-layering.md). dashboard -> scripts REFACTORED AWAY, not declared — and the pre-existing declaration was REMOVED. scripts/lib/dashboard/collect-reference.mjs imported loadAllSkills from scripts/skills-help.mjs, a top-level CLI entry point; the two pure functions (parseSkill, loadAllSkills) moved verbatim to scripts/lib/skills-index.mjs (shared-lib), which dashboard already declares — so the fix added ZERO edges and deleted one grant. Why removal rather than accept-by-declaration: \"scripts\" was NOT an adjudication. It entered allowedDeps.dashboard on 2026-07-17 in the Phase-C baseline that set allowedDeps to the OBSERVED graph wholesale (see _comment_allowedDeps, which opens \"BASELINE, NOT ENDORSEMENT\"), which is AFTER the three findings it appeared to bless were raised (2026-07-15/15/16). Affirming it would have converted a mechanical snapshot into recorded intent the map explicitly disclaims. Same reasoning as the L4 RE-TAG decision in _adjudication_2026_07_31, and stronger here: skills-help.mjs was the SOLE producer of the edge (the only other ../../ import under scripts/lib/dashboard/** is audit-metrics.mjs, which tags audit-orchestration and is separately declared), so the grant covered exactly one import of one function while granting the whole current and future root-scripts domain. NO new rule was added: skills-index.mjs is a FILE, not a scripts/lib/<subsystem>/ directory, so it correctly falls through the scripts/lib/** -> shared-lib catch-all. Guards: tests/layering-contracts.test.mjs L5 (module resolves to shared-lib; the moved symbols are absent from BOTH skills-help.mjs's namespace and its __test__ object; \"scripts\" is absent from allowedDeps.dashboard — nothing else checks for a stale allowedDeps EDGE, since computeDeadIntent only finds dead DOMAINS) and tests/dashboard-collect-reference.test.mjs (first coverage of the consumer path). Closes tech-debt topicIds 7cd98d98/dafaf6c8/1f6dd42d.",
-  "_adjudication_2026_07_31": "Layering pass (docs/plans/layering-and-mutation-contracts.md). L2 DECLARED: cross-skill-bridge -> model-eval. cross-skill.mjs is the CLI facade and already declares dispatch edges to arm-eval, audit-orchestration, nav-audit, persona-test and stores; model-eval was an omission in the intent layer, not a violation. L4 RE-TAGGED (not declared): install.mjs -> install. It was root-scripts only via the '*.mjs' catch-all, while its sibling scripts/install-skills.mjs was already 'install'. Declaring tests -> root-scripts would have granted every test module access to the whole current and future root-scripts domain to express one narrow relationship; re-tagging removes the edge instead. L1 and L3 were REFACTORED, not declared: CoverageSchema -> lib/coverage-schema.mjs and canonicaliseForHash -> lib/canonical-hash.mjs (both shared-lib), old exports removed."
+  "_adjudication_2026_07_31": "Layering pass (docs/plans/layering-and-mutation-contracts.md). L2 DECLARED: cross-skill-bridge -> model-eval. cross-skill.mjs is the CLI facade and already declares dispatch edges to arm-eval, audit-orchestration, nav-audit, persona-test and stores; model-eval was an omission in the intent layer, not a violation. L4 RE-TAGGED (not declared): install.mjs -> install. It was root-scripts only via the '*.mjs' catch-all, while its sibling scripts/install-skills.mjs was already 'install'. Declaring tests -> root-scripts would have granted every test module access to the whole current and future root-scripts domain to express one narrow relationship; re-tagging removes the edge instead. L1 and L3 were REFACTORED, not declared: CoverageSchema -> lib/coverage-schema.mjs and canonicaliseForHash -> lib/canonical-hash.mjs (both shared-lib), old exports removed.",
+  "_adjudication_2026_08_12": "Layering pass (docs/plans/god-module-and-layering-debt.md). Baseline 14 violations / 9 domain edges at 581fea0b, measured by tests/arm-vocabulary-layering.test.mjs (derived, never a hand list). RETAGGED, not declared (preference order refactor > retag > declare): check-db-suite-enrolment.mjs -> scripts; lib/db/errors.mjs -> shared-lib; lib/audit-store-writers.mjs -> audit-orchestration; setup.mjs -> install. DECLARED, 2 grants: (a) scripts -> install — update-auditloop.mjs imports lib/install/deps.mjs, the entry-point-to-implementation shape already declared for root-scripts -> install on 2026-07-26 and never extended to this third installer. (b) tests -> cross-skill-bridge — a146bb7b moved scripts/lib/cross-skill/** into cross-skill-bridge on 2026-08-12 and did not re-baseline the INBOUND direction, so that domain's own four unit tests became violations overnight. `tests` already grants 29 of 32 domains; cross-skill-bridge was missing by timing, not by decision. NOTE this is NOT the shape _adjudication_2026_07_31 rejected: that refused tests -> root-scripts because root-scripts is the *.mjs catch-all, and the fix was to retag the file out of it — done here for setup.mjs. REFUSED: shared-lib -> stores. d5e66d35 removed `stores` from shared-lib's grant nine days ago (7 -> 3) and _comment_allowedDeps records it as debt; granting it back to clear three file edges would have reversed that and pre-authorised every future shared-lib -> stores import. Retagged the two files instead. The three group-C edges (audit-store-writers x2, durable-write -> db/errors) are DELIBERATE per audit-store-write-durability decisions 1b and 2c — argued and accepted there, re-raised every round since because nothing recorded the verdict. This is the record. ADDENDUM: retiring setup.mjs from root-scripts emptied that domain (install.mjs had already left in 2026-07-31), so root-scripts is REMOVED from allowedDeps + domainPurposes and its *.mjs/*.js catch-all rules now point at `scripts`. The rules are kept, not deleted — an untagged file is SKIPPED by analyseImports, so dropping the catch-all would hide every future repo-root script from the layering check."
 }

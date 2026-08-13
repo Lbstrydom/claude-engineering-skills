@@ -223,8 +223,17 @@ async function runStage({ stage, provider, model, redactedContext, planContent, 
       capEur: budget.capEur, activeTtlMs: RESERVATION_TTL_MS,
     });
     if (!reservation.ok) {
-      process.stderr.write(`  [shadow] spend cap reached (${reservation.spentEur?.toFixed?.(2)}/${budget.capEur} EUR) — skipping ${stage}/${passName}\n`);
-      passStats.push({ stage, passName, model, skipped: 'cap-exceeded' });
+      // Two refusals, and they are NOT the same fact (audit H2): `cap-exceeded`
+      // means the ceiling did its job; `stale-reservations` means the ceiling
+      // could not be computed honestly because reservations past the TTL count
+      // as €0 while possibly still spending. Logging both as "cap reached"
+      // would report a healthy refusal for an accounting failure.
+      if (reservation.reason === 'stale-reservations') {
+        process.stderr.write(`  [shadow] REFUSING ${stage}/${passName} — ${reservation.hint}\n`);
+      } else {
+        process.stderr.write(`  [shadow] spend cap reached (${reservation.spentEur?.toFixed?.(2)}/${budget.capEur} EUR) — skipping ${stage}/${passName}\n`);
+      }
+      passStats.push({ stage, passName, model, skipped: reservation.reason || 'cap-exceeded' });
       break;
     }
 

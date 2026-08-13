@@ -688,7 +688,9 @@
           "enabled": false,
           "budgetEur": null,
           "enabledAt": null,
-          "present": false
+          "present": false,
+          "state": "absent",
+          "reason": null
         },
         "shadowArms": {
           "enabled": false,
