@@ -734,3 +734,108 @@ describe('git-tracked artifacts are refused', () => {
     assert.equal(res.tracked.size, 0);
   });
 });
+
+// ── The replay RETURN contract ──────────────────────────────────────────────
+//
+// The oracle above proves every store write is registered or exempt. It cannot
+// see the defect that shipped on 2026-08-13: a registered writer whose replay
+// SUCCEEDS but reports itself as not-applied.
+//
+// `receipt()` (audit-store-writers.mjs) computes `applied = r?.applied === true`.
+// `learning-decisions.mjs`'s `safeWrite` returned a bare `{ok:true}`, so the
+// three writers routed through it — audit.convergenceState, audit.diffComplexity,
+// learning.outcome — replayed successfully and scored `applied:false` every
+// time. `drainSpill` counts that as `failed` WITHOUT incrementing attempts or
+// quarantining, so the artifact returns to the queue unchanged: an unbounded
+// retry loop over data the store already held. Measured before the fix:
+// 31 artifacts queued, 0 drained across repeated drains, while the target rows
+// in `audit_runs` already carried the exact spilled values. Every audit run in
+// the repo reported `runStatus: incomplete` on that basis — the durability
+// signal inverted, claiming loss where there was none.
+//
+// Asserted on the CLOUD-OFF path so it needs no database: that path exercises
+// the same return contract, and its `reason` must additionally be one
+// `receipt()` recognises as a decline, or a spilled artifact from a cloud-off
+// run is retried forever instead of being recorded as skipped.
+// Set at FILE scope, not inside a test: the module is imported dynamically
+// below and Node caches it, so the flag has to be in place before the FIRST
+// import or `__testExports` is undefined for every later one.
+process.env.AUDIT_EXPORTS_FOR_TESTS = '1';
+
+describe('spill-eligible writers report `applied` truthfully', () => {
+  const DECLINED = new Set(['cloud-off', 'no-run-id', 'no-repo-identity']);
+
+  test('the three learning-decisions writers return an explicit applied + declinable reason', async () => {
+    process.env.AUDIT_DB_URL = '';   // force the cloud-off branch
+    const ld = await import('../scripts/lib/store/learning-decisions.mjs');
+
+    const cases = [
+      ['audit.convergenceState', () => ld.recordConvergenceState('11111111-1111-1111-1111-111111111111', { round_converged_after: 2 })],
+      ['audit.diffComplexity', () => ld.recordDiffComplexity('11111111-1111-1111-1111-111111111111', 3)],
+      ['learning.outcome', () => ld.backfillLearningOutcome({ decisionKey: 'k', outcome: 'accepted' })],
+    ];
+
+    for (const [writerId, call] of cases) {
+      const r = await call();
+      // `undefined` is the bug: it makes `r?.applied === true` false for a write
+      // that may well have landed, which is indistinguishable from a real failure.
+      assert.equal(typeof r?.applied, 'boolean',
+        `${writerId}: replay result must state \`applied\` explicitly — an absent field reads as NOT APPLIED to receipt()`);
+      assert.equal(r.applied, false, `${writerId}: cloud-off cannot have applied anything`);
+      assert.ok(DECLINED.has(r.reason),
+        `${writerId}: a not-attempted write needs a reason receipt() treats as a DECLINE (got ${JSON.stringify(r.reason)}) — otherwise its spilled artifact retries forever`);
+    }
+  });
+
+  // The mechanism itself, at the seam — no database, and no test handle leaking
+  // into the store's frozen 93-function public surface (adding one there was
+  // the first attempt; `learning-store-exports.test.mjs` correctly refused it).
+  //
+  // This is the negative control for the assertions above AND the direct proof
+  // of the defect: a replay returning the historical `{ok:true}` must not drain,
+  // and the artifact must come back UNCHANGED — no attempt increment, no
+  // quarantine — which is the unbounded retry loop, reproduced in miniature.
+  test('a replay returning only {ok:true} does not drain, and loops forever', async () => {
+    _resetRegistry();
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ces-applied-'));
+    try {
+      const dir = path.join(root, SPILL_DIR);
+      fs.mkdirSync(dir, { recursive: true });
+
+      let okShapeReplays = 0;
+      registerWriter('legacyOkShape', {
+        schemaVersion: 1,
+        rowKey: (r) => r.id,
+        // Exactly what `safeWrite` returned before 2026-08-13: the write
+        // SUCCEEDED, and said nothing `receipt()` can read.
+        replay: async () => { okShapeReplays++; return { ok: true }; },
+      });
+      registerWriter('appliedShape', {
+        schemaVersion: 1,
+        rowKey: (r) => r.id,
+        replay: async () => ({ applied: true, rows: 1 }),
+      });
+
+      const mk = (writerId, name) => fs.writeFileSync(path.join(dir, name), `${JSON.stringify({
+        v: 1, fingerprint: name.replace('.json', ''), writerId, schemaVersion: 1,
+        enqueuedAt: new Date().toISOString(), payload: { id: 'x' },
+      })}\n`);
+      mk('legacyOkShape', 'legacy.json');
+      mk('appliedShape', 'applied.json');
+
+      const res = await drainSpill({ repoRoot: root, isCloudEnabled: () => true });
+
+      assert.equal(okShapeReplays, 1, 'vacuous-pass guard: the {ok} replay must actually have been invoked');
+      assert.equal(res.drained, 1, 'only the writer reporting `applied` may drain');
+      assert.ok(fs.existsSync(path.join(dir, 'legacy.json')),
+        'the {ok}-only artifact returns to the QUEUE — this is the loop: 31 artifacts, 0 drained, over data the store already held');
+      assert.ok(!fs.existsSync(path.join(dir, 'applied.json')),
+        'the compliant artifact is applied and removed');
+      // It is not even quarantined, so nothing bounds the retries.
+      assert.ok(!fs.existsSync(path.join(dir, 'rejected', 'legacy.json')),
+        'and it is NOT quarantined — an unbounded retry, which is why the queue could only grow');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+});

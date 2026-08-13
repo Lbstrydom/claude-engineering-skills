@@ -21,14 +21,49 @@ import { isCloudEnabled } from './repo.mjs';
  * Preserves the legacy `_safeWriteCall` error-swallowing contract (#16
  * graceful degradation).
  */
+/**
+ * Run a store write and report BOTH contracts this module is read under.
+ *
+ * `{ok}` is the historical shape every existing caller here reads. `applied` /
+ * `rows` / `reason` is the shape `durable-write.mjs`'s `receipt()` requires —
+ * it computes `applied = r?.applied === true`, so a bare `{ok:true}` reads as
+ * NOT APPLIED. That mismatch is not theoretical: when
+ * `recordConvergenceState` / `recordDiffComplexity` / `backfillLearningOutcome`
+ * became spill-eligible writers (2026-08-13), their replays returned
+ * `{ok:true}` for writes that had genuinely landed, so `drainSpill` scored
+ * every one as `failed`, incremented no attempt counter, quarantined nothing,
+ * and handed the artifact straight back to the queue. Measured: 31 artifacts,
+ * 0 drained, on a store that already held the data. Every audit run in the repo
+ * then reported `runStatus: incomplete` on the strength of it — the durability
+ * signal inverted, reporting loss where there was none.
+ *
+ * Returning a SUPERSET rather than switching contracts is deliberate: nothing
+ * reading `.ok` changes behaviour, and `receipt()` starts seeing the truth.
+ * `rows` is the driver's real `rowCount`, never a fabricated 1 — a 0-row UPDATE
+ * is `applied:true, rows:0`, which is an honest "the statement ran and matched
+ * nothing", distinct from a failure.
+ */
 async function safeWrite(fn) {
   try {
-    await fn();
-    return { ok: true };
+    const res = await fn();
+    return { ok: true, applied: true, rows: res?.rowCount ?? 0 };
   } catch (err) {
-    return { ok: false, error: err.message };
+    return { ok: false, applied: false, error: err.message };
   }
 }
+
+/**
+ * A write that was never attempted, with a reason `receipt()` recognises as a
+ * DECLINE (`cloud-off` / `no-run-id`) rather than a retryable failure. Without
+ * the reason a spilled artifact for a cloud-off run would be retried forever
+ * instead of being recorded as declined.
+ *
+ * @param {'cloud-off'|'no-run-id'|'nothing-to-write'} reason
+ */
+function notAttempted(reason) {
+  return { ok: true, applied: false, rows: 0, reason };
+}
+
 
 // ── learning_decisions ─────────────────────────────────────────────────────
 
@@ -69,7 +104,7 @@ export async function insertLearningDecision(entry) {
  * @param {{decisionKey: string, outcome: object}} input
  */
 export async function backfillLearningOutcome({ decisionKey, outcome }) {
-  if (!await isCloudEnabled()) return { ok: true };
+  if (!await isCloudEnabled()) return notAttempted('cloud-off');
   return safeWrite(() => updateWhere(
     'learning_decisions',
     { outcome, outcome_at: new Date().toISOString() },
@@ -83,7 +118,8 @@ export async function backfillLearningOutcome({ decisionKey, outcome }) {
  * Update audit_runs.diff_complexity. Best-effort.
  */
 export async function recordDiffComplexity(runId, complexity) {
-  if (!runId || !await isCloudEnabled()) return { ok: true };
+  if (!runId) return notAttempted('no-run-id');
+  if (!await isCloudEnabled()) return notAttempted('cloud-off');
   return safeWrite(() => updateWhere(
     'audit_runs', { diff_complexity: complexity }, { id: runId }
   ));
@@ -93,7 +129,8 @@ export async function recordDiffComplexity(runId, complexity) {
  * Update audit_runs.round_converged_after + rigor_pressure_round.
  */
 export async function recordConvergenceState(runId, state) {
-  if (!runId || !await isCloudEnabled()) return { ok: true };
+  if (!runId) return notAttempted('no-run-id');
+  if (!await isCloudEnabled()) return notAttempted('cloud-off');
   const patch = {};
   if (state.round_converged_after !== undefined) patch.round_converged_after = state.round_converged_after;
   if (state.rigor_pressure_round  !== undefined) patch.rigor_pressure_round  = state.rigor_pressure_round;
@@ -104,7 +141,11 @@ export async function recordConvergenceState(runId, state) {
   // `auditedTree` would disagree with the row for the same runId).
   if (state.audited_sha  !== undefined) patch.audited_sha  = state.audited_sha;
   if (state.audited_tree !== undefined) patch.audited_tree = state.audited_tree;
-  if (Object.keys(patch).length === 0) return { ok: true };
+  // Nothing to write is NOT "applied" — but it is also not a failure, and it
+  // must not be retried forever. `nothing-to-write` is deliberately OUTSIDE
+  // DECLINED_REASONS: a spilled artifact carrying an empty patch is malformed,
+  // and dressing that up as a clean decline would hide it.
+  if (Object.keys(patch).length === 0) return notAttempted('nothing-to-write');
   return safeWrite(() => updateWhere('audit_runs', patch, { id: runId }));
 }
 
