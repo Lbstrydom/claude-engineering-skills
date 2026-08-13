@@ -480,6 +480,17 @@ a `$(…)` shell substitution in an npm script does not. It assumes the common
 git dir's parent *is* the main checkout — true for a normal repo, wrong for a
 bare-repo-plus-worktrees layout.
 
+> **`node_modules` is the second gitignored absence, and hydrating does not
+> cover it.** A worktree *nested* inside the checkout — which is where Claude
+> Code puts them, `.claude/worktrees/<name>` — is fine: Node walks up and finds
+> the main checkout's copy (`prepush-sandbox.md` §2.2). A worktree created
+> OUTSIDE the tree (`git worktree add ../my-branch`) has no upward path to it,
+> and the hydrated tooling then dies on `Cannot find package 'dotenv'` instead.
+> Verified both ways 2026-08-13: identical commit, `npm run context:check` clean
+> in the nested worktree and `ERR_MODULE_NOT_FOUND` in a `C:/tmp` one. Run
+> `npm install` there, and **do not hand-link `node_modules`** — that hides the
+> resolution bug from the next person.
+
 ### Remedy 2 — one-off, without hydrating
 
 Run the main checkout's **script file** while keeping cwd in the worktree
