@@ -171,7 +171,14 @@ export async function getNavFirstSeenCmd(ctx) {
   const repoId = scope.kind === 'scoped' ? scope.repoId : null;
   if (!repoId) return { ok: true, cloud: true, firstSeen: {} };
   const history = await ctx.deps.listNavAuditRunHistory({ repoId, sinceDays: p.sinceDays ?? undefined });
-  if (!history.ok) return { ok: false, cloud: true, firstSeen: {}, error: history.error };
+  // An unmeasured READ is not a failed one. `{ok:false, firstSeen:{}}` made a
+  // history-query failure indistinguishable from a genuinely empty history —
+  // both an empty object — while also telling the caller the command failed.
+  // `measured:false` separates the two, which is the shape ship.mjs's nudge
+  // readers already use for exactly this question.
+  if (!history.ok) {
+    return { ok: true, cloud: true, measured: false, reason: 'history-read-failed', firstSeen: {}, error: history.error };
+  }
   const { firstSeenFromHistory } = await import('../../nav/drift.mjs');
   const lookup = firstSeenFromHistory(history.rows);
   const firstSeen = {};

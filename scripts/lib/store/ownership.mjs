@@ -220,6 +220,52 @@ export async function assertParentOwnership({ parentTable, parentId, repoId = nu
 }
 
 /**
+ * A tenant predicate for a READ addressed by an opaque row id.
+ *
+ * **Why reads needed their own answer.** D7 scoped child WRITES; the read path
+ * was deferred, and a census then found **15** id-addressed readers with no
+ * repo predicate — not the two an audit had named. But they are not one class,
+ * and treating them alike would have been wrong in both directions:
+ *
+ *  - **Scope-DERIVING reads** (`resolveLabelTarget` selects `repo_id` from the
+ *    session it was handed) establish the tenant FROM the id. Adding a predicate
+ *    there is circular — you would be asking the caller for the answer the
+ *    function exists to compute.
+ *  - **Reporting reads** (`readPlanSatisfaction`, `readCorrelationsForRun`)
+ *    return rows with no repo anywhere, and the caller presents them as its
+ *    own. That is the 207-vs-0 shape: a number belonging to another repository,
+ *    reported as this one's, indistinguishable from a real measurement.
+ *
+ * Only the second kind takes this. The asymmetry with writes is deliberate and
+ * bounded: a cross-tenant WRITE corrupts the store irreversibly, so it is
+ * refused in SQL that a caller cannot bypass; a cross-tenant READ misinforms one
+ * caller, so an OPTIONAL predicate that relaxes when scope is unresolvable is
+ * proportionate. `null` relaxes the tenant match; the EXISTS still requires the
+ * parent row, exactly as on the write side.
+ *
+ * @param {{parentTable: string, idColumnInQuery: string, idParam: number, repoParam: number}} a
+ * @returns {string} a SQL fragment for a WHERE clause
+ */
+export function ownedReadPredicate({ parentTable, idColumnInQuery, idParam, repoParam }) {
+  const spec = PARENT_TABLES[parentTable];
+  if (!spec) {
+    throw new Error(
+      `ownership: "${parentTable}" is not an allowed parent table. `
+      + `Allowed: ${Object.keys(PARENT_TABLES).join(', ')}.`,
+    );
+  }
+  ident(idColumnInQuery, 'query id column');
+  const repoExpr = spec.repoVia
+    ? `(SELECT f.${ident(spec.repoVia.repoColumn, 'repo column')} `
+      + `FROM ${ident(spec.repoVia.table, 'via table')} f `
+      + `WHERE f.${ident(spec.repoVia.foreignColumn, 'via column')} = p.${ident(spec.repoVia.localColumn, 'local column')})`
+    : `p.${ident(spec.repoColumn, 'repo column')}`;
+  return `EXISTS (SELECT 1 FROM ${ident(parentTable, 'parent table')} p `
+    + `WHERE p.${ident(spec.idColumn, 'parent id column')} = ${idColumnInQuery} `
+    + `AND ($${repoParam}::uuid IS NULL OR ${repoExpr} = $${repoParam}))`;
+}
+
+/**
  * Map the statement's two counts to a discriminated outcome.
  *
  * Kept separate from the builder so a writer can classify a result it obtained

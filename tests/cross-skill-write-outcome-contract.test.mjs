@@ -132,6 +132,24 @@ describe('record-plan-verify-items — a SHORT write is a failed write', () => {
     assert.equal(r.envelope.error.requested, 3);
   });
 
+  it('a planId that disagrees with the run is refused BEFORE anything is written', async () => {
+    // The first cut reconciled the caller's planId AFTER the insert, so a
+    // mismatch left the rows committed while telling the caller it had failed —
+    // write-then-refuse, worse than either alternative (audit H2/H5). The check
+    // is input validation now, and it runs first.
+    const deps = stubDeps({
+      recordPlanVerificationItems: async () => ({
+        ok: false, inserted: 0, reason: 'plan-id-mismatch',
+        message: 'run r-1 belongs to plan p-9, not the supplied p-1 — refusing before writing anything',
+      }),
+    });
+    const r = await dispatch(argv('record-plan-verify-items', '--json', payload), { deps, cloudGate: 'ready' });
+    assert.equal(r.exitCode, 1);
+    assert.equal(r.envelope.error.reason, 'plan-id-mismatch');
+    assert.equal(r.envelope.error.inserted, 0, 'a refusal must report that NOTHING was written');
+    assert.match(r.envelope.error.message, /before writing anything/);
+  });
+
   it('ZERO rows written is distinguishable from a partial write', async () => {
     const deps = stubDeps({
       recordPlanVerificationItems: async () => ({
@@ -211,5 +229,45 @@ describe('record-persona-session — reports the failure WITHOUT discarding the 
     assert.equal(r.exitCode, 0, JSON.stringify(r.envelope));
     assert.equal(r.envelope.ok, true);
     assert.equal(r.envelope.sessionId, 'row-1');
+  });
+});
+
+describe('count validation — the guard that was satisfied by its own presence', () => {
+  // Four audit rounds reported plan-verify counts as unvalidated while
+  // `validateCountFields(p)` sat at the call site. Both were true: the
+  // validator's DEFAULT field list is passedCriteria/failedCriteria/
+  // skippedCriteria, and this command's payload carries passedCount/
+  // failedCount/skippedCount — so every optional field was `undefined`,
+  // skipped, and `passedCount: -5` returned ok. Accepted, validated, inert.
+  //
+  // Fixed at BOTH layers, deliberately: the handler (so the CLI refuses with
+  // exit 2) and the store (because ux-lock-run.mjs calls the writer directly
+  // and a handler-only guard leaves that caller unprotected).
+  for (const [label, bad] of [
+    ['a negative peer', { planId: 'p-1', totalCriteria: 3, passedCount: -5 }],
+    // NOT NaN: `JSON.stringify({x: NaN})` emits `null`, so NaN cannot reach a
+    // CLI through a --json payload at all — the test case would have been
+    // asserting a shape the transport makes unrepresentable. A numeric STRING
+    // is what a shell pipeline actually delivers, and it is the same class as
+    // the `"false"`-becomes-true bug fixed in the items writer.
+    ['a numeric string', { planId: 'p-1', totalCriteria: 3, failedCount: '2' }],
+    ['peers exceeding the total', { planId: 'p-1', totalCriteria: 1, passedCount: 5 }],
+  ]) {
+    it(`the handler refuses ${label} (exit 2)`, async () => {
+      const deps = stubDeps({
+        recordPlanVerificationRun: async () => { throw new Error('the writer must not be reached'); },
+      });
+      const r = await dispatch(argv('record-plan-verify-run', '--json', JSON.stringify(bad)), { deps, cloudGate: 'ready' });
+      assert.equal(r.exitCode, 2, JSON.stringify(r.envelope));
+      assert.equal(r.envelope.error.code, 'BAD_INPUT');
+    });
+  }
+
+  it('a VALID payload still passes — the fix narrows, it does not block', async () => {
+    const deps = stubDeps({ recordPlanVerificationRun: async () => ({ ok: true, cloud: true, runId: 'run-1' }) });
+    const payload = JSON.stringify({ planId: 'p-1', totalCriteria: 3, passedCount: 2, failedCount: 1 });
+    const r = await dispatch(argv('record-plan-verify-run', '--json', payload), { deps, cloudGate: 'ready' });
+    assert.equal(r.exitCode, 0, JSON.stringify(r.envelope));
+    assert.equal(r.envelope.runId, 'run-1');
   });
 });

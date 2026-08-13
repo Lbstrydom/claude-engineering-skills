@@ -20,9 +20,14 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
-  PARENT_TABLES, buildOwnedInsert, classifyOwnedWrite, assertParentOwnership,
+  PARENT_TABLES, buildOwnedInsert, classifyOwnedWrite, assertParentOwnership, ownedReadPredicate,
 } from '../scripts/lib/store/ownership.mjs';
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 describe('the allowlist is closed', () => {
   it('rejects a parent table it does not know', () => {
@@ -196,6 +201,70 @@ describe('reading the two counts', () => {
     // `pool.query` returning no rows must not read as "wrote everything".
     assert.equal(classifyOwnedWrite(undefined, 1).ok, false);
     assert.equal(classifyOwnedWrite({}, 1).reason, 'parent-not-found');
+  });
+});
+
+describe('ownedReadPredicate — the read-path tenancy close-out', () => {
+  it('requires the parent row to exist AND (optionally) to match the repo', () => {
+    const p = ownedReadPredicate({
+      parentTable: 'plans', idColumnInQuery: 'plan_id', idParam: 1, repoParam: 2,
+    });
+    assert.match(p, /EXISTS \(SELECT 1 FROM plans p WHERE p\.id = plan_id/);
+    assert.match(p, /\$2::uuid IS NULL OR p\.repo_id = \$2/,
+      'a null repoId relaxes the TENANT match; the EXISTS never relaxes — same asymmetry as the write side');
+  });
+
+  it('reaches the tenant through the declared hop for a parent with no repo_id', () => {
+    const p = ownedReadPredicate({
+      parentTable: 'plan_verification_runs', idColumnInQuery: 'run_id', idParam: 1, repoParam: 2,
+    });
+    assert.match(p, /SELECT f\.repo_id FROM plans f WHERE f\.id = p\.plan_id/);
+  });
+
+  it('rejects a parent off the closed allowlist, like every other entry point', () => {
+    assert.throws(() => ownedReadPredicate({
+      parentTable: 'audit_repos', idColumnInQuery: 'x', idParam: 1, repoParam: 2,
+    }), /not an allowed parent table/);
+  });
+
+  it('refuses an unsafe column identifier', () => {
+    assert.throws(() => ownedReadPredicate({
+      parentTable: 'plans', idColumnInQuery: 'x; DROP TABLE y', idParam: 1, repoParam: 2,
+    }), /unsafe query id column/);
+  });
+});
+
+describe('the reporting readers carry the predicate', () => {
+  // A census found FIFTEEN id-addressed readers with no repo predicate — not
+  // the two an audit named. They are not one class, and the source assertion
+  // below is about the ones that REPORT rows as the caller's. The
+  // scope-DERIVING readers (resolveLabelTarget selects repo_id from the session
+  // it was handed) must NOT take one: asking the caller for the tenant is
+  // circular when computing it is the function's whole job.
+  const read = (rel) => fs.readFileSync(path.resolve(HERE, '..', rel), 'utf8');
+
+  for (const [file, fn] of [
+    ['scripts/lib/store/plan-verification.mjs', 'readPlanSatisfaction'],
+    ['scripts/lib/store/plan-verification.mjs', 'readPersistentPlanFailures'],
+    ['scripts/lib/store/persona-correlations.mjs', 'readCorrelationsForRun'],
+  ]) {
+    it(`${fn} takes an optional repoId and uses it as a predicate`, () => {
+      const src = read(file);
+      const start = src.indexOf(`export async function ${fn}(`);
+      assert.ok(start > -1, `${fn} not found — the anchor is stale`);
+      const body = src.slice(start, src.indexOf('\nexport ', start + 1));
+      assert.match(body, /\{ repoId = null \} = \{\}/, `${fn} must accept an optional repoId`);
+      assert.match(body, /ownedReadPredicate\(/, `${fn} must apply the predicate, not merely accept the argument`);
+    });
+  }
+
+  it('resolveLabelTarget does NOT take one — it DERIVES the repo', () => {
+    const src = read('scripts/lib/store/persona-outcomes.mjs');
+    const start = src.indexOf('export async function resolveLabelTarget(');
+    const body = src.slice(start, src.indexOf('\nexport ', start + 1));
+    assert.ok(!/ownedReadPredicate\(/.test(body),
+      'a scope-deriving read must not ask the caller for the scope it computes');
+    assert.match(body, /repo_id/, 'it establishes the tenant FROM the row');
   });
 });
 

@@ -344,7 +344,12 @@ export async function armEvalMaybeCaptureCmd(ctx) {
       experimentType, task, repoId: scope.kind === 'scoped' ? scope.repoId : null,
       phase: 'prospective', seed: null, budgetCapEur,
     });
-    return { ok: r.state === 'ran', captured: r.state === 'ran', ...r };
+    // A DECLINED capture is not a failure. `ok: r.state === 'ran'` reported
+    // budget exhaustion and a toggle race as errors, when the runner declining
+    // is the toggle working — the same 'supported mode is not a failure'
+    // reasoning that took cloud-off to ok:true in F3. `captured` already
+    // carries the fact, and `state`/`reason` say which decline it was.
+    return { ok: true, captured: r.state === 'ran', ...r };
   });
 }
 
@@ -380,6 +385,8 @@ export async function armEvalRunCmd(ctx) {
       seed: seedFlag ? Number.parseInt(seedFlag, 10) : null,
       budgetCapEur,
     });
-    return { ok: r.state === 'ran', ...r };
+    // Same as arm-eval-maybe-capture: a run the harness declined is a
+    // legitimate non-run, and `state` reports which.
+    return { ok: true, ran: r.state === 'ran', ...r };
   });
 }

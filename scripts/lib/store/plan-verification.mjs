@@ -12,7 +12,8 @@
 import { getPool } from '../db/client.mjs';
 import { isCloudEnabled } from './repo.mjs';
 import { many, one } from '../db/query.mjs';
-import { buildOwnedInsert, classifyOwnedWrite } from './ownership.mjs';
+import { buildOwnedInsert, classifyOwnedWrite, ownedReadPredicate } from './ownership.mjs';
+import { validateCountFields } from '../command-input.mjs';
 
 // ── plan_verification_runs / plan_verification_items ───────────────────────
 
@@ -36,6 +37,20 @@ export async function recordPlanVerificationRun(run, opts = {}) {
   }
   if (!await isCloudEnabled()) {
     return { ok: false, cloud: false, runId: null, reason: 'cloud-off', message: 'cloud store is disabled' };
+  }
+  // Validated at the STORE, not only at the CLI handler. `ux-lock-run.mjs`
+  // calls this writer directly, so a handler-only guard leaves the direct
+  // caller unprotected — and the handler's guard was itself inert until
+  // 2026-08-12 (it checked passedCriteria while the payload carries
+  // passedCount). Four audit rounds reported these counts as unvalidated with
+  // a validator sitting at the call site; the honest fix is at the boundary
+  // that actually persists them.
+  const counts = validateCountFields(run, {
+    required: ['totalCriteria'],
+    optional: ['passedCount', 'failedCount', 'skippedCount'],
+  });
+  if (!counts.ok) {
+    return { ok: false, cloud: true, runId: null, reason: 'invalid-input', message: counts.reason };
   }
   const row = {
     plan_id: run.planId,
@@ -138,6 +153,36 @@ export async function recordPlanVerificationItems(runId, planId, items, opts = {
   }));
   const pool = await getPool();
   if (!pool) return { ok: false, inserted: 0, reason: 'no-pool' };
+
+  // `planId` is INPUT-VALIDATED before anything is written. It is no longer
+  // written at all — `plan_id` comes from the parent run — which left it a
+  // vestigial argument a caller could get wrong and never hear about. The first
+  // cut reconciled it AFTER the insert, so a mismatch left the rows committed
+  // while telling the caller it had failed: write-then-refuse, worse than
+  // either alternative (audit H2/H5).
+  //
+  // A pre-check is right HERE and wrong for ownership: this validates an
+  // argument the caller supplied against the row it names, and the write does
+  // not depend on the answer (the parent's value is used either way). The
+  // ownership predicate stays in the SQL, where a caller cannot skip it.
+  //
+  // The preflight is itself TENANT-SCOPED. Unscoped, it answered "run r-1
+  // belongs to plan p-9" for a run in another repository — a refusal message
+  // that discloses a foreign row's contents. Scoped, a run the caller may not
+  // see simply returns nothing, the mismatch check is skipped, and the INSERT's
+  // ownership join gives the correct answer (`parent-not-owned`). A read that
+  // exists to validate input must not see further than the write it guards.
+  const parent = await one(
+    `SELECT plan_id FROM plan_verification_runs WHERE id = $1 AND `
+    + `${ownedReadPredicate({ parentTable: 'plan_verification_runs', idColumnInQuery: 'id', idParam: 1, repoParam: 2 })}`,
+    [runId, opts.repoId ?? null],
+  );
+  if (parent && parent.plan_id !== planId) {
+    return {
+      ok: false, inserted: 0, reason: 'plan-id-mismatch',
+      message: `run ${runId} belongs to plan ${parent.plan_id}, not the supplied ${planId} — refusing before writing anything`,
+    };
+  }
   // Parent-joined since D7 / Phase 7. The parent here is the RUN, not the plan:
   // `plan_verification_runs` is what `runId` addresses, and attaching criterion
   // rows to a run that does not exist is the defect. That table carries no
@@ -163,23 +208,7 @@ export async function recordPlanVerificationItems(runId, planId, items, opts = {
       fromParent: { plan_id: 'plan_id' },
     });
     const res = await pool.query(text, values);
-    const out = classifyOwnedWrite(res?.rows?.[0], rows.length);
-    // `planId` is no longer WRITTEN (it comes from the parent), which left it a
-    // vestigial argument a caller could get wrong and never hear about — the
-    // write would silently be "corrected" to the parent's plan. Reconciling it
-    // turns that into a reported caller bug. Read after the write because the
-    // parent row is only known to exist once the join has run; on a refusal the
-    // ownership reason is the more specific answer and wins. (Audit H4.)
-    if (out.ok) {
-      const parent = await one('SELECT plan_id FROM plan_verification_runs WHERE id = $1', [runId]);
-      if (parent && parent.plan_id !== planId) {
-        return {
-          ok: false, inserted: out.inserted, reason: 'plan-id-mismatch',
-          message: `run ${runId} belongs to plan ${parent.plan_id}, not the supplied ${planId} — the rows were written against the RUN's plan`,
-        };
-      }
-    }
-    return out;
+    return classifyOwnedWrite(res?.rows?.[0], rows.length);
   };
   // The short-write check (§2b F2, raised in both Cluster F audit rounds) now
   // lives in `classifyOwnedWrite`, alongside the two ownership refusals — one
@@ -192,8 +221,14 @@ export async function recordPlanVerificationItems(runId, planId, items, opts = {
     // 20260704…) — retry once without it so the per-criterion rows aren't lost.
     if (err?.code === '42703' && 'skipped' in rows[0]) {
       process.stderr.write('  [learning] plan_verification_items.skipped missing — run setup-postgres --migrate; recording without it\n');
-      try { return await insertItems(true); }
-      catch (retryErr) {
+      try {
+        // The retry loses the `skipped` flag — a real loss of information,
+        // REPORTED rather than silent (audit H3). Losing one boolean beats
+        // losing every per-criterion row, but a caller that cannot SEE the
+        // degradation reads the rows as complete.
+        const retry = await insertItems(true);
+        return retry.ok ? { ...retry, degraded: 'skipped-column-missing' } : retry;
+      } catch (retryErr) {
         process.stderr.write(`  [learning] recordPlanVerificationItems failed: ${retryErr.message}\n`);
         return { ok: false, inserted: 0, reason: retryErr.message };
       }
@@ -203,22 +238,37 @@ export async function recordPlanVerificationItems(runId, planId, items, opts = {
   }
 }
 
-/** Read the plan_satisfaction view (latest run + failing P0/P1). */
-export async function readPlanSatisfaction(planId) {
+/**
+ * Read the plan_satisfaction view (latest run + failing P0/P1).
+ *
+ * `repoId` is additive and OPTIONAL (read-path tenancy close-out, 2026-08-12):
+ * null relaxes the tenant match, a supplied value refuses a plan belonging to
+ * another repository. The rows carry no repo of their own, so without it a
+ * caller presents another repo's satisfaction as its own — the 207-vs-0 shape.
+ */
+export async function readPlanSatisfaction(planId, { repoId = null } = {}) {
   if (!planId || !await isCloudEnabled()) return null;
   try {
-    return await one(`SELECT * FROM plan_satisfaction WHERE plan_id = $1 LIMIT 1`, [planId]);
+    return await one(
+      `SELECT * FROM plan_satisfaction WHERE plan_id = $1 AND `
+      + `${ownedReadPredicate({ parentTable: 'plans', idColumnInQuery: 'plan_id', idParam: 1, repoParam: 2 })} LIMIT 1`,
+      [planId, repoId],
+    );
   } catch (err) {
     process.stderr.write(`  [learning] readPlanSatisfaction failed: ${err.message}\n`);
     return null;
   }
 }
 
-/** Read criteria failing across recent verification runs. */
-export async function readPersistentPlanFailures(planId) {
+/** Read criteria failing across recent verification runs. `repoId` as above. */
+export async function readPersistentPlanFailures(planId, { repoId = null } = {}) {
   if (!planId || !await isCloudEnabled()) return [];
   try {
-    return await many(`SELECT * FROM persistent_plan_failures WHERE plan_id = $1`, [planId]);
+    return await many(
+      `SELECT * FROM persistent_plan_failures WHERE plan_id = $1 AND `
+      + `${ownedReadPredicate({ parentTable: 'plans', idColumnInQuery: 'plan_id', idParam: 1, repoParam: 2 })}`,
+      [planId, repoId],
+    );
   } catch (err) {
     process.stderr.write(`  [learning] readPersistentPlanFailures failed: ${err.message}\n`);
     return [];

@@ -280,18 +280,50 @@ describe('the dispatcher contract itself', () => {
     assert.equal(r.envelope.ok, true);
   });
 
-  it('a returned non-ok envelope on a non-softFail command is CONTRACT_VIOLATION', async () => {
-    // record-ship-event throws CommandError for failures; simulate a handler
-    // regression by making the STORE return ok:true while the handler is
-    // forced into the returned-envelope path — covered above. Here: prove
-    // the validator itself using persona-outcomes' softFail exemption as the
-    // negative control: summary returning ok:false PASSES (exit 0)…
+  it('a DECLARED in-band failure keeps its payload AND exits non-zero', async () => {
+    // `softFail` → `reportsFailure` (2026-08-12). The old declaration meant
+    // "ok:false at exit 0", which conflated two opposite things: an outcome
+    // that is not really a failure (a declined run, a cloud-off read) and a
+    // real failure whose PAYLOAD is the point. The first kind was converted to
+    // honest `ok:true`; this second kind now exits 1 with the envelope intact.
+    //
+    // The exit code is what makes the difference visible: under softFail this
+    // exact case returned 0, so every caller checking `$?` — every shell
+    // script, every CI step — read a failed summary query as a success.
     const { deps } = recordingDeps({
       getPersonaOutcomesSummary: async () => ({ ok: false, error: 'store exploded' }),
     });
     const r = await dispatch(argv('persona-outcomes', 'summary', '--repo', 'o/r'), { deps, cloudGate: 'ready' });
-    assert.equal(r.exitCode, 0, 'softFail: summary forwards the store result verbatim (frozen legacy quirk)');
+    assert.equal(r.exitCode, 1, 'a declaration must not be able to buy exit 0 for a real failure');
     assert.equal(r.envelope.ok, false);
+    assert.equal(r.envelope.error, 'store exploded',
+      'the payload survives — that is the whole reason this is a declaration and not a throw');
+  });
+
+  it('the declaration is VERB-SCOPED — it exempts summary only, not the whole command', async () => {
+    // The negative control for the case above, and it has to be this rather
+    // than "drive an undeclared command until it returns ok:false": no command
+    // CAN do that any more. Every handler either builds an ok:true envelope or
+    // throws CommandError, which is the validator having done its job — so the
+    // violation branch is unreachable through the public surface, and a test
+    // that pretended otherwise would be asserting a fiction.
+    //
+    // What IS checkable is that the exemption stayed narrow. A command-wide
+    // declaration on persona-outcomes would silently cover `label`,
+    // `backfill-hash` and `--worksheet` too, and those must stay armed.
+    const { REGISTRY } = await import('../scripts/lib/cross-skill/registry.mjs');
+    const entry = REGISTRY.find((e) => e.name === 'persona-outcomes');
+    assert.deepEqual(entry.reportsFailure, { verbs: ['summary'] },
+      'only `summary` forwards a store result verbatim; the other verbs throw and must stay validated');
+    assert.notEqual(entry.reportsFailure?.all, true);
+  });
+
+  it('NO command declares softFail any more — the exemption that bought exit 0 is gone', async () => {
+    // §2b F4's invariant is absolute rather than baselined: there is no
+    // declaration left that yields `ok:false` at exit 0. `reportsFailure`
+    // replaced it and always exits 1.
+    const { REGISTRY } = await import('../scripts/lib/cross-skill/registry.mjs');
+    assert.deepEqual(REGISTRY.filter((e) => e.softFail).map((e) => e.name), []);
   });
 
   it('CommandError is exported and typed', () => {

@@ -117,7 +117,7 @@ export const REGISTRY = Object.freeze([
     // verb-scoped form keeps the validator armed everywhere the quirk is not.
     // Not hermetically capturable (it needs a store error), so the proof is
     // the legacy source (`cmdPersonaOutcomes` → `return emit(res)`).
-    softFail: { verbs: ['summary'] },
+    reportsFailure: { verbs: ['summary'] },
     load: () => import('./commands/persona.mjs').then((m) => m.personaOutcomesCmd),
   },
 
@@ -208,7 +208,10 @@ export const REGISTRY = Object.freeze([
     name: 'add-persona',
     flags: [], positionals: 'none', payload: 'json',
     scope: 'none', kind: 'write', cloud: 'degrade-noop',
-    degradeShape: { personaId: null, existed: false }, softFail: { all: true, reason: 'legacy `ok: !!personaId` — same swallowed-null shape. Owned by Cluster F.' },
+    // softFail RETIRED: upsertPersona returns {ok, reason} now, so `ok: !!personaId`
+    // is unwritable — there is no null left to infer from, and the handler throws.
+    // This was the LAST `ok:false at exit 0` declaration in the registry.
+    degradeShape: { personaId: null, existed: false },
     load: () => import('./commands/persona.mjs').then((m) => m.addPersonaCmd),
   },
   {
@@ -222,7 +225,7 @@ export const REGISTRY = Object.freeze([
     // discards `correlationSummary`, the field that names why the correlation
     // pass did nothing (`reason: 'session-write-failed'`). Trading the diagnosis
     // for the signal is not an improvement, so the failure rides the envelope.
-    softFail: { all: true, reason: 'DESIGNED (§2b F2): the store reports {ok,reason} and the handler spreads it; a throw would discard correlationSummary, which is the payload that explains the failure.' },
+    reportsFailure: { all: true, reason: 'the store reports {ok,reason} and the handler spreads it; a throw would discard correlationSummary, the payload that explains WHY. reportsFailure keeps the payload AND exits 1 — softFail bought exit 0, which told every caller checking $? that a failed session write had succeeded.' },
     load: () => import('./commands/persona.mjs').then((m) => m.recordPersonaSessionCmd),
   },
   {
@@ -320,7 +323,11 @@ export const REGISTRY = Object.freeze([
   {
     name: 'plan-satisfaction',
     flags: ['plan-id'], positionals: 'none', payload: 'none',
-    scope: 'none', kind: 'read', cloud: 'degrade-noop',
+    // scope became 'ambient-ok' with the read-path tenancy close-out: the
+    // resolved repo is the tenant predicate on two views that carry no repo of
+    // their own. scope:'none' could never produce one, leaving the predicate
+    // permanently relaxed — the same reasoning as the parent-scoped writers.
+    scope: 'ambient-ok', kind: 'read', cloud: 'degrade-noop',
     degradeShape: { row: null, persistentFailures: [] },
     load: () => import('./commands/plans.mjs').then((m) => m.planSatisfactionCmd),
   },
@@ -345,7 +352,10 @@ export const REGISTRY = Object.freeze([
     degradeShape: { firstSeen: {} },
     // Legacy emits {ok:false, cloud:true, firstSeen:{}, error} when the history
     // read fails — a reader reporting its own unmeasurability, at exit 0.
-    softFail: { all: true, reason: 'legacy history-read failure emits ok:false with firstSeen:{} at exit 0 — a reader saying "unmeasured". Cluster F §2b F4 decides whether an unmeasured READ should exit non-zero or become {ok:true, measured:false}; the latter is likely correct and is NOT the same question as a failed write.' },
+    // softFail RETIRED: an unmeasured READ is not a failed one. A history-read
+    // failure is now {ok:true, measured:false, reason} — the shape ship.mjs's
+    // nudge readers already use, which separates 'could not measure' from 'the
+    // history is genuinely empty'. Both used to be an empty object.
     load: () => import('./commands/misc.mjs').then((m) => m.getNavFirstSeenCmd),
   },
   {
@@ -467,7 +477,7 @@ export const REGISTRY = Object.freeze([
     scope: 'none', kind: 'read', cloud: 'none',
     // The store's result travels verbatim (legacy `emit(res)`), error shape
     // included — the same forwarded-result quirk as persona-outcomes summary.
-    softFail: { all: true, reason: 'legacy forwards getFinalReviewStats’s result VERBATIM, so its {ok:false, error} shape reaches the envelope at exit 0. Cluster F §2b decides whether a forwarded store error should exit non-zero; it is the same question as the other forwarded-result commands, not a per-command judgement.' },
+    reportsFailure: { all: true, reason: 'forwards the getFinalReviewStats result verbatim; a store error carries its own diagnosis, and a throw would discard it. Exit 1 with the payload intact.' },
     load: () => import('./commands/final-review.mjs').then((m) => m.finalReviewStatsCmd),
   },
   {
@@ -537,7 +547,7 @@ export const REGISTRY = Object.freeze([
     name: 'get-friction-neighbourhood',
     flags: ['prompt', 'k'], positionals: 'none', payload: 'json',
     scope: 'none', kind: 'read', cloud: 'degrade-noop', degradeShape: {},
-    softFail: { all: true, reason: 'forwards frictionNeighbourhood’s result verbatim, whose cloud-off/error shape can be ok:false at exit 0 — the same forwarded-result question as final-review-stats, owned by Cluster F §2b.' },
+    reportsFailure: { all: true, reason: 'forwards the frictionNeighbourhood result verbatim; a store error carries its own reason. Exit 1, payload preserved.' },
     load: () => import('./commands/misc.mjs').then((m) => m.getFrictionNeighbourhoodCmd),
   },
   {
@@ -687,7 +697,9 @@ export const REGISTRY = Object.freeze([
     name: 'arm-eval-maybe-capture',
     flags: ['experiment', 'task', 'repo-id'], positionals: 'none', payload: 'none',
     scope: 'ambient-ok', kind: 'write', cloud: 'none',
-    softFail: { all: true, reason: 'returns ok:(r.state===\'ran\') — a session the runner declined (budget, toggle race) is a legitimate non-run, not an error, and the `captured` field carries the fact. Plan §2b F2 decides whether declined-vs-failed needs separating.' },
+    // softFail RETIRED: a DECLINED capture is not a failure. The handler
+    // reports ok:true with `captured:false` and the state/reason that says which
+    // decline it was — the same reasoning F3 applied to cloud-off.
     load: () => import('./commands/model-eval.mjs').then((m) => m.armEvalMaybeCaptureCmd),
   },
   {
@@ -699,7 +711,8 @@ export const REGISTRY = Object.freeze([
     // open, only an explicit CLI call spends). Consequence: its degrade path is
     // deliberately NOT golden-covered, because capturing it means paying.
     scope: 'ambient-ok', kind: 'write', cloud: 'none',
-    softFail: { all: true, reason: 'returns ok:(r.state===\'ran\'); a declined run is a legitimate non-run. Plan §2b F2.' },
+    // softFail RETIRED: a declined run is a legitimate non-run, reported as
+    // ok:true with `ran:false` and the state.
     load: () => import('./commands/model-eval.mjs').then((m) => m.armEvalRunCmd),
   },
 
@@ -726,7 +739,7 @@ export const REGISTRY = Object.freeze([
     // fixture-pinned by lock-with-test-missing. These are REFUSALS, which the
     // §2b F4 invariant says should exit non-zero; folded into that decision
     // rather than changed piecemeal here.
-    softFail: { all: true, reason: 'every refusal path returns {ok:false, error:"refusing: …"} at exit 0 — fixture-pinned (lock-with-test-missing). A refusal is exactly what F4 says must exit non-zero; changing it is a consumer-visible break that belongs with the other four.' },
+    reportsFailure: { all: true, reason: 'every refusal path returns {ok:false, error:"refusing: ..."} naming what the operator must do next; a throw would discard that. A refusal IS a failure, so it exits 1 now with the payload preserved.' },
     load: () => import('./commands/ship.mjs').then((m) => m.lockWithTestCmd),
   },
   {

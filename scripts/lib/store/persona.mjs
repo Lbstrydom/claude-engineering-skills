@@ -227,10 +227,16 @@ export async function upsertPersona(persona) {
       repo_name: persona.repoName || null,
     }], { onConflict: ['name', 'app_url'], update: 'all', returning: ['id'] });
 
-    return { personaId: rows[0]?.id || null, existed };
+    const personaId = rows[0]?.id || null;
+    if (!personaId) {
+      const message = 'upsert returned no row — the write did not verify';
+      process.stderr.write(`  [persona] upsertPersona: ${message}\n`);
+      return { ok: false, cloud: true, reason: 'write-failed', message, personaId: null, existed };
+    }
+    return { ok: true, cloud: true, personaId, existed };
   } catch (err) {
     process.stderr.write(`  [persona] upsertPersona failed: ${err.message}\n`);
-    return { personaId: null, existed: false };
+    return { ok: false, cloud: true, reason: 'write-failed', message: err.message, personaId: null, existed: false };
   }
 }
 

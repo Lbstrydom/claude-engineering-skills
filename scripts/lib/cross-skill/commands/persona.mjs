@@ -128,9 +128,11 @@ export async function personaOutcomesCmd(ctx) {
     if (!repoName) throw new CommandError('BAD_INPUT', '--repo <name> is required (or set PERSONA_TEST_REPO_NAME)');
     const scope = await ctx.resolveScope({ explicitRepoName: repoName });
     const repoId = scope.repoId;
-    // The store's result travels VERBATIM (legacy `emit(res)`) — including
-    // its `{ok:false}` error shape at exit 0, which is why this command is
-    // the registry's one declared softFail.
+    // The store's result travels VERBATIM, INCLUDING its `{ok:false}` error
+    // shape — which is a real store failure carrying its own diagnosis, so
+    // `reportsFailure` keeps the payload and exits 1. Under the old softFail
+    // it exited 0, telling every caller that checks $? that a failed summary
+    // query had succeeded.
     return ctx.deps.getPersonaOutcomesSummary({ repoName, repoId });
   }
 
@@ -198,10 +200,17 @@ export async function addPersonaCmd(ctx) {
   if (!await ctx.deps.isPersonaCloudEnabled()) {
     return { ...ctx.degrade(), personaId: null, existed: false };
   }
-  const { personaId, existed } = await ctx.deps.upsertPersona(parsed.data);
-  // Legacy `ok: !!personaId` — declared softFail (the store returns null on a
-  // swallowed failure); tightening it changes an envelope /persona-test reads.
-  return { ok: !!personaId, cloud: true, personaId, existed };
+  const res = await ctx.deps.upsertPersona(parsed.data);
+  // `ok: !!personaId` is unwritable now — upsertPersona reports its own
+  // outcome, so there is no null left to infer from. A refused input is exit
+  // 2, a failed write exit 1; cloud-off never reaches here (the degrade branch
+  // above returns first).
+  if (!res.ok) {
+    const failed = res.reason === 'write-failed';
+    throw new CommandError(failed ? 'WRITE_FAILED' : 'BAD_INPUT',
+      `upsertPersona: ${res.message}`, { reason: res.reason }, failed ? 1 : 2);
+  }
+  return { ok: true, cloud: true, personaId: res.personaId, existed: res.existed };
 }
 
 /**

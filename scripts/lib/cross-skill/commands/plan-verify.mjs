@@ -23,7 +23,17 @@ import { validateCountFields } from '../../command-input.mjs';
 export async function recordPlanVerifyRunCmd(ctx) {
   const p = ctx.payload();
   if (!p.planId) throw new CommandError('BAD_INPUT', 'planId is required');
-  const counts = validateCountFields(p);
+  // The FIELD NAMES must match the payload. `validateCountFields(p)` with its
+  // defaults checks passedCriteria/failedCriteria/skippedCriteria, and this
+  // command's payload carries passedCount/failedCount/skippedCount — so every
+  // optional field was `undefined`, skipped, and the validator returned ok for
+  // `passedCount: -5`. Accepted, validated, and inert: a guard satisfied by its
+  // own presence, which is why four audit rounds reported these counts as
+  // unvalidated while a validator sat right here. Confirmed by executing it.
+  const counts = validateCountFields(p, {
+    required: ['totalCriteria'],
+    optional: ['passedCount', 'failedCount', 'skippedCount'],
+  });
   if (!counts.ok) throw new CommandError('BAD_INPUT', counts.reason);
   if (!ctx.cloud.enabled) return { ...ctx.degrade(), runId: null };
   // D7 / Phase 8: thread the RESOLVED repo into the writer's parent join.

@@ -17,7 +17,7 @@
 
 import { isCloudEnabled } from './repo.mjs';
 import { many, one, upsert, deleteWhere, withTx } from '../db/query.mjs';
-import { assertParentOwnership } from './ownership.mjs';
+import { assertParentOwnership, ownedReadPredicate } from './ownership.mjs';
 import { PERSONA_FINDING_HASH_VERSION, PERSONA_FINDING_HASH_SHAPE } from '../persona/audit-correlator.mjs';
 
 // ── persona_audit_correlations ─────────────────────────────────────────────
@@ -294,11 +294,22 @@ export async function getExistingCorrelationHashesForSession(personaSessionId) {
   }
 }
 
-/** Read correlations for a specific audit_run. */
-export async function readCorrelationsForRun(auditRunId) {
+/**
+ * Read correlations for a specific audit_run.
+ *
+ * `repoId` is additive and OPTIONAL (read-path tenancy close-out, 2026-08-12).
+ * The rows carry no repo of their own, so an unscoped read hands another
+ * repository's ground truth to a caller that will present it as its own. The
+ * tenant reaches the row through the persona SESSION that owns the correlation.
+ */
+export async function readCorrelationsForRun(auditRunId, { repoId = null } = {}) {
   if (!auditRunId || !await isCloudEnabled()) return [];
   try {
-    return await many(`SELECT * FROM persona_audit_correlations WHERE audit_run_id = $1`, [auditRunId]);
+    return await many(
+      `SELECT * FROM persona_audit_correlations WHERE audit_run_id = $1 AND `
+      + `${ownedReadPredicate({ parentTable: 'persona_test_sessions', idColumnInQuery: 'persona_session_id', idParam: 1, repoParam: 2 })}`,
+      [auditRunId, repoId],
+    );
   } catch (err) {
     process.stderr.write(`  [learning] readCorrelationsForRun failed: ${err.message}\n`);
     return [];

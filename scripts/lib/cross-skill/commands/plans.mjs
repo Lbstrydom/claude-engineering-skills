@@ -258,9 +258,17 @@ export async function planSatisfactionCmd(ctx) {
   if (!ctx.cloud.enabled) return { ...ctx.degrade(), row: null, persistentFailures: [] };
   const planId = ctx.flag('plan-id');
   if (!planId) throw new CommandError('BAD_INPUT', '--plan-id is required');
+  // Read-path tenancy (2026-08-12). `planId` is an opaque uuid the caller
+  // supplies, and these views carry no repo of their own — so an unscoped read
+  // returns another repository's satisfaction rollup and this command reports
+  // it as THIS repo's. That is the 207-vs-0 shape on the read side. `null` for
+  // an unresolvable scope relaxes the tenant match, exactly as on the write
+  // side; the plan must still exist either way.
+  const scope = await ctx.resolveScope();
+  const repoId = scope.kind === 'scoped' ? scope.repoId : null;
   const [row, persistent] = await Promise.all([
-    ctx.deps.readPlanSatisfaction(planId),
-    ctx.deps.readPersistentPlanFailures(planId),
+    ctx.deps.readPlanSatisfaction(planId, { repoId }),
+    ctx.deps.readPersistentPlanFailures(planId, { repoId }),
   ]);
-  return { ok: true, cloud: true, row, persistentFailures: persistent };
+  return { ok: true, cloud: true, scopedTo: repoId, row, persistentFailures: persistent };
 }

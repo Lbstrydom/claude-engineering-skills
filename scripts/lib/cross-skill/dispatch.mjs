@@ -305,12 +305,25 @@ export async function dispatch(argv, overrides = {}) {
         exitCode: 1,
       };
     }
-    // softFail is verb-scoped when declared as {verbs:[…]} — a command-wide
-    // boolean would exempt every verb from the validator when only one carries
-    // the frozen legacy quirk (audit CA-r1).
-    const softFailApplies = cmd.softFail === true
-      || cmd.softFail?.all === true
-      || (Array.isArray(cmd.softFail?.verbs) && cmd.softFail.verbs.includes(bare[0]));
+    // `reportsFailure` REPLACED `softFail` (2026-08-12). The old name conflated
+    // two questions that need opposite answers:
+    //
+    //   1. "this ok:false is not really a failure" — a declined arm-eval run, a
+    //      cloud-off read, an unmeasured history lookup. The honest fix is to
+    //      stop saying ok:false, and every one of those was converted.
+    //   2. "this IS a failure, and the PAYLOAD is the point" — lock-with-test's
+    //      refusals name what to do next; record-persona-session carries the
+    //      `correlationSummary` that explains why. Throwing signals the failure
+    //      and discards the explanation.
+    //
+    // `softFail` answered both with "exit 0", which made (2) indistinguishable
+    // from success to every caller that checks `$?`. `reportsFailure` keeps the
+    // envelope AND exits 1 — so the payload survives and the shell is told the
+    // truth. There is no remaining declaration that yields ok:false at exit 0,
+    // which is what makes §2b F4's invariant absolute rather than baselined.
+    const reportsFailure = cmd.reportsFailure === true
+      || cmd.reportsFailure?.all === true
+      || (Array.isArray(cmd.reportsFailure?.verbs) && cmd.reportsFailure.verbs.includes(bare[0]));
     // An envelope with NO `ok` field at all is a distinct, legitimate shape —
     // `final-review-pending` carries its outcome in `state`
     // (ready|disabled|unavailable) and deliberately exits 0 for all three,
@@ -335,13 +348,18 @@ export async function dispatch(argv, overrides = {}) {
         exitCode: 1,
       };
     }
-    if (envelope.ok !== true && !softFailApplies) {
-      return {
-        envelope: { ok: false, error: { code: 'CONTRACT_VIOLATION',
-          message: `handler for "${name}" RETURNED a non-ok envelope — failure must travel as CommandError, `
-            + 'never as a returned ok:false (that is how five unverified-success bugs were built)' } },
-        exitCode: 1,
-      };
+    if (envelope.ok !== true) {
+      if (!reportsFailure) {
+        return {
+          envelope: { ok: false, error: { code: 'CONTRACT_VIOLATION',
+            message: `handler for "${name}" RETURNED a non-ok envelope — failure must travel as CommandError, `
+              + 'never as a returned ok:false (that is how five unverified-success bugs were built)' } },
+          exitCode: 1,
+        };
+      }
+      // Declared in-band failure: the envelope travels intact, and the exit
+      // code still says "this failed". A declaration cannot buy exit 0.
+      return { envelope, exitCode: 1 };
     }
     return { envelope, exitCode: 0 };
   } catch (err) {
