@@ -122,7 +122,23 @@ export const ShadowPassSchema = z.object({
   summary: z.string().max(1000).default(''),
 });
 
-/** Build the per-pass user prompt from the ALREADY-redacted context (decision 11). */
+/**
+ * Build the per-pass user prompt from the ALREADY-redacted context (decision 11).
+ *
+ * **`planContent` is deliberately NOT redacted here** (audit 2026-08-13 raised
+ * this as an egress bypass; investigating it showed the opposite). The
+ * assembled prompt — plan included — goes through `assertEgressSafe` at the
+ * single call site below, whose own contract is that it does not trust
+ * `redactedContext`'s provenance and aborts BEFORE any provider call. So the
+ * plan is covered, by a gate rather than by a scrubber.
+ *
+ * That distinction is the point, and it is why the "fix" was reverted:
+ * redacting the plan here would let a run whose plan contains a secret PROCEED
+ * quietly, converting a loud, correct refusal into a silent pass and denying
+ * the operator the one signal that their plan document holds a credential.
+ * Locked by `tests/audit-shadow.test.mjs` — "egress: a secret in the plan
+ * ABORTS the run".
+ */
 function buildPassUserPrompt(passName, planContent, redactedContext) {
   return [
     `## Task\nAudit the code below for the "${passName}" concern. Return findings per the schema.`,

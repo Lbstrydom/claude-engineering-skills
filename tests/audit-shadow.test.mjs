@@ -306,3 +306,72 @@ describe('runGenerationShadow — bucketing vs baseline', () => {
     assert.ok(allPersisted.some((f) => f._bucket === 'shadow-only'), 'novel findings are shadow-only');
   });
 });
+
+describe('egress: a secret in the PLAN aborts the run', () => {
+  // Audit 2026-08-13 raised this as "sensitive data egress bypass: the stated
+  // redaction boundary protects only redactedContext, but the prompt builders
+  // also interpolate planContent directly". Investigating it showed the
+  // OPPOSITE, and the intended fix was reverted as a latent regression:
+  //
+  //   assertEgressSafe() scans the ASSEMBLED prompt (plan included) at the single
+  //   call site in runStage, and its own contract is that it does not trust
+  //   redactedContext's provenance. The plan is covered — by a GATE, not a
+  //   scrubber. Redacting the plan first would have converted this loud, correct
+  //   refusal into a silent pass, hiding from the operator that their plan
+  //   document contains a credential.
+  //
+  // These lock the behaviour that already existed, so the "fix" cannot be
+  // re-applied by a future reader of that finding.
+  const SECRET_PLAN = '# Plan\nUse postgresql://u:sup3rs3cr3t@db.example.com:5432/prod for the store.';
+
+  function capturingHarness() {
+    const prompts = [];
+    const deps = {
+      modelAbSchemaReady: async () => ({ ready: true, cloud: true, missing: [] }),
+      ensureArmSet: async () => {},
+      updateRunMeta: async () => {},
+      releaseOrphanedReservations: async () => 0,
+      reserveSpend: async () => ({ ok: true, ledgerId: 1, spentEur: 0 }),
+      reconcileSpend: async () => {},
+      releaseSpend: async () => {},
+      recordFindings: async () => {},
+      recordPassStats: async () => {},
+      // The mock ECHOES the prompt rather than returning a canned-correct value:
+      // a mock that repairs its input hides exactly this class of prompt bug.
+      callModel: async ({ userPrompt }) => {
+        prompts.push(userPrompt);
+        return {
+          result: { findings: [] }, conformant: true, failed: false,
+          usage: { input_tokens: 1, output_tokens: 1, latency_ms: 1, usageMissing: false },
+        };
+      },
+      callGemini: async () => ({ findings: [], passStats: [] }),
+    };
+    return { deps, prompts };
+  }
+
+  it('the run ABORTS and the provider is never called', async () => {
+    const { deps, prompts } = capturingHarness();
+    await assert.rejects(
+      () => runGenerationShadow({ ...BASE, arms: ARMS_B, deps, planContent: SECRET_PLAN }),
+      // Keyed on the gate's identity, not its prose — a stale substring here
+      // would read as "never rejected" even while the gate worked.
+      (err) => /egress-gate/.test(err.message) && /dsn-password/.test(err.message),
+      'a plan carrying a DSN must abort the shadow, not be quietly scrubbed',
+    );
+    assert.equal(prompts.length, 0, 'the egress gate must abort BEFORE any provider call');
+  });
+
+  it('NEGATIVE CONTROL: a clean plan DOES reach the provider prompt', async () => {
+    // Without this, a gate stuck permanently closed passes the test above while
+    // silently disabling every shadow run.
+    const { deps, prompts } = capturingHarness();
+    await runGenerationShadow({
+      ...BASE, arms: ARMS_B, deps,
+      planContent: '# Plan\nExtract the arm vocabulary into shared-lib.',
+    });
+    assert.ok(prompts.length > 0, 'no provider call was made for a clean plan — the gate is stuck closed');
+    assert.ok(prompts.some((p) => p.includes('Extract the arm vocabulary into shared-lib')),
+      'the plan body must reach the prompt — it is the audit subject');
+  });
+});
