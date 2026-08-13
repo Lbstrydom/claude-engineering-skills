@@ -1807,6 +1807,9 @@
         "writers": [
           "audit.findings",
           "audit.runComplete",
+          "audit.convergenceState",
+          "audit.diffComplexity",
+          "learning.outcome",
           "audit.passStats",
           "audit.suppressionEvents",
           "learning.banditArms",

@@ -95,7 +95,7 @@ import { executeTools, normalizeToolResults, formatLintSummary } from '../linter
 import {
   selectEventSource, loadDebtLedger, appendEvents, reconcileLocalToCloud, mergeLedgers as mergeLedgersForSuppression
 } from '../debt-memory.mjs';
-import { initLearningStore, isCloudEnabled, resolveRepoForStore, upsertPlan, recordRunStart, recordRunComplete, recordFindings, recordPassStats, recordSuppressionEvents, syncBanditArms, syncFalsePositivePatterns, loadFalsePositivePatterns, recordDiffComplexity, backfillLearningOutcome, insertLearningDecision, markFindingsRemediation, reconcileRemediationProjection } from '../../learning-store.mjs';
+import { initLearningStore, isCloudEnabled, resolveRepoForStore, upsertPlan, recordRunStart, recordRunComplete, recordFindings, recordPassStats, recordSuppressionEvents, syncBanditArms, syncFalsePositivePatterns, loadFalsePositivePatterns, backfillLearningOutcome, insertLearningDecision, markFindingsRemediation, reconcileRemediationProjection } from '../../learning-store.mjs';
 // Durable audit-store writes (docs/plans/audit-store-write-durability.md).
 // `audit-store-writers.mjs` is imported for its REGISTRATIONS — importing it is
 // the registry's bootstrap, and `durableWrite` throws for an unregistered id, so
@@ -1121,29 +1121,38 @@ async function classifyShadowFailureSafe(err, importShadowModule = () => import(
  *
  * **NOT exhaustive over every persistence-capable call in this file** — a
  * later audit (H1-H4, 2026-07-24) correctly found OTHER cloud-write/telemetry
- * sites this wrapper does not cover: `recordDiffComplexity(...)`,
- * `backfillLearningOutcome(...)`, debt-memory writes, ledger writes, and
+ * sites this wrapper does not cover: debt-memory writes, ledger writes, and
  * session writes. See docs/plans/audit-backlog-triage-hardening.md item 1's
  * "Explicitly NOT in scope" framing (item 5's God-orchestrator decomposition
  * covers the eventual real fix). Full lint-level enforcement of even the 5
  * sites this wrapper DOES cover (forbidding a raw store call outside it) is
  * also out of scope here.
  *
- * **CORRECTED 2026-08-13 — this paragraph used to end "several of which also
- * silently discard failures (`.catch(() => {})`)", and that is no longer
- * true.** Every one of those sites now checks its result and logs; the file
- * contains zero `.catch(() => {})` swallows. The claim outlived its fix by
- * long enough that `docs/plans/god-module-and-layering-debt.md` cited THIS
- * DOCSTRING as the authority for a whole cluster of work, and the cluster had
- * to be re-cut on contact with the code. A stale docstring is not a cosmetic
- * defect — it is a false premise other plans build on, which is the same
- * class as the stale line-pins the plan's own §11 warns about.
+ * **THIS PARAGRAPH HAS NOW BEEN WRONG TWICE — 2026-08-13.** It first claimed
+ * those sites "silently discard failures (`.catch(() => {})`)" long after they
+ * had been fixed to check and log; the file contains zero such swallows. Then,
+ * corrected, it still listed `recordDiffComplexity` and
+ * `backfillLearningOutcome` as uncovered — and within the hour both were routed
+ * through `durableWrite`, along with `recordConvergenceState`.
  *
- * What remains true, and is the reason these sites still matter: a logged
- * failure is not a REPRESENTED one. None of them reaches `writeOutcomes`, so
- * the run still reports complete. `reconcileRemediationProjection` and
- * `markFindingsRemediation` now return enough for their caller to say so;
- * the telemetry writes deliberately do not (see the plan's Cluster 2 note).
+ * That is the reason it is worth writing down rather than just editing: the
+ * FIRST stale version was cited by
+ * `docs/plans/god-module-and-layering-debt.md` as the authority for a whole
+ * cluster of work, and that cluster had to be re-cut on contact with the code.
+ * A docstring enumerating call sites decays every time somebody moves one, and
+ * a decayed one is not a cosmetic defect — it is a false premise other plans
+ * build on. **Prefer `grep durableWrite(` / `grep writeLearningState(` over
+ * trusting this list.**
+ *
+ * The distinction the list existed to draw is still the right one, and now has
+ * a mechanical answer instead of prose: a logged failure is not a REPRESENTED
+ * one. A write reaches `writeOutcomes` only through `durableWrite`, and
+ * `tests/audit-store-durability-call-site.test.mjs` checks BOTH directions —
+ * store exports registered-or-exempted, and orchestrator imports likewise.
+ * `reconcileRemediationProjection` and `markFindingsRemediation` stay outside
+ * the seam deliberately (the on-disk ledger is their durable copy) and instead
+ * return enough for their caller to report a failure or a shortfall.
+ *
  * @param {boolean} allowed
  * @param {() => any} fn
  */
@@ -1713,9 +1722,16 @@ export async function runLegacyProductionAudit(ctx) {
         // telemetry). The function returns { ok, error? } — never throws —
         // so `.catch()` was dead code masking nothing; check the result and
         // log a failure instead of silently discarding it.
+        // Permission WRAPS durability — the composition already used at the
+        // bandit/fp-pattern sites. `writeLearningState` answers "may this run
+        // persist?" and reports nothing; `durableWrite` answers "did it land?".
+        // Logging the failure (what this did before) is not the same as
+        // REPRESENTING it: a logged failure leaves `writeOutcomes` untouched and
+        // the run still reports complete.
         await writeLearningState(learningWritesAllowed, async () => {
-          const r = await recordDiffComplexity(cloudRunId, diffComplexity);
-          if (!r?.ok) process.stderr.write(`  [learning] recordDiffComplexity failed: ${r?.error ?? 'unknown'}\n`);
+          tallyWriteOutcomes(writeOutcomes, [await durableWrite('audit.diffComplexity', {
+            runId: cloudRunId, complexity: diffComplexity, run_id: cloudRunId,
+          })]);
         });
 
         // Record pass_selection decision (telemetry-only in v1; choice always
@@ -3838,7 +3854,6 @@ export async function runLegacyProductionAudit(ctx) {
     //     `round_converged_after` stays NULL when the round did not converge —
     //     that is the honest value, and it is what makes `passed` refuse.
     try {
-      const { recordConvergenceState } = await import('../store/learning-decisions.mjs');
       // bf45c2f7: reuse the SAME effSeverity/countFor-derived counts the
       // verdict above used, rather than recomputing from raw allFindings/
       // f.severity — the two previously could disagree whenever a finding
@@ -3889,11 +3904,20 @@ export async function runLegacyProductionAudit(ctx) {
       // binding it here is what lets the store contradict a forged local marker.
       // `round_converged_after` stays NULL on a non-converged round — the honest
       // value, and the one that makes `passed` refuse.
-      await recordConvergenceState(cloudRunId, {
-        audited_sha: ctx.auditedSha ?? null,
-        audited_tree: ctx.auditedTree ?? null,
-        ...(convergedNow ? { round_converged_after: round || 1 } : {}),
-      });
+      // Through the seam (audit 2026-08-13). This is the write that makes a
+      // FORGED `.audit/last-audit-run.json` detectable, so its failure being
+      // logged-but-uncounted meant the cross-check could go missing for a run
+      // with nothing recording that it had. Same table, same key and the same
+      // idempotent UPDATE as `audit.runComplete`, which was already durable.
+      tallyWriteOutcomes(writeOutcomes, [await durableWrite('audit.convergenceState', {
+        runId: cloudRunId,
+        run_id: cloudRunId,
+        state: {
+          audited_sha: ctx.auditedSha ?? null,
+          audited_tree: ctx.auditedTree ?? null,
+          ...(convergedNow ? { round_converged_after: round || 1 } : {}),
+        },
+      })]);
     } catch (e) {
       process.stderr.write(`  [gate-evidence] convergence record failed: ${e.message}\n`);
     }
@@ -4003,9 +4027,15 @@ export async function runLegacyProductionAudit(ctx) {
       // backfillLearningOutcome returns { ok, error? } — never throws — so
       // `.catch()` was dead code; check the result and log a failure
       // instead of silently discarding it.
+      // Through the seam. Losing an outcome LABEL silently is not hypothetical
+      // here — audit effectiveness went unmeasurable for a stretch precisely
+      // because labels stopped arriving and nothing counted their absence.
+      // Idempotent UPDATE keyed on `decision_key`, so a replay re-applies the
+      // same label rather than appending a second one.
       await writeLearningState(learningWritesAllowed, async () => {
-        const r = await backfillLearningOutcome({
+        tallyWriteOutcomes(writeOutcomes, [await durableWrite('learning.outcome', {
           decisionKey,
+          decision_key: decisionKey,
           outcome: {
             totalFindings: allFindings.length,
             highKept: allFindings.filter(f => f.severity === 'HIGH' && f.adjudicationOutcome !== 'dismissed').length,
@@ -4013,8 +4043,7 @@ export async function runLegacyProductionAudit(ctx) {
             dismissed: allFindings.filter(f => f.adjudicationOutcome === 'dismissed').length,
             durationMs: totalLatency,
           },
-        });
-        if (!r?.ok) process.stderr.write(`  [learning] backfillLearningOutcome failed: ${r?.error ?? 'unknown'}\n`);
+        })]);
       });
       const flushSummary = await _learningFlush({
         store: { insertLearningDecision, backfillLearningOutcome, isCloudEnabled },

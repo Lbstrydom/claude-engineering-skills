@@ -35,6 +35,9 @@ import {
   recordFindings, recordPassStats, recordSuppressionEvents, recordRunComplete,
 } from './store/runs-findings.mjs';
 import { syncBanditArms, syncFalsePositivePatterns } from './store/bandit-fp.mjs';
+import {
+  recordConvergenceState, recordDiffComplexity, backfillLearningOutcome,
+} from './store/learning-decisions.mjs';
 
 /**
  * Turn a store receipt into a `durableWrite` result.
@@ -135,6 +138,52 @@ export function registerAuditStoreWriters() {
     schemaVersion: 1,
     rowKey: (row) => `${row.run_id}`,
     replay: (payload) => receipt(recordRunComplete(payload.runId, payload.stats)),
+  });
+
+  // ── audit.convergenceState ────────────────────────────────────────────────
+  // NOT telemetry, despite sitting beside some. This write carries
+  // `audited_sha` / `audited_tree`, and `recordConvergenceState`'s own docstring
+  // says why they exist: the local `.audit/last-audit-run.json` marker "is a
+  // file anyone could hand-author", so the store's pipeline-written copy "is
+  // what makes a forged marker detectable". Losing it silently does not break
+  // `AI-Gate: passed` (the commit trailer is the self-verifying record), but it
+  // removes the cross-check that could CONVICT a forged one — and removes it
+  // without saying so.
+  //
+  // Keyed and spill-eligible for the same reason `audit.runComplete` above is:
+  // an idempotent `UPDATE audit_runs … WHERE id = $runId` against a primary key.
+  // These two are structurally the same write; treating one as durable and the
+  // other as fire-and-forget was an accident of which plan traced which.
+  registerWriter('audit.convergenceState', {
+    schemaVersion: 1,
+    rowKey: (row) => `${row.run_id}`,
+    replay: (payload) => receipt(recordConvergenceState(payload.runId, payload.state)),
+  });
+
+  // ── audit.diffComplexity ──────────────────────────────────────────────────
+  // Genuine telemetry — but the SAME table, the SAME key and the same
+  // idempotent UPDATE as the two writers above, so `lost`-only would be a
+  // distinction without a difference. The real `lost`-only case is
+  // `audit.passStats` below: an append-only INSERT with no unique constraint,
+  // where a replay double-counts. Idempotency is the test, not importance.
+  registerWriter('audit.diffComplexity', {
+    schemaVersion: 1,
+    rowKey: (row) => `${row.run_id}`,
+    replay: (payload) => receipt(recordDiffComplexity(payload.runId, payload.complexity)),
+  });
+
+  // ── learning.outcome ──────────────────────────────────────────────────────
+  // The outcome LABEL for a learning decision. Losing these silently is not
+  // hypothetical here: audit effectiveness was unmeasurable for a stretch
+  // precisely because outcome labels stopped arriving and nothing counted the
+  // absence. Idempotent UPDATE keyed on `decision_key`, so a replay re-applies
+  // the same label rather than appending a second one.
+  registerWriter('learning.outcome', {
+    schemaVersion: 1,
+    rowKey: (row) => `${row.decision_key}`,
+    replay: (payload) => receipt(backfillLearningOutcome({
+      decisionKey: payload.decisionKey, outcome: payload.outcome,
+    })),
   });
 
   // ── audit.passStats ───────────────────────────────────────────────────────

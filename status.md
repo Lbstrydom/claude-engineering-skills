@@ -1,5 +1,53 @@
 # Project Status Log
 
+## 2026-08-13 — Cluster 2 finished: the three "telemetry" writes were not telemetry
+
+The previous entry deferred three writes as telemetry not worth registering —
+"registry churn for no recoverable state". Asked to re-examine, that reasoning
+was wrong on the facts, and all three are now durable.
+
+**All three are idempotent UPDATEs on a natural key.** `recordConvergenceState`
+and `recordDiffComplexity` are both `UPDATE audit_runs … WHERE id = $runId` —
+the *same table and the same key* as `audit.runComplete`, which was already
+registered with `rowKey: run_id`. `backfillLearningOutcome` is keyed on
+`decision_key`. The genuine `lost`-only case is `audit.passStats`: an
+append-only INSERT with no unique constraint, where a replay double-counts.
+**Idempotency is the test, not importance** — and by that test all three
+qualified while my deferral said none did.
+
+**And `recordConvergenceState` is not telemetry at all.** It writes
+`audited_sha` / `audited_tree`, and its own docstring says why: the local
+`.audit/last-audit-run.json` marker "is a file anyone could hand-author", so the
+store's pipeline-written copy "is what makes a forged marker detectable". Its
+failure being logged-but-uncounted meant that cross-check could be missing for a
+run with nothing recording the absence. It does not gate `AI-Gate: passed` (the
+`AI-Audited-Tree` commit trailer is the self-verifying record) — it is the thing
+that could *convict* a forged one.
+
+Registry 6 → 9 writers; `durableWrite` call sites 6 → 9. Two now-dead imports
+removed, one of them the dynamic import my own Phase 5 guard was written to
+notice — the guard still passes because other dynamic imports remain, which is
+exactly the check being honest rather than lucky.
+
+**Two existing tests caught the change, and both were right to.** A wiring pin
+asserted the literal `recordConvergenceState(cloudRunId` call; its intent ("the
+convergence verdict must be recorded") still holds, so the pin now follows the
+seam — and is stronger, because `durableWrite` throws on an unregistered id, so
+it proves registration where the old one only proved a name appeared in a file.
+The `write-spill-status` golden envelope pins the registered-writer list, which
+legitimately grew; re-captured in runtime order.
+
+**The docstring that started this has now been wrong twice**, and says so. It
+first claimed swallows that had already been fixed; corrected, it still listed
+two sites as uncovered — and within the hour both were routed. It now points at
+`grep durableWrite(` instead of enumerating call sites, because a list of call
+sites decays every time somebody moves one.
+
+**Consumer-side verification**: `unverified` — no second checkout on this machine.
+Producer side: `npm test` 11,913 pass / 1 fail, that one being another session's
+uncommitted `skills.manifest.json` desync, untouched here and absent from the
+clean pre-push worktree.
+
 ## 2026-08-13 — Cluster 2, re-cut on contact with the code
 
 Cluster 2 was planned as "delete the failure swallows in five un-seamed writes

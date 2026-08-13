@@ -212,7 +212,18 @@ describe('WIRING PIN: the audit pipeline actually calls the writer', () => {
     const path = await import('node:path');
     const src = fs.readFileSync(path.join(import.meta.dirname, '../scripts/lib/audit/legacy-production-audit.mjs'), 'utf-8');
     assert.match(src, /writeGateEvidence\(\{/, 'the marker writer must be invoked by the audit');
-    assert.match(src, /recordConvergenceState\(cloudRunId/, 'the convergence verdict must be recorded');
+    // The convergence verdict is now recorded THROUGH the durable-write seam
+    // (2026-08-13) rather than by a direct `recordConvergenceState(cloudRunId…)`
+    // call. The pin follows the wiring, and gets stronger for it: `durableWrite`
+    // THROWS on an unregistered id, so this also proves the writer is registered
+    // — where the old assertion only proved a function name appeared in the file.
+    assert.match(src, /durableWrite\('audit\.convergenceState'/,
+      'the convergence verdict must be recorded — through the seam, so its failure reaches writeOutcomes');
+    const writers = fs.readFileSync(path.join(import.meta.dirname, '../scripts/lib/audit-store-writers.mjs'), 'utf-8');
+    assert.match(writers, /registerWriter\('audit\.convergenceState'/,
+      'audit.convergenceState must be registered, or every one of those writes throws at runtime');
+    assert.match(writers, /recordConvergenceState\(/,
+      'the registration must actually replay through recordConvergenceState — the class this pin exists for is a correct module nobody calls');
   });
 });
 
