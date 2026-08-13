@@ -73,6 +73,18 @@
   ],
   "ignoredCandidates": [
     {
+      "line": "gitignored, so `git worktree add` never populates it — while `.claude/` (this",
+      "reason": "Phase 0a. States what GIT does with an ignored path when creating a linked worktree (it does not populate it) against what the consumer sync layout puts where — `scripts/.claude-skills/` is gitignored, `.claude/` is tracked. A statement of fact about two external behaviours that together produce the MODULE_NOT_FOUND this step exists to pre-empt, not a gate /ship enforces. The preflight it introduces is a pair of `git rev-parse` reads whose result the AGENT acts on; there is no /ship exit code to assert."
+    },
+    {
+      "line": "**Never `cd` to the main checkout to run these.** `ship-commit.mjs` and",
+      "reason": "Phase 0a operator guidance, and deliberately NOT contracted: the failure it warns about is invisible to the guard that looks closest to it. Running from the main checkout makes ship-commit and cross-skill read THAT tree's HEAD, branch and commit_sha — but `--expect-head`/`--expect-branch` are captured in the same wrong place, so guard-b-identity-is-a-precondition verifies the wrong tree against itself and passes. `context:check` has the same blind spot (it takes its repo root from cwd). Nothing mechanical distinguishes the two checkouts at that point, which is exactly why this is written as a prohibition to the agent rather than claimed as a gate."
+    },
+    {
+      "line": "**Never `npm run sync -- --target-path <worktree>`.** It aborts on unowned",
+      "reason": "Phase 0a operator guidance. Describes SYNC's behaviour, not /ship's: the ownership manifest is gitignored, so a fresh worktree reads as an unowned repo and the sync aborts on collisions — and `--adopt-orphans`, the flag that clears the abort, does so by overwriting tracked files. The prohibition is about which recovery an agent reaches for; /ship emits no exit code for a command it is telling you not to run."
+    },
+    {
       "line": "`post-commit-drift` it exits 1 and prints a recovery command: **do not push.**",
       "reason": "Post-commit verification, and deliberately NOT contracted as executable: it DETECTS drift rather than preventing it, and \"do not push\" is an instruction to the AGENT about what to do with exit 1 — there is no further exit code for a recipe to assert. The exit-1 path is covered by tests/ship-commit-worktree-identity.test.mjs; the prevention half is docs/plans/ship-commit-transaction.md."
     },
