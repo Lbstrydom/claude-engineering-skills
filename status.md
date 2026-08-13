@@ -50,11 +50,21 @@ transport. **Not verified**: a successful call against a real Foundry tenant —
 no tenant on this machine, so that last mile is one run in the consumer's Azure
 repo. The `azure-claude` cost line is a list-price estimate, not a tenant rate.
 
-**Consumer-side verification (Step 6.8): `unverified`** — blocked prerequisite:
-no Azure tenant and no consumer checkout of the reporting repo on this machine.
-`npm run sync:dry` confirms both new modules resolve into
-`scripts/.claude-skills/lib/brainstorm/` for both local consumers, but that is
-producer-side evidence and is not inherited as a pass.
+**Consumer-side verification (Step 6.8), split by row — one `verified`, one
+`unverified`.** At pushed sha `80cc4ab8`:
+
+- **Synced consumer bundle → `verified`.** `node
+  scripts/.claude-skills/lib/sync-isolation-verify.mjs`, run *in*
+  `wine-cellar-app`: 8/8 gates pass, no orphans.
+  `azure-claude-adapter.mjs` (7,944 B) and `provider-availability.mjs`
+  (6,916 B) are present under `scripts/.claude-skills/lib/brainstorm/`,
+  `callAzureClaude` exported, upstream-ownership banner injected (the banner is
+  the 7,548 → 7,944 delta against source). `npm run sync:dry` was the
+  pre-check; this is the verdict.
+- **Azure runtime behaviour → `unverified`.** Blocked prerequisite: no Azure
+  tenant and no checkout of the reporting repo on this machine, so no call has
+  ever reached a real Foundry deployment. The producer-side green is not
+  inherited — this stays open until someone runs it there.
 
 **Shipped as two commits deliberately.** `skills.manifest.json` is one shared
 generated artifact and the freshness gate checks every skill's sha against
