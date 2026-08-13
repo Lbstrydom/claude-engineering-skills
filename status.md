@@ -1,5 +1,71 @@
 # Project Status Log
 
+## 2026-08-13 — unremediated-acceptances backlog: 125 → 96, and the one class write-off
+
+Triaged the top 8 concentration files in `unremediated_acceptances` (60 of the
+125 open rows, per `list-unremediated-acceptances --limit 200`). 29 rows
+closed — 28 `final-review-record-fix` (state `fixed`, each carrying the real
+resolving commit sha) and 1 `final-review-adjudicate --action dismissed`.
+`agedOut` stayed 0 throughout — nothing expired unseen this cycle.
+
+**Verification method, not a re-run of the audit**: for every row, read the
+current file, confirmed (or refuted) the finding against the code as it
+stands today, and only then closed it — never trusted a `planned` state at
+face value (per AGENTS.md's own note that `docs/plans/` statuses are stale).
+Two prior systemic fixes accounted for most of the yield:
+
+- **`durable-write.mjs`** (landed 2026-08-12, commit `1019d519` + siblings)
+  closed 7 fire-and-forget/durability findings in
+  [legacy-production-audit.mjs](scripts/lib/audit/legacy-production-audit.mjs) —
+  `recordFindings`/`recordPassStats`/`syncBanditArms`/`syncFalsePositivePatterns`
+  now all route through `durableWrite`, and `writeLearningState` became the
+  single choke point the `noCloudRecording` finding wanted.
+- **Cluster E** (commit `773d946b`) split
+  [plans-ship.mjs](scripts/lib/store/plans-ship.mjs) from a 1,572-line god
+  module into 7 domain siblings, and in the same commit fixed
+  `getPlanIdByPath`'s `not-found`/`lookup-failed` conflation and `upsertPlan`'s
+  silent-null-on-RLS-denial contract. That one commit closed 11 of 12 rows
+  filed against the old module — the god-module/coupling findings became true
+  by construction once the split landed; only the `status || 'draft'`
+  normalization gap (`27caf508`) survives.
+- The **layering pass** (commit `d1d8097c`) moved `CoverageSchema` out of
+  `observed-deps.mjs` (arch-memory) into `lib/coverage-schema.mjs`
+  (shared-lib), closing 4 `stores → arch-memory` / `audit-orchestration →
+  install` boundary findings across `arch/coverage.mjs` and
+  `tiered-shadow-contract-digest.mjs` at once.
+
+**The one class write-off.** `stage0-relevance-context.mjs`'s
+`ADJACENCY_INCOMPLETE (enumeration-bound): maxContainers=20 reached` row
+(fingerprint `1207c538`) was never a code defect — it's a machine-generated
+control-state notice (`scripts/lib/audit/control-markers.mjs`
+`CONTROL_MARKER_PREFIXES`), explicitly excluded from semantic-suppression
+clustering elsewhere in this codebase for exactly this reason. Something
+upstream adjudicated it `accepted` as if it were a real finding; there was
+never anything to remediate. Recorded via `final-review-adjudicate
+--action dismissed` — not "this was investigated and found not to
+reproduce" (the other 31 open rows in this session), but "this row's
+existence in the backlog was itself the bug."
+
+**Genuinely still open (verified reproducing, left alone)**: 31 of the 60
+rows in the 8 files — the 4 HIGH tenant/owner-scoping gaps in
+`arch/coverage.mjs` (`copyForwardCoverage` still trusts caller-supplied
+refresh IDs with no cross-repo check), the SHA-1-hardcoded regex in
+`vcs.mjs`, the buffer-limit and colon-in-target-grammar gaps in
+`duplicate-justification-pragma.mjs` (the latter is an explicit source TODO,
+not silently forgotten), and the god-orchestrator/coupling findings against
+`legacy-production-audit.mjs` itself (now 4,682 lines — grew, not shrank).
+One additional row (`vcs.mjs`'s ENOENT-classification finding, `188e7ae8`)
+looks like it was a false positive at acceptance time — the code that
+resolves it (`classifyChildError` unwrapping `spawnSync`'s `.error`) predates
+the finding's acceptance date by two months — but was left untouched rather
+than force a fix-record with backward-dated provenance; flagging here as a
+signal for whoever reviews this class of finding next.
+
+**Not touched this session**: the remaining 65 rows spread across the long
+tail (1-3 rows per file). `total` moved from 125 to 96 in `byDisposition`;
+`acceptedPermanent` (42) is untouched by design — those are recorded
+decisions, not backlog.
+
 ## 2026-08-13 — the two MCP configs now check each other, and the pill proves it
 
 `/cycle --autonomous` over both clusters of
