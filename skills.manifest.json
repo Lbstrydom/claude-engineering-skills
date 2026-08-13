@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "7615bf55f1007dd1",
+  "bundleVersion": "d2dbcec252b68d83",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -120,14 +120,14 @@
     },
     "brainstorm": {
       "path": "skills/brainstorm/SKILL.md",
-      "sha": "83f8f8d19d9c",
-      "size": 18484,
+      "sha": "499a16bb3ba2",
+      "size": 19622,
       "summary": "Multi-LLM concept-level brainstorming. Sends the user's topic to OpenAI",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "83f8f8d19d9c",
-          "size": 18484
+          "sha": "499a16bb3ba2",
+          "size": 19622
         }
       ]
     },
@@ -357,14 +357,14 @@
     },
     "ship": {
       "path": "skills/ship/SKILL.md",
-      "sha": "0585b20ce456",
-      "size": 56302,
+      "sha": "4344db4c0eb6",
+      "size": 58064,
       "summary": "Sync all project documentation, optionally update a plan, then commit and push to git.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "0585b20ce456",
-          "size": 56302
+          "sha": "4344db4c0eb6",
+          "size": 58064
         },
         {
           "relPath": "references/python-environment-discovery.md",

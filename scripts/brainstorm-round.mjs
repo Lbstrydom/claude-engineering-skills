@@ -15,9 +15,12 @@ import crypto from 'node:crypto';
 import { resolveModel, refreshModelCatalog } from './lib/model-resolver.mjs';
 import { redactSecrets } from './lib/secret-patterns.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
-import { BrainstormEnvelopeWriteSchema } from './lib/brainstorm/schemas.mjs';
+import { BrainstormEnvelopeWriteSchema, BRAINSTORM_PROVIDERS } from './lib/brainstorm/schemas.mjs';
 import { callOpenAI } from './lib/brainstorm/openai-adapter.mjs';
 import { callGemini } from './lib/brainstorm/gemini-adapter.mjs';
+import { callAzureClaude } from './lib/brainstorm/azure-claude-adapter.mjs';
+import { resolveProviderAvailability, defaultProviders } from './lib/brainstorm/provider-availability.mjs';
+import { azureConfig } from './lib/config.mjs';
 import { preflightEstimateUsd } from './lib/brainstorm/pricing.mjs';
 import { resolveOutputBudget, DEPTH_TOKENS } from './lib/brainstorm/depth-config.mjs';
 import { assembleResumeContext } from './lib/brainstorm/resume-context.mjs';
@@ -49,11 +52,18 @@ USAGE — save mode (positional 'save' first arg)
 FLAGS — brainstorm-round mode
   --topic <text>         User topic
   --topic-stdin          Read topic from stdin
-  --models <csv>         Providers to call (default: openai,gemini). Options: openai, gemini
-  --with-gemini          No-op on the default path (gemini is already included); kept for back-compat
-  --no-gemini            Drop gemini — OpenAI only (alias: --openai-only)
+  --models <csv>         Providers to call. Options: openai, gemini, azure-claude.
+                         Default depends on the active profile: openai,gemini on
+                         the public profile; openai,azure-claude when the Azure
+                         work profile is active (no Gemini exists in an Azure
+                         tenant). An explicit --models is honoured verbatim.
+  --with-gemini          Force the Gemini leg in (no-op on the public default)
+  --no-gemini            Just the OpenAI voice (alias: --openai-only) — on Azure
+                         this also drops the substituted azure-claude leg
   --openai-model <id>    OpenAI model sentinel or concrete ID (default: latest-gpt)
   --gemini-model <id>    Gemini model sentinel or concrete ID (default: latest-pro)
+                         (azure-claude has no flag: its model is the deployment
+                         named by AZURE_FOUNDRY_CLAUDE_DEPLOYMENT)
   --max-tokens <n>       Per-provider output CEILING. Overrides only the ceiling —
                          --depth still sets the prose length asked for.
   --depth <tier>         shallow|standard|deep — sets the prose length asked for
@@ -112,11 +122,16 @@ function parseBrainstormArgs(argv) {
     mode: 'brainstorm',
     topic: null,
     topicStdin: false,
-    // Default is BOTH providers — the whole point of /brainstorm is comparing
-    // independent perspectives, so one-model was the wrong default. A missing
-    // GEMINI_API_KEY degrades to state:'misconfigured' (see dispatchProvider),
-    // it does not fail the run. Drop gemini with --no-gemini / --openai-only.
-    models: ['openai', 'gemini'],
+    // Default is TWO providers — the whole point of /brainstorm is comparing
+    // independent perspectives, so one-model was the wrong default. WHICH two
+    // is a property of the active profile (`defaultProviders()`: openai+gemini
+    // public, openai+azure-claude on Azure), so it is resolved after the argv
+    // loop rather than baked in here — `null` means "user did not choose". A
+    // provider with no route degrades to state:'misconfigured' (see
+    // lib/brainstorm/provider-availability.mjs); it does not fail the run.
+    models: null,
+    forceGemini: false,      // --with-gemini
+    openaiOnly: false,       // --no-gemini / --openai-only
     openaiModel: 'latest-gpt',
     geminiModel: 'latest-pro',
     maxTokens: null,         // null = derived from --depth (or default standard)
@@ -147,14 +162,19 @@ function parseBrainstormArgs(argv) {
       case '--models': args.models = requireValue().split(',').map(s => s.trim()).filter(Boolean); break;
       case '--with-gemini':
         // Audit R1-H16: convenience shortcut for --models openai,gemini
-        // (documented in SKILL.md). Last-flag-wins if --models also passed.
-        // Now a no-op on the default path (gemini is already in), retained so
-        // existing scripts/docs that pass it keep working.
-        if (!args.models.includes('gemini')) args.models = [...new Set([...args.models, 'gemini'])];
+        // (documented in SKILL.md). A no-op on the PUBLIC default path (gemini
+        // is already in), retained so existing scripts/docs keep working — and
+        // now load-bearing again on Azure, where it forces the Gemini leg back
+        // in beside the profile's default voices if you really do have a key.
+        args.forceGemini = true;
         break;
       case '--no-gemini':
       case '--openai-only':
-        args.models = args.models.filter(m => m !== 'gemini');
+        // Aliases, and they must stay one meaning: "just the OpenAI voice".
+        // Applied AFTER the default list resolves, so on Azure it also drops
+        // the substituted azure-claude leg — the flag's intent is one voice,
+        // not "drop a provider that is not in the list anyway".
+        args.openaiOnly = true;
         break;
       case '--openai-model': args.openaiModel = requireValue(); break;
       case '--gemini-model': args.geminiModel = requireValue(); break;
@@ -183,14 +203,24 @@ function parseBrainstormArgs(argv) {
   if (args.topic === null && !args.topicStdin) {
     throw new ArgvError('Missing --topic or --topic-stdin');
   }
-  // Audit R3-M8: --models "" or --models , leaves args.models empty
-  if (args.models.length === 0) {
-    throw new ArgvError(`--models requires at least one provider (allowed: openai, gemini)`);
+  // Audit R3-M8: --models "" or --models , leaves args.models empty. Checked
+  // BEFORE the default resolves, so an explicitly-empty list still fails loudly
+  // instead of silently inheriting the profile default.
+  if (args.models !== null && args.models.length === 0) {
+    throw new ArgvError(`--models requires at least one provider (allowed: ${BRAINSTORM_PROVIDERS.join(', ')})`);
   }
-  for (const m of args.models) {
-    if (!['openai', 'gemini'].includes(m)) {
-      throw new ArgvError(`Unknown model provider: ${m} (allowed: openai, gemini)`);
+  for (const m of args.models ?? []) {
+    if (!BRAINSTORM_PROVIDERS.includes(m)) {
+      throw new ArgvError(`Unknown model provider: ${m} (allowed: ${BRAINSTORM_PROVIDERS.join(', ')})`);
     }
+  }
+  // Resolve the effective provider list: explicit --models wins verbatim,
+  // otherwise the active profile's default pair.
+  args.models = args.models ?? defaultProviders();
+  if (args.forceGemini && !args.models.includes('gemini')) args.models = [...args.models, 'gemini'];
+  if (args.openaiOnly) args.models = args.models.filter(m => m === 'openai');
+  if (args.models.length === 0) {
+    throw new ArgvError('--openai-only / --no-gemini left no providers to call (did you pass --models without openai?)');
   }
   // Audit R4-M7: Object.hasOwn guards against prototype-chain bypass
   if (args.depth !== null && !Object.hasOwn(DEPTH_TOKENS, args.depth)) {
@@ -334,6 +364,12 @@ async function runBrainstormMode(args) {
   const resolvedModels = {};
   if (args.models.includes('openai')) resolvedModels.openai = resolveModel(args.openaiModel);
   if (args.models.includes('gemini')) resolvedModels.gemini = resolveModel(args.geminiModel);
+  // The Azure voice's "model" is a DEPLOYMENT name, so it must NOT go through
+  // resolveModel — a sentinel would 404 on the wire, which is exactly the
+  // footgun `azureConfig` keeps the deployment vars separate from the logical
+  // model vars to avoid. Null-safe: an inactive profile leaves it undefined and
+  // the availability oracle reports why before any call is attempted.
+  if (args.models.includes('azure-claude')) resolvedModels['azure-claude'] = azureConfig.claudeDeployment ?? undefined;
 
   // Depth ALWAYS resolves; `--max-tokens` overrides only the CEILING.
   //
@@ -674,21 +710,38 @@ async function runDebateRound({ providers, round1, args, resolvedModels, assembl
   return await Promise.all(tasks);
 }
 
+/**
+ * provider id → adapter. One table, used by round 1 AND the debate round, so a
+ * new voice cannot be wired into one and forgotten in the other. Every id in
+ * `BRAINSTORM_PROVIDERS` must appear here — asserted at module load below.
+ */
+const ADAPTERS = {
+  openai: callOpenAI,
+  gemini: callGemini,
+  'azure-claude': callAzureClaude,
+};
+for (const p of BRAINSTORM_PROVIDERS) {
+  if (typeof ADAPTERS[p] !== 'function') {
+    throw new Error(`[brainstorm] provider "${p}" is declared but has no adapter wired in ADAPTERS`);
+  }
+}
+
 async function dispatchDebateCall({ provider, reactingTo, systemPrompt, userMessage, args, resolvedModels }) {
-  const requiredEnv = provider === 'openai' ? 'OPENAI_API_KEY' : 'GEMINI_API_KEY';
   const baseEntry = {
     provider, reactingTo,
     state: 'http_error', text: null, errorMessage: null,
     httpStatus: null, usage: null, latencyMs: 0, estimatedCostUsd: null,
   };
-  if (!process.env[requiredEnv]) {
-    return { ...baseEntry, state: 'http_error', errorMessage: `${requiredEnv} not set` };
+  // Same oracle as round 1 — never a second copy of the credential test.
+  const availability = resolveProviderAvailability(provider);
+  if (!availability.available) {
+    return { ...baseEntry, state: 'http_error', errorMessage: availability.reason };
   }
   const model = resolvedModels[provider];
   // Reuse round-1 adapters but pass the debate prompts via the topic argument
   // and inject the system preface inline. The adapters take a single `topic`
   // string today — we concatenate system+user for compatibility.
-  const fn = provider === 'openai' ? callOpenAI : callGemini;
+  const fn = ADAPTERS[provider];
   const debateTopic = `${systemPrompt}\n\n---\n\n${userMessage}`;
   const r1 = await fn({ topic: debateTopic, model, maxTokens: args.maxTokens, timeoutMs: args.timeoutMs, reasoningEffort: args.reasoningEffort ?? null });
   // r1 has the ProviderResultSchema shape; project the fields the DebateRoundSchema expects
@@ -705,13 +758,16 @@ async function dispatchDebateCall({ provider, reactingTo, systemPrompt, userMess
 }
 
 async function dispatchProvider({ provider, topic, systemPreface = '', args, resolvedModels }) {
-  const requiredEnv = provider === 'openai' ? 'OPENAI_API_KEY' : 'GEMINI_API_KEY';
-  if (!process.env[requiredEnv]) {
+  // "Can this provider be called?" — a route question, not a public-env-var
+  // question. See lib/brainstorm/provider-availability.mjs for why the two are
+  // not the same on an Azure work profile.
+  const availability = resolveProviderAvailability(provider);
+  if (!availability.available) {
     return {
       provider,
       state: 'misconfigured',
       text: null,
-      errorMessage: `${requiredEnv} not set`,
+      errorMessage: availability.reason,
       httpStatus: null,
       usage: null,
       latencyMs: 0,
@@ -720,7 +776,7 @@ async function dispatchProvider({ provider, topic, systemPreface = '', args, res
   }
 
   const model = resolvedModels[provider];
-  const fn = provider === 'openai' ? callOpenAI : callGemini;
+  const fn = ADAPTERS[provider];
   // The adapters take a single `topic` string. We prepend the resume
   // context inline so the round-1 prompt = preface + topic + with-context.
   const composedTopic = systemPreface

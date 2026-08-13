@@ -37,6 +37,14 @@ export const PROVIDER_INPUT_CEILING_TOKENS = Object.freeze({
     'latest-flash-lite': 1_000_000,
     default: 100_000,
   }),
+  // Keyed by DEPLOYMENT name, not a sentinel — that is what the Azure voice
+  // reports as its model. Deployments are tenant-named and unpredictable, so
+  // `default` does the real work here: 100K is the conservative floor every
+  // current Claude deployment clears, and a wrong-high ceiling would silently
+  // build a prompt the tenant rejects.
+  'azure-claude': Object.freeze({
+    default: 100_000,
+  }),
 });
 
 /**
@@ -65,7 +73,7 @@ export const ARCH_CONTEXT_FRACTION = 0.1;
  * Falls back to the provider's `default` when the specific sentinel
  * isn't in the table.
  *
- * @param {'openai'|'gemini'} provider
+ * @param {'openai'|'gemini'|'azure-claude'} provider
  * @param {string} modelSentinel
  * @returns {number}
  */
@@ -87,7 +95,7 @@ export function getCeilingTokens(provider, modelSentinel) {
  * Used to drive resume-context budget so the assembled prompt fits all
  * requested providers (most restrictive wins).
  *
- * @param {Array<{provider: 'openai'|'gemini', model: string}>} providers
+ * @param {Array<{provider: 'openai'|'gemini'|'azure-claude', model: string}>} providers
  * @returns {{ceilingTokens: number, drivenBy: {provider: string, model: string}}}
  */
 export function smallestCeilingTokens(providers) {

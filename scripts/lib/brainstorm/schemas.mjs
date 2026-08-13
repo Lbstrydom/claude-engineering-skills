@@ -29,8 +29,17 @@ export const PROVIDER_STATES = [
   'truncated',
 ];
 
+/**
+ * Every voice /brainstorm can speak with. `azure-claude` is the Azure work
+ * profile's second voice (Foundry Claude) — the substitution the final reviewer
+ * already makes for Gemini, which has no Azure tenant equivalent. The id
+ * deliberately matches `gemini-review.mjs`'s provider registry and the
+ * `set-provider azure-claude` CLI, so one name means one thing bundle-wide.
+ */
+export const BRAINSTORM_PROVIDERS = ['openai', 'gemini', 'azure-claude'];
+
 export const ProviderResultSchema = z.object({
-  provider: z.enum(['openai', 'gemini']),
+  provider: z.enum(BRAINSTORM_PROVIDERS),
   state: z.enum(PROVIDER_STATES),
   text: z.string().nullable(),
   errorMessage: z.string().nullable(),
@@ -52,8 +61,8 @@ export const ProviderResultSchema = z.object({
  * Plan §12.A canonical 4-case state machine.
  */
 export const DebateRoundSchema = z.object({
-  provider: z.enum(['openai', 'gemini']),
-  reactingTo: z.enum(['openai', 'gemini']),
+  provider: z.enum(BRAINSTORM_PROVIDERS),
+  reactingTo: z.enum(BRAINSTORM_PROVIDERS),
   state: z.enum(['success', 'malformed', 'timeout', 'http_error', 'empty']),
   text: z.string().nullable(),
   errorMessage: z.string().nullable(),
@@ -76,9 +85,14 @@ export const DebateRoundSchema = z.object({
 export const BrainstormEnvelopeV1Schema = z.object({
   topic: z.string(),
   redactionCount: z.number().int().min(0),
+  // One key per provider that was CALLED. Every id must be listed: a plain
+  // `z.object` STRIPS unknown keys rather than rejecting them, and the writer
+  // emits `parse`d data — so a missing key here would silently drop the model
+  // id from the envelope, and Step 3 renders headings from it.
   resolvedModels: z.object({
     openai: z.string().optional(),
     gemini: z.string().optional(),
+    'azure-claude': z.string().optional(),
   }),
   providers: z.array(ProviderResultSchema),
   totalCostUsd: z.number(),

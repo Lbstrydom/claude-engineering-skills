@@ -18,6 +18,35 @@ drifting from the work repo.
 | Final reviewer | Gemini (→ Claude Opus fallback) | **Claude Opus on Azure Foundry** (`AZURE_AI_ENDPOINT`), deployment `AZURE_FOUNDRY_CLAUDE_DEPLOYMENT` (`claude-opus-4-7`) — opt in with `set-provider azure-claude` (no longer automatic; see Provider precedence below) |
 | Embeddings | Gemini `gemini-embedding-001` | Azure OpenAI `text-embedding-3-large` (`dimensions: 768`) |
 | Author (coding) | your choice in the IDE | Sonnet 4.6 in VS Code (unchanged; out of the bundle's scope) |
+| `/brainstorm` voices | OpenAI + Gemini | **OpenAI + Foundry Claude** (`--models openai,azure-claude`, the default here) |
+
+### `/brainstorm` voices on Azure
+
+The OpenAI voice routes through the same Azure GPT deployment as the auditor, so
+`/brainstorm` works on an Azure-only install with no `OPENAI_API_KEY`. The Gemini
+voice cannot — there is no Gemini in an Azure tenant — so the second voice is
+**Claude on Foundry** (`azure-claude`), the same substitution the final reviewer
+makes, using `AZURE_FOUNDRY_CLAUDE_DEPLOYMENT` and the resolved
+`AZURE_CLAUDE_ROUTE`. You do not have to ask for it: with no explicit `--models`,
+an active Azure profile defaults to `openai,azure-claude`. Public installs are
+unchanged (`openai,gemini`).
+
+Two honest caveats. The Azure pair is **not** cross-vendor independent the way
+OpenAI+Gemini is — when Claude Code is the orchestrator, the second voice shares
+its model family (it is still a separate call with no conversation history and
+its own prompt, but say so rather than presenting it as an outside opinion). And
+the cost line for that leg is a **list-price estimate**: a Foundry tenant's
+negotiated rate may differ, so read it as an order of magnitude, not an invoice.
+Pass `--openai-only` for a single voice; `--with-gemini` forces the Gemini leg
+back in if you really do hold a key.
+
+> Both fixed 2026-08-13, in that order. Before that, both legs reported
+> *"OPENAI_API_KEY / GEMINI_API_KEY not set"* on Azure and `/brainstorm` was unusable
+> there: the OpenAI adapter had been Azure-aware since 2026-07-14, but the dispatch
+> gate short-circuited on the public env var before reaching it. The tell in the
+> envelope is `latencyMs: 0` — no call was attempted. Availability oracle:
+> [`provider-availability.mjs`](../../scripts/lib/brainstorm/provider-availability.mjs);
+> the second voice: [`azure-claude-adapter.mjs`](../../scripts/lib/brainstorm/azure-claude-adapter.mjs).
 
 ## Setup
 

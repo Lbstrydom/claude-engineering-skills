@@ -1,5 +1,67 @@
 # Project Status Log
 
+## 2026-08-13 — /brainstorm was unusable on Azure, and its second voice did not exist
+
+Reported from a consumer's Azure repo: the independent brainstorm step returned
+*"both providers were unavailable because OPENAI_API_KEY and GEMINI_API_KEY are
+not configured"* — on an install where every other Azure-routed skill worked.
+
+**The gate asked the wrong question.** `openai-adapter.mjs` had been routed
+through the Azure-aware `createOpenAIClient()` seam on 2026-07-14, with a
+comment saying it was done precisely so /brainstorm would work on Azure-only
+installs. But both dispatch sites in `brainstorm-round.mjs` short-circuited on
+`process.env.OPENAI_API_KEY` first, so that branch was **unreachable — dead code
+on exactly the installs it was written for**, for a month. Reproduced with a
+synthetic Azure-only env: `misconfigured / latencyMs 0` (measured; the zero is
+the tell — no call was attempted). After the fix, same env: a real transport
+error at 45ms. Availability is now one oracle,
+[`provider-availability.mjs`](scripts/lib/brainstorm/provider-availability.mjs),
+asking *does a route exist* rather than *is the public key set*; round 1 and the
+debate round each carried their own copy of the test, so fixing one would have
+left the other wrong. **Third instance of this class** (`openai-audit.mjs` and
+`check-setup.mjs` were fixed at their own gates earlier) — now a resident rule
+in AGENTS.md.
+
+**Then the second voice.** Gemini is structurally absent from an Azure tenant,
+so the Azure profile had one external voice and the skill's premise was halved.
+Added [`azure-claude-adapter.mjs`](scripts/lib/brainstorm/azure-claude-adapter.mjs)
+— Foundry Claude, the same substitution the final reviewer already makes, same
+provider id (`azure-claude`), same route resolution. The default is now "two
+voices, chosen by profile": `openai,gemini` public (byte-identical to before),
+`openai,azure-claude` on Azure. Not claimed as cross-vendor independence, and
+SKILL.md says so where the user reads it.
+
+**Two things static review did not catch, and running it did.** Declaring the
+provider everywhere else still produced `FATAL: Unknown provider: azure-claude`
+— `PROVIDER_INPUT_CEILING_TOKENS` was the one table missed, and it is reached
+only through resume-context assembly. And the first route test was **vacuous**:
+it asserted the APIM route does not leak the Foundry credential, but
+`AZURE_AI_API_KEY` is honoured on the *foundry* route only, so both fixtures
+resolved to the same key and the assertion could not fail. Rewritten with
+genuinely distinct credentials per route plus a guard that fails if they ever
+converge again; both routes are asserted on the **emitted request** (host, auth
+header, credential, deployment-as-model), never on client config.
+
+**Verified**: 134 brainstorm tests green; full suite 11,953 pass. Live
+public-profile run — OpenAI `success`, Gemini `truncated` at a 300-token cap
+(correct labelling), $0.005. Azure legs attempt real calls against an
+unroutable `.invalid` endpoint; request shape asserted through an injected
+transport. **Not verified**: a successful call against a real Foundry tenant —
+no tenant on this machine, so that last mile is one run in the consumer's Azure
+repo. The `azure-claude` cost line is a list-price estimate, not a tenant rate.
+
+**Consumer-side verification (Step 6.8): `unverified`** — blocked prerequisite:
+no Azure tenant and no consumer checkout of the reporting repo on this machine.
+`npm run sync:dry` confirms both new modules resolve into
+`scripts/.claude-skills/lib/brainstorm/` for both local consumers, but that is
+producer-side evidence and is not inherited as a pass.
+
+**Shipped as two commits deliberately.** `skills.manifest.json` is one shared
+generated artifact and the freshness gate checks every skill's sha against
+`git show HEAD:` — so a parallel session's finished-but-uncommitted
+`skills/ship/SKILL.md` could not be separated from it. Its cluster went first,
+under its own message, rather than being bundled into this one.
+
 ## 2026-08-13 — Cluster 3: the record corrected, and the plan closed
 
 Final cluster of [god-module-and-layering-debt.md](docs/plans/god-module-and-layering-debt.md).

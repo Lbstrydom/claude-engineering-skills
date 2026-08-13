@@ -826,6 +826,27 @@ stay logical sentinels (dodges the `gpt-5.3 → latest-gpt` remap footgun);
 `MODEL_CATALOG_REFRESH` auto-skips under Azure.
 
 **Load-bearing gotchas** (the operational depth is in the guide):
+- **An availability gate must ask whether a ROUTE exists, not whether a public
+  env var is set** — third instance fixed 2026-08-13. Routing a call site
+  through the Azure-aware seam does nothing if an `if (!process.env.OPENAI_API_KEY)`
+  guard upstream returns first: the Azure branch becomes unreachable, dead code
+  on exactly the installs it was written for. `openai-audit.mjs` (`!azureConfig.active
+  && !OPENAI_API_KEY`) and `check-setup.mjs` were fixed at their gates; /brainstorm
+  was not, and was unusable on an Azure-only consumer for a month while its adapter
+  was already Azure-aware. The envelope tell is a **failure with zero latency** —
+  nothing was called. So: **when you move a call site onto the seam, grep the whole
+  path it takes for the public key name**, and let ONE oracle own the answer
+  (`lib/brainstorm/provider-availability.mjs`) — the two brainstorm dispatch sites
+  each carried their own copy of the test, so fixing one would have left the other
+  wrong. Tests that spawn such a CLI must scrub `AZURE_*` explicitly, or they pass
+  or spend by whose machine they run on. **A profile-dependent DEFAULT is the other
+  half**: /brainstorm's default is "two voices", and which two is a property of the
+  profile (`defaultProviders()` — `openai,gemini` public, `openai,azure-claude` on
+  Azure, since no Gemini exists in a tenant), never a constant. Adding a voice means
+  every table that must know: adapter map, `PROVIDER_INPUT_CEILING_TOKENS`, the
+  `resolvedModels` schema key (a non-`.strict()` `z.object` **strips** an
+  undeclared key and the writer emits `parse`d data, so the id vanishes silently)
+  — the ceiling table was the one missed, and only running it caught the FATAL.
 - **The deployment is CONSTRUCTOR-level route state, not a body field** (fixed
   2026-08-12). `gpt` and `embed` are built as `AzureOpenAI({endpoint, deployment,
   apiVersion})` and the SDK derives `/openai/deployments/{deployment}/…` itself —

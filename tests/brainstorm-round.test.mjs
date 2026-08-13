@@ -14,11 +14,23 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const HELPER = path.join(__dirname, '..', 'scripts', 'brainstorm-round.mjs');
 
+// Every case below asserts PUBLIC-profile behaviour, and the helper inherits
+// the developer's environment. Since provider availability became a route
+// question rather than a public-key question, an ambient AZURE_OPENAI_ENDPOINT
+// would make these runs reach a real Azure deployment instead of returning
+// `misconfigured` — the suite would spend money and pass/fail by whose machine
+// it ran on. Scrub the profile explicitly; a caller may still opt back in.
+const PUBLIC_PROFILE_ENV = {
+  AZURE_OPENAI_ENDPOINT: '',
+  AZURE_AI_ENDPOINT: '',
+  AZURE_OPENAI_API_KEY: '',
+};
+
 function runHelper(args, { stdin = null, env = {} } = {}) {
   return spawnSync('node', [HELPER, ...args], {
     input: stdin,
     encoding: 'utf-8',
-    env: { ...process.env, ...env },
+    env: { ...process.env, ...PUBLIC_PROFILE_ENV, ...env },
   });
 }
 

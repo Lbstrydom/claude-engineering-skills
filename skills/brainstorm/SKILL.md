@@ -17,7 +17,7 @@ description: |
 
 ```
 Usage:
-  /brainstorm <topic>                          # OpenAI + Gemini (default)
+  /brainstorm <topic>                          # two voices (default — see below)
   /brainstorm --no-gemini <topic>              # OpenAI only (alias: --openai-only)
   /brainstorm --models openai,gemini <topic>   # explicit
   /brainstorm --with-arch <topic>              # force-attach repo architecture context
@@ -51,11 +51,25 @@ SAVE MODE (jump to §Step 5 below). Otherwise BRAINSTORM-ROUND mode.
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--with-gemini` | — | No-op (Gemini is on by default); kept so older invocations still work |
-| `--no-gemini` / `--openai-only` | off | Drop Gemini — OpenAI only |
-| `--models <csv>` | `openai,gemini` | Explicit list; a later `--no-gemini` still subtracts from it |
+| `--with-gemini` | — | Force the Gemini leg in; a no-op on the public default, meaningful on Azure |
+| `--no-gemini` / `--openai-only` | off | Just the OpenAI voice — on Azure this also drops `azure-claude` |
+| `--models <csv>` | profile-dependent (below) | Explicit list, honoured verbatim; `--no-gemini` still reduces it to `openai` |
 | `--openai-model <id>` | `latest-gpt` | OpenAI sentinel or concrete ID |
 | `--gemini-model <id>` | `latest-pro` | Gemini sentinel or concrete ID |
+| — | — | `azure-claude` has no model flag: it calls the deployment in `AZURE_FOUNDRY_CLAUDE_DEPLOYMENT` |
+
+**Which two voices you get depends on the profile** — the default is "two
+independent views", and which two is not a constant:
+
+| Profile | Default `--models` | Why |
+|---|---|---|
+| Public (`OPENAI_API_KEY` etc.) | `openai,gemini` | Two vendors, genuinely independent |
+| Azure work profile (`AZURE_OPENAI_ENDPOINT` set) | `openai,azure-claude` | There is no Gemini in an Azure tenant; Foundry Claude is the substitute, the same one the final reviewer makes |
+
+On Azure, say plainly in the synthesis that the second voice is Claude on
+Foundry: it has no conversation history and its own system prompt, so it is a
+separate view — but it is **not** the cross-vendor independence the public pair
+gives, and you should not present it as one.
 | `--debate` | off | Run a SECOND round where each model reacts to the other's response. Doubles cost (~$0.05) and ~10s. Only meaningful when 2 providers AND both succeed in round 1. |
 | `--depth <tier>` | auto | Prose length asked for: `shallow` (150–250 words) / `standard` (250–500) / `deep` (600–1000). The output ceiling is derived from that plus reasoning headroom. Auto-promote to `deep` when topic mentions architecture/schema/migration/refactor/design/"how should we structure"/"what's the best approach". |
 | `--continue-from <sid>` | — | Resume from prior session id (assembles prior rounds as context per token budget). |
@@ -166,7 +180,7 @@ risks (Plan v6 §2.1, Gemini-G1 v1+v2).
    node scripts/brainstorm-round.mjs \
      --topic-stdin \
      --sid <SID> \
-     [--models openai,gemini]        # omit to get the default (both) \
+     [--models openai,gemini]        # omit to get the profile default (two voices) \
      [--no-gemini]                   # OpenAI only \
      [--openai-model <id>] [--gemini-model <id>] \
      [--depth shallow|standard|deep] \
@@ -202,6 +216,9 @@ user verbatim.
 Read the JSON from `--out`. For each provider entry, render exactly one
 block. Use the resolved model ID from the helper's `resolvedModels` field
 in the heading (e.g. `### OpenAI (gpt-5.x)` not `### OpenAI (latest-gpt)`).
+Provider display names: `openai` → **OpenAI**, `gemini` → **Gemini**,
+`azure-claude` → **Claude (Azure Foundry)** — name the host, so nobody reads it
+as the agent talking to itself.
 
 State-driven rendering (the helper guarantees one of these states per
 provider):

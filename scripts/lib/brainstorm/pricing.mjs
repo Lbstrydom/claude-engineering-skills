@@ -17,6 +17,13 @@ const RATES = {
   'gemini-3.1-pro': { input: 1.25, output: 10.0 },
   'gemini-3-pro': { input: 1.25, output: 10.0 },
   'gemini-flash-latest': { input: 0.075, output: 0.30 },
+  // Claude — keyed by DEPLOYMENT-NAME prefix, because that is what the Azure
+  // voice reports as its model id (`claude-opus-4-7`, `claude-sonnet-4-6`).
+  // List prices; a Foundry tenant's negotiated rate may differ, so treat the
+  // azure-claude line as an order-of-magnitude ceiling, not an invoice.
+  'claude-opus': { input: 15.0, output: 75.0 },
+  'claude-sonnet': { input: 3.0, output: 15.0 },
+  'claude-haiku': { input: 1.0, output: 5.0 },
 };
 
 const FALLBACK = { input: 1.25, output: 10.0 };
