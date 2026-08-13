@@ -1,5 +1,64 @@
 # Project Status Log
 
+## 2026-08-13 — the instruction reached the worktree, the tooling did not
+
+`72c98df8`, `3747941d`. A consumer reported that `/ship` Step 4's
+`npm run context:check` dies with a bare `MODULE_NOT_FOUND` in a git worktree.
+Accurate, reproduced, and the smallest visible part of it.
+
+`scripts/.claude-skills/` is gitignored, so `git worktree add` does not populate
+it. The scope is not one script: **18** npm scripts in the reporting consumer
+plus every SKILL.md-instructed `node scripts/.claude-skills/*.mjs`. `/ship` fails
+on its **first** command — Phase 0's `detect-stack` — before reaching the
+`context:check` anyone notices.
+
+**The measurement that decided the design.** Across three live worktrees of one
+consumer: `scripts/.claude-skills/` absent in 3 of 3, while `.claude/` was
+present in the 2 the harness created and absent in the one made by hand. So the
+rule is **only tracked content is guaranteed to reach a worktree** — which is why
+the remedy rides on `package.json` (`npm run skills:hydrate`) and why there is no
+auto-detector: a `.claude/` hook would reach two thirds of worktrees, which is
+the wrong number to build a gate on.
+
+The first draft of the runbook section asserted the harness copies `.claude/`
+into worktrees, generalised from a single sample. That was corrected before the
+push, and the table above replaced the assertion.
+
+**Two things that look like remedies and are not**, both verified rather than
+reasoned about: `npm run sync -- --target-path <worktree>` aborts on unowned
+collisions, because the ownership manifest is itself gitignored and a worktree
+therefore reads as a fresh repo of unowned files — and `--adopt-orphans` clears
+that abort by overwriting *tracked* files. And `cd`-ing to the main checkout
+makes `ship-commit.mjs`/`cross-skill.mjs` read the wrong HEAD, branch and
+`commit_sha`, silently.
+
+**Why a gate and not a note.** This class has now shipped four times —
+`check-cli-flags`, `check-npm-run-args`, `build-audit-transcript`, and this — the
+instruction reaching a consumer while the tool does not. `worktree:preflight:gate`
+derives its subject set from the FILESYSTEM, resolving both `node scripts/*.mjs`
+and `npm run <script>` indirection. That second half is load-bearing: the first
+cut grepped only for the direct form, found 14 skills, and missed
+`ai-context-management` — which reaches the tooling only through
+`npm run context:check`, and is **the skill the bug was reported against**. A
+curated list would have exempted the reporting skill. The real answer is 16 of
+16, and all 16 now carry one byte-identical marker block.
+
+Seen to fail before being trusted: marker-removed → exit 1, marker-edited → exit
+1 (distinct codes; two failures needing two remedies), restored → exit 0, plus a
+poison pill whose fixture deliberately KEEPS its tooling command — strip it and
+the skill leaves the subject set, the gate passes, and the pill proves nothing.
+
+`3747941d` corrects the runbook: hydrating covers the tooling tree, not
+`node_modules`. A worktree nested under the checkout is fine (Node walks up); one
+created outside it dies on `Cannot find package 'dotenv'`. Found by probing in
+`C:/tmp`, which is not where the harness puts worktrees — the probe location was
+the unrepresentative thing, not the recipe.
+
+Consumer side: `Lbstrydom/wine-cellar-app#329` adds `skills:hydrate` and stops
+the pre-push npm-args gate **skipping** in a worktree, where it was passing
+ungated and reading clean. Upstream issue `b5e44db7` filed from the consumer and
+closed `fixed`.
+
 ## 2026-08-13 — the existence gate's verdict now reaches the store
 
 The gate has resolved "file/module X is missing" claims against the real repo
