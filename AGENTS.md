@@ -704,9 +704,25 @@ call-site list: [`docs/reference/anthropic-backend-routing.md`](docs/reference/a
 ## Shadow Final-Review A/B — CLOSED 2026-07-28, verdict KEEP
 
 Opt-in, observation-only 2nd final reviewer, run blind to test whether a second
-gate earns its keep. **Committed default unset; re-enabled locally 2026-07-29** (KEEP
-was the verdict; the flag drifted off). `FINAL_REVIEW_SHADOW=claude-opus|gemini|openrouter`
-(a gateway needs an explicit `FINAL_REVIEW_SHADOW_MODEL`; unset ⇒ not entered, byte-identical; no-op under Azure; never gates).
+gate earns its keep. **Committed default unset; paused locally 2026-08-14 on cost**
+(KEEP was the original verdict, but an unscoped envelope made a shadow run cost
+multiples of the primary Gemini review it exists to sanity-check).
+`FINAL_REVIEW_SHADOW=claude-opus|gemini|openrouter|xai` (a gateway needs an explicit
+`FINAL_REVIEW_SHADOW_MODEL`; xai is a native provider, own base URL/credential pair,
+not a gateway; unset ⇒ not entered, byte-identical; no-op under Azure; never gates).
+
+**Envelope scope (2026-08-14, plan: `final-review-scoped-second-reviewer.md`).**
+`FINAL_REVIEW_SHADOW_SCOPE=full|thin|gap` (default `full`, the historical
+byte-identical envelope). `thin` drops repo-context and narrows code files to the
+in-scope diff, budget-capped (`THIN_ENVELOPE_MAX_CHARS`,
+`scripts/lib/final-review/envelope.mjs`) — the intended default going forward,
+since the shadow's job is a targeted gap-check against Gemini's already-extensive
+review, not a second full audit. `gap` additionally shows the shadow the primary's
+own findings (projected, capped, KD-3) and is campaign-ineligible (KD-5). A campaign
+manifest's `controls.envelopeScope` binds a cohort to one scope (KD-6); an active
+campaign refuses `gap` and any invalid scope value outright, before any provider
+call. Full env-var table: [`docs/reference/environment-variables.md`](docs/reference/environment-variables.md)
+§Shadow final review.
 Verdict/method/stopping rule + three dated corrections: [briefing](docs/research/final-review-shadow-adjudication-briefing.md) · [plan](docs/plans/final-review-shadow-reviewer.md).
 Three results that generalise — **read before any reviewer/model comparison**:
 

@@ -7,7 +7,7 @@ import {
 
 const {
   resolveShadow, diffFindingBuckets, dedupByHash, shadowModelMatchesFamily,
-  resolveModelEvalShadowOverride, mapRouteToShadowProvider,
+  resolveModelEvalShadowOverride, mapRouteToShadowProvider, runShadowAndPersist,
 } = _internals;
 
 // A resolver stub so tests don't depend on the live model catalog.
@@ -71,6 +71,66 @@ describe('resolveShadow — provider/key/model resolution', () => {
     const r = resolveShadow({ shadowConfig: { provider: 'claude-opus', model: 'claude-opus-4-7' }, env: { ANTHROPIC_API_KEY: 'x' }, azureActive: false, resolve: (s) => s });
     assert.equal(r.state, 'ready');
     assert.equal(r.model, 'claude-opus-4-7');
+  });
+});
+
+describe('runShadowAndPersist — campaign-safety refusals (plan KD-6)', () => {
+  const ctx = { planContent: 'plan', transcriptContent: '{}', projectContext: '', auditMode: 'code' };
+
+  // `runShadowAndPersist` resolves `shadow` via `resolveShadow()` (ambient
+  // process.env) on its very first line, UNCONDITIONALLY — before either
+  // refusal check below. The two REFUSES cases throw regardless of what
+  // `shadow` resolves to, so ambient env can't flip them. But the two
+  // doesNotReject cases fall through PAST the refusal checks into the
+  // `shadow.state === 'ready'` branch, which makes an actual provider call —
+  // so on a machine/CI where FINAL_REVIEW_SHADOW happens to be set with a
+  // valid key, these would attempt a real network call inside what is
+  // supposed to be a pure config-refusal unit test. `resolveShadow` has no
+  // env-independent path here (it's read once via frozen shadowReviewConfig
+  // at module load), so the fix is a deterministic `modelEvalOverride` that
+  // bypasses `resolveShadow()` entirely and forces a known non-ready state —
+  // same seam `resolveModelEvalShadowOverride` uses in production, just
+  // hand-supplied instead of DB-resolved.
+  const FORCED_SKIP = { repoId: null, modelEvalRunId: null, shadow: { state: 'skipped-unset', provider: null, model: null } };
+
+  it('gap + active campaign (--campaign-digest present) REFUSES before any provider call', async () => {
+    await assert.rejects(
+      () => runShadowAndPersist({ verdict: 'X' }, 'gemini-pro-latest', null, ctx,
+        { envelopeScopeCli: 'gap', campaignDigest: 'abc123' }),
+      /campaign-ineligible/,
+    );
+  });
+
+  it('gap WITHOUT an active campaign is a supported operator flag — does not throw', async () => {
+    const result = { verdict: 'X' };
+    await assert.doesNotReject(
+      () => runShadowAndPersist(result, 'gemini-pro-latest', null, ctx,
+        { envelopeScopeCli: 'gap', campaignDigest: null, modelEvalOverride: FORCED_SKIP }),
+    );
+  });
+
+  it('an invalid scope under an active campaign REFUSES before any provider call', async () => {
+    await assert.rejects(
+      () => runShadowAndPersist({ verdict: 'X' }, 'gemini-pro-latest', null, ctx,
+        { envelopeScopeCli: 'not-a-real-scope', campaignDigest: 'abc123' }),
+      /invalid --envelope-scope/,
+    );
+  });
+
+  it('an invalid scope with NO active campaign warns and proceeds (interactive default)', async () => {
+    const result = { verdict: 'X' };
+    await assert.doesNotReject(
+      () => runShadowAndPersist(result, 'gemini-pro-latest', null, ctx,
+        { envelopeScopeCli: 'not-a-real-scope', campaignDigest: null, modelEvalOverride: FORCED_SKIP }),
+    );
+  });
+
+  it('a VALID scope under an active campaign does not refuse (only invalid/gap do)', async () => {
+    const result = { verdict: 'X' };
+    await assert.doesNotReject(
+      () => runShadowAndPersist(result, 'gemini-pro-latest', null, ctx,
+        { envelopeScopeCli: 'thin', campaignDigest: 'abc123', modelEvalOverride: FORCED_SKIP }),
+    );
   });
 });
 

@@ -15,11 +15,12 @@ import {
   zeroFindingArms, isComplete, summarise, CONTRACT_EPOCH, buildArmArgs, EXPERIMENT_TAG,
   distinctFindingCount, shadowFindingTotal, armCostUsd,
   LEGACY_ARMS, transportForModel, deriveArms, armRequestFingerprint,
-  classifyArmCollisions, computeCollectLock, resolveArms,
+  classifyArmCollisions, computeCollectLock, resolveArms, verifyPreflightArtifact,
 } from '../scripts/bakeoff-collect.mjs';
 import { parseCampaignConfig } from '../scripts/lib/campaign/config.mjs';
 import nodeFs from 'node:fs';
 import nodePath from 'node:path';
+import nodeCrypto from 'node:crypto';
 import nodeOs from 'node:os';
 
 /** Build an injectable fake FS for the pure enumerator. */
@@ -138,14 +139,22 @@ describe('zeroFindingArms (bakeoff-collect)', () => {
 });
 
 describe('contract epoch + solo arm (bakeoff-collect isComplete)', () => {
+  // `expectedScope: null` on every call in THIS block, explicitly — these
+  // tests are about epoch + solo-arm logic, orthogonal to scope-binding
+  // (which has its own dedicated block below). Without this they silently
+  // couple to whatever `.campaigns/final-review-2026q3.json` happens to
+  // declare for `envelopeScope` via `defaultExpectedScope()`, which is
+  // exactly the kind of accidental coupling that breaks a test for a reason
+  // it doesn't name.
   const ran = (over) => ({ shadowState: 'ran', buckets: { shadowOnly: 1 }, primaryVerdict: 'CONCERNS', ...over });
   const full = (over = {}) => ({
     contractEpoch: CONTRACT_EPOCH,
     arms: { opus: ran(), kimi: ran(), 'solo-opus': { primaryVerdict: 'APPROVE' }, ...over },
   });
+  const complete = (e) => isComplete(e, undefined, null);
 
   it('a fully-populated current-epoch snapshot counts', () => {
-    assert.equal(isComplete(full()), true);
+    assert.equal(complete(full()), true);
   });
 
   it('an UNSTAMPED entry never counts, however complete it looks', () => {
@@ -153,33 +162,77 @@ describe('contract epoch + solo arm (bakeoff-collect isComplete)', () => {
     // ran at three different reasoning depths and call it a model result.
     const e = full();
     delete e.contractEpoch;
-    assert.equal(isComplete(e), false);
+    assert.equal(complete(e), false);
   });
 
   it('a STALE epoch never counts — and is not silently upgraded', () => {
-    assert.equal(isComplete({ ...full(), contractEpoch: 'e1-unmatched' }), false);
+    assert.equal(complete({ ...full(), contractEpoch: 'e1-unmatched' }), false);
   });
 
   it('the solo arm is judged on its primary verdict, not on shadowState', () => {
     // It runs Opus as primary with no shadow; requiring shadowState==='ran'
     // would make every snapshot permanently incomplete.
-    assert.equal(isComplete(full({ 'solo-opus': { primaryVerdict: 'REJECT', shadowState: null } })), true);
-    assert.equal(isComplete(full({ 'solo-opus': { primaryVerdict: null } })), false);
+    assert.equal(complete(full({ 'solo-opus': { primaryVerdict: 'REJECT', shadowState: null } })), true);
+    assert.equal(complete(full({ 'solo-opus': { primaryVerdict: null } })), false);
   });
 
   it('an arm that ERRORED fails the snapshot even under the right epoch', () => {
-    assert.equal(isComplete(full({ kimi: { error: 'exit 1' } })), false);
+    assert.equal(complete(full({ kimi: { error: 'exit 1' } })), false);
   });
 
   it('a missing arm fails the snapshot — absence is never treated as a pass', () => {
     const e = full();
     delete e.arms.kimi;
-    assert.equal(isComplete(e), false);
+    assert.equal(complete(e), false);
   });
 
   it('the solo arm is excluded from zero-finding reporting (it has no shadow bucket)', () => {
     const z = zeroFindingArms(full({ opus: ran({ buckets: { shadowOnly: 0 }, shadowVerdict: 'APPROVE' }) }));
     assert.deepEqual(z.map((x) => x.arm), ['opus']);
+  });
+});
+
+describe('isComplete — scope-binding eligibility (plan KD-6)', () => {
+  // Same three-arm shape as above, but now WITH shadowScope, since these
+  // tests are specifically about the scope check the previous block
+  // deliberately disables.
+  const ran = (scope, over) => ({ shadowState: 'ran', buckets: { shadowOnly: 1 }, primaryVerdict: 'CONCERNS', shadowScope: scope, ...over });
+  const full = (opusScope, kimiScope, over = {}) => ({
+    contractEpoch: CONTRACT_EPOCH,
+    arms: { opus: ran(opusScope), kimi: ran(kimiScope), 'solo-opus': { primaryVerdict: 'APPROVE' }, ...over },
+  });
+
+  it('every shadow arm matching the expected scope counts', () => {
+    assert.equal(isComplete(full('thin', 'thin'), undefined, 'thin'), true);
+  });
+
+  it('a MISMATCHED shadow arm makes the snapshot ineligible', () => {
+    // One arm ran under a different envelope than the manifest declares —
+    // exactly the mixed-cohort case KD-6 exists to make structurally
+    // impossible rather than merely discouraged.
+    assert.equal(isComplete(full('thin', 'full'), undefined, 'thin'), false);
+  });
+
+  it('expectedScope null (no campaign / legacy fallback) skips the check entirely', () => {
+    // Both directions matter: this must NOT reject a scope-less entry when
+    // nothing declared a scope to bind against.
+    assert.equal(isComplete(full('thin', 'full'), undefined, null), true);
+  });
+
+  it("the PRIMARY (solo) arm is NEVER checked for shadowScope — it has none", () => {
+    // The bug this regression-guards: a check quantified over ALL arms
+    // (`arms.every`) would compare the solo arm's `undefined` shadowScope
+    // against the expected value and mark the snapshot ineligible even when
+    // every REAL shadow arm matches — bricking every snapshot in any cohort
+    // that includes a primary replicate, permanently, the moment one exists.
+    const e = full('thin', 'thin', { 'solo-opus': { primaryVerdict: 'APPROVE' } }); // no shadowScope key at all
+    assert.equal(isComplete(e, undefined, 'thin'), true);
+  });
+
+  it('an entry that PREDATES the scope field (shadowScope absent) does not match a declared scope', () => {
+    const e = full('thin', 'thin');
+    delete e.arms.kimi.shadowScope;
+    assert.equal(isComplete(e, undefined, 'thin'), false);
   });
 });
 
@@ -273,7 +326,7 @@ describe('summarise surfaces every arm (bakeoff-collect)', () => {
   });
 
   it('the solo arm contributes its PRIMARY findings, never a shadow bucket it does not have', () => {
-    const s = summarise([snap('a', 7, 1, 2, 4, 7)], 12);
+    const s = summarise([snap('a', 7, 1, 2, 4, 7)], 12, undefined, null);
     assert.equal(s.totals.soloFindings, 7);
     assert.equal(s.totals.opusUnique, 7);
     assert.equal(s.totals.kimiUnique, 1);
@@ -282,7 +335,7 @@ describe('summarise surfaces every arm (bakeoff-collect)', () => {
   it('primary self-divergence is the per-snapshot |P1 - P2| spread', () => {
     // Same primary model, same transcript, two runs. This is §0.4's
     // "is a 2nd reviewer just a reroll?" question, and it is free to collect.
-    const s = summarise([snap('a', 7, 1, 2, 4, 7), snap('b', 3, 2, 5, 5, 3)], 12);
+    const s = summarise([snap('a', 7, 1, 2, 4, 7), snap('b', 3, 2, 5, 5, 3)], 12, undefined, null);
     assert.deepEqual(s.totals.primaryDivergence, [2, 0]);
   });
 
@@ -298,8 +351,8 @@ describe('summarise surfaces every arm (bakeoff-collect)', () => {
         'solo-opus': { primaryVerdict: 'CONCERNS', primaryFindings: 4, primaryDistinct: 4 },
       },
     };
-    assert.deepEqual(summarise([e], 12).totals.opusDivergence, [1]);
-    assert.equal(summarise([e], 12).totals.opusDivergenceUnpaired, 0);
+    assert.deepEqual(summarise([e], 12, undefined, null).totals.opusDivergence, [1]);
+    assert.equal(summarise([e], 12, undefined, null).totals.opusDivergenceUnpaired, 0);
   });
 
   it('a missing Opus sample is UNPAIRED, never scored as zero divergence', () => {
@@ -315,7 +368,7 @@ describe('summarise surfaces every arm (bakeoff-collect)', () => {
         'solo-opus': { primaryVerdict: 'CONCERNS', primaryFindings: 4 }, // no primaryDistinct
       },
     };
-    const s = summarise([e], 12);
+    const s = summarise([e], 12, undefined, null);
     assert.deepEqual(s.totals.opusDivergence, []);
     assert.equal(s.totals.opusDivergenceUnpaired, 1);
   });
@@ -333,7 +386,7 @@ describe('summarise surfaces every arm (bakeoff-collect)', () => {
         'solo-opus': { primaryVerdict: 'CONCERNS', primaryFindings: 4, requestFingerprints: ['opusFP'] },
       },
     };
-    const pairs = summarise([e], 12).totals.rerollPairs;
+    const pairs = summarise([e], 12, undefined, null).totals.rerollPairs;
     assert.ok(pairs.includes('opus=solo-opus'), 'the identical Opus request must be surfaced');
     assert.ok(pairs.includes('opus=kimi'), 'both arms also run the same Gemini primary');
   });
@@ -345,7 +398,7 @@ describe('summarise surfaces every arm (bakeoff-collect)', () => {
       snapshotId: 'a', contractEpoch: CONTRACT_EPOCH,
       arms: { opus: ran(5, 2), kimi: ran(1, 2), 'solo-opus': { primaryVerdict: 'CONCERNS', primaryFindings: 4 } },
     };
-    assert.deepEqual(summarise([e], 12).totals.rerollPairs, []);
+    assert.deepEqual(summarise([e], 12, undefined, null).totals.rerollPairs, []);
   });
 
   it('an arm with an unpriced call makes that ARM null, and flags the snapshot', () => {
@@ -357,7 +410,7 @@ describe('summarise surfaces every arm (bakeoff-collect)', () => {
         'solo-opus': { primaryVerdict: 'CONCERNS', primaryFindings: 4, costUsd: 2.3 },
       },
     };
-    const t = summarise([e], 12).totals;
+    const t = summarise([e], 12, undefined, null).totals;
     assert.equal(t.costByArm.opus, 2.5);
     assert.equal(t.costByArm.kimi, null, 'an unpriced arm shows null, not the sum of its priced snapshots');
     assert.equal(t.costUncostedSnapshots, 1);
@@ -366,11 +419,65 @@ describe('summarise surfaces every arm (bakeoff-collect)', () => {
   it('an INCOMPLETE snapshot contributes to no total — not even a partial one', () => {
     const bad = snap('c', 9, 9, 9, 9, 9);
     delete bad.contractEpoch; // stale-epoch row
-    const s = summarise([bad], 12);
+    const s = summarise([bad], 12, undefined, null);
     assert.equal(s.complete, 0);
     assert.equal(s.totals.opusUnique, 0);
     assert.equal(s.totals.soloFindings, 0);
     assert.deepEqual(s.totals.primaryDivergence, []);
+  });
+});
+
+describe('verifyPreflightArtifact — collector-side sha256 recomputation (plan §8)', () => {
+  const PREFLIGHT = { artifact: 'docs/research/grok-effort-preflight-2026q3.json', sha256: 'a'.repeat(64), disposition: 'pass' };
+  const content = Buffer.from('{"trials":[]}');
+  const realSha256 = nodeCrypto.createHash('sha256').update(content).digest('hex');
+
+  it('no preflight declared -> not checked, ok (no xAI arm, nothing to verify)', () => {
+    const r = verifyPreflightArtifact(undefined);
+    assert.equal(r.ok, true);
+    assert.equal(r.checked, false);
+  });
+
+  it('artifact missing on disk -> refused, never silently skipped', () => {
+    const r = verifyPreflightArtifact(PREFLIGHT, { exists: () => false });
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /does not exist/);
+  });
+
+  it('RECOMPUTED sha256 mismatches the recorded one -> refused (tamper/edit detection)', () => {
+    // This is the whole point of "collector-side RECOMPUTATION" — a recorded
+    // hash nobody recomputes is decoration. The artifact on disk here does NOT
+    // match PREFLIGHT.sha256 ('a'.repeat(64)), simulating a post-signing edit.
+    const r = verifyPreflightArtifact(PREFLIGHT, { exists: () => true, readFile: () => content });
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /has been modified since the campaign was signed/);
+  });
+
+  it('sha256 matches but disposition is not "pass" -> refused (belt-and-braces)', () => {
+    const withRealSha = { ...PREFLIGHT, sha256: realSha256, disposition: 'fail' };
+    const r = verifyPreflightArtifact(withRealSha, { exists: () => true, readFile: () => content });
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /disposition is "fail"/);
+  });
+
+  it('sha256 matches AND disposition is "pass" -> verified, checked:true', () => {
+    const withRealSha = { ...PREFLIGHT, sha256: realSha256 };
+    const r = verifyPreflightArtifact(withRealSha, { exists: () => true, readFile: () => content });
+    assert.equal(r.ok, true);
+    assert.equal(r.checked, true);
+    assert.equal(r.artifact, PREFLIGHT.artifact);
+  });
+
+  it('the REAL committed artifact verifies against the REAL campaign config (end-to-end, no mocks)', () => {
+    // No injected deps — reads the actual files this repo ships. If this ever
+    // fails, either the artifact was edited without re-running the pre-flight,
+    // or the campaign config's recorded sha256 is stale.
+    const { config } = parseCampaignConfig(
+      JSON.parse(nodeFs.readFileSync('.campaigns/final-review-scoped-2026q3.json', 'utf-8')),
+    );
+    const r = verifyPreflightArtifact(config.controls.preflight);
+    assert.equal(r.ok, true, r.reason);
+    assert.equal(r.checked, true);
   });
 });
 
@@ -410,6 +517,28 @@ describe('cloud run wiring (bakeoff-collect buildArmArgs)', () => {
     // denominator is COUNT(*) over audit_runs. Replays are not audits; an
     // untagged replay deflates the rate it is being compared against.
     assert.equal(EXPERIMENT_TAG, 'final-review-bakeoff');
+  });
+
+  it('threads --envelope-scope and --campaign-digest when a campaign is active (plan KD-6)', () => {
+    const args = buildArmArgs(arm, { ...ctx, runId: 'r1', envelopeScope: 'thin', campaignDigest: 'deadbeef' });
+    assert.equal(args[args.indexOf('--envelope-scope') + 1], 'thin');
+    assert.equal(args[args.indexOf('--campaign-digest') + 1], 'deadbeef');
+  });
+
+  it('OMITS both flags when no campaign is active — never passes a blank value', () => {
+    const args = buildArmArgs(arm, { ...ctx, runId: 'r1' });
+    assert.equal(args.includes('--envelope-scope'), false);
+    assert.equal(args.includes('--campaign-digest'), false);
+  });
+
+  it('the two flags travel TOGETHER — scope with no digest is still omitted-or-present consistently', () => {
+    // Guards against a caller passing envelopeScope without campaignDigest,
+    // which would make the spawned reviewer believe a campaign is active
+    // (--campaign-digest present) while actually recording no digest at all —
+    // this test pins that buildArmArgs does not silently synthesize one.
+    const args = buildArmArgs(arm, { ...ctx, runId: 'r1', envelopeScope: 'thin' });
+    assert.equal(args[args.indexOf('--envelope-scope') + 1], 'thin');
+    assert.equal(args.includes('--campaign-digest'), false);
   });
 });
 
@@ -537,11 +666,33 @@ describe('collect-time lock', () => {
 });
 
 describe('resolveArms — selection is a refusal, never a silent fallback', () => {
-  it('derives from the committed campaign when one exists', () => {
-    const r = resolveArms({});
+  it('derives from a NAMED committed campaign', () => {
+    // Was `resolveArms({})` — relied on `.campaigns/` holding exactly one
+    // config. It now legitimately holds two (final-review-2026q3 and
+    // final-review-scoped-2026q3, plan: final-review-scoped-second-reviewer.md
+    // Phase 6), so "no campaignId" is correctly ambiguous — see the dedicated
+    // test below for that real, repo-level ambiguity.
+    const r = resolveArms({ campaignId: 'final-review-2026q3' });
     assert.equal(r.source, 'campaign:final-review-2026q3');
     assert.equal(r.arms.length, 3);
     assert.ok(r.lock.lockDigest);
+  });
+
+  it('derives from the NEW scoped campaign, with the scoped controls intact', () => {
+    const r = resolveArms({ campaignId: 'final-review-scoped-2026q3' });
+    assert.equal(r.source, 'campaign:final-review-scoped-2026q3');
+    assert.deepEqual(r.arms.map((a) => a.id).sort(), ['grok', 'kimi', 'opus']);
+    assert.equal(r.config.controls.envelopeScope, 'thin');
+    assert.equal(r.config.controls.preflight.disposition, 'pass');
+  });
+
+  it('the REAL `.campaigns/` directory is ambiguous with no --campaign — refuses, names both', () => {
+    // This is production behaviour, not a synthetic fixture: with two real
+    // committed campaigns, `--progress` / a bare collect with no --campaign
+    // must refuse rather than silently picking one — the same "never guess
+    // which campaign ran" rule the synthetic ambiguity test below also checks,
+    // now exercised against this repo's actual .campaigns/ contents.
+    assert.throws(() => resolveArms({}), /pass --campaign.*final-review-2026q3.*final-review-scoped-2026q3|pass --campaign.*final-review-scoped-2026q3.*final-review-2026q3/);
   });
 
   it('falls back to the legacy table only when NO campaign exists', () => {

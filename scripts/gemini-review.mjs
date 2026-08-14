@@ -41,7 +41,7 @@ import { applyEnvSetting } from './lib/env-setting.mjs';
 import { geminiConfig, claudeConfig, azureConfig, shadowReviewConfig, finalReviewConfig, auditShadowConfig, findingMatchConfig, FINDING_MATCH_SCHEMA_VERSION } from './lib/config.mjs';
 import { describeAzureRoute, describeTransportFailure } from './lib/azure-route-report.mjs';
 import { recordFinalReviewFindings } from './learning-store.mjs';
-import { refreshModelCatalog, resolveModel } from './lib/model-resolver.mjs';
+import { refreshModelCatalog, resolveModel, resolveXaiCreds } from './lib/model-resolver.mjs';
 import { createOpenAIClient } from './lib/openai-client.mjs';
 import { createAnthropicClient } from './lib/anthropic-client.mjs';
 import { azureThrottle } from './lib/azure-throttle.mjs';
@@ -58,6 +58,16 @@ import { isCloudEnabled } from './lib/store/repo.mjs';
 import { getActiveEvalRunId } from './lib/store/model-eval.mjs';
 import { resolveCandidateRoute } from './lib/model-eval/route-catalog.mjs';
 import { appendModelEvalShadowObservation } from './lib/model-eval/finalize-shadow-eval.mjs';
+import { statSync } from 'node:fs';
+import { resolveAndClassify, classifyPath } from './lib/sensitive-paths.mjs';
+import { redactSecretsWithCount } from './lib/sensitive-egress-gate.mjs';
+import {
+  resolveEnvelopeScope, isReducedScope, isNonBlindScope, selectInScopeCodeFiles,
+} from './lib/final-review/scope.mjs';
+import {
+  buildReviewEnvelope, THIN_CODE_MAX_CHARS, THIN_CODE_MAX_PER_FILE,
+} from './lib/final-review/envelope.mjs';
+import { serializePrimaryForGap } from './lib/final-review/gap-projection.mjs';
 // NOTE: lib/llm-wrappers.mjs provides shared wrappers for learning/refinement/evolution paths.
 // This module keeps the specialized `callReviewer` seam (thinkingConfig + one
 // abort-correct timeout across all transports) because the final review requires
@@ -70,6 +80,13 @@ import { appendModelEvalShadowObservation } from './lib/model-eval/finalize-shad
 // model instead of whatever STATIC_POOL knew about at last commit.
 let MODEL = geminiConfig.model;
 let CLAUDE_OPUS_MODEL = claudeConfig.finalReviewModel;
+// `const`, unlike the two above — there is no live-catalog fetcher for xAI
+// (deliberate, see XAI_POOL's docstring in model-resolver.mjs: the endpoint
+// mixes chat and non-chat models with no uniform version grammar, so a
+// maintainer-curated single-entry pool is the right-sized choice), so nothing
+// refreshes this after the initial resolution. `resolveModel('latest-grok')`
+// still honours XAI_MODEL env override and reads XAI_POOL's head.
+const XAI_MODEL = resolveModel('latest-grok');
 const TIMEOUT_MS = geminiConfig.timeoutMs;
 const MAX_OUTPUT_TOKENS = geminiConfig.maxOutputTokens;
 
@@ -1095,6 +1112,34 @@ const PROVIDERS = {
       reasoning: { effort: finalReviewConfig.reasoningEffort },
     }),
   },
+  // Native xAI — final-review shadow arm (plan KD-4). OpenAI-compatible chat
+  // completions at api.x.ai; verified live 2026-08-14 (200 on /v1/models,
+  // response_format:json_schema returns valid structured JSON, top-level
+  // reasoning_effort accepted and moves reasoning_tokens in usage).
+  xai: {
+    id: 'xai',
+    structuredOutput: true,
+    label: 'xAI Grok',
+    transportKind: () => 'openai',
+    resolveModel: () => XAI_MODEL,
+    assertReady: (env = process.env) => {
+      if (!env.XAI_API_KEY) { console.error('Error: provider "xai" requires XAI_API_KEY'); process.exit(1); }
+    },
+    buildClient: async () => {
+      const c = resolveXaiCreds();
+      return createOpenAIClient({ oss: { baseURL: c.baseUrl, apiKey: c.apiKey } });
+    },
+    // DELIBERATELY not the OpenRouter descriptor's requestExtras (KD-4). The
+    // `provider`/`require_parameters`/`sort` fields are OpenRouter gateway-only
+    // — xAI is a single direct endpoint, not a router selecting among upstream
+    // backends, so those fields have no meaning here and a strict API could
+    // reject them as unknown. `reasoning.effort` is also OpenRouter's NESTED
+    // shape; xAI takes a FLAT top-level `reasoning_effort` string (verified
+    // live) — nesting it as OpenRouter does would silently be ignored, which is
+    // exactly the "accepted but inert" failure class the plan's pre-flight
+    // (Phase 5) exists to catch, so getting the shape right here matters.
+    requestExtras: () => ({ reasoning_effort: finalReviewConfig.reasoningEffort }),
+  },
 };
 
 /** Review-scoped OpenAI-compatible creds (all explicit; validated in assertReady). */
@@ -1116,6 +1161,17 @@ function resolveOpenRouterCreds() {
   };
 }
 
+// `resolveXaiCreds` (base URL + credential) lives in model-resolver.mjs —
+// NOT routed through resolveOpenRouterCreds/resolveCompatCreds, on purpose
+// (plan: final-review-scoped-second-reviewer.md KD-4). Those two exist to let
+// an operator point at an ARBITRARY gateway/base URL via env; xAI is a
+// specific, known, closed-catalog provider with one real endpoint, so a
+// fixed constant is the same choice this file already makes for `gemini` and
+// `claude-opus` above — an endpoint and the credential it is addressed with
+// are one unit (AGENTS.md). Shared with grok-effort-preflight.mjs (M4's fix)
+// so the base URL and env var name have exactly one definition, not two that
+// can silently drift apart.
+
 // ── Review Orchestrator ────────────────────────────────────────────────────────
 
 /**
@@ -1127,7 +1183,14 @@ function resolveOpenRouterCreds() {
  * @param {string} projectContext
  * @returns {Promise<{result: object, usage: object, latencyMs: number}>}
  */
-export async function runFinalReview(provider, client, planContent, transcriptContent, projectContext, auditMode = 'code', modelOverride = null) {
+export async function runFinalReview(provider, client, planContent, transcriptContent, projectContext, auditMode = 'code', modelOverride = null, options = {}) {
+  // `envelopeScope` defaults to 'full' so an omitted options bag is
+  // byte-identical to the pre-extraction behaviour (plan KD-1: threaded as a
+  // parameter, NOT as a second module-global — `_roleAddendum` already has a
+  // documented non-reentrancy caveat and adding a consumer would compound it).
+  const { envelopeScope = 'full', primaryResult = null } = options;
+  const reduced = isReducedScope(envelopeScope);
+
   // Parse transcript to extract code file paths for direct code inclusion
   let transcript;
   try {
@@ -1137,21 +1200,57 @@ export async function runFinalReview(provider, client, planContent, transcriptCo
     transcript = { raw: transcriptContent };
   }
 
-  // Read code files if paths are listed in transcript
-  let codeContext = '';
-  if (transcript.code_files && Array.isArray(transcript.code_files)) {
+  // Resolve the code-file set. `full` keeps the historical set verbatim;
+  // reduced scopes narrow to the in-scope diff, which is the set the review
+  // prompt's own rule 8 already restricts findings to — so the wider set was
+  // paying for tokens the scope filter then discards.
+  let codePaths = [];
+  let codeExcluded = null;
+  if (reduced) {
+    const sel = selectInScopeCodeFiles(
+      Array.isArray(transcript.changed_files) ? transcript.changed_files : [],
+      {
+        exists: (p) => { try { return statSync(p).isFile(); } catch { return false; } },
+        // resolveAndClassify, NOT classifyPath. `changed_files` is
+        // transcript-supplied, and this selector's output is read into a prompt
+        // that egresses to a third party — so a path named innocently but
+        // resolving through a symlink into (say) ~/.ssh must be caught. The
+        // lexical classifier matches the visible string only and would pass it
+        // (INC-001's class). This variant realpaths, re-classifies the canonical
+        // target, and fails CLOSED: a repo-escaping or unresolvable path throws
+        // or classifies sensitive, and either way we exclude it.
+        isSensitive: (p) => {
+          try {
+            return resolveAndClassify(p, { repoRoot: process.cwd() }).category === 'sensitive';
+          } catch {
+            return true; // unresolvable ⇒ sensitive. Never "couldn't classify, so allow".
+          }
+        },
+        // Cheap, name-only, never touches the filesystem — safe to call on a
+        // path that does not exist (an ordinary deletion), where the
+        // canonicalising check above would throw on realpath's ENOENT and
+        // fail-closed to "sensitive" for every deletion. See selectInScopeCodeFiles's
+        // docstring for why this split exists.
+        isSensitiveLexical: (p) => classifyPath(p) === 'sensitive',
+        isInfra: isAuditInfraFile,
+      },
+    );
+    codePaths = sel.files;
+    codeExcluded = sel.excluded;
+  } else if (transcript.code_files && Array.isArray(transcript.code_files)) {
     const { found } = extractPlanPaths(planContent);
     // Filter out audit-loop infrastructure files — they bleed into scope when
     // consumer repos have synced copies of scripts/ and cause false findings.
-    const allFiles = [...new Set([...found, ...transcript.code_files])].filter(f => !isAuditInfraFile(f));
-    codeContext = readFilesAsContext(allFiles, { maxPerFile: 8000, maxTotal: 100000 });
+    codePaths = [...new Set([...found, ...transcript.code_files])].filter(f => !isAuditInfraFile(f));
   } else {
     // Fall back to extracting from plan (already filtered by extractPlanPaths)
-    const { found } = extractPlanPaths(planContent);
-    if (found.length > 0) {
-      codeContext = readFilesAsContext(found, { maxPerFile: 8000, maxTotal: 100000 });
-    }
+    codePaths = extractPlanPaths(planContent).found;
   }
+  const renderCode = (paths) => (paths.length === 0
+    ? ''
+    : readFilesAsContext(paths, reduced
+      ? { maxPerFile: THIN_CODE_MAX_PER_FILE, maxTotal: THIN_CODE_MAX_CHARS }
+      : { maxPerFile: 8000, maxTotal: 100000 }));
 
   // Phase D.4: extract debt-suppression context from transcript envelope.
   // When the upstream audit already filtered debt, tell the reviewer so they
@@ -1199,45 +1298,65 @@ export async function runFinalReview(provider, client, planContent, transcriptCo
   // "missing module" claims in the transcript instead of only judging the
   // deliberation. T1 (with the changed files) for a code review; T0 for a
   // plan review. Non-blocking — a failure just omits the block.
+  // Reduced scopes drop this block entirely (~8000 tokens) — it is the single
+  // largest bounded saving available, and a second reviewer working from the
+  // diff does not need a repo-wide inventory to find what the first missed.
   let repoContextBlock = '';
-  try {
-    const rc = getRepoContext({
-      tier: auditMode === 'plan' ? 'T0' : 'T1',
-      scope: auditMode === 'plan' ? 'plan' : 'diff',
-      targetPaths: changedFiles, baseDir: process.cwd(),
-    });
-    if (rc.block) {
-      repoContextBlock = `## Repository Context (tier ${rc.resolvedTier})\n${rc.block}`;
-    }
-  } catch { /* non-blocking */ }
+  if (!reduced) {
+    try {
+      const rc = getRepoContext({
+        tier: auditMode === 'plan' ? 'T0' : 'T1',
+        scope: auditMode === 'plan' ? 'plan' : 'diff',
+        targetPaths: changedFiles, baseDir: process.cwd(),
+      });
+      if (rc.block) {
+        repoContextBlock = `## Repository Context (tier ${rc.resolvedTier})\n${rc.block}`;
+      }
+    } catch { /* non-blocking */ }
+  }
 
-  const userPrompt = [
-    '## Project Context',
-    projectContext,
-    '',
-    '---',
-    '',
-    '## Plan',
-    planContent,
-    '',
-    '---',
-    '',
-    repoContextBlock,
-    repoContextBlock ? '---' : '',
-    scopeBlock,
-    scopeBlock ? '---' : '',
-    '## Audit Transcript (Claude-GPT Deliberation)',
-    typeof transcript === 'object' && transcript.raw
-      ? transcript.raw
-      : JSON.stringify(transcript, null, 2),
-    '',
-    '---',
-    '',
-    debtBlock,
-    debtBlock ? '---' : '',
-    '## Code Files',
-    codeContext || '(No code files found — review based on transcript only)',
-  ].filter(Boolean).join('\n');
+  // `gap` only: the primary's findings, bounded + projected + labelled untrusted.
+  const gapProjection = isNonBlindScope(envelopeScope)
+    ? serializePrimaryForGap(primaryResult)
+    : null;
+
+  // Envelope assembly + budget live in lib/final-review/envelope.mjs (KD-2):
+  // pure, injectable code reader, so the byte-identity contract for `full` and
+  // the truncation order for `thin`/`gap` are unit-testable without a CLI.
+  const built = buildReviewEnvelope({
+    scope: envelopeScope,
+    projectContext, planContent, repoContextBlock, scopeBlock,
+    transcript, debtBlock,
+    gapBlock: gapProjection?.block ?? '',
+    // Truncation step 3: re-render the gap block smaller rather than slicing
+    // its string, so its field caps, severity ordering and omission marker
+    // survive the trim.
+    renderGap: gapProjection
+      ? (budget) => serializePrimaryForGap(primaryResult, { maxChars: budget })
+      : null,
+    codePaths, renderCode,
+  });
+  let userPrompt = built.userPrompt;
+
+  // Defence-in-depth secret scan over the ASSEMBLED envelope (KD-8). Per-file
+  // provenance enforcement already happened upstream in readFilesAsContext,
+  // where provenance still exists; this is the net under the PROSE blocks
+  // (plan, transcript, project context, debt) that have no other coverage, and
+  // it covers every provider rather than only the newest one.
+  //
+  // The gentle `secret-patterns` redactor, deliberately NOT `sanitizer.mjs` —
+  // the blanket variant redacts any 20+ char token and would shred findings
+  // prose and code snippets (AGENTS.md).
+  const scanned = redactSecretsWithCount(userPrompt);
+  userPrompt = scanned.text;
+  const envelopeAccounting = {
+    ...built.accounting,
+    redactions: scanned.redacted,
+    codeExcluded,
+    gapFindings: gapProjection
+      ? { included: gapProjection.included, omitted: gapProjection.omitted }
+      : null,
+  };
 
   const descriptor = PROVIDERS[provider];
   if (!descriptor) throw new Error(`[final-review] unknown provider "${provider}"`);
@@ -1288,7 +1407,7 @@ export async function runFinalReview(provider, client, planContent, transcriptCo
     jsonSchema: GeminiFinalReviewJsonSchema,
     toolSchema: AnthropicReviewToolSchema,
     passName: `${provider}-review`,
-    // Optional per-descriptor gateway body fields; only `openrouter` defines it.
+    // Optional per-descriptor gateway body fields (`openrouter`, `xai`).
     requestExtras: descriptor.requestExtras?.(),
     // Only descriptors that opt in (`structuredOutput: true`) ask for the schema.
     // Azure Foundry shares the openai adapter and deliberately does NOT.
@@ -1300,7 +1419,8 @@ export async function runFinalReview(provider, client, planContent, transcriptCo
   // be lost at the first hop that rebuilds its own envelope, which is exactly
   // how the shadow's cache-token counts went missing.
   call.result._requestFingerprint = requestFingerprint;
-  return { ...call, requestFingerprint };
+  call.result._envelope = envelopeAccounting;
+  return { ...call, requestFingerprint, envelope: envelopeAccounting };
 }
 
 // ── Output Formatting ──────────────────────────────────────────────────────────
@@ -1413,6 +1533,12 @@ const SHADOW_PROVIDER_SPECS = {
     canonical: 'openrouter', family: 'gateway', gateway: true, defaultSentinel: null,
     hasCredential: (env) => Boolean(env.FINAL_REVIEW_API_KEY || env.OPENROUTER_API_KEY),
   },
+  // Native xAI — NOT a gateway (unlike openrouter): xai is a single known
+  // endpoint with a real default model, so `defaultSentinel: 'latest-grok'`
+  // means FINAL_REVIEW_SHADOW=xai with no FINAL_REVIEW_SHADOW_MODEL is
+  // perfectly usable, matching claude-opus/gemini's behaviour above rather
+  // than openrouter's "explicit model required" refusal.
+  'xai': { canonical: 'xai', family: 'xai', defaultSentinel: 'latest-grok', hasCredential: (env) => Boolean(env.XAI_API_KEY) },
 };
 
 /** Cheap family check so an explicit model can't be paired with a wrong provider (R3 M1). */
@@ -1423,6 +1549,7 @@ function shadowModelMatchesFamily(modelId, family) {
   // explicit model in resolveShadow, not a name pattern.
   if (family === 'gateway') return true;
   if (family === 'gemini') return id.includes('gemini');
+  if (family === 'xai') return id.includes('grok');
   // claude family — opus/sonnet/haiku today, mythos/fable when they land.
   return /claude|opus|sonnet|haiku|mythos|fable/.test(id);
 }
@@ -1503,6 +1630,14 @@ async function buildShadowClient(canonicalProvider) {
       return createAnthropicClient({ azureRoute: azureConfig.claudeRoute });
     }
     return createOpenAIClient({ purpose: 'foundry-claude' });
+  }
+  if (canonicalProvider === 'xai') {
+    // Same non-delegation note as openrouter above: buildShadowClient does NOT
+    // call PROVIDERS.xai.assertReady/buildClient — that descriptor's assertReady
+    // is a plain env check the shadow path duplicates in resolveShadow's own
+    // hasCredential, so calling both would just be two places to keep in sync.
+    const c = resolveXaiCreds();
+    return createOpenAIClient({ oss: { baseURL: c.baseUrl, apiKey: c.apiKey } });
   }
   // `backend:'sdk'` PINNED, never the ambient CLAUDE_BACKEND (found live
   // 2026-07-26 on the shadow's first real run). This transport gets its JSON
@@ -1590,14 +1725,22 @@ async function resolveModelEvalShadowOverride() {
 }
 
 /**
- * Run the shadow review BLIND on the same transcript as the primary, then
- * apply the identical suppression/scope/semantic-id pipeline so finding counts
- * are comparable. Returns {result, usage, latencyMs}.
+ * Run the shadow review on the same transcript as the primary, then apply the
+ * identical suppression/scope/semantic-id pipeline so finding counts are
+ * comparable. Returns {result, usage, latencyMs}.
+ *
+ * BLINDNESS IS SCOPE-DEPENDENT — do not read the old unconditional claim here.
+ * `full` and `thin` are BLIND: the primary's result is not a parameter of this
+ * function and is never forwarded, so blindness is structural rather than
+ * conventional. `gap` deliberately surrenders it — the mode's whole job is
+ * "what did the primary miss?", which cannot be asked without showing it the
+ * primary's findings. That trade is why `gap` is campaign-INELIGIBLE: a shadow
+ * conditioned on its own arm's stochastic primary is not comparable across arms.
  */
-async function runShadowReview(shadow, planContent, transcriptContent, projectContext, auditMode) {
+async function runShadowReview(shadow, planContent, transcriptContent, projectContext, auditMode, options = {}) {
   const client = await buildShadowClient(shadow.provider);
   const r = await runReviewWithRetry(
-    shadow.provider, client, planContent, transcriptContent, projectContext, auditMode, shadow.model
+    shadow.provider, client, planContent, transcriptContent, projectContext, auditMode, shadow.model, options
   );
   const { result, usage, latencyMs, requestFingerprint, transcriptContent: usedTranscript } = r;
   await applyDebtSuppression(result, usedTranscript);
@@ -1698,9 +1841,9 @@ function shadowSkipBlock(shadow) {
  * @param {object} result          primary reviewer result (already id-stamped)
  * @param {string} primaryModel    primary reviewer's resolved concrete model id
  * @param {string|null} runId      audit_runs.id (null → local-only, no cloud)
- * @param {{modelEvalOverride?: {repoId:string, modelEvalRunId:string, shadow:object}|null}} [opts]
+ * @param {{modelEvalOverride?: {repoId:string, modelEvalRunId:string, shadow:object}|null, envelopeScopeCli?: string|null, campaignDigest?: string|null}} [opts]
  */
-async function runShadowAndPersist(result, primaryModel, runId, { planContent, transcriptContent, projectContext, auditMode }, { modelEvalOverride = null } = {}) {
+async function runShadowAndPersist(result, primaryModel, runId, { planContent, transcriptContent, projectContext, auditMode }, { modelEvalOverride = null, envelopeScopeCli = null, campaignDigest = null } = {}) {
   // modelEvalOverride (Phase 4) takes priority over the ordinary
   // FINAL_REVIEW_SHADOW-derived resolution — resolveModelEvalShadowOverride()
   // itself only returns non-null when an adjudicator Tier A/B eval run is
@@ -1709,6 +1852,54 @@ async function runShadowAndPersist(result, primaryModel, runId, { planContent, t
   const shadow = modelEvalOverride ? modelEvalOverride.shadow : resolveShadow();
   let diff = null;
 
+  // Campaign identity + scope resolution happen HERE, unconditionally and
+  // BEFORE the shadow.state check — never inside the try/catch below, whose
+  // only job is making an ACTUAL PROVIDER CALL failure non-fatal. A
+  // config-level refusal must propagate as a genuine uncaught error ("exit
+  // non-zero before any client is constructed" is the plan's own test for
+  // this); relabelling it 'error-unavailable' via the catch would silently
+  // turn a campaign-safety refusal into the same non-fatal shrug a network
+  // timeout gets, which defeats the entire point of refusing early.
+  //
+  // Campaign identity is `--campaign-digest`'s PRESENCE, never how scope was
+  // supplied (KD-6's correction: an earlier draft used "was --envelope-scope
+  // given" as the campaign signal, which made identical `gap` intent behave
+  // differently by transport — gap via env was fine, gap via CLI was a
+  // violation, for no reason a caller could predict).
+  //
+  // Scope resolution has ONE home (scope.mjs). Precedence: --envelope-scope
+  // (campaign) > FINAL_REVIEW_SHADOW_SCOPE (operator) > 'full' (default) —
+  // resolveEnvelopeScope's own cli-then-env precedence gives this for free.
+  const campaignActive = campaignDigest !== null;
+  const scopeRes = resolveEnvelopeScope({ cliScope: envelopeScopeCli, envScope: shadowReviewConfig.scope });
+  if (campaignActive && scopeRes.scope === 'gap') {
+    // Zero-latency failure — the tell that nothing was billed.
+    throw new Error(
+      '[shadow-review] --envelope-scope gap is campaign-ineligible (plan KD-5): a gap '
+      + 'shadow is conditioned on its own arm\'s primary result, so gap arms are not '
+      + 'comparable across a cohort. Refusing before any provider call.',
+    );
+  }
+  if (scopeRes.invalid !== null) {
+    // Disposition differs by whether a campaign is watching. Interactive:
+    // loud warning, proceed on 'full' (the most expensive envelope, so a
+    // typo cannot silently buy the cheap behaviour). Campaign: hard reject
+    // before any billed call — an unattended run has nobody to read the
+    // warning, and the operator-approved plan explicitly requires this.
+    if (campaignActive) {
+      throw new Error(
+        `[shadow-review] invalid --envelope-scope "${scopeRes.invalid}" under an active campaign `
+        + '(--campaign-digest present) — refusing before any provider call. Campaign scope must be valid.',
+      );
+    }
+    process.stderr.write(
+      `  [shadow-review] WARNING: FINAL_REVIEW_SHADOW_SCOPE="${scopeRes.invalid}" is not one of `
+      + `full|thin|gap — falling back to "full" (the most expensive envelope). `
+      + 'Fix the value or unset it.\n',
+    );
+  }
+  const envelopeScope = scopeRes.scope;
+
   if (shadow.state !== 'ready') {
     result._shadow = shadowSkipBlock(shadow);
     if (shadow.state !== 'skipped-unset') {
@@ -1716,12 +1907,28 @@ async function runShadowAndPersist(result, primaryModel, runId, { planContent, t
     }
   } else {
     try {
-      const sr = await runShadowReview(shadow, planContent, transcriptContent, projectContext, auditMode);
+      // `primaryResult` is passed ONLY for `gap` — for `full`/`thin` it stays
+      // null so blindness is enforced by what the callee receives, not by
+      // what it promises.
+      const sr = await runShadowReview(shadow, planContent, transcriptContent, projectContext, auditMode, {
+        envelopeScope,
+        primaryResult: isNonBlindScope(envelopeScope) ? result : null,
+      });
       diff = diffFindingBuckets(result, sr.result);
       for (const f of diff.primary) f._sourceModel = primaryModel;
       for (const f of diff.shadow) f._sourceModel = shadow.model;
       result._shadow = {
         state: 'ran', provider: shadow.provider, model: shadow.model,
+        // Provenance: WHICH envelope produced this observation. Without it a
+        // persisted shadow row cannot be told apart across contract epochs, and
+        // the campaign's scope-binding eligibility check has nothing to read.
+        scope: envelopeScope,
+        envelope: sr.result?._envelope ?? null,
+        // Recorded, never verified here — verification is the COLLECTOR's job
+        // (it owns the manifest and can recompute against it). This is what
+        // lets a persisted snapshot be matched to the specific signed cohort
+        // that claims it, rather than merely being contemporaneous with one.
+        campaignDigest,
         verdict: sr.result.verdict,
         // Cache token counts are copied, not dropped. This envelope is rebuilt
         // by hand rather than spread, so any field omitted here does not exist
@@ -1943,7 +2150,23 @@ function parseReviewArgs(args) {
   // main(). Absent (null) → today's default behaviour, byte-identical.
   const roleIdx = args.indexOf('--role');
   const role = roleIdx !== -1 && args[roleIdx + 1] ? args[roleIdx + 1] : null;
-  return { planFile, transcriptFile, jsonMode, outFile, providerOverride, auditMode, runId, role };
+  // --envelope-scope <full|thin|gap> — the CAMPAIGN's declared scope for the
+  // shadow reviewer this process spawns. Presence of this flag (or
+  // --campaign-digest) is the "a campaign is active" signal — see KD-6's
+  // correction: an earlier draft used the presence of ANY envelope-scope
+  // source as that signal, which made identical `gap` intent behave
+  // differently by transport (env-supplied gap was fine, CLI-supplied gap was
+  // a campaign violation). Precedence: this flag > FINAL_REVIEW_SHADOW_SCOPE
+  // env > 'full' default (resolveEnvelopeScope owns the actual resolution).
+  const envelopeScopeIdx = args.indexOf('--envelope-scope');
+  const envelopeScopeCli = envelopeScopeIdx !== -1 && args[envelopeScopeIdx + 1] ? args[envelopeScopeIdx + 1] : null;
+  // --campaign-digest <hex> — the manifest's configDigest, recorded (never
+  // verified here; verification is the COLLECTOR's job, which owns the
+  // manifest) so a persisted snapshot can be matched to the specific signed
+  // cohort that claims it. Its PRESENCE is the campaign-active signal.
+  const campaignDigestIdx = args.indexOf('--campaign-digest');
+  const campaignDigest = campaignDigestIdx !== -1 && args[campaignDigestIdx + 1] ? args[campaignDigestIdx + 1] : null;
+  return { planFile, transcriptFile, jsonMode, outFile, providerOverride, auditMode, runId, role, envelopeScopeCli, campaignDigest };
 }
 
 /**
@@ -2109,12 +2332,12 @@ function isJsonTruncationError(err) {
     || err.message?.includes('parse');
 }
 
-export async function runReviewWithRetry(provider, client, planContent, transcriptContent, projectContext, auditMode, modelOverride = null) {
+export async function runReviewWithRetry(provider, client, planContent, transcriptContent, projectContext, auditMode, modelOverride = null, options = {}) {
   const MAX_ATTEMPTS = 2;
   let txContent = transcriptContent;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      const r = await runFinalReview(provider, client, planContent, txContent, projectContext, auditMode, modelOverride);
+      const r = await runFinalReview(provider, client, planContent, txContent, projectContext, auditMode, modelOverride, options);
       return { ...r, transcriptContent: txContent };
     } catch (err) {
       if (!isJsonTruncationError(err) || attempt >= MAX_ATTEMPTS) throw err;
@@ -2603,7 +2826,7 @@ async function main() {
   if (mode === 'ping') return runPing(args);
   if (mode === 'set-provider') return runSetProvider(args[1]);
 
-  const { planFile, transcriptFile, jsonMode, outFile, providerOverride, auditMode, runId: cliRunId, role } = parseReviewArgs(args);
+  const { planFile, transcriptFile, jsonMode, outFile, providerOverride, auditMode, runId: cliRunId, role, envelopeScopeCli, campaignDigest } = parseReviewArgs(args);
   let runId = cliRunId;
   // A cloud-enabled invocation with no --run-id is a SILENT total loss of this
   // review's persistence (found live 2026-07-26, chasing a consumer repo whose
@@ -2640,7 +2863,7 @@ async function main() {
     }
   }
   if (mode !== 'review' || !planFile || !transcriptFile) {
-    console.error('Usage: node scripts/gemini-review.mjs review <plan-file> <transcript-file> [--json] [--out <file>] [--provider gemini|azure-claude|anthropic|openai-compatible|openrouter] [--mode plan|code] [--role adjudicator-only] [--run-id <audit_runs.id>]');
+    console.error('Usage: node scripts/gemini-review.mjs review <plan-file> <transcript-file> [--json] [--out <file>] [--provider gemini|azure-claude|anthropic|openai-compatible|openrouter] [--mode plan|code] [--role adjudicator-only] [--run-id <audit_runs.id>] [--envelope-scope full|thin|gap] [--campaign-digest <hex>]');
     console.error('       node scripts/gemini-review.mjs set-provider <gemini|azure-claude|anthropic|openai-compatible|openrouter|default>');
     console.error('       node scripts/gemini-review.mjs ping');
     process.exit(1);
@@ -2692,13 +2915,19 @@ async function main() {
       : provider === 'azure-claude' ? azureConfig.claudeDeployment
       : CLAUDE_OPUS_MODEL;
     // Shadow reviewer + cloud persistence — runs BEFORE emit so the --out
-    // artifact carries the _shadow block (R1 M1). Observation-only; never
-    // throws out (its own try/catch keeps the primary review unaffected).
+    // artifact carries the _shadow block (R1 M1). Observation-only for an
+    // ACTUAL PROVIDER CALL failure — that half still never throws out (its own
+    // try/catch keeps the primary review unaffected). NOT observation-only for
+    // a config-level campaign-safety refusal (invalid/gap scope under
+    // --campaign-digest): that throws PAST this call, past the outer catch
+    // below, to a non-zero exit — deliberately losing this arm's otherwise-good
+    // primary result too, because the whole point is "nothing about this arm
+    // invocation should be trusted" when its own campaign config is wrong.
     // Phase 4: resolved UNCONDITIONALLY (independent of FINAL_REVIEW_SHADOW,
     // round-6 audit H4) — a non-null result overrides the ordinary shadow
     // resolution for this invocation only when a Tier A/B eval is active.
     const modelEvalOverride = await resolveModelEvalShadowOverride();
-    await runShadowAndPersist(result, primaryModel, runId, { planContent, transcriptContent: usedTranscript, projectContext, auditMode }, { modelEvalOverride });
+    await runShadowAndPersist(result, primaryModel, runId, { planContent, transcriptContent: usedTranscript, projectContext, auditMode }, { modelEvalOverride, envelopeScopeCli, campaignDigest });
     emitReviewOutput(result, usage, latencyMs, provider, jsonMode, outFile);
     recordGeminiOutcomes(result, primaryModel);
     await finishAndExit(0); // guarantee termination — never rely on natural drain

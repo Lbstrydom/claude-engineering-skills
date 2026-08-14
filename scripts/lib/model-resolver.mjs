@@ -131,6 +131,83 @@ export const OSS_POOL = Object.freeze({
 // `OSS_CODER_MODEL=qwen/qwen3-coder`. Unset → the static OSS_POOL head.
 const OSS_ROLE_ENV = Object.freeze({ coder: 'OSS_CODER_MODEL', reasoner: 'OSS_REASONER_MODEL' });
 
+// ── xAI pool (native final-review shadow arm — plan KD-4) ───────────────────
+// Role-partitioned like OSS_POOL, DELIBERATELY not version-parsed like
+// google/anthropic/openai's STATIC_POOL. Two reasons: (1) xAI's catalog mixes
+// chat models with non-chat ones on the SAME /v1/models endpoint (verified live
+// 2026-08-14: grok-imagine-image, grok-imagine-video, grok-build-0.1 alongside
+// grok-4.x) — a naive major.minor comparator would need to filter those out
+// first, and getting that filter wrong silently picks an image model for a
+// final review; (2) xAI's chat-model naming isn't uniform either
+// (`grok-4.20-0309-reasoning` vs `grok-4.6` vs `grok-4.6-non-reasoning`), so
+// there is no single grammar for parseXaiModel to parse. A maintainer-curated,
+// list-head-wins pool (this repo's existing OSS_POOL convention) is the
+// right-sized choice: safer than an under-specified parser, no more complex
+// than what OSS_POOL already does for the same reason.
+export const XAI_POOL = Object.freeze(['grok-4.6']);
+
+// Env override, same shape as OSS_ROLE_ENV — lets an operator pin a different
+// concrete id without editing source.
+const XAI_MODEL_ENV = 'XAI_MODEL';
+
+/**
+ * Resolve the `latest-grok` sentinel to a concrete xAI model id. Env override
+ * (comma-list head wins) beats the static pool head. Returns null only if the
+ * pool is somehow empty — resolveModel decides the error.
+ * @returns {string|null}
+ */
+export function pickXaiModel() {
+  const override = (process.env[XAI_MODEL_ENV] || '').split(',').map((s) => s.trim()).filter(Boolean)[0];
+  if (override) return override;
+  return XAI_POOL.length > 0 ? XAI_POOL[0] : null;
+}
+
+/**
+ * True iff `id` is an xAI Grok CHAT model id. The ONE predicate every
+ * xai-routing decision shares — `bakeoff-collect.mjs`'s `transportForModel`
+ * and `campaign/config.mjs`'s pre-flight-attestation schema rule both
+ * consult this rather than each carrying their own pattern, so they cannot
+ * silently diverge on what counts as "an xAI model" (the exact failure class
+ * AGENTS.md records for the `finding.severity` vs `finding.code` field-
+ * contract incident — two spellings of the same predicate, nothing to
+ * compare them).
+ *
+ * NOT a bare `/^grok/i` prefix test — xAI's `/v1/models` endpoint mixes chat
+ * models with non-chat ones under the SAME `grok-` prefix (verified live
+ * 2026-08-14: `grok-imagine-image`, `grok-imagine-video`,
+ * `grok-build-0.1` alongside `grok-4.x`). Routing one of those to the
+ * chat-completions transport would fail at runtime in a way static
+ * validation could have caught. Excludes the two known non-chat families by
+ * name rather than building a full capability-registry: `XAI_POOL` is a
+ * single maintainer-curated entry (see its own docstring for why), so this
+ * predicate is defence-in-depth around that pool, not the primary safety
+ * mechanism — proportionate to what is actually at risk today.
+ */
+export function isXaiModel(id) {
+  if (typeof id !== 'string' || !/^grok/i.test(id)) return false;
+  return !/^grok-(imagine|build)-/i.test(id);
+}
+
+/**
+ * xAI's single known endpoint. ONE definition, imported by both
+ * `gemini-review.mjs` (the shadow reviewer's xai descriptor) and
+ * `grok-effort-preflight.mjs` (the pre-flight's own direct call) — the
+ * cluster audit flagged the base URL and credential env var name as
+ * independently duplicated across the two files (M4), which is real drift
+ * risk: a base-URL or env-var-name change made in one copy and not the other
+ * fails silently at the network layer, not at review time. NOT a full shared
+ * transport (streaming/tool-schema/retry machinery) — the pre-flight is a
+ * bounded 6-call measurement script with no need for callReviewer's full
+ * apparatus, and building that would be the over-engineered extreme for what
+ * two call sites actually share: an endpoint and a credential.
+ */
+export const XAI_BASE_URL = 'https://api.x.ai/v1';
+
+/** @returns {{baseUrl: string, apiKey: string}} */
+export function resolveXaiCreds() {
+  return { baseUrl: XAI_BASE_URL, apiKey: process.env.XAI_API_KEY };
+}
+
 // ── Deprecated remap ────────────────────────────────────────────────────────
 // When a user's .env has a stale concrete ID, remap to a sentinel and warn.
 // Prevents 404s when providers retire models.
@@ -180,6 +257,11 @@ export const SENTINEL_TO_TIER = Object.freeze({
   // never partitioned by the author-tier observation).
   'latest-oss-coder':    { provider: 'oss', role: 'coder'    },
   'latest-oss-reasoner': { provider: 'oss', role: 'reasoner' },
+  // Final-review shadow arm (plan: final-review-scoped-second-reviewer.md
+  // KD-4). No `.tier` — same reason as the OSS sentinels above: xai has one
+  // role-partitioned pool, not an economy/standard/frontier ladder, so this
+  // degrades to 'unknown' in tierForModel/describeModel exactly like OSS does.
+  'latest-grok': { provider: 'xai' },
 });
 
 export function isSentinel(modelId) {
@@ -666,6 +748,11 @@ export function resolveModel(modelId, opts = {}) {
     const picked = pickOssModel(spec.role);
     if (picked) return picked;
     throw new Error(`resolveModel: cannot resolve OSS sentinel "${afterRemap}" — OSS_POOL.${spec.role} is empty`);
+  }
+  if (spec.provider === 'xai') {
+    const picked = pickXaiModel();
+    if (picked) return picked;
+    throw new Error(`resolveModel: cannot resolve xAI sentinel "${afterRemap}" — XAI_POOL is empty`);
   }
 
   const pool = mergedPool(spec.provider);

@@ -53,6 +53,13 @@ describe('campaign config — strict, closed validation', () => {
       assert.equal(parses(cfg), false, `arm id "${bad}" must be rejected`);
     }
   });
+
+  it('rejects an oversized arm id (audit-found gap, cluster B round 4 M3) — arm ids are receipt filename components, same 64-char ceiling as campaign ids', () => {
+    const tooLong = base(); tooLong.arms[0].id = 'a'.repeat(65);
+    assert.equal(parses(tooLong), false, '65 chars must be rejected');
+    const ok = base(); ok.arms[0].id = 'a'.repeat(64);
+    assert.equal(parses(ok), true, '64 chars is the documented maximum, not one less');
+  });
 });
 
 describe('campaign config — semantic rules (§2.5a)', () => {

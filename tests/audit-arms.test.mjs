@@ -351,13 +351,23 @@ describe('model-pricing — usage→cost with null-cost policy', () => {
       assert.equal(isPriced(head), true, `OSS_POOL.${role} head "${head}" must be priced`);
     }
   });
+  // Flatten a TIERED entry ({tiers:[...]}, e.g. the xAI grok-4.6 rate card —
+  // KD-7) into one {input,output} pair per tier, mirroring the exact same
+  // flatten model-pricing.mjs's own FALLBACK_PRICE_USD derivation applies.
+  // Without this, `.input`/`.output` on a tiered entry are `undefined` and the
+  // Math.max(...) calls below silently produce NaN, which then makes every
+  // `>`/`>=` comparison false — a NaN-corrupted assertion is a false green
+  // dressed up as a passing dominance check, not a real one.
+  const flattenPrices = (table) => Object.values(table)
+    .flatMap((entry) => (Array.isArray(entry?.tiers) ? entry.tiers : [entry]));
+
   it('FALLBACK_PRICE_USD STRICTLY dominates every known price, OSS *and* family (f68a6dbc)', () => {
     // This test used to read OSS_PRICING only, with `>=`. That is why it stayed
     // green while the real margin decayed to 1.0x: the tie was against
     // claude-opus in the FAMILY table, which the assertion never looked at, and
     // `>=` would have permitted it anyway. Both gaps closed — a tie is not an
     // over-estimate, and the family table is exactly where the maximum lives.
-    const all = [...Object.values(OSS_PRICING), ...Object.values(modelPricing)];
+    const all = [...flattenPrices(OSS_PRICING), ...flattenPrices(modelPricing)];
     const maxIn = Math.max(...all.map((p) => p.input));
     const maxOut = Math.max(...all.map((p) => p.output));
     assert.ok(FALLBACK_PRICE_USD.input > maxIn, `fallback input ${FALLBACK_PRICE_USD.input} must strictly exceed max listed ${maxIn}`);
@@ -368,7 +378,7 @@ describe('model-pricing — usage→cost with null-cost policy', () => {
     // The failure mode was a hand-picked constant sitting beside a table that
     // grew toward it. Pin the relationship, not the number: assert the value IS
     // max(listed) x margin, so adding a pricier model necessarily raises it.
-    const all = [...Object.values(OSS_PRICING), ...Object.values(modelPricing)];
+    const all = [...flattenPrices(OSS_PRICING), ...flattenPrices(modelPricing)];
     const maxIn = Math.max(...all.map((p) => p.input));
     const maxOut = Math.max(...all.map((p) => p.output));
     assert.equal(FALLBACK_PRICE_USD.input, maxIn * FALLBACK_MARGIN);
@@ -391,5 +401,71 @@ describe('model-pricing — usage→cost with null-cost policy', () => {
     // (valid numbers) BUT usageMissing:true. The flag must win → unmeterable.
     const r = costForBudget({ input_tokens: 0, output_tokens: 0, usageMissing: true }, 'qwen/qwen3-coder');
     assert.equal(r.unmeterable, true, 'a successful-but-unmeterable call must not read as a real €0');
+  });
+});
+
+describe('model-pricing — TIERED entries (grok-4.6, plan KD-7)', () => {
+  const GROK = 'grok-4.6';
+
+  it('priceFor selects the tier by MEASURED input tokens — exact boundary, both sides', () => {
+    // Inclusive upper edge: 200,000 is still tier 1; 200,001 crosses to tier 2.
+    assert.deepEqual(priceFor(GROK, { inputTokens: 199_999 }), { maxInputTokens: 200_000, input: 2.00, output: 6.00, cachedInput: 0.50 });
+    assert.deepEqual(priceFor(GROK, { inputTokens: 200_000 }), { maxInputTokens: 200_000, input: 2.00, output: 6.00, cachedInput: 0.50 });
+    assert.deepEqual(priceFor(GROK, { inputTokens: 200_001 }), { maxInputTokens: Infinity, input: 4.00, output: 12.00, cachedInput: 1.00 });
+  });
+
+  it('priceFor with NO token count returns the cheapest tier as an informational default', () => {
+    // isPriced()/FALLBACK_PRICE_USD's derivation need SOME representative
+    // number without knowing real usage — the cheapest tier, never a guessed
+    // "average", so it under-claims rather than over-claims when used loosely.
+    assert.equal(priceFor(GROK).input, 2.00);
+  });
+
+  it('isPriced is true for a tiered model even with no token count', () => {
+    assert.equal(isPriced(GROK), true);
+  });
+
+  it('costFromUsage crosses the boundary correctly — 200,000 vs 200,001 bill at DIFFERENT rates', () => {
+    const at = costFromUsage({ input_tokens: 200_000, output_tokens: 0 }, GROK);
+    const over = costFromUsage({ input_tokens: 200_001, output_tokens: 0 }, GROK);
+    assert.equal(at.totalUsd, 200_000 * 2.00 / 1_000_000, '200,000 tokens must bill at the tier-1 rate');
+    // Not "over > at" alone (a flat-rate bug would satisfy that too) — assert
+    // the per-token rate itself changed, which only a real tier flip explains.
+    const tier1ImpliedRate = at.totalUsd / 200_000;
+    const overImpliedRate = over.totalUsd / 200_001;
+    assert.ok(overImpliedRate > tier1ImpliedRate,
+      `the effective per-token rate must rise across the boundary (tier1=${tier1ImpliedRate}, over=${overImpliedRate})`);
+  });
+
+  it('cachedInput is a REAL per-1M rate, used in preference to the global CACHE_MULTIPLIER.read', () => {
+    // Grok's cached ratio (0.25 of base) differs from the global multiplier
+    // (0.10, tuned for Anthropic) — using the wrong one would under-price a
+    // cache-heavy Grok run by more than half. Kept well under 200K so the
+    // TIER itself doesn't flip — this test isolates the cached-rate choice,
+    // not tier selection (that has its own dedicated test above).
+    const c = costFromUsage({ input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 100_000 }, GROK);
+    assert.equal(c.inputUsd, 0.05, 'must use tier-1\'s cachedInput ($0.50/1M -> $0.05 for 100K), not input(2.00) * global CACHE_MULTIPLIER.read(0.10) = $0.02');
+  });
+
+  it('costForBudget (spend-cap path) also selects by measured tokens, never the cheap default', () => {
+    // If this fell back to the no-token-count cheapest-tier default, a >200K
+    // xAI call would reserve against the € ceiling at the WRONG (lower) rate —
+    // the one direction costForBudget exists to make impossible.
+    const r = costForBudget({ input_tokens: 250_000, output_tokens: 0 }, GROK);
+    assert.equal(r.estimated, false);
+    assert.equal(r.totalUsd, 250_000 * 4.00 / 1_000_000, 'must reserve at the TIER-2 rate for a 250K-token call');
+  });
+
+  it('a tiered entry does not break FALLBACK_PRICE_USD\'s strict-dominance invariant', () => {
+    // Regression pin for the flatten fix — FALLBACK_PRICE_USD is computed at
+    // import time by scanning every table entry; a tiered entry that isn't
+    // flattened first crashes the whole module at import (every tier's
+    // {input,output} must individually sit strictly under the fallback).
+    assert.ok(Number.isFinite(FALLBACK_PRICE_USD.input) && FALLBACK_PRICE_USD.input > 4.00);
+    assert.ok(Number.isFinite(FALLBACK_PRICE_USD.output) && FALLBACK_PRICE_USD.output > 12.00);
+  });
+
+  it('modelPricing keys the tiered entry on the CONCRETE id, per KD-4 — not a sentinel', () => {
+    assert.ok(Array.isArray(modelPricing[GROK]?.tiers), 'grok-4.6 must be the literal key, not latest-grok or a family token');
   });
 });

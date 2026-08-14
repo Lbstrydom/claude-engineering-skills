@@ -28,13 +28,16 @@ Azure work-profile variables are documented separately in
 | `BRIEF_MODEL_CLAUDE` | No | `latest-haiku` | Brief-generation Claude model |
 | `META_ASSESS_MODEL` | No | `latest-flash` | Meta-assessment Gemini model |
 | `META_ASSESS_GPT_FALLBACK` | No | `latest-gpt-mini` | Meta-assessment GPT fallback when `GEMINI_API_KEY` is absent |
+| `XAI_API_KEY` | No | — | xAI Grok access for the shadow final reviewer (`FINAL_REVIEW_SHADOW=xai`) and `scripts/grok-effort-preflight.mjs`. Native provider (own base URL/credential pair via `resolveXaiCreds()` in `model-resolver.mjs`), not an OpenRouter gateway route — no `X.AI_API_KEY` variant; the dot is unreachable as a shell variable name. |
 
 ## Shadow final review
 
 | Variable | Required | Default | Purpose |
 |----------|----------|---------|---------|
-| `FINAL_REVIEW_SHADOW` | No | — | Opt-in **shadow** final reviewer (observation-only A/B): `claude-opus` \| `anthropic` \| `gemini`. Runs a second blind reviewer in parallel with the primary; never gates the build. No-op when unset or under an Azure profile. |
-| `FINAL_REVIEW_SHADOW_MODEL` | No | per-provider | Concrete model / sentinel for the shadow reviewer. Unset → derived from the provider (`claude-opus`→`latest-opus`, `gemini`→`latest-pro`). A family mismatch is a logged no-op. |
+| `FINAL_REVIEW_SHADOW` | No | — | Opt-in **shadow** final reviewer (observation-only A/B): `claude-opus` \| `anthropic` \| `gemini` \| `xai`. Runs a second blind reviewer in parallel with the primary; never gates the build. No-op when unset or under an Azure profile. |
+| `FINAL_REVIEW_SHADOW_MODEL` | No | per-provider | Concrete model / sentinel for the shadow reviewer. Unset → derived from the provider (`claude-opus`→`latest-opus`, `gemini`→`latest-pro`, `xai`→`latest-grok`). A family mismatch is a logged no-op. |
+| `FINAL_REVIEW_SHADOW_SCOPE` | No | `full` | Envelope scope the shadow reviewer receives: `full` (byte-identical to the primary's own envelope — the historical baseline), `thin` (blind; drops repo-context, narrows code files to the in-scope diff, budget-capped — see `THIN_ENVELOPE_MAX_CHARS` in `scripts/lib/final-review/envelope.mjs`), or `gap` (thin + non-blind — also sees the primary reviewer's findings, projected and capped; campaign-ineligible per KD-5, since a gap shadow is conditioned on its own arm's primary result and isn't comparable across a cohort). An active campaign (`--campaign-digest` passed to `gemini-review.mjs`) requires a valid value and refuses `gap` outright, both before any provider call; outside a campaign an invalid value warns and falls back to `full` (the most expensive envelope, so a typo can't silently buy the cheap one). `--envelope-scope` on the CLI takes precedence over this variable. |
+| `CAMPAIGN_HMAC_KEY_<CAMPAIGN_ID>` | Campaign-only | — | Per-campaign worksheet-integrity secret, name derived by `hmacKeyRefFor()` (`scripts/lib/store/campaign.mjs`) as `CAMPAIGN_HMAC_KEY_` + the campaign id uppercased with non-alphanumerics folded to `_` (e.g. campaign id `final-review-scoped-2026q3` → `CAMPAIGN_HMAC_KEY_FINAL_REVIEW_SCOPED_2026Q3`). Generate fresh per campaign (`crypto.randomBytes(32).toString('hex')`) — never reuse or rotate an existing campaign's key, which would orphan its human dispositions. |
 
 `FINAL_REVIEW_{BASE_URL,API_KEY,MODEL,HARD_DEADLINE_MS}` (provider-agnostic
 gateway + termination watchdog) are documented in the

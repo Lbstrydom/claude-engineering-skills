@@ -24,23 +24,44 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { z } from 'zod';
+import { isXaiModel } from '../model-resolver.mjs';
 
 /** Campaign and arm ids become path components (`.audit/campaigns/<id>/…`), so
  * they are pattern-constrained at the schema boundary. Defence-in-depth, not
  * the only guard — every derived path is additionally resolved and asserted
  * repo-root-contained before any write (INC-001's lesson, one layer out). */
 export const CAMPAIGN_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
-export const ARM_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
+export const ARM_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 /** §6.3 row 1. Not re-derived here — a campaign below this cannot support a
  * verdict, and `verdict.mjs` emits INCONCLUSIVE under it regardless of config. */
 export const MIN_TARGET_N = 12;
 
 const ArmSchema = z.object({
-  id: z.string().regex(ARM_ID_PATTERN, 'arm id must match ^[a-z0-9][a-z0-9-]*$ — it is a receipt filename component'),
+  id: z.string().regex(ARM_ID_PATTERN, 'arm id must match ^[a-z0-9][a-z0-9-]{0,63}$ (max 64 chars) — it is a receipt filename component'),
   model: z.string().min(1),
   mode: z.enum(['shadow', 'primary']),
   type: z.literal('replicate').optional(),
+}).strict();
+
+/**
+ * The pre-flight ATTESTATION a campaign manifest cites when it declares an
+ * xAI arm (plan: final-review-scoped-second-reviewer.md §8, Phase 6). Lives
+ * inside `controls` — not at the manifest top level, where an earlier draft
+ * inconsistently placed it — so `configDigest` covers it, making the
+ * attestation part of what a re-collection must match.
+ *
+ * `model` is checked against the declaring arm's model STRING (semanticRules
+ * below), never a live-resolved id — the schema validates a static file and
+ * must not need network access or become non-deterministic when a catalog
+ * moves (this is WHY the campaign manifest pins a concrete xAI model rather
+ * than the `latest-grok` sentinel; see KD-4).
+ */
+const PreflightSchema = z.object({
+  artifact: z.string().min(1),
+  sha256: z.string().regex(/^[0-9a-f]{64}$/i, 'sha256 must be a 64-hex-char digest'),
+  model: z.string().min(1),
+  disposition: z.enum(['pass', 'fail', 'inconclusive']),
 }).strict();
 
 const ControlsSchema = z.object({
@@ -50,6 +71,15 @@ const ControlsSchema = z.object({
   maxOutputTokens: z.number().int().positive(),
   toolPolicy: z.string().min(1),
   temperature: z.number().finite().min(0),
+  // Plan KD-6: which final-review envelope every arm's shadow reviewer
+  // receives. Lives here (inside `controls`, therefore inside `configDigest`)
+  // so scope is SIGNED cohort state, not ambient env — a mismatched snapshot
+  // is structurally ineligible rather than merely discouraged.
+  envelopeScope: z.enum(['full', 'thin', 'gap']),
+  // Required only when an arm's model is on the xAI route — enforced below,
+  // not here, because "required" is conditional on `arms`, which this schema
+  // cannot see field-locally.
+  preflight: PreflightSchema.optional(),
 }).strict();
 
 const AdjudicatorSchema = z.object({
@@ -109,7 +139,13 @@ function semanticRules(cfg, ctx) {
     issue(`a campaign needs >= 2 non-replicate arms (got ${nonReplicates.length}) — one arm is not a comparison`, ['arms']);
   }
 
-  // The shadow protocol has exactly one primary.
+  // AT MOST one primary, not exactly one — a stale version of this comment
+  // said "exactly one", which the check below never enforced (only `> 1` is
+  // rejected) and a real committed campaign now depends on: `final-review-
+  // scoped-2026q3.json` (KD-5) has ZERO primaries by design — a solo replicate
+  // buys a within-model-variance reading the Gemini self-divergence readout
+  // already estimates, at Opus's rate, for a comparison this cohort does not
+  // need. Enforcing "exactly one" here would break that campaign.
   const primaries = cfg.arms.filter((a) => a.mode === 'primary');
   if (primaries.length > 1) {
     issue(`at most one arm may be mode:"primary" (got ${primaries.length}: ${primaries.map((a) => a.id).join(', ')})`, ['arms']);
@@ -137,6 +173,67 @@ function semanticRules(cfg, ctx) {
   // Unused here, referenced by the digest below — keep them in one place so a
   // future field addition has an obvious home.
   void replicates;
+
+  // `gap` is campaign-INELIGIBLE (plan KD-5). A gap shadow is conditioned on
+  // its OWN arm's stochastic primary result, so two gap arms are answering
+  // different questions — the confound is structural, not a data-quality
+  // issue a bigger N would fix. `gap` ships as an operator-selectable flag
+  // only; it must never appear inside a signed, N-tracked cohort.
+  if (cfg.controls.envelopeScope === 'gap') {
+    issue(
+      'controls.envelopeScope "gap" is campaign-ineligible (plan KD-5) — a gap '
+      + 'shadow is conditioned on its own arm\'s primary result, so gap arms are '
+      + 'not comparable to each other; use "thin" for a campaign cohort',
+      ['controls', 'envelopeScope'],
+    );
+  }
+
+  // xAI-arm conditional pre-flight requirement (plan KD-2's correction, §8,
+  // Phase 6). A manifest declaring ANY arm on the xAI route must carry a
+  // PASSING attestation naming that exact model — schema-enforced so it
+  // cannot be forgotten, never a runtime-only check a manifest could bypass.
+  // Keyed on `isXaiModel`, the SAME predicate `transportForModel` uses
+  // (model-resolver.mjs) — one oracle, so the two can never diverge on what
+  // counts as "an xAI arm".
+  const xaiArms = cfg.arms.filter((a) => isXaiModel(a.model));
+  if (xaiArms.length > 0) {
+    const distinctModels = new Set(xaiArms.map((a) => a.model));
+    if (distinctModels.size > 1) {
+      // v1 supports exactly one xAI model per campaign: one pre-flight
+      // artifact attests to one model, and there is no mechanism here for
+      // "attest to N models" — a real future need, not a corner to cut today.
+      issue(
+        `multiple distinct xAI models declared (${[...distinctModels].join(', ')}) — `
+        + 'one preflight artifact cannot attest to more than one model; v1 supports '
+        + 'exactly one xAI model per campaign',
+        ['arms'],
+      );
+    } else if (!cfg.controls.preflight) {
+      issue(
+        `arm(s) ${xaiArms.map((a) => a.id).join(', ')} declare an xAI model `
+        + `("${xaiArms[0].model}") — controls.preflight is REQUIRED before a campaign `
+        + 'may include a Grok arm (run scripts/grok-effort-preflight.mjs --run first)',
+        ['controls', 'preflight'],
+      );
+    } else {
+      if (cfg.controls.preflight.model !== xaiArms[0].model) {
+        issue(
+          `controls.preflight.model ("${cfg.controls.preflight.model}") does not match `
+          + `the declared xAI arm's model ("${xaiArms[0].model}") — the attestation must `
+          + 'name the exact model it measured, not a sentinel or a different release',
+          ['controls', 'preflight', 'model'],
+        );
+      }
+      if (cfg.controls.preflight.disposition !== 'pass') {
+        issue(
+          `controls.preflight.disposition is "${cfg.controls.preflight.disposition}", not `
+          + '"pass" — a Grok arm requires a PASSING pre-flight (plan §8): the dial must be '
+          + 'proven to move output before the arm may be billed inside a campaign',
+          ['controls', 'preflight', 'disposition'],
+        );
+      }
+    }
+  }
 }
 
 /**

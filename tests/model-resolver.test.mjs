@@ -1,11 +1,11 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  STATIC_POOL, DEPRECATED_REMAP, SENTINEL_TO_TIER, OSS_POOL,
+  STATIC_POOL, DEPRECATED_REMAP, SENTINEL_TO_TIER, OSS_POOL, XAI_POOL,
   isSentinel, parseClaudeModel, parseGeminiModel, parseOpenAIModel,
   pickNewestClaude, pickNewestGemini, pickNewestOpenAI,
   deprecatedRemap, resolveModel, setCatalog, _resetCatalogCache,
-  supportsReasoningEffort, pricingKey,
+  supportsReasoningEffort, pricingKey, isXaiModel,
 } from '../scripts/lib/model-resolver.mjs';
 
 // Reset state between tests so catalog overrides from one test don't leak
@@ -369,6 +369,18 @@ describe('STATIC_POOL / DEPRECATED_REMAP integrity', () => {
         );
         continue;
       }
+      // Same shape as the OSS carve-out above, one role-partitioned pool
+      // (model-resolver.mjs's XAI_POOL docstring explains why xai is NOT in
+      // STATIC_POOL: its endpoint mixes chat/non-chat ids with no uniform
+      // version grammar, so there is no per-provider array to check against).
+      if (spec.provider === 'xai') {
+        assert.equal(
+          XAI_POOL.includes(resolved),
+          true,
+          `"${sentinel}" resolved to "${resolved}" which is not in XAI_POOL`
+        );
+        continue;
+      }
       assert.equal(
         STATIC_POOL[spec.provider].includes(resolved),
         true,
@@ -380,5 +392,34 @@ describe('STATIC_POOL / DEPRECATED_REMAP integrity', () => {
   it('Google aliases present for pro/flash tiers', () => {
     assert.equal(STATIC_POOL.google.includes('gemini-pro-latest'), true);
     assert.equal(STATIC_POOL.google.includes('gemini-flash-latest'), true);
+  });
+});
+
+describe('isXaiModel — chat models only, NOT a bare prefix test (audit-found gap)', () => {
+  it('accepts real chat model ids', () => {
+    for (const id of ['grok-4.6', 'grok-4.5', 'grok-4.3', 'grok-4.20-0309-reasoning', 'grok-4.20-0309-non-reasoning']) {
+      assert.equal(isXaiModel(id), true, `${id} should be a recognised xAI chat model`);
+    }
+  });
+
+  it('REJECTS the non-chat families verified live on api.x.ai — the exact gap the audit caught', () => {
+    // grok-imagine-* and grok-build-* were observed live 2026-08-14 on the
+    // same /v1/models endpoint as the chat models. A bare /^grok/i prefix
+    // matched them too, which would route an image/video/build model to the
+    // chat-completions transport and fail only at runtime.
+    for (const id of ['grok-imagine-image', 'grok-imagine-image-2.0', 'grok-imagine-video', 'grok-imagine-video-1.5', 'grok-build-0.1']) {
+      assert.equal(isXaiModel(id), false, `${id} must NOT be classified as a chat model`);
+    }
+  });
+
+  it('rejects non-grok ids and non-string input without throwing', () => {
+    assert.equal(isXaiModel('claude-opus-5'), false);
+    assert.equal(isXaiModel('gemini-pro-latest'), false);
+    for (const v of [null, undefined, 42, {}]) assert.doesNotThrow(() => isXaiModel(v));
+  });
+
+  it('is case-insensitive, matching the rest of this repo\'s id-matching convention', () => {
+    assert.equal(isXaiModel('GROK-4.6'), true);
+    assert.equal(isXaiModel('Grok-Imagine-Image'), false);
   });
 });

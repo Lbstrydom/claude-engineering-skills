@@ -342,9 +342,27 @@ export const FINDING_MATCH_SCHEMA_VERSION = 1;
 // default model is derived in resolveShadow(), NOT here, so it can tell
 // "user explicitly pinned a model" from "unset → derive from provider"
 // (plan Gemini R2 G3). `model` is null when unset — never 'latest-opus'.
+// `scope` selects the ENVELOPE the shadow receives: `full` (today's behaviour,
+// byte-identical), `thin` (blind, no repo context, in-scope diff code only) or
+// `gap` (thin + non-blind — it sees the primary's findings and reports only
+// what they missed). Plan: docs/plans/final-review-scoped-second-reviewer.md.
+//
+// RAW, exactly like `provider`/`model` above — this is deliberately NOT
+// validated here. `resolveEnvelopeScope` (lib/final-review/scope.mjs) owns the
+// resolution and returns a TYPED result distinguishing "absent" from "invalid",
+// because the two must not resolve the same way: absent keeps today's `full`
+// silently, whereas an invalid value has to be loud. A typo would otherwise
+// convert a deliberately cheap blind experiment into the most expensive
+// envelope available, which is the precise outcome this feature exists to stop.
+//
+// Note this does NOT follow `finalReviewConfig.reasoningEffort`'s
+// silent-fallback pattern, and the asymmetry is intentional: a wrong reasoning
+// value costs depth, a wrong scope changes egress volume, blindness, and how a
+// whole measurement cohort is interpreted.
 export const shadowReviewConfig = Object.freeze({
   provider: (process.env.FINAL_REVIEW_SHADOW || '').trim() || null,
   model: (process.env.FINAL_REVIEW_SHADOW_MODEL || '').trim() || null,
+  scope: (process.env.FINAL_REVIEW_SHADOW_SCOPE || '').trim() || null,
 });
 
 // ── Model-A/B/C generation-shadow Config (observation-only burn-in) ──────────
@@ -602,6 +620,29 @@ export const modelPricing = Object.freeze({
   'gemini-flash-lite': { input: 0.075, output: 0.3 },
   // Legacy key preserved for callers still reading `gemini-3.1`
   'gemini-3.1':        { input: 1.25, output: 5   },
+
+  // xAI (final-review shadow arm — plan: final-review-scoped-second-reviewer.md
+  // KD-4, KD-7). Keyed by the CONCRETE id, not a family/tier key: xai has no
+  // parseXaiModel (model-resolver.mjs explains why — mixed chat/non-chat ids
+  // on one endpoint, no uniform version grammar), so there is no family axis
+  // to key on, and a pricing table must be keyed by billed identity anyway.
+  // This is NOT the "don't pin concrete ids" anti-pattern — that rule governs
+  // CALL PATHS (which model gets invoked), and a price schedule is priced
+  // against a specific, already-chosen model, which is a different question.
+  //
+  // TIERED, unlike every other entry above: rates are `{tiers: […]}` ordered
+  // ascending by `maxInputTokens` (inclusive upper edge — 200,000 is tier 1,
+  // 200,001 is tier 2), selected in model-pricing.mjs's costFromUsage by the
+  // ACTUAL measured input-token count, never estimated. `cachedInput` is a
+  // real per-1M rate, not a multiplier — xAI's cached-input ratio (0.25) does
+  // not match the global CACHE_MULTIPLIER.read (0.10) used for Anthropic.
+  // Operator-supplied rate card, verified against api.x.ai 2026-08-14.
+  'grok-4.6': {
+    tiers: [
+      { maxInputTokens: 200_000, input: 2.00, output: 6.00, cachedInput: 0.50 },
+      { maxInputTokens: Infinity, input: 4.00, output: 12.00, cachedInput: 1.00 },
+    ],
+  },
 });
 
 // ── Architectural Memory Config ─────────────────────────────────────────────

@@ -141,6 +141,81 @@ describe('gateway shadow — the OpenRouter routing pins are inherited, not re-p
   });
 });
 
+describe('xAI shadow — resolution states (plan: final-review-scoped-second-reviewer.md KD-4)', () => {
+  it('is ready with the review-scoped key and NO explicit model — unlike a gateway, xai has a real default', () => {
+    // The load-bearing difference from openrouter: xai is NOT `gateway:true`,
+    // so an unset model derives from `defaultSentinel: 'latest-grok'` rather
+    // than being refused. `resolveShadow`'s own gateway branch would reject
+    // this shape (`skipped-no-model`); xai must not take that branch.
+    const r = shadow({ provider: 'xai', model: null }, { XAI_API_KEY: 'k' });
+    assert.equal(r.state, 'ready');
+    assert.match(String(r.model), /grok/i);
+    assert.equal(r.provider, 'xai');
+  });
+
+  it('is ready with an explicit model matching the xai family', () => {
+    const r = shadow({ provider: 'xai', model: 'grok-4.6' }, { XAI_API_KEY: 'k' });
+    assert.equal(r.state, 'ready');
+    assert.equal(r.model, 'grok-4.6');
+  });
+
+  it('an explicit model from the WRONG family is rejected, not silently routed to xai', () => {
+    const r = shadow({ provider: 'xai', model: 'claude-opus-5' }, { XAI_API_KEY: 'k' });
+    assert.equal(r.state, 'skipped-unsupported-provider');
+  });
+
+  it('no XAI_API_KEY -> skipped-no-key, never a silent skip-unset', () => {
+    const r = shadow({ provider: 'xai', model: null }, {});
+    assert.equal(r.state, 'skipped-no-key');
+  });
+
+  it('is a no-op under an active Azure profile — same guard order as every other provider', () => {
+    const r = shadow({ provider: 'xai', model: null }, { XAI_API_KEY: 'k' }, true);
+    assert.equal(r.state, 'skipped-azure');
+    assert.equal(r.model, null);
+  });
+});
+
+describe('xAI shadow — the descriptor is DELIBERATELY NOT the OpenRouter shape (KD-4)', () => {
+  it('carries the flat reasoning_effort field xAI actually accepts, and OMITS the OpenRouter-only gateway fields', async () => {
+    // The point of KD-4 is the DIFFERENCE from the openrouter descriptor two
+    // blocks above, not mere presence of a reasoning dial. xAI is a single
+    // direct endpoint, not a router selecting among upstream backends, so
+    // `provider`/`require_parameters`/`sort` have no meaning here — and
+    // OpenRouter's NESTED `reasoning: { effort }` shape would be silently
+    // ignored by xAI's API, which takes a FLAT top-level `reasoning_effort`
+    // string (verified live 2026-08-14 against api.x.ai). Getting this wrong
+    // is the "accepted but inert" failure class the Grok pre-flight (plan §8)
+    // exists to catch — this test catches it earlier, for free.
+    const src = readFileSync(new URL('../scripts/gemini-review.mjs', import.meta.url), 'utf-8');
+
+    const canonical = shadow({ provider: 'xai', model: null }, { XAI_API_KEY: 'k' }).provider;
+    assert.equal(canonical, 'xai');
+
+    const descriptor = src.slice(src.indexOf('  xai: {'));
+    const body = descriptor.slice(0, descriptor.indexOf('\n  },'));
+    assert.match(body, /reasoning_effort:\s*finalReviewConfig\.reasoningEffort/, 'flat reasoning_effort pin missing');
+    assert.match(body, /structuredOutput:\s*true/, 'the shadow needs the JSON schema, not prose');
+    // Field-WITH-VALUE shape, not the bare word — this descriptor's own
+    // explanatory comment names `require_parameters`/`sort`/`reasoning.effort`
+    // in prose (to say why they're excluded), so a bare-word regex would match
+    // the comment explaining the absence and fail the very test asserting it.
+    assert.doesNotMatch(body, /require_parameters:\s*true/, 'require_parameters is OpenRouter-only — xai has one endpoint, nothing to require');
+    assert.doesNotMatch(body, /sort:\s*'[a-z]+'/, 'sort is OpenRouter-only routing — meaningless for a direct endpoint');
+    assert.doesNotMatch(body, /reasoning:\s*\{\s*effort:/, 'must NOT use OpenRouter\'s NESTED shape — xai would silently ignore it');
+  });
+
+  it('the SHADOW_PROVIDER_SPECS entry is native (not gateway) — has a real defaultSentinel', () => {
+    const src = readFileSync(new URL('../scripts/gemini-review.mjs', import.meta.url), 'utf-8');
+    const specs = src.slice(src.indexOf('const SHADOW_PROVIDER_SPECS'));
+    const body = specs.slice(0, specs.indexOf('\n};'));
+    const xaiLine = body.split('\n').find((l) => l.includes("'xai':") || l.includes('xai:'));
+    assert.ok(xaiLine, 'no xai entry found in SHADOW_PROVIDER_SPECS');
+    assert.match(xaiLine, /defaultSentinel:\s*'latest-grok'/, 'xai must have a real default sentinel, unlike the openrouter gateway (defaultSentinel: null)');
+    assert.doesNotMatch(xaiLine, /gateway:\s*true/, 'xai is not a gateway — it is a single known provider with a real default model');
+  });
+});
+
 describe('reasoning-effort dial (apples-to-apples arms)', () => {
   it('defaults to `high` — the depth Gemini and Opus already ran at', () => {
     assert.equal(['low', 'medium', 'high'].includes(finalReviewConfig.reasoningEffort), true);

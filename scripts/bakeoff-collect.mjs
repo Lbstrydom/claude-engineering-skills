@@ -35,6 +35,7 @@ import { spawnSync } from 'node:child_process';
 import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { costFromUsage, PRICING_VERSION } from './lib/model-pricing.mjs';
+import { isXaiModel } from './lib/model-resolver.mjs';
 import { canonicalJson, selectCampaignConfig } from './lib/campaign/config.mjs';
 import { computeLockDigest } from './lib/campaign/lock.mjs';
 
@@ -77,8 +78,19 @@ const DEFAULT_TARGET = 12;
  * silently disables reasoning), Kimi 'low'. Every e1 row therefore describes a
  * configuration that no longer exists, so they are ineligible rather than
  * deleted: the rows stay readable, they just cannot count.
+ *
+ * e3 (2026-08-14, docs/plans/final-review-scoped-second-reviewer.md): the
+ * shadow envelope itself changed — `thin` drops ~32KB of repo context and
+ * narrows code files to the in-scope diff, versus e2's unbounded `full`
+ * envelope. A snapshot's `contractEpoch` alone cannot say WHICH envelope
+ * produced it (that is `controls.envelopeScope`, now signed cohort state —
+ * see `isComplete`'s scope-binding check), but the epoch bump is still
+ * required: e2 rows measured a materially different request and must not
+ * silently pool with e3 rows just because the reasoning dial didn't change
+ * again. Every e2 row is ineligible under this epoch, same disposition as e1
+ * before it — re-collect, never backfill by date.
  */
-export const CONTRACT_EPOCH = 'e2-matched-reasoning-effort';
+export const CONTRACT_EPOCH = 'e3-scoped-envelope';
 
 /**
  * The LEGACY hardcoded arms — the fallback for a repo with no `.campaigns/`
@@ -163,6 +175,15 @@ export function transportForModel(model) {
   }
   if (model.startsWith('gemini')) {
     return { route: 'gemini', shadowToken: 'gemini', providerArg: 'gemini', shadowModel: model, promptCache: '' };
+  }
+  if (isXaiModel(model)) {
+    // Native xai route (plan: final-review-scoped-second-reviewer.md, Phase 4)
+    // — not the openrouter branch above, per KD-4: xAI is a single direct
+    // endpoint, and the OpenRouter routing extras (provider/require_parameters)
+    // have no meaning for it. No prompt-cache multiplier: xai reports no
+    // cache_creation/cache_read usage fields today, so the flag would be a
+    // pure no-op either way.
+    return { route: 'xai', shadowToken: 'xai', providerArg: 'xai', shadowModel: model, promptCache: '' };
   }
   throw new ArgvError(`[bakeoff] no transport for model "${model}" — a campaign cannot declare a family the runner has no wire shape for. Add one to transportForModel() rather than letting it fail inside a spawned reviewer.`);
 }
@@ -322,8 +343,27 @@ export function defaultArms() {
   return _defaultArms;
 }
 
+// `undefined`, not `null`, is the "not yet resolved" sentinel — a genuinely
+// resolved value (including the legacy-fallback case) is `null`, which must
+// stay distinguishable from "haven't looked yet" or every call after the
+// first legacy-fallback resolution would re-run resolveArms() for nothing.
+let _defaultScope;
+
+/**
+ * Same resolution as `defaultArms()`, exposing `controls.envelopeScope` for
+ * `isComplete`'s scope-binding check (plan KD-6). `null` when no real
+ * campaign is active (legacy-table fallback) — there is no scope concept to
+ * bind against, so the check that consumes this treats `null` as "skip".
+ */
+export function defaultExpectedScope() {
+  if (_defaultScope !== undefined) return _defaultScope;
+  try { _defaultScope = resolveArms({}).config?.controls?.envelopeScope ?? null; }
+  catch { _defaultScope = null; }
+  return _defaultScope;
+}
+
 /** Test seam — mirrors the `_reset*` pattern used elsewhere in scripts/lib. */
-export function _resetDefaultArms() { _defaultArms = null; }
+export function _resetDefaultArms() { _defaultArms = null; _defaultScope = undefined; }
 
 /**
  * Resolve the arms for this run: derived from the committed campaign when one
@@ -473,6 +513,13 @@ export function readArmResult(outPath) {
     primaryDistinct: distinctFindingCount(j.new_findings),
     shadowState: shadow.state ?? null,
     shadowModel: shadow.model ?? null,
+    // Which envelope the shadow actually received (gemini-review.mjs's
+    // `_shadow.scope`). This is the evidence `isComplete`'s scope-binding
+    // check reads — plan KD-6: scope must be signed cohort state, and a
+    // snapshot whose arm ran a DIFFERENT scope than the manifest declared is
+    // ineligible, not merely annotated. Absent on entries predating the field
+    // (reads as null, never coerced to a guessed scope).
+    shadowScope: shadow.scope ?? null,
     // The shadow's own VERDICT, not just its finding count. Observed at N=3:
     // both shadows APPROVE nearly everything — Kimi APPROVEd a plan the primary
     // REJECTed. A shadow's verdict is therefore near-useless as a signal, and
@@ -539,15 +586,35 @@ export function readLog(logPath = LOG_PATH) {
  * uniqueness claim, which is the same "measured nothing, read as data" failure
  * the epoch gate exists to prevent elsewhere.
  */
-export function isComplete(entry, arms = defaultArms()) {
+export function isComplete(entry, arms = defaultArms(), expectedScope = defaultExpectedScope()) {
   if (entry?.contractEpoch !== CONTRACT_EPOCH) return false; // unstamped or stale ⇒ ineligible
-  return arms.every((a) => {
+  const armsRan = arms.every((a) => {
     const r = entry?.arms?.[a.id];
     if (!r || r.error) return false;
     // A solo arm has no shadow, so demanding shadowState==='ran' would make the
     // snapshot permanently incomplete. Its evidence of having run is a verdict.
     return a.solo ? Boolean(r.primaryVerdict) : r.shadowState === 'ran';
   });
+  if (!armsRan) return false;
+  if (expectedScope === null) return true; // no campaign scope declared — nothing to bind
+
+  // Scope-binding eligibility (plan KD-6, H1's correction): every SHADOW-
+  // PRODUCING arm's actual `_shadow.scope` must equal the manifest's declared
+  // `controls.envelopeScope`, so a snapshot collected under a different
+  // envelope (e.g. before a scope change) cannot silently mix into this
+  // cohort.
+  //
+  // Quantified over `!a.solo` (shadow-producing arms), NEVER `arms` as a
+  // whole. An earlier draft of this check used `arms.every`, which is wrong
+  // by construction: the campaign schema permits one `mode:"primary"` arm
+  // (the committed `final-review-2026q3` cohort has one, `solo-opus`), and a
+  // primary arm runs no shadow reviewer at all — it emits no `_shadow` block
+  // and therefore has no `shadowScope`. A universally-quantified check would
+  // compare `undefined` against the expected scope on that arm and mark
+  // EVERY snapshot in the cohort permanently ineligible — a bug that would
+  // stay latent for any campaign with no primary arm and detonate the moment
+  // one was added (caught in this plan's own audit trail before it shipped).
+  return arms.filter((a) => !a.solo).every((a) => entry?.arms?.[a.id]?.shadowScope === expectedScope);
 }
 
 /**
@@ -641,11 +708,11 @@ export function aggregateMatched(complete, arms = defaultArms()) {
   };
 }
 
-export function summarise(entries, target = DEFAULT_TARGET, arms = defaultArms()) {
+export function summarise(entries, target = DEFAULT_TARGET, arms = defaultArms(), expectedScope = defaultExpectedScope()) {
   // Arrow, not a bare reference: Array#filter passes (element, index, array),
   // so `filter(isComplete)` would hand the INDEX to the optional `arms` param
   // and `arms.every` would blow up on a number. Caught by the existing suite.
-  const complete = entries.filter((e) => isComplete(e, arms));
+  const complete = entries.filter((e) => isComplete(e, arms, expectedScope));
   const totals = {
     opusUnique: 0, kimiUnique: 0, soloFindings: 0, primaryTotal: 0,
     primaryDivergence: [], opusDivergence: [], opusDivergenceUnpaired: 0,
@@ -906,9 +973,9 @@ async function mintArmRun(arm, { plan, mode, id }) {
  * wiring is assertable without spawning a reviewer or a database.
  *
  * @param {{id: string, args?: string[]}} arm
- * @param {{transcript: string, plan: string, mode?: string|null, out: string, runId?: string|null}} ctx
+ * @param {{transcript: string, plan: string, mode?: string|null, out: string, runId?: string|null, envelopeScope?: string|null, campaignDigest?: string|null}} ctx
  */
-export function buildArmArgs(arm, { transcript, plan, mode, out, runId }) {
+export function buildArmArgs(arm, { transcript, plan, mode, out, runId, envelopeScope = null, campaignDigest = null }) {
   const args = ['scripts/gemini-review.mjs', 'review', plan, transcript, '--out', out, ...(arm.args || [])];
   if (mode) args.push('--mode', mode);
   // Without this, `runShadowAndPersist` returns early at `if (!runId) return`
@@ -920,12 +987,20 @@ export function buildArmArgs(arm, { transcript, plan, mode, out, runId }) {
   // blank `--run-id` would be consumed as the flag's VALUE and silently write
   // nowhere, which is the same silence with an extra step.
   if (runId) args.push('--run-id', runId);
+  // Campaign scope binding (plan KD-6). Passed EXPLICITLY per arm rather than
+  // via env — a child spawned with an env var could not be told apart from an
+  // operator's own FINAL_REVIEW_SHADOW_SCOPE, which is exactly the ambient-env
+  // failure mode this whole mechanism exists to close. Both flags travel
+  // together: envelopeScope is meaningless provenance without knowing WHICH
+  // signed cohort declared it.
+  if (envelopeScope) args.push('--envelope-scope', envelopeScope);
+  if (campaignDigest) args.push('--campaign-digest', campaignDigest);
   return args;
 }
 
-function runArm(arm, { transcript, plan, mode, outDir, id, runId }) {
+function runArm(arm, { transcript, plan, mode, outDir, id, runId, envelopeScope, campaignDigest }) {
   const out = path.join(outDir, `${id}-${arm.id}.json`);
-  const args = buildArmArgs(arm, { transcript, plan, mode, out, runId });
+  const args = buildArmArgs(arm, { transcript, plan, mode, out, runId, envelopeScope, campaignDigest });
   process.stderr.write(`  [bakeoff] arm ${arm.id}…\n`);
   const r = spawnSync(process.execPath, args, {
     encoding: 'utf-8',
@@ -934,6 +1009,43 @@ function runArm(arm, { transcript, plan, mode, outDir, id, runId }) {
   });
   if (r.status !== 0) return { error: `exit ${r.status}`, stderrTail: String(r.stderr || '').slice(-400) };
   try { return readArmResult(out); } catch (err) { return { error: `unreadable result: ${err.message}` }; }
+}
+
+/**
+ * Collector-side pre-flight verification (plan §8, Phase 6). The schema's
+ * semanticRules already REQUIRE a `pass` disposition for any campaign
+ * declaring an xAI arm; this is the second half — RECOMPUTING the artifact's
+ * sha256 rather than trusting the recorded one, because a recorded hash
+ * nobody recomputes is decoration (this repo's own "control the write side,
+ * not just the read" lesson). Pure modulo the injected file reads, so it is
+ * unit-testable without a real campaign directory or network call.
+ *
+ * @param {{artifact:string, sha256:string, disposition:string}|undefined} preflight
+ * @param {{exists?: (p:string)=>boolean, readFile?: (p:string)=>Buffer}} [deps]
+ * @returns {{ok: boolean, checked: boolean, reason?: string, artifact?: string}}
+ *   `checked:false` means no preflight was declared (no xAI arm) — nothing to verify.
+ */
+export function verifyPreflightArtifact(preflight, { exists = fs.existsSync, readFile = fs.readFileSync } = {}) {
+  if (!preflight) return { ok: true, checked: false };
+  if (!exists(preflight.artifact)) {
+    return { ok: false, checked: false, reason: `campaign declares a preflight artifact that does not exist: ${preflight.artifact}` };
+  }
+  const actualSha256 = crypto.createHash('sha256').update(readFile(preflight.artifact)).digest('hex');
+  if (actualSha256 !== preflight.sha256) {
+    return {
+      ok: false, checked: false,
+      reason: `preflight artifact ${preflight.artifact} has been modified since the campaign was signed `
+        + `(recorded sha256 ${preflight.sha256}, actual ${actualSha256}) — refusing to collect. `
+        + 're-run scripts/grok-effort-preflight.mjs and update the campaign config with the new digest.',
+    };
+  }
+  if (preflight.disposition !== 'pass') {
+    // Belt-and-braces — the schema's semanticRules already reject this shape,
+    // so reaching here means the config was hand-edited after validation or
+    // loaded via a path that skipped it.
+    return { ok: false, checked: false, reason: `preflight disposition is "${preflight.disposition}", not "pass" — refusing to collect` };
+  }
+  return { ok: true, checked: true, artifact: preflight.artifact };
 }
 
 async function main() {
@@ -976,6 +1088,19 @@ async function main() {
   // made and before any arm is spawned: a refusal must cost nothing.
   const resolved = resolveArms({ campaignId: arg('campaign') });
   const ARMS = resolved.arms;
+  const envelopeScope = resolved.config?.controls?.envelopeScope ?? null;
+  // `--campaign` in argv IS the campaign-active signal downstream — matches
+  // gemini-review.mjs's own rule (--campaign-digest's presence, not how scope
+  // arrived) so the two processes agree on what "a campaign is active" means.
+  const campaignDigest = resolved.config ? resolved.configDigest : null;
+
+  // Collector-side pre-flight verification (plan §8, Phase 6) — BEFORE any
+  // arm spawns, cost nothing on refusal, same as the collision check above.
+  const preflightCheck = verifyPreflightArtifact(resolved.config?.controls?.preflight);
+  if (!preflightCheck.ok) throw new ArgvError(`[bakeoff] ${preflightCheck.reason}`);
+  if (preflightCheck.checked) {
+    process.stderr.write(`  [bakeoff] preflight verified: ${preflightCheck.artifact} (sha256 matches, disposition pass)\n`);
+  }
 
   const outDir = path.join('.audit', 'bakeoff', id);
   fs.mkdirSync(outDir, { recursive: true });
@@ -987,7 +1112,7 @@ async function main() {
   const arms = {};
   for (const a of ARMS) {
     const runId = await mintArmRun(a, { plan, mode: arg('mode'), id });
-    arms[a.id] = { ...runArm(a, { transcript, plan, mode: arg('mode'), outDir, id, runId }), runId: runId ?? null };
+    arms[a.id] = { ...runArm(a, { transcript, plan, mode: arg('mode'), outDir, id, runId, envelopeScope, campaignDigest }), runId: runId ?? null };
   }
 
   const entry = {

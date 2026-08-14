@@ -313,6 +313,110 @@ repo's `main`. Pushed sha recorded in the commit trailers.
 already on local `main` and unpushed (the accepted-debt checker work logged
 below). They are not mine and I did not modify them.
 
+---
+
+## 2026-08-14 — Scoped second final reviewer + 4-arm cost/yield campaign (xAI Grok added)
+
+Full chain: `/audit-plan` (4 GPT rounds + 3 Gemini rounds, APPROVE with a
+post-gate module-placement amendment) → `/cycle --autonomous` clustered
+implementation (Clusters A–C) → mandatory consolidated Gemini gate over the
+union diff (2 rounds, APPROVE). Plan:
+[final-review-scoped-second-reviewer.md](docs/plans/final-review-scoped-second-reviewer.md).
+
+**What shipped**: the final-review shadow reviewer now supports a scoped
+envelope (`FINAL_REVIEW_SHADOW_SCOPE=full|thin|gap`) instead of always
+sending the primary's full byte-identical context — `thin` narrows to the
+in-scope diff (budget-capped, blind), `gap` additionally shows the shadow
+the primary's own projected findings (non-blind, campaign-ineligible per
+KD-5). This closes the cost complaint that started the session: an
+unscoped shadow run was costing multiples of the Gemini review it exists
+to sanity-check. Added a native xAI Grok provider descriptor
+(`scripts/gemini-review.mjs`), tiered pricing support (`model-pricing.mjs`,
+KD-7), a bounded $8-capped pre-flight measurement script
+(`scripts/grok-effort-preflight.mjs`) that proves `reasoning_effort` moves
+Grok's output before any campaign may bill it, and a v2 campaign manifest
+schema (`envelopeScope` + conditional xAI `preflight` attestation) so the
+existing bake-off harness can run all three shadow arms (Opus incumbent,
+Kimi, Grok) under the same narrowed scope. `.env`: `FINAL_REVIEW_SHADOW`
+paused (cost, until this ships), `XAI_API_KEY` added, a fresh per-campaign
+`CAMPAIGN_HMAC_KEY_FINAL_REVIEW_SCOPED_2026Q3` generated.
+
+**Session started from a user observation, not a plan**: Gemini's own
+review finished in 96s while the local shadow Opus reviewer pushed past a
+5-minute timeout — the shadow's whole point was a targeted gap-check, not
+a second full audit. Confirmed the shadow was sending the FULL,
+byte-identical envelope (repo context, whole transcript, all code files)
+with no scope reduction, which is what this plan fixes.
+
+**Two verified-false audit findings, both closed by direct reproduction
+rather than argument**: (1) round-4 of Cluster B's code audit flagged
+`gemini-review.mjs`'s xAI-arm code-path selection as reading nothing from
+its enclosing `if` — the 5th+ occurrence of this exact false claim across
+both clusters; the cited line is in the SIBLING `else`, not nested inside
+the `if`, re-verified against current line numbers each time. (2) the
+consolidated Gemini gate's round-1 CONCERNS_REMAINING cited a `.find()`
+-based validation shape for the xAI multi-model preflight check that does
+not exist in the file — the real code uses `.filter()` + a distinct-models
+`Set` guard that already refuses any campaign declaring more than one
+distinct xAI model. Constructed the exact two-model manifest the finding
+described and ran it through the live validator before dismissing: rejected,
+as expected. Round 2: APPROVE, 0 new findings.
+
+**Real fixes the audit loop caught across both clusters**: `selectInScopeCodeFiles`
+was fail-closing every ordinary git-diff deletion to `sensitive` (the
+canonicalizing `isSensitive` check throws `ENOENT` on a path that no longer
+exists); `isXaiModel` needed to exclude xAI's non-chat model families
+(`grok-imagine-*`, `grok-build-*`) verified live in-session; `computeDisposition`
+could return a garbage PASS on a degenerate all-one-label trial set via
+`Math.min(...[])===Infinity`; `callXai`'s AbortController timer was cleared
+after headers arrived, not after the body read, leaving a stalled response
+body unbounded; `ARM_ID_PATTERN` had no max length despite being a receipt
+filename component; and five campaign-safety tests could attempt a real,
+billed xAI call on any machine/CI where `FINAL_REVIEW_SHADOW` happened to be
+ambiently set, fixed via a deterministic `modelEvalOverride` bypass of
+`resolveShadow()`'s env read.
+
+**Not yet run**: the actual 4-arm (Gemini + Opus/Kimi/Grok shadow) cost/yield
+campaign this plan exists to enable — code lands this ship; the campaign run
+is the next deliverable.
+
+### Files Affected
+- `scripts/lib/final-review/{envelope,scope,gap-projection}.mjs` (new) —
+  envelope scope modes, budget/truncation, gap-finding projection
+- `scripts/gemini-review.mjs` — xAI provider descriptor, scope threading,
+  campaign-safety refusals in `runShadowAndPersist`
+- `scripts/grok-effort-preflight.mjs` (new) + `docs/research/grok-effort-preflight-2026q3.json`
+  (new, non-reproducible measurement artifact — provenance-labeled) —
+  bounded pre-flight attestation
+- `scripts/lib/campaign/config.mjs` — `envelopeScope`/`preflight` schema,
+  xAI conditional rule, `ARM_ID_PATTERN` max length
+- `scripts/bakeoff-collect.mjs` — scope-binding eligibility, preflight
+  artifact verification gate
+- `scripts/lib/model-resolver.mjs` / `model-pricing.mjs` — xAI sentinel +
+  tiered pricing
+- `.campaigns/final-review-scoped-2026q3.json` (new) — the 3-shadow-arm
+  campaign manifest
+- `AGENTS.md` / `docs/reference/environment-variables.md` — scope modes,
+  xAI env vars, campaign HMAC key convention
+
+### Decisions Made
+- Opus stays the incumbent/default shadow; all three arms (Opus/Kimi/Grok)
+  are tested regardless, via the campaign rather than the interactive default
+- `gap` scope is campaign-ineligible (KD-5) — a gap shadow is conditioned on
+  its own arm's primary result, not comparable across a cohort
+- Committed measurement artifacts that aren't deterministically reproducible
+  (the pre-flight JSON) get honest provenance labeling rather than a
+  content-addressed verification pipeline disproportionate to a one-time
+  $8 measurement
+
+### Next Steps
+- Run the 4-arm bake-off campaign and adjudicate Opus vs Kimi vs Grok under
+  the narrowed scope
+- `task_df28bcc3` (splitting `bakeoff-collect.mjs`'s mixed responsibilities)
+  running independently in a separate session
+
+---
+
 ## 2026-08-14 — AGENTS.md accepted-debt table gets a V1 mechanical checker
 
 Full chain: `/brainstorm` (OpenAI + Gemini, on why backlogs go stale) →

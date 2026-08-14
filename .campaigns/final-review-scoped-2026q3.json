@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "id": "final-review-2026q3",
+  "id": "final-review-scoped-2026q3",
   "role": "final_review_shadow",
   "decision": { "type": "select_default", "incumbent": "claude-opus" },
   "arms": [
     { "id": "opus", "model": "claude-opus", "mode": "shadow" },
-    { "id": "solo-opus", "model": "claude-opus", "mode": "primary", "type": "replicate" },
-    { "id": "kimi", "model": "moonshotai/kimi-k2-thinking", "mode": "shadow" }
+    { "id": "kimi", "model": "moonshotai/kimi-k2-thinking", "mode": "shadow" },
+    { "id": "grok", "model": "grok-4.6", "mode": "shadow" }
   ],
   "controls": {
     "reasoningEffort": "high",
@@ -15,7 +15,13 @@
     "maxOutputTokens": 32000,
     "toolPolicy": "structured-output-only",
     "temperature": 0,
-    "envelopeScope": "full"
+    "envelopeScope": "thin",
+    "preflight": {
+      "artifact": "docs/research/grok-effort-preflight-2026q3.json",
+      "sha256": "19e78fadf566d35f088ec314e7e318b3fb640980e0b3997d66e52d9cc25de108",
+      "model": "grok-4.6",
+      "disposition": "pass"
+    }
   },
   "adjudicator": {
     "model": "latest-opus",

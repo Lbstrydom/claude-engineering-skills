@@ -85,6 +85,46 @@ export function containsSecrets(bodyText) {
  * @param {string|object} payload
  * @returns {string}
  */
+/**
+ * `redactSecrets` for a STRING, but returning the match count the impl already
+ * computes and this module's public wrapper discards.
+ *
+ * WHY A SIBLING AND NOT A SIGNATURE CHANGE: `redactSecrets` returns a bare
+ * string, and its existing callers (the audit-scope reader among them) depend
+ * on that plus the fail-closed `[REDACTED:redaction-failed]` contract above.
+ * Widening its return to an object would be a silent breakage of exactly the
+ * kind that contract exists to prevent — so the count gets its own export and
+ * `redactSecrets` stays byte-identical for everyone already using it.
+ *
+ * The count is what makes a wire-level claim checkable rather than assumed:
+ * `redacted === 0` means the transmitted bytes are unchanged, which is how the
+ * final-review path substantiates "`full` is byte-identical to the historical
+ * baseline" instead of asserting it. A non-zero count on a real envelope is
+ * itself evidence that a fuller egress boundary is warranted.
+ *
+ * Fail-closed identically: on redactor failure the text is the placeholder and
+ * the count is reported as `null` — "unknown", never a reassuring 0.
+ *
+ * Plan: docs/plans/final-review-scoped-second-reviewer.md KD-8.
+ *
+ * @param {string} text
+ * @returns {{text: string, redacted: number|null}}
+ */
+export function redactSecretsWithCount(text) {
+  if (typeof text !== 'string') {
+    return { text: redactSecrets(text), redacted: null };
+  }
+  try {
+    const r = redactSecretsImpl(text);
+    if (r && typeof r === 'object' && typeof r.text === 'string') {
+      return { text: r.text, redacted: Array.isArray(r.redacted) ? r.redacted.length : 0 };
+    }
+    return { text: typeof r === 'string' ? r : text, redacted: 0 };
+  } catch {
+    return { text: '[REDACTED:redaction-failed]', redacted: null };
+  }
+}
+
 export function redactSecrets(payload) {
   // String path — bounded text redactor.
   if (typeof payload === 'string') {

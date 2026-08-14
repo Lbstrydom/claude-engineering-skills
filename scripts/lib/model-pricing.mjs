@@ -75,6 +75,29 @@ export const OSS_PRICING = Object.freeze({
  */
 export const CACHE_MULTIPLIER = Object.freeze({ write: 1.25, read: 0.10 });
 
+/**
+ * True iff a `modelPricing`/`OSS_PRICING` entry is TIERED (`{tiers: [...]}`)
+ * rather than flat (`{input, output}`). Every price-table consumer in this
+ * module branches on this once, at the point of lookup, rather than each
+ * re-deriving it — a second ad-hoc "does this look tiered" check is exactly
+ * the kind of duplicate classifier this repo has been bitten by before.
+ */
+function isTieredEntry(entry) {
+  return !!entry && Array.isArray(entry.tiers) && entry.tiers.length > 0;
+}
+
+/**
+ * Select the tier whose `maxInputTokens` first covers `inputTokens` (tiers are
+ * ordered ascending, inclusive upper edge — 200,000 selects tier 1, 200,001
+ * selects tier 2). Returns the LAST tier if every bound is somehow exceeded
+ * (a defensively-unreachable case given `Infinity` terminates every real
+ * schedule, kept so this can never return undefined).
+ */
+function selectTier(tiers, inputTokens) {
+  for (const t of tiers) if (inputTokens <= t.maxInputTokens) return t;
+  return tiers[tiers.length - 1];
+}
+
 /** Coarse fixed USD→EUR rate for the burn-in spend cap (safety ceiling, not accounting). */
 export const EUR_PER_USD = 0.92;
 
@@ -118,7 +141,17 @@ export const FALLBACK_MARGIN = 2;
  * is bounded and visible instead of silent and zero.
  */
 export const FALLBACK_PRICE_USD = (() => {
-  const listed = [...Object.entries(OSS_PRICING), ...Object.entries(familyPricing)];
+  // Flatten TIERED entries (e.g. the xAI grok-4.6 rate card) into one
+  // {input,output} pair per tier BEFORE scanning for a maximum. Skipping this
+  // would either crash (px.input is undefined on a {tiers:[...]} entry, which
+  // the finite-number guard below would then correctly refuse) or, if the
+  // guard were loosened instead, silently exclude the tiered model's real
+  // rates from the max-scan — the fallback must dominate every REAL price,
+  // including a tier the flat-shaped scan cannot see without this step.
+  const listed = [...Object.entries(OSS_PRICING), ...Object.entries(familyPricing)]
+    .flatMap(([id, px]) => (isTieredEntry(px)
+      ? px.tiers.map((t, i) => [`${id}[tier${i}]`, t])
+      : [[id, px]]));
   if (listed.length === 0) {
     throw new Error('[model-pricing] cannot derive FALLBACK_PRICE_USD: both price tables are empty, so there is no maximum to bound the spend cap with.');
   }
@@ -137,13 +170,19 @@ export const FALLBACK_PRICE_USD = (() => {
 
 // Self-enforcing invariant (audit R4 M5 / R5 M3, tightened for f68a6dbc): the
 // budget fallback must STRICTLY dominate every known price — OSS *and* the
-// family table. `>` allowed a tie, which is how the margin reached 1.0x
-// unnoticed; `>=` makes a tie the failure it always was. Now that the value is
-// derived this is a post-condition on the derivation rather than a reminder to
-// a human, so it can only fire on a real bug above.
-for (const [id, px] of [...Object.entries(OSS_PRICING), ...Object.entries(familyPricing)]) {
-  if (px.input >= FALLBACK_PRICE_USD.input || px.output >= FALLBACK_PRICE_USD.output) {
-    throw new Error(`[model-pricing] FALLBACK_PRICE_USD {${FALLBACK_PRICE_USD.input}/${FALLBACK_PRICE_USD.output}} must STRICTLY exceed price["${id}"] {${px.input}/${px.output}} — a tie is not an over-estimate.`);
+// family table, EVERY tier of a tiered entry included (same flatten as the
+// derivation above; the loop below iterates the raw tables directly, so it
+// needs the same treatment or a tiered entry's per-tier rates go unchecked).
+// `>` allowed a tie, which is how the margin reached 1.0x unnoticed; `>=`
+// makes a tie the failure it always was. Now that the value is derived this
+// is a post-condition on the derivation rather than a reminder to a human, so
+// it can only fire on a real bug above.
+for (const [id, entry] of [...Object.entries(OSS_PRICING), ...Object.entries(familyPricing)]) {
+  const tiers = isTieredEntry(entry) ? entry.tiers : [entry];
+  for (const px of tiers) {
+    if (px.input >= FALLBACK_PRICE_USD.input || px.output >= FALLBACK_PRICE_USD.output) {
+      throw new Error(`[model-pricing] FALLBACK_PRICE_USD {${FALLBACK_PRICE_USD.input}/${FALLBACK_PRICE_USD.output}} must STRICTLY exceed price["${id}"] {${px.input}/${px.output}} — a tie is not an over-estimate.`);
+    }
   }
 }
 
@@ -169,12 +208,31 @@ export function sanitizeTokens(v) {
  * Look up the {input, output} per-1M-token price for a resolved model id.
  * Tries the OSS table (full id) first, then the family-keyed config table via
  * `pricingKey()`, then a bare-id lookup. Returns null when the model is unpriced.
+ *
+ * TIERED entries (currently: xAI's grok-4.6, KD-7) are resolved to a concrete
+ * `{input,output}` here too, so every existing caller keeps working against
+ * the same return shape:
+ *   - `opts.inputTokens` given (a real measured count) → the tier that count
+ *     falls into. This is the ONLY path that reflects what a call will
+ *     actually be billed.
+ *   - `opts.inputTokens` omitted → the CHEAPEST tier, returned as an
+ *     INFORMATIONAL price only (so `isPriced()` and the FALLBACK_PRICE_USD
+ *     derivation have a representative number to work with). Never treat this
+ *     branch's output as a real bill — `costFromUsage` always has a measured
+ *     count by the time it prices anything, so this branch is not its path.
+ *
  * @param {string} modelId - resolved concrete model id (NOT a sentinel)
- * @returns {{input:number, output:number}|null}
+ * @param {{inputTokens?: number}} [opts]
+ * @returns {{input:number, output:number, cachedInput?:number}|null}
  */
-export function priceFor(modelId) {
+export function priceFor(modelId, opts = {}) {
   if (!modelId || typeof modelId !== 'string') return null;
-  if (Object.hasOwn(OSS_PRICING, modelId)) return OSS_PRICING[modelId];
+  const resolve = (entry) => {
+    if (!entry) return null;
+    if (!isTieredEntry(entry)) return entry;
+    return isValidCount(opts.inputTokens) ? selectTier(entry.tiers, opts.inputTokens) : entry.tiers[0];
+  };
+  if (Object.hasOwn(OSS_PRICING, modelId)) return resolve(OSS_PRICING[modelId]);
   const key = pricingKey(modelId);
   // adbda8c8 fix — these two were bare bracket lookups while the OSS_PRICING
   // check one line up already used Object.hasOwn: two different lookup
@@ -183,8 +241,8 @@ export function priceFor(modelId) {
   // truthy NON-price whose .input/.output are undefined, which then priced as
   // NaN while still reporting priced:true — a fabricated cost, not a caught
   // error. Match the safer adjacent pattern.
-  if (Object.hasOwn(familyPricing, key)) return familyPricing[key];
-  if (Object.hasOwn(familyPricing, modelId)) return familyPricing[modelId];
+  if (Object.hasOwn(familyPricing, key)) return resolve(familyPricing[key]);
+  if (Object.hasOwn(familyPricing, modelId)) return resolve(familyPricing[modelId]);
   return null;
 }
 
@@ -242,7 +300,10 @@ export function costFromUsage(usage, modelId) {
   const cacheReadTokens = sanitizeTokens(usage?.cache_read_input_tokens);
   const inputTokens = uncachedTokens + cacheWriteTokens + cacheReadTokens;
   const outputTokens = sanitizeTokens(rawOut);
-  const px = priceFor(modelId);
+  // Pass the MEASURED total prompt size, never estimated — this is what
+  // selects the correct tier for a tiered model (KD-7: "select the applicable
+  // tier from normalized usage"). A flat-priced model ignores the extra field.
+  const px = priceFor(modelId, { inputTokens });
   if (!px || unmeterable) {
     // Null-cost policy (plan decision 8): unknown price → null, NEVER 0 — now
     // extended to unknown USAGE for the same reason.
@@ -251,10 +312,16 @@ export function costFromUsage(usage, modelId) {
       inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens,
     };
   }
+  // A tier can carry its OWN cached-input rate (`cachedInput`, a real per-1M
+  // price) rather than a multiplier on the base rate — KD-7: xAI's cached
+  // ratio is 0.25, not the global CACHE_MULTIPLIER.read (0.10) tuned for
+  // Anthropic. When present it is used directly; otherwise the global
+  // multiplier applies exactly as before (every non-xAI caller is unaffected).
+  const cacheReadRate = Number.isFinite(px.cachedInput) ? px.cachedInput : px.input * CACHE_MULTIPLIER.read;
   const inputUsd = (
     uncachedTokens * px.input
     + cacheWriteTokens * px.input * CACHE_MULTIPLIER.write
-    + cacheReadTokens * px.input * CACHE_MULTIPLIER.read
+    + cacheReadTokens * cacheReadRate
   ) / 1_000_000;
   const outputUsd = (outputTokens * px.output) / 1_000_000;
   return {
@@ -307,13 +374,23 @@ export function costForBudget(usage, modelId) {
   const cacheReadTokens = sanitizeTokens(usage?.cache_read_input_tokens);
   const inputTokens = sanitizeTokens(rawIn) + cacheWriteTokens + cacheReadTokens;
   const outputTokens = sanitizeTokens(rawOut);
-  const px = priceFor(modelId);
+  // Same measured-tokens tier selection as costFromUsage — the spend-cap path
+  // must reserve against the TIER THIS CALL ACTUALLY LANDS IN, not the cheapest
+  // one, or a >200K xAI call would reserve at the tier-1 rate.
+  const px = priceFor(modelId, { inputTokens });
   const estimated = !px;
   const rate = px || FALLBACK_PRICE_USD;
-  const billableInput = sanitizeTokens(rawIn)
-    + cacheWriteTokens * CACHE_MULTIPLIER.write
-    + cacheReadTokens * CACHE_MULTIPLIER.read;
-  const totalUsd = (billableInput * rate.input + outputTokens * rate.output) / 1_000_000;
+  // USD-space, matching costFromUsage's structure exactly — a token-space
+  // "billable input" combining three different per-token rates into one
+  // number is fragile the moment one of those rates isn't a multiplier of
+  // rate.input (which `cachedInput` deliberately isn't; see costFromUsage).
+  const cacheReadRate = Number.isFinite(rate.cachedInput) ? rate.cachedInput : rate.input * CACHE_MULTIPLIER.read;
+  const totalUsd = (
+    sanitizeTokens(rawIn) * rate.input
+    + cacheWriteTokens * rate.input * CACHE_MULTIPLIER.write
+    + cacheReadTokens * cacheReadRate
+    + outputTokens * rate.output
+  ) / 1_000_000;
   return { totalUsd, estimated, unmeterable, inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens };
 }
 

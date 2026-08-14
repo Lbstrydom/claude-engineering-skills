@@ -1,0 +1,77 @@
+{
+  "provenance": "Point-in-time measurement from live xAI calls; NOT byte-reproducible from committed source (generatedAt/latencyMs/token counts vary per run). A manifest sha256 binding attests this exact historical result is unmodified, not that current provider behaviour still matches it. See ARTIFACT_PATH docstring in scripts/grok-effort-preflight.mjs.",
+  "generatedAt": "2026-08-14T10:56:08.734Z",
+  "model": "grok-4.6",
+  "fixture": {
+    "path": ".audit/grok-preflight-fixture.json",
+    "sha256": "b5d52b507d7c512aafc5d2495185c6fefd7286146203be5c21ea6ef1230739bb",
+    "chars": 197405,
+    "sourceTranscript": ".audit\\audit-plan-1786693285-transcript.json",
+    "sourcePlan": "docs\\plans\\final-review-scoped-second-reviewer.md"
+  },
+  "trials": [
+    {
+      "effort": "low",
+      "httpStatus": 200,
+      "ok": true,
+      "latencyMs": 3794,
+      "promptTokens": 47655,
+      "completionTokens": 43,
+      "reasoningTokens": 17,
+      "error": null
+    },
+    {
+      "effort": "low",
+      "httpStatus": 200,
+      "ok": true,
+      "latencyMs": 2163,
+      "promptTokens": 47655,
+      "completionTokens": 47,
+      "reasoningTokens": 17,
+      "error": null
+    },
+    {
+      "effort": "low",
+      "httpStatus": 200,
+      "ok": true,
+      "latencyMs": 1909,
+      "promptTokens": 47655,
+      "completionTokens": 34,
+      "reasoningTokens": 18,
+      "error": null
+    },
+    {
+      "effort": "high",
+      "httpStatus": 200,
+      "ok": true,
+      "latencyMs": 7365,
+      "promptTokens": 47655,
+      "completionTokens": 61,
+      "reasoningTokens": 180,
+      "error": null
+    },
+    {
+      "effort": "high",
+      "httpStatus": 200,
+      "ok": true,
+      "latencyMs": 10036,
+      "promptTokens": 47655,
+      "completionTokens": 53,
+      "reasoningTokens": 496,
+      "error": null
+    },
+    {
+      "effort": "high",
+      "httpStatus": 200,
+      "ok": true,
+      "latencyMs": 10441,
+      "promptTokens": 47655,
+      "completionTokens": 59,
+      "reasoningTokens": 530,
+      "error": null
+    }
+  ],
+  "spendBoundUsd": 4.31048,
+  "disposition": "pass",
+  "reason": "min(high)=180 > max(low)=18 — distributions do not overlap"
+}
