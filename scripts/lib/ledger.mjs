@@ -659,6 +659,12 @@ export function suppressReRaises(findings, ledger, { changedFiles = [], impactSe
 const RULINGS_BLOCK_CAP = 2500;
 /** The disproof IS the payload for a dismissal — 100 chars cut it mid-sentence. */
 const DISMISSED_RATIONALE_BUDGET = 300;
+/** A deferral's reason is a SCOPE statement ("pre-existing; the new code does
+ *  not call this path"), not an evidence-carrying disproof — so it needs far
+ *  less room than a dismissal. Rendering it at all is the point: without the
+ *  reason the auditor re-derives the same scope argument next round, which is
+ *  the exact repeat this group exists to stop. */
+const DEFERRED_RATIONALE_BUDGET = 160;
 const OTHER_GROUP_MAX_ENTRIES = 5;
 const MARKER_MAX_IDS = 5;
 /** Bounds the marker at the RENDER point — `topicId` is an unbounded string in
@@ -722,6 +728,15 @@ function byDismissalPriority(a, b) {
  * field (2026-07-16) despite being dismissed each round with deterministic
  * disproof. The clause now attaches ONLY to FIXED, where it is correct.
  *
+ * **Four groups, four different strengths of instruction.** DISMISSED carries a
+ * disproof, so it can honestly say "you ruled this false". FIXED can be undone by
+ * a later change, so it keeps the reopen clause. SEVERITY ADJUSTED bars only
+ * re-escalation. DEFERRED — added after deferrals were found to match no group at
+ * all — bars re-arguing scope while explicitly licensing a *different* defect in
+ * the same code, because the deferred defect is real and still present. Matching
+ * the instruction to what was actually established is the invariant here; a group
+ * whose header overstates its ruling suppresses true positives.
+ *
  * @param {string} ledgerPath - Path to ledger JSON file
  * @param {string} passName - Current pass name
  * @param {string[]} [impactSet] - Files in the impact set
@@ -757,10 +772,27 @@ export function buildRulingsBlock(ledgerPath, passName, impactSet = []) {
   }
   if (entries.length === 0) return '';
 
-  // Group by outcome
-  const dismissed = entries.filter(e => e.adjudicationOutcome === 'dismissed');
-  const adjusted = entries.filter(e => e.adjudicationOutcome === 'severity_adjusted');
-  const fixed = entries.filter(e => e.remediationState === 'fixed' || e.remediationState === 'verified');
+  // Group by outcome.
+  //
+  // `ruling` is a SEPARATE axis from `adjudicationOutcome` (see LedgerEntrySchema)
+  // and `defer` is the one value that lands in neither: the sanctioned shape for a
+  // deferral is `accepted` + `pending`, which matched none of the three groups
+  // below. Deferred findings were therefore invisible to the next round's prompt,
+  // and the auditor re-litigated the same scope decision every round with the same
+  // reasoning — the repeat class this group closes.
+  //
+  // A defer that was later actually fixed renders as FIXED, not DEFERRED: the
+  // reopen-on-material-change clause is correct for a remediation and wrong for a
+  // scope decision. Deferred entries are excluded from DISMISSED/ADJUSTED so one
+  // topic can never render twice under contradictory headers — the contradiction
+  // that produced the 2026-07-16 field regression documented above.
+  const isRemediated = (e) => e.remediationState === 'fixed' || e.remediationState === 'verified';
+  const deferred = entries.filter(e => e.ruling === 'defer' && !isRemediated(e));
+  const deferredIds = new Set(deferred.map(e => e.topicId));
+
+  const dismissed = entries.filter(e => e.adjudicationOutcome === 'dismissed' && !deferredIds.has(e.topicId));
+  const adjusted = entries.filter(e => e.adjudicationOutcome === 'severity_adjusted' && !deferredIds.has(e.topicId));
+  const fixed = entries.filter(isRemediated);
 
   // Optional-field guards: an entry can be well-formed enough to render (has
   // topicId) yet omit rationale/scope; `.slice`/`.join` on those must not throw.
@@ -817,6 +849,37 @@ export function buildRulingsBlock(ledgerPath, passName, impactSet = []) {
     const section = `${header}${lines.join('\n')}\n`;
     sections.push(section);
     used += section.length;
+  }
+
+  // ── DEFERRED — valid, out-of-scope: neither a disproof nor a remediation ──
+  //
+  // The instruction is deliberately WEAKER than DISMISSED's. A dismissal is a
+  // disproof, so "you ruled this FALSE, do not re-raise" is a true statement. A
+  // deferral is not: the finding is real and the code is still defective. Telling
+  // the model "do not raise anything here" would be false AND would suppress true
+  // positives — the failure this whole layer is supposed to avoid. So the
+  // prohibition is scoped to re-arguing SCOPE, and raising a *different* defect in
+  // the same code is explicitly licensed.
+  if (deferred.length > 0) {
+    const lines = [
+      '### DEFERRED — YOU ruled these VALID but OUT OF SCOPE',
+      'The scope decision is settled. Do NOT re-raise one of these to re-argue',
+      'scope, and do NOT restate its reason back as a new finding.',
+      'A deferral is NOT a clean bill of health — the defect is real and still',
+      'present. If you find a DIFFERENT defect in this code, raise it as new.',
+      '',
+    ];
+    for (const d of [...deferred].sort(byDismissalPriority).slice(0, OTHER_GROUP_MAX_ENTRIES)) {
+      // Redact BEFORE truncating — same egress reasoning as the DISMISSED group.
+      const reason = truncateAtWord(redactSecrets(d.rulingRationale ?? ''), DEFERRED_RATIONALE_BUDGET);
+      lines.push(`- [${shortTopicId(d.topicId)}] "${cat(d)}" — YOU ruled DEFERRED R${d.resolvedRound ?? '?'}. Reason: ${reason}. Scope: ${files(d)}`);
+    }
+    // Never a silent cap: an unreported drop reads as "that was all of them".
+    if (deferred.length > OTHER_GROUP_MAX_ENTRIES) {
+      lines.push(`  ... and ${deferred.length - OTHER_GROUP_MAX_ENTRIES} more deferred items (see ledger)`);
+    }
+    const section = `${lines.join('\n')}\n`;
+    if (used + section.length <= RULINGS_BLOCK_CAP) { sections.push(section); used += section.length; }
   }
 
   // ── FIXED — the reopen-on-change clause lives HERE and only here ──

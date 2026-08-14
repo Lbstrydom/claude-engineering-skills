@@ -52,6 +52,8 @@ import { assertRepoRoot } from './lib/assert-repo-root.mjs';
 import { RUN_ID_RE } from './lib/commit-trailers.mjs';
 import { GATE_EVIDENCE_RELPATH } from './lib/audit/gate-evidence.mjs';
 import { resolveRepoIdentity } from './lib/repo-identity.mjs';
+import { verifyExistenceFindings, isRefuted } from './lib/audit/finding-verification.mjs';
+import { listRepoFiles } from './lib/repo-inventory.mjs';
 import { isCloudEnabled } from './lib/store/repo.mjs';
 import { getActiveEvalRunId } from './lib/store/model-eval.mjs';
 import { resolveCandidateRoute } from './lib/model-eval/route-catalog.mjs';
@@ -1339,6 +1341,12 @@ function formatReviewResult(result, usage, latencyMs, provider) {
     for (const wd of result.wrongly_dismissed) {
       lines.push(`### [${wd.original_finding_id}] → Should be ${wd.recommended_severity}`);
       lines.push(`- **Why**: ${wd.reason_claude_was_wrong}`);
+      // A mechanically-refuted absence claim must be flagged where the operator
+      // reads the finding. Without this the only signal was a stderr line the
+      // report reader never sees, and the claim is re-argued in prose instead.
+      if (isRefuted(wd)) {
+        lines.push(`- **REFUTED (repo inventory)**: ${wd.verification?.verificationReason || 'the cited entity exists'} — this claim is mechanically false; do not re-argue it.`);
+      }
       lines.push('');
     }
   }
@@ -1594,6 +1602,7 @@ async function runShadowReview(shadow, planContent, transcriptContent, projectCo
   const { result, usage, latencyMs, requestFingerprint, transcriptContent: usedTranscript } = r;
   await applyDebtSuppression(result, usedTranscript);
   await applyScopeFilter(result, usedTranscript);
+  applyExistenceGate(result);
   addSemanticIds(result, shadow.provider);
   return { result, usage, latencyMs, requestFingerprint };
 }
@@ -2176,6 +2185,114 @@ async function applyDebtSuppression(result, transcriptContent) {
   } catch { /* transcript not JSON or no _debtMemory — skip */ }
 }
 
+/**
+ * Project a `wrongly_dismissed` entry onto the `{category, section, detail}`
+ * shape `classifyFinding` reads.
+ *
+ * **This projection is the whole point of the function** (validator-inert-by-
+ * arguments). `WronglyDismissedSchema` shares NOT ONE field name with
+ * `FindingBase` — its prose lives in `reason_claude_was_wrong`/`evidence_basis`
+ * and its file references in `cited_lines`. Handing those entries to the gate
+ * unprojected type-checks, runs, and classifies exactly zero of them, so the
+ * gate would read clean on the path that needs it most: a re-asserted GPT
+ * finding is where a false absence claim survives Claude's dismissal and comes
+ * back as "you hallucinated the verification".
+ *
+ * `category` is left EMPTY on purpose — it is concatenated into the haystack
+ * `classifyFinding` scans, so a synthetic label there could manufacture a
+ * classification the model's own prose never made.
+ */
+function projectWronglyDismissed(wd) {
+  const cited = Array.isArray(wd?.cited_lines) ? wd.cited_lines : [];
+  return {
+    category: '',
+    // `auth.js:132` → `extractCitedEntity` splits on `:` for the fromFile anchor.
+    section: cited.length > 0 ? String(cited[0]) : '',
+    detail: `${wd?.reason_claude_was_wrong || ''}\n${wd?.evidence_basis || ''}`.trim(),
+    // `mk()` defaults verdictSeverity to `finding.severity`; without this the
+    // projected view has no severity at all and the annotation reads undefined.
+    severity: wd?.recommended_severity,
+  };
+}
+
+/**
+ * Deterministic existence-claim gate for FINAL-REVIEW findings — the same
+ * `verifyExistenceFindings` the GPT audit path runs at
+ * `legacy-production-audit.mjs`, which the final reviewer never passed through.
+ *
+ * Why it belongs here too: a "file/module/symbol X does not exist" claim is
+ * mechanically decidable against the repo inventory, and until this ran, a
+ * false one from the final reviewer could only be answered by argument — the
+ * operator re-deriving `git ls-files` by hand while the reviewer restated the
+ * claim. The failure shape is a category error (treating "not in the
+ * changed-files list" as "not in the repo"), which no amount of prose settles
+ * and one set lookup does.
+ *
+ * Deliberately ANNOTATES rather than drops, mirroring the GPT path: `.verification`
+ * rides on the finding and `isRefuted` decides what it means. The model's own
+ * `verdict` is NOT recomputed here — mechanically flipping a REJECT is a
+ * separate decision with its own failure modes, and a refuted finding that is
+ * *named as refuted* in the report already ends the argument.
+ *
+ * @param {object} result - parsed GeminiFinalReviewSchema object, mutated in place
+ * @param {object} [deps] - test seam
+ * @returns {{checked:number, refuted:number}}
+ */
+export function applyExistenceGate(result, { listFiles = listRepoFiles } = {}) {
+  const stats = { checked: 0, refuted: 0 };
+  try {
+    const inv = listFiles({ baseDir: process.cwd() });
+    const ctx = { repoFiles: inv.files, inventoryComplete: inv.complete };
+
+    // ── new_findings: already FindingBase-shaped, gate applies directly ──
+    if (Array.isArray(result?.new_findings) && result.new_findings.length > 0) {
+      stats.checked += result.new_findings.length;
+      result.new_findings = verifyExistenceFindings(result.new_findings, ctx);
+    }
+
+    // ── wrongly_dismissed: needs the projection above to be adjudicable ──
+    if (Array.isArray(result?.wrongly_dismissed) && result.wrongly_dismissed.length > 0) {
+      stats.checked += result.wrongly_dismissed.length;
+      const projected = verifyExistenceFindings(result.wrongly_dismissed.map(projectWronglyDismissed), ctx);
+      // Map the verdict back onto the ORIGINAL entries — index-aligned because
+      // verifyExistenceFindings is a `.map`, one output per input, order kept.
+      result.wrongly_dismissed = result.wrongly_dismissed.map((wd, i) => (
+        projected[i]?.verification ? { ...wd, verification: projected[i].verification } : wd
+      ));
+    }
+
+    const refuted = [
+      ...(result?.new_findings || []),
+      ...(result?.wrongly_dismissed || []),
+    ].filter(isRefuted);
+    stats.refuted = refuted.length;
+
+    if (refuted.length > 0) {
+      // Name the entities, not just a count — the operator's next move is to
+      // stop arguing about a specific path, so the path has to be on screen.
+      process.stderr.write(
+        `  [final-review] Existence gate: ${refuted.length}/${stats.checked} claim(s) REFUTED against the repo inventory\n`,
+      );
+      for (const f of refuted.slice(0, 5)) {
+        const id = f.id || f.original_finding_id || '?';
+        process.stderr.write(`    [refuted] ${id}: ${f.verification?.verificationReason || 'entity exists'}\n`);
+      }
+    }
+    if (!inv.complete) {
+      // Absence is not provable against a partial inventory — the gate degrades
+      // to `requires_verification` internally, and saying so here stops the
+      // operator reading a quiet run as a clean one.
+      process.stderr.write('  [final-review] Existence gate: repo inventory INCOMPLETE — absence claims not adjudicable\n');
+    }
+  } catch (err) {
+    // Non-blocking, like the GPT path's own try/catch: a gate failure must not
+    // take down a review that otherwise succeeded.
+    process.stderr.write(`  [final-review] Existence gate skipped: ${err.message}\n`);
+  }
+  result._existenceGate = stats;
+  return stats;
+}
+
 export async function applyScopeFilter(result, transcriptContent) {
   try {
     const transcriptObj = JSON.parse(transcriptContent);
@@ -2568,6 +2685,7 @@ async function main() {
     const { result, usage, latencyMs, transcriptContent: usedTranscript } = r;
     await applyDebtSuppression(result, usedTranscript);
     await applyScopeFilter(result, usedTranscript);
+    applyExistenceGate(result);
     addSemanticIds(result, provider);
     // Primary reviewer's resolved concrete model id (for source_model attribution).
     const primaryModel = provider === 'gemini' ? MODEL

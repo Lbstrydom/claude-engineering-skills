@@ -1,5 +1,69 @@
 # Project Status Log
 
+## 2026-08-14 — Deferrals reach the next round's prompt; the existence gate reaches the final reviewer
+
+Two audit-loop holes, both found by asking why a repeat repeated. No audit
+loop was run on this change (`AI-Gate: not-run`); verification was the test
+suite plus negative controls on each new gate.
+
+**1 — `defer` matched no rulings group, so deferrals were invisible to R2+.**
+`ruling` is a separate axis from `adjudicationOutcome` in `LedgerEntrySchema`,
+and the sanctioned deferral shape (`accepted` + `pending`) matched none of
+`buildRulingsBlock`'s three groups. A deferred finding was therefore never
+shown back to the auditor, which re-litigated the same scope decision with the
+same reasoning every round — the observed repeat (4 of 6 findings in one
+round, identical deferral reasoning, with a real bug sitting inside the same
+cluster). Added a DEFERRED group, excluded from DISMISSED/ADJUSTED so one
+topic cannot render twice under contradictory headers, and rendered as FIXED
+instead when a defer was later remediated. **Its instruction is deliberately
+weaker than DISMISSED's**: a dismissal is a disproof and can honestly say "you
+ruled this false"; a deferral is not — the defect is real and still present —
+so it bars re-arguing scope while explicitly licensing a *different* defect in
+the same code. Matching header strength to what the ruling actually
+established is the invariant; a group that overstates its ruling suppresses
+true positives.
+
+**2 — the existence gate never ran on the final reviewer, and could not have
+caught the field case anyway.** `verifyExistenceFindings` ran only inside
+`legacy-production-audit.mjs`; `gemini-review.mjs` had no reference to it and
+final-review findings arrive afterwards via `recordFinalReviewFindings`. So a
+mechanically-false "file X does not exist" claim from the final reviewer could
+only be answered by argument — the operator re-deriving `git ls-files` by hand
+while the reviewer called the verification a hallucination. Wired
+`applyExistenceGate` into both post-parse filter chains. `wrongly_dismissed`
+needed a projection: it shares **not one field name** with `FindingBase`, so
+an unprojected gate would have type-checked, run, and classified zero on the
+exact path that matters.
+
+Wiring it exposed the larger defect. `EXISTENCE_CLAIM_SIGNAL` bridged the
+entity noun to the claim phrase with `[^.]{0,60}` — "don't cross a sentence
+boundary", with a bare dot standing in for the boundary. **A filename's dot is
+not a sentence boundary**, so neither ``The module `x/y.mjs` does not exist``
+nor ``The file `x/y.mjs` is missing from the repo`` classified — the two most
+natural ways to write a file-absence claim. Absence prose naming no extension
+classified fine, which is why the hole survived: the gate looked alive.
+Replaced with `CLAIM_GAP`, using the same semantics the file already had in
+`SENTENCE_GAP`. Widening classification is the safe direction (an
+unadjudicable claim lands `requires_verification`, preserving severity; only
+`refuted` downgrades), and the transitive-`missing` guard and cross-sentence
+block were both re-verified as still rejecting.
+
+**Verification**: 12,175 tests / 1 pre-existing unrelated failure
+(`cycle-audit-scope-contract` "reads the canonical source" — reproduced with
+these changes stashed, untouched). 20 new tests. Each new gate was
+negative-controlled: neutering the DEFERRED group failed 5 of its 9 tests and
+caught one absence assertion passing vacuously against an empty section;
+removing one `applyExistenceGate` call site failed the wiring test. The
+incident fixture failed red before the `CLAIM_GAP` fix and passed after.
+
+**Consumer-side verification**: `unverified` — no consumer checkout on this
+machine was refreshed in this session, and the push target is this source
+repo's `main`. Pushed sha recorded in the commit trailers.
+
+**Heads-up**: this push carries 3 commits from a concurrent session that were
+already on local `main` and unpushed (the accepted-debt checker work logged
+below). They are not mine and I did not modify them.
+
 ## 2026-08-14 — AGENTS.md accepted-debt table gets a V1 mechanical checker
 
 Full chain: `/brainstorm` (OpenAI + Gemini, on why backlogs go stale) →

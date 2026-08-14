@@ -79,13 +79,39 @@ const PREDICATIVE_TAIL =
 const ATTRIBUTIVE_TAIL = `(?=\\s+(?:${ENTITY_NOUN}\\b|[\`'"]))`;
 
 /**
+ * The gap between an entity noun and its claim phrase — "the module **`x.mjs`**
+ * does not exist".
+ *
+ * This was `[^.]{0,60}`, meaning "don't cross a sentence boundary", with a bare
+ * dot standing in for the boundary. **A filename's dot is not a sentence
+ * boundary**, so the bridge broke on exactly the prose the gate exists to
+ * catch: measured 2026-08-14, neither `The module \`scripts/lib/glob-match.mjs\`
+ * does not exist` nor `The file \`x.mjs\` is missing from the repo` classified —
+ * the two most natural ways to write a file-absence claim, and the shape of the
+ * field incident that prompted this. Absence prose that named no extension
+ * classified fine, which is why the hole survived: the gate looked alive.
+ *
+ * The correct notion of a boundary already existed one screen down as
+ * `SENTENCE_GAP` — punctuation followed by whitespace or end-of-input. This is
+ * that, tempered: a `.` is admitted when a non-space follows it (inside
+ * `.mjs`), and rejected when it actually ends a sentence.
+ *
+ * Widening classification is the SAFE direction here: a newly-classified claim
+ * that cannot be adjudicated lands `requires_verification`, which preserves the
+ * model's severity. Only `refuted` downgrades, and that still requires the
+ * cited path to resolve as present. The transitive-`missing` guard
+ * (PREDICATIVE_TAIL) is untouched and still rejects "is missing error handling".
+ */
+const CLAIM_GAP = '(?:(?!\\.(?:\\s|$))[^;!?\\n]){0,60}';
+
+/**
  * Regexes that mark a finding as an *existence claim* about the repo.
  * Single source of truth (#5). Tested against category + section + detail.
  */
 export const EXISTENCE_CLAIM_SIGNAL = Object.freeze([
   /missing (?:module|file|import|dependency|export|symbol)/i,
   new RegExp(
-    '\\b(?:module|file|import|export|symbol)s?\\b[^.]{0,60}\\b(?:does ?n[o\']?t exist|do not exist|not found|'
+    '\\b(?:module|file|import|export|symbol)s?\\b' + CLAIM_GAP + '\\b(?:does ?n[o\']?t exist|do not exist|not found|'
     + '(?:is|are) missing' + PREDICATIVE_TAIL
     + '|is absent|are absent|cannot be found|is not present|are not present)',
     'i',
@@ -103,7 +129,7 @@ export const EXISTENCE_CLAIM_SIGNAL = Object.freeze([
   // written in the plural at least as often as the singular.
   /\bnone of the\b[^.]{0,80}\b(?:exists?|are present|were (?:created|added|found))\b/i,
   new RegExp(
-    '\\b(?:module|file|script|test|spec|dependenc|export|symbol)\\w*\\b[^.]{0,60}\\bmissing\\b'
+    '\\b(?:module|file|script|test|spec|dependenc|export|symbol)\\w*\\b' + CLAIM_GAP + '\\bmissing\\b'
     + '(?:' + PREDICATIVE_TAIL + '|' + ATTRIBUTIVE_TAIL + ')',
     'i',
   ),

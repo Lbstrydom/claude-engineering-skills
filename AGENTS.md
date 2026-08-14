@@ -928,6 +928,32 @@ When `--round >= 2`, the audit script enables three-layer defence against findin
 2. **R2+ prompts** (Layer 2): `R2_ROUND_MODIFIER` + pass rubric (not "find all issues")
 3. **Post-output suppression** (Layer 3): `suppressReRaises()` fuzzy-matches findings against ledger, then — when cloud is on — `runCloudFpPass()` applies the **cloud FP-pattern policy** (`docs/plans/cloud-fp-suppression-read-loop.md`). Called **unconditionally, outside the ledger branch** (a no-ledger run is exactly the case a pattern learned on another machine serves) and it **exempts `reopened`** so category statistics can never mask a regression. Layer 1 stays local-ledger-only: a pre-generation "do NOT raise X" hint can stop a required reopen from ever reaching the classifier, so the cloud policy deliberately does **not** feed the prompt.
 
+**A rulings group's header may claim only what its ruling ESTABLISHED** (2026-08-14).
+`buildRulingsBlock` renders four groups and their instructions differ in strength on
+purpose: DISMISSED carries a disproof ("you ruled this false"); FIXED keeps the
+reopen-on-material-change clause; ADJUSTED bars only re-escalation; **DEFERRED** bars
+re-arguing scope while *explicitly licensing a different defect in the same code*,
+because a defer is not a disproof — the defect is real and still present. The DEFERRED
+group exists because `ruling` is a **separate axis** from `adjudicationOutcome`
+(`LedgerEntrySchema`), so the sanctioned deferral shape (`accepted` + `pending`) matched
+no group and was invisible to the next round: the auditor re-litigated the same scope
+decision, with the same reasoning, every round. Adding a group? State what its ruling
+proved, and give it the weakest instruction that is *true* — an overstated header
+suppresses true positives.
+
+**The existence gate runs on BOTH reviewer paths, and its classifier is prose-shaped**
+(2026-08-14). `verifyExistenceFindings` ([finding-verification.mjs](scripts/lib/audit/finding-verification.mjs))
+mechanically refutes "file/module X does not exist" against the repo inventory. It ran
+only in the GPT path for its whole life — `gemini-review.mjs` never called it, so a false
+absence claim from the *final* reviewer could only be answered by argument. Now wired via
+`applyExistenceGate` at both post-parse filter chains. Two traps: `wrongly_dismissed`
+shares **no field name** with `FindingBase`, so it needs a projection or the gate runs and
+classifies zero; and the noun→claim bridge must not treat a **filename's dot as a sentence
+boundary** (`CLAIM_GAP`, not `[^.]`) — that hole made the two most natural absence
+phrasings unclassifiable while extension-free prose still matched, so the gate looked
+alive. Widening classification is the safe direction here (unadjudicable ⇒
+`requires_verification`, severity preserved); only `refuted` downgrades.
+
 ### R2+ CLI Flags
 
 | Flag | Purpose |

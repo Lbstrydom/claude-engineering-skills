@@ -152,6 +152,123 @@ describe('buildRulingsBlock — per-group headers (the re-raise licence)', () =>
   });
 });
 
+// ── DEFERRED group ──────────────────────────────────────────────────────────
+//
+// `ruling` is a separate axis from `adjudicationOutcome` (LedgerEntrySchema), and
+// `defer` is the value that landed in neither: the sanctioned deferral shape is
+// `accepted` + `pending`, which matched none of DISMISSED / SEVERITY ADJUSTED /
+// FIXED. Deferred findings were invisible to the next round's prompt, so the
+// auditor re-litigated the same scope decision with the same reasoning every
+// round. Field report: four of six findings in one round were repeats carrying
+// identical deferral reasoning — while a real bug sat inside the same cluster.
+// That second half is why the instruction here must stay weak; see the
+// must-NOT-fire test below.
+
+/** A deferral in its sanctioned shape: valid (accepted), out-of-scope, pending. */
+function deferredEntry(overrides = {}) {
+  return wellFormed({
+    topicId: 'deadbeef0001',
+    adjudicationOutcome: 'accepted',
+    remediationState: 'pending',
+    ruling: 'defer',
+    category: 'error-handling',
+    rulingRationale: 'pre-existing; the new code does not call this path',
+    ...overrides,
+  });
+}
+
+describe('buildRulingsBlock — DEFERRED group', () => {
+  test('a deferred entry renders, with its reason (the reason IS what stops the repeat)', () => {
+    writeLedger([deferredEntry()]);
+    const block = buildRulingsBlock(ledgerPath, 'plan');
+    const deferred = section(block, 'DEFERRED');
+    assert.ok(deferred.length > 0, 'DEFERRED section must render');
+    assert.match(deferred, /\[deadbe\]/);
+    assert.match(deferred, /does not call this path/,
+      'without the reason the auditor re-derives the same scope argument next round');
+    assert.match(deferred, /scripts\/foo\.mjs/);
+  });
+
+  // THE DIRECTION THE GATE MUST NOT FIRE. A deferral is not a disproof: the
+  // defect is real and still in the code. An instruction that reads as "nothing
+  // here is reportable" would suppress true positives — and a real bug hiding
+  // inside a cluster of repeats is precisely the observed case.
+  test('MUST NOT SUPPRESS: the section licenses raising a DIFFERENT defect in deferred code', () => {
+    writeLedger([deferredEntry()]);
+    const deferred = section(buildRulingsBlock(ledgerPath, 'plan'), 'DEFERRED');
+    assert.match(deferred, /DIFFERENT defect/,
+      'a new defect in deferred code must remain explicitly reportable');
+    assert.match(deferred, /not a clean bill of health/i,
+      'the section must state that the deferred defect is still present');
+  });
+
+  test('the DEFERRED section never claims the finding is false (that is DISMISSED\'s licence)', () => {
+    writeLedger([deferredEntry()]);
+    const deferred = section(buildRulingsBlock(ledgerPath, 'plan'), 'DEFERRED');
+    // Vacuous-pass guard: both assertions below are absence claims, which an
+    // empty section satisfies trivially. Negative-controlled 2026-08-14 — without
+    // this line the test passed against a neutered DEFERRED group.
+    assert.ok(deferred.length > 0, 'DEFERRED section must render for the absence claims to mean anything');
+    assert.doesNotMatch(deferred, /FALSE/,
+      'a defer establishes scope, not falsity — overstating it suppresses a real defect');
+    assert.doesNotMatch(deferred, /materially changed/i,
+      'the reopen-on-change clause belongs to FIXED; here it would invite the scope re-argument');
+  });
+
+  test('a deferral renders ONCE — never also under DISMISSED (contradictory headers)', () => {
+    // The messy-data case: an entry carrying both a dismissed outcome and a
+    // defer ruling. Rendering it twice reproduces the prohibition-plus-escape
+    // -clause contradiction that caused the 2026-07-16 field regression.
+    writeLedger([deferredEntry({ adjudicationOutcome: 'dismissed' })]);
+    const block = buildRulingsBlock(ledgerPath, 'plan');
+    assert.match(section(block, 'DEFERRED'), /\[deadbe\]/);
+    assert.doesNotMatch(section(block, 'DISMISSED'), /\[deadbe\]/);
+  });
+
+  test('a deferral that was later FIXED renders as FIXED, not DEFERRED', () => {
+    writeLedger([deferredEntry({ remediationState: 'fixed' })]);
+    const block = buildRulingsBlock(ledgerPath, 'plan');
+    assert.match(section(block, 'FIXED'), /\[deadbe\]/,
+      'a remediation supersedes the scope decision — the reopen clause is correct there');
+    assert.equal(section(block, 'DEFERRED'), '');
+  });
+
+  test('a deferred entry missing rulingRationale/affectedFiles does not throw', () => {
+    writeLedger([deferredEntry({ rulingRationale: undefined, affectedFiles: undefined })]);
+    let block;
+    assert.doesNotThrow(() => { block = buildRulingsBlock(ledgerPath, 'plan'); });
+    assert.match(block, /\[deadbe\]/);
+  });
+
+  test('a truncated deferral list is reported, never silently capped', () => {
+    writeLedger(Array.from({ length: 9 }, (_, i) =>
+      deferredEntry({ topicId: `defe${String(i).padStart(8, '0')}` })));
+    const block = buildRulingsBlock(ledgerPath, 'plan');
+    assert.match(block, /and 4 more deferred items/,
+      'an unreported drop reads as "that was all of them"');
+  });
+
+  test('DISMISSED is not starved by a large deferred group, and the cap holds', () => {
+    writeLedger([
+      wellFormed({ topicId: 'dddddd444444', rulingRationale: 'the disproof that must survive' }),
+      ...Array.from({ length: 50 }, (_, i) => deferredEntry({
+        topicId: `e${String(i).padStart(11, '0')}`,
+        rulingRationale: 'y'.repeat(400),
+      })),
+    ]);
+    const block = buildRulingsBlock(ledgerPath, 'plan');
+    assert.ok(block.length <= 2500, `cap breached: ${block.length}`);
+    assert.match(block, /\[dddddd\]/, 'the dismissed disproof must not be starved by deferrals');
+  });
+
+  test('non-defer rulings are unaffected (no DEFERRED section for a sustained finding)', () => {
+    writeLedger([wellFormed({ ruling: 'sustain' })]);
+    const block = buildRulingsBlock(ledgerPath, 'plan');
+    assert.equal(section(block, 'DEFERRED'), '');
+    assert.match(block, /DISMISSED/);
+  });
+});
+
 describe('buildRulingsBlock — dismissal rationale is the payload', () => {
   const R300 = `The claim is disproven: the Zod schema at src/schemas/wine.ts:42 accepts style null via nullable, verified by a direct parse in a unit test plus a real Postgres integration test at tests/db/wine.test.mjs:88 which passes against the live schema and asserts the row round trips with a null style column intact today`;
 
