@@ -803,7 +803,7 @@ first version as unnecessarily coupled to `maintenance-checks.mjs`'s own
 scheduler machinery.
 
 **A literal NUL byte reached committed source** from an early draft of
-`computeRowFingerprint` (a stray ` ` join separator instead of a
+`computeRowFingerprint` (a stray `\u0000` join separator instead of a
 space) — caught only because a later `Grep` call returned a "binary file
 matches" result on a `.mjs` file that should never be binary. Fixed at the
 byte level; all 6 registry fingerprints recomputed (they had been
