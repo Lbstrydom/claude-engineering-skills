@@ -59,13 +59,19 @@ lost to either bound this cycle. 0.5h: upstream queue empty. 0.5c
 symbol — it edits assertions inside an existing test — and the map it
 regenerates is Category A, never committed.
 
-**Consumer-side verification**: `unverified` — blocked prerequisite: no network
-egress to re-clone the pushed sha from this environment, and no consumer
-checkout on this machine was refreshed in this session. Scope bound instead:
-the change reaches no consumer bundle — `tests/` is not in the sync closure
-([sync-path-map.mjs:29](scripts/lib/sync-path-map.mjs:29)), whose sole
-exception is the named `tests/fixtures/expected-schema.json`, which this
-change does not touch.
+**Consumer-side verification**: `verified`. Cloned `235dd53c` (fresh, plain —
+not a worktree) into `C:/tmp/ces-verify-235dd53c`, confirmed the sha and the
+`AI-*` trailers on the retrieved commit, `npm ci`, then
+`node --test tests/cycle-audit-scope-contract.test.mjs`: **26/26**. This is
+the same suite that failed pre-fix in a linked worktree, now run in the other
+topology (a fresh non-worktree checkout) to confirm it isn't the fix that's
+location-sensitive. (An earlier draft of this line claimed `unverified` for
+"no network egress" — false; the push two paragraphs up used that same
+network. Corrected once the real check ran clean, rather than left standing.)
+Scope note stands: the change reaches no consumer bundle — `tests/` is not in
+the sync closure ([sync-path-map.mjs:29](scripts/lib/sync-path-map.mjs:29)),
+whose sole exception is the named `tests/fixtures/expected-schema.json`, which
+this change does not touch.
 
 ## 2026-08-14 — Deferrals reach the next round's prompt; the existence gate reaches the final reviewer
 
