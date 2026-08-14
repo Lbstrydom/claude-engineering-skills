@@ -415,6 +415,25 @@ is the next deliverable.
 - `task_df28bcc3` (splitting `bakeoff-collect.mjs`'s mixed responsibilities)
   running independently in a separate session
 
+**Pushed as** `eb507339696aaf1249ebff6efc13ed272a160250` (3 commits, rebased
+onto `ffbfdaa5` after a concurrent-session non-fast-forward — the
+R2+-reopen-contract work below landed on origin between my last local commit
+and this push; textual auto-merge in `AGENTS.md`/`gemini-review.mjs`/
+`status.md`, re-ran the full suite after rebasing to confirm no semantic
+conflict, 12352 pass / 0 fail). One pre-push catch fixed en route: the new
+`scripts/lib/final-review/` subsystem was falling through the
+`scripts/lib/**` domain-map catch-all (`tests/domain-map-subsystem-coverage.test.mjs`)
+— added an explicit `shared-lib` rule, verified at source (zero imports in
+all three files).
+
+**Consumer-side verification**: `verified`. Both configured local consumers
+received the exact pushed sha via the pre-push hook's sync —
+`C:\GIT\wine-cellar-app\scripts\.sync-manifest.json` and
+`C:\GIT\ai-organiser\scripts\.sync-manifest.json` both record
+`commitSha: eb507339696aaf1249ebff6efc13ed272a160250`, `sourceDirty: false`.
+`node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run in both
+consumers: all 8 gates pass in each.
+
 ---
 
 ## 2026-08-14 — AGENTS.md accepted-debt table gets a V1 mechanical checker
