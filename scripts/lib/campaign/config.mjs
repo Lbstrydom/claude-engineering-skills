@@ -29,7 +29,7 @@ import { assertEligibleSubset } from '../comparison/roles.mjs';
 // live in comparison/. Re-exported below so every existing importer of this
 // module is unchanged — the extraction must be invisible to callers, and the
 // digest must stay byte-identical (asserted in tests/comparison-core.test.mjs).
-import { ArmSchema as CoreArmSchema, ARM_ID_PATTERN, isScoredArm } from '../comparison/arms.mjs';
+import { ArmSchema as CoreArmSchema, ARM_ID_PATTERN, isScoredArm, checkArmSetSemantics } from '../comparison/arms.mjs';
 import { canonicalJson, configDigest, ANALYSIS_TIME_FIELDS } from '../comparison/lock.mjs';
 
 /**
@@ -58,8 +58,12 @@ export { ARM_ID_PATTERN };
 export const MIN_TARGET_N = 12;
 
 // ArmSchema + ARM_ID_PATTERN now live in comparison/arms.mjs (role-agnostic).
-// Re-exported so existing importers of this module are unchanged.
+// Genuinely RE-EXPORTED, not just aliased: the first version of this line was
+// `const ArmSchema = CoreArmSchema;` with a comment claiming a re-export, so
+// any importer of `{ ArmSchema }` from this module would have got `undefined`
+// while the comment said otherwise.
 const ArmSchema = CoreArmSchema;
+export { ArmSchema };
 
 export { isScoredArm };
 
@@ -151,60 +155,13 @@ export const CampaignConfigSchema = z.object({
 function semanticRules(cfg, ctx) {
   const issue = (message, cursor) => ctx.addIssue({ code: z.ZodIssueCode.custom, message, ...(cursor ? { path: cursor } : {}) });
 
-  const seen = new Set();
-  for (const [i, arm] of cfg.arms.entries()) {
-    if (seen.has(arm.id)) issue(`duplicate arm id "${arm.id}" — arm id identifies a receipt and a store row`, ['arms', i, 'id']);
-    seen.add(arm.id);
-  }
+  // The arm-set rules are SHARED with the comparison manifest via the single
+  // oracle in comparison/arms.mjs — unique ids, >=2 scored arms, at most one
+  // primary, replicate backing, incumbent uniqueness. They lived here and in
+  // manifest.mjs independently until 2026-08-14; two copies of one contract is
+  // exactly how the  arm type reached one and not the other.
+  checkArmSetSemantics(cfg, issue);
 
-  const nonReplicates = cfg.arms.filter(isScoredArm);
-  const replicates = cfg.arms.filter((a) => a.type === 'replicate');
-
-  // One arm is not a comparison. Counts SCORED arms only — a campaign of one
-  // candidate plus a control still compares nothing.
-  if (nonReplicates.length < 2) {
-    issue(`a campaign needs >= 2 scored arms (got ${nonReplicates.length}; replicate/control arms do not count) — one arm is not a comparison`, ['arms']);
-  }
-
-  // AT MOST one primary, not exactly one — a stale version of this comment
-  // said "exactly one", which the check below never enforced (only `> 1` is
-  // rejected) and a real committed campaign now depends on: `final-review-
-  // scoped-2026q3.json` (KD-5) has ZERO primaries by design — a solo replicate
-  // buys a within-model-variance reading the Gemini self-divergence readout
-  // already estimates, at Opus's rate, for a comparison this cohort does not
-  // need. Enforcing "exactly one" here would break that campaign.
-  const primaries = cfg.arms.filter((a) => a.mode === 'primary');
-  if (primaries.length > 1) {
-    issue(`at most one arm may be mode:"primary" (got ${primaries.length}: ${primaries.map((a) => a.id).join(', ')})`, ['arms']);
-  }
-
-  // A "replicate" of nothing is a mislabelled scenario. (`controls` here means
-  // the campaign-level dials block, which every arm shares by construction, so
-  // the test reduces to the model — if per-arm dial overrides are ever added,
-  // this must widen to compare them too. Not to be confused with a
-  // `type: 'control'` ARM, which is deliberately exempt: naming a model no
-  // scored arm uses is the entire point of one.)
-  const nonReplicateModels = new Set(nonReplicates.map((a) => a.model));
-  for (const [i, arm] of cfg.arms.entries()) {
-    if (arm.type === 'replicate' && !nonReplicateModels.has(arm.model)) {
-      issue(`replicate arm "${arm.id}" names model "${arm.model}", which no scored arm uses — a replicate of nothing is a mislabelled scenario`, ['arms', i, 'model']);
-    }
-  }
-
-  // The incumbent must be a real, comparable participant.
-  const incumbentArms = nonReplicates.filter((a) => a.model === cfg.decision.incumbent);
-  if (incumbentArms.length === 0) {
-    // Scored arms only — naming a control as the incumbent would make the
-    // baseline something the campaign refuses to score, so every comparison
-    // against it would be against an absent number.
-    issue(`decision.incumbent "${cfg.decision.incumbent}" names no scored arm's model (available: ${[...nonReplicateModels].join(', ') || 'none'}; replicate/control arms are not eligible)`, ['decision', 'incumbent']);
-  } else if (incumbentArms.length > 1) {
-    issue(`decision.incumbent "${cfg.decision.incumbent}" matches ${incumbentArms.length} scored arms (${incumbentArms.map((a) => a.id).join(', ')}) — the incumbent must be unambiguous`, ['decision', 'incumbent']);
-  }
-
-  // Unused here, referenced by the digest below — keep them in one place so a
-  // future field addition has an obvious home.
-  void replicates;
 
   // `gap` is campaign-INELIGIBLE (plan KD-5). A gap shadow is conditioned on
   // its OWN arm's stochastic primary result, so two gap arms are answering

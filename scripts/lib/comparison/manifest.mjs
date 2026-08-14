@@ -26,7 +26,7 @@
 
 import { z } from 'zod';
 import { ROLES } from './roles.mjs';
-import { ArmSchema, isScoredArm } from './arms.mjs';
+import { ArmSchema, checkArmSetSemantics } from './arms.mjs';
 import { controlsSchemaForRole } from './controls.mjs';
 import { resolveLocalPath } from './paths.mjs';
 
@@ -74,34 +74,12 @@ export function manifestSchemaForRole(role) {
 /** Rules structural strictness cannot express — the same shape as the
  * campaign's, kept here so both mechanisms enforce them identically. */
 function manifestSemanticRules(cfg, ctx) {
-  const issue = (message, cursor) => ctx.addIssue({ code: z.ZodIssueCode.custom, message, ...(cursor ? { path: cursor } : {}) });
-
-  const seen = new Set();
-  for (const [i, arm] of cfg.arms.entries()) {
-    if (seen.has(arm.id)) issue(`duplicate arm id "${arm.id}" — arm id identifies a receipt and a store row`, ['arms', i, 'id']);
-    seen.add(arm.id);
-  }
-
-  const scored = cfg.arms.filter(isScoredArm);
-  if (scored.length < 2) {
-    issue(`a comparison needs >= 2 scored arms (got ${scored.length}; replicate/control arms do not count) — one arm is not a comparison`, ['arms']);
-  }
-
-  // A replicate of nothing is a mislabelled scenario. A CONTROL naming an
-  // otherwise-absent model is exactly the point of one, so it is exempt.
-  const scoredModels = new Set(scored.map((a) => a.model));
-  for (const [i, arm] of cfg.arms.entries()) {
-    if (arm.type === 'replicate' && !scoredModels.has(arm.model)) {
-      issue(`replicate arm "${arm.id}" names model "${arm.model}", which no scored arm uses — a replicate of nothing is a mislabelled scenario`, ['arms', i, 'model']);
-    }
-  }
-
-  const incumbents = scored.filter((a) => a.model === cfg.decision.incumbent);
-  if (incumbents.length === 0) {
-    issue(`decision.incumbent "${cfg.decision.incumbent}" names no scored arm's model (available: ${[...scoredModels].join(', ') || 'none'}; replicate/control arms are not eligible)`, ['decision', 'incumbent']);
-  } else if (incumbents.length > 1) {
-    issue(`decision.incumbent "${cfg.decision.incumbent}" matches ${incumbents.length} scored arms (${incumbents.map((a) => a.id).join(', ')}) — the incumbent must be unambiguous`, ['decision', 'incumbent']);
-  }
+  // Delegates to the shared oracle in arms.mjs. This function used to carry
+  // its own copy of the same four rules, which is how the campaign and the
+  // manifest drift apart — the control arm type landed in one of them
+  // first, and only a mechanical check found the other.
+  checkArmSetSemantics(cfg, (message, cursor) =>
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message, ...(cursor ? { path: cursor } : {}) }));
 }
 
 /**

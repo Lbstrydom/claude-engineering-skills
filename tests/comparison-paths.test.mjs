@@ -133,4 +133,54 @@ describe('comparison/paths — the handle is the control', () => {
     const h = resolveLocalPath('package.json', { repoRoot: REPO_ROOT });
     assert.equal(assertHandle(h), h);
   });
+
+  it('a FORGED handle is rejected — the brand is not the public flag', () => {
+    // The control was decorative while it keyed on `__resolved`: any caller
+    // could freeze an object carrying that property and walk through the
+    // boundary with an arbitrary path. The real brand is a module-private
+    // symbol, so this forgery — which mimics the visible shape exactly — fails.
+    const forged = Object.freeze({
+      __resolved: true, kind: 'local', rel: '../../etc/passwd', abs: '/etc/passwd', rev: null,
+    });
+    assert.throws(() => assertHandle(forged),
+      (e) => e.reason === 'not-a-handle',
+      'a hand-built object carrying __resolved must NOT authenticate as a resolved path');
+  });
+});
+
+describe('comparison/paths — absence vs lookup failure are different facts', () => {
+  it('a genuinely absent blob reports absence, not a git failure', () => {
+    const h = resolveGitPath('docs/plans/role-agnostic-comparison-core.md', {
+      repoRoot: REPO_ROOT, rev: 'HEAD~50',
+    });
+    assert.equal(h.present, false);
+    assert.ok(typeof h.absence === 'string', 'absence must be stated, not implied by present:false alone');
+  });
+
+  it('a BAD REVISION is not evidence of absence', () => {
+    // Collapsing this into `present:false` manufactures a false absence claim
+    // against a true finding — an arm penalised because git was unavailable.
+    const h = resolveGitPath('package.json', { repoRoot: REPO_ROOT, rev: 'definitely-not-a-rev-9f3a' });
+    assert.equal(h.present, false);
+    assert.notEqual(h.absence, 'absent',
+      'a lookup failure must be distinguishable from the file genuinely not being there');
+    assert.match(String(h.absence), /^lookup-failed:/);
+  });
+
+  it('a present blob reports absence: null', () => {
+    const h = resolveGitPath('package.json', { repoRoot: REPO_ROOT, rev: 'HEAD' });
+    assert.equal(h.present, true);
+    assert.equal(h.absence, null);
+  });
+
+  it('a GIT handle authenticates — the registry keys on identity, so it must be the returned object', () => {
+    // The gap that let a real break through: every assertHandle test used a
+    // LOCAL handle, so nothing noticed when resolveGitPath started registering
+    // one object and returning a different one (spread + extra fields). The
+    // module was rejecting its own output.
+    for (const rev of ['HEAD', 'HEAD~50']) {
+      const h = resolveGitPath('package.json', { repoRoot: REPO_ROOT, rev });
+      assert.equal(assertHandle(h), h, `a git handle at ${rev} must authenticate`);
+    }
+  });
 });

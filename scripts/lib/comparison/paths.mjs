@@ -56,8 +56,32 @@ export const REFUSAL_REASONS = Object.freeze([
  * @typedef {{__resolved: true, kind: 'local'|'git', rel: string, abs: string|null, rev: string|null}} PathHandle
  */
 
-function makeHandle(kind, rel, abs, rev) {
-  return Object.freeze({ __resolved: true, kind, rel, abs: abs ?? null, rev: rev ?? null });
+/**
+ * Registry of handles this module actually issued. Membership is the authority.
+ *
+ * Two weaker designs were tried and both are forgeable, which is worth
+ * recording because each looked sufficient:
+ *  1. `__resolved: true` — any caller can freeze an object carrying it.
+ *  2. A module-private `Symbol` key — symbols on a returned object are
+ *     ENUMERABLE via `Object.getOwnPropertySymbols`, so a caller holding any
+ *     legitimate handle can copy the brand onto a forged one. "Private symbol"
+ *     is private to the module's *scope*, not to the objects it hands out.
+ *
+ * A WeakSet keys on object IDENTITY, which cannot be copied, forged or
+ * enumerated off an existing handle — and it holds weakly, so handles stay
+ * collectable. This is the difference between a marker and a control.
+ */
+const ISSUED_HANDLES = new WeakSet();
+
+function makeHandle(kind, rel, abs, rev, extra = {}) {
+  // `extra` is spread in BEFORE freezing and registering, because registration
+  // keys on object identity: an earlier version registered the base object and
+  // then returned `{...base, present, absence}`, so `resolveGitPath` handed back
+  // an object the registry had never seen and `assertHandle` rejected the
+  // module's own output. Build once, freeze once, register that.
+  const h = Object.freeze({ __resolved: true, kind, rel, abs: abs ?? null, rev: rev ?? null, ...extra });
+  ISSUED_HANDLES.add(h);
+  return h;
 }
 
 /**
@@ -69,7 +93,10 @@ function makeHandle(kind, rel, abs, rev) {
  * @returns {PathHandle}
  */
 export function assertHandle(h) {
-  if (!h || typeof h !== 'object' || h.__resolved !== true) {
+  // Membership in the issue registry, NOT any property on the object — the
+  // `__resolved` flag is retained only so a debugging `console.log` reads
+  // clearly, and is deliberately not what is checked.
+  if (!h || typeof h !== 'object' || !ISSUED_HANDLES.has(h)) {
     throw new PathRefusedError('not-a-handle',
       '[comparison/paths] expected a resolved path handle, got a bare value — manifest paths must go through '
       + 'resolveLocalPath/resolveGitPath, never be read directly (INC-001)');
@@ -159,7 +186,22 @@ export function resolveGitPath(rel, { repoRoot, rev } = {}) {
   // return a structured failure that reads exactly like "absent at that
   // revision", turning a wiring bug into a false `unverifiable`.
   const shown = gitShowFileAtRevision(repoRoot, rev, norm);
-  return Object.freeze({ ...makeHandle('git', norm, null, rev), present: Boolean(shown?.ok) });
+  // `present:false` must mean "absent at that revision" and NOTHING else. A
+  // bad revision, a git execution failure or a corrupt repository are not
+  // evidence of absence, and collapsing them here would manufacture exactly the
+  // false absence claim this seam exists to avoid — an arm penalised for
+  // correctly citing a file, because git was unavailable. `vcs.mjs` returns a
+  // structured `{ok:false, error:{code}}`, so the distinction is already
+  // present and only needs to survive.
+  const failureCode = shown?.ok ? null : (shown?.error?.code ?? 'UNKNOWN');
+  const absent = failureCode === 'NOT_FOUND' || failureCode === 'PATH_NOT_IN_REVISION';
+  return makeHandle('git', norm, null, rev, {
+    present: Boolean(shown?.ok),
+    // null when present; 'absent' when genuinely not in that tree; otherwise
+    // the git failure code, so a caller can render `unverifiable (git failed)`
+    // rather than a confident absence.
+    absence: shown?.ok ? null : (absent ? 'absent' : `lookup-failed:${failureCode}`),
+  });
 }
 
 /**

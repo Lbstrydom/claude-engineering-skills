@@ -894,6 +894,18 @@ before (5) in anger** — it is the only one that can leak.
     the schema/digest primitives move together, and Phase 2's `configDigest`
     byte-identity assertion is meaningless until Phase 1's enum is the one
     both consumers read.
+  - Additional files: `.audit-loop/domain-map.json` (modify),
+    `docs/plans/role-agnostic-comparison-core.md` (modify).
+    Added 2026-08-14 when `cycle-cluster-scope.mjs` refused the audit envelope
+    for out-of-scope edits — correctly, and the refusal is the reason they are
+    declared rather than quietly excluded. The domain-map rule is a *direct
+    consequence* of this cluster: creating `scripts/lib/comparison/**` makes a
+    new subsystem, and the repo requires an explicit rule above the
+    `scripts/lib/**` catch-all (the defect that split `lib/cross-skill/**` from
+    `cross-skill.mjs` and produced 10 layering violations). The plan file is
+    listed because implementing a plan legitimately corrects it — Phase 4's
+    `db-test-container.mjs` path was wrong, caught by the Step 0.7 preflight
+    before any code ran.
 - **Cluster B** — Phases 3–4 — fix-gate: yes
   - Coupling: `spend.mjs`/`cost.mjs` are what the auditor adapter consumes;
     building the adapter against a spend module that is about to change its

@@ -84,11 +84,16 @@ export const AuditorControlsSchema = z.object({
   rounds: z.number().int().positive(),
 }).strict();
 
-/** role → its controls schema. The single dispatch table. */
-export const CONTROLS_BY_ROLE = Object.freeze({
+/** role → its controls schema. The single dispatch table.
+ *
+ * `Object.create(null)`, not a literal: a plain object inherits from
+ * `Object.prototype`, so `CONTROLS_BY_ROLE['toString']` returns a function and a
+ * truthiness check would accept `toString` as a role. A null-prototype table
+ * cannot answer for a key nobody declared. */
+export const CONTROLS_BY_ROLE = Object.freeze(Object.assign(Object.create(null), {
   final_review_shadow: FinalReviewShadowControlsSchema,
   auditor: AuditorControlsSchema,
-});
+}));
 
 /**
  * The controls schema for a role, or a refusal naming what is missing.
@@ -104,7 +109,7 @@ export const CONTROLS_BY_ROLE = Object.freeze({
  * @returns {import('zod').ZodTypeAny}
  */
 export function controlsSchemaForRole(role) {
-  const schema = CONTROLS_BY_ROLE[role];
+  const schema = Object.hasOwn(CONTROLS_BY_ROLE, role) ? CONTROLS_BY_ROLE[role] : undefined;
   if (!schema) {
     throw new Error(
       `[comparison/controls] role "${role}" has no controls schema — declarative manifests are not yet supported `

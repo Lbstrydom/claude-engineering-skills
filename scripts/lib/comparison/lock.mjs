@@ -51,7 +51,27 @@ export function canonicalJson(value) {
   if (value === null || typeof value !== 'object') {
     if (typeof value === 'number') {
       if (!Number.isFinite(value)) throw new Error(`canonicalJson: refusing to digest a non-finite number (${value}) — it would serialize as null and silently change identity`);
-      return JSON.stringify(Number(value.toFixed(6)));
+      // Fixed 6dp so two producers rendering the same float agree. But rounding
+      // is LOSSY, and this is cohort identity: `temperature: 0.0000001` and
+      // `0.0000002` both render "0", so two genuinely different provider
+      // requests would collapse into one cohort and be aggregated as if they
+      // were the same scenario — the silent-merge failure the digest exists to
+      // prevent, arriving through the digest itself.
+      //
+      // The fix is NOT to widen the precision: that would change the digest of
+      // every existing config and orphan all collected evidence. Instead,
+      // refuse a value that does not survive the round-trip. Every value in use
+      // today (temperature 0, integer token counts) is unaffected — verified by
+      // the byte-identity test — so this closes the collision without touching
+      // a single existing identity.
+      const rounded = Number(value.toFixed(6));
+      if (rounded !== value) {
+        throw new Error(
+          `canonicalJson: refusing to digest ${value} — it does not survive 6dp canonicalisation (becomes ${rounded}), `
+          + 'so two distinct configurations would share one cohort identity. Use a value expressible in 6 decimal places.',
+        );
+      }
+      return JSON.stringify(rounded);
     }
     return JSON.stringify(value ?? null);
   }
