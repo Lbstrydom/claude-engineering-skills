@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**8 active · 186 terminal · 27 audit summaries · 4 reference docs**
+**8 active · 187 terminal · 27 audit summaries · 4 reference docs**
 
 ---
 
@@ -48,10 +48,11 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 183 completed plans</summary>
+<summary>Show all 184 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
+| [Accepted Technical Debt Table — Mechanical Revisit-Trigger Verification (V1)](./accepted-debt-table-verification.md) | `Complete` |  |
 | [Adaptive context "blast radius" + deterministic finding-verification gate](./adaptive-context-blast-radius.md) | `Complete` |  |
 | [Adaptive Learning — Phase 1 (Foundation + Auto-Deferral + Weekly Review)](./adaptive-learning-phase-1-foundation.md) | `Complete` | shipped as commit `0bde3ab` on 2026-05-08; schema migration applied 2026-05-09 |
 | [Adaptive Learning — Phase 2 (Live Quickfix Learner)](./adaptive-learning-phase-2-quickfix.md) | `Complete` | shipped as commit `cf9a89b` on 2026-05-08 |
