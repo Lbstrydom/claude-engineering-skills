@@ -22,10 +22,15 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import { z } from 'zod';
 import { isXaiModel } from '../model-resolver.mjs';
 import { assertEligibleSubset } from '../comparison/roles.mjs';
+// Arm identity, the scored-arm oracle and the lock digest are role-agnostic and
+// live in comparison/. Re-exported below so every existing importer of this
+// module is unchanged — the extraction must be invisible to callers, and the
+// digest must stay byte-identical (asserted in tests/comparison-core.test.mjs).
+import { ArmSchema as CoreArmSchema, ARM_ID_PATTERN, isScoredArm } from '../comparison/arms.mjs';
+import { canonicalJson, configDigest, ANALYSIS_TIME_FIELDS } from '../comparison/lock.mjs';
 
 /**
  * The roles the PASSIVE campaign collector accepts — a subset of the shared
@@ -46,49 +51,17 @@ export const CAMPAIGN_ELIGIBLE_ROLES = Object.freeze(
  * the only guard — every derived path is additionally resolved and asserted
  * repo-root-contained before any write (INC-001's lesson, one layer out). */
 export const CAMPAIGN_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
-export const ARM_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
+export { ARM_ID_PATTERN };
 
 /** §6.3 row 1. Not re-derived here — a campaign below this cannot support a
  * verdict, and `verdict.mjs` emits INCONCLUSIVE under it regardless of config. */
 export const MIN_TARGET_N = 12;
 
-const ArmSchema = z.object({
-  id: z.string().regex(ARM_ID_PATTERN, 'arm id must match ^[a-z0-9][a-z0-9-]{0,63}$ (max 64 chars) — it is a receipt filename component'),
-  model: z.string().min(1),
-  mode: z.enum(['shadow', 'primary']),
-  type: z.enum(['replicate', 'control']).optional(),
-}).strict();
+// ArmSchema + ARM_ID_PATTERN now live in comparison/arms.mjs (role-agnostic).
+// Re-exported so existing importers of this module are unchanged.
+const ArmSchema = CoreArmSchema;
 
-/**
- * Does this arm compete for the decision? The SINGLE oracle for that question.
- *
- * Two kinds of arm are collected but never scored, and they are not the same
- * thing:
- *  - **`replicate`** — the SAME model as a scored arm, run again, to read
- *    within-model reroll variance. Must duplicate a scored arm's model
- *    (enforced below); a replicate of nothing is a mislabelled scenario.
- *  - **`control`** — a DIFFERENT model included to calibrate what the
- *    comparison means, not to win it. The motivating case (2026-08-14): the
- *    incumbent primary reviewer is Gemini, and running Gemini in the shadow
- *    slot separates "is Opus the better second reviewer" from "is a fresh
- *    second look worth anything at all". It must never be scored, because the
- *    same model on both gates has correlated failure modes — the property a
- *    second gate exists to avoid — so a control that could win the slot would
- *    be recommending exactly the configuration the design rejects.
- *
- * Four sites re-derived `a.type !== 'replicate'` inline before this existed
- * (two here, two in verdict.mjs). Adding a second non-scored type to four
- * independent copies is how one gets missed and a control silently enters the
- * standings, so the predicate is exported and those sites now call it. The
- * comment below this once warned that the check "must widen" — this is that
- * widening, done once rather than four times.
- *
- * @param {{type?: string}} arm
- * @returns {boolean} true when the arm's findings count toward the verdict
- */
-export function isScoredArm(arm) {
-  return arm?.type !== 'replicate' && arm?.type !== 'control';
-}
+export { isScoredArm };
 
 /**
  * The pre-flight ATTESTATION a campaign manifest cites when it declares an
@@ -308,18 +281,7 @@ function semanticRules(cfg, ctx) {
  * Not reusing `cohortDigest` itself — that is a fixed four-field literal for
  * the matcher config, not a general structural canonicaliser.
  */
-export function canonicalJson(value) {
-  if (value === null || typeof value !== 'object') {
-    if (typeof value === 'number') {
-      if (!Number.isFinite(value)) throw new Error(`canonicalJson: refusing to digest a non-finite number (${value}) — it would serialize as null and silently change identity`);
-      return JSON.stringify(Number(value.toFixed(6)));
-    }
-    return JSON.stringify(value ?? null);
-  }
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
-  const keys = Object.keys(value).sort();
-  return `{${keys.map((k) => `${JSON.stringify(k)}:${canonicalJson(value[k])}`).join(',')}}`;
-}
+export { canonicalJson };
 
 /**
  * Digest over the COLLECTION-RELEVANT subset — the fields that determine what
@@ -330,15 +292,12 @@ export function canonicalJson(value) {
  * (`rule_changed`) plus the standings watermark, which records that the
  * goalposts moved without destroying the data.
  */
-export function configDigest(cfg) {
-  const subset = { role: cfg.role, decision: cfg.decision, arms: cfg.arms, controls: cfg.controls };
-  return crypto.createHash('sha256').update(canonicalJson(subset)).digest('hex').slice(0, 16);
-}
+export { configDigest };
 
 /** Fields deliberately outside every digest — exported so the dashboard can
  * name the analysis-time values it applied rather than leaving a reader to
  * guess which rule produced a verdict. */
-export const ANALYSIS_TIME_FIELDS = Object.freeze(['targetN', 'calibration', 'decisionRule']);
+export { ANALYSIS_TIME_FIELDS };
 
 /**
  * Parse + validate one campaign config from an object.

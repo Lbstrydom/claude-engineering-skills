@@ -37,6 +37,7 @@ import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { costFromUsage, PRICING_VERSION } from './lib/model-pricing.mjs';
 import { isXaiModel } from './lib/model-resolver.mjs';
 import { canonicalJson, selectCampaignConfig, isScoredArm } from './lib/campaign/config.mjs';
+import { armRequestFingerprint, classifyArmCollisions } from './lib/comparison/fingerprint.mjs';
 import { computeLockDigest } from './lib/campaign/lock.mjs';
 
 const KNOWN_FLAGS = Object.freeze([
@@ -244,9 +245,8 @@ export function deriveArms(config) {
  * twice, which is a real thing to buy at this N but is a REROLL, not a second
  * scenario, and the arithmetic must know the difference.
  */
-export function armRequestFingerprint(arm, controls) {
-  return crypto.createHash('sha256').update(canonicalJson({ model: arm.model, controls })).digest('hex').slice(0, 16);
-}
+// Moved to comparison/fingerprint.mjs; re-exported for existing importers.
+
 
 /**
  * D4 — colliding arms are classified BEFORE spend, never discovered after.
@@ -261,34 +261,8 @@ export function armRequestFingerprint(arm, controls) {
  *
  * @returns {{ok: true, fingerprints: Record<string,string>} | {ok: false, message: string}}
  */
-export function classifyArmCollisions(config) {
-  const arms = config.arms;
-  const fingerprints = {};
-  const byFingerprint = new Map();
-  for (const arm of arms) {
-    const fp = armRequestFingerprint(arm, config.controls);
-    fingerprints[arm.id] = fp;
-    if (!byFingerprint.has(fp)) byFingerprint.set(fp, []);
-    byFingerprint.get(fp).push(arm);
-  }
-  for (const [fp, group] of byFingerprint) {
-    if (group.length < 2) continue;
-    // A `control` declaration counts as declared here for the same reason
-    // `replicate` does: both say "this duplicate request is deliberate". The
-    // refusal exists to catch an UNdeclared collision (lesson c), not to
-    // privilege one declaration keyword.
-    const undeclared = group.filter(isScoredArm);
-    if (undeclared.length > 1) {
-      return {
-        ok: false,
-        message: `[bakeoff] D4: arms ${undeclared.map((a) => `"${a.id}"`).join(', ')} send an IDENTICAL request (fingerprint ${fp}) but none is declared type:"replicate". `
-          + 'Two arms sampling one distribution are a reroll, not a comparison — declare the duplicate as a replicate, or make the requests differ. '
-          + 'Refusing before spend: discovering this afterwards means the aggregate was already wrong.',
-      };
-    }
-  }
-  return { ok: true, fingerprints };
-}
+export { armRequestFingerprint, classifyArmCollisions };
+
 
 /**
  * The collect-time lock inputs available to the RUNNER.
