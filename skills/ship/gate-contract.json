@@ -185,7 +185,7 @@
       "reason": "Step 0.5g migration-realization gate. Genuinely executable and enforced in scripts/ship-commit.mjs (exit 2), but deliberately left UNCONTRACTED rather than bound to a wrong oracle. The `cli-exit` oracle drives a CLI against a filesystem fixture (CLI_EXIT_RECIPES in scripts/lib/gate-honesty/oracles.mjs); this gate's trigger is DATABASE state — a migration ledger missing a bundled filename — which no current recipe shape can construct. Declaring `cli-exit` anyway would assert a binding that does not hold, which is the exact dishonesty this contract system exists to detect. The logic is covered by tests/schema-realization.test.mjs and tests/write-path-fail-closed.test.mjs. Contracting it needs a DB-backed oracle — a separate change with no current requirement."
     },
     {
-      "line": "### 0.5g — Migration realization gate (ENFORCED by the binary)",
+      "line": "### 0.5g — Migration realization gate (ENFORCED by the binary, checked HERE too)",
       "reason": "Step 0.5g, the migration-realization gate. It is genuinely ENFORCED — scripts/ship-commit.mjs refuses to compose a commit and exits 2 with an `AGENT FIX:` line when the database is missing a bundled migration — but it stays uncontracted rather than bound to a wrong oracle: the cli-exit oracle drives a CLI against a FILESYSTEM fixture, and this gate's trigger is DATABASE state (a migration ledger missing a bundled filename), which no recipe shape can construct. Declaring cli-exit anyway would assert a binding that does not hold. The logic is covered by tests/schema-realization.test.mjs and tests/write-path-fail-closed.test.mjs, and the refusal is observed END-TO-END against a real database by tests/db-schema-realization-live.test.mjs (db:suites:gate + the postgres-parity CI job), which evicts a ledger row and asserts ERR_SCHEMA_BEHIND. Contracting it needs a DB-backed oracle — a separate change with no current requirement."
     },
     {
@@ -201,7 +201,7 @@
       "reason": "Step 0.5g, the migration-realization gate. It is genuinely ENFORCED — scripts/ship-commit.mjs refuses to compose a commit and exits 2 with an `AGENT FIX:` line when the database is missing a bundled migration — but it stays uncontracted rather than bound to a wrong oracle: the cli-exit oracle drives a CLI against a FILESYSTEM fixture, and this gate's trigger is DATABASE state (a migration ledger missing a bundled filename), which no recipe shape can construct. Declaring cli-exit anyway would assert a binding that does not hold. The logic is covered by tests/schema-realization.test.mjs and tests/write-path-fail-closed.test.mjs, and the refusal is observed END-TO-END against a real database by tests/db-schema-realization-live.test.mjs (db:suites:gate + the postgres-parity CI job), which evicts a ledger row and asserts ERR_SCHEMA_BEHIND. Contracting it needs a DB-backed oracle — a separate change with no current requirement."
     },
     {
-      "line": "**On a block**: run `node scripts/setup-postgres.mjs --migrate`, then re-invoke",
+      "line": "**On a block**: run `node scripts/setup-postgres.mjs --migrate`, then continue — Step 6.3",
       "reason": "Step 0.5g, the migration-realization gate. It is genuinely ENFORCED — scripts/ship-commit.mjs refuses to compose a commit and exits 2 with an `AGENT FIX:` line when the database is missing a bundled migration — but it stays uncontracted rather than bound to a wrong oracle: the cli-exit oracle drives a CLI against a FILESYSTEM fixture, and this gate's trigger is DATABASE state (a migration ledger missing a bundled filename), which no recipe shape can construct. Declaring cli-exit anyway would assert a binding that does not hold. The logic is covered by tests/schema-realization.test.mjs and tests/write-path-fail-closed.test.mjs, and the refusal is observed END-TO-END against a real database by tests/db-schema-realization-live.test.mjs (db:suites:gate + the postgres-parity CI job), which evicts a ledger row and asserts ERR_SCHEMA_BEHIND. Contracting it needs a DB-backed oracle — a separate change with no current requirement."
     },
     {
@@ -271,6 +271,50 @@
     {
       "line": "investigate. `open === total` always; they are one number under two names.",
       "reason": "States an arithmetic identity of the emitted payload, not a gate: byDisposition.open is total under a second name, so a caller reading either gets the same number. It IS mechanically asserted — tests/unremediated-acceptance-disposition.test.mjs pins total === byDisposition.open against a seeded fixture matrix on a disposable Postgres — which is why it is dispositioned here rather than as document-only (that kind would claim it is not checkable when it is). Nothing about it blocks a ship; 0.5e remains non-blocking with no override flag, per the unremediated-acceptances-never-blocks gate above."
+    },
+    {
+      "line": "A consumer reported (2026-08-14) discovering this block only at Step 6.3, after already",
+      "reason": "Step 0.5g's migration-realization gate, now with an early advisory preflight (`ship-commit.mjs --check-migrations`) added 2026-08-14. The commit-time enforcement is unchanged and stays uncontracted for the same reason as the sibling entries here: the cli-exit oracle drives a CLI against a FILESYSTEM fixture, and this gate's trigger is DATABASE state (a migration ledger missing a bundled filename), which no recipe shape can construct. The preflight is advisory-only by design — 'A SKILL step is an instruction to an agent and cannot block on its own' is the explicit disclaimer this text makes, not a claim that the preflight itself enforces anything. Logic covered by tests/schema-realization.test.mjs, tests/write-path-fail-closed.test.mjs, and the new --check-migrations CLI path in tests/ship-commit-cli.test.mjs."
+    },
+    {
+      "line": "running a full local + fresh-clone readiness pass — the block itself is cheap (one indexed",
+      "reason": "Step 0.5g's migration-realization gate, now with an early advisory preflight (`ship-commit.mjs --check-migrations`) added 2026-08-14. The commit-time enforcement is unchanged and stays uncontracted for the same reason as the sibling entries here: the cli-exit oracle drives a CLI against a FILESYSTEM fixture, and this gate's trigger is DATABASE state (a migration ledger missing a bundled filename), which no recipe shape can construct. The preflight is advisory-only by design — 'A SKILL step is an instruction to an agent and cannot block on its own' is the explicit disclaimer this text makes, not a claim that the preflight itself enforces anything. Logic covered by tests/schema-realization.test.mjs, tests/write-path-fail-closed.test.mjs, and the new --check-migrations CLI path in tests/ship-commit-cli.test.mjs."
+    },
+    {
+      "line": "had nothing to do with. Running it here surfaces the same block before that work happens.",
+      "reason": "Step 0.5g's migration-realization gate, now with an early advisory preflight (`ship-commit.mjs --check-migrations`) added 2026-08-14. The commit-time enforcement is unchanged and stays uncontracted for the same reason as the sibling entries here: the cli-exit oracle drives a CLI against a FILESYSTEM fixture, and this gate's trigger is DATABASE state (a migration ledger missing a bundled filename), which no recipe shape can construct. The preflight is advisory-only by design — 'A SKILL step is an instruction to an agent and cannot block on its own' is the explicit disclaimer this text makes, not a claim that the preflight itself enforces anything. Logic covered by tests/schema-realization.test.mjs, tests/write-path-fail-closed.test.mjs, and the new --check-migrations CLI path in tests/ship-commit-cli.test.mjs."
+    },
+    {
+      "line": "inside the commit path and exits 2 there regardless of whether this preflight ran. A SKILL",
+      "reason": "Step 0.5g's migration-realization gate, now with an early advisory preflight (`ship-commit.mjs --check-migrations`) added 2026-08-14. The commit-time enforcement is unchanged and stays uncontracted for the same reason as the sibling entries here: the cli-exit oracle drives a CLI against a FILESYSTEM fixture, and this gate's trigger is DATABASE state (a migration ledger missing a bundled filename), which no recipe shape can construct. The preflight is advisory-only by design — 'A SKILL step is an instruction to an agent and cannot block on its own' is the explicit disclaimer this text makes, not a claim that the preflight itself enforces anything. Logic covered by tests/schema-realization.test.mjs, tests/write-path-fail-closed.test.mjs, and the new --check-migrations CLI path in tests/ship-commit-cli.test.mjs."
+    },
+    {
+      "line": "step is an instruction to an agent and cannot block on its own; this early run is advisory,",
+      "reason": "Step 0.5g's migration-realization gate, now with an early advisory preflight (`ship-commit.mjs --check-migrations`) added 2026-08-14. The commit-time enforcement is unchanged and stays uncontracted for the same reason as the sibling entries here: the cli-exit oracle drives a CLI against a FILESYSTEM fixture, and this gate's trigger is DATABASE state (a migration ledger missing a bundled filename), which no recipe shape can construct. The preflight is advisory-only by design — 'A SKILL step is an instruction to an agent and cannot block on its own' is the explicit disclaimer this text makes, not a claim that the preflight itself enforces anything. Logic covered by tests/schema-realization.test.mjs, tests/write-path-fail-closed.test.mjs, and the new --check-migrations CLI path in tests/ship-commit-cli.test.mjs."
+    },
+    {
+      "line": "not a substitute gate.",
+      "reason": "Step 0.5g's migration-realization gate, now with an early advisory preflight (`ship-commit.mjs --check-migrations`) added 2026-08-14. The commit-time enforcement is unchanged and stays uncontracted for the same reason as the sibling entries here: the cli-exit oracle drives a CLI against a FILESYSTEM fixture, and this gate's trigger is DATABASE state (a migration ledger missing a bundled filename), which no recipe shape can construct. The preflight is advisory-only by design — 'A SKILL step is an instruction to an agent and cannot block on its own' is the explicit disclaimer this text makes, not a claim that the preflight itself enforces anything. Logic covered by tests/schema-realization.test.mjs, tests/write-path-fail-closed.test.mjs, and the new --check-migrations CLI path in tests/ship-commit-cli.test.mjs."
+    },
+    {
+      "line": "it survives a session boundary but never ships as-is.",
+      "reason": "Step 2's pickup of a pending Step 6.8 verification note. Describes properties of the gitignored scratch file (`.claude/tmp/ship-verification-pending.md`) itself — it persists across a session boundary (unlike in-memory agent state) but is never staged/committed as-is (Step 2 reads and deletes it, folding its content into a proper status.md entry). Not an enforcement claim: nothing blocks on the file's presence or absence, and its own loss is explicitly framed two lines below as 'an acceptable loss for advisory documentation (never a gate)'."
+    },
+    {
+      "line": "that provisions `scripts/.claude-skills/**` never merges npm scripts into a",
+      "reason": "States a fact about the consumer-sync mechanism (added 2026-08-14 alongside `--if-present`): npm scripts are never merged into a consumer's package.json by the file-sync that provisions scripts/.claude-skills/**. Explains WHY `--if-present` is load-bearing; not itself a claim this skill enforces — the sync mechanism's own behaviour lives in scripts/sync-to-repos.mjs, outside /ship's exit code."
+    },
+    {
+      "line": "on every such push (reported by a consumer 2026-08-14) — harmless (never",
+      "reason": "Continuation of the --if-present rationale: describes the field-observed defect (an avoidable npm error) this fix removes, and confirms it never blocked the ship even before the fix — a NEGATIVE historical observation, not an enforcement claim. Nothing in /ship asserts an exit code over whether a prior bug was blocking; the fix is a UX improvement (silence a harmless error), not a new gate."
+    },
+    {
+      "line": "**Write the outcome to `.claude/tmp/ship-verification-pending.md` — never by",
+      "reason": "Step 6.8 instruction to the agent about WHERE to record the consumer-verification outcome (a gitignored scratch file, not the already-pushed status.md entry). Same shape as the existing Step 6.8 entries here ('unverified must name a concrete blocked prerequisite', 'Never inherit the producer-side green'): a discipline addressed to the agent, with no CLI exit code for a cli-exit recipe to assert — /ship writes nothing that checks whether the agent complied."
+    },
+    {
+      "line": "(never a gate), not a reason to force a push now.",
+      "reason": "Tail of the sentence explaining WHY the pending-verification file is acceptable to lose (Step 6.8 is advisory, never a gate — the existing step-0-5-gates-non-blocking rationale applied to this specific note). Not a new claim: restates the advisory-only nature of Step 6.8 already contracted via the 'Advisory by construction' entry here."
     }
   ]
 }

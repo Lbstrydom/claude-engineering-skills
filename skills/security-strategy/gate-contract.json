@@ -22,5 +22,11 @@
       "kind": "document-only",
       "reason": "'The skill is on-demand only — it never blocks /cycle, /plan, or any other skill' is a NEGATIVE cross-skill guarantee. Verifying it would require asserting that no other skill invokes security-strategy as a gate — a source-graph negative with no oracle in the closed registry; the cli-exit oracle cannot assert an absence of invocation."
     }
+  ],
+  "ignoredCandidates": [
+    {
+      "line": "stays current. `--if-present` matters here: sync never merges npm scripts",
+      "reason": "States a fact about the consumer-sync mechanism (npm scripts are never merged into a consumer's package.json), which is why `--if-present` is needed — not a claim this skill enforces. The flag itself is not a gate: it makes the refresh step a silent no-op when the script is absent, the opposite of enforcement."
+    }
   ]
 }
