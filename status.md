@@ -1,5 +1,77 @@
 # Project Status Log
 
+## 2026-08-14 — four places that said "done" without having checked
+
+`/cycle --autonomous` end-to-end on
+[silent-success-cluster.md](docs/plans/silent-success-cluster.md), now `Complete`.
+Shipped as `cbbe944e`. Check chain green: 12,132 pass / 0 fail. Consolidated gate
+`APPROVE`.
+
+**The class**, which this repo already gates for elsewhere (the `durableWrite`
+seam, "audit your success paths"): an operation reports success without
+establishing it. Four sites, and **three were fixed by routing through machinery
+that already existed** rather than by adding guards — `cleanupOrFail` +
+`writeAbortStub` had partial coverage, and `makeGitRunner` was the correct
+checked runner that 7 sibling `spawnSync` sites bypassed.
+
+- **render-mermaid**: the consistency invariant covered only the 4 early returns,
+  so a throw from the body reached the top-level handler, which does not clear
+  the observed-deps envelope — leaving a stale coverage verdict that
+  `arch:coverage-gate` reads as current. The file's own comment said so. The
+  window now opens at the first invalidating step, deliberately NOT at `main()`
+  entry: a catch placed earlier would delete a still-valid envelope on an argv
+  error, turning a usage mistake into data loss.
+- **arch/symbols**: `vectorLiteral` ran inside the chunk loop, so chunk N
+  committed before chunk N+1 threw. Validation is now a pre-pass; the literals
+  are deliberately not cached, because retaining ~95k vector strings would
+  undercut the batching whose entire purpose is Disk-IO pressure.
+- **refresh-subprocess + extract**: `recoveredTouchedSet` came from
+  `finalSymbols` — the EMBED output — so a file processed to zero symbols was
+  excluded and copy-forward resurrected its stale prior-refresh rows.
+- **fixtures**: 8 `spawnSync` sites, 1 checked. A failed `git init` produced a
+  fixture that LOOKED constructed, so every suite built on it was green for the
+  wrong reason. Now 1 site, inside the runner, pinned by an AST census.
+
+**Reading the code beat reasoning about it, four times:**
+
+- **A fifth "defect" was refuted during planning.** `visual/contract.mjs` already
+  enforces no-clobber at the write via EEXIST on an `atomicWriteFileSync`, with
+  an explicit `force` path and a comment rejecting check-then-write. The proposed
+  `{flag:'wx'}` would have BROKEN the force overwrite. Scope went 5 → 4.
+- **KD-3's first data source would have made things worse.** Reusing
+  `progress{file}` looked right until its own comment identified it as the
+  *parse-start* marker — it fires before `loadAndParseFile`, so parse-FAILED
+  files would have counted as reached. There is also a security constraint: the
+  earlier progress emit deliberately carries no path, because an unrestricted
+  walk enumerates `.env`/`secrets/**` and names attach only post-admission.
+- **The dependency seam was not executable** — `(await getPool())?.query.bind(pool)`
+  references `pool` in its own initialiser, a `ReferenceError` on exactly the
+  production path it claimed left unchanged.
+- **My own guard passed against the unfixed code.** The KD-2 test used two rows,
+  which fit one chunk, so the throw preceded the only query. Red-proofing caught
+  it; it now spans more than one chunk. A guard that stays green when the fix is
+  reverted is asserting the wrong thing.
+
+**The consolidated gate raised a false positive and a real one, and the real one
+explained the false one.** It claimed a throwing `writeAbortStub` masks the
+original error (it does not — the inner catch holds), and separately that the
+KD-1 guards asserted on source TEXT and token order. The second is why the first
+had to be settled by reading rather than running. The failure path is now
+`handleRenderFailure`, executed by tests with injected fakes across all three
+branches; branch 3 refutes the HIGH by running it.
+
+**The cluster-scope tooling built earlier today proved itself on first real use**:
+it refused the Cluster A envelope because a concurrent session's untracked plan
+doc sat in the worktree. Correct fail-closed behaviour — the file was provably
+foreign, so the allowlist was used deliberately rather than by amending the
+cluster. One correction to yesterday's characterisation: the audit read 9 files
+against a declared 5, and that is not a leak — `mergeScopeFiles` unions
+plan-referenced files with the `--files` allowlist by design.
+
+**Backlog**: the triage that produced this plan closed 7 stale rows (74 → 67);
+this change closes 4 more, and one refuted row remains to be closed as stale.
+Roughly a quarter of the sampled backlog was already-fixed-never-closed.
+
 ## 2026-08-14 — /cycle told you to scope with a flag that does not scope
 
 [cycle-cluster-audit-scope.md](docs/plans/cycle-cluster-audit-scope.md), now

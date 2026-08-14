@@ -1,7 +1,7 @@
 # Plan: Four places that report success without establishing it
 
 - **Date**: 2026-08-14
-- **Status**: Approved
+- **Status**: Complete
 - **Author**: Claude + Louis
 - **Scope**: backend
 - **Target domain(s)**: `arch-memory`, `stores`, `tests`, `visual-audit`
@@ -496,3 +496,46 @@ unconditional rather than contingent on a check that cannot detect a stale ledge
 **Stop decision**: GPT stopped at the 3-round default with acceptance at 100%
 throughout — the rounds were buying real corrections, but the Gemini gate is
 mandatory and it approved on the first pass with nothing outstanding.
+
+---
+
+## 13. Implementation Log
+
+### 2026-08-14 — shipped (`cbbe944e`)
+
+All four fixes landed with 17 executable guards. Full check chain green:
+12,132 pass / 0 fail. Consolidated gate `APPROVE` on round 2.
+
+**Deviation: KD-1's failure path was extracted into `handleRenderFailure`.** The
+plan said "wrap the render body"; that shipped, but the consolidated gate then
+raised two findings. One was a **false positive** — it claimed a throwing
+`writeAbortStub` would mask the original error, when the inner catch already
+prevented that. The other was correct and explained the first: the KD-1 guards
+asserted on source TEXT and token order, so they could neither confirm nor refute
+a claim about runtime behaviour. Extracting the catch into an injectable function
+made all three branches executable; branch 3 now refutes the HIGH by running it.
+
+**Caught by red-proofing a guard against my own fix**: the KD-2 test used two
+rows, which fit inside one chunk (`UPSERT_CHUNK_SIZE` = 500), so the throw
+preceded the only query and the assertion passed against the UNFIXED code. It now
+spans more than one chunk. A guard that stays green when the fix is reverted is
+asserting the wrong thing.
+
+**Cluster A audit**: H:0, M:5 — one `deferred-declared` to Cluster B (the guard
+file, since discharged), one verified false positive (`fixtures.mjs` was reported
+as having 7 unchecked `spawnSync` sites; it had 1 — the auditor restated this
+plan's problem statement as current code), and three pre-existing CLI
+arg-parsing findings deferred with named independence: `parseArgs` runs before
+the artifact-consistency window opens, so this change's correctness does not ride
+on it.
+
+**A note on `--files` scoping, corrected here**: the audit read 9 files against a
+declared 5. That is not a leak — `mergeScopeFiles` unions plan-referenced files
+with the `--files` allowlist by design. Scoping worked (no foreign-session files,
+no working-tree recompute); the earlier characterisation of `--files` as purely
+replacing the set was wrong.
+
+**The new cluster-scope tooling proved itself on first real use**: it refused the
+Cluster A envelope because a concurrent session's untracked plan doc was in the
+worktree. Correct fail-closed behaviour — the file was provably foreign, so the
+allowlist was used deliberately rather than by amending the cluster.
