@@ -591,6 +591,17 @@ export function extractSymbols(filePaths, repoRoot, opts = {}) {
     const candidates = classifySymbolsInFile(parsed.sourceFile);
     redactAndEmit(candidates, { rel, includeDelegates: opts.includeDelegates, stats });
 
+    // The SUCCESS marker — "admitted, parsed, and classified". Distinct from the
+    // `progress` tick at the top of this loop, which is a parse-START liveness
+    // signal: it fires BEFORE loadAndParseFile, so a parse failure `continue`s
+    // having already emitted it. Consumers that need "files actually reached"
+    // must read this, not that — deriving a touched-set from the start marker
+    // marks parse-failed files as reached and suppresses their correct
+    // copy-forward. Carrying `rel` is safe for the same reason the start
+    // marker's is: both are downstream of admitFile (INC-001 fail-closed).
+    // See docs/plans/silent-success-cluster.md KD-3.
+    emit({ type: 'processed', file: rel });
+
     // Release SourceFile after we're done with it so the project doesn't
     // accumulate 800+ in-memory ASTs (memory growth was a contributor to
     // the 4.3GB heap in wine-cellar's hung run).

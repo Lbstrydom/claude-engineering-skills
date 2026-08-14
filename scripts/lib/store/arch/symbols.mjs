@@ -164,10 +164,21 @@ export async function recordSymbolEmbedding({ definitionId, embeddingModel, dime
  * @param {{definitionId: string, embeddingModel: string, dimension: number, vector: number[], signatureHash: string}[]} rows
  * @returns {Promise<number>} count of DISTINCT rows written
  */
-export async function recordSymbolEmbeddings(rows) {
+export async function recordSymbolEmbeddings(rows, { query } = {}) {
   if (!Array.isArray(rows) || rows.length === 0) return 0;
-  const pool = await getPool();
-  if (!pool) return 0;
+  // The query function is injectable so the validate-before-commit ordering
+  // below can be asserted without a database — the invariant is "no statement
+  // is issued until every vector is known good", which is about ordering, not
+  // about Postgres. Production path is unchanged: same pool, same cloud-off
+  // short-circuit. (Deliberately a closure, not `pool.query.bind(pool)` in the
+  // initialiser — `pool` is not in scope there, which is a ReferenceError on
+  // exactly the non-injected path.)
+  let run = query;
+  if (!run) {
+    const pool = await getPool();
+    if (!pool) return 0;
+    run = (text, params) => pool.query(text, params);
+  }
 
   const byKey = new Map();
   for (const r of rows) {
@@ -175,6 +186,18 @@ export async function recordSymbolEmbeddings(rows) {
     byKey.set(key, r);
   }
   const distinct = [...byKey.values()];
+
+  // VALIDATE EVERY ROW BEFORE COMMITTING ANY OF THEM. `vectorLiteral` throws on
+  // a malformed vector; calling it here for the throw alone means a bad vector
+  // in the LAST chunk cannot leave the earlier chunks already persisted, with
+  // the embedding space partially written and no marker saying so.
+  //
+  // The result is deliberately DISCARDED rather than cached: retaining ~95k
+  // formatted vector strings materialises a second copy of the largest data in
+  // the run, which is exactly the Disk-IO/memory pressure the batching above
+  // exists to avoid. Validation is O(n) time and O(1) retained; caching would
+  // be O(n) in both. The duplicated call inside the loop is the cheap half.
+  for (const r of distinct) vectorLiteral(r.vector, r.dimension);
 
   let total = 0;
   for (const batch of chunk(distinct, UPSERT_CHUNK_SIZE)) {
@@ -187,7 +210,7 @@ export async function recordSymbolEmbeddings(rows) {
       params.push(r.definitionId, r.embeddingModel, r.dimension, literal, r.signatureHash);
     });
     try {
-      const result = await pool.query(
+      const result = await run(
         `INSERT INTO symbol_embeddings
            (definition_id, embedding_model, dimension, embedding, signature_hash)
          VALUES ${placeholders.join(', ')}

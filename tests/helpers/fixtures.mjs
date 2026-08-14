@@ -152,11 +152,17 @@ export function makeRepoTemplate(build) {
  * @param {string} dir
  */
 export function gitInit(dir) {
-  const env = gitFixtureEnv();
-  spawnSync('git', ['init', '-q'], { cwd: dir, stdio: 'ignore', env });
-  spawnSync('git', ['config', 'user.email', 'test@example.com'], { cwd: dir, stdio: 'ignore', env });
-  spawnSync('git', ['config', 'user.name', 'Test'], { cwd: dir, stdio: 'ignore', env });
-  spawnSync('git', ['config', 'commit.gpgsign', 'false'], { cwd: dir, stdio: 'ignore', env });
+  // Through the CHECKED runner, not raw spawnSync. These are setup commands
+  // that must succeed; with stdio:'ignore' and no status read, a failed
+  // `git init` produced a fixture that LOOKED constructed and was not, so
+  // every suite built on it asserted against a broken repo — green for the
+  // wrong reason, which is indistinguishable from the code being correct.
+  // See docs/plans/silent-success-cluster.md KD-4.
+  const git = makeGitRunner(() => dir);
+  git(['init', '-q']);
+  git(['config', 'user.email', 'test@example.com']);
+  git(['config', 'user.name', 'Test']);
+  git(['config', 'commit.gpgsign', 'false']);
 }
 
 /**
@@ -170,7 +176,7 @@ export function gitInit(dir) {
  */
 export function gitInitWithEmptyCommit(dir) {
   gitInit(dir);
-  spawnSync('git', ['commit', '--allow-empty', '-m', 'init'], { cwd: dir, stdio: 'ignore', env: gitFixtureEnv() });
+  makeGitRunner(() => dir)(['commit', '--allow-empty', '-m', 'init']);
 }
 
 /**
@@ -183,9 +189,10 @@ export function gitInitWithEmptyCommit(dir) {
  */
 export function commit(dir, filePath, content, message) {
   const env = gitFixtureEnv();
+  const git = makeGitRunner(() => dir);
   fs.writeFileSync(path.join(dir, filePath), content);
-  spawnSync('git', ['add', filePath], { cwd: dir, stdio: 'ignore', env });
-  spawnSync('git', ['commit', '-m', message], { cwd: dir, stdio: 'ignore', env });
+  git(['add', filePath]);
+  git(['commit', '-m', message]);
   return execSync('git rev-parse HEAD', { cwd: dir, env }).toString().trim();
 }
 

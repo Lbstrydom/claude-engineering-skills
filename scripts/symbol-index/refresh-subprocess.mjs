@@ -87,16 +87,32 @@ export function shouldAttemptTimeoutRecovery({ mode, extractionTimedOut }) {
  * I/O — the DB read already happened in the caller; this function only makes
  * the decision from its RESULT.
  *
- * @param {{priorForRecovery: {refreshId?: string}|null, finalSymbols: Array<{filePath: string}>}} args
+ * @param {{priorForRecovery: {refreshId?: string}|null, finalSymbols: Array<{filePath: string}>, reachedFiles?: string[]}} args
  * @returns {{timeoutRecovery: {prior: object}|null, recoveredTouchedSet: Set<string>|null}}
  */
-export function buildTimeoutRecovery({ priorForRecovery, finalSymbols }) {
+export function buildTimeoutRecovery({ priorForRecovery, finalSymbols, reachedFiles = [] }) {
   if (!priorForRecovery?.refreshId) {
     return { timeoutRecovery: null, recoveredTouchedSet: null };
   }
+  // The touched-set is what extraction REACHED, not what produced symbols.
+  // `finalSymbols` is the embed stage's output, so a file that was admitted,
+  // parsed and classified to ZERO symbols (an empty file, one of only type
+  // declarations) never appears in it — and copy-forward would then resurrect
+  // that file's stale prior-refresh rows even though this run processed it
+  // correctly. `reachedFiles` comes from extract.mjs's `processed` records,
+  // which are emitted only on the success path.
+  //
+  // The union keeps `finalSymbols` as a floor: an older extract child that
+  // predates the `processed` record emits none, so `reachedFiles` is empty and
+  // this degrades to exactly today's behaviour rather than to "nothing was
+  // reached" — the fail-open direction. Path identity is like-for-like: both
+  // sides are the repo-relative POSIX path the extractor uses for
+  // `symbol.filePath`. See docs/plans/silent-success-cluster.md KD-3.
+  const touched = new Set(finalSymbols.map(s => s.filePath));
+  for (const f of reachedFiles) if (typeof f === 'string' && f) touched.add(f);
   return {
     timeoutRecovery: { prior: priorForRecovery },
-    recoveredTouchedSet: new Set(finalSymbols.map(s => s.filePath)),
+    recoveredTouchedSet: touched,
   };
 }
 
@@ -238,6 +254,12 @@ export async function runExtractSummariseEmbed({ repoRoot, repoId, mode, restric
   }
   const symbolsRaw = extracted.filter(r => r.type === 'symbol');
   const violations = extracted.filter(r => r.type === 'violation');
+  // Files extraction actually REACHED (admitted → parsed → classified). Emitted
+  // only on extract.mjs's success path, so a parse failure is excluded — unlike
+  // the  tick, which fires before the parse. Empty when paired with an
+  // extract child predating the record; buildTimeoutRecovery degrades to
+  // finalSymbols in that case. See docs/plans/silent-success-cluster.md KD-3.
+  const reachedFiles = extracted.filter(r => r.type === 'processed').map(r => r.file);
   const importEdges = extracted.filter(r => r.type === 'import');
   const coverageLine = extracted.find(r => r.type === 'coverage') || null;
   logOk(`extracted ${symbolsRaw.length} symbols, ${violations.length} violations, ${importEdges.length} internal import edges`);
@@ -276,7 +298,7 @@ export async function runExtractSummariseEmbed({ repoRoot, repoId, mode, restric
   let recoveredTouchedSet = null;
   if (shouldAttemptTimeoutRecovery({ mode, extractionTimedOut })) {
     const priorForRecovery = await getActiveSnapshot(repoId);
-    ({ timeoutRecovery, recoveredTouchedSet } = buildTimeoutRecovery({ priorForRecovery, finalSymbols }));
+    ({ timeoutRecovery, recoveredTouchedSet } = buildTimeoutRecovery({ priorForRecovery, finalSymbols, reachedFiles }));
     if (timeoutRecovery) {
       logOk(`WARNING: full extraction was truncated by timeout — reached ${recoveredTouchedSet.size} file(s); `
         + `recovering the rest via copy-forward from ${priorForRecovery.refreshId} `

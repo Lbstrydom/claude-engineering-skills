@@ -1,7 +1,7 @@
 {
-  "generatedAt": "2026-08-12T09:25:45.467Z",
-  "commitSha": "c7e53e12d2b992468904dd53080e275a8cf8a0d5",
-  "extractionSourceSha": "c7e53e12d2b992468904dd53080e275a8cf8a0d5",
+  "generatedAt": "2026-08-14T05:29:16.069Z",
+  "commitSha": "f6beb594a8502ea9eaf4f4f0731cdf824ade9eb4",
+  "extractionSourceSha": "f6beb594a8502ea9eaf4f4f0731cdf824ade9eb4",
   "coveredFiles": [
     "scripts/anthropic-ping.mjs",
     "scripts/arch-coverage-gate.mjs",
@@ -575,7 +575,8 @@
     "scripts/write-code-outcomes.mjs",
     "scripts/write-ledger-entries.mjs",
     "scripts/write-ledger-r1.mjs",
-    "scripts/write-plan-outcomes.mjs"
+    "scripts/write-plan-outcomes.mjs",
+    "tests/helpers/fixtures.mjs"
   ],
   "requirements": [
     {
@@ -5942,6 +5943,36 @@
       }
     },
     {
+      "id": "REQ-behavioural-524fb648",
+      "assertion": "Architecture-map rendering must retrieve symbols in pages up to ARCH_RENDER_MAX_SYMBOLS and emit a warning when an additional symbol exists beyond that configured cap.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/render-mermaid.mjs",
+          "anchor": "main symbol pagination and truncation probe"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/render-mermaid.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/render-mermaid.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-524fb648",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound bounded rendering and warning invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-behavioural-526a7f47",
       "assertion": "Arm-eval architecture-memory reuse candidates must be reported as informational context with no flag or score penalty merely because reusable nearby symbols exist.",
       "kind": "behavioural",
@@ -5999,36 +6030,6 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test is present."
-      }
-    },
-    {
-      "id": "REQ-behavioural-54830596",
-      "assertion": "Repository enumeration must exclude configured dependency, VCS, audit-state, build-output, cache, deployment-output, and .claude directories from unrestricted symbol extraction.",
-      "kind": "behavioural",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/symbol-index/extract.mjs",
-          "anchor": "SKIP_DIRS / enumerateFiles"
-        }
-      ],
-      "appliesTo": [
-        "scripts/symbol-index/extract.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/symbol-index/extract.mjs"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-behavioural-54830596",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "This repository enumeration exclusion rule has no linked test."
       }
     },
     {
@@ -7379,6 +7380,41 @@
       }
     },
     {
+      "id": "REQ-behavioural-700b8741",
+      "assertion": "Snapshot symbol listing and counting must apply the same refresh, kind, domain-tag, and file-path-prefix filters, while listing returns results ordered by file path then start line.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/arch/symbols.mjs",
+          "anchor": "listSymbolsForSnapshot"
+        },
+        {
+          "file": "scripts/lib/store/arch/symbols.mjs",
+          "anchor": "countSymbolsForSnapshot"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/arch/symbols.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/arch/symbols.mjs:listSymbolsForSnapshot",
+          "scripts/lib/store/arch/symbols.mjs:countSymbolsForSnapshot"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-700b8741",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound listing and counting consistency invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-behavioural-70a17feb",
       "assertion": "A prior ledger entry may suppress a re-raised finding only when it is suppressible by source and outcome, overlaps the finding's file scope, and exceeds the configured same-pass similarity threshold o",
       "kind": "behavioural",
@@ -7763,6 +7799,51 @@
       }
     },
     {
+      "id": "REQ-behavioural-73cf0e6f",
+      "assertion": "Cloud-disabled symbol-store read operations must return empty results or zero counts without querying the database.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/arch/symbols.mjs",
+          "anchor": "listSymbolsForSnapshot"
+        },
+        {
+          "file": "scripts/lib/store/arch/symbols.mjs",
+          "anchor": "countSymbolsForSnapshot"
+        },
+        {
+          "file": "scripts/lib/store/arch/symbols.mjs",
+          "anchor": "listLayeringViolationsForSnapshot"
+        },
+        {
+          "file": "scripts/lib/store/arch/symbols.mjs",
+          "anchor": "copyForwardUntouchedFiles"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/arch/symbols.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/arch/symbols.mjs:listSymbolsForSnapshot",
+          "scripts/lib/store/arch/symbols.mjs:countSymbolsForSnapshot",
+          "scripts/lib/store/arch/symbols.mjs:listLayeringViolationsForSnapshot",
+          "scripts/lib/store/arch/symbols.mjs:copyForwardUntouchedFiles"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-73cf0e6f",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound cloud-disabled read invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-behavioural-744d79f4",
       "assertion": "Context-staleness tracking must exclude generated documents, terminal or parked plans, and plan audit summaries while continuing to track other documents as live.",
       "kind": "behavioural",
@@ -7824,36 +7905,6 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This cloud-disabled refresh CLI response has no linked test."
-      }
-    },
-    {
-      "id": "REQ-behavioural-74af26b0",
-      "assertion": "Importing the extractor module must not start extraction or write JSON lines, while direct CLI execution must invoke main and exit nonzero on an uncaught failure.",
-      "kind": "behavioural",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/symbol-index/extract.mjs",
-          "anchor": "CLI-only entry guard"
-        }
-      ],
-      "appliesTo": [
-        "scripts/symbol-index/extract.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/symbol-index/extract.mjs"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-behavioural-74af26b0",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "This extractor import-safety and CLI failure rule has no linked test."
       }
     },
     {
@@ -8279,6 +8330,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This bandit context-selection precedence has no linked test."
+      }
+    },
+    {
+      "id": "REQ-behavioural-7cb3a7ab",
+      "assertion": "Snapshot symbol listing must join definitions to expose each symbol name and kind, apply the requested filters, and order results by file path then start line.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/arch/symbols.mjs",
+          "anchor": "listSymbolsForSnapshot"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/arch/symbols.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/arch/symbols.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-7cb3a7ab",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound filtered ordered symbol-listing invariant with no linked test."
       }
     },
     {
@@ -9022,41 +9103,6 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test evidence."
-      }
-    },
-    {
-      "id": "REQ-behavioural-8a27f5c1",
-      "assertion": "Files selected for summary retry must belong to the requested repository and refresh, have missing or blank summaries, not be archived or terminally failed, and have fewer than three summary attempts.",
-      "kind": "behavioural",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/lib/store/arch/symbols.mjs",
-          "anchor": "listFilesNeedingSummaryRetry"
-        },
-        {
-          "file": "scripts/lib/store/arch/symbols.mjs",
-          "anchor": "SUMMARY_RETRY_CAP"
-        }
-      ],
-      "appliesTo": [
-        "scripts/lib/store/arch/**/*.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/lib/store/arch/symbols.mjs:listFilesNeedingSummaryRetry",
-          "scripts/lib/store/arch/symbols.mjs:SUMMARY_RETRY_CAP"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-behavioural-8a27f5c1",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "This summary-retry eligibility rule has no linked test."
       }
     },
     {
@@ -11135,6 +11181,44 @@
       }
     },
     {
+      "id": "REQ-behavioural-af1dbf76",
+      "assertion": "Snapshot symbol listing and counting must return no cloud-backed data when cloud access is disabled.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/arch/symbols.mjs",
+          "anchor": "listSymbolsForSnapshot"
+        },
+        {
+          "file": "scripts/lib/store/arch/symbols.mjs",
+          "anchor": "countSymbolsForSnapshot"
+        },
+        {
+          "file": "scripts/lib/store/arch/symbols.mjs",
+          "anchor": "listLayeringViolationsForSnapshot"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/arch/symbols.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/arch/symbols.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-af1dbf76",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound cloud-disabled listing invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-behavioural-af3b2eb7",
       "assertion": "When finalizing outcomes, pending control-marker findings must be auto-dismissed while other pending findings must be marked needs_triage when a cloud run is available.",
       "kind": "behavioural",
@@ -11294,36 +11378,6 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This explicit spec-path summary rule has no linked test."
-      }
-    },
-    {
-      "id": "REQ-behavioural-b1c1fa17",
-      "assertion": "Summary-retry file discovery must return only distinct files in the specified repository and refresh whose non-archived symbol definitions have missing summaries, are not terminal failures, and remain",
-      "kind": "behavioural",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/lib/store/arch/symbols.mjs",
-          "anchor": "listFilesNeedingSummaryRetry"
-        }
-      ],
-      "appliesTo": [
-        "scripts/lib/store/arch/symbols.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/lib/store/arch/symbols.mjs: listFilesNeedingSummaryRetry"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-behavioural-b1c1fa17",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "This summary-retry discovery rule has no linked test."
       }
     },
     {
@@ -12487,6 +12541,42 @@
       }
     },
     {
+      "id": "REQ-behavioural-ce818ea1",
+      "assertion": "By default, symbols identified as thin delegates must be excluded from the index, and they may be included only when --include-delegates is explicitly enabled.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/extract.mjs",
+          "anchor": "redactAndEmit thin-delegate filter"
+        },
+        {
+          "file": "scripts/symbol-index/extract.mjs",
+          "anchor": "parseArgs --include-delegates"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/extract.mjs",
+        "scripts/symbol-index/refresh-subprocess.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/extract.mjs",
+          "scripts/symbol-index/refresh-subprocess.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-ce818ea1",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound default delegate-exclusion invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-behavioural-d03668cf",
       "assertion": "Finding-grounding searches must be restricted to source files named by the finding and must report identifier hits as contested evidence rather than proof that the finding is false.",
       "kind": "behavioural",
@@ -13099,22 +13189,17 @@
         },
         {
           "file": "scripts/symbol-index/extract.mjs",
-          "anchor": "redactAndEmit"
-        },
-        {
-          "file": "scripts/symbol-index/extract.mjs",
-          "anchor": "parseArgs"
+          "anchor": "parseArgs --include-delegates"
         }
       ],
       "appliesTo": [
         "scripts/symbol-index/extract.mjs",
-        "scripts/lib/symbol-index/thin-delegate.mjs"
+        "scripts/symbol-index/refresh-subprocess.mjs"
       ],
       "evidence": {
         "code": [
           "scripts/symbol-index/extract.mjs",
-          "scripts/symbol-index/extract.mjs:redactAndEmit",
-          "scripts/symbol-index/extract.mjs:parseArgs"
+          "scripts/symbol-index/refresh-subprocess.mjs"
         ],
         "tests": []
       },
@@ -13125,7 +13210,7 @@
         "requirementId": "REQ-behavioural-db7feea6",
         "gap": "untested",
         "conflictsWith": [],
-        "rationale": "No linked test is provided."
+        "rationale": "This is a sound delegate-exclusion invariant with no linked test."
       }
     },
     {
@@ -16477,6 +16562,37 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test is provided."
+      }
+    },
+    {
+      "id": "REQ-correctness-07f1765f",
+      "assertion": "If drift-score computation fails, the rendered architecture map must report INSUFFICIENT_DATA rather than deriving a GREEN, AMBER, or RED status from a fallback score.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/render-mermaid.mjs",
+          "anchor": "main drift score computation catch"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/render-mermaid.mjs",
+        "docs/architecture-map.md"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/render-mermaid.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-07f1765f",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound fail-safe drift-status invariant with no linked test."
       }
     },
     {
@@ -22481,6 +22597,36 @@
       }
     },
     {
+      "id": "REQ-correctness-26e43c64",
+      "assertion": "A redacted symbol record must retain a signature hash derived from the original signature and body while emitting an empty bodyText, SECRET_REDACTED purposeSummary, and redacted=true.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/extract.mjs",
+          "anchor": "redactAndEmit record construction"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/extract.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/extract.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-26e43c64",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound redacted-record integrity invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-26f3dbe1",
       "assertion": "Glob matching must normalize backslashes to forward slashes and require the entire candidate path to match the glob expression.",
       "kind": "correctness",
@@ -24419,6 +24565,42 @@
         "gap": "none",
         "conflictsWith": [],
         "rationale": "This is a sound invariant with linked test evidence."
+      }
+    },
+    {
+      "id": "REQ-correctness-3086bb94",
+      "assertion": "A restricted empty file scope must remain distinct from an unrestricted scope: null triggers repository enumeration, while [] produces a valid zero-file extraction scope.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/extract.mjs",
+          "anchor": "isFullRunFromFiles and enumerateFiles"
+        },
+        {
+          "file": "scripts/symbol-index/refresh-subprocess.mjs",
+          "anchor": "writeFilesManifestIfRestricted"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/extract.mjs",
+        "scripts/symbol-index/refresh-subprocess.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/extract.mjs",
+          "scripts/symbol-index/refresh-subprocess.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-3086bb94",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound empty-versus-unrestricted scope invariant with no linked test."
       }
     },
     {
@@ -26369,6 +26551,36 @@
       }
     },
     {
+      "id": "REQ-correctness-3be34b00",
+      "assertion": "The stub OpenAI client must throw when a responses.parse call requests a schema name for which no response handler was supplied.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "tests/helpers/fixtures.mjs",
+          "anchor": "makeStubClient"
+        }
+      ],
+      "appliesTo": [
+        "tests/helpers/fixtures.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "tests/helpers/fixtures.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-3be34b00",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound strict stub response-schema invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-3c7951a0",
       "assertion": "Context hashes must be SHA-256 hashes of recursively key-sorted object contexts while preserving array order and literal quoted-property names such as __proto__.",
       "kind": "correctness",
@@ -26404,6 +26616,38 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test covers canonical context hashing."
+      }
+    },
+    {
+      "id": "REQ-correctness-3c8a4977",
+      "assertion": "When cloud storage is disabled, the repository is unregistered, or no active snapshot exists, arch:render must remove or neutralize any existing observed-deps artifact and replace the requested archit",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/render-mermaid.mjs",
+          "anchor": "cleanupStaleObservedDeps / writeAbortStub / early cloud-repo-snapshot exits"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/render-mermaid.mjs",
+        "docs/architecture-map.md",
+        ".audit-loop/observed-domain-deps.json"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/render-mermaid.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-3c8a4977",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound stale-artifact invalidation invariant with no linked test."
       }
     },
     {
@@ -27271,37 +27515,6 @@
       }
     },
     {
-      "id": "REQ-correctness-4291c51d",
-      "assertion": "Coverage eligibility must be computed from the whole repository's eligible source-file universe even during restricted extraction runs, excluding files rejected by the eligibility policy or whose size",
-      "kind": "correctness",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/symbol-index/extract.mjs",
-          "anchor": "coverageUniverse / main coverage denominator"
-        }
-      ],
-      "appliesTo": [
-        "scripts/symbol-index/extract.mjs",
-        "scripts/lib/symbol-index/graph-coverage.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/symbol-index/extract.mjs"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-correctness-4291c51d",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "No linked test covers repository-wide coverage eligibility."
-      }
-    },
-    {
       "id": "REQ-correctness-42e8725a",
       "assertion": "For every comparison, overlapCount plus overlapDebtRouted plus onlyLegacyCount must equal the total number of legacy findings, and unmatched legacy findings on tiered debt-routed files must be counted",
       "kind": "correctness",
@@ -27552,6 +27765,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test is provided."
+      }
+    },
+    {
+      "id": "REQ-correctness-44904aeb",
+      "assertion": "The extract CLI must reject invocations that supply both --files and --files-from rather than choosing an extraction scope based on argument order.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/extract.mjs",
+          "anchor": "parseArgs mutually exclusive scope validation"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/extract.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/extract.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-44904aeb",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound mutually-exclusive scope invariant with no linked test."
       }
     },
     {
@@ -28185,37 +28428,6 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test is provided."
-      }
-    },
-    {
-      "id": "REQ-correctness-46e7da42",
-      "assertion": "A drift-score retrieval failure must render architecture-map drift status as `INSUFFICIENT_DATA` rather than reporting a green or zero-drift result.",
-      "kind": "correctness",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/symbol-index/render-mermaid.mjs",
-          "anchor": "main"
-        }
-      ],
-      "appliesTo": [
-        "scripts/symbol-index/render-mermaid.mjs",
-        "scripts/lib/arch-render.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/symbol-index/render-mermaid.mjs:main"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-correctness-46e7da42",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "No linked test covers drift retrieval failure status."
       }
     },
     {
@@ -29687,6 +29899,40 @@
       }
     },
     {
+      "id": "REQ-correctness-4c5f31d3",
+      "assertion": "Dependency edges must be persisted as import records only when dependency-cruiser identifies them as internal and they neither self-reference nor resolve outside the repository.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/extract.mjs",
+          "anchor": "extractGraphAndViolations import-edge loop"
+        },
+        {
+          "file": "scripts/symbol-index/extract.mjs",
+          "anchor": "isInternalEdge"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/extract.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/extract.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-4c5f31d3",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound internal-dependency filtering invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-4c7a6c56",
       "assertion": "Threshold sensitivity must be reported invariant only when every supplied matcher variant has the same signature of degeneracy, sorted cleared-arm set, and winner.",
       "kind": "correctness",
@@ -29996,6 +30242,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-4db7f9ae",
+      "assertion": "Copy-forward refreshes must exclude files marked touched and, when an existence callback is supplied, exclude prior rows whose file no longer exists.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/arch/symbols.mjs",
+          "anchor": "copyForwardUntouchedFiles"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/arch/symbols.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/arch/symbols.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-4db7f9ae",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound copy-forward exclusion invariant with no linked test."
       }
     },
     {
@@ -30506,6 +30782,42 @@
       }
     },
     {
+      "id": "REQ-correctness-508e0367",
+      "assertion": "If importer retrieval fails, arch:render must pass no importer map to the renderer so that importer information is omitted rather than labeling symbols as internal or leaf nodes.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/render-mermaid.mjs",
+          "anchor": "getImportersForFiles try-catch / importerMap = null"
+        },
+        {
+          "file": "scripts/symbol-index/render-mermaid.mjs",
+          "anchor": "main importerMap retrieval catch"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/render-mermaid.mjs",
+        "scripts/lib/arch-render.mjs",
+        "docs/architecture-map.md"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/render-mermaid.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-correctness-508e0367",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound importer-failure handling invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-5098ec30",
       "assertion": "Review-response parsing must accept clean JSON, an outer Markdown JSON fence containing inner code fences, or the first complete object span from surrounding prose, and must reject responses with no J",
       "kind": "correctness",
@@ -30787,42 +31099,6 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test covers dismissed-finding fix rejection."
-      }
-    },
-    {
-      "id": "REQ-correctness-5240f1e7",
-      "assertion": "If importer retrieval fails, architecture rendering must omit importer data rather than label symbols as having no importers.",
-      "kind": "correctness",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/symbol-index/render-mermaid.mjs",
-          "anchor": "getImportersForFiles error handling"
-        },
-        {
-          "file": "scripts/symbol-index/render-mermaid.mjs",
-          "anchor": "main"
-        }
-      ],
-      "appliesTo": [
-        "scripts/symbol-index/render-mermaid.mjs",
-        "scripts/lib/arch-render.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/symbol-index/render-mermaid.mjs",
-          "scripts/symbol-index/render-mermaid.mjs:main"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 2,
-      "confidence": "high",
-      "status": "active",
-      "gap": {
-        "requirementId": "REQ-correctness-5240f1e7",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "No linked test covers importer retrieval failure rendering."
       }
     },
     {
@@ -31151,41 +31427,6 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test is present."
-      }
-    },
-    {
-      "id": "REQ-correctness-55107c6f",
-      "assertion": "A resolved empty incremental restrictFiles array must be transported to extract through a manifest, while only restrictFiles === null may mean unrestricted full traversal.",
-      "kind": "correctness",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/symbol-index/refresh-subprocess.mjs",
-          "anchor": "writeFilesManifestIfRestricted"
-        },
-        {
-          "file": "scripts/symbol-index/refresh-subprocess.mjs",
-          "anchor": "runExtractSummariseEmbed files manifest lifecycle"
-        }
-      ],
-      "appliesTo": [
-        "scripts/symbol-index/refresh-subprocess.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/symbol-index/refresh-subprocess.mjs:writeFilesManifestIfRestricted",
-          "scripts/symbol-index/refresh-subprocess.mjs:runExtractSummariseEmbed"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-correctness-55107c6f",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "No linked test evidence."
       }
     },
     {
@@ -32166,6 +32407,38 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test covers bandit reward bounds and fallback weighting."
+      }
+    },
+    {
+      "id": "REQ-correctness-5a1f7995",
+      "assertion": "Every persisted observed-deps envelope must validate against ObservedDepsSchema before it is written.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/render-mermaid.mjs",
+          "anchor": "ObservedDepsSchema.parse(envelope)"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/render-mermaid.mjs",
+        ".audit-loop/observed-domain-deps.json",
+        "scripts/lib/observed-deps.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/render-mermaid.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-5a1f7995",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound schema-validation-before-write invariant with no linked test."
       }
     },
     {
@@ -38128,36 +38401,6 @@
       }
     },
     {
-      "id": "REQ-correctness-7c3c2a25",
-      "assertion": "A restricted extraction scope must preserve the distinction between null (unrestricted full walk) and an empty array (valid zero-file restricted run), so an empty scope must never trigger a full repos",
-      "kind": "correctness",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/symbol-index/extract.mjs",
-          "anchor": "isFullRunFromFiles / enumerateFiles"
-        }
-      ],
-      "appliesTo": [
-        "scripts/symbol-index/extract.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/symbol-index/extract.mjs"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-correctness-7c3c2a25",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "This restricted-scope distinction has no linked test."
-      }
-    },
-    {
       "id": "REQ-correctness-7c667f83",
       "assertion": "Database vector arguments used by symbol and incident neighbourhood RPCs must be finite numeric arrays of exactly 768 dimensions and must be serialized as pgvector literals before the query is issued.",
       "kind": "correctness",
@@ -38324,41 +38567,6 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This SQL array serialization rule has no linked test."
-      }
-    },
-    {
-      "id": "REQ-correctness-7d1c336b",
-      "assertion": "A null file restriction must trigger unrestricted repository enumeration, whereas an empty file restriction must produce an empty extraction scope and must not fall back to a full walk.",
-      "kind": "correctness",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/symbol-index/extract.mjs",
-          "anchor": "isFullRunFromFiles"
-        },
-        {
-          "file": "scripts/symbol-index/extract.mjs",
-          "anchor": "enumerateFiles"
-        }
-      ],
-      "appliesTo": [
-        "scripts/symbol-index/extract.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/symbol-index/extract.mjs:isFullRunFromFiles",
-          "scripts/symbol-index/extract.mjs:enumerateFiles"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-correctness-7d1c336b",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "This null-versus-empty scope rule has no linked test."
       }
     },
     {
@@ -40300,6 +40508,40 @@
       }
     },
     {
+      "id": "REQ-correctness-892efb27",
+      "assertion": "Coverage eligibility must be computed from the whole repository’s eligible file universe on both full and incremental runs, excluding files rejected by eligibility policy and reporting unreadable-size",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/extract.mjs",
+          "anchor": "coverageUniverse"
+        },
+        {
+          "file": "scripts/symbol-index/extract.mjs",
+          "anchor": "main coverage denominator computation"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/extract.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/extract.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-892efb27",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound whole-repository coverage invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-8949f3c3",
       "assertion": "Nav-audit history must be limited to records for the requested repository created within the requested positive 1-to-365-day window.",
       "kind": "correctness",
@@ -40424,6 +40666,46 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This repository-scoped ship event query rule has no linked test."
+      }
+    },
+    {
+      "id": "REQ-correctness-89e52ad0",
+      "assertion": "Symbol embedding writes must reject vectors that are not arrays of finite numbers or whose length differs from the declared dimension before issuing their database statement.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/arch/symbols.mjs",
+          "anchor": "vectorLiteral"
+        },
+        {
+          "file": "scripts/lib/store/arch/symbols.mjs",
+          "anchor": "recordSymbolEmbedding"
+        },
+        {
+          "file": "scripts/lib/store/arch/symbols.mjs",
+          "anchor": "recordSymbolEmbeddings"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/arch/symbols.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/arch/symbols.mjs:vectorLiteral",
+          "scripts/lib/store/arch/symbols.mjs:recordSymbolEmbedding",
+          "scripts/lib/store/arch/symbols.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-correctness-89e52ad0",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound embedding input-validation invariant with no linked test."
       }
     },
     {
@@ -41447,6 +41729,38 @@
       }
     },
     {
+      "id": "REQ-correctness-908c67d8",
+      "assertion": "Any failure after snapshot processing begins must invalidate the observed-deps artifact before writing an architecture-map failure stub, and must still cause arch:render to exit non-zero.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/render-mermaid.mjs",
+          "anchor": "artifact-consistency window / outer render try-catch"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/render-mermaid.mjs",
+        "docs/architecture-map.md",
+        ".audit-loop/observed-domain-deps.json"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/render-mermaid.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-908c67d8",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound failure-handling invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-908e6862",
       "assertion": "costPerKnownDefect must return a null cost with status \"undefined\" when an arm matched zero known defects and must not fabricate a zero or divide-by-zero cost.",
       "kind": "correctness",
@@ -41564,6 +41878,42 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test evidence."
+      }
+    },
+    {
+      "id": "REQ-correctness-91f7330c",
+      "assertion": "A null file restriction must mean an unrestricted repository walk, while an empty restriction array must remain an intentional zero-file extraction scope.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/extract.mjs",
+          "anchor": "isFullRunFromFiles / enumerateFiles"
+        },
+        {
+          "file": "scripts/symbol-index/refresh-subprocess.mjs",
+          "anchor": "writeFilesManifestIfRestricted"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/extract.mjs",
+        "scripts/symbol-index/refresh-subprocess.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/extract.mjs",
+          "scripts/symbol-index/refresh-subprocess.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-91f7330c",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound distinction between unrestricted and empty scopes with no linked test."
       }
     },
     {
@@ -41909,6 +42259,43 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This complete-snapshot denominator rule has no linked test."
+      }
+    },
+    {
+      "id": "REQ-correctness-9389d444",
+      "assertion": "Restricted extraction file lists passed between refresh and extract must use the shared NUL-delimited files manifest transport rather than a lossy newline or comma-delimited representation.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/extract.mjs",
+          "anchor": "parseArgs --files-from"
+        },
+        {
+          "file": "scripts/symbol-index/refresh-subprocess.mjs",
+          "anchor": "writeFilesManifestIfRestricted"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/extract.mjs",
+        "scripts/symbol-index/refresh-subprocess.mjs",
+        "scripts/lib/symbol-index/files-manifest.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/extract.mjs",
+          "scripts/symbol-index/refresh-subprocess.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-9389d444",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound lossless manifest transport invariant with no linked test."
       }
     },
     {
@@ -42895,6 +43282,43 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test is provided."
+      }
+    },
+    {
+      "id": "REQ-correctness-99941eec",
+      "assertion": "A --files-from manifest must be read as a NUL-framed file list and its unreadability must cause extraction to fail with a diagnostic rather than silently broadening or emptying the scope.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/extract.mjs",
+          "anchor": "parseArgs --files-from handling"
+        },
+        {
+          "file": "scripts/symbol-index/refresh-subprocess.mjs",
+          "anchor": "writeFilesManifestIfRestricted"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/extract.mjs",
+        "scripts/symbol-index/refresh-subprocess.mjs",
+        "scripts/lib/symbol-index/files-manifest.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/extract.mjs",
+          "scripts/symbol-index/refresh-subprocess.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-99941eec",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound manifest parsing and failure-handling invariant with no linked test."
       }
     },
     {
@@ -44421,6 +44845,40 @@
       }
     },
     {
+      "id": "REQ-correctness-a235aa6b",
+      "assertion": "Only symbols with missing or blank summaries that are nonterminal, unarchived, and below three failed summary attempts may be returned for summary retry.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/arch/symbols.mjs",
+          "anchor": "SUMMARY_RETRY_CAP"
+        },
+        {
+          "file": "scripts/lib/store/arch/symbols.mjs",
+          "anchor": "listFilesNeedingSummaryRetry"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/arch/symbols.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/arch/symbols.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-a235aa6b",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound summary-retry eligibility invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-a2a13740",
       "assertion": "A run may count as a decision-grade compared run only when it is complete, has the current contract epoch, is not a malformed-anchor contract failure, has numeric eligible counts on both sides, and ha",
       "kind": "correctness",
@@ -44945,36 +45403,6 @@
         "gap": "none",
         "conflictsWith": [],
         "rationale": "A linked test supports this sound correctness invariant."
-      }
-    },
-    {
-      "id": "REQ-correctness-a520fb69",
-      "assertion": "Persisted import records must represent only internal, non-self, repository-contained dependency-cruiser edges, excluding core modules, npm dependency types, node_modules paths, node: specifiers, and ",
-      "kind": "correctness",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/symbol-index/extract.mjs",
-          "anchor": "isInternalEdge / extractGraphAndViolations edge loop"
-        }
-      ],
-      "appliesTo": [
-        "scripts/symbol-index/extract.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/symbol-index/extract.mjs"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-correctness-a520fb69",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "This persisted import filtering rule has no linked test."
       }
     },
     {
@@ -46486,6 +46914,36 @@
       }
     },
     {
+      "id": "REQ-correctness-af98f293",
+      "assertion": "Duplicate-justification recording must clear all justification fields for the specified refresh and repository before applying the supplied justifications, including when the supplied list is empty.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/arch/symbols.mjs",
+          "anchor": "recordDuplicateJustifications"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/arch/symbols.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/arch/symbols.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-af98f293",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound duplicate-justification clearing invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-b079da47",
       "assertion": "A basename-only defect match must be ineligible whenever that basename identifies multiple distinct files on either the candidate side or the rubric side.",
       "kind": "correctness",
@@ -47687,46 +48145,6 @@
       }
     },
     {
-      "id": "REQ-correctness-b7248af9",
-      "assertion": "Persisted symbol embeddings must contain only finite numeric vectors whose length exactly matches the declared dimension, and duplicate embedding keys must update the stored vector rather than creatin",
-      "kind": "correctness",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/lib/store/arch/symbols.mjs",
-          "anchor": "vectorLiteral"
-        },
-        {
-          "file": "scripts/lib/store/arch/symbols.mjs",
-          "anchor": "recordSymbolEmbedding"
-        },
-        {
-          "file": "scripts/lib/store/arch/symbols.mjs",
-          "anchor": "recordSymbolEmbeddings"
-        }
-      ],
-      "appliesTo": [
-        "scripts/lib/store/arch/symbols.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/lib/store/arch/symbols.mjs: vectorLiteral",
-          "scripts/lib/store/arch/symbols.mjs: recordSymbolEmbedding",
-          "scripts/lib/store/arch/symbols.mjs: recordSymbolEmbeddings"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-correctness-b7248af9",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "This embedding vector validation rule has no linked test."
-      }
-    },
-    {
       "id": "REQ-correctness-b74f6bf9",
       "assertion": "Adjacency state construction must preserve the supplied candidate and incompleteness arrays regardless of the summary state selected.",
       "kind": "correctness",
@@ -48895,7 +49313,7 @@
     },
     {
       "id": "REQ-correctness-bf351ee1",
-      "assertion": "Only dependency-cruiser edges classified as internal may be emitted as import records, and every persisted import must exclude core modules, npm dependencies, node_modules paths, self-edges, and paths",
+      "assertion": "Only dependency-cruiser edges resolved to internal repository files may be emitted as import records; core modules, npm dependencies, node_modules paths, self-edges, and repository-escaping edges must",
       "kind": "correctness",
       "checkable": true,
       "provenance": [
@@ -48905,7 +49323,7 @@
         },
         {
           "file": "scripts/symbol-index/extract.mjs",
-          "anchor": "extractGraphAndViolations"
+          "anchor": "extractGraphAndViolations import edge loop"
         }
       ],
       "appliesTo": [
@@ -48913,8 +49331,7 @@
       ],
       "evidence": {
         "code": [
-          "scripts/symbol-index/extract.mjs:isInternalEdge",
-          "scripts/symbol-index/extract.mjs:extractGraphAndViolations"
+          "scripts/symbol-index/extract.mjs"
         ],
         "tests": []
       },
@@ -48925,7 +49342,7 @@
         "requirementId": "REQ-correctness-bf351ee1",
         "gap": "untested",
         "conflictsWith": [],
-        "rationale": "This internal-import filtering rule has no linked test."
+        "rationale": "This is a sound repository-internal import filtering invariant with no linked test."
       }
     },
     {
@@ -51047,37 +51464,6 @@
       }
     },
     {
-      "id": "REQ-correctness-ca0866e9",
-      "assertion": "A resolved empty incremental file scope must be passed to extraction as an empty files manifest rather than being treated as an unrestricted full-repository walk.",
-      "kind": "correctness",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/symbol-index/refresh-subprocess.mjs",
-          "anchor": "writeFilesManifestIfRestricted"
-        }
-      ],
-      "appliesTo": [
-        "scripts/symbol-index/refresh-subprocess.mjs",
-        "scripts/lib/symbol-index/files-manifest.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/symbol-index/refresh-subprocess.mjs"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-correctness-ca0866e9",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "No linked test evidence."
-      }
-    },
-    {
       "id": "REQ-correctness-ca5ac6d3",
       "assertion": "A witness record must set partialCapture when any extracted DOM claim lacks matching cumulative network ground truth or when the network-ground-truth store is at capacity.",
       "kind": "correctness",
@@ -51494,41 +51880,6 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This multi-row UPSERT column consistency rule has no linked test."
-      }
-    },
-    {
-      "id": "REQ-correctness-cb865633",
-      "assertion": "Extraction summaries must separately count skipped path, extension, size, delegate, redaction, stat, and parse outcomes so files omitted due to stat or parse failures cannot appear as a clean successf",
-      "kind": "correctness",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/symbol-index/extract.mjs",
-          "anchor": "extractSymbols"
-        },
-        {
-          "file": "scripts/symbol-index/extract.mjs",
-          "anchor": "main"
-        }
-      ],
-      "appliesTo": [
-        "scripts/symbol-index/extract.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/symbol-index/extract.mjs:extractSymbols",
-          "scripts/symbol-index/extract.mjs:main"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-correctness-cb865633",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "This extraction outcome accounting rule has no linked test."
       }
     },
     {
@@ -53741,6 +54092,38 @@
       }
     },
     {
+      "id": "REQ-correctness-d726663a",
+      "assertion": "Any failure after an active snapshot has been selected must invalidate observed-deps before writing a render-failed map stub, and must rethrow the original failure so the command exits nonzero.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/render-mermaid.mjs",
+          "anchor": "main outer try/catch artifact-consistency window"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/render-mermaid.mjs",
+        "docs/architecture-map.md",
+        ".audit-loop/observed-domain-deps.json"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/render-mermaid.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-d726663a",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound render-failure propagation invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-d72bd2b1",
       "assertion": "A zero shadow-only finding count must be classified separately as unrecorded, reviewed, or no-verdict based on whether a shadow verdict field exists and has a value, rather than being treated as uncon",
       "kind": "correctness",
@@ -54094,6 +54477,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test evidence."
+      }
+    },
+    {
+      "id": "REQ-correctness-da1eae1a",
+      "assertion": "Duplicate justifications may only mark symbol-index rows whose definition ID, refresh ID, and repository ID all match the requested scope, and the returned count must reflect rows actually updated.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/arch/symbols.mjs",
+          "anchor": "recordDuplicateJustifications"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/arch/symbols.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/arch/symbols.mjs:recordDuplicateJustifications"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-da1eae1a",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound scoped duplicate-justification invariant with no linked test."
       }
     },
     {
@@ -55058,42 +55471,6 @@
       }
     },
     {
-      "id": "REQ-correctness-e0994a67",
-      "assertion": "Each emitted symbol signatureHash must be derived from the original unredacted symbol name, signature, and body text rather than from the redacted emitted fields.",
-      "kind": "correctness",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/symbol-index/extract.mjs",
-          "anchor": "redactAndEmit signatureHash construction"
-        },
-        {
-          "file": "scripts/symbol-index/extract.mjs",
-          "anchor": "redactAndEmit"
-        }
-      ],
-      "appliesTo": [
-        "scripts/symbol-index/extract.mjs",
-        "scripts/lib/symbol-index.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/symbol-index/extract.mjs",
-          "scripts/symbol-index/extract.mjs:redactAndEmit"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 2,
-      "confidence": "high",
-      "status": "active",
-      "gap": {
-        "requirementId": "REQ-correctness-e0994a67",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "This unredacted signature-hash derivation rule has no linked test."
-      }
-    },
-    {
       "id": "REQ-correctness-e09b2bba",
       "assertion": "The canonical Anthropic URL, differing only by case, surrounding whitespace, or trailing slashes, must be treated as no custom base URL.",
       "kind": "correctness",
@@ -55291,6 +55668,41 @@
       }
     },
     {
+      "id": "REQ-correctness-e10d05f3",
+      "assertion": "Symbol embeddings must be unique by definition ID, embedding model, dimension, and signature hash, with repeated rows for the same key resolved using the last supplied row in batched writes.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/arch/symbols.mjs",
+          "anchor": "recordSymbolEmbeddings"
+        },
+        {
+          "file": "scripts/lib/store/arch/symbols.mjs",
+          "anchor": "recordSymbolEmbedding"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/arch/symbols.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/arch/symbols.mjs:recordSymbolEmbeddings",
+          "scripts/lib/store/arch/symbols.mjs:recordSymbolEmbedding"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-e10d05f3",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound embedding upsert conflict-resolution invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-e12c935f",
       "assertion": "Concurrent item processing must invoke the worker with each item's original input index and must never have more than the requested positive bounded concurrency limit in flight.",
       "kind": "correctness",
@@ -55449,6 +55861,37 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test covers absent allowedDeps representation."
+      }
+    },
+    {
+      "id": "REQ-correctness-e22ee2d9",
+      "assertion": "The renderer must retrieve symbols in pages until exhaustion or the configured renderMaxSymbols cap, and must mark the rendered map as capped when additional symbols exist beyond that cap.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/render-mermaid.mjs",
+          "anchor": "symbol pagination loop / cap probe / renderedSymbolCap"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/render-mermaid.mjs",
+        "scripts/lib/arch-render.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/render-mermaid.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-e22ee2d9",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound pagination and cap-reporting invariant with no linked test."
       }
     },
     {
@@ -55877,37 +56320,6 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This heartbeat scheduling lifecycle rule has no linked test."
-      }
-    },
-    {
-      "id": "REQ-correctness-e48e37be",
-      "assertion": "Architecture rendering must not report a successful drift classification when drift-score computation fails, and must render the status as `INSUFFICIENT_DATA` instead.",
-      "kind": "correctness",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/symbol-index/render-mermaid.mjs",
-          "anchor": "computeDriftScore error handling"
-        }
-      ],
-      "appliesTo": [
-        "scripts/symbol-index/render-mermaid.mjs",
-        "scripts/lib/arch-render.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/symbol-index/render-mermaid.mjs"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-correctness-e48e37be",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "This drift-score failure rendering rule has no linked test."
       }
     },
     {
@@ -57699,6 +58111,42 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test is provided."
+      }
+    },
+    {
+      "id": "REQ-correctness-ee19bb1b",
+      "assertion": "Extraction must emit a processed record for a file only after that file has been admitted, parsed, and classified successfully.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/extract.mjs",
+          "anchor": "extractSymbols processed emission"
+        },
+        {
+          "file": "scripts/symbol-index/refresh-subprocess.mjs",
+          "anchor": "reachedFiles collection"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/extract.mjs",
+        "scripts/symbol-index/refresh-subprocess.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/extract.mjs",
+          "scripts/symbol-index/refresh-subprocess.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-correctness-ee19bb1b",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound processed-record sequencing invariant with no linked test."
       }
     },
     {
@@ -59580,37 +60028,6 @@
       }
     },
     {
-      "id": "REQ-correctness-f8c3ccb8",
-      "assertion": "The --files-from manifest must be read only after argument-shape validation and parsed through the shared NUL-delimited parseFilesManifest format.",
-      "kind": "correctness",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/symbol-index/extract.mjs",
-          "anchor": "parseArgs --files-from handling"
-        }
-      ],
-      "appliesTo": [
-        "scripts/symbol-index/extract.mjs",
-        "scripts/lib/symbol-index/files-manifest.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/symbol-index/extract.mjs"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-correctness-f8c3ccb8",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "This manifest parsing-order invariant has no linked test."
-      }
-    },
-    {
       "id": "REQ-correctness-f9674a37",
       "assertion": "Campaign effectiveness counts must include accepted findings only from complete snapshots so that no accepted-finding numerator includes evidence outside the completion denominator.",
       "kind": "correctness",
@@ -60442,6 +60859,40 @@
       }
     },
     {
+      "id": "REQ-correctness-fd775f1b",
+      "assertion": "Coverage measurement must use the whole repository's eligible file universe on both full and incremental refreshes, excluding files rejected by eligibility policy or whose size cannot be read.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/extract.mjs",
+          "anchor": "coverageUniverse"
+        },
+        {
+          "file": "scripts/symbol-index/extract.mjs",
+          "anchor": "main eligible coverage denominator"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/extract.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/extract.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-fd775f1b",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound whole-repository coverage measurement invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-fdc9d2d4",
       "assertion": "Cost per known defect must be reported as undefined with a null amount when an arm matches zero known defects.",
       "kind": "correctness",
@@ -60975,6 +61426,38 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This local shadow-observation durability invariant has no linked test."
+      }
+    },
+    {
+      "id": "REQ-persistence-040fda1c",
+      "assertion": "Copy-forward refreshes must preserve duplicate-justification status and its reason, target, and source for every copied untouched symbol.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/arch/symbols.mjs",
+          "anchor": "copyForwardUntouchedFiles"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/arch/symbols.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/arch/symbols.mjs:copyForwardUntouchedFiles"
+        ],
+        "tests": [
+          "tests/symbol-index-drift-justification.test.mjs"
+        ]
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-040fda1c",
+        "gap": "none",
+        "conflictsWith": [],
+        "rationale": "This is a sound copy-forward metadata-preservation invariant and has a linked test."
       }
     },
     {
@@ -62799,41 +63282,6 @@
       }
     },
     {
-      "id": "REQ-persistence-1c08a3fc",
-      "assertion": "A successful symbol summarisation outcome must reset its consecutive-failure counter and terminal flag, while failed outcomes must increment the counter and mark the symbol terminal at three consecuti",
-      "kind": "persistence",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/lib/store/arch/symbols.mjs",
-          "anchor": "SUMMARY_RETRY_CAP"
-        },
-        {
-          "file": "scripts/lib/store/arch/symbols.mjs",
-          "anchor": "recordSummaryOutcomes"
-        }
-      ],
-      "appliesTo": [
-        "scripts/lib/store/arch/**/*.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/lib/store/arch/symbols.mjs:SUMMARY_RETRY_CAP",
-          "scripts/lib/store/arch/symbols.mjs:recordSummaryOutcomes"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-persistence-1c08a3fc",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "This summarisation failure-counter invariant has no linked test."
-      }
-    },
-    {
       "id": "REQ-persistence-1c58da20",
       "assertion": "Domain summaries must not be read from or written to cloud storage when cloud access is disabled, and reads without a repository ID must return an empty result set.",
       "kind": "persistence",
@@ -62991,47 +63439,6 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test evidence."
-      }
-    },
-    {
-      "id": "REQ-persistence-1e3f5940",
-      "assertion": "Coverage eligibility must be computed from the whole repository's eligible file universe on both full and incremental runs, excluding files rejected by eligibility policy or unreadable size metadata, ",
-      "kind": "persistence",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/symbol-index/extract.mjs",
-          "anchor": "coverageUniverse"
-        },
-        {
-          "file": "scripts/symbol-index/extract.mjs",
-          "anchor": "main"
-        },
-        {
-          "file": "scripts/symbol-index/extract.mjs",
-          "anchor": "extractGraphAndViolations"
-        }
-      ],
-      "appliesTo": [
-        "scripts/symbol-index/extract.mjs",
-        "scripts/lib/symbol-index/graph-coverage.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/symbol-index/extract.mjs:coverageUniverse",
-          "scripts/symbol-index/extract.mjs:main",
-          "scripts/symbol-index/extract.mjs:extractGraphAndViolations"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-persistence-1e3f5940",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "This whole-repository coverage invariant has no linked test."
       }
     },
     {
@@ -63322,38 +63729,6 @@
       }
     },
     {
-      "id": "REQ-persistence-211791d0",
-      "assertion": "A valid observed-dependencies envelope may be written only for snapshots marked `importGraphPopulated === true`, and it must pass `ObservedDepsSchema` validation before persistence.",
-      "kind": "persistence",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/symbol-index/render-mermaid.mjs",
-          "anchor": "observed-deps envelope generation and ObservedDepsSchema.parse"
-        }
-      ],
-      "appliesTo": [
-        "scripts/symbol-index/render-mermaid.mjs",
-        ".audit-loop/observed-deps.json",
-        "scripts/lib/observed-deps.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/symbol-index/render-mermaid.mjs"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-persistence-211791d0",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "This observed-dependencies validation invariant has no linked test."
-      }
-    },
-    {
       "id": "REQ-persistence-21757d6e",
       "assertion": "`learning-record` must derive `contextHash` through the shared decision-logger hash implementation rather than a separate JSON serialization algorithm.",
       "kind": "persistence",
@@ -63479,6 +63854,68 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test is provided."
+      }
+    },
+    {
+      "id": "REQ-persistence-2235dd75",
+      "assertion": "When cloud access is disabled, the repository is unregistered, or no active snapshot exists, arch:render must invalidate any existing .audit-loop/observed-domain-deps.json and atomically replace the r",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/render-mermaid.mjs",
+          "anchor": "main early exits for cloud-disabled, repo-not-registered, and no-active-snapshot"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/render-mermaid.mjs",
+        "docs/architecture-map.md",
+        ".audit-loop/observed-domain-deps.json"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/render-mermaid.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-2235dd75",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound disabled-render artifact invalidation invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-persistence-2257a7bc",
+      "assertion": "The duplicate-justification reset and every chunked reapplication update must execute in one transaction so a failure cannot persist a partially reset or partially reapplied state.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/arch/symbols.mjs",
+          "anchor": "recordDuplicateJustifications"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/arch/symbols.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/arch/symbols.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-2257a7bc",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound transactional reapplication invariant with no linked test."
       }
     },
     {
@@ -64059,6 +64496,37 @@
       }
     },
     {
+      "id": "REQ-persistence-2b28cd81",
+      "assertion": "When the active snapshot does not have a populated import graph, arch:render must remove any existing observed-deps envelope rather than preserving or generating one.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/render-mermaid.mjs",
+          "anchor": "main observed-deps branch for snap.importGraphPopulated !== true"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/render-mermaid.mjs",
+        ".audit-loop/observed-domain-deps.json"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/render-mermaid.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-2b28cd81",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound missing-graph stale-envelope removal invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-persistence-2bbbb6a3",
       "assertion": "Upserting a plan must reject an unresolved repository ID rather than writing a row with a NULL repo_id.",
       "kind": "persistence",
@@ -64473,38 +64941,6 @@
       }
     },
     {
-      "id": "REQ-persistence-2ea07dcf",
-      "assertion": "An observed-dependencies envelope may be written only for an active snapshot whose import graph is marked populated, and it must validate against `ObservedDepsSchema` before atomic persistence.",
-      "kind": "persistence",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/symbol-index/render-mermaid.mjs",
-          "anchor": "main"
-        }
-      ],
-      "appliesTo": [
-        "scripts/symbol-index/render-mermaid.mjs",
-        ".audit-loop/observed-deps.json",
-        "scripts/lib/observed-deps.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/symbol-index/render-mermaid.mjs:main"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-persistence-2ea07dcf",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "This active snapshot dependency invariant has no linked test."
-      }
-    },
-    {
       "id": "REQ-persistence-2ec41098",
       "assertion": "Weekly-review publishing must update the existing issue carrying both the learning-weekly-review label and sticky marker, reopening it when closed, rather than creating a duplicate sticky issue.",
       "kind": "persistence",
@@ -64542,6 +64978,38 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This sticky issue update invariant has no linked test."
+      }
+    },
+    {
+      "id": "REQ-persistence-2f63f58f",
+      "assertion": "Architecture-map and observed-deps outputs must be written atomically whenever they are persisted.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/render-mermaid.mjs",
+          "anchor": "atomicWriteFileSync calls for map, abort stub, and observed envelope"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/render-mermaid.mjs",
+        "docs/architecture-map.md",
+        ".audit-loop/observed-domain-deps.json"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/render-mermaid.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-2f63f58f",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound atomic-persistence invariant with no linked test."
       }
     },
     {
@@ -64982,37 +65450,6 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test is provided."
-      }
-    },
-    {
-      "id": "REQ-persistence-35446da1",
-      "assertion": "An idle-timed-out full extraction with a prior active snapshot must retain unreached files by copy-forward recovery while preserving the extraction-timeout degraded measurement state.",
-      "kind": "persistence",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/symbol-index/refresh-subprocess.mjs",
-          "anchor": "runExtractSummariseEmbed timed-out-full recovery"
-        }
-      ],
-      "appliesTo": [
-        "scripts/symbol-index/refresh-subprocess.mjs",
-        "scripts/symbol-index/refresh.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/symbol-index/refresh-subprocess.mjs"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-persistence-35446da1",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "No linked test evidence."
       }
     },
     {
@@ -65470,42 +65907,6 @@
       }
     },
     {
-      "id": "REQ-persistence-40e3e498",
-      "assertion": "When observed-dependencies generation fails or the active snapshot has no populated import graph, `arch:render` must remove or invalidate any previously persisted observed-dependencies envelope instea",
-      "kind": "persistence",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/symbol-index/render-mermaid.mjs",
-          "anchor": "main"
-        },
-        {
-          "file": "scripts/symbol-index/render-mermaid.mjs",
-          "anchor": "cleanupOrFail"
-        }
-      ],
-      "appliesTo": [
-        "scripts/symbol-index/render-mermaid.mjs",
-        ".audit-loop/observed-deps.json"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/symbol-index/render-mermaid.mjs:main",
-          "scripts/symbol-index/render-mermaid.mjs:cleanupOrFail"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-persistence-40e3e498",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "This stale observed-dependencies invalidation invariant has no linked test."
-      }
-    },
-    {
       "id": "REQ-persistence-410d29da",
       "assertion": "Campaign lock digests must be derived from all required collection-time contract inputs and must be invariant to arm declaration order.",
       "kind": "persistence",
@@ -65607,36 +66008,6 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This deterministic requirement-ID invariant has no linked test."
-      }
-    },
-    {
-      "id": "REQ-persistence-425644e2",
-      "assertion": "Batch embedding persistence must deduplicate input rows globally by definition id, embedding model, dimension, and signature hash with last occurrence winning before database insertion.",
-      "kind": "persistence",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/lib/store/arch/symbols.mjs",
-          "anchor": "recordSymbolEmbeddings"
-        }
-      ],
-      "appliesTo": [
-        "scripts/lib/store/arch/symbols.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/lib/store/arch/symbols.mjs: recordSymbolEmbeddings"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-persistence-425644e2",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "This embedding batch deduplication invariant has no linked test."
       }
     },
     {
@@ -65941,6 +66312,37 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test is provided."
+      }
+    },
+    {
+      "id": "REQ-persistence-452c058d",
+      "assertion": "A populated snapshot import graph with zero cross-domain dependencies must produce a valid observed-deps envelope, while a snapshot whose import graph is not populated must not leave an observed-deps ",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/render-mermaid.mjs",
+          "anchor": "snap.importGraphPopulated observed-deps branches"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/render-mermaid.mjs",
+        ".audit-loop/observed-domain-deps.json"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/render-mermaid.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-452c058d",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound observed-deps persistence invariant with no linked test."
       }
     },
     {
@@ -66305,41 +66707,6 @@
       }
     },
     {
-      "id": "REQ-persistence-486c3981",
-      "assertion": "A symbol definition with a successful summarisation outcome must have its consecutive failure count reset and terminal-failure flag cleared, while failed outcomes increment the count only until the co",
-      "kind": "persistence",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/lib/store/arch/symbols.mjs",
-          "anchor": "recordSummaryOutcomes"
-        },
-        {
-          "file": "scripts/lib/store/arch/symbols.mjs",
-          "anchor": "SUMMARY_RETRY_CAP"
-        }
-      ],
-      "appliesTo": [
-        "scripts/lib/store/arch/symbols.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/lib/store/arch/symbols.mjs: recordSummaryOutcomes",
-          "scripts/lib/store/arch/symbols.mjs: SUMMARY_RETRY_CAP"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-persistence-486c3981",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "This symbol failure-counter invariant has no linked test."
-      }
-    },
-    {
       "id": "REQ-persistence-48c5a46f",
       "assertion": "Writing debt entries must reject entries that fail the persisted-entry schema without inserting or updating them, while returning a per-entry rejection reason.",
       "kind": "persistence",
@@ -66431,6 +66798,41 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This single-live-verdict invariant has no linked test."
+      }
+    },
+    {
+      "id": "REQ-persistence-49e26bde",
+      "assertion": "Successful summary outcomes must reset attempts and clear terminal failure status, while unsuccessful outcomes must increment attempts and mark a symbol terminal when its consecutive failure count rea",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/arch/symbols.mjs",
+          "anchor": "recordSummaryOutcomes"
+        },
+        {
+          "file": "scripts/lib/store/arch/symbols.mjs",
+          "anchor": "SUMMARY_RETRY_CAP"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/arch/symbols.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/arch/symbols.mjs:recordSummaryOutcomes",
+          "scripts/lib/store/arch/symbols.mjs:SUMMARY_RETRY_CAP"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-49e26bde",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound summary-outcome state-transition invariant with no linked test."
       }
     },
     {
@@ -68753,6 +69155,108 @@
       }
     },
     {
+      "id": "REQ-persistence-66387121",
+      "assertion": "When a full extraction is killed specifically for idle timeout and an active prior snapshot exists, the refresh must recover untouched files by copy-forward using the union of embedded symbol file pat",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/refresh-subprocess.mjs",
+          "anchor": "shouldAttemptTimeoutRecovery"
+        },
+        {
+          "file": "scripts/symbol-index/refresh-subprocess.mjs",
+          "anchor": "buildTimeoutRecovery"
+        },
+        {
+          "file": "scripts/symbol-index/refresh-subprocess.mjs",
+          "anchor": "runExtractSummariseEmbed timed-out-full recovery"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/refresh-subprocess.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/refresh-subprocess.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-66387121",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound idle-timeout copy-forward recovery invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-persistence-6669f489",
+      "assertion": "Recording a successful summary outcome must reset that definition's failure count to zero and clear its terminal failure status, while a failed outcome must increment the count and mark it terminal at",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/arch/symbols.mjs",
+          "anchor": "SUMMARY_RETRY_CAP"
+        },
+        {
+          "file": "scripts/lib/store/arch/symbols.mjs",
+          "anchor": "recordSummaryOutcomes"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/arch/symbols.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/arch/symbols.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-6669f489",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound summary outcome persistence invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-persistence-6689c9d3",
+      "assertion": "Copy-forward refreshes must exclude touched files and, when an existence callback is provided, exclude prior-snapshot files that no longer exist.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/arch/symbols.mjs",
+          "anchor": "copyForwardUntouchedFiles"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/arch/symbols.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/arch/symbols.mjs:copyForwardUntouchedFiles"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-6689c9d3",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound copy-forward exclusion invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-persistence-66bad514",
       "assertion": "A brainstorm session ledger entry must not be appended when no first-round provider succeeds, while a round with at least one successful provider must attempt session append and expose round 0 if appe",
       "kind": "persistence",
@@ -70415,6 +70919,38 @@
       }
     },
     {
+      "id": "REQ-persistence-7f8bba9b",
+      "assertion": "Copying an untouched symbol-index row into a new refresh must preserve its duplicate-justified flag and all duplicate-justification metadata.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/arch/symbols.mjs",
+          "anchor": "copyForwardUntouchedFiles"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/arch/symbols.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/arch/symbols.mjs"
+        ],
+        "tests": [
+          "tests/symbol-index-drift-justification.test.mjs"
+        ]
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-7f8bba9b",
+        "gap": "none",
+        "conflictsWith": [],
+        "rationale": "This is a sound copy-forward justification-preservation invariant and has a linked test."
+      }
+    },
+    {
       "id": "REQ-persistence-8004a590",
       "assertion": "Reading recent friction breadcrumbs must return only records at or after the requested time, sorted newest first and deduplicated by memory_name with the newest record retained.",
       "kind": "persistence",
@@ -70443,6 +70979,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test."
+      }
+    },
+    {
+      "id": "REQ-persistence-802cef7d",
+      "assertion": "Duplicate-justification recording must clear all justification fields for the specified refresh and repository before applying the current justifications, including when the supplied list is empty.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/arch/symbols.mjs",
+          "anchor": "recordDuplicateJustifications"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/arch/symbols.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/arch/symbols.mjs:recordDuplicateJustifications"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-802cef7d",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound duplicate-justification reset invariant with no linked test."
       }
     },
     {
@@ -70544,36 +71110,6 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test is provided."
-      }
-    },
-    {
-      "id": "REQ-persistence-8164e88e",
-      "assertion": "Bulk symbol embedding writes must deduplicate input rows by definition ID, embedding model, dimension, and signature hash, retaining the last occurrence for each key.",
-      "kind": "persistence",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/lib/store/arch/symbols.mjs",
-          "anchor": "recordSymbolEmbeddings"
-        }
-      ],
-      "appliesTo": [
-        "scripts/lib/store/arch/**/*.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/lib/store/arch/symbols.mjs:recordSymbolEmbeddings"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-persistence-8164e88e",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "This bulk embedding deduplication invariant has no linked test."
       }
     },
     {
@@ -71004,36 +71540,6 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Sound observation-only persistence invariant lacks linked tests."
-      }
-    },
-    {
-      "id": "REQ-persistence-8855e99f",
-      "assertion": "Recording duplicate justifications for a refresh must atomically clear all existing duplicate-justification fields scoped to that refresh and repository before applying the supplied justifications, in",
-      "kind": "persistence",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/lib/store/arch/symbols.mjs",
-          "anchor": "recordDuplicateJustifications"
-        }
-      ],
-      "appliesTo": [
-        "scripts/lib/store/arch/symbols.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/lib/store/arch/symbols.mjs: recordDuplicateJustifications"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-persistence-8855e99f",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "Sound atomic refresh-scoped replacement invariant lacks linked tests."
       }
     },
     {
@@ -72806,36 +73312,6 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Sound provenance-trailer verification invariant lacks linked tests."
-      }
-    },
-    {
-      "id": "REQ-persistence-a10feb2b",
-      "assertion": "Recording duplicate justifications must atomically clear all duplicate-justification fields for the specified refresh and repository before applying the supplied justifications in bounded chunks.",
-      "kind": "persistence",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/lib/store/arch/symbols.mjs",
-          "anchor": "recordDuplicateJustifications"
-        }
-      ],
-      "appliesTo": [
-        "scripts/lib/store/arch/**/*.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/lib/store/arch/symbols.mjs:recordDuplicateJustifications"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-persistence-a10feb2b",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "Sound atomic duplicate-justification replacement invariant lacks linked tests."
       }
     },
     {
@@ -75641,48 +76117,6 @@
       }
     },
     {
-      "id": "REQ-persistence-c2f8ce74",
-      "assertion": "When architecture rendering exits early because cloud access is disabled, the repository is unregistered, or no active snapshot exists, it must invalidate any prior observed-dependencies envelope and ",
-      "kind": "persistence",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/symbol-index/render-mermaid.mjs",
-          "anchor": "cleanupStaleObservedDeps"
-        },
-        {
-          "file": "scripts/symbol-index/render-mermaid.mjs",
-          "anchor": "writeAbortStub"
-        },
-        {
-          "file": "scripts/symbol-index/render-mermaid.mjs",
-          "anchor": "main"
-        }
-      ],
-      "appliesTo": [
-        "scripts/symbol-index/render-mermaid.mjs",
-        ".audit-loop/observed-deps.json",
-        "docs/architecture-map.md"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/symbol-index/render-mermaid.mjs:cleanupStaleObservedDeps",
-          "scripts/symbol-index/render-mermaid.mjs:writeAbortStub",
-          "scripts/symbol-index/render-mermaid.mjs:main"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-persistence-c2f8ce74",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "Sound early-exit dependency-envelope invalidation invariant lacks linked tests."
-      }
-    },
-    {
       "id": "REQ-persistence-c3695796",
       "assertion": "Prompt evolution must not recreate an experiment whose deterministic pass-and-content-hash ID is already resolved as killed, promoted, or stale.",
       "kind": "persistence",
@@ -75838,36 +76272,6 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Sound conservative JSONL cursor invariant lacks linked tests."
-      }
-    },
-    {
-      "id": "REQ-persistence-c5274630",
-      "assertion": "A files manifest created for restricted extraction must be removed after the extract subprocess attempt whether extraction succeeds, times out, or throws.",
-      "kind": "persistence",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/symbol-index/refresh-subprocess.mjs",
-          "anchor": "runExtractSummariseEmbed extract try/finally"
-        }
-      ],
-      "appliesTo": [
-        "scripts/symbol-index/refresh-subprocess.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/symbol-index/refresh-subprocess.mjs"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-persistence-c5274630",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "No linked test evidence."
       }
     },
     {
@@ -76217,6 +76621,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Sound complete tiered-result telemetry invariant lacks linked tests."
+      }
+    },
+    {
+      "id": "REQ-persistence-c96bc76a",
+      "assertion": "A timeout recovery touched set must include every valid processed file path as well as every embedded symbol file path so successfully processed zero-symbol files are not copied forward from the prior",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/refresh-subprocess.mjs",
+          "anchor": "buildTimeoutRecovery"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/refresh-subprocess.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/refresh-subprocess.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-c96bc76a",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound timeout touched-set invariant with no linked test."
       }
     },
     {
@@ -76885,6 +77319,40 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Sound accepted-baseline gate exclusion invariant lacks linked tests."
+      }
+    },
+    {
+      "id": "REQ-persistence-d342bf23",
+      "assertion": "Symbol embeddings must be uniquely upserted by definition ID, embedding model, dimension, and signature hash, with a repeated conflict key in one batch resolved to its last supplied row.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/arch/symbols.mjs",
+          "anchor": "recordSymbolEmbedding"
+        },
+        {
+          "file": "scripts/lib/store/arch/symbols.mjs",
+          "anchor": "recordSymbolEmbeddings"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/arch/symbols.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/arch/symbols.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-d342bf23",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound embedding upsert uniqueness invariant with no linked test."
       }
     },
     {
@@ -78084,6 +78552,40 @@
       }
     },
     {
+      "id": "REQ-persistence-e482024d",
+      "assertion": "When a full extraction is killed by idle timeout and an active snapshot exists, the refresh pipeline must recover prior data for files not reached by extraction while retaining the timeout-degraded co",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/refresh-subprocess.mjs",
+          "anchor": "shouldAttemptTimeoutRecovery / buildTimeoutRecovery"
+        },
+        {
+          "file": "scripts/symbol-index/refresh-subprocess.mjs",
+          "anchor": "runExtractSummariseEmbed timed-out-full recovery"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/refresh-subprocess.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/refresh-subprocess.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-e482024d",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound timeout recovery invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-persistence-e4c4b750",
       "assertion": "Applying semantic suppression must preserve the canonical finding in each cluster and record each dismissed duplicate with a rationale naming its canonical finding.",
       "kind": "persistence",
@@ -78145,40 +78647,6 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Sound existing-run reuse invariant lacks linked tests."
-      }
-    },
-    {
-      "id": "REQ-persistence-e543db56",
-      "assertion": "Copying untouched symbol rows into a new refresh must exclude touched files and optional nonexistent files while preserving duplicate-justification fields for each copied row.",
-      "kind": "persistence",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/lib/store/arch/symbols.mjs",
-          "anchor": "copyForwardUntouchedFiles"
-        }
-      ],
-      "appliesTo": [
-        "scripts/lib/store/arch/**/*.mjs",
-        "scripts/lib/store/arch/symbols.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/lib/store/arch/symbols.mjs:copyForwardUntouchedFiles",
-          "scripts/lib/store/arch/symbols.mjs: copyForwardUntouchedFiles"
-        ],
-        "tests": [
-          "tests/symbol-index-drift-justification.test.mjs"
-        ]
-      },
-      "seenInRuns": 2,
-      "confidence": "high",
-      "status": "active",
-      "gap": {
-        "requirementId": "REQ-persistence-e543db56",
-        "gap": "none",
-        "conflictsWith": [],
-        "rationale": "Sound untouched-symbol copy-forward invariant has linked tests."
       }
     },
     {
@@ -78620,6 +79088,37 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test is provided."
+      }
+    },
+    {
+      "id": "REQ-persistence-e9b53137",
+      "assertion": "A populated snapshot import graph must produce an observed-deps envelope that validates against ObservedDepsSchema and includes the active refresh ID, domain-map digest, derived dependencies, and a co",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/render-mermaid.mjs",
+          "anchor": "main observed-deps envelope construction and ObservedDepsSchema.parse"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/render-mermaid.mjs",
+        ".audit-loop/observed-domain-deps.json"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/render-mermaid.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-e9b53137",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound populated-graph envelope invariant with no linked test."
       }
     },
     {
@@ -79332,46 +79831,6 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test is provided."
-      }
-    },
-    {
-      "id": "REQ-persistence-f2804dd2",
-      "assertion": "If a full extraction is terminated by the configured timeout and an active snapshot exists, the refresh pipeline must recover unreached files by copy-forward from that prior snapshot while retaining t",
-      "kind": "persistence",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/symbol-index/refresh-subprocess.mjs",
-          "anchor": "shouldAttemptTimeoutRecovery"
-        },
-        {
-          "file": "scripts/symbol-index/refresh-subprocess.mjs",
-          "anchor": "buildTimeoutRecovery"
-        },
-        {
-          "file": "scripts/symbol-index/refresh-subprocess.mjs",
-          "anchor": "runExtractSummariseEmbed timed-out-full recovery"
-        }
-      ],
-      "appliesTo": [
-        "scripts/symbol-index/refresh-subprocess.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/symbol-index/refresh-subprocess.mjs:shouldAttemptTimeoutRecovery",
-          "scripts/symbol-index/refresh-subprocess.mjs:buildTimeoutRecovery",
-          "scripts/symbol-index/refresh-subprocess.mjs:runExtractSummariseEmbed"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-persistence-f2804dd2",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "No linked test evidence."
       }
     },
     {
@@ -83150,6 +83609,40 @@
       }
     },
     {
+      "id": "REQ-safety-11a5f3a9",
+      "assertion": "The extract subprocess must use an inactivity timeout rather than an absolute total-duration timeout, so ongoing progress records prevent termination of a slow extraction.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/refresh-subprocess.mjs",
+          "anchor": "buildExtractSpawnOpts"
+        },
+        {
+          "file": "scripts/symbol-index/refresh-subprocess.mjs",
+          "anchor": "runExtractSummariseEmbed extract invocation"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/refresh-subprocess.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/refresh-subprocess.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-11a5f3a9",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound inactivity-timeout invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-safety-11c2069d",
       "assertion": "Every distinct sync destination outside the consumer tooling directory must match at least one EOL-pin glob or be returned in `uncovered` for the caller to abort the sync.",
       "kind": "safety",
@@ -83541,6 +84034,37 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test is provided."
+      }
+    },
+    {
+      "id": "REQ-safety-143f8a5f",
+      "assertion": "Any error while generating or writing observed-deps after the architecture map is rendered must clear or invalidate any observed-deps file rather than leaving a prior coverage verdict available to dow",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/render-mermaid.mjs",
+          "anchor": "main observed-deps try/catch"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/render-mermaid.mjs",
+        ".audit-loop/observed-domain-deps.json"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/render-mermaid.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-143f8a5f",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound observed-deps failure cleanup invariant with no linked test."
       }
     },
     {
@@ -85032,36 +85556,6 @@
       "status": "inferred-only",
       "gap": {
         "requirementId": "REQ-safety-1f1e1efe",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "No linked test is provided."
-      }
-    },
-    {
-      "id": "REQ-safety-1fe36793",
-      "assertion": "The extractor must emit an unnamed progress record before processing every candidate file and may attach a file path to progress only after that file has passed admission.",
-      "kind": "safety",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/symbol-index/extract.mjs",
-          "anchor": "extractSymbols per-file progress emission"
-        }
-      ],
-      "appliesTo": [
-        "scripts/symbol-index/extract.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/symbol-index/extract.mjs"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-safety-1fe36793",
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test is provided."
@@ -86944,6 +87438,41 @@
       }
     },
     {
+      "id": "REQ-safety-2b5c50c7",
+      "assertion": "Fixture git setup commands must fail the test immediately when a git subprocess exits nonzero rather than continuing with a partially constructed repository.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "tests/helpers/fixtures.mjs",
+          "anchor": "makeGitRunner"
+        },
+        {
+          "file": "tests/helpers/fixtures.mjs",
+          "anchor": "gitInit"
+        }
+      ],
+      "appliesTo": [
+        "tests/helpers/fixtures.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "tests/helpers/fixtures.mjs:makeGitRunner",
+          "tests/helpers/fixtures.mjs:gitInit"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-2b5c50c7",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound fixture setup failure invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-safety-2b62e4d2",
       "assertion": "A non-existent destination component must be accepted as safe unless inspection fails for an error other than ENOENT, which must fail closed with a containment error.",
       "kind": "safety",
@@ -87655,46 +88184,6 @@
       "status": "inferred-only",
       "gap": {
         "requirementId": "REQ-safety-320b6ad0",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "No linked test is provided."
-      }
-    },
-    {
-      "id": "REQ-safety-322ed4ce",
-      "assertion": "Symbol embedding writes must reject vectors that are not arrays of finite numbers or whose length differs from the declared dimension before issuing a database write.",
-      "kind": "safety",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/lib/store/arch/symbols.mjs",
-          "anchor": "vectorLiteral"
-        },
-        {
-          "file": "scripts/lib/store/arch/symbols.mjs",
-          "anchor": "recordSymbolEmbedding"
-        },
-        {
-          "file": "scripts/lib/store/arch/symbols.mjs",
-          "anchor": "recordSymbolEmbeddings"
-        }
-      ],
-      "appliesTo": [
-        "scripts/lib/store/arch/**/*.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/lib/store/arch/symbols.mjs:vectorLiteral",
-          "scripts/lib/store/arch/symbols.mjs:recordSymbolEmbedding",
-          "scripts/lib/store/arch/symbols.mjs:recordSymbolEmbeddings"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-safety-322ed4ce",
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test is provided."
@@ -89130,6 +89619,36 @@
       }
     },
     {
+      "id": "REQ-safety-3b403ba4",
+      "assertion": "The arch:render CLI must reject unknown flags or a missing --out value with an ARGV_ERROR that causes process exit code 2 without rendering artifacts.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/render-mermaid.mjs",
+          "anchor": "KNOWN_FLAGS / parseArgs / isMain error handler"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/render-mermaid.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/render-mermaid.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-3b403ba4",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound CLI argument-error invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-safety-3b6d4371",
       "assertion": "Resolving a latest-* provider sentinel must select from a fresh live catalog merged with the static fallback pool, and must still resolve from the static pool when the live catalog is absent, stale, i",
       "kind": "safety",
@@ -89951,6 +90470,38 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test is provided."
+      }
+    },
+    {
+      "id": "REQ-safety-3fb58c7e",
+      "assertion": "Importing render-mermaid.mjs as a module must not execute the renderer or overwrite architecture artifacts; rendering may run only when the module is invoked as the CLI entrypoint.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/render-mermaid.mjs",
+          "anchor": "isMain guard"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/render-mermaid.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/render-mermaid.mjs"
+        ],
+        "tests": [
+          "tests/cli-unknown-flags.test.mjs"
+        ]
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-3fb58c7e",
+        "gap": "none",
+        "conflictsWith": [],
+        "rationale": "This is a sound module-import safety invariant and has a linked test."
       }
     },
     {
@@ -91518,23 +92069,22 @@
       }
     },
     {
-      "id": "REQ-safety-49b3b17a",
-      "assertion": "When observed-dependency generation fails after markdown rendering, the renderer must clear or invalidate any existing observed-dependencies envelope rather than leave stale coverage data available.",
+      "id": "REQ-safety-49f80665",
+      "assertion": "The stub OpenAI client must throw for any structured-output schema name that has not been explicitly stubbed.",
       "kind": "safety",
       "checkable": true,
       "provenance": [
         {
-          "file": "scripts/symbol-index/render-mermaid.mjs",
-          "anchor": "observed-deps catch cleanupOrFail"
+          "file": "tests/helpers/fixtures.mjs",
+          "anchor": "makeStubClient"
         }
       ],
       "appliesTo": [
-        "scripts/symbol-index/render-mermaid.mjs",
-        ".audit-loop/observed-deps.json"
+        "tests/helpers/fixtures.mjs"
       ],
       "evidence": {
         "code": [
-          "scripts/symbol-index/render-mermaid.mjs"
+          "tests/helpers/fixtures.mjs:makeStubClient"
         ],
         "tests": []
       },
@@ -91542,10 +92092,10 @@
       "confidence": "low",
       "status": "inferred-only",
       "gap": {
-        "requirementId": "REQ-safety-49b3b17a",
+        "requirementId": "REQ-safety-49f80665",
         "gap": "untested",
         "conflictsWith": [],
-        "rationale": "No linked test is provided."
+        "rationale": "This is a sound strict stub-schema invariant with no linked test."
       }
     },
     {
@@ -93147,6 +93697,37 @@
       }
     },
     {
+      "id": "REQ-safety-555966ae",
+      "assertion": "If stale observed-deps content cannot be deleted during an aborted render, arch:render must overwrite it with schema-invalid content, and must exit nonzero if it can neither delete nor invalidate the ",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/render-mermaid.mjs",
+          "anchor": "cleanupStaleObservedDeps / cleanupOrFail"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/render-mermaid.mjs",
+        ".audit-loop/observed-domain-deps.json"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/render-mermaid.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-555966ae",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound stale-content neutralization invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-safety-5571f324",
       "assertion": "Next.js API routes and `_app`, `_document`, and `_error` pages must not be emitted as navigation destinations.",
       "kind": "safety",
@@ -93419,6 +94000,40 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Sound environment-isolation invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-safety-5659d5f6",
+      "assertion": "An extract subprocess timeout must be treated as an idle timeout reset by child output rather than as a total pipeline-duration limit.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/refresh-subprocess.mjs",
+          "anchor": "buildExtractSpawnOpts"
+        },
+        {
+          "file": "scripts/symbol-index/refresh-subprocess.mjs",
+          "anchor": "runExtractSummariseEmbed extract invocation"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/refresh-subprocess.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/refresh-subprocess.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-5659d5f6",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound inactivity-timeout invariant with no linked test."
       }
     },
     {
@@ -94300,6 +94915,36 @@
       }
     },
     {
+      "id": "REQ-safety-5bbe4cd7",
+      "assertion": "The extract CLI must reject unknown, duplicate, valueless, or invalid-mode flags before performing extraction work.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/extract.mjs",
+          "anchor": "KNOWN_FLAGS / takeFlagValue / parseArgs"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/extract.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/extract.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-5bbe4cd7",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound extract CLI validation invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-safety-5c2a5211",
       "assertion": "The tiered audit pipeline must throw before discovery begins unless both ctx.providers.geminiReviewCall and ctx.providers.geminiCleanRegionCall are functions.",
       "kind": "safety",
@@ -94829,36 +95474,6 @@
       }
     },
     {
-      "id": "REQ-safety-616e6bd1",
-      "assertion": "The extractor must count stat failures and parse failures in its summary rather than silently omitting files that cannot be statted or loaded by ts-morph.",
-      "kind": "safety",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/symbol-index/extract.mjs",
-          "anchor": "extractSymbols stats and loadAndParseFile handling"
-        }
-      ],
-      "appliesTo": [
-        "scripts/symbol-index/extract.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/symbol-index/extract.mjs"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-safety-616e6bd1",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "Sound extraction-failure accounting invariant with no linked test."
-      }
-    },
-    {
       "id": "REQ-safety-61714826",
       "assertion": "Migration mode on a non-Supabase-managed database must fail before applying migrations when the session lacks CREATEROLE or any required pgcrypto, pg_trgm, or vector extension is unavailable.",
       "kind": "safety",
@@ -95028,41 +95643,6 @@
       "status": "active",
       "gap": {
         "requirementId": "REQ-safety-6295f5ef",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "No linked test evidence."
-      }
-    },
-    {
-      "id": "REQ-safety-62a6fa9c",
-      "assertion": "Extract subprocess execution must use coverageConfig.hardTimeoutMs as an idleTimeoutMs and must not impose it as an absolute timeout.",
-      "kind": "safety",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/symbol-index/refresh-subprocess.mjs",
-          "anchor": "buildExtractSpawnOpts"
-        },
-        {
-          "file": "scripts/symbol-index/refresh-subprocess.mjs",
-          "anchor": "runExtractSummariseEmbed extract invocation"
-        }
-      ],
-      "appliesTo": [
-        "scripts/symbol-index/refresh-subprocess.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/symbol-index/refresh-subprocess.mjs:buildExtractSpawnOpts",
-          "scripts/symbol-index/refresh-subprocess.mjs:runExtractSummariseEmbed"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-safety-62a6fa9c",
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test evidence."
@@ -95477,6 +96057,36 @@
       }
     },
     {
+      "id": "REQ-safety-65137c8d",
+      "assertion": "Duplicate-justification reset and all chunked reapplication updates must execute in one transaction, so a failed application cannot leave a refresh partially reset or partially marked.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/arch/symbols.mjs",
+          "anchor": "recordDuplicateJustifications"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/arch/symbols.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/arch/symbols.mjs:recordDuplicateJustifications"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-65137c8d",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound transactional duplicate-justification invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-safety-656cce47",
       "assertion": "Declared commit paths must be refused if they escape the repository or identify an existing or deleted directory, while a missing path is accepted only when it is tracked or resolves to a blob at HEAD",
       "kind": "safety",
@@ -95633,36 +96243,6 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Sound explicit-adoption invariant with no linked test."
-      }
-    },
-    {
-      "id": "REQ-safety-67c257f4",
-      "assertion": "The extractor must reject unknown CLI flags, duplicate flags, flags with missing or empty values, invalid --mode values, --files combined with --files-from, and any positional operands following --.",
-      "kind": "safety",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/symbol-index/extract.mjs",
-          "anchor": "KNOWN_FLAGS / parseArgs"
-        }
-      ],
-      "appliesTo": [
-        "scripts/symbol-index/extract.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/symbol-index/extract.mjs"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-safety-67c257f4",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "Sound extractor CLI validation invariant with no linked test."
       }
     },
     {
@@ -96191,6 +96771,41 @@
       }
     },
     {
+      "id": "REQ-safety-6b09f505",
+      "assertion": "Only non-archived symbols with missing or blank summaries, fewer than three failed attempts, and no terminal summary-failure flag may be returned for summary retry.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/arch/symbols.mjs",
+          "anchor": "SUMMARY_RETRY_CAP"
+        },
+        {
+          "file": "scripts/lib/store/arch/symbols.mjs",
+          "anchor": "listFilesNeedingSummaryRetry"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/arch/symbols.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/arch/symbols.mjs:SUMMARY_RETRY_CAP",
+          "scripts/lib/store/arch/symbols.mjs:listFilesNeedingSummaryRetry"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-6b09f505",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound summary-retry eligibility invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-safety-6b2c9905",
       "assertion": "Gate 8 must fail if a skill name deployed by the consumer manifest under `.claude/skills/` also exists under `.github/skills/` or `.agents/skills/`, and must fail if either shadowing surface cannot be",
       "kind": "safety",
@@ -96406,6 +97021,40 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test is provided."
+      }
+    },
+    {
+      "id": "REQ-safety-6c3ac240",
+      "assertion": "Fixture git commands must assert successful process completion rather than continuing after a nonzero git exit status.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "tests/helpers/fixtures.mjs",
+          "anchor": "makeGitRunner"
+        },
+        {
+          "file": "tests/helpers/fixtures.mjs",
+          "anchor": "gitInit"
+        }
+      ],
+      "appliesTo": [
+        "tests/helpers/fixtures.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "tests/helpers/fixtures.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-6c3ac240",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound fixture git failure-checking invariant with no linked test."
       }
     },
     {
@@ -98017,6 +98666,67 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Sound no-capture visual-gate invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-safety-77cc7193",
+      "assertion": "Duplicate justifications may update only symbol-index rows whose definition ID, refresh ID, and repository ID all match the supplied values.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/arch/symbols.mjs",
+          "anchor": "recordDuplicateJustifications"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/arch/symbols.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/arch/symbols.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-77cc7193",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound duplicate-justification scope safety invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-safety-78e40b45",
+      "assertion": "If drift-score computation fails, the rendered architecture map must report INSUFFICIENT_DATA rather than deriving a GREEN, AMBER, or RED status from a fallback score.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/render-mermaid.mjs",
+          "anchor": "computeDriftScore try-catch / driftStatus"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/render-mermaid.mjs",
+        "scripts/lib/arch-render.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/render-mermaid.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-78e40b45",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound fail-safe drift-status invariant with no linked test."
       }
     },
     {
@@ -99696,6 +100406,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-86389524",
+      "assertion": "The extract CLI must reject unknown flags, duplicate flags, unsupported modes, missing or empty flag values, positional operands, and simultaneous use of --files and --files-from before reading a mani",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/extract.mjs",
+          "anchor": "KNOWN_FLAGS and parseArgs"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/extract.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/extract.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-86389524",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound comprehensive extract CLI validation invariant with no linked test."
       }
     },
     {
@@ -101983,6 +102723,39 @@
       }
     },
     {
+      "id": "REQ-safety-954b88c3",
+      "assertion": "The observed-deps coverage verdict must treat missing extraction coverage as unmeasured data rather than as verified extraction coverage.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/render-mermaid.mjs",
+          "anchor": "getGraphCoverage / extraction = persisted?.extraction ?? null / graphVerdict"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/render-mermaid.mjs",
+        ".audit-loop/observed-domain-deps.json",
+        "scripts/lib/observed-deps.mjs",
+        "scripts/lib/symbol-index/graph-verdict.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/render-mermaid.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-954b88c3",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound conservative coverage-verdict invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-safety-95823eb4",
       "assertion": "Arm-evaluation judging must perform two passes, allow at most one corrective retry per failed pass, and return a non-conformant result if a pass remains invalid after that retry.",
       "kind": "safety",
@@ -102177,38 +102950,6 @@
       }
     },
     {
-      "id": "REQ-safety-96f39b8a",
-      "assertion": "When cloud access is disabled, the repository is unregistered, or no active snapshot exists, architecture rendering must invalidate stale observed-dependency data and atomically replace the requested ",
-      "kind": "safety",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/symbol-index/render-mermaid.mjs",
-          "anchor": "cleanupOrFail and early-exit writeAbortStub paths"
-        }
-      ],
-      "appliesTo": [
-        "scripts/symbol-index/render-mermaid.mjs",
-        "docs/architecture-map.md",
-        ".audit-loop/observed-deps.json"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/symbol-index/render-mermaid.mjs"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-safety-96f39b8a",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "Sound stale-data invalidation invariant with no linked test."
-      }
-    },
-    {
       "id": "REQ-safety-971d035c",
       "assertion": "Legacy-surface cleanup eligibility must be derived only from receipt-recorded members within the applicable retired surface root and never from directory enumeration.",
       "kind": "safety",
@@ -102272,6 +103013,37 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test is provided."
+      }
+    },
+    {
+      "id": "REQ-safety-98240ef4",
+      "assertion": "A failure while generating or writing observed dependencies after the architecture map succeeds must clear or neutralize any observed-deps artifact rather than leaving a previous envelope readable as ",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/render-mermaid.mjs",
+          "anchor": "observed-deps try-catch / cleanupOrFail"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/render-mermaid.mjs",
+        ".audit-loop/observed-domain-deps.json"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/render-mermaid.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-98240ef4",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound stale-verdict prevention invariant with no linked test."
       }
     },
     {
@@ -104130,43 +104902,6 @@
       }
     },
     {
-      "id": "REQ-safety-a69325ee",
-      "assertion": "If stale observed-dependency data cannot be deleted, rendering must either overwrite it with schema-invalid invalidation content or exit non-zero.",
-      "kind": "safety",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/symbol-index/render-mermaid.mjs",
-          "anchor": "cleanupStaleObservedDeps"
-        },
-        {
-          "file": "scripts/symbol-index/render-mermaid.mjs",
-          "anchor": "cleanupOrFail"
-        }
-      ],
-      "appliesTo": [
-        "scripts/symbol-index/render-mermaid.mjs",
-        ".audit-loop/observed-deps.json"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/symbol-index/render-mermaid.mjs",
-          "scripts/symbol-index/render-mermaid.mjs:cleanupStaleObservedDeps",
-          "scripts/symbol-index/render-mermaid.mjs:cleanupOrFail"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 2,
-      "confidence": "high",
-      "status": "active",
-      "gap": {
-        "requirementId": "REQ-safety-a69325ee",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "No linked test is present."
-      }
-    },
-    {
       "id": "REQ-safety-a69663d7",
       "assertion": "Debt-ledger mutations must acquire a single-writer file lock and atomically replace the ledger file before reporting success.",
       "kind": "safety",
@@ -105958,48 +106693,6 @@
       }
     },
     {
-      "id": "REQ-safety-b360fbce",
-      "assertion": "The architecture renderer must reject unknown CLI flags and must reject `--out` when it has no non-flag path value.",
-      "kind": "safety",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/symbol-index/render-mermaid.mjs",
-          "anchor": "KNOWN_FLAGS and parseArgs"
-        },
-        {
-          "file": "scripts/symbol-index/render-mermaid.mjs",
-          "anchor": "KNOWN_FLAGS"
-        },
-        {
-          "file": "scripts/symbol-index/render-mermaid.mjs",
-          "anchor": "parseArgs"
-        }
-      ],
-      "appliesTo": [
-        "scripts/symbol-index/render-mermaid.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/symbol-index/render-mermaid.mjs",
-          "scripts/symbol-index/render-mermaid.mjs:KNOWN_FLAGS",
-          "scripts/symbol-index/render-mermaid.mjs:parseArgs"
-        ],
-        "tests": [
-          "tests/cli-unknown-flags.test.mjs"
-        ]
-      },
-      "seenInRuns": 2,
-      "confidence": "high",
-      "status": "active",
-      "gap": {
-        "requirementId": "REQ-safety-b360fbce",
-        "gap": "none",
-        "conflictsWith": [],
-        "rationale": "A linked test is present."
-      }
-    },
-    {
       "id": "REQ-safety-b3c5f8cf",
       "assertion": "assertKnownFlags() must reject every unrecognized --flag before the POSIX -- terminator by throwing an ArgvError instead of silently ignoring it.",
       "kind": "safety",
@@ -106376,37 +107069,6 @@
       "status": "inferred-only",
       "gap": {
         "requirementId": "REQ-safety-b6120baf",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "No linked test is present."
-      }
-    },
-    {
-      "id": "REQ-safety-b664a12d",
-      "assertion": "When dependency-cruiser fails during a coverage-measured run, the extractor must emit coverage with outcome failed and null measurement counts rather than reporting a zero-import or zero-violation mea",
-      "kind": "safety",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/symbol-index/extract.mjs",
-          "anchor": "extractGraphAndViolations cruise failure handling"
-        }
-      ],
-      "appliesTo": [
-        "scripts/symbol-index/extract.mjs",
-        "scripts/lib/symbol-index/graph-coverage.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/symbol-index/extract.mjs"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-safety-b664a12d",
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test is present."
@@ -107610,6 +108272,42 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-bd71397e",
+      "assertion": "All fixture-repository git subprocesses created by the shared fixture helpers must run with Git-local environment variables removed so ambient repository targeting cannot override the fixture working ",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "tests/helpers/fixtures.mjs",
+          "anchor": "gitFixtureEnv"
+        },
+        {
+          "file": "tests/helpers/fixtures.mjs",
+          "anchor": "makeGitRunner"
+        }
+      ],
+      "appliesTo": [
+        "tests/helpers/fixtures.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "tests/helpers/fixtures.mjs:gitFixtureEnv",
+          "tests/helpers/fixtures.mjs:makeGitRunner",
+          "scripts/lib/git-env-sanitize.mjs:GIT_LOCAL_ENV_VARS"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-bd71397e",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound fixture git environment-isolation invariant with no linked test."
       }
     },
     {
@@ -109330,46 +110028,6 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test covers unresolvable background handling."
-      }
-    },
-    {
-      "id": "REQ-safety-c9a729cf",
-      "assertion": "The extract CLI must reject unknown, duplicate, valueless, malformed, or positional arguments, and must reject invocations that supply both --files and --files-from before reading any manifest or scan",
-      "kind": "safety",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/symbol-index/extract.mjs",
-          "anchor": "parseArgs"
-        },
-        {
-          "file": "scripts/symbol-index/extract.mjs",
-          "anchor": "takeFlagValue"
-        },
-        {
-          "file": "scripts/symbol-index/extract.mjs",
-          "anchor": "KNOWN_FLAGS"
-        }
-      ],
-      "appliesTo": [
-        "scripts/symbol-index/extract.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/symbol-index/extract.mjs:KNOWN_FLAGS",
-          "scripts/symbol-index/extract.mjs:takeFlagValue",
-          "scripts/symbol-index/extract.mjs:parseArgs"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-safety-c9a729cf",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "No linked test is present."
       }
     },
     {
@@ -111746,6 +112404,41 @@
       }
     },
     {
+      "id": "REQ-safety-d81c98c5",
+      "assertion": "Git subprocesses used to construct or mutate test fixture repositories must remove every configured Git-local environment variable from the inherited environment.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "tests/helpers/fixtures.mjs",
+          "anchor": "gitFixtureEnv"
+        },
+        {
+          "file": "tests/helpers/fixtures.mjs",
+          "anchor": "makeGitRunner"
+        }
+      ],
+      "appliesTo": [
+        "tests/helpers/fixtures.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "tests/helpers/fixtures.mjs",
+          "scripts/lib/git-env-sanitize.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-d81c98c5",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound fixture git environment-isolation invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-safety-d8386952",
       "assertion": "Network observation must be passive through a page response event listener and removing the listener must detach that exact response handler without propagating detach errors.",
       "kind": "safety",
@@ -112781,6 +113474,37 @@
       }
     },
     {
+      "id": "REQ-safety-e157d12b",
+      "assertion": "Batched symbol embedding persistence must validate every distinct input vector before issuing any database write, so an invalid later vector cannot leave earlier batches persisted.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/arch/symbols.mjs",
+          "anchor": "recordSymbolEmbeddings"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/arch/symbols.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/arch/symbols.mjs:recordSymbolEmbeddings",
+          "scripts/lib/store/arch/symbols.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-safety-e157d12b",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound all-or-nothing batch validation invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-safety-e1e0a607",
       "assertion": "Arm-evaluation decisions must remain in collecting status until the experiment contains at least the configured minimum number of distinct task IDs.",
       "kind": "safety",
@@ -112843,6 +113567,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test evidence."
+      }
+    },
+    {
+      "id": "REQ-safety-e2c72fda",
+      "assertion": "The arch:render CLI must reject any flag other than --out and must exit with status 2 for invalid CLI arguments, including --out without a non-flag path value.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/render-mermaid.mjs",
+          "anchor": "KNOWN_FLAGS / parseArgs / main().catch"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/render-mermaid.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/render-mermaid.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-e2c72fda",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound CLI-validation invariant with no linked test."
       }
     },
     {
@@ -115835,6 +116589,37 @@
       }
     },
     {
+      "id": "REQ-safety-f3f1255a",
+      "assertion": "arch:render must exit non-zero if it cannot delete or overwrite a stale observed-deps artifact with invalid content, because a readable stale coverage verdict must not be left available after an abort",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/render-mermaid.mjs",
+          "anchor": "cleanupStaleObservedDeps / cleanupOrFail"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/render-mermaid.mjs",
+        ".audit-loop/observed-domain-deps.json"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/render-mermaid.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-f3f1255a",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound safety invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-safety-f3f18504",
       "assertion": "Each shadow model pass must reserve estimated spend before calling a provider and must skip remaining passes in that stage when the reservation would exceed the configured budget cap.",
       "kind": "safety",
@@ -117899,43 +118684,6 @@
       }
     },
     {
-      "id": "REQ-security-0849f673",
-      "assertion": "Symbol extraction must refuse a file before parsing it when its lexical path is excluded, canonical resolution fails, its canonical target escapes the repository or is sensitive, its canonical extensi",
-      "kind": "security",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/symbol-index/extract.mjs",
-          "anchor": "admitFile"
-        },
-        {
-          "file": "scripts/symbol-index/extract.mjs",
-          "anchor": "MAX_FILE_BYTES"
-        }
-      ],
-      "appliesTo": [
-        "scripts/symbol-index/extract.mjs",
-        "scripts/lib/sensitive-paths.mjs",
-        "scripts/lib/sensitive-egress-gate.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/symbol-index/extract.mjs:admitFile",
-          "scripts/symbol-index/extract.mjs:MAX_FILE_BYTES"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-security-0849f673",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "No linked test is listed."
-      }
-    },
-    {
       "id": "REQ-security-085835f0",
       "assertion": "Every registered and ad-hoc target must be canonicalised and containment-checked before sync writes proceed, and a refused target must count as an error rather than a skipped target.",
       "kind": "security",
@@ -118347,6 +119095,40 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test is listed."
+      }
+    },
+    {
+      "id": "REQ-security-132aff06",
+      "assertion": "Symbol extraction must parse only the canonical path approved by file admission and must not retry an unresolved or rejected path.",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/extract.mjs",
+          "anchor": "admitFile canonical resolution"
+        },
+        {
+          "file": "scripts/symbol-index/extract.mjs",
+          "anchor": "extractSymbols loadAndParseFile invocation"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/extract.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/extract.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-security-132aff06",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound canonical-path-only parsing invariant with no linked test."
       }
     },
     {
@@ -120218,36 +121000,6 @@
       "status": "inferred-only",
       "gap": {
         "requirementId": "REQ-security-31541a67",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "No linked test is listed."
-      }
-    },
-    {
-      "id": "REQ-security-315cb9a8",
-      "assertion": "A file whose canonical resolution fails, resolves outside the repository, resolves to a sensitive path, cannot be statted, has a non-allowlisted canonical extension, or exceeds MAX_FILE_BYTES must be ",
-      "kind": "security",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/symbol-index/extract.mjs",
-          "anchor": "admitFile canonical-path admission flow"
-        }
-      ],
-      "appliesTo": [
-        "scripts/symbol-index/extract.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/symbol-index/extract.mjs"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-security-315cb9a8",
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test is listed."
@@ -124410,6 +125162,36 @@
       }
     },
     {
+      "id": "REQ-security-6e08dd66",
+      "assertion": "Symbol records from admitted files must never emit detected secret-bearing body text, and any detected secrets in a symbol signature must be redacted before emission.",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/extract.mjs",
+          "anchor": "redactAndEmit"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/extract.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/extract.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-security-6e08dd66",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound secret emission-redaction invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-security-6ec27842",
       "assertion": "Journal recovery must reject and quarantine malformed or out-of-containment journals without performing their recorded filesystem mutations.",
       "kind": "security",
@@ -125604,6 +126386,36 @@
       }
     },
     {
+      "id": "REQ-security-7f1958bb",
+      "assertion": "Canonical-path resolution failures and symlinks escaping the repository must fail closed by skipping the file rather than falling back to reading the unresolved path.",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/extract.mjs",
+          "anchor": "admitFile resolution-failed and escaped-repo branches"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/extract.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/extract.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-security-7f1958bb",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound fail-closed canonical-resolution invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-security-80b225ad",
       "assertion": "OpenAI client caches must be keyed by effective endpoint and digests of secret-bearing credentials, and OSS-client cache keys must additionally distinguish routing or identity headers without storing ",
       "kind": "security",
@@ -125700,6 +126512,40 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test is provided."
+      }
+    },
+    {
+      "id": "REQ-security-837fcb5d",
+      "assertion": "No source file may be loaded into ts-morph unless its lexical path and canonical resolved path are non-sensitive, remain inside the repository, have an allowlisted canonical extension, and are at most",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/extract.mjs",
+          "anchor": "admitFile"
+        },
+        {
+          "file": "scripts/symbol-index/extract.mjs",
+          "anchor": "extractSymbols admission before loadAndParseFile"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/extract.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/extract.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-security-837fcb5d",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound ts-morph admission-control invariant with no linked test."
       }
     },
     {
@@ -125972,6 +126818,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This is a sound security invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-security-898dc299",
+      "assertion": "Extraction must emit an unnamed progress record before processing every candidate file and may attach a file path to progress only after that path has passed file admission.",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/extract.mjs",
+          "anchor": "extractSymbols progress emission"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/extract.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/extract.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-security-898dc299",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound path-disclosure safety invariant with no linked test."
       }
     },
     {
@@ -126519,6 +127395,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test is provided."
+      }
+    },
+    {
+      "id": "REQ-security-96bcc87f",
+      "assertion": "For every candidate whose body contains a detected secret, emitted symbol records must omit bodyText, mark redacted true, set purposeSummary to SECRET_REDACTED, and redact the signature before output.",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/extract.mjs",
+          "anchor": "redactAndEmit"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/extract.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/extract.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-security-96bcc87f",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound secret-redaction invariant with no linked test."
       }
     },
     {
@@ -127252,42 +128158,6 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test evidence."
-      }
-    },
-    {
-      "id": "REQ-security-a2527e45",
-      "assertion": "For every emitted symbol whose body or signature contains secrets, the emitted signature must be redacted, bodyText must be empty, purposeSummary must equal SECRET_REDACTED, and redacted must be true.",
-      "kind": "security",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/symbol-index/extract.mjs",
-          "anchor": "redactAndEmit secret handling"
-        },
-        {
-          "file": "scripts/symbol-index/extract.mjs",
-          "anchor": "redactAndEmit"
-        }
-      ],
-      "appliesTo": [
-        "scripts/symbol-index/extract.mjs",
-        "scripts/lib/sensitive-egress-gate.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/symbol-index/extract.mjs",
-          "scripts/symbol-index/extract.mjs:redactAndEmit"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 2,
-      "confidence": "high",
-      "status": "active",
-      "gap": {
-        "requirementId": "REQ-security-a2527e45",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "This is a sound secret-safe symbol emission invariant with no linked test."
       }
     },
     {
@@ -129366,36 +130236,6 @@
       }
     },
     {
-      "id": "REQ-security-bfe6956b",
-      "assertion": "No file may be parsed or have symbol body text emitted unless it passes lexical sensitive/generated/drift-exempt skipping, canonical-path resolution, repository-escape prevention, canonical sensitive-",
-      "kind": "security",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/symbol-index/extract.mjs",
-          "anchor": "admitFile"
-        }
-      ],
-      "appliesTo": [
-        "scripts/symbol-index/extract.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/symbol-index/extract.mjs"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-security-bfe6956b",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "This is a sound file-admission invariant with no linked test."
-      }
-    },
-    {
       "id": "REQ-security-c0524784",
       "assertion": "SARIF artifact URIs that are unsupported, absolute, remote-authority, unknown-base, malformed, or lexically escape the repository frame must resolve to no path and receive diagnostics rather than bein",
       "kind": "security",
@@ -129662,6 +130502,40 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test is provided."
+      }
+    },
+    {
+      "id": "REQ-security-c1c53910",
+      "assertion": "A file must be denied before parsing if its lexical path is skipped, canonical resolution fails, its canonical target escapes the repository or is sensitive, its canonical extension is not allowlisted",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/extract.mjs",
+          "anchor": "admitFile"
+        },
+        {
+          "file": "scripts/symbol-index/extract.mjs",
+          "anchor": "MAX_FILE_BYTES"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/extract.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/extract.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-security-c1c53910",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound fail-closed file-admission invariant with no linked test."
       }
     },
     {
@@ -132236,36 +133110,6 @@
       }
     },
     {
-      "id": "REQ-security-f5fdc426",
-      "assertion": "Every emitted named progress record must refer only to a file that has passed lexical, canonical-path, extension, and size admission checks, while pre-admission progress records must not expose a file",
-      "kind": "security",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/symbol-index/extract.mjs",
-          "anchor": "extractSymbols"
-        }
-      ],
-      "appliesTo": [
-        "scripts/symbol-index/extract.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/symbol-index/extract.mjs:extractSymbols"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-security-f5fdc426",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "This is a sound progress-record file-admission invariant with no linked test."
-      }
-    },
-    {
       "id": "REQ-security-f698f23c",
       "assertion": "SARIF artifact URIs that are missing, non-file schemes, remote file authorities, absolute paths, unknown bases, or lexically escape the repository frame must resolve to no path rather than a guessed r",
       "kind": "security",
@@ -132784,6 +133628,8 @@
     "REQ-persistence-d49a7eaa": "REQ-persistence-0ab0cbee",
     "REQ-safety-6e96b81e": "REQ-safety-1522cf47",
     "REQ-persistence-5303e274": "REQ-persistence-e28ca78a",
-    "REQ-behavioural-2cf170de": "REQ-behavioural-298a3c86"
+    "REQ-behavioural-2cf170de": "REQ-behavioural-298a3c86",
+    "REQ-behavioural-90b84480": "REQ-behavioural-db7feea6",
+    "REQ-correctness-3576ac8e": "REQ-correctness-bf351ee1"
   }
 }

@@ -173,6 +173,64 @@ function writeAbortStub(outPath, identityName, reason, hint) {
   atomicWriteFileSync(outPath, stub);
 }
 
+/**
+ * The artifact-consistency failure path, extracted so it can be EXECUTED by a
+ * test rather than asserted on as source text.
+ *
+ * The consolidated gate flagged the original inline version twice: once as a
+ * (false-positive) claim that `writeAbortStub` could mask the original error,
+ * and once — correctly — because the guards read this file as a string and
+ * matched token order, which cannot verify runtime behaviour and could not have
+ * settled the first claim either way. Injectable dependencies make all three
+ * branches directly testable with fakes.
+ *
+ * Contract, in every branch: the ORIGINAL `err` is what re-throws. It is the
+ * one that explains why the render died; a cleanup or stub problem is
+ * additional information, never a replacement. Returning normally from here
+ * would convert a failed render into a silent success.
+ *
+ * @param {Error} err — the original failure; always re-thrown
+ * @param {object} o
+ * @param {string} o.repoRoot
+ * @param {string} o.outPath
+ * @param {string} o.identityName
+ * @param {(root: string) => boolean} [o.cleanup] — injected for tests
+ * @param {Function} [o.writeStub] — injected for tests
+ * @param {(msg: string) => void} [o.log] — injected for tests
+ * @returns {never}
+ */
+export function handleRenderFailure(err, {
+  repoRoot, outPath, identityName,
+  cleanup = cleanupStaleObservedDeps,
+  writeStub = writeAbortStub,
+  log = (m) => process.stderr.write(m),
+}) {
+  // Cleanup FIRST, then stub. A stub beside a live stale envelope is worse than
+  // the untouched pair: the stub asserts "no map" while the envelope still
+  // claims coverage — the split-brain writeAbortStub exists to prevent. So on a
+  // cleanup failure the stub is deliberately skipped.
+  //
+  // cleanupStaleObservedDeps (the bool primitive), NOT cleanupOrFail: the latter
+  // exits 1 on failure, which here would discard `err` and report the cleanup
+  // problem as though it were the reason the render died.
+  if (!cleanup(repoRoot)) {
+    log(`arch:render: could NOT clear stale ${OBSERVED_FILE} after a failed render — `
+      + `it may still be read as current; abort stub deliberately NOT written\n`);
+    throw err;
+  }
+  try {
+    writeStub(outPath, identityName, 'render-failed',
+      'The render failed partway through. Both this map and the observed-deps\n'
+      + 'envelope have been cleared so neither is read as current. Re-run\n'
+      + '`npm run arch:render` once the underlying failure is resolved.');
+  } catch (stubErr) {
+    // A stub-write failure must NOT escape: it would replace the original error
+    // and hide why the render actually died.
+    log(`arch:render: abort stub write failed — ${stubErr.message}\n`);
+  }
+  throw err;
+}
+
 async function main() {
   assertRepoRoot(import.meta.url);
   const args = parseArgs(process.argv);
@@ -214,229 +272,240 @@ async function main() {
     process.exit(0);
   }
 
-  // Page through all symbols. Default cap raised from 5000 → 50000 (was
-  // silently truncating wine-cellar at 5377). Configurable via env var
-  // for huge monorepos; loud warning to stderr if the cap is hit so the
-  // user knows the rendered map is incomplete.
-  const cap = symbolIndexConfig.renderMaxSymbols;
-  const allSymbols = [];
-  let offset = 0;
-  let truncatedAtCap = false;
-  while (allSymbols.length < cap) {
-    const remaining = cap - allSymbols.length;
-    const pageLimit = Math.min(500, remaining);
-    const page = await listSymbolsForSnapshot({ refreshId: snap.refreshId, limit: pageLimit, offset });
-    if (!page || page.length === 0) break;
-    allSymbols.push(...page);
-    if (page.length < pageLimit) break;
-    offset += pageLimit;
-  }
-  // Probe whether more rows exist beyond our cap so we can warn.
-  if (allSymbols.length === cap) {
-    const probe = await listSymbolsForSnapshot({ refreshId: snap.refreshId, limit: 1, offset: cap });
-    if (probe && probe.length > 0) {
-      truncatedAtCap = true;
-      process.stderr.write(`arch:render: WARN — symbol cap of ${cap} hit; some symbols not rendered. Raise ARCH_RENDER_MAX_SYMBOLS env var to include more.\n`);
+  // ── Artifact-consistency window (silent-success-cluster KD-1) ──────────
+  // Everything below can INVALIDATE the observed-deps envelope and the map.
+  // Above this point a failure is a usage/config error and the prior pair is
+  // still valid — clearing it there would turn a bad flag into data loss.
+  // From here a throw must leave BOTH artifacts consistently unavailable,
+  // which is the same invariant the early returns already enforce via
+  // cleanupOrFail + writeAbortStub; only its coverage was partial.
+  try {
+    // Page through all symbols. Default cap raised from 5000 → 50000 (was
+    // silently truncating wine-cellar at 5377). Configurable via env var
+    // for huge monorepos; loud warning to stderr if the cap is hit so the
+    // user knows the rendered map is incomplete.
+    const cap = symbolIndexConfig.renderMaxSymbols;
+    const allSymbols = [];
+    let offset = 0;
+    let truncatedAtCap = false;
+    while (allSymbols.length < cap) {
+      const remaining = cap - allSymbols.length;
+      const pageLimit = Math.min(500, remaining);
+      const page = await listSymbolsForSnapshot({ refreshId: snap.refreshId, limit: pageLimit, offset });
+      if (!page || page.length === 0) break;
+      allSymbols.push(...page);
+      if (page.length < pageLimit) break;
+      offset += pageLimit;
     }
-  }
-
-  const violations = await listLayeringViolationsForSnapshot(snap.refreshId);
-  // R1 H8/M8: do NOT silently substitute score=0 on RPC failure — that gives
-  // a false GREEN signal in a rendered surface humans trust. Surface the
-  // failure as a distinct status so the document tells the truth.
-  let drift = { score: 0 };
-  let driftStatus;
-  const threshold = symbolIndexConfig.driftThreshold;
-  try {
-    drift = await computeDriftScore({
-      repoId: repo.id, refreshId: snap.refreshId,
-      simDup: symbolIndexConfig.driftSimDup,
-      simName: symbolIndexConfig.driftSimName,
-    });
-    driftStatus = classify(Number(drift.score) || 0, threshold);
-  } catch (err) {
-    process.stderr.write(`arch:render: drift_score RPC failed: ${err.message}\n`);
-    driftStatus = 'INSUFFICIENT_DATA';
-  }
-  const status = driftStatus;
-
-  // Plan v6 §2.5 — generate (or reuse cached) per-domain summaries
-  // before render. Best-effort — if Haiku/Anthropic key is missing
-  // OR Supabase write fails, render proceeds with empty summaries.
-  let domainSummaries = new Map();
-  try {
-    const { summariseDomains } = await import('./summarise-domains.mjs');
-    const r = await summariseDomains({ repoId: repo.id, refreshId: snap.refreshId });
-    for (const [d, v] of r.summaries) domainSummaries.set(d, v.summary);
-    process.stderr.write(`arch:render: domain summaries — total=${r.stats.total} cached=${r.stats.cacheHits} fresh=${r.stats.fresh} failed=${r.stats.failed}\n`);
-  } catch (err) {
-    process.stderr.write(`arch:render: domain summaries skipped — ${err.message}\n`);
-  }
-
-  // Plan v6 §2.6 — fetch file-level importers for "Where used" column.
-  // Best-effort — if symbol_file_imports is empty (pre-feature snapshot)
-  // the map is empty; renderer falls back to "(unknown)" markers via
-  // importGraphPopulated flag.
-  //
-  // Audit-Gemini-G3: initialize to null (NOT new Map()). On RPC failure
-  // the renderer must OMIT the column entirely, not render every symbol
-  // as "(internal)" which would silently lie about all importer data.
-  let importerMap = null;
-  try {
-    const allFilePaths = Array.from(new Set(allSymbols.map(s => s.filePath)));
-    importerMap = await getImportersForFiles({
-      refreshId: snap.refreshId, paths: allFilePaths,
-    });
-  } catch (err) {
-    importerMap = null;  // explicit — fail-safe to omit column
-    process.stderr.write(`arch:render: importers fetch failed — ${err.message}; column omitted to avoid false-leaf labels\n`);
-  }
-
-  // Which non-JS/TS stacks does this repo actually carry? `stackKinds` (not
-  // `stack`) is the right field: a repo with a package.json AND .java sources
-  // reports stack='js-ts' — it clears the gate and its Java half is dropped
-  // just as silently as a mixed repo's Python half, which the coarser `stack`
-  // enum cannot express. Cheap + pure (markers + a bounded git ls-files).
-  //
-  // Scoped to stacks that define a SYMBOL namespace someone could duplicate.
-  // `postgres` is deliberately excluded: the banner exists so an absent symbol
-  // is not misread as nonexistent, and migration DDL is not a symbol space
-  // arch-memory reasons about — including it would fire on every repo with a
-  // supabase/migrations dir (this one), and a banner that always fires is one
-  // nobody reads.
-  // Best-effort, like the domain-summary and importer steps above: this is an
-  // advisory banner input, and a stack-detection failure must not abort a
-  // render that would otherwise succeed. It also sits in the window BETWEEN
-  // the early-return cleanups and the observed-deps step's own try/catch — a
-  // throw here would reach the top-level fatal handler, which does NOT clear a
-  // prior observed-deps envelope, so an unguarded call would let a banner
-  // lookup strand a stale coverage verdict on disk. Degrade to "no banner".
-  let unindexedStackKinds = [];
-  try {
-    const SYMBOL_BEARING_STACKS = new Set(['python', 'java']);
-    unindexedStackKinds = detectRepoStack(repoRoot).stackKinds
-      .filter(k => SYMBOL_BEARING_STACKS.has(k));
-  } catch (err) {
-    process.stderr.write(`arch:render: stack detection failed — ${err.message}; partial-coverage banner omitted\n`);
-  }
-
-  const { markdown, bytesWritten } = renderArchitectureMap({
-    repoName: identity.name,
-    generatedAt: new Date().toISOString(),
-    commitSha: commitSha(),
-    refreshId: snap.refreshId,
-    drift: drift.score,
-    threshold,
-    status,
-    symbols: allSymbols,
-    violations,
-    dupSymbolIds: new Set(),
-    renderedSymbolCap: truncatedAtCap ? cap : null,
-    domainSummaries,
-    importerMap,
-    importGraphPopulated: snap.importGraphPopulated === true,
-    unindexedStackKinds,
-  });
-
-  atomicWriteFileSync(outPath, markdown);
-  process.stderr.write(`arch:render: wrote ${outPath} (${bytesWritten} bytes, ${allSymbols.length} symbols, ${violations.length} violations)\n`);
-
-  // Plan: docs/plans/observed-domain-deps.md §6 — write the observed-deps
-  // envelope from the DB import graph. Best-effort; thrown errors here must
-  // not abort the markdown render that already succeeded above.
-  const observedPath = path.join(repoRoot, OBSERVED_FILE);
-  try {
-    // R1-M7: distinguish "snapshot's import graph is populated but empty"
-    // (write a valid empty envelope) from "snapshot has no import graph at
-    // all" (delete any stale prior file). A populated graph with zero
-    // cross-domain edges IS current data — the dashboard should consume it,
-    // not fall back to manual-only via 'absent'.
-    if (snap.importGraphPopulated === true) {
-      const edges = await listFileImportsForSnapshot(snap.refreshId);
-      const rules = loadDomainRules(repoRoot);
-      const coverageConfig = loadCoverageConfig(repoRoot);
-      // The attribution layer is measured HERE because this is where domain
-      // rules meet persisted edges — those buckets cannot exist upstream.
-      // The extraction layer travels from the DB because its buckets
-      // (external/selfEdge/escaping) are dropped before the DB write and are
-      // not recomputable downstream (§2.1.2).
-      const { deps, buckets, untaggedSamples } = computeObservedDomainDepsWithCoverage(
-        edges, rules, { sampleCap: coverageConfig.sampleCap },
-      );
-      const attribution = assessAttributionCoverage({
-        buckets, sampleCap: coverageConfig.sampleCap, untaggedSamples,
-      });
-      const exhaustive = assertAttributionExhaustive(attribution, edges.length);
-      if (!exhaustive.ok) {
-        process.stderr.write(`arch:render: WARNING attribution buckets do not account for `
-          + `every persisted edge (counted ${exhaustive.actual}, persisted ${exhaustive.expected}) `
-          + `— a drop site was added without a bucket\n`);
+    // Probe whether more rows exist beyond our cap so we can warn.
+    if (allSymbols.length === cap) {
+      const probe = await listSymbolsForSnapshot({ refreshId: snap.refreshId, limit: 1, offset: cap });
+      if (probe && probe.length > 0) {
+        truncatedAtCap = true;
+        process.stderr.write(`arch:render: WARN — symbol cap of ${cap} hit; some symbols not rendered. Raise ARCH_RENDER_MAX_SYMBOLS env var to include more.\n`);
       }
+    }
 
-      // Extraction coverage was measured by a DIFFERENT process (extract.mjs,
-      // via refresh.mjs). A missing row means we do not know — which maps to
-      // `unknown`/`not_measured`, never to `verified`. Absence is not evidence
-      // of cleanliness.
-      const persisted = await getGraphCoverage(snap.refreshId);
-      const extraction = persisted?.extraction ?? null;
-      const stale = persisted?.stale === true;
-      const verdict = graphVerdict({ extraction, attribution, stale, config: coverageConfig });
+    const violations = await listLayeringViolationsForSnapshot(snap.refreshId);
+    // R1 H8/M8: do NOT silently substitute score=0 on RPC failure — that gives
+    // a false GREEN signal in a rendered surface humans trust. Surface the
+    // failure as a distinct status so the document tells the truth.
+    let drift = { score: 0 };
+    let driftStatus;
+    const threshold = symbolIndexConfig.driftThreshold;
+    try {
+      drift = await computeDriftScore({
+        repoId: repo.id, refreshId: snap.refreshId,
+        simDup: symbolIndexConfig.driftSimDup,
+        simName: symbolIndexConfig.driftSimName,
+      });
+      driftStatus = classify(Number(drift.score) || 0, threshold);
+    } catch (err) {
+      process.stderr.write(`arch:render: drift_score RPC failed: ${err.message}\n`);
+      driftStatus = 'INSUFFICIENT_DATA';
+    }
+    const status = driftStatus;
 
-      const envelope = {
-        version: OBSERVED_VERSION,
-        refreshId: snap.refreshId,
-        domainMapDigest: computeDomainMapDigest(rules),
-        generatedAt: new Date().toISOString(),
-        deps,
-        coverage: {
-          schemaVersion: 1,
-          verdict,
-          // Provenance stays with the run that MEASURED it, which is not this
-          // refresh when the row was copied forward.
-          measuredAt: persisted?.measuredAt ?? new Date().toISOString(),
-          refreshId: persisted?.refreshId ?? snap.refreshId,
-          stale,
-          extraction,
-          attribution,
-        },
-      };
-      // R4-M2: validate at write time too. If computeObservedDomainDeps ever
-      // produces a malformed shape, fail loudly before persisting; the reader
-      // already validates so producer/consumer share the same schema.
-      ObservedDepsSchema.parse(envelope);
-      // R2-M4: ensure parent dir exists. `.audit-loop/` is committed in
-      // source-repo, but a fresh-cloned consumer could theoretically lack it.
-      fs.mkdirSync(path.dirname(observedPath), { recursive: true });
-      atomicWriteFileSync(observedPath, JSON.stringify(envelope, null, 2) + '\n');
-      const edgeCount = Object.values(deps).reduce((n, l) => n + l.length, 0);
-      // This line used to report ONLY what survived — `N domains, M edges` —
-      // which is the false-authority surface this whole feature exists to end.
-      // It now leads with the verdict and names what was dropped.
-      const dropped = attribution.edges;
-      const untagged = dropped.untaggedFrom + dropped.untaggedTo + dropped.untaggedBoth;
-      process.stderr.write(
-        `arch:render: wrote ${OBSERVED_FILE} — coverage ${verdict.status.toUpperCase()}`
-        + `${verdict.reason ? ` (${verdict.reason})` : ''}`
-        + `${stale ? ' [copied forward]' : ''}\n`
-      );
-      process.stderr.write(
-        `arch:render:   surviving: ${Object.keys(deps).length} domains, ${edgeCount} edges`
-        + ` · dropped: ${untagged} untagged, ${dropped.sameDomain} same-domain`
-        + `${dropped.malformed ? `, ${dropped.malformed} malformed` : ''}`
-        + `${extraction ? ` · extraction ${extraction.cruised}/${extraction.eligible}` : ' · extraction NOT MEASURED'}\n`
-      );
-    } else if (fs.existsSync(observedPath)) {
-      fs.unlinkSync(observedPath);
-      process.stderr.write(`arch:render: removed stale ${OBSERVED_FILE} (snapshot import graph not populated)\n`);
-    } else {
-      process.stderr.write(`arch:render: skipped ${OBSERVED_FILE} — snapshot import graph not populated\n`);
+    // Plan v6 §2.5 — generate (or reuse cached) per-domain summaries
+    // before render. Best-effort — if Haiku/Anthropic key is missing
+    // OR Supabase write fails, render proceeds with empty summaries.
+    let domainSummaries = new Map();
+    try {
+      const { summariseDomains } = await import('./summarise-domains.mjs');
+      const r = await summariseDomains({ repoId: repo.id, refreshId: snap.refreshId });
+      for (const [d, v] of r.summaries) domainSummaries.set(d, v.summary);
+      process.stderr.write(`arch:render: domain summaries — total=${r.stats.total} cached=${r.stats.cacheHits} fresh=${r.stats.fresh} failed=${r.stats.failed}\n`);
+    } catch (err) {
+      process.stderr.write(`arch:render: domain summaries skipped — ${err.message}\n`);
+    }
+
+    // Plan v6 §2.6 — fetch file-level importers for "Where used" column.
+    // Best-effort — if symbol_file_imports is empty (pre-feature snapshot)
+    // the map is empty; renderer falls back to "(unknown)" markers via
+    // importGraphPopulated flag.
+    //
+    // Audit-Gemini-G3: initialize to null (NOT new Map()). On RPC failure
+    // the renderer must OMIT the column entirely, not render every symbol
+    // as "(internal)" which would silently lie about all importer data.
+    let importerMap = null;
+    try {
+      const allFilePaths = Array.from(new Set(allSymbols.map(s => s.filePath)));
+      importerMap = await getImportersForFiles({
+        refreshId: snap.refreshId, paths: allFilePaths,
+      });
+    } catch (err) {
+      importerMap = null;  // explicit — fail-safe to omit column
+      process.stderr.write(`arch:render: importers fetch failed — ${err.message}; column omitted to avoid false-leaf labels\n`);
+    }
+
+    // Which non-JS/TS stacks does this repo actually carry? `stackKinds` (not
+    // `stack`) is the right field: a repo with a package.json AND .java sources
+    // reports stack='js-ts' — it clears the gate and its Java half is dropped
+    // just as silently as a mixed repo's Python half, which the coarser `stack`
+    // enum cannot express. Cheap + pure (markers + a bounded git ls-files).
+    //
+    // Scoped to stacks that define a SYMBOL namespace someone could duplicate.
+    // `postgres` is deliberately excluded: the banner exists so an absent symbol
+    // is not misread as nonexistent, and migration DDL is not a symbol space
+    // arch-memory reasons about — including it would fire on every repo with a
+    // supabase/migrations dir (this one), and a banner that always fires is one
+    // nobody reads.
+    // Best-effort, like the domain-summary and importer steps above: this is an
+    // advisory banner input, and a stack-detection failure must not abort a
+    // render that would otherwise succeed. It also sits in the window BETWEEN
+    // the early-return cleanups and the observed-deps step's own try/catch — a
+    // throw here would reach the top-level fatal handler, which does NOT clear a
+    // prior observed-deps envelope, so an unguarded call would let a banner
+    // lookup strand a stale coverage verdict on disk. Degrade to "no banner".
+    let unindexedStackKinds = [];
+    try {
+      const SYMBOL_BEARING_STACKS = new Set(['python', 'java']);
+      unindexedStackKinds = detectRepoStack(repoRoot).stackKinds
+        .filter(k => SYMBOL_BEARING_STACKS.has(k));
+    } catch (err) {
+      process.stderr.write(`arch:render: stack detection failed — ${err.message}; partial-coverage banner omitted\n`);
+    }
+
+    const { markdown, bytesWritten } = renderArchitectureMap({
+      repoName: identity.name,
+      generatedAt: new Date().toISOString(),
+      commitSha: commitSha(),
+      refreshId: snap.refreshId,
+      drift: drift.score,
+      threshold,
+      status,
+      symbols: allSymbols,
+      violations,
+      dupSymbolIds: new Set(),
+      renderedSymbolCap: truncatedAtCap ? cap : null,
+      domainSummaries,
+      importerMap,
+      importGraphPopulated: snap.importGraphPopulated === true,
+      unindexedStackKinds,
+    });
+
+    atomicWriteFileSync(outPath, markdown);
+    process.stderr.write(`arch:render: wrote ${outPath} (${bytesWritten} bytes, ${allSymbols.length} symbols, ${violations.length} violations)\n`);
+
+    // Plan: docs/plans/observed-domain-deps.md §6 — write the observed-deps
+    // envelope from the DB import graph. Best-effort; thrown errors here must
+    // not abort the markdown render that already succeeded above.
+    const observedPath = path.join(repoRoot, OBSERVED_FILE);
+    try {
+      // R1-M7: distinguish "snapshot's import graph is populated but empty"
+      // (write a valid empty envelope) from "snapshot has no import graph at
+      // all" (delete any stale prior file). A populated graph with zero
+      // cross-domain edges IS current data — the dashboard should consume it,
+      // not fall back to manual-only via 'absent'.
+      if (snap.importGraphPopulated === true) {
+        const edges = await listFileImportsForSnapshot(snap.refreshId);
+        const rules = loadDomainRules(repoRoot);
+        const coverageConfig = loadCoverageConfig(repoRoot);
+        // The attribution layer is measured HERE because this is where domain
+        // rules meet persisted edges — those buckets cannot exist upstream.
+        // The extraction layer travels from the DB because its buckets
+        // (external/selfEdge/escaping) are dropped before the DB write and are
+        // not recomputable downstream (§2.1.2).
+        const { deps, buckets, untaggedSamples } = computeObservedDomainDepsWithCoverage(
+          edges, rules, { sampleCap: coverageConfig.sampleCap },
+        );
+        const attribution = assessAttributionCoverage({
+          buckets, sampleCap: coverageConfig.sampleCap, untaggedSamples,
+        });
+        const exhaustive = assertAttributionExhaustive(attribution, edges.length);
+        if (!exhaustive.ok) {
+          process.stderr.write(`arch:render: WARNING attribution buckets do not account for `
+            + `every persisted edge (counted ${exhaustive.actual}, persisted ${exhaustive.expected}) `
+            + `— a drop site was added without a bucket\n`);
+        }
+
+        // Extraction coverage was measured by a DIFFERENT process (extract.mjs,
+        // via refresh.mjs). A missing row means we do not know — which maps to
+        // `unknown`/`not_measured`, never to `verified`. Absence is not evidence
+        // of cleanliness.
+        const persisted = await getGraphCoverage(snap.refreshId);
+        const extraction = persisted?.extraction ?? null;
+        const stale = persisted?.stale === true;
+        const verdict = graphVerdict({ extraction, attribution, stale, config: coverageConfig });
+
+        const envelope = {
+          version: OBSERVED_VERSION,
+          refreshId: snap.refreshId,
+          domainMapDigest: computeDomainMapDigest(rules),
+          generatedAt: new Date().toISOString(),
+          deps,
+          coverage: {
+            schemaVersion: 1,
+            verdict,
+            // Provenance stays with the run that MEASURED it, which is not this
+            // refresh when the row was copied forward.
+            measuredAt: persisted?.measuredAt ?? new Date().toISOString(),
+            refreshId: persisted?.refreshId ?? snap.refreshId,
+            stale,
+            extraction,
+            attribution,
+          },
+        };
+        // R4-M2: validate at write time too. If computeObservedDomainDeps ever
+        // produces a malformed shape, fail loudly before persisting; the reader
+        // already validates so producer/consumer share the same schema.
+        ObservedDepsSchema.parse(envelope);
+        // R2-M4: ensure parent dir exists. `.audit-loop/` is committed in
+        // source-repo, but a fresh-cloned consumer could theoretically lack it.
+        fs.mkdirSync(path.dirname(observedPath), { recursive: true });
+        atomicWriteFileSync(observedPath, JSON.stringify(envelope, null, 2) + '\n');
+        const edgeCount = Object.values(deps).reduce((n, l) => n + l.length, 0);
+        // This line used to report ONLY what survived — `N domains, M edges` —
+        // which is the false-authority surface this whole feature exists to end.
+        // It now leads with the verdict and names what was dropped.
+        const dropped = attribution.edges;
+        const untagged = dropped.untaggedFrom + dropped.untaggedTo + dropped.untaggedBoth;
+        process.stderr.write(
+          `arch:render: wrote ${OBSERVED_FILE} — coverage ${verdict.status.toUpperCase()}`
+          + `${verdict.reason ? ` (${verdict.reason})` : ''}`
+          + `${stale ? ' [copied forward]' : ''}\n`
+        );
+        process.stderr.write(
+          `arch:render:   surviving: ${Object.keys(deps).length} domains, ${edgeCount} edges`
+          + ` · dropped: ${untagged} untagged, ${dropped.sameDomain} same-domain`
+          + `${dropped.malformed ? `, ${dropped.malformed} malformed` : ''}`
+          + `${extraction ? ` · extraction ${extraction.cruised}/${extraction.eligible}` : ' · extraction NOT MEASURED'}\n`
+        );
+      } else if (fs.existsSync(observedPath)) {
+        fs.unlinkSync(observedPath);
+        process.stderr.write(`arch:render: removed stale ${OBSERVED_FILE} (snapshot import graph not populated)\n`);
+      } else {
+        process.stderr.write(`arch:render: skipped ${OBSERVED_FILE} — snapshot import graph not populated\n`);
+      }
+    } catch (err) {
+      // Gemini-G2: an RPC / write failure here must NOT leave a stale envelope
+      // on disk that the dashboard would consume as current. Best-effort
+      // cleanup of any prior file so the reader falls back to manual-only.
+      process.stderr.write(`arch:render: observed deps failed — ${err.message}; clearing any stale envelope\n`);
+      cleanupOrFail(repoRoot);
     }
   } catch (err) {
-    // Gemini-G2: an RPC / write failure here must NOT leave a stale envelope
-    // on disk that the dashboard would consume as current. Best-effort
-    // cleanup of any prior file so the reader falls back to manual-only.
-    process.stderr.write(`arch:render: observed deps failed — ${err.message}; clearing any stale envelope\n`);
-    cleanupOrFail(repoRoot);
+    handleRenderFailure(err, { repoRoot, outPath, identityName: identity.name });
   }
 }
 
