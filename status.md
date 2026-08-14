@@ -1,5 +1,115 @@
 # Project Status Log
 
+## 2026-08-14 — A dismissed finding re-raised, and the reopen flag that could never be set
+
+Investigating why R2+ suppression let a re-raise through during a live
+`/cycle --autonomous` run on Cluster A of
+`final-review-scoped-second-reviewer.md`. GPT raised a false claim about
+`scripts/gemini-review.mjs:1193`'s brace structure at round 2, it was dismissed
+with a direct disproof (ledger topic `49da527ca28c`), and at round 3 it came
+back near-verbatim with one added, also-false, sentence — not suppressed.
+
+### What the measurement said, against the starting hypothesis
+
+The working hypothesis was that the added sentence dropped the finding below
+the fuzzy-match threshold. **It did not.** Re-running `ledgerFindingSimilarity`
+against the exact stored `detailSnapshot` bytes scored
+**0.5079365079365079** — matching the `_matchScore` the pipeline itself
+recorded in `cluster-A-r3-result.json`, and **~1.45x the 0.35 threshold**.
+Stripping the added sentence moves it by <0.02 either way. The matcher worked
+correctly; `SUPPRESS_SIMILARITY_THRESHOLD` is not miscalibrated and was not
+touched.
+
+Real cause: `suppressReRaises`'s reopen-on-touch check routes a match to
+`reopened` whenever the entry's file changed this round, **without consulting
+`adjudicationOutcome`** — correct regression detection for a `fixed` entry,
+re-litigation for a `dismissed` one. Exactly mechanism #1 of the 2026-07-16
+wine-cellar-app field report, reproduced from source rather than recalled. That
+is the deferred Phase 2 of `dismissed-fp-reopen-policy.md`, and it remains
+**unfixed by design** — it overturns tests that assert the current behaviour
+deliberately, and there was no data to size the alternative.
+
+### The defect that investigation actually turned up
+
+`R2_ROUND_MODIFIER` had instructed the model to set `is_reopened: true` since
+**2026-04-01**, while `ProducerFindingSchema` had no such property and emits
+`additionalProperties: false`. The model was **structurally forbidden** from
+answering — the value was unrepresentable, not merely mistyped. Verified on the
+emitted JSON Schema (`has is_reopened property? false` → `true`), never by
+reading the Zod source. Same class the repo had already documented one function
+away when it rejected `EVIDENCE_CONTRACT_BLOCK` as "schema-blocked, not merely
+expensive"; AGENTS.md's prose↔code seam section now carries the variant.
+
+Two further halves: the prompt's closing sentence was the **same
+self-cancelling escape clause** `buildRulingsBlock` had already had removed
+(one instance fixed, its twin one section up left standing), and a
+producer-supplied `is_reopened` would have been silently stripped by the
+non-strict `PersistedFindingSchema` on the way to storage.
+
+### A claim of mine that turned out false
+
+The first write-up asserted the new signal "accumulates in ordinary round
+logs". Checking the write side rather than assuming it:
+`recordSuppressionEvents` wrote `reason: 'Scope changed'` — **a hardcoded
+literal for every reopen** — and `suppression_events` is the only place a
+reopen survives its run (the counters go to stderr and the result JSON, both
+per-run and gitignored). A constant in a telemetry column reads as a
+measurement while carrying no information. Fixed via `reopenReason(f)` →
+`Scope changed; declared=<yes|no>; matched=<outcome>`; free-text column, no
+migration, historical prefix preserved, and an older bundle reports
+`matched=unknown` so version skew cannot inflate the churn count.
+
+### Changes
+- **`is_reopened` made representable** — required on `ProducerFindingSchema`
+  (plain boolean matching `is_quick_fix`/`is_mechanical`, **not** `.nullable()`,
+  which renders as `anyOf` and is not something a required field should stake on
+  Gemini's dialect support); `.optional()` on `PersistedFindingSchema` so
+  pre-today rows validate. Required is forced, not stylistic: OpenAI strict
+  structured outputs admit no optional property.
+- **The reopen clause** now demands the same specific-changed-line citation the
+  DISMISSED group header demands.
+- **Observation-only telemetry** — `suppressReRaises` records
+  `_reopenDeclared`/`_matchedOutcome` and returns `reopenTelemetry`, surfaced in
+  the round summary and `_suppression`. **Routing is unchanged**, and a test
+  pins that direction: every historical value is absent-by-construction rather
+  than false, so gating on it would swap a known-too-coarse rule for an
+  uncalibrated one.
+- **14 non-LLM finding constructors** (linter, adjacency, duplication, orphan,
+  arch-intent, a gemini fixture) now set `is_reopened: false` — a required field
+  is never a one-line change.
+
+### Verification
+Full suite **12,237 pass / 0 fail** post-rebase. The one failure I had been
+calling "pre-existing" (`cycle-audit-scope-contract`) was fixed upstream by
+`235dd53c`, which the rebase picked up — a reminder that "pre-existing" is not
+"unfixable". Two export-surface guards correctly caught the new `reopenReason`
+export and forced deliberate updates to both the name list and the count pin.
+
+Live provider verification, mirroring the real `responses.parse` call over the
+real schema (**measured, not reasoned about**):
+
+| Probe | Provider | Result |
+|---|---|---|
+| Ordinary new finding | OpenAI `gpt-5.6-terra` | accepted; boolean `false` |
+| Ordinary new finding | Gemini `gemini-flash-latest` | accepted; strict re-parse OK; `false` |
+| Genuine reopen scenario | OpenAI `gpt-5.6-terra` | `is_reopened: true` **with** the changed-line citation |
+
+The third row is why the first two are insufficient: a model unable to emit
+`true` would make the telemetry read `declared=no` forever, indistinguishable
+from "all reopens are mechanical churn" — silently corrupting the decision the
+field exists to inform.
+
+### Follow-ups (not done here)
+- **Layer-3 policy fix still open.** It now has a data source it never had:
+  `SELECT reason, COUNT(*) FROM suppression_events WHERE action='reopened'`.
+  `declared=no; matched=dismissed` is the churn shape. Only accrues with the
+  cloud store on, and the series starts today — it does not reach backwards.
+- **`/ship` names a non-existent script.** The worktree preflight says to run
+  `npm run skills:hydrate`; no such script exists in `package.json`
+  (`worktree:preflight:gate` does, and passes). Harmless here — the source repo
+  keeps its tooling at `scripts/`, not the consumer's `scripts/.claude-skills/`
+  — but it is a documented command that cannot run.
+
 ## 2026-08-14 — Three /ship friction points from a consumer's own field report
 
 A consumer pasted a field report (GPT-5.6 Terra) diagnosing an unusually slow

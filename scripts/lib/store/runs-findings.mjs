@@ -1732,6 +1732,30 @@ export async function getRunMeta(runId, deps = {}) {
 // ── suppression_events ─────────────────────────────────────────────────────
 
 /**
+ * The durable `reason` for a reopened finding. Keeps the historical
+ * `Scope changed` prefix (so any existing query still matches) and appends the
+ * distinction the column previously threw away: did the MODEL claim this
+ * reopen, or did only the mechanical file-touch rule fire?
+ *
+ * `declared=no` on a `dismissed` entry is the churn shape — a false positive
+ * the operator disproved, re-raised because an unrelated edit touched the same
+ * file, with the model itself making no claim that anything invalidated the
+ * ruling. Counting those over real rounds is what the deferred reopen-policy
+ * decision needs (docs/plans/dismissed-fp-reopen-policy.md).
+ *
+ * @param {object} f - a reopened finding, post-`suppressReRaises`
+ * @returns {string}
+ */
+export function reopenReason(f) {
+  const declared = f?._reopenDeclared === true;
+  // `_matchedOutcome` is absent on findings produced by an older bundle; report
+  // it as `unknown` rather than implying `dismissed`, so a version skew cannot
+  // silently inflate the churn count this string exists to measure.
+  const outcome = f?._matchedOutcome ?? 'unknown';
+  return `Scope changed; declared=${declared ? 'yes' : 'no'}; matched=${outcome}`;
+}
+
+/**
  * Record both suppressed-and-reopened events from an R2+ post-processing pass.
  */
 export async function recordSuppressionEvents(runId, suppressionResult) {
@@ -1752,7 +1776,16 @@ export async function recordSuppressionEvents(runId, suppressionResult) {
       matched_topic_id: f._matchedTopic,
       match_score: f._matchScore,
       action: 'reopened',
-      reason: 'Scope changed',
+      // `reason` was the hardcoded literal 'Scope changed' — identical for every
+      // reopen, so the ONLY durable record of a reopen could not distinguish a
+      // model-declared, line-citing reopen from a purely mechanical file-touch
+      // reopen of a dismissal (the 2026-08-14 cluster-A shape). A constant in a
+      // telemetry column reads as a measurement while carrying no information;
+      // the per-run stderr/result-JSON counters do not survive the run, so
+      // without this the signal the reopen-policy decision needs never
+      // accumulated anywhere. Free-text column, so no migration — the prefix is
+      // preserved for any existing query.
+      reason: reopenReason(f),
     })),
   ];
   // Terminal for a replayed artifact: a suppression result with no suppressed

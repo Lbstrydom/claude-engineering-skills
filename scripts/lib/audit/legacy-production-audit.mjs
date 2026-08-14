@@ -976,6 +976,7 @@ async function runArchitecturePass({ openai, repoRoot, focusBlock, planContent, 
               affectedPrinciples: ['#5 SSoT'],
               is_quick_fix: false,
               is_mechanical: false,
+              is_reopened: false,   // mechanical wave — never reopens a prior ruling
               principle: '#5 SSoT',
             })],
             summary: 'Architecture pass aborted — config invalid',
@@ -1096,6 +1097,7 @@ function orphanToStandardFinding(raw, idx) {
       : `Remove ${raw.file} along with the diff that orphaned it, or accept via <!-- audit:accept-v1: ${raw.file} :: reason -->`,
     is_quick_fix: false,
     is_mechanical: true,
+    is_reopened: false,   // mechanical wave — never reopens a prior ruling
     principle: 'Long-Term Sustainability (#20) — dead code is invisible debt',
     classification: {
       sonarType: 'CODE_SMELL',
@@ -1798,6 +1800,7 @@ function deriveFindingsFromReport(report) {
       affectedPrinciples: ['#5 SSoT'],
       is_quick_fix: false,
       is_mechanical: true,
+      is_reopened: false,   // mechanical wave — never reopens a prior ruling
       principle: '#5 SSoT',
     }));
   }
@@ -1815,6 +1818,7 @@ function deriveFindingsFromReport(report) {
       affectedPrinciples: ['#5 SSoT'],
       is_quick_fix: true,
       is_mechanical: true,
+      is_reopened: false,   // mechanical wave — never reopens a prior ruling
       principle: '#5 SSoT',
     }));
   }
@@ -1831,6 +1835,7 @@ function deriveFindingsFromReport(report) {
       affectedPrinciples: ['#5 SSoT'],
       is_quick_fix: true,
       is_mechanical: true,
+      is_reopened: false,   // mechanical wave — never reopens a prior ruling
       principle: '#5 SSoT',
     }));
   }
@@ -1847,6 +1852,7 @@ function deriveFindingsFromReport(report) {
       affectedPrinciples: ['#15 Error Handling'],
       is_quick_fix: false,
       is_mechanical: true,
+      is_reopened: false,   // mechanical wave — never reopens a prior ruling
       principle: '#15 Error Handling',
     }));
   }
@@ -3352,11 +3358,23 @@ export async function runLegacyProductionAudit(ctx) {
   }
 
   if (mergedLedger.entries.length > 0) {
-    let { kept, suppressed, reopened } = suppressReRaises(allFindings, mergedLedger, { changedFiles, impactSet });
+    let { kept, suppressed, reopened, reopenTelemetry } = suppressReRaises(allFindings, mergedLedger, { changedFiles, impactSet });
 
     process.stderr.write(`\n═══════════════════════════════════════\n`);
     process.stderr.write(`  R${round} POST-PROCESSING\n`);
     process.stderr.write(`  Kept: ${kept.length} | Suppressed: ${suppressed.length} | Reopened: ${reopened.length}\n`);
+    // Observation-only (2026-08-14). `undeclaredOnDismissal` is the shape the
+    // cluster-A field case had: a dismissal mechanically reopened by a
+    // file-touch that the model itself never claimed invalidated the ruling.
+    // Printed so the signal accumulates in ordinary round logs rather than
+    // needing a bespoke experiment — it is the input to the deferred
+    // reopen-policy decision, and it is NOT a gate.
+    if (reopenTelemetry && reopenTelemetry.total > 0) {
+      process.stderr.write(
+        `  Reopens: ${reopenTelemetry.declared}/${reopenTelemetry.total} model-declared`
+        + ` | ${reopenTelemetry.undeclaredOnDismissal} undeclared on a dismissal\n`,
+      );
+    }
     if (suppressed.length > 0) {
       for (const s of suppressed.slice(0, 5)) {
         process.stderr.write(`    [suppressed] ${s.matchedTopic.slice(0,8)} score=${s.matchScore.toFixed(2)}\n`);
@@ -3439,6 +3457,10 @@ export async function runLegacyProductionAudit(ctx) {
       keptCount: kept.length,
       suppressedCount: suppressed.length,
       reopenedCount: reopened.length,
+      // Observation-only; lands in the result JSON's `_suppression` so the
+      // declared-vs-mechanical reopen signal is retained per round rather than
+      // only printed to stderr. Not read by any gate.
+      reopenTelemetry,
       fpSuppressedCount: 0,   // set by runSuppressionPasses — the local pass moved out
     };
 

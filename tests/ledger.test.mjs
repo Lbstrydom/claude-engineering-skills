@@ -290,6 +290,53 @@ describe('suppressReRaises — reopen-on-touch is what stops a real regression b
   });
 });
 
+describe('suppressReRaises — reopen telemetry (observation only, must not route)', () => {
+  const changed = { changedFiles: ['scripts/lib/foo.mjs'] };
+
+  it('counts a mechanical reopen the model never declared — the cluster-A shape', () => {
+    // The 2026-08-14 field case: a dismissal reopened purely because its file
+    // was touched, while the model itself made no reopen claim.
+    const r = suppressReRaises([finding()], ledgerOf(entry()), changed);
+    assert.equal(r.reopenTelemetry.total, 1);
+    assert.equal(r.reopenTelemetry.declared, 0);
+    assert.equal(r.reopenTelemetry.undeclaredOnDismissal, 1);
+    assert.equal(r.reopened[0]._reopenDeclared, false);
+    assert.equal(r.reopened[0]._matchedOutcome, 'dismissed');
+  });
+
+  it('counts a declared reopen separately', () => {
+    const r = suppressReRaises([{ ...finding(), is_reopened: true }], ledgerOf(entry()), changed);
+    assert.equal(r.reopenTelemetry.declared, 1);
+    assert.equal(r.reopenTelemetry.undeclaredOnDismissal, 0);
+    assert.equal(r.reopened[0]._reopenDeclared, true);
+  });
+
+  it('THE DIRECTION THAT MUST NOT FIRE: the declaration does not change routing', () => {
+    // The whole point of landing this observation-only. If declaring/omitting
+    // `is_reopened` moved a finding between buckets, we would have shipped an
+    // uncalibrated policy change under the guise of telemetry.
+    const declared = suppressReRaises([{ ...finding(), is_reopened: true }], ledgerOf(entry()), changed);
+    const undeclared = suppressReRaises([{ ...finding(), is_reopened: false }], ledgerOf(entry()), changed);
+    const absent = suppressReRaises([finding()], ledgerOf(entry()), changed);
+    for (const r of [declared, undeclared, absent]) {
+      assert.equal(r.reopened.length, 1);
+      assert.equal(r.suppressed.length, 0);
+      assert.equal(r.kept.length, 0);
+    }
+    // ...and on an UNCHANGED scope it still suppresses regardless of the flag.
+    const quiet = suppressReRaises([{ ...finding(), is_reopened: true }], ledgerOf(entry()), {
+      changedFiles: ['scripts/lib/unrelated.mjs'],
+    });
+    assert.equal(quiet.suppressed.length, 1, 'a model-declared reopen must not override scope-unchanged suppression');
+    assert.equal(quiet.reopened.length, 0);
+  });
+
+  it('reports a zeroed telemetry object when nothing reopened', () => {
+    const r = suppressReRaises([finding()], ledgerOf(entry()), { changedFiles: [] });
+    assert.deepEqual(r.reopenTelemetry, { total: 0, declared: 0, undeclaredOnDismissal: 0 });
+  });
+});
+
 describe('suppressReRaises — the hard-suppress ruling counter', () => {
   const overruled = (i) => entry({
     topicId: `t${i}`.padEnd(12, '0'),

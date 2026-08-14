@@ -1221,6 +1221,17 @@ both directions.
 - **Name the mismatch distinctly.** "No P0/P1 findings" and "P0/P1 declared but
   none parsed" must not share a reason string; the second is a shape bug wearing
   the first's clothes.
+- **The worse variant: the prompt asks for a field the RESPONSE SCHEMA forbids.**
+  Above, the two sides merely spelled it differently. `R2_ROUND_MODIFIER` told
+  the model to set `is_reopened: true` from 2026-04-01 while
+  `ProducerFindingSchema` had no such property and emits
+  `additionalProperties: false` — so the value was *unrepresentable*, not
+  mistyped, and no test could have caught it from either side alone. Ask it of
+  the EMITTED schema (`z.toJSONSchema(...)` → `properties`/`required`), never of
+  the Zod source: **a prompt that names a field is a claim about a contract you
+  have not checked.** Third instance of this class (`causalChain`,
+  `EVIDENCE_CONTRACT_BLOCK`, this) — and a required field also has to be filled
+  by every non-LLM constructor, so adding one is never a one-line change.
 
 ## Sensitive paths + VCS contract (canonical locations)
 

@@ -283,6 +283,11 @@ export function normalizeExternalFinding(raw, result, autoIndex) {
     recommendation: `Review and resolve rule: ${raw.rule}. ${raw.fixable ? 'Auto-fix available via tool --fix flag.' : 'Manual fix required.'}`,
     is_quick_fix: meta.isQuickFix,
     is_mechanical: true,
+    // A tool-derived finding is never a reopen of a prior human/LLM ruling —
+    // `is_reopened` is required on ProducerFindingSchema (2026-08-14) and this
+    // constructor must satisfy it explicitly, exactly as it does the two
+    // booleans above.
+    is_reopened: false,
     principle: raw.rule,
     classification: {
       sonarType: meta.sonarType,

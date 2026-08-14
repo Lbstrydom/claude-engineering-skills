@@ -2459,7 +2459,7 @@ function runFixtureReview({ transcriptFile, outFile, jsonMode }) {
     new_findings: wantMissed ? [{
       id: 'F1', severity: 'MEDIUM', category: 'Fixture', section: targetFile || 'fixture.js',
       detail: 'fixture canned missed-candidate finding', risk: 'fixture risk',
-      recommendation: 'fixture recommendation', is_quick_fix: false, is_mechanical: false,
+      recommendation: 'fixture recommendation', is_quick_fix: false, is_mechanical: false, is_reopened: false,
       principle: 'fixture', classification: { sonarType: 'CODE_SMELL', effort: 'EASY', sourceKind: 'REVIEWER', sourceName: 'fixture' },
     }] : [],
     wrongly_dismissed: wantReversed ? [{

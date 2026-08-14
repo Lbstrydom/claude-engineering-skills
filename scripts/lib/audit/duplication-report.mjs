@@ -208,6 +208,7 @@ function buildDuplicationFinding(c, severity, bouncerRationale) {
     affectedPrinciples: ['#1 DRY', '#5 SSoT'],
     is_mechanical: !bouncerRationale,
     is_quick_fix: true,
+    is_reopened: false,   // mechanical wave — never reopens a prior ruling
     principle: '#1 DRY',
   };
 }
@@ -226,6 +227,7 @@ export function buildDetectorFailedFinding(_reason) {
     affectedPrinciples: ['#15 Error Handling'],
     is_mechanical: true,
     is_quick_fix: true,
+    is_reopened: false,   // mechanical wave — never reopens a prior ruling
     principle: '#15 Error Handling',
   };
 }
@@ -248,6 +250,7 @@ export function finalizeDeterministicFindings(rawRecords) {
         affectedPrinciples: ['#1 DRY', '#5 SSoT'],
         is_mechanical: true,
         is_quick_fix: true,
+        is_reopened: false,   // mechanical wave — never reopens a prior ruling
         principle: '#1 DRY',
       };
     }

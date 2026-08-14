@@ -281,7 +281,10 @@ describe('FindingJsonSchema (derived)', () => {
     // Evidence-contract fields (tiered-recall pipeline, docs/plans/tiered-recall-audit-pipeline.md
     // Phase 1) are optional on the canonical schema too — a V1 finding has none of them;
     // required only at the ProducerFindingV2Schema producer boundary.
-    const optional = new Set(['classification', 'verification', 'evidenceType', 'anchor', 'triggerAnchor', 'causalChain']);
+    // `is_reopened` (2026-08-14) is REQUIRED on ProducerFindingSchema and
+    // optional here for the same reason `classification` is: every finding
+    // persisted before that date predates the field.
+    const optional = new Set(['classification', 'verification', 'evidenceType', 'anchor', 'triggerAnchor', 'causalChain', 'is_reopened']);
     const zodKeys = Object.keys(FindingSchema.shape).filter(k => !optional.has(k)).sort();
     assert.deepEqual([...FindingJsonSchema.required].sort(), zodKeys);
   });

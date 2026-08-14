@@ -16,7 +16,13 @@
   `tests/sensitive-egress.test.mjs` extended (written test-first: confirmed RED
   against the old implementation, then GREEN). Full suite 6545 pass / 0 fail.
   **Phase 2 remains deferred and unbuilt** — gated on the empirical protocol
-  below, which has NOT run yet. Approved — 3 GPT rounds + 2 Gemini rounds.
+  below, which has NOT run yet. **2026-08-14**: a second independent field
+  occurrence was recorded, and investigating it found + fixed a SEPARATE defect
+  (the `is_reopened` prompt→schema contract was unrepresentable, so the reopen
+  signal had never been recordable at all). That fix is **not** Phase 2 and
+  changes no routing — it is the instrument Phase 2's decision was missing. See
+  "2026-08-14 field evidence" below the protocol table. Approved — 3 GPT rounds
+  + 2 Gemini rounds.
   GPT: HIGH 3→3→3, stopped at the cap on a **scope decision**, not convergence
   (the findings were real but concentrated in Phase 2, which this plan now
   defers — see "Why Phase 2 is not in this plan's scope"); R1-H2 went to
@@ -851,6 +857,151 @@ The protocol is a retained regression harness, not a one-off operator exercise:
 Pre-registering the rule before collecting data is deliberate — the same
 discipline the shadow-reviewer A/B uses, and the absence of which let three
 tiered-shadow windows read as "met".
+
+### 2026-08-14 field evidence — organic recurrence in this repo's own `/cycle` run
+
+**Does NOT satisfy the protocol above by itself — recorded per the same
+pre-registration discipline that protocol invokes.** This is real-world
+evidence, not one of the 5 fixture trials, and must not be read as "the
+trigger fired." It is, however, a second independent real-world hit of the
+identical failure shape the 2026-07-16 wine-cellar-app field report first
+surfaced — while Phase 1's prompt fix (`buildRulingsBlock`, live since
+2026-07-17) was already in effect.
+
+**What happened** (`/cycle --autonomous` on `final-review-scoped-second-reviewer.md`
+Cluster A; artifacts in this repo's local, gitignored `.audit/cluster-A-*`):
+GPT raised `[Adjacency] Statement may be trapped inside a conditional` against
+`scripts/gemini-review.mjs:1193` at round 2 (finding H4) — a false claim about
+the branch structure at lines 1186-1193. The operator/agent dismissed it with
+a direct brace-by-brace disproof (ledger topicId `49da527ca28c`). At round 3,
+GPT raised the **same claim near-verbatim** (finding H2, topicId
+`0c3d779925cf`) with one added, also-false, trailing sentence. It was **not**
+suppressed — it shipped as `reopened`.
+
+**Measured, not assumed** — `ledgerFindingSimilarity` scored the round-3
+finding against the round-2 ledger entry's stored `detailSnapshot` at
+**0.5079365079365079** (verified by re-running the exact function against the
+exact stored bytes; matches the `_matchScore` the pipeline itself recorded in
+`cluster-A-r3-result.json`). That is **~1.45x the 0.35 threshold** — the fuzzy
+matcher worked correctly and identified this as the same claim. Stripping the
+added trailing sentence and rescoring moves the score by <0.02 either
+direction — the added sentence is not what let this through.
+
+**Root cause, confirmed**: `suppressReRaises`'s Step 3 reopen-on-touch check
+(`scopeDirectlyChanged` — ledger.mjs) routed the match to `reopened` rather
+than `suppressed` because `scripts/gemini-review.mjs` was genuinely a changed
+file in this cluster's diff (an unrelated `reduced`-scope refactor touched the
+same function, though not the disputed branch's truth value), and the check
+does not condition on `adjudicationOutcome`. This is **exactly** mechanism #1
+from the 2026-07-16 field report, reproduced from first principles against
+this repo's own source rather than recalled from memory.
+
+**What investigating it turned up — a second, unrecorded defect, since FIXED.**
+Tracing why the re-raise survived surfaced a bug that is not the reopen policy
+at all. `R2_ROUND_MODIFIER` had, since 2026-04-01, instructed the model to
+*"raise it with is_reopened: true"* — while `ProducerFindingSchema` had **no
+`is_reopened` property** and emits `additionalProperties: false`. Verified by
+emitting the JSON Schema rather than reading the Zod source:
+
+```
+additionalProperties: false
+required: [id, severity, category, section, detail, risk, recommendation,
+           is_quick_fix, is_mechanical, principle, classification]
+has is_reopened property? false      ← before
+has is_reopened property? true       ← after
+```
+
+The model was **structurally forbidden** from answering; no value could reach
+any consumer. Same class as the `EVIDENCE_CONTRACT_BLOCK` rejection recorded in
+[`adaptive-context-blast-radius.md`](adaptive-context-blast-radius.md)
+(*"schema-blocked, not merely expensive… the model cannot emit the field the
+block demands"*) — recurring one function away. Two further halves of the same
+defect: this prompt's closing sentence was the **same self-cancelling escape
+clause** `buildRulingsBlock` had already had removed (one instance fixed, its
+twin one section up in the same prompt left standing), and a producer-supplied
+`is_reopened` would have been silently **stripped** by the non-strict
+`PersistedFindingSchema` on the way to storage.
+
+Fixed 2026-08-14: `is_reopened` is required on the producer schema (plain
+boolean, matching `is_quick_fix`/`is_mechanical` — *not* `.nullable()`, which
+renders as `anyOf` and is not something a required field should stake on
+Gemini's dialect support), optional on the persisted schema, and the escape
+clause now demands the same specific-changed-line citation the DISMISSED group
+header demands. `suppressReRaises` records `_reopenDeclared` /
+`_matchedOutcome` and returns a `reopenTelemetry` counter, surfaced in the round
+summary and the result JSON's `_suppression`.
+
+**This is observation only and deliberately does NOT change routing** — a test
+pins that direction explicitly. Every historical `is_reopened` is
+absent-by-construction rather than false, so there is not yet a single round of
+data establishing whether the model's declaration tracks genuine staleness;
+gating on it would swap a known-too-coarse rule for an uncalibrated one.
+
+**Second write-side defect, found by checking the claim rather than assuming
+it.** The first write-up of this section asserted the new signal "accumulates in
+ordinary round logs". It did not. `recordSuppressionEvents` wrote
+`reason: 'Scope changed'` — a hardcoded literal, identical for every reopened
+finding — and `suppression_events` is the **only** place a reopen survives its
+run (the counters go to stderr and the result JSON, both per-run and
+gitignored). So the durable record could not distinguish a declared reopen from
+a mechanical one, which is the entire distinction the policy decision turns on:
+a constant in a telemetry column reads as a measurement while carrying no
+information. Fixed via `reopenReason(f)` →
+`Scope changed; declared=<yes|no>; matched=<outcome>`; free-text column, no
+migration, historical prefix preserved. An older bundle's finding reports
+`matched=unknown`, never `dismissed`, so version skew cannot inflate the churn
+count. Pinned by `tests/reopen-reason-durability.test.mjs`, whose end-to-end
+cases derive their input from real `suppressReRaises` output rather than a
+hand-written factory built to the reader's expectations.
+
+**Empirical verification — measured 2026-08-14, not reasoned about.** The
+change alters a live structured-output contract on every audit call, so it was
+run against real providers before being trusted (AGENTS.md "Pre-ship empirical
+verify"). Offline first: `zodTextFormat` emits `strict: true` with every
+property in `required` including `is_reopened` (which is *why* the field is
+required — OpenAI strict mode admits no optional property), and
+`zodToGeminiSchema` emits a plain `{"type":"boolean"}` with no `anyOf`. Then
+live, mirroring the real `responses.parse` call shape over the real
+`ProducerFindingSchema`:
+
+| Probe | Provider / model | Result |
+|---|---|---|
+| Ordinary new finding | OpenAI `gpt-5.6-terra` | schema accepted; `is_reopened` present, boolean `false` |
+| Ordinary new finding | Gemini `gemini-flash-latest` | schema accepted; strict re-parse OK; boolean `false` |
+| **Genuine reopen scenario** | OpenAI `gpt-5.6-terra` | `is_reopened: true` **and** the detail cited the specific changed line |
+
+The third row is the one that matters and the reason the first two are not
+sufficient: had the model been unable to emit `true`, the telemetry would read
+`declared=no` on every reopen forever — indistinguishable from "all reopens are
+mechanical churn", silently corrupting the decision this field exists to
+inform. It also confirms the tightened escape clause is obeyed rather than
+merely present. (Probes are local-only under the gitignored `.audit/`; they
+spend API credit, so they are deliberately NOT in `npm test`.)
+
+**Bearing on next steps**: two independent real-world occurrences of the same
+mechanism, zero fixture trials run — and, until 2026-08-14, an instrument that
+could not record the one signal that most cheaply distinguishes a stale
+dismissal from a re-litigated one. The reopen-policy decision now has a data
+source it never had, and it accumulates from ordinary cloud-enabled rounds with
+no bespoke experiment:
+
+```sql
+-- churn shape vs legitimate reopen, per repo, over real rounds
+SELECT reason, COUNT(*)
+FROM suppression_events
+WHERE action = 'reopened' AND created_at > NOW() - INTERVAL '30 days'
+GROUP BY reason ORDER BY 2 DESC;
+```
+
+`declared=no; matched=dismissed` is the churn shape. Two caveats on reading it:
+it only accrues when the **cloud store is on** (a local-only run still leaves no
+durable trace), and rows written before 2026-08-14 all carry the old literal, so
+the series starts here rather than reaching backwards. Read a few real rounds
+before choosing between the pre-registered 5-trial fixture protocol above and a
+direct policy change. **Either way, Phase 2 is a fresh plan document built on
+`evidence-triage.mjs`'s `resolveAnchorLocation`/`tagPreExisting` (see
+"2026-07-17 re-examination" below) — never an amendment to this document's
+superseded Phase-2 design.**
 
 ---
 

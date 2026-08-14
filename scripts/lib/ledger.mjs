@@ -515,7 +515,8 @@ export function matchesLedgerEntry(f, d, { threshold }) {
  * @param {object} opts
  * @param {string[]} [opts.changedFiles] - Files changed since last round
  * @param {string[]} [opts.impactSet] - Files in the impact set
- * @returns {{kept: object[], suppressed: object[], reopened: object[]}}
+ * @returns {{kept: object[], suppressed: object[], reopened: object[],
+ *            reopenTelemetry: {total: number, declared: number, undeclaredOnDismissal: number}}}
  */
 export function suppressReRaises(findings, ledger, { changedFiles = [], impactSet = [] } = {}) {
   // Threshold calibrated from real audit data — paraphrased re-raises score 0.3-0.6, new findings <0.2
@@ -544,6 +545,11 @@ export function suppressReRaises(findings, ledger, { changedFiles = [], impactSe
 
   const kept = [], suppressed = [], reopened = [];
   const changedSet = new Set(changedFiles.map(normalizePath));
+
+  // OBSERVATION ONLY — does the model's own reopen declaration agree with this
+  // function's mechanical file-touch reopen? Recorded, never routed on. See the
+  // `_reopenDeclared` comment in the reopen branch for why it cannot gate yet.
+  const reopenTelemetry = { total: 0, declared: 0, undeclaredOnDismissal: 0 };
 
   // Fix #4: Build ruling count index. When a (category + primaryFile) pair has been
   // ruled 'overrule' 3+ times across rounds, hard-suppress regardless of hash drift.
@@ -631,6 +637,22 @@ export function suppressReRaises(findings, ledger, { changedFiles = [], impactSe
         f._reopened = true;
         f._matchedTopic = bestMatch.topicId;
         f._matchScore = bestScore;
+        // OBSERVATION ONLY (2026-08-14) — deliberately does NOT influence the
+        // branch above it. `is_reopened` became answerable only on this date
+        // (ProducerFindingSchema had no such property and emits
+        // `additionalProperties: false`, so the model was structurally
+        // forbidden from setting it since 2026-04-01). Every historical value
+        // is therefore absent-by-construction, not false — which means there
+        // is not yet one round of data establishing whether the declaration
+        // tracks genuine staleness. Gating on an untested signal would swap a
+        // known-too-coarse rule for an uncalibrated one. Read these counters
+        // over the next few real rounds first; the policy decision they feed is
+        // docs/plans/dismissed-fp-reopen-policy.md "2026-08-14 field evidence".
+        f._reopenDeclared = f.is_reopened === true;
+        f._matchedOutcome = bestMatch.adjudicationOutcome ?? null;
+        reopenTelemetry.total++;
+        if (f._reopenDeclared) reopenTelemetry.declared++;
+        else if (bestMatch.adjudicationOutcome === 'dismissed') reopenTelemetry.undeclaredOnDismissal++;
         reopened.push(f);
       } else {
         const src = bestMatch.source || 'session';
@@ -650,7 +672,9 @@ export function suppressReRaises(findings, ledger, { changedFiles = [], impactSe
     }
   }
 
-  return { kept, suppressed, reopened };
+  // `reopenTelemetry` is an ADDED key — every existing caller destructures
+  // `{kept, suppressed, reopened}` and is unaffected.
+  return { kept, suppressed, reopened, reopenTelemetry };
 }
 
 // ── Rulings Block & R2+ Prompts ─────────────────────────────────────────────
@@ -911,7 +935,26 @@ export function buildRulingsBlock(ledgerPath, passName, impactSet = []) {
   return block;
 }
 
-/** Round 2+ system prompt modifier for verification-focused auditing. */
+/**
+ * Round 2+ system prompt modifier for verification-focused auditing.
+ *
+ * **The closing reopen clause is load-bearing, and it was the other half of a
+ * fix `buildRulingsBlock` only half-made** (found 2026-08-14). That function's
+ * docstring records removing an escape clause — *"Do NOT re-raise them unless
+ * the code they affect has materially changed"* — because in an active fix
+ * loop the affected code has ALWAYS changed, making it a standing licence to
+ * re-raise a dismissal. But `buildR2SystemPrompt` concatenates THIS string
+ * immediately ABOVE that block, and this string ended with the same clause in
+ * the same permissive shape ("if you believe ... materially affects its scope,
+ * raise it with is_reopened: true"). One instance was fixed; its twin, one
+ * section up in the same prompt, was not.
+ *
+ * Worse, the flag it offered was unrepresentable: `ProducerFindingSchema` had
+ * no `is_reopened` property and emits `additionalProperties: false`, so from
+ * 2026-04-01 the model was structurally forbidden from setting it. The clause
+ * now demands the same specific-changed-line citation the DISMISSED group
+ * header demands, and the schema can carry the answer.
+ */
 export const R2_ROUND_MODIFIER = `ROUND 2+ VERIFICATION MODE
 
 This is a follow-up round. Your job has CHANGED from Round 1:
@@ -930,8 +973,10 @@ DO NOT:
 - Paraphrase a dismissed finding as "new" — that contradicts your own judgment
 - Re-audit unchanged, unaffected code for the same issue classes
 
-If you believe a dismissed finding should be REOPENED because changed code
-materially affects its scope, raise it with is_reopened: true.`;
+If you believe a dismissed finding should be REOPENED, you MUST cite the
+specific changed line that invalidates the prior ruling, in your detail field,
+and set is_reopened: true. A reopen WITHOUT that citation contradicts your own
+prior ruling — do not raise it.`;
 
 /**
  * Build a Round 2+ system prompt with rulings context and pass rubric.

@@ -28,6 +28,7 @@ function validFinding(overrides = {}) {
     recommendation: 'Fix it properly.',
     is_quick_fix: false,
     is_mechanical: true,
+    is_reopened: false,
     principle: 'Fail loud, not quiet',
     classification: {
       sonarType: 'BUG',

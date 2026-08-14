@@ -79,10 +79,34 @@ const FindingBase = {
 /**
  * ProducerFindingSchema — what LLMs emit. Classification is REQUIRED.
  * Used as response schema for GPT / Gemini / Claude audit calls.
+ *
+ * `is_reopened` is REQUIRED and a plain boolean, deliberately — same shape as
+ * `is_quick_fix`/`is_mechanical`, and NOT `.nullable()`. A nullable boolean
+ * renders as `{anyOf:[{type:'boolean'},{type:'null'}]}` under
+ * `z.toJSONSchema`, and this schema is handed to Gemini through
+ * `zodToGeminiSchema` (gemini-review.mjs `new_findings`) whose dialect support
+ * for `anyOf` is not something we want a required field to depend on. R1 and
+ * every non-reopen finding emit `false`.
+ *
+ * **Why it was added (2026-08-14).** `R2_ROUND_MODIFIER` had instructed the
+ * model to "raise it with is_reopened: true" since 2026-04-01, while this
+ * schema had no such property and emits `additionalProperties: false` — so the
+ * model was *structurally forbidden* from answering, and no value could reach
+ * any consumer. Four and a half months of a prose→code contract with nothing
+ * on the receiving end, in the exact class
+ * `docs/plans/adaptive-context-blast-radius.md` had already documented one
+ * function away when it rejected `EVIDENCE_CONTRACT_BLOCK` as "schema-blocked,
+ * not merely expensive". Verified before/after by emitting the JSON Schema and
+ * checking `properties`/`required`, not by reading the Zod source.
  */
 export const ProducerFindingSchema = z.object({
   ...FindingBase,
   classification: ClassificationSchema,
+  is_reopened: z.boolean().describe(
+    'ROUND 2+ ONLY. TRUE only if this re-raises a finding YOU previously ruled DISMISSED *and* '
+    + 'a specific changed line has invalidated that ruling — cite that line in `detail`. '
+    + 'FALSE on round 1, and for every finding that is not such a reopen.'
+  ),
 });
 
 /**
@@ -370,6 +394,14 @@ export const PersistedFindingSchema = z.object({
   ...FindingBase,
   classification: ClassificationSchema.nullable().optional(),
   verification: FindingVerificationSchema.optional(),
+  // OPTIONAL here and REQUIRED on the producer, exactly as `classification` is
+  // — every finding persisted before 2026-08-14 predates the field. Declaring
+  // it is not cosmetic: this is a non-strict `z.object`, so an undeclared key
+  // is STRIPPED rather than rejected, and a producer-supplied `is_reopened`
+  // would be silently discarded on the way to storage — the same
+  // unrepresentable-value defect one layer down from the one that motivated
+  // adding it.
+  is_reopened: z.boolean().optional(),
   ...EvidenceFieldsOptional,
 });
 

@@ -57,6 +57,13 @@ const EXPECTED_EXPORTS = [
   'recordRunComplete',
   'recordRunStart',
   'recordSuppressionEvents',
+  // Added 2026-08-14. The durable `reason` for a reopened finding was the
+  // hardcoded literal 'Scope changed', so `suppression_events` — the only place
+  // a reopen survives its run — could not distinguish a model-declared reopen
+  // from a mechanical file-touch reopen of a dismissal. Exported (rather than
+  // inlined) so the string contract is directly testable: it is the accumulating
+  // signal the deferred reopen-policy decision reads.
+  'reopenReason',
   'updatePassStatsPostDeliberation',
   'updateRunMeta',
   'getPassTimings',
@@ -442,6 +449,14 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // invariant worth pinning — that `severity` keeps the MODEL's value while
     // the gate's verdict lands in `verdict_severity` — was unreachable by any
     // test while the mapping was an inline closure.
-    assert.equal(EXPECTED_EXPORTS.length, 185);
+    // 185 → 186: +reopenReason (2026-08-14). `suppression_events.reason` was
+    // the hardcoded literal 'Scope changed' for every reopened finding, and
+    // that row is the ONLY durable record of a reopen — the per-round counters
+    // live in stderr and the result JSON, both gitignored and per-run. So the
+    // store could not distinguish a model-declared, line-citing reopen from a
+    // purely mechanical file-touch reopen of a dismissal the operator had
+    // already disproved. Same class as a hardcoded 0 in telemetry: a constant
+    // that reads as a measurement. Exported so the string contract is testable.
+    assert.equal(EXPECTED_EXPORTS.length, 186);
   });
 });

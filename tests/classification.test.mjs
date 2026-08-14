@@ -70,13 +70,48 @@ test('ClassificationSchema — accepts LINTER and TYPE_CHECKER sourceKind (Phase
 });
 
 test('ProducerFindingSchema — requires classification', () => {
-  const result = ProducerFindingSchema.safeParse(baseFindingFields);
+  // `is_reopened` supplied so the ONLY missing field is `classification` —
+  // otherwise this would go red for the wrong reason and still read green.
+  const result = ProducerFindingSchema.safeParse({ ...baseFindingFields, is_reopened: false });
   assert.equal(result.success, false);
 });
 
 test('ProducerFindingSchema — accepts finding with valid classification', () => {
-  const finding = { ...baseFindingFields, classification: validClassification };
+  const finding = { ...baseFindingFields, classification: validClassification, is_reopened: false };
   const result = ProducerFindingSchema.safeParse(finding);
+  assert.equal(result.success, true);
+});
+
+test('ProducerFindingSchema — requires is_reopened', () => {
+  const finding = { ...baseFindingFields, classification: validClassification };
+  assert.equal(ProducerFindingSchema.safeParse(finding).success, false);
+});
+
+test('is_reopened is REACHABLE in the emitted provider JSON Schema', () => {
+  // The regression this locks (2026-08-14): R2_ROUND_MODIFIER asked the model
+  // to set `is_reopened: true` from 2026-04-01, while this schema had no such
+  // property AND emits `additionalProperties: false` — so the model was
+  // structurally forbidden from answering and every value was unrepresentable.
+  // Asserting the EMITTED schema, not the Zod source, because the emitted
+  // schema is what the provider actually enforces.
+  const jsonSchema = zodToGeminiSchema(ProducerFindingSchema);
+  assert.ok(jsonSchema.properties?.is_reopened, 'is_reopened property must exist');
+  assert.ok(jsonSchema.required?.includes('is_reopened'), 'is_reopened must be required');
+  // A nullable boolean would render as anyOf, which Gemini's dialect support
+  // for a REQUIRED field is not something to bet on — keep it a plain boolean.
+  assert.equal(jsonSchema.properties.is_reopened.type, 'boolean');
+  assert.ok(!jsonSchema.properties.is_reopened.anyOf, 'must not render as anyOf');
+});
+
+test('PersistedFindingSchema — keeps is_reopened instead of stripping it', () => {
+  // Non-strict z.object strips undeclared keys; an undeclared `is_reopened`
+  // would be silently dropped between producer and storage.
+  const parsed = PersistedFindingSchema.parse({ ...baseFindingFields, is_reopened: true });
+  assert.equal(parsed.is_reopened, true);
+});
+
+test('PersistedFindingSchema — accepts a pre-2026-08-14 finding with no is_reopened', () => {
+  const result = PersistedFindingSchema.safeParse(baseFindingFields);
   assert.equal(result.success, true);
 });
 

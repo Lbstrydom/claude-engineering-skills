@@ -183,6 +183,7 @@ function buildAdjacencyFinding(e, severity, rationale) {
     affectedPrinciples: ['#2 SRP', '#15 Error Handling'],
     is_mechanical: !rationale,
     is_quick_fix: true,
+    is_reopened: false,   // mechanical wave — never reopens a prior ruling
     principle: '#2 SOLID — Single Responsibility',
   };
 }
@@ -211,6 +212,7 @@ export function buildAdjacencyIncompleteFinding(record) {
     affectedPrinciples: ['#19 Observability'],
     is_mechanical: true,
     is_quick_fix: true,
+    is_reopened: false,   // mechanical wave — never reopens a prior ruling
     principle: '#19 Observability',
   };
 }
@@ -235,6 +237,7 @@ export function buildAdjacencyFailedFinding(_reason) {
     affectedPrinciples: ['#15 Error Handling'],
     is_mechanical: true,
     is_quick_fix: true,
+    is_reopened: false,   // mechanical wave — never reopens a prior ruling
     principle: '#15 Error Handling',
   };
 }
