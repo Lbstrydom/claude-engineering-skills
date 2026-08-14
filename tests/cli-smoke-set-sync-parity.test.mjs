@@ -26,6 +26,7 @@ import { _internals } from '../scripts/lib/sync-isolation-verify.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SYNC_SRC = fs.readFileSync(path.join(ROOT, 'scripts/sync-to-repos.mjs'), 'utf8');
+const SYNC_INVENTORY_SRC = fs.readFileSync(path.join(ROOT, 'scripts/lib/sync-inventory.mjs'), 'utf8');
 
 describe('CLI_SMOKE_SET ↔ sync-to-repos parity', () => {
   test('every CLI_SMOKE_SET entry is declared as a synced script', () => {
@@ -47,17 +48,36 @@ describe('CLI_SMOKE_SET ↔ sync-to-repos parity', () => {
     assert.deepEqual(absent, [], 'CLI_SMOKE_SET names a script that does not exist in scripts/');
   });
 
-  test('the two known source-repo-only CLIs stay OUT of the set', () => {
-    // Regression pin: both read docs/experiments/audit-effectiveness/known-defects.json,
-    // a corpus graded on THIS repo's finding distribution that is deliberately
-    // never synced. Shipping the CLIs without it would deliver tools that cannot
-    // run, so the correct fix is exclusion, not declaration.
-    for (const rel of ['model-eval-auditor.mjs', 'model-eval-adjudicator.mjs', 'verify-anchor-contract.mjs']) {
+  test('the known source-repo-only CLIs stay OUT of the set', () => {
+    // Regression pin: model-eval-auditor.mjs / model-eval-adjudicator.mjs /
+    // verify-anchor-contract.mjs all read docs/experiments/audit-effectiveness/
+    // known-defects.json, a corpus graded on THIS repo's finding distribution
+    // that is deliberately never synced. check-accepted-debt.mjs is the same
+    // shape for a different reason: its registry (ACCEPTED_DEBT_ROWS) is
+    // hardcoded to THIS repo's own 6 AGENTS.md rows and their exact
+    // fingerprints — running it against a consumer's own AGENTS.md would
+    // report the whole table unregistered forever (round-2 code-audit
+    // Quickfix M7). This pin is what makes "excluded from sync today" a
+    // tested, permanent invariant rather than a silent absence a future
+    // change could reintroduce without reconsidering the design (round-4
+    // code-audit M2/M7/Quickfix M8 — "excluding a script from today's sync
+    // manifest does not make it immune to drift").
+    for (const rel of ['model-eval-auditor.mjs', 'model-eval-adjudicator.mjs', 'verify-anchor-contract.mjs', 'check-accepted-debt.mjs']) {
       assert.ok(
         !_internals.CLI_SMOKE_SET.includes(rel),
-        `${rel} is a source-repo-only tool (reads an unsynced corpus / pins a source sha) — ` +
-        'adding it to CLI_SMOKE_SET breaks gate 4 in every consumer.',
+        `${rel} is a source-repo-only tool — adding it to CLI_SMOKE_SET breaks gate 4 in every consumer.`,
       );
+    }
+  });
+
+  test('check-accepted-debt.mjs and its lib files stay OUT of sync-to-repos.mjs / sync-inventory.mjs entirely', () => {
+    // Round-5 code-audit be-services M1 / Sustainability M4: this test's NAME
+    // named both files but its body only ever read SYNC_SRC — sync-inventory.mjs
+    // was never actually checked, so a reintroduction there would have passed
+    // silently. Both sources are asserted now.
+    for (const rel of ['scripts/check-accepted-debt.mjs', 'scripts/lib/accepted-debt-check.mjs', 'scripts/lib/accepted-debt-registry.mjs']) {
+      assert.ok(!SYNC_SRC.includes(`'${rel}'`), `${rel} must not be declared in sync-to-repos.mjs — see the source-repo-only rationale above`);
+      assert.ok(!SYNC_INVENTORY_SRC.includes(`'${rel}'`), `${rel} must not be declared in sync-inventory.mjs — see the source-repo-only rationale above`);
     }
   });
 });

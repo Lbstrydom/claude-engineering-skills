@@ -207,6 +207,15 @@ export function fmtMs(ms) {
   return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`;
 }
 
+/**
+ * Escape a string for use as a literal inside a `RegExp`. Consolidated here
+ * (round-2 audit, `[Duplication]`) — `env-setting.mjs` and
+ * `accepted-debt-check.mjs` each had their own copy of this exact one-liner.
+ */
+export function escapeRegExp(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 export function log(msg) {
   process.stderr.write(`${msg}\n`);
 }

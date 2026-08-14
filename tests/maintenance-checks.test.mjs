@@ -29,6 +29,7 @@ import {
   loadHeartbeat,
   runCheck,
   runExclusive,
+  isSourceRepo,
 } from '../scripts/maintenance-checks.mjs';
 
 describe('maintenance-checks — CHECKS manifest', () => {
@@ -40,6 +41,7 @@ describe('maintenance-checks — CHECKS manifest', () => {
   it('declares the exact weekly-maintenance inventory', () => {
     const keys = CHECKS.map((c) => c.key).sort();
     assert.deepEqual(keys, [
+      'accepted-debt',
       'arch-maintenance',
       'cache-hitrate',
       'context-staleness',
@@ -88,6 +90,62 @@ describe('maintenance-checks — CHECKS manifest', () => {
     }
   });
 
+  it('accepted-debt is declared sourceRepoOnly — its registry is hardcoded to this repo (round-2 audit Quickfix M7)', () => {
+    const c = CHECKS.find((c) => c.key === 'accepted-debt');
+    assert.equal(c.sourceRepoOnly, true);
+  });
+});
+
+describe('isSourceRepo / runCheck sourceRepoOnly gating', () => {
+  it('isSourceRepo() is true in this checkout (package.json.name === claude-engineering-skills)', () => {
+    assert.equal(isSourceRepo(), true);
+  });
+
+  it('isSourceRepo() is false when package.json.name does not match (mocked read)', () => {
+    const real = fs.readFileSync;
+    try {
+      fs.readFileSync = (p, enc) => (String(p).endsWith('package.json') ? JSON.stringify({ name: 'wine-cellar-app' }) : real(p, enc));
+      assert.equal(isSourceRepo(), false);
+    } finally {
+      fs.readFileSync = real;
+    }
+  });
+
+  it('isSourceRepo() fails closed to false on a read error (never crashes, never assumes source-repo)', () => {
+    const real = fs.readFileSync;
+    try {
+      fs.readFileSync = (p, enc) => (String(p).endsWith('package.json') ? (() => { throw new Error('ENOENT'); })() : real(p, enc));
+      assert.equal(isSourceRepo(), false);
+    } finally {
+      fs.readFileSync = real;
+    }
+  });
+
+  it('runCheck() skips a sourceRepoOnly check with a named reason when not the source repo (mocked)', () => {
+    const real = fs.readFileSync;
+    try {
+      fs.readFileSync = (p, enc) => (String(p).endsWith('package.json') ? JSON.stringify({ name: 'wine-cellar-app' }) : real(p, enc));
+      const result = runCheck({ key: 'accepted-debt', label: 'x', requiredEnv: [], sourceRepoOnly: true, steps: [{ script: 'check-accepted-debt.mjs', args: [] }] });
+      assert.equal(result.status, 'skipped');
+      assert.match(result.reason, /source-repo-only/);
+    } finally {
+      fs.readFileSync = real;
+    }
+  });
+
+  it('runCheck() does NOT gate a check that omits sourceRepoOnly, even when not the source repo (mocked) — the gate must not spuriously widen to every check', () => {
+    const real = fs.readFileSync;
+    try {
+      fs.readFileSync = (p, enc) => (String(p).endsWith('package.json') ? JSON.stringify({ name: 'wine-cellar-app' }) : real(p, enc));
+      const result = runCheck({ key: 'context-staleness', label: 'x', requiredEnv: [], steps: [{ script: 'context-staleness.mjs', args: [] }] });
+      assert.notEqual(result.status, 'skipped');
+    } finally {
+      fs.readFileSync = real;
+    }
+  });
+});
+
+describe('maintenance-checks — CHECKS manifest', () => {
   it('learning-weekly-review requires LEARNING_REPO_NAME (cross-tenant leakage guard)', () => {
     const c = CHECKS.find((c) => c.key === 'learning-weekly-review');
     assert.ok(c.requiredEnv.includes('LEARNING_REPO_NAME'));
@@ -426,7 +484,7 @@ describe('maintenance CHECKS — workflow citations resolve', () => {
   it('every check whose key names no workflow is marked ad hoc in the header', () => {
     // The inverse direction: a check with no workflow must be DECLARED as such,
     // so "no citation" is a stated fact rather than an omission.
-    const adHoc = ['cache-hitrate', 'debt-health', 'context-staleness', 'slice-recurrence'];
+    const adHoc = ['cache-hitrate', 'debt-health', 'context-staleness', 'slice-recurrence', 'accepted-debt'];
     for (const key of adHoc) {
       assert.ok(CHECKS.some((c) => c.key === key), `${key} must still exist for this assertion to mean anything`);
     }

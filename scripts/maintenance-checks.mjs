@@ -3,11 +3,12 @@
  * @fileoverview Local replica of the 5 weekly GitHub Actions maintenance
  * workflows (architectural-drift, migration-drift, model-freshness,
  * memory-health, learning-weekly-review) plus cache-hitrate-check,
- * debt-health and context-staleness (ad hoc — no dedicated workflow file),
- * and one DISPOSABLE one-shot (slice-recurrence, which retires itself — see
- * its script header), for operators whose org blocks GitHub-hosted Actions
- * runners (or who just prefer local-only). Opt-in, default-OFF — see
- * docs/runbooks/local-maintenance-checks.md.
+ * debt-health, context-staleness, and accepted-debt (ad hoc — no dedicated
+ * workflow file; accepted-debt is additionally sourceRepoOnly, see its
+ * CHECKS entry), and one DISPOSABLE one-shot (slice-recurrence, which
+ * retires itself — see its script header), for operators whose org blocks
+ * GitHub-hosted Actions runners (or who just prefer local-only). Opt-in,
+ * default-OFF — see docs/runbooks/local-maintenance-checks.md.
  *
  * **`CHECKS` below is the inventory; this paragraph is prose beside it.** It
  * had already drifted (context-staleness was missing) before slice-recurrence
@@ -77,11 +78,21 @@ import { atomicWriteFileSync } from './lib/file-io.mjs';
 // Residual risk: architecture-intent.md will keep flagging this edge for
 // every future consumer until the module is relocated.
 import { withFileLock, LockTimeoutError } from './lib/file-lock.mjs';
+import { isSourceRepo } from './lib/is-source-repo.mjs';
 
 if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
 
 const REPO_ROOT = findRepoRootFromScript(import.meta.url);
 const SCRIPTS_DIR = import.meta.dirname;
+
+// isSourceRepo() now lives in scripts/lib/is-source-repo.mjs (round-6
+// code-audit Sustainability M5): a zero-side-effect module, so a caller that
+// only wants the source-repo predicate doesn't also evaluate this file's
+// config.mjs import (env loading) and scheduler machinery. Re-exported here
+// so existing importers of this module (including this file's own tests)
+// don't need to change their import path.
+export { isSourceRepo };
+
 /**
  * Where the heartbeat + lock live. Overridable so a test driving the real CLI
  * as a SUBPROCESS can point it at a throwaway directory.
@@ -145,7 +156,7 @@ const DEFAULT_INTERVAL_DAYS = 7;
  * the file pointer per entry below) can silently diverge until a manual run
  * fails. Revisit if that actually happens in practice.
  *
- * 7 entries as of debt-health's addition — docs/runbooks/local-maintenance-
+ * 8 entries as of accepted-debt's addition — docs/runbooks/local-maintenance-
  * checks.md quotes a "6 checks" count that predates it; CHECKS.length is
  * the source of truth here, not a hand-copied number.
  */
@@ -238,6 +249,34 @@ export const CHECKS = [
     requiredEnv: [],
     steps: [{ script: 'debt-health-check.mjs', args: [] }],
   },
+  {
+    // Local-only, no requiredEnv, no dedicated GH workflow — same "ad hoc"
+    // shape as debt-health above, and deliberately NOT the same system: that
+    // one covers .audit/tech-debt.json (audit-captured findings, TTL/
+    // recurrence-based staleness); this one covers the hand-written
+    // "Accepted Technical Debt" table in AGENTS.md, whose claims are
+    // condition-based ("if X becomes true"), not time-based. Only one of
+    // the table's 6 rows is mechanically checkable today (readFileOrDie's
+    // "library context" trigger); the rest are reported as explicitly
+    // unverifiable, never silently trusted. `attention` = a checked
+    // predicate is contradicted/unknown, or a registry/table parity
+    // mismatch; never blocks. Design: docs/plans/accepted-debt-table-verification.md.
+    //
+    // sourceRepoOnly (round-2 audit Quickfix M7): check-accepted-debt.mjs's
+    // registry is hardcoded to THIS repo's own 6 AGENTS.md rows — running it
+    // in a consumer would report every row unregistered forever, training
+    // operators to ignore maintenance failures. This CHECKS entry (part of
+    // the synced orchestrator) stays declared and documented; runCheck()
+    // skips it in a consumer via isSourceRepo(), the same source-repo gate
+    // /audit-code Step 6.5/6.5b already uses for other steps. The script
+    // itself is deliberately excluded from CLI_SMOKE_SET / sync-to-repos.mjs
+    // / sync-inventory.mjs — see its own module header.
+    key: 'accepted-debt',
+    label: 'AGENTS.md accepted-debt revisit-trigger drift',
+    requiredEnv: [],
+    sourceRepoOnly: true,
+    steps: [{ script: 'check-accepted-debt.mjs', args: [] }],
+  },
 ];
 
 export function missingEnv(requiredEnv) {
@@ -266,6 +305,14 @@ export function positiveIntEnv(name, fallback) {
  * prior step's exit (matches the workflow's per-step `|| true` semantics).
  */
 export function runCheck(check) {
+  // Checked BEFORE requiredEnv: a source-repo-only check's script is excluded
+  // from the sync manifest on purpose (see check-accepted-debt.mjs's own
+  // header), so spawning it in a consumer would hit MODULE_NOT_FOUND rather
+  // than a clean, informative skip.
+  if (check.sourceRepoOnly && !isSourceRepo()) {
+    return { key: check.key, label: check.label, status: 'skipped', reason: 'source-repo-only (not claude-engineering-skills)' };
+  }
+
   const missing = missingEnv(check.requiredEnv);
   if (missing.length > 0) {
     return { key: check.key, label: check.label, status: 'skipped', reason: `missing env: ${missing.join(', ')}` };

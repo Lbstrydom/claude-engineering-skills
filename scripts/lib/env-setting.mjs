@@ -20,6 +20,7 @@
  */
 
 /** Escape a string for use as a literal inside a RegExp. */
+// @duplicate-justification: target=scripts/lib/cli-io.mjs:escapeRegExp reason=this module documents itself as intentionally dependency-free/pure (no imports) so a second .env mutator can unit-test it in isolation; importing cli-io.mjs (which pulls in node:fs/node:crypto for its own unrelated helpers) would be a backwards coupling for a 2-line utility, so the copy stays local and justified here instead
 function escapeRegExp(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

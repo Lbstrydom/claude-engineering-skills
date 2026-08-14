@@ -1,5 +1,85 @@
 # Project Status Log
 
+## 2026-08-14 — AGENTS.md accepted-debt table gets a V1 mechanical checker
+
+Full chain: `/brainstorm` (OpenAI + Gemini, on why backlogs go stale) →
+synthesis → `/plan` → `/audit-plan` (5 GPT rounds + 1 rebuttal, 3 Gemini
+rounds, APPROVE) → `/cycle --autonomous` implementation → `/audit-code` (6
+GPT rounds — the absolute cap — + 2 Gemini rounds, APPROVE). Plan:
+[accepted-debt-table-verification.md](docs/plans/accepted-debt-table-verification.md),
+now `Complete`.
+
+**What shipped**: `scripts/check-accepted-debt.mjs` verifies the one
+mechanically-checkable row of AGENTS.md's "Accepted Technical Debt" table
+(`readFileOrDie`'s "library context" trigger) via real AST call-site
+resolution (`scripts/lib/import-binding.mjs`'s `resolvesToNamedImport`/
+`resolvesToModuleBinding`, reused rather than reinvented), never a text
+regex. The other five rows are reported as explicitly unverifiable, never
+silently trusted. Registry/table parity (anchor + content fingerprint)
+catches drift between AGENTS.md's prose and the registry's classification.
+Wired into `maintenance-checks.mjs`, opt-in, local-only.
+
+**The plan-audit loop's own most consequential catch was about scope, not
+mechanics**: 5 rounds hardened the predicate's call-shape resolution, error
+handling, and output contract — then Gemini's G2 (a genuine-bug exception
+to its 2-round cap) found that `allowedGlobs: ['scripts/**', ...]` matched
+`scripts/lib/**`, which AGENTS.md's own Architecture section names as
+exactly the "library context" the debt row exists to catch. The predicate
+was blind to its own primary target. Narrowed to `scripts/*.mjs`.
+
+**The code-audit loop's own biggest catch was a scope mistake of a
+different kind**: round 2 found that `check-accepted-debt.mjs`, once wired
+into the SYNCED `maintenance-checks.mjs` orchestrator, would ship to
+consumer repos with a registry hardcoded to this repo's own 6 AGENTS.md
+rows — reporting every row unregistered forever in wine-cellar-app /
+ai-organiser. Fixed by making the CLI + its two lib files source-repo-only
+(excluded from `CLI_SMOKE_SET`/`sync-to-repos.mjs`/`sync-inventory.mjs`,
+with regression-pin tests so the exclusion can't silently regress) and
+gating the shared CHECKS entry with a new `sourceRepoOnly` + `isSourceRepo()`
+predicate (extracted to its own zero-side-effect module, `scripts/lib/
+is-source-repo.mjs`, after round 6 flagged the original as coupled to the
+CLI's own scheduler machinery).
+
+**A literal NUL byte reached committed source once, from my own hand.** An
+early draft of `computeRowFingerprint` joined cells with a literal NUL character instead
+of a plain space; caught only because a later `Grep` call returned "binary file
+matches" on a `.mjs` file. Fixed at the byte level (`Buffer.indexOf(0)`),
+and all 6 registry fingerprints recomputed — they'd already been generated
+against the broken separator. Memory: a literal NUL makes its source file
+binary, and the tell is exactly that "binary file" grep result on a file
+that should never be binary.
+
+**Round 6 (the audit-code absolute cap) produced a HIGH finding that was a
+plain false positive**, then Gemini's round 1 doubled down on it, calling
+my dismissal a hallucination. `scripts/lib/glob-match.mjs` — confused with
+the unrelated `scripts/lib/audit/glob-match.mjs`, which has documented
+DIFFERENT `**` semantics for a different domain — is real, git-tracked,
+committed (`git ls-files`, `git log`, `git show HEAD:<path>` all confirm
+it), and imported successfully by the 12,200+-test suite on every round of
+this audit. Both reviewers made the same category error: a file not in the
+`--changed`/diff scope isn't the same as a file that doesn't exist. Gemini
+accepted the evidence and withdrew the claim on round 2; verdict APPROVE.
+
+**The concurrency-safety lock finding recurred 7 times across 6 GPT rounds
+and never converged** — `AUDIT_LOOP_STATE_DIR` making `maintenance-checks.mjs`'s
+single-instance lock caller-configurable is real, but it's pre-existing
+code (a deliberate test-isolation trade-off, with its own rationale comment
+already in the file, predating this plan) that this plan's one new CHECKS
+entry doesn't create or worsen. Deferred every round with the same
+load-bearing-test reasoning; captured as debt (`.audit/tech-debt.json`,
+now ~150 entries total across this repo).
+
+**23 findings across the plan-audit and code-audit loops were captured as
+debt**, not silently dropped — the largest classes: the pre-existing
+`AUDIT_LOOP_STATE_DIR` lock bug (7 raises), pre-existing `env-setting.mjs`
+dotenv-grammar gaps (6 raises, comment-only diff to that file), and the
+plan's own explicitly-adjudicated "Out of Scope (Future)" items (full
+indirect-call-form soundness, a formal Zod envelope schema) resurfacing
+correctly against the real implementation.
+
+Check chain: 12,264 tests / 0 fail (27 skipped, DB-gated). Consolidated
+code-audit gate: Gemini `APPROVE`.
+
 ## 2026-08-14 — four places that said "done" without having checked
 
 `/cycle --autonomous` end-to-end on
