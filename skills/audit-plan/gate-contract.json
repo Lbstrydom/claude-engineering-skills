@@ -16,6 +16,12 @@
       "id": "final-gate-mandatory",
       "kind": "document-only",
       "reason": "The Gemini final review being MANDATORY after the last round, with the FINAL_GATE_SKIPPED sentinel + Opus/independent-agent fallback ladder when no key is present, is an orchestration invariant the model enacts by following Step 6 — not a CLI exit. A cli-exit recipe cannot assert 'the agent ran the final gate'; the sentinel is agent OUTPUT, not a script's exit code."
+    },
+    {
+      "id": "run-id-arms-verdict-writeback",
+      "kind": "document-only",
+      "stated": "Step 6: --run-id is what ARMS the gemini_verdict write-back; omit it and the gate verdict is recorded nowhere.",
+      "reason": "Same class as mode-plan-required. Omitting --run-id does NOT fail anything: gemini-review.mjs runs normally and simply does not write audit_runs.gemini_verdict, so there is no exit code, refusal or counter for a cli-exit recipe to assert. That silence is precisely the defect the step documents (measured 2026-08-14: 0 of 55 plan runs carried a verdict against 45 of 178 code runs), and the remedy is the model passing the flag, not a mechanical gate. Declaring it document-only is the honest disposition; claiming enforcement would be the false-green this contract file exists to prevent."
     }
   ],
   "ignoredCandidates": [

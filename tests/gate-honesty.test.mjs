@@ -101,7 +101,14 @@ const PINNED_DOCUMENT_ONLY = {
   skills: [],
   // Phase C — mostly-document-only skills (agent-enforced caps / write-gate /
   // judgement calls; no CLI exit the skill states).
-  'audit-plan': ['round-caps', 'mode-plan-required', 'final-gate-mandatory'],
+  // `run-id-arms-verdict-writeback` (2026-08-14): Step 6 states that --run-id
+  // arms the gemini_verdict write-back. Omitting it fails nothing — the review
+  // runs and silently records no verdict — so there is no exit code or refusal
+  // for the closed oracle registry to bind to. Document-only is the honest
+  // disposition; the silence IS the defect the step documents (0 of 55 plan
+  // runs carried a verdict before it), and claiming enforcement would be the
+  // fake-check class this suite exists to catch.
+  'audit-plan': ['round-caps', 'mode-plan-required', 'final-gate-mandatory', 'run-id-arms-verdict-writeback'],
   'security-strategy': ['write-gated-on-round-trip-parse', 'never-include-real-secrets', 'never-inflate-threat-model', 'on-demand-non-blocking'],
   brainstorm: ['artifact-sensitive-path-refusal', 'exit-0-on-provider-failure'],
   'click-test': ['verdict-precedence', 'arg-validation-refusals', 'capability-abort', 'scanner-error-caps'],
@@ -222,7 +229,11 @@ describe('gate-honesty — real skills/', () => {
     //   exit code of its own; the enforcing non-zero exit is in
     //   scripts/cycle-cluster-scope.mjs, pinned against real git repos by
     //   tests/cycle-audit-scope-contract.test.mjs.
-    assert.equal(totalDocOnly, 44);   // +2 ux-lock, +5 ship, +4 cycle, +4 plan (Phase C final — ALL 15 contracted); +1 cycle cluster-start-ref (Phase 5)
+    // 44 → 45: +1 audit-plan (run-id-arms-verdict-writeback, Step 6, 2026-08-14).
+    //   Document-only because omitting --run-id fails nothing — the review runs
+    //   and silently records no gemini_verdict, which is the defect the step
+    //   documents, not a refusal an oracle could bind to.
+    assert.equal(totalDocOnly, 45);   // +2 ux-lock, +5 ship, +4 cycle, +4 plan (Phase C final — ALL 15 contracted); +1 cycle cluster-start-ref (Phase 5)
 
     const allSkillNames = listSkillNames(skillsRoot);
     const expectedUncontracted = allSkillNames.filter((n) => !PINNED_CONTRACTED_SKILLS.includes(n));

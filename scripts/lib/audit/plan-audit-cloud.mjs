@@ -48,8 +48,19 @@ import { openaiConfig } from '../config.mjs';
  * @param {string} [model] - resolved audit model (defaults to the configured one)
  * @returns {number|null} USD, or null when unpriceable/unmetered
  */
-export function planRunCostUsd(result, model = openaiConfig.model) {
-  const usage = result?._usage;
+export function planRunCostUsd(result, model = openaiConfig.model, usageOverride = null) {
+  // `usageOverride` first, and it is the path that actually fires in
+  // production. `result._usage` is NOT set on the in-memory result object:
+  // `openai-audit.mjs` spreads usage onto the OUTPUT artifact
+  // (`{...result, _usage: usage}`) 45 lines AFTER it calls
+  // `completePlanAuditRun`, so reading `result._usage` here always saw
+  // `undefined` and priced every run as null — the very defect this function
+  // was added to fix, still live, with a green unit test beside it because the
+  // test handed the function a payload directly and never exercised the
+  // wiring. Verified against production 2026-08-14: three plan runs recorded
+  // `total_cost_estimate: null` while `planRunCostUsd(<the artifact>)`
+  // returned $0.1267 for the same data.
+  const usage = usageOverride ?? result?._usage;
   if (!usage || typeof usage !== 'object') return null;
   return costFromUsage(usage, model).totalUsd ?? null;
 }
@@ -151,7 +162,7 @@ export async function registerPlanAuditRun({ repoProfile, planFile, runId = null
  * @param {object} result - the plan-audit result (findings already suppressed/enriched)
  * @param {{ round?: number, durationMs?: number|null, costEstimate?: number|null }} [stats]
  */
-export async function completePlanAuditRun(cloudRunId, result, { round = 1, durationMs = null, costEstimate = null } = {}) {
+export async function completePlanAuditRun(cloudRunId, result, { round = 1, durationMs = null, costEstimate = null, usage = null } = {}) {
   if (!cloudRunId || !result || !Array.isArray(result.findings)) return;
   try {
     // Defensive: recordFindings keys on _hash/_primaryFile metadata — the
@@ -175,7 +186,7 @@ export async function completePlanAuditRun(cloudRunId, result, { round = 1, dura
       rounds: round,
       totalFindings: result.findings.length,
       durationMs,
-      costEstimate: costEstimate ?? planRunCostUsd(result),
+      costEstimate: costEstimate ?? planRunCostUsd(result, openaiConfig.model, usage),
     });
   } catch (err) {
     process.stderr.write(`  [learning] plan-run completion failed (non-blocking): ${err.message}\n`);

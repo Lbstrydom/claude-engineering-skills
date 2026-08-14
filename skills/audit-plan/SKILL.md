@@ -409,19 +409,10 @@ node scripts/gemini-review.mjs review <plan-file> .audit/$SID-transcript.json \
 `code`; without it the final gate reviews a not-yet-built plan as if it were
 shipped code and flags the absent implementations.
 
-**`--run-id` is what ARMS the `gemini_verdict` write-back** — omit it and the
-gate's verdict is recorded nowhere. This step omitted it for its whole life, and
-the cost was total: measured 2026-08-14, **0 of 55 plan runs carry a
-`gemini_verdict`** against 45 of 178 code runs. Every plan gate that ever ran —
-including the `CONCERNS` verdicts that sent an author back for another round —
-is invisible in the store, so plan-gate effectiveness cannot be asked at all.
-Read the id off the last round's result artifact (it is `_cloudRunId`, set by
-the plan-audit cloud registration); a plan audit whose cloud run is absent
-(cloud off) simply drops the flag.
-
-```bash
-node -e "console.log(JSON.parse(require('fs').readFileSync('.audit/'+process.argv[1]+'-r<N>-result.json','utf8'))._cloudRunId ?? '')" $SID
-```
+**`--run-id` arms the `gemini_verdict` write-back.** Without it the review still
+runs and simply records no verdict — measured 2026-08-14, 0 of 55 plan runs had
+one against 45 of 178 code runs. The value is `_cloudRunId` on the last round's
+result artifact; when cloud is off it is absent and the flag is dropped.
 
 Verdict handling: `APPROVE` → done. `CONCERNS` → deliberate on findings, edit
 plan, re-run Gemini. `REJECT` → present to user with recommendation.

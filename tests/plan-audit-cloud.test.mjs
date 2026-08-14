@@ -78,6 +78,24 @@ test('planRunCostUsd: unknown is null, never 0 (the anti-green invariant)', () =
   assert.equal(planRunCostUsd({ _usage: REAL_PLAN_USAGE }, '<unpriced-model>'), null);
 });
 
+test('planRunCostUsd: prices from the usage ARGUMENT, because result._usage is never set', () => {
+  // The wiring defect that shipped on 2026-08-14 with a green suite beside it:
+  // openai-audit.mjs spreads usage onto the OUTPUT artifact, not onto the
+  // in-memory result, so `result._usage` is undefined at the moment
+  // completePlanAuditRun runs. Every test above hands the function a payload
+  // directly and therefore proves nothing about production. This one asserts
+  // the shape production actually passes: a result WITHOUT `_usage`, plus the
+  // usage as a separate argument.
+  const resultAsProductionHasIt = { verdict: 'SIGNIFICANT_GAPS', findings: [] };
+  assert.equal(resultAsProductionHasIt._usage, undefined, 'guard: production results carry no _usage');
+  const usd = planRunCostUsd(resultAsProductionHasIt, 'gpt-5.6-terra', REAL_PLAN_USAGE);
+  assert.equal(typeof usd, 'number');
+  assert.ok(usd > 0, `expected a priced run, got ${usd}`);
+  // And the pre-fix call shape must still be null — that is the bug, pinned.
+  assert.equal(planRunCostUsd(resultAsProductionHasIt, 'gpt-5.6-terra'), null,
+    'without the usage argument there is nothing to price — this is what shipped broken');
+});
+
 test('planRunCostUsd: negative control — the assertion can fail', () => {
   // Guards against a vacuous pass: if `costFromUsage` ever started returning 0
   // or null for a priced model, the positive test above must break rather than

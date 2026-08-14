@@ -1130,10 +1130,14 @@ async function main() {
       if (planLinkLost) result._planLinkLost = planLinkLost;
       if (cloudRunId) {
         result._cloudRunId = cloudRunId;
-        // `costEstimate` is deliberately NOT passed: completePlanAuditRun
-        // derives it from `result._usage` itself. Leaving it to the call site
-        // is what made every plan run record a NULL cost (see that function).
-        await completePlanAuditRun(cloudRunId, result, { round, durationMs: Date.now() - startMs });
+        // `usage` is passed EXPLICITLY, not left to be read off `result`:
+        // `_usage` is spread onto the output artifact further down
+        // (`{...result, _usage: usage}`), never onto this in-memory object, so
+        // deriving from `result._usage` here priced every plan run as null.
+        // `costEstimate` is still not passed — the pricing stays owned by
+        // `completePlanAuditRun` so a caller cannot forget it; what the caller
+        // owes is the raw usage, which only it has.
+        await completePlanAuditRun(cloudRunId, result, { round, durationMs: Date.now() - startMs, usage });
         process.stderr.write(`  [learning] plan-audit run registered: ${cloudRunId} (${result.findings.length} findings, round ${round})\n`);
       }
     }
