@@ -271,8 +271,16 @@ describe('KD-4b — Step 3C\'s executable block really passes --files', () => {
   });
 
   it('reads the canonical source, never the generated .claude/ copy', () => {
-    assert.match(SKILL.replace(/\\/g, '/'), /skills\/cycle\/SKILL\.md$/);
-    assert.doesNotMatch(SKILL.replace(/\\/g, '/'), /\.claude\//);
+    // The RELATIVE form is load-bearing, not stylistic. This repo's linked
+    // worktrees live under `.claude/worktrees/<name>/`, so an ABSOLUTE path
+    // carries `.claude/` from the checkout's own location — a
+    // `doesNotMatch(/\.claude\//)` on it passed in the primary tree and failed in
+    // every worktree, on the canonical file it was meant to accept. The invariant
+    // is about where the file sits INSIDE the repo, which is what path.relative()
+    // expresses and what the absolute path cannot.
+    const rel = path.relative(REPO_ROOT, SKILL).replace(/\\/g, '/');
+    assert.equal(rel, 'skills/cycle/SKILL.md',
+      'SKILL must resolve to the canonical source, not the generated .claude/ copy');
   });
 
   it('does NOT present --changed as the scoping mechanism', () => {

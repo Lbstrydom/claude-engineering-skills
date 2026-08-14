@@ -1,5 +1,72 @@
 # Project Status Log
 
+## 2026-08-14 — A path assertion that only held in the primary checkout
+
+Closes the failure the entry below recorded as pre-existing and left standing:
+`cycle-audit-scope-contract` → "reads the canonical source, never the generated
+`.claude/` copy". It asserted `doesNotMatch(SKILL, /\.claude\//)` on an
+**absolute** path. This repo's linked worktrees live under
+`.claude/worktrees/<name>/`, so in a worktree that path reads
+`C:/GIT/claude-engineering-skills/.claude/worktrees/cool-villani-2c47d0/skills/cycle/SKILL.md`
+— it contains `.claude/` because of where the **checkout** sits, not because of
+which file was read. The subject was the canonical `skills/cycle/SKILL.md`, i.e.
+exactly what the test wanted. Green in the primary checkout, red in all five
+linked worktrees, which reads as "main is red" to whoever is working in one.
+
+Fixed by asserting on `path.relative(REPO_ROOT, SKILL)`, which is what the
+invariant *means* — where the file sits inside the repo, not the ancestry of the
+tree it was resolved through. The generalisation is worth more than the fix: a
+repo-root-derived absolute path smuggles the checkout's own location into every
+pattern you match against it, and this repo keeps its worktrees under a
+directory the test was written to reject.
+
+Both assertions collapsed into one `assert.equal` on the relative path. The old
+pair was weaker than it looked: `assert.match(…, /skills\/cycle\/SKILL\.md$/)`
+accepts `.claude/skills/cycle/SKILL.md` just as happily, so the buggy
+`doesNotMatch` had been carrying the whole contract alone — the fix removes that
+asymmetry rather than preserving it.
+
+**Verification** (all figures measured in this worktree, 2026-08-14) —
+`node --test tests/cycle-audit-scope-contract.test.mjs`: **26/26**, was 25/26.
+`npm test`: **12,247 tests / 0 fail / 27 skipped / 149s**, exit 0 — recording
+the skip count so a future run can tell a moved one from a stable one. No
+comparison is claimed against the 12,175 figure in the entry below: that was
+measured on a different tree and the +72 delta is unexplained, not attributed
+here. Three controls, because a location assertion is exactly the kind that
+passes vacuously:
+
+- **Negative control** — repointing `SKILL` at `.claude/skills/cycle/SKILL.md`
+  fails **1 of 26**, and it is this subtest
+  (`actual: '.claude/skills/cycle/SKILL.md'` vs `expected: 'skills/cycle/SKILL.md'`).
+  Load-bearing: the other four KD-4b subtests stay **green** against the
+  generated copy, whose content and delimited command block are identical. This
+  one assertion is the only thing standing between the suite and validating the
+  generated artifact.
+- **Old assertion, this worktree** — fails, reproducing the report.
+- **Old assertion, primary checkout** — passes, confirming the split was in the
+  checkout location and not in the change.
+
+Swept the repo for siblings of the class (an assertion matching a
+repo-location pattern against an absolute path): no others.
+`tests/sync-gitattributes.test.mjs:65` matches a literal relative string and is
+unaffected.
+
+**Ship gates** — 0.5b: 38 code / 52 plan unlocked, `agedOut 0` (228
+`prePractice`, written off 2026-08-11, not an obligation). 0.5e: 61 open
+acceptances / 42 accepted-permanent, `agedOut 0`, `notYetDue` 232 — nothing
+lost to either bound this cycle. 0.5h: upstream queue empty. 0.5c
+(arch-memory refresh) **skipped deliberately**: the change introduces no
+symbol — it edits assertions inside an existing test — and the map it
+regenerates is Category A, never committed.
+
+**Consumer-side verification**: `unverified` — blocked prerequisite: no network
+egress to re-clone the pushed sha from this environment, and no consumer
+checkout on this machine was refreshed in this session. Scope bound instead:
+the change reaches no consumer bundle — `tests/` is not in the sync closure
+([sync-path-map.mjs:29](scripts/lib/sync-path-map.mjs:29)), whose sole
+exception is the named `tests/fixtures/expected-schema.json`, which this
+change does not touch.
+
 ## 2026-08-14 — Deferrals reach the next round's prompt; the existence gate reaches the final reviewer
 
 Two audit-loop holes, both found by asking why a repeat repeated. No audit
