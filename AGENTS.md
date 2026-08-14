@@ -821,6 +821,10 @@ from the pre-push hook when overdue, **not** an OS scheduler (avoids the
 wrong-PATH/cwd/asleep-at-trigger failure class). Enable via `setup.mjs` Step 4
 or `AUDIT_LOOP_WEEKLY_MAINTENANCE=1`. Detail: [`docs/runbooks/local-maintenance-checks.md`](docs/runbooks/local-maintenance-checks.md).
 
+**Sibling tool**: `npm run runner:doctor` tests whether the current `gh`
+identity can self-serve a repo-scoped self-hosted runner, printing the setup
+recipe or this fallback. Detail: [`docs/runbooks/actions-runner-doctor.md`](docs/runbooks/actions-runner-doctor.md).
+
 ## Azure AI Foundry Work Profile
 
 Run the **same** bundle in a corporate Azure environment (restricted models)

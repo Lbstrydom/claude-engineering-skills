@@ -467,6 +467,14 @@
       "description": "Apply 'require branches up to date before merging' to a repo's existing main-branch ruleset (never creates protection where none exists). Needs gh CLI + admin.",
       "category": "diagnostic"
     },
+    "runner:doctor": {
+      "description": "For a repo hitting the GHE 'hosted runners disabled' block: test whether the current gh identity can self-serve a repo-scoped self-hosted runner, and print the setup recipe or the local-maintenance-checks fallback.",
+      "category": "diagnostic"
+    },
+    "runner:doctor:json": {
+      "description": "runner:doctor, machine-readable output.",
+      "category": "diagnostic"
+    },
     "requirements:map": {
       "description": "Regenerate docs/requirements-map.md from .requirements/ledger.json.",
       "category": "plans"

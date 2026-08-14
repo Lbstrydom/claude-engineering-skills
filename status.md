@@ -1,5 +1,45 @@
 # Project Status Log
 
+## 2026-08-14 — Self-hosted-runner fallback doctor, for the "GHE hosted runners disabled" class
+
+A work-repo hit "GitHub Actions hosted runners are disabled for this repository" on
+a required `phase-gates` check. Worked through the decision tree live against a
+real GHE org (Wärtsilä): confirmed self-hosted registration is allowed at the repo
+level (smoke-tested with a temporary Windows runner, then deregistered and cleaned
+up), explored Azure AI Foundry and AWS ECS as host candidates for a persistent
+org-level runner — both blocked short-term (Azure needs a fresh RBAC grant plus an
+unreadable centrally-managed TGW egress path; the AWS account had no ECS at all and
+needs the same egress answer from the network team) — and landed on a repo-scoped
+self-hosted runner as the immediate unblock while the org-level ask and hosting
+decision stay pending.
+
+Generalized the diagnostic half into a real feature so a future occurrence (in this
+repo or a consumer) doesn't need to re-derive it by hand:
+
+- `npm run runner:doctor` (`scripts/actions-runner-doctor.mjs` +
+  `scripts/lib/runner-fallback.mjs`) — tests whether the current `gh` identity can
+  self-serve a repo-scoped self-hosted runner via a real, short-lived
+  registration-token request (the capability test IS the probe), and prints either
+  the setup recipe (live-resolved `actions/runner` release/asset — no hardcoded
+  version to go stale) or a pointer at the existing `local-maintenance-checks.md`
+  fallback. Deliberately does NOT try to detect the hosted-runner block itself — no
+  GHE API exposes that policy; it assumes the operator already hit the annotation
+  and answers the next question.
+- Verified end-to-end against this repo: real registration token requested,
+  live-resolved `v2.336.0` win-x64 asset URL, correct recipe printed, both human
+  and `--json` output modes checked.
+- Registered in the sync manifest (`sync-to-repos.mjs` / `sync-inventory.mjs`) so it
+  ships to consumers; `scripts/.cli-catalog.json` entry added (the dashboard
+  catalog-coverage regression gate caught the miss on first pass); runbook at
+  `docs/runbooks/actions-runner-doctor.md`; short AGENTS.md stub pointer next to
+  the sibling Local Weekly Maintenance Checks section.
+
+**Pre-existing backlog noted, not touched.** Ship-time advisory gates surfaced 92
+unlocked-fix rows and 74 unremediated-acceptance rows, all pre-dating this session
+(oldest 2026-07-17) and none touching the files this change modified. Left alone
+per scope discipline — logged here so the count isn't silently absorbed into an
+unrelated ship.
+
 ## 2026-08-14 — A dismissed finding re-raised, and the reopen flag that could never be set
 
 Investigating why R2+ suppression let a re-raise through during a live

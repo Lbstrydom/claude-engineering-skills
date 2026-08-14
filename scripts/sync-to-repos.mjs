@@ -310,6 +310,13 @@ const CORE_ENTRY = [
   // consumers (a cloned consumer self-applies via `npm run protect:main:apply`).
   // Walker pulls in lib/branch-protection.mjs automatically.
   'scripts/ensure-branch-protection.mjs',
+  // Self-hosted-runner fallback doctor — for a consumer whose GHE org
+  // disables GitHub-hosted Actions runners, tests whether THIS identity can
+  // register a self-hosted runner on THIS repo and prints the choice (setup
+  // recipe, or the local-maintenance-checks pre-push-hook fallback). A
+  // standalone CLI nothing imports. Walker pulls in lib/runner-fallback.mjs
+  // automatically.
+  'scripts/actions-runner-doctor.mjs',
   // One-shot operator reconcile of fragmented audit_repos rows in the shared
   // store. A standalone CLI nothing imports, but it carries --selfcheck-relocation
   // AND is in the relocation guard's CLI_SMOKE_SET (which asserts consumer

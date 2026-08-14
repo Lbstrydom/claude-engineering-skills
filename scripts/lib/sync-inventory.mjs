@@ -62,6 +62,9 @@ const CORE_ENTRY = [
   // audit_repos identity reconcile, tiered-shadow report reader). Authoritative
   // list is sync-to-repos.mjs; keep in lock-step.
   'scripts/ensure-branch-protection.mjs',
+  // Self-hosted-runner fallback doctor. Authoritative list is
+  // sync-to-repos.mjs; keep in lock-step.
+  'scripts/actions-runner-doctor.mjs',
   'scripts/reconcile-repo-identity.mjs',
   'scripts/tiered-shadow-report.mjs',
   '.claude/hooks/quickfix-scan.mjs',

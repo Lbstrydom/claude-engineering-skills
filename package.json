@@ -132,6 +132,8 @@
     "audit:clean:apply": "node scripts/audit-clean.mjs --apply",
     "protect:main": "node scripts/ensure-branch-protection.mjs",
     "protect:main:apply": "node scripts/ensure-branch-protection.mjs --apply",
+    "runner:doctor": "node scripts/actions-runner-doctor.mjs",
+    "runner:doctor:json": "node scripts/actions-runner-doctor.mjs --json",
     "arch:coverage-gate": "node scripts/arch-coverage-gate.mjs",
     "db:check-rls:gate": "node scripts/check-rls.mjs --gate",
     "skills:check-surface": "node scripts/check-stale-skill-surface.mjs --gate --source-surfaces",
