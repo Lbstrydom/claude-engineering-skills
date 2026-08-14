@@ -318,6 +318,11 @@
       "domain": "shared-lib"
     },
     {
+      "_why": "EXPLICIT shared-lib claim, added 2026-08-14 (final-review-scoped-second-reviewer plan, Cluster A) so the domain is DECIDED rather than defaulted — same shape as the 2026-08-13 six-subsystem rule above (tests/domain-map-subsystem-coverage.test.mjs). VERIFIED at source before claiming: envelope.mjs, gap-projection.mjs and scope.mjs have ZERO import statements — pure, self-contained modules (envelope.mjs's own docstring: 'Pure: no fs, no env, no I/O'), so shared-lib is correct on the evidence, stronger than the precedent's 'shared-lib primitives only' bar. Adding the directory without this rule would have let it fall through to the scripts/lib/** catch-all silently, the same shape that produced 10 layering violations on 2026-08-12.",
+      "pattern": "scripts/lib/final-review/**",
+      "domain": "shared-lib"
+    },
+    {
       "pattern": "scripts/lib/**",
       "domain": "shared-lib"
     },
