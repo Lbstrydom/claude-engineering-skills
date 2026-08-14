@@ -68,9 +68,24 @@ cluster. One correction to yesterday's characterisation: the audit read 9 files
 against a declared 5, and that is not a leak — `mergeScopeFiles` unions
 plan-referenced files with the `--files` allowlist by design.
 
-**Backlog**: the triage that produced this plan closed 7 stale rows (74 → 67);
-this change closes 4 more, and one refuted row remains to be closed as stale.
-Roughly a quarter of the sampled backlog was already-fixed-never-closed.
+**Backlog**: 74 → 61 across the session. The triage closed 7 already-fixed-never-
+closed rows, this change closed 5 more as genuinely remediated, and one was
+dismissed as refuted. Roughly a quarter of the sampled backlog was stale.
+
+**Correction, recorded because the first pass got it wrong.** `visual/contract.mjs`
+had TWO open rows, not one. The HIGH (a4da09e7) IS refuted and is now
+**dismissed**: `writeContract` calls `atomicWriteFileSync(..., { exclusive: !force })`
+and catches EEXIST, and its `existsSync` is documented in-source as a
+"non-authoritative fast path" — the guarantee is enforced at the write, so the
+finding describes code that predates that fix. The store has no
+"declined on the merits" state, but `dismissed` is the honest verb here: it was
+not a real defect in current code.
+
+The MEDIUM (89c00c27) is a DIFFERENT claim and is **still live** — left open
+deliberately. That catch handles EEXIST and re-throws everything else, while the
+JSDoc declares `@returns {{ok, path, error?}}` with no mention of throwing, so a
+permission or disk error escapes as an exception to a caller expecting a result
+object. Small, real, and not what this session set out to fix.
 
 ## 2026-08-14 — /cycle told you to scope with a flag that does not scope
 
