@@ -1,5 +1,74 @@
 # Project Status Log
 
+## 2026-08-14 (latest) — a fix that shipped inert, and a green test that agreed with it
+
+Telemetry first. Plan-mode audit runs had never recorded a cost —
+**0 of 55 priced** against 136 of 178 code runs — because
+`openai-audit.mjs`'s cloud block never passed `costEstimate`. Same one-line
+class as the code-mode bug fixed on 08-08, in the sibling path. The fix moved
+the pricing *into* `completePlanAuditRun` so no caller could forget it.
+
+It priced nothing. `openai-audit.mjs` calls that function at `:1136` and
+attaches usage to the **output artifact** at `:1181` — `{...result, _usage:
+usage}`, 45 lines later, never onto the in-memory result. So `result._usage`
+was `undefined` at call time and every run still stored `null`. The unit test
+passed the whole way through because it handed the function a payload directly:
+it proved the arithmetic and nothing about the wiring. Caught only by checking
+production — three plan runs recorded `null` while `planRunCostUsd(<their own
+artifact>)` returned `$0.1267` for the same data. `usage` is now passed
+explicitly, and a test asserts the shape production actually passes (a result
+*without* `_usage`), with the pre-fix call pinned as null. Live confirmation:
+run `f1a5545e` → **$0.169**, the first plan run ever priced.
+
+The companion `--run-id` fix worked first time: this session's plan gate wrote
+`gemini_verdict: REJECT` — the first plan-gate verdict in the store, against 0
+of 55 before.
+
+Earlier in the day, the campaign side. Two live defects, both found by running
+one snapshot before twelve. `isComplete(entry)` defaulted to `resolveArms({})`
+with no campaign id; with two committed campaigns that throws by design, and
+the catch degraded to `LEGACY_ARMS` — which contains `solo-opus`, an arm the
+scoped campaign does not have. Every snapshot would have been judged
+**INCOMPLETE forever**: twelve paid collections counting zero, while the readout
+quoted an arm from the other campaign and omitted `grok` and `gemini-control`
+entirely. A fallback that answers a question it could not resolve.
+
+Four arms now collect (`opus`, `kimi`, `grok`, plus `gemini-control` as a new
+`type: "control"` — collected, never scored, because Gemini is the incumbent
+primary and the same model on both gates has correlated failure modes). The
+control arm pins `gemini-pro-latest`: the bare token `gemini` resolves to
+`gemini`, which is not a model, so it would have 404'd on every snapshot and
+read as a useless model rather than a broken arm.
+
+**Measured, and worse than the readout says**: 4 snapshots attempted, 1
+complete. Different arm failed each time (`exit 1`). Real spend **$7.10**, of
+which **$4.16 bought nothing** — the progress line reported `$2.94` because it
+sums only complete snapshots. Thin envelope costs $2.94/snapshot vs ~$5.85
+full, so N=12 is ~$35 if incomplete spend stops being invisible.
+
+Finally, `docs/plans/role-agnostic-comparison-core.md` (Draft). The ask was to
+compare models for the auditor role too, without hardcoded arms. Tracing it
+found the capability already built **twice**, in two places that do not import
+each other: `ROLES = ['auditor','adjudicator']` in `model-eval/contracts.mjs`
+and `role: z.enum(['final_review_shadow'])` in `campaign/config.mjs`. Widening
+the campaign enum would have made a third vocabulary *and* added the sixth
+passive collector AGENTS.md forbids by name. So the core generalises and the
+collector does not.
+
+Audited to both caps — GPT 3 rounds, Gemini 2, **30 findings, 30 accepted**.
+The final gate returned **REJECT**, and earned it: the shared scalar
+`evaluateFloor` those rounds built cannot express the auditor's
+`minRecall`/`minF1` floor (verified — `ORACLE_FLOOR_KEYS` is real), and the
+realpath-everything path rule I added as a security fix would have broken the
+adjudicator's historical `git show` reads (verified — `campaign.mjs` really does
+read at `audited_sha`). Both fixes make the design *smaller*. The recurring
+shape across all of it, four separate times: **fixed for one sibling, not the
+other.**
+
+Status stays Draft — both caps are spent, so the REJECT fixes have had no
+independent review. Next step is `/cycle`'s code audit against a real
+implementation, not a third gate round.
+
 ## 2026-08-14 — Self-hosted-runner fallback doctor, for the "GHE hosted runners disabled" class
 
 A work-repo hit "GitHub Actions hosted runners are disabled for this repository" on
