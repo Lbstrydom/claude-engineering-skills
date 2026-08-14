@@ -34,7 +34,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { resolveAndClassify } from '../sensitive-paths.mjs';
+import { resolveAndClassify, classifyPath } from '../sensitive-paths.mjs';
 import { gitShowFileAtRevision } from '../vcs.mjs';
 
 /** Thrown for every refusal. Carries a machine-readable `reason`. */
@@ -152,8 +152,34 @@ export function resolveLocalPath(rel, { repoRoot } = {}) {
  * @returns {PathHandle & {present: boolean}}
  */
 export function resolveGitPath(rel, { repoRoot, rev } = {}) {
-  if (typeof repoRoot !== 'string' || !repoRoot) throw new TypeError('[comparison/paths] repoRoot is required');
   if (typeof rev !== 'string' || !rev) throw new TypeError('[comparison/paths] rev is required for a historical read');
+  const norm = assertGitPathAdmissible(rel, { repoRoot });
+  // Signature is (cwd, revision, filePath) — positional. Verified against
+  // scripts/lib/vcs.mjs rather than assumed; a transposed argument here would
+  // return a structured failure that reads exactly like "absent at that
+  // revision", turning a wiring bug into a false `unverifiable`.
+  const shown = gitShowFileAtRevision(repoRoot, rev, norm);
+  return Object.freeze({ ...makeHandle('git', norm, null, rev), present: Boolean(shown?.ok) });
+}
+
+/**
+ * The ADMISSION half of a historical read, with no git call and no filesystem
+ * touch — pure policy: is this path one we are willing to read at all?
+ *
+ * Separate from `resolveGitPath` because presence and admissibility are
+ * different questions, and conflating them breaks callers that own the read.
+ * `campaign.mjs::resolveCitedSources` takes an INJECTABLE `show` so its tests
+ * can drive synthetic revisions; folding a real `git show` into the admission
+ * check silently bypassed that injection and made seven tests fail against a
+ * fake revision the real repo has never heard of. Admission must be answerable
+ * without knowing whether the blob exists.
+ *
+ * @param {string} rel
+ * @param {{repoRoot: string}} opts
+ * @returns {string} the normalised repo-relative path
+ */
+export function assertGitPathAdmissible(rel, { repoRoot } = {}) {
+  if (typeof repoRoot !== 'string' || !repoRoot) throw new TypeError('[comparison/paths] repoRoot is required');
   if (typeof rel !== 'string' || rel.length === 0) {
     throw new PathRefusedError('missing', '[comparison/paths] path must be a non-empty string');
   }
@@ -168,22 +194,25 @@ export function resolveGitPath(rel, { repoRoot, rev } = {}) {
     throw new PathRefusedError('escapes-repo',
       `[comparison/paths] "${rel}" escapes the repository root — refusing`);
   }
-  // Sensitive classification is lexical here BY NECESSITY: the target lives in
-  // history, not on disk, so there is no realpath to take. That is sound
-  // because git tracks no symlink we would follow — a symlink at that revision
-  // is a blob whose CONTENT is the target, and reading it yields the link text,
-  // never the pointee.
-  const verdict = resolveAndClassify(norm, { repoRoot });
-  if (verdict.category === 'sensitive') {
+  // LEXICAL classification, and `classifyPath` NOT `resolveAndClassify` — the
+  // distinction is the whole point of this function existing separately.
+  //
+  // `resolveAndClassify` realpaths and fail-closes: a path absent from the
+  // CURRENT working tree resolves nowhere and comes back `sensitive`. For a
+  // historical read that is exactly backwards — the file legitimately may not
+  // exist now, which is the case this seam is built to serve. Calling it here
+  // reintroduced the current-filesystem dependency through the classifier and
+  // turned every citation to a since-moved file into a spurious
+  // `sensitive-path` refusal (caught by seven existing citation tests).
+  //
+  // Lexical is SOUND here, not a compromise: git tracks no symlink this could
+  // follow. A symlink at that revision is a blob whose CONTENT is the target,
+  // so reading it yields the link text, never the pointee — the traversal
+  // INC-001 closed is unreachable through `git show`.
+  if (classifyPath(norm) === 'sensitive') {
     throw new PathRefusedError('sensitive',
       `[comparison/paths] "${rel}" classifies as sensitive — refusing (INC-001)`);
   }
 
-  // Signature is (cwd, revision, filePath) — positional. Verified against
-  // scripts/lib/vcs.mjs rather than assumed; a transposed argument here would
-  // return a structured failure that reads exactly like "absent at that
-  // revision", turning a wiring bug into a false `unverifiable`.
-  const shown = gitShowFileAtRevision(repoRoot, rev, norm);
-  const present = Boolean(shown?.ok);
-  return Object.freeze({ ...makeHandle('git', norm, null, rev), present });
+  return norm;
 }

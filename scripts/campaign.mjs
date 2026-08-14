@@ -49,8 +49,8 @@ import { evaluateCampaign, assessThresholdSensitivity } from './lib/campaign/ver
 import { resolveArms, readLog } from './bakeoff-collect.mjs';
 import { matchFindings, affectedFilesOf } from './lib/finding-match.mjs';
 import { findingMatchConfig, FINDING_MATCH_SCHEMA_VERSION } from './lib/config.mjs';
-import { classifyPath } from './lib/sensitive-paths.mjs';
 import { gitShowFileAtRevision, gitBlobSizeAtRevision } from './lib/vcs.mjs';
+import { assertGitPathAdmissible } from './lib/comparison/paths.mjs';
 import { resolveModel } from './lib/model-resolver.mjs';
 import { costFromUsage } from './lib/model-pricing.mjs';
 import { createAnthropicClient } from './lib/anthropic-client.mjs';
@@ -269,12 +269,27 @@ export function resolveCitedSources({
   const sources = [];
   let resolvedAny = false;
   for (const p of paths) {
-    if (classifyPath(p) === 'sensitive') {
-      sources.push({ path: p, resolved: false, reason: 'sensitive-path' });
-      continue;
-    }
-    if (path.isAbsolute(p) || p.split('/').includes('..')) {
-      sources.push({ path: p, resolved: false, reason: 'path-escapes-repo' });
+    // Admission is delegated to `comparison/paths.mjs::resolveGitPath` — the
+    // SINGLE resolver for comparison paths (2026-08-14). The two checks that
+    // used to sit inline here (a lexical `classifyPath` and an
+    // absolute/`..` test) were a second implementation of exactly that policy,
+    // and a second implementation is how one of them later misses a case the
+    // other learned. The reasoning that was in this block is preserved in that
+    // module: a historical read must NOT be realpath'd, because realpath
+    // resolves against the CURRENT filesystem and would refuse a legitimate
+    // read whenever a cited file moved after its snapshot.
+    //
+    // The structured-result contract is unchanged — refusals still arrive as
+    // `{resolved:false, reason}` rather than throwing, because one bad cited
+    // path must not abort the other citations in the same finding.
+    // The ADMISSION half only — no git call. This function owns the read via
+    // its injectable `show`, and folding a real `git show` into the check would
+    // bypass that injection (it did, and seven tests caught it).
+    try {
+      assertGitPathAdmissible(p, { repoRoot });
+    } catch (err) {
+      const reason = err?.reason === 'sensitive' ? 'sensitive-path' : 'path-escapes-repo';
+      sources.push({ path: p, resolved: false, reason });
       continue;
     }
     // Bound the INPUT, not just the output. The excerpt is capped in lines and
