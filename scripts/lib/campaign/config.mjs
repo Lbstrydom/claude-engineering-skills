@@ -41,8 +41,39 @@ const ArmSchema = z.object({
   id: z.string().regex(ARM_ID_PATTERN, 'arm id must match ^[a-z0-9][a-z0-9-]{0,63}$ (max 64 chars) — it is a receipt filename component'),
   model: z.string().min(1),
   mode: z.enum(['shadow', 'primary']),
-  type: z.literal('replicate').optional(),
+  type: z.enum(['replicate', 'control']).optional(),
 }).strict();
+
+/**
+ * Does this arm compete for the decision? The SINGLE oracle for that question.
+ *
+ * Two kinds of arm are collected but never scored, and they are not the same
+ * thing:
+ *  - **`replicate`** — the SAME model as a scored arm, run again, to read
+ *    within-model reroll variance. Must duplicate a scored arm's model
+ *    (enforced below); a replicate of nothing is a mislabelled scenario.
+ *  - **`control`** — a DIFFERENT model included to calibrate what the
+ *    comparison means, not to win it. The motivating case (2026-08-14): the
+ *    incumbent primary reviewer is Gemini, and running Gemini in the shadow
+ *    slot separates "is Opus the better second reviewer" from "is a fresh
+ *    second look worth anything at all". It must never be scored, because the
+ *    same model on both gates has correlated failure modes — the property a
+ *    second gate exists to avoid — so a control that could win the slot would
+ *    be recommending exactly the configuration the design rejects.
+ *
+ * Four sites re-derived `a.type !== 'replicate'` inline before this existed
+ * (two here, two in verdict.mjs). Adding a second non-scored type to four
+ * independent copies is how one gets missed and a control silently enters the
+ * standings, so the predicate is exported and those sites now call it. The
+ * comment below this once warned that the check "must widen" — this is that
+ * widening, done once rather than four times.
+ *
+ * @param {{type?: string}} arm
+ * @returns {boolean} true when the arm's findings count toward the verdict
+ */
+export function isScoredArm(arm) {
+  return arm?.type !== 'replicate' && arm?.type !== 'control';
+}
 
 /**
  * The pre-flight ATTESTATION a campaign manifest cites when it declares an
@@ -131,12 +162,13 @@ function semanticRules(cfg, ctx) {
     seen.add(arm.id);
   }
 
-  const nonReplicates = cfg.arms.filter((a) => a.type !== 'replicate');
+  const nonReplicates = cfg.arms.filter(isScoredArm);
   const replicates = cfg.arms.filter((a) => a.type === 'replicate');
 
-  // One arm is not a comparison.
+  // One arm is not a comparison. Counts SCORED arms only — a campaign of one
+  // candidate plus a control still compares nothing.
   if (nonReplicates.length < 2) {
-    issue(`a campaign needs >= 2 non-replicate arms (got ${nonReplicates.length}) — one arm is not a comparison`, ['arms']);
+    issue(`a campaign needs >= 2 scored arms (got ${nonReplicates.length}; replicate/control arms do not count) — one arm is not a comparison`, ['arms']);
   }
 
   // AT MOST one primary, not exactly one — a stale version of this comment
@@ -151,23 +183,28 @@ function semanticRules(cfg, ctx) {
     issue(`at most one arm may be mode:"primary" (got ${primaries.length}: ${primaries.map((a) => a.id).join(', ')})`, ['arms']);
   }
 
-  // A "replicate" of nothing is a mislabelled scenario. Controls are
-  // campaign-level, so every arm shares them by construction and the test
-  // reduces to the model — if per-arm control overrides are ever added, this
-  // must widen to compare them too.
+  // A "replicate" of nothing is a mislabelled scenario. (`controls` here means
+  // the campaign-level dials block, which every arm shares by construction, so
+  // the test reduces to the model — if per-arm dial overrides are ever added,
+  // this must widen to compare them too. Not to be confused with a
+  // `type: 'control'` ARM, which is deliberately exempt: naming a model no
+  // scored arm uses is the entire point of one.)
   const nonReplicateModels = new Set(nonReplicates.map((a) => a.model));
   for (const [i, arm] of cfg.arms.entries()) {
     if (arm.type === 'replicate' && !nonReplicateModels.has(arm.model)) {
-      issue(`replicate arm "${arm.id}" names model "${arm.model}", which no non-replicate arm uses — a replicate of nothing is a mislabelled scenario`, ['arms', i, 'model']);
+      issue(`replicate arm "${arm.id}" names model "${arm.model}", which no scored arm uses — a replicate of nothing is a mislabelled scenario`, ['arms', i, 'model']);
     }
   }
 
   // The incumbent must be a real, comparable participant.
   const incumbentArms = nonReplicates.filter((a) => a.model === cfg.decision.incumbent);
   if (incumbentArms.length === 0) {
-    issue(`decision.incumbent "${cfg.decision.incumbent}" names no non-replicate arm's model (available: ${[...nonReplicateModels].join(', ') || 'none'})`, ['decision', 'incumbent']);
+    // Scored arms only — naming a control as the incumbent would make the
+    // baseline something the campaign refuses to score, so every comparison
+    // against it would be against an absent number.
+    issue(`decision.incumbent "${cfg.decision.incumbent}" names no scored arm's model (available: ${[...nonReplicateModels].join(', ') || 'none'}; replicate/control arms are not eligible)`, ['decision', 'incumbent']);
   } else if (incumbentArms.length > 1) {
-    issue(`decision.incumbent "${cfg.decision.incumbent}" matches ${incumbentArms.length} non-replicate arms (${incumbentArms.map((a) => a.id).join(', ')}) — the incumbent must be unambiguous`, ['decision', 'incumbent']);
+    issue(`decision.incumbent "${cfg.decision.incumbent}" matches ${incumbentArms.length} scored arms (${incumbentArms.map((a) => a.id).join(', ')}) — the incumbent must be unambiguous`, ['decision', 'incumbent']);
   }
 
   // Unused here, referenced by the digest below — keep them in one place so a

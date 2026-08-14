@@ -681,9 +681,34 @@ describe('resolveArms — selection is a refusal, never a silent fallback', () =
   it('derives from the NEW scoped campaign, with the scoped controls intact', () => {
     const r = resolveArms({ campaignId: 'final-review-scoped-2026q3' });
     assert.equal(r.source, 'campaign:final-review-scoped-2026q3');
-    assert.deepEqual(r.arms.map((a) => a.id).sort(), ['grok', 'kimi', 'opus']);
+    // `gemini-control` joined on 2026-08-14 as a declared CONTROL arm — Gemini
+    // is the incumbent primary reviewer, so running it in the shadow slot
+    // separates "is Opus the better second reviewer" from "is a fresh second
+    // look worth anything at all".
+    assert.deepEqual(r.arms.map((a) => a.id).sort(), ['gemini-control', 'grok', 'kimi', 'opus']);
     assert.equal(r.config.controls.envelopeScope, 'thin');
     assert.equal(r.config.controls.preflight.disposition, 'pass');
+  });
+
+  it('the control arm is COLLECTED but not scored, and pins a concrete model', () => {
+    const r = resolveArms({ campaignId: 'final-review-scoped-2026q3' });
+    const control = r.arms.find((a) => a.id === 'gemini-control');
+    assert.ok(control, 'the control arm must still be collected — it is evidence, just not a candidate');
+    // On a DERIVED arm, `replicate` means "collected but not scored": it gates
+    // neither completeness nor the standings. If this flips to false the
+    // control starts gating snapshot completeness and can enter the verdict —
+    // the two things a control must never do.
+    assert.equal(control.replicate, true, 'a control must be excluded from scoring and completeness');
+    // The three scored arms are unaffected.
+    for (const id of ['opus', 'kimi', 'grok']) {
+      assert.equal(r.arms.find((a) => a.id === id).replicate, false, `${id} must remain a scored arm`);
+    }
+    // Concrete id, not the bare family token: the gemini branch of
+    // `transportForModel` forwards its model verbatim, and `resolveModel`
+    // passes 'gemini' through unchanged, so the bare token would ship a
+    // nonexistent model id and 404 on every snapshot.
+    assert.equal(control.env.FINAL_REVIEW_SHADOW_MODEL, 'gemini-pro-latest');
+    assert.equal(control.env.FINAL_REVIEW_SHADOW, 'gemini');
   });
 
   it('the REAL `.campaigns/` directory is ambiguous with no --campaign — refuses, names both', () => {

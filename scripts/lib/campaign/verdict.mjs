@@ -31,7 +31,7 @@
  * @module scripts/lib/campaign/verdict
  */
 
-import { MIN_TARGET_N } from './config.mjs';
+import { MIN_TARGET_N, isScoredArm } from './config.mjs';
 
 /** §5. Terminal states are `INCONCLUSIVE` and `SUPERSEDED`. */
 export const CAMPAIGN_STATES = Object.freeze([
@@ -359,7 +359,7 @@ export function assessThresholdSensitivity({ config, snapshots = [], variants = 
   if (!variants.length) {
     return { assessed: false, invariant: null, outcomes: [], reason: 'no variants supplied' };
   }
-  const nonReplicate = config.arms.filter((a) => a.type !== 'replicate');
+  const nonReplicate = config.arms.filter(isScoredArm);
   const armIds = nonReplicate.map((a) => a.id);
   const incumbent = nonReplicate.find((a) => a.model === config.decision.incumbent);
   if (!incumbent) throw new Error('[campaign/verdict] sensitivity needs a declared incumbent arm');
@@ -540,7 +540,7 @@ export function evaluateCampaign(input) {
     ruleChangedAfterFirstArmRun = false, sensitivity = null,
   } = input;
 
-  const nonReplicate = config.arms.filter((a) => a.type !== 'replicate');
+  const nonReplicate = config.arms.filter(isScoredArm);
   const armIds = nonReplicate.map((a) => a.id);
   const incumbentArm = nonReplicate.find((a) => a.model === config.decision.incumbent);
   // The config schema guarantees exactly one incumbent arm; a missing one here

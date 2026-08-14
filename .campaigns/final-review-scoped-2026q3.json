@@ -6,7 +6,8 @@
   "arms": [
     { "id": "opus", "model": "claude-opus", "mode": "shadow" },
     { "id": "kimi", "model": "moonshotai/kimi-k2-thinking", "mode": "shadow" },
-    { "id": "grok", "model": "grok-4.6", "mode": "shadow" }
+    { "id": "grok", "model": "grok-4.6", "mode": "shadow" },
+    { "id": "gemini-control", "model": "gemini-pro-latest", "mode": "shadow", "type": "control" }
   ],
   "controls": {
     "reasoningEffort": "high",

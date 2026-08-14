@@ -36,7 +36,7 @@ import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { costFromUsage, PRICING_VERSION } from './lib/model-pricing.mjs';
 import { isXaiModel } from './lib/model-resolver.mjs';
-import { canonicalJson, selectCampaignConfig } from './lib/campaign/config.mjs';
+import { canonicalJson, selectCampaignConfig, isScoredArm } from './lib/campaign/config.mjs';
 import { computeLockDigest } from './lib/campaign/lock.mjs';
 
 const KNOWN_FLAGS = Object.freeze([
@@ -205,7 +205,14 @@ export function transportForModel(model) {
 export function deriveArms(config) {
   return Object.freeze(config.arms.map((arm) => {
     const t = transportForModel(arm.model);
-    const replicate = arm.type === 'replicate';
+    // `replicate` on a DERIVED arm means "collected but not scored" — it gates
+    // neither completeness nor the standings. Two declared types now have that
+    // property (`replicate` and `control`), so it is derived from the single
+    // `isScoredArm` oracle rather than re-tested against one literal here. The
+    // literal test silently gave a control arm `replicate: false`, which would
+    // have let a deliberately-unscored arm gate snapshot completeness — the
+    // campaign would then stall waiting for a result it must never score.
+    const replicate = !isScoredArm(arm);
     if (arm.mode === 'primary') {
       // A primary arm answers "would this model ALONE have done", so it runs
       // with no shadow at all. Blanked explicitly rather than omitted: an arm
@@ -266,7 +273,11 @@ export function classifyArmCollisions(config) {
   }
   for (const [fp, group] of byFingerprint) {
     if (group.length < 2) continue;
-    const undeclared = group.filter((a) => a.type !== 'replicate');
+    // A `control` declaration counts as declared here for the same reason
+    // `replicate` does: both say "this duplicate request is deliberate". The
+    // refusal exists to catch an UNdeclared collision (lesson c), not to
+    // privilege one declaration keyword.
+    const undeclared = group.filter(isScoredArm);
     if (undeclared.length > 1) {
       return {
         ok: false,
@@ -364,6 +375,48 @@ export function defaultExpectedScope() {
 
 /** Test seam — mirrors the `_reset*` pattern used elsewhere in scripts/lib. */
 export function _resetDefaultArms() { _defaultArms = null; _defaultScope = undefined; }
+
+/**
+ * The arm set an ENTRY's completeness must be judged against — the campaign it
+ * was actually collected under, never an ambient default.
+ *
+ * Found on the first real collection into a two-campaign repo (2026-08-14).
+ * `isComplete(entry)` defaulted to `defaultArms()`, which calls
+ * `resolveArms({})` with no campaign id; with two committed campaigns that
+ * THROWS by design (ambiguity is never resolved by picking one) and the catch
+ * silently degrades to `LEGACY_ARMS` — `opus, solo-opus, kimi`. The scoped
+ * campaign has no `solo-opus`, so a snapshot where all four of its arms ran
+ * perfectly was judged INCOMPLETE, permanently: N could never advance, and all
+ * twelve snapshots would have been paid for and counted zero. The measured
+ * proof is the run that found it — `isComplete(entry)` false,
+ * `isComplete(entry, itsOwnArms, itsOwnScope)` true, on identical data.
+ *
+ * The root cause is a fallback that answers a question it was never able to
+ * resolve. So this returns `null` rather than guessing when an entry names a
+ * campaign that cannot be resolved — "cannot judge" and "an arm did not run"
+ * are different facts and must not share a message. Only a genuinely
+ * pre-campaign entry (no `campaignId`) falls back to the legacy table.
+ *
+ * @param {object} entry - a bake-off log entry
+ * @returns {{arms: object[], expectedScope: string|null}|null} null ⇒ unjudgeable
+ */
+export function scopeForEntry(entry) {
+  const campaignId = entry?.campaignId;
+  if (!campaignId) return { arms: defaultArms(), expectedScope: defaultExpectedScope() };
+  const r = selectCampaignConfig({ campaignId });
+  if (!r.ok) return null;
+  return { arms: deriveArms(r.config), expectedScope: r.config.controls?.envelopeScope ?? null };
+}
+
+/**
+ * `isComplete` scoped to the entry's own campaign. Unjudgeable ⇒ false, but
+ * callers that can report WHY should ask `scopeForEntry` first.
+ */
+export function isCompleteForEntry(entry) {
+  const scope = scopeForEntry(entry);
+  if (!scope) return false;
+  return isComplete(entry, scope.arms, scope.expectedScope);
+}
 
 /**
  * Resolve the arms for this run: derived from the committed campaign when one
@@ -714,6 +767,11 @@ export function summarise(entries, target = DEFAULT_TARGET, arms = defaultArms()
   // and `arms.every` would blow up on a number. Caught by the existing suite.
   const complete = entries.filter((e) => isComplete(e, arms, expectedScope));
   const totals = {
+    // Generic, arm-id-keyed tallies — the source of truth for the readout.
+    uniqueByArm: {}, soloFindingsByArm: {},
+    // Legacy flat fields, DERIVED from the maps below so the historical
+    // three-arm campaign keeps reporting identically. They are a view, not a
+    // second source: nothing writes them directly.
     opusUnique: 0, kimiUnique: 0, soloFindings: 0, primaryTotal: 0,
     primaryDivergence: [], opusDivergence: [], opusDivergenceUnpaired: 0,
     // Per-arm spend. `costByArm[x] === null` means at least one call in that arm
@@ -725,12 +783,26 @@ export function summarise(entries, target = DEFAULT_TARGET, arms = defaultArms()
   // running sum so one unpriced model cannot silently deflate an arm's total.
   const armCostState = new Map();
   for (const e of complete) {
-    totals.opusUnique += e.arms.opus?.buckets?.shadowOnly ?? 0;
-    totals.kimiUnique += e.arms.kimi?.buckets?.shadowOnly ?? 0;
-    // The solo arm's whole result IS its primary count — it has no shadow
-    // bucket, so omitting it here made the one arm that answers "would Opus
-    // alone have done" invisible in the only readout an operator reads.
-    totals.soloFindings += e.arms['solo-opus']?.primaryFindings ?? 0;
+    // Tallied per DECLARED arm, never per hardcoded id. The readout named
+    // `opus`/`kimi`/`solo-opus` literally, so the moment a campaign declared a
+    // different arm set it reported an arm that did not exist (`solo-opus`,
+    // from the other campaign) and silently omitted the ones that did (`grok`,
+    // `gemini-control` contributed to spend and to the verdict while appearing
+    // in no line of the only readout an operator reads). A comparison tool
+    // whose summary is pinned to one historical arm set cannot be used for the
+    // next comparison, which is the entire point of declaring arms in config.
+    for (const a of arms) {
+      const r = e.arms?.[a.id];
+      if (!r) continue;
+      // A solo arm has no shadow bucket, so its whole result IS its primary
+      // count — the two are different measurements and must not be summed into
+      // one column.
+      if (a.solo) {
+        totals.soloFindingsByArm[a.id] = (totals.soloFindingsByArm[a.id] ?? 0) + (r.primaryFindings ?? 0);
+      } else {
+        totals.uniqueByArm[a.id] = (totals.uniqueByArm[a.id] ?? 0) + (r.buckets?.shadowOnly ?? 0);
+      }
+    }
     const p1 = e.arms.opus?.primaryFindings ?? 0;
     const p2 = e.arms.kimi?.primaryFindings ?? 0;
     totals.primaryTotal += p1 + p2;
@@ -788,6 +860,13 @@ export function summarise(entries, target = DEFAULT_TARGET, arms = defaultArms()
     }
   }
   for (const [id, s] of armCostState) totals.costByArm[id] = s.costable ? s.usd : null;
+  // Derive the legacy flat fields from the generic maps. Kept so the original
+  // three-arm campaign's readout and its existing assertions are unchanged;
+  // they are a projection of `uniqueByArm`/`soloFindingsByArm`, never a
+  // parallel tally that could disagree with them.
+  totals.opusUnique = totals.uniqueByArm.opus ?? 0;
+  totals.kimiUnique = totals.uniqueByArm.kimi ?? 0;
+  totals.soloFindings = totals.soloFindingsByArm['solo-opus'] ?? 0;
   Object.assign(totals, aggregateMatched(complete));
   return {
     complete: complete.length,
@@ -799,13 +878,28 @@ export function summarise(entries, target = DEFAULT_TARGET, arms = defaultArms()
   };
 }
 
-function printProgress(logPath, target) {
-  const entries = readLog(logPath);
-  const s = summarise(entries, target);
+function printProgress(logPath, target, campaignId = null) {
+  // Scope to ONE campaign's entries, judged against THAT campaign's arms.
+  // Previously this summarised every entry in the shared log against
+  // `defaultArms()` — which, with two committed campaigns, is the legacy table
+  // (see scopeForEntry). The readout then quoted `solo-opus`, an arm the
+  // scoped campaign does not have, while reporting its four real arms as
+  // incomplete. A progress line that counts the wrong arms is worse than none:
+  // it is the number the stopping rule reads.
+  const all = readLog(logPath);
+  const entries = campaignId ? all.filter((e) => e.campaignId === campaignId) : all;
+  let arms; let expectedScope;
+  if (campaignId) {
+    const r = selectCampaignConfig({ campaignId });
+    if (r.ok) { arms = deriveArms(r.config); expectedScope = r.config.controls?.envelopeScope ?? null; }
+  }
+  const s = arms ? summarise(entries, target, arms, expectedScope) : summarise(entries, target);
   process.stdout.write(`\nBake-off progress — ${s.complete}/${s.target} complete snapshot(s)\n`);
   if (s.incomplete > 0) process.stdout.write(`  ${s.incomplete} incomplete (an arm skipped or errored) — not counted\n`);
-  process.stdout.write(`  raw uniques so far: opus=${s.totals.opusUnique} kimi=${s.totals.kimiUnique}`
-    + ` | solo-opus findings=${s.totals.soloFindings} (not a "unique" — no shadow to diff against)\n`);
+  const uniqueLine = Object.entries(s.totals.uniqueByArm).map(([id, n]) => `${id}=${n}`).join(' ');
+  const soloLine = Object.entries(s.totals.soloFindingsByArm).map(([id, n]) => `${id} findings=${n}`).join(' ');
+  if (uniqueLine) process.stdout.write(`  raw uniques so far: ${uniqueLine}\n`);
+  if (soloLine) process.stdout.write(`  ${soloLine} (not a "unique" — no shadow to diff against)\n`);
   // Two self-divergence readouts, and they answer the SAME question about
   // different models: how much of an arm's apparent edge is just variance?
   // Reporting only Gemini's — as this did while the solo arm was already being
@@ -839,9 +933,8 @@ function printProgress(logPath, target) {
     // §6.3 scores ACCEPTED HIGH/MED clusters, which only exist after blind
     // adjudication. Printing it unlabelled would let a cheap-and-noisy arm read
     // as a win. Uniques come from the shadow buckets, so the solo arm has none.
-    for (const [id, key] of [['opus', 'opusUnique'], ['kimi', 'kimiUnique']]) {
+    for (const [id, n] of Object.entries(s.totals.uniqueByArm)) {
       const v = s.totals.costByArm[id];
-      const n = s.totals[key];
       if (typeof v === 'number' && n > 0) {
         process.stdout.write(`    ${id}: $${(v / n).toFixed(2)} per raw unique — a FLOOR, not the verdict`
           + ' (the rule scores accepted HIGH/MED after adjudication)\n');
@@ -887,7 +980,7 @@ function printProgress(logPath, target) {
   // verdict beside it so "lenient reviewer" and "broken arm" are never conflated
   // in the one number the stopping rule reads.
   const LABEL = { unrecorded: 'verdict not recorded (pre-dates the field)', 'no-verdict': 'NO VERDICT — suspect a BROKEN arm' };
-  const zeros = entries.filter((e) => isComplete(e)).flatMap((e) => zeroFindingArms(e)
+  const zeros = entries.filter((e) => isCompleteForEntry(e)).flatMap((e) => zeroFindingArms(e)
     .map((z) => `${z.arm}: ${LABEL[z.evidence] ?? `reviewed, verdict ${z.verdict}`}`));
   if (zeros.length > 0) {
     const tally = {};
@@ -1057,7 +1150,7 @@ async function main() {
     return;
   }
   const target = Number(arg('target') || DEFAULT_TARGET);
-  if (process.argv.includes('--progress')) { printProgress(LOG_PATH, target); return; }
+  if (process.argv.includes('--progress')) { printProgress(LOG_PATH, target, arg('campaign') ?? null); return; }
 
   const transcript = arg('transcript');
   const plan = arg('plan');
@@ -1067,10 +1160,12 @@ async function main() {
   const id = snapshotId(transcript);
   const force = process.argv.includes('--force');
   const existing = readLog().find((e) => e.snapshotId === id);
-  if (existing && isComplete(existing) && !force) {
+  if (existing && isCompleteForEntry(existing) && !force) {
     process.stderr.write(`  [bakeoff] snapshot ${id} already collected and complete — skipping (re-runs would double-count)\n`
       + '  Pass --force to re-collect: it SUPERSEDES rather than overwrites, so the prior attempt stays readable and its spend still counts.\n');
-    printProgress(LOG_PATH, target);
+    // `resolved` is not bound yet at this early return, so scope the readout
+    // by the entry's own campaign — which is the authoritative answer anyway.
+    printProgress(LOG_PATH, target, existing.campaignId ?? null);
     return;
   }
   if (force && existing) {
@@ -1166,8 +1261,21 @@ async function main() {
   } else if (registered < Object.keys(arms).length && await cloudIsOn()) {
     process.stderr.write(`  [bakeoff] NOTE: ${registered}/${Object.keys(arms).length} arms registered a cloud run — the rest are file-only.\n`);
   }
-  if (!isComplete(entry)) process.stderr.write('  [bakeoff] INCOMPLETE — an arm did not run; this snapshot does NOT count toward N\n');
-  printProgress(LOG_PATH, target);
+  // Judged against the campaign this entry was collected under, not an ambient
+  // default (see scopeForEntry). And it names the arm: "an arm did not run"
+  // printed directly under four lines each saying an arm HAD run, which is a
+  // self-contradiction the reader has to debug rather than a diagnosis.
+  const entryScope = scopeForEntry(entry);
+  if (!entryScope) {
+    process.stderr.write(`  [bakeoff] CANNOT JUDGE completeness — entry names campaign "${entry.campaignId}", which does not resolve.\n`
+      + '  This is not "an arm did not run"; the snapshot is unjudgeable until the campaign is resolvable again.\n');
+  } else if (!isComplete(entry, entryScope.arms, entryScope.expectedScope)) {
+    const missing = entryScope.arms
+      .filter((a) => { const r = entry?.arms?.[a.id]; return !r || r.error || (a.solo ? !r.primaryVerdict : r.shadowState !== 'ran'); })
+      .map((a) => a.id);
+    process.stderr.write(`  [bakeoff] INCOMPLETE — this snapshot does NOT count toward N.${missing.length ? ` Arms that did not run: ${missing.join(', ')}.` : ' Every arm ran; the envelope-scope binding or contract epoch is what failed.'}\n`);
+  }
+  printProgress(LOG_PATH, target, resolved.config?.id ?? null);
 }
 
 const invokedDirectly = (() => {

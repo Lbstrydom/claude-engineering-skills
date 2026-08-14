@@ -28,6 +28,31 @@ import {
   recordRunStart, recordRunComplete, recordFindings,
 } from '../../learning-store.mjs';
 import { populateFindingMetadata } from '../ledger.mjs';
+import { costFromUsage } from '../model-pricing.mjs';
+import { openaiConfig } from '../config.mjs';
+
+/**
+ * Price a plan-audit result from the usage it carries.
+ *
+ * Pure and exported so the contract is testable without a store — the defect
+ * this closes was invisible precisely because nothing owned it as a unit.
+ *
+ * Same single-model assumption as the code path's
+ * `totalUsage.costUsd = costFromUsage(totalUsage, openaiConfig.model).totalUsd`:
+ * every plan pass uses the one resolved audit model, so one price over the
+ * aggregate is correct. `costFromUsage` always returns an object whose
+ * `totalUsd` is null for an unpriced model, so an honest unknown stays
+ * distinguishable from a measured zero — never coerce this to 0.
+ *
+ * @param {object|null} result - plan-audit result; `_usage` carries the tokens
+ * @param {string} [model] - resolved audit model (defaults to the configured one)
+ * @returns {number|null} USD, or null when unpriceable/unmetered
+ */
+export function planRunCostUsd(result, model = openaiConfig.model) {
+  const usage = result?._usage;
+  if (!usage || typeof usage !== 'object') return null;
+  return costFromUsage(usage, model).totalUsd ?? null;
+}
 
 /** Best-effort git anchor — {commitSha, branch}, nulls outside a repo. */
 async function gitAnchor() {
@@ -107,6 +132,21 @@ export async function registerPlanAuditRun({ repoProfile, planFile, runId = null
  * triages) so cloud labels line up 1:1 with the ledger the agent writes.
  * Never throws.
  *
+ * `costEstimate` is DERIVED here from `result._usage`, not required from the
+ * caller. It used to default to null and the only call site
+ * (`openai-audit.mjs`) never passed it, so `audit_runs.total_cost_estimate`
+ * was NULL on every plan run for the column's entire life — measured
+ * 2026-08-14: 0 of 55 plan runs priced against 136 of 178 code runs, with
+ * ~$8.10 of GPT spend recoverable only from `.audit/` artifacts that prune at
+ * ~14 days. Identical defect to the code path's, fixed 2026-08-08 in
+ * `legacy-production-audit.mjs`, in the sibling path — the "fixed in one place
+ * of two" shape this repo keeps hitting. A column that is always null does not
+ * read as broken; it reads as free.
+ *
+ * Deriving rather than guarding is the point: the omission is now
+ * unrepresentable, because there is no argument for a caller to forget. An
+ * explicit `costEstimate` still wins, for a caller that priced it differently.
+ *
  * @param {string|null} cloudRunId
  * @param {object} result - the plan-audit result (findings already suppressed/enriched)
  * @param {{ round?: number, durationMs?: number|null, costEstimate?: number|null }} [stats]
@@ -135,7 +175,7 @@ export async function completePlanAuditRun(cloudRunId, result, { round = 1, dura
       rounds: round,
       totalFindings: result.findings.length,
       durationMs,
-      costEstimate,
+      costEstimate: costEstimate ?? planRunCostUsd(result),
     });
   } catch (err) {
     process.stderr.write(`  [learning] plan-run completion failed (non-blocking): ${err.message}\n`);

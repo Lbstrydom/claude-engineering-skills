@@ -6,7 +6,7 @@ import path from 'node:path';
 
 import {
   CampaignConfigSchema, parseCampaignConfig, configDigest, canonicalJson,
-  selectCampaignConfig, MIN_TARGET_N, ANALYSIS_TIME_FIELDS,
+  selectCampaignConfig, MIN_TARGET_N, ANALYSIS_TIME_FIELDS, isScoredArm,
 } from '../scripts/lib/campaign/config.mjs';
 
 /** The committed dogfood campaign, used as the known-good base for mutations. */
@@ -17,6 +17,75 @@ const errorOf = (cfg) => {
   const r = CampaignConfigSchema.safeParse(cfg);
   return r.success ? '' : r.error.issues.map((i) => i.message).join(' | ');
 };
+
+// ── Control arms (2026-08-14) ────────────────────────────────────────────
+// A `control` is collected but never scored — a DIFFERENT model included to
+// calibrate what the comparison means, not to win it. Motivating case: Gemini
+// is the incumbent PRIMARY reviewer, so running it in the shadow slot
+// separates "is Opus the better second reviewer" from "is a fresh second look
+// worth anything at all". It must never be scored: the same model on both
+// gates has correlated failure modes, so a control that could win the slot
+// would recommend the configuration the design exists to avoid.
+describe('campaign config — control arms', () => {
+  const SCOPED = JSON.parse(fs.readFileSync('.campaigns/final-review-scoped-2026q3.json', 'utf-8'));
+
+  it('the committed scoped campaign (which carries a control arm) parses', () => {
+    const { config } = parseCampaignConfig(SCOPED);
+    const control = config.arms.find((a) => a.type === 'control');
+    assert.ok(control, 'expected a declared control arm in the scoped campaign');
+    // A CONCRETE model id, not the bare family token `gemini`. The gemini
+    // branch of `transportForModel` forwards its model verbatim into
+    // FINAL_REVIEW_SHADOW_MODEL (unlike the claude branch, which maps the bare
+    // family token to null), and `resolveModel('gemini')` passes 'gemini'
+    // through unchanged — so the bare token would have shipped a nonexistent
+    // model id to the API and 404'd on every snapshot. Per lesson (b) that
+    // reads as a useless model, not a broken arm.
+    assert.equal(control.model, 'gemini-pro-latest');
+  });
+
+  it('isScoredArm excludes both non-scored types and nothing else', () => {
+    assert.equal(isScoredArm({ id: 'a' }), true, 'an undeclared arm is scored');
+    assert.equal(isScoredArm({ id: 'a', type: 'replicate' }), false);
+    assert.equal(isScoredArm({ id: 'a', type: 'control' }), false);
+  });
+
+  it('a control arm does NOT count toward the >= 2-scored-arms minimum', () => {
+    // One real candidate plus a control compares nothing — the control cannot
+    // stand in for the second arm.
+    const cfg = base();
+    cfg.arms = [
+      { id: 'opus', model: 'claude-opus', mode: 'shadow' },
+      { id: 'gemini-control', model: 'gemini', mode: 'shadow', type: 'control' },
+    ];
+    cfg.decision.incumbent = 'claude-opus';
+    assert.match(errorOf(cfg), /scored arms/i);
+  });
+
+  it('a control arm may name a model no scored arm uses (unlike a replicate)', () => {
+    // The replicate-of-nothing rule must NOT fire for a control — naming an
+    // otherwise-absent model is the entire point of one.
+    const cfg = base();
+    cfg.arms.push({ id: 'gemini-control', model: 'gemini', mode: 'shadow', type: 'control' });
+    assert.equal(errorOf(cfg), '', 'a control naming an unused model must be accepted');
+    // Negative control: the SAME arm declared as a replicate must be refused.
+    const asReplicate = base();
+    asReplicate.arms.push({ id: 'gemini-rep', model: 'gemini', mode: 'shadow', type: 'replicate' });
+    assert.match(errorOf(asReplicate), /replicate of nothing|no scored arm/i);
+  });
+
+  it('a control arm may not be the incumbent', () => {
+    const cfg = base();
+    cfg.arms.push({ id: 'gemini-control', model: 'gemini', mode: 'shadow', type: 'control' });
+    cfg.decision.incumbent = 'gemini';
+    assert.match(errorOf(cfg), /names no scored arm/i);
+  });
+
+  it('an unknown arm type is still refused (.strict enum, not a free string)', () => {
+    const cfg = base();
+    cfg.arms.push({ id: 'x', model: 'gemini', mode: 'shadow', type: 'baseline' });
+    assert.equal(parses(cfg), false, "'baseline' is not a declared arm type");
+  });
+});
 
 describe('campaign config — the committed campaign is valid', () => {
   it('the repo\'s own dogfood campaign parses', () => {
@@ -82,12 +151,15 @@ describe('campaign config — semantic rules (§2.5a)', () => {
     }
   });
 
-  it('one arm is not a comparison — >= 2 non-replicate arms required', () => {
+  it('one arm is not a comparison — >= 2 scored arms required', () => {
     const cfg = base();
     cfg.arms = [{ id: 'only', model: 'claude-opus', mode: 'shadow' }];
     cfg.decision.incumbent = 'claude-opus';
     assert.equal(parses(cfg), false);
-    assert.match(errorOf(cfg), /non-replicate arms/);
+    // Wording moved from "non-replicate" to "scored" on 2026-08-14 when
+    // `control` became a second non-scored type — "non-replicate" would now
+    // name only half the exclusion.
+    assert.match(errorOf(cfg), /scored arms/);
   });
 
   it('replicates do NOT count toward the two-arm minimum', () => {

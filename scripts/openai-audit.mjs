@@ -1130,6 +1130,9 @@ async function main() {
       if (planLinkLost) result._planLinkLost = planLinkLost;
       if (cloudRunId) {
         result._cloudRunId = cloudRunId;
+        // `costEstimate` is deliberately NOT passed: completePlanAuditRun
+        // derives it from `result._usage` itself. Leaving it to the call site
+        // is what made every plan run record a NULL cost (see that function).
         await completePlanAuditRun(cloudRunId, result, { round, durationMs: Date.now() - startMs });
         process.stderr.write(`  [learning] plan-audit run registered: ${cloudRunId} (${result.findings.length} findings, round ${round})\n`);
       }
