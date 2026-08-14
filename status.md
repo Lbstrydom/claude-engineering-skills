@@ -1,5 +1,113 @@
 # Project Status Log
 
+## 2026-08-14 — /cycle told you to scope with a flag that does not scope
+
+[cycle-cluster-audit-scope.md](docs/plans/cycle-cluster-audit-scope.md), now
+`Complete`. Shipped as `977428fb` + `21964159`. Full check chain green:
+12,114 pass / 0 fail.
+
+**The defect.** `/cycle` Step 3C instructed the agent to invoke
+`/audit-code --scope=diff` with `--changed`=the cluster's derived scope.
+`--changed` does not bound what the model reads — it is the R2+ impact set for
+reopen detection (`openai-audit.mjs:622`) — so `--scope=diff` recomputed the file
+set from the working tree instead. On a tree shared with a concurrent session
+that meant **52 files reached the prompt against 11 declared**, and **26 of 31
+findings concerned code the cluster never touched**. The failure was silent and
+read as thoroughness: the audit returned 12 HIGH findings, exactly one of which
+was in-cluster, and that one was a false positive from the egress redactor.
+
+**The fork this was commissioned to settle did not exist.** It was posed as
+"build a constraining mechanism vs make `/cycle` refuse". Exploration found
+`--files` already shipping as an explicit allowlist that overrides `--scope`
+(`openai-audit.mjs:632`, stated in-source). Nothing needed building; `/cycle`
+simply never named it. Demonstrated at `c0390f74` with one unrelated file made
+dirty: with `--files` the git recompute never fires and the foreign file never
+enters scope; without it, the audit scoped to the foreign file alone and ignored
+both `--changed` entries.
+
+**What did need building was the protocol around it — and the first draft put it
+in the wrong place.** The plan originally wrote the reconciliation as SKILL.md
+prose: parse NUL-delimited `git diff --name-status -z` records, hand-apply
+`isAuditInfraFile`, maintain argv-marshalling discipline. The consolidated gate
+caught that as a capability mismatch — `/cycle` is an LLM following instructions,
+and none of that is reliably doable in prose. It now lives in
+`scripts/cycle-cluster-scope.mjs`, in code, with tests over real throwaway git
+repos, and the SKILL.md's job shrank to "call it, act on the exit code". The plan
+got smaller in prose and stronger in guarantees.
+
+**Three ways the plan was wrong before it was right**, each caught by a different
+instrument:
+
+- **A git command written but never run.** The reconciliation used
+  `--name-only --diff-filter=ACMRD`, which silently drops the OLD path of a
+  rename — so a file renamed out of a cluster would have escaped the fail-closed
+  check. Executing it on a throwaway repo showed exactly that.
+  `--name-status -z -M` was the fix, and the `--diff-filter` was dropped entirely
+  because its `ACMRD` had already forgotten `T`.
+- **Two sets conflated.** Deleted and old-rename paths MUST be in the
+  reconciliation set and MUST NOT be in `--files` (admission rejects off-disk
+  paths). The draft passed "the same derived scope" to both, making it
+  unsatisfiable in either direction.
+- **A pre-flight that ran after the spend.** The admission comparison was
+  specified post-invocation, by which point the model has been paid and has
+  emitted a verdict over the narrowed set.
+
+**Then the implementation was wrong in its own ways**, found by auditing it with
+the plan's own prescription (`--files` over all 13 changed files plus
+`--allow-infra-scope`, which scoped correctly — no recompute, no foreign files):
+
+- **A legitimate delete was refused.** A cluster whose plan intent-tags a file
+  `(delete)` must declare it for the ownership check, but it is gone from disk at
+  admission time. `removed-by-this-cluster` is now distinguished from an
+  unexplained `not-on-disk`, which stays fatal.
+- **Removing a duplicated policy broke everything.** Replacing a hardcoded
+  extension set with an import of `PLAN_REFERENCE_EXTENSIONS` rejected every file
+  until a fixture run surfaced the format mismatch — the constant stores `'mjs'`,
+  `path.extname()` returns `'.mjs'`. The fix was worse than the defect until it
+  was executed.
+
+**Four pre-existing defects fixed in the same change**, each in-scope by impact
+rather than authorship:
+
+- `safeReadFile` verified containment on the realpath, then stat'd and read the
+  ORIGINAL path — reopening the symlink, so a swap in between escaped the check.
+- `isAuditInfraFile`'s comment has always said "directly under `scripts/` or
+  `scripts/lib/`"; the code only checked `startsWith('scripts/')`. **Measured: 9
+  tracked files** were classified as audit infrastructure purely for sharing a
+  basename with the audit's own modules — `persona-test/schemas.mjs`,
+  `requirements/ledger.mjs` and siblings were unauditable by accident.
+- `normalizePath` stripped the cwd prefix by string replace, so with cwd `/repo` a
+  sibling `/repo2/file.mjs` became `2/file.mjs`: not the input, not in the repo,
+  and shaped like a valid relative path to every consumer that dedups on it.
+- `loadExcludePatterns` read every `.auditignore` failure as absence, so a
+  permission error silently dropped the operator's exclusions.
+
+**Three existing gates caught things this session would otherwise have shipped**,
+which is the part worth keeping: `skill-command-portability` found that the new
+SKILL.md named a script the consumer bundle does not ship (AGENTS.md defect class
+4 — now in `CORE_ENTRY` in both lock-step lists); the gate-contract checker found
+nine undispositioned enforcement-verb lines in the new prose, one a real claim
+that became a document-only gate and three of them scanner false positives on
+Node's `require()`; and the pinned gate census forced the 43 → 44 change to be a
+visible edit rather than silent coverage drift.
+
+**Deliberately not fixed**: the duplicated skill source and duplicated sync
+inventory the audit flagged (M5/M6/M2) are the documented generated-copy and
+lock-step patterns with existing parity tests — changing them is a subsystem
+redesign, not a defect fix. The systemic-monolith finding has no bounded remedy
+here.
+
+**Consumer-side verification**: `verified`, and by running it rather than by
+listing it. The pre-push hook ran the real sync; `scripts/.claude-skills/cycle-cluster-scope.mjs`
+is present in BOTH consumer repos and `--selfcheck-relocation` returns OK in each,
+which proves its imports resolve in the relocated layout — the thing mere presence
+does not establish.
+
+**`AI-Gate: not-run` on both commits** — an audit did run and its findings were
+fixed, but fixing them invalidates the tree-hashed evidence by design, so
+`passed` was not earnable and the helper correctly refused `waived`.
+
+
 ## 2026-08-14 — the 31 remaining rows: 22 closed with real fixes, 96 → 74
 
 Follow-on to 2026-08-13's triage pass below: the 31 rows that verified as

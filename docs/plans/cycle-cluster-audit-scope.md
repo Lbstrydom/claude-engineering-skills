@@ -1,7 +1,7 @@
 # Plan: /cycle's per-cluster audit must name the flag that actually scopes
 
 - **Date**: 2026-08-13
-- **Status**: Approved
+- **Status**: Complete
 - **Author**: Claude + Louis
 - **Scope**: backend
 - **Target domain(s)**: `audit-orchestration`, `skills-content`
@@ -683,3 +683,62 @@ different ways:**
 against precisely the corruption that expansion causes. A ` ```bash ` block a
 test extracts and an agent runs is executable, and calling it illustrative does
 not make it safe.
+
+---
+
+## 13. Implementation Log
+
+### 2026-08-14 — shipped (`977428fb`, `21964159`)
+
+Implemented as planned, with the deviations below. Full check chain green:
+12,114 pass / 0 fail.
+
+**What the code audit found in the fresh implementation** (run with the plan's
+own prescription — `--files` over all 13 changed files plus `--allow-infra-scope`,
+which scoped correctly: no working-tree recompute, no foreign files):
+
+- **A legitimate delete was refused.** A cluster whose plan intent-tags a file
+  `(delete)` must declare it for the ownership check, but it is gone from disk at
+  admission time. The plan described two sets; the implementation derived both
+  from one input. Now `removed-by-this-cluster` (non-fatal) is distinguished from
+  an unexplained `not-on-disk` (fatal), with both directions tested.
+- **The pre-flight duplicated the auditor's extension policy.** Replaced with an
+  import of `PLAN_REFERENCE_EXTENSIONS` — **and that import rejected every file**
+  until a fixture run surfaced the format mismatch (`'mjs'` vs `path.extname`'s
+  `'.mjs'`). The M9 fix was worse than the defect until it was executed.
+- `REPO_ROOT` was captured at module load, making the exported functions
+  untestable against a fixture repo. `cwd` is now an explicit parameter.
+
+**Pre-existing defects fixed in the same change** (all in files this change
+touched; each was in-scope by impact, not authorship):
+
+- `safeReadFile` verified containment on the realpath then stat'd and read the
+  original path, reopening the symlink — a swap in between escaped the check.
+- `isAuditInfraFile`'s comment has always said "directly under `scripts/` or
+  `scripts/lib/`"; the code only checked `startsWith('scripts/')`. **Measured: 9
+  tracked files** were classified as audit infrastructure purely for sharing a
+  basename (`persona-test/schemas.mjs`, `requirements/ledger.mjs`, siblings) and
+  were unauditable by accident.
+- `normalizePath` stripped the cwd prefix by string replace, so with cwd `/repo` a
+  sibling `/repo2/file.mjs` became `2/file.mjs` — not the input, not in the repo,
+  and shaped like a valid dedup key.
+- `loadExcludePatterns` treated every `.auditignore` read failure as absence, so a
+  permission error silently dropped the operator's exclusions.
+
+**Deviations from the plan:**
+
+1. **`cycle-cluster-scope.mjs` had to join `CORE_ENTRY`** in both
+   `sync-to-repos.mjs` and `sync-inventory.mjs`. The plan did not anticipate it:
+   the SKILL.md naming it is synced, so a documented command whose tooling is
+   absent where it runs is AGENTS.md defect class 4. Caught by
+   `skill-command-portability`.
+2. **A gate contract entry was required.** Step 3C's new prose introduced nine
+   enforcement-verb lines. One is a real claim (the pre-flight's non-zero exit)
+   and became a **document-only** gate — `/cycle` orchestrates and emits no exit
+   code of its own, so a `cli-exit` oracle would have nothing to assert against.
+   The pinned census moved 43 → 44.
+3. **Not fixed, deliberately**: the duplicated skill source and duplicated sync
+   inventory (audit M5/M6/M2) are the documented generated-copy and lock-step
+   patterns with existing parity tests — changing them is a subsystem redesign,
+   not a defect fix. The systemic-monolith finding (H4) is an architecture
+   observation with no bounded remedy here.
