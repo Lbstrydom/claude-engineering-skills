@@ -1,11 +1,7 @@
 # Plan: Reduced-Scope Second Final Reviewer + 4-Arm Cost/Yield Campaign
 
 - **Date**: 2026-08-14
-- **Status**: **Complete** (2026-08-14) — Clusters A–C implemented via
-  `/cycle --autonomous`, close-out run, consolidated Gemini gate over the
-  union diff APPROVE in 2 rounds (see §10b), shipped. Running the 4-arm
-  campaign itself is follow-on operational work, not a plan phase — see
-  the Implementation Log below.
+- **Status**: Complete — Clusters A–C implemented via `/cycle --autonomous`, consolidated Gemini gate APPROVE in 2 rounds (§10b), shipped 2026-08-14. Running the 4-arm campaign itself is follow-on operational work, not a plan phase — see the Implementation Log.
 - **Author**: Claude + Louis
 - **Scope**: backend
 - **Target domain(s)**: `audit-orchestration`, `scripts`, `shared-lib`, `tests`
