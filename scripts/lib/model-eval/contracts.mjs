@@ -13,9 +13,22 @@
  */
 
 import { z } from 'zod';
+import { assertEligibleSubset } from '../comparison/roles.mjs';
 
-export const ROLES = Object.freeze(['auditor', 'adjudicator']);
-export const RoleSchema = z.enum(ROLES);
+// The vocabulary moved to `comparison/roles.mjs` (2026-08-14) so the campaign
+// and swap-eval mechanisms stop carrying disjoint role enums that cannot see
+// each other. What stays HERE is this mechanism's ELIGIBILITY — the roles the
+// synchronous swap-eval harness accepts — which is deliberately a SUBSET and
+// deliberately not `ROLES` itself: `final_review_shadow` is the passive
+// campaign's role, and accepting it here would claim a role this harness does
+// not run. `assertEligibleSubset` fails loudly on an invented or duplicated
+// role name, so the subset cannot silently drift from the vocabulary.
+export const SWAP_ELIGIBLE_ROLES = Object.freeze(
+  assertEligibleSubset(['auditor', 'adjudicator'], 'SWAP_ELIGIBLE_ROLES'),
+);
+/** @deprecated Use SWAP_ELIGIBLE_ROLES (this mechanism's subset) or comparison/roles.mjs ROLES (the vocabulary). */
+export const ROLES = SWAP_ELIGIBLE_ROLES;
+export const RoleSchema = z.enum(SWAP_ELIGIBLE_ROLES);
 
 export const TIERS = Object.freeze(['screen', 'promotion']);
 export const TierSchema = z.enum(TIERS);

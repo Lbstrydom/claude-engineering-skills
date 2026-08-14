@@ -25,6 +25,21 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { z } from 'zod';
 import { isXaiModel } from '../model-resolver.mjs';
+import { assertEligibleSubset } from '../comparison/roles.mjs';
+
+/**
+ * The roles the PASSIVE campaign collector accepts — a subset of the shared
+ * vocabulary, never the vocabulary itself.
+ *
+ * It stays at one value on purpose. A role earns a campaign only when it also
+ * earns a passive shadow, and AGENTS.md (2026-07-26) caps that population:
+ * "only intervention-over-organic-work earns a shadow; exactly two are open …
+ * do NOT add a sixth collector." Widening this array is therefore a decision
+ * about collection mode, not a naming change.
+ */
+export const CAMPAIGN_ELIGIBLE_ROLES = Object.freeze(
+  assertEligibleSubset(['final_review_shadow'], 'CAMPAIGN_ELIGIBLE_ROLES'),
+);
 
 /** Campaign and arm ids become path components (`.audit/campaigns/<id>/…`), so
  * they are pattern-constrained at the schema boundary. Defence-in-depth, not
@@ -130,11 +145,18 @@ const DecisionRuleSchema = z.object({
 export const CampaignConfigSchema = z.object({
   schemaVersion: z.literal(1),
   id: z.string().regex(CAMPAIGN_ID_PATTERN, 'campaign id must match ^[a-z0-9][a-z0-9-]{0,63}$ — it is interpolated into lock and receipt paths'),
-  // D7: v1 generalises role 3 only, so the enum has exactly ONE value. An open
-  // string let a typo'd or invented role parse into a campaign that collects
-  // happily under a role nothing dispatches on — the seam exists to be widened
-  // deliberately, not to be widened by accident.
-  role: z.enum(['final_review_shadow']),
+  // D7: v1 generalises role 3 only, so this mechanism's ELIGIBILITY set has
+  // exactly ONE value. An open string let a typo'd or invented role parse into
+  // a campaign that collects happily under a role nothing dispatches on — the
+  // seam exists to be widened deliberately, not to be widened by accident.
+  //
+  // Validated against CAMPAIGN_ELIGIBLE_ROLES, NOT against the shared `ROLES`
+  // vocabulary (2026-08-14). That distinction is load-bearing: `ROLES` contains
+  // `auditor`, and validating against it would let an auditor manifest into the
+  // PASSIVE collector — the sixth collector AGENTS.md forbids by name. The
+  // vocabulary says which role names exist; this says which ones THIS mechanism
+  // runs.
+  role: z.enum(CAMPAIGN_ELIGIBLE_ROLES),
   decision: z.object({
     type: z.literal('select_default'),
     incumbent: z.string().min(1),
