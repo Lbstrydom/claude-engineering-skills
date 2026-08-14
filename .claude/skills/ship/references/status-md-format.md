@@ -85,6 +85,20 @@ These will silently regress under future refactors.
 - **Failing P0**: <first failing criterion if any>
 ```
 
+### Consumer Verification — previous ship (when `.claude/tmp/ship-verification-pending.md` exists)
+
+Step 6.8 of a PRIOR `/ship` run wrote this file instead of amending an
+already-pushed status.md entry (which would force a second commit + push —
+see SKILL.md Step 6.8). Step 2 of THIS run reads it, prepends it above this
+session's own entry, then deletes the file:
+
+```markdown
+### Consumer Verification (previous ship)
+- **Commit**: <full sha>
+- **Retrieval**: <command actually run, e.g. clone-to-tempdir + `npm run check`>
+- **Result**: <verified | failed | unverified — <blocked prerequisite> if unverified>
+```
+
 ## Never commit these into status.md
 
 - Raw tool output (dumps, stack traces, lint output)

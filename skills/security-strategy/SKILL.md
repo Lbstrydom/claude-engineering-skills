@@ -19,7 +19,11 @@ disable-model-invocation: true
 
 This skill maintains the **markdown source-of-truth** at
 `docs/security-strategy.md`. After any edit, it triggers
-`npm run security:refresh` so the Supabase embedding index stays current.
+`npm run security:refresh --if-present` so the Supabase embedding index
+stays current. `--if-present` matters here: sync never merges npm scripts
+into a consumer's `package.json`, so the script can legitimately be absent
+even though the markdown file exists — a bare `npm run security:refresh`
+throws an avoidable `Missing script` error on such a repo.
 
 The skill is **on-demand only** — it never blocks `/cycle`, `/plan`, or
 `/ship`. The planner (Phase 0.5b) consults the memory via the cross-skill
@@ -77,7 +81,7 @@ write back via the round-trip parse + atomicWriteFileSync protocol
    parse warnings; if any, fail loudly and don't write.
 4. Call `atomicWriteFileSync('docs/security-strategy.md', content)`.
 
-Then run `npm run security:refresh` and surface its summary line.
+Then run `npm run security:refresh --if-present` and surface its summary line.
 
 ---
 
@@ -116,7 +120,7 @@ For interactive ADD, prompt the user for each field with examples.
    `incidents[]` with non-null `description` AND no parse warnings
    reference the new ID.
 5. Only on round-trip success → `atomicWriteFileSync()`.
-6. Run `npm run security:refresh` and surface result summary.
+6. Run `npm run security:refresh --if-present` and surface result summary.
 7. If round-trip fails → output the parsed warnings, do NOT write,
    ask the user to revise.
 

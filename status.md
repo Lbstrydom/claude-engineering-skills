@@ -1,5 +1,71 @@
 # Project Status Log
 
+## 2026-08-14 — Three /ship friction points from a consumer's own field report
+
+A consumer pasted a field report (GPT-5.6 Terra) diagnosing an unusually slow
+`/ship` run: PostgreSQL gate queries were cheap (~7s total), the dual
+local+fresh-clone readiness validation is deliberate and valuable, but three
+concrete workflow bugs added avoidable round-trips. They filed three upstream
+reports (2837b033, 2b7988de, 4d5cd75b) — none of which ever reached this
+repo's shared `upstream_issues` queue (`npm run upstream:issues` read empty
+both before and after this fix; consistent with the reporter's machine having
+cloud off at file time, so the reports are sitting in that machine's own
+`.audit/upstream-outbox/`, not ours to `ack`/`fix`). Fixed directly from the
+pasted report bodies instead.
+
+### Changes
+- **`security:refresh` avoidable error** — `/ship` Step 6.5 and all three
+  `security-strategy` call sites now run `npm run security:refresh
+  --if-present`. Root cause: the consumer sync never merges npm scripts into a
+  consumer's `package.json`, so `docs/security-strategy.md` existing does not
+  imply the script does — a bare `npm run security:refresh` threw `Missing
+  script` on every such push (harmless, but noise).
+- **Migration gate discovered too late** — added a read-only
+  `node scripts/ship-commit.mjs --check-migrations` preflight (same DB query
+  the commit-time gate uses, factored into one shared `formatMigrationBlockLine`
+  so the two messages can't drift), wired into `/ship` Step 0.5g so an
+  unapplied-migration block surfaces *before* the doc-update work and the
+  pre-push readiness suite, not only at Step 6.3. Commit-time enforcement is
+  unchanged — the preflight is advisory-early, never a second gate (a SKILL
+  step is an instruction to an agent and cannot itself block).
+- **status.md vs. post-push-verification ordering conflict** — Step 6.8 told
+  the agent to "record the outcome in the status.md session line," but that
+  entry is already committed and pushed by the time Step 6.8 runs, so writing
+  into it meant a second commit + push (re-triggering the same expensive
+  pre-push readiness suite for one status line — exactly what the consumer
+  hit). Fixed: Step 6.8 now writes the note to the gitignored
+  `.claude/tmp/ship-verification-pending.md`; the *next* `/ship`'s Step 2
+  reads it, prepends it as a `### Consumer Verification (previous ship)`
+  subsection, and deletes the file. No file exists for this ship (nothing
+  pending from a prior run).
+
+### Files Affected
+- `skills/ship/SKILL.md` (+ `.claude/skills/ship/SKILL.md` generated copy) —
+  Steps 0.5g, 2, 6.5, 6.8.
+- `skills/ship/references/status-md-format.md` (+ generated copy) — new
+  "Consumer Verification — previous ship" template section.
+- `skills/security-strategy/SKILL.md` (+ generated copy) — 3 call sites.
+- `scripts/ship-commit.mjs` — `--check-migrations` flag,
+  `formatMigrationBlockLine()` extraction.
+- `tests/ship-commit-cli.test.mjs` — 2 new tests for `--check-migrations`
+  (cloud-off happy path; mutual-exclusivity with commit args).
+- `skills.manifest.json` — regenerated via `npm run skills:regenerate`.
+
+### Decisions Made
+- The verification-note hand-off uses a single fixed-name scratch file
+  (never `<epoch>`-suffixed) so it overwrites rather than accumulates — this
+  repo already hit a 658-file/39MB `.claude/tmp` leak from per-invocation
+  commit-message files, and the fix deliberately doesn't repeat that shape.
+- Chose `--if-present` (npm-native) over teaching the sync tooling to merge
+  npm scripts into consumer `package.json`s — the reported bug is "avoidable
+  error", not "the script doesn't work on consumers", and the larger fix
+  wasn't asked for.
+
+### Next Steps
+- If the reporter's environment reconnects and its outbox drains, the three
+  reports will surface in `npm run upstream:issues`; close them with
+  `upstream fix --commit <this commit's sha>` rather than re-diagnosing.
+
 ## 2026-08-14 — A path assertion that only held in the primary checkout
 
 Closes the failure the entry below recorded as pre-existing and left standing:

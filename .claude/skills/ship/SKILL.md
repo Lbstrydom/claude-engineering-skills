@@ -477,26 +477,37 @@ Judge the list before echoing it — two rows look identical but are not:
 - `remediation_state = 'planned'` with a live plan is genuinely in-flight, not
   forgotten — drop it from the printed list.
 
-### 0.5g — Migration realization gate (ENFORCED by the binary)
+### 0.5g — Migration realization gate (ENFORCED by the binary, checked HERE too)
 
 A commit that ships a migration is only half-shipped until the migration is APPLIED. On
 2026-07-31 exactly that happened here: migration + dependent code committed, tests green,
 pushed — and the fix was byte-for-byte inert because nobody ran `--migrate`. The drift
 checker existed and was wired to nothing.
 
-**You do not need to run anything for this step.** `ship-commit.mjs` performs the check
-itself (Step 6.3) and exits 2 with an `AGENT FIX:` line naming the unapplied migrations and
-the exact remedy. It is documented here so the block is not a surprise — the binary
-enforces, this text explains.
+**Run the read-only preflight now, before Steps 1–6.2's doc work and the pre-push hook's
+readiness suite** — not just at Step 6.3:
 
+```bash
+node scripts/ship-commit.mjs --check-migrations
+```
+
+A consumer reported (2026-08-14) discovering this block only at Step 6.3, after already
+running a full local + fresh-clone readiness pass — the block itself is cheap (one indexed
+SELECT), but finding out about it late meant redoing validation that unapplied migrations
+had nothing to do with. Running it here surfaces the same block before that work happens.
+
+- **The real enforcement stays at Step 6.3** — `ship-commit.mjs` performs the check again
+  inside the commit path and exits 2 there regardless of whether this preflight ran. A SKILL
+  step is an instruction to an agent and cannot block on its own; this early run is advisory,
+  not a substitute gate.
 - **Unconditional when the cloud store is on.** Deliberately NOT gated on "the push range
   touches `supabase/migrations/`": a code-only commit can depend on a migration left
   unapplied by an *earlier* push or a branch switch, which is the more dangerous version of
   the same bug.
 - **Cloud off / unreachable / no ledger ⇒ silently skipped**, never a block. Blocking on an
   unmeasurable condition is the cried-wolf shape that earns `--no-verify`.
-- **On a block**: run `node scripts/setup-postgres.mjs --migrate`, then re-invoke
-  `ship-commit.mjs`. Do NOT work around it by dropping the migration from the commit.
+- **On a block**: run `node scripts/setup-postgres.mjs --migrate`, then continue — Step 6.3
+  will pass without a retry once the migration is applied.
 
 ### 0.5h — Upstream issue queue (advisory, source-repo only)
 
@@ -654,12 +665,21 @@ patterns were established.
 
 ## Step 2 — Update status.md
 
+If `.claude/tmp/ship-verification-pending.md` exists (Step 6.8 of a prior ship
+wrote it instead of force-pushing a status.md-only commit), read it, prepend
+its content now as a `### Consumer Verification (previous ship)` subsection
+above the new entry — see `references/status-md-format.md` — then delete the
+file. This is how that note ever reaches git without a second push. The file
+is gitignored scratch state (same directory the commit-message file uses), so
+it survives a session boundary but never ships as-is.
+
 Append a new session log entry to `status.md`. If file doesn't exist,
 create with the standard header. Always append at the TOP (below the
 header) so the most recent session is first.
 
 Full template + rules + optional sections (UX Status, Persona Test Status,
-Regression Lock Status, Plan Verify Status): `references/status-md-format.md`.
+Regression Lock Status, Plan Verify Status, Consumer Verification):
+`references/status-md-format.md`.
 
 ---
 
@@ -936,9 +956,22 @@ fix. Do NOT force push.
 ## Step 6.5 — Security Memory Refresh + Capture Hint (after successful push)
 
 If push succeeded AND `docs/security-strategy.md` exists in the repo,
-run `npm run security:refresh` to keep the Supabase index in sync with
-markdown (only ever publishes pushed state — R3-H3 design constraint).
-Surface the result line briefly.
+run `npm run security:refresh --if-present` to keep the Supabase index in
+sync with markdown (only ever publishes pushed state — R3-H3 design
+constraint). Surface the result line briefly.
+
+**`--if-present` is load-bearing, not decoration.** `docs/security-strategy.md`
+can exist without the `security:refresh` npm script existing — the file-sync
+that provisions `scripts/.claude-skills/**` never merges npm scripts into a
+consumer's `package.json`, so a consumer that hand-authored or partially
+bootstrapped `docs/security-strategy.md` has no `security:refresh` script to
+run. Without the flag this step threw an avoidable `npm error Missing script`
+on every such push (reported by a consumer 2026-08-14) — harmless (never
+blocked the ship) but noise the flag makes disappear silently, matching the
+"doesn't exist → no-op" rule two lines below. Do not "fix" the missing script
+by adding one to the consumer's `package.json` by hand here — the SKILL step
+has no business writing to a consumer's script table; that belongs in the sync
+tooling if it's ever done at all.
 
 After refresh, regex-match the HEAD commit subject against
 `/fix.*\bsecurity\b|\bcve\b|\bvuln\b|\bleak\b|\binjection\b|\bauth\b|\bxss\b|\bcsrf\b|\brce\b/i`
@@ -1045,9 +1078,20 @@ Pick the row(s) this push actually produced:
 | the synced consumer bundle | **authoritative**: `node scripts/.claude-skills/lib/sync-isolation-verify.mjs`, run *in the consumer* — note the `lib/` segment, it is a module rather than a top-level script. `npm run sync:dry` from here is the pre-check, not the verdict | zero unexpected diffs; no orphans |
 | the skill manifest | re-derive from the pushed sha, not the working tree | regenerated bytes identical |
 
-**Record the outcome in the `status.md` session line** (Step 2) — it is prose,
-no schema needed. Required in it: the immutable locator (full sha / digest /
-bundle version), the retrieval command actually run, and the observed result.
+**Write the outcome to `.claude/tmp/ship-verification-pending.md` — never by
+re-opening the status.md entry you just pushed.** status.md is append-only
+(Reminders, below), and this step runs AFTER that entry's commit already
+landed: writing into it now means a second commit and a second push, which
+re-triggers the same pre-push readiness suite Step 6.8 exists to verify —
+doubling the workflow's cost for one status line. A consumer hit exactly this
+2026-08-14 and reported it as friction. Include in the file: the immutable
+locator (full sha / digest / bundle version), the retrieval command actually
+run, and the observed result. The **next** `/ship` invocation's Step 2 reads
+this file, prepends it as a `### Consumer Verification (previous ship)`
+subsection above that session's own entry, then deletes it (template:
+`references/status-md-format.md`). If no further `/ship` happens, the file
+simply sits there unread — an acceptable loss for advisory documentation
+(never a gate), not a reason to force a push now.
 
 **Three terminal states, and only three**: `verified`, `failed`, `unverified`.
 **`unverified` must name a concrete blocked prerequisite** — "no network in this

@@ -67,6 +67,7 @@ const KNOWN_FLAGS = new Set([
 ]);
 const KNOWN_BOOLEAN_FLAGS = new Set([
   '--no-run-id', '--no-tests', '--selfcheck-relocation', '--expect-detached',
+  '--check-migrations',
 ]);
 
 function err(line) { process.stderr.write(`${line}\n`); }
@@ -127,6 +128,39 @@ async function main() {
       process.exit(2);
     }
     console.log('OK');
+    process.exit(0);
+  }
+
+  // Read-only preflight for the migration realization gate below — same
+  // mutual-exclusivity contract as --selfcheck-relocation (a standalone check
+  // that commits nothing must not be combined with commit arguments, or a
+  // caller could misread "the check passed" as "the commit happened").
+  //
+  // Exists so /ship can surface an unapplied-migration block during Step 0.5,
+  // BEFORE the doc-update and pre-push-hook work that follows it — not just at
+  // Step 6.3, after that work is already done. The gate itself stays enforced
+  // ONLY in the commit path below: a SKILL step is an instruction to an agent
+  // and cannot block, so this flag is advisory-early, not a second gate.
+  if (process.argv.includes('--check-migrations')) {
+    const others = process.argv.slice(2).filter((a) => a !== '--check-migrations');
+    if (others.length > 0) {
+      err(
+        'AGENT FIX: --check-migrations: a standalone read-only preflight that commits nothing; '
+        + `it cannot be combined with commit arguments (also given: ${others.join(' ')}). `
+        + 'Run it alone.',
+      );
+      process.exit(2);
+    }
+    const top = git(['rev-parse', '--show-toplevel'], process.cwd());
+    if (top.error) { err('ship-commit: git spawn failed'); process.exit(1); }
+    if (top.status !== 0) { err(`ship-commit: git: ${(top.stderr || '').trim()}`); process.exit(1); }
+    const repoRoot = top.stdout.trim();
+    const realization = await checkMigrationRealization(repoRoot);
+    if (realization.behind) {
+      err(formatMigrationBlockLine(realization));
+      process.exit(2);
+    }
+    console.log(`ship-commit: migrations realized (${realization.reason}).`);
     process.exit(0);
   }
 
@@ -652,15 +686,7 @@ async function main() {
     const realization = await checkMigrationRealization(repoRoot);
     if (realization.behind) {
       if (pathspecRollback) pathspecRollback();
-      err(
-        `AGENT FIX: ${realization.db ? `database ${realization.db}` : 'the database'} is missing `
-        + `${realization.missing.length} migration(s) this commit's bundle ships `
-        + `(${realization.missing.slice(0, 3).join(', ')}`
-        + `${realization.missing.length > 3 ? `, +${realization.missing.length - 3} more` : ''}) `
-        + `— compared ${realization.dir} against public.audit_loop_migrations. `
-        + 'Shipping now would push code whose schema does not exist yet. '
-        + `Run: ${realization.command}`,
-      );
+      err(formatMigrationBlockLine(realization));
       process.exit(2);
     }
   }
@@ -756,6 +782,23 @@ async function main() {
 }
 
 await main();
+
+/**
+ * Render the block message for a `{behind: true}` realization result.
+ *
+ * ONE oracle for this text, used by both the `--check-migrations` preflight
+ * and the real Step 6.3 commit-time gate — they must never drift into two
+ * different descriptions of the same block.
+ */
+function formatMigrationBlockLine(realization) {
+  return `AGENT FIX: ${realization.db ? `database ${realization.db}` : 'the database'} is missing `
+    + `${realization.missing.length} migration(s) this commit's bundle ships `
+    + `(${realization.missing.slice(0, 3).join(', ')}`
+    + `${realization.missing.length > 3 ? `, +${realization.missing.length - 3} more` : ''}) `
+    + `— compared ${realization.dir} against public.audit_loop_migrations. `
+    + 'Shipping now would push code whose schema does not exist yet. '
+    + `Run: ${realization.command}`;
+}
 
 /**
  * Is the database missing migrations this checkout bundles?

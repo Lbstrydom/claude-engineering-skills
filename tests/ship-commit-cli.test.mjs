@@ -354,6 +354,26 @@ describe('ship-commit CLI — §F1.4 taxonomy', () => {
     assert.equal(r.stdout.trim(), 'OK');
     assert.equal(commitCount(), before);
   });
+
+  // --check-migrations: the read-only preflight /ship's Step 0.5g runs so an
+  // unapplied-migration block surfaces before the doc-update + readiness-suite
+  // work that follows, instead of only at Step 6.3 (report 2b7988de).
+  it('--check-migrations, cloud off → exit 0, reports realized, no git side effects', () => {
+    const before = commitCount();
+    const r = runCli(['--check-migrations']);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /migrations realized \(cloud-off\)/);
+    assert.equal(commitCount(), before);
+  });
+
+  it('--check-migrations combined with commit args → AGENT FIX, exit 2, no git side effects', () => {
+    const mf = arrange();
+    const before = commitCount();
+    const r = runCli(['--check-migrations', ...BASE_ARGS(mf)]);
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /AGENT FIX: --check-migrations:.*cannot be combined/);
+    assert.equal(commitCount(), before);
+  });
 });
 
 // ── E1: the false-pass attack, driven through the REAL CLI ─────────────────

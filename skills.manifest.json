@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "974590b792673352",
+  "bundleVersion": "2110efe67d6e4697",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -344,27 +344,27 @@
     },
     "security-strategy": {
       "path": "skills/security-strategy/SKILL.md",
-      "sha": "681c40f9b6b9",
-      "size": 6662,
+      "sha": "8692773ff20a",
+      "size": 6969,
       "summary": "On-demand maintenance of the per-repo security memory: bootstrap an",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "681c40f9b6b9",
-          "size": 6662
+          "sha": "8692773ff20a",
+          "size": 6969
         }
       ]
     },
     "ship": {
       "path": "skills/ship/SKILL.md",
-      "sha": "5808d7bf03b6",
-      "size": 57058,
+      "sha": "c1eb1731763b",
+      "size": 59864,
       "summary": "Sync all project documentation, optionally update a plan, then commit and push to git.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "5808d7bf03b6",
-          "size": 57058
+          "sha": "c1eb1731763b",
+          "size": 59864
         },
         {
           "relPath": "references/python-environment-discovery.md",
@@ -373,8 +373,8 @@
         },
         {
           "relPath": "references/status-md-format.md",
-          "sha": "823b3e52c5c3",
-          "size": 2588
+          "sha": "6c4434eab927",
+          "size": 3212
         },
         {
           "relPath": "references/verification-discipline.md",
