@@ -15,12 +15,42 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+// The repo's single classification oracle — used here only to assert the
+// FIXTURE is what the test claims, never to re-implement the check.
+import { classifyPath } from '../scripts/lib/sensitive-paths.mjs';
 
 import {
-  resolveLocalPath, resolveGitPath, assertHandle, PathRefusedError,
+  resolveLocalPath, resolveGitPath, assertHandle, PathRefusedError, classifyLookupError,
 } from '../scripts/lib/comparison/paths.mjs';
 
 const REPO_ROOT = process.cwd();
+
+describe('comparison/paths — a failed lookup is not evidence of absence', () => {
+  // The sibling of the `resolveGitPath` absent-vs-lookup-failed fix. Tested
+  // through the exported classifier because no test can portably make a
+  // filesystem return EACCES, and a rule exercised only through the one errno
+  // the host happens to produce has no coverage at all.
+  it('ENOENT and ENOTDIR are proof of absence', () => {
+    assert.equal(classifyLookupError(Object.assign(new Error('x'), { code: 'ENOENT' })), 'absent');
+    assert.equal(classifyLookupError(Object.assign(new Error('x'), { code: 'ENOTDIR' })), 'absent');
+  });
+
+  it('a permission or I/O failure is NOT absence — the direction that must not fire', () => {
+    // The whole defect: reporting these as `missing` states "X does not exist"
+    // about a path that was never examined.
+    for (const code of ['EACCES', 'EPERM', 'EIO', 'ELOOP', 'ENAMETOOLONG']) {
+      assert.equal(classifyLookupError(Object.assign(new Error('x'), { code })), 'unknown',
+        `${code} must not be reported as absence`);
+    }
+  });
+
+  it('fails closed on an unrecognised or absent code, and reports success as ok', () => {
+    assert.equal(classifyLookupError(new Error('no code')), 'unknown');
+    assert.equal(classifyLookupError(Object.assign(new Error('x'), { code: 'EWEIRD' })), 'unknown');
+    assert.equal(classifyLookupError(null), 'ok');
+    assert.equal(classifyLookupError(undefined), 'ok');
+  });
+});
 
 describe('comparison/paths — local reads, fail-closed', () => {
   it('NEGATIVE CONTROL: an ordinary in-repo file IS accepted', () => {
@@ -64,12 +94,63 @@ describe('comparison/paths — local reads, fail-closed', () => {
     );
   });
 
-  it('refuses a symlink whose target is sensitive (the INC-001 shape)', (t) => {
+  // Both cases below assert the SPECIFIC reason, not merely that something threw.
+  //
+  // This test used to link to `${os.homedir()}/.ssh/id_rsa` and assert only
+  // `e instanceof PathRefusedError`. Measured 2026-08-15 on a machine with no
+  // such key: it threw `resolution-failed` — the dangling-link branch — so the
+  // sensitive-path check it exists to guard had never once run, and it passed
+  // green anyway. Worse, the target was outside the repo, and `escapedRepo` is
+  // tested BEFORE `sensitive`, so even WITH a real key present it would have
+  // refused as `escapes-repo` and still never reached the branch. A regression
+  // test for a security incident that cannot fail is not a regression test.
+  //
+  // Owning the target instead of borrowing the developer's removes both
+  // problems: it exists, and its location is chosen rather than assumed.
+  it('refuses a symlink whose in-repo target is sensitive (the INC-001 shape)', (t) => {
     // The whole incident: a link named innocently, resolving somewhere else.
-    const linkRel = `.audit/tmp-inc001-${process.pid}.txt`;
+    // The basename must BE `id_rsa` — the patterns match the name, not a
+    // suffix, so `…-id_rsa` classifies as null. The per-pid DIRECTORY keeps
+    // concurrent runs apart without touching the filename that carries the
+    // meaning. (Caught by the fixture guard below on the first attempt.)
+    const targetDir = path.join(REPO_ROOT, '.audit', `inc001-${process.pid}`);
+    const targetAbs = path.join(targetDir, 'id_rsa');
+    const linkRel = `.audit/inc001-innocent-${process.pid}.txt`;
     const linkAbs = path.join(REPO_ROOT, linkRel);
-    const targetAbs = path.join(os.homedir(), '.ssh', 'id_rsa');
+    fs.mkdirSync(targetDir, { recursive: true });
+    fs.writeFileSync(targetAbs, 'not a real key');
+    try {
+      fs.symlinkSync(targetAbs, linkAbs);
+    } catch {
+      t.skip('symlink creation not permitted in this environment');
+      return;
+    }
+    try {
+      // Guard the fixture itself: if the filename ever stops matching the
+      // sensitive patterns, this test would go green on a benign path.
+      assert.equal(classifyPath(path.relative(REPO_ROOT, targetAbs)), 'sensitive',
+        'fixture invalid — the target must classify as sensitive for this test to mean anything');
+      assert.throws(
+        () => resolveLocalPath(linkRel, { repoRoot: REPO_ROOT }),
+        (e) => e instanceof PathRefusedError && e.reason === 'sensitive',
+        'a link must be refused on its CANONICAL target, not its innocent visible name',
+      );
+    } finally {
+      fs.rmSync(linkAbs, { force: true, recursive: true, maxRetries: 3, retryDelay: 50 });
+      fs.rmSync(targetDir, { force: true, recursive: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+
+  it('refuses a symlink that escapes the repo, naming THAT as the reason', (t) => {
+    // The other half of the INC-001 shape, and a distinct fact: we refuse
+    // because the canonical target is outside the repo, which we can assert
+    // without the target being sensitive at all.
+    const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'inc001-outside-'));
+    const targetAbs = path.join(outsideDir, 'ordinary.txt');
+    const linkRel = `.audit/inc001-escape-${process.pid}.txt`;
+    const linkAbs = path.join(REPO_ROOT, linkRel);
     fs.mkdirSync(path.dirname(linkAbs), { recursive: true });
+    fs.writeFileSync(targetAbs, 'ordinary');
     try {
       fs.symlinkSync(targetAbs, linkAbs);
     } catch {
@@ -79,11 +160,11 @@ describe('comparison/paths — local reads, fail-closed', () => {
     try {
       assert.throws(
         () => resolveLocalPath(linkRel, { repoRoot: REPO_ROOT }),
-        (e) => e instanceof PathRefusedError,
-        'a symlink resolving into ~/.ssh must be refused on its CANONICAL target, not its visible name',
+        (e) => e instanceof PathRefusedError && e.reason === 'escapes-repo',
       );
     } finally {
       fs.rmSync(linkAbs, { force: true, recursive: true, maxRetries: 3, retryDelay: 50 });
+      fs.rmSync(outsideDir, { force: true, recursive: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 });

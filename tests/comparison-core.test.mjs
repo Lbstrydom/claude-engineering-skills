@@ -145,6 +145,25 @@ describe('comparison/lock — the extraction preserved cohort identity', () => {
     assert.throws(() => canonicalJson({ x: Number.NaN }), /non-finite/);
     assert.throws(() => canonicalJson({ x: Infinity }), /non-finite/);
   });
+
+  it('canonicalJson refuses `undefined` — it would collide with an explicit null', async () => {
+    // Measured 2026-08-15, before the fix: `[undefined]` and `[null]` BOTH
+    // digested as `[null]`, and `{a: undefined}` and `{a: null}` both as
+    // `{"a":null}` — two distinct configurations sharing one cohort identity,
+    // which is the silent merge the digest exists to prevent, arriving through
+    // the digest itself. Same class as the 6dp rounding case above, and the
+    // same remedy: refuse, rather than invent a second spelling of "no value".
+    const { canonicalJson } = await import('../scripts/lib/comparison/lock.mjs');
+    assert.throws(() => canonicalJson(undefined), /refusing to digest `undefined`/);
+    assert.throws(() => canonicalJson([undefined]), /refusing to digest `undefined`/);
+    assert.throws(() => canonicalJson({ a: undefined }), /refusing to digest `undefined`/);
+
+    // The alternatives the error message names must both still work, and must
+    // stay DISTINGUISHABLE from each other — otherwise the advice re-creates
+    // the collision it is steering away from.
+    assert.notEqual(canonicalJson({ a: null }), canonicalJson({}));
+    assert.notEqual(canonicalJson([null]), canonicalJson([]));
+  });
 });
 
 describe('comparison/roles — coverage, in both directions', () => {

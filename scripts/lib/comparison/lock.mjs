@@ -48,6 +48,24 @@ export const LOCK_SCHEMA_VERSION = 1;
  * matcher config, not a general structural canonicaliser.
  */
 export function canonicalJson(value) {
+  // `undefined` is the SAME collision class as the 6dp rounding below, reached
+  // by a different route: `JSON.stringify(undefined ?? null)` is `"null"`, so
+  // `[undefined]` and `[null]` both digest as `[null]`, and `{a: undefined}`
+  // and `{a: null}` both as `{"a":null}` (measured 2026-08-15). Two distinct
+  // configurations would share one cohort identity — the silent merge the
+  // digest exists to prevent, arriving through the digest itself.
+  //
+  // Refuse rather than pick a distinct encoding, for the same reason the
+  // rounding case refuses: any new encoding for `undefined` changes nothing
+  // today but establishes a second way to spell "no value", and the caller
+  // already has an unambiguous one. An absent key and `null` are both
+  // representable and both round-trip; `undefined` is neither.
+  if (value === undefined) {
+    throw new Error(
+      'canonicalJson: refusing to digest `undefined` — it serializes as null, so it would share a cohort '
+      + 'identity with an explicit null. Omit the key, or pass null if "no value" is the value.',
+    );
+  }
   if (value === null || typeof value !== 'object') {
     if (typeof value === 'number') {
       if (!Number.isFinite(value)) throw new Error(`canonicalJson: refusing to digest a non-finite number (${value}) — it would serialize as null and silently change identity`);

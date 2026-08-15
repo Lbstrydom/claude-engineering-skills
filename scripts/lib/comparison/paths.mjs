@@ -116,6 +116,37 @@ export function assertHandle(h) {
  * @param {{repoRoot: string}} opts
  * @returns {PathHandle}
  */
+/**
+ * Does a failed `lstat` prove the entry is ABSENT, or only that we could not
+ * look?
+ *
+ * Key on the errno, never on "lstat threw". `ENOENT` (nothing at that name) and
+ * `ENOTDIR` (a parent component is not a directory, so the name cannot exist)
+ * are proof of absence. `EACCES`, `EPERM`, `EIO`, `ELOOP` and
+ * `ENAMETOOLONG` are not: the entry may exist perfectly well and merely be
+ * unreadable by us.
+ *
+ * A bare `catch { missing = true }` reported every one of those as `missing`,
+ * which states `"X" does not exist` about a path we never managed to examine —
+ * the false-absence claim this seam exists to prevent. `resolveGitPath` had the
+ * identical defect and was fixed on 2026-08-14 (`absent` vs
+ * `lookup-failed:<code>`); this is the sibling that fix missed, which is the
+ * recurring shape this plan's own status note names.
+ *
+ * Exported because the discrimination is the contract, and a filesystem cannot
+ * portably be made to return `EACCES` in a test — a rule that can only be
+ * exercised through the one errno the test host happens to produce is a rule
+ * with no coverage. Fail CLOSED on an unrecognised code: `unknown` refuses
+ * without claiming absence, which is the safe direction.
+ *
+ * @param {(Error & {code?: string})|null|undefined} err — the caught error, or null on success
+ * @returns {'ok'|'absent'|'unknown'}
+ */
+export function classifyLookupError(err) {
+  if (!err) return 'ok';
+  return (err.code === 'ENOENT' || err.code === 'ENOTDIR') ? 'absent' : 'unknown';
+}
+
 export function resolveLocalPath(rel, { repoRoot } = {}) {
   if (typeof repoRoot !== 'string' || !repoRoot) throw new TypeError('[comparison/paths] repoRoot is required');
   if (typeof rel !== 'string' || rel.length === 0) {
@@ -136,11 +167,16 @@ export function resolveLocalPath(rel, { repoRoot } = {}) {
     // fails. Collapsing the two would report a dangling link into a sensitive
     // target as a benign typo — the reason code is operator-facing, and both
     // still refuse.
-    let entryExists = true;
-    try { fs.lstatSync(path.resolve(repoRoot, rel)); } catch { entryExists = false; }
-    if (!entryExists) {
+    let lookupError = null;
+    try { fs.lstatSync(path.resolve(repoRoot, rel)); } catch (err) { lookupError = err; }
+    if (classifyLookupError(lookupError) === 'absent') {
       throw new PathRefusedError('missing',
         `[comparison/paths] "${rel}" does not exist — refused at manifest load, before any provider call`);
+    }
+    if (lookupError) {
+      throw new PathRefusedError('resolution-failed',
+        `[comparison/paths] "${rel}" could not be examined (${lookupError.code || 'unknown error'}) — refusing rather `
+        + 'than claiming it is absent, which would be a fact we do not have');
     }
     throw new PathRefusedError('resolution-failed',
       `[comparison/paths] "${rel}" exists but does not resolve (dangling link?) — refusing rather than reading an unclassifiable path`);
