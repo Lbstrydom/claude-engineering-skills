@@ -22,7 +22,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import 'dotenv/config';
+import './lib/load-env.mjs';
 
 import { resolveManifest }       from './lib/persona-test/manifest-resolver.mjs';
 import { loadCanary, verifyExpectations } from './lib/persona-test/canary.mjs';

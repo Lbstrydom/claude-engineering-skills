@@ -4,7 +4,7 @@
 // .env (never the shared ~/.audit-loop.env) run cloud-blind. The fix routes the
 // shared-layer load through the single DSN reader, db/client.mjs::resolveDbUrl(),
 // via loadSharedEnv({ includeCwd: false }) — the cwd .env is the entrypoint's
-// job (every real CLI does `import 'dotenv/config'`/config.mjs first), so the
+// job (every real CLI imports lib/load-env.mjs), so the
 // reader only needs to add the shared layer. These tests lock that contract
 // WHERE IT SHIPS (consumer repos have no CI), plus a structural assertion that
 // the reader doesn't regress back to config.mjs's incidental import side-effect.

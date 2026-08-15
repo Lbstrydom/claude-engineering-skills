@@ -25,7 +25,7 @@
  *
  * @module scripts/lib/learning/quickfix-stats
  */
-import 'dotenv/config';
+import '../load-env.mjs';
 import fs from 'node:fs';
 
 import { betaPosterior } from './beta-posterior.mjs';

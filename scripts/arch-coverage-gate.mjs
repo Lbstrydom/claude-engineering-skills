@@ -22,7 +22,7 @@
  * @module scripts/arch-coverage-gate
  */
 
-import 'dotenv/config';
+import './lib/load-env.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';

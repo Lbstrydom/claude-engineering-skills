@@ -29,6 +29,7 @@
  * @module scripts/setup-postgres
  */
 
+import './lib/load-env.mjs';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';

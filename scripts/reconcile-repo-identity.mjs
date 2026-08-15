@@ -41,7 +41,7 @@
  *
  * @module scripts/reconcile-repo-identity
  */
-import 'dotenv/config';
+import './lib/load-env.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

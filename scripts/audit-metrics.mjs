@@ -13,7 +13,7 @@
  * @module scripts/audit-metrics
  */
 
-import 'dotenv/config';
+import './lib/load-env.mjs';
 import { pathToFileURL } from 'node:url';
 import { loadOutcomes } from './lib/findings-outcomes.mjs';
 import { many } from './lib/db/query.mjs';

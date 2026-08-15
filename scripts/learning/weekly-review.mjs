@@ -27,7 +27,7 @@
  *
  * @module scripts/learning/weekly-review
  */
-import 'dotenv/config';
+import '../lib/load-env.mjs';
 import {
   initLearningStore,
   isCloudEnabled,

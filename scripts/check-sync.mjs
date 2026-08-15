@@ -6,7 +6,7 @@
  * Usage:  node scripts/check-sync.mjs [--json]
  */
 
-import 'dotenv/config';
+import './lib/load-env.mjs';
 import path from 'node:path';
 import { generateRepoProfile } from './lib/context.mjs';
 

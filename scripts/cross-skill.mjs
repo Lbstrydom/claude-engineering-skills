@@ -27,7 +27,7 @@
  * @module scripts/cross-skill
  */
 
-import 'dotenv/config';
+import './lib/load-env.mjs';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';

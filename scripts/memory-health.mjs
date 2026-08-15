@@ -21,7 +21,7 @@
  * @module scripts/memory-health
  */
 
-import 'dotenv/config';
+import './lib/load-env.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
 
 // Parse a numeric env var, falling back to the default on absent/garbage. A bare

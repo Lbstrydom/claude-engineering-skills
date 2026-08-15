@@ -8,7 +8,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import 'dotenv/config';
+import '../load-env.mjs';
 import { fetchCloudMetrics, computeLocalMetrics } from '../../audit-metrics.mjs';
 import { getLearningStats } from '../learning/stats.mjs';
 import { redactSecrets } from '../sanitizer.mjs';

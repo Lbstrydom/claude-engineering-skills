@@ -17,7 +17,7 @@
  * @module scripts/defect-harvest
  */
 
-import 'dotenv/config';
+import './lib/load-env.mjs';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { classifyPath } from './lib/sensitive-paths.mjs';

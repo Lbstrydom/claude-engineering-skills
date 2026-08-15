@@ -22,7 +22,7 @@
  *   AUDIT_TOOL_MANIFEST_URL=<url>   override default upstream URL
  */
 
-import 'dotenv/config';
+import './lib/load-env.mjs';
 import {
   fetchUpstreamManifest,
   compareToUpstream,

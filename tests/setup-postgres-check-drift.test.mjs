@@ -449,9 +449,22 @@ function spawnNode(args, { stripDbUrl = false } = {}) {
     delete env.AUDIT_DB_URL;
     delete env.AUDIT_POSTGRES_URL;
     delete env.SUPABASE_AUDIT_URL;
-    // resolveDbUrl() now loads the shared ~/.audit-loop.env layer in the child;
-    // disable it so "AUDIT_DB_URL unset" genuinely reaches the cloud-off path.
+    // "AUDIT_DB_URL unset" is a claim about THREE layers, not one. Deleting the
+    // shell variable is only the first; both files that can supply it have to be
+    // neutralised too, or this test asserts the cloud-off path while the child
+    // is fully configured.
+    //
+    //   2. the shared ~/.audit-loop.env layer, loaded by resolveDbUrl():
     env.AUDIT_LOOP_DISABLE_SHARED = '1';
+    //   3. the cwd/git-root .env layer. setup-postgres.mjs now imports
+    //      lib/load-env.mjs (2026-08-15) — before that it had no cwd loader at
+    //      all, which is why this helper never needed to think about it and why
+    //      the docs told operators to prepend `-r dotenv/config` by hand.
+    //      Pinning DOTENV_CONFIG_PATH short-circuits discovery (see
+    //      load-shared-env.mjs::loadCwdLayer) so nothing is found. Note the
+    //      discovery it short-circuits reaches the MAIN worktree's .env from a
+    //      linked worktree, so deleting a variable here is not enough.
+    env.DOTENV_CONFIG_PATH = path.join(REPO_ROOT, '.env.hermetic-test-absent');
   }
   const r = spawnSync(process.execPath, ['scripts/setup-postgres.mjs', ...args], {
     cwd: REPO_ROOT,

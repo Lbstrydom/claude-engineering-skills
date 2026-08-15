@@ -69,7 +69,7 @@
  * @module scripts/solo-control-audit
  */
 
-import 'dotenv/config'; // load repo-local .env (CLAUDE_BACKEND, AUDIT_DB_URL, keys)
+import './lib/load-env.mjs'; // load repo-local .env (CLAUDE_BACKEND, AUDIT_DB_URL, keys)
 
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';

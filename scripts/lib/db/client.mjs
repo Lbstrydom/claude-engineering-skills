@@ -334,9 +334,14 @@ export function resolveDbUrl() {
   // Guarantee the shared-env precondition at the single DSN reader: load the
   // shared `~/.audit-loop.env` layer here, so cloud connectivity no longer
   // depends on some entrypoint having imported config.mjs first. `includeCwd:
-  // false` — the cwd `.env` is the entrypoint's job (every real CLI does
-  // `import 'dotenv/config'`/config.mjs first); the bug was only the missing
-  // shared layer. Sync + idempotent + latched → no-op after the first call.
+  // false` — the cwd `.env` is the entrypoint's job (every real CLI imports
+  // `lib/load-env.mjs`); the bug was only the missing shared layer. Sync +
+  // idempotent + latched → no-op after the first call.
+  //
+  // That parenthetical used to read "`import 'dotenv/config'`/config.mjs", as
+  // if the two were interchangeable. They are not — `dotenv/config` reads only
+  // `${cwd}/.env` — and treating them as equal is what let 43 cwd-blind call
+  // sites read as covered until 2026-08-15. See `lib/load-env.mjs`.
   loadSharedEnv({ includeCwd: false });
   const canonical = (process.env.AUDIT_DB_URL || '').trim();
   const alias = (process.env.AUDIT_POSTGRES_URL || '').trim();

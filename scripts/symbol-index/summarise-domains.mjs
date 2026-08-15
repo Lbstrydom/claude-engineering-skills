@@ -15,7 +15,7 @@
  *
  * @module scripts/symbol-index/summarise-domains
  */
-import 'dotenv/config';
+import '../lib/load-env.mjs';
 import crypto from 'node:crypto';
 import {
   initLearningStore,

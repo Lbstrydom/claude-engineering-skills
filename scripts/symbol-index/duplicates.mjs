@@ -17,7 +17,7 @@
  * @module scripts/symbol-index/duplicates
  */
 
-import 'dotenv/config';
+import '../lib/load-env.mjs';
 import {
   initLearningStore,
   isCloudEnabled,

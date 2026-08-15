@@ -22,7 +22,7 @@
  *
  * @module scripts/explain-history
  */
-import 'dotenv/config';
+import './lib/load-env.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';

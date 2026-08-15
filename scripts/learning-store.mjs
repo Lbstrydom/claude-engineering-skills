@@ -37,8 +37,7 @@
 
 // dotenv load preserved — CLI scripts that import this still expect .env
 // to have been loaded by the time they start using config.
-import dotenv from 'dotenv';
-dotenv.config({ path: process.env.DOTENV_CONFIG_PATH || '.env', quiet: true });
+import './lib/load-env.mjs';
 
 // Re-export every public function from the 9 domain modules. The
 // `export *` form is mechanical + makes a single source-of-truth file

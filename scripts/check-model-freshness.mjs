@@ -24,7 +24,7 @@
  * @module scripts/check-model-freshness
  */
 
-import 'dotenv/config';
+import './lib/load-env.mjs';
 import crypto from 'node:crypto';
 import { z } from 'zod';
 

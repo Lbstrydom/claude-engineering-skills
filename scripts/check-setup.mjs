@@ -19,6 +19,13 @@
  *   1 — one or more failures
  */
 
+// Load env FIRST. This is the setup doctor: every `process.env.X` check below
+// is a claim about the user's configuration, and a doctor that reads an unloaded
+// environment reports "not configured" for a repo that is configured correctly —
+// the exact false negative it exists to prevent. `resolveCloudConfig`'s
+// differ-check already assumes the loader has run (see its comment on why a
+// naive "process.env first" read would always report source: 'process-env').
+import './lib/load-env.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import {

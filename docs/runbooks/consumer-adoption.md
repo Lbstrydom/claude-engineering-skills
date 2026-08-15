@@ -35,6 +35,46 @@ sends a diff to GPT, and a Python diff audits exactly as well as a TypeScript
 one; `/plan` is language-agnostic. What the `.mjs` half needs is a *runtime*,
 not a matching language.
 
+### Your package manager — npm, pnpm, yarn or bun
+
+Nothing to configure: sync detects it from your repo and uses it. Detection is
+evidence-ordered — the `packageManager` field in `package.json` first (an
+explicit declaration, and what corepack itself obeys), then a lockfile, then npm
+as the fallback. Carrying two lockfiles is reported rather than silently
+resolved, because whichever one loses is somebody's broken CI.
+
+This matters more than it sounds. Until 2026-08-15 dependency install was
+hardcoded to `npm install --save-dev`, which in a **pnpm** repo is not a slower
+route to the same place:
+
+- pnpm's `node_modules` is a symlink farm over `.pnpm/`; `npm install` writes a
+  flat tree beside it and updates `package-lock.json`, which pnpm ignores.
+- `pnpm-lock.yaml` is untouched, so your next `pnpm install --frozen-lockfile`
+  removes what npm added.
+- Under pnpm's strict layout only **direct** dependencies get a top-level entry,
+  so a package npm hoisted into place stops resolving once pnpm rebuilds.
+
+The symptom is a dependency that works locally, fails in CI, and repairs itself
+on the next sync — with nothing to attribute it to.
+
+pnpm and yarn are driven through **corepack**, which ships inside Node, so
+neither has to be on your `PATH` and a pinned `packageManager` version is
+honoured. It also sidesteps a Windows-only trap: `pnpm`/`yarn`/`npx` on `PATH`
+are `.cmd` shims, and Node ≥ 22.19 refuses to spawn a `.cmd` without a shell
+(CVE-2024-27980 hardening). The `npx` fallback for `/ux-lock`'s Playwright
+runner had been dead on Windows for exactly this reason; it now uses your
+manager's own fetch-and-run verb (`npx` / `pnpm dlx` / `yarn dlx` / `bun x`).
+
+One-shot install works under any of them:
+
+```bash
+npx github:Lbstrydom/claude-engineering-skills <dir>
+```
+
+```bash
+pnpm dlx github:Lbstrydom/claude-engineering-skills <dir>
+```
+
 ### The three adoption tiers
 
 **Tier 1 — full sync (consumer has `package.json` + installed deps).**
@@ -511,6 +551,20 @@ Reaching for the main checkout by changing directory into it silently changes
   (`path.resolve(args.repo || '.')`), so a clean result obtained from the main
   checkout describes the main checkout, not the branch you are shipping. Pass
   `--repo <worktree>` if you must run it from elsewhere.
+
+**`.env` is the one thing you no longer have to `cd` for** (fixed 2026-08-15).
+It is gitignored, so it exists only in the main checkout — and every CLI used to
+load it with `import 'dotenv/config'`, which reads `${cwd}/.env` and nothing
+else. From a worktree that found nothing, so the command ran with no
+`OPENAI_API_KEY`, no `AUDIT_DB_URL`, and no error: the tell is a **failure with
+zero latency**, because nothing was ever called. Entry points now import
+`lib/load-env.mjs`, which walks up and then asks git for the main worktree root
+(`--git-common-dir`), so the main checkout's `.env` is found from a worktree,
+from a subdirectory, and from a worktree stored outside the checkout entirely.
+
+Do not "fix" this by copying `.env` into a worktree — you get a second copy that
+drifts from the first, and the copy is what a stale credential incident is made
+of.
 
 ### Pre-push hooks: fail loudly, do not skip
 

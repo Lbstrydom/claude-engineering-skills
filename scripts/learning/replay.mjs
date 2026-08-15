@@ -21,7 +21,7 @@
  *
  * @module scripts/learning/replay
  */
-import 'dotenv/config';
+import '../lib/load-env.mjs';
 import path from 'node:path';
 import { assertKnownFlags, ArgvError } from '../lib/cli-io.mjs';
 import { pathToFileURL } from 'node:url';

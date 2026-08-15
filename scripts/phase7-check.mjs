@@ -4,7 +4,7 @@
  * when enough data has accumulated for predictive strategy implementation.
  */
 
-import 'dotenv/config';
+import './lib/load-env.mjs';
 import { loadOutcomes } from './lib/findings.mjs';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';
 

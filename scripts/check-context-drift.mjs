@@ -28,7 +28,7 @@
  * @module scripts/check-context-drift
  */
 
-import 'dotenv/config';
+import './lib/load-env.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';

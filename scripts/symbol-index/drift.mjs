@@ -14,7 +14,7 @@
  * @module scripts/symbol-index/drift
  */
 
-import 'dotenv/config';
+import '../lib/load-env.mjs';
 import { findStalePragmas, renderStalePragmaSection } from '../lib/symbol-index/stale-pragma-sweep.mjs';
 import { findRepoPragmas, resolvePragmasToDefinitions } from '../lib/duplicate-justification-pragma.mjs';
 import {

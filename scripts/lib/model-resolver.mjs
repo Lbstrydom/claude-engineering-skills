@@ -24,15 +24,15 @@
 
 // Load .env when this module is the process entry point (its documented
 // CLI self-check: `node scripts/lib/model-resolver.mjs resolve|catalog`).
-// When imported as a library, the actual entry point (config.mjs's
-// loadSharedEnv, or another script's own `import 'dotenv/config'`) has
+// When imported as a library, the actual entry point (config.mjs or its own
+// `lib/load-env.mjs` import — both routing to loadSharedEnv) has
 // already populated process.env by the time refreshModelCatalog() reads
 // it — this import is a harmless idempotent no-op in that case. Without
 // it, a standalone CLI invocation reads undefined API keys, so
 // refreshModelCatalog() silently queues zero fetch tasks and falls back
 // to STATIC_POOL with no error at all — the self-check reports "no live
 // catalog" even when the keys and network are both fine.
-import 'dotenv/config';
+import './load-env.mjs';
 
 // ── Static fallback pool ────────────────────────────────────────────────────
 // IMPORTANT: only pin model IDs that exist in the provider's current catalog.

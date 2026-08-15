@@ -20,7 +20,7 @@
  *
  * @module scripts/audit-full
  */
-import 'dotenv/config';
+import './lib/load-env.mjs';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import fs from 'node:fs';

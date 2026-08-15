@@ -28,8 +28,7 @@
  * @module scripts/debt-backfill
  */
 
-import dotenv from 'dotenv';
-dotenv.config({ path: process.env.DOTENV_CONFIG_PATH || '.env', quiet: true });
+import './lib/load-env.mjs';
 
 import fs from 'node:fs';
 import path from 'node:path';

@@ -22,8 +22,7 @@
  */
 
 // Load .env without the banner (keeps CLI stdout clean for JSON output)
-import dotenv from 'dotenv';
-dotenv.config({ path: process.env.DOTENV_CONFIG_PATH || '.env', quiet: true });
+import './lib/load-env.mjs';
 import { initLearningStore, isCloudEnabled, resolveRepoForStore } from './learning-store.mjs';
 import { selectEventSource, removeDebt, appendEvents } from './lib/debt-memory.mjs';
 import { readDebtLedger, DEFAULT_DEBT_LEDGER_PATH } from './lib/debt-ledger.mjs';

@@ -8,7 +8,7 @@
  * Total output contract (R2-H4): always emit schema-valid JSON. Exit code
  * is secondary — caller reads per-provider state to know what worked.
  */
-import 'dotenv/config';
+import './lib/load-env.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';

@@ -355,7 +355,7 @@ Runs as part of `npm run check` (the pre-push hook). ERRORs block; WARNs are adv
 | `zod` | **4.4.3** | Zod 4 API — NOT Zod 3. `_def.type` is a string (`'object'`, `'array'`, `'enum'`), NOT `_def.typeName` (`'ZodObject'`). `shape` is a direct property on object schemas, NOT `_def.shape()`. `_def.entries` for enums, NOT `_def.values`. |
 | `openai` | **7.4.0** | v7 since 2026-08-09; `responses.parse()` + `zodTextFormat()` unchanged and live-verified on the bump |
 | `@google/genai` | ^2.13.0 | Google Generative AI SDK. Uses `responseMimeType: 'application/json'` + `responseSchema` for structured output |
-| `dotenv` | 17.4.2 | Auto-loads `.env` via `import 'dotenv/config'` |
+| `dotenv` | 17.4.2 | Load via `lib/load-env.mjs`, never `dotenv/config` (cwd-only) |
 
 ## Architecture
 
@@ -1346,6 +1346,7 @@ contract: [`docs/reference/commit-provenance.md`](docs/reference/commit-provenan
 - Use `_def.typeName` or `_def.shape()` — these are Zod 3 patterns, we use Zod 4
 - Send `.env` or credential files to external APIs
 - Use `require()` — project is ESM-only
+- Use `import 'dotenv/config'` — cwd-only; import `lib/load-env.mjs` instead
 - Create new Anthropic/OpenAI client instances per call — reuse the client created in `main()`
 
 ## Accepted Technical Debt

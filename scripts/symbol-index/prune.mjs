@@ -16,7 +16,7 @@
  * @module scripts/symbol-index/prune
  */
 
-import 'dotenv/config';
+import '../lib/load-env.mjs';
 import {
   initLearningStore,
   isCloudEnabled,

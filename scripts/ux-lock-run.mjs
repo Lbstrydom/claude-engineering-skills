@@ -21,7 +21,7 @@
  *
  * @module scripts/ux-lock-run
  */
-import 'dotenv/config';
+import './lib/load-env.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 

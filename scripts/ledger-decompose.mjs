@@ -22,7 +22,7 @@
  * @module scripts/ledger-decompose
  */
 
-import 'dotenv/config';
+import './lib/load-env.mjs';
 import path from 'node:path';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { log, argOption, hasFlag } from './lib/cli-io.mjs';

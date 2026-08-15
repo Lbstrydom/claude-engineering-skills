@@ -17,7 +17,7 @@
  *   DATABASE_URL=postgres://... node scripts/migrate-v3-run-metadata.mjs
  */
 
-import 'dotenv/config';
+import './lib/load-env.mjs';
 
 const DB_URL = process.env.DATABASE_URL;
 if (!DB_URL) {

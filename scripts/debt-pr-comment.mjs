@@ -34,8 +34,7 @@
  * @module scripts/debt-pr-comment
  */
 
-import dotenv from 'dotenv';
-dotenv.config({ path: process.env.DOTENV_CONFIG_PATH || '.env', quiet: true });
+import './lib/load-env.mjs';
 
 import fs from 'node:fs';
 import { readDebtLedger, DEFAULT_DEBT_LEDGER_PATH } from './lib/debt-ledger.mjs';

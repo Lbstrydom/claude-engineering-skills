@@ -28,7 +28,7 @@
  *
  * @module scripts/write-code-outcomes
  */
-import 'dotenv/config'; // load .env for standalone CLI use (matches sibling CLIs)
+import './lib/load-env.mjs'; // load .env for standalone CLI use (matches sibling CLIs)
 import { finalizeRoundOutcomes, loadAuditInputs, parseResultPath } from './lib/finalize-outcomes.mjs';
 import {
   initLearningStore,
