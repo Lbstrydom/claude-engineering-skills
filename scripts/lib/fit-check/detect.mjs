@@ -13,6 +13,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { detectRepoStack } from '../repo-stack.mjs';
+import { detectPackageManager } from '../package-manager.mjs';
 
 /**
  * Framework signature → label. Order matters — first match wins, so the
@@ -59,6 +60,12 @@ const FRAMEWORK_RULES = [
  * @property {boolean} hasCliBin — package.json bin field, or known CLI signatures
  * @property {boolean} isPlugin — Obsidian plugin or similar embedded runtime
  * @property {boolean} hasPlaywright — @playwright/test in deps OR playwright.config.* present
+ * @property {string} packageManager — npm|pnpm|yarn|bun, governing this repo
+ * @property {boolean} packageManagerAmbiguous — true when two lockfiles disagree and
+ *   no "packageManager" field settles it; `packageManager` is then only a guess
+ * @property {boolean} packageManagerInvalidDeclaration — true when package.json
+ *   declares (or attempts to declare) a "packageManager" that doesn't parse;
+ *   `packageManager` is then only a fallback guess, same caveat as ambiguous
  * @property {boolean} hasSupabase — @supabase/supabase-js in deps OR SUPABASE_* env vars
  * @property {string|null} testRunner — vitest | jest | mocha | node-test | pytest | null
  * @property {boolean} hasPlansDir — docs/plans/ directory present
@@ -103,6 +110,8 @@ export function detectShape(cwd = process.cwd()) {
 
   const hasPersonaTestManifest = fs.existsSync(path.join(cwd, '.persona-test', 'surfaces.json'));
 
+  const pmDetection = detectPackageManager(cwd);
+
   return {
     stack: stackInfo.stack,
     // The per-kind list, NOT derivable from `stack`: a repo with a
@@ -122,6 +131,19 @@ export function detectShape(cwd = process.cwd()) {
     hasPlansDir,
     hasEngineClaimAnnotations,
     hasPersonaTestManifest,
+    // Carried so a rule's `setup` line is written in the dialect the target
+    // repo actually uses — the strings were hardcoded npm, which is the wrong
+    // advice (and, for pnpm, a tree-corrupting one) in any non-npm consumer.
+    packageManager: pmDetection.name,
+    // Surfaced separately rather than folded into `packageManager` (round-1
+    // audit M4/M13, 2026-08-15): collapsing an ambiguous two-lockfile repo to
+    // just its first-candidate guess silently hid the ambiguity from the one
+    // consumer (`playwrightSetup`) that renders it into user-facing advice.
+    packageManagerAmbiguous: pmDetection.ambiguous,
+    // Same reasoning, round-2 (audit M6, 2026-08-15): an invalid declaration
+    // is a THIRD state distinct from both "clean detection" and "ambiguous",
+    // and `packageManager` alone can't distinguish it either.
+    packageManagerInvalidDeclaration: pmDetection.invalidDeclaration,
     detectedFrom,
   };
 }

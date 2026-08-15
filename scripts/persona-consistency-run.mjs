@@ -28,6 +28,7 @@ import 'dotenv/config';
 import { resolveManifest }       from './lib/persona-test/manifest-resolver.mjs';
 import { loadCanary, verifyExpectations } from './lib/persona-test/canary.mjs';
 import { openLedger }            from './lib/persona-test/ledger.mjs';
+import { playwrightInstallHint } from './lib/package-manager.mjs';
 import { diffClaims, manifestQualityWarnings, appliesToCurrent, routePatternCoverageWarnings }
   from './lib/persona-test/consistency.mjs';
 import { attachNetworkListener, captureWitness }
@@ -149,7 +150,7 @@ export async function runConsistency(args, deps = {}) {
       });
       ledger.close();
       process.stderr.write(
-        `playwright-missing: ${err.message}\nFix: npm install playwright && npx playwright install chromium\n`,
+        `playwright-missing: ${err.message}\nFix: ${playwrightInstallHint(repoRoot)}\n`,
       );
       return { exitCode: EXIT.PLAYWRIGHT_MISSING, ledgerPath: ledger.ledgerPath, ledger: ledger.state };
     }
@@ -791,6 +792,13 @@ const isMain = (() => {
 })();
 
 if (isMain) {
+  // CLI relocation smoke contract (AGENTS.md) — proves imports survive a
+  // consumer's scripts/.claude-skills/ layout, before anything below ever
+  // touches Playwright/the ledger/network. Added post-hoc (Gemini final
+  // review, 2026-08-16): this runner had no handler at all, unlike its
+  // sibling ux-lock-run.mjs, which already implements this same idiom.
+  if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
+
   const startedAt = Date.now();
   const result = await runConsistency(parseArgs(process.argv.slice(2)));
   const durationMs = Date.now() - startedAt;

@@ -33,6 +33,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { playwrightBootstrapHint } from './package-manager.mjs';
 
 /** Closed outcome status — also imported by tests to assert without spawning. */
 export const RUN_STATUS = Object.freeze({
@@ -101,6 +102,44 @@ export function normalizeSpecPath(file, repoRoot) {
 }
 
 /**
+ * Locate a locally-installed Playwright test-runner CLI script, trying BOTH
+ * packages this bundle might have provisioned — never anything requiring a
+ * package-manager spawn (round-1/round-2 audit H1/H3, 2026-08-15).
+ *
+ * 1. `@playwright/test/cli` — the dedicated test-runner package, importable
+ *    directly via its declared `exports`.
+ * 2. The base `playwright` package's own CLI — this is what
+ *    `scripts/lib/install/deps.mjs`'s `OPTIONAL_DEPS` actually provisions
+ *    (`@playwright/test` was deliberately dropped from that list 2026-08-11),
+ *    and it ships the identical `test` subcommand (confirmed:
+ *    `node node_modules/playwright/cli.js test --help`). Its `./cli` subpath
+ *    is NOT in the package's `exports` map, so `require.resolve('playwright/cli')`
+ *    throws even when the file exists — read the script path out of the
+ *    package's own `bin` field instead, which is exactly what npm/npx do
+ *    under the hood to find it, minus the shell-out.
+ *
+ * Throws (like `require.resolve`) when NEITHER is locally installed — the
+ * caller treats that as PLAYWRIGHT_MISSING. There is no third, exec-through-
+ * the-package-manager attempt: that was the H1 defect (an npm/npx-family
+ * `exec` can silently fetch an unpinned copy from the registry when nothing
+ * resolves locally), and both of these steps stay strictly local-resolution.
+ *
+ * @param {string} repoRoot
+ * @returns {string} absolute path to a Playwright test-runner CLI script
+ */
+export function resolvePlaywrightCli(repoRoot) {
+  const req = createRequire(path.join(repoRoot, 'package.json'));
+  try {
+    return req.resolve('@playwright/test/cli');
+  } catch { /* try the base package next */ }
+  const pkgJsonPath = req.resolve('playwright/package.json');
+  const bin = req(pkgJsonPath).bin;
+  const rel = typeof bin === 'string' ? bin : bin?.playwright;
+  if (!rel) throw new Error('playwright package.json has no usable "bin" entry');
+  return path.join(path.dirname(pkgJsonPath), rel);
+}
+
+/**
  * Run one or more Playwright spec files and return the parsed JSON report.
  *
  * @param {object} opts
@@ -110,44 +149,59 @@ export function normalizeSpecPath(file, repoRoot) {
  * @param {number} [opts.timeoutMs]  subprocess timeout (default 180000)
  * @param {(cmd:string,args:string[],options:object)=>{status:number|null,error?:Error,stderr?:Buffer|string}} [opts._spawn]
  *        injectable spawn (tests) — defaults to spawnSync.
+ * @param {(repoRoot:string)=>string} [opts._resolveCli]
+ *        injectable CLI resolver (tests) — defaults to {@link resolvePlaywrightCli}.
+ *        Exists so outcome-classification tests can reach `_spawn` without this
+ *        SOURCE repo needing `@playwright/test` as a real dependency (it
+ *        genuinely does not have one — only the base `playwright` package,
+ *        which is exactly the case {@link resolvePlaywrightCli}'s second step
+ *        now also covers for real).
  * @returns {{ status: string, report: object|null, exitCode: number|null, error: string|null }}
  */
 export function runPlaywrightJson(opts) {
   const {
     specPaths, baseUrl, cwd, timeoutMs = 180000, _spawn = spawnSync,
+    _resolveCli = resolvePlaywrightCli,
   } = opts || {};
   if (!Array.isArray(specPaths) || specPaths.length === 0) {
     return { status: RUN_STATUS.SPAWN_FAILED, report: null, exitCode: null, error: 'no spec paths provided' };
   }
-  const repoRoot = cwd || resolveRepoRoot();
+  // path.resolve, not a bare passthrough (round-4 audit H3, 2026-08-15): a
+  // relative `cwd` reached createRequire/path.join downstream un-normalized,
+  // resolving against whatever process.cwd() happened to be at call time
+  // rather than the caller's intended directory. Both real callers
+  // (ux-lock-run.mjs) already pass resolveRepoRoot()'s output, which is
+  // always absolute, so this was unreached in practice — but cwd is a public
+  // parameter, and resolving it is a one-line fix for a real API contract gap.
+  const repoRoot = cwd ? path.resolve(cwd) : resolveRepoRoot();
   const reportFile = path.join(os.tmpdir(), `ux-lock-pw-${randomUUID()}.json`);
 
   const env = { ...process.env, PLAYWRIGHT_JSON_OUTPUT_NAME: reportFile };
   if (baseUrl) env.E2E_BASE_URL = baseUrl;
 
-  // Prefer the repo's installed Playwright CLI run by the CURRENT Node binary —
-  // no npx shim, no shell. Node >=22.19 EINVALs spawning .cmd files without
-  // shell:true (CVE-2024-27980 hardening), which broke the old
+  // Run the repo's installed Playwright CLI directly under the CURRENT Node
+  // binary — no npx shim, no shell. Node >=22.19 EINVALs spawning .cmd files
+  // without shell:true (CVE-2024-27980 hardening), which broke the old
   // 'npx.cmd' path on Windows; shell:true would reopen quoting pitfalls.
-  // Fall back to npx only when @playwright/test isn't resolvable from the repo
-  // (then PLAYWRIGHT_MISSING classification still applies as before).
+  //
+  // No exec-fallback when `@playwright/test` is unresolvable (round-1 audit
+  // H1, 2026-08-15). An earlier version fell back to the repo's package
+  // manager `exec`/`npx`, which for npm shares `npx`'s install-on-demand
+  // behavior: `npm exec <pkg>` for a package not found locally can resolve
+  // and run a copy FETCHED FROM THE REGISTRY rather than failing. That
+  // defeats the point of requiring Playwright as a pinned dependency — this
+  // runner should never execute code it did not find already installed.
   let bin;
   let args;
-  // Reaching the fallback MEANS `@playwright/test` did not resolve from this
-  // repo — that is the fact, known here for certain, rather than something to
-  // re-infer downstream from an error string. Carried so a fallback failure is
-  // classified as PLAYWRIGHT_MISSING (with its actionable install line) instead
-  // of a raw spawn error.
-  let usedNpxFallback = false;
   try {
-    const req = createRequire(path.join(repoRoot, 'package.json'));
-    const cliPath = req.resolve('@playwright/test/cli');
+    const cliPath = _resolveCli(repoRoot);
     bin = process.execPath;
     args = [cliPath, 'test', ...specPaths, '--reporter=json'];
   } catch {
-    usedNpxFallback = true;
-    bin = process.platform === 'win32' ? 'npx.cmd' : 'npx';
-    args = ['playwright', 'test', ...specPaths, '--reporter=json'];
+    return {
+      status: RUN_STATUS.PLAYWRIGHT_MISSING, report: null, exitCode: null,
+      error: `@playwright/test is not installed in this repo — ${playwrightBootstrapHint(repoRoot)}`,
+    };
   }
 
   let res;
@@ -158,15 +212,7 @@ export function runPlaywrightJson(opts) {
   }
 
   if (res.error) {
-    // Any failure on the npx fallback is PLAYWRIGHT_MISSING by construction: we
-    // only got here because `@playwright/test` was unresolvable. This closes a
-    // real Windows hole — Node >=22.19 EINVALs when spawning a .cmd without
-    // shell:true, so on Windows a missing test-runner surfaced as the opaque
-    // `spawnSync npx.cmd EINVAL` under SPAWN_FAILED, and the user never saw the
-    // install command. `looksLikePlaywrightMissing` matched ENOENT but not
-    // EINVAL. Fixing the classification rather than adding shell:true keeps the
-    // CVE-2024-27980 hardening and the quoting pitfalls it avoids (see above).
-    if (usedNpxFallback || looksLikePlaywrightMissing(res.error, res.stderr)) {
+    if (looksLikePlaywrightMissing(res.error, res.stderr)) {
       return { status: RUN_STATUS.PLAYWRIGHT_MISSING, report: null, exitCode: res.status ?? null, error: res.error.message };
     }
     return { status: RUN_STATUS.SPAWN_FAILED, report: null, exitCode: res.status ?? null, error: res.error.message };

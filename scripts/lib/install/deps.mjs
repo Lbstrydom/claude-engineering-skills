@@ -1,14 +1,18 @@
 /**
- * @fileoverview Audit-loop npm dependency management for consumer repos.
+ * @fileoverview Audit-loop dependency management for consumer repos.
  *
  * Shared between `install-skills.mjs` (one-shot installer) and
  * `sync-to-repos.mjs` (recurring sync). Single source of truth for which
- * npm packages the audit scripts need to run.
+ * packages the audit scripts need to run.
  *
- * Called after file copy. Checks `<repoRoot>/node_modules/` for each dep;
- * if missing, runs `npm install --save-dev --legacy-peer-deps <missing>`
- * in the target repo. The `--legacy-peer-deps` flag bypasses ESLint /
- * framework plugin peer-dep conflicts that are orthogonal to the audit loop.
+ * Called after file copy. Checks `<repoRoot>/node_modules/` for each dep; if
+ * missing, installs them **with the consumer's own package manager**, resolved
+ * by `lib/package-manager.mjs`. This used to be a hardcoded
+ * `npm install --save-dev --legacy-peer-deps`, which does not work in a pnpm
+ * consumer at all — npm cannot read pnpm's symlinked tree and aborts (measured
+ * 2026-08-15; see that module's header for the negative control). The
+ * `node_modules/<dep>` probe below needs no such adjustment: pnpm symlinks
+ * every DIRECT dependency there, and every dep we install is direct.
  *
  * @module scripts/lib/install/deps
  */
@@ -16,6 +20,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { getAllConsumerInventories } from '../sync-inventory.mjs';
+import {
+  detectPackageManager,
+  packageManagerInvocation,
+  addDevDepsArgs,
+  displayAddDev,
+  SUPPORTED_PACKAGE_MANAGERS,
+} from '../package-manager.mjs';
 
 /**
  * Optional — the audit loop still imports cleanly without these, but features
@@ -117,23 +128,18 @@ const G = '\x1b[32m', Y = '\x1b[33m', X = '\x1b[0m', D = '\x1b[2m';
  *
  * `shell: true` would fix the spawn and reopen quoting pitfalls on
  * caller-influenced argv. Instead run npm's own JS entry point under the
- * CURRENT node binary — no shell, no `.cmd`, no quoting. Same pattern as
- * `lib/playwright-runner.mjs`.
+ * CURRENT node binary — no shell, no `.cmd`, no quoting.
+ *
+ * Retained as the npm-specific entry point for callers that legitimately mean
+ * npm and not "whatever this repo uses" — `update-auditloop.mjs` updates the
+ * audit-loop clone itself, which is an npm repo. Consumer-facing code wants
+ * {@link packageManagerInvocation} instead.
  *
  * @returns {{bin: string, prefix: string[]}}
  */
 export function npmInvocation() {
-  const candidates = [
-    path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js'),
-    path.join(path.dirname(process.execPath), '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
-  ];
-  for (const cli of candidates) {
-    if (fs.existsSync(cli)) return { bin: process.execPath, prefix: [cli] };
-  }
-  // No bundled npm-cli.js (unusual layout). Fall back to the PATH lookup,
-  // which still works on POSIX; Windows will report the spawn error rather
-  // than pretend the install happened.
-  return { bin: process.platform === 'win32' ? 'npm.cmd' : 'npm', prefix: [] };
+  const { bin, prefix } = packageManagerInvocation('npm');
+  return { bin, prefix };
 }
 
 /**
@@ -166,10 +172,13 @@ export function findMissingDeps(repoRoot) {
  * @param {boolean} [opts.quiet=false] — suppress stdout when no action needed
  * @param {number} [opts.timeoutMs=120000] — per-install timeout
  * @returns {{
- *   action: 'installed' | 'already-satisfied' | 'no-package-json' | 'failed',
+ *   action: 'installed' | 'already-satisfied' | 'no-package-json' | 'failed'
+ *         | 'ambiguous-package-manager' | 'invalid-package-manager-declaration'
+ *         | 'manual-install-required',
  *   installed: string[],
  *   installedOptional: string[],
  *   failed: string[],
+ *   packageManager?: string,
  *   error?: string,
  * }}
  */
@@ -186,14 +195,81 @@ export function ensureAuditDeps(repoRoot, { dryRun = false, quiet = false, timeo
     return { action: 'already-satisfied', installed: [], installedOptional: [], failed: [] };
   }
 
+  const pm = detectPackageManager(repoRoot);
+  const all = [...missing, ...missingOptional];
+
+  // Ambiguity/invalid-declaration/unsupported-manager refusal has to run BEFORE
+  // the dry-run branch, not after (round-1 audit M9, 2026-08-15) — otherwise
+  // `--dry-run` on exactly the repos this module exists to protect (two
+  // lockfiles, or a typo'd `packageManager`) silently reported "would
+  // install via <guessed manager>" instead of the same refusal a real run
+  // would give, which is the one case a dry-run must not lie about.
+
+  // A `packageManager` field is present but does not parse — do not fall
+  // through to a lockfile guess, which may be stale (e.g. left over from
+  // before a migration to the declared-but-typo'd manager).
+  if (pm.invalidDeclaration) {
+    process.stderr.write(
+      `  ${Y}⚠${X} ${path.basename(repoRoot)}: package.json "packageManager" field is present but unrecognised — not guessing\n`
+      + `  Fix it to "<name>@<version>" (${SUPPORTED_PACKAGE_MANAGERS.join('|')}), or install manually:\n`
+      + `    cd ${repoRoot} && ${displayAddDev(pm.name, all)}\n`,
+    );
+    return {
+      action: 'invalid-package-manager-declaration', installed: [], installedOptional: [],
+      failed: all, packageManager: pm.name,
+    };
+  }
+
+  // Two managers' lockfiles and nothing declaring which one governs. Installing
+  // with either writes a lockfile the other does not own, so the honest move is
+  // to hand the decision back rather than pick — the repo cannot tell us, and
+  // guessing wrong is the exact corruption this module exists to prevent.
+  if (pm.ambiguous) {
+    process.stderr.write(
+      `  ${Y}⚠${X} ${path.basename(repoRoot)}: multiple lockfiles (${pm.candidates.join(', ')}) — not guessing a package manager\n`
+      + `  Add a "packageManager" field to package.json, or install manually with the one you use:\n`
+      + `    cd ${repoRoot} && ${displayAddDev(pm.candidates[0], all)}\n`,
+    );
+    return {
+      action: 'ambiguous-package-manager', installed: [], installedOptional: [],
+      failed: all, packageManager: pm.name,
+    };
+  }
+
+  // Automated install is deliberately npm+pnpm only — the two managers this
+  // module verifies presence for correctly. Both `node_modules/<dep>` (used by
+  // findMissingDeps above): npm always populates it; pnpm symlinks every
+  // DIRECT dependency there too (confirmed in this module's header). Yarn in
+  // Plug'n'Play mode resolves through `.pnp.cjs` with no `node_modules` at
+  // all, so the SAME presence check would report every dep "missing" and then
+  // install duplicates on top of a working PnP tree (round-1 audit H2,
+  // 2026-08-15) — a correctness gap, not a crash, but not one to paper over.
+  // bun has no bundled JS entry point to spawn without a shell on Windows the
+  // way npm/pnpm/yarn do (see `packageManagerInvocation`), so an automated bun
+  // install would EINVAL there (H4/M6). Neither gap is worth solving to ship
+  // pnpm support — see the plan's stated scope boundary — so yarn/bun get the
+  // same honest hand-back as an ambiguous repo, never a silent wrong attempt.
+  if (pm.name !== 'npm' && pm.name !== 'pnpm') {
+    process.stderr.write(
+      `  ${Y}⚠${X} ${path.basename(repoRoot)}: automated install supports npm/pnpm only — not attempting an unverified ${pm.name} install\n`
+      + `  Install manually:\n`
+      + `    cd ${repoRoot} && ${displayAddDev(pm.name, all)}\n`,
+    );
+    return {
+      action: 'manual-install-required', installed: [], installedOptional: [],
+      failed: all, packageManager: pm.name,
+    };
+  }
+
   if (dryRun) {
     if (!quiet) {
-      if (missing.length) process.stderr.write(`  ${Y}~${X} ${path.basename(repoRoot)}: would install required — ${missing.join(', ')}\n`);
-      if (missingOptional.length) process.stderr.write(`  ${Y}~${X} ${path.basename(repoRoot)}: would install optional — ${missingOptional.join(', ')}\n`);
+      if (missing.length) process.stderr.write(`  ${Y}~${X} ${path.basename(repoRoot)}: would install required via ${pm.name} — ${missing.join(', ')}\n`);
+      if (missingOptional.length) process.stderr.write(`  ${Y}~${X} ${path.basename(repoRoot)}: would install optional via ${pm.name} — ${missingOptional.join(', ')}\n`);
     }
     return {
       action: missing.length > 0 ? 'installed' : 'already-satisfied',
       installed: missing, installedOptional: missingOptional, failed: [],
+      packageManager: pm.name,
     };
   }
 
@@ -201,40 +277,79 @@ export function ensureAuditDeps(repoRoot, { dryRun = false, quiet = false, timeo
   const installedOptional = [];
   const failed = [];
 
-  if (missing.length > 0) {
-    process.stderr.write(`  ${D}Installing required audit-loop deps in ${path.basename(repoRoot)}: ${missing.join(', ')}${X}\n`);
+  /**
+   * One install attempt, adjudicated by RE-PROBING the tree rather than by the
+   * exit code.
+   *
+   * A non-zero exit does not mean the packages are absent. pnpm 11 blocks
+   * dependency build scripts by default and then exits 1 with
+   * `ERR_PNPM_IGNORED_BUILDS` to force a decision — measured 2026-08-15, where
+   * all 12 required deps installed correctly and the run still reported
+   * failure, because `@google/genai` and `protobufjs` ship postinstall scripts.
+   * Keying on that error code would be brittle (it is version- and
+   * manager-specific); asking the filesystem the question we actually care
+   * about — "are they there now?" — cannot rot the same way, and it also
+   * catches a partial install that exited 0.
+   *
+   * The exit-code error is kept as an ADVISORY when the deps did land, since
+   * ignored build scripts are still worth telling the operator about.
+   *
+   * @param {string[]} pkgs
+   * @returns {{stillMissing: string[], err: Error|null}}
+   */
+  const installAndVerify = (pkgs) => {
+    let err = null;
     try {
-      const { bin, prefix } = npmInvocation();
-      execFileSync(bin, [...prefix, 'install', '--save-dev', '--legacy-peer-deps', ...missing], {
-        cwd: repoRoot, stdio: ['pipe', 'pipe', 'pipe'], timeout: timeoutMs,
+      const { bin, prefix, shell } = packageManagerInvocation(pm.name);
+      execFileSync(bin, [...prefix, ...addDevDepsArgs(pm.name, pkgs)], {
+        cwd: repoRoot, stdio: ['pipe', 'pipe', 'pipe'], timeout: timeoutMs, shell,
       });
-      installed.push(...missing);
-      process.stderr.write(`  ${G}✓${X} Required deps installed\n`);
-    } catch (err) {
-      failed.push(...missing);
-      process.stderr.write(`  ${Y}⚠${X} npm install failed: ${err.message?.slice(0, 160)}\n`);
-      process.stderr.write(`  Run manually: cd ${repoRoot} && npm install --save-dev --legacy-peer-deps ${missing.join(' ')}\n`);
-      return { action: 'failed', installed, installedOptional, failed, error: err.message };
+    } catch (e) {
+      err = e;
     }
+    const nodeModules = path.join(repoRoot, 'node_modules');
+    return { stillMissing: pkgs.filter(p => !fs.existsSync(path.join(nodeModules, p))), err };
+  };
+
+  /** First interesting line of a manager's failure output (it may use stdout). */
+  const advisory = (err) => {
+    const text = `${err?.stdout || ''}\n${err?.stderr || ''}\n${err?.message || ''}`;
+    const line = text.split('\n').map(s => s.trim()).find(s => /^\[?ERR|error/i.test(s));
+    return (line || err?.message || '').slice(0, 200);
+  };
+
+  if (missing.length > 0) {
+    process.stderr.write(`  ${D}Installing required audit-loop deps in ${path.basename(repoRoot)} via ${pm.name}: ${missing.join(', ')}${X}\n`);
+    const { stillMissing, err } = installAndVerify(missing);
+    if (stillMissing.length > 0) {
+      failed.push(...stillMissing);
+      process.stderr.write(`  ${Y}⚠${X} ${pm.name} install failed: ${advisory(err) || 'packages absent after install'}\n`);
+      process.stderr.write(`  Run manually: cd ${repoRoot} && ${displayAddDev(pm.name, stillMissing)}\n`);
+      return {
+        action: 'failed', installed, installedOptional, failed,
+        packageManager: pm.name, error: err?.message || `still missing: ${stillMissing.join(', ')}`,
+      };
+    }
+    installed.push(...missing);
+    process.stderr.write(`  ${G}✓${X} Required deps installed\n`);
+    if (err) process.stderr.write(`  ${Y}○${X} ${pm.name} reported: ${advisory(err)}\n`);
   }
 
   if (missingOptional.length > 0) {
-    process.stderr.write(`  ${D}Installing optional audit-loop deps in ${path.basename(repoRoot)}: ${missingOptional.join(', ')}${X}\n`);
-    try {
-      const { bin, prefix } = npmInvocation();
-      execFileSync(bin, [...prefix, 'install', '--save-dev', '--legacy-peer-deps', ...missingOptional], {
-        cwd: repoRoot, stdio: ['pipe', 'pipe', 'pipe'], timeout: timeoutMs,
-      });
-      installedOptional.push(...missingOptional);
+    process.stderr.write(`  ${D}Installing optional audit-loop deps in ${path.basename(repoRoot)} via ${pm.name}: ${missingOptional.join(', ')}${X}\n`);
+    const { stillMissing, err } = installAndVerify(missingOptional);
+    installedOptional.push(...missingOptional.filter(p => !stillMissing.includes(p)));
+    if (stillMissing.length > 0) {
+      failed.push(...stillMissing);
+      process.stderr.write(`  ${Y}○${X} Optional deps unavailable (${stillMissing.join(', ')}) — audit will degrade gracefully\n`);
+    } else {
       process.stderr.write(`  ${G}✓${X} Optional deps installed\n`);
-    } catch {
-      failed.push(...missingOptional);
-      process.stderr.write(`  ${Y}○${X} Some optional deps failed — audit will degrade gracefully\n`);
+      if (err) process.stderr.write(`  ${Y}○${X} ${pm.name} reported: ${advisory(err)}\n`);
     }
   }
 
   return {
     action: installed.length > 0 ? 'installed' : 'already-satisfied',
-    installed, installedOptional, failed,
+    installed, installedOptional, failed, packageManager: pm.name,
   };
 }

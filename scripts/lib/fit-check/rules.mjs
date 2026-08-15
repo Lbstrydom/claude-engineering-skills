@@ -16,6 +16,43 @@
  *
  * @module scripts/lib/fit-check/rules
  */
+import { displayAddDev, displayExec } from '../package-manager.mjs';
+
+/**
+ * The "install Playwright" setup line, in the target repo's own package
+ * manager. `profile.packageManager` is filled by `detectShape`; the `?? 'npm'`
+ * keeps hand-built fixtures working without forcing every one to declare it.
+ *
+ * When detection is `packageManagerAmbiguous` (two lockfiles, no declared
+ * winner) or `packageManagerInvalidDeclaration` (a "packageManager" field
+ * present but unparseable), `packageManager` is only a fallback guess — say
+ * so rather than hand out an unqualified command for a manager the repo may
+ * not actually be standardised on (round-1 audit M4/M13, round-2 audit M6,
+ * 2026-08-15).
+ *
+ * @param {{packageManager?: string, packageManagerAmbiguous?: boolean, packageManagerInvalidDeclaration?: boolean}} profile
+ * @returns {string}
+ */
+function playwrightSetup(profile) {
+  const pm = profile?.packageManager || 'npm';
+  // 'playwright', not '@playwright/test' (round-3 audit H1/H4, 2026-08-15):
+  // this used to recommend @playwright/test while scripts/lib/install/deps.mjs
+  // OPTIONAL_DEPS provisions the BASE playwright package, and
+  // playwrightBootstrapHint() (package-manager.mjs, the same hint used
+  // everywhere else) already recommends 'playwright' too — this was the one
+  // inconsistent voice. playwright-runner.mjs's resolvePlaywrightCli() accepts
+  // either package, but the auto-installer only ever gives consumers this
+  // one, so it's the one advice should center on.
+  // exec, not dlx: the `add` on the left just installed it, so the right half
+  // must run the local copy rather than fetch another from the registry.
+  const cmd = `${displayAddDev(pm, ['playwright'])} && ${displayExec(pm, ['playwright', 'install', 'chromium'])}`;
+  if (profile?.packageManagerInvalidDeclaration) {
+    return `${cmd} (guessed — package.json's "packageManager" field doesn't parse; fix it or confirm the manager first)`;
+  }
+  return profile?.packageManagerAmbiguous
+    ? `${cmd} (guessed — this repo has more than one lockfile; confirm the manager first)`
+    : cmd;
+}
 
 export const SKILLS = [
   // ── Universal skills — work in any Node/Python repo with an API key ─────
@@ -136,7 +173,7 @@ export const SKILLS = [
         return {
           label: 'PARTIAL',
           reason: 'UI surface present but Playwright is not installed.',
-          setup: 'npm i -D @playwright/test && npx playwright install chromium',
+          setup: playwrightSetup(p),
         };
       }
       return { label: 'FITS', reason: 'Playwright + UI routes detected.' };
@@ -168,7 +205,7 @@ export const SKILLS = [
         return {
           label: 'PARTIAL',
           reason: 'Plans exist but Playwright is not installed.',
-          setup: 'npm i -D @playwright/test && npx playwright install chromium',
+          setup: playwrightSetup(p),
         };
       }
       return { label: 'FITS', reason: 'Plans + Playwright + UI routes detected.' };

@@ -291,6 +291,15 @@ the managed-gitignore runtime-outputs block + self-healing untrack semantics, th
 source of truth is [`scripts/lib/sync-path-map.mjs`](scripts/lib/sync-path-map.mjs)**
 — never hand-compute a consumer path.
 
+**A consumer's package manager is [`package-manager.mjs`](scripts/lib/package-manager.mjs)'s
+answer, never a hardcoded `npm`/`npx`** — and the managers are not swappable:
+npm aborts on pnpm's symlinked tree (so dep install never once worked in a pnpm
+consumer, measured 2026-08-15), while `pnpm add` in an npm repo quietly leaves a
+second lockfile. Both directions corrupt, so two lockfiles + no `packageManager`
+field is **ambiguous and left alone**, never guessed. Adjudicate an install by
+RE-PROBING `node_modules`, never the exit code: pnpm exits non-zero on
+`ERR_PNPM_IGNORED_BUILDS` after a fully successful install.
+
 ### CLI smoke contract (`--selfcheck-relocation`)
 
 Every top-level CLI script that needs to prove its imports survive relocation implements:

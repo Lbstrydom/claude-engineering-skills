@@ -11,15 +11,16 @@
  * itself silently returning nothing — the "can this go green having checked
  * nothing?" rule from AGENTS.md.
  */
-import { describe, it } from 'node:test';
+import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { execFileSync } from 'node:child_process';
 
-import { bundleDeps, requiredDeps, OPTIONAL_DEPS, findMissingDeps, npmInvocation } from '../scripts/lib/install/deps.mjs';
+import { bundleDeps, requiredDeps, OPTIONAL_DEPS, findMissingDeps, npmInvocation, ensureAuditDeps } from '../scripts/lib/install/deps.mjs';
 import { packageNameFromSpecifier, collectImportClosure } from '../scripts/lib/module-graph.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -98,6 +99,85 @@ describe('npmInvocation', () => {
       assert.ok(!/\.cmd$/i.test(bin) || bin === 'npm.cmd', 'win32 must prefer node + npm-cli.js');
     }
     assert.ok(typeof bin === 'string' && bin.length > 0);
+  });
+});
+
+describe('ensureAuditDeps — manager routing (round-1 audit fixes, 2026-08-15)', () => {
+  let TMP;
+  before(() => { TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'ensure-deps-')); });
+  after(() => {
+    try { fs.rmSync(TMP, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* best effort */ }
+  });
+
+  /** A repo with no node_modules at all — every required dep reports missing. */
+  function scratchRepo(name, files) {
+    const root = path.join(TMP, name);
+    fs.mkdirSync(root, { recursive: true });
+    for (const [file, body] of Object.entries(files)) fs.writeFileSync(path.join(root, file), body);
+    return root;
+  }
+
+  it('H2/H4/M6: refuses an automated install for yarn — never attempts a spawn', () => {
+    const root = scratchRepo('yarn-consumer', { 'package.json': '{}', 'yarn.lock': '' });
+    const res = ensureAuditDeps(root, { quiet: true });
+    assert.equal(res.action, 'manual-install-required');
+    assert.equal(res.packageManager, 'yarn');
+    assert.equal(res.installed.length, 0);
+  });
+
+  it('H2/H4/M6: refuses an automated install for bun — never attempts a spawn', () => {
+    const root = scratchRepo('bun-consumer', { 'package.json': '{}', 'bun.lockb': '' });
+    const res = ensureAuditDeps(root, { quiet: true });
+    assert.equal(res.action, 'manual-install-required');
+    assert.equal(res.packageManager, 'bun');
+  });
+
+  it('M8 (round-2 audit, 2026-08-15): refuses to guess when package.json itself does not parse', () => {
+    // The regression this guards: the round-1 fix only distinguished
+    // "field malformed" from "field absent" — an UNPARSEABLE package.json
+    // (not just a bad packageManager value) still silently fell through to
+    // lockfile guessing, indistinguishable from a manifest that simply
+    // omits the field.
+    const root = scratchRepo('broken-manifest', {
+      'package.json': '{ this is not json',
+      'pnpm-lock.yaml': '', // real signal that must NOT be silently trusted
+    });
+    const res = ensureAuditDeps(root, { quiet: true });
+    assert.equal(res.action, 'invalid-package-manager-declaration');
+  });
+
+  it('H6/M3/M17: refuses to guess when packageManager is declared but malformed', () => {
+    const root = scratchRepo('bad-declared', {
+      'package.json': JSON.stringify({ packageManager: 'pnmp@8.0.0' }), // typo'd name
+      'package-lock.json': '{}', // stale lockfile from before the (attempted) switch
+    });
+    const res = ensureAuditDeps(root, { quiet: true });
+    assert.equal(res.action, 'invalid-package-manager-declaration');
+    // Must NOT silently fall through to the stale npm lockfile evidence.
+    assert.notEqual(res.action, 'installed');
+  });
+
+  it('M9: dry-run reports the SAME refusal a real run would, not a guessed install', () => {
+    const ambiguous = scratchRepo('ambiguous-dryrun', {
+      'package.json': '{}', 'pnpm-lock.yaml': '', 'package-lock.json': '{}',
+    });
+    const real = ensureAuditDeps(ambiguous, { quiet: true });
+    const dry = ensureAuditDeps(ambiguous, { quiet: true, dryRun: true });
+    assert.equal(real.action, 'ambiguous-package-manager');
+    assert.equal(dry.action, 'ambiguous-package-manager', 'dry-run must not report "installed" for an ambiguous repo');
+
+    const invalid = scratchRepo('invalid-dryrun', {
+      'package.json': JSON.stringify({ packageManager: 'cargo@1.0.0' }),
+    });
+    const dryInvalid = ensureAuditDeps(invalid, { quiet: true, dryRun: true });
+    assert.equal(dryInvalid.action, 'invalid-package-manager-declaration');
+  });
+
+  it('still reports the honest "installed" shape for a plain npm dry-run', () => {
+    const root = scratchRepo('npm-dryrun', { 'package.json': '{}', 'package-lock.json': '{}' });
+    const dry = ensureAuditDeps(root, { quiet: true, dryRun: true });
+    assert.equal(dry.packageManager, 'npm');
+    assert.ok(dry.action === 'installed' || dry.action === 'already-satisfied');
   });
 });
 

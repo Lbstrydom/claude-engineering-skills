@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   runPlaywrightJson, flattenReport, statusToPassed, normalizeSpecPath,
-  exitCodeForStatus, RUN_STATUS, mapCriteriaToItems,
+  exitCodeForStatus, RUN_STATUS, mapCriteriaToItems, resolvePlaywrightCli,
 } from '../scripts/lib/playwright-runner.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -50,12 +50,20 @@ function fakeSpawn(report, { status = 0, writeReport = true, error = null } = {}
   };
 }
 
+/**
+ * Stand in for `@playwright/test/cli` resolving successfully — this SOURCE
+ * repo does not have `@playwright/test` as a real dependency (only
+ * consumers running `/ux-lock` specs do), so the outcome-classification
+ * tests below need this to reach `_spawn` at all.
+ */
+const resolvableCli = () => '/fake/node_modules/@playwright/test/cli.js';
+
 // ── runPlaywrightJson outcome classification ────────────────────────────────
 
 describe('runPlaywrightJson — outcome classification', () => {
   it('non-zero exit WITH a valid report → OK (R1-H4: failing tests are still recorded)', () => {
     const r = runPlaywrightJson({
-      specPaths: ['tests/e2e/foo.spec.js'], cwd: repoRoot,
+      specPaths: ['tests/e2e/foo.spec.js'], cwd: repoRoot, _resolveCli: resolvableCli,
       _spawn: fakeSpawn(FIXTURE_REPORT, { status: 1 }),
     });
     assert.equal(r.status, RUN_STATUS.OK);
@@ -65,7 +73,7 @@ describe('runPlaywrightJson — outcome classification', () => {
 
   it('spawn ENOENT → PLAYWRIGHT_MISSING (exit 5)', () => {
     const r = runPlaywrightJson({
-      specPaths: ['x.spec.js'], cwd: repoRoot,
+      specPaths: ['x.spec.js'], cwd: repoRoot, _resolveCli: resolvableCli,
       _spawn: fakeSpawn(null, { error: Object.assign(new Error('not found'), { code: 'ENOENT' }) }),
     });
     assert.equal(r.status, RUN_STATUS.PLAYWRIGHT_MISSING);
@@ -74,7 +82,7 @@ describe('runPlaywrightJson — outcome classification', () => {
 
   it('non-zero exit with NO parseable report → REPORT_UNREADABLE (hard error, exit 3)', () => {
     const r = runPlaywrightJson({
-      specPaths: ['x.spec.js'], cwd: repoRoot,
+      specPaths: ['x.spec.js'], cwd: repoRoot, _resolveCli: resolvableCli,
       _spawn: fakeSpawn(null, { status: 1, writeReport: false }),
     });
     assert.equal(r.status, RUN_STATUS.REPORT_UNREADABLE);
@@ -84,6 +92,60 @@ describe('runPlaywrightJson — outcome classification', () => {
   it('empty specPaths → SPAWN_FAILED (never spawns)', () => {
     const r = runPlaywrightJson({ specPaths: [], cwd: repoRoot, _spawn: () => { throw new Error('should not spawn'); } });
     assert.equal(r.status, RUN_STATUS.SPAWN_FAILED);
+  });
+
+  it('H1 (round-1 audit, 2026-08-15): @playwright/test unresolvable → PLAYWRIGHT_MISSING with NO spawn attempt', () => {
+    // The regression this guards: an earlier version fell back to spawning the
+    // repo's package-manager `exec`/`npx` here, which for npm can silently
+    // fetch-and-run a fresh copy from the registry when nothing is installed
+    // locally — the opposite of "Playwright must be a pinned dependency."
+    // There must now be no fallback spawn at all.
+    const r = runPlaywrightJson({
+      specPaths: ['x.spec.js'], cwd: repoRoot,
+      _resolveCli: () => { throw new Error('Cannot find module \'@playwright/test/cli\''); },
+      _spawn: () => { throw new Error('must not spawn anything when the CLI is unresolvable'); },
+    });
+    assert.equal(r.status, RUN_STATUS.PLAYWRIGHT_MISSING);
+    assert.match(r.error, /@playwright\/test is not installed/);
+  });
+
+  it('H3 (round-2 audit, 2026-08-15): falls back to the base `playwright` package, not just @playwright/test', () => {
+    // The regression this guards: fixing H1 by REMOVING the exec fallback also
+    // removed the only path that ever ran the base `playwright` package's own
+    // CLI — but `scripts/lib/install/deps.mjs` OPTIONAL_DEPS provisions
+    // exactly `playwright`, not `@playwright/test` (dropped 2026-08-11). This
+    // repo's own node_modules is a real, unmocked instance of that exact
+    // shape (only the base package installed) — resolvePlaywrightCli must not
+    // throw against it.
+    const cli = resolvePlaywrightCli(repoRoot);
+    assert.ok(fs.existsSync(cli), `resolved path must exist: ${cli}`);
+    assert.match(cli, /playwright[\\/]cli\.js$/, 'must be the base package CLI, not @playwright/test');
+
+    // And runPlaywrightJson reaches `_spawn` using the REAL default resolver
+    // (not injected) — proving the fallback is wired end-to-end, not just
+    // unit-testable in isolation.
+    const r = runPlaywrightJson({
+      specPaths: ['tests/e2e/foo.spec.js'], cwd: repoRoot,
+      _spawn: fakeSpawn(FIXTURE_REPORT, { status: 0 }),
+    });
+    assert.equal(r.status, RUN_STATUS.OK);
+  });
+
+  it('H3 (round-4 audit, 2026-08-15): a relative cwd is normalized before CLI resolution', () => {
+    // The regression this guards: `cwd` used to pass straight through as
+    // `repoRoot`, so a relative value would resolve against whatever
+    // process.cwd() happened to be at call time rather than the caller's
+    // intended directory. Prove it by handing a relative path and checking
+    // the resolver received an absolute one.
+    const relative = path.relative(process.cwd(), repoRoot) || '.';
+    let seenRoot = null;
+    const r = runPlaywrightJson({
+      specPaths: ['x.spec.js'], cwd: relative,
+      _resolveCli: (root) => { seenRoot = root; return resolvableCli(root); },
+      _spawn: fakeSpawn(FIXTURE_REPORT, { status: 0 }),
+    });
+    assert.equal(r.status, RUN_STATUS.OK);
+    assert.ok(path.isAbsolute(seenRoot), `expected an absolute root, got: ${seenRoot}`);
   });
 });
 

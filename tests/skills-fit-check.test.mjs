@@ -164,7 +164,10 @@ describe('applyRules — Vite SPA, no Playwright', () => {
   it('/ux-lock → PARTIAL (UI yes, Playwright no)', () => {
     const v = verdictFor(verdicts, '/ux-lock (lock mode)');
     assert.equal(v.label, 'PARTIAL');
-    assert.match(v.setup, /@playwright\/test/);
+    // 'playwright', not '@playwright/test' (round-3 audit H1/H4, 2026-08-15) —
+    // matches what scripts/lib/install/deps.mjs OPTIONAL_DEPS actually installs.
+    assert.match(v.setup, /\bplaywright\b/);
+    assert.doesNotMatch(v.setup, /@playwright\/test/);
   });
   it('/persona-test exploratory → PARTIAL (web surface but app URL needed)', () => {
     const v = verdictFor(verdicts, '/persona-test (exploratory)');

@@ -24,6 +24,7 @@
  */
 import { stableNodeKey } from './node-key.mjs';
 import { resolveProvenance } from './provenance-resolver.mjs';
+import { playwrightInstallHint } from '../package-manager.mjs';
 
 /** Computed properties collected per node (union of what the four tiers read). */
 export const COLLECTED_PROPS = [
@@ -68,7 +69,7 @@ export async function runExtract({ url, contract, devices, themeNames = null, st
   catch (err) {
     // Keep the friendly code but preserve the real cause (B-R2: a corrupted
     // install / ESM resolution failure must be distinguishable from "not installed").
-    return { ok: false, code: 'NO_CHROMIUM', reason: `playwright unavailable — run \`npx playwright install chromium\` (cause: ${(err && err.message) ? err.message : String(err)})` };
+    return { ok: false, code: 'NO_CHROMIUM', reason: `playwright unavailable — run \`${playwrightInstallHint()}\` (cause: ${(err && err.message) ? err.message : String(err)})` };
   }
 
   const themes = (contract.themes || []).filter((t) => !themeNames || themeNames.includes(t.name));

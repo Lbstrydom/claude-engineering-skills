@@ -58,6 +58,11 @@ const CLI_SMOKE_SET = [
   'ux-lock-run.mjs', // WS2 deterministic /ux-lock runner
   'nav-audit.mjs',   // /nav-audit CLI orchestrator
   'visual-audit.mjs',// /visual-audit CLI orchestrator
+  'persona-consistency-run.mjs', // Phase 4 consistency-mode runner; declared in
+                                 // sync-to-repos.mjs (verified before adding —
+                                 // see the trap this comment block warns about);
+                                 // handler added 2026-08-16 (Gemini final review)
+
   'setup-postgres.mjs', // layout-aware repo-root resolution — must survive the scripts/.claude-skills relocation
   'efficacy-lints-check.mjs', // GREEN≠REALIZED Cluster A CLI — relocation-sensitive lib import
   'tiered-shadow-report.mjs', // tiered-recall Close-out shadow-validation report — reads the consumer's own shadow log

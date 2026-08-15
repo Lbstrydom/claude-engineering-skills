@@ -30,6 +30,7 @@ import {
   resolveRepoRoot, exitCodeForStatus, RUN_STATUS, RUN_CONTEXTS, mapCriteriaToItems,
 } from './lib/playwright-runner.mjs';
 import { parseAcceptanceCriteria } from './lib/plan-criteria-parser.mjs';
+import { playwrightInstallHint } from './lib/package-manager.mjs';
 import { emit, assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 import {
   initLearningStore, isCloudEnabled, resolveRepoForStoreResult,
@@ -251,7 +252,7 @@ async function cmdSpec() {
   const result = runPlaywrightJson({ specPaths, baseUrl: url, cwd: repoRoot });
 
   if (result.status === RUN_STATUS.PLAYWRIGHT_MISSING) {
-    emit({ ok: false, status: result.status, error: { code: 'PLAYWRIGHT_MISSING', message: 'Playwright not installed — run: npx playwright install chromium' } });
+    emit({ ok: false, status: result.status, error: { code: 'PLAYWRIGHT_MISSING', message: `Playwright not installed — run: ${playwrightInstallHint()}` } });
     process.exit(exitCodeForStatus(result.status));
   }
   if (result.status !== RUN_STATUS.OK) {
@@ -420,7 +421,7 @@ async function cmdVerify() {
   });
   const result = runPlaywrightJson({ specPaths: [specArg], baseUrl: url, cwd: repoRoot });
   if (result.status === RUN_STATUS.PLAYWRIGHT_MISSING) {
-    emit({ ok: false, status: result.status, error: { code: 'PLAYWRIGHT_MISSING', message: 'Playwright not installed — run: npx playwright install chromium' } });
+    emit({ ok: false, status: result.status, error: { code: 'PLAYWRIGHT_MISSING', message: `Playwright not installed — run: ${playwrightInstallHint()}` } });
     process.exit(exitCodeForStatus(result.status));
   }
   if (result.status !== RUN_STATUS.OK) {

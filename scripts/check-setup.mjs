@@ -399,6 +399,10 @@ function printJsonReport(report) {
 
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import {
+  detectPackageManager, packageManagerInvocation, execBinaryArgs,
+  playwrightInstallHint, playwrightBootstrapHint,
+} from './lib/package-manager.mjs';
 const execFileAsync = promisify(execFile);
 
 /**
@@ -416,10 +420,22 @@ export async function checkPlaywrightAvailable() {
   }
   let version = null;
   try {
-    const { stdout } = await execFileAsync('npx', ['playwright', '--version'], { timeout: 10_000, shell: process.platform === 'win32' });
+    // Package-manager-aware. This was `execFileAsync('npx', …, {shell: win32})`,
+    // which assumed npm and reopened shell quoting on Windows for every caller;
+    // `packageManagerInvocation` routes npm/pnpm/yarn through a bundled JS entry
+    // (no shell at all) and reports `shell: true` ONLY for its bun/unusual-layout
+    // fallback, where argv here is the two fixed literals below — never
+    // caller-influenced — so opting in for exactly that case is safe.
+    const pm = detectPackageManager(process.cwd()).name;
+    const inv = packageManagerInvocation(pm);
+    const { stdout } = await execFileAsync(
+      inv.bin,
+      [...inv.prefix, ...execBinaryArgs(pm, ['playwright', '--version'])],
+      { timeout: 10_000, shell: inv.shell },
+    );
     version = stdout.trim();
   } catch (err) {
-    return { available: true, version: null, browserBinary: false, reason: `npx playwright --version failed: ${err.message}` };
+    return { available: true, version: null, browserBinary: false, reason: `playwright --version failed: ${err.message}` };
   }
   // Probe for the chromium binary for real.
   //
@@ -516,7 +532,9 @@ async function checkBrowser(report) {
     report.warn(
       'Playwright unavailable',
       `${pw.reason} — /persona-test, /click-test, /nav-audit --verify and /visual-audit cannot run`,
-      'npm install playwright && npx playwright install chromium',
+      // The package itself is absent, so this needs BOTH halves — telling the
+      // user to run a binary they have not installed is not a fix.
+      playwrightBootstrapHint(),
     );
     return;
   }
@@ -525,7 +543,7 @@ async function checkBrowser(report) {
     report.warn(
       'Chromium binary not detected',
       `${pw.reason} — the four browser-driven lenses will exit non-zero at first run`,
-      'npx playwright install chromium',
+      playwrightInstallHint(),
     );
     return;
   }

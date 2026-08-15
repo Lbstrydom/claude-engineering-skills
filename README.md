@@ -89,6 +89,30 @@ That installs the skills into `<repo>/.claude/skills/`, the runners into
 prompts for API keys. Nothing is written to your home directory. Add `--dry-run`
 to see what would change.
 
+**Use `npx` here even if your project is on pnpm, yarn or bun.** npm ships with
+Node, so `npx` is present regardless of which manager your project uses, and it
+is the only spelling of this command that works: `pnpm dlx github:…` fails with
+`ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED` (verified 2026-08-15). Your project's own
+package manager is detected separately — see
+[Package managers](#package-managers) below.
+
+> **Know what that command does.** It fetches this repo and runs its `prepare`
+> script — remote code execution, by design, which is what any installer is.
+> pnpm's refusal above is not a bug: pnpm is deny-by-default on lifecycle
+> scripts and npm is allow-by-default, so `npx` is *also* the spelling with the
+> weaker default. If you would rather read the code before it runs — or your
+> policy requires it — clone first and install from a checkout you have
+> inspected, which needs no lifecycle script on the target:
+>
+> ```bash
+> git clone https://github.com/Lbstrydom/claude-engineering-skills.git
+> cd claude-engineering-skills && npm run sync -- --target-path /path/to/your/repo
+> ```
+>
+> Pin the one-liner to a reviewed revision with
+> `npx github:Lbstrydom/claude-engineering-skills#<tag-or-sha> <dir>`; plain
+> `npx github:…` takes whatever is on `main` at that moment.
+
 **Working on the bundle itself** (contributors):
 
 ```bash
@@ -262,13 +286,46 @@ git commit -m "feat(arch-memory): initial index"
 
 **Tracked in consumer repos**: `.audit-loop/repo-id`, `.audit-loop/domain-map.json` (path-based domain rules), `package.json` arch:* scripts. **Generated locally, never staged**: `docs/architecture-map.md` (see above). Synced runtime files (`scripts/lib/symbol-index/*`, `scripts/symbol-index/*`, `.claude/hooks/arch-memory-check.sh`) are gitignored — managed by `npm run sync` from the source repo.
 
+## Package managers
+
+The bundle works in **npm, pnpm, yarn and bun** consumer repos. Which one
+governs a repo is resolved by
+[`scripts/lib/package-manager.mjs`](scripts/lib/package-manager.mjs) —
+the `packageManager` field first, then the lockfile on disk, then npm — and
+everything that installs a dependency or prints an install hint goes through it.
+
+This matters because the managers are not interchangeable at the tree level:
+npm cannot read pnpm's symlinked `node_modules` and aborts outright, while
+`pnpm add` in an npm repo quietly leaves a second lockfile behind. A repo
+carrying two managers' lockfiles is therefore reported ambiguous and left alone
+rather than guessed at — declare a `packageManager` field to settle it.
+
+**Adding a call site that installs a package or prints an install command? Route
+it through that module.** A hardcoded `npm install` / `npx` is wrong advice in
+three of the four supported managers, and in pnpm's case it corrupts the tree.
+
 ## Browser Tools
 
-`/persona-test` and `/ux-lock` use Playwright via `.mcp.json` (auto-discovered by Claude Code). Required first-time install:
+`/persona-test` and `/ux-lock` use Playwright via `.mcp.json` (auto-discovered by Claude Code). Required first-time install — in your project's own package manager:
 
 ```bash
 npx playwright install chromium
 ```
+
+```bash
+pnpm exec playwright install chromium
+```
+
+(`yarn exec …` / `bunx …` for the other two. The skills print whichever matches
+your repo, so you can copy the command out of the failure message.)
+
+**`exec`, not `dlx`** — and this is a supply-chain point, not a style one.
+`npx <bin>` runs the copy in `node_modules/.bin` when there is one and fetches
+nothing; `pnpm dlx` **always** resolves and downloads a fresh copy, so it
+re-fetches at run time a package your lockfile already pins. Measured
+2026-08-15 against playwright 1.62.1: `npx playwright --version` fetched
+nothing, `pnpm dlx playwright --version` downloaded 2 packages. Reserve
+`dlx`/`bunx` for running something you have deliberately *not* installed.
 
 Windows users — see [CLAUDE.md](CLAUDE.md#claude-code-only-notes) for the `npx.cmd` MCP override needed by Claude Code's process spawner.
 

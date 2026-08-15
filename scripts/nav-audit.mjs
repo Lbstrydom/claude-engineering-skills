@@ -27,6 +27,7 @@ import { computeContractDigest, NAV_VERIFY_TOOL_VERSION, NAV_TOOL_VERSION } from
 import { runVerify } from './lib/nav/verify.mjs';
 import { mapPersonasToIntents } from './lib/nav/persona-seed.mjs';
 import { writeVerifyResult } from './lib/nav/verify-store.mjs';
+import { playwrightInstallHint } from './lib/package-manager.mjs';
 
 async function main() {
   // CLI smoke contract — must prove imports survive relocation (AGENTS.md).
@@ -124,7 +125,7 @@ async function main() {
     if (!report.ok) {
       process.stderr.write(`[nav-audit] limited mode — ${report.reason}\n`);
       if (report.code === 'NO_PLAYWRIGHT' || report.code === 'NO_CHROMIUM') {
-        process.stderr.write('  install the browser: npx playwright install chromium\n');
+        process.stderr.write(`  install the browser: ${playwrightInstallHint(root)}\n`);
       }
       process.exit(2);
     }
