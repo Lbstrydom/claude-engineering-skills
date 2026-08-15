@@ -1,7 +1,7 @@
 # Plan: pnpm-aware consumer installation
 
 - **Date**: 2026-08-15
-- **Status**: In Progress
+- **Status**: Complete
 - **Author**: Claude (ad-hoc fix, not `/plan`-originated)
 - **Scope**: backend
 - **Target domain(s)**: `scripts`, `shared-lib`

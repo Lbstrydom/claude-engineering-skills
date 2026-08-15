@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**9 active · 188 terminal · 27 audit summaries · 4 reference docs**
+**9 active · 189 terminal · 27 audit summaries · 4 reference docs**
 
 ---
 
@@ -49,7 +49,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 185 completed plans</summary>
+<summary>Show all 186 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -177,6 +177,7 @@ source comments that no docs linter sees — stays valid.
 | [Phase H — Public-Distribution Hardening](./phase-h-public-distribution.md) | `Complete` | shipped — `install.mjs` (one-shot installer with key collection) + `scripts/check-deps.mjs` (dependency aud… |
 | [Phase I — CLAUDE.md / AGENTS.md Hygiene + Sprawl Control](./phase-i-claudemd-hygiene.md) | `Complete` | shipped — `/ai-context-management` skill + `scripts/check-context-drift.mjs` (the strict-mode drift gate; r… |
 | [Plan-audit learning parity + AGENTS.md sprawl cap](./plan-audit-parity-and-agents-md-cap.md) | `Complete` |  |
+| [pnpm-aware consumer installation](./pnpm-consumer-support.md) | `Complete` |  |
 | [Postgres Parity — One Postgres Code Path for the Audit-Loop Store](./postgres-parity.md) | `Complete` | 2026-07-18 — the one deferred follow-up was retired, not |
 | [Predictive Audit Strategy — Data Loop Completion & Intelligence](./predictive-audit-strategy.md) | `Complete` | shipped — `predictiveConfig` block exported from `scripts/lib/config.mjs` (explorationInterval, freshnessWi… |
 | [Git-Native Provenance Trailers (F1) + Executable Gate-Honesty Suite (F2)](./provenance-trailers-and-gate-honesty.md) | `Complete` | implemented via `/cycle --autonomous` (Cluster A: 5×GPT + 1 rebuttal, converged; Cluster B: 3×GPT + 3 rebut… |
