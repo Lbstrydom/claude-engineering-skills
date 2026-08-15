@@ -4,7 +4,7 @@
  * real Postgres. Skips gracefully when no DB is configured or the security
  * migration has not been applied.
  */
-import 'dotenv/config';
+import '../scripts/lib/load-env.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { getPool, closePool } from '../scripts/lib/db/client.mjs';

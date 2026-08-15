@@ -29,6 +29,10 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 const SCRIPTS = path.join(REPO_ROOT, 'scripts');
 const ORACLE = path.join(SCRIPTS, 'lib', 'load-env.mjs');
 
+// Directories with no shippable source, skipped before the walk so the scan
+// stays cheap. NOT the exemption mechanism — that is git-ignore status, below.
+const SKIP_DIRS = new Set(['node_modules', '.git']);
+
 // The only modules allowed to name `dotenv`: the oracle and the chain it calls.
 const DOTENV_CHAIN = new Set([
   path.join(SCRIPTS, 'lib', 'load-env.mjs'),
@@ -43,11 +47,47 @@ const DOTENV_IMPORT = /(?:^|\n)\s*(?:import\s[^\n;]*from\s*['"]dotenv(?:\/[^'"]*
 
 function collectMjsFiles(dir, acc = []) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (SKIP_DIRS.has(e.name)) continue;
     const p = path.join(dir, e.name);
     if (e.isDirectory()) collectMjsFiles(p, acc);
-    else if (e.name.endsWith('.mjs')) acc.push(p);
+    else if (/\.(mjs|cjs|js)$/.test(e.name)) acc.push(p);
   }
   return acc;
+}
+
+/**
+ * Drop the git-ignored candidates.
+ *
+ * Ignored files are scratch — probes, temp dirs, generated output — and are not
+ * shipped, so they are not this rule's business. Everything else is, INCLUDING
+ * trees that are not `scripts/`: this gate originally scanned `scripts/**`
+ * only, and on 2026-08-15 that missed three tracked files under
+ * `docs/plans/security/files/`, a promotion staging area whose `files/scripts/…`
+ * paths mirror real `scripts/…` ones. One of them was the staged twin of a file
+ * the same change had just fixed, so the defect would have been reintroduced the
+ * moment the kit was promoted. Walking the filesystem and subtracting
+ * git-ignore is the version that cannot have that blind spot — a hardcoded root
+ * list can only ever cover the roots someone remembered.
+ *
+ * Asked of the CANDIDATES, never of the repo: a whole-tree
+ * `ls-files --others --ignored` ENOBUFs past spawnSync's 1MiB maxBuffer, and a
+ * fail-open guard reads that as "nothing is ignored".
+ */
+function withoutIgnored(files) {
+  if (files.length === 0) return files;
+  // Repo-relative POSIX paths, not absolute ones. `check-ignore` echoes back
+  // whatever form it was given, and on Windows an absolute backslash path
+  // matches nothing — which silently exempts NOTHING and made the first run of
+  // this filter flag a gitignored scratch probe.
+  const rel = files.map((f) => path.relative(REPO_ROOT, f).split(path.sep).join('/'));
+  const res = spawnSync('git', ['check-ignore', '--stdin'], {
+    cwd: REPO_ROOT, input: rel.join('\n'), encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
+  });
+  // Exit 0 = some ignored, 1 = none ignored, anything else = git failed. Fail
+  // CLOSED: on an error we scan everything rather than silently exempting.
+  if (res.status !== 0 && res.status !== 1) return files;
+  const ignored = new Set((res.stdout || '').split('\n').map((l) => l.trim()).filter(Boolean));
+  return files.filter((_f, i) => !ignored.has(rel[i]));
 }
 
 const cleanups = [];
@@ -60,13 +100,18 @@ after(() => {
 });
 
 describe('env loading — single oracle (structural)', () => {
-  const files = collectMjsFiles(SCRIPTS);
+  const files = withoutIgnored(collectMjsFiles(REPO_ROOT));
 
   it('scans a non-trivial number of files (vacuous-pass guard)', () => {
     // Without this, a bad root or a broken walker reports "0 violations" and
     // reads exactly like a clean repo.
-    assert.ok(files.length > 100, `expected >100 .mjs files under scripts/, walked ${files.length}`);
+    assert.ok(files.length > 100, `expected >100 source files repo-wide, walked ${files.length}`);
     assert.ok(files.includes(ORACLE), 'walker did not reach the oracle itself');
+    // Beyond scripts/ — the blind spot this gate had on the day it was written.
+    assert.ok(files.some((f) => f.includes(`${path.sep}docs${path.sep}plans${path.sep}security${path.sep}files${path.sep}`)),
+      'walker did not reach the security-kit promotion staging area');
+    assert.ok(files.some((f) => f.startsWith(path.join(REPO_ROOT, 'tests') + path.sep)),
+      'walker did not reach tests/');
   });
 
   it('no module outside the oracle chain imports dotenv', () => {

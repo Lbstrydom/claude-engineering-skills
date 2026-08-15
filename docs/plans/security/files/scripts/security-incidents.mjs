@@ -3,7 +3,7 @@
  * Logs /security-strategy operations to the `security_incident_log` Postgres table.
  * Exit 0 = logged; exit 1 = write error or DB unavailable; exit 2 = usage error.
  */
-import 'dotenv/config';
+import './lib/load-env.mjs';
 import { execFileSync } from 'node:child_process';
 import { getPool } from './lib/db/client.mjs';
 
