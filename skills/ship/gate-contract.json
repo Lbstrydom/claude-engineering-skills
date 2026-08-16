@@ -315,6 +315,30 @@
     {
       "line": "(never a gate), not a reason to force a push now.",
       "reason": "Tail of the sentence explaining WHY the pending-verification file is acceptable to lose (Step 6.8 is advisory, never a gate — the existing step-0-5-gates-non-blocking rationale applied to this specific note). Not a new claim: restates the advisory-only nature of Step 6.8 already contracted via the 'Advisory by construction' entry here."
+    },
+    {
+      "line": "boundary but never ships as-is.",
+      "reason": "Step 2. Describes what the gitignored scratch file DOES (survives a session, is never committed) — a property of .gitignore, not a rule /ship enforces. There is no exit code to assert: the note is advisory documentation the next ship folds into status.md."
+    },
+    {
+      "line": "node -e \"const{execFileSync}=require('node:child_process'),p=require('node:path');console.log(p.join(p.dirname(execFileSync('git',['rev-parse','--path-format=absolute','--git-common-dir'],{encoding:'utf8'}).trim()),'.claude','tmp','ship-verification-pending.md'))\"",
+      "reason": "Step 2. A path-resolution recipe, not an enforcement claim. `--git-common-dir` is matched only because the verb scanner sees `git`; the command prints a path and asserts nothing. Same literal appears in Step 6.8 (dispositioned separately) because the two steps must resolve the SAME file."
+    },
+    {
+      "line": "— never by re-opening the status.md entry you just pushed.** status.md is append-only",
+      "reason": "Step 6.8. Restates the pre-existing append-only convention for status.md and says where NOT to write the verification note. Re-wrapped 2026-08-14 when the target moved to the main checkout, which changed the line boundary; the claim is unchanged and is a documentation convention, not a /ship gate — nothing exits non-zero if an agent writes it elsewhere."
+    },
+    {
+      "line": "> so the handoff silently never happens and the only symptom is a note that",
+      "reason": "Step 6.8. Explains the FAILURE MODE that motivated resolving the main checkout (a deleted worktree destroys the note). A statement about what happens absent the fix, not a rule /ship enforces."
+    },
+    {
+      "line": "> never appears. `.claude/tmp/` resolves per-tree, so \"write it to",
+      "reason": "Step 6.8. States a fact about how a relative path resolves inside a linked git worktree — external git/filesystem behaviour, not a /ship enforcement claim."
+    },
+    {
+      "line": "> node -e \"const{execFileSync}=require('node:child_process'),p=require('node:path');console.log(p.join(p.dirname(execFileSync('git',['rev-parse','--path-format=absolute','--git-common-dir'],{encoding:'utf8'}).trim()),'.claude','tmp','ship-verification-pending.md'))\"",
+      "reason": "Step 6.8. The blockquoted form of the same path-resolution recipe as Step 2. Prints a path; asserts nothing. Matched only because the verb scanner sees `git`."
     }
   ]
 }

@@ -163,7 +163,8 @@
     "docs:citations:json": "node scripts/check-doc-citations.mjs --format json",
     "mutation": "node scripts/mutation-test.mjs",
     "mutation:all": "node scripts/mutation-test.mjs --all",
-    "worktree:preflight:gate": "node scripts/check-worktree-preflight.mjs"
+    "worktree:preflight:gate": "node scripts/check-worktree-preflight.mjs",
+    "skills:hydrate": "node scripts/skills-hydrate.mjs"
   },
   "keywords": [
     "claude",

@@ -82,10 +82,34 @@ describe('reopenReason — end-to-end against real suppressReRaises output', () 
     ...extra,
   });
 
-  test('the cluster-A case records as undeclared churn on a dismissal', () => {
+  test('the cluster-A case is now SUPPRESSED by Layer 3, not reopened-and-labelled', () => {
+    // Updated 2026-08-14 when Layer 3 landed. This case previously reached
+    // `reopened` and `reopenReason` labelled it `declared=no; matched=dismissed`
+    // — the churn shape the label existed to make countable. The policy now
+    // declines to re-litigate it at all, so the SAME fact is recorded one step
+    // earlier and in a different column: a `suppressed` row whose reason names
+    // the missing declaration. Both spellings must stay greppable, because the
+    // store holds rows written under each.
     const r = suppressReRaises([finding()], ledger, { changedFiles: ['scripts/gemini-review.mjs'] });
-    assert.equal(r.reopened.length, 1, 'precondition: the real matcher reopens this');
-    assert.equal(reopenReason(r.reopened[0]), 'Scope changed; declared=no; matched=dismissed');
+    assert.equal(r.reopened.length, 0, 'a touch alone no longer re-litigates a disproof');
+    assert.equal(r.suppressed.length, 1);
+    assert.match(r.suppressed[0].reason, /declared=no/);
+    assert.equal(r.reopenTelemetry.relitigationSuppressed, 1);
+  });
+
+  test('reopenReason still labels the reopens that DO happen (kill switch on)', () => {
+    // The label is not dead code: it governs every `fixed`-entry reopen, and
+    // every dismissal reopen under the opt-out.
+    const prev = process.env.AUDIT_DISMISSAL_REOPEN_REQUIRES_DECLARATION;
+    process.env.AUDIT_DISMISSAL_REOPEN_REQUIRES_DECLARATION = 'false';
+    try {
+      const r = suppressReRaises([finding()], ledger, { changedFiles: ['scripts/gemini-review.mjs'] });
+      assert.equal(r.reopened.length, 1);
+      assert.equal(reopenReason(r.reopened[0]), 'Scope changed; declared=no; matched=dismissed');
+    } finally {
+      if (prev === undefined) delete process.env.AUDIT_DISMISSAL_REOPEN_REQUIRES_DECLARATION;
+      else process.env.AUDIT_DISMISSAL_REOPEN_REQUIRES_DECLARATION = prev;
+    }
   });
 
   test('the same case with a model declaration records differently', () => {

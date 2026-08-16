@@ -57,7 +57,8 @@ gateway + termination watchdog) are documented in the
 
 | Variable | Required | Default | Purpose |
 |----------|----------|---------|---------|
-| `SUPPRESS_SIMILARITY_THRESHOLD` | No | `0.35` | Jaccard threshold for R2+ suppression (0.0-1.0) |
+| `SUPPRESS_SIMILARITY_THRESHOLD` | No | `0.35` | Jaccard threshold for R2+ suppression (0.0-1.0). Calibrated against a labelled corpus — do not retune casually; the 2026-08-14 re-raise that prompted Layer 3 scored **0.508** against it, so the matcher was working and the threshold was not the defect. |
+| `AUDIT_DISMISSAL_REOPEN_REQUIRES_DECLARATION` | No | `true` | Layer 3. When true (default), a **dismissed** ledger entry whose file changed reopens only if the re-raise sets `is_reopened: true`; otherwise it is suppressed with a `declared=no` reason and counted in `reopenTelemetry.relitigationSuppressed`. `fixed`/`verified` entries are unaffected — they always reopen on touch, because regression detection must not depend on the model noticing. Set to `false` to restore the pre-2026-08-14 uniform behaviour. |
 | `AUDIT_AUTHOR_TIER_HINT` | No | — | **Observation-only** (never routes). Optional author-model hint (concrete id e.g. `claude-sonnet-4-6`, or a logical tier `economy\|standard\|frontier`) read by the `author_tier` recorder in `openai-audit.mjs` to capture actual-vs-suggested tier + the ladder partition key. A concrete id populates the partition key; a bare logical tier leaves it null. See [`docs/plans/model-tier-observation.md`](../plans/model-tier-observation.md). |
 
 ## persona-test

@@ -33,6 +33,7 @@ import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 import {
   EXEMPTIONS,
   checkSkill,
+  checkMarkerRemedies,
   skillsInvokingSyncedTooling,
 } from './lib/worktree-preflight.mjs';
 
@@ -69,15 +70,29 @@ function main() {
   const inScope = skillsInvokingSyncedTooling(ROOT);
   const results = inScope.map(s => checkSkill(ROOT, s));
   const failures = results.filter(r => r.status !== 'ok');
+  // The marker's REMEDY must be runnable, not merely present — see
+  // `checkMarkerRemedies`. Repo-wide (one package.json), so it is not a
+  // per-skill failure row.
+  const remedies = checkMarkerRemedies(ROOT);
+  const ok = failures.length === 0 && remedies.ok;
 
   if (json) {
     process.stdout.write(`${JSON.stringify({
-      ok: failures.length === 0,
+      ok,
       inScope: inScope.length,
       exemptions: Object.keys(EXEMPTIONS),
       failures,
+      remedies,
     }, null, 2)}\n`);
-    process.exit(failures.length === 0 ? 0 : 1);
+    process.exit(ok ? 0 : 1);
+  }
+
+  if (!remedies.ok) {
+    process.stdout.write(
+      `${R}✗${X} package.json ${D}wtpf/remedy-missing — the marker tells readers to run `
+      + `${remedies.missing.map(n => `\`npm run ${n}\``).join(', ')}, which package.json does not define. `
+      + `Add the script (it must ride on TRACKED content to reach a worktree at all).${X}\n`,
+    );
   }
 
   for (const f of failures) {
@@ -88,9 +103,20 @@ function main() {
   const exempt = Object.keys(EXEMPTIONS).length;
   process.stdout.write(
     `\n${B}worktree-preflight:${X} ${inScope.length} skill(s) in scope, `
-    + `${failures.length} without the marker, ${exempt} exempt — `
-    + `${failures.length === 0 ? `${G}OK${X}` : `${R}FAIL${X}`}\n`,
+    + `${failures.length} without the marker, ${exempt} exempt, `
+    + `${remedies.checked.length - remedies.missing.length}/${remedies.checked.length} remedy script(s) defined — `
+    + `${ok ? `${G}OK${X}` : `${R}FAIL${X}`}\n`,
   );
+
+  if (!remedies.ok) {
+    for (const name of remedies.missing) {
+      process.stderr.write(`wtpf/remedy-missing package.json:scripts.${name}\n`);
+    }
+    process.stderr.write(
+      `${R}The worktree-preflight marker prescribes a remedy package.json does not define, `
+      + `so the instruction cannot be followed where it is printed.${X}\n`,
+    );
+  }
 
   if (failures.length > 0) {
     // Codes on stderr, one per failing skill: the poison pill matches these, and
@@ -103,9 +129,8 @@ function main() {
       + `that the tree is absent in a linked worktree.${X}\n`
       + `${D}Why this is gated: docs/runbooks/consumer-adoption.md §"Linked git worktrees"${X}\n`,
     );
-    process.exit(1);
   }
-  process.exit(0);
+  process.exit(ok ? 0 : 1);
 }
 
 const invokedDirectly = (() => {

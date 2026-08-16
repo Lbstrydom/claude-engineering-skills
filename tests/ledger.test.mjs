@@ -264,11 +264,19 @@ describe('suppressReRaises — which ledger entries are even eligible to suppres
 });
 
 describe('suppressReRaises — reopen-on-touch is what stops a real regression being silenced', () => {
-  it('REOPENS instead of suppressing when the entry scope was changed this round', () => {
-    const r = suppressReRaises([finding()], ledgerOf(entry()), {
+  // Retargeted 2026-08-14. This assertion previously read "touching the file
+  // makes a prior dismissal untrustworthy" and used a DISMISSED entry — it
+  // stated the old uniform policy as intent, and it is exactly what Layer 3
+  // overturns: a file touch is far too coarse a staleness signal for a
+  // DISPROOF, though it remains the right one for a FIX. The mechanical path is
+  // asserted here on a fixed entry (unchanged behaviour); the dismissal path
+  // moved to its own describe below, asserted in both directions.
+  it('REOPENS instead of suppressing when a FIXED entry scope was changed this round', () => {
+    const fixed = entry({ adjudicationOutcome: 'accepted', remediationState: 'fixed' });
+    const r = suppressReRaises([finding()], ledgerOf(fixed), {
       changedFiles: ['scripts/lib/foo.mjs'],
     });
-    assert.equal(r.reopened.length, 1, 'touching the file makes a prior dismissal untrustworthy');
+    assert.equal(r.reopened.length, 1, 'a touched FIXED entry must reopen — regression detection');
     assert.equal(r.suppressed.length, 0);
     assert.equal(r.reopened[0]._reopened, true);
     assert.equal(r.reopened[0]._matchedTopic, 'aaaaaaaaaaaa');
@@ -283,57 +291,75 @@ describe('suppressReRaises — reopen-on-touch is what stops a real regression b
   });
 
   it('compares changed files through path normalisation, not string equality', () => {
-    const r = suppressReRaises([finding()], ledgerOf(entry()), {
+    const fixed = entry({ adjudicationOutcome: 'accepted', remediationState: 'fixed' });
+    const r = suppressReRaises([finding()], ledgerOf(fixed), {
       changedFiles: ['scripts\\lib\\foo.mjs'],
     });
     assert.equal(r.reopened.length, 1, 'a Windows-spelled changed file must still reopen');
   });
 });
 
-describe('suppressReRaises — reopen telemetry (observation only, must not route)', () => {
+describe('suppressReRaises — Layer 3: a dismissal is a disproof, a fix is a repair', () => {
   const changed = { changedFiles: ['scripts/lib/foo.mjs'] };
+  const fixedEntry = () => entry({ adjudicationOutcome: 'accepted', remediationState: 'fixed' });
 
-  it('counts a mechanical reopen the model never declared — the cluster-A shape', () => {
-    // The 2026-08-14 field case: a dismissal reopened purely because its file
-    // was touched, while the model itself made no reopen claim.
+  it('THE CLUSTER-A SHAPE: a touched dismissal with no declaration is suppressed, not reopened', () => {
     const r = suppressReRaises([finding()], ledgerOf(entry()), changed);
-    assert.equal(r.reopenTelemetry.total, 1);
-    assert.equal(r.reopenTelemetry.declared, 0);
-    assert.equal(r.reopenTelemetry.undeclaredOnDismissal, 1);
-    assert.equal(r.reopened[0]._reopenDeclared, false);
-    assert.equal(r.reopened[0]._matchedOutcome, 'dismissed');
+    assert.equal(r.reopened.length, 0, 'an unrelated edit must not re-litigate a disproof');
+    assert.equal(r.suppressed.length, 1);
+    assert.match(r.suppressed[0].reason, /declared=no/);
+    assert.equal(r.reopenTelemetry.relitigationSuppressed, 1);
   });
 
-  it('counts a declared reopen separately', () => {
+  it('a DECLARED reopen of a dismissal still gets through', () => {
     const r = suppressReRaises([{ ...finding(), is_reopened: true }], ledgerOf(entry()), changed);
+    assert.equal(r.reopened.length, 1, 'the escape hatch must stay open for a real staleness');
     assert.equal(r.reopenTelemetry.declared, 1);
-    assert.equal(r.reopenTelemetry.undeclaredOnDismissal, 0);
-    assert.equal(r.reopened[0]._reopenDeclared, true);
+    assert.equal(r.reopenTelemetry.relitigationSuppressed, 0);
   });
 
-  it('THE DIRECTION THAT MUST NOT FIRE: the declaration does not change routing', () => {
-    // The whole point of landing this observation-only. If declaring/omitting
-    // `is_reopened` moved a finding between buckets, we would have shipped an
-    // uncalibrated policy change under the guise of telemetry.
-    const declared = suppressReRaises([{ ...finding(), is_reopened: true }], ledgerOf(entry()), changed);
-    const undeclared = suppressReRaises([{ ...finding(), is_reopened: false }], ledgerOf(entry()), changed);
-    const absent = suppressReRaises([finding()], ledgerOf(entry()), changed);
-    for (const r of [declared, undeclared, absent]) {
-      assert.equal(r.reopened.length, 1);
-      assert.equal(r.suppressed.length, 0);
-      assert.equal(r.kept.length, 0);
+  it('THE DIRECTION THAT MUST NOT FIRE: a FIXED entry still reopens WITHOUT a declaration', () => {
+    // The whole asymmetry. If this ever needed `is_reopened`, regression
+    // detection would silently depend on the model noticing a regression —
+    // which is the one thing it cannot be trusted to do, since the fix that
+    // regressed is precisely what it was told had been handled.
+    const r = suppressReRaises([finding()], ledgerOf(fixedEntry()), changed);
+    assert.equal(r.reopened.length, 1);
+    assert.equal(r.suppressed.length, 0);
+    assert.equal(r.reopenTelemetry.relitigationSuppressed, 0);
+  });
+
+  it('the kill switch restores the old uniform behaviour', () => {
+    const prev = process.env.AUDIT_DISMISSAL_REOPEN_REQUIRES_DECLARATION;
+    process.env.AUDIT_DISMISSAL_REOPEN_REQUIRES_DECLARATION = 'false';
+    try {
+      const r = suppressReRaises([finding()], ledgerOf(entry()), changed);
+      assert.equal(r.reopened.length, 1, 'opting out must reopen exactly as before');
+      assert.equal(r.reopenTelemetry.undeclaredOnDismissal, 1);
+      assert.equal(r.reopenTelemetry.relitigationSuppressed, 0);
+    } finally {
+      if (prev === undefined) delete process.env.AUDIT_DISMISSAL_REOPEN_REQUIRES_DECLARATION;
+      else process.env.AUDIT_DISMISSAL_REOPEN_REQUIRES_DECLARATION = prev;
     }
-    // ...and on an UNCHANGED scope it still suppresses regardless of the flag.
-    const quiet = suppressReRaises([{ ...finding(), is_reopened: true }], ledgerOf(entry()), {
+  });
+
+  it('scope-unchanged suppression is a DIFFERENT event, with a different reason', () => {
+    // Two suppressions that must stay distinguishable in suppression_events:
+    // "nothing changed" vs "something changed and we declined to re-litigate".
+    const quiet = suppressReRaises([finding()], ledgerOf(entry()), {
       changedFiles: ['scripts/lib/unrelated.mjs'],
     });
-    assert.equal(quiet.suppressed.length, 1, 'a model-declared reopen must not override scope-unchanged suppression');
-    assert.equal(quiet.reopened.length, 0);
+    assert.equal(quiet.suppressed.length, 1);
+    assert.match(quiet.suppressed[0].reason, /scope unchanged/);
+    assert.doesNotMatch(quiet.suppressed[0].reason, /declared=no/);
+    assert.equal(quiet.reopenTelemetry.relitigationSuppressed, 0);
   });
 
-  it('reports a zeroed telemetry object when nothing reopened', () => {
-    const r = suppressReRaises([finding()], ledgerOf(entry()), { changedFiles: [] });
-    assert.deepEqual(r.reopenTelemetry, { total: 0, declared: 0, undeclaredOnDismissal: 0 });
+  it('reports a zeroed telemetry object when nothing matched at all', () => {
+    const r = suppressReRaises([finding()], ledgerOf(fixedEntry()), { changedFiles: [] });
+    assert.deepEqual(r.reopenTelemetry, {
+      total: 0, declared: 0, undeclaredOnDismissal: 0, relitigationSuppressed: 0,
+    });
   });
 });
 

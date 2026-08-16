@@ -3369,11 +3369,20 @@ export async function runLegacyProductionAudit(ctx) {
     // Printed so the signal accumulates in ordinary round logs rather than
     // needing a bespoke experiment — it is the input to the deferred
     // reopen-policy decision, and it is NOT a gate.
-    if (reopenTelemetry && reopenTelemetry.total > 0) {
+    if (reopenTelemetry && (reopenTelemetry.total > 0 || reopenTelemetry.relitigationSuppressed > 0)) {
       process.stderr.write(
         `  Reopens: ${reopenTelemetry.declared}/${reopenTelemetry.total} model-declared`
         + ` | ${reopenTelemetry.undeclaredOnDismissal} undeclared on a dismissal\n`,
       );
+      // Layer 3's own false-negative exposure. Printed separately because it is
+      // the number that would show the policy over-suppressing: each one is a
+      // dismissal whose file changed and which we declined to re-litigate.
+      if (reopenTelemetry.relitigationSuppressed > 0) {
+        process.stderr.write(
+          `  Re-litigation declined: ${reopenTelemetry.relitigationSuppressed}`
+          + ` (dismissed + scope changed + no declared reopen)\n`,
+        );
+      }
     }
     if (suppressed.length > 0) {
       for (const s of suppressed.slice(0, 5)) {

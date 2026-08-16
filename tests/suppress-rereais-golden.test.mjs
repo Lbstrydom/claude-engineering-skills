@@ -37,11 +37,18 @@ test('same-pass fuzzy match on an unchanged-scope dismissed entry → suppressed
   assert.equal(r.reopened.length, 0);
 });
 
-test('same match but scope changed → reopened, not suppressed', () => {
+// Deliberately retargeted 2026-08-14 from a `dismissed` entry to a FIXED one.
+// This suite locks MATCHER semantics (see the header), and the matcher is
+// unchanged — but reopen-on-touch is no longer uniform across outcomes: a fixed
+// entry still reopens mechanically (regression detection must not depend on the
+// model noticing), while a dismissed one now requires the re-raise to declare
+// itself. Exercising the fixed path keeps this test measuring what it was
+// written to measure; the dismissed path is asserted both ways below.
+test('same match but scope changed → reopened, not suppressed (FIXED entry)', () => {
   const ledger = { entries: [entry({
     topicId: 't1', pass: 'backend', category: 'Null deref', section: 'src/a.mjs:10',
     detail: 'possible null dereference on user input in the parse path',
-    affectedFiles: ['src/a.mjs'], adjudicationOutcome: 'dismissed',
+    affectedFiles: ['src/a.mjs'], adjudicationOutcome: 'accepted', remediationState: 'fixed',
   })] };
   const findings = [finding({
     category: 'Null deref', section: 'src/a.mjs:10',
@@ -49,8 +56,32 @@ test('same match but scope changed → reopened, not suppressed', () => {
     pass: 'backend', file: 'src/a.mjs',
   })];
   const r = suppressReRaises(findings, ledger, { changedFiles: ['src/a.mjs'] });
-  assert.equal(r.reopened.length, 1, 'changed scope must reopen');
+  assert.equal(r.reopened.length, 1, 'changed scope must reopen a FIXED entry');
   assert.equal(r.suppressed.length, 0);
+});
+
+test('a DISMISSED entry on changed scope needs a declaration to reopen', () => {
+  const mk = (extra = {}) => ({
+    ledger: { entries: [entry({
+      topicId: 't1', pass: 'backend', category: 'Null deref', section: 'src/a.mjs:10',
+      detail: 'possible null dereference on user input in the parse path',
+      affectedFiles: ['src/a.mjs'], adjudicationOutcome: 'dismissed',
+    })] },
+    findings: [{ ...finding({
+      category: 'Null deref', section: 'src/a.mjs:10',
+      detail: 'possible null dereference on user input in the parse path',
+      pass: 'backend', file: 'src/a.mjs',
+    }), ...extra }],
+  });
+  const undeclared = mk();
+  const a = suppressReRaises(undeclared.findings, undeclared.ledger, { changedFiles: ['src/a.mjs'] });
+  assert.equal(a.reopened.length, 0, 'a touch alone must not re-litigate a disproof');
+  assert.equal(a.suppressed.length, 1);
+  assert.match(a.suppressed[0].reason, /declared=no/);
+
+  const declared = mk({ is_reopened: true });
+  const b = suppressReRaises(declared.findings, declared.ledger, { changedFiles: ['src/a.mjs'] });
+  assert.equal(b.reopened.length, 1, 'a declared reopen must still get through');
 });
 
 test('no file overlap → kept (never a candidate)', () => {

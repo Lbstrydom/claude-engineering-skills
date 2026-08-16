@@ -607,6 +607,10 @@
     "worktree:preflight:gate": {
       "description": "Fail when a skill documents a command into the synced tooling tree without warning that the tree is absent in a linked git worktree.",
       "category": "gate"
+    },
+    "skills:hydrate": {
+      "description": "Copy the main checkout's synced tooling tree into a linked git worktree, where it is absent because it is gitignored. No-op in the main checkout and in this source repo (tooling is tracked at scripts/).",
+      "category": "setup"
     }
   }
 }

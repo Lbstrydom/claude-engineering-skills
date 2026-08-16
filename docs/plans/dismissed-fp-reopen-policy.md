@@ -15,8 +15,16 @@
   rewritten; `tests/rulings-block-guard.test.mjs` +
   `tests/sensitive-egress.test.mjs` extended (written test-first: confirmed RED
   against the old implementation, then GREEN). Full suite 6545 pass / 0 fail.
-  **Phase 2 remains deferred and unbuilt** — gated on the empirical protocol
-  below, which has NOT run yet. **2026-08-14**: a second independent field
+  **Phase 2 (Layer 3) SHIPPED 2026-08-14 — see "Layer 3 as shipped" below.** It
+  was NOT built from this document's superseded token-intersection design, and
+  it did not need the `evidence-triage` anchors either: making `is_reopened`
+  representable earlier the same day supplied a cheaper signal than the anchor
+  work this plan assumed would be required. The 5-trial empirical protocol below
+  never ran; the scope call was taken deliberately on two independent field
+  occurrences, and the policy ships with a kill switch and its own
+  false-negative counter instead of on the protocol's evidence. Recorded that
+  way rather than retro-fitting the protocol to the decision.
+  <br>**2026-08-14 (earlier)**: a second independent field
   occurrence was recorded, and investigating it found + fixed a SEPARATE defect
   (the `is_reopened` prompt→schema contract was unrepresentable, so the reopen
   signal had never been recordable at all). That fix is **not** Phase 2 and
@@ -992,6 +1000,57 @@ FROM suppression_events
 WHERE action = 'reopened' AND created_at > NOW() - INTERVAL '30 days'
 GROUP BY reason ORDER BY 2 DESC;
 ```
+
+### Layer 3 as shipped (2026-08-14) — the asymmetry, not a threshold change
+
+`suppressReRaises`'s reopen branch now splits on `adjudicationOutcome`:
+
+| Matched entry | Scope changed | Model declared `is_reopened` | Outcome |
+|---|---|---|---|
+| `fixed` / `verified` | yes | *irrelevant* | **reopened** (unchanged) |
+| `dismissed` | yes | yes | **reopened** |
+| `dismissed` | yes | no | **suppressed**, reason `…declared=no`, counted |
+| any | no | *irrelevant* | suppressed, `scope unchanged` (unchanged) |
+
+**A dismissal is a disproof; a fix is a repair.** Reopen-on-touch is correct
+regression detection for the second and re-litigation for the first — editing a
+file to fix other findings does not make a disproved claim true, and in an
+active fix loop the audited files change every round, which is what made the
+churn structurally guaranteed. `fixed` deliberately does NOT require a
+declaration: regression detection must not depend on the model noticing a
+regression in the very thing it was told had been handled.
+
+**What this trades.** One known failure (every dismissed finding on a touched
+file re-litigating) for a smaller unknown one (a genuinely stale dismissal the
+model fails to declare is suppressed). That is a recall risk, so it is
+reversible without a code change (`AUDIT_DISMISSAL_REOPEN_REQUIRES_DECLARATION=false`)
+and never silent — each suppression carries its own reason string, distinct
+from the scope-unchanged one, and increments
+`reopenTelemetry.relitigationSuppressed`, so the policy's own false-negative
+rate is measurable from `suppression_events` rather than inferred:
+
+```sql
+SELECT reason, COUNT(*) FROM suppression_events
+WHERE action = 'suppressed' AND reason LIKE '%declared=no%'
+GROUP BY reason;
+```
+
+**Two tests pinning the OLD behaviour were overturned deliberately**, not
+deleted: the golden suite's reopen case and `ledger.test.mjs`'s
+*"touching the file makes a prior dismissal untrustworthy"* both stated the
+uniform policy as intent. They were retargeted to `fixed` entries — where the
+mechanical reopen genuinely is unchanged, which is what those suites exist to
+lock — and the dismissal path is now asserted in **both** directions, including
+that a `fixed` entry still reopens WITHOUT a declaration (the direction that
+must not fire).
+
+**The empirical protocol below never ran.** Two independent field occurrences
+plus a reversible, self-measuring policy were judged sufficient; the honest
+record is that this was a scope call, not a protocol result. If
+`relitigationSuppressed` climbs while real regressions go unreported, that is
+the signal to revisit — and it is now countable, which it was not before.
+
+---
 
 `declared=no; matched=dismissed` is the churn shape. Two caveats on reading it:
 it only accrues when the **cloud store is on** (a local-only run still leaves no

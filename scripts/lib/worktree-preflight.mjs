@@ -59,6 +59,63 @@ export const MARKER_BLOCK = `> **Worktree preflight** — in a linked git worktr
 export const MARKER_KEY = '**Worktree preflight**';
 
 /**
+ * Every `npm run <script>` the marker block instructs the reader to run.
+ *
+ * Derived from `MARKER_BLOCK` rather than hard-coded, so a future edit to the
+ * remedy cannot drift from what gets verified — the same reason the block is
+ * one constant instead of 16 paragraphs.
+ *
+ * @param {string} [block]
+ * @returns {string[]} script names, de-duplicated, in order of appearance
+ */
+export function markerNamedNpmScripts(block = MARKER_BLOCK) {
+  const names = [];
+  // Tolerates the backslash-escaped backticks the constant carries in source.
+  for (const m of block.matchAll(/npm run ([a-z0-9:_-]+)/gi)) {
+    if (!names.includes(m[1])) names.push(m[1]);
+  }
+  return names;
+}
+
+/**
+ * Does every script the marker names actually EXIST in `package.json`?
+ *
+ * **Why this is a gate and not a note** (added 2026-08-14). The marker check
+ * above proves the block is PRESENT in all 16 skills. It never asked whether
+ * the remedy the block prescribes could be followed — and it could not: the
+ * block has told readers to run `npm run skills:hydrate` since it landed, while
+ * no such npm script existed here, so following the instruction produced
+ * `npm error Missing script`. That is the very defect class this module was
+ * built to stop (*the instruction ships and the tool does not*), reappearing
+ * one level up — in the REMEDY rather than the subject it remedies. A gate that
+ * verifies a pointer's existence but not its target is half a gate.
+ *
+ * `package.json` is the right place to look precisely because it is TRACKED:
+ * the runbook's whole argument is that a worktree remedy must ride on tracked
+ * content, so a remedy absent from `package.json` is unreachable by
+ * construction.
+ *
+ * @param {string} rootDir
+ * @param {{readPackageJson?: (dir: string) => object}} [io] - injected for tests
+ * @returns {{ok: boolean, missing: string[], checked: string[]}}
+ */
+export function checkMarkerRemedies(rootDir, io = {}) {
+  const read = io.readPackageJson
+    ?? ((dir) => JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf-8')));
+  const checked = markerNamedNpmScripts();
+  let scripts = {};
+  try {
+    scripts = read(rootDir)?.scripts ?? {};
+  } catch {
+    // An unreadable package.json cannot prove the remedy exists, so report
+    // every named script missing rather than passing on absence of evidence.
+    return { ok: false, missing: checked, checked };
+  }
+  const missing = checked.filter((name) => !Object.prototype.hasOwnProperty.call(scripts, name));
+  return { ok: missing.length === 0, missing, checked };
+}
+
+/**
  * Skills deliberately out of scope, each with the reason it cannot be bitten.
  *
  * Empty today, and that is a finding rather than an oversight: the census found

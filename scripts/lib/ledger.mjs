@@ -516,7 +516,9 @@ export function matchesLedgerEntry(f, d, { threshold }) {
  * @param {string[]} [opts.changedFiles] - Files changed since last round
  * @param {string[]} [opts.impactSet] - Files in the impact set
  * @returns {{kept: object[], suppressed: object[], reopened: object[],
- *            reopenTelemetry: {total: number, declared: number, undeclaredOnDismissal: number}}}
+ *            reopenTelemetry: {total: number, declared: number,
+ *                              undeclaredOnDismissal: number,
+ *                              relitigationSuppressed: number}}}
  */
 export function suppressReRaises(findings, ledger, { changedFiles = [], impactSet = [] } = {}) {
   // Threshold calibrated from real audit data — paraphrased re-raises score 0.3-0.6, new findings <0.2
@@ -546,10 +548,28 @@ export function suppressReRaises(findings, ledger, { changedFiles = [], impactSe
   const kept = [], suppressed = [], reopened = [];
   const changedSet = new Set(changedFiles.map(normalizePath));
 
-  // OBSERVATION ONLY — does the model's own reopen declaration agree with this
-  // function's mechanical file-touch reopen? Recorded, never routed on. See the
-  // `_reopenDeclared` comment in the reopen branch for why it cannot gate yet.
-  const reopenTelemetry = { total: 0, declared: 0, undeclaredOnDismissal: 0 };
+  const reopenTelemetry = {
+    total: 0, declared: 0, undeclaredOnDismissal: 0, relitigationSuppressed: 0,
+  };
+
+  /**
+   * Layer 3 (2026-08-14): may a DISMISSED entry be reopened by a file touch
+   * alone, or must the re-raise declare itself?
+   *
+   * Default ON — this is the fix. The kill switch exists because the policy
+   * trades one known failure for a smaller unknown one: previously EVERY
+   * dismissed finding on a touched file re-litigated (structurally guaranteed
+   * churn in an active fix loop, field-confirmed twice); now a genuinely stale
+   * dismissal that the model fails to declare is suppressed instead. That is a
+   * recall risk, so it is (a) reversible without a code change, (b) never
+   * silent — each one is pushed to `suppressed` with its own reason string and
+   * counted in `relitigationSuppressed`, so the false-negative rate is
+   * measurable from `suppression_events` rather than inferred.
+   *
+   * Only `dismissed` is affected. `fixed`/`verified` keep the mechanical
+   * reopen, because regression detection must not depend on the model noticing.
+   */
+  const requireDeclaration = process.env.AUDIT_DISMISSAL_REOPEN_REQUIRES_DECLARATION !== 'false';
 
   // Fix #4: Build ruling count index. When a (category + primaryFile) pair has been
   // ruled 'overrule' 3+ times across rounds, hard-suppress regardless of hash drift.
@@ -633,27 +653,49 @@ export function suppressReRaises(findings, ledger, { changedFiles = [], impactSe
     // Step 3: Threshold + reopen check
     if (bestMatch && bestScore > threshold) {
       const scopeDirectlyChanged = bestMatch.affectedFiles.some(af => changedSet.has(normalizePath(af)));
-      if (scopeDirectlyChanged) {
+      f._reopenDeclared = f.is_reopened === true;
+      f._matchedOutcome = bestMatch.adjudicationOutcome ?? null;
+      // A dismissal is a DISPROOF; a fix is a repair. Reopen-on-touch is
+      // correct regression detection for the second and re-litigation for the
+      // first — editing a file to fix other findings does not make a disproved
+      // claim true. `requireDeclaration` splits them (Layer 3, the deferred
+      // "Phase 2" of docs/plans/dismissed-fp-reopen-policy.md).
+      // `stage1-mechanical` is EXCLUDED, for the same reason it is already
+      // excluded from `overruleCountIndex` above: its dismissal reason is a
+      // mechanical FACT about the code ("the cited function does not exist"),
+      // and a fact can be falsified by the very edit that touched the file —
+      // unlike a human/GPT judgment, which a later edit does not retroactively
+      // disprove. Requiring a declaration there would let a stale mechanical
+      // dismissal silently outlive the code state it was true about, which is
+      // precisely what that existing exclusion exists to prevent.
+      // Caught by tests/ledger-stage1-mechanical routing, not by review.
+      const isJudgmentDismissal = bestMatch.adjudicationOutcome === 'dismissed'
+        && (bestMatch.source || 'session') !== 'stage1-mechanical';
+      const relitigation = requireDeclaration && isJudgmentDismissal && !f._reopenDeclared;
+
+      if (scopeDirectlyChanged && !relitigation) {
         f._reopened = true;
         f._matchedTopic = bestMatch.topicId;
         f._matchScore = bestScore;
-        // OBSERVATION ONLY (2026-08-14) — deliberately does NOT influence the
-        // branch above it. `is_reopened` became answerable only on this date
-        // (ProducerFindingSchema had no such property and emits
-        // `additionalProperties: false`, so the model was structurally
-        // forbidden from setting it since 2026-04-01). Every historical value
-        // is therefore absent-by-construction, not false — which means there
-        // is not yet one round of data establishing whether the declaration
-        // tracks genuine staleness. Gating on an untested signal would swap a
-        // known-too-coarse rule for an uncalibrated one. Read these counters
-        // over the next few real rounds first; the policy decision they feed is
-        // docs/plans/dismissed-fp-reopen-policy.md "2026-08-14 field evidence".
-        f._reopenDeclared = f.is_reopened === true;
-        f._matchedOutcome = bestMatch.adjudicationOutcome ?? null;
         reopenTelemetry.total++;
         if (f._reopenDeclared) reopenTelemetry.declared++;
-        else if (bestMatch.adjudicationOutcome === 'dismissed') reopenTelemetry.undeclaredOnDismissal++;
+        else if (isJudgmentDismissal) reopenTelemetry.undeclaredOnDismissal++;
         reopened.push(f);
+      } else if (relitigation && scopeDirectlyChanged) {
+        // NOT the same event as "scope unchanged", and it must not share that
+        // reason string: this one means the scope DID change and we declined to
+        // re-litigate anyway. Recorded, never silent — it reaches
+        // `suppression_events` through the same `suppressed` array, so the
+        // policy's own false-negative rate stays measurable from the store.
+        reopenTelemetry.relitigationSuppressed++;
+        suppressed.push({
+          finding: f,
+          matchedTopic: bestMatch.topicId,
+          matchScore: bestScore,
+          matchedSource: bestMatch.source || 'session',
+          reason: 'Matches dismissed entry; scope changed but the re-raise cited no '
+            + 'changed line invalidating the ruling (declared=no)',
+        });
       } else {
         const src = bestMatch.source || 'session';
         const reason = src === 'debt'
