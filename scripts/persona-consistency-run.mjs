@@ -22,7 +22,6 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
 import 'dotenv/config';
 
 import { resolveManifest }       from './lib/persona-test/manifest-resolver.mjs';
@@ -220,8 +219,6 @@ export async function runConsistency(args, deps = {}) {
 
     // ── 7. Execute journey steps deterministically ────────────────────────
     const allContradictions = [];
-    const commitSha = safeGitSha(repoRoot);
-    const ctx = { repoId, journeyKey: canary.name, commitSha };
 
     // Manifest-quality warnings (CSS-locator nudges, etc.) — surface ONCE
     // at the start of the run so they appear in the first step's warnings
@@ -757,15 +754,6 @@ function safeCurrentRoute(page) {
   try {
     const u = new URL(page.url());
     return u.pathname + u.search;
-  } catch { return null; }
-}
-
-function safeGitSha(repoRoot) {
-  try {
-    const out = execFileSync('git', ['rev-parse', 'HEAD'], {
-      cwd: repoRoot, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'],
-    });
-    return out.trim() || null;
   } catch { return null; }
 }
 

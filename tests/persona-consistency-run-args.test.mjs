@@ -181,6 +181,55 @@ describe('runConsistency — early exits (no Playwright session needed)', () => 
 });
 
 // ────────────────────────────────────────────────────────────────────────────
+// runConsistency — reaches journey execution (regression: undefined `repoId`)
+//
+// `runConsistency()` used to build `const ctx = { repoId, ... }` right before
+// the journey-steps loop, with NO `repoId` binding anywhere in the file — a
+// ReferenceError on every real invocation, orphaned by the 2026-08-11
+// candidate-promotion retirement (the code that used to compute `repoId` was
+// removed; this leftover reference to it was not). None of the "early exits"
+// tests above reach this far — they all fail before manifest+canary resolve.
+// This test drives PAST that point with a minimal fake Playwright surface, so
+// a regression here fails with THIS specific assertion instead of silently
+// passing every other suite.
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('runConsistency — reaches journey execution', () => {
+  it('does not throw ReferenceError before/at the former ctx-construction point', async () => {
+    writeManifest(tmpDir, MIN_MANIFEST);
+    writeCanary(tmpDir, 'demo', MIN_CANARY);
+
+    // Minimal fake surface: chromium.launch() -> browser.newContext() ->
+    // context.newPage() -> page. attachNetworkListener needs page.on/off;
+    // executeStep's 'navigate' action needs page.goto. Throwing a sentinel
+    // from goto (rather than making it succeed) keeps the fake tiny — the
+    // point is proving we get PAST the dead-code line, not a full green run.
+    const page = {
+      on: () => {}, off: () => {},
+      goto: () => { throw new Error('TEST_SENTINEL: reached executeStep'); },
+    };
+    const context = { newPage: async () => page };
+    const browser = { newContext: async () => context, close: async () => {} };
+    const playwrightFactory = async () => ({ chromium: { launch: async () => browser } });
+
+    const r = await runConsistency(
+      { canary: 'demo', url: 'http://example.test', repoRoot: tmpDir },
+      { playwrightFactory },
+    );
+
+    // APP_ERROR (not a crash) with the sentinel message proves execution
+    // reached the journey-steps loop — i.e. past the former ctx/repoId
+    // line — cleanly. A regression here throws ReferenceError instead,
+    // which `runConsistency`'s own try/catch does NOT swallow (it only
+    // wraps `executeStep`, not the ctx construction above the loop), so
+    // this test would fail with an uncaught rejection, not a wrong exitCode.
+    assert.equal(r.exitCode, EXIT.APP_ERROR);
+    const ledger = JSON.parse(fs.readFileSync(r.ledgerPath, 'utf-8'));
+    assert.match(ledger.stepFailureReason, /TEST_SENTINEL: reached executeStep/);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
 // safeCurrentRoute — upstream 8c62cfcc
 //
 // This function IS the defect: it returned `pathname` alone, so every
