@@ -140,19 +140,24 @@ describe('bakeoff-collect — entriesToSpendSnapshots projects into comparison/s
   });
 
   it('the complete flag is derived per-entry, from its own committed campaign scope', () => {
-    // Complete needs every one of the campaign's FOUR declared arms to have
-    // run — supplying only opus/kimi/grok is deliberately incomplete for the
-    // negative half of this same assertion.
+    // The "complete" fixture is DERIVED from the campaign's own declared arms,
+    // not a hardcoded list. It was hardcoded to four (opus/kimi/grok/
+    // gemini-control) and broke the moment a concurrent session added `qwen`
+    // and `deepseek` to that campaign — s1 silently became incomplete, so both
+    // sides of the contrast read `false` and the assertion failed. That is the
+    // test working as designed (its own comment asked to read the config live
+    // rather than blind), and the fix is to finish the job: enumerate the arms
+    // from the config so adding a seventh arm cannot break this again.
+    //
+    // shadowScope is likewise read from the campaign's declared
+    // controls.envelopeScope rather than pinned to the literal 'thin'.
+    const scope = scopeForEntry({ campaignId: CAMPAIGN_ID });
+    assert.ok(scope && scope.arms.length >= 2,
+      'fixture invalid — the committed campaign must resolve to a real arm set or this test proves nothing');
+    const ran = { shadowState: 'ran', shadowScope: scope.expectedScope };
     const complete = {
       snapshotId: 's1', contractEpoch: CONTRACT_EPOCH, campaignId: CAMPAIGN_ID,
-      // shadowScope:'thin' matches this committed campaign's declared
-      // controls.envelopeScope — read live rather than hardcoded blind, so a
-      // future change to that config fails this test loudly instead of
-      // leaving it silently asserting the wrong scope.
-      arms: {
-        opus: { shadowState: 'ran', shadowScope: 'thin' }, kimi: { shadowState: 'ran', shadowScope: 'thin' },
-        grok: { shadowState: 'ran', shadowScope: 'thin' }, 'gemini-control': { shadowState: 'ran', shadowScope: 'thin' },
-      },
+      arms: Object.fromEntries(scope.arms.map((a) => [a.id, { ...ran }])),
     };
     const incomplete = { snapshotId: 's2', contractEpoch: CONTRACT_EPOCH, campaignId: CAMPAIGN_ID, arms: { opus: { error: 'x' } } };
     const snaps = entriesToSpendSnapshots([complete, incomplete], [OPUS]);
