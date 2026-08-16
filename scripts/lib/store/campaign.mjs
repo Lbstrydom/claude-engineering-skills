@@ -22,7 +22,7 @@
 import crypto from 'node:crypto';
 import { many, one, insertReturning, updateWhere, withTx } from '../db/query.mjs';
 import { isCloudEnabled } from './repo.mjs';
-import { STATIC_POOL, OSS_POOL } from '../model-resolver.mjs';
+import { STATIC_POOL, OSS_POOL, parseClaudeModel, parseGeminiModel, parseOpenAIModel } from '../model-resolver.mjs';
 import { OSS_PRICING } from '../model-pricing.mjs';
 import { FINDING_MATCH_SCHEMA_VERSION } from '../config.mjs';
 import { terminalEvent } from '../campaign/verdict.mjs';
@@ -62,6 +62,94 @@ const PROVIDER_TERMS = Object.freeze([
  *  safe direction — it makes the adjudication unperformable rather than blind. */
 const MIN_REDACTABLE_TERM = 3;
 
+// ── D1c: derived-per-arm redaction coverage ─────────────────────────────────
+//
+// `PROVIDER_TERMS` above is a hand-maintained vocabulary and stays exactly as
+// it was — this section does not touch or replace it. What it closes is the
+// gap `PROVIDER_TERMS` cannot: a NEW arm whose vendor was never added to that
+// list still leaks its identity narratively (a finding saying "Cohere found
+// three issues") even though the arm's own model STRING is already redacted
+// via `armModels` below. `resolveProviderIdentity` + `PROVIDER_ALIASES` derive
+// coverage from the arm's OWN declaration, so adding an arm is one edit, not
+// two — the second one invisible from the file being edited.
+
+/** Bare model ids with no parseable/slug identity (D1c source 3). Kept small
+ *  and explicit rather than guessed — every entry here was hit by a real
+ *  committed arm (`grok-4.6`, no vendor segment, no version-parser match). */
+const STATIC_RESIDUE = Object.freeze([
+  { re: /^grok(-|$)/i, provider: 'xai' },
+]);
+
+/**
+ * Narrative alias vocabulary keyed by CANONICAL provider, not by arm — a
+ * handful of providers, not N arms (D1c). A provider with no curated alias
+ * redacts on its own resolved name only (`moonshotai`, `deepseek`, `qwen`,
+ * `xai` carry none today); this is where a genuinely new alias is added,
+ * once, for every arm that provider covers.
+ */
+const PROVIDER_ALIASES = Object.freeze({
+  anthropic: ['anthropic', 'claude', 'opus', 'sonnet', 'haiku'],
+  google: ['google', 'gemini'],
+  openai: ['openai', 'gpt'],
+});
+
+/**
+ * Provider identity for a declared arm's MODEL STRING. Three ordered
+ * sources (D1c), each tried in turn:
+ *  1. **First-party parsers already in this repo** — `parseClaudeModel` /
+ *     `parseGeminiModel` / `parseOpenAIModel` for a fully-versioned id, with a
+ *     bare-prefix fallback for a still-first-party but unversioned/sentinel-
+ *     shaped string. Needed because this repo's OWN committed campaigns
+ *     declare the literal `"claude-opus"` (no version digits) — the strict
+ *     parser correctly refuses to match that as a versioned release, but it
+ *     is unambiguously Anthropic and must not read as unresolvable.
+ *  2. **The OpenRouter `vendor/model` slug** — the segment before the first
+ *     `/`, lowercased. Covers gateway ids by construction
+ *     (`moonshotai/kimi-k2-thinking`, `qwen/qwen3.8-max`).
+ *  3. **`STATIC_RESIDUE`** — a small explicit table for known bare ids
+ *     neither source covers (`grok-4.6` → `xai`).
+ *
+ * @param {string} model
+ * @returns {string|null} a provider key, or `null` when unresolvable
+ */
+export function resolveProviderIdentity(model) {
+  if (typeof model !== 'string' || model.length === 0) return null;
+  const m = model.toLowerCase();
+  if (parseClaudeModel(model) || /^claude(-|$)/.test(m)) return 'anthropic';
+  if (parseGeminiModel(model) || /^gemini(-|$)/.test(m)) return 'google';
+  if (parseOpenAIModel(model) || /^gpt(-|$)/.test(m)) return 'openai';
+  const slash = model.indexOf('/');
+  if (slash > 0) return model.slice(0, slash).toLowerCase();
+  for (const { re, provider } of STATIC_RESIDUE) {
+    if (re.test(m)) return provider;
+  }
+  return null;
+}
+
+/**
+ * The redaction term set for ONE declared arm (D1c). An explicit
+ * `arm.redactionTerms` override wins outright — the escape hatch for a
+ * genuinely unresolvable vendor. Otherwise `resolveProviderIdentity` must
+ * succeed; **unresolvable is a REFUSAL, not a silent gap** — a campaign with
+ * an unredactable arm is not run half-blind, it is not run (fail-closed, the
+ * same posture `resolveAndClassify` already applies to path classification).
+ *
+ * @param {{id: string, model: string, redactionTerms?: string[]}} arm
+ * @returns {string[]}
+ * @throws {Error} when unresolvable and no override is declared
+ */
+export function armRedactionTerms(arm) {
+  if (Array.isArray(arm?.redactionTerms) && arm.redactionTerms.length > 0) return arm.redactionTerms;
+  const provider = resolveProviderIdentity(arm?.model);
+  if (!provider) {
+    throw new Error(
+      `[campaign] arm "${arm?.id}" (model "${arm?.model}") has no resolvable provider identity for blind `
+      + 'adjudication — declare an explicit "redactionTerms": ["..."] on this arm in the campaign config.',
+    );
+  }
+  return PROVIDER_ALIASES[provider] ?? [provider];
+}
+
 function flattenPool(pool) {
   const out = [];
   for (const v of Object.values(pool || {})) {
@@ -94,10 +182,19 @@ function escapeRegex(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
  * exists to read. Blindness is about which arm spoke, not which strings exist
  * in the tree.
  *
- * @param {{armIds?: string[], armModels?: string[], extraTerms?: string[]}} [opts]
+ * **`arms` also drives D1c's derived provider coverage.** Each declared arm's
+ * `resolveProviderIdentity(model)` (or its explicit `redactionTerms`
+ * override) is resolved HERE, at redactor-construction time — fail-closed: an
+ * arm with no resolvable provider and no override throws, refusing to build a
+ * half-blind redactor rather than silently shipping one. This is additive to
+ * `PROVIDER_TERMS` below, never a replacement for it.
+ *
+ * @param {{arms?: Array<{id:string, model:string, redactionTerms?:string[]}>, extraTerms?: string[]}} [opts]
  * @returns {(text: string|null|undefined) => string|null}
  */
-export function buildModelRedactor({ armIds = [], armModels = [], extraTerms = [] } = {}) {
+export function buildModelRedactor({ arms = [], extraTerms = [] } = {}) {
+  const armIds = arms.map((a) => a?.id);
+  const armModels = arms.map((a) => a?.model);
   const modelTerms = new Set();
   const catalogue = [
     ...flattenPool(STATIC_POOL), ...flattenPool(OSS_POOL), ...Object.keys(OSS_PRICING),
@@ -123,11 +220,32 @@ export function buildModelRedactor({ armIds = [], armModels = [], extraTerms = [
   // catalogue; it must never decide whether THIS campaign's own arms are blind.
   // Short ones join the boundary-guarded set below instead of vanishing.
   const armTerms = new Set(armIds.filter((a) => typeof a === 'string' && a.length > 0).map((a) => a.toLowerCase()));
+  // D1c: each declared arm's DERIVED provider terms (or its explicit
+  // override) — fail-closed, so a vendor with no coverage anywhere refuses
+  // the whole redactor rather than silently shipping a partially-blind one.
+  // Boundary-guarded like arm ids (below): these are discrete narrative words
+  // ("claude", "grok"), not required to embed-match inside a versioned model
+  // string — `armModels` above already covers that case as a plain substring.
+  const derivedTerms = new Set();
+  for (const arm of arms) {
+    for (const t of armRedactionTerms(arm)) derivedTerms.add(String(t).toLowerCase());
+  }
   for (const m of armModels) {
-    if (typeof m === 'string' && m.length > 0) modelTerms.add(m.toLowerCase());
+    if (typeof m !== 'string' || m.length === 0) continue;
+    modelTerms.add(m.toLowerCase());
+    // M6: an OpenRouter `vendor/model` slug redacted only as the FULL string
+    // leaves the bare model alias exposed — prose naming just "command-r"
+    // (no "cohere/" prefix) survived a redactor that only knew
+    // "cohere/command-r". Add the post-slash segment too, in the SAME
+    // boundary-guarded bucket as the provider terms above (a discrete alias,
+    // not a token meant to embed-match inside an unrelated longer word) —
+    // and rendered `[MODEL-A]`, never `[ARM]`: a model alias is not a
+    // campaign-local label.
+    const slash = m.indexOf('/');
+    if (slash > 0 && slash < m.length - 1) derivedTerms.add(m.slice(slash + 1).toLowerCase());
   }
 
-  const all = [...modelTerms, ...armTerms].sort((a, b) => b.length - a.length);
+  const all = [...modelTerms, ...armTerms, ...derivedTerms].sort((a, b) => b.length - a.length);
   if (all.length === 0) return (text) => (text == null ? null : String(text));
   // **Every ARM ID is token-boundaried; every MODEL/PROVIDER term is a plain
   // substring.** The split is by KIND, not by length, and that is the precise
@@ -150,7 +268,7 @@ export function buildModelRedactor({ armIds = [], armModels = [], extraTerms = [
   // or more characters matching mid-word for no reason — the length was
   // standing in for the kind. Splitting on KIND alone then un-bounded the short
   // models. Both conditions are load-bearing.
-  const needsBoundary = (t) => armTerms.has(t) || t.length < MIN_REDACTABLE_TERM;
+  const needsBoundary = (t) => armTerms.has(t) || derivedTerms.has(t) || t.length < MIN_REDACTABLE_TERM;
   const boundaried = all.filter(needsBoundary);
   const plain = all.filter((t) => !needsBoundary(t));
   const parts = [];

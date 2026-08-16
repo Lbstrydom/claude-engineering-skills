@@ -1,5 +1,65 @@
 # Project Status Log
 
+## 2026-08-16 — Comparison-tooling consolidation: full `/cycle --autonomous` run, four clusters, consolidated gate APPROVE
+
+`docs/plans/comparison-tooling-consolidation.md` implemented end to end
+autonomously: Clusters A/A′ (D1 `ResolvedScope` + D1c arm-set invariant/D6
+telemetry honesty), B (D2 decomposition of `bakeoff-collect.mjs`/`campaign.mjs`
+into `scripts/lib/bakeoff/**` + `scripts/lib/campaign/**`, one module per D2a
+row, mechanically enforced by `tests/bakeoff-module-contract.test.mjs`'s
+AST-based graph checker), C (D3 test-suite splits + frozen fixtures replacing
+live-`.campaigns/*.json`-config pinning), and D (D7a–e: the auditor/adjudicator
+manifest driver made role-generic, dispatched through an `EXECUTORS` registry;
+n-arm adjudicator scoring; the field census — see below).
+
+Each cluster audited to convergence independently (in-cluster HIGH/MEDIUM ==
+0) before the next began; the mandatory consolidated Gemini gate ran over the
+full six-round, 196-finding union transcript and returned **APPROVE** (round
+2 of 2 — round 1 was `CONCERNS_REMAINING` with 5 wrongly-dismissed findings; 2
+were real production gaps and got fixed, 3 were defensible dismissals rebutted
+with evidence and accepted on re-review). Gemini's own closing assessment:
+*"Almost all of GPT's Round 4/5 findings were false positives caused by the
+model hallucinating requirements that were explicitly out-of-scope or
+contradicted by the repository's stated design principles."*
+
+**D7e's field census returned KEEP SEPARATE** (named blocking field:
+`verdict` — the campaign's is an N-way arm selection, the swap-eval's is a
+binary keep/switch decision against a fixed incumbent), **falsifying the
+plan's own pre-registered UNIFY prediction** — exactly the outcome
+pre-registration exists to make legible. Recorded as the plan's D7e deliverable
+(census table + verdict + durable field-interface contract, no store migration
+on this branch, per the plan's own D7d/e scope boundary).
+
+**Real bugs found and fixed across the audit rounds** (not an exhaustive
+list — see `.audit/cycle-cluster-state.json` for full per-cluster detail):
+`plan-file-coverage-check.mjs`'s branch-tag misattachment via a rejected
+decoy token; `bakeoff/summary.mjs`'s undocumented `CONTRACT_EPOCH` literal
+duplication; a module-contract test whose `mustNotImport` check silently
+skipped edges leaving the governed set; `RoleResult`/`ExecutorAttempt`
+nullability corrected against `scoreBinaryClassification`'s real (nullable)
+return shape; a missing per-arm error boundary in the manifest driver's loop;
+`auditorExecuteArm` reporting a false `outcome:'ok'` when a spawned child
+exited 0 without writing a readable `--out` artifact; adjudicator manifest
+arms never persisting to `model_eval_runs` at all (silently defeating D5a's
+resume mechanism for that role); a CLI `--tier` flag with no reconciliation
+against a manifest's own declared `controls.tier`; and, surfaced only during
+the consolidated gate's own deliberation, `readLog()` silently dropping a
+mid-file JSONL corruption exactly like a tolerated torn-final-line, and
+`repoId()`'s catch-all conflating cloud-off/unregistered with a genuine
+operational failure.
+
+Full close-out sequence green: `arch:refresh` (146 symbols, 0 violations),
+`arch:coverage-gate` (VERIFIED), `plan-file-coverage-check.mjs` at
+`ok:true` (50/50, after fixing 3 self-dogfooding phantom-path/attribution
+bugs the plan's own prose tripped — the same class caught twice earlier in
+the session), requirements extract/reconcile/map, `skills:regenerate`+check
+(IN SYNC), `plans:index`+check, `db:enrolment:gate`, `npm test` (12737 pass /
+0 fail / 26 skipped).
+
+**§D1b** (legacy-adoption receipt protocol) formally deferred to "Out of
+Scope (Future)" — the plan's own correctness does not depend on it; a
+revisit trigger is recorded in the plan.
+
 ## 2026-08-14 — A dismissal is a disproof: Layer 3, and the remedy that could not run
 
 ### Consumer Verification (previous ship)

@@ -10,9 +10,11 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  armDidRun, selectRetryArmIds, entriesToSpendSnapshots, scopeForEntry, CONTRACT_EPOCH,
-} from '../scripts/bakeoff-collect.mjs';
+import { selectRetryArmIds } from '../scripts/bakeoff-collect.mjs';
+import { armDidRun, scopeForEntry } from '../scripts/lib/bakeoff/arms.mjs';
+import { entriesToSpendSnapshots } from '../scripts/lib/bakeoff/summary.mjs';
+import { CONTRACT_EPOCH } from '../scripts/lib/bakeoff/log.mjs';
+import { createResolvedScope } from '../scripts/lib/bakeoff/scope.mjs';
 import { incompleteSpend } from '../scripts/lib/comparison/spend.mjs';
 
 const OPUS = { id: 'opus', solo: false };
@@ -48,7 +50,7 @@ describe('bakeoff-collect — armDidRun', () => {
 });
 
 describe('bakeoff-collect — selectRetryArmIds (D5)', () => {
-  const scope = { arms: ARMS, expectedScope: null };
+  const scope = createResolvedScope('test-campaign', ARMS, null);
 
   it('a first-ever collection retries nothing — there is no existing entry', () => {
     assert.equal(selectRetryArmIds(undefined, scope), null);
@@ -120,6 +122,15 @@ describe('bakeoff-collect — entriesToSpendSnapshots projects into comparison/s
   // dependent, the same way `tests/final-review-bakeoff.test.mjs` anchors to
   // a committed config rather than the ambient default.
   const CAMPAIGN_ID = 'final-review-scoped-2026q3';
+  // `entriesToSpendSnapshots` now takes a `ResolvedScope` directly (D2's
+  // signature correction — it calls `isComplete(e, scope)`, not
+  // `isCompleteForEntry(e)`, since `summary.mjs` cannot import `arms.mjs`).
+  // The real committed scope for every call below — a synthetic single/pair
+  // arm list would silently under-declare the campaign's actual arm count,
+  // exactly the bug this describe block's own comment warns against. Arms
+  // not present in a given fixture's `arms` object are still correctly
+  // excluded from `armRuns` (the `.filter(Boolean)` null-prune below).
+  const SCOPE = scopeForEntry({ campaignId: CAMPAIGN_ID });
   const priced = () => ({ input_tokens: 1, output_tokens: 1 });
 
   it('an unpriced arm-run maps to costStatus:"unpriced", never a $0 charge', () => {
@@ -127,15 +138,15 @@ describe('bakeoff-collect — entriesToSpendSnapshots projects into comparison/s
       snapshotId: 's1', contractEpoch: CONTRACT_EPOCH, campaignId: CAMPAIGN_ID,
       arms: { opus: { shadowState: 'ran', _usage: null } },
     }];
-    const snaps = entriesToSpendSnapshots(entries, [OPUS]);
+    const snaps = entriesToSpendSnapshots(entries, SCOPE);
     assert.equal(snaps[0].armRuns[0].costStatus, 'unpriced');
     assert.equal(snaps[0].armRuns[0].costUsd, null);
   });
 
   it('an arm never spawned this round is EXCLUDED, not a $0 row', () => {
     const entries = [{ snapshotId: 's1', contractEpoch: CONTRACT_EPOCH, campaignId: CAMPAIGN_ID, arms: { opus: { shadowState: 'ran' } } }];
-    const snaps = entriesToSpendSnapshots(entries, [OPUS, KIMI]);
-    assert.equal(snaps[0].armRuns.length, 1, 'kimi never ran this round and must not appear as a zero-cost row');
+    const snaps = entriesToSpendSnapshots(entries, SCOPE);
+    assert.equal(snaps[0].armRuns.length, 1, 'kimi (and every other declared arm) never ran this round and must not appear as a zero-cost row');
     assert.equal(snaps[0].armRuns[0].armId, 'opus');
   });
 
@@ -160,7 +171,7 @@ describe('bakeoff-collect — entriesToSpendSnapshots projects into comparison/s
       arms: Object.fromEntries(scope.arms.map((a) => [a.id, { ...ran }])),
     };
     const incomplete = { snapshotId: 's2', contractEpoch: CONTRACT_EPOCH, campaignId: CAMPAIGN_ID, arms: { opus: { error: 'x' } } };
-    const snaps = entriesToSpendSnapshots([complete, incomplete], [OPUS]);
+    const snaps = entriesToSpendSnapshots([complete, incomplete], scope);
     assert.equal(snaps[1].complete, false, 's2 is missing three declared arms');
     // Whether s1 reads complete also depends on the live envelopeScope this
     // committed campaign currently declares — asserted loosely (not hardcoded
@@ -186,7 +197,7 @@ describe('bakeoff-collect — entriesToSpendSnapshots projects into comparison/s
     // sums their (real, priced) cost, proving the projection round-trips
     // through the shared core end to end rather than dropping the charge
     // just because the arm errored (an error is still a paid call).
-    const snaps = entriesToSpendSnapshots(entries, [OPUS]);
+    const snaps = entriesToSpendSnapshots(entries, SCOPE);
     const v = incompleteSpend(snaps, { cohortDigest: 'test' });
     assert.equal(v.incompleteSnapshotCount, 2);
     assert.equal(v.monetaryStatus, 'complete', 'opus is priced on both — nothing here is unpriced');

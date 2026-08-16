@@ -47,7 +47,7 @@
 import { describe, it, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -75,7 +75,16 @@ function trackedMjs() {
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
   });
-  return out.split('\0').map(s => s.trim()).filter(Boolean);
+  const paths = out.split('\0').map(s => s.trim()).filter(Boolean);
+  // `git ls-files` lists the INDEX, not the working tree: a file removed from
+  // disk without `git rm`/`git add` (a pending, unstaged deletion) is still
+  // listed here, and dependency-cruiser's stat() on it throws ENOENT — killing
+  // the whole suite, not reporting a violation. Existence is the same
+  // working-tree-reality filter the module already applies in spirit (a
+  // deleted-but-uncommitted file has no edges to analyse, same as one that was
+  // never tracked); it does not widen the inventory the docstring above
+  // reasons about, only narrows it to what can actually be read.
+  return paths.filter((p) => existsSync(path.join(REPO, p)));
 }
 
 describe('layering: no not-in-allowedDeps violations', () => {

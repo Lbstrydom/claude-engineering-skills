@@ -102,7 +102,14 @@ describe('model-eval-auditor.mjs --manifest — CLI contract (§9a case 5)', () 
     }));
     const r = run(['--manifest', mPath, '--tier', 'screen']);
     assert.equal(r.status, 2);
-    assert.match(r.stderr, /role must be "auditor"/);
+    // D7a (plan: comparison-tooling-consolidation.md) made the manifest
+    // driver role-generic — the refusal is now against the EXECUTORS
+    // registry, not a hardcoded 'auditor' literal. final_review_shadow has a
+    // registry entry (for SUPPORTED_ROLES <-> EXECUTORS coverage) but
+    // deliberately no executeArm, and must refuse AT LOAD — before minting
+    // any model_eval_comparisons row — not per-arm after one is minted.
+    assert.match(r.stderr, /no synchronous executor/);
+    assert.match(r.stderr, /final_review_shadow/);
   });
 
   it('neither --candidate nor --manifest: exit 1 with a usage line naming BOTH forms', () => {

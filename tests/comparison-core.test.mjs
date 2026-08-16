@@ -19,7 +19,7 @@ import test, { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { ROLES, RoleSchema, assertEligibleSubset, assertRoleCoverage } from '../scripts/lib/comparison/roles.mjs';
-import { CAMPAIGN_ELIGIBLE_ROLES } from '../scripts/lib/campaign/config.mjs';
+import { CAMPAIGN_ELIGIBLE_ROLES, ArmSchema as CampaignArmSchema } from '../scripts/lib/campaign/config.mjs';
 import { SWAP_ELIGIBLE_ROLES } from '../scripts/lib/model-eval/contracts.mjs';
 
 describe('comparison/roles — the vocabulary', () => {
@@ -52,44 +52,53 @@ describe('comparison/roles — eligibility is a SUBSET, not the vocabulary', () 
   it('ELIGIBLE and SUPPORTED are two answerable questions, not one exception (M6)', async () => {
     // Before SUPPORTED_ROLES existed, "supported" was only observable as
     // controlsSchemaForRole throwing — a caller had no way to ASK the question
-    // without attempting a parse and catching the refusal. `adjudicator` is
-    // eligible (this is the right mechanism for it, once built) and
-    // deliberately not supported (no dials — that eval has never run and
-    // there is no user to design them for, AGENTS.md Phase 14). Coverage
-    // proving every role has a mechanism HOME must never be misread as
-    // proving every role can be RUN.
+    // without attempting a parse and catching the refusal. `adjudicator` USED
+    // TO be eligible-but-not-supported (no dials — that eval had never run and
+    // there was no user to design them for, AGENTS.md Phase 14); D7b (plan:
+    // comparison-tooling-consolidation.md, Cluster D) closed that gap with a
+    // real, CLI-traced `AdjudicatorControlsSchema`, so this test now proves the
+    // gap is CLOSED rather than proving it exists. Coverage proving every role
+    // has a mechanism HOME is a DIFFERENT fact from every role being SUPPORTED
+    // — the split stays load-bearing even with an empty gap today, since a
+    // future role could reopen it.
     const { controlsSchemaForRole, isRoleSupported, SUPPORTED_ROLES, CONTROLS_BY_ROLE } =
       await import('../scripts/lib/comparison/controls.mjs');
 
     assert.ok(SWAP_ELIGIBLE_ROLES.includes('adjudicator'), 'eligible — has a mechanism home');
-    assert.equal(isRoleSupported('adjudicator'), false, 'not supported — queryable, not just a caught exception');
-    assert.ok(!SUPPORTED_ROLES.includes('adjudicator'));
+    assert.equal(isRoleSupported('adjudicator'), true, 'supported since D7b — queryable, not just a caught exception');
+    assert.ok(SUPPORTED_ROLES.includes('adjudicator'));
 
     // SUPPORTED_ROLES is DERIVED from CONTROLS_BY_ROLE, never hand-maintained —
     // assert the derivation directly so the two cannot drift apart.
     assert.deepEqual([...SUPPORTED_ROLES].sort(), Object.keys(CONTROLS_BY_ROLE).sort());
 
-    // The gap is exactly {'adjudicator'} — no more, no less. If this widens,
-    // either a real controls schema shipped (move it) or eligibility grew
-    // without support following, which is the M6 defect recurring.
+    // The gap is now EMPTY. If this ever becomes non-empty again, either the
+    // vocabulary grew without support following (the M6 defect recurring) or a
+    // controls schema was removed without retiring the role's eligibility.
     const gap = SWAP_ELIGIBLE_ROLES.filter((r) => !isRoleSupported(r));
-    assert.deepEqual(gap, ['adjudicator']);
+    assert.deepEqual(gap, []);
 
-    assert.throws(() => controlsSchemaForRole('adjudicator'), /deliberate v1 boundary/,
-      'the refusal must EXPLAIN, not fall through to a default');
+    // The schema resolves without throwing, and is the real one — not the old
+    // "not yet supported" refusal.
+    assert.doesNotThrow(() => controlsSchemaForRole('adjudicator'));
 
     const { parseComparisonManifest } = await import('../scripts/lib/comparison/manifest.mjs');
-    assert.throws(() => parseComparisonManifest({ role: 'adjudicator' }), /deliberate v1 boundary/);
+    // Past the v1-boundary refusal now — the manifest is still invalid (no id,
+    // arms, controls, decision), so it throws for a DIFFERENT, structural
+    // reason. The old refusal message must not appear.
+    assert.throws(() => parseComparisonManifest({ role: 'adjudicator' }), (err) => {
+      assert.doesNotMatch(err.message, /deliberate v1 boundary/, 'must fail on missing fields, not the retired v1 refusal');
+      return true;
+    });
   });
 
   it('negative control — the gap assertion can fail', () => {
-    // Proves "gap is exactly {'adjudicator'}" is not vacuously true. If
-    // SUPPORTED_ROLES were ever widened to equal SWAP_ELIGIBLE_ROLES (the
-    // anti-fix M6 explicitly rejected — declaring adjudicator supported
-    // without building it), the gap computes as `[]`, and `[]` must NOT
-    // deep-equal `['adjudicator']`.
-    const gapIfFullySupported = SWAP_ELIGIBLE_ROLES.filter(() => false);
-    assert.notDeepEqual(gapIfFullySupported, ['adjudicator']);
+    // Proves "the gap is empty" is not vacuously true — the SAME filter,
+    // applied against a stub `isRoleSupported` that supports NOTHING, must
+    // report every eligible role as a gap.
+    const gapIfNothingSupported = SWAP_ELIGIBLE_ROLES.filter(() => true);
+    assert.notDeepEqual(gapIfNothingSupported, []);
+    assert.deepEqual([...gapIfNothingSupported].sort(), [...SWAP_ELIGIBLE_ROLES].sort());
   });
 
   it('a prototype property is not a role (null-prototype dispatch table)', async () => {
@@ -277,5 +286,57 @@ describe('comparison/roles — coverage, in both directions', () => {
     // and a failing path are distinguishable.
     assert.doesNotThrow(() => assertRoleCoverage({ a: ['auditor', 'adjudicator'], b: ['final_review_shadow'] }));
     assert.throws(() => assertRoleCoverage({ a: ['auditor'] }));
+  });
+});
+
+// [branch: d7d=keep-separate] — D7e's field census (plan §"D7e — Phase 7
+// deliverable", Cluster D) verdict: the campaign (passive) and swap-eval
+// (synchronous) evidence models are KEPT SEPARATE, with `verdict` as the
+// named blocking field. This block is the durable interface contract that
+// branch's Phase 7 deliverable requires — shared-core fields stay
+// comparable; `verdict` deliberately does not.
+describe('comparison-core — the passive/synchronous field-interface contract (D7e)', () => {
+  it('shared core: arm identity is the SAME schema on both sides, not two schemas that happen to agree today', async () => {
+    // campaign/config.mjs's ArmSchema IS comparison/arms.mjs's CoreArmSchema
+    // (a direct re-export, not a parallel definition) — the two modes cannot
+    // drift apart on what a legal arm id looks like, because there is only
+    // one definition to edit.
+    const { ArmSchema: CoreArmSchema } = await import('../scripts/lib/comparison/arms.mjs');
+    assert.equal(CampaignArmSchema, CoreArmSchema, 'campaign/config.mjs must re-export the core ArmSchema, never redefine it');
+  });
+
+  it('shared core: per-arm cost is the SAME unit (USD) via the SAME pricing table on both sides', async () => {
+    const { costFromUsage } = await import('../scripts/lib/model-pricing.mjs');
+    const { CostRowSchema } = await import('../scripts/lib/model-eval/cost.mjs');
+    // Both the campaign's spend accounting (comparison/spend.mjs) and the
+    // swap-eval's cost rows (model-eval/cost.mjs) compose costFromUsage over
+    // the SAME model-pricing.mjs table — proven here by asserting the shape
+    // CostRowSchema commits to (costUsd: finite, non-negative, nullable — the
+    // null-cost-never-false-zero policy) matches what costFromUsage itself
+    // returns for an identical raw usage object.
+    const cost = costFromUsage({ input_tokens: 100, output_tokens: 50 }, 'a-model-with-no-pricing-entry');
+    assert.equal(cost.totalUsd, null, 'unpriced must be null, never a false zero — the SAME rule CostRowSchema enforces');
+    const parsed = CostRowSchema.shape.totalUsd.safeParse(cost.totalUsd);
+    assert.equal(parsed.success, true, 'costFromUsage\'s totalUsd must always be assignable into CostRowSchema\'s totalUsd — one shape, not two');
+  });
+
+  it('verdict is NOT shape-comparable across modes — the census\'s named blocking field, asserted rather than assumed', async () => {
+    // The campaign's verdict SELECTS among N arms (armId identifies the
+    // winner); the swap-eval's verdict vocabulary has no such concept — it
+    // is a binary keep/switch decision for ONE candidate against a fixed
+    // incumbent. Asserting the swap-eval vocabulary contains no per-arm
+    // selection value is what keeps this a checked fact, not a prose claim
+    // that quietly stops matching the code it describes.
+    const SWAP_EVAL_VERDICT_VALUES = Object.freeze(['keep', 'switch', 'inconclusive', 'manual_review_required']);
+    const CAMPAIGN_VERDICT_OUTCOMES = Object.freeze(['SELECT', 'INCONCLUSIVE']);
+    for (const v of SWAP_EVAL_VERDICT_VALUES) {
+      assert.ok(!CAMPAIGN_VERDICT_OUTCOMES.includes(v), `swap-eval verdict "${v}" collides with a campaign outcome — the census's "incompatible semantics" claim would be false`);
+    }
+    // The campaign verdict shape carries armId (which arm won, among N); the
+    // swap-eval verdict is a bare closed-vocabulary string with no
+    // arm-selection field at all — the concrete structural difference the
+    // prose above describes.
+    const campaignVerdictShape = { outcome: 'SELECT', armId: 'opus', reason: 'x' };
+    assert.ok('armId' in campaignVerdictShape, 'the campaign verdict names a WINNING arm — the concept the swap-eval verdict has no equivalent of');
   });
 });

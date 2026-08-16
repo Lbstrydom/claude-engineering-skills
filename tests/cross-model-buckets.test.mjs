@@ -30,7 +30,8 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { matchFindings } from '../scripts/lib/finding-match.mjs';
-import { cohortDigest, aggregateMatched } from '../scripts/bakeoff-collect.mjs';
+import { cohortDigest, aggregateMatched } from '../scripts/lib/bakeoff/summary.mjs';
+import { createResolvedScope } from '../scripts/lib/bakeoff/scope.mjs';
 
 const FIXTURE = JSON.parse(fs.readFileSync('tests/fixtures/cross-model-pairs.json', 'utf8'));
 const CALIBRATED = FIXTURE.calibratedThreshold;
@@ -190,12 +191,13 @@ describe('aggregateMatched — the arithmetic cannot invent a measurement', () =
   const arm = (cohort, m) => ({ shadowState: 'ran', bucketsMatched: m, matchCohort: cohort });
   const bm = (over = {}) => ({ both: 1, primaryOnly: 0, shadowOnly: 2, unmatchablePrimary: 0, unmatchableShadow: 0, coverage: 0.9, verdict: 'ok', pairs: [], ...over });
   const snap = (arms) => ({ arms });
+  const SCOPE = createResolvedScope('test-campaign', [{ id: 'opus', model: 'm' }, { id: 'kimi', model: 'm' }], null);
 
   it('a null coverage is EXCLUDED from the mean, not coerced to 0', () => {
     // `0.9 + null === 0.9` in JS, so a naive sum/N would report 0.45 here.
     const out = aggregateMatched([
       snap({ opus: arm('c1', bm()), kimi: arm('c1', bm({ coverage: null, verdict: 'not-applicable' })) }),
-    ]);
+    ], SCOPE);
     assert.equal(out.matchedCoverage, 0.9, 'the not-applicable row must not drag the mean');
     assert.equal(out.matchedTotals.notApplicable, 1);
   });
@@ -203,7 +205,7 @@ describe('aggregateMatched — the arithmetic cannot invent a measurement', () =
   it('all-null coverage reports null, never 0', () => {
     const out = aggregateMatched([
       snap({ opus: arm('c1', bm({ coverage: null, verdict: 'not-applicable' })) }),
-    ]);
+    ], SCOPE);
     assert.equal(out.matchedCoverage, null);
   });
 
@@ -211,15 +213,15 @@ describe('aggregateMatched — the arithmetic cannot invent a measurement', () =
     const out = aggregateMatched([
       snap({ opus: arm('c1', bm()), kimi: arm('c1', bm()) }),
       snap({ opus: arm('c2', bm()), kimi: arm('c1', bm()) }),
-    ]);
+    ], SCOPE);
     assert.equal(out.matchedCohort, 'c1');
     assert.equal(out.matchedRows, 3);
     assert.deepEqual(out.matchedExcluded, [{ cohort: 'c2', rows: 1 }]);
   });
 
   it('a cohort tie breaks on the lowest digest, never input order', () => {
-    const a = aggregateMatched([snap({ opus: arm('bbb', bm()), kimi: arm('aaa', bm()) })]);
-    const b = aggregateMatched([snap({ opus: arm('aaa', bm()), kimi: arm('bbb', bm()) })]);
+    const a = aggregateMatched([snap({ opus: arm('bbb', bm()), kimi: arm('aaa', bm()) })], SCOPE);
+    const b = aggregateMatched([snap({ opus: arm('aaa', bm()), kimi: arm('bbb', bm()) })], SCOPE);
     assert.equal(a.matchedCohort, 'aaa');
     assert.equal(b.matchedCohort, 'aaa', 'same log, same answer regardless of order');
   });
@@ -227,13 +229,13 @@ describe('aggregateMatched — the arithmetic cannot invent a measurement', () =
   it('a null bucketsMatched is DROPPED before grouping — never dereferenced', () => {
     // The Gemini-gate finding: a disabled run shares a digest with an enabled
     // one, so filtering after grouping would read `.both` off null.
-    const out = aggregateMatched([snap({ opus: arm('c1', null), kimi: arm('c1', bm()) })]);
+    const out = aggregateMatched([snap({ opus: arm('c1', null), kimi: arm('c1', bm()) })], SCOPE);
     assert.equal(out.matchedRows, 1);
     assert.equal(out.matchedNotComputed, 1);
   });
 
   it('no matched rows at all yields nulls, not zeros', () => {
-    const out = aggregateMatched([snap({ opus: arm('c1', null) })]);
+    const out = aggregateMatched([snap({ opus: arm('c1', null) })], SCOPE);
     assert.equal(out.matchedCohort, null);
     assert.equal(out.matchedCoverage, null);
     assert.equal(out.matchedTotals, null);

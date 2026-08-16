@@ -22,7 +22,7 @@ import assert from 'node:assert/strict';
 import {
   centredWindow, resolveCitedSources,
   CITED_SOURCE_MAX_CHARS, CITED_SOURCE_MAX_BYTES,
-} from '../scripts/campaign.mjs';
+} from '../scripts/lib/campaign/cited-source.mjs';
 
 describe('centredWindow — the character ceiling holds unconditionally', () => {
   it('cuts a single line longer than the entire budget', () => {

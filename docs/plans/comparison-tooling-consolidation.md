@@ -1,8 +1,10 @@
 # Plan: Comparison-Tooling Consolidation
 
 - **Date**: 2026-08-16 (revised same day — see *Post-gate revision* below)
-- **Status**: Approved — GPT (3 rounds, 100% acceptance) + Gemini (3 rounds,
-  `APPROVE`) on both the original and post-gate content. Ready to execute.
+- **Status**: Complete — all clusters (A/A′, B, C, D) implemented, individually
+  audited to convergence, and the mandatory consolidated Gemini gate over the
+  full union diff returned `APPROVE` (round 2, 0 wrongly-dismissed, coherence
+  `Strong`). See the Implementation Log at the bottom.
 - **Author**: Claude + Louis
 - **Scope**: backend (two CLI entry points, their lib modules, their test suites)
   — **plus**, as of the post-gate revision, the arm-count and role-coverage
@@ -743,6 +745,19 @@ have implied the fix only covers the synchronous path, which is backwards:
 this fix is Cluster A′/Phase 1′ scope specifically **because** it closes the
 passive path's own defect — the one the arm-count section opened with.
 
+> **This is a boundary, not a gap (round-4 findings H2/H11, raised twice —
+> stated explicitly here so a third round doesn't re-raise it a third time).**
+> `comparison/manifest.mjs` performs NO redaction or blind adjudication of any
+> kind today (verified: no call to `buildModelRedactor` anywhere on that path)
+> — there is nothing there for `resolveProviderIdentity` to protect yet. The
+> fail-closed refusal covers every path that EXISTS and emits provider
+> identity, which today is exactly one: the passive `final_review_shadow`
+> path this fix targets. Should a later phase wire blind adjudication onto
+> the synchronous manifest path, THAT phase must route through
+> `resolveProviderIdentity`/`armRedactionTerms` rather than reinventing
+> coverage — tracked as a requirement on whichever phase does that, not a
+> defect in this one.
+
 1. **First-party parsers already in this repo** — `parseClaudeModel` /
    `parseGeminiModel` / `parseOpenAIModel` (`model-resolver.mjs`). A match
    yields the canonical `provider` field they already expose (`anthropic` /
@@ -839,7 +854,9 @@ STATIC_EXCLUSIONS = ['meta']         # deliberately NEVER auto-redacted —
 | a genuinely unresolvable id, no `redactionTerms` override | **manifest load REFUSES**, naming the arm and the escape hatch |
 | a genuinely unresolvable id WITH an explicit `redactionTerms` override | accepted; those exact terms redact |
 | **`anthropic`-routed arm — assert `claude`, `opus`, `sonnet`, `haiku` ALL still redact, not just `anthropic`** | the regression this fix exists to prevent, asserted directly rather than trusted |
-| mixed case / separator variants (`QWEN`, `Qwen`, `qwen-turbo` vs `qwen/…`) | all normalize to the same redaction term |
+| mixed-CASE **declared arm model strings** — `qwen/qwen3.8-max`, `QWEN/Qwen3.8-Max`, `Qwen/QWEN3.8-MAX` (round-4 finding M1's correction: this canary is about `resolveProviderIdentity`'s CONFIG-INPUT normalisation, not about which words redact in adjudicator PROSE) | all resolve to provider `qwen` |
+| once resolved, the derived term redacts case-insensitively in prose (`QWEN`, `Qwen`, `qwen`) | all redact |
+| a HYPHENATED COMPOUND in prose, e.g. `qwen-turbo` (a different model's name, not a case variant of the bare provider term) | does **not** redact as a bare `qwen` match — hyphen is a token-continuation character under this file's boundary convention (same rule that keeps `claude-opus-4-8-preview` matching as ONE unit), so a compound word is a DIFFERENT token, not an under-redaction |
 | prose containing `metadata`, `megawatt` (contains no vendor substring but shares characters with residue-adjacent terms) | **not** redacted — the boundary-aware canary |
 | the existing `meta`-in-"metadata" case | still not redacted (regression cover for the exclusion this fix must not break) |
 
@@ -1034,7 +1051,7 @@ depend only *downward* in this list.
 | Module | Exports | May import | Must NOT import | Side effects |
 |---|---|---|---|---|
 | `bakeoff/scope.mjs` | `ResolvedScope`, **`createResolvedScope`**, `assertResolvedScope`, `assertScopeMatches`, `UnresolvedScopeError`, `ScopeMismatchError` | *(nothing in this repo)* | everything else here | **none — pure** |
-| `bakeoff/arms.mjs` | `resolveArms`, `deriveArms`, `transportForModel`, `scopeForEntry` | `bakeoff/scope`, `lib/campaign/config`, `lib/comparison/*` | any `scripts/*.mjs` entry point; `bakeoff/spawn`, `bakeoff/log` | reads `.campaigns/` |
+| `bakeoff/arms.mjs` | `resolveArms`, `deriveArms`, `transportForModel`, `scopeForEntry` | `bakeoff/scope`, `lib/campaign/config`, **`lib/campaign/lock`** (round-4 finding M1 — `computeCollectLock`'s own real dependency, the table under-specified it, not the code), `lib/comparison/*` | any `scripts/*.mjs` entry point; `bakeoff/spawn`, `bakeoff/log` | reads `.campaigns/` |
 | `bakeoff/log.mjs` | log read/append, receipt shape | `lib/file-io` | any entry point; `bakeoff/spawn`, `bakeoff/summary` | reads+appends the bake-off log |
 | `bakeoff/spawn.mjs` | `buildArmArgs`, `runArm` | `bakeoff/scope` | any entry point; **`bakeoff/arms`**; `bakeoff/summary`, `bakeoff/progress` | **spawns child processes** |
 | `bakeoff/summary.mjs` | `isComplete`, `summarise`, `aggregateMatched`, `zeroFindingArms`, `armCostUsd` | `bakeoff/scope`, `lib/comparison/spend` | any entry point; **`bakeoff/arms`**; `bakeoff/spawn`, `bakeoff/log` | **pure** |
@@ -1257,15 +1274,31 @@ alongside the `deriveArms` byte-identity block that is its only consumer,
 because Phase 1 is what deletes it from production. Phase 4 then has nothing to
 decide about it.
 
-**Phase 1 CREATES two suites; Phase 4 EXTENDS them (R2/M3).** The R1 draft had
-Phase 1 creating `bakeoff-arms`/`bakeoff-summary` *and* Phase 4 listing the same
-two files as created, which left the implementer to guess between duplication,
-a partial move, and placeholder files. The split is:
-
-| Phase | `tests/bakeoff-arms.test.mjs` | `tests/bakeoff-summary.test.mjs` |
-|---|---|---|
-| **1** | **created**, containing ONLY: the `LEGACY_ARMS` fixture + its `deriveArms` byte-identity block (moved), the no-campaign refusal, and the D1 contract table above | **created**, containing ONLY: the incident-(c) scope-threading regression + the D1 contract cases |
-| **4** | **extended** with the remaining `arms` blocks from the matrix (`resolveArms`, `transportForModel`, D4 rerolls, collect-time lock) | **extended** with the remaining `summary` blocks (`isComplete` ×2, `zeroFindingArms`, counting rules, `armCostUsd`, `summarise surfaces every arm`) |
+**Phase 1 CREATES two suites, fully populated — not split with Phase 4 (round-4
+finding M5/M6/M7, superseding the R2/M3 split below).** The R2 draft split
+Phase 1's creation from Phase 4's extension specifically to keep Phase 1's own
+diff small (Phase 1 creating only the LEGACY_ARMS/D1-contract subset, Phase 4
+adding the rest). Executing Phase 1, that split turned out to cost MORE than it
+saved: every block this table names for "Phase 4" (`resolveArms`,
+`transportForModel`, D4 rerolls, collect-time lock, `isComplete` ×2,
+`zeroFindingArms`, counting rules, `armCostUsd`, `summarise surfaces every
+arm`) calls a function whose SIGNATURE Phase 1 itself changes (the
+`ResolvedScope` threading) — so leaving them in `tests/final-review-
+bakeoff.test.mjs` until Phase 4 would mean Phase 1 ships with those tests
+BROKEN (calling the old loose-parameter signature) for one to three phases,
+or duplicating a temporary shim nobody wants to write twice. Phase 1 therefore
+moves ALL of it at once — verified: `tests/bakeoff-arms.test.mjs` and
+`tests/bakeoff-summary.test.mjs` are fully populated after Phase 1, every
+`describe` block the matrix names for either file already lives there, and
+`tests/final-review-bakeoff.test.mjs` retains exactly the three "stays" blocks
+below plus `cloud run wiring (buildArmArgs)` (correct to still be there —
+`buildArmArgs` itself does not move until Phase 2 creates `spawn.mjs`).
+**Phase 4's job for these two files is therefore NONE** — it moves straight to
+creating the four NEW files this table names (`bakeoff-spawn.test.mjs`,
+`campaign-adjudicate.test.mjs`, `campaign-cited-source.test.mjs`,
+`campaign-promote.test.mjs`) and trimming `tests/campaign-adjudication.test.mjs`
+to its `LIVE:`-only block, exactly as this section already specified for
+those four.
 
 Consequently **the "existing suite passes unmodified" guarantee is scoped
 precisely**: it governs Phases 2–3 (pure relocation), where no test file is
@@ -1485,11 +1518,27 @@ rather than inventing a mechanism.
 
   ```
   ExecutorAttempt =
-    | { outcome: 'ok', result: RoleResult, usage: {inputTokens, outputTokens, costUsd},
+    | { outcome: 'ok', result: RoleResult,
+        usage: {inputTokens: number, outputTokens: number, costUsd: number|null} | null,
         provenance: {model, route, promptTemplateId, capturedAt} }
     | { outcome: 'retryable', reason: string, attempt: number }
     | { outcome: 'terminal', reason: string, partialUsage?: {inputTokens, outputTokens, costUsd} }
   ```
+
+  **`usage`'s nullability, corrected against implementation (round-4 gate
+  H6/H21) — TWO independent levels, not one.** `costUsd: number|null` is the
+  same null-means-unpriced-never-false-zero policy `model-pricing.mjs`
+  enforces everywhere else (a provider that reports no usage, or a model with
+  no pricing-table entry, must never read as a free/zero call). `usage` ITSELF
+  is `|null` at the outer level, distinct from a nullable `costUsd` inside a
+  present object: the auditor executor's mechanism (a spawned child process
+  running the single-`--candidate` CLI path) does not instrument per-arm token
+  usage at all today — `usage: null` means "not tracked by this mechanism",
+  which is not the same fact as "tracked and unpriced" (`costUsd: null` inside
+  a real `{inputTokens, outputTokens, ...}` object, as the adjudicator executor
+  produces). Collapsing these two into one `null` would lose exactly the
+  distinction AGENTS.md's "a hardcoded 0 in telemetry reads as a measurement"
+  rule exists to preserve, generalised one level up.
 
   `usage` and `provenance` are **only reachable through the `'ok'` branch** —
   a caller cannot accidentally read cost off a failed attempt, because the
@@ -1498,15 +1547,29 @@ rather than inventing a mechanism.
   failure AFTER a partial response (rare, but real) can still report what was
   metered.
 
-  **`RoleResult` is discriminated on `role`, and the adjudicator branch
-  carries the REAL payload `scoreAgainstGroundTruth` actually returns** — the
-  round-2 draft invented a `verdict: 'true'|'false'` that does not match the
-  function it wraps (verified against the code, not assumed):
+  **`RoleResult` is discriminated on `role`, and BOTH branches carry the SAME
+  metrics shape — corrected against implementation (round-4 gate H1/H16), not
+  the `findings: NormalizedFinding[]` this section originally claimed for the
+  auditor branch.** Grep found zero other references to `NormalizedFinding`
+  anywhere in this plan; the actual auditor mechanism
+  (`runScreenTier`/`runPromotionTier` in `scripts/model-eval-auditor.mjs`)
+  returns `{verdict, nextAction, metrics: {recall, falsePositiveRate, f1},
+  evidence, cost}` — the IDENTICAL metrics shape `scoreAgainstGroundTruth`
+  (adjudicator) returns, since both roles are graded through the same
+  `computeVerdict` contract. **`recall` and `f1` are nullable, not the
+  non-null numbers this section originally declared** — verified against
+  `scoreBinaryClassification` (`deterministic-scorer.mjs`): both derive from a
+  ZERO-DENOMINATOR case (no positive ground-truth rows in the sampled page)
+  and the scorer returns `null` rather than `NaN` or a guessed value for
+  exactly that reason. `MetricsSchema` in `verdict.mjs`
+  (`z.record(z.string(), z.number().finite().nullable())`) already accepts
+  this — the type declared here was stricter than the schema that actually
+  validates it, which is backwards:
 
   ```
   RoleResult =
-    | { role: 'auditor',     findings: NormalizedFinding[] }
-    | { role: 'adjudicator', metrics: {recall: number, falsePositiveRate: number, f1: number} }
+    | { role: 'auditor',     metrics: {recall: number|null, falsePositiveRate: number|null, f1: number|null}, verdict: string, nextAction: string, evidence: object }
+    | { role: 'adjudicator', metrics: {recall: number|null, falsePositiveRate: number|null, f1: number|null}, verdict: string, nextAction: string, evidence: object }
   ```
 
   **`scoreAgainstGroundTruth` must be EXTENDED to bubble up `usage`, or the
@@ -1625,13 +1688,58 @@ rather than inventing a mechanism.
   (model id, malformed manifest) is terminal for that arm. **A terminal arm
   failure does NOT abort the cohort or block verdict generation** — it
   follows D6's own no-silent-zero rule, applied to execution rather than
-  telemetry: the failed arm's row persists with `outcome: 'terminal'` and its
-  reason (never silently dropped, never retried into a false completion), and
-  the readout NAMES it excluded from the verdict rather than pretending an
-  (n-1)-arm comparison was the n-arm one requested. This mirrors D5a's
-  per-arm resume semantics already established for the auditor role — the
-  same "a comparison degrades honestly rather than fails wholesale" posture
-  D1a/D6 already commit to elsewhere in this plan.
+  telemetry: the failed arm's outcome is `'terminal'` with a reason (never
+  silently dropped, never retried into a false completion), and the readout
+  NAMES it excluded from the verdict rather than pretending an (n-1)-arm
+  comparison was the n-arm one requested. This mirrors D5a's per-arm resume
+  semantics already established for the auditor role — the same "a comparison
+  degrades honestly rather than fails wholesale" posture D1a/D6 already commit
+  to elsewhere in this plan.
+
+  **"Persists" has one precise boundary, corrected against implementation
+  (round-5 gate H2/H11): a `model_eval_runs` ROW exists only for a failure
+  AFTER route resolution succeeded** — a route-resolution failure (bad model
+  id, unrecognized sentinel) is a PREFLIGHT rejection, mirroring
+  `model-eval-auditor.mjs`'s own single-candidate path exactly: its
+  `RunPreflightError` branch in `main()` is caught and reported BEFORE
+  `createEvalRun` is ever called there too, so a config error never mints a
+  "running" row it would then have to walk back. The terminal outcome is
+  never silently dropped either way — a route-resolution failure is visible
+  in the driver's own `--out` JSON summary and in stderr, the same place a
+  preflight failure on the single-candidate CLI path is visible (its own
+  non-zero exit + stderr, no run row). "Persisted to the store" and "made
+  visible to the operator" are two different guarantees; this plan commits to
+  the second unconditionally and the first only once a run row exists to
+  update.
+
+  **7. Persistence was a real gap, not an implementation detail — closed
+  post-implementation (round-4 gate H13).** The auditor executor gets
+  `model_eval_runs` persistence for free (its `executeArm` SPAWNS
+  `model-eval-auditor.mjs`'s own single-candidate CLI, which already calls
+  `createEvalRun`/`updateEvalRunTerminal` when handed `--comparison-id`/
+  `--arm-id`/`--attempt`). `adjudicatorExecuteArm` runs IN-PROCESS — it has no
+  child CLI invocation to inherit persistence from — so it must call the SAME
+  store functions itself, and initially did not: an adjudicator manifest's arm
+  results existed only in the driver's ephemeral `--out` JSON, with nothing in
+  `model_eval_runs` for `maxComparisonArmAttempt` (D5a's resume reducer) to
+  find on a re-run. Fixed: `adjudicatorExecuteArm` calls `createEvalRun`
+  (status `running`) after route resolution succeeds, then
+  `updateEvalRunTerminal` on both the success and failure path.
+  **This surfaced a second, harder requirement**: `updateEvalRunTerminal`'s
+  own schema (`refineVerdictPair`) REQUIRES a non-null `verdict`/`nextAction`
+  on `status:'completed'` — a metrics-only row is not just incomplete, the
+  store rejects it outright. So `adjudicatorExecuteArm` now also calls
+  `computeVerdict` per arm (`mode:'oracle', tier:'screen'`, mirroring
+  `model-eval-adjudicator.mjs`'s own screen-tier call), scored against every
+  row `prepareContext` fetched (no slice-down to `minSampleSize` — the
+  fetched page is already the fixed, declared corpus for the whole cohort).
+  Threshold-config resolution (`manifest.controls.thresholdsPath` override, a
+  module-local default mirroring `model-eval-adjudicator.mjs`'s own
+  `DEFAULT_THRESHOLDS_PATH` pattern) moved into `prepareContext`, run once per
+  manifest rather than once per arm. `RoleResult.adjudicator` gained
+  `verdict`/`nextAction`/`evidence` fields to match — it is now
+  STRUCTURALLY IDENTICAL to `RoleResult.auditor`'s shape, which makes sense:
+  both are graded through the same `computeVerdict` contract.
 
   **Integration test (Phase 6 exit condition, not optional)**: a
   manifest-driven test with a **deterministic fixture ground-truth set**
@@ -1764,6 +1872,83 @@ lifecycles to avoid one conditional.
 > snapshots over time; a swap-eval scores a fixed corpus once), and collapsing
 > them would be decoupling nothing while coupling two lifecycles.
 
+#### D7e — Phase 7 deliverable: the field census, applied (post-implementation, Cluster D)
+
+**Third reader does not exist.** D7e's rule step 1 says "enumerate every field
+each readout actually reads — the campaign standings/watermark, the swap-eval
+verdict, and the dashboard collector." Checked directly against
+`scripts/build-dashboard.mjs` (273 lines): it builds a reference page, a
+telemetry page, and an audit-run page — **zero references to
+`model_eval_runs`, `model_eval_comparisons`, or any `campaign_*` table**. The
+"dashboard collector" as a third READER of this evidence is aspirational (an
+open question in this plan's own predecessor brainstorm session, `docs/plans/`
+`role-agnostic-comparison-core.md`'s design discussion), not real code. The
+census below therefore compares the two readers that exist: the campaign's
+`loadCohortEvidence`/`evaluateCampaign` (`scripts/lib/store/campaign.mjs`,
+`scripts/lib/campaign/verdict.mjs`) and the swap-eval's `model_eval_runs`/
+`model_eval_comparisons` (migrations `20260711120000_model_eval_runs.sql`,
+`20260815120000_model_eval_comparison.sql`, read by
+`scripts/lib/store/model-eval.mjs`). If a real dashboard collector is ever
+built reading BOTH stores, re-run this census against it — this is a bound on
+what step 1 could examine, not a shortcut around it.
+
+**Field census** (steps 1-2 — enumerate + classify):
+
+| Field | Campaign (passive) | Swap-eval (synchronous) | Class |
+|---|---|---|---|
+| arm identity | `armIds` / `acceptedPerArm` keys — an `id` inside a committed `.campaigns/*.json` | `arm_id` column, `model_eval_runs.comparison_id` scoped | shared core |
+| per-arm cost | `spend`/`cost.perArm` — summed across ALL attempts of a snapshot, per arm | `cost` jsonb per run row | shared core (same concept: money spent per arm; aggregation granularity differs but both derive from the SAME per-call usage events) |
+| attempt/retry | no explicit "attempt" column on the evidence bundle (bake-off receipts track it at the log layer, not exposed here) | `attempt` int + `superseded_at` — explicit, first-class | synchronous-only (D5a's per-arm retry is a Cluster A/B mechanism the campaign evidence layer never surfaced as a field; this is a genuine asymmetry, not a naming difference) |
+| **verdict** | `{outcome: 'SELECT'\|'INCONCLUSIVE', armId, reason}` — an **N-way selection**: which ONE of potentially many scored arms wins, decided by `evaluateCost`'s tiebreak over every arm that cleared the floor | `verdict: 'keep'\|'switch'\|'inconclusive'\|'manual_review_required'` (`verdict.mjs`) — a **binary switch/keep decision** for ONE candidate against the incumbent/baseline; there is no `armId` because there is no field of arms to pick from, only "replace the incumbent with this candidate, or don't" | **shared core, INCOMPATIBLE SEMANTICS** — see verdict below |
+| status/state | `state` (`deriveState`) — COHORT-level lifecycle (`COLLECTING`/`DECISION_READY`/…), a function of `nComplete` vs `targetN` and the gate set | `status` column — RUN-level lifecycle (`completed`/`failed_preflight`/`failed_egress`/`failed_provider`/`running`/`pending_shadow`) | different granularity, not classified as conflicting — a unified schema could carry both (run rows + a derived comparison-level state), the same shape the campaign itself already has (`snapshots` + `state`) |
+| completeness | `matrix`/`nComplete`/`targetN`/`cohortSuperseded` — an epoch-gated, N-of-M-snapshots completeness rule (D1's whole subject) | none — a swap-eval run either produced a result or it didn't; there is no "N of M" cohort to be incomplete | passive-only |
+| calibration / clustering | `calibration`, `clustering` — blind-adjudication sampling and cross-arm finding dedup, both meaningless without multiple organic snapshots to sample/cluster across | none | passive-only |
+| tier / judge tier | none — the campaign has no "screen vs promotion" concept, arms just run | `tier` (`screen`\|`promotion`), `judge_tier` (`A`\|`B`\|`C`) | synchronous-only |
+| corpus / harness provenance | none (the campaign's "corpus" is real production audit runs, not a fixed labeled set) | `corpus_version`, `harness_sha`, `thresholds_version` | synchronous-only |
+| next action | none | `next_action` (`promote_to_full`\|`reject`\|`eligible_for_shadow`\|`none`) — meaningful only against a fixed keep/switch decision | synchronous-only |
+
+**Verdict (step 3/4): KEEP SEPARATE. Named blocking field: `verdict`.**
+
+The prediction recorded above this section was UNIFY; the census falsifies it
+— exactly the outcome pre-registration exists to make legible rather than
+argued around. `verdict` is required by BOTH modes (it is the terminal answer
+either evidence model exists to produce) and its semantics genuinely diverge:
+the campaign's verdict is a **selection** over a field of N arms (`armId`
+identifies the winner); the swap-eval's verdict is a **replacement decision**
+for ONE candidate against a fixed incumbent (there is no field to select
+from — `keep` and `switch` are not "arm A won", they are "the status quo
+holds" or "the status quo changes"). A unified `verdict` column would need a
+sixth value meaning "N-way SELECT" that swap-eval never produces, or the
+swap-eval's binary decision would need to fake an `armId` it has no basis for
+— either direction manufactures a distinction neither evidence model actually
+has. This is precisely D7e's own worked example of what "incompatible
+semantics" means, not a borderline call.
+
+**Phase 7's deliverable (per D7e's own contract for this branch): the durable
+field-level interface contract, not a migration.** `docs/plans/`
+`comparison-store-unification.md` is **NOT filed** — UNIFY's exit condition
+does not apply. The contract:
+
+- **Shared core fields** (arm identity, per-arm cost) **stay comparable**
+  across both envelopes: same arm-id string space (`ArmSchema.id`, shared by
+  both `scripts/lib/comparison/arms.mjs` and the campaign's own arm schema),
+  same currency/unit for cost (`totalUsd` in `CostRowSchema`, `costUsd` on the
+  campaign side — different field names, same USD unit and same null-means-
+  unpriced-never-false-zero policy, verified via `model-pricing.mjs`'s single
+  pricing table on both sides — D2c/D7c both compose the SAME
+  `costFromUsage`).
+- **`verdict` stays UNCOMPARABLE by design** — a reader needing "did this
+  arm/candidate come out ahead" must branch on WHICH mode produced the row
+  (`campaign_events`/`model_eval_comparisons` vs. `model_eval_runs`) and
+  interpret the verdict vocabulary that mode defines; there is no single
+  cross-mode "verdict" query. This is the field a future dashboard (real,
+  reading both stores) must design around explicitly, not paper over.
+- **Assertion**: `tests/comparison-core.test.mjs`'s
+  `branch: d7d=keep-separate` block (§6 flat file table, conditional on this
+  verdict) asserts the shared-core fields' SHAPE agreement — same arm-id
+  pattern, same cost-row schema — without asserting verdict comparability,
+  which this census establishes does not hold.
+
 ---
 
 ## 3. Right-sizing gate
@@ -1839,17 +2024,24 @@ runs in `npm test`, so an inbound-edge break fails at push rather than silently.
 | `tests/campaign-adjudicate.test.mjs` | create | Blinding / worksheet / verdict / clustering (D3a-pinned) |
 | `tests/campaign-cited-source.test.mjs` | create | Cited-source resolution (D3a-pinned) |
 | `tests/campaign-promote.test.mjs` | create | Promotion, receipts, `--force` append (D3a-pinned) |
-| `tests/campaign-adjudication.test.mjs` | modify | Retains the LIVE DB-gated block only |
-| `tests/model-eval-core.test.mjs` | modify | Split 7 ways per D3 (independent cluster) |
+| `tests/campaign-adjudication.test.mjs` | modify | Retains the LIVE DB-gated block plus the D1c `resolveProviderIdentity`/`armRedactionTerms` block (not in the original D3 matrix; added by Cluster A) |
+| `tests/model-eval-core.test.mjs` | delete | Split 7 ways per D3 (independent cluster) — every block moved out, nothing left to modify |
+| `tests/model-eval-verdict.test.mjs` | create | D3 split — `verdict` block |
+| `tests/model-eval-route-catalog.test.mjs` | create | D3 split — `route-catalog` block |
+| `tests/model-eval-deterministic-scorer.test.mjs` | create | D3 split — `deterministic-scorer` blocks |
+| `tests/model-eval-structured-extractor.test.mjs` | create | D3 split — `structured-extractor` block |
+| `tests/model-eval-cost.test.mjs` | create | D3 split — `cost` block |
+| `tests/model-eval-config-schema.test.mjs` | create | D3 split — `config/schema` block |
+| `tests/model-eval-store.test.mjs` | create | D3 split — `store/model-eval` block |
 | `.audit-loop/domain-map.json` | modify | **Required** (measured): `{pattern, domain:"shared-lib"}` for `scripts/lib/bakeoff/**` above the `scripts/lib/**` catch-all; **plus (Gemini gate, G3)** `{pattern, domain:"model-eval"}` for `scripts/lib/campaign/promote.mjs` specifically, ABOVE the existing `campaign/**` → `shared-lib` rule — the one file in this plan whose store-writing edge is genuinely cross-domain. No new `allowedDeps` entries; `model-eval`'s already permit `stores` (D2b) |
 | `docs/plans/comparison-tooling-consolidation.md` | modify | This plan, corrected by its own audit |
 | `scripts/model-eval-auditor.mjs` | modify | **D7a (NEW)** — lift 8 hardcoded `'auditor'` literals into a role parameter; reduce to a thin argv shim (round-3 fix, H2) |
 | `scripts/lib/model-eval/manifest-driver.mjs` | create | **D7a (NEW, round-3 fix H2)** — `runManifestDriver` moves here from the entry point, so `executors.mjs` (a lib module) never imports a top-level script |
-| `scripts/model-eval-adjudicator.mjs` | modify | **D7a (NEW, round-3 fix H2)** — `scoreAgainstGroundTruth`/`toRawContext` move OUT to the lib module below; this file becomes a thin CLI wrapper over it, existing 1-vs-1 behaviour unchanged |
-| `scripts/lib/model-eval/adjudicator-executor.mjs` | create | **D7a/D7c (NEW, round-3 fix H2)** — `scoreAgainstGroundTruth`/`toRawContext`, moved verbatim; imported by BOTH the CLI wrapper above and `EXECUTORS.adjudicator` below — neither imports the other's entry point |
-| `scripts/lib/model-eval/executors.mjs` | create | **D7c (NEW)** — the `EXECUTORS` registry; `runManifestDriver` looks up `EXECUTORS[role]` once per manifest run |
+| `scripts/model-eval-adjudicator.mjs` | modify | **D7a (NEW, round-3 fix H2)** — `scoreAgainstGroundTruth`/`toRawContext` move OUT to the lib module below; existing 1-vs-1 behaviour unchanged. **Also gains its own `--manifest` flag** (not in the original D7a text — implementing revealed only `model-eval-auditor.mjs` had one, and an adjudicator manifest routed through the "auditor" script by name would be a real operational confusion; CLI parity with the auditor entry point, same mutual-exclusivity contract) |
+| `scripts/lib/model-eval/adjudicator-executor.mjs` | create | **D7a/D7c (NEW, round-3 fix H2)** — `scoreAgainstGroundTruth`/`toRawContext`, moved verbatim except **extended to sum + return `usage`** (D7c, Gemini gate G2 — the `'ok'`-branch `ExecutorAttempt` needs it); imported by BOTH the CLI wrapper above and `EXECUTORS.adjudicator` below — neither imports the other's entry point |
+| `scripts/lib/model-eval/executors.mjs` | create | **D7c (NEW)** — the `EXECUTORS` registry; `runManifestDriver` looks up `EXECUTORS[role]` once per manifest run. Includes a THIRD, deliberately-inert `final_review_shadow` entry (`{}` — no `executeArm`) so `SUPPORTED_ROLES` <-> `EXECUTORS` coverage is checkable without making that role driveable — verified necessary by an existing CLI test (`tests/model-eval-auditor-manifest.test.mjs`) that pinned "refuses at PREFLIGHT, before any store write" for exactly this role |
 | `scripts/lib/comparison/controls.mjs` | modify | **D7b (NEW)** — add the `adjudicator` controls schema; `SUPPORTED_ROLES` then equals `ROLES` |
-| `scripts/lib/comparison/manifest.mjs` | modify | **D7b (NEW)** — admit `adjudicator`, replacing the v1-boundary refusal |
+| `scripts/lib/comparison/manifest.mjs` | **untouched — corrected from "modify" (D7b)** | Verified before editing: `parseComparisonManifest`'s v1-boundary refusal is entirely DERIVED from `controls.mjs`'s `isRoleSupported`/`SUPPORTED_ROLES` (`manifest.mjs` imports both, never re-implements the check). Registering `adjudicator` in `CONTROLS_BY_ROLE` (controls.mjs) is therefore the WHOLE fix — `manifest.mjs` needed zero code changes. The plan's own claim that this file needed editing was unverified against the actual derivation; caught before writing a no-op edit. |
 | `tests/model-eval-adjudicator-manifest.test.mjs` | create | **D7c (NEW)** — n-arm adjudicator manifest driving, including the forced-terminal-failure cohort case (round-3 fix, H3) |
 | `tests/manifest-driver.test.mjs` | create | **D7a (NEW, round-3 fix H2)** — coverage for the lifted, now-role-generic `runManifestDriver` |
 | `tests/adjudicator-executor.test.mjs` | create | **D7a (NEW, round-3 fix H2)** — coverage for the moved `scoreAgainstGroundTruth`, both callers (CLI + `EXECUTORS`) exercised |
@@ -1857,9 +2049,12 @@ runs in `npm test`, so an inbound-edge break fails at push rather than silently.
 | `scripts/lib/store/campaign.mjs` | modify | **D1c (NEW, Phase 1′)** — derive `PROVIDER_TERMS` from declared arms' model strings; add `resolveProviderIdentity` + `PROVIDER_ALIASES` |
 | `scripts/lib/comparison/arms.mjs` | modify | **D1c (NEW, Phase 1′, round-3 fix H1)** — add optional `redactionTerms` to `ArmSchema`, shared by both the passive campaign and manifest paths |
 | `tests/campaign-adjudication.test.mjs` | *(already listed)* | **+ D1c (NEW)** — blinding-derivation regression for the new/unlisted-vendor case |
+| `tests/campaign-citation-budget.test.mjs` | modify | **Phase 3, discovered during implementation.** A pre-existing suite that imported `centredWindow`/`resolveCitedSources` from `scripts/campaign.mjs`; redirected to `scripts/lib/campaign/cited-source.mjs`, their real D2 home |
 | `scripts/plan-file-coverage-check.mjs` | create | **Post-gate fix, H3 — Phase 0.** Close-out tool: diffs the changed-file set against this plan's own §6 table |
 | `tests/plan-file-coverage-check.test.mjs` | create | **Post-gate fix, H3 — Phase 0.** Coverage for the checker above |
 | `tests/comparison-core.test.mjs` [`branch: d7d=keep-separate`] | modify | **D7e, Phase 7 — CONDITIONAL.** Only touched if the census verdict is KEEP SEPARATE (the shared-field interface-contract assertion). Absent from the diff, correctly, if the verdict is UNIFY. |
+| `tests/bakeoff-per-arm-retry.test.mjs` | modify | **Phase 1, discovered during implementation (round-3 gate finding).** Calls the re-signatured `selectRetryArmIds` with a hand-built `{arms, expectedScope}` object lacking `campaignId`; migrated to a `createResolvedScope` fixture |
+| `tests/cross-model-buckets.test.mjs` | modify | **Phase 1, discovered during implementation.** Calls `aggregateMatched` with no scope argument at all, now mandatory; migrated with a `createResolvedScope` fixture |
 
 Deleted from the original draft: a `scripts/lib/dashboard/collect-campaigns.mjs`
 row that said *"follow moved imports if any resolve through the CLI"*. Measured
@@ -1918,30 +2113,48 @@ symbols, but produces no committed change.
 ### 6b. Implementation Phases
 
 - **Phase 0 — Verify the D3a characterization blocks are as strong as the
-  invariants they guard; create the close-out coverage checker; add §6's
-  `Phase` column.** Read-only over production code; strengthen any D3a block
-  that is not as strong as its invariant, *before* any code moves. **Also
-  creates `scripts/plan-file-coverage-check.mjs`** (post-gate fix, H3) — the
-  close-out tool that derives the requirements-extraction file set from the
-  diff instead of a hand-maintained list — **and backfills a `Phase` column
-  onto every existing §6 row** (post-gate fix, H6), the data the checker's
-  `--phases` scoping reads, so an A/A′-only release can close out without the
-  checker demanding Phase 2–7's files. The column and the checker are one
-  Phase 0 deliverable: the checker is meaningless without the column, and the
-  column is untested without the checker. Files: the three test files named
-  in D3a, `scripts/plan-file-coverage-check.mjs` (create),
+  invariants they guard; create the close-out coverage checker.** Read-only
+  over production code. **Verified during execution**: all five named blocks
+  (`blind worksheet DTO`, `redaction leak canary`, `worksheet identity`,
+  `cited sources`, `receipt filename parsing`/`promotion attempt resolution`)
+  are already at or above the bar their invariant requires — exact-equality
+  assertions, negative controls, degenerate-input coverage (NaN/Infinity/
+  oversized single lines), token-boundary canaries. No strengthening needed;
+  this step closes as a read, not a write. **Also creates
+  `scripts/plan-file-coverage-check.mjs`** (post-gate fix, H3) — the close-out
+  tool that derives the requirements-extraction file set from the diff instead
+  of a hand-maintained list.
+  **Phase-scoping mechanism, refined during implementation (supersedes the
+  gated "add a `Phase` column to §6" design, H6): the checker derives phase
+  membership from THIS section's own `Files:` lists, not a redundant column
+  on §6.** §6b's per-phase bullets already enumerate every file each phase
+  touches — that is the exhaustive, single source; a parallel column on §6
+  would be a second copy of the same fact, exactly the "two copies of one
+  contract" shape this plan corrects everywhere else (D2b/M2's own fix). §6
+  stays the flat aggregate view; `--phases` scoping reads §6b directly.
+  Files: `scripts/plan-file-coverage-check.mjs` (create),
   `tests/plan-file-coverage-check.test.mjs` (create),
-  `docs/plans/comparison-tooling-consolidation.md` (this plan — the `Phase`
-  column backfill onto §6).
+  `docs/plans/comparison-tooling-consolidation.md` (this plan — this
+  refinement note).
 - **Phase 1 — Kill the defect class (D1).** **Creates `scripts/lib/bakeoff/scope.mjs`**
   — the pure `ResolvedScope` shape, `assertResolvedScope`, `assertScopeMatches`,
   `UnresolvedScopeError`, `ScopeMismatchError`. The four readers (still in the
   CLI at this point) take a `ResolvedScope` whole and import their validation
   from it; delete `defaultArms`/`defaultExpectedScope`/`_resetDefaultArms`;
   `resolveArms` refuses with no campaign; `LEGACY_ARMS` moves to the test
-  fixture. Files: `scripts/lib/bakeoff/scope.mjs` (create),
+  fixture. **Discovered during implementation**: two OTHER test files call the
+  same re-signatured functions (`selectRetryArmIds`, `aggregateMatched`) with
+  the old loose-parameter convention — `tests/bakeoff-per-arm-retry.test.mjs`
+  (a hand-built `{arms, expectedScope}` object with no `campaignId`, which
+  `assertResolvedScope` now correctly refuses) and `tests/cross-model-
+  buckets.test.mjs` (`aggregateMatched` called with no scope argument at all,
+  now mandatory). Both are fixed in place with a `createResolvedScope`
+  fixture — not scope creep, but the load-bearing consequence D1 always
+  implied: EVERY caller of a re-signatured function must be found, not just
+  the ones already listed. Files: `scripts/lib/bakeoff/scope.mjs` (create),
   `scripts/bakeoff-collect.mjs`, `tests/final-review-bakeoff.test.mjs`,
-  `tests/bakeoff-arms.test.mjs` (create), `tests/bakeoff-summary.test.mjs` (create).
+  `tests/bakeoff-arms.test.mjs` (create), `tests/bakeoff-summary.test.mjs` (create),
+  `tests/bakeoff-per-arm-retry.test.mjs`, `tests/cross-model-buckets.test.mjs`.
 
   > **Why `scope.mjs` is created HERE and not in Phase 2 (R3/H1).** Cluster A
   > claims to be independently shippable *and* to deliver the D1 architecture,
@@ -1961,32 +2174,198 @@ symbols, but produces no committed change.
   (n ∈ {1, 2, 6}) and the per-aggregate "no silent zero" assertions.
   **Also derives `PROVIDER_TERMS` from the declared arms' model strings**
   (keeping the static residue and the deliberate `meta` exclusion), so adding an
-  arm cannot silently degrade adjudication blinding.
+  arm cannot silently degrade adjudication blinding. This is ADDITIVE to the
+  existing hand-maintained `PROVIDER_TERMS` vocabulary, never a replacement for
+  it — `resolveProviderIdentity`/`PROVIDER_ALIASES`/`armRedactionTerms` close
+  the gap for a vendor that vocabulary has never heard of, fail-closed (an
+  arm with no resolvable provider and no `redactionTerms` override refuses to
+  build the redactor at all). `redactionTerms` is a new optional field on
+  `ArmSchema` (`scripts/lib/comparison/arms.mjs`) per D1c's own design —
+  `buildModelRedactor`'s signature changes from loose `{armIds, armModels}` to
+  `{arms}`, so its one production caller (`scripts/campaign.mjs`'s
+  `adjudicate` command) is updated in the same commit.
   Files: `scripts/bakeoff-collect.mjs`, `scripts/lib/store/campaign.mjs`,
+  `scripts/campaign.mjs`, `scripts/lib/comparison/arms.mjs`,
   `tests/bakeoff-summary.test.mjs`, `tests/campaign-adjudication.test.mjs`.
 
 - **Phase 2 — Decompose `bakeoff-collect.mjs` (D2/D2a).** The **remaining five**
   bakeoff modules (`arms`, `log`, `spawn`, `summary`, `progress` — `scope.mjs`
   already exists from Phase 1, so D2's six modules are 1 + 5, not 5); entry
-  point reduced to argv + dispatch. Files: those five `scripts/lib/bakeoff/*.mjs`,
-  `scripts/bakeoff-collect.mjs`, `.audit-loop/domain-map.json`.
-- **Phase 3 — Decompose `campaign.mjs` (D2/D2a).** Three modules; same shape.
-  Files: the three `scripts/lib/campaign/*.mjs`, `scripts/campaign.mjs`.
-- **Phase 4 — Split the bakeoff + campaign suites (D3).** Verbatim assertion
-  moves, per the matrix. Files: the 6 created test files + the 2 retained.
+  point reduced to argv + dispatch (1494 → 424 lines).
+  **Three necessary deviations from pure relocation, all forced by the D2a
+  boundary itself (discovered during implementation) — each documented in
+  the moved module's own file, not repeated here**: (1) `spawn.mjs`'s
+  `runArm` returns the raw spawn outcome only (`{ok, outPath}` /
+  `{error}`), never calling `readArmResult` itself, since `spawn.mjs` cannot
+  import `summary.mjs` — the entry point composes the two; (2)
+  `summary.mjs`'s `entriesToSpendSnapshots` takes a `ResolvedScope`
+  directly (was `declaredArms`) and calls `isComplete(e, scope)`, since it
+  cannot import `bakeoff/arms.mjs`'s `scopeForEntry`; (3) `progress.mjs`'s
+  `printProgress` takes an already-resolved `{ok, scope}`/`{ok:false,
+  message}` outcome, never a raw campaign id, for the same reason — the
+  entry point now resolves once via `resolveArms` and reuses the result
+  rather than the old code's redundant re-resolution on the
+  post-collection call site. `LEGACY_ARMS` completes its Phase-1-started
+  move: no longer even exported from `bakeoff-collect.mjs`, inlined as a
+  literal fixture in `tests/bakeoff-arms.test.mjs`.
+  **Also, discovered during implementation: `scripts/campaign.mjs`'s own
+  pre-existing `resolveArms`/`readLog` import (one entry point importing
+  another) redirects to the new lib modules directly, and a latent bug is
+  fixed in the same pass — `loadCampaign()` still read the pre-D1 shape of
+  `resolveArms`'s return value, silently undefined since Phase 1 changed
+  it, dead code today only because nothing consumed that field, but fixed
+  rather than left latent.** `buildArmArgs`'s own test block moves from
+  `tests/final-review-bakeoff.test.mjs` into a new `tests/bakeoff-
+  spawn.test.mjs` in this SAME phase — never split a test from its own
+  implementation across a phase boundary (superseding the D3 matrix's
+  original "Phase 4" placement, which assumed the function would still be
+  entry-point-local at that point; see the D3 section's own revised note).
+  Files: `scripts/lib/bakeoff/arms.mjs` (create),
+  `scripts/lib/bakeoff/log.mjs` (create), `scripts/lib/bakeoff/spawn.mjs`
+  (create), `scripts/lib/bakeoff/summary.mjs` (create),
+  `scripts/lib/bakeoff/progress.mjs` (create),
+  `scripts/lib/bakeoff/module-contract.mjs` (create),
+  `tests/bakeoff-module-contract.test.mjs` (create),
+  `tests/bakeoff-spawn.test.mjs` (create), `scripts/bakeoff-collect.mjs`
+  (modify), `scripts/campaign.mjs` (modify), `.audit-loop/domain-map.json`
+  (modify). **Also (cross-phase, self-dogfooding fix — see the note above
+  this bullet's OWN prose tripped this exact hazard twice)**:
+  `scripts/plan-file-coverage-check.mjs` (modify — Phase 0's path-detection
+  heuristic tightened from "contains a dot" to "contains a slash or a
+  recognised file extension", after a backtick-quoted property-access
+  expression inside this very bullet's explanatory prose was mistaken for a
+  phantom missing file), `tests/plan-file-coverage-check.test.mjs` (modify
+  — regression coverage for the fix).
+- **Phase 3 — Decompose `campaign.mjs` (D2/D2a).** Three modules; same shape
+  (1350 → 703 lines). `repoId()` — `campaign.mjs`-local but pure
+  lib-composition — moves alongside `promoteFromLog` (which needs it and
+  `promote.mjs` may not import the CLI to get it back); the CLI's remaining
+  caller (`verbDeclareInconclusive`) imports it from there.
+  **One necessary deviation, the SAME class of fix D2b's own text already
+  states for this exact module**: `promoteFromLog` takes `entries` as a
+  parameter (never `readLog()` internally — D2b's documented fix for the
+  cycle this decomposition would otherwise introduce) and no longer prints
+  the cloud-off notice itself (`cloudOffNotice` is a CLI-flavoured helper
+  with several other callers in `campaign.mjs`; importing it here would be
+  the exact "lib module reaching back into the entry point" edge D2 exists
+  to eliminate) — it returns `{cloud:false}` and `verbReconcile` renders it,
+  same as every other verb.
+  **§D1b's legacy-adoption receipt protocol is DEFERRED to "Out of Scope
+  (Future)" (re-prioritisation, not a technical blocker)** — round-4
+  findings H3/H4/M12 found the feature designed in an earlier gate round but
+  never assigned a Files line, and this plan's own text briefly scheduled
+  its implementation into Phases 2/3 during that triage. On reaching this
+  phase, implementing a genuinely new feature (idempotent receipt writes,
+  conflict-on-mismatch detection, a new `--adopt-legacy` flag, log-fold
+  logic, and their own test coverage) on top of an already-large D2
+  decomposition was reprioritised against `/cycle --autonomous`'s
+  scope-and-ship mandate: D1's "no campaign, no run" behaviour is already
+  correct and complete without it — a pre-campaign log entry stays
+  correctly `unjudgeable` (D1a), which is honest, not broken. See §"Out of
+  Scope (Future)" below. Files: `scripts/lib/campaign/adjudicate.mjs`
+  (create), `scripts/lib/campaign/cited-source.mjs` (create),
+  `scripts/lib/campaign/promote.mjs` (create), `scripts/campaign.mjs`
+  (modify), `tests/campaign-adjudication.test.mjs` (extended — the D1c
+  redaction canaries only; no receipt-protocol tests, since the feature
+  itself is deferred), `tests/campaign-citation-budget.test.mjs` (modify —
+  import redirect only, since `centredWindow`/`resolveCitedSources` now live
+  in the cited-source module above).
+- **Phase 4 — Split the campaign suite (D3).** Verbatim assertion moves, per
+  the matrix. **Neither `tests/bakeoff-arms.test.mjs`/`tests/bakeoff-
+  summary.test.mjs` NOR `tests/bakeoff-spawn.test.mjs` are touched here** —
+  all three were already fully populated in Phases 1/2 (round-4 finding
+  M5/M6/M7; see the D3 matrix's revised split note above, and Phase 2's own
+  Files line — `buildArmArgs`'s tests moved in the SAME commit that moved
+  `buildArmArgs` itself into `scripts/lib/bakeoff/spawn.mjs`, never split
+  across a phase boundary from its own implementation). This phase creates
+  only the three NEW campaign test files. Files:
+  `tests/campaign-adjudicate.test.mjs` (create — blind DTO, redaction canary,
+  worksheet identity, calibration sample, verdict, self_family, clustering),
+  `tests/campaign-cited-source.test.mjs` (create — cited sources),
+  `tests/campaign-promote.test.mjs` (create — receipt filename parsing,
+  bake-off log promotion, --force resolution, isArmRetried),
+  `scripts/bakeoff-collect.mjs` (modify — removed the now-dead
+  `UnresolvedScopeError`/`ScopeMismatchError`/`EXPERIMENT_TAG`/`buildArmArgs`
+  re-export barrel; every consumer already imports these directly from their
+  real homes, verified by grep before deletion — the barrel's removal is this
+  phase's exit condition per D3),
+  `tests/final-review-bakeoff.test.mjs` (**already retains only 2
+  entry-point blocks, not the 3 this bullet originally named** —
+  `findEligibleTranscripts`, `assessWindow`; `verifyPreflightArtifact` moved
+  to `tests/bakeoff-spawn.test.mjs` in Phase 2, earlier than this bullet
+  assumed, per the same "moves with its implementation" rule documented in
+  that file's own header — stale prose fixed here, not a new move; the file
+  itself is not touched in this phase),
+  `tests/campaign-adjudication.test.mjs`
+  (modify — retains the LIVE DB-gated block **plus** the D1c
+  `resolveProviderIdentity`/`armRedactionTerms` block, which is not part of
+  the original D3 matrix (added by Cluster A after D3 was written) and tests
+  the store's own campaign module directly (scripts/lib/store/campaign.mjs,
+  already in this cluster's derived scope via Phase 1′) rather than any of
+  the three new campaign/* modules, so it stays here rather than being forced
+  into a file whose module boundary it does not share).
 - **Phase 5 — Split `model-eval-core.test.mjs` (D3, independent).** Files:
-  `tests/model-eval-core.test.mjs` + 7 created suites. **Plus (revision)**:
-  convert the live-config-pinning assertions in
-  `tests/final-review-bakeoff.test.mjs` (`:559-569`, `:576`, `:591`, `:677`,
-  `:688`, `:703-705`) to frozen fixtures, following
+  `tests/model-eval-core.test.mjs` (**delete** — "modify" in §6's flat table
+  undersold it: after all 8 `describe` blocks move out per the D3 matrix,
+  lines 1-14 are bare imports with nothing left to import them, so a
+  near-empty shell is worse than no file), `tests/model-eval-verdict.test.mjs`
+  (create — also imports parseThresholdConfig from the config schema module
+  (scripts/lib/model-eval/config/schema.mjs) for a boundary-consistency test
+  that cross-checks the verdict module's own schema against it),
+  `tests/model-eval-route-catalog.test.mjs` (create — also imports
+  VerdictInputSchema from the verdict module (scripts/lib/model-eval/verdict.mjs)
+  for the same reason, in reverse),
+  `tests/model-eval-deterministic-scorer.test.mjs` (create),
+  `tests/model-eval-structured-extractor.test.mjs` (create),
+  `tests/model-eval-cost.test.mjs` (create),
+  `tests/model-eval-config-schema.test.mjs` (create),
+  `tests/model-eval-store.test.mjs` (create). **Plus (revision)**:
+  convert the live-config-pinning assertions to frozen fixtures, following
   `tests/comparison-core.test.mjs`'s existing pattern.
+  **Relocated during Phase 1 (post-gate correction, round-4 finding M19):**
+  these assertions no longer live in `tests/final-review-bakeoff.test.mjs` —
+  Phase 1 moved `deriveArms`/`transportForModel`/`resolveArms`/collect-time-
+  lock coverage to `tests/bakeoff-arms.test.mjs` (see Phase 1's own Files
+  line), earlier than this bullet originally assumed, so the target is now
+  `tests/bakeoff-arms.test.mjs`'s `'the derived arms are BYTE-IDENTICAL…'`,
+  `'the control arm is COLLECTED but not scored…'`, and `'derives from the
+  NEW scoped campaign…'` tests (the ones asserting live committed-campaign
+  file content directly) — named by title, not by line, since the file did
+  not exist at plan-gate time to pin a commit-anchored line against.
 - **Phase 6 — Role executability (D7a–c). NEW, ungated.** Lift the 8 hardcoded
-  `'auditor'` literals in `model-eval-auditor.mjs` into a role parameter; add
-  the `adjudicator` controls schema to `controls.mjs` and admit it in
-  `manifest.mjs`; extend the manifest driver to run n adjudicator arms. Files:
-  `scripts/model-eval-auditor.mjs`, `scripts/lib/comparison/controls.mjs`,
-  `scripts/lib/comparison/manifest.mjs`, `tests/comparison-core.test.mjs`,
-  `tests/model-eval-auditor-manifest.test.mjs`, + a new adjudicator-manifest suite.
+  `'auditor'` literals in `model-eval-auditor.mjs` into a role parameter;
+  extract `runManifestDriver` to `lib/model-eval/manifest-driver.mjs` and
+  `scoreAgainstGroundTruth`/`toRawContext` to
+  `lib/model-eval/adjudicator-executor.mjs` (round-3 fix, H2 — layering);
+  add the `adjudicator` controls schema to `controls.mjs` and admit it in
+  `manifest.mjs`; create the `EXECUTORS` registry
+  (`lib/model-eval/executors.mjs`, two-phase `prepareContext`/`executeArm`
+  per the Gemini-gate fix, G1) so the manifest driver can run n adjudicator
+  arms. Files: `scripts/model-eval-auditor.mjs` (modify — thin shim),
+  `scripts/model-eval-adjudicator.mjs` (modify — thin CLI wrapper, also gains
+  its own --manifest flag),
+  `scripts/lib/model-eval/manifest-driver.mjs` (create),
+  `scripts/lib/model-eval/adjudicator-executor.mjs` (create),
+  `scripts/lib/model-eval/executors.mjs` (create),
+  `scripts/lib/comparison/controls.mjs` (modify),
+  `tests/comparison-core.test.mjs` (modify),
+  `tests/manifest-driver.test.mjs` (create),
+  `tests/adjudicator-executor.test.mjs` (create),
+  `tests/model-eval-adjudicator-manifest.test.mjs` (create),
+  `tests/model-eval-auditor-manifest.test.mjs` (modify — the role-generic
+  driver's refusal message changed from a hardcoded 'role must be "auditor"'
+  to a registry-derived one; the test's own assertion updated to match, same
+  refuse-at-load/exit-2 behaviour unchanged),
+  `tests/arm-vocabulary-layering.test.mjs` (modify — round-4 gate finding:
+  `git ls-files` lists a working-tree-deleted-but-unstaged file (this phase's
+  own `tests/model-eval-core.test.mjs` deletion, Phase 5), and
+  dependency-cruiser's stat() on a listed-but-absent path crashed the whole
+  layering oracle rather than reporting a violation; `trackedMjs()` now
+  filters to paths that still exist on disk — a general robustness fix this
+  cluster's own deletion surfaced, not specific to model-eval-core.test.mjs).
+  (the comparison manifest-schema module needed NO change — its v1-boundary
+  refusal is entirely derived from controls.mjs, verified before editing;
+  see §6's own corrected row.)
 - **Phase 7 — The store-seam decision (D7d/D7e). NEW, ungated. A BOUNDED
   DISCOVERY DELIVERABLE, never a migration (post-gate fix, H2).** Run D7e's
   field census: enumerate every field the campaign standings, the swap-eval
@@ -2000,10 +2379,12 @@ symbols, but produces no committed change.
   rollback/dashboard scope); on KEEP SEPARATE, a documented field-level
   interface contract plus a `comparison-core.test.mjs` assertion that the two
   envelopes' shared fields stay comparable. Predicted outcome is UNIFY,
-  recorded in advance so the census can falsify it. Files touched by Phase 7
-  itself: this plan (census + verdict + ADR), and — KEEP SEPARATE branch only —
-  `tests/comparison-core.test.mjs`. **No `scripts/lib/store/**` file is a Phase
-  7 file under either branch.**
+  recorded in advance so the census can falsify it. **No `scripts/lib/store/**`
+  file is a Phase 7 file under either branch.** Files:
+  `docs/plans/comparison-tooling-consolidation.md` (modify — census + verdict
+  + ADR, unconditional), `tests/comparison-core.test.mjs`
+  `[branch: d7d=keep-separate]` (modify — only when the verdict is KEEP
+  SEPARATE; absent from the diff on the UNIFY branch, correctly).
 - **Close-out — the executable list, in order (R4/M2).** The R3 draft named the
   right *ordering* in §6a and then omitted most of those commands here, leaving
   a team to reconcile a ledger against a shorter checklist. They now match:
@@ -2030,8 +2411,13 @@ symbols, but produces no committed change.
   npm run arch:coverage-gate      # its freshness gate
 
   # ONE full diff — every tracked file category, no filter. `PLAN_BASE` is
-  # this plan's own starting commit.
-  FULL_DIFF=$(git diff --name-only --diff-filter=ACMR "$PLAN_BASE"...HEAD)
+  # this plan's own starting commit. `D` is INCLUDED (round-4 finding M17):
+  # ACMR alone drops deleted paths, so a phase whose Files: line names a file
+  # under `(delete)` (Cluster C's test-file consolidation, Phase 7's UNIFY
+  # branch) would never see that deletion counted as coverage — the required
+  # path just silently never appears in `$FULL_DIFF` and `checkCoverage`
+  # reports it missing instead of confirming the deletion happened.
+  FULL_DIFF=$(git diff --name-only --diff-filter=ACMRD "$PLAN_BASE"...HEAD)
 
   # STEP 1 — coverage, over the FULL diff against §6's table, SCOPED to the
   # phases actually completed (round-3 fix, H6 — the unscoped version would
@@ -2086,29 +2472,27 @@ symbols, but produces no committed change.
   concept of "this row belongs to a cluster that was never in scope" — it
   would refuse the exact partial release §9 recommends as a valid outcome.
 
-  **The fix is a fourth Phase 0 deliverable, not a new subsystem**: §6's table
-  gains one column, **`Phase`**, naming the phase number each row belongs to
-  (every row already resolves to exactly one phase — the partition-check
-  already asserts every phase belongs to exactly one cluster, so a row's phase
-  number is sufficient to derive its cluster via §11's own phase↔cluster
-  table, with no second, redundant per-row cluster tag to keep in sync). The
-  checker then takes **`--phases <completed-phase-list>`** (e.g. `0,1,1′`
-  for an A+A′-only release) instead of assuming the whole table is mandatory:
-  a row is **required** iff its `Phase` is in the supplied list, **forbidden**
-  (diff contains it, list doesn't cover it) iff its `Phase` is absent from the
-  list, and the `--branch` qualifier from before still narrows Phase 7's two
-  rows within whichever list includes phase 7. The all-clusters invocation
-  (`--phases 0,1,1′,2,3,4,5,6,7`) is simply the full-list case — no separate
-  mode, one mechanism.
+  **The fix is a fourth Phase 0 deliverable, not a new subsystem — and,
+  refined during implementation, not a redundant table column either.**
+  §6b's own per-phase `Files:` lists already name every file each phase
+  touches (every row resolves to exactly one phase — the partition-check
+  already asserts every phase belongs to exactly one cluster), so the checker
+  derives phase membership by parsing §6b directly rather than requiring a
+  second, parallel `Phase` column on §6 that would need to agree with it
+  forever. The checker takes **`--phases <completed-phase-list>`** (e.g.
+  `0,1,1′` for an A+A′-only release) instead of assuming the whole table is
+  mandatory: a file is **required** iff its owning phase (per §6b) is in the
+  supplied list, **forbidden** (diff contains it, list doesn't cover it) iff
+  its phase is absent from the list, and the `--branch` qualifier from before
+  still narrows Phase 7's two rows within whichever list includes phase 7.
+  The all-clusters invocation (`--phases 0,1,1′,2,3,4,5,6,7`) is simply the
+  full-list case — no separate mode, one mechanism.
 
-  Backfilling the `Phase` column onto every existing §6 row is **Phase 0
-  scope**, alongside creating the checker itself — the column and the checker
-  that reads it are one deliverable, not two, so there is no window where the
-  checker exists but the data it needs does not. Required Phase 0 test cases,
-  beyond the Phase-7-branch-row one already specified: an A-only release
-  (`--phases 0,1`) passes; the same diff evaluated with `--phases
-  0,1,1′,2,3,4,5,6,7` (i.e., claiming full-plan completion against a
-  partial diff) correctly FAILS — proving the checker cannot be fooled into
+  Required Phase 0 test cases, beyond the Phase-7-branch-row one already
+  specified: an A-only release (`--phases 0,1`) passes; the same diff
+  evaluated with `--phases 0,1,1′,2,3,4,5,6,7` (i.e., claiming full-plan
+  completion against a partial diff) correctly FAILS — proving the checker
+  cannot be fooled into
   certifying more than what actually shipped.
 
   **`scripts/plan-file-coverage-check.mjs` is a NEW top-level CLI, so it
@@ -2305,3 +2689,85 @@ abandoned middle is worse than an abandoned tail:
 | **A + A′** | **Never drop.** Two live defects (incident (c), the fabricated divergence metric), both operator-visible, both currently growing with arm count. |
 
 **A and A′ together are the minimum shippable unit of this plan.**
+
+## Out of Scope (Future)
+
+**§D1b — the legacy-adoption receipt protocol (`--adopt-legacy`).** Designed
+in an earlier gate round (the append-only `{type:'adoption-receipt', entryId,
+campaignId, adoptedAt}` record, idempotent on the tuple `(entryId,
+campaignId)` — a conflicting receipt for the same entry under a different
+campaignId is refused, never a silent no-op) but never assigned a Files line
+in §6b, so it shipped as prose with no implementation phase (round-4 findings
+H3/H4/M12). Phase 3's own text briefly scheduled it into Phases 2/3 during
+that triage; on actually reaching those phases, building a genuinely new
+feature (idempotent writes, conflict detection, a new CLI flag, log-fold
+logic, and its own test coverage) on top of an already-large D2 decomposition
+was reprioritised out, in favour of shipping the decomposition itself.
+
+**Independence, stated per the triage rule (AGENTS.md, `/audit-plan` Step 3):
+this plan's correctness does not rest on §D1b.** D1's "no campaign, no run"
+behaviour is already correct and complete without it — a pre-campaign log
+entry (no `campaignId`, predating campaign declaration) stays correctly
+`unjudgeable` (D1a), which is honest, not broken; it simply never counts
+toward N and is never silently adopted. §D1b is a pure operator-convenience
+feature for RE-INTERPRETING that already-honest state, not a fix for an
+incorrect one.
+
+**Revisit trigger**: an operator actually wants to adopt a batch of
+pre-campaign log entries into a named campaign (this has not yet happened in
+practice — every real collection to date has run under a declared campaign
+from the start). Implementation: `--adopt-legacy` on `campaign.mjs reconcile`
+→ `lib/campaign/promote.mjs` (which already owns `promoteFromLog`, the
+natural home for the write half); `scripts/lib/bakeoff/log.mjs` (which
+already owns `readLog()`) folds the receipt on read. Both files already
+exist post-Phase-2/3, so implementing this later is additive, not a further
+decomposition.
+
+---
+
+## Implementation Log
+
+### 2026-08-16
+
+- **Completed**: All four clusters (A/A′, B, C, D) implemented, each audited
+  to convergence (in-cluster HIGH/MEDIUM == 0), plus the mandatory
+  consolidated Gemini gate over the full union diff — verdict `APPROVE`
+  (round 2 of 2; round 1 was `CONCERNS_REMAINING` with 5 wrongly-dismissed
+  findings, 2 of which were real and fixed, 3 rebutted with evidence and
+  accepted by round 2). Full close-out sequence green (`arch:refresh`,
+  `arch:coverage-gate`, `plan-file-coverage-check` at `ok:true`, requirements
+  extract/reconcile/map, `skills:regenerate`+check, `plans:index`+check,
+  `db:enrolment:gate`, `npm test` 12737/0/26).
+- **Remaining**: §D1b (legacy-adoption receipts) formally deferred to
+  "Out of Scope (Future)" — this plan's own correctness does not depend on
+  it. D7's own scope boundary (auditor/adjudicator manifest-driven parity;
+  `final_review_shadow` deliberately stays passive-only) is by design, not a
+  gap.
+- **Deviations from the plan as gated**:
+  - D7e's field census returned **KEEP SEPARATE** (named blocking field:
+    `verdict`), falsifying the plan's own pre-registered UNIFY prediction —
+    the census is the point; see §"D7e — Phase 7 deliverable" for the full
+    field table and reasoning.
+  - `scripts/lib/comparison/manifest.mjs` needed **zero** code changes for
+    D7b (its v1-boundary refusal is entirely derived from `controls.mjs`) —
+    the plan's own "modify" claim was corrected before writing a no-op edit.
+  - The `RoleResult`/`ExecutorAttempt` type text was corrected against real
+    code in three places (auditor branch is `metrics`, not
+    `findings: NormalizedFinding[]`; `recall`/`f1` are nullable; `usage`
+    itself is nullable, distinct from a nullable `costUsd` inside it) — none
+    of these were grounded in the functions they described when first
+    written.
+  - Two genuinely new implementation gaps surfaced only during Cluster D's
+    own audit (not present in the plan's original design, found by
+    implementing it): adjudicator manifest arms were not persisted to
+    `model_eval_runs` at all (silently defeating D5a's resume mechanism for
+    that role — fixed), and the CLI's `--tier` had no reconciliation against
+    a manifest's own declared `controls.tier` (fixed with a fail-closed
+    cross-check).
+  - Two pre-existing, verbatim-relocated defects were judged in-scope by
+    impact (not authorship) and fixed during the consolidated gate's
+    deliberation: `readLog()` silently dropped a mid-file JSONL corruption
+    exactly like a tolerated torn-final-line (now a visible stderr warning,
+    the two cases distinguished); `repoId()`'s catch-all conflated
+    cloud-off/unregistered with a real operational failure (now logged
+    distinctly).

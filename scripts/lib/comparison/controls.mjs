@@ -93,6 +93,35 @@ export const AuditorControlsSchema = z.object({
   rounds: z.number().int().positive(),
 }).strict();
 
+/**
+ * `adjudicator` — the synchronous swap-eval's dials for the ground-truth
+ * scoring path (D7b, plan: comparison-tooling-consolidation.md).
+ *
+ * Every field traced to what `model-eval-adjudicator.mjs` already configures
+ * today (`--tier`, `--thresholds`, `--baseline`), mirroring
+ * `AuditorControlsSchema`'s pattern: `COMMON_SHAPE` plus a small role-specific
+ * tail. No per-arm override of `tier`/`baseline`/`thresholdsPath` — comparison-
+ * level dials by the same rule `reasoningEffort` already enforces for every
+ * role (lesson (b): arms must share one dial or the comparison measures the
+ * setting, not the model).
+ */
+export const AdjudicatorControlsSchema = z.object({
+  ...COMMON_SHAPE,
+  tier: z.enum(['screen', 'promotion']),
+  thresholdsPath: z.string().min(1).optional(),
+  baseline: z.object({
+    kind: z.enum(['sentinel', 'concrete']),
+    value: z.string().min(1),
+  }).strict().optional(),
+  // A manifest run needs the corpus page FIXED and DECLARED (D7c's "fetched
+  // once per manifest run, reused for every arm" rule) — not implicitly
+  // whatever today's `Math.max(tierConfig.minSampleSize * 5, 200)` default
+  // happens to resolve to for a single `--candidate` invocation. No flag maps
+  // to this on the existing CLI; it is new, named here rather than discovered
+  // as a gap during Phase 6.
+  groundTruthLimit: z.number().int().positive().optional(),
+}).strict();
+
 /** role → its controls schema. The single dispatch table.
  *
  * `Object.create(null)`, not a literal: a plain object inherits from
@@ -102,6 +131,7 @@ export const AuditorControlsSchema = z.object({
 export const CONTROLS_BY_ROLE = Object.freeze(Object.assign(Object.create(null), {
   final_review_shadow: FinalReviewShadowControlsSchema,
   auditor: AuditorControlsSchema,
+  adjudicator: AdjudicatorControlsSchema,
 }));
 
 /**
@@ -110,19 +140,24 @@ export const CONTROLS_BY_ROLE = Object.freeze(Object.assign(Object.create(null),
  * dispatch table it describes.
  *
  * Distinct from `SWAP_ELIGIBLE_ROLES` (`contracts.mjs`), and the distinction is
- * now load-bearing rather than implicit (Cluster A round 4, M6). Eligibility
+ * load-bearing rather than implicit (Cluster A round 4, M6). Eligibility
  * proves a role has a MECHANISM HOME — the coverage assertion in
  * `roles.mjs::assertRoleCoverage` needs that to hold for the whole vocabulary.
- * Support proves a role can be EXECUTED. `adjudicator` is eligible (this is
- * the right mechanism for it, once built) and NOT supported (no controls
- * schema exists, because that eval has never run and there is no user to
- * design dials for). Before this export, "supported" existed only as the
- * behaviour of `controlsSchemaForRole` throwing, which is not a check anything
- * could ask a question of — `SWAP_ELIGIBLE_ROLES.includes` and
- * `SUPPORTED_ROLES.includes` are now two answerable questions instead of one
- * answerable question and one guaranteed exception. Never assert
- * `SUPPORTED_ROLES` should equal the full vocabulary — the gap is the
- * documented v1 boundary, not a bug to close by widening this array.
+ * Support proves a role can be EXECUTED. Before this export, "supported"
+ * existed only as the behaviour of `controlsSchemaForRole` throwing, which is
+ * not a check anything could ask a question of — `SWAP_ELIGIBLE_ROLES.includes`
+ * and `SUPPORTED_ROLES.includes` are now two answerable questions instead of
+ * one answerable question and one guaranteed exception.
+ *
+ * `SUPPORTED_ROLES` now equals `ROLES` (D7b, plan:
+ * comparison-tooling-consolidation.md, Cluster D) — `adjudicator` gained
+ * `AdjudicatorControlsSchema` above, closing the last eligible-but-unsupported
+ * gap. "Supported" still means "can be PARSED and DISPATCHED", never "has been
+ * RUN" — the adjudicator swap-eval schema now exists, but no evaluation has
+ * actually executed against it yet (see AGENTS.md's Model Swap-In Evaluation
+ * Harness section). The eligible/supported split itself stays load-bearing:
+ * a role could regain a gap here if a schema were ever removed without
+ * retiring its eligibility.
  */
 export const SUPPORTED_ROLES = Object.freeze(Object.keys(CONTROLS_BY_ROLE));
 
@@ -145,12 +180,12 @@ export function isRoleSupported(role) {
 /**
  * The controls schema for a role, or a refusal naming what is missing.
  *
- * `adjudicator` is in the vocabulary and in `SWAP_ELIGIBLE_ROLES`, but has no
- * controls schema here — deliberately, and it must refuse LOUDLY rather than
- * fall through to a default. The adjudicator swap-eval has never been run
- * (AGENTS.md records it pending at Phase 14), so there is no evidence about
- * what its dials should be and designing them now would be guessing at a set
- * with no user. Eligibility is not manifest support.
+ * Every role in `ROLES` now has a schema (D7b closed the last gap,
+ * `adjudicator`'s). The refusal path stays live — never hardcode an
+ * assumption that `SUPPORTED_ROLES` will always equal `ROLES` — for the same
+ * reason `assertRoleCoverage` stays a real check rather than a documented
+ * invariant nobody verifies: a future role added to the vocabulary with no
+ * mechanism home yet must refuse LOUDLY here, not fall through to a default.
  *
  * @param {string} role
  * @returns {import('zod').ZodTypeAny}

@@ -306,7 +306,17 @@
       "domain": "shared-lib"
     },
     {
+      "_why": "MORE SPECIFIC than the campaign/** rule below — ordering is significant, this line must precede it (comparison-tooling-consolidation.md D2b). promote.mjs is the one file in that plan's whole decomposition that touches a store: `campaign/promote.mjs -> lib/store/campaign.mjs` is a genuine, currently-nonexistent shared-lib -> stores edge, and widening shared-lib's own allowedDeps to admit `stores` for every one of its 156 files to let this one through was rejected as too broad. Reuses the EXISTING model-eval domain (already permits stores) rather than inventing a domain for one file.",
+      "pattern": "scripts/lib/campaign/promote.mjs",
+      "domain": "model-eval"
+    },
+    {
       "pattern": "scripts/lib/campaign/**",
+      "domain": "shared-lib"
+    },
+    {
+      "_why": "EXPLICIT shared-lib claim (comparison-tooling-consolidation.md D2b), so the domain is DECIDED rather than defaulted — same shape as the other explicit six/one-off subsystem rules above (tests/domain-map-subsystem-coverage.test.mjs). scripts/lib/campaign/** and scripts/lib/comparison/** (both siblings of this new directory) already resolve to shared-lib, not a domain of their own — giving bakeoff/** its own domain would invent a boundary its own siblings do not have, turning every bakeoff -> campaign/comparison edge into a cross-domain edge the equivalent comparison -> campaign edge has never needed.",
+      "pattern": "scripts/lib/bakeoff/**",
       "domain": "shared-lib"
     },
     {

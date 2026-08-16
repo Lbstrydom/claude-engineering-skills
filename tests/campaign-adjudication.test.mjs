@@ -3,11 +3,18 @@
  *
  * Plan: docs/plans/model-comparison-campaigns.md §2.5c, §9 cases 6 + 7, §7a.
  *
- * Two halves, and the split is deliberate:
+ * **Trimmed (Phase 4, plan: comparison-tooling-consolidation.md, D3)** — the
+ * blind DTO / redaction / worksheet-identity / calibration / verdict /
+ * self_family / clustering / cited-sources / promotion blocks moved verbatim
+ * to tests/campaign-adjudicate.test.mjs, tests/campaign-cited-source.test.mjs,
+ * and tests/campaign-promote.test.mjs. What remains:
  *
- *  - **Pure** (always runs): the blind DTO whitelist, the redactor and its leak
- *    canary, the calibration sample's stability, cited-source resolution, the
- *    verdict downgrade rules, and the cluster refusal.
+ *  - **D1c** (`resolveProviderIdentity` / `armRedactionTerms`) — not part of
+ *    the original D3 matrix (added by Cluster A's D1c work after D3 was
+ *    written). Kept HERE rather than forced into one of the three new files:
+ *    it tests `store/campaign.mjs`'s own provider-identity resolution
+ *    directly, not the adjudicate/cited-source/promote module boundary any
+ *    of those three files owns.
  *  - **Live** (runs under `db:suites:gate`, gated on `AUDIT_DB_TEST_URL` +
  *    `assertDisposableDbUrl`): the claims that are only settleable against a
  *    real schema — "the blind query never returns `source_model`", "an override
@@ -17,755 +24,77 @@
  */
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 
 import {
-  BLIND_ROW_FIELDS, buildBlindRow, buildModelRedactor, worksheetRowIdFor,
-  calibrationScore, isCalibrationSelected, assignCalibrationSample, isSelfFamily,
-  hmacKeyRefFor, requireCampaignHmacKey, CALIBRATION_MIN_PER_ARM,
+  resolveProviderIdentity, armRedactionTerms, buildModelRedactor,
+  assignCalibrationSample, isSelfFamily, worksheetRowIdFor,
 } from '../scripts/lib/store/campaign.mjs';
-import {
-  centredWindow, citedLineOf, resolveCitedSources, clusterSnapshotFindings,
-  normaliseVerdict, routesToHumanQueue, ADJUDICATION_TOOL, AdjudicationVerdictSchema,
-  classifyLogEntry, detailAnchors, anchorLine, resolvePromotionAttempt, isArmRetried,
-} from '../scripts/campaign.mjs';
-import { parseCampaignConfig } from '../scripts/lib/campaign/config.mjs';
 
-const REAL_CONFIG = parseCampaignConfig(JSON.parse(fs.readFileSync('.campaigns/final-review-2026q3.json', 'utf-8'))).config;
 const KEY = 'a'.repeat(64);
 
-// ── §9 case 6 — the blind DTO is a WHITELIST ────────────────────────────────
+// ── D1c: derived-per-arm redaction coverage ──────────────────────────────────────────
 
-describe('blind worksheet DTO', () => {
-  it('is a closed shape — a wider source row cannot leak a new field', () => {
-    const row = buildBlindRow({
-      worksheetRowId: 'w1', category: 'Backend', primaryFile: 'scripts/a.mjs:12',
-      detail: 'a defect', severity: 'HIGH', citedSources: [],
-      // Everything below is present on the real store row and must NOT appear.
-      source_model: 'claude-opus-4-8', sourceModel: 'claude-opus-4-8',
-      arm_id: 'opus', run_id: 'r1', finding_id: 'f1', someColumnAddedNextYear: 'leak',
-    }, (t) => t);
-    assert.deepEqual(Object.keys(row).sort(), [...BLIND_ROW_FIELDS].sort());
-    const serialised = JSON.stringify(row);
-    for (const leak of ['claude-opus-4-8', 'opus', 'someColumnAddedNextYear', 'leak']) {
-      assert.ok(!serialised.includes(leak), `blind row leaked ${leak}`);
+describe('resolveProviderIdentity / armRedactionTerms (D1c)', () => {
+  it('a vendor not in ANY source resolves via the OpenRouter slug', () => {
+    assert.equal(resolveProviderIdentity('cohere/command-r'), 'cohere');
+  });
+
+  it('the bare MODEL ALIAS of a slug id redacts too, not just the full "vendor/model" string', () => {
+    // Redacting only the full slug leaves the bare alias exposed: prose
+    // naming just "command-r" (no "cohere/" prefix) survived a redactor that
+    // only knew "cohere/command-r" as one plain-substring token.
+    const r = buildModelRedactor({ arms: [{ id: 'x', model: 'cohere/command-r' }] });
+    assert.match(r('the cohere/command-r arm found this'), /\[MODEL-A\]/);
+    assert.match(r('the command-r model found this'), /\[MODEL-A\]/, 'the bare alias must redact too');
+    assert.equal(r('a command-recipe is unrelated text'), 'a command-recipe is unrelated text', 'boundary-guarded, not a mid-word match');
+  });
+
+  it('a genuinely unresolvable id, no override — buildModelRedactor REFUSES, naming the arm and the escape hatch', () => {
+    assert.throws(
+      () => buildModelRedactor({ arms: [{ id: 'mystery', model: 'mystery-model-9000' }] }),
+      (err) => {
+        assert.match(err.message, /"mystery"/);
+        assert.match(err.message, /redactionTerms/);
+        return true;
+      },
+    );
+  });
+
+  it('a genuinely unresolvable id WITH an explicit redactionTerms override — accepted; those exact terms redact', () => {
+    const r = buildModelRedactor({ arms: [{ id: 'mystery', model: 'mystery-model-9000', redactionTerms: ['mysteryvendor'] }] });
+    assert.match(r('built by MysteryVendor originally'), /\[MODEL-A\]/);
+  });
+
+  it('an anthropic-routed arm — claude, opus, sonnet, haiku ALL still redact, not just "anthropic"', () => {
+    const r = buildModelRedactor({ arms: [{ id: 'a1', model: 'claude-opus' }] });
+    for (const word of ['Claude', 'Opus', 'Sonnet', 'Haiku', 'Anthropic']) {
+      assert.match(r(`${word} reviewed this`), /\[MODEL-A\]/, `"${word}" must redact`);
     }
   });
 
-  it('flags a detail that hit the store\'s 600-char cap, so short is never mistaken for complete', () => {
-    assert.equal(buildBlindRow({ worksheetRowId: 'w', detail: 'x'.repeat(600) }, (t) => t).detailTruncated, true);
-    assert.equal(buildBlindRow({ worksheetRowId: 'w', detail: 'x'.repeat(599) }, (t) => t).detailTruncated, false);
-  });
-});
-
-// ── the leak canary, against the REAL campaign fixture ──────────────────────
-
-describe('redaction leak canary (real campaign fixture, not a synthetic row)', () => {
-  const redact = buildModelRedactor({
-    armIds: REAL_CONFIG.arms.map((a) => a.id),
-    armModels: REAL_CONFIG.arms.map((a) => a.model),
-  });
-
-  it('no arm id, arm model or provider name survives in the rendered row', () => {
-    // Real reviewer prose from this repo's own campaign: models name themselves.
-    const row = buildBlindRow({
-      worksheetRowId: 'w1', category: 'Backend',
-      primaryFile: 'scripts/lib/store/x.mjs:40',
-      detail: 'Opus 5 thinks by default, so the OpenRouter arm running moonshotai/kimi-k2-thinking '
-        + 'at claude-opus parity would差 — see the gemini reviewer and gpt-5.6-terra fallback.',
-      severity: 'HIGH', citedSources: [],
-    }, redact);
-    const text = JSON.stringify(row);
-    for (const arm of REAL_CONFIG.arms) {
-      assert.ok(!text.toLowerCase().includes(arm.id.toLowerCase()), `leaked arm id "${arm.id}"`);
-      assert.ok(!text.toLowerCase().includes(arm.model.toLowerCase()), `leaked arm model "${arm.model}"`);
+  it('mixed-case arm model strings resolve to the same provider, and the derived term redacts case-insensitively', () => {
+    for (const modelSpelling of ['qwen/qwen3.8-max', 'QWEN/Qwen3.8-Max', 'Qwen/QWEN3.8-MAX']) {
+      assert.equal(resolveProviderIdentity(modelSpelling), 'qwen', `"${modelSpelling}" must resolve to "qwen"`);
     }
-    for (const provider of ['openrouter', 'gemini', 'gpt-5.6-terra', 'moonshotai']) {
-      assert.ok(!text.toLowerCase().includes(provider), `leaked provider "${provider}"`);
+    const r = buildModelRedactor({ arms: [{ id: 'q1', model: 'qwen/qwen3.8-max' }] });
+    for (const variant of ['QWEN', 'Qwen', 'qwen']) {
+      assert.match(r(`the ${variant} model`), /\[MODEL-A\]/, `"${variant}" must redact`);
     }
-    assert.ok(text.includes('[MODEL-A]') || text.includes('[ARM]'), 'the redactor must actually have fired');
+    // A hyphenated compound is a DIFFERENT token under this file's existing
+    // boundary convention (hyphen counts as a word character, same rule that
+    // lets "claude-opus-4-8-preview" redact as one unit elsewhere in this
+    // suite) — it does not fragment into a bare "qwen" match, and must not.
+    assert.equal(r('the qwen-turbo model'), 'the qwen-turbo model');
   });
 
-  it('the SECTION is redacted too — it is not always a file path', () => {
-    // It looks like a path, so an earlier version passed it through. But
-    // recordFindings stores `_primaryFile || section`, so raw model-authored
-    // prose lands in the column whenever the resolved path is absent. Measured
-    // on the live store: 43 rows already carry a provider term there. These two
-    // strings are real values from that query.
-    for (const real of [
-      '§4 phase 5; §6 “the gemini census must discover, not enumerate”',
-      'Audit transcript (rounds: [], claude_resolutions[0]) — consolidated gate',
-    ]) {
-      const row = buildBlindRow({ worksheetRowId: 'w1', primaryFile: real, detail: 'x', severity: 'HIGH', citedSources: [] }, redact);
-      assert.ok(!/gemini|claude/i.test(row.section), `section leaked a provider term: ${row.section}`);
-    }
-    // A genuine path still survives intact — redaction must not destroy the
-    // location the reviewer needs.
-    const pathRow = buildBlindRow({ worksheetRowId: 'w1', primaryFile: 'scripts/lib/store/campaign.mjs', detail: 'x', severity: 'HIGH', citedSources: [] }, redact);
-    assert.equal(pathRow.section, 'scripts/lib/store/campaign.mjs');
+  it('boundary-aware: "metadata" and "megawatt" are not redacted by an unrelated derived term', () => {
+    const r = buildModelRedactor({ arms: [{ id: 'a1', model: 'claude-opus' }, { id: 'g1', model: 'grok-4.6' }] });
+    assert.equal(r('check the metadata and the megawatt rating'), 'check the metadata and the megawatt rating');
   });
 
-  it('NEGATIVE CONTROL: the same row fails the canary when the redactor is bypassed', () => {
-    // Without this the canary could pass vacuously — e.g. if buildBlindRow ever
-    // stopped emitting `detail` at all.
-    const unredacted = buildBlindRow({
-      worksheetRowId: 'w1', detail: 'the moonshotai/kimi-k2-thinking arm', severity: 'HIGH', citedSources: [],
-    }, (t) => t);
-    assert.ok(JSON.stringify(unredacted).toLowerCase().includes('moonshotai/kimi-k2-thinking'));
-  });
-
-  it('one placeholder, not a per-model alias — an alias would let the adjudicator correlate rows', () => {
-    const a = redact('claude-opus wrote this');
-    const b = redact('moonshotai/kimi-k2-thinking wrote this');
-    assert.equal(a, b, 'two different models must render identically');
-  });
-
-  it('a SHORT arm id is redacted on a token boundary, not as a bare substring', () => {
-    // The arm-id pattern permits a single character. As a plain substring that
-    // would rewrite every letter `a` in the finding — which does not make the
-    // row blind, it makes it unreadable, and an adjudicator that cannot read
-    // the claim cannot verify it.
-    const short = buildModelRedactor({ armIds: ['a'], armModels: [] });
-    assert.equal(short('a caching layer already allocates'), '[ARM] caching layer already [MODEL-A]llocates'.replace('[MODEL-A]llocates', 'allocates'),
-      'ordinary words containing the letter must survive');
-    assert.match(short('arm a failed'), /\[ARM\]/, 'the standalone arm id is still redacted');
-    assert.ok(!short('a caching layer already allocates').includes('[ARM] c[ARM]ching'), 'no intra-word rewriting');
-  });
-
-  it('EVERY arm id is token-boundaried, whatever its length', () => {
-    // The split is by KIND, not length. An arm id is a discrete label that
-    // appears as a whole word; a three-character one has no more business
-    // rewriting the inside of a word than a one-character one does.
-    const r = buildModelRedactor({ armIds: ['abc'], armModels: [] });
-    assert.equal(r('the abcdef helper'), 'the abcdef helper', 'a 3-char arm id must not match mid-word');
-    assert.match(r('arm abc failed'), /\[ARM\]/, 'but still redacts standing alone');
-  });
-
-  it('a long model id embedded in a longer token still redacts', () => {
-    const r = buildModelRedactor({ armIds: [], armModels: ['claude-opus'] });
-    assert.ok(!r('running claude-opus-4-8-preview here').includes('claude-opus'));
-  });
-
-  it('a SHORT arm MODEL is redacted, not dropped for being short', () => {
-    // The length floor is a readability heuristic for the ambient catalogue. It
-    // must never decide whether THIS campaign's own arms are blind — and it did:
-    // a two-character model id (which the schema permits) fell through the
-    // `>= MIN_REDACTABLE_TERM` filter and stayed visible in the worksheet.
-    const r = buildModelRedactor({ armIds: [], armModels: ['g5'] });
-    assert.ok(!r('the g5 model found it').includes(' g5 '), 'a short arm model leaked');
-    assert.match(r('the g5 model found it'), /\[MODEL-A\]/);
-    assert.equal(r('a g5x identifier'), 'a g5x identifier', 'and it is boundary-guarded, not shredding longer tokens');
-  });
-
-  it('a provider NAME the resolver knows is redacted, not just its model ids', () => {
-    // `flattenPool` walks values only, so the pool KEYS — google, openai,
-    // anthropic — were absent from the term set: "gemini" redacted while
-    // "Google's model" passed through. Half a vocabulary reads as a whole one.
-    const r = buildModelRedactor({ armIds: ['opus'], armModels: ['claude-opus'] });
-    // `z-ai` is deliberate: it is a vendor namespace in OSS_PRICING that the
-    // hardcoded PROVIDER_TERMS list does NOT contain, so it is covered only by
-    // deriving vendors from the pricing table. Asserting on `moonshotai` here
-    // would pass whether or not that derivation exists — a vacuous test of a
-    // real mechanism.
-    for (const vendor of ['Google', 'google', 'z-ai']) {
-      assert.ok(!r(`built by ${vendor} originally`).includes(vendor), `leaked vendor "${vendor}"`);
-    }
-    assert.match(r('the Gemini family'), /\[MODEL-A\]/, 'and the previously-covered terms still redact');
-  });
-
-  it('citedSources are NEVER redacted — repo source at a fixed sha carries no arm signal', () => {
-    const row = buildBlindRow({
-      worksheetRowId: 'w1', detail: 'x', severity: 'HIGH',
-      citedSources: [{ path: 'scripts/lib/model-resolver.mjs', sha: 'abc', resolved: true, content: "'claude-opus-4-8', 'gemini-pro-latest'" }],
-    }, redact);
-    assert.match(row.citedSources[0].content, /claude-opus-4-8/,
-      'redacting the tree would corrupt the very evidence the adjudicator exists to read');
-  });
-});
-
-// ── worksheet identity + the HMAC key lifecycle ─────────────────────────────
-
-describe('worksheet identity', () => {
-  it('is one-way and stable for a given key', () => {
-    const a = worksheetRowIdFor('finding-1', KEY);
-    assert.equal(a, worksheetRowIdFor('finding-1', KEY));
-    assert.notEqual(a, worksheetRowIdFor('finding-2', KEY));
-    assert.ok(!a.includes('finding-1'), 'the row id must not carry the finding id');
-    assert.notEqual(a, worksheetRowIdFor('finding-1', 'b'.repeat(64)), 'a different key gives different ids');
-  });
-
-  it('an absent key is a hard refusal, never a regenerated one', () => {
-    const ref = hmacKeyRefFor('final-review-2026q3');
-    assert.equal(ref, 'CAMPAIGN_HMAC_KEY_FINAL_REVIEW_2026Q3');
-    assert.throws(() => requireCampaignHmacKey('final-review-2026q3', {}), /is not set/);
-    // The refusal must SAY why regenerating is wrong, or the next operator does it.
-    assert.throws(() => requireCampaignHmacKey('x', {}), /orphan every human disposition/);
-    assert.equal(requireCampaignHmacKey('final-review-2026q3', { [ref]: KEY }), KEY);
-  });
-});
-
-// ── §2.5c.5 — the deterministic calibration sample ──────────────────────────
-
-describe('calibration sample', () => {
-  const rows = Array.from({ length: 40 }, (_, i) => ({ worksheetRowId: worksheetRowIdFor(`f${i}`, KEY), armId: i % 2 === 0 ? 'opus' : 'kimi' }));
-
-  it('is a per-row property — inclusion does not change as the campaign grows', () => {
-    const at10 = assignCalibrationSample(rows.slice(0, 10), { campaignId: 'c', key: KEY, rate: 0.2, minPerArm: 0 });
-    const at40 = assignCalibrationSample(rows, { campaignId: 'c', key: KEY, rate: 0.2, minPerArm: 0 });
-    for (const r of rows.slice(0, 10)) {
-      assert.equal(at10.get(r.worksheetRowId), at40.get(r.worksheetRowId),
-        'a top-N sort would churn here and overwrite human review work already done');
-    }
-  });
-
-  it('is reproducible across machines from the key alone', () => {
-    const id = rows[0].worksheetRowId;
-    assert.equal(calibrationScore(id, 'c', KEY), calibrationScore(id, 'c', KEY));
-    assert.equal(isCalibrationSelected(id, 'c', KEY, 1.0), true, 'rate 1.0 selects everything');
-    assert.equal(isCalibrationSelected(id, 'c', KEY, 0.0), false, 'rate 0 selects nothing');
-  });
-
-  // NOTE the name: it asserts the per-arm MINIMUM is reached, nothing about
-  // monotonicity. An earlier name ("the top-up only ever ADDS") claimed the
-  // property the test below proves FALSE of this function — a test whose name
-  // outran its assertions, which is the false-green shape this suite exists to
-  // avoid. Monotonicity is a store property; see the live half.
-  it('tops up to the per-arm minimum even when the filter selects nothing', () => {
-    const assigned = assignCalibrationSample(rows, { campaignId: 'c', key: KEY, rate: 0.0 });
-    for (const armId of ['opus', 'kimi']) {
-      const n = rows.filter((r) => r.armId === armId && assigned.get(r.worksheetRowId)).length;
-      assert.equal(n, CALIBRATION_MIN_PER_ARM, `${armId} must reach the minimum even at rate 0`);
-    }
-    const atRate = assignCalibrationSample(rows, { campaignId: 'c', key: KEY, rate: 0.5 });
-    for (const r of rows) {
-      if (assigned.get(r.worksheetRowId) && isCalibrationSelected(r.worksheetRowId, 'c', KEY, 0.5)) {
-        assert.equal(atRate.get(r.worksheetRowId), true);
-      }
-    }
-  });
-
-  it('the TOP-UP is population-dependent, and pretending otherwise is the trap', () => {
-    // Pinned as a limitation, not a bug: an exact per-arm minimum is a RANK over
-    // the current population, so a lower-scoring arrival displaces a previously
-    // topped-up row. No implementation of "exactly 5 lowest" can be
-    // population-independent. This test exists so the incompatibility stays
-    // visible — the plan asserted both properties of this function, and only the
-    // filter half is true here.
-    const at8 = assignCalibrationSample(rows.slice(0, 8), { campaignId: 'c', key: KEY, rate: 0.2 });
-    const at12 = assignCalibrationSample(rows.slice(0, 12), { campaignId: 'c', key: KEY, rate: 0.2 });
-    const dropped = [...at8].filter(([id, was]) => was && at12.get(id) !== true);
-    assert.ok(dropped.length > 0,
-      'if this ever passes with 0 drops, the top-up changed shape — re-derive which layer owns monotonicity');
-    // The property that protects human work is enforced by the STORE
-    // (`calibration_assigned OR EXCLUDED.calibration_assigned`), asserted in the
-    // live half: "re-running the worksheet ... never lowers a calibration
-    // assignment". Placed there because that is where it actually holds.
-  });
-
-  it('is deterministic given a population — two computations never disagree', () => {
-    const a = assignCalibrationSample(rows, { campaignId: 'c', key: KEY, rate: 0.2 });
-    const b = assignCalibrationSample([...rows].reverse(), { campaignId: 'c', key: KEY, rate: 0.2 });
-    for (const [id, v] of a) assert.equal(b.get(id), v, `row ${id} depended on input ORDER`);
-  });
-
-  it('an arm with fewer rows than the minimum has ALL of them assigned', () => {
-    const thin = [{ worksheetRowId: 'a', armId: 'thin' }, { worksheetRowId: 'b', armId: 'thin' }];
-    const assigned = assignCalibrationSample(thin, { campaignId: 'c', key: KEY, rate: 0 });
-    assert.equal([...assigned.values()].filter(Boolean).length, 2);
-  });
-
-  it('is stratified — a lopsided arm cannot be under-sampled', () => {
-    const lopsided = [
-      ...Array.from({ length: 60 }, (_, i) => ({ worksheetRowId: `big${i}`, armId: 'big' })),
-      ...Array.from({ length: 6 }, (_, i) => ({ worksheetRowId: `small${i}`, armId: 'small' })),
-    ];
-    const assigned = assignCalibrationSample(lopsided, { campaignId: 'c', key: KEY, rate: 0.05 });
-    const small = lopsided.filter((r) => r.armId === 'small' && assigned.get(r.worksheetRowId)).length;
-    assert.ok(small >= CALIBRATION_MIN_PER_ARM, `the thin arm got ${small}, below the per-arm floor`);
-  });
-});
-
-// ── cited sources ───────────────────────────────────────────────────────────
-
-describe('cited sources', () => {
-  const content = Array.from({ length: 1000 }, (_, i) => `line${i + 1}`).join('\n');
-
-  it('the window is CENTRED on the cited line, not taken from the top', () => {
-    // The failure this prevents: an arm correctly finds a defect at line 800 of
-    // a file truncated at 500, the adjudicator sees a file without it, and the
-    // arm is penalised for being right.
-    const win = centredWindow(content, 800, 240);
-    assert.ok(win.startLine < 800 && win.endLine > 800, `line 800 must be inside [${win.startLine}, ${win.endLine}]`);
-    assert.equal(win.startLine, 680);
-    assert.match(win.text, /^line680\n/);
-    assert.equal(win.truncated, true);
-  });
-
-  it('a SINGLE line longer than the whole budget is CUT — the bound is a bound', () => {
-    // The first version kept an oversized first line whole (`&& kept.length > 0`
-    // on the break), so one minified line bypassed the ceiling entirely:
-    // measured at 500,000 characters through a 24,000 budget. A limit with an
-    // exception for the common bad case is not a limit.
-    const one = 'x'.repeat(500000);
-    const win = centredWindow(one, 1, 240, 24000);
-    // `<= 24000` exactly, with no tolerance. An earlier version of this
-    // assertion allowed `+ 120` to accommodate the truncation marker — a test
-    // written around the bug rather than against it. The marker is paid for out
-    // of the budget, so the ceiling holds for the WHOLE returned string.
-    assert.ok(win.text.length <= 24000, `single line escaped the budget at ${win.text.length} chars`);
-    assert.equal(win.truncated, true);
-    assert.match(win.text, /truncated: single line exceeds/, 'and it says so, rather than silently losing the tail');
-
-    // The ceiling holds at EVERY budget, including ones smaller than the
-    // truncation marker itself — where reserving room for the marker still
-    // overflows, because `room` clamps to 0 and the marker is appended anyway.
-    // An exported function has to survive the degenerate arguments it is handed.
-    for (const budget of [80, 40, 10, 1]) {
-      const win2 = centredWindow(one, 1, 240, budget);
-      assert.ok(win2.text.length <= budget, `budget ${budget} produced ${win2.text.length} chars`);
-    }
-
-    // A budget that merely LOOKS numeric must not disable the bound. `NaN`
-    // defeats every comparison silently (`len <= NaN` is false), so an
-    // unvalidated parameter is a bound a caller can switch off by accident.
-    for (const bogus of [NaN, Infinity, -1, 0, undefined, null]) {
-      const win3 = centredWindow(one, 1, 240, bogus);
-      assert.ok(win3.text.length <= 24000, `budget ${String(bogus)} produced ${win3.text.length} chars`);
-    }
-  });
-
-  it('the window is bounded by CHARACTERS as well as lines', () => {
-    // 240 lines of a minified file is megabytes, and every character is paid
-    // for on a spend-bearing call. A line budget is not a byte budget.
-    const wide = Array.from({ length: 50 }, () => 'x'.repeat(5000)).join('\n');
-    const win = centredWindow(wide, 1, 240, 24000);
-    assert.ok(win.text.length <= 24000, `excerpt was ${win.text.length} chars`);
-    assert.equal(win.truncated, true, 'a char-clamped excerpt is truncated, whatever the line count says');
-    assert.ok(win.endLine < 50, 'endLine must follow the clamp, not the pre-clamp window');
-  });
-
-  it('recovers an anchor from the finding prose — the cited line is absent on EVERY real row', () => {
-    // Measured 2026-08-10 against the live store: primary_file carries a :line
-    // in 0 of 3993 rows, because recordFindings stores `_primaryFile || section`
-    // and the resolved bare path wins. Without a prose anchor the centring
-    // mitigation is inert in production while its test passes on a synthetic
-    // section — a mitigation that reads as covered and never fires.
-    const anchors = detailAnchors('The `resolveNextAttempt` helper wedges when store.maxArmRunAttempt returns 0.');
-    assert.ok(anchors.includes('resolveNextAttempt'), `got ${JSON.stringify(anchors)}`);
-    assert.ok(anchors.includes('store.maxArmRunAttempt'));
-    assert.ok(!anchors.includes('The'), 'ordinary words are not anchors');
-
-    const content = `${'filler\n'.repeat(600)}function resolveNextAttempt() {}\n${'more\n'.repeat(600)}`;
-    const hit = anchorLine(content, anchors);
-    assert.equal(hit.anchor, 'resolveNextAttempt');
-    assert.equal(hit.line, 601);
-  });
-
-  it('an anchor is matched LITERALLY — model prose never becomes a regex', () => {
-    // The detail is model-authored and arrives unvalidated; compiling it would
-    // be an injection surface and a catastrophic-backtracking one.
-    assert.equal(anchorLine('a.b.c', ['a.b.c']).line, 1);
-    assert.equal(anchorLine('axbxc', ['a.b.c']), null, 'the dot must not match any character');
-  });
-
-  it('each cited path gets its OWN line — one path\'s line is never applied to another', () => {
-    const seen = [];
-    const res = resolveCitedSources({
-      section: 'scripts/a.mjs:800 and scripts/b.mjs:5',
-      detail: '', auditedSha: 'HEAD',
-      show: (_root, _sha, p) => { seen.push(p); return { ok: true, content: Array.from({ length: 1000 }, (_, i) => `${p}-line${i + 1}`).join('\n') }; },
-    });
-    const a = res.sources.find((s) => s.path === 'scripts/a.mjs');
-    const b = res.sources.find((s) => s.path === 'scripts/b.mjs');
-    assert.ok(a.startLine < 800 && a.endLine > 800, `a centred on ${a.startLine}-${a.endLine}, not on 800`);
-    assert.ok(b.startLine <= 5 && b.endLine > 5, `b centred on ${b.startLine}-${b.endLine}, not on 5`);
-    assert.equal(a.anchorKind, 'cited-line');
-    assert.equal(b.anchorKind, 'cited-line');
-  });
-
-  it('names WHICH anchor produced the window, so a head window is never ambiguous', () => {
-    const long = Array.from({ length: 1000 }, (_, i) => (i === 700 ? 'const targetSymbol = 1;' : `pad${i}`)).join('\n');
-    const viaDetail = resolveCitedSources({
-      section: 'scripts/a.mjs', detail: 'the `targetSymbol` constant is wrong', auditedSha: 'HEAD',
-      show: () => ({ ok: true, content: long }),
-    });
-    assert.equal(viaDetail.sources[0].anchorKind, 'detail-anchor');
-    assert.equal(viaDetail.sources[0].anchor, 'targetSymbol');
-    assert.ok(viaDetail.sources[0].startLine <= 701 && viaDetail.sources[0].endLine >= 701);
-
-    const viaHead = resolveCitedSources({
-      section: 'scripts/a.mjs', detail: 'nothing nameable here', auditedSha: 'HEAD',
-      show: () => ({ ok: true, content: long }),
-    });
-    assert.equal(viaHead.sources[0].anchorKind, 'head', '"found nothing" must be distinguishable from "small file"');
-    assert.equal(viaHead.sources[0].truncated, true, 'and a head window on a long file is honestly truncated');
-  });
-
-  it('a file that fits is not marked truncated', () => {
-    const win = centredWindow('a\nb\nc', null, 240);
-    assert.equal(win.truncated, false);
-    assert.equal(win.endLine, 3);
-  });
-
-  it('reads the cited line out of a section reference', () => {
-    assert.equal(citedLineOf('scripts/a.mjs:120'), 120);
-    assert.equal(citedLineOf('scripts/a.mjs'), null);
-    assert.equal(citedLineOf(null), null);
-  });
-
-  it('resolves a real file at a real revision, and reports resolvedAny honestly', () => {
-    const fake = () => ({ ok: false, error: { code: 'BAD_REVISION' } });
-    const none = resolveCitedSources({ section: 'scripts/campaign.mjs:10', auditedSha: 'deadbeef', show: fake });
-    assert.equal(none.resolvedAny, false, 'an all-fail row must be forced to unverifiable BEFORE any provider call');
-    assert.equal(none.sources[0].resolved, false);
-
-    const ok = resolveCitedSources({
-      section: 'scripts/campaign.mjs:10', auditedSha: 'HEAD',
-      show: () => ({ ok: true, content: 'a\nb\nc' }),
-    });
-    assert.equal(ok.resolvedAny, true);
-    assert.equal(ok.sources[0].path, 'scripts/campaign.mjs');
-  });
-
-  it('a sensitive path is refused and MARKED, never read', () => {
-    let read = 0;
-    const res = resolveCitedSources({
-      section: 'secrets/config.mjs:3', auditedSha: 'HEAD', show: () => { read += 1; return { ok: true, content: 'SECRET=1' }; },
-    });
-    assert.equal(read, 0, 'the egress seam must not even fetch it');
-    assert.equal(res.resolvedAny, false);
-    assert.equal(res.sources[0]?.reason, 'sensitive-path');
-  });
-});
-
-// ── the verdict contract ────────────────────────────────────────────────────
-
-describe('adjudication verdict', () => {
-  const evidence = { path: 'a.mjs', sha: 'abc', lineRange: '10-12', quotedSpan: 'x', absenceReason: null };
-
-  it('a verified verdict lacking evidence is DOWNGRADED, never warned-and-kept', () => {
-    const r = normaliseVerdict({
-      worksheetRowId: 'w1', method: 'verified', outcome: 'accepted', confidence: 0.9,
-      evidence: { path: null, sha: null, lineRange: null, quotedSpan: null, absenceReason: null },
-    }, { worksheetRowId: 'w1' });
-    assert.equal(r.ok, true);
-    assert.equal(r.verdict.method, 'unverifiable');
-    assert.equal(r.verdict.outcome, 'needs_triage');
-    assert.match(r.downgraded, /lacked evidence/);
-  });
-
-  it('a dismissal without an absenceReason is downgraded too', () => {
-    const r = normaliseVerdict({
-      worksheetRowId: 'w1', method: 'verified', outcome: 'dismissed', confidence: 0.9,
-      evidence: { ...evidence, absenceReason: null },
-    }, { worksheetRowId: 'w1' });
-    assert.equal(r.verdict.method, 'unverifiable');
-  });
-
-  it('a well-evidenced verdict survives intact', () => {
-    const r = normaliseVerdict({ worksheetRowId: 'w1', method: 'verified', outcome: 'accepted', confidence: 0.9, evidence }, { worksheetRowId: 'w1' });
-    assert.equal(r.verdict.method, 'verified');
-    assert.equal(r.downgraded, null);
-    assert.equal(routesToHumanQueue(r.verdict), false);
-  });
-
-  it('a mismatched worksheetRowId is REJECTED — it would file a verdict against the wrong finding', () => {
-    const r = normaliseVerdict({ worksheetRowId: 'other', method: 'verified', outcome: 'accepted', confidence: 1, evidence }, { worksheetRowId: 'w1' });
-    assert.equal(r.ok, false);
-    assert.match(r.reason, /mismatch/);
-  });
-
-  it('a malformed response is rejected, never a silent pending', () => {
-    assert.equal(normaliseVerdict({ nonsense: true }, { worksheetRowId: 'w1' }).ok, false);
-    assert.equal(normaliseVerdict(null, { worksheetRowId: 'w1' }).ok, false);
-    // `.strict()`: an unknown key means the model answered a different contract.
-    assert.equal(normaliseVerdict({ worksheetRowId: 'w1', method: 'verified', outcome: 'accepted', confidence: 1, evidence, extra: 1 }, { worksheetRowId: 'w1' }).ok, false);
-  });
-
-  it('unverifiable and needs_triage both route to the human queue', () => {
-    assert.equal(routesToHumanQueue({ method: 'unverifiable', outcome: 'accepted' }), true);
-    assert.equal(routesToHumanQueue({ method: 'verified', outcome: 'needs_triage' }), true);
-  });
-
-  it('the schema admits only the two methods — `judgement` is not auto-recordable', () => {
-    assert.equal(AdjudicationVerdictSchema.safeParse({ worksheetRowId: 'w', method: 'judgement', outcome: 'accepted', confidence: 1, evidence }).success, false);
-  });
-
-  it('the adjudicator is offered exactly ONE tool, and it cannot be quietly granted more', () => {
-    // Tool policy is explicitly none-but-this: retrieval happens in the CLI,
-    // where it is bounded, sensitive-path-gated and reproducible from the
-    // receipt. A `git show` tool here would be an unbounded unlogged read loop
-    // inside a spend-bearing blind adjudication.
-    assert.equal(ADJUDICATION_TOOL.name, 'record_verdict');
-    assert.equal(ADJUDICATION_TOOL.input_schema.additionalProperties, false);
-    const src = fs.readFileSync('scripts/campaign.mjs', 'utf-8');
-    const tools = src.match(/tools:\s*\[([^\]]*)\]/g) ?? [];
-    assert.deepEqual(tools, ['tools: [ADJUDICATION_TOOL]'], 'only one tool list, holding only the verdict tool');
-    assert.ok(!/tool_choice:\s*\{\s*type:\s*'auto'/.test(src), 'the tool call must stay forced');
-  });
-});
-
-// ── self_family ─────────────────────────────────────────────────────────────
-
-describe('self_family', () => {
-  it('is family-level, and unknown is null rather than a confident false', () => {
-    assert.equal(isSelfFamily('claude-opus-4-8', 'claude-opus'), true);
-    assert.equal(isSelfFamily('claude-opus-4-8', 'moonshotai/kimi-k2-thinking'), false);
-    assert.equal(isSelfFamily('moonshotai/kimi-k2', 'moonshotai/other'), true);
-    assert.equal(isSelfFamily(null, 'claude-opus'), null);
-    assert.equal(isSelfFamily('claude-opus', null), null);
-  });
-});
-
-// ── clustering refusals ─────────────────────────────────────────────────────
-
-describe('clustering', () => {
-  const opts = { threshold: 0.14, coverageFloor: 0.6 };
-
-  it('REFUSES a snapshot whose findings cite no resolvable file path', () => {
-    // Plan-mode findings cite §-sections, so the file-set prefilter can never
-    // fire — the matcher is not an instrument for that comparison, and writing
-    // a cluster set anyway would revert to "unique means total".
-    const res = clusterSnapshotFindings([
-      { findingId: 'f1', armId: 'a', section: '§0.3 (Activation Addendum)', category: 'X', detail: 'd', severity: 'HIGH' },
-      { findingId: 'f2', armId: 'b', section: '§6.1', category: 'X', detail: 'd', severity: 'HIGH' },
-    ], opts);
-    assert.equal(res.coverage, 'unknown');
-    assert.deepEqual(res.clusters, []);
-    assert.match(res.reason, /cannot fire/);
-  });
-
-  it('an empty snapshot is unknown, not a measured zero', () => {
-    assert.equal(clusterSnapshotFindings([], opts).coverage, 'unknown');
-  });
-
-  it('merges the same defect across arms and leaves distinct defects apart', () => {
-    const res = clusterSnapshotFindings([
-      { findingId: 'f1', armId: 'a', section: 'scripts/x.mjs:10', category: 'Backend', detail: 'the cost column sums only live rows so a superseded attempt vanishes', severity: 'HIGH' },
-      { findingId: 'f2', armId: 'b', section: 'scripts/x.mjs:11', category: 'Backend', detail: 'superseded attempt rows are excluded from the cost column sum', severity: 'HIGH' },
-      { findingId: 'f3', armId: 'b', section: 'scripts/y.mjs:1', category: 'Frontend', detail: 'the heading order is wrong on the standings pane', severity: 'MEDIUM' },
-    ], opts);
-    assert.notEqual(res.coverage, 'unknown');
-    const sizes = res.clusters.map((c) => c.members.length).sort();
-    assert.deepEqual(sizes, [1, 2], 'two arms describing one defect are one cluster; the unrelated finding is its own');
-  });
-
-  it('WITHIN-arm duplicates are merged — the anti-inflation rule §2.5c-i states', () => {
-    // It was prose beside a loop that could not enforce it: clustering iterated
-    // `i < k` over DISTINCT arms, so two findings from one arm could only merge
-    // via a transitive bridge through a third. Measured: two byte-identical
-    // findings from one arm produced 2 clusters at every threshold 0.00–0.50.
-    const dup = 'the cost column sums only live rows so a superseded attempt vanishes';
-    const rows = [
-      { findingId: 'f1', armId: 'opus', section: 'scripts/x.mjs', category: 'Backend', detail: dup, severity: 'HIGH' },
-      { findingId: 'f2', armId: 'opus', section: 'scripts/x.mjs', category: 'Backend', detail: dup, severity: 'HIGH' },
-    ];
-    const merged = clusterSnapshotFindings(rows, { ...opts, withinArmThreshold: 0.35 });
-    assert.equal(merged.clusters.length, 1, 'a verbose arm must not inflate itself');
-    assert.equal(merged.clusters[0].members.length, 2);
-
-    // NEGATIVE CONTROL: without the within-arm threshold the duplicate survives,
-    // so the assertion above is the new pass doing work — not the cross-arm loop
-    // happening to catch it.
-    const unmerged = clusterSnapshotFindings(rows, { ...opts, withinArmThreshold: null });
-    assert.equal(unmerged.clusters.length, 2);
-  });
-
-  it('within-arm uses its OWN threshold — the cross-model cutoff would over-merge', () => {
-    // Two DISTINCT defects from one arm in one file. They share category, path
-    // and house style, so at the cross-model cutoff (0.14, driven down by ~17%
-    // cross-vocabulary overlap) they merge — under-counting the arm, which is
-    // the inverse of the inflation the rule targets.
-    const rows = [
-      { findingId: 'f1', armId: 'opus', section: 'scripts/x.mjs', category: 'Backend', detail: 'the cost column sums only live rows so a superseded attempt vanishes from the total', severity: 'HIGH' },
-      { findingId: 'f2', armId: 'opus', section: 'scripts/x.mjs', category: 'Backend', detail: 'the retry path claims an exclusive receipt and never releases it on a crash', severity: 'HIGH' },
-    ];
-    assert.equal(clusterSnapshotFindings(rows, { ...opts, withinArmThreshold: 0.14 }).clusters.length, 1,
-      'control: at the CROSS threshold these two distinct defects wrongly merge');
-    assert.equal(clusterSnapshotFindings(rows, { ...opts, withinArmThreshold: 0.35 }).clusters.length, 2,
-      'at the within-arm threshold they stay distinct');
-  });
-
-  it('is deterministic — two runs over one snapshot produce identical clusters', () => {
-    const rows = [
-      { findingId: 'f1', armId: 'a', section: 'scripts/x.mjs:10', category: 'B', detail: 'the same defect described one way', severity: 'HIGH' },
-      { findingId: 'f2', armId: 'b', section: 'scripts/x.mjs:10', category: 'B', detail: 'the same defect described one way', severity: 'HIGH' },
-    ];
-    assert.deepEqual(clusterSnapshotFindings(rows, opts), clusterSnapshotFindings([...rows].reverse(), opts));
-  });
-});
-
-// ── receipt-name parsing (consolidated gate G1) ─────────────────────────────
-
-describe('receipt filename parsing', () => {
-  it('round-trips an arm id containing a DOUBLE hyphen', async () => {
-    // `solo--opus` is a legal arm id (`^[a-z0-9][a-z0-9-]*$`), and a greedy
-    // parse read it as snapshotId="abcdef123456--solo", armId="opus". Both then
-    // fail the caller's equality check, the receipt is SILENTLY skipped,
-    // maxAttemptOnDisk returns 0, and every later run collides on `wx` — the
-    // permanent wedge resolveNextAttempt exists to prevent, with the worst
-    // possible symptom.
-    const lock = await import('../scripts/lib/campaign/lock.mjs');
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'receipt-'));
-    const args = { campaignId: 'c1', cohortDigest: 'd1', snapshotId: 'abcdef123456', armId: 'solo--opus', repoRoot: root };
-    const claim = lock.claimReceipt({ ...args, attempt: 1 });
-    assert.equal(claim.ok, true);
-
-    const max = lock.maxAttemptOnDisk(args);
-    assert.equal(max, 1, 'the receipt just written must be visible to the disk scan');
-    assert.equal(lock.resolveNextAttempt({ ...args, dbMaxAttempt: 0 }), 2, 'a wedge would resolve 1 forever');
-
-    const scanned = lock.scanReceipts('c1', { repoRoot: root });
-    assert.equal(scanned.length, 1);
-    assert.equal(scanned[0].snapshotId, 'abcdef123456');
-    assert.equal(scanned[0].armId, 'solo--opus');
-    assert.equal(scanned[0].attempt, 1);
-  });
-
-  it('still parses the ordinary single-hyphen arm id', async () => {
-    const lock = await import('../scripts/lib/campaign/lock.mjs');
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'receipt2-'));
-    const args = { campaignId: 'c1', cohortDigest: 'd1', snapshotId: 'abcdef123456', armId: 'solo-opus', repoRoot: root };
-    lock.claimReceipt({ ...args, attempt: 3 });
-    const scanned = lock.scanReceipts('c1', { repoRoot: root });
-    assert.equal(scanned[0].armId, 'solo-opus');
-    assert.equal(scanned[0].attempt, 3);
-  });
-});
-
-// ── promotion: the producer for the arm-run spine ───────────────────────────
-
-describe('bake-off log promotion', () => {
-  const ctx = { campaignId: 'camp', lockDigest: 'lock1', shaByRunId: { r1: 'abc123', r2: 'abc123', r3: 'def456' } };
-
-  it('promotes a well-formed entry and derives audited_sha from the arms\' runs', () => {
-    const cls = classifyLogEntry({
-      snapshotId: 's1', campaignId: 'camp', lockDigest: 'lock1', transcript: 't.json',
-      arms: { opus: { runId: 'r1', costUsd: 1.5 }, kimi: { runId: 'r2', costUsd: 0.4 } },
-    }, ctx);
-    assert.equal(cls.eligible, true);
-    assert.equal(cls.auditedSha, 'abc123');
-    assert.deepEqual(cls.armRuns.map((a) => [a.armId, a.costStatus]), [['opus', 'priced'], ['kimi', 'priced']]);
-  });
-
-  it('an entry with no lockDigest is INELIGIBLE — never adopted into the current cohort', () => {
-    // This is the five-false-greens rule: evidence collected under an unknown
-    // contract cannot be relabelled into a cohort it was not produced under.
-    const cls = classifyLogEntry({ snapshotId: 's1', campaignId: 'camp', arms: { opus: { runId: 'r1' } } }, ctx);
-    assert.equal(cls.eligible, false);
-    assert.match(cls.reason, /unknown contract/);
-  });
-
-  it('an entry under a SUPERSEDED lock is its own cohort, not this one', () => {
-    const cls = classifyLogEntry({ snapshotId: 's1', campaignId: 'camp', lockDigest: 'oldlock', arms: { opus: { runId: 'r1' } } }, ctx);
-    assert.equal(cls.eligible, false);
-    assert.match(cls.reason, /superseded lock oldlock/);
-  });
-
-  it('arms disagreeing about the commit are not one snapshot', () => {
-    const cls = classifyLogEntry({
-      snapshotId: 's1', campaignId: 'camp', lockDigest: 'lock1',
-      arms: { opus: { runId: 'r1' }, kimi: { runId: 'r3' } },
-    }, ctx);
-    assert.equal(cls.eligible, false);
-    assert.match(cls.reason, /one snapshot is one revision/);
-  });
-
-  it('an unresolvable revision is ineligible, never promoted with a guessed sha', () => {
-    const cls = classifyLogEntry({ snapshotId: 's1', campaignId: 'camp', lockDigest: 'lock1', arms: { opus: { runId: 'unknown' } } }, ctx);
-    assert.equal(cls.eligible, false);
-    assert.match(cls.reason, /unadjudicatable/);
-  });
-
-  it('a missing cost is UNPRICED, never 0 — an unrecorded charge must not read as free', () => {
-    const cls = classifyLogEntry({
-      snapshotId: 's1', campaignId: 'camp', lockDigest: 'lock1',
-      arms: { opus: { runId: 'r1' }, kimi: { runId: 'r2', costUsd: 0 } },
-    }, ctx);
-    assert.deepEqual(cls.armRuns.map((a) => [a.armId, a.costUsd, a.costStatus]),
-      [['opus', null, 'unpriced'], ['kimi', 0, 'priced']],
-      'a genuinely measured 0 stays priced; an ABSENT cost is unpriced');
-  });
-
-  it('an errored arm still promotes, carrying its error — a silent gap is never allowed', () => {
-    const cls = classifyLogEntry({
-      snapshotId: 's1', campaignId: 'camp', lockDigest: 'lock1',
-      arms: { opus: { runId: 'r1', costUsd: 1 }, kimi: { error: 'exit 1' } },
-    }, ctx);
-    assert.equal(cls.eligible, true);
-    assert.equal(cls.armRuns.find((a) => a.armId === 'kimi').error, 'exit 1');
-  });
-});
-
-// ── --force promotion (gap 2) ───────────────────────────────────────────────
-
-describe('promotion attempt resolution (--force)', () => {
-  it('first promotion is attempt 1 and supersedes nothing', () => {
-    assert.deepEqual(resolvePromotionAttempt({ existingAttempt: 0, forced: false }),
-      { skip: false, attempt: 1, supersedePrior: false });
-  });
-
-  it('re-running reconcile on an already-promoted arm SKIPS — idempotence, not a second charge', () => {
-    assert.deepEqual(resolvePromotionAttempt({ existingAttempt: 1, forced: false }),
-      { skip: true, attempt: 1, supersedePrior: false });
-  });
-
-  it('a FORCED re-collection appends attempt N+1 and supersedes the prior live row', () => {
-    // Never an overwrite: the earlier attempt stays readable and its spend still
-    // counts, which is exactly why armSpend sums superseded rows. Before --force
-    // existed this branch was unreachable, so the attempt column, the partial
-    // unique index and the receipt-attempt protocol were machinery no operator
-    // action could trigger.
-    assert.deepEqual(resolvePromotionAttempt({ existingAttempt: 1, forced: true }),
-      { skip: false, attempt: 2, supersedePrior: true });
-    assert.deepEqual(resolvePromotionAttempt({ existingAttempt: 4, forced: true }),
-      { skip: false, attempt: 5, supersedePrior: true });
-  });
-
-  it('a garbage attempt count is treated as none, never as a negative attempt', () => {
-    for (const bogus of [null, undefined, -3, NaN, 'two']) {
-      assert.deepEqual(resolvePromotionAttempt({ existingAttempt: bogus, forced: true }),
-        { skip: false, attempt: 1, supersedePrior: false });
-    }
-  });
-});
-
-// ── per-arm retry promotion (D5) ────────────────────────────────────────────
-
-describe('isArmRetried — the per-arm marker promotion actually keys on', () => {
-  it('THE HEADLINE CASE: only the named arm reads as retried', () => {
-    const entry = { retriedArmIds: ['grok'] };
-    assert.equal(isArmRetried(entry, 'grok'), true);
-    assert.equal(isArmRetried(entry, 'opus'), false, 'opus was carried forward unchanged and must not be re-promoted');
-    assert.equal(isArmRetried(entry, 'kimi'), false);
-  });
-
-  it('a plain (non-retry) entry: no arm is retried', () => {
-    assert.equal(isArmRetried({ arms: { opus: {} } }, 'opus'), false);
-  });
-
-  it('legacy whole-entry forced:true (pre-D5 log lines, no retriedArmIds field): every arm is retried', () => {
-    // Before retriedArmIds existed, `forced: true` meant the WHOLE entry was
-    // a re-collection — every arm present in it was, by definition, a retry.
-    // A log line written before this change must promote exactly the same
-    // way it always did.
-    assert.equal(isArmRetried({ forced: true }, 'opus'), true);
-    assert.equal(isArmRetried({ forced: true }, 'anyArmAtAll'), true);
-  });
-
-  it('NEGATIVE CONTROL: retriedArmIds present but empty means nothing is retried, even with legacy forced also set', () => {
-    // retriedArmIds, when present, is authoritative — an explicit empty list
-    // is a real fact ("this entry retried nothing"), not a reason to fall
-    // back to the legacy blanket flag.
-    assert.equal(isArmRetried({ forced: true, retriedArmIds: [] }, 'opus'), false);
-  });
-
-  it('a missing or malformed entry never throws and reads as not-retried', () => {
-    assert.equal(isArmRetried(undefined, 'opus'), false);
-    assert.equal(isArmRetried({}, 'opus'), false);
-    assert.equal(isArmRetried({ retriedArmIds: 'not-an-array' }, 'opus'), false);
+  it('the existing "meta" exclusion is unaffected by derivation — still never auto-redacted', () => {
+    const r = buildModelRedactor({ arms: [{ id: 'a1', model: 'claude-opus' }] });
+    assert.equal(r('metadata about the run'), 'metadata about the run');
   });
 });
 

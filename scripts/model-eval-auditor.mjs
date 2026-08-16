@@ -39,25 +39,20 @@ import { runBlindJudgeProtocol } from './lib/model-eval/blind-judge.mjs';
 import { assembleCostRows, buildUsageEvent } from './lib/model-eval/cost.mjs';
 import { CANONICAL_ARMS, buildCandidateArm } from './lib/audit-arms.mjs';
 import { parseThresholdConfig } from './lib/model-eval/config/schema.mjs';
-import {
-  createEvalRun, updateEvalRunTerminal, EvalRunAlreadyActiveError,
-  upsertComparison, maxComparisonArmAttempt,
-} from './lib/store/model-eval.mjs';
+import { createEvalRun, updateEvalRunTerminal, EvalRunAlreadyActiveError } from './lib/store/model-eval.mjs';
 import { resolveRepoIdentity } from './lib/repo-identity.mjs';
 import { writeOutput } from './lib/file-io.mjs';
 import { argOption } from './lib/cli-io.mjs';
 import { RunPreflightError, parseJsonArg } from './lib/model-eval/cli-shared.mjs';
-// D3a — the declarative arm manifest. `isScoredArm`/`ArmSchema` decide WHICH
-// arms this driver spawns (control/replicate are collected elsewhere, never
-// scored here — auditor manifests don't run a passive collector at all, so a
-// control/replicate arm declared on one is inert by construction, but the
-// filter stays for a single shared meaning of "scored" across every role).
-import { parseComparisonManifest, resolveManifestPaths } from './lib/comparison/manifest.mjs';
-import { isScoredArm } from './lib/comparison/arms.mjs';
-import { configDigest as manifestConfigDigest, LOCK_SCHEMA_VERSION } from './lib/comparison/lock.mjs';
+// D7a layering fix — runManifestDriver moved to a lib module (was defined
+// here); this entry point is now a thin shim calling it, same shape D2's
+// bakeoff-collect.mjs/campaign.mjs reduction already establishes elsewhere in
+// this plan. DEFAULT_CORPUS_PATH moved WITH it (executors.mjs's own
+// auditorPrepareContext needs it too — one definition, not two).
+import { runManifestDriver } from './lib/model-eval/manifest-driver.mjs';
+import { DEFAULT_CORPUS_PATH } from './lib/model-eval/executors.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DEFAULT_CORPUS_PATH = path.join('docs', 'experiments', 'audit-effectiveness', 'known-defects.json');
 const DEFAULT_THRESHOLDS_PATH = path.join(__dirname, 'lib', 'model-eval', 'config', 'auditor-thresholds.json');
 const BASELINE_ARM = CANONICAL_ARMS.find((a) => a.id === 'A'); // production GPT audit — the real baseline
 
@@ -272,154 +267,6 @@ async function runPromotionTier({
     },
     cost: costDelta ? { totalUsd: (costDelta.candidateCostUsd ?? 0) + (costDelta.baselineCostUsd ?? 0), byRow: costRows } : null,
   };
-}
-
-// ── D3a — declarative arm manifest driver ───────────────────────────────────
-
-/**
- * Resolve a declarative arm manifest and invoke the SAME single-candidate
- * execution path once per scored arm, each with a real `--candidate`
- * (REQ-safety-f0ef6d7d). Spawned as a CHILD PROCESS per arm, not called
- * in-process: that keeps the invariant literally true at the process
- * boundary — a script inspecting its own argv sees `--candidate` present on
- * every execution, manifest-driven or not — and means this driver never has
- * to re-implement anything the single-candidate path already does correctly
- * (route resolution, corpus loading, egress gating, terminal-status writes).
- *
- * **Sequential, never parallel.** This harness is "bounded and synchronous by
- * construction" by design (AGENTS.md, 2026-07-26) — running arms concurrently
- * would send concurrent provider calls this repo has never needed to
- * rate-limit for, and would race each arm's own createEvalRun/updateEvalRunTerminal
- * pair for no benefit; each attempt is paid, so there is nothing to gain from
- * haste.
- *
- * **Per-arm failure is terminal for that arm only** — its child process exits
- * non-zero, siblings still run, and the aggregate `--out` records it rather
- * than crashing the driver. A PREFLIGHT failure in the child (bad candidate
- * JSON, corpus too small) writes no store row at all, same as it always has
- * for a plain --candidate invocation; a provider/execution failure DOES
- * reach a terminal status via the child's own updateEvalRunTerminal call.
- * Either way the failure is visible in this function's own printed summary
- * and `--out` JSON, which is the only place a preflight-stage failure is
- * recorded at all.
- *
- * @param {{manifestPath: string, tier: string, corpusFlagPath: string|null,
- *   thresholdsPath: string, outFile: string|null, repoRoots: string[]}} args
- */
-async function runManifestDriver({ manifestPath, tier, corpusFlagPath, thresholdsPath, outFile, repoRoots }) {
-  let raw;
-  try {
-    raw = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-  } catch (err) {
-    throw new RunPreflightError('bad_manifest', `--manifest: could not read/parse "${manifestPath}": ${err.message}`);
-  }
-
-  let manifest;
-  try {
-    ({ manifest } = parseComparisonManifest(raw));
-  } catch (err) {
-    throw new RunPreflightError('bad_manifest', `--manifest: ${err.message}`);
-  }
-  if (manifest.role !== 'auditor') {
-    throw new RunPreflightError('bad_manifest', `--manifest: role must be "auditor" for model-eval-auditor.mjs, got "${manifest.role}"`);
-  }
-
-  // Refused at LOAD, before any provider call (INC-001's lesson) — a typo'd
-  // or sensitive subject path costs nothing.
-  const repoRoot = repoRoots[0] ?? process.cwd();
-  let resolvedPaths;
-  try {
-    resolvedPaths = resolveManifestPaths(manifest, { repoRoot });
-  } catch (err) {
-    throw new RunPreflightError('manifest_path_refused', `--manifest: ${err.message}`);
-  }
-
-  // Precedence: an explicit --corpus on THIS invocation is the operator's own
-  // instruction and wins over everything; the manifest's declared subject
-  // comes next; the CLI's hardcoded default is the last resort.
-  const effectiveCorpusPath = corpusFlagPath ?? resolvedPaths.corpusPath?.abs ?? DEFAULT_CORPUS_PATH;
-
-  const digest = manifestConfigDigest(manifest);
-  const repoIdentity = resolveRepoIdentity();
-  const ensured = await upsertComparison({
-    repoId: repoIdentity.repoUuid, comparisonKey: manifest.id, configDigest: digest,
-    lockSchemaVersion: LOCK_SCHEMA_VERSION, role: 'auditor', subjectRef: manifest.subject ?? null,
-  });
-  if (!ensured.ok) {
-    throw new RunPreflightError('comparison_persist_failed', `--manifest: could not persist comparison "${manifest.id}": ${ensured.error}`);
-  }
-  // null only when cloud is off — every arm still runs; the cohort is simply
-  // unlinked, same graceful-degradation posture as the rest of this harness.
-  const comparisonId = ensured.id;
-
-  const scoredArms = manifest.arms.filter(isScoredArm);
-  const unscoredArms = manifest.arms.filter((a) => !isScoredArm(a));
-  // D3a's design text says control/replicate arms are "collected and never
-  // scored" — this driver does not yet collect them at all: `model_eval_runs`
-  // has no column distinguishing "ran, but excluded from the decision" from
-  // "never ran", so executing them today would produce a scored-shaped row
-  // with no honest way to mark it unscored. Filtering them out entirely is
-  // the smaller, correct-for-now gap (a declared arm the manifest still
-  // validates, just never spawned) rather than a silent one — at minimum this
-  // says so, out loud, so a manifest author sees their declaration had no
-  // effect instead of discovering it by absence.
-  if (unscoredArms.length > 0) {
-    process.stderr.write(`  [model-eval-auditor] manifest: ${unscoredArms.length} control/replicate arm(s) declared but NOT executed `
-      + `(${unscoredArms.map((a) => a.id).join(', ')}) — this driver does not yet collect unscored arms, only score them\n`);
-  }
-  const scriptPath = fileURLToPath(import.meta.url);
-  const results = [];
-
-  for (const arm of scoredArms) {
-    // Resume (D5a's reducer, applied to the auditor role): an arm with a live
-    // success is never re-run — re-invoking the driver resumes the cohort by
-    // running only the arms without one.
-    let nextAttempt = 1;
-    let supersede = false;
-    if (comparisonId) {
-      const existing = await maxComparisonArmAttempt({ comparisonId, armId: arm.id });
-      if (existing.hasLiveSuccess) {
-        process.stderr.write(`  [model-eval-auditor] manifest: arm "${arm.id}" already has a live success — skipping (resume)\n`);
-        results.push({ armId: arm.id, skipped: true, ok: true, attempt: existing.attempt });
-        continue;
-      }
-      nextAttempt = existing.attempt + 1;
-      supersede = existing.attempt > 0;
-    }
-
-    const armOutDir = fs.mkdtempSync(path.join(os.tmpdir(), 'model-eval-arm-'));
-    const armOutFile = path.join(armOutDir, 'result.json');
-    // A bare model name/sentinel is the only thing an arm declares — the
-    // general mapping onto CandidateSpecSchema's discriminated union.
-    const candidateSpec = { kind: 'sentinel', value: arm.model };
-    const args = [
-      scriptPath, '--candidate', JSON.stringify(candidateSpec), '--tier', tier,
-      '--thresholds', thresholdsPath, '--corpus', effectiveCorpusPath, '--out', armOutFile,
-    ];
-    if (repoRoots.length > 1) args.push('--repo-roots', repoRoots.slice(1).join(','));
-    if (comparisonId) args.push('--comparison-id', comparisonId, '--arm-id', arm.id, '--attempt', String(nextAttempt));
-    if (supersede) args.push('--supersede-prior');
-
-    process.stderr.write(`  [model-eval-auditor] manifest: running arm "${arm.id}" (model ${arm.model})…\n`);
-    // node itself, not a shim — no CVE-2024-27980 exposure, the same
-    // reasoning every other spawn site in this repo already documents.
-    const spawned = spawnSync(process.execPath, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-    let armResult = null;
-    try { armResult = JSON.parse(fs.readFileSync(armOutFile, 'utf8')); } catch { /* the arm may have failed before writing --out */ }
-    const ok = spawned.status === 0;
-    if (!ok) {
-      process.stderr.write(`  [model-eval-auditor] manifest: arm "${arm.id}" FAILED (exit ${spawned.status}) — comparison continues with remaining arm(s)\n`);
-      if (spawned.stderr) process.stderr.write(`${spawned.stderr}\n`);
-    }
-    results.push({ armId: arm.id, ok, exitCode: spawned.status, attempt: nextAttempt, result: armResult });
-  }
-
-  const failedArms = results.filter((r) => !r.ok && !r.skipped).map((r) => r.armId);
-  const summaryLine = `[model-eval-auditor] manifest=${manifest.id} comparisonId=${comparisonId ?? '(cloud off)'} arms=${scoredArms.length} failed=${failedArms.length}`;
-  writeOutput({ manifestId: manifest.id, comparisonId, tier, corpusPath: effectiveCorpusPath, arms: results }, outFile, summaryLine);
-  if (failedArms.length > 0) {
-    process.stderr.write(`  [model-eval-auditor] manifest: arm(s) failed: ${failedArms.join(', ')} — INCONCLUSIVE for those; siblings recorded normally\n`);
-  }
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────

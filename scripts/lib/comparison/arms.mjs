@@ -31,6 +31,14 @@ export const ArmSchema = z.object({
   model: z.string().min(1),
   mode: z.enum(['shadow', 'primary']),
   type: z.enum(['replicate', 'control']).optional(),
+  // D1c escape hatch: overrides `resolveProviderIdentity(model)` for blind
+  // adjudication when no source (first-party parser, OpenRouter slug, static
+  // residue) can derive a provider for this arm's model string. Declared on
+  // `ArmSchema` — imported by BOTH `campaign/config.mjs` (the passive
+  // `final_review_shadow` path) and `comparison/manifest.mjs` (the
+  // synchronous path) — so one schema change closes the gap for both
+  // mechanisms rather than two. See scripts/lib/store/campaign.mjs.
+  redactionTerms: z.array(z.string().min(1)).min(1).optional(),
 }).strict();
 
 /**
