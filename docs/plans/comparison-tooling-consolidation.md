@@ -1,7 +1,8 @@
 # Plan: Comparison-Tooling Consolidation
 
 - **Date**: 2026-08-16 (revised same day — see *Post-gate revision* below)
-- **Status**: Draft — **partially gated. Read the gate table before executing.**
+- **Status**: Approved — GPT (3 rounds, 100% acceptance) + Gemini (3 rounds,
+  `APPROVE`) on both the original and post-gate content. Ready to execute.
 - **Author**: Claude + Louis
 - **Scope**: backend (two CLI entry points, their lib modules, their test suites)
   — **plus**, as of the post-gate revision, the arm-count and role-coverage
@@ -13,10 +14,52 @@
 
 ## Audit trail
 
+**Original gate** (D1/D2/D3, Clusters A–C as first drafted):
+
 | Gate | Rounds | Result |
 |---|---|---|
 | GPT (`/audit-plan`) | **5 of 5 (absolute cap)** | H 2→2→4→2→3, M 3→3→0→3→2, L 0→1→0→0→0. **25 findings, 25 accepted as fix-now — zero dismissals, zero deferrals, zero rebuttals (100% every round).** |
 | Gemini (`--mode plan`, mandatory) | **3** (2-round cap + one genuine-bug exception) | R1 `CONCERNS` — 4 findings **+ 1 over-engineering flag**, coherence `Adequate`. R2 `CONCERNS` — 2 findings, coherence **`Strong`**, 0 over-eng. R3 **`APPROVE`** — **0 new, 0 wrongly-dismissed, 0 over-engineering**, coherence `Strong`. **7 of 7 accepted.** |
+
+**Post-gate revision re-audit** (D1c, D6, D7/Cluster D — the arm-count and
+role-coverage material added after the original gate, 2026-08-16):
+
+| Round | H / M / L | Character | Acceptance |
+|---|---|---|---|
+| R1 | 4 / 3 / 0 | Every finding on genuinely new (post-gate) content — the role-executor contract, the Phase-7 scope boundary, the extraction-list omission, the promotion exit-code ambiguity, the redaction-derivation gap, the module-contract test's string-search weakness, the aggregate-shape ambiguity | 7/7 accepted (100%) |
+| R2 | 5 / 2 / 0 | Mostly REGRESSIONS in round-1's own fixes (an untagged result union, a real blinding-alias regression caught before it shipped, a self-contradictory D7 heading) plus one genuinely new gap (arm-set invariant weaker than it looked) | 6/6 accepted (100%) |
+| R3 | 7 / 2 / 0 | A mix of layering violations (lib importing an entry point), unrepresentable types (required fields with nothing to populate on early failure), and — the sharpest class — **self-contradictions between this plan's own sections** (a close-out gate that would refuse the plan's own truncation-order recommendation; a "pure" claim contradicting the same paragraph's own dependency table) | 9/9 accepted (100%) |
+
+**Gemini (`--mode plan`, mandatory) on the post-gate content** — 3 rounds (2-round
+cap + one genuine-bug exception):
+
+| Round | Verdict | Findings |
+|---|---|---|
+| R1 | `CONCERNS` | G1 — the role-generic `EXECUTORS` registry took `corpus` as a per-call parameter while D7c required it fetched once per run; unresolvable without either breaking genericity or breaking fetch-once. Fixed: two-phase `{prepareContext?, executeArm}` interface. |
+| R2 | `CONCERNS` | G1 — the round-3 GPT fix's "adoption is a durable write" was false: `promoteFromLog` writes the STORE, never the SOURCE log, so a re-run without `--adopt-legacy` re-reads the same unresolved entries. Fixed: an appended, idempotent adoption receipt, folded by `readLog()` on every future read. G2 — `scoreAgainstGroundTruth` cannot populate the mandatory `usage` field; the token/cost accounting happens inside its per-row `extractStructured` calls and never escapes. Fixed: extended to sum and return it. G3 — `campaign/promote.mjs → lib/store/campaign.mjs` is `shared-lib → stores`, a real, currently-nonexistent, unpermitted cross-domain edge D2a's own table introduces; the "every edge is intra-domain" claim missed the one file that touches a store. Fixed: a file-specific domain rule reusing the existing `model-eval` domain (already permits `stores`), never widening `shared-lib` itself. |
+| R3 | **`APPROVE`** | **0 new, 0 wrongly-dismissed.** |
+
+**Why round 3 was warranted past the 2-round cap**: both R1 and R2 findings
+were concrete design/correctness defects (an unrepresentable interface
+contract, a false durability claim, a real unpermitted cross-domain edge) —
+the documented genuine-bug exception, not rigor pressure or
+implementation-completeness. All 4 findings across 2 rounds accepted, 0
+dismissed, 0 deferred.
+
+**Stop decision: GPT round 3, the documented default cap — not extended.**
+Acceptance was 100% every round, which by the doctrine's own rule argues FOR
+continuing (a round accepted wholesale is not rigor pressure). The reason to
+stop anyway: round 3's *character* shifted from "new gaps in new content" and
+"regressions in the immediately-prior fix" toward **self-contradictions
+between increasingly many prior fixes** — a signal that the ungated material
+had reached a size where further additions were as likely to manufacture a
+new internal inconsistency as to close a real one. Three rounds gave the
+arm-count and role-coverage material the same depth of scrutiny the original
+D1/D2/D3 content received (5 rounds, but starting from a smaller, single-axis
+surface); continuing past the default cap is reserved for a concrete net-new
+design bug forcing it, and none was outstanding at the end of R3 — every
+finding across all three rounds was fixed, none deferred. Proceeding to the
+mandatory Gemini gate over the full plan (original + post-gate content) next.
 
 **Total: 32 findings across both gates, 32 accepted, 0 dismissed, 0 deferred, 0 rebutted.**
 
@@ -268,6 +311,15 @@ whether or not such entries exist**:
   that *"cannot judge and an arm did not run are different facts and must not
   share a message."* Keeping a silent fallback for the no-id case while
   refusing the unresolvable case was the inconsistency; D1 removes it.
+  **Made explicit (round-3 gate, H5): both cases land in the SAME
+  `unjudgeable` bucket** — `campaignId: null` (predates campaign declaration)
+  and `campaignId` **declared but unresolvable** (deleted/malformed campaign
+  reference) are both "cannot judge", distinguished only by their **reason
+  code** (`no-campaign-id` vs. `campaign-unresolvable`), never by routing to
+  different outcomes. §D1b's `PromotionResult` table's `skippedUnjudgeable`
+  covers BOTH — a round-2 test-matrix row that filed a declared-but-unresolvable
+  entry under `failedJudgeable` (a write failure) directly contradicted this
+  rule and is corrected in §8's matrix below.
 - **Escape hatch, explicit rather than implicit**: an operator who knows what
   legacy entries belong to passes `--campaign <id>` to interpret them under a
   named campaign. A guess becomes a declared decision, which is the whole
@@ -351,12 +403,40 @@ Resolved:
 |---|---|
 | **readout envelope** (CLI-composed, **not** `summarise()`'s return) | `unjudgeable: {count, byReason: {reason: [entryId…]}}` — **excluded from `complete`, `incomplete`, `target` and `remaining`**, so every existing ratio keeps its current denominator |
 | CLI readout | one line per reason with counts and ids, phrased as *"cannot judge"*, never merged into the incomplete list |
-| **Exit code** | **zero.** A readout reporting unjudgeable entries has succeeded at reporting; it is not a gate. Only `promoteFromLog` refuses (non-zero), because promotion is an action on the data rather than a description of it |
+| **`printProgress`'s exit code** | **zero, always.** A readout reporting unjudgeable entries has succeeded at reporting; it is not a gate |
+| **`promoteFromLog`'s exit code** | **the STRUCTURED RESULT below determines it — see the exhaustive rule** |
 | Legacy adoption | when `--adopt-legacy` reinterprets the `null` group, the readout **says so on its own line** — an adopted interpretation must never look like a native one |
+
+**`promoteFromLog`'s structured result, and the exit rule made exhaustive
+(post-gate fix, H4).** The round-1 gate correctly flagged that "Only
+`promoteFromLog` refuses (non-zero)" is ambiguous read on its own — it can be
+(mis)implemented as "refuses whenever unjudgeable entries are present", which
+is the exact permanent-denial-of-service shape §D1a's own prose rejects two
+paragraphs above this table. Removing the ambiguity means defining the return
+shape, not just the words:
+
+```
+PromotionResult = {
+  promoted:          EntryId[],
+  skippedUnjudgeable: Array<{entryId, reason}>,   // legacy, no campaignId — D1a
+  failedJudgeable:    Array<{entryId, error}>,    // a REAL, actionable failure
+}
+```
+
+**Exit rule, exhaustive over that shape**: `exitCode = failedJudgeable.length
+> 0 ? 1 : 0`. **`skippedUnjudgeable` NEVER appears in the exit-code decision,
+under any count, including "only unjudgeable entries present, zero promoted."**
+That is precisely the case D1a's prose already requires to exit zero, and
+writing the rule against the structured result rather than against prose is
+what makes an implementer's reading of "refuses" unambiguous. The CLI readout
+still prints `skippedUnjudgeable`'s count and reasons — visibility, not
+failure, is the answer to "how do I know legacy history is piling up."
 
 The exit-code row is the one worth being explicit about: making a *readout* fail
 because history is unjudgeable would push an operator to stop running it, which
-is how the invisible-spend incident happened in the first place.
+is how the invisible-spend incident happened in the first place. Making
+`promoteFromLog` fail on the same condition would be the identical mistake one
+command over.
 
 `summary.mjs` stays pure under this: the partition needs the scope and the
 entries, both already in hand, and performs no I/O.
@@ -407,6 +487,35 @@ groupByCampaign(entries) → Map<campaignId|null, Entry[]>
   exists solely so the readout can disclose the reinterpretation (per the
   observable-contract table); nothing branches on it. Without `--adopt-legacy`
   the null group is never stamped and remains `unjudgeable`.
+
+  **The in-memory stamp is correct for THIS run; it was wrongly claimed durable
+  across future ones (Gemini gate, G1).** `nullGroup.map(...)` is a real,
+  correct transformation for the CURRENT invocation's `summarise`/
+  `promoteFromLog` calls — that part was never wrong. What was wrong: a
+  round-3 fix claimed re-running promotion later would see the entry as
+  "an ordinary judgeable entry… on disk." It would not — `promoteFromLog`
+  writes the STORE, never the SOURCE log
+  (`.audit/bakeoff-log.jsonl`), so a later run reading that file with no
+  `--adopt-legacy` sees the identical `campaignId: null` entry it started
+  with. **The log stays append-only** (mutating historical entries in place
+  is the wrong fix for an audit log) — so durability is an **appended
+  receipt**, not a rewrite:
+
+  ```
+  --adopt-legacy + --campaign X
+    ↳ nullGroup.map(e => ({ ...e, campaignId: X, adopted: true }))  (unchanged, this run)
+    ↳ ALSO appends one receipt per adopted entry to the log:
+        { type: 'adoption-receipt', entryId, campaignId: X, adoptedAt }
+  ```
+
+  `readLog()` folds receipts over their target entries **before**
+  `scopeForEntry` ever sees them: an entry with a matching receipt resolves
+  under the receipted `campaignId` on every SUBSEQUENT run, with no
+  `--adopt-legacy` flag required again — the adoption is a recorded historical
+  fact, not a per-invocation reinterpretation. A duplicate receipt for the
+  same `entryId` is a no-op (idempotent by construction: folding the same
+  receipt twice yields the same resolved entry). This is the actual mechanism
+  the round-3 fix's "durable, idempotent" claim needed and did not have.
 - **With no `--campaign` and more than one campaign present, the command
   refuses** — the same ambiguity refusal `resolveArms` already makes. It does
   not pick, and it does not silently summarise all of them.
@@ -610,35 +719,178 @@ campaign turns on. For a system whose entire purpose is to be run again with
 different arms, a recurring manual step that silently corrupts the evidence when
 skipped is the worst available failure mode.
 
-**The fix is the same derived-set principle**: the vendor terms for a given
-comparison are derivable from the declared arms' own model strings (`qwen/…`,
-`deepseek/…`, `moonshotai/…` — the provider segment is right there in the id),
-so the list becomes *computed from the arm set* plus a small static residue for
-vendors whose name never appears in their own model id. Same shape as every
-other fix in D1c: stop asserting a set, derive it.
-
-> **Deliberately NOT widened into a general redaction overhaul.** The static
-> list also carries hand-won exclusions (`meta` is absent on purpose — it
-> matches inside "metadata" and redacting it corrupts the prose the adjudicator
-> must read). Those stay. This adds derivation *alongside* the residue; it does
-> not replace a working security control with a clever one.
-
-**Enforcement — a derived-set invariant, deliberately NOT a golden file.** A
-golden fixture pins one arm set, so it must be edited whenever an arm is added —
-and an edited golden proves only that someone edited it. The assertion instead
-compares two things the code already has:
+**The fix, made a real contract rather than a gesture (post-gate fix, M1).**
+The round-1 gate was right that "the provider segment is right there in the id"
+does not hold universally — **measured against the live committed campaign**:
 
 ```
-for n in [1, 2, 6]:                       # 1 exercises the degenerate case
-  scope = a synthetic ResolvedScope with n arms
-  assert keys(summarise(entries, scope).totals.uniqueByArm) ⊆ ids(scope.arms)
-  assert every arm in scope.arms is REPRESENTED (present, or explicitly unpaired)
+moonshotai/kimi-k2-thinking   → clean vendor/model slug (OpenRouter convention)
+qwen/qwen3.8-max              → clean vendor/model slug
+deepseek/deepseek-v4-pro      → clean vendor/model slug
+claude-opus                   → NO slash — first-party, needs a parser, not a split
+grok-4.6                      → NO slash — xAI direct, no vendor segment at all
+gemini-pro-latest             → NO slash — first-party sentinel
+```
+
+Three shapes, three sources, tried in order — **`resolveProviderIdentity(model)`**
+in `scripts/lib/store/campaign.mjs`, called once per declared arm at
+**arm-declaration load** — a wording fix, not a mechanism change (round-3 gate,
+H1): the earlier draft said "manifest load", but `PROVIDER_TERMS`/this
+resolver lives in `store/campaign.mjs`, which the **passive** campaign path
+(`final_review_shadow`) uses directly — D7 states explicitly that path
+**never touches `comparison/manifest.mjs`**. Calling it "manifest load" would
+have implied the fix only covers the synchronous path, which is backwards:
+this fix is Cluster A′/Phase 1′ scope specifically **because** it closes the
+passive path's own defect — the one the arm-count section opened with.
+
+1. **First-party parsers already in this repo** — `parseClaudeModel` /
+   `parseGeminiModel` / `parseOpenAIModel` (`model-resolver.mjs`). A match
+   yields the canonical `provider` field they already expose (`anthropic` /
+   `google` / `openai`) — reusing an existing, tested parser rather than a
+   second regex.
+2. **The OpenRouter `vendor/model` slug** — the segment before the first `/`,
+   lowercased. Covers gateway ids by construction.
+3. **A small static residue** for known bare ids no parser or slug covers
+   (`grok-*` → `xai`), kept explicit and short rather than guessed at.
+
+**Unresolvable is a REFUSAL, not a silent gap.** If none of the three sources
+resolve an identity for a declared arm, blind-comparison setup **fails at
+manifest load** — the same fail-closed posture `resolveAndClassify`
+(`sensitive-paths.mjs`) already applies to path classification. A campaign
+with an unredactable arm is not run half-blind; it is not run. **The refusal
+message names the escape hatch**: declare an explicit `redactionTerms: string[]`
+on that arm (validated non-empty) rather than silently extending the static
+residue table — the operator who knows the vendor states it once, on the
+one arm that needs it, instead of a maintainer growing a table for everyone.
+
+**A canonical `provider` is a ROUTING identity, not a REDACTION lexicon — and
+collapsing the two is a real blinding regression the round-2 gate caught**
+(post-gate fix, H3). `resolveProviderIdentity` returning `'anthropic'` and
+redacting only the word `anthropic` would have **dropped `claude`, `opus`,
+`sonnet`, `haiku` (all narrative aliases the EXISTING static list already
+redacts) and `gemini`, `gpt` the same way** — an adjudicator reading "Claude
+found three issues" would see the model's name in the supposedly-blind prose.
+The fix is a small **alias lexicon keyed by canonical provider**, not a
+per-arm table (this is the load-bearing difference from the table this whole
+section replaces — a handful of PROVIDERS, not N arms):
+
+```
+PROVIDER_ALIASES = {
+  anthropic: ['anthropic', 'claude', 'opus', 'sonnet', 'haiku'],
+  google:    ['google', 'gemini'],
+  openai:    ['openai', 'gpt'],
+  // an OpenRouter-slug or static-residue provider redacts on ITS OWN name —
+  // 'moonshotai', 'deepseek', 'qwen', 'xai' carry no separate narrative alias
+  // today; this map is where a future one is added, once, for every arm that
+  // provider covers, rather than per-arm.
+}
+```
+
+- **`resolveProviderIdentity(model)` is unchanged** (still the 3 ordered
+  sources) — it answers "which provider", not "which words".
+- **The redaction term SET for a resolved arm is `PROVIDER_ALIASES[provider]
+  ?? [provider]`** — curated aliases when they exist, the bare provider name
+  otherwise. This is where a genuinely new alias (a model nicknamed
+  differently in prose than its routing id) gets added: to the map, once, not
+  discovered missing in a live adjudication.
+- **An arm with an explicit `redactionTerms` override uses exactly that set**,
+  bypassing derivation entirely — the escape hatch named above.
+
+  **`redactionTerms` needs a home, and the home is ONE place both paths already
+  share (round-3 gate, H1).** `ArmSchema` (`scripts/lib/comparison/arms.mjs`)
+  is imported by BOTH `campaign/config.mjs`'s `CampaignConfigSchema` (the
+  passive path) and `comparison/manifest.mjs`'s `ComparisonManifestSchema`
+  (the synchronous path) — confirmed by import, not assumed. Adding
+  `redactionTerms: z.array(z.string().min(1)).min(1).optional()` to
+  `ArmSchema` itself means **one schema change closes the gap for both
+  mechanisms simultaneously**, exactly the "one contract, not two copies"
+  discipline `checkArmSetSemantics`'s own docstring already states as this
+  module's reason to exist. Validation (non-empty strings, `.strict()`
+  already rejects unknown keys elsewhere) is structural, at the same schema
+  boundary every other arm field is checked at — no new validation layer.
+  Persistence: the term set is derived at redaction-construction time from
+  the parsed arm object already in hand (`arm.redactionTerms ??
+  PROVIDER_ALIASES[resolveProviderIdentity(arm.model)] ?? …`); nothing new is
+  written to any store — the override is a config-time value, re-derived
+  identically on every read, same as every other derived value in this plan.
+
+**Term generation is boundary-aware**, not a bare substring scrub: every term
+from every source (derived alias, residue, or explicit override) becomes
+`\b${escaped}\b` (case-insensitive), so `qwen` matches the word `qwen` and not
+a substring of an unrelated token — the same class of over-redaction bug the
+existing `meta` exclusion was hand-written to avoid, generalised into the
+generator rather than left as a one-off exception.
+
+**The static residue and its hand-won exclusions are KEPT, not replaced** —
+this adds derivation *alongside* them:
+
+```
+STATIC_RESIDUE = ['xai']             # bare ids with no parseable/slug identity
+STATIC_EXCLUSIONS = ['meta']         # deliberately NEVER auto-redacted —
+                                      # matches inside "metadata"; would corrupt
+                                      # the adjudicator's prose (existing, kept)
+```
+
+**Canaries (required, not optional):**
+
+| Case | Expected |
+|---|---|
+| a vendor not in ANY source (e.g. a hypothetical `cohere/command-r`) | resolves via source 2 (slug) — the case this whole fix exists for |
+| a genuinely unresolvable id, no `redactionTerms` override | **manifest load REFUSES**, naming the arm and the escape hatch |
+| a genuinely unresolvable id WITH an explicit `redactionTerms` override | accepted; those exact terms redact |
+| **`anthropic`-routed arm — assert `claude`, `opus`, `sonnet`, `haiku` ALL still redact, not just `anthropic`** | the regression this fix exists to prevent, asserted directly rather than trusted |
+| mixed case / separator variants (`QWEN`, `Qwen`, `qwen-turbo` vs `qwen/…`) | all normalize to the same redaction term |
+| prose containing `metadata`, `megawatt` (contains no vendor substring but shares characters with residue-adjacent terms) | **not** redacted — the boundary-aware canary |
+| the existing `meta`-in-"metadata" case | still not redacted (regression cover for the exclusion this fix must not break) |
+
+**Enforcement — a derived-set invariant, deliberately NOT a golden file, and
+STRONGER than key equality (post-gate fix, M2).** A golden fixture pins one
+arm set, so it must be edited whenever an arm is added — and an edited golden
+proves only that someone edited it. But the round-2 gate correctly found that
+key-set equality alone is a **weaker property than it looks**: an
+implementation could pre-create every key in `scope.arms` and mark each
+"represented" while silently discarding a real arm's actual findings/cost —
+passing a key-presence check by construction, independent of whether any data
+attribution happened at all. The oracle must be **independent of the
+implementation's own key-construction loop**, not derived from the same
+iteration:
+
+**Disjoint per-n fixtures, not one formula stretched across all n (round-3
+gate, M1 — the round-2 pseudocode referenced a nonexistent `arm[1]` at n=1,
+and required `arm[n-1]` to be simultaneously the honest-zero AND the unpaired
+arm at n=2, which is the same index playing two contradictory roles):**
+
+```
+n=1: arm[0] only.
+  entries = [{arm[0]: N findings, cost C}]                     # a normal measured arm
+  assert keys(result.totals.uniqueByArm) == ids(scope.arms)     # exact key-set, still checked
+  assert result.totals.uniqueByArm[arm[0].id] == N              # the arithmetic case: no
+                                                                 # off-by-one on a 1-element set
+
+n=2: arm[0] measured-nonzero, arm[1] measured-ZERO. No unpaired arm at n=2 —
+     there is no third role to seat, and inventing one would re-introduce the
+     contradiction this fix exists to remove.
+  entries = [{arm[0]: N findings, cost C}, {arm[1]: 0 findings, cost 0}]
+  assert keys(result.totals.uniqueByArm) == ids(scope.arms)
+  assert result.totals.uniqueByArm[arm[0].id] == N
+  assert result.totals.uniqueByArm[arm[1].id] == 0                # a MEASURED zero,
+                                                                    # distinct from 'unknown'
+
+n=6 (the live campaign's own arm count): all three roles, three DISTINCT arms.
+  entries = [{arm[0]: N findings, cost C}, {arm[1]: 0 findings, cost 0},
+             {arm[2..4]: ordinary measured}]                       # arm[5] has NO entry
+  assert keys(result.totals.uniqueByArm) == ids(scope.arms)        # exact, all 6 present
+  assert result.totals.uniqueByArm[arm[0].id] == N
+  assert result.totals.uniqueByArm[arm[1].id] == 0
+  assert result.totals.<...>[arm[5].id].status == 'unknown'        # honestly unpaired,
+                                                                     # per D6's AggregateResult
 ```
 
 Adding an arm changes the input and the expectation together, so the test never
-needs editing and cannot go stale. This single assertion covers incident (c),
-the `:860-889` block, and the fragile test in D3's matrix — all three are the
-same property violated in three places.
+needs editing and cannot go stale. This single assertion — now checking
+per-arm VALUES, not just the key set — covers incident (c), the `:860-889`
+block, and the fragile test in D3's matrix — all three are the same property
+violated in three places.
 
 > **`n = 1` is included on purpose.** `checkArmSetSemantics` requires ≥2 *scored*
 > arms for a campaign, so n=1 is not a legal campaign — but it IS a legal input
@@ -687,23 +939,49 @@ repo has already built the right answer several times without generalising it
 (`costEvidence: 'unknown'`, `costStatus: 'unpriced'`, `opusDivergenceUnpaired`,
 `arch:coverage-gate`'s `unknown` verdict, this plan's own D1a `unjudgeable`).
 
-**The contract, at the write boundary:**
+**The contract, at the write boundary — ONE discriminated shape, not four
+prose options (post-gate fix, M3).** The round-1 gate was right that "absent
+or `unknown`, `—` in rendering, empty arrays, and a count beside it" reads as
+four compatible-sounding representations that a future caller can each
+implement differently. There is exactly one return type, and every divergence
+aggregate in `summary.mjs` returns it:
 
-- An aggregate over zero observations is **absent or `unknown`** — never `0`,
-  never `[]` silently averaged, never `Infinity`.
-- **The count of non-observations travels beside the aggregate** (`…Unpaired`,
-  `…Unpriced`, `unjudgeable`), so a reader can always distinguish *"measured,
-  and it was zero"* from *"nothing to measure"*.
-- **A renderer may not average a set it cannot prove non-empty.** `mean` of `[]`
-  must render `—`/`unknown`, not `0.0`.
+```
+AggregateResult =
+  | { status: 'measured', value: number, observationCount: number, unpairedCount: number }
+  | { status: 'unknown', observationCount: 0, unpairedCount: number, reason: string }
+```
+
+- **`status` is discriminated, not inferred from `value` being present.** A
+  consumer switches on `status`; `value` does not exist on the `unknown` branch
+  — not `null`, not `0`, absent from the object, so a renderer that forgets to
+  check `status` gets `undefined` (loud) rather than a silently wrong number.
+- **`observationCount > 0` is the ONLY condition under which `status:
+  'measured'` may be returned.** Zero observations is `unknown` by
+  construction — this is the rule as a type invariant, not a convention a
+  caller has to remember.
+- **`unpairedCount` travels on BOTH branches** (`opusDivergenceUnpaired`'s
+  existing shape, generalised) — a "measured" aggregate can still have
+  unpaired snapshots alongside the ones that contributed.
+- **Per-declared-arm results are a map whose key set equals `scope.arms`
+  exactly** — `Record<ArmId, AggregateResult>` (or the equivalent per-metric
+  shape), asserted by the same derived-set invariant D1c already requires, so
+  "present, or explicitly unpaired" from D1c's own text has one concrete
+  representation rather than being restated loosely here.
+- **A renderer switches EXHAUSTIVELY on `status`** — `'measured'` → the
+  formatted `value`; `'unknown'` → `—` plus `reason`. No third branch, no
+  default case that silently prints `value ?? 0`.
 - **`primaryTotal` is deleted**, not fixed: a dead metric cannot be honest, and
   keeping it invites a future reader to start trusting it.
 
 **Enforcement**: `bakeoff/summary.mjs` is pure under D2a, so every one of these
-is a unit assertion with no rig — *"an aggregate computed from zero
-contributions is not a number"*, asserted per aggregate. That is cheap precisely
-because D2 made the module pure, which is the dependency worth noting between
-the clusters.
+is a unit assertion with no rig. Required cases: measured-zero (`status:
+'measured', value: 0` — a real, meaningful zero, distinct from `unknown`),
+`unknown` with `observationCount: 0`, and a partially-unpaired measured result
+— asserted for both serialization (the shape itself) and rendering (the
+renderer's exhaustive switch), so a change to either side alone still fails.
+That is cheap precisely because D2 made the module pure, which is the
+dependency worth noting between the clusters.
 
 ### D2 — Decompose the two outlier CLIs into the layout this repo already uses
 
@@ -795,19 +1073,86 @@ existing `shared-lib` domain**, not to domains of their own. So:
   // rules[] — pattern + domain ONLY, matching every existing rule's shape.
   // Placed above the scripts/lib/** catch-all; ordering is significant.
   { "pattern": "scripts/lib/bakeoff/**", "domain": "shared-lib" }
-  // No allowedDeps entry: bakeoff, campaign and comparison are ONE domain,
-  // so every edge in the D2a table is INTRA-domain by construction.
   ```
+
+  **"Every edge in the D2a table is intra-domain" was FALSE for one edge, and
+  the Gemini gate caught it (G3).** `campaign/promote.mjs → lib/store/campaign.mjs`
+  is `shared-lib → stores` — measured: `lib/store/**` resolves to the `stores`
+  domain, not `shared-lib`, and `shared-lib`'s own `allowedDeps`
+  (`["claude-hooks", "findings", "plan"]`) does not include `stores`. This is a
+  **real, currently-nonexistent** cross-domain edge (confirmed: no file under
+  `campaign/**`/`comparison/**` imports `lib/store/**` today) — D2a's own table
+  introduces it, and the blanket "intra-domain by construction" claim missed
+  the one file in this whole plan that actually touches a store.
+  - **Widening `shared-lib`'s `allowedDeps` to include `stores` is REJECTED**
+    — `shared-lib` is used far beyond this plan's files, and opening store
+    access for everything under it to get ONE file through is exactly the
+    broad, uncontrolled widening a domain boundary exists to prevent.
+  - **A brand-new domain for one file is also rejected as heavier than
+    needed.** `promote.mjs` alone gets a **file-specific, more-specific-pattern
+    rule**, reusing the **existing** `model-eval` domain (already permits
+    `stores` — no new domain, no new `allowedDeps` entry at all):
+    ```jsonc
+    // MORE SPECIFIC than the campaign/** rule below — ordering is significant,
+    // and this line must precede it, same convention as the bakeoff/** rule
+    // above the scripts/lib/** catch-all.
+    { "pattern": "scripts/lib/campaign/promote.mjs", "domain": "model-eval" }
+    { "pattern": "scripts/lib/campaign/**", "domain": "shared-lib" }   // unchanged, pre-existing
+    ```
+  - **Consequence for the module-contract graph checker** (below): the edge
+    `campaign/promote.mjs → lib/store/campaign.mjs` is now an INTER-domain
+    edge the domain map explicitly permits (`model-eval`'s `allowedDeps`
+    already lists `stores`), while `arm-vocabulary-layering` (domain-level)
+    now correctly SEES and validates it — the one edge D2a's module-level
+    checker cannot substitute for, because domain-level enforcement is exactly
+    what a cross-domain edge needs.
 
 - **Consequence, stated rather than glossed: `arm-vocabulary-layering` CANNOT
   enforce the D2a table.** It checks *domain*-level edges; D2a is a *module*-level
   contract inside a single domain. The R5 claim of mechanical enforcement was
   false. The honest replacement operates at module granularity:
-  - **`tests/bakeoff-module-contract.test.mjs`** (new, Phase 2) parses each
-    `scripts/lib/bakeoff/*.mjs`'s `import` statements and asserts the forbidden
-    edges are absent — `summary`/`spawn` must not import `arms`; no lib module
-    may import a `scripts/*.mjs` entry point; `campaign/promote` must not import
-    `bakeoff/**`. Static, small, fails at push like everything else here.
+  - **`tests/bakeoff-module-contract.test.mjs`** (new, Phase 2) — **a resolved
+    local-module GRAPH check, not a string search (post-gate fix, M2).** The
+    round-1 gate was right that "parses import statements" is bypassable
+    (re-export, a new intermediary module, a dynamic import) and doesn't prove
+    the graph is acyclic. The checker:
+    1. **Builds the edge set** from every `import`/`export … from` statement
+       (both count — a re-export is still a dependency) AND every **literal**
+       `import('./literal/path.mjs')` dynamic import, resolved to repo-relative
+       paths (no string matching on unresolved specifiers).
+    2. **A non-literal dynamic import inside a restricted module** (`spawn`,
+       `summary`, `promote` — the modules D2a forbids specific edges from) is
+       **itself a failure**, unless paired with an explicit
+       `// module-contract:exempt reason=<why>` pragma, reviewed like any other
+       suppression this repo uses (`@duplicate-justification`'s sibling pattern).
+       A dynamic import with a computed path is exactly how a forbidden edge
+       hides from a static string search.
+    3. **Asserts every edge against the D2a allow-list, read from ONE
+       machine-readable source, never re-typed into the test (round-3 gate,
+       M2).** "Table-driven from D2a's own table" was underspecified — a
+       Markdown table is prose, and a test consuming it either duplicates the
+       allow-list (drifts from the prose silently) or parses a
+       human-formatted table (couples the test to document layout). The fix:
+       **`scripts/lib/bakeoff/module-contract.mjs` (create, Phase 2)
+       exports the allow-list as a plain JS data structure** —
+       `Record<modulePath, {mayImport: string[], mustNotImport: string[],
+       sideEffects: 'pure'|'reads-log'|'writes-store'|'spawns'|'writes-stdout'}>`,
+       one entry per D2a row. **D2a's Markdown table is generated FROM this
+       module** (a small script, or written by hand and asserted equal to the
+       module's own `Object.entries` in a Tier-1 test) — the module is the
+       source of truth, the prose is its rendering, never the reverse. The
+       graph checker imports the module directly; no parsing of this
+       document, ever.
+    4. **Asserts the resolved subgraph (`bakeoff/**` + the three new
+       `campaign/*.mjs`) is ACYCLIC** — a cycle is a failure independent of
+       whether any single edge is individually on the allow-list, closing the
+       gap the round-1 gate named directly.
+    5. Failure messages **name the file, the import line, and the specific
+       D2a rule violated** — deterministic and actionable, not a stack trace
+       from a generic graph library.
+
+    Static, small, fails at push like everything else here — the graph is
+    ~9 files, not a general-purpose architecture linter.
   - The domain rule still earns its place for what it genuinely does: it keeps
     `bakeoff/**` off the `scripts/lib/**` catch-all — the defect that split
     `lib/cross-skill/**` from `cross-skill.mjs` and produced 10 violations.
@@ -834,9 +1179,15 @@ existing `shared-lib` domain**, not to domains of their own. So:
     point**, which already imports both subsystems and is the only layer
     permitted to, does `promoteFromLog(readLog(), …)`.
   - Net effect: **one permitted direction only — `bakeoff/** → campaign/config`**
-    — and `promote.mjs` loses a file-reading side effect, becoming a pure
-    transform over data it is handed. That is smaller than the declaration it
-    replaces, and it removes the cycle instead of blessing it.
+    — and `promote.mjs` loses a file-reading side effect. **Wording fix
+    (round-3 gate, M2)**: "pure transform" overstated it — the D2a table two
+    sections below correctly lists `promote.mjs`'s side effect as **writes
+    the store**, which this paragraph's "pure" contradicted. The precise
+    claim is narrower and is what actually matters for the cycle: `promote.mjs`
+    is **pure with respect to the LOG** (no longer reads it — that's the
+    parameter-passing change above) while remaining an impure store-writing
+    service, exactly as D2a's table already states. That is smaller than the
+    declaration it replaces, and it removes the cycle instead of blessing it.
   - `scripts/lib/campaign/**`'s existing `allowedDeps` is left **unchanged**;
     only the new `scripts/lib/bakeoff/**` rule is added.
 - **`tests/arm-vocabulary-layering.test.mjs`** re-derives the whole violation set
@@ -990,7 +1341,7 @@ their own measurement, and silently dropping them would be dishonest:
   both are internally coherent. Splitting them would be refactoring by metric
   rather than by pain.
 
-### D7 — Three roles, n arms, ONE driver — and the driver is the manifest, not the campaign (NEW — ungated)
+### D7 — Two roles reach n-arm synchronous parity; final-review stays passive, by name (NEW — ungated; retitled post-gate, H1)
 
 > **Post-gate addition, and the largest one.** Neither this plan nor its
 > predecessor covered *role executability*. The predecessor built the role
@@ -1030,9 +1381,24 @@ because "add adjudicator controls" sounds like a small change and is not:
    name into the blind adjudication payload**. Adding a vendor is therefore
    currently a two-edit operation, which is the shape D1c exists to eliminate.
 
-**The decision: the synchronous manifest driver becomes the universal
-n-arm × n-role comparison path; the passive campaign collector stays
-final-review-only.**
+**The decision, stated precisely because the round-2 gate caught an overclaim
+in the first draft's own heading (post-gate fix, H1): this plan closes the
+`auditor`↔`adjudicator` gap; it does NOT make `final_review_shadow` driveable
+by the manifest.** The first draft's heading — "one driver for three roles" —
+was flatly inconsistent with its own body, which correctly scoped
+`final_review_shadow` OUT. Corrected: **the synchronous manifest driver
+reaches n-arm parity across the two roles that operate synchronously
+(`auditor`, `adjudicator`); the passive campaign collector remains
+`final_review_shadow`'s ONLY execution path, unconditionally, for the
+duration of this plan.** Whether `final_review_shadow` ever gets synchronous
+execution is a real, separate, and currently open question — not a promise
+D7 makes, and not something the census in D7e is scoped to grant either: D7e
+decides where evidence is **stored**, not what a driver can **execute**. If
+synchronous final-review execution is ever wanted, it needs its own
+`RoleExecutor` and its own corpus definition (§D7c's port makes that
+extension mechanical, but extending it is out of scope here) — named
+explicitly rather than discovered as a gap during Phase 6, which is exactly
+how the overclaim above was found.
 
 Direction matters and this is the only direction that satisfies both
 constraints. It respects the collector cap (wall 2 — nothing is added to the
@@ -1045,17 +1411,235 @@ rather than inventing a mechanism.
 
 **Scope of Cluster D, smallest-first, each independently valuable:**
 
-- **D7a — de-hardcode the existing driver.** Lift the 8 `'auditor'` literals in
-  `model-eval-auditor.mjs` into a role parameter; the entry point becomes a thin
-  argv shim over a role-generic `runManifestDriver(role, manifest)`. No new
-  capability, and it is the prerequisite for everything below.
-- **D7b — `adjudicator` controls schema + manifest support.** The narrow,
-  honest version: dials that role actually needs, no invented ones. This is
-  where `SUPPORTED_ROLES` finally equals `ROLES`, and `assertRoleCoverage`
-  starts asserting something about production rather than about test fixtures.
-- **D7c — n-arm adjudicator execution.** Extend the driver, not
-  `model-eval-adjudicator.mjs`'s 1-vs-1 oracle (which stays as the
-  ground-truth-scoring path it already is).
+- **D7a — de-hardcode the existing driver, AND fix the layering direction
+  (round-3 gate, H2).** Lift the 8 `'auditor'` literals in
+  `model-eval-auditor.mjs` into a role parameter. The round-3 gate correctly
+  caught that "the entry point becomes a thin shim over `runManifestDriver`"
+  never said WHERE `runManifestDriver` lives once lifted — leaving it in the
+  top-level script would make `executors.mjs` (D7c, a lib module) import FROM
+  an entry point to reach it, inverting this plan's own repeatedly-enforced
+  `entry point → lib, never the reverse` rule.
+  - **`runManifestDriver` moves to `scripts/lib/model-eval/manifest-driver.mjs`**
+    (create) — role-generic, imports `EXECUTORS` (D7c) and the manifest/scope
+    machinery already in `comparison/**`.
+  - `scripts/model-eval-auditor.mjs` becomes a thin argv shim: parse flags,
+    call the lib function, print/exit. Same shape D2's `bakeoff-collect.mjs`/
+    `campaign.mjs` reduction already establishes elsewhere in this plan — D7a
+    is that same pattern applied to a third entry point.
+  - **Same fix for the adjudicator side**: `scoreAgainstGroundTruth` and its
+    `toRawContext` helper move from `scripts/model-eval-adjudicator.mjs`
+    (a top-level script) into a NEW `scripts/lib/model-eval/adjudicator-executor.mjs`
+    (create) — bodies move verbatim, D2's own rule. `model-eval-adjudicator.mjs`
+    imports the lib function for its existing 1-vs-1 CLI path (unchanged
+    behaviour); `EXECUTORS.adjudicator` (D7c) imports the SAME lib function —
+    neither imports the other's entry point.
+- **D7b — `adjudicator` controls schema, enumerated (post-gate fix, M1).** "The
+  narrow, honest version" was a promise with no table — the round-2 gate
+  correctly asked for the dials, not the adjective. `AdjudicatorControlsSchema`
+  mirrors `AuditorControlsSchema`'s existing pattern (`...COMMON_SHAPE` plus a
+  small role-specific tail), every field traced to what
+  `model-eval-adjudicator.mjs` already configures today:
+
+  | Field | Zod 4 shape | Source / default | Maps to (existing CLI) |
+  |---|---|---|---|
+  | `reasoningEffort`, `promptTemplateId`, `outputSchemaId`, `maxOutputTokens`, `toolPolicy`, `temperature`, `preflight?` | `COMMON_SHAPE` (unchanged) | shared with every role — no new definition | passed through to `extractStructured`'s route/prompt construction, same as `auditor` today |
+  | `tier` | `z.enum(['screen', 'promotion'])` | **required**, no default (mirrors `--tier`'s existing hard requirement — `main()` exits 1 without it) | `--tier` |
+  | `thresholdsPath` | `z.string().min(1).optional()` | defaults to `DEFAULT_THRESHOLDS_PATH` (`config/adjudicator-thresholds.json`) when absent | `--thresholds` |
+  | `baseline` | `CandidateSpecSchema.optional()` (reuse the existing spec shape `resolveCandidateRoute` already parses) | defaults to `DEFAULT_BASELINE_CANDIDATE_SPEC` (`{kind:'sentinel', value:'latest-pro'}`) when absent | `--baseline` |
+  | `groundTruthLimit` | `z.number().int().positive().optional()` | defaults to `GROUND_TRUTH_LIMIT_DEFAULT` (`store/model-ab.mjs`) | not currently a flag — new, because a manifest run needs it fixed and declared (D7c's "one page, fetched once" rule), not implicitly whatever today's default happens to be |
+
+  **What this schema does NOT add**: no per-arm override of `tier`/`baseline`/
+  `thresholdsPath` — these are comparison-level dials by the same rule
+  `reasoningEffort` already enforces for every role (lesson (b): arms must
+  share one dial or the comparison measures the setting, not the model).
+  `groundTruthLimit` is the one field with no existing CLI flag, and it is
+  added ONLY because D7c's fixed-corpus requirement makes an implicit default
+  unsafe for a multi-run comparison in a way it was not for a single
+  `--candidate` invocation — named here rather than discovered as a gap during
+  Phase 6.
+
+  `SUPPORTED_ROLES` then equals `ROLES`, and `assertRoleCoverage` starts
+  asserting something about production rather than about test fixtures.
+
+  **Tests (Phase 6 exit condition)**: parse/round-trip for the schema itself;
+  a manifest-to-executor propagation test asserting `tier`/`baseline`/
+  `thresholdsPath`/`groundTruthLimit` from a parsed manifest reach
+  `EXECUTORS.adjudicator`'s actual call into `scoreAgainstGroundTruth` —
+  proving the wiring, not just the schema.
+- **D7c — n-arm adjudicator execution, against a NAMED, DISPATCHED port
+  (post-gate fixes H1 round 1 + H2 round 2).** "Extend the driver" was not a
+  contract — round 1's gate correctly called this out. Round 2's gate then
+  found the port itself underspecified: an untagged union mixing auditor
+  findings and adjudicator verdicts, no named dispatch module, no
+  `arm.model → route` resolution, no cohort-completeness rule for a failed
+  arm. All four, closed:
+
+  **1. The result type is an ATTEMPT union, not a success-shaped record with
+  bolted-on failure fields (round-3 gate, H3).** The round-2 fix required
+  `result`/`usage`/`provenance` unconditionally — but a route-resolution
+  failure or a failed spawn happens **before any provider call**, so none of
+  those three exist yet at that point. Requiring them made the type
+  unrepresentable for exactly the failure modes D7c's own cohort-completeness
+  rule depends on. The union now branches on attempt outcome FIRST, and only
+  the success branch carries a role result:
+
+  ```
+  ExecutorAttempt =
+    | { outcome: 'ok', result: RoleResult, usage: {inputTokens, outputTokens, costUsd},
+        provenance: {model, route, promptTemplateId, capturedAt} }
+    | { outcome: 'retryable', reason: string, attempt: number }
+    | { outcome: 'terminal', reason: string, partialUsage?: {inputTokens, outputTokens, costUsd} }
+  ```
+
+  `usage` and `provenance` are **only reachable through the `'ok'` branch** —
+  a caller cannot accidentally read cost off a failed attempt, because the
+  type does not offer one. `partialUsage` on `'terminal'` is optional and
+  named as such: a 4xx before any tokens were spent has none; a terminal
+  failure AFTER a partial response (rare, but real) can still report what was
+  metered.
+
+  **`RoleResult` is discriminated on `role`, and the adjudicator branch
+  carries the REAL payload `scoreAgainstGroundTruth` actually returns** — the
+  round-2 draft invented a `verdict: 'true'|'false'` that does not match the
+  function it wraps (verified against the code, not assumed):
+
+  ```
+  RoleResult =
+    | { role: 'auditor',     findings: NormalizedFinding[] }
+    | { role: 'adjudicator', metrics: {recall: number, falsePositiveRate: number, f1: number} }
+  ```
+
+  **`scoreAgainstGroundTruth` must be EXTENDED to bubble up `usage`, or the
+  `'ok'` branch is unrepresentable for the adjudicator role (Gemini gate,
+  G2).** Real gap, correctly caught: the function calls `extractStructured`
+  **once per ground-truth row internally**, and today returns only the three
+  metrics — none of those N calls' token/cost usage escapes the function. D7a
+  already moves and generalises this function (its layering fix, above); this
+  is a bounded EXTENSION of that same edit, not new unplanned scope:
+  - `scoreAgainstGroundTruth` sums `{inputTokens, outputTokens, costUsd}`
+    across its internal `extractStructured` calls and returns it alongside
+    the existing metrics: `{recall, falsePositiveRate, f1, usage}`.
+  - **`provenance` is NOT blocked the same way — it was never inside
+    `scoreAgainstGroundTruth` to begin with.** `route` is already a parameter
+    the caller (`executeArm`) holds before calling in; `promptTemplateId`
+    comes from the already-resolved `controls`; `capturedAt` is the call
+    timestamp. `executeArm` constructs `provenance` itself, from values already
+    in hand — no plumbing through `scoreAgainstGroundTruth` needed for this
+    field, only for `usage`.
+  - Test (Phase 6 exit condition, additive to the existing integration test):
+    a fixture with 2 ground-truth rows asserts the returned `usage` is the SUM
+    of both rows' token counts, not just the last row's or a single row's.
+
+  A caller switches on `result.role` inside the `'ok'` branch, never on which
+  field happens to be present — the exact ambiguity the round-2 gate named,
+  now closed on the correct payload shape.
+
+  **2. Dispatch is a NAMED registry, TWO-PHASE — not a single per-arm
+  function (Gemini gate, G1).** The round-3 shape,
+  `EXECUTORS: Record<Role, (arm, controls, corpus) => Promise<ExecutorAttempt>>`,
+  was self-contradictory: it took `corpus` as a per-call parameter while D7c's
+  own text required the corpus be **"fetched once per manifest run and reused
+  for every arm."** Something has to fetch it once, BEFORE the per-arm loop —
+  but the driver is role-generic and has no business knowing an adjudicator
+  fetches `getAdjudicatorGroundTruth` rows while an auditor fetches nothing
+  comparable at all. A single-phase signature forces a choice between
+  breaking genericity (the driver hardcodes a role-specific fetch) or breaking
+  "fetch once" (each arm call fetches its own copy). Split into two phases,
+  exactly the shape the round-3 `repoId`-reuse fix already established for a
+  single value, generalised to whatever run-level setup a role needs:
+
+  ```
+  EXECUTORS: Record<Role, {
+    prepareContext?: (manifest, repoIdentity) => Promise<Context>,   // once per RUN
+    executeArm: (arm, controls, context) => Promise<ExecutorAttempt>, // once per ARM
+  }>
+  ```
+
+  - `scripts/lib/model-eval/executors.mjs` exports `EXECUTORS`. D7a's
+    role-generic `runManifestDriver(role, manifest)` resolves `repoIdentity`
+    once (as it already does), calls `EXECUTORS[role].prepareContext?.(manifest,
+    repoIdentity)` **once**, then loops scored arms calling `executeArm(arm,
+    controls, context)` — the driver stays generic because it never
+    interprets `context`'s shape, only passes it through. `assertRoleCoverage`
+    (already proving vocabulary↔mechanism coverage) gets a THIRD check here:
+    every `SUPPORTED_ROLES` entry must have an `EXECUTORS` key with a
+    (possibly no-op) `executeArm`.
+  - `EXECUTORS.auditor` has **no `prepareContext`** (`undefined` — the driver
+    treats it as a no-op `context = undefined`) — the existing per-arm spawn
+    needs no run-level setup beyond what it already resolves per call. D7a's
+    role lift wraps the existing spawn as `executeArm`, does not rewrite it.
+  - `EXECUTORS.adjudicator.prepareContext` fetches
+    `getAdjudicatorGroundTruth({repoId: repoIdentity.repoUuid, …}).rows`
+    **once** and returns `{rows}` as `context` — satisfying "fetch once,
+    reuse for every arm" literally, not just in prose. `executeArm(arm,
+    controls, {rows})` then calls `scoreAgainstGroundTruth({route, rows})`
+    **from its lib home, `model-eval/adjudicator-executor.mjs`** (D7a's
+    layering fix — never the top-level script) — reusing the existing
+    `extractStructured`/`scoreBinaryClassification` pipeline verbatim, once
+    per declared arm rather than once for a single `--candidate`.
+
+  **3. `arm.model` reaches a route through the EXISTING resolver, not a new
+  one**: `resolveCandidateRoute({role, candidateSpec: {kind:'concrete',
+  value: arm.model}, env})` (`model-eval/route-catalog.mjs:125`) — the same
+  function `model-eval-adjudicator.mjs` already calls for its single
+  `--candidate`. `executeArm` calls it once per arm; no new resolution logic.
+
+  **4. The fixed corpus is `getAdjudicatorGroundTruth({repoId, …}).rows`**
+  (`store/model-ab.mjs:584`) — the same labeled-row set the existing 1-vs-1
+  path already scores against, fetched by `prepareContext` above and passed
+  as `context` to every `executeArm` call — arms are scored against identical
+  rows by construction, not by convention.
+
+  **`repoId` is threaded, not re-derived (round-3 gate, H4).** The round-2
+  draft left `repoId` unsourced. `runManifestDriver` **already** resolves it
+  today — `const repoIdentity = resolveRepoIdentity()` runs once, for the
+  auditor path's own `upsertComparison` call. The fix is reuse, not new
+  machinery: the SAME resolved `repoIdentity` feeds both `upsertComparison`
+  and `prepareContext` — one resolution, shared, never re-derived per arm.
+  Unresolvable repo identity fails the SAME way an unresolvable campaign
+  already does elsewhere in this plan: at load, before any arm runs, named.
+
+  **Provenance is the query parameters actually used, not invented snapshot
+  machinery.** The round-3 recommendation's fuller ask — an immutable
+  corpus-snapshot digest with ordered row fingerprints — is **declined as
+  disproportionate** to what "one page, fetched once" needs: `getAdjudicatorGroundTruth`
+  already accepts `{repoId, limit, cursor, sinceDecidedAt}`, and recording
+  those four values alongside the fetched rows (in the manifest run's
+  provenance, not a new store concept) is sufficient to answer "what corpus
+  did this comparison actually score against" — a digest over the rows
+  themselves is precision this fixed-page-per-run design does not need and
+  would be inventing state to solve a question the query parameters already
+  answer. **An empty corpus (zero rows returned) is a refusal**, not a
+  0-observation `unknown` result under D6's rule — an adjudicator comparison
+  with nothing to score is not a degenerate-but-valid outcome, it is a setup
+  error, and it fails the same way an unresolvable repo identity does.
+
+  **5. Persistence and scoring reuse the existing pipeline unchanged**:
+  `scoreBinaryClassification` → `computeVerdict` → `model_eval_runs` via
+  `createEvalRun`/`updateEvalRunTerminal`. D7c adds an arms loop around step 1
+  of the existing 5-step pipeline; it does not touch steps 2–5.
+
+  **6. Retryable vs. terminal**, and **cohort completeness on a terminal
+  failure (round-2 gate, H2)**: `classifyLlmError` (already imported by the
+  shared provider seam) — a 429/5xx retries per arm independently; a 4xx
+  (model id, malformed manifest) is terminal for that arm. **A terminal arm
+  failure does NOT abort the cohort or block verdict generation** — it
+  follows D6's own no-silent-zero rule, applied to execution rather than
+  telemetry: the failed arm's row persists with `outcome: 'terminal'` and its
+  reason (never silently dropped, never retried into a false completion), and
+  the readout NAMES it excluded from the verdict rather than pretending an
+  (n-1)-arm comparison was the n-arm one requested. This mirrors D5a's
+  per-arm resume semantics already established for the auditor role — the
+  same "a comparison degrades honestly rather than fails wholesale" posture
+  D1a/D6 already commit to elsewhere in this plan.
+
+  **Integration test (Phase 6 exit condition, not optional)**: a
+  manifest-driven test with a **deterministic fixture ground-truth set**
+  (2-3 rows, fixed labels) traces `CLI → runManifestDriver → EXECUTORS.adjudicator
+  → scoreBinaryClassification → model_eval_runs`, asserting the persisted row
+  shape for 2 arms against the same fixed rows, **plus one arm forced to a
+  terminal failure**, asserting the cohort still produces a verdict over the
+  surviving arm with the failed one named in the result.
 - **D7d — the store seam, decided against PRE-REGISTERED criteria.** See D7e
   below: the question is posed precisely, and the rule that answers it is fixed
   *before* the evidence arrives.
@@ -1130,6 +1714,32 @@ D7a–c land. No judgement call at decision time:
    failed analysis, not a valid outcome.
 5. Either way, **record the field census in this plan**. It is the artifact that
    makes the decision re-checkable, and it is worth more than the verdict.
+
+**Phase 7's deliverable is the census + verdict + a short ADR — never a
+migration (post-gate fix, H2).** The round-1 gate correctly rejected calling
+this "an implementation phase" while giving it zero implementation scope: on
+UNIFY, there is no schema, no migration/backfill/rollback plan, no dual-read or
+cutover strategy, no dashboard change, and no historical-row treatment anywhere
+in this document — the honest size of that work is comparable to a second
+`role-agnostic-comparison-core`-sized plan, not a bullet inside this one.
+So, stated as a hard boundary rather than left implicit:
+
+- **If the verdict is UNIFY**, Phase 7 ends by **filing a new, separate plan**
+  — `docs/plans/comparison-store-unification.md` (planned), exact name decided
+  when Phase 7 actually runs — scoped to the migration, and that plan goes
+  through its own `/audit-plan` gate before any schema or `model_eval_*`
+  constraint changes. Phase 7 itself makes **zero** production changes on
+  this branch.
+- **If the verdict is KEEP SEPARATE**, Phase 7's remaining deliverable is the
+  **durable interface contract** the round-1 gate asked for: a documented
+  field-level mapping showing how the shared-core fields the census identified
+  stay comparable across both envelopes (same units, same severity vocabulary,
+  same arm-identity scheme) even though they persist separately. That contract
+  is a doc + an assertion in `tests/comparison-core.test.mjs` that both
+  envelopes' shared-field shapes agree — not a schema change.
+- **Cluster D's fix-gate therefore closes on either branch without a migration
+  landing in THIS plan.** A migration is out of scope for this plan by
+  construction, not by omission.
 
 > **Predicted outcome, recorded in advance so the prediction is falsifiable.**
 > On the current reading the overlap looks large and the differences look like
@@ -1220,6 +1830,7 @@ runs in `npm test`, so an inbound-edge break fails at push rather than silently.
 | `scripts/bakeoff-collect.mjs` | modify | Reduce to argv + dispatch; delete `defaultArms`/`LEGACY_ARMS` (D1) |
 | `scripts/campaign.mjs` | modify | Reduce to argv + dispatch |
 | `tests/bakeoff-module-contract.test.mjs` | create | Static import-shape guard for the D2a table — the module-granularity enforcement the domain map cannot provide (Gemini R2/M) |
+| `scripts/lib/bakeoff/module-contract.mjs` | create | **Round-3 fix, M2.** D2a's allow-list as a machine-readable data module — the single source `bakeoff-module-contract.test.mjs` consumes; D2a's Markdown table is generated from/asserted against it, never re-typed |
 | `scripts/lib/bakeoff/scope.mjs` | create | **Pure** `ResolvedScope` shape + `assertResolvedScope` + `UnresolvedScopeError`/`ScopeMismatchError`. No I/O (D2a) |
 | `tests/final-review-bakeoff.test.mjs` | modify | Retains the 3 entry-point blocks (D3 matrix); everything else moves out |
 | `tests/bakeoff-arms.test.mjs` | create | Arm resolution, no-campaign refusal (D1), **hosts the `LEGACY_ARMS` fixture** |
@@ -1230,13 +1841,25 @@ runs in `npm test`, so an inbound-edge break fails at push rather than silently.
 | `tests/campaign-promote.test.mjs` | create | Promotion, receipts, `--force` append (D3a-pinned) |
 | `tests/campaign-adjudication.test.mjs` | modify | Retains the LIVE DB-gated block only |
 | `tests/model-eval-core.test.mjs` | modify | Split 7 ways per D3 (independent cluster) |
-| `.audit-loop/domain-map.json` | modify | **Required** (measured): one `{pattern, domain:"shared-lib"}` rule for `scripts/lib/bakeoff/**` above the `scripts/lib/**` catch-all. **No `allowedDeps` entry** — rules do not carry that key and the siblings share the domain (D2b) |
+| `.audit-loop/domain-map.json` | modify | **Required** (measured): `{pattern, domain:"shared-lib"}` for `scripts/lib/bakeoff/**` above the `scripts/lib/**` catch-all; **plus (Gemini gate, G3)** `{pattern, domain:"model-eval"}` for `scripts/lib/campaign/promote.mjs` specifically, ABOVE the existing `campaign/**` → `shared-lib` rule — the one file in this plan whose store-writing edge is genuinely cross-domain. No new `allowedDeps` entries; `model-eval`'s already permit `stores` (D2b) |
 | `docs/plans/comparison-tooling-consolidation.md` | modify | This plan, corrected by its own audit |
-| `scripts/model-eval-auditor.mjs` | modify | **D7a (NEW)** — lift 8 hardcoded `'auditor'` literals into a role parameter |
+| `scripts/model-eval-auditor.mjs` | modify | **D7a (NEW)** — lift 8 hardcoded `'auditor'` literals into a role parameter; reduce to a thin argv shim (round-3 fix, H2) |
+| `scripts/lib/model-eval/manifest-driver.mjs` | create | **D7a (NEW, round-3 fix H2)** — `runManifestDriver` moves here from the entry point, so `executors.mjs` (a lib module) never imports a top-level script |
+| `scripts/model-eval-adjudicator.mjs` | modify | **D7a (NEW, round-3 fix H2)** — `scoreAgainstGroundTruth`/`toRawContext` move OUT to the lib module below; this file becomes a thin CLI wrapper over it, existing 1-vs-1 behaviour unchanged |
+| `scripts/lib/model-eval/adjudicator-executor.mjs` | create | **D7a/D7c (NEW, round-3 fix H2)** — `scoreAgainstGroundTruth`/`toRawContext`, moved verbatim; imported by BOTH the CLI wrapper above and `EXECUTORS.adjudicator` below — neither imports the other's entry point |
+| `scripts/lib/model-eval/executors.mjs` | create | **D7c (NEW)** — the `EXECUTORS` registry; `runManifestDriver` looks up `EXECUTORS[role]` once per manifest run |
 | `scripts/lib/comparison/controls.mjs` | modify | **D7b (NEW)** — add the `adjudicator` controls schema; `SUPPORTED_ROLES` then equals `ROLES` |
 | `scripts/lib/comparison/manifest.mjs` | modify | **D7b (NEW)** — admit `adjudicator`, replacing the v1-boundary refusal |
-| `tests/model-eval-adjudicator-manifest.test.mjs` | create | **D7c (NEW)** — n-arm adjudicator manifest driving |
+| `tests/model-eval-adjudicator-manifest.test.mjs` | create | **D7c (NEW)** — n-arm adjudicator manifest driving, including the forced-terminal-failure cohort case (round-3 fix, H3) |
+| `tests/manifest-driver.test.mjs` | create | **D7a (NEW, round-3 fix H2)** — coverage for the lifted, now-role-generic `runManifestDriver` |
+| `tests/adjudicator-executor.test.mjs` | create | **D7a (NEW, round-3 fix H2)** — coverage for the moved `scoreAgainstGroundTruth`, both callers (CLI + `EXECUTORS`) exercised |
 | `tests/bakeoff-summary.test.mjs` | *(already listed)* | **+ D1c/D6 (NEW)** — the derived-set invariant at n ∈ {1,2,6} and the per-aggregate no-silent-zero assertions |
+| `scripts/lib/store/campaign.mjs` | modify | **D1c (NEW, Phase 1′)** — derive `PROVIDER_TERMS` from declared arms' model strings; add `resolveProviderIdentity` + `PROVIDER_ALIASES` |
+| `scripts/lib/comparison/arms.mjs` | modify | **D1c (NEW, Phase 1′, round-3 fix H1)** — add optional `redactionTerms` to `ArmSchema`, shared by both the passive campaign and manifest paths |
+| `tests/campaign-adjudication.test.mjs` | *(already listed)* | **+ D1c (NEW)** — blinding-derivation regression for the new/unlisted-vendor case |
+| `scripts/plan-file-coverage-check.mjs` | create | **Post-gate fix, H3 — Phase 0.** Close-out tool: diffs the changed-file set against this plan's own §6 table |
+| `tests/plan-file-coverage-check.test.mjs` | create | **Post-gate fix, H3 — Phase 0.** Coverage for the checker above |
+| `tests/comparison-core.test.mjs` [`branch: d7d=keep-separate`] | modify | **D7e, Phase 7 — CONDITIONAL.** Only touched if the census verdict is KEEP SEPARATE (the shared-field interface-contract assertion). Absent from the diff, correctly, if the verdict is UNIFY. |
 
 Deleted from the original draft: a `scripts/lib/dashboard/collect-campaigns.mjs`
 row that said *"follow moved imports if any resolve through the CLI"*. Measured
@@ -1295,8 +1918,21 @@ symbols, but produces no committed change.
 ### 6b. Implementation Phases
 
 - **Phase 0 — Verify the D3a characterization blocks are as strong as the
-  invariants they guard.** Read-only; strengthen any that are not, *before* any
-  code moves. Files: the three test files named in D3a.
+  invariants they guard; create the close-out coverage checker; add §6's
+  `Phase` column.** Read-only over production code; strengthen any D3a block
+  that is not as strong as its invariant, *before* any code moves. **Also
+  creates `scripts/plan-file-coverage-check.mjs`** (post-gate fix, H3) — the
+  close-out tool that derives the requirements-extraction file set from the
+  diff instead of a hand-maintained list — **and backfills a `Phase` column
+  onto every existing §6 row** (post-gate fix, H6), the data the checker's
+  `--phases` scoping reads, so an A/A′-only release can close out without the
+  checker demanding Phase 2–7's files. The column and the checker are one
+  Phase 0 deliverable: the checker is meaningless without the column, and the
+  column is untested without the checker. Files: the three test files named
+  in D3a, `scripts/plan-file-coverage-check.mjs` (create),
+  `tests/plan-file-coverage-check.test.mjs` (create),
+  `docs/plans/comparison-tooling-consolidation.md` (this plan — the `Phase`
+  column backfill onto §6).
 - **Phase 1 — Kill the defect class (D1).** **Creates `scripts/lib/bakeoff/scope.mjs`**
   — the pure `ResolvedScope` shape, `assertResolvedScope`, `assertScopeMatches`,
   `UnresolvedScopeError`, `ScopeMismatchError`. The four readers (still in the
@@ -1351,25 +1987,73 @@ symbols, but produces no committed change.
   `scripts/model-eval-auditor.mjs`, `scripts/lib/comparison/controls.mjs`,
   `scripts/lib/comparison/manifest.mjs`, `tests/comparison-core.test.mjs`,
   `tests/model-eval-auditor-manifest.test.mjs`, + a new adjudicator-manifest suite.
-- **Phase 7 — The store-seam decision (D7d/D7e). NEW, ungated. A DECISION
-  executed against a PRE-REGISTERED rule.** Run D7e's field census: enumerate
-  every field the campaign standings, the swap-eval verdict and the dashboard
-  collector each read; classify each as shared-core / passive-only /
-  synchronous-only; apply D7e's rule. **UNIFY** if every field classifies
-  cleanly; **KEEP SEPARATE** only if a field is required by both modes with
-  incompatible semantics — and that field must be named. Record the census in
-  this plan regardless of verdict: the census outlives the decision and is what
-  makes it re-checkable. Predicted outcome is UNIFY, recorded in advance so the
-  census can falsify it. Implement only if the verdict is UNIFY.
+- **Phase 7 — The store-seam decision (D7d/D7e). NEW, ungated. A BOUNDED
+  DISCOVERY DELIVERABLE, never a migration (post-gate fix, H2).** Run D7e's
+  field census: enumerate every field the campaign standings, the swap-eval
+  verdict and the dashboard collector each read; classify each as shared-core /
+  passive-only / synchronous-only; apply D7e's rule. **UNIFY** if every field
+  classifies cleanly; **KEEP SEPARATE** only if a field is required by both
+  modes with incompatible semantics — and that field must be named. Record the
+  census in this plan regardless of verdict. **Output is one of two things,
+  never a schema change on this branch**: on UNIFY, a filed follow-up plan
+  (scoped to migration, its own `/audit-plan` gate, own schema/backfill/
+  rollback/dashboard scope); on KEEP SEPARATE, a documented field-level
+  interface contract plus a `comparison-core.test.mjs` assertion that the two
+  envelopes' shared fields stay comparable. Predicted outcome is UNIFY,
+  recorded in advance so the census can falsify it. Files touched by Phase 7
+  itself: this plan (census + verdict + ADR), and — KEEP SEPARATE branch only —
+  `tests/comparison-core.test.mjs`. **No `scripts/lib/store/**` file is a Phase
+  7 file under either branch.**
 - **Close-out — the executable list, in order (R4/M2).** The R3 draft named the
   right *ordering* in §6a and then omitted most of those commands here, leaving
   a team to reconcile a ledger against a shorter checklist. They now match:
 
+  **The extraction file list is DERIVED, not hand-maintained (post-gate fix,
+  H3).** A hand-typed `--files` list is exactly the class of defect this plan
+  exists to eliminate — the round-1 gate found it had already happened once:
+  the list omitted `scripts/lib/store/campaign.mjs` (Phase 1′'s
+  `PROVIDER_TERMS` edit) and all three Phase 6 files
+  (`model-eval-auditor.mjs`, `comparison/controls.mjs`, `comparison/manifest.mjs`).
+  Reconciling against a narrowed extraction commits a ledger that does not
+  cover every changed invariant-bearing file, silently.
+
+  **Two DIFFERENT derived sets, over the SAME diff, in sequence — never one set
+  doing both jobs (post-gate fix, H4).** The round-2 gate correctly found that
+  a single `scripts/**/*.mjs`-only `CHANGED` set cannot ALSO validate against
+  §6's table, because that table lists 7+ test files, this plan document, and
+  `.audit-loop/domain-map.json` — none of which a `.mjs`-only filter admits.
+  Checking coverage and deriving the extraction subset are two different
+  questions asked of two different projections of one diff:
+
   ```bash
   npm run arch:refresh            # retag moved symbols (Class A)
   npm run arch:coverage-gate      # its freshness gate
-  # created + moved libs AND the two modified entry points (R5/M2, Gemini/L)
-  node scripts/requirements.mjs extract --files "scripts/lib/bakeoff/scope.mjs,scripts/lib/bakeoff/arms.mjs,scripts/lib/bakeoff/log.mjs,scripts/lib/bakeoff/spawn.mjs,scripts/lib/bakeoff/summary.mjs,scripts/lib/bakeoff/progress.mjs,scripts/lib/campaign/adjudicate.mjs,scripts/lib/campaign/cited-source.mjs,scripts/lib/campaign/promote.mjs,scripts/bakeoff-collect.mjs,scripts/campaign.mjs"
+
+  # ONE full diff — every tracked file category, no filter. `PLAN_BASE` is
+  # this plan's own starting commit.
+  FULL_DIFF=$(git diff --name-only --diff-filter=ACMR "$PLAN_BASE"...HEAD)
+
+  # STEP 1 — coverage, over the FULL diff against §6's table, SCOPED to the
+  # phases actually completed (round-3 fix, H6 — the unscoped version would
+  # refuse §9's own independently-shippable A/A′-only release). Fails on
+  # either-side-only entries WITHIN that scope: a file in the diff but not the
+  # table, or an in-scope mandatory row not in the diff. `--phases` is the
+  # completed-phase list for THIS release (all 9 for a full-plan close-out);
+  # `--branch` still narrows Phase 7's two mutually exclusive rows within it.
+  node scripts/plan-file-coverage-check.mjs \
+    --plan docs/plans/comparison-tooling-consolidation.md \
+    --diff "$FULL_DIFF" \
+    --phases "<comma-separated completed phases, e.g. 0,1,1′ for an A+A′-only release>" \
+    --branch "d7d=<unify|keep-separate|not-yet-decided>"   # only meaningful once phase 7 is in --phases
+
+  # STEP 2 — ONLY AFTER STEP 1 SUCCEEDS, derive the requirements-extraction
+  # SUBSET (source .mjs, never test files) from the SAME validated diff.
+  # This is a narrowing filter on an already-verified-complete set, not a
+  # second independent derivation — coverage is proven before extraction ever
+  # sees a file list.
+  EXTRACT_SET=$(printf '%s\n' "$FULL_DIFF" | grep -E '^scripts/.*\.mjs$' | grep -v '\.test\.mjs$')
+
+  node scripts/requirements.mjs extract --files "$EXTRACT_SET"
   node scripts/requirements.mjs reconcile        # → .requirements/ledger.json (Class B)
   npm run requirements:map && npm run requirements:map:check
   npm run skills:regenerate && npm run skills:check      # expected: no-op, asserted
@@ -1378,6 +2062,69 @@ symbols, but produces no committed change.
   npm test                        # includes arm-vocabulary-layering
   npm run check
   ```
+
+  > **`scripts/plan-file-coverage-check.mjs` does not exist yet — creating it is
+  > in-scope for Phase 0, not a close-out-time surprise.** It is a small,
+  > reusable script: diff the supplied file list against every `modify`/
+  > `create` row in a plan's §6 File-Level Plan table; a row tagged with a
+  > `branch:` qualifier (Phase 7's two rows) is required only when
+  > `--branch` names it as taken, optional-and-ignored otherwise; fail on any
+  > unqualified either-side-only entry. Small enough to be worth having for
+  > every future plan's close-out, not just this one — the argument encoding
+  > (`--diff`, `--branch key=value`) and the branch-qualifier row syntax are
+  > BOTH Phase 0 deliverables, specified now rather than improvised at
+  > close-out time. Files: `scripts/plan-file-coverage-check.mjs` (create),
+  > `tests/plan-file-coverage-check.test.mjs` (create) — with a required test
+  > case for the Phase-7-branch-row scenario specifically, since that is the
+  > one case a naive "every row is mandatory" implementation gets wrong.
+
+  **The checker as specified above would REFUSE the plan's own §9 truncation
+  order (round-3 gate, H6) — a real self-contradiction, not a hypothetical
+  one.** §9 says Cluster A/A′ ships independently and Clusters B/C/D may be
+  dropped. An A-only release's diff necessarily omits every Phase 2–7 row, and
+  the "fail on any unqualified either-side-only entry" rule above admits no
+  concept of "this row belongs to a cluster that was never in scope" — it
+  would refuse the exact partial release §9 recommends as a valid outcome.
+
+  **The fix is a fourth Phase 0 deliverable, not a new subsystem**: §6's table
+  gains one column, **`Phase`**, naming the phase number each row belongs to
+  (every row already resolves to exactly one phase — the partition-check
+  already asserts every phase belongs to exactly one cluster, so a row's phase
+  number is sufficient to derive its cluster via §11's own phase↔cluster
+  table, with no second, redundant per-row cluster tag to keep in sync). The
+  checker then takes **`--phases <completed-phase-list>`** (e.g. `0,1,1′`
+  for an A+A′-only release) instead of assuming the whole table is mandatory:
+  a row is **required** iff its `Phase` is in the supplied list, **forbidden**
+  (diff contains it, list doesn't cover it) iff its `Phase` is absent from the
+  list, and the `--branch` qualifier from before still narrows Phase 7's two
+  rows within whichever list includes phase 7. The all-clusters invocation
+  (`--phases 0,1,1′,2,3,4,5,6,7`) is simply the full-list case — no separate
+  mode, one mechanism.
+
+  Backfilling the `Phase` column onto every existing §6 row is **Phase 0
+  scope**, alongside creating the checker itself — the column and the checker
+  that reads it are one deliverable, not two, so there is no window where the
+  checker exists but the data it needs does not. Required Phase 0 test cases,
+  beyond the Phase-7-branch-row one already specified: an A-only release
+  (`--phases 0,1`) passes; the same diff evaluated with `--phases
+  0,1,1′,2,3,4,5,6,7` (i.e., claiming full-plan completion against a
+  partial diff) correctly FAILS — proving the checker cannot be fooled into
+  certifying more than what actually shipped.
+
+  **`scripts/plan-file-coverage-check.mjs` is a NEW top-level CLI, so it
+  carries the repo's standard CLI contract (round-3 gate, H7) — this was
+  simply omitted, not a judgement call**: `--selfcheck-relocation` (the
+  established `if (process.argv.includes('--selfcheck-relocation')) {
+  console.log('OK'); process.exit(0); }` guard at the head of `main()`, per
+  every other CLI in `CLI_SMOKE_SET`); `assertKnownFlags` over
+  `{--plan, --diff, --phases, --branch}` so a typo'd flag refuses rather than
+  silently no-ops; and the standard `emit`/non-zero-exit envelope
+  (`cli-io.mjs`) for both success and failure output, never a bare
+  `console.log`. Required Phase 0 tests, additive to the ones already
+  specified: `--selfcheck-relocation` prints `OK` and exits 0; an unknown
+  flag refuses via `assertKnownFlags`; a missing/malformed `--plan` or
+  `--diff` fails with a named reason, not a stack trace; an invalid `--branch`
+  or `--phases` value fails the same way.
 
   Expected committed diff: `docs/plans/README.md`, `.audit-loop/domain-map.json`,
   `.requirements/ledger.json`, `docs/requirements-map.md` — and nothing else.
@@ -1423,6 +2170,20 @@ which would have proved little more than "the defaults are gone". Required:
 The last row is the one that is easy to skip and the only one an operator ever
 sees: a named error class that the CLI stringifies into an anonymous crash has
 not delivered the contract.
+
+**`promoteFromLog`'s exit rule gets its own mixed-batch matrix (post-gate fix,
+H4)**, since the exit-code ambiguity the round-1 gate found is precisely a case
+where single-condition tests can each pass while the exhaustive rule is still
+wrong:
+
+| Batch composition | `PromotionResult` shape | Exit code |
+|---|---|---|
+| all modern, all promote clean | `promoted: [n], skippedUnjudgeable: [], failedJudgeable: []` | 0 |
+| modern + legacy, no `campaignId` (reason `no-campaign-id`), no failures | `promoted: [n], skippedUnjudgeable: [m], failedJudgeable: []` | **0** — this is the exact case the ambiguity risked getting wrong |
+| modern + an entry whose **declared** `campaignId` is now unresolvable (reason `campaign-unresolvable`) | `skippedUnjudgeable: [1]` | **0 — corrected (round-3 gate, H5)**: an unresolvable campaign is `unjudgeable` per D1a's own rule (both reason codes share the bucket), NOT a write failure. A round-2 draft mislabeled this row as `failedJudgeable`, directly contradicting D1a's own text two sections earlier. |
+| modern + a JUDGEABLE entry (resolvable campaign, correct shape) that errors on the actual write | `failedJudgeable: [1]` | 1 — the real write-failure case the row above was wrongly standing in for |
+| ALL entries unjudgeable, zero promoted | `promoted: [], skippedUnjudgeable: [n], failedJudgeable: []` | **0** — the permanent-DoS case D1a's prose forbids, asserted directly |
+| mixed, with `--adopt-legacy --campaign X` reinterpreting some of the legacy group | adopted entries move from `skippedUnjudgeable` to `promoted`, AND an adoption receipt is appended to the log | 0 (if no failures) — **corrected (Gemini gate, G1): the STORE row is durable; the SOURCE LOG is not, unless a receipt says so.** The round-3 "durable write" claim was false as written — `promoteFromLog`'s write goes to the STORE, but `.audit/bakeoff-log.jsonl` itself is never rewritten, so a re-run WITHOUT `--adopt-legacy` reads the exact same `campaignId: null` entries again. See D1b's fix below for the actual mechanism. |
 - **The incident-(c) regression is the headline test, and it must fail first.**
   Assert that the matched-view aggregation iterates *the campaign's* arms:
   with the scoped campaign it must see `grok` and `gemini-control` and must not
