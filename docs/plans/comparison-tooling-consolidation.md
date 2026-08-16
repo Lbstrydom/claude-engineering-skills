@@ -1,12 +1,14 @@
 # Plan: Comparison-Tooling Consolidation
 
-- **Date**: 2026-08-16
-- **Status**: Draft
+- **Date**: 2026-08-16 (revised same day — see *Post-gate revision* below)
+- **Status**: Draft — **partially gated. Read the gate table before executing.**
 - **Author**: Claude + Louis
 - **Scope**: backend (two CLI entry points, their lib modules, their test suites)
+  — **plus**, as of the post-gate revision, the arm-count and role-coverage
+  flexibility axes (Clusters A′ and D).
 - **Target domain(s)**: `scripts`, `shared-lib`
 - **Predecessor**: [`role-agnostic-comparison-core.md`](./role-agnostic-comparison-core.md)
-  (Clusters A–C, shipped `916147a0..e70cb2bf`). That plan built the shared core
+  (Clusters A–C, shipped `916147a0..a0c72290`). That plan built the shared core
   correctly; this one pays the debt its own audit rounds kept deferring.
 
 ## Audit trail
@@ -17,6 +19,36 @@
 | Gemini (`--mode plan`, mandatory) | **3** (2-round cap + one genuine-bug exception) | R1 `CONCERNS` — 4 findings **+ 1 over-engineering flag**, coherence `Adequate`. R2 `CONCERNS` — 2 findings, coherence **`Strong`**, 0 over-eng. R3 **`APPROVE`** — **0 new, 0 wrongly-dismissed, 0 over-engineering**, coherence `Strong`. **7 of 7 accepted.** |
 
 **Total: 32 findings across both gates, 32 accepted, 0 dismissed, 0 deferred, 0 rebutted.**
+
+> ### ⚠ Post-gate revision (2026-08-16, after the rebase onto `c5cbb252`)
+>
+> **What the 32/32 gate covers**: D1/D2/D3 and Clusters A, B, C as originally
+> written. Nothing below invalidates them.
+>
+> **What is NEW and has NOT been through either gate** — treat as unaudited
+> until `/audit-plan` runs again:
+> - **D1c** (arm-count invariant) and **D6** (telemetry no-silent-zero), folded
+>   into Cluster A because they share D1's root cause and its file set.
+> - **D7** and **Cluster D** (role executability) — a genuinely new axis
+>   neither this plan nor its predecessor covered.
+> - Every re-pinned citation in §1 (see below).
+>
+> **Why the citations moved.** This plan was authored on a branch whose commits
+> were rewritten by a rebase onto `main`. Its pin, `e70cb2bf`, is **orphaned** —
+> it exists as a dangling object but is not reachable from `main`. Every
+> `file:line (e70cb2bf)` reference has been re-pinned to **`c5cbb252`** and
+> re-measured. This is exactly the decay
+> [`verification-discipline.md`](../audit/shared-references/verification-discipline.md) §1
+> names: the old refs still *resolved*, they just pointed at the wrong lines —
+> `:913` landed on a bare `}`. **The findings all survived re-measurement; only
+> the coordinates were wrong.** Re-derive rather than trust, on every future
+> read of this document.
+>
+> **One finding got worse under re-measurement, and that is the argument for
+> Cluster A′.** Incident (c) dropped **2** arms when first measured. Re-run on
+> `c5cbb252` it drops **4** (`grok, qwen, deepseek, gemini-control`), because a
+> concurrent session added two arms in between. The defect scales with arm
+> count: every arm added widens the silent miss. See §1's re-measurement block.
 
 > **Why a 3rd Gemini round.** The cap is 2; R2's two findings were both concrete
 > *design* defects (an enforcement mechanism that would have been silently inert,
@@ -70,11 +102,13 @@ the bug being fixed that round. **Six correct deferrals in a row is the
 definition of debt that is now due**, and deferring a seventh time would be the
 band-aid AGENTS.md names.
 
-**Measured 2026-08-16** (`wc -l`, on `e70cb2bf`):
+**Measured 2026-08-16** (`wc -l`, re-measured on **`c5cbb252`**; a parenthesised
+value is the original `e70cb2bf` reading, kept so the drift stays visible rather
+than being silently overwritten):
 
 | File | Lines | vs. repo median |
 |---|---:|---:|
-| `scripts/bakeoff-collect.mjs` | 1424 | **7.4×** |
+| `scripts/bakeoff-collect.mjs` | **1435** (was 1424) | **7.4×** |
 | `scripts/campaign.mjs` | 1338 | **6.9×** |
 | `tests/model-eval-core.test.mjs` | 1266 | 6.6× |
 | `tests/campaign-adjudication.test.mjs` | 1080 | 5.6× |
@@ -82,9 +116,12 @@ band-aid AGENTS.md names.
 | `scripts/lib/store/model-eval.mjs` | 621 | 3.2× |
 | `scripts/model-eval-auditor.mjs` | 594 | 3.1× |
 
-Median for `scripts/lib/**/*.mjs` is **193 lines over 487 files**
+Median for `scripts/lib/**/*.mjs` is **194 lines over 488 files** (was 193/487;
+the extra file is `comparison/model-family.mjs`)
 (`find scripts/lib -name '*.mjs' -exec wc -l {} +`). The repo already knows what
 its own module size looks like; two files are outliers by an order of magnitude.
+The ratios are unchanged to one decimal place — the honest reading being that
+the argument never rested on the exact integers.
 
 ### The fault is not "files are big". It is a fallback used as a default parameter.
 
@@ -109,7 +146,8 @@ right now.
 
 ### Code Trace — measured, not inferred (2026-08-16)
 
-> Every `file:line` below is pinned to **`e70cb2bf`**, and every figure carries
+> Every `file:line` below is pinned to **`c5cbb252`** (re-pinned from the
+> orphaned `e70cb2bf` — see the post-gate revision note), and every figure carries
 > the command that produced it. Re-derive rather than trust: line numbers decay
 > into wrong-but-resolving references, which is the failure this repo's
 > verification discipline names.
@@ -147,26 +185,36 @@ possible.
 
 **(c) Incident 2 — live, unreported, found by writing this plan.**
 `summarise()` accepts correctly-scoped `arms`, then calls
-`aggregateMatched(complete)` at `scripts/bakeoff-collect.mjs:913 (e70cb2bf)`
+`aggregateMatched(complete)` at `scripts/bakeoff-collect.mjs:924 (c5cbb252)`
 **without forwarding them**. Measured against the committed scoped campaign:
 
 ```
-scoped campaign REAL arms      : opus, kimi, grok, gemini-control
+scoped campaign REAL arms      : opus, kimi, grok, qwen, deepseek, gemini-control
 what aggregateMatched iterates : opus, solo-opus, kimi   (defaultArms -> LEGACY_ARMS)
-arms SILENTLY MISSED by the matched view: grok, gemini-control
-phantom arms it looks for that do not exist: solo-opus
+arms SILENTLY MISSED           : grok, qwen, deepseek, gemini-control
+phantom arms hunted            : solo-opus
 ```
 
-The matched-view aggregation — a reported campaign metric — drops two of four
+> **RE-MEASURED on `c5cbb252`, and it got worse — this is Cluster A′'s whole
+> argument.** At `e70cb2bf` this dropped **two of four** arms
+> (`grok, gemini-control`). It now drops **four of six**, because a concurrent
+> session added `qwen` and `deepseek` to the same committed campaign in between.
+> Nothing about the defect changed; the *campaign* changed, and the defect
+> widened to match. **The size of the silent miss is a function of the arm
+> count**, so it grows every time the comparison does the thing it exists to do.
+> A fix that only forwards the parameter at this one call site leaves that
+> property intact — which is why D1c generalises it to an invariant.
+
+The matched-view aggregation — a reported campaign metric — drops four of six
 arms and hunts one that does not exist. Same class as incident (b), one call
 frame deeper, never caught, because the failure mode is a *plausible number*
 rather than an error. `zeroFindingArms(e)` at
-`scripts/bakeoff-collect.mjs:1075 (e70cb2bf)` takes the same default and is
+`scripts/bakeoff-collect.mjs:1086 (c5cbb252)` takes the same default and is
 exposed identically.
 
 **This is the load-bearing argument for the whole plan.** The structure is not
 merely inelegant; it has produced two defects of one class, and the second was
-invisible to 17 rounds of audit *because reading a 1424-line file is how you
+invisible to 17 rounds of audit *because reading a 1435-line file is how you
 miss a parameter that is not passed*.
 
 ### `LEGACY_ARMS` — a claim I made and then falsified
@@ -199,7 +247,7 @@ drafts conflated the two. The bake-off log is a real input surface —
 **historical entry with no `campaignId` silently resolves to `LEGACY_ARMS`**:
 
 ```js
-// scripts/bakeoff-collect.mjs:405 (e70cb2bf)
+// scripts/bakeoff-collect.mjs:417 (c5cbb252)
 if (!campaignId) return { arms: defaultArms(), expectedScope: defaultExpectedScope() };
 ```
 
@@ -327,8 +375,8 @@ groupByCampaign(entries) → Map<campaignId|null, Entry[]>
 
 - **The reader iterates campaigns and summarises each group under its own
   scope.** This is not a new behaviour: `printProgress` **already** filters to
-  one campaign's entries before summarising (`bakeoff-collect.mjs:958
-  (e70cb2bf)`), for exactly this reason. D1b makes that filtering the *contract*
+  one campaign's entries before summarising (`bakeoff-collect.mjs:961
+  (c5cbb252)`), for exactly this reason. D1b makes that filtering the *contract*
   rather than one caller's precaution.
 - **`--campaign <id>` has one meaning, stated: it SELECTS.** It restricts the
   operation to that campaign's entries; entries of other declared campaigns are
@@ -384,10 +432,10 @@ The contract already half-exists and is being *destructured apart* at every call
 site — which is precisely what permits the mismatch:
 
 ```js
-// scripts/bakeoff-collect.mjs:404 (e70cb2bf) — already returns a scope VALUE
+// scripts/bakeoff-collect.mjs:415 (c5cbb252) — already returns a scope VALUE
 export function scopeForEntry(entry) { … return { arms, expectedScope }; }
 // …and every caller immediately takes it apart again:
-return isComplete(entry, scope.arms, scope.expectedScope);   // :419 (e70cb2bf)
+return isComplete(entry, scope.arms, scope.expectedScope);   // :430 (c5cbb252)
 ```
 
 So D1 promotes that existing shape into the contract rather than inventing a
@@ -510,6 +558,153 @@ count does not go up; the number of ways to hold it wrong goes down.
 **Migration is bounded and mechanical**: 4 signatures, and by measurement 8 call
 sites, of which 6 already pass explicit scope and 2 are the defects.
 
+### D1c — The arm set is 1..n, and that is an INVARIANT, not a fixed list (NEW — ungated)
+
+> **Post-gate addition.** Not covered by the 32/32 audit. Folded into D1 rather
+> than filed separately because it is the *same root cause* (`defaultArms()`
+> supplying an arm set nobody asked for) reaching a different set of readers,
+> and it lands in the same files D1 already opens. Splitting it out would mean
+> touching `summarise` twice.
+
+D1 stops a *wrong* arm set being substituted. D1c stops a *hardcoded* one being
+assumed. The operating requirement, stated as a property rather than a count:
+
+> **Any code that iterates arms must iterate the set the resolved scope
+> declares — never a literal, never a fixed arity.** Adding the (n+1)th arm to a
+> campaign must require zero production-code edits.
+
+That is not aspirational; it is already 90% true, and the exceptions are
+enumerable. **Measured on `c5cbb252`** — the generic surfaces are genuinely
+generic (`campaign/verdict.mjs`, `comparison/spend.mjs`, `comparison/cost.mjs`,
+`dashboard/collect-campaigns.mjs` and `dashboard/sections/campaigns.mjs` are all
+`Object.entries`/`armIds`-driven, no fixed widths, no literals). The violations
+are concentrated in one readout block:
+
+| Site | Defect | Consequence |
+|---|---|---|
+| `bakeoff-collect.mjs:860-862` | `e.arms.opus`/`e.arms.kimi` literals feed `primaryTotal` | Only 2 of 6 declared arms contribute. **`primaryTotal` is also dead** — written twice, read nowhere in the repo. |
+| `bakeoff-collect.mjs:868` | `primaryDivergence.push(Math.abs(p1 - p2))` with both sides `?? 0` | **Fabricates a metric.** See D6 — this is the telemetry defect, not merely an arm defect. |
+| `bakeoff-collect.mjs:884-889` | `e.arms['solo-opus']?.primaryDistinct` literal | Reports *"N snapshot(s) unpaired — one Opus sample missing"* for a campaign that never declared that arm. Degrades honestly (no false zero) but the message is wrong. |
+| `bakeoff-collect.mjs:921-923` | `opusUnique`/`kimiUnique`/`soloFindings` legacy projection | Deliberate back-compat view, derived from the generic maps. **Not load-bearing** — consumed only by tests. Retain, but it must not gain a new consumer. |
+
+**The fix is the invariant, not four patches.** Patching four sites leaves the
+fifth to be written next year. `summarise` receives a `ResolvedScope` under D1;
+every tally in it derives its key set from `scope.arms` and nothing else. The
+legacy projection stays as an explicitly-labelled *view* over the generic maps.
+
+**A fifth site, and it is the one that matters most for running evals
+repeatedly: `PROVIDER_TERMS`** (`scripts/lib/store/campaign.mjs:54-58`). The
+adjudication blinding redacts `armIds` and `armModels` dynamically, then also
+scrubs a **static vendor list** (`openai, anthropic, gemini, claude, openrouter,
+moonshotai, moonshot, deepseek, qwen, zhipu, mistral, llama, grok, kimi, opus,
+sonnet, haiku, gpt, glm`). Add an arm from a vendor not on that list — Cohere,
+Nova, whoever ships next — and **that vendor's name survives into the blind
+adjudication payload.**
+
+This is filed here, in A′, rather than with the role work, because it is the
+sharpest possible violation of D1c's own invariant: *adding an arm must be one
+edit*. Today it is two, the second one is invisible from the file you are
+editing, and **forgetting it degrades blinding silently** — no error, no failed
+test, just a slightly less blind adjudication feeding the metric the whole
+campaign turns on. For a system whose entire purpose is to be run again with
+different arms, a recurring manual step that silently corrupts the evidence when
+skipped is the worst available failure mode.
+
+**The fix is the same derived-set principle**: the vendor terms for a given
+comparison are derivable from the declared arms' own model strings (`qwen/…`,
+`deepseek/…`, `moonshotai/…` — the provider segment is right there in the id),
+so the list becomes *computed from the arm set* plus a small static residue for
+vendors whose name never appears in their own model id. Same shape as every
+other fix in D1c: stop asserting a set, derive it.
+
+> **Deliberately NOT widened into a general redaction overhaul.** The static
+> list also carries hand-won exclusions (`meta` is absent on purpose — it
+> matches inside "metadata" and redacting it corrupts the prose the adjudicator
+> must read). Those stay. This adds derivation *alongside* the residue; it does
+> not replace a working security control with a clever one.
+
+**Enforcement — a derived-set invariant, deliberately NOT a golden file.** A
+golden fixture pins one arm set, so it must be edited whenever an arm is added —
+and an edited golden proves only that someone edited it. The assertion instead
+compares two things the code already has:
+
+```
+for n in [1, 2, 6]:                       # 1 exercises the degenerate case
+  scope = a synthetic ResolvedScope with n arms
+  assert keys(summarise(entries, scope).totals.uniqueByArm) ⊆ ids(scope.arms)
+  assert every arm in scope.arms is REPRESENTED (present, or explicitly unpaired)
+```
+
+Adding an arm changes the input and the expectation together, so the test never
+needs editing and cannot go stale. This single assertion covers incident (c),
+the `:860-889` block, and the fragile test in D3's matrix — all three are the
+same property violated in three places.
+
+> **`n = 1` is included on purpose.** `checkArmSetSemantics` requires ≥2 *scored*
+> arms for a campaign, so n=1 is not a legal campaign — but it IS a legal input
+> to these pure functions, and it is the case where an off-by-one or an
+> `arms[0]`/`arms[1]` assumption shows up. Testing the arithmetic at n=1 is not
+> the same as permitting a 1-arm comparison.
+
+### D6 — A metric with no measurement is `unknown`, never `0` (NEW — ungated)
+
+> **Post-gate addition.** This is the telemetry axis, and it is a *different*
+> failure from D1/D1c even though it surfaces at the same lines. D1c is "the
+> wrong arms were counted"; D6 is "nothing was measured and the readout printed
+> a number anyway".
+
+**Measured, executed, on `c5cbb252`.** Two complete snapshots from a campaign
+declaring `grok`/`qwen`/`deepseek` (no `opus`, no `kimi`):
+
+```
+complete snapshots        : 2          ← positive control: the block DID run
+primaryDivergence samples : [0, 0]     → readout: "mean 0.0, max 0"
+opusDivergence samples    : []         | unpaired: 2   ← refuses to fabricate
+```
+
+`printProgress` renders that first line as *"Gemini self-divergence (P1 vs P2):
+mean 0.0, max 0 — same model, same transcript, two runs."* **That is the
+strongest agreement claim the readout can make, manufactured entirely from
+absent data.**
+
+**The rule already exists in this repo — it is written in the comment between
+the two blocks** (`bakeoff-collect.mjs:881-883`):
+
+> *"A snapshot missing either side is COUNTED AS UNPAIRED, never as a zero — a
+> zero here would read as 'Opus agreed with itself perfectly', which is the
+> strongest possible claim and exactly what absent data cannot support."*
+
+Applied to `opusDivergence` fifteen lines below. Violated by `primaryDivergence`
+immediately above it. **The rule is correct, stated, and unenforced** — which is
+the entire finding, and why the remedy is a contract rather than a third patch.
+
+This is the fourth instance of one shape. Each was found separately and fixed
+locally: per-run cost `NULL` on all 128 rows for the column's entire life; a
+hardcoded `0` in telemetry read as a measurement; `labelled: 0` from
+`write-code-outcomes` reading as success; and now `mean 0.0`. **They share a
+single cause — a missing measurement rendered as a legitimate value** — and the
+repo has already built the right answer several times without generalising it
+(`costEvidence: 'unknown'`, `costStatus: 'unpriced'`, `opusDivergenceUnpaired`,
+`arch:coverage-gate`'s `unknown` verdict, this plan's own D1a `unjudgeable`).
+
+**The contract, at the write boundary:**
+
+- An aggregate over zero observations is **absent or `unknown`** — never `0`,
+  never `[]` silently averaged, never `Infinity`.
+- **The count of non-observations travels beside the aggregate** (`…Unpaired`,
+  `…Unpriced`, `unjudgeable`), so a reader can always distinguish *"measured,
+  and it was zero"* from *"nothing to measure"*.
+- **A renderer may not average a set it cannot prove non-empty.** `mean` of `[]`
+  must render `—`/`unknown`, not `0.0`.
+- **`primaryTotal` is deleted**, not fixed: a dead metric cannot be honest, and
+  keeping it invites a future reader to start trusting it.
+
+**Enforcement**: `bakeoff/summary.mjs` is pure under D2a, so every one of these
+is a unit assertion with no rig — *"an aggregate computed from zero
+contributions is not a number"*, asserted per aggregate. That is cheap precisely
+because D2 made the module pure, which is the dependency worth noting between
+the clusters.
+
 ### D2 — Decompose the two outlier CLIs into the layout this repo already uses
 
 `scripts/*.mjs` are thin entry points; `scripts/lib/**` are focused modules.
@@ -543,7 +738,7 @@ R1 correctly flagged that responsibility labels do not constrain imports, and
 that the original file plan hid an unresolved question behind the words *"follow
 moved imports **if any** resolve through the CLI"*. **Resolved by measurement
 rather than left conditional** — `scripts/lib/dashboard/collect-campaigns.mjs
-(e70cb2bf)` imports exactly:
+(c5cbb252)` imports exactly:
 
 ```
 ../campaign/config.mjs · ../campaign/verdict.mjs · ../comparison/spend.mjs
@@ -658,7 +853,9 @@ a refactor's clothes, and the suite is the only thing proving D1/D2 changed no
 behaviour.
 
 **The migration matrix (R1/M1 — enumerated, not described).** Destinations are
-derived from the actual `describe` blocks at `e70cb2bf`, so the mapping is a
+derived from the actual `describe` blocks — **re-verified line-by-line on
+`c5cbb252`: all nine still land correctly**, so Phase 4 is unaffected by the
+rebase. The mapping is a
 measurement rather than an intention. Line numbers are the block's opening
 `describe(`.
 
@@ -754,7 +951,7 @@ regression is a **security or accounting** failure, not a test failure — so th
 are pinned by name, **verified to exist before the move is attempted**, and run
 before *and* after each relocation:
 
-| Invariant | Guarding block (verified present at `e70cb2bf`) |
+| Invariant | Guarding block (verified present at `c5cbb252`) |
 |---|---|
 | Blind worksheets exclude model/provider/arm identity | `blind worksheet DTO` (41), `redaction leak canary` (65) — **37 blind/redact assertions measured** in this file |
 | Worksheet row ids are deterministic (HMAC) and stable | `worksheet identity` (190) |
@@ -793,12 +990,179 @@ their own measurement, and silently dropping them would be dishonest:
   both are internally coherent. Splitting them would be refactoring by metric
   rather than by pain.
 
+### D7 — Three roles, n arms, ONE driver — and the driver is the manifest, not the campaign (NEW — ungated)
+
+> **Post-gate addition, and the largest one.** Neither this plan nor its
+> predecessor covered *role executability*. The predecessor built the role
+> **vocabulary**; it did not make the vocabulary runnable. This decision is
+> Cluster D and is deliberately last.
+
+**The requirement**: choose any of the three LLM roles in the audit chain, and
+compare 1..n models for it, without hand-editing a table.
+
+**Measured state on `c5cbb252`** — the vocabulary is unusually well-modelled
+(`ROLES`, the eligible/supported split, `assertRoleCoverage` proving every role
+has exactly one owning mechanism). Execution is not:
+
+| Role | Runnable? | n-arm? | Evidence |
+|---|---|---|---|
+| `final_review_shadow` | **Yes** — live, spend-bearing, 6 arms | Yes | Runs on `CampaignConfigSchema` via `bakeoff-collect.mjs`. **Does not use `comparison/manifest.mjs` at all.** Its manifest support exists in `controls.mjs` and has **no CLI consumer** — schema-reachable, execution-unreachable. |
+| `auditor` | **Yes** | **Yes** — the only n-arm manifest driver | `model-eval-auditor.mjs` `runManifestDriver`. Role hardcoded at **8 production sites**; a `final_review_shadow` manifest parses and is then rejected. Declared `control`/`replicate` arms are validated but **never executed**. |
+| `adjudicator` | **No** | No | No controls schema (`CONTROLS_BY_ROLE` omits it); `parseComparisonManifest` refuses it as a stated v1 boundary; `model-eval-adjudicator.mjs` exists but has **no `--manifest` and no arm concept** (1-candidate-vs-1-baseline); **never executed** in any tier; and its live-shadow path is transport-limited to 3 providers. |
+
+**Three structural walls, not one missing schema** — worth stating plainly
+because "add adjudicator controls" sounds like a small change and is not:
+
+1. **The store enforces the split.** `store/model-eval.mjs` validates `role`
+   against `SWAP_ELIGIBLE_ROLES` (`auditor|adjudicator`), so
+   `model_eval_comparisons` can **never** hold a `final_review_shadow` row —
+   that role persists through `store/campaign.mjs` instead. Unifying at the CLI
+   without addressing this hits a wall at the persistence layer.
+2. **Widening the campaign collector is FORBIDDEN.** `CAMPAIGN_ELIGIBLE_ROLES`
+   is a one-value enum on purpose: AGENTS.md's model-swap-eval section states
+   *"Do not add a sixth collector"*, and the predecessor's D3 caps how many
+   passive collectors this repo may have. So the unification **must not** go via
+   `bakeoff-collect.mjs`.
+3. **Blinding vocabulary is vendor-keyed.** `store/campaign.mjs`'s
+   `PROVIDER_TERMS` is a static vendor list (`deepseek, qwen, grok, kimi, opus,
+   glm, …`). `armIds`/`armModels` are redacted dynamically, so this is
+   defence-in-depth — but **an arm from an unlisted vendor leaks that vendor's
+   name into the blind adjudication payload**. Adding a vendor is therefore
+   currently a two-edit operation, which is the shape D1c exists to eliminate.
+
+**The decision: the synchronous manifest driver becomes the universal
+n-arm × n-role comparison path; the passive campaign collector stays
+final-review-only.**
+
+Direction matters and this is the only direction that satisfies both
+constraints. It respects the collector cap (wall 2 — nothing is added to the
+passive side), and it matches what the capability is actually *for*: choosing a
+layer and running a comparison is **synchronous, operator-initiated** work —
+which is the swap-eval's job description — not organic accumulation over
+commits, which is the campaign's. `model-eval-auditor.mjs` already proves the
+shape works for n arms; the work is generalising it off one hardcoded role
+rather than inventing a mechanism.
+
+**Scope of Cluster D, smallest-first, each independently valuable:**
+
+- **D7a — de-hardcode the existing driver.** Lift the 8 `'auditor'` literals in
+  `model-eval-auditor.mjs` into a role parameter; the entry point becomes a thin
+  argv shim over a role-generic `runManifestDriver(role, manifest)`. No new
+  capability, and it is the prerequisite for everything below.
+- **D7b — `adjudicator` controls schema + manifest support.** The narrow,
+  honest version: dials that role actually needs, no invented ones. This is
+  where `SUPPORTED_ROLES` finally equals `ROLES`, and `assertRoleCoverage`
+  starts asserting something about production rather than about test fixtures.
+- **D7c — n-arm adjudicator execution.** Extend the driver, not
+  `model-eval-adjudicator.mjs`'s 1-vs-1 oracle (which stays as the
+  ground-truth-scoring path it already is).
+- **D7d — the store seam, decided against PRE-REGISTERED criteria.** See D7e
+  below: the question is posed precisely, and the rule that answers it is fixed
+  *before* the evidence arrives.
+
+#### D7e — Role and MODE are orthogonal axes, and the decision rule is pre-registered (NEW — ungated)
+
+**The reframing that matters for doing this repeatedly.** An earlier draft of
+D7d asked "should the two persistence paths unify?" and answered "we'll decide
+later; keeping them separate is a valid outcome." Both halves were wrong, and
+the second is the more dangerous:
+
+- **A decision gate with no stated criteria decides after seeing the data**,
+  which is what pre-registration exists to prevent and what this repo enforces
+  everywhere else (the campaign's own decision rule, the N=12 stopping rule,
+  `TIERED_SHADOW_CONTRACT_EPOCH`). Writing "either outcome is valid" with no rule
+  is not scope discipline; it is a licence to pick whichever answer is cheaper
+  on the day. AGENTS.md's own test applies: **a defer is honest as a scope
+  boundary or as documented debt, never because the correct fix is larger.**
+- **"Unify the stores?" is the wrong question.** The real structure is two
+  *orthogonal* axes, and the current design conflates them.
+
+**The two axes:**
+
+| Axis | Values | What it determines |
+|---|---|---|
+| **Role** | `auditor` · `adjudicator` · `final_review_shadow` | *What* is being compared — which LLM seat in the audit chain |
+| **Mode** | `passive` (accumulate over real work) · `synchronous` (score a fixed corpus on demand) | *How* the evidence is gathered |
+
+Today role **determines** mode, and that binding is a historical accident rather
+than a design: `final_review_shadow` runs passively because that is how the
+bake-off happened to start; `auditor` runs synchronously because that is how the
+model-swap question happened to be framed. **Nothing in either role's nature
+requires its mode.** A synchronous final-review eval over a corpus of transcripts
+is perfectly coherent; so is passively accumulating auditor comparisons as real
+audits run.
+
+**Why this matters specifically for doing evals repeatedly.** If role keeps
+determining mode, then every future eval inherits its tooling from an accident:
+the operator must remember which of two CLIs, two config formats, two stores and
+two readouts applies to the seat they happen to be testing — and *"how did Opus
+do as a final reviewer"* versus *"how did Opus do as an auditor"* cannot be put
+side by side, because the two answers are computed by different machines. That
+is the stated requirement — three layers, n arms, easily — failing at the second
+word. **Two systems sharing a vocabulary is not one system.**
+
+**The target shape** (already most of the way built — this names it, it does not
+invent it): **one comparison core, two mode envelopes.**
+
+```
+shared core   : arms · controls · per-arm runs · per-arm spend · findings · adjudication
+passive env.  : cohortDigest · contractEpoch · targetN/stoppingRule · per-snapshot completeness
+synchronous   : tier · oracle corpus · per-case scoring
+```
+
+The overlap is the *evidence*; the differences are *framing metadata*. That is
+exactly the split `role-agnostic-comparison-core` already made in the schema
+layer — D7e asks only whether the **store** follows it.
+
+**PRE-REGISTERED DECISION RULE for D7d.** Fixed now, applied mechanically when
+D7a–c land. No judgement call at decision time:
+
+1. **Enumerate** every field each readout actually reads — the campaign
+   standings/watermark, the swap-eval verdict, and the dashboard collector.
+2. **Classify** each field as *shared core*, *passive-only*, or
+   *synchronous-only*.
+3. **UNIFY** (widen the `model_eval_*` role constraint; one store, two envelopes)
+   **iff every field classifies cleanly** — i.e. no field is required by both
+   modes with *incompatible semantics*.
+4. **KEEP SEPARATE iff at least one field is required by both with incompatible
+   semantics** — and that field must be **named in the verdict**, not gestured
+   at. A "keep separate" conclusion that cannot name its blocking field is a
+   failed analysis, not a valid outcome.
+5. Either way, **record the field census in this plan**. It is the artifact that
+   makes the decision re-checkable, and it is worth more than the verdict.
+
+> **Predicted outcome, recorded in advance so the prediction is falsifiable.**
+> On the current reading the overlap looks large and the differences look like
+> pure framing metadata, so I expect **UNIFY**. Writing that down now means the
+> census can prove me wrong — which is the point of predicting before measuring
+> rather than after. If the census returns "keep separate", the named blocking
+> field is a real finding about the two evidence models, not a shrug.
+
+**Right-sizing.** D7e adds no build scope: it replaces an unstated decision with
+a stated one, and step 1–2's census is a read of code that will already be open.
+The over-built alternative — collapsing the two envelopes into one schema
+regardless of what the census finds — is explicitly rejected: a one-sitting eval
+has no meaningful cohort epoch, and forcing one on it would be coupling two
+lifecycles to avoid one conditional.
+
+> **Right-sizing note.** D7 is *not* "build a universal comparison framework".
+> D7a is a parameter lift over code that already works. D7b/c make the third
+> role reach parity with the second. D7d is explicitly a *decision*, not a
+> build. The over-built version — one store schema, one CLI, one config format
+> for all three roles regardless of what they persist — is rejected: two of the
+> three roles have genuinely different evidence shapes (a campaign accumulates
+> snapshots over time; a swap-eval scores a fixed corpus once), and collapsing
+> them would be decoupling nothing while coupling two lifecycles.
+
 ---
 
 ## 3. Right-sizing gate
 
-- **The band-aid**: forward `arms` at line 913 and close incident (c). Rejected —
-  fixes one instance, leaves the generator and the other exposed reader.
+- **The band-aid**: forward `arms` at line 924 and close incident (c). Rejected —
+  fixes one instance, leaves the generator and the other exposed reader. **The
+  re-measurement makes this sharper**: the same defect widened from 2 dropped
+  arms to 4 without anyone touching the code, purely because the campaign grew.
+  A one-line forward leaves that scaling property completely intact.
 - **The over-built version**: a scope-context object threaded everywhere, plus
   rewriting the JSONB validator, plus a vocabulary migration, plus a comment
   sweep. Rejected — three of those four are unforced, and one is a security
@@ -868,6 +1232,11 @@ runs in `npm test`, so an inbound-edge break fails at push rather than silently.
 | `tests/model-eval-core.test.mjs` | modify | Split 7 ways per D3 (independent cluster) |
 | `.audit-loop/domain-map.json` | modify | **Required** (measured): one `{pattern, domain:"shared-lib"}` rule for `scripts/lib/bakeoff/**` above the `scripts/lib/**` catch-all. **No `allowedDeps` entry** — rules do not carry that key and the siblings share the domain (D2b) |
 | `docs/plans/comparison-tooling-consolidation.md` | modify | This plan, corrected by its own audit |
+| `scripts/model-eval-auditor.mjs` | modify | **D7a (NEW)** — lift 8 hardcoded `'auditor'` literals into a role parameter |
+| `scripts/lib/comparison/controls.mjs` | modify | **D7b (NEW)** — add the `adjudicator` controls schema; `SUPPORTED_ROLES` then equals `ROLES` |
+| `scripts/lib/comparison/manifest.mjs` | modify | **D7b (NEW)** — admit `adjudicator`, replacing the v1-boundary refusal |
+| `tests/model-eval-adjudicator-manifest.test.mjs` | create | **D7c (NEW)** — n-arm adjudicator manifest driving |
+| `tests/bakeoff-summary.test.mjs` | *(already listed)* | **+ D1c/D6 (NEW)** — the derived-set invariant at n ∈ {1,2,6} and the per-aggregate no-silent-zero assertions |
 
 Deleted from the original draft: a `scripts/lib/dashboard/collect-campaigns.mjs`
 row that said *"follow moved imports if any resolve through the CLI"*. Measured
@@ -946,6 +1315,20 @@ symbols, but produces no committed change.
   > `scope.mjs` is pure and imports nothing, so it has no reason to wait for the
   > decomposition: it is the *definition* D1 needs, not part of the relocation.
 
+- **Phase 1′ — Arm-set invariant + telemetry honesty (D1c, D6). NEW, ungated.**
+  Same commit range as Phase 1, same files (see Cluster A′'s ordering argument).
+  Replace the `opus`/`kimi`/`solo-opus` literals at `bakeoff-collect.mjs:860-889`
+  with `scope.arms`-derived tallies; **delete `primaryTotal`** (dead — written
+  twice, read nowhere); make `primaryDivergence` count unpaired snapshots the
+  way `opusDivergence` already does; make the renderer print `—` rather than
+  `0.0` for an aggregate over zero observations. Add the derived-set invariant
+  (n ∈ {1, 2, 6}) and the per-aggregate "no silent zero" assertions.
+  **Also derives `PROVIDER_TERMS` from the declared arms' model strings**
+  (keeping the static residue and the deliberate `meta` exclusion), so adding an
+  arm cannot silently degrade adjudication blinding.
+  Files: `scripts/bakeoff-collect.mjs`, `scripts/lib/store/campaign.mjs`,
+  `tests/bakeoff-summary.test.mjs`, `tests/campaign-adjudication.test.mjs`.
+
 - **Phase 2 — Decompose `bakeoff-collect.mjs` (D2/D2a).** The **remaining five**
   bakeoff modules (`arms`, `log`, `spawn`, `summary`, `progress` — `scope.mjs`
   already exists from Phase 1, so D2's six modules are 1 + 5, not 5); entry
@@ -956,7 +1339,28 @@ symbols, but produces no committed change.
 - **Phase 4 — Split the bakeoff + campaign suites (D3).** Verbatim assertion
   moves, per the matrix. Files: the 6 created test files + the 2 retained.
 - **Phase 5 — Split `model-eval-core.test.mjs` (D3, independent).** Files:
-  `tests/model-eval-core.test.mjs` + 7 created suites.
+  `tests/model-eval-core.test.mjs` + 7 created suites. **Plus (revision)**:
+  convert the live-config-pinning assertions in
+  `tests/final-review-bakeoff.test.mjs` (`:559-569`, `:576`, `:591`, `:677`,
+  `:688`, `:703-705`) to frozen fixtures, following
+  `tests/comparison-core.test.mjs`'s existing pattern.
+- **Phase 6 — Role executability (D7a–c). NEW, ungated.** Lift the 8 hardcoded
+  `'auditor'` literals in `model-eval-auditor.mjs` into a role parameter; add
+  the `adjudicator` controls schema to `controls.mjs` and admit it in
+  `manifest.mjs`; extend the manifest driver to run n adjudicator arms. Files:
+  `scripts/model-eval-auditor.mjs`, `scripts/lib/comparison/controls.mjs`,
+  `scripts/lib/comparison/manifest.mjs`, `tests/comparison-core.test.mjs`,
+  `tests/model-eval-auditor-manifest.test.mjs`, + a new adjudicator-manifest suite.
+- **Phase 7 — The store-seam decision (D7d/D7e). NEW, ungated. A DECISION
+  executed against a PRE-REGISTERED rule.** Run D7e's field census: enumerate
+  every field the campaign standings, the swap-eval verdict and the dashboard
+  collector each read; classify each as shared-core / passive-only /
+  synchronous-only; apply D7e's rule. **UNIFY** if every field classifies
+  cleanly; **KEEP SEPARATE** only if a field is required by both modes with
+  incompatible semantics — and that field must be named. Record the census in
+  this plan regardless of verdict: the census outlives the decision and is what
+  makes it re-checkable. Predicted outcome is UNIFY, recorded in advance so the
+  census can falsify it. Implement only if the verdict is UNIFY.
 - **Close-out — the executable list, in order (R4/M2).** The R3 draft named the
   right *ordering* in §6a and then omitted most of those commands here, leaving
   a team to reconcile a ledger against a shorter checklist. They now match:
@@ -989,6 +1393,10 @@ symbols, but produces no committed change.
 | **Retagging breaks layering in the invisible (inbound) direction.** | `tests/arm-vocabulary-layering.test.mjs` re-derives the whole violation set and runs in `npm test`. Do not verify by grep. |
 | **The plan becomes a rewrite under audit pressure.** Audit rounds will propose improving the code being moved. | The non-goals section is the pre-registered answer: in-scope is *relocation + D1*. A genuine defect found in moved code is fixed; a readability improvement is declined and recorded. |
 | **Deferred**: JSONB validator redesign, vocabulary unification, comment sweep, the 3× files. | Each named in §2 with its reason; none blocks the two properties this plan buys. |
+| **NEW — the plan grew after its own gate, which is how a gated artifact becomes an ungated one wearing a gate's badge.** | The gate table names precisely which decisions carry the 32/32 and which do not, and every new section is banner-marked `NEW — ungated`. **`/audit-plan` must run again before Cluster A′ or D is executed** — the original gate cannot vouch for text it never saw. Clusters A/B/C as originally written are unaffected and may proceed on the existing gate. |
+| **NEW — Cluster D adds a third role to schemas two roles currently share.** A regression here breaks `auditor` (live) or `final_review_shadow` (live, spend-bearing) while adding `adjudicator` (never run). | D7a is a pure parameter lift with the existing suite as its control. D7b adds a *new key* to `CONTROLS_BY_ROLE` rather than altering existing ones — `SUPPORTED_ROLES` is derived, so the blast radius is assertable. `assertRoleCoverage` already fails closed on a role with no owning mechanism, and `tests/comparison-controls-parity.test.mjs` already asserts the two live roles' rules independently. |
+| **NEW — the vendor-blinding list is a second hardcoded table** (`PROVIDER_TERMS`). An arm from an unlisted vendor leaks its vendor name into a blind adjudication payload. | **Moved INTO Cluster A′** (D1c) on reflection — an earlier draft filed it with D7, which was wrong: it is the sharpest violation of D1c's own "adding an arm is one edit" invariant, and it is the one violation that *silently corrupts evidence* rather than merely miscounting. Derive the terms from the declared arms' model strings; keep the hand-won static residue (including the deliberate `meta` exclusion). Mitigating context, not an excuse: `armIds`/`armModels` are already redacted dynamically, so the leak is the *vendor word*, not the arm identity. |
+| **NEW — D7d could be decided post-hoc to fit whatever the evidence makes cheap.** | **D7e pre-registers the decision rule and the predicted outcome (UNIFY) before the evidence exists**, and requires a "keep separate" verdict to NAME its blocking field. A conclusion that cannot name one is a failed analysis, not a valid outcome. This is the same discipline the campaign's own decision rule and stopping rule already carry. |
 
 ---
 
@@ -1028,6 +1436,36 @@ not delivered the contract.
   untouched assertions is the only evidence that "verbatim" was true.
 - **Not tested**: provider responses. No whole-provider mock.
 
+### D1c/D6 — why NOT golden files (NEW — ungated)
+
+The instinct for "make sure the arms fire and the telemetry is right" is a
+golden fixture. It is the wrong instrument here, for a reason this plan has
+already had to learn twice:
+
+- **A golden pins one arm set**, so it must be hand-edited on every arm change.
+  An edited golden proves that someone edited it. `tests/final-review-bakeoff.test.mjs:688`
+  is exactly this failure already — it pins the complete 6-arm set against a
+  *mutable* config, and a 7th arm breaks it with no defect present.
+- **A golden over telemetry pins the numbers**, which are legitimately different
+  every run. It would either be so loose it asserts nothing, or so tight it
+  fails on noise.
+
+The two replacements assert *properties*, so adding an arm changes input and
+expectation together and neither test needs editing:
+
+| Concern | Instrument | Why it cannot go stale |
+|---|---|---|
+| Do the right arms fire? | **Derived-set invariant** — the iterated key set equals `ids(scope.arms)`, checked at n ∈ {1, 2, 6} | Both sides derive from the same scope; there is no literal to update |
+| Is the telemetry honest? | **No-silent-zero, per aggregate** — an aggregate over zero observations is `unknown`/absent, and its non-observation count travels beside it | Asserts a *shape* (a number vs. an absence), not a value |
+
+**Both must be seen to fail first.** Written against pre-fix code, the
+derived-set invariant fails on incident (c) and on `:860-889`; the no-silent-zero
+assertion fails on `primaryDivergence`'s `[0,0]`. Red-then-green, one defect at a
+time — and the negative control already exists in the same function
+(`opusDivergence` correctly reports `[] / unpaired: 2` on identical data), so the
+assertion has a proven-correct sibling to be measured against rather than a
+hand-written expectation.
+
 ---
 
 ## 9. Execution Clustering
@@ -1041,6 +1479,17 @@ not delivered the contract.
     default.
   - This cluster contains a **live defect fix** and is independently shippable.
     If every later cluster is abandoned, this one must still land.
+- **Cluster A′** — Phase 1′ (D1c + D6) — fix-gate: yes — **NEW, ungated**
+  - **Runs WITH Cluster A, in the same commit range, not after it.** The
+    hardcoded readouts (`:860-889`) and the fabricated divergence live *inside*
+    `summarise`, which is the same function D1 re-signatures and which Cluster B
+    then **moves** to `bakeoff/summary.mjs`. Three orderings were considered:
+    fix-then-move touches every line twice; move-then-fix decomposes code known
+    to be wrong and then rewrites it in its new home, defeating B's
+    "bodies move verbatim" safety argument; **fix-with-A is the only ordering
+    where each line is written once.**
+  - Independently shippable *with* A. Its own defect (D6's fabricated metric) is
+    live and operator-visible today.
 - **Cluster B** — Phases 2–3 — fix-gate: yes
   - Coupling: both decompositions are the same mechanical move against the same
     layout rule, both are governed by the D2a table, and both retag domains in
@@ -1053,4 +1502,45 @@ not delivered the contract.
     never moves) and is grouped here only because it is the same mechanical
     operation on the same kind of artifact — it may be dropped without affecting
     any other cluster.
-- **Final gate**: mandatory consolidated Gemini review over the union diff A–C.
+  - **Added by the revision**: C also converts D3's live-config-pinning
+    assertions to frozen fixtures — `tests/final-review-bakeoff.test.mjs:688`
+    pins the complete 6-arm set against the *mutable committed campaign*, so a
+    7th arm breaks it. `tests/comparison-core.test.mjs` already models the
+    correct pattern (frozen `HISTORICAL_SUBSET` + assert the live config
+    *differs*); this is copying it, not inventing it.
+- **Cluster D** — Phases 6–7 (D7a–d, role executability) — fix-gate: yes — **NEW, ungated**
+  - Coupling and **why it is last**: D7a lifts a role parameter through
+    `model-eval-auditor.mjs`, and D7b/c add a third role to `controls.mjs` /
+    `manifest.mjs`. Both are far cheaper against **decomposed** modules than
+    against a 1435-line entry point — and adding a third role to a machine that
+    can still silently substitute an arm set (pre-A) would be building on the
+    exact defect A exists to remove. **D depends on A and B; it does not depend
+    on C.**
+  - D7d/D7e is a **decision gate, not an implementation phase**, and its rule is
+    **pre-registered in D7e** rather than settled on the day. It consumes the
+    evidence D7a–c produce, applies a fixed classification test, and must NAME a
+    blocking field to conclude "keep separate". The predicted outcome (UNIFY) is
+    recorded in advance so the census can falsify it.
+- **Final gate**: mandatory consolidated Gemini review over the union diff A–D.
+
+**Partition check** (the property `/cycle` re-validates at execution time, and
+the one the revision most easily breaks): the nine phases are 0, 1, 1′, 2, 3, 4,
+5, 6, 7. Cluster A owns 0–1; A′ owns 1′; B owns 2–3; C owns 4–5; D owns 6–7.
+**Every phase is in exactly one cluster; none is omitted or duplicated; the
+ranges are contiguous and ascending.** Clusters are named by *phase*, not by
+decision id, because that is what makes the block machine-derivable — a
+decision-labelled cluster has no `Files:` to resolve scope from.
+
+### Truncation order (what to drop if this is cut short)
+
+Stated explicitly because four clusters is more than one sitting, and an
+abandoned middle is worse than an abandoned tail:
+
+| Drop | Cost of dropping |
+|---|---|
+| **Cluster D** first | No live defect goes unfixed. `adjudicator` stays unrunnable — which is its status today, so this is status quo, not a regression. |
+| **Cluster C** next | Test-file size debt persists; the fragile `:688` assertion stays fragile. No production behaviour affected. |
+| **Cluster B** next | The two CLIs stay outliers. The *defects* are already fixed by A/A′; only reviewability is lost — which is the property this plan argues matters, but it is not a correctness loss. |
+| **A + A′** | **Never drop.** Two live defects (incident (c), the fabricated divergence metric), both operator-visible, both currently growing with arm count. |
+
+**A and A′ together are the minimum shippable unit of this plan.**
