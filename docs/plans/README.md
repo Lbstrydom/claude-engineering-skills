@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**10 active · 189 terminal · 27 audit summaries · 4 reference docs**
+**9 active · 190 terminal · 27 audit summaries · 4 reference docs**
 
 ---
 
@@ -27,7 +27,6 @@ This is the list to read when asking "what is in flight?".
 | [Final-Review Shadow Bake-Off (marginal-value re-test)](./final-review-shadow-bakeoff.md) | `In Progress` | activated 2026-07-31 — see §0 Activation Addendum |
 | [Learning / Persona / Quickfix Reliability Debt (2026-07-26 triage)](./refactor-learning-persona-quickfix-2026-07.md) | `Draft` | re-scoped to the 7 entries that are still real. |
 | [Miscellaneous Small-Cluster Debt (2026-07-26 triage)](./refactor-misc-small-items-2026-07.md) | `Draft` | items resolved individually as picked up (see per-item status below), not implemented as one batch |
-| [Role-Agnostic Model-Comparison Core](./role-agnostic-comparison-core.md) | `Draft` |  |
 | [A transactional commit boundary for `ship-commit`](./ship-commit-transaction.md) | `Draft` | not started; trigger-gated; Phase 1 answered in §2.1 and the cost widened |
 | [Standing Queue Burndown — the three gates that fire on every ship](./standing-queue-burndown.md) | `In Progress` | Q1 38 code rows, Q2 unknown (reader reports no total), Q3 68 actionable; measured 2026-08-09 |
 | [Tiered Recall-Weighted Audit Pipeline](./tiered-recall-audit-pipeline.md) | `In Progress` | implementation complete (Clusters A-F implemented |
@@ -50,7 +49,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 186 completed plans</summary>
+<summary>Show all 187 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -204,6 +203,7 @@ source comments that no docs linter sees — stays valid.
 | [Repo-Scoped Skill Surfaces + a Third-Party-Usable Installer](./repo-scoped-skill-surfaces-and-installer.md) | `Complete` |  |
 | [Requirements Layer — a materialized view of the codebase's de-facto requirements](./requirements-layer.md) | `Complete` |  |
 | [Robustness Hardening & R2+ Ledger Auto-Write](./robustness-and-ledger-wiring.md) | `Complete` | shipped — `scripts/lib/ledger.mjs` exports `writeLedgerEntry` + tracks the two-axis state model (`adjudicat… |
+| [Role-Agnostic Model-Comparison Core](./role-agnostic-comparison-core.md) | `Complete` | all three clusters shipped (`916147a0..a0c72290`) and the mandatory consolidated Gemini gate returned APPRO… |
 | [Sast-Routing, Sandbox Integrity & Migration-Adoption Hardening (7-item punch list)](./sast-sandbox-backlog-hardening.md) | `Complete` | all 7 items implemented + tested (19 new/updated |
 | [SAST Triage — Route, Never Suppress](./sast-triage-routing.md) | `Complete` |  |
 | [Isolate engineering-skills tooling in consumer repos under `scripts/.claude-skills/`](./scripts-claude-skills-isolation.md) | `Complete` | 2026-06-02) — archived to docs/completed/. All phases done; both consumers migrated. Phases 0/1/5 (source i… |

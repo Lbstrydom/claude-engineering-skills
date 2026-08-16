@@ -1,7 +1,7 @@
 # Plan: Role-Agnostic Model-Comparison Core
 
 - **Date**: 2026-08-14
-- **Status**: Draft
+- **Status**: Complete — all three clusters shipped (`916147a0..a0c72290`) and the mandatory consolidated Gemini gate returned **APPROVE** (0 new findings, coherence Strong). §9a rows 1, 2, 6, 7 executed and green; **rows 3–4 were NOT run** — they are spend-bearing live collection runs against a real campaign, an operator action rather than an implementation step. Follow-on module-size debt is carried by [`comparison-tooling-consolidation.md`](./comparison-tooling-consolidation.md).
 - **Author**: Claude + Louis
 - **Scope**: backend (CLI + store + one generated dashboard readout line)
 - **Target domain(s)**: `scripts`, `shared-lib`, `model-eval`, `dashboard`
@@ -38,11 +38,18 @@
 > — and it is still the right trade, because a 4th GPT round would have audited
 > R3's fixes and produced a 5th round's worth of the same.
 >
-> **Status stays `Draft` pending a re-gate.** Both caps are spent, so the fixes
-> for the REJECT findings have had no independent review. The honest next step
-> is `/cycle`'s code audit against a real implementation — not a third Gemini
-> round, which the cap exists to prevent and which would re-audit my own edits
-> for the fourth time.
+> **~~Status stays `Draft` pending a re-gate.~~ RESOLVED 2026-08-16 — the
+> re-gate happened, exactly as prescribed.** This paragraph was written at plan
+> time, when both caps were spent and the fixes for the `REJECT` findings had
+> had no independent review. It named the honest next step as *"`/cycle`'s code
+> audit against a real implementation — not a third Gemini round"*, and that is
+> what ran: each cluster carried its own `/audit-code` fix-gate (Cluster B took
+> **6 rounds**, 72 raw findings), and the mandatory consolidated Gemini review
+> over the union diff of A+B+C returned **`APPROVE`** — 0 new findings, 0
+> wrongly-dismissed, coherence `Strong`. The design the `REJECT` produced (D2b's
+> shrunk core, the split `resolveLocalPath`/`resolveGitPath`) survived contact
+> with the implementation. Kept rather than deleted because the prediction and
+> its outcome are the useful record.
 
 **Stop decision — at the cap, and the reason is the shape of the findings, not
 their number.** Acceptance stayed at 100% and every finding was a concrete
@@ -884,6 +891,29 @@ this order; each line's output is the evidence to retain in the ship log.
 Safe manifest for (5): the two cheapest auditor routes, `--tier screen`, so the
 whole check costs well under one final-review snapshot. **Row (6) must be run
 before (5) in anger** — it is the only one that can leak.
+
+---
+
+### 9b. Acceptance outcome (recorded 2026-08-16, at `a0c72290`)
+
+`Complete` is claimed against evidence, not assertion — and two rows were
+deliberately NOT executed, which is stated rather than glossed:
+
+| # | Outcome |
+|---|---|
+| 1 | **green** — `scripts/lib/campaign/config.mjs` is a LIB module, so per AGENTS.md it carries an import-test rather than `--selfcheck-relocation` (that handler is for top-level CLIs). `comparison/{spend,cost,manifest}.mjs` all import cleanly; `tests/relocation-guard.test.mjs` covers this in `npm test`. The row's stated command was itself slightly wrong. |
+| 2 | **green** — `deriveArms(committed campaign)` is byte-identical to `LEGACY_ARMS` key-for-key including env key ORDER, verified live and locked by `tests/final-review-bakeoff.test.mjs`. |
+| 3 | **NOT RUN** — a live `--progress` collection against `final-review-scoped-2026q3`. Spend-bearing and requires the runtime log; an operator action. |
+| 4 | **NOT RUN** — re-collecting snapshot `1a6e776f92eb`. Spend-bearing, same reason. The per-arm retry logic it would exercise IS unit-covered (`tests/bakeoff-per-arm-retry.test.mjs`). |
+| 5 | **partial** — the manifest driver was smoke-tested end to end during Cluster B (real spawned child per scored arm, cohort rows written); a full 2-arm `--tier screen` run against live providers was not repeated. |
+| 6 | **green** — a REAL constructed symlink into a sensitive target is refused at load with zero provider calls (`tests/model-eval-auditor-manifest.test.mjs` §9a case 6b). |
+| 7 | **green** — `npm run dashboard` then grep: the incomplete-spend line renders `$10.05 (bought no 1)` for one campaign and `none — no incomplete snapshots` for the other. |
+
+**Rows 3–4 are the honest gap.** Nothing in the shipped code is unverified by
+tests, but the *field* behaviour they describe — that a real collection reports
+non-zero incomplete spend, and that a retry re-charges only the failed arm — has
+been proven only in unit form. Run them the next time a real collection happens
+rather than manufacturing spend to close a checklist.
 
 ---
 
