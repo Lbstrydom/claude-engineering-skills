@@ -104,6 +104,18 @@ export function checkArmSetSemantics(cfg, issue) {
     }
   }
 
+  // A control must not name the INCUMBENT's model. A control is collected and
+  // never scored, so an arm carrying the baseline's model in that slot produces
+  // two runs of the baseline with only one of them counting — which reads as a
+  // replicate, is treated as neither, and makes "credited iff its OWN member
+  // was accepted" ambiguous about which baseline row an accepted finding
+  // belongs to.
+  for (const [i, arm] of cfg.arms.entries()) {
+    if (arm.type === 'control' && arm.model === cfg.decision.incumbent) {
+      issue(`control arm "${arm.id}" names the incumbent model "${arm.model}" — a control calibrates the comparison and is never scored, so it must not double as the baseline`, ['arms', i, 'model']);
+    }
+  }
+
   // The incumbent must be a real, comparable participant — scored arms only,
   // since a control is never scored and could not serve as a baseline.
   const incumbentArms = scored.filter((a) => a.model === cfg.decision.incumbent);

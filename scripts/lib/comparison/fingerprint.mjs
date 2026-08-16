@@ -36,6 +36,28 @@ import { isScoredArm } from './arms.mjs';
  * @param {object} controls - the campaign-level shared dials
  * @returns {string} 16 hex chars
  */
+/**
+ * KNOWN LIMIT, deferred deliberately (Cluster A round 4).
+ *
+ * The fingerprint hashes the model string AS DECLARED, not a canonical id. Two
+ * arms naming the same model by different spellings — `latest-opus` and a
+ * concrete `claude-opus-5`, say — therefore fingerprint differently and evade
+ * collision detection, which is a real gap in D4's coverage.
+ *
+ * It is NOT fixed by canonicalising through `resolveModel()`, and that is the
+ * whole reason it stays open: `resolveModel` consults the live provider
+ * catalog, so the fingerprint would become network-dependent and
+ * non-deterministic. Cohort identity computed from mutable remote state is a
+ * strictly worse failure than the one being closed — it would split one cohort
+ * across a catalog refresh, silently, which is the exact class the lock exists
+ * to prevent.
+ *
+ * What bounds the gap today: manifests pin CONCRETE model ids by policy (KD-4
+ * — the campaign pins a concrete xAI model rather than the `latest-grok`
+ * sentinel), so producing the collision requires deliberately declaring one
+ * model two ways. Closing it properly needs an OFFLINE alias table, which is a
+ * separate piece of work with its own staleness problem.
+ */
 export function armRequestFingerprint(arm, controls) {
   return crypto.createHash('sha256').update(canonicalJson({ model: arm.model, controls })).digest('hex').slice(0, 16);
 }
