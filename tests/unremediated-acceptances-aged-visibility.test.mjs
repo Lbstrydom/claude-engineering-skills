@@ -127,9 +127,16 @@ describe('unremediated_acceptances age bounds — floor and ceiling are not the 
           WHERE repo_id = $1 AND is_open_disposition AND NOT is_mature`, [repoId]);
       assert.equal(aged.notYetDue, under.n, 'notYetDue must be exactly the open under-floor set');
       // The whole point: a maturity delay is not a forgetting mechanism.
+      // Same `is_open_disposition` filter as `under` above, for the same
+      // reason (migration 20260811160000) — omitted here until this fix:
+      // a closed-disposition row over the ceiling isn't an aged-out
+      // OBLIGATION either, and the production query (ship-nudges.mjs
+      // `countAgedUnremediatedAcceptances`) already excludes it. Without
+      // this filter the raw comparison over-counts relative to the
+      // honest, disposition-aware production count.
       const overCeiling = await q.one(
         `SELECT count(*)::int AS n FROM unremediated_acceptances_all
-          WHERE repo_id = $1 AND is_mature AND NOT is_recent`, [repoId]);
+          WHERE repo_id = $1 AND is_open_disposition AND is_mature AND NOT is_recent`, [repoId]);
       assert.equal(aged.agedOut + aged.prePractice, overCeiling.n,
         'agedOut+prePractice must be exactly the over-ceiling set — the floor must not leak in');
       if (under.n > 0 && overCeiling.n === 0) {
@@ -153,7 +160,7 @@ describe('unremediated_acceptances age bounds — floor and ceiling are not the 
            count(*) FILTER (WHERE p.started_at IS NOT NULL AND a.accepted_at >= p.started_at)::int AS aged,
            count(*) FILTER (WHERE p.started_at IS NULL OR a.accepted_at < p.started_at)::int AS pre
          FROM unremediated_acceptances_all a CROSS JOIN practice p
-         WHERE a.repo_id = $1 AND a.is_mature AND NOT a.is_recent`, [repoId]);
+         WHERE a.repo_id = $1 AND a.is_open_disposition AND a.is_mature AND NOT a.is_recent`, [repoId]);
       const aged = await store.countAgedUnremediatedAcceptances({ repoId });
       assert.equal(aged.agedOut, expected.aged);
       assert.equal(aged.prePractice, expected.pre);
