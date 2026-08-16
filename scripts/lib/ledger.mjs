@@ -693,6 +693,11 @@ export function suppressReRaises(findings, ledger, { changedFiles = [], impactSe
           matchedTopic: bestMatch.topicId,
           matchScore: bestScore,
           matchedSource: bestMatch.source || 'session',
+          // STRUCTURAL flag, so the caller can list these without matching on
+          // the reason prose. A consumer that greps the sentence breaks the
+          // moment the wording is improved — the exact prose→code seam this
+          // session kept closing.
+          relitigationDeclined: true,
           reason: 'Matches dismissed entry; scope changed but the re-raise cited no '
             + 'changed line invalidating the ruling (declared=no)',
         });

@@ -3382,6 +3382,19 @@ export async function runLegacyProductionAudit(ctx) {
           `  Re-litigation declined: ${reopenTelemetry.relitigationSuppressed}`
           + ` (dismissed + scope changed + no declared reopen)\n`,
         );
+        // NAME them, don't just count them. A count tells the operator the
+        // policy fired; only the identity tells them whether it fired on the
+        // WRONG finding — and this is the one branch where a real staleness the
+        // model failed to declare disappears from the round's report. Bounded
+        // like the suppressed sample above; the full set is in `_suppression`
+        // and in suppression_events.
+        for (const s of suppressed.filter(x => x.relitigationDeclined).slice(0, 5)) {
+          process.stderr.write(
+            `    [declined] ${String(s.matchedTopic).slice(0, 8)} `
+            + `${s.finding?._primaryFile ?? s.finding?.section ?? '(unknown file)'} `
+            + `score=${Number(s.matchScore).toFixed(2)}\n`,
+          );
+        }
       }
     }
     if (suppressed.length > 0) {

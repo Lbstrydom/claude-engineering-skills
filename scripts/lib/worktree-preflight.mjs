@@ -127,6 +127,89 @@ export function checkMarkerRemedies(rootDir, io = {}) {
  */
 export const EXEMPTIONS = Object.freeze({});
 
+/**
+ * The ONE spelling of "resolve the MAIN checkout's pending-note path".
+ *
+ * `/ship` Step 2 READS that file and Step 6.8 WRITES it, so the two must
+ * resolve the same path — and they carried hand-copied recipes with nothing
+ * comparing them. That is the producer/consumer-must-agree class this repo keeps
+ * fixing, reappearing inside a single document. `checkDocumentedRecipes` compares
+ * every copy against this constant, so N copies stay legal and DISAGREEMENT does
+ * not — the same shape as `MARKER_BLOCK` above.
+ */
+export const MAIN_CHECKOUT_PATH_RECIPE = "node -e \"const{execFileSync}=require('node:child_process'),p=require('node:path');console.log(p.join(p.dirname(execFileSync('git',['rev-parse','--path-format=absolute','--git-common-dir'],{encoding:'utf8'}).trim()),'.claude','tmp','ship-verification-pending.md'))\"";
+
+/**
+ * The consumer-side `skills:hydrate` npm script, as documented in
+ * `docs/runbooks/consumer-adoption.md` §"Linked git worktrees" → Remedy 1.
+ *
+ * **Why a second implementation of `scripts/skills-hydrate.mjs` is legitimate,
+ * and why it is pinned anyway.** A consumer cannot run that script: it syncs
+ * into `scripts/.claude-skills/`, which is precisely the gitignored tree absent
+ * from every linked worktree — the bootstrap problem the remedy exists to solve.
+ * So a consumer needs a package.json one-liner depending on nothing but node and
+ * git. The duplication is FORCED, not sloppy. What is not forced is letting the
+ * two drift: the runbook must quote this constant byte-for-byte, and
+ * `tests/skills-hydrate.test.mjs` asserts the one-liner emits the same
+ * user-visible messages `planHydration` does for the branches they share.
+ */
+export const CONSUMER_HYDRATE_NPM_SCRIPT = "\"skills:hydrate\": \"node -e \\\"const{execFileSync}=require('node:child_process'),p=require('node:path'),f=require('node:fs');const main=p.dirname(execFileSync('git',['rev-parse','--path-format=absolute','--git-common-dir'],{encoding:'utf8'}).trim());const dir='scripts/.claude-skills';const src=p.join(main,dir);if(p.resolve(dir)===p.resolve(src)){console.log('[hydrate] main checkout - nothing to do');process.exit(0)}if(!f.existsSync(src)){console.error('[hydrate] no tooling at '+src+' - re-sync the main checkout first');process.exit(1)}f.cpSync(src,dir,{recursive:true});console.log('[hydrate] copied '+src)\\\"\"";
+
+/**
+ * Do the DOCS still quote the canonical recipes byte-for-byte?
+ *
+ * Closes the last two hand-copied spellings this subsystem had (2026-08-14):
+ * `skills/ship/SKILL.md` carries the pending-note path recipe twice — once
+ * where Step 6.8 WRITES the file and once where Step 2 READS it — and
+ * `docs/runbooks/consumer-adoption.md` carries the consumer `skills:hydrate`
+ * one-liner. Nothing compared any of them.
+ *
+ * **N copies stay legal; disagreement does not.** Deliberately not "the recipe
+ * must appear exactly once": a reader following Step 2 should not have to jump
+ * to Step 6.8 to learn the path, and prose that forces a jump gets re-inlined
+ * by the next editor anyway. The real invariant is that the writer and the
+ * reader resolve the SAME path — so this compares every occurrence against one
+ * constant, exactly as `checkSkill` compares 16 marker copies against
+ * `MARKER_BLOCK`.
+ *
+ * A leading blockquote marker (`> `) is stripped before comparing: the recipe
+ * appears both bare and inside a `>` callout, and that is formatting, not
+ * meaning.
+ *
+ * @param {string} rootDir
+ * @param {{readFile?: (p: string) => string}} [io] - injected for tests
+ * @returns {{ok: boolean, mismatches: Array<{file: string, line: number, found: string}>, checked: number}}
+ */
+export function checkDocumentedRecipes(rootDir, io = {}) {
+  const read = io.readFile ?? ((p) => fs.readFileSync(p, 'utf-8'));
+  const subjects = [
+    { file: 'skills/ship/SKILL.md', marker: '--git-common-dir', canonical: MAIN_CHECKOUT_PATH_RECIPE, needs: 'node -e' },
+    { file: 'docs/runbooks/consumer-adoption.md', marker: '"skills:hydrate"', canonical: CONSUMER_HYDRATE_NPM_SCRIPT, needs: '"skills:hydrate"' },
+  ];
+  const mismatches = [];
+  let checked = 0;
+  for (const s of subjects) {
+    let text;
+    try {
+      text = read(path.join(rootDir, s.file));
+    } catch {
+      // A doc that cannot be read cannot be shown to quote the constant.
+      mismatches.push({ file: s.file, line: 0, found: '<unreadable>' });
+      continue;
+    }
+    const lines = text.split('\n');
+    for (const [i, raw] of lines.entries()) {
+      if (!raw.includes(s.marker) || !raw.includes(s.needs)) continue;
+      checked++;
+      const bare = raw.replace(/^>\s?/, '').trim();
+      if (bare !== s.canonical.trim()) {
+        mismatches.push({ file: s.file, line: i + 1, found: bare.slice(0, 120) });
+      }
+    }
+  }
+  return { ok: mismatches.length === 0, mismatches, checked };
+}
+
 /** Matches a path into the tooling tree, in either invocation form. */
 const TOOLING_PATH = /scripts\/[\w./-]+\.mjs/;
 

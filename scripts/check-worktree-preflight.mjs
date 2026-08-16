@@ -34,6 +34,7 @@ import {
   EXEMPTIONS,
   checkSkill,
   checkMarkerRemedies,
+  checkDocumentedRecipes,
   skillsInvokingSyncedTooling,
 } from './lib/worktree-preflight.mjs';
 
@@ -74,7 +75,9 @@ function main() {
   // `checkMarkerRemedies`. Repo-wide (one package.json), so it is not a
   // per-skill failure row.
   const remedies = checkMarkerRemedies(ROOT);
-  const ok = failures.length === 0 && remedies.ok;
+  // Every documented copy of a canonical recipe must still quote the constant.
+  const recipes = checkDocumentedRecipes(ROOT);
+  const ok = failures.length === 0 && remedies.ok && recipes.ok;
 
   if (json) {
     process.stdout.write(`${JSON.stringify({
@@ -83,8 +86,19 @@ function main() {
       exemptions: Object.keys(EXEMPTIONS),
       failures,
       remedies,
+      recipes,
     }, null, 2)}\n`);
     process.exit(ok ? 0 : 1);
+  }
+
+  if (!recipes.ok) {
+    for (const m of recipes.mismatches) {
+      process.stdout.write(
+        `${R}✗${X} ${m.file}:${m.line} ${D}wtpf/recipe-drift — this copy no longer matches its `
+        + `canonical constant in scripts/lib/worktree-preflight.mjs. The writer and the reader `
+        + `must resolve the SAME path.${X}\n`,
+      );
+    }
   }
 
   if (!remedies.ok) {
@@ -104,9 +118,16 @@ function main() {
   process.stdout.write(
     `\n${B}worktree-preflight:${X} ${inScope.length} skill(s) in scope, `
     + `${failures.length} without the marker, ${exempt} exempt, `
-    + `${remedies.checked.length - remedies.missing.length}/${remedies.checked.length} remedy script(s) defined — `
+    + `${remedies.checked.length - remedies.missing.length}/${remedies.checked.length} remedy script(s) defined, `
+    + `${recipes.checked - recipes.mismatches.length}/${recipes.checked} documented recipe(s) matching — `
     + `${ok ? `${G}OK${X}` : `${R}FAIL${X}`}\n`,
   );
+
+  if (!recipes.ok) {
+    for (const m of recipes.mismatches) {
+      process.stderr.write(`wtpf/recipe-drift ${m.file}:${m.line}\n`);
+    }
+  }
 
   if (!remedies.ok) {
     for (const name of remedies.missing) {

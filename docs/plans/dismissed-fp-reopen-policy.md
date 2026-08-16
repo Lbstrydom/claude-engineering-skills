@@ -1050,6 +1050,31 @@ record is that this was a scope call, not a protocol result. If
 `relitigationSuppressed` climbs while real regressions go unreported, that is
 the signal to revisit — and it is now countable, which it was not before.
 
+**Declaration reliability — measured 2026-08-14, both directions.** The policy
+routes on a model-supplied flag, so the flag's reliability *is* the recall risk.
+The first cut rested on a single live observation; `.audit/probe-declaration-reliability.mjs`
+raised that and measured the two failure modes separately, because their costs
+are opposite — under-declaring loses a real staleness, over-declaring restores
+the churn:
+
+| Scenario | Correct answer | Measured (`gpt-5.6-terra`, 4 trials each) |
+|---|---|---|
+| Change introduces the unguarded call site the dismissal's reason denied | `is_reopened: true` | **4/4 declared** |
+| Unrelated edit; the dismissal's reason still holds | `is_reopened: false` | **0/4 falsely declared** |
+
+n=8 against the real R2 prompt and the real schema, not a paraphrase. Clean in
+both directions, which is what makes routing on the flag defensible rather than
+hopeful. It is **not** a guarantee: 4/4 bounds the error rate loosely, the
+fixture is one synthetic shape, and a model swap invalidates it — so the counter
+and the kill switch stay. Re-run the probe when the auditor model changes.
+
+**Each declined re-litigation is also NAMED in the round summary**, not just
+counted (`[declined] <topic> <file> score=…`, bounded at 5). A count says the
+policy fired; only the identity says whether it fired on the wrong finding — and
+this is the one branch where a real staleness disappears from the report. The
+suppressed record carries a structural `relitigationDeclined: true` flag so the
+listing never depends on matching the reason prose.
+
 ---
 
 `declared=no; matched=dismissed` is the churn shape. Two caveats on reading it:

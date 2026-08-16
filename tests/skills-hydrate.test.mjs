@@ -16,7 +16,10 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 
 import { planHydration, resolveMainWorktree, SYNCED_TOOLING_DIR } from '../scripts/skills-hydrate.mjs';
-import { markerNamedNpmScripts, checkMarkerRemedies, MARKER_BLOCK } from '../scripts/lib/worktree-preflight.mjs';
+import {
+  markerNamedNpmScripts, checkMarkerRemedies, checkDocumentedRecipes,
+  MARKER_BLOCK, MAIN_CHECKOUT_PATH_RECIPE, CONSUMER_HYDRATE_NPM_SCRIPT,
+} from '../scripts/lib/worktree-preflight.mjs';
 
 const MAIN = path.resolve('/repo');
 const WORKTREE = path.resolve('/repo/.claude/worktrees/wt');
@@ -112,5 +115,57 @@ describe('checkMarkerRemedies — the gate on the gate', () => {
   it('THE REAL REPO satisfies its own marker', () => {
     const r = checkMarkerRemedies(path.resolve(import.meta.dirname, '..'));
     assert.equal(r.ok, true, `package.json is missing: ${r.missing.join(', ')}`);
+  });
+});
+
+describe('checkDocumentedRecipes — N copies legal, disagreement not', () => {
+  const ROOT = path.resolve(import.meta.dirname, '..');
+
+  it('THE REAL REPO: every documented copy matches its canonical constant', () => {
+    const r = checkDocumentedRecipes(ROOT);
+    assert.equal(r.ok, true, `drifted: ${JSON.stringify(r.mismatches)}`);
+    // Guards against a vacuous pass: if the markers stop matching anything,
+    // `checked` collapses to 0 and `ok` would be trivially true.
+    assert.ok(r.checked >= 3, `expected >=3 occurrences, checked ${r.checked}`);
+  });
+
+  it('accepts the SAME recipe appearing many times — copies are not the defect', () => {
+    const many = [
+      'blah', MAIN_CHECKOUT_PATH_RECIPE, 'text', `> ${MAIN_CHECKOUT_PATH_RECIPE}`, 'more',
+    ].join('\n');
+    const r = checkDocumentedRecipes('/x', {
+      readFile: (p) => (p.includes('SKILL.md') ? many : CONSUMER_HYDRATE_NPM_SCRIPT),
+    });
+    assert.equal(r.ok, true);
+    assert.equal(r.checked, 3);
+  });
+
+  it('THE DIRECTION THAT MUST FIRE: one drifted copy fails, and is located', () => {
+    const drifted = MAIN_CHECKOUT_PATH_RECIPE.replace('pending.md', 'DRIFTED.md');
+    const r = checkDocumentedRecipes('/x', {
+      readFile: (p) => (p.includes('SKILL.md')
+        ? `${MAIN_CHECKOUT_PATH_RECIPE}\n${drifted}`
+        : CONSUMER_HYDRATE_NPM_SCRIPT),
+    });
+    assert.equal(r.ok, false);
+    assert.equal(r.mismatches.length, 1);
+    assert.equal(r.mismatches[0].line, 2, 'must name WHICH copy drifted');
+  });
+
+  it('strips only the blockquote marker, which is formatting rather than meaning', () => {
+    const r = checkDocumentedRecipes('/x', {
+      readFile: (p) => (p.includes('SKILL.md')
+        ? `> ${MAIN_CHECKOUT_PATH_RECIPE}`
+        : CONSUMER_HYDRATE_NPM_SCRIPT),
+    });
+    assert.equal(r.ok, true);
+  });
+
+  it('an unreadable doc FAILS, never passes on absence of evidence', () => {
+    const r = checkDocumentedRecipes('/x', {
+      readFile: () => { throw new Error('ENOENT'); },
+    });
+    assert.equal(r.ok, false);
+    assert.equal(r.mismatches.length, 2, 'both subject docs reported');
   });
 });

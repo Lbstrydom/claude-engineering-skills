@@ -311,6 +311,18 @@ describe('suppressReRaises — Layer 3: a dismissal is a disproof, a fix is a re
     assert.equal(r.reopenTelemetry.relitigationSuppressed, 1);
   });
 
+  it('marks the declined record STRUCTURALLY, so callers need not grep the prose', () => {
+    // The round summary lists these by name. Matching on the reason sentence
+    // would break the moment the wording improves — the prose→code seam again.
+    const r = suppressReRaises([finding()], ledgerOf(entry()), changed);
+    assert.equal(r.suppressed[0].relitigationDeclined, true);
+    const quiet = suppressReRaises([finding()], ledgerOf(entry()), {
+      changedFiles: ['scripts/lib/unrelated.mjs'],
+    });
+    assert.notEqual(quiet.suppressed[0].relitigationDeclined, true,
+      'an ordinary scope-unchanged suppression must NOT carry the flag');
+  });
+
   it('a DECLARED reopen of a dismissal still gets through', () => {
     const r = suppressReRaises([{ ...finding(), is_reopened: true }], ledgerOf(entry()), changed);
     assert.equal(r.reopened.length, 1, 'the escape hatch must stay open for a real staleness');
