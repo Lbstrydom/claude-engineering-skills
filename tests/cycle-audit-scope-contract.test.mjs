@@ -346,4 +346,19 @@ describe('audit-found regressions — delete lifecycle and the shared extension 
     assert.equal(rows.find(r => r.path === 's/x.mjs').admitted, true);
     assert.equal(rows.find(r => r.path === 's/y.bin').reason, 'extension');
   });
+
+  it('a double-extension file (`index.html.template`) is admitted, not rejected as `extension`', () => {
+    // `path.extname('public/index.html.template')` returns '.template', which
+    // is not a PLAN_REFERENCE_EXTENSIONS member — a Set-lookup keyed on that
+    // rejects every such file, and since this pre-flight also gates what
+    // reaches the auditor's --files allowlist, the file's real content changes
+    // never reach the model for ANY cluster or plan that touches it. This is
+    // the wine-cellar-app repo's canonical HTML-template source shape
+    // (`public/index.html.template`, regenerated into a gitignored
+    // `public/index.html` on build) — a common file shape, not an edge case.
+    const rows = admissionPreflight(['public/index.html.template'], { exists: () => true });
+    const row = rows.find(r => r.path === 'public/index.html.template');
+    assert.equal(row.admitted, true, `expected admission, got reason=${row.reason}`);
+    assert.equal(row.reason, null);
+  });
 });

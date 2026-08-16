@@ -22,7 +22,7 @@ import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { mergeScopeFiles } from '../scripts/lib/plan-paths.mjs';
+import { mergeScopeFiles, resolveReferenceExtension } from '../scripts/lib/plan-paths.mjs';
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '..');
 
@@ -116,5 +116,55 @@ describe('mergeScopeFiles — changed-but-not-plan-referenced files', () => {
     // would make an unaudited file indistinguishable from an unrequested one.
     const { rejected } = mergeScopeFiles([], ['scripts/does-not-exist.mjs', CHANGED_NOT_PLANNED]);
     assert.deepEqual(rejected, ['scripts/does-not-exist.mjs']);
+  });
+
+  // ── Compound (double) extensions: `resolveReferenceExtension` ────────────
+  //
+  // `index.html.template` is a common wine-cellar-app-shaped source: an HTML
+  // template regenerated into a gitignored `index.html` at build time.
+  // `path.extname()` / a last-dot split both truncate it to `.template`,
+  // which is not a `PLAN_REFERENCE_EXTENSIONS` member, so the file was
+  // rejected as 'extension' and never reached the auditor's `--files`
+  // allowlist for ANY plan or cluster that touched it.
+
+  it('resolveReferenceExtension recognises a registered compound suffix', () => {
+    assert.equal(resolveReferenceExtension('public/index.html.template'), 'html');
+    assert.equal(resolveReferenceExtension('INDEX.HTML.TEMPLATE'), 'html', 'case-insensitive');
+  });
+
+  it('resolveReferenceExtension still rejects an unregistered double extension', () => {
+    // The regression this guards: a general "strip the last segment and
+    // retry" rule would also resolve `package-lock.json.lock` to `.json` —
+    // see the 'rejects a non-source extension' test above, which pins that
+    // file as REJECTED on purpose. Only a literal, explicit compound suffix
+    // may be recognised.
+    assert.equal(resolveReferenceExtension('package-lock.json.lock'), null);
+  });
+
+  it('mergeScopeFiles admits a real double-extension file via --files', () => {
+    const templateFixture = path.resolve(REPO_ROOT, 'index.html.template');
+    fs.writeFileSync(templateFixture, '<html></html>\n');
+    try {
+      const { addedFromScope, rejected } = mergeScopeFiles([], ['index.html.template']);
+      assert.deepEqual(addedFromScope, ['index.html.template']);
+      assert.deepEqual(rejected, []);
+    } finally {
+      fs.rmSync(templateFixture, { force: true });
+    }
+  });
+
+  it('package-lock.json.lock-shaped names stay rejected through mergeScopeFiles', () => {
+    // Same fixture requirement as the pre-existing 'rejects a non-source
+    // extension' test: existence is checked before extension, so a
+    // non-existent path would be rejected for the wrong reason.
+    const lockFixture = path.resolve(REPO_ROOT, 'package-lock.json.lock');
+    fs.writeFileSync(lockFixture, '{}\n');
+    try {
+      const { addedFromScope, rejected } = mergeScopeFiles([], ['package-lock.json.lock']);
+      assert.deepEqual(addedFromScope, []);
+      assert.deepEqual(rejected, ['package-lock.json.lock']);
+    } finally {
+      fs.rmSync(lockFixture, { force: true });
+    }
   });
 });
