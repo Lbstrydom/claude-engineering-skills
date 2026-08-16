@@ -91,6 +91,72 @@ are a *reroll*, not a comparison. The runner computes each arm's fingerprint
 `"type": "replicate"`. Discovering it afterwards means the aggregate was already
 wrong.
 
+### 1a. The auditor role — a manifest, not a campaign file
+
+Everything above (steps 1–5) is the `final_review_shadow` role. The
+**auditor** role answers a narrower question — "which of these candidate
+audit-generator routes is cheapest among the ones that clear their own
+recall/false-positive floor?" — over one synchronous run of the curated
+known-defect corpus, not a multi-day shadow campaign. It shares the SAME
+manifest schema (arms, controls, subject) but is declared and run
+differently: no `.campaigns/*.json`, no `targetN`/`decisionRule`, no
+adjudicator, no calibration sample. `role must be "auditor"` is enforced at
+load — a `final_review_shadow` manifest is refused by name, not with a
+generic parse error.
+
+```json
+{
+  "schemaVersion": 1,
+  "id": "auditor-screen-2026q3",
+  "role": "auditor",
+  "decision": { "type": "select_default", "incumbent": "latest-gpt" },
+  "arms": [
+    { "id": "gpt", "model": "latest-gpt", "mode": "primary" },
+    { "id": "sonnet", "model": "latest-sonnet", "mode": "shadow" }
+  ],
+  "controls": {
+    "reasoningEffort": "medium",
+    "promptTemplateId": "auditor-v1",
+    "outputSchemaId": "auditor-v1",
+    "maxOutputTokens": 4096,
+    "toolPolicy": "none",
+    "temperature": 0,
+    "passes": ["structure"],
+    "scope": "diff",
+    "rounds": 1
+  }
+}
+```
+
+Run it directly — no `bakeoff-collect.mjs`, no `reconcile`:
+
+```bash
+node scripts/model-eval-auditor.mjs --manifest auditor-screen-2026q3.json --tier screen
+```
+
+**`--candidate` and `--manifest` are mutually exclusive**, and the CLI
+refuses the combination before any provider call — `--manifest` is a
+*driver*, not a supplemental input: it expands into one real `--candidate`
+invocation per scored arm (a genuine spawned child process each), so the
+"must supply a candidate" requirement is satisfied at every actual
+execution, not bypassed by declaring arms instead. At least two SCORED arms
+(`type` unset or `"scored"`, never `"control"`/`"replicate"`) are required —
+a manifest with fewer refuses at schema validation, zero provider calls.
+
+Each scored arm's run persists to `model_eval_runs`, linked to one
+`model_eval_comparisons` row keyed on `(repo, manifest id, config digest,
+lock schema version)` — re-running the SAME manifest (byte-identical digest)
+resumes into the same cohort rather than double-charging an arm that already
+succeeded (the same D5a resume/retry contract the campaign role uses).
+`node scripts/cross-skill.mjs get-neighbourhood` and this repo's own
+architectural-memory tooling read `model_eval_comparisons`/`model_eval_runs`
+directly — there is no dashboard tab for the auditor role today; the
+Campaigns tab (step 4 below) is `final_review_shadow`-only.
+
+A manifest declaring a subject path (`corpusPath`/`diffPath`/
+`transcriptDir`) that resolves to a sensitive location — lexically or via a
+symlink — refuses at **load**, before any provider call, non-zero exit.
+
 ---
 
 ## 2. Collect
@@ -266,6 +332,15 @@ exists to stop. Let the running campaign finish under its original rule.
   would be a claim the call was measured and cost nothing.
 - **Spend sums every attempt, superseded ones included.** A superseded attempt
   was still paid for; counting only the last one flatters the flakier model.
+- **Incomplete-snapshot spend is its own line, on purpose.** "Per-arm spend"
+  above answers a different question (money spent across every snapshot,
+  complete or not) from "incomplete-snapshot spend" (money that bought
+  nothing toward `N`) — the two are deliberately never summed together. A
+  real measured collection had **$4.16 of $7.10 spent on incomplete
+  snapshots**, invisible in every other number on this page because nothing
+  asked the question. `none — no incomplete snapshots` and `unknown (every
+  arm unpriced)` are different facts from a real dollar figure — read the
+  words, not just the number.
 - **Adjudication cost is campaign overhead**, on its own line — never folded into
   an arm's cost-per-accepted, which would penalise the arm that found more.
 - **Raw counts sit beside accepted counts.** Raw-count seduction is the measured

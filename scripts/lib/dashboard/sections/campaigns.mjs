@@ -40,6 +40,39 @@ function pct(v) {
   return v == null ? 'unknown' : `${Math.round(v * 100)}%`;
 }
 
+/** D5/R1-H4 — money spent on snapshots that never became complete. Mirrors
+ *  `bakeoff-collect.mjs`'s `printProgress` three-way branching (none / unknown
+ *  / a real figure with the gap named beside it), because a renderer must not
+ *  invent a fourth reading of the same view model the CLI already
+ *  established. `unrecordedSnapshotCount` (Cluster B R4) is surfaced beside
+ *  `excludedArmIds`, never folded into it — a snapshot with no arm run at all
+ *  has no arm id for that list to name.
+ *
+ *  Cluster C fix-gate (R3, H2) — `!inc` and `inc.incompleteSnapshotCount === 0`
+ *  are DIFFERENT facts and were collapsed into one "none" reading. This pane
+ *  is `renderCampaign`'s FIRST section and renders unconditionally, including
+ *  for a campaign that has not been collected yet (`c.collected === false`,
+ *  where `c.incompleteSpend` is never set) — for that row, `!inc` means "no
+ *  evidence exists to check", not "checked, and it is genuinely zero". The
+ *  page's own design already draws exactly this line for spend evidence
+ *  ("unknown" is a word, never a blank or a confident zero) — this closes the
+ *  same gap for the missing-measurement case specifically. */
+function incompleteSpendCell(inc, ui) {
+  if (!inc) return 'not yet collected — no evidence to compute this from';
+  if (inc.incompleteSnapshotCount === 0) return 'none — no incomplete snapshots';
+  if (inc.incompleteSpendUsd == null) {
+    const why = inc.unrecordedSnapshotCount > 0
+      ? `${ui.escapeHtml(inc.unrecordedSnapshotCount)} of ${ui.escapeHtml(inc.incompleteSnapshotCount)} recorded no arm run at all`
+      : 'every arm unpriced';
+    return `unknown (${ui.escapeHtml(inc.incompleteSnapshotCount)} incomplete snapshot(s), ${why})`;
+  }
+  const parts = [];
+  if (inc.excludedArmIds?.length) parts.push(`excludes unpriced: ${ui.escapeHtml(inc.excludedArmIds.join(', '))}`);
+  if (inc.unrecordedSnapshotCount > 0) parts.push(`${ui.escapeHtml(inc.unrecordedSnapshotCount)} snapshot(s) recorded no arm run`);
+  const gap = parts.length ? ` (${parts.join('; ')})` : '';
+  return `$${Number(inc.incompleteSpendUsd).toFixed(2)} (bought no ${ui.escapeHtml(inc.incompleteSnapshotCount)})${gap}`;
+}
+
 export default function sectionCampaigns({ src, campaigns }, ui) {
   if (ui.NON_OK.has(src.status)) return ui.warningPanel(SECTION, src);
   const data = campaigns || { campaigns: [], degraded: false };
@@ -95,6 +128,8 @@ function evidencePane(c, ui) {
   }).join('');
   rows.push(`<tr><th scope="row">Per-arm spend</th><td><table><thead><tr><th>Arm</th><th>Spend</th></tr></thead><tbody>${spend}</tbody></table>`
     + `<p class="summary">Sums ALL attempts, superseded included — a superseded attempt was still paid for.</p></td></tr>`);
+
+  rows.push(`<tr><th scope="row">Incomplete-snapshot spend</th><td data-testid="campaign-incomplete-spend">${incompleteSpendCell(c.incompleteSpend, ui)}</td></tr>`);
 
   rows.push(`<tr><th scope="row">Adjudication overhead</th><td>${ui.escapeHtml(money(c.overhead?.spendUsd, c.overhead?.costEvidence))}`
     + ` over ${ui.escapeHtml(c.overhead?.attempts ?? 0)} attempt(s) — campaign overhead, never folded into per-arm cost-per-accepted</td></tr>`);

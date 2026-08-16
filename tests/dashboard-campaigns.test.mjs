@@ -134,6 +134,84 @@ describe('campaigns section — unknown is a word', () => {
   });
 });
 
+// Cluster C (Phase 5, R1/H4) — the incomplete-snapshot spend line. Mirrors the
+// CLI's printProgress three-way branching (none / unknown / a real figure with
+// the gap named), computed by collect-campaigns.mjs via the shared spend.mjs
+// and passed through untouched — the renderer must not invent a fourth
+// reading of the same view model.
+describe('campaigns section — incomplete-snapshot spend', () => {
+  it('a measured zero incomplete snapshots renders "none", never $0.00', () => {
+    const html = sectionCampaigns({
+      src: OK,
+      campaigns: envelope({ campaigns: [campaignFixture({
+        incompleteSpend: { cohortDigest: 'd1', incompleteSpendUsd: null, monetaryStatus: 'complete', excludedArmIds: [], incompleteSnapshotCount: 0, unrecordedSnapshotCount: 0 },
+      })] }),
+    }, ui);
+    const cell = html.match(/data-testid="campaign-incomplete-spend">([^<]*)/);
+    assert.ok(cell);
+    assert.match(cell[1], /none — no incomplete snapshots/);
+    assert.ok(!/\$0\.00/.test(html));
+  });
+
+  // Cluster C fix-gate (R3, H2) — an ABSENT incompleteSpend field (no
+  // evidence to compute from — e.g. a not-yet-collected campaign, where
+  // evidencePane still renders as pane 1) is a DIFFERENT fact from a
+  // measured zero and must not collapse into the same "none" reading.
+  it('an absent incompleteSpend field (not yet collected) reads distinctly from a measured zero', () => {
+    const html = sectionCampaigns({
+      src: OK,
+      campaigns: envelope({ campaigns: [campaignFixture({ collected: false, incompleteSpend: undefined })] }),
+    }, ui);
+    const cell = html.match(/data-testid="campaign-incomplete-spend">([^<]*)/);
+    assert.ok(cell);
+    assert.doesNotMatch(cell[1], /^none — no incomplete snapshots$/, 'no evidence to compute from is not the same claim as "checked, genuinely zero"');
+    assert.match(cell[1], /not yet collected/);
+  });
+
+  it('every arm unpriced renders "unknown", never a confident $0.00', () => {
+    const html = sectionCampaigns({
+      src: OK,
+      campaigns: envelope({ campaigns: [campaignFixture({
+        incompleteSpend: { cohortDigest: 'd1', incompleteSpendUsd: null, monetaryStatus: 'unknown', excludedArmIds: ['grok'], incompleteSnapshotCount: 1, unrecordedSnapshotCount: 0 },
+      })] }),
+    }, ui);
+    const cell = html.match(/data-testid="campaign-incomplete-spend">([^<]*)/);
+    assert.match(cell[1], /unknown \(1 incomplete snapshot\(s\), every arm unpriced\)/);
+  });
+
+  it('a wholly-unrecorded snapshot (crashed before any arm run) names the gap distinctly from an unpriced arm', () => {
+    const html = sectionCampaigns({
+      src: OK,
+      campaigns: envelope({ campaigns: [campaignFixture({
+        incompleteSpend: { cohortDigest: 'd1', incompleteSpendUsd: null, monetaryStatus: 'unknown', excludedArmIds: [], incompleteSnapshotCount: 1, unrecordedSnapshotCount: 1 },
+      })] }),
+    }, ui);
+    const cell = html.match(/data-testid="campaign-incomplete-spend">([^<]*)/);
+    assert.match(cell[1], /1 of 1 recorded no arm run at all/);
+  });
+
+  it('the measured incident shape: a real figure, the excluded arm named beside it, never silently rounded up', () => {
+    const html = sectionCampaigns({
+      src: OK,
+      campaigns: envelope({ campaigns: [campaignFixture({
+        incompleteSpend: { cohortDigest: 'd1', incompleteSpendUsd: 4.16, monetaryStatus: 'partial', excludedArmIds: ['grok'], incompleteSnapshotCount: 2, unrecordedSnapshotCount: 0 },
+      })] }),
+    }, ui);
+    const cell = html.match(/data-testid="campaign-incomplete-spend">([^<]*)/);
+    assert.match(cell[1], /\$4\.16 \(bought no 2\) \(excludes unpriced: grok\)/);
+  });
+
+  it('escapes a hostile arm id in the excluded-arms list', () => {
+    const html = sectionCampaigns({
+      src: OK,
+      campaigns: envelope({ campaigns: [campaignFixture({
+        incompleteSpend: { cohortDigest: 'd1', incompleteSpendUsd: 1, monetaryStatus: 'partial', excludedArmIds: ['<script>alert(1)</script>'], incompleteSnapshotCount: 1, unrecordedSnapshotCount: 0 },
+      })] }),
+    }, ui);
+    assert.ok(!html.includes('<script>alert(1)</script>'), 'a hostile arm id must not reach the page unescaped');
+  });
+});
+
 describe('campaigns section — review rows', () => {
   const withFindings = () => envelope({ campaigns: [campaignFixture({
     review: [{
@@ -255,6 +333,49 @@ describe('collector fault isolation + event sourcing (consolidated gate G2, G3)'
       clusters: [], eventsByFinding: {},
     });
     assert.equal(rows[0].outcome, null, 'absence must read as absence, never as a ruling');
+  });
+
+  // Cluster C (Phase 5, D5/R1-H4) — the collector must COMPUTE incompleteSpend
+  // via the shared spend.mjs, never re-sum it inline; this reproduces the
+  // measured incident figure from the plan's own D5 text ($4.16 of a $7.10
+  // collection, invisible because nothing asked the question).
+  it('computes incompleteSpend via the shared spend.mjs — reproduces the measured $4.16 incident figure', async () => {
+    const config = {
+      id: 'incident-repro', targetN: 12,
+      arms: [{ id: 'opus', model: 'claude-opus' }, { id: 'grok', model: 'grok-x' }],
+      decision: { incumbent: 'claude-opus' },
+      decisionRule: { floorMargin: 0.5, costCeilingUsdPerAccepted: 8 },
+      calibration: { sampleRate: 0.2 },
+    };
+    const snapshots = [
+      { snapshotId: 's1', complete: true, armRuns: [{ armId: 'opus', costUsd: 2.94, costStatus: 'priced' }, { armId: 'grok', costUsd: 1, costStatus: 'priced' }] },
+      { snapshotId: 's2', complete: false, armRuns: [{ armId: 'opus', costUsd: 2.5, costStatus: 'priced' }, { armId: 'kimi', costUsd: 1.66, costStatus: 'priced' }] },
+    ];
+    const out = await collectCampaigns('/repo', {
+      isCloudEnabled: async () => true,
+      repoId: 'r1',
+      selectCampaignConfig: () => ({ ok: true, config }),
+      loadCohortEvidence: async () => ({
+        ok: true, lockDigest: 'lock1', cohortSuperseded: false,
+        snapshots, clusters: [], adjudication: {}, calibration: {}, clustering: {}, overhead: {},
+        declaredInconclusive: null, ruleChangedAfterFirstArmRun: false,
+      }),
+    });
+    const row = out.campaigns.campaigns[0];
+    assert.equal(row.incompleteSpend.incompleteSpendUsd, 4.16);
+    assert.equal(row.incompleteSpend.incompleteSnapshotCount, 1);
+    assert.equal(row.incompleteSpend.cohortDigest, 'lock1', 'cohort-scoped, attributable across a future lock change');
+  });
+
+  it('NEGATIVE CONTROL: an unread/failed campaign row (evidence.ok === false) carries no incompleteSpend — there is no evidence to compute it from', async () => {
+    const config = { id: 'unread', targetN: 12, arms: [{ id: 'a', model: 'm' }], decision: { incumbent: 'm' }, decisionRule: {}, calibration: {} };
+    const out = await collectCampaigns('/repo', {
+      isCloudEnabled: async () => true,
+      repoId: 'r1',
+      selectCampaignConfig: () => ({ ok: true, config }),
+      loadCohortEvidence: async () => ({ ok: false, reason: 'no cohort recorded', lockDigest: null }),
+    });
+    assert.equal(out.campaigns.campaigns[0].incompleteSpend, undefined);
   });
 });
 

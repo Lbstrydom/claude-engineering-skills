@@ -34,6 +34,7 @@
 import path from 'node:path';
 import { selectCampaignConfig, ANALYSIS_TIME_FIELDS, CAMPAIGNS_DIR } from '../campaign/config.mjs';
 import { evaluateCampaign, terminalEvent } from '../campaign/verdict.mjs';
+import { incompleteSpend } from '../comparison/spend.mjs';
 import { loadCohortEvidence } from '../store/campaign.mjs';
 import { isCloudEnabled } from '../store/repo.mjs';
 import { findingMatchConfig, FINDING_MATCH_SCHEMA_VERSION } from '../config.mjs';
@@ -209,6 +210,14 @@ export async function collectCampaigns(root = process.cwd(), deps = {}) {
       calibration: evidence.calibration?.perArm ?? {},
       adjudication: evidence.adjudication,
       review: buildReviewRows(evidence),
+      // D5/R1-H4 — computed HERE via the shared spend.mjs, never re-summed.
+      // `evaluateCampaign`'s own `armSpend` call (below) answers a different
+      // question (per-arm spend across every snapshot); this is money spent
+      // on snapshots that never became complete — the $4.16-of-$7.10 that
+      // went unreported until this line existed. cohortDigest is the LOCK
+      // digest this evidence was read under, so the figure is attributable
+      // across a future lock change rather than orphaned.
+      incompleteSpend: incompleteSpend(evidence.snapshots, { cohortDigest: evidence.lockDigest ?? null }),
       ...evaluateCampaign({
         config,
         snapshots: evidence.snapshots, clusters: evidence.clusters,
