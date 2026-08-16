@@ -39,6 +39,7 @@ import { runWithConcurrency } from './lib/concurrency.mjs';
 // found there. One walk, so there is one place to regress it.
 import { findNodeModules } from './lib/node-modules-resolver.mjs';
 import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
+import { sanitizeGitEnv } from './lib/git-env-sanitize.mjs';
 
 const SELF = fileURLToPath(import.meta.url);
 const REPO_ROOT = path.resolve(path.dirname(SELF), '..');
@@ -326,7 +327,15 @@ export function reconcile(gates, contracts, exemptions) {
  * edit to a gate IS exercised; only files that no commit contains are excluded.
  */
 function listTracked(repoRoot) {
-  const r = spawnSync('git', ['ls-files', '-z'], { cwd: repoRoot, encoding: 'utf-8', windowsHide: true });
+  // sanitizeGitEnv() — same reasoning as the needsGit fixture spawn below: a
+  // leaked GIT_DIR (from an actual pre-push hook invocation, or any caller
+  // whose env still carries it from a different repo) must not override
+  // `cwd: repoRoot` for a call whose entire point is "list REPO_ROOT's own
+  // tracked files". Without this, `repoRoot` and whatever GIT_DIR happens to
+  // point at coinciding is a coincidence this call was implicitly relying on,
+  // not a guarantee.
+  const r = spawnSync('git', ['ls-files', '-z'],
+    { cwd: repoRoot, encoding: 'utf-8', windowsHide: true, env: sanitizeGitEnv(repoRoot) });
   if (r.status !== 0) return null;
   return String(r.stdout || '').split('\0').filter(Boolean);
 }
@@ -466,7 +475,17 @@ export function runPill(contract, { repoRoot = REPO_ROOT, tmpRoot } = {}) {
     // control run, which is now three-for-three at catching a harness that would otherwise
     // have made a crash look like a passing pill.
     if (contract.needsGit) {
-      const g = (args) => spawnSync('git', args, { cwd: work, encoding: 'utf-8', windowsHide: true });
+      // sanitizeGitEnv() strips GIT_DIR/GIT_INDEX_FILE/etc before crossing into
+      // this disposable fixture. Without it, running as an actual pre-push hook
+      // leaks the REAL repo's git-local env into this "isolated" `git init` —
+      // git gives GIT_DIR precedence over cwd, so `git commit` here redirects to
+      // the outer push's own (locked) index instead of the fixture, and dies on
+      // `Unable to create '.../index.lock': File exists`, misread as contention
+      // with another process. See lib/git-env-sanitize.mjs's fileoverview: the
+      // identical root cause was found and fixed in prepush-check.mjs's own
+      // sandbox spawn (2026-07-23) but not carried over to this file's spawn.
+      const gitEnv = sanitizeGitEnv(REPO_ROOT);
+      const g = (args) => spawnSync('git', args, { cwd: work, encoding: 'utf-8', windowsHide: true, env: gitEnv });
       g(['init', '-q']);
       g(['config', 'user.email', 'pill@example.com']);
       g(['config', 'user.name', 'pill']);
