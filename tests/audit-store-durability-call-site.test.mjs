@@ -167,6 +167,7 @@ const NOT_A_DURABLE_WRITE = {
   recordFindingResolution: 'Learning telemetry. Telemetry failures never crash a run by design, and the learning outbox (.audit/learning-outbox/) is that subsystem\'s own spill path.',
   upsertDebtEntries: 'Debt ledger projection; recomputed from the findings that produced it on every audit run.',
   upsertFrictionRow: 'Friction-log CLI; THROWS, so the failure is already representable to its caller.',
+  upsertComparison: 'Operator model-eval-auditor.mjs --manifest CLI write (D3a cohort persistence). Returns {ok, error, id} and its ONE call site (runManifestDriver) checks !ensured.ok and throws RunPreflightError before spawning any arm — a failed write aborts the whole manifest run rather than proceeding on a null cohort id.',
 
   // (d) Identity prerequisites and the security kit.
   upsertRepo: 'Repo identity prerequisite. A failure disables the operation that needed the row — every caller null-checks and aborts — so there is nothing to replay INTO.',

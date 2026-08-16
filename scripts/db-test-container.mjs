@@ -76,6 +76,13 @@ export const ISOLATED_SUITE_FILES = Object.freeze([
   // Postgres. Two edits, always — this list AND postgres-parity.yml.
   'tests/store-ownership-db.test.mjs',
   'tests/symbol-index-drift-justification.test.mjs',
+  // Enrolled 2026-08-15 with D3a's cohort persistence (role-agnostic-
+  // comparison-core.md Phase 4). Needs the model_eval_comparisons table and
+  // model_eval_runs' comparison_id/arm_id/attempt/superseded_at columns —
+  // real constraints (the composite unique key, the partial live-attempt
+  // index) a mock cannot exercise. Two edits, always — this list AND
+  // postgres-parity.yml.
+  'tests/model-eval-comparison-store.test.mjs',
   // ── Enrolled 2026-08-11 ──────────────────────────────────────────────────
   // Every entry below was `AUDIT_DB_TEST_URL`-gated and named by NO runner, so
   // each skipped itself everywhere and node reported the skip as a pass: 15

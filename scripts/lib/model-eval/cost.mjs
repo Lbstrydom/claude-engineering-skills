@@ -261,4 +261,55 @@ export function assembleCostRows(rawUsageEvents) {
   return rows;
 }
 
+/**
+ * Project this module's `CostRow[]` into `comparison/spend.mjs`'s input
+ * shape, so `armSpend`/`incompleteSpend` (Phase 3) can be reused for the
+ * auditor role rather than summed a second time. This module stays the
+ * auditor's usage-row producer — token capture, pricing, per-phase
+ * aggregation are all unchanged; only the SUM moves to the shared core.
+ *
+ * **Grouping.** `spend.mjs` groups by `snapshotId` but flattens across every
+ * snapshot it is given before summing per arm — so the grouping only has to
+ * be internally consistent, not meaningful on its own, for the total to be
+ * correct. `runId` (one execution of the curated corpus) is the natural unit
+ * here, and is what this projects as `snapshotId`.
+ *
+ * **Identity.** `armId` is nullable in `CostRowSchema` (a single-candidate,
+ * non-comparison run has none) — falling back to `candidateRef` when absent
+ * avoids collapsing distinct candidates under one `null`-keyed bucket, which
+ * would silently merge their spend. A true comparison run (Phase 4's
+ * declarative arm manifest) always sets `armId`, so this fallback is reached
+ * only outside that path.
+ *
+ * **Vocabulary.** `costStatus` is translated from this module's
+ * `'available'|'unavailable'` to spend.mjs's `'priced'|'unpriced'` — two
+ * spellings of the same fact, kept because each side already has independent
+ * callers and tests that read its own spelling.
+ *
+ * No `attempt`/`supersededAt` fields: this module does not yet model retries
+ * the way the campaign role's snapshots do (D5a), so every row is attempt 1,
+ * never superseded. `armSpend` treats an absent `attempt`/`supersededAt` as
+ * "the only attempt", which is the correct reading here.
+ *
+ * @param {Array<z.infer<typeof CostRowSchema>>} costRows
+ * @returns {Array<{snapshotId: string, armRuns: Array<{armId: string, costUsd: number|null, costStatus: 'priced'|'unpriced'}>}>}
+ */
+export function toArmSpend(costRows) {
+  const bySnapshot = new Map();
+  for (const row of costRows || []) {
+    const snapshotId = row.runId;
+    if (!bySnapshot.has(snapshotId)) bySnapshot.set(snapshotId, []);
+    bySnapshot.get(snapshotId).push({
+      armId: row.armId ?? row.candidateRef,
+      costUsd: row.costStatus === 'available' ? row.totalUsd : null,
+      costStatus: row.costStatus === 'available' ? 'priced' : 'unpriced',
+    });
+  }
+  // Sorted for a deterministic order — same reasoning as assembleCostRows'
+  // own final sort: a Map's insertion order tracks arrival, not the data.
+  return [...bySnapshot.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([snapshotId, armRuns]) => ({ snapshotId, armRuns }));
+}
+
 export { priceFor, isPriced };

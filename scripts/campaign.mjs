@@ -1061,6 +1061,31 @@ export function classifyLogEntry(entry, { campaignId, lockDigest, shaByRunId }) 
  * the partial unique index and the receipt-attempt protocol were all machinery
  * no operator action could trigger.
  */
+/**
+ * Is THIS arm's result in THIS log entry a retry (D5)?
+ *
+ * Extracted so the rule is assertable without a database, same reasoning as
+ * `resolvePromotionAttempt` immediately below, and because `retriedArmIds` is
+ * PER-ARM while the log entry it lives on may carry several arms' results at
+ * once — collapsing that back to a single boolean at the call site is exactly
+ * the mistake that made `--force` retry the whole snapshot instead of one arm.
+ *
+ * `retriedArmIds` is bakeoff-collect.mjs's per-arm marker; its absence means
+ * this log line predates D5, where the only marker was the whole-entry
+ * `forced: true` — every arm present in such an entry WAS a retry by
+ * definition, since a non-forced re-collection never wrote a second line for
+ * an already-recorded snapshot.
+ *
+ * @param {object} entry - a bake-off log entry
+ * @param {string} armId
+ * @returns {boolean}
+ */
+export function isArmRetried(entry, armId) {
+  return Array.isArray(entry?.retriedArmIds)
+    ? entry.retriedArmIds.includes(armId)
+    : entry?.forced === true;
+}
+
 export function resolvePromotionAttempt({ existingAttempt = 0, forced = false } = {}) {
   const n = Number.isInteger(existingAttempt) && existingAttempt > 0 ? existingAttempt : 0;
   if (n === 0) return { skip: false, attempt: 1, supersedePrior: false };
@@ -1095,7 +1120,7 @@ async function promoteFromLog({ config, lock, configDigest }) {
     if (!snap.ok) { refused.push({ snapshotId: entry.snapshotId, reason: snap.error }); continue; }
     for (const arm of cls.armRuns) {
       const existing = await store.maxArmRunAttempt({ cohortId: cohort.id, snapshotId: entry.snapshotId, armId: arm.armId });
-      const plan = resolvePromotionAttempt({ existingAttempt: existing.attempt, forced: entry.forced === true });
+      const plan = resolvePromotionAttempt({ existingAttempt: existing.attempt, forced: isArmRetried(entry, arm.armId) });
       if (plan.skip) continue;
       const res = await store.recordArmRun({
         cohortId: cohort.id, snapshotRowId: snap.id, snapshotId: entry.snapshotId, armId: arm.armId, attempt: plan.attempt,

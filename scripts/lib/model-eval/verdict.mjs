@@ -25,6 +25,7 @@
 
 import { z } from 'zod';
 import { RoleSchema, TierSchema, JudgeTierSchema, SwitchPercentSchema, ORACLE_FLOOR_KEYS, COMPARATIVE_FLOOR_KEYS } from './contracts.mjs';
+import { evaluateCost } from '../comparison/cost.mjs';
 
 // Round-6 audit H5 fix — reject self-contradictory route evidence at the
 // schema boundary instead of letting it silently reach success-path verdict
@@ -401,4 +402,42 @@ export function computeVerdict(rawInput) {
   }
 
   return { verdict, nextAction, reasons };
+}
+
+/**
+ * D2b's cohort-level cost comparison, ACROSS a manifest's scored arms —
+ * genuinely new with the declarative arm manifest (Phase 4/D3a); a
+ * single-candidate run has only one arm and never needs to rank arms against
+ * each other.
+ *
+ * **This does NOT replace `computeVerdict`.** `computeVerdict` decides ONE
+ * candidate's fate against ONE baseline (keep/switch/inconclusive) and keeps
+ * its own multi-dimensional floor + two-model cost/switch-percentage logic
+ * unchanged, exactly as D2b requires — that decision is well-tested and
+ * shaped for a different question ("is this candidate worth switching to")
+ * than the one below ("which of several arms that already cleared ITS OWN
+ * floor is cheapest"). What crosses the boundary is the boolean OUTCOME of
+ * that per-arm decision, never its internals — the same floor-before-cost
+ * separation D2b establishes for the campaign role.
+ *
+ * @param {{
+ *   perArm: Record<string, {floorsMet: boolean, spendUsd: number|null, acceptedUnits: number}>,
+ *   ceilingUsdPerAccepted?: number|null,
+ * }} args - `acceptedUnits` is role-defined per the shared core's own
+ *   contract; for the auditor a natural choice is the corpus subset size
+ *   or the candidate's true-positive count — this function is deliberately
+ *   agnostic about which, taking whatever the caller already computed.
+ * @returns {ReturnType<typeof evaluateCost>}
+ */
+export function evaluateManifestCost({ perArm, ceilingUsdPerAccepted = null }) {
+  const armIds = Object.keys(perArm);
+  const clearedFloor = {};
+  const spendUsd = {};
+  const acceptedUnits = {};
+  for (const armId of armIds) {
+    clearedFloor[armId] = perArm[armId].floorsMet === true;
+    spendUsd[armId] = perArm[armId].spendUsd;
+    acceptedUnits[armId] = perArm[armId].acceptedUnits;
+  }
+  return evaluateCost({ clearedFloor, spendUsd, acceptedUnits, ceilingUsdPerAccepted });
 }

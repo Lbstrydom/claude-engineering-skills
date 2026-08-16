@@ -29,7 +29,7 @@ import {
 import {
   centredWindow, citedLineOf, resolveCitedSources, clusterSnapshotFindings,
   normaliseVerdict, routesToHumanQueue, ADJUDICATION_TOOL, AdjudicationVerdictSchema,
-  classifyLogEntry, detailAnchors, anchorLine, resolvePromotionAttempt,
+  classifyLogEntry, detailAnchors, anchorLine, resolvePromotionAttempt, isArmRetried,
 } from '../scripts/campaign.mjs';
 import { parseCampaignConfig } from '../scripts/lib/campaign/config.mjs';
 
@@ -729,6 +729,43 @@ describe('promotion attempt resolution (--force)', () => {
       assert.deepEqual(resolvePromotionAttempt({ existingAttempt: bogus, forced: true }),
         { skip: false, attempt: 1, supersedePrior: false });
     }
+  });
+});
+
+// ── per-arm retry promotion (D5) ────────────────────────────────────────────
+
+describe('isArmRetried — the per-arm marker promotion actually keys on', () => {
+  it('THE HEADLINE CASE: only the named arm reads as retried', () => {
+    const entry = { retriedArmIds: ['grok'] };
+    assert.equal(isArmRetried(entry, 'grok'), true);
+    assert.equal(isArmRetried(entry, 'opus'), false, 'opus was carried forward unchanged and must not be re-promoted');
+    assert.equal(isArmRetried(entry, 'kimi'), false);
+  });
+
+  it('a plain (non-retry) entry: no arm is retried', () => {
+    assert.equal(isArmRetried({ arms: { opus: {} } }, 'opus'), false);
+  });
+
+  it('legacy whole-entry forced:true (pre-D5 log lines, no retriedArmIds field): every arm is retried', () => {
+    // Before retriedArmIds existed, `forced: true` meant the WHOLE entry was
+    // a re-collection — every arm present in it was, by definition, a retry.
+    // A log line written before this change must promote exactly the same
+    // way it always did.
+    assert.equal(isArmRetried({ forced: true }, 'opus'), true);
+    assert.equal(isArmRetried({ forced: true }, 'anyArmAtAll'), true);
+  });
+
+  it('NEGATIVE CONTROL: retriedArmIds present but empty means nothing is retried, even with legacy forced also set', () => {
+    // retriedArmIds, when present, is authoritative — an explicit empty list
+    // is a real fact ("this entry retried nothing"), not a reason to fall
+    // back to the legacy blanket flag.
+    assert.equal(isArmRetried({ forced: true, retriedArmIds: [] }, 'opus'), false);
+  });
+
+  it('a missing or malformed entry never throws and reads as not-retried', () => {
+    assert.equal(isArmRetried(undefined, 'opus'), false);
+    assert.equal(isArmRetried({}, 'opus'), false);
+    assert.equal(isArmRetried({ retriedArmIds: 'not-an-array' }, 'opus'), false);
   });
 });
 

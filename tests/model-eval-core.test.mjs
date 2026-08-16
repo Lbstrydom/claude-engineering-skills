@@ -1074,6 +1074,95 @@ describe('store/model-eval.mjs — persisted verdict/nextAction bounded to the r
     assert.equal(storeModelEvalInternals.CreateEvalRunBundleSchema.safeParse({ ...base, candidateRef: { bare } }).success, true);
   });
 
+  test('an array with a NON-INDEX own property is rejected — JSON.stringify drops the property silently (Cluster B fix-gate)', () => {
+    const base = { repoId: 'r1', role: 'auditor', tier: 'screen', status: 'running' };
+    // Negative control: the loop above this fix only ever walked index keys
+    // (0..length-1), so a property attached to the array itself was invisible
+    // to it — and JSON.stringify drops it with no error, same silent-loss class
+    // as every other case in this file.
+    const withMetadata = [1, 2, 3]; withMetadata.extra = 'dropped-silently';
+    assert.equal(JSON.stringify({ v: withMetadata }), '{"v":[1,2,3]}', 'the extra property vanishes with no error');
+    assert.equal(
+      storeModelEvalInternals.CreateEvalRunBundleSchema.safeParse({ ...base, candidateRef: { v: withMetadata } }).success,
+      false,
+    );
+    // Nested, matching the file's own convention for these regression cases.
+    assert.equal(
+      storeModelEvalInternals.CreateEvalRunBundleSchema.safeParse({ ...base, candidateRef: { nested: { deep: withMetadata } } }).success,
+      false,
+    );
+    // A dense array with ONLY index keys — same length, no extras — must still
+    // pass; this is the case the fix must not collaterally break.
+    assert.equal(storeModelEvalInternals.CreateEvalRunBundleSchema.safeParse({ ...base, candidateRef: { v: [1, 2, 3] } }).success, true);
+  });
+
+  test('an array with a NON-ENUMERABLE extra property or an ACCESSOR at an index is rejected too (Cluster B fix-gate, round 2)', () => {
+    // The FIRST array fix (above) used `Object.keys(v).length !== v.length`,
+    // which repeated — inside the very function fixing this bug class — the
+    // same two mistakes that had already been fixed for plain objects two
+    // audits earlier (R1 H1 and R5 H3), because it borrowed a shortcut rather
+    // than the object branch's own descriptor-walk approach:
+    const base = { repoId: 'r1', role: 'auditor', tier: 'screen', status: 'running' };
+
+    // Gap (a): Object.keys() sees only ENUMERABLE own keys, so a
+    // non-enumerable extra property left both sides of that length
+    // comparison equal — invisible.
+    const withHiddenProp = [1, 2, 3];
+    Object.defineProperty(withHiddenProp, 'hidden', { value: 'x', enumerable: false, configurable: true });
+    assert.equal(Object.keys(withHiddenProp).length, withHiddenProp.length, 'negative control: the OLD check saw these as equal — that IS the bug');
+    assert.equal(JSON.stringify({ v: withHiddenProp }), '{"v":[1,2,3]}', 'the hidden property vanishes with no error');
+    assert.equal(
+      storeModelEvalInternals.CreateEvalRunBundleSchema.safeParse({ ...base, candidateRef: { v: withHiddenProp } }).success,
+      false,
+    );
+
+    // Gap (b): reading `v[i]` directly INVOKES a getter rather than
+    // inspecting it — the same two-invocations problem R5 H3 fixed for
+    // `Object.values()` on plain objects (one read here, a DIFFERENT read at
+    // persistence time; nothing guarantees the two agree).
+    const withGetterIndex = [1, 2, 3];
+    Object.defineProperty(withGetterIndex, 0, { get: () => 99, enumerable: true, configurable: true });
+    assert.equal(
+      storeModelEvalInternals.CreateEvalRunBundleSchema.safeParse({ ...base, candidateRef: { v: withGetterIndex } }).success,
+      false,
+    );
+
+    // NEGATIVE CONTROLS this fix must not collaterally break: the array's own
+    // `length` property (every array has one, non-enumerable) must not itself
+    // be counted as an "extra" — and ordinary, empty, and nested arrays all
+    // still pass.
+    assert.equal(
+      storeModelEvalInternals.CreateEvalRunBundleSchema.safeParse({ ...base, candidateRef: { v: [1, 2, 3] } }).success,
+      true,
+    );
+    assert.equal(storeModelEvalInternals.CreateEvalRunBundleSchema.safeParse({ ...base, candidateRef: { v: [] } }).success, true);
+    assert.equal(
+      storeModelEvalInternals.CreateEvalRunBundleSchema.safeParse({ ...base, candidateRef: { v: [[1, 2], [3, 4]] } }).success,
+      true,
+    );
+  });
+
+  test('a cyclic object/array is rejected cleanly, never stack-overflows the validator (Cluster B fix-gate, round 3, raised a third time)', () => {
+    const base = { repoId: 'r1', role: 'auditor', tier: 'screen', status: 'running' };
+
+    const cyclicObject = {}; cyclicObject.self = cyclicObject;
+    assert.equal(storeModelEvalInternals.CreateEvalRunBundleSchema.safeParse({ ...base, candidateRef: { v: cyclicObject } }).success, false);
+
+    const cyclicArray = []; cyclicArray.push(cyclicArray);
+    assert.equal(storeModelEvalInternals.CreateEvalRunBundleSchema.safeParse({ ...base, candidateRef: { v: cyclicArray } }).success, false);
+
+    const deepCycle = { a: { b: { c: {} } } }; deepCycle.a.b.c.back = deepCycle;
+    assert.equal(storeModelEvalInternals.CreateEvalRunBundleSchema.safeParse({ ...base, candidateRef: deepCycle }).success, false);
+
+    // NEGATIVE CONTROL: the SAME object reached via two DIFFERENT, non-cyclic
+    // paths is valid JSON (JSON.stringify duplicates it rather than emitting
+    // a $ref) and must still pass — the ancestor-chain tracker must forget an
+    // object once its own subtree finishes, not remember every value ever
+    // visited across the whole call.
+    const shared = { x: 1 };
+    assert.equal(storeModelEvalInternals.CreateEvalRunBundleSchema.safeParse({ ...base, candidateRef: { a: shared, b: shared } }).success, true);
+  });
+
   test('a custom toJSON is never invoked, so it cannot pass once and persist otherwise (audit R3 H1/H2, R4 H1/H2)', () => {
     const base = { repoId: 'r1', role: 'auditor', tier: 'screen', status: 'running' };
     // Negative control: the key vanishes and stringify never complains.

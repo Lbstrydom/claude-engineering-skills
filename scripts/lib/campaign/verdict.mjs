@@ -32,6 +32,19 @@
  */
 
 import { MIN_TARGET_N, isScoredArm } from './config.mjs';
+import { armSpend as armSpendCore } from '../comparison/spend.mjs';
+import { evaluateCost as evaluateCostCore } from '../comparison/cost.mjs';
+
+/**
+ * Re-export, not a wrapper — `armSpend`'s summation moved to
+ * `comparison/spend.mjs` unchanged (Phase 3/D5), because the auditor role
+ * needs the identical all-attempts sum and a second implementation would be a
+ * second chance to reintroduce the 59%-invisible-spend bug this function was
+ * fixed for. Kept under this name/path so existing callers (`campaign.mjs`,
+ * this module's own `assessThresholdSensitivity`) and
+ * `tests/campaign-verdict.test.mjs` are unaffected by the move.
+ */
+export const armSpend = armSpendCore;
 
 /** §5. Terminal states are `INCONCLUSIVE` and `SUPERSEDED`. */
 export const CAMPAIGN_STATES = Object.freeze([
@@ -191,43 +204,6 @@ export function completionMatrix(snapshots, requiredArmIds) {
   };
 }
 
-/**
- * Per-arm spend. **Effectiveness reads live rows; spend reads ALL rows**
- * (§7a, shadow/S4).
- *
- * A superseded attempt WAS PAID FOR. Summing only the final attempt means an
- * arm that failed once and was re-run under `--force` reports less spend than
- * it cost, while an arm that succeeded first time reports all of its own — and
- * since the cost stage is a comparison *between* arms, that asymmetry
- * systematically flatters the flakier model. Lesson (e) in its subtler form:
- * not a null read as free, but a real charge read as never having happened.
- *
- * `cost_status: 'unpriced'` on ANY attempt — live or superseded — forces
- * `costEvidence: 'unknown'` for that arm (D6). So does `'unknown'`: a status
- * that says we never determined the price is not weaker evidence than one that
- * says we could not, it is the same absence.
- *
- * @param {Array<{snapshotId: string, armRuns: Array<{armId: string, attempt?: number,
- *   costUsd?: number|null, costStatus?: string, supersededAt?: string|null}>}>} snapshots
- */
-export function armSpend(snapshots) {
-  const perArm = {};
-  for (const snap of snapshots || []) {
-    for (const run of snap.armRuns || []) {
-      const entry = perArm[run.armId] ?? (perArm[run.armId] = { spendUsd: 0, attempts: 0, unpricedAttempts: 0, costEvidence: 'known' });
-      entry.attempts += 1;
-      if (run.costStatus === 'priced' && Number.isFinite(run.costUsd)) {
-        entry.spendUsd += Number(run.costUsd);
-      } else {
-        entry.unpricedAttempts += 1;
-        entry.costEvidence = 'unknown';
-      }
-    }
-  }
-  for (const entry of Object.values(perArm)) entry.spendUsd = round6(entry.spendUsd);
-  return perArm;
-}
-
 function round6(n) { return Math.round(n * 1e6) / 1e6; }
 
 /**
@@ -286,37 +262,77 @@ export function evaluateFloor({ acceptedPerArm, nComplete, incumbentArmId, floor
  * the absolute half of the floor already excluded it — but the arithmetic is
  * written honestly rather than relying on an upstream guard.
  *
+ * **A thin, POLICY-bearing wrapper over the shared core (Phase 3/D2b), not a
+ * pass-through.** The actual per-arm cost-per-accepted arithmetic now lives
+ * once, in `comparison/cost.mjs`, shared with the auditor role. What stays
+ * here is genuinely campaign-specific and does not belong in a shared core:
+ *
+ *  - **Whole-stage refusal on ANY unpriced eligible arm.** The core excludes
+ *    an unpriced arm from `selectable` and marks the column `partial`; this
+ *    campaign's policy (D6) is stricter — "a comparison whose money column is
+ *    partly imaginary is not a comparison" — so one unknown here refuses the
+ *    ENTIRE stage (`evaluated: false`), not just that arm's row.
+ *  - **Winner selection with the arm-id tiebreak.** Which arm wins, and how
+ *    ties break, is `decisionRule` policy — the shared core deliberately
+ *    returns `selectable` (a set) and picks nothing, because a different role
+ *    may pick differently.
+ *
+ * External shape (params and return) is unchanged from the pre-extraction
+ * version — `tests/campaign-verdict.test.mjs` asserts on it directly and is
+ * not part of this cluster's file set.
+ *
  * @param {{eligibleArmIds: string[], acceptedPerArm: Record<string, number>,
  *   spend: Record<string, {spendUsd: number, costEvidence: string, attempts: number}>,
  *   costCeilingUsdPerAccepted: number}} args
  */
 export function evaluateCost({ eligibleArmIds, acceptedPerArm, spend, costCeilingUsdPerAccepted }) {
-  const perArm = {};
-  let evidence = 'known';
+  // Every eligible arm has already cleared ITS floor by the time it reaches
+  // here — `assessThresholdSensitivity`/`evaluateCampaign` only pass
+  // `floor.cleared` as `eligibleArmIds`. The core still requires the boolean
+  // explicitly (never implicitly, per D2b) so it cannot be called with an
+  // arm that has not cleared.
+  const clearedFloor = {};
+  const spendUsd = {};
+  let anyUnknown = false;
   for (const armId of eligibleArmIds) {
     const s = spend[armId] ?? { spendUsd: 0, costEvidence: 'unknown', attempts: 0 };
-    const accepted = acceptedPerArm[armId] ?? 0;
-    if (s.costEvidence !== 'known') evidence = 'unknown';
-    const costPerAccepted = accepted > 0 && s.costEvidence === 'known'
-      ? round6(s.spendUsd / accepted)
-      : null;
+    clearedFloor[armId] = true;
+    if (s.costEvidence === 'known') {
+      spendUsd[armId] = s.spendUsd;
+    } else {
+      spendUsd[armId] = null;
+      anyUnknown = true;
+    }
+  }
+
+  const core = evaluateCostCore({
+    clearedFloor, spendUsd, acceptedUnits: acceptedPerArm, ceilingUsdPerAccepted: costCeilingUsdPerAccepted,
+  });
+
+  // Project the core's per-arm shape onto the pre-extraction field names —
+  // `attempts`/`costEvidence`/`accepted` are this module's own vocabulary and
+  // were never part of the shared core's contract.
+  const perArm = {};
+  for (const armId of eligibleArmIds) {
+    const s = spend[armId] ?? { spendUsd: 0, costEvidence: 'unknown', attempts: 0 };
     perArm[armId] = {
-      spendUsd: s.costEvidence === 'known' ? s.spendUsd : null,
+      spendUsd: core.perArm[armId].spendUsd,
       costEvidence: s.costEvidence,
       attempts: s.attempts,
-      accepted,
-      costPerAccepted,
-      withinCeiling: costPerAccepted == null ? null : costPerAccepted <= costCeilingUsdPerAccepted,
+      accepted: acceptedPerArm[armId] ?? 0,
+      costPerAccepted: core.perArm[armId].costPerAccepted,
+      withinCeiling: core.perArm[armId].withinCeiling,
     };
   }
-  if (evidence === 'unknown') {
+
+  if (anyUnknown) {
     // D6: collection never halts on a pricing-table gap, but a comparison whose
     // money column is partly imaginary is not a comparison.
-    return { evaluated: false, evidence, perArm, winner: null, reason: 'cost-evidence-unknown' };
+    return { evaluated: false, evidence: 'unknown', perArm, winner: null, reason: 'cost-evidence-unknown' };
   }
   const affordable = eligibleArmIds.filter((id) => perArm[id].withinCeiling === true);
   if (affordable.length === 0) {
-    return { evaluated: true, evidence, perArm, winner: null, reason: 'no-arm-within-cost-ceiling' };
+    return { evaluated: true, evidence: 'known', perArm, winner: null, reason: 'no-arm-within-cost-ceiling' };
   }
   let winner = affordable[0];
   for (const id of affordable) {
@@ -326,7 +342,7 @@ export function evaluateCost({ eligibleArmIds, acceptedPerArm, spend, costCeilin
     // A tie is broken by arm id so two reads of one dataset cannot disagree.
     else if (a === b && id < winner) winner = id;
   }
-  return { evaluated: true, evidence, perArm, winner, reason: null };
+  return { evaluated: true, evidence: 'known', perArm, winner, reason: null };
 }
 
 /**

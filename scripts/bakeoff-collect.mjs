@@ -39,6 +39,7 @@ import { isXaiModel } from './lib/model-resolver.mjs';
 import { canonicalJson, selectCampaignConfig, isScoredArm } from './lib/campaign/config.mjs';
 import { armRequestFingerprint, classifyArmCollisions } from './lib/comparison/fingerprint.mjs';
 import { computeLockDigest } from './lib/campaign/lock.mjs';
+import { incompleteSpend } from './lib/comparison/spend.mjs';
 
 const KNOWN_FLAGS = Object.freeze([
   '--transcript', '--plan', '--mode', '--progress', '--target', '--campaign',
@@ -127,9 +128,35 @@ export const CONTRACT_EPOCH = 'e3-scoped-envelope';
  * changes no request and no result; it only decides whether the second send is
  * billed at 1.0x or 0.1x. Kimi last because nothing waits on it.
  */
-/** Exported for the request-preservation test only: the derived arms must be
- * byte-identical to this for the committed campaign, which is what proves the
- * Phase-2 refactor changed no request. Not for production use. */
+/**
+ * Two real, tested roles — both production — not one, and neither is
+ * "test-only". Corrected 2026-08-16: an earlier commit message on this repo
+ * claimed this table was "Not for production use", which is false and was
+ * disproven by reading `resolveArms()` below (`selected.code === 'none' ⇒
+ * return { arms: LEGACY_ARMS, … }`) plus the test at
+ * `tests/final-review-bakeoff.test.mjs:726` that PINS exactly that fallback:
+ * `assert.deepEqual(r.arms, LEGACY_ARMS, 'a repo that never adopted campaigns
+ * collects exactly as before')`.
+ *
+ *   1. **The runtime fallback** for any repo that has not adopted a committed
+ *      `.campaigns/*.json` — a real, reachable, spend-bearing production path,
+ *      not a test fixture.
+ *   2. **The request-preservation fixture** — `deriveArms(committed campaign
+ *      config)` must be byte-identical to this for the Phase-2 refactor's own
+ *      request-preservation proof (`tests/final-review-bakeoff.test.mjs:559`).
+ *
+ * Both roles pin the SAME frozen values on purpose, and that is why the
+ * concrete OpenRouter id below (`moonshotai/kimi-k2-thinking`) is not a
+ * sentinel despite AGENTS.md's own "do not pin concrete model IDs" rule: a
+ * sentinel resolves to whatever is CURRENT at call time, which would make
+ * role 2's byte-identity assertion meaningless (it would pass or fail
+ * depending on what the model catalogue currently resolves to, not on
+ * whether the refactor changed the request) and would silently change role
+ * 1's collected request out from under any repo depending on exact
+ * backward-compatible behaviour. Changing what a campaign-less repo collects
+ * is a real decision with real cost/behaviour consequences for those repos —
+ * not something to default into as a side effect of "no hardcoded ids".
+ */
 export const LEGACY_ARMS = Object.freeze([
   { id: 'opus', env: { FINAL_REVIEW_SHADOW: 'claude-opus', FINAL_REVIEW_PROMPT_CACHE: '1' } },
   { id: 'solo-opus', solo: true, args: ['--provider', 'claude-opus'], env: { FINAL_REVIEW_SHADOW: '', FINAL_REVIEW_PROMPT_CACHE: '1' } },
@@ -390,6 +417,48 @@ export function isCompleteForEntry(entry) {
   const scope = scopeForEntry(entry);
   if (!scope) return false;
   return isComplete(entry, scope.arms, scope.expectedScope);
+}
+
+/**
+ * Did THIS arm actually run for THIS entry? The single predicate for "an arm
+ * is missing" — used both by the incomplete-snapshot report and by per-arm
+ * retry's arm selection (D5), which must agree on the same question or a
+ * retry could skip an arm the report just named as missing.
+ *
+ * @param {object} arm - a declared arm (from resolveArms/deriveArms)
+ * @param {object} entry - a bake-off log entry
+ * @returns {boolean}
+ */
+export function armDidRun(arm, entry) {
+  const r = entry?.arms?.[arm.id];
+  if (!r || r.error) return false;
+  // A solo arm has no shadow, so demanding shadowState==='ran' would report it
+  // as never having run — its evidence of running is a verdict (isComplete's
+  // own rule, mirrored here so the two cannot silently diverge).
+  return arm.solo ? Boolean(r.primaryVerdict) : r.shadowState === 'ran';
+}
+
+/**
+ * D5's retry-arm selection — extracted so the rule is assertable without
+ * spawning a single provider call, same reasoning as `resolvePromotionAttempt`
+ * in campaign.mjs.
+ *
+ * @param {object|undefined} existing - the entry currently on disk for this
+ *   snapshotId, or undefined on a first-ever collection
+ * @param {{arms: object[], expectedScope: string|null}|null} existingScope -
+ *   `scopeForEntry(existing)`; null when the entry names an unresolvable
+ *   campaign ("cannot judge" — not the same fact as "an arm did not run")
+ * @returns {string[]|null} arm ids to retry, or null for a FULL collection —
+ *   reached on a first-ever attempt, OR when every declared arm ran and the
+ *   snapshot is still incomplete for a reason a retry cannot fix (envelope-
+ *   scope binding, contract epoch): re-spawning nothing there would be a
+ *   silent no-op that never resolves the incompleteness.
+ */
+export function selectRetryArmIds(existing, existingScope) {
+  if (!existing || !existingScope) return null;
+  if (isComplete(existing, existingScope.arms, existingScope.expectedScope)) return null;
+  const missing = existingScope.arms.filter((a) => !armDidRun(a, existing)).map((a) => a.id);
+  return missing.length > 0 ? missing : null;
 }
 
 /**
@@ -852,6 +921,32 @@ export function summarise(entries, target = DEFAULT_TARGET, arms = defaultArms()
   };
 }
 
+/**
+ * Project bake-off log entries into `comparison/spend.mjs`'s snapshot shape,
+ * so the incomplete-snapshot spend line (D5) is computed by the shared core
+ * rather than a second summation. Reuses `armCostUsd` — the same per-arm
+ * dollar extraction the existing complete-only "spend:" line already trusts —
+ * so the two lines can never quietly disagree about what one arm-run cost.
+ *
+ * @param {object[]} entries - bake-off log entries (already campaign-scoped)
+ * @param {object[]} declaredArms - this campaign's declared arms
+ * @returns {Array<{snapshotId: string, complete: boolean, armRuns: Array<{armId: string, costUsd: number|null, costStatus: 'priced'|'unpriced'}>}>}
+ */
+export function entriesToSpendSnapshots(entries, declaredArms) {
+  return entries.map((e) => ({
+    snapshotId: e.snapshotId,
+    complete: isCompleteForEntry(e),
+    armRuns: declaredArms
+      .map((a) => {
+        const r = e.arms?.[a.id];
+        if (!r) return null; // never spawned this round — not a $0 charge
+        const { usd } = armCostUsd(r);
+        return { armId: a.id, costUsd: usd, costStatus: usd == null ? 'unpriced' : 'priced' };
+      })
+      .filter(Boolean),
+  }));
+}
+
 function printProgress(logPath, target, campaignId = null) {
   // Scope to ONE campaign's entries, judged against THAT campaign's arms.
   // Previously this summarised every entry in the shared log against
@@ -918,6 +1013,29 @@ function printProgress(logPath, target, campaignId = null) {
       process.stdout.write(`    (${s.totals.costUncostedSnapshots} snapshot(s) had an unpriced call —`
         + ' those arms show `unpriced` rather than a partial sum that reads complete)\n');
     }
+  }
+
+  // Incomplete-snapshot spend (D5) — a DIFFERENT question from the "spend:"
+  // line above, and deliberately not summed together: that line reads
+  // complete snapshots only (effectiveness), this one reads every snapshot
+  // that did NOT count toward N. On 2026-08-14 that second number was $4.16
+  // and nowhere in this output — 59% of a $7.10 spend, invisible because
+  // nothing asked the question. A `$0.00` here must never be silently
+  // conflated with "nothing incomplete"; the count is what disambiguates it.
+  const inc = incompleteSpend(entriesToSpendSnapshots(entries, arms ?? defaultArms()), { cohortDigest: campaignId });
+  if (inc.incompleteSnapshotCount === 0) {
+    process.stdout.write('  incomplete-snapshot spend: none — no incomplete snapshots\n');
+  } else if (inc.incompleteSpendUsd == null) {
+    const why = inc.unrecordedSnapshotCount > 0
+      ? `${inc.unrecordedSnapshotCount} of ${inc.incompleteSnapshotCount} recorded no arm run at all`
+      : 'every arm unpriced';
+    process.stdout.write(`  incomplete-snapshot spend: unknown (${inc.incompleteSnapshotCount} incomplete snapshot(s), ${why})\n`);
+  } else {
+    const parts = [];
+    if (inc.excludedArmIds.length) parts.push(`excludes unpriced: ${inc.excludedArmIds.join(', ')}`);
+    if (inc.unrecordedSnapshotCount > 0) parts.push(`${inc.unrecordedSnapshotCount} snapshot(s) recorded no arm run`);
+    const excl = parts.length ? ` (${parts.join('; ')})` : '';
+    process.stdout.write(`  incomplete-snapshot spend: $${inc.incompleteSpendUsd.toFixed(2)} (bought no ${inc.incompleteSnapshotCount})${excl}\n`);
   }
 
   // The MATCHED view, beside the strict one. The strict `opus unique` above is
@@ -1142,7 +1260,23 @@ async function main() {
     printProgress(LOG_PATH, target, existing.campaignId ?? null);
     return;
   }
-  if (force && existing) {
+
+  // D5 per-arm retry — scoped against the EXISTING entry's OWN campaign
+  // (scopeForEntry), so this is knowable before `resolveArms` runs below.
+  // `retryArmIds !== null` means "only spawn these arms and carry every other
+  // arm's result forward unchanged"; `null` means a full collection (either
+  // the first-ever attempt, or an operator-requested full refresh of an
+  // already-complete snapshot via --force).
+  const existingScope = existing ? scopeForEntry(existing) : null;
+  const retryArmIds = selectRetryArmIds(existing, existingScope);
+
+  if (retryArmIds) {
+    // Discarding the arms that already succeeded (opus/kimi/gemini-control,
+    // say) because one arm (grok) returned `exit 1` is the exact waste D5
+    // exists to stop — each of those was a real, paid provider call.
+    process.stderr.write(`  [bakeoff] snapshot ${id} incomplete — retrying only: ${retryArmIds.join(', ')}`
+      + ` (${existingScope.arms.length - retryArmIds.length} arm(s) already recorded, NOT re-charged)\n`);
+  } else if (force && existing) {
     // §5's resume table: `--force` APPENDS a retry, it never overwrites. The
     // supersede itself happens at promotion time (`campaign.mjs reconcile`),
     // where the store can stamp the prior row `superseded_at` and insert
@@ -1156,7 +1290,12 @@ async function main() {
   // Arms + D4 collision classification resolve BEFORE the output directory is
   // made and before any arm is spawned: a refusal must cost nothing.
   const resolved = resolveArms({ campaignId: arg('campaign') });
-  const ARMS = resolved.arms;
+  const fullArms = resolved.arms;
+  // The spawn set: every declared arm, UNLESS this is a per-arm retry, in
+  // which case only the arm(s) named by retryArmIds are re-spawned. The other
+  // declared arms are neither re-run nor re-charged — their prior results are
+  // carried forward unchanged below.
+  const ARMS = retryArmIds ? fullArms.filter((a) => retryArmIds.includes(a.id)) : fullArms;
   const envelopeScope = resolved.config?.controls?.envelopeScope ?? null;
   // `--campaign` in argv IS the campaign-active signal downstream — matches
   // gemini-review.mjs's own rule (--campaign-digest's presence, not how scope
@@ -1178,11 +1317,18 @@ async function main() {
     process.stderr.write(`  [bakeoff] lock ${resolved.lock.lockDigest} (config ${resolved.configDigest}, prompt-template source: ${resolved.lock.promptTemplateSource})\n`);
   }
 
-  const arms = {};
+  const newArms = {};
   for (const a of ARMS) {
     const runId = await mintArmRun(a, { plan, mode: arg('mode'), id });
-    arms[a.id] = { ...runArm(a, { transcript, plan, mode: arg('mode'), outDir, id, runId, envelopeScope, campaignDigest }), runId: runId ?? null };
+    newArms[a.id] = { ...runArm(a, { transcript, plan, mode: arg('mode'), outDir, id, runId, envelopeScope, campaignDigest }), runId: runId ?? null };
   }
+  // A partial retry carries every OTHER arm's result forward unchanged from
+  // the existing entry — this is what makes "opus/kimi/gemini-control NOT
+  // re-charged" true at the file level, not just in intent. `readLog()`
+  // replaces the whole entry per snapshotId (newest wins), so the merged
+  // object below — not a partial one — is what must be written; a log line
+  // containing only the retried arm would make readLog() forget the others.
+  const arms = retryArmIds ? { ...existing.arms, ...newArms } : newArms;
 
   const entry = {
     snapshotId: id,
@@ -1200,12 +1346,21 @@ async function main() {
       lockDigest: resolved.lock.lockDigest,
       promptTemplateSource: resolved.lock.promptTemplateSource,
       requestFingerprints: resolved.fingerprints,
-      replicateArmIds: ARMS.filter((a) => a.replicate).map((a) => a.id),
+      // The campaign's DECLARED replicate arms — always from fullArms, never
+      // from the (possibly retry-narrowed) spawn set ARMS. A partial retry
+      // must not make this metadata forget a replicate arm just because it
+      // wasn't spawned this particular round.
+      replicateArmIds: fullArms.filter((a) => a.replicate).map((a) => a.id),
     } : {}),
     collectedAt: new Date().toISOString(),
-    // Read by `campaign.mjs reconcile` to promote this entry as a SUPERSEDING
-    // attempt rather than skipping it as already-recorded.
-    ...(force && existing ? { forced: true } : {}),
+    // Read by `campaign.mjs reconcile` to decide, PER ARM, whether that arm's
+    // result in this entry is a retry (attempt N+1, supersede the prior live
+    // row) or unchanged (skip — already recorded, never re-charged).
+    // `retriedArmIds` is the per-arm marker (D5); `forced: true` is kept
+    // alongside it on a whole-entry --force refresh for readability, but
+    // `retriedArmIds` is what promotion actually keys on now.
+    ...(retryArmIds ? { retriedArmIds: retryArmIds }
+      : (force && existing ? { forced: true, retriedArmIds: fullArms.map((a) => a.id) } : {})),
     transcript: path.basename(transcript),
     plan,
     arms,
@@ -1244,9 +1399,7 @@ async function main() {
     process.stderr.write(`  [bakeoff] CANNOT JUDGE completeness — entry names campaign "${entry.campaignId}", which does not resolve.\n`
       + '  This is not "an arm did not run"; the snapshot is unjudgeable until the campaign is resolvable again.\n');
   } else if (!isComplete(entry, entryScope.arms, entryScope.expectedScope)) {
-    const missing = entryScope.arms
-      .filter((a) => { const r = entry?.arms?.[a.id]; return !r || r.error || (a.solo ? !r.primaryVerdict : r.shadowState !== 'ran'); })
-      .map((a) => a.id);
+    const missing = entryScope.arms.filter((a) => !armDidRun(a, entry)).map((a) => a.id);
     process.stderr.write(`  [bakeoff] INCOMPLETE — this snapshot does NOT count toward N.${missing.length ? ` Arms that did not run: ${missing.join(', ')}.` : ' Every arm ran; the envelope-scope binding or contract epoch is what failed.'}\n`);
   }
   printProgress(LOG_PATH, target, resolved.config?.id ?? null);

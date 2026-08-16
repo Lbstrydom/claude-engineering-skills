@@ -12,7 +12,7 @@
  */
 
 import { z } from 'zod';
-import { insertReturning, one, many, updateWhere } from '../db/query.mjs';
+import { insertReturning, one, many, updateWhere, withTx } from '../db/query.mjs';
 import { isCloudEnabled } from './repo.mjs';
 import { RoleSchema, TierSchema, JudgeTierSchema, RunStatusSchema, TerminalRunStatusSchema, NonTerminalRunStatusSchema, VerdictSchema, NextActionSchema } from '../model-eval/contracts.mjs';
 import { ALL_VALID_VERDICT_NEXT_ACTION_PAIRS } from '../model-eval/verdict.mjs';
@@ -68,12 +68,40 @@ function refineRolePendingShadow(v, ctx) {
 // THROWS at serialization time — well after this validation boundary passed.
 // Fail here instead, at the API boundary these comments already claim
 // enforces "a bad value must never reach SQL assembly."
+/**
+ * Public entry point — always starts a FRESH ancestor-chain tracker.
+ *
+ * Cluster B fix-gate (R3, third time this was raised — the first two rounds
+ * deferred it as pre-existing and independent of what shipped; a third
+ * independent raise is worth acting on rather than deferring a fourth time).
+ * The recursive walker below had no cycle guard at all: `const evidence = {};
+ * evidence.self = evidence;` would recurse until the call stack was
+ * exhausted, INSIDE the validation boundary whose whole job is to run
+ * BEFORE a bad value reaches SQL assembly — an uncaught RangeError there is
+ * itself the failure this seam exists to prevent, just moved one step
+ * earlier than jsonb serialization would have hit it.
+ *
+ * @param {unknown} v
+ * @returns {boolean}
+ */
+function isJsonbSafeValue(v) {
+  return isJsonbSafeValueInner(v, new Set());
+}
+
 /** Recursively reject function/undefined/Symbol/bigint values — a plain
  * try/catch around JSON.stringify is NOT sufficient here: JSON.stringify
  * silently DROPS function-valued keys (no throw) rather than rejecting
  * them, so a round-trip-equality check would let exactly the silent-data-
- * loss case this fix exists to catch pass right through. */
-function isJsonbSafeValue(v) {
+ * loss case this fix exists to catch pass right through.
+ *
+ * @param {unknown} v
+ * @param {Set<object>} seen — every OBJECT/ARRAY currently on the path from
+ *   the root to `v` (the ancestor chain, not "every value visited overall" —
+ *   the same object reachable twice via two DIFFERENT, non-cyclic paths,
+ *   e.g. `{a: shared, b: shared}`, is valid JSON and must not be rejected,
+ *   so an entry is removed from `seen` once its own subtree finishes).
+ */
+function isJsonbSafeValueInner(v, seen) {
   if (v === null) return true;
   const t = typeof v;
   // r15h1jsonbfinite fix — `typeof NaN === 'number'` and `typeof Infinity ===
@@ -88,15 +116,57 @@ function isJsonbSafeValue(v) {
   if (t === 'string' || t === 'boolean') return true;
   if (t === 'function' || t === 'symbol' || t === 'bigint' || t === 'undefined') return false;
   if (Array.isArray(v)) {
-    // Audit R1 H1 — `v.every()` SKIPS sparse-array holes, so `new Array(3)` or
-    // `[1, , 3]` passed with zero elements ever inspected, and JSON.stringify
-    // then writes each hole as `null`. Same silent-rewrite class as NaN above:
-    // the array that comes back out is not the one that went in. Index
-    // explicitly so a hole is seen and rejected.
+    // Cluster B fix-gate, round 2 — the first fix (`Object.keys(v).length !==
+    // v.length`) closed the non-index-property gap but repeated the SAME two
+    // mistakes the object branch below had already been fixed for, TWICE
+    // (Audit R1 H1, R5 H3), because it did not reuse that branch's approach:
+    //   (a) `Object.keys()` sees only ENUMERABLE own keys, so a NON-ENUMERABLE
+    //       extra property (`Object.defineProperty(arr,'x',{enumerable:false})`)
+    //       left BOTH sides of the length comparison equal — invisible, same
+    //       as it would have been to `v.every()` before the R1 fix.
+    //   (b) reading `v[i]` directly, like `v.every()` before it, INVOKES a
+    //       getter rather than inspecting it — the exact two-invocations
+    //       problem R5 H3 fixed for objects (`Object.values()` reads a getter
+    //       once here, JSON.stringify reads it again at write time; nothing
+    //       guarantees the two agree).
+    // Both measured live before this fix (Cluster B R2): an array with a
+    // non-enumerable extra property, and one with a getter at index 0, both
+    // passed validation and both silently diverge from what they validated as.
+    //
+    // The array-specific property this function must additionally establish —
+    // an array is not just "an object without extra keys", it also declares
+    // NO index gaps — so this reimplements the object branch's own-property
+    // rigor (getOwnPropertyNames count, symbol check, per-key descriptor walk
+    // rejecting accessors) plus the R1 sparse-hole check, rather than
+    // borrowing a shortcut that quietly dropped both guarantees again.
+    if (Object.getOwnPropertySymbols(v).length > 0) return false;
+    // Every own property name must be exactly one of the array's numeric
+    // indices — anything else (a non-index property, enumerable or not) is
+    // rejected here, closing gap (a) above. `getOwnPropertyNames` on an array
+    // ALWAYS includes the own, non-enumerable `'length'` property itself
+    // (`Object.getOwnPropertyNames([1,2,3])` → `['0','1','2','length']`) — the
+    // one name every array legitimately carries beyond its indices, so it is
+    // subtracted before comparing rather than counted as an extra.
+    const names = Object.getOwnPropertyNames(v).filter((n) => n !== 'length');
+    if (names.length !== v.length) return false;
+    // Cluster B fix-gate (R3, third raise): `const a=[]; a.push(a);` recursed
+    // into itself with no ancestor check — an uncaught RangeError from stack
+    // exhaustion, inside the boundary meant to run BEFORE a bad value reaches
+    // SQL, not instead of a controlled rejection. `v` is added to the
+    // ancestor chain for the DURATION of walking its own children only, and
+    // removed once they finish — a shared, non-cyclic reference to the same
+    // array from two different branches is valid JSON and must still pass.
+    if (seen.has(v)) return false;
+    seen.add(v);
     for (let i = 0; i < v.length; i++) {
-      if (!Object.hasOwn(v, i)) return false;
-      if (!isJsonbSafeValue(v[i])) return false;
+      const descriptor = Object.getOwnPropertyDescriptor(v, i);
+      // A hole (R1 H1) has no descriptor at all; an accessor index (gap (b))
+      // has one with get/set instead of a plain value. Both are rejected the
+      // same way the object branch already rejects them.
+      if (!descriptor || typeof descriptor.get === 'function' || typeof descriptor.set === 'function') { seen.delete(v); return false; }
+      if (!isJsonbSafeValueInner(descriptor.value, seen)) { seen.delete(v); return false; }
     }
+    seen.delete(v);
     return true;
   }
   if (t === 'object') {
@@ -151,6 +221,10 @@ function isJsonbSafeValue(v) {
     if (proto !== Object.prototype && proto !== null) return false;
     if (Object.getOwnPropertySymbols(v).length > 0) return false;
     if (Object.getOwnPropertyNames(v).length !== Object.keys(v).length) return false;
+    // Cluster B fix-gate (R3, third raise) — same ancestor-chain guard as the
+    // array branch above; see its comment for the full reasoning.
+    if (seen.has(v)) return false;
+    seen.add(v);
     // Audit R5 H3 — `Object.values()` INVOKES getters, so an accessor property
     // was being read here and read again by JSON.stringify at write time: two
     // invocations, two chances to differ. Walk descriptors instead, which
@@ -158,9 +232,10 @@ function isJsonbSafeValue(v) {
     // a computed property has no stable serialized form to validate.
     for (const key of Object.keys(v)) {
       const descriptor = Object.getOwnPropertyDescriptor(v, key);
-      if (typeof descriptor.get === 'function' || typeof descriptor.set === 'function') return false;
-      if (!isJsonbSafeValue(descriptor.value)) return false;
+      if (typeof descriptor.get === 'function' || typeof descriptor.set === 'function') { seen.delete(v); return false; }
+      if (!isJsonbSafeValueInner(descriptor.value, seen)) { seen.delete(v); return false; }
     }
+    seen.delete(v);
     return true;
   }
   return false;
@@ -183,6 +258,40 @@ export class EvalRunAlreadyActiveError extends Error {
     this.name = 'EvalRunAlreadyActiveError';
   }
 }
+
+/**
+ * D3a's cohort-attempt collision — a DIFFERENT fact from
+ * {@link EvalRunAlreadyActiveError}, and conflating the two is a real defect
+ * that shipped and was caught only by a live-DB test, not by reading the code:
+ * before D3a, `idx_model_eval_runs_active_pending_shadow` (role/repo-scoped)
+ * was the only unique constraint a plain insert could hit, so a blanket
+ * "any 23505 means EvalRunAlreadyActiveError" was correct. D3a's migration
+ * added two MORE unique indexes on `(comparison_id, arm_id[, attempt])`, and a
+ * caller retrying an arm without `supersedePrior` now hits one of THOSE — a
+ * cohort-attempt collision, which needs a different remediation
+ * (`supersedePrior: true`) than an active pending_shadow run does (finish or
+ * cancel the other run). Reporting the wrong one as the other would send an
+ * operator chasing a role-active-run problem that does not exist.
+ *
+ * A THIRD path reaches the same error (R5): the attempt-sequence trigger
+ * (20260816110000) rejects a reused attempt number with its own RAISE
+ * EXCEPTION (P0001) before the unique index above is ever checked. Same
+ * caller-facing fact, different underlying constraint — see the P0001 branch
+ * in `createEvalRun`'s catch block.
+ */
+export class ComparisonArmAttemptCollisionError extends Error {
+  constructor(comparisonId, armId, attempt) {
+    super(`ComparisonArmAttemptCollisionError: comparison ${comparisonId} arm "${armId}" already has a live/recorded attempt ${attempt} — pass supersedePrior:true to retry`);
+    this.name = 'ComparisonArmAttemptCollisionError';
+  }
+}
+
+/** The ONE unique constraint that means "an active pending_shadow run already
+ * exists" — every other unique_violation on this table is a different fact
+ * (see {@link ComparisonArmAttemptCollisionError}'s docstring). Named
+ * explicitly rather than inferred, so a future index addition cannot
+ * silently widen this class again the way D3a's migration did. */
+const ACTIVE_PENDING_SHADOW_CONSTRAINT = 'idx_model_eval_runs_active_pending_shadow';
 
 // Implementation M4 fix — validate at the API boundary even though callers
 // (store/model-eval.mjs consumers in Phase 3/4) also validate; a bad status/
@@ -214,38 +323,197 @@ const CreateEvalRunBundleSchema = z.object({
   evidence: jsonbSafeRecord().nullable().optional(),
   harnessSha: z.string().nullable().optional(),
   corpusVersion: z.string().nullable().optional(),
-}).superRefine(refineVerdictPair).superRefine(refineRolePendingShadow);
+  // D3a cohort fields — all optional and all-or-nothing (a comparison run
+  // must be identifiable by BOTH comparisonId and armId, or the cohort read
+  // that "includes failed siblings" cannot attribute a row to an arm). A
+  // single-candidate run (no --manifest) supplies none of these, and every
+  // branch below that touches them is a no-op for that call — this schema
+  // change must not alter behaviour for the path that predates D3a.
+  comparisonId: z.string().min(1).nullable().optional(),
+  armId: z.string().min(1).nullable().optional(),
+  attempt: z.number().int().positive().optional(),
+  // Mirrors campaign/store.mjs::recordArmRun — the supersede-then-insert
+  // transaction, not a caller-visible field on the row itself.
+  supersedePrior: z.boolean().optional(),
+}).superRefine(refineVerdictPair).superRefine(refineRolePendingShadow)
+  .superRefine((v, ctx) => {
+    const hasComparison = v.comparisonId != null;
+    const hasArm = v.armId != null;
+    if (hasComparison !== hasArm) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'comparisonId and armId must be both set or both absent — a cohort row must be attributable to an arm' });
+    }
+    if (v.supersedePrior && !hasComparison) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'supersedePrior requires comparisonId/armId — there is no cohort row to supersede' });
+    }
+  });
 
 /**
  * @param {object} rawBundle - {repoId, role, tier, candidateRef, baselineRef, judgeTier, status, evidence, ...}
+ *   Cohort fields (comparisonId, armId, attempt, supersedePrior) are D3a's
+ *   addition — omit all of them for a plain single-candidate run.
  */
 export async function createEvalRun(rawBundle) {
   const bundle = CreateEvalRunBundleSchema.parse(rawBundle);
   if (!await isCloudEnabled()) return { ok: true, cloud: false, runId: null };
+  const row = {
+    repo_id: bundle.repoId,
+    role: bundle.role,
+    tier: bundle.tier,
+    candidate_ref: bundle.candidateRef,
+    baseline_ref: bundle.baselineRef ?? null,
+    judge_tier: bundle.judgeTier ?? null,
+    status: bundle.status,
+    verdict: bundle.verdict ?? null,
+    next_action: bundle.nextAction ?? null,
+    metrics: bundle.metrics ?? null,
+    thresholds_version: bundle.thresholdsVersion ?? null,
+    cost: bundle.cost ?? null,
+    evidence: bundle.evidence ?? null,
+    harness_sha: bundle.harnessSha ?? null,
+    corpus_version: bundle.corpusVersion ?? null,
+    ...(bundle.comparisonId != null ? { comparison_id: bundle.comparisonId, arm_id: bundle.armId, attempt: bundle.attempt ?? 1 } : {}),
+  };
   try {
-    const row = await insertReturning('model_eval_runs', {
-      repo_id: bundle.repoId,
-      role: bundle.role,
-      tier: bundle.tier,
-      candidate_ref: bundle.candidateRef,
-      baseline_ref: bundle.baselineRef ?? null,
-      judge_tier: bundle.judgeTier ?? null,
-      status: bundle.status,
-      verdict: bundle.verdict ?? null,
-      next_action: bundle.nextAction ?? null,
-      metrics: bundle.metrics ?? null,
-      thresholds_version: bundle.thresholdsVersion ?? null,
-      cost: bundle.cost ?? null,
-      evidence: bundle.evidence ?? null,
-      harness_sha: bundle.harnessSha ?? null,
-      corpus_version: bundle.corpusVersion ?? null,
-    }, { returning: ['run_id'] });
-    return { ok: true, cloud: true, runId: row.run_id };
+    // The supersede-then-insert is ONE transaction only when there is a prior
+    // live cohort row to retire — the partial unique index
+    // (comparison_id, arm_id) WHERE superseded_at IS NULL permits exactly one
+    // live row, so doing the two apart would leave a window where the insert
+    // fails against a row still marked live. A plain single-candidate call
+    // (no comparisonId) never reaches this branch and is unaffected.
+    const inserted = bundle.supersedePrior
+      ? await withTx(async () => {
+          await updateWhere('model_eval_runs', { superseded_at: new Date().toISOString() },
+            { comparison_id: bundle.comparisonId, arm_id: bundle.armId, superseded_at: null });
+          return insertReturning('model_eval_runs', row, { returning: ['run_id'] });
+        })
+      : await insertReturning('model_eval_runs', row, { returning: ['run_id'] });
+    return { ok: true, cloud: true, runId: inserted.run_id };
   } catch (err) {
-    if (String(err.message).includes('duplicate key') || err.code === '23505') {
-      throw new EvalRunAlreadyActiveError(bundle.repoId, bundle.role);
+    if (err.code === '23505') {
+      // The constraint NAME is the fact, not the bare 23505 code — two
+      // different unique indexes on this table both raise it, for two
+      // different reasons (see ComparisonArmAttemptCollisionError's
+      // docstring). A caller telling them apart needs the right one.
+      if (err.constraint === ACTIVE_PENDING_SHADOW_CONSTRAINT) {
+        throw new EvalRunAlreadyActiveError(bundle.repoId, bundle.role);
+      }
+      if (bundle.comparisonId != null) {
+        throw new ComparisonArmAttemptCollisionError(bundle.comparisonId, bundle.armId, bundle.attempt ?? 1);
+      }
+      // An unrecognised unique_violation on this table (a future index this
+      // function does not yet know about) — fail with the real error rather
+      // than guessing which of the two known classes it belongs to.
+    }
+    // Cluster B fix-gate (R5) — the attempt-sequence trigger
+    // (20260816110000, BEFORE INSERT) fires ahead of any unique-index check,
+    // so an attempt reused for the same arm now trips ITS RAISE EXCEPTION
+    // (SQLSTATE P0001, no `.constraint`) before ever reaching the 23505 path
+    // above — the exact caller-facing case ComparisonArmAttemptCollisionError
+    // already exists to represent. A bare `err.code === 'P0001'` match would
+    // ALSO catch the unrelated repo-scope trigger on this same table
+    // (20260816090000), so this matches on the message prefix each trigger's
+    // RAISE EXCEPTION is written with, the same "the name is the fact, not
+    // the bare code" principle as the 23505 branch above.
+    if (err.code === 'P0001' && typeof err.message === 'string'
+      && err.message.startsWith('model_eval_runs.attempt must be exactly one more than the prior max')
+      && bundle.comparisonId != null) {
+      throw new ComparisonArmAttemptCollisionError(bundle.comparisonId, bundle.armId, bundle.attempt ?? 1);
     }
     throw err;
+  }
+}
+
+const UpsertComparisonArgsSchema = z.object({
+  repoId: z.string().min(1),
+  comparisonKey: z.string().min(1),
+  configDigest: z.string().min(1),
+  lockSchemaVersion: z.number().int().positive().default(1),
+  role: RoleSchema,
+  subjectRef: jsonbSafeRecord().nullable().optional(),
+});
+
+/**
+ * Idempotent on `(repo_id, comparison_key, config_digest, lock_schema_version)`
+ * — re-running the SAME manifest (byte-identical digest) returns the SAME
+ * cohort; a config change (new digest) or a `lock_schema_version` bump
+ * creates a genuinely NEW row, never an update. That is D2a's whole point:
+ * prior evidence under the old digest is orphaned into its own cohort, never
+ * silently relabelled to look comparable with what came after it changed.
+ *
+ * Cluster B fix-gate (R5) — renamed from `ensureComparison`: the ON CONFLICT
+ * ... DO UPDATE below IS an upsert, and this repo's writer-discovery gate
+ * (`tests/audit-store-durability-call-site.test.mjs`'s `WRITER_NAME`)
+ * DISCOVERS candidates by verb-prefixed export NAME — `ensure*` isn't a
+ * recognised verb, so the old name made this write invisible to the very
+ * mechanism meant to register or exempt it, not merely unregistered.
+ *
+ * @param {{repoId, comparisonKey, configDigest, lockSchemaVersion?, role, subjectRef?}} args
+ */
+export async function upsertComparison(rawArgs) {
+  const args = UpsertComparisonArgsSchema.parse(rawArgs);
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, id: null };
+  try {
+    const hit = await one(
+      `INSERT INTO model_eval_comparisons (repo_id, comparison_key, config_digest, lock_schema_version, role, subject_ref)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (repo_id, comparison_key, config_digest, lock_schema_version)
+         DO UPDATE SET subject_ref = EXCLUDED.subject_ref
+       RETURNING id`,
+      [args.repoId, args.comparisonKey, args.configDigest, args.lockSchemaVersion, args.role,
+        args.subjectRef == null ? null : JSON.stringify(args.subjectRef)],
+    );
+    return { ok: true, cloud: true, id: hit?.id ?? null };
+  } catch (err) {
+    process.stderr.write(`  [model-eval] upsertComparison failed: ${err.message}\n`);
+    return { ok: false, cloud: true, error: err.message, id: null };
+  }
+}
+
+/**
+ * Highest attempt RECORDED for one (comparison, arm) — the resume-safety
+ * read. D5a's reducer applied at the auditor role: a re-invocation of the
+ * same manifest must know whether an arm already has a live success before
+ * deciding to spawn it again.
+ *
+ * @param {{comparisonId: string, armId: string}} args
+ * @returns {Promise<{ok: boolean, cloud: boolean, attempt: number, hasLiveSuccess: boolean}>}
+ */
+export async function maxComparisonArmAttempt({ comparisonId, armId }) {
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, attempt: 0, hasLiveSuccess: false };
+  try {
+    const row = await one(
+      `SELECT COALESCE(MAX(attempt), 0) AS attempt,
+              BOOL_OR(status = 'completed' AND superseded_at IS NULL) AS has_live_success
+         FROM model_eval_runs WHERE comparison_id = $1 AND arm_id = $2`,
+      [comparisonId, armId],
+    );
+    return { ok: true, cloud: true, attempt: Number(row?.attempt ?? 0), hasLiveSuccess: row?.has_live_success === true };
+  } catch (err) {
+    return { ok: false, cloud: true, error: err.message, attempt: 0, hasLiveSuccess: false };
+  }
+}
+
+/**
+ * Every arm's LIVE row for one comparison, including `failed` siblings
+ * (D3a). A read that hides failures would make a half-collected comparison
+ * look complete — the exact false-green class the campaign role's own cohort
+ * read was already written to avoid, applied here.
+ *
+ * @param {{comparisonId: string}} args
+ */
+export async function getComparisonCohort({ comparisonId }) {
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, rows: [] };
+  try {
+    const rows = await many(
+      `SELECT run_id, arm_id, attempt, status, verdict, next_action, metrics, cost, evidence, created_at
+         FROM model_eval_runs
+        WHERE comparison_id = $1 AND superseded_at IS NULL
+        ORDER BY arm_id, created_at DESC`,
+      [comparisonId],
+    );
+    return { ok: true, cloud: true, rows };
+  } catch (err) {
+    return { ok: false, cloud: true, rows: [], error: err.message };
   }
 }
 

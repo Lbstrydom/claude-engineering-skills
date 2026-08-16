@@ -3506,6 +3506,67 @@
       ]
     },
     {
+      "table_name": "model_eval_comparisons",
+      "columns": [
+        {
+          "column_name": "id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": "gen_random_uuid()",
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "repo_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "comparison_key",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 3
+        },
+        {
+          "column_name": "config_digest",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 4
+        },
+        {
+          "column_name": "lock_schema_version",
+          "data_type": "integer",
+          "is_nullable": "NO",
+          "column_default": "1",
+          "ordinal_position": 5
+        },
+        {
+          "column_name": "role",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 6
+        },
+        {
+          "column_name": "subject_ref",
+          "data_type": "jsonb",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 7
+        },
+        {
+          "column_name": "created_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "NO",
+          "column_default": "now()",
+          "ordinal_position": 8
+        }
+      ]
+    },
+    {
       "table_name": "model_eval_judge_batches",
       "columns": [
         {
@@ -3687,6 +3748,34 @@
           "is_nullable": "NO",
           "column_default": "now()",
           "ordinal_position": 17
+        },
+        {
+          "column_name": "comparison_id",
+          "data_type": "uuid",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 18
+        },
+        {
+          "column_name": "arm_id",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 19
+        },
+        {
+          "column_name": "attempt",
+          "data_type": "integer",
+          "is_nullable": "NO",
+          "column_default": "1",
+          "ordinal_position": 20
+        },
+        {
+          "column_name": "superseded_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 21
         }
       ]
     },
@@ -7254,6 +7343,27 @@
       "config": "search_path=public"
     },
     {
+      "function_name": "check_model_eval_comparison_repo_immutable",
+      "args": "",
+      "return_type": "trigger",
+      "security_definer": false,
+      "config": null
+    },
+    {
+      "function_name": "check_model_eval_run_attempt_sequence",
+      "args": "",
+      "return_type": "trigger",
+      "security_definer": false,
+      "config": null
+    },
+    {
+      "function_name": "check_model_eval_run_comparison_repo_scope",
+      "args": "",
+      "return_type": "trigger",
+      "security_definer": false,
+      "config": null
+    },
+    {
       "function_name": "cosine_distance",
       "args": "halfvec, halfvec",
       "return_type": "double precision",
@@ -9483,6 +9593,24 @@
       "definition": "PRIMARY KEY (id)"
     },
     {
+      "table_name": "model_eval_comparisons",
+      "constraint_name": "model_eval_comparisons_pkey",
+      "constraint_type": "PRIMARY KEY",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "table_name": "model_eval_comparisons",
+      "constraint_name": "model_eval_comparisons_repo_id_comparison_key_config_digest_key",
+      "constraint_type": "UNIQUE",
+      "definition": "UNIQUE (repo_id, comparison_key, config_digest, lock_schema_version)"
+    },
+    {
+      "table_name": "model_eval_comparisons",
+      "constraint_name": "model_eval_comparisons_role_check",
+      "constraint_type": "CHECK",
+      "definition": "CHECK ((role = ANY (ARRAY['auditor'::text, 'adjudicator'::text])))"
+    },
+    {
       "table_name": "model_eval_judge_batches",
       "constraint_name": "model_eval_judge_batches_pkey",
       "constraint_type": "PRIMARY KEY",
@@ -9499,6 +9627,24 @@
       "constraint_name": "model_eval_judge_batches_unit_check",
       "constraint_type": "CHECK",
       "definition": "CHECK ((unit = ANY (ARRAY['findings-vs-diff'::text, 'verdict-vs-finding'::text])))"
+    },
+    {
+      "table_name": "model_eval_runs",
+      "constraint_name": "chk_model_eval_runs_comparison_arm_pairing",
+      "constraint_type": "CHECK",
+      "definition": "CHECK (((comparison_id IS NULL) = (arm_id IS NULL)))"
+    },
+    {
+      "table_name": "model_eval_runs",
+      "constraint_name": "fk_model_eval_runs_comparison_id",
+      "constraint_type": "FOREIGN KEY",
+      "definition": "FOREIGN KEY (comparison_id) REFERENCES model_eval_comparisons(id)"
+    },
+    {
+      "table_name": "model_eval_runs",
+      "constraint_name": "model_eval_runs_attempt_positive",
+      "constraint_type": "CHECK",
+      "definition": "CHECK ((attempt > 0))"
     },
     {
       "table_name": "model_eval_runs",
@@ -10818,6 +10964,21 @@
       "indexdef": "CREATE UNIQUE INDEX model_ab_spend_ledger_pkey ON public.model_ab_spend_ledger USING btree (id)"
     },
     {
+      "tablename": "model_eval_comparisons",
+      "indexname": "idx_model_eval_comparisons_repo_key",
+      "indexdef": "CREATE INDEX idx_model_eval_comparisons_repo_key ON public.model_eval_comparisons USING btree (repo_id, comparison_key, created_at DESC)"
+    },
+    {
+      "tablename": "model_eval_comparisons",
+      "indexname": "model_eval_comparisons_pkey",
+      "indexdef": "CREATE UNIQUE INDEX model_eval_comparisons_pkey ON public.model_eval_comparisons USING btree (id)"
+    },
+    {
+      "tablename": "model_eval_comparisons",
+      "indexname": "model_eval_comparisons_repo_id_comparison_key_config_digest_key",
+      "indexdef": "CREATE UNIQUE INDEX model_eval_comparisons_repo_id_comparison_key_config_digest_key ON public.model_eval_comparisons USING btree (repo_id, comparison_key, config_digest, lock_schema_version)"
+    },
+    {
       "tablename": "model_eval_judge_batches",
       "indexname": "idx_model_eval_judge_batches_run_commit",
       "indexdef": "CREATE UNIQUE INDEX idx_model_eval_judge_batches_run_commit ON public.model_eval_judge_batches USING btree (run_id, commit_sha) WHERE (commit_sha IS NOT NULL)"
@@ -10836,6 +10997,21 @@
       "tablename": "model_eval_runs",
       "indexname": "idx_model_eval_runs_active_pending_shadow",
       "indexdef": "CREATE UNIQUE INDEX idx_model_eval_runs_active_pending_shadow ON public.model_eval_runs USING btree (repo_id, role) WHERE (status = 'pending_shadow'::text)"
+    },
+    {
+      "tablename": "model_eval_runs",
+      "indexname": "idx_model_eval_runs_comparison_arm_attempt",
+      "indexdef": "CREATE UNIQUE INDEX idx_model_eval_runs_comparison_arm_attempt ON public.model_eval_runs USING btree (comparison_id, arm_id, attempt) WHERE (comparison_id IS NOT NULL)"
+    },
+    {
+      "tablename": "model_eval_runs",
+      "indexname": "idx_model_eval_runs_comparison_arm_live",
+      "indexdef": "CREATE UNIQUE INDEX idx_model_eval_runs_comparison_arm_live ON public.model_eval_runs USING btree (comparison_id, arm_id) WHERE ((comparison_id IS NOT NULL) AND (superseded_at IS NULL))"
+    },
+    {
+      "tablename": "model_eval_runs",
+      "indexname": "idx_model_eval_runs_comparison_id",
+      "indexdef": "CREATE INDEX idx_model_eval_runs_comparison_id ON public.model_eval_runs USING btree (comparison_id)"
     },
     {
       "tablename": "model_eval_runs",
@@ -11449,6 +11625,27 @@
       "action_statement": "EXECUTE FUNCTION touch_memory_friction_updated_at()"
     },
     {
+      "table_name": "model_eval_comparisons",
+      "trigger_name": "trg_model_eval_comparison_repo_immutable",
+      "action_timing": "BEFORE",
+      "events": "UPDATE",
+      "action_statement": "EXECUTE FUNCTION check_model_eval_comparison_repo_immutable()"
+    },
+    {
+      "table_name": "model_eval_runs",
+      "trigger_name": "trg_model_eval_run_attempt_sequence",
+      "action_timing": "BEFORE",
+      "events": "INSERT,UPDATE",
+      "action_statement": "EXECUTE FUNCTION check_model_eval_run_attempt_sequence()"
+    },
+    {
+      "table_name": "model_eval_runs",
+      "trigger_name": "trg_model_eval_run_comparison_repo_scope",
+      "action_timing": "BEFORE",
+      "events": "INSERT,UPDATE",
+      "action_statement": "EXECUTE FUNCTION check_model_eval_run_comparison_repo_scope()"
+    },
+    {
       "table_name": "persona_finding_outcomes",
       "trigger_name": "trg_persona_finding_outcomes_touch",
       "action_timing": "BEFORE",
@@ -11705,6 +11902,11 @@
     {
       "grantee": "postgres",
       "object": "public.model_ab_spend_ledger",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "postgres",
+      "object": "public.model_eval_comparisons",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
@@ -12121,6 +12323,11 @@
     },
     {
       "object_name": "model_ab_spend_ledger",
+      "object_kind": "r",
+      "owner": "postgres"
+    },
+    {
+      "object_name": "model_eval_comparisons",
       "object_kind": "r",
       "owner": "postgres"
     },
