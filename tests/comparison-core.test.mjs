@@ -109,34 +109,77 @@ describe('comparison/lock — the extraction preserved cohort identity', () => {
   // splits one cohort into two and shrinks the aggregate.
   const LIVE_COLLECTION_DIGEST = '8786fd5211cdf25c';
 
-  it('the committed scoped campaign still digests to the live-collection value', async () => {
-    const { selectCampaignConfig } = await import('../scripts/lib/campaign/config.mjs');
-    const r = selectCampaignConfig({ campaignId: 'final-review-scoped-2026q3' });
-    assert.equal(r.ok, true, 'the committed campaign must still load');
-    assert.equal(r.configDigest, LIVE_COLLECTION_DIGEST,
+  /**
+   * The digest subset EXACTLY as it stood during the 2026-08-14 four-arm live
+   * collection, frozen here as a fixture.
+   *
+   * Pinned to a fixture rather than to `.campaigns/final-review-scoped-2026q3.json`
+   * because that file is legitimately mutable — adding an arm re-locks the
+   * cohort on purpose, and a test pointed at it can only be "fixed" by bumping
+   * the expected value, which destroys the guarantee it exists to give. Against
+   * a frozen input the assertion means what it says forever: THIS input, run
+   * through today's extracted code, still produces the identity the live run
+   * recorded.
+   */
+  const HISTORICAL_SUBSET = Object.freeze({
+    role: 'final_review_shadow',
+    decision: { type: 'select_default', incumbent: 'claude-opus' },
+    arms: [
+      { id: 'opus', model: 'claude-opus', mode: 'shadow' },
+      { id: 'kimi', model: 'moonshotai/kimi-k2-thinking', mode: 'shadow' },
+      { id: 'grok', model: 'grok-4.6', mode: 'shadow' },
+      { id: 'gemini-control', model: 'gemini-pro-latest', mode: 'shadow', type: 'control' },
+    ],
+    controls: {
+      reasoningEffort: 'high',
+      promptTemplateId: 'final-review-shadow@4',
+      outputSchemaId: 'final-review@3',
+      maxOutputTokens: 32000,
+      toolPolicy: 'structured-output-only',
+      temperature: 0,
+      envelopeScope: 'thin',
+      preflight: {
+        artifact: 'docs/research/grok-effort-preflight-2026q3.json',
+        sha256: '19e78fadf566d35f088ec314e7e318b3fb640980e0b3997d66e52d9cc25de108',
+        model: 'grok-4.6',
+        disposition: 'pass',
+      },
+    },
+  });
+
+  it('the extracted digest still reproduces the live-collection identity', async () => {
+    const { configDigest } = await import('../scripts/lib/comparison/lock.mjs');
+    assert.equal(configDigest(HISTORICAL_SUBSET), LIVE_COLLECTION_DIGEST,
       'the extraction changed cohort identity — every snapshot collected under the old digest is now orphaned');
   });
 
-  it('configDigest is reachable from BOTH the core and the campaign re-export, and agrees', async () => {
+  it('configDigest is reachable from BOTH the core and the campaign re-export, and is the same function', async () => {
     const { configDigest: coreDigest } = await import('../scripts/lib/comparison/lock.mjs');
-    const { configDigest: reExported, selectCampaignConfig } = await import('../scripts/lib/campaign/config.mjs');
+    const { configDigest: reExported } = await import('../scripts/lib/campaign/config.mjs');
     assert.equal(coreDigest, reExported, 'the re-export must be the same function, not a copy');
-    const r = selectCampaignConfig({ campaignId: 'final-review-scoped-2026q3' });
-    assert.equal(coreDigest(r.config), LIVE_COLLECTION_DIGEST);
+    assert.equal(reExported(HISTORICAL_SUBSET), LIVE_COLLECTION_DIGEST);
   });
 
-  it('negative control — the digest assertion can fail', async () => {
-    const { configDigest, canonicalJson } = await import('../scripts/lib/comparison/lock.mjs');
+  it('the CURRENT committed campaign still loads, and its digest is deliberately different', async () => {
+    // Arms were added on 2026-08-14 (qwen, deepseek), which re-locks the cohort
+    // BY DESIGN. Asserting the difference keeps that intentional, so a silent
+    // digest drift cannot hide behind "we changed something".
     const { selectCampaignConfig } = await import('../scripts/lib/campaign/config.mjs');
-    const { config } = selectCampaignConfig({ campaignId: 'final-review-scoped-2026q3' });
-    const mutated = { ...config, controls: { ...config.controls, reasoningEffort: 'low' } };
-    assert.notEqual(configDigest(mutated), LIVE_COLLECTION_DIGEST,
-      'a changed collection-time dial MUST change the digest — otherwise the lock is inert');
-    // …and an analysis-time field must NOT.
-    const analysisOnly = { ...config, targetN: config.targetN + 1 };
-    assert.equal(configDigest(analysisOnly), LIVE_COLLECTION_DIGEST,
-      'an analysis-time edit must not orphan a paid cohort');
-    assert.equal(typeof canonicalJson({ b: 1, a: 2 }), 'string');
+    const r = selectCampaignConfig({ campaignId: 'final-review-scoped-2026q3' });
+    assert.equal(r.ok, true, 'the committed campaign must still parse');
+    assert.notEqual(r.configDigest, LIVE_COLLECTION_DIGEST,
+      'the six-arm campaign is a NEW cohort — if this ever matches, an arm change failed to re-lock');
+  });
+
+  it('negative control — the digest assertion can fail, and only for the right reasons', async () => {
+    const { configDigest } = await import('../scripts/lib/comparison/lock.mjs');
+    // A collection-time dial MUST change identity.
+    const dialChanged = { ...HISTORICAL_SUBSET, controls: { ...HISTORICAL_SUBSET.controls, reasoningEffort: 'low' } };
+    assert.notEqual(configDigest(dialChanged), LIVE_COLLECTION_DIGEST,
+      'a changed dial that leaves the digest alone means the lock is inert');
+    // An analysis-time field must NOT — it is not in the subset at all.
+    assert.equal(configDigest({ ...HISTORICAL_SUBSET, targetN: 99 }), LIVE_COLLECTION_DIGEST,
+      'an analysis-time edit must never orphan a paid cohort');
   });
 
   it('canonicalJson is key-order stable and refuses non-finite numbers', async () => {

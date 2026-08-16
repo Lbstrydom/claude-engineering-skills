@@ -685,7 +685,7 @@ describe('resolveArms — selection is a refusal, never a silent fallback', () =
     // is the incumbent primary reviewer, so running it in the shadow slot
     // separates "is Opus the better second reviewer" from "is a fresh second
     // look worth anything at all".
-    assert.deepEqual(r.arms.map((a) => a.id).sort(), ['gemini-control', 'grok', 'kimi', 'opus']);
+    assert.deepEqual(r.arms.map((a) => a.id).sort(), ['deepseek', 'gemini-control', 'grok', 'kimi', 'opus', 'qwen']);
     assert.equal(r.config.controls.envelopeScope, 'thin');
     assert.equal(r.config.controls.preflight.disposition, 'pass');
   });
@@ -700,7 +700,7 @@ describe('resolveArms — selection is a refusal, never a silent fallback', () =
     // the two things a control must never do.
     assert.equal(control.replicate, true, 'a control must be excluded from scoring and completeness');
     // The three scored arms are unaffected.
-    for (const id of ['opus', 'kimi', 'grok']) {
+    for (const id of ['opus', 'kimi', 'grok', 'qwen', 'deepseek']) {
       assert.equal(r.arms.find((a) => a.id === id).replicate, false, `${id} must remain a scored arm`);
     }
     // Concrete id, not the bare family token: the gemini branch of
