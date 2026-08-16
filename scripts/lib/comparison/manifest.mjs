@@ -27,8 +27,9 @@
 import { z } from 'zod';
 import { ROLES } from './roles.mjs';
 import { ArmSchema, checkArmSetSemantics } from './arms.mjs';
-import { controlsSchemaForRole } from './controls.mjs';
+import { controlsSchemaForRole, isRoleSupported, SUPPORTED_ROLES, checkFinalReviewShadowControls } from './controls.mjs';
 import { resolveLocalPath } from './paths.mjs';
+import { isXaiModel } from '../model-resolver.mjs';
 
 /** Manifest ids become path components, same reason as arm ids. */
 export const MANIFEST_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
@@ -74,12 +75,28 @@ export function manifestSchemaForRole(role) {
 /** Rules structural strictness cannot express — the same shape as the
  * campaign's, kept here so both mechanisms enforce them identically. */
 function manifestSemanticRules(cfg, ctx) {
+  const issue = (message, cursor) =>
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message, ...(cursor ? { path: cursor } : {}) });
+
   // Delegates to the shared oracle in arms.mjs. This function used to carry
   // its own copy of the same four rules, which is how the campaign and the
   // manifest drift apart — the control arm type landed in one of them
   // first, and only a mechanical check found the other.
-  checkArmSetSemantics(cfg, (message, cursor) =>
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message, ...(cursor ? { path: cursor } : {}) }));
+  checkArmSetSemantics(cfg, issue);
+
+  // final_review_shadow-ONLY: `envelopeScope`/`preflight` exist solely on
+  // that role's controls shape (`AuditorControlsSchema` has neither field),
+  // so this must be conditional — never call it for `auditor`.
+  //
+  // Cluster A round 5, M4: before this, a `final_review_shadow` manifest
+  // parsed HERE could declare an unattested xAI arm — the exact safety check
+  // `campaign/config.mjs`'s `semanticRules` enforces for the SAME role via the
+  // SAME shared function, silently absent on this sibling entry point. Two
+  // parse paths for one role must enforce the same safety rules or one of
+  // them is a bypass.
+  if (cfg.role === 'final_review_shadow') {
+    checkFinalReviewShadowControls(cfg, issue, isXaiModel);
+  }
 }
 
 /**
@@ -99,8 +116,19 @@ export function parseComparisonManifest(raw) {
       `[comparison/manifest] role must be one of ${ROLES.join(', ')} — got ${JSON.stringify(role)}`,
     );
   }
-  // Throws the explanatory message for a role in the vocabulary that has no
-  // declarative-manifest support yet (adjudicator).
+  // Checked explicitly against SUPPORTED_ROLES (M6), not left to fall out of
+  // `controlsSchemaForRole` throwing — a role can be in the shared VOCABULARY
+  // and have a mechanism ELIGIBLE to run it (assertRoleCoverage requires that)
+  // without being SUPPORTED yet. `adjudicator` is exactly that: the right
+  // mechanism, no dials, because that eval has never run and there is no user
+  // to design them for.
+  if (!isRoleSupported(role)) {
+    throw new Error(
+      `[comparison/manifest] role "${role}" has no controls schema — declarative manifests are not yet supported `
+      + `for it (supported: ${SUPPORTED_ROLES.join(', ')}). This is a deliberate v1 boundary, not a missing default: `
+      + 'inventing dials for a role nobody has run would be guessing.',
+    );
+  }
   const schema = manifestSchemaForRole(role);
   return { manifest: schema.parse(raw) };
 }

@@ -31,6 +31,9 @@ import { assertEligibleSubset } from '../comparison/roles.mjs';
 // digest must stay byte-identical (asserted in tests/comparison-core.test.mjs).
 import { ArmSchema as CoreArmSchema, ARM_ID_PATTERN, isScoredArm, checkArmSetSemantics } from '../comparison/arms.mjs';
 import { canonicalJson, configDigest, ANALYSIS_TIME_FIELDS } from '../comparison/lock.mjs';
+import {
+  PreflightSchema, FinalReviewShadowControlsSchema, checkFinalReviewShadowControls,
+} from '../comparison/controls.mjs';
 
 /**
  * The roles the PASSIVE campaign collector accepts — a subset of the shared
@@ -67,43 +70,16 @@ export { ArmSchema };
 
 export { isScoredArm };
 
-/**
- * The pre-flight ATTESTATION a campaign manifest cites when it declares an
- * xAI arm (plan: final-review-scoped-second-reviewer.md §8, Phase 6). Lives
- * inside `controls` — not at the manifest top level, where an earlier draft
- * inconsistently placed it — so `configDigest` covers it, making the
- * attestation part of what a re-collection must match.
- *
- * `model` is checked against the declaring arm's model STRING (semanticRules
- * below), never a live-resolved id — the schema validates a static file and
- * must not need network access or become non-deterministic when a catalog
- * moves (this is WHY the campaign manifest pins a concrete xAI model rather
- * than the `latest-grok` sentinel; see KD-4).
- */
-const PreflightSchema = z.object({
-  artifact: z.string().min(1),
-  sha256: z.string().regex(/^[0-9a-f]{64}$/i, 'sha256 must be a 64-hex-char digest'),
-  model: z.string().min(1),
-  disposition: z.enum(['pass', 'fail', 'inconclusive']),
-}).strict();
-
-const ControlsSchema = z.object({
-  reasoningEffort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']),
-  promptTemplateId: z.string().min(1),
-  outputSchemaId: z.string().min(1),
-  maxOutputTokens: z.number().int().positive(),
-  toolPolicy: z.string().min(1),
-  temperature: z.number().finite().min(0),
-  // Plan KD-6: which final-review envelope every arm's shadow reviewer
-  // receives. Lives here (inside `controls`, therefore inside `configDigest`)
-  // so scope is SIGNED cohort state, not ambient env — a mismatched snapshot
-  // is structurally ineligible rather than merely discouraged.
-  envelopeScope: z.enum(['full', 'thin', 'gap']),
-  // Required only when an arm's model is on the xAI route — enforced below,
-  // not here, because "required" is conditional on `arms`, which this schema
-  // cannot see field-locally.
-  preflight: PreflightSchema.optional(),
-}).strict();
+// `PreflightSchema` + the final-review-shadow `ControlsSchema` now live in
+// comparison/controls.mjs (`FinalReviewShadowControlsSchema`), genuinely
+// re-exported — not redefined here a second time. Before this fix (Cluster A
+// round 5, M5) this file carried an INDEPENDENT copy of the identical shape,
+// which is the same "two copies of one contract" defect already fixed once
+// for the arm-set semantic rules (`checkArmSetSemantics`) — a DRY violation
+// that let the xAI-preflight safety check (M4, below) exist on only one of
+// the two entry points that both accept a `final_review_shadow` config.
+const ControlsSchema = FinalReviewShadowControlsSchema;
+export { PreflightSchema, ControlsSchema };
 
 const AdjudicatorSchema = z.object({
   model: z.string().min(1),
@@ -162,67 +138,12 @@ function semanticRules(cfg, ctx) {
   // exactly how the  arm type reached one and not the other.
   checkArmSetSemantics(cfg, issue);
 
-
-  // `gap` is campaign-INELIGIBLE (plan KD-5). A gap shadow is conditioned on
-  // its OWN arm's stochastic primary result, so two gap arms are answering
-  // different questions — the confound is structural, not a data-quality
-  // issue a bigger N would fix. `gap` ships as an operator-selectable flag
-  // only; it must never appear inside a signed, N-tracked cohort.
-  if (cfg.controls.envelopeScope === 'gap') {
-    issue(
-      'controls.envelopeScope "gap" is campaign-ineligible (plan KD-5) — a gap '
-      + 'shadow is conditioned on its own arm\'s primary result, so gap arms are '
-      + 'not comparable to each other; use "thin" for a campaign cohort',
-      ['controls', 'envelopeScope'],
-    );
-  }
-
-  // xAI-arm conditional pre-flight requirement (plan KD-2's correction, §8,
-  // Phase 6). A manifest declaring ANY arm on the xAI route must carry a
-  // PASSING attestation naming that exact model — schema-enforced so it
-  // cannot be forgotten, never a runtime-only check a manifest could bypass.
-  // Keyed on `isXaiModel`, the SAME predicate `transportForModel` uses
-  // (model-resolver.mjs) — one oracle, so the two can never diverge on what
-  // counts as "an xAI arm".
-  const xaiArms = cfg.arms.filter((a) => isXaiModel(a.model));
-  if (xaiArms.length > 0) {
-    const distinctModels = new Set(xaiArms.map((a) => a.model));
-    if (distinctModels.size > 1) {
-      // v1 supports exactly one xAI model per campaign: one pre-flight
-      // artifact attests to one model, and there is no mechanism here for
-      // "attest to N models" — a real future need, not a corner to cut today.
-      issue(
-        `multiple distinct xAI models declared (${[...distinctModels].join(', ')}) — `
-        + 'one preflight artifact cannot attest to more than one model; v1 supports '
-        + 'exactly one xAI model per campaign',
-        ['arms'],
-      );
-    } else if (!cfg.controls.preflight) {
-      issue(
-        `arm(s) ${xaiArms.map((a) => a.id).join(', ')} declare an xAI model `
-        + `("${xaiArms[0].model}") — controls.preflight is REQUIRED before a campaign `
-        + 'may include a Grok arm (run scripts/grok-effort-preflight.mjs --run first)',
-        ['controls', 'preflight'],
-      );
-    } else {
-      if (cfg.controls.preflight.model !== xaiArms[0].model) {
-        issue(
-          `controls.preflight.model ("${cfg.controls.preflight.model}") does not match `
-          + `the declared xAI arm's model ("${xaiArms[0].model}") — the attestation must `
-          + 'name the exact model it measured, not a sentinel or a different release',
-          ['controls', 'preflight', 'model'],
-        );
-      }
-      if (cfg.controls.preflight.disposition !== 'pass') {
-        issue(
-          `controls.preflight.disposition is "${cfg.controls.preflight.disposition}", not `
-          + '"pass" — a Grok arm requires a PASSING pre-flight (plan §8): the dial must be '
-          + 'proven to move output before the arm may be billed inside a campaign',
-          ['controls', 'preflight', 'disposition'],
-        );
-      }
-    }
-  }
+  // Delegated to comparison/controls.mjs (M4/M5) — the same rules now also
+  // govern a `final_review_shadow` manifest parsed via
+  // comparison/manifest.mjs, not just a campaign parsed here. `isXaiModel` is
+  // injected rather than imported inside that module, so a role-agnostic file
+  // does not carry a dependency only one of its two role-specific callers needs.
+  checkFinalReviewShadowControls(cfg, issue, isXaiModel);
 }
 
 /**

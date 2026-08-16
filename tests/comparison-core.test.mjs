@@ -49,21 +49,47 @@ describe('comparison/roles — eligibility is a SUBSET, not the vocabulary', () 
     assert.deepEqual([...SWAP_ELIGIBLE_ROLES].sort(), ['adjudicator', 'auditor']);
   });
 
-  it('ELIGIBILITY IS NOT MANIFEST SUPPORT — adjudicator is eligible and deliberately unbuildable', async () => {
-    // The coverage assertion below proves every role has a HOME. It must not be
-    // read as proving every role can be RUN: `adjudicator` has no controls
-    // schema, because that eval has never been run (AGENTS.md records it
-    // pending at Phase 14) and inventing dials for a role with no user would be
-    // guessing. Asserting the refusal here is what keeps the gap a declared
-    // boundary rather than a latent hole.
-    const { controlsSchemaForRole, CONTROLS_BY_ROLE } = await import('../scripts/lib/comparison/controls.mjs');
-    assert.ok(SWAP_ELIGIBLE_ROLES.includes('adjudicator'), 'eligible…');
-    assert.ok(!Object.hasOwn(CONTROLS_BY_ROLE, 'adjudicator'), '…but no dials');
+  it('ELIGIBLE and SUPPORTED are two answerable questions, not one exception (M6)', async () => {
+    // Before SUPPORTED_ROLES existed, "supported" was only observable as
+    // controlsSchemaForRole throwing — a caller had no way to ASK the question
+    // without attempting a parse and catching the refusal. `adjudicator` is
+    // eligible (this is the right mechanism for it, once built) and
+    // deliberately not supported (no dials — that eval has never run and
+    // there is no user to design them for, AGENTS.md Phase 14). Coverage
+    // proving every role has a mechanism HOME must never be misread as
+    // proving every role can be RUN.
+    const { controlsSchemaForRole, isRoleSupported, SUPPORTED_ROLES, CONTROLS_BY_ROLE } =
+      await import('../scripts/lib/comparison/controls.mjs');
+
+    assert.ok(SWAP_ELIGIBLE_ROLES.includes('adjudicator'), 'eligible — has a mechanism home');
+    assert.equal(isRoleSupported('adjudicator'), false, 'not supported — queryable, not just a caught exception');
+    assert.ok(!SUPPORTED_ROLES.includes('adjudicator'));
+
+    // SUPPORTED_ROLES is DERIVED from CONTROLS_BY_ROLE, never hand-maintained —
+    // assert the derivation directly so the two cannot drift apart.
+    assert.deepEqual([...SUPPORTED_ROLES].sort(), Object.keys(CONTROLS_BY_ROLE).sort());
+
+    // The gap is exactly {'adjudicator'} — no more, no less. If this widens,
+    // either a real controls schema shipped (move it) or eligibility grew
+    // without support following, which is the M6 defect recurring.
+    const gap = SWAP_ELIGIBLE_ROLES.filter((r) => !isRoleSupported(r));
+    assert.deepEqual(gap, ['adjudicator']);
+
     assert.throws(() => controlsSchemaForRole('adjudicator'), /deliberate v1 boundary/,
       'the refusal must EXPLAIN, not fall through to a default');
 
     const { parseComparisonManifest } = await import('../scripts/lib/comparison/manifest.mjs');
     assert.throws(() => parseComparisonManifest({ role: 'adjudicator' }), /deliberate v1 boundary/);
+  });
+
+  it('negative control — the gap assertion can fail', () => {
+    // Proves "gap is exactly {'adjudicator'}" is not vacuously true. If
+    // SUPPORTED_ROLES were ever widened to equal SWAP_ELIGIBLE_ROLES (the
+    // anti-fix M6 explicitly rejected — declaring adjudicator supported
+    // without building it), the gap computes as `[]`, and `[]` must NOT
+    // deep-equal `['adjudicator']`.
+    const gapIfFullySupported = SWAP_ELIGIBLE_ROLES.filter(() => false);
+    assert.notDeepEqual(gapIfFullySupported, ['adjudicator']);
   });
 
   it('a prototype property is not a role (null-prototype dispatch table)', async () => {

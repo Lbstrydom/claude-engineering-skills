@@ -18,6 +18,7 @@
  */
 
 import { z } from 'zod';
+import { sameFamilyAmbiguity } from './model-family.mjs';
 
 /** Arm ids become path components (receipt filenames), so they are
  * pattern-constrained at the schema boundary. Defence-in-depth, not the only
@@ -61,6 +62,25 @@ export function isScoredArm(arm) {
 }
 
 /**
+ * Exact match OR same-family — the ONE predicate every model-identity rule in
+ * `checkArmSetSemantics` uses (Cluster A round 8, M4).
+ *
+ * Round 6 (M3) added `sameFamilyAmbiguity` to the replicate-backing rule.
+ * Round 7 (H3/M4) found the sibling control-vs-incumbent rule still used exact
+ * string equality. Round 8 found a THIRD sibling — incumbent-exactly-once —
+ * with the identical gap. Patching each occurrence individually is how a
+ * fourth one gets missed; this is the single place the identity test is
+ * defined, and every rule below calls it instead of re-deriving it.
+ *
+ * @param {string} a
+ * @param {string} b
+ * @returns {boolean}
+ */
+function sameOrFamilyModel(a, b) {
+  return a === b || sameFamilyAmbiguity(a, b);
+}
+
+/**
  * The arm-set rules structural strictness cannot express — shared by the
  * campaign config and the comparison manifest.
  *
@@ -97,10 +117,21 @@ export function checkArmSetSemantics(cfg, issue) {
 
   // A `replicate` of nothing is a mislabelled scenario. A `control` is exempt —
   // naming a model no scored arm uses is the entire point of one.
+  //
+  // "Names" is checked via `sameOrFamilyModel` (Cluster A round 6, M3), not
+  // exact string equality alone. Without the family half, a replicate declared
+  // with a sentinel where the scored arm it backs used the equivalent concrete
+  // id (or vice versa) was wrongly refused HERE even though
+  // `classifyArmCollisions` (fingerprint.mjs) already treats that exact
+  // declared pairing as the correct escape hatch — two policies disagreeing
+  // about the identical configuration is the inconsistency the finding named,
+  // not a missing rule.
   const scoredModels = new Set(scored.map((a) => a.model));
   for (const [i, arm] of cfg.arms.entries()) {
-    if (arm.type === 'replicate' && !scoredModels.has(arm.model)) {
-      issue(`replicate arm "${arm.id}" names model "${arm.model}", which no scored arm uses — a replicate of nothing is a mislabelled scenario`, ['arms', i, 'model']);
+    if (arm.type !== 'replicate') continue;
+    const backed = scored.some((s) => sameOrFamilyModel(arm.model, s.model));
+    if (!backed) {
+      issue(`replicate arm "${arm.id}" names model "${arm.model}", which no scored arm uses (or plausibly resolves to) — a replicate of nothing is a mislabelled scenario`, ['arms', i, 'model']);
     }
   }
 
@@ -111,17 +142,24 @@ export function checkArmSetSemantics(cfg, issue) {
   // was accepted" ambiguous about which baseline row an accepted finding
   // belongs to.
   for (const [i, arm] of cfg.arms.entries()) {
-    if (arm.type === 'control' && arm.model === cfg.decision.incumbent) {
-      issue(`control arm "${arm.id}" names the incumbent model "${arm.model}" — a control calibrates the comparison and is never scored, so it must not double as the baseline`, ['arms', i, 'model']);
+    if (arm.type !== 'control') continue;
+    if (sameOrFamilyModel(arm.model, cfg.decision.incumbent)) {
+      issue(`control arm "${arm.id}" names the incumbent model "${arm.model}" (or plausibly resolves to it) — a control calibrates the comparison and is never scored, so it must not double as the baseline`, ['arms', i, 'model']);
     }
   }
 
   // The incumbent must be a real, comparable participant — scored arms only,
-  // since a control is never scored and could not serve as a baseline.
-  const incumbentArms = scored.filter((a) => a.model === cfg.decision.incumbent);
+  // since a control is never scored and could not serve as a baseline. Uses
+  // the same family-aware predicate as the two rules above (Cluster A round 8,
+  // M4): two scored arms that resolve to the SAME model under different
+  // spellings (one sentinel, one concrete) are exactly as ambiguous a baseline
+  // as two arms that spell it identically — the exact-string-only version of
+  // this check could report a false "exactly one match" while a second,
+  // differently-spelled arm for the same model sat right beside it.
+  const incumbentArms = scored.filter((a) => sameOrFamilyModel(a.model, cfg.decision.incumbent));
   if (incumbentArms.length === 0) {
     issue(`decision.incumbent "${cfg.decision.incumbent}" names no scored arm's model (available: ${[...scoredModels].join(', ') || 'none'}; replicate/control arms are not eligible)`, ['decision', 'incumbent']);
   } else if (incumbentArms.length > 1) {
-    issue(`decision.incumbent "${cfg.decision.incumbent}" matches ${incumbentArms.length} scored arms (${incumbentArms.map((a) => a.id).join(', ')}) — the incumbent must be unambiguous`, ['decision', 'incumbent']);
+    issue(`decision.incumbent "${cfg.decision.incumbent}" matches ${incumbentArms.length} scored arms (${incumbentArms.map((a) => a.id).join(', ')}, exactly or by family) — the incumbent must be unambiguous`, ['decision', 'incumbent']);
   }
 }

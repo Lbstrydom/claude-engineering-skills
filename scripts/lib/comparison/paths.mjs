@@ -191,9 +191,25 @@ export function resolveLocalPath(rel, { repoRoot } = {}) {
   }
 
   const abs = verdict.canonical ?? path.resolve(repoRoot, rel);
-  if (!fs.existsSync(abs)) {
+  // The SIBLING of the check above, and it goes through the same oracle
+  // (Cluster A round 7 + the concurrent `classifyLookupError` extraction).
+  // This branch used `fs.existsSync`, which collapses EVERY failure — ENOENT,
+  // EACCES, EIO — into a bare `false` reported as `missing`: a claim that a
+  // path does not exist, made about a path that was never examined. Two
+  // sessions independently found this same defect class in this same file,
+  // one in each branch; routing BOTH through `classifyLookupError` is what
+  // stops a third instance, since a rule with one call site is a rule that
+  // gets fixed for one sibling and not the other.
+  let statErr = null;
+  try { fs.lstatSync(abs); } catch (err) { statErr = err; }
+  if (classifyLookupError(statErr) === 'absent') {
     throw new PathRefusedError('missing',
       `[comparison/paths] "${rel}" does not exist — refused at manifest load, before any provider call`);
+  }
+  if (statErr) {
+    throw new PathRefusedError('resolution-failed',
+      `[comparison/paths] "${rel}" could not be examined (${statErr.code || 'unknown error'}) — refusing rather `
+      + 'than claiming it is absent, which would be a fact we do not have');
   }
   return makeHandle('local', rel, abs, null);
 }

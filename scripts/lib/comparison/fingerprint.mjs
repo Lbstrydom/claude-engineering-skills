@@ -25,6 +25,18 @@
 import crypto from 'node:crypto';
 import { canonicalJson } from './lock.mjs';
 import { isScoredArm } from './arms.mjs';
+import { deprecatedRemap } from '../model-resolver.mjs';
+import { sameFamilyAmbiguity } from './model-family.mjs';
+
+/**
+ * Re-exported for callers that historically imported it from here.
+ * `sameFamilyAmbiguity` itself now lives in `model-family.mjs` — a LEAF module
+ * with no dependency on `arms.mjs` — because `arms.mjs`'s own
+ * `checkArmSetSemantics` needs the identical same-family test (Cluster A
+ * round 6, M3) and importing this file from `arms.mjs` would be circular
+ * (this file already imports `isScoredArm` FROM `arms.mjs`).
+ */
+export { sameFamilyAmbiguity };
 
 /**
  * The request fingerprint, computed PRE-FLIGHT.
@@ -32,34 +44,31 @@ import { isScoredArm } from './arms.mjs';
  * Over `{model, controls}` and deliberately NOT `mode`: two arms differing only
  * in shadow-vs-primary send the *same request*.
  *
+ * Canonicalises through `deprecatedRemap()` first — OFFLINE and deterministic,
+ * a static lookup table, no network — closing the case where one arm uses a
+ * STALE concrete id and another its current form. `{ silent: true }` because
+ * this runs on every collection pre-flight, not an interactive resolution.
+ *
+ * A sentinel (`latest-opus`) vs the concrete id it might currently resolve to
+ * (`claude-opus-5`) is DELIBERATELY left un-collapsed at the hash level — that
+ * would need the live catalog, and a fingerprint depending on mutable remote
+ * state is a WORSE failure than the reroll D4 exists to catch (a catalog
+ * refresh would silently split one cohort into two). That pairing is instead
+ * refused pre-flight, offline, by `sameFamilyAmbiguity()` (`model-family.mjs`) +
+ * `classifyArmCollisions()` below — closed at the point it matters (before
+ * spend) without making the hash itself network-dependent. Cluster A raised
+ * this gap as HIGH three times before it closed this way: round 4 against the
+ * raw string, again after a documentation-only defer (a comment does not
+ * close a correctness gap), and round 5 after the `deprecatedRemap`-only
+ * narrowing still left the sentinel/concrete pair undetected.
+ *
  * @param {{model: string}} arm
  * @param {object} controls - the campaign-level shared dials
  * @returns {string} 16 hex chars
  */
-/**
- * KNOWN LIMIT, deferred deliberately (Cluster A round 4).
- *
- * The fingerprint hashes the model string AS DECLARED, not a canonical id. Two
- * arms naming the same model by different spellings — `latest-opus` and a
- * concrete `claude-opus-5`, say — therefore fingerprint differently and evade
- * collision detection, which is a real gap in D4's coverage.
- *
- * It is NOT fixed by canonicalising through `resolveModel()`, and that is the
- * whole reason it stays open: `resolveModel` consults the live provider
- * catalog, so the fingerprint would become network-dependent and
- * non-deterministic. Cohort identity computed from mutable remote state is a
- * strictly worse failure than the one being closed — it would split one cohort
- * across a catalog refresh, silently, which is the exact class the lock exists
- * to prevent.
- *
- * What bounds the gap today: manifests pin CONCRETE model ids by policy (KD-4
- * — the campaign pins a concrete xAI model rather than the `latest-grok`
- * sentinel), so producing the collision requires deliberately declaring one
- * model two ways. Closing it properly needs an OFFLINE alias table, which is a
- * separate piece of work with its own staleness problem.
- */
 export function armRequestFingerprint(arm, controls) {
-  return crypto.createHash('sha256').update(canonicalJson({ model: arm.model, controls })).digest('hex').slice(0, 16);
+  const canonicalModel = deprecatedRemap(arm.model, { silent: true });
+  return crypto.createHash('sha256').update(canonicalJson({ model: canonicalModel, controls })).digest('hex').slice(0, 16);
 }
 
 /**
@@ -97,5 +106,30 @@ export function classifyArmCollisions(config) {
       };
     }
   }
+
+  // SAME-FAMILY AMBIGUITY (Cluster A round 5, H2/H3): a sentinel and a
+  // concrete id can be the SAME model under different spellings and still
+  // fingerprint differently — that is fingerprinting's documented residual
+  // gap. Where it IS provable offline (anthropic/google/openai), refuse
+  // rather than silently allow, same escape hatch as an exact-fingerprint
+  // collision: two UNDECLARED scored arms in the same family is a refusal,
+  // but a declared `replicate`/`control` is exactly the right way to say
+  // "yes, this is deliberately the same model."
+  const scored = arms.filter(isScoredArm);
+  for (let i = 0; i < scored.length; i++) {
+    for (let j = i + 1; j < scored.length; j++) {
+      const [a, b] = [scored[i], scored[j]];
+      if (sameFamilyAmbiguity(a.model, b.model)) {
+        return {
+          ok: false,
+          message: `[bakeoff] D4: arms "${a.id}" (${a.model}) and "${b.id}" (${b.model}) name the SAME first-party `
+            + 'model family via a sentinel and a concrete id — they may resolve to the identical model under '
+            + 'different spellings, which is the reroll D4 exists to catch. Declare the duplicate as a replicate/'
+            + 'control, or make them provably different models. Refusing before spend.',
+        };
+      }
+    }
+  }
+
   return { ok: true, fingerprints };
 }

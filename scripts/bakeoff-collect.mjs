@@ -130,32 +130,43 @@ export const CONTRACT_EPOCH = 'e3-scoped-envelope';
  */
 /**
  * Two real, tested roles — both production — not one, and neither is
- * "test-only". Corrected 2026-08-16: an earlier commit message on this repo
- * claimed this table was "Not for production use", which is false and was
- * disproven by reading `resolveArms()` below (`selected.code === 'none' ⇒
- * return { arms: LEGACY_ARMS, … }`) plus the test at
- * `tests/final-review-bakeoff.test.mjs:726` that PINS exactly that fallback:
- * `assert.deepEqual(r.arms, LEGACY_ARMS, 'a repo that never adopted campaigns
- * collects exactly as before')`.
+ * "test-only". Corrected 2026-08-16 by two sessions independently, which is
+ * itself the evidence: an earlier commit message claimed this table was "Not
+ * for production use", and that is false. Disproven by reading `resolveArms()`
+ * below (`selected.code === 'none' ⇒ return { arms: LEGACY_ARMS, … }`) plus
+ * the test in `tests/final-review-bakeoff.test.mjs` that PINS exactly that
+ * fallback (`a repo that never adopted campaigns collects exactly as before`).
  *
  *   1. **The runtime fallback** for any repo that has not adopted a committed
  *      `.campaigns/*.json` — a real, reachable, spend-bearing production path,
  *      not a test fixture.
  *   2. **The request-preservation fixture** — `deriveArms(committed campaign
- *      config)` must be byte-identical to this for the Phase-2 refactor's own
- *      request-preservation proof (`tests/final-review-bakeoff.test.mjs:559`).
+ *      config)` must be byte-identical to this, the Phase-2 refactor's own
+ *      proof that it changed no request.
  *
  * Both roles pin the SAME frozen values on purpose, and that is why the
  * concrete OpenRouter id below (`moonshotai/kimi-k2-thinking`) is not a
- * sentinel despite AGENTS.md's own "do not pin concrete model IDs" rule: a
- * sentinel resolves to whatever is CURRENT at call time, which would make
- * role 2's byte-identity assertion meaningless (it would pass or fail
- * depending on what the model catalogue currently resolves to, not on
- * whether the refactor changed the request) and would silently change role
- * 1's collected request out from under any repo depending on exact
- * backward-compatible behaviour. Changing what a campaign-less repo collects
- * is a real decision with real cost/behaviour consequences for those repos —
- * not something to default into as a side effect of "no hardcoded ids".
+ * sentinel despite AGENTS.md's own "do not pin concrete model IDs" rule.
+ * TWO independent reasons, and either alone is sufficient:
+ *
+ *   - **Byte-identity would be destroyed.** A sentinel resolves to whatever is
+ *     CURRENT at call time, so role 2's assertion would pass or fail on what
+ *     the catalogue happens to resolve to rather than on whether the refactor
+ *     changed the request — and role 1's collected request would silently
+ *     change out from under a repo depending on backward-compatible behaviour.
+ *     Changing what a campaign-less repo collects is a real decision with real
+ *     cost consequences, not a side effect of "no hardcoded ids".
+ *   - **There is no sentinel to use.** `resolveModel()`'s sentinels cover only
+ *     first-party providers (`latest-gpt`/`latest-opus`/`latest-pro`/…); an
+ *     OpenRouter gateway id has "no meaningful default — ids are passed
+ *     verbatim... refuse explicitly instead of guessing"
+ *     (`SHADOW_PROVIDER_SPECS.openrouter`, `gateway: true`). The campaign's own
+ *     xAI arm pins a concrete model for the identical reason (KD-4) rather than
+ *     the `latest-grok` sentinel. These pins are the SAME policy applied in the
+ *     SAME place a campaign config applies it — not a second, unmanaged one.
+ *
+ * A full model-resolution registry unifying every pin site is real work and a
+ * separate initiative; recorded in the plan's Out of Scope section.
  */
 export const LEGACY_ARMS = Object.freeze([
   { id: 'opus', env: { FINAL_REVIEW_SHADOW: 'claude-opus', FINAL_REVIEW_PROMPT_CACHE: '1' } },

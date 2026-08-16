@@ -22,6 +22,7 @@
  */
 
 import { z } from 'zod';
+import { isCanonicalizableNumber } from './lock.mjs';
 
 /** Effort is the canonical shared dial — same enum for every role. */
 export const EFFORT_LEVELS = Object.freeze(['low', 'medium', 'high', 'xhigh', 'max']);
@@ -50,7 +51,15 @@ const COMMON_SHAPE = {
   outputSchemaId: z.string().min(1),
   maxOutputTokens: z.number().int().positive(),
   toolPolicy: z.string().min(1),
-  temperature: z.number().finite().min(0),
+  // Validation-contract parity with the digest (Cluster A round 6, M4):
+  // canonicalJson (lock.mjs) refuses a number that does not survive a 6dp
+  // round-trip, because two such values collapse to the same digest bytes and
+  // would silently merge distinct cohorts. Before this, a temperature failing
+  // that test parsed successfully here and only threw later, deep inside
+  // configDigest() — a config-valid-now, digest-fails-later trap. Refusing it
+  // at THIS boundary means the caller who set the bad value sees the error.
+  temperature: z.number().finite().min(0)
+    .refine(isCanonicalizableNumber, 'temperature must be expressible in 6 decimal places — it is digested into cohort identity (see lock.mjs canonicalJson)'),
   preflight: PreflightSchema.optional(),
 };
 
@@ -96,6 +105,44 @@ export const CONTROLS_BY_ROLE = Object.freeze(Object.assign(Object.create(null),
 }));
 
 /**
+ * Roles this mechanism can actually RUN today — derived from
+ * `CONTROLS_BY_ROLE`, never hand-maintained, so it cannot drift from the
+ * dispatch table it describes.
+ *
+ * Distinct from `SWAP_ELIGIBLE_ROLES` (`contracts.mjs`), and the distinction is
+ * now load-bearing rather than implicit (Cluster A round 4, M6). Eligibility
+ * proves a role has a MECHANISM HOME — the coverage assertion in
+ * `roles.mjs::assertRoleCoverage` needs that to hold for the whole vocabulary.
+ * Support proves a role can be EXECUTED. `adjudicator` is eligible (this is
+ * the right mechanism for it, once built) and NOT supported (no controls
+ * schema exists, because that eval has never run and there is no user to
+ * design dials for). Before this export, "supported" existed only as the
+ * behaviour of `controlsSchemaForRole` throwing, which is not a check anything
+ * could ask a question of — `SWAP_ELIGIBLE_ROLES.includes` and
+ * `SUPPORTED_ROLES.includes` are now two answerable questions instead of one
+ * answerable question and one guaranteed exception. Never assert
+ * `SUPPORTED_ROLES` should equal the full vocabulary — the gap is the
+ * documented v1 boundary, not a bug to close by widening this array.
+ */
+export const SUPPORTED_ROLES = Object.freeze(Object.keys(CONTROLS_BY_ROLE));
+
+/**
+ * Can a manifest for this role actually be parsed and run today?
+ *
+ * The queryable half of the eligible/supported split (M6): a caller no longer
+ * has to attempt a parse and catch the refusal just to answer this. (This
+ * docstring used to sit, misplaced, above `controlsSchemaForRole` below —
+ * fixed in the same pass as M4/M5, another instance of the class this repo
+ * keeps catching: documentation drifting from the code it describes.)
+ *
+ * @param {string} role
+ * @returns {boolean}
+ */
+export function isRoleSupported(role) {
+  return Object.hasOwn(CONTROLS_BY_ROLE, role);
+}
+
+/**
  * The controls schema for a role, or a refusal naming what is missing.
  *
  * `adjudicator` is in the vocabulary and in `SWAP_ELIGIBLE_ROLES`, but has no
@@ -118,4 +165,88 @@ export function controlsSchemaForRole(role) {
     );
   }
   return schema;
+}
+
+/**
+ * The `final_review_shadow`-SPECIFIC semantic rules — `envelopeScope` and
+ * xAI pre-flight requirements. These reference `cfg.controls.envelopeScope`
+ * and `cfg.controls.preflight`, fields that exist ONLY on
+ * `FinalReviewShadowControlsSchema` — never call this for any other role
+ * (`AuditorControlsSchema` has neither field).
+ *
+ * Cluster A round 5, M4/M5: this rule set used to live ONLY inside
+ * `campaign/config.mjs`'s `semanticRules`, so a `final_review_shadow`
+ * manifest parsed via `comparison/manifest.mjs::parseComparisonManifest`
+ * could declare an unattested xAI arm — the exact safety check the campaign
+ * path enforces, silently absent on the sibling entry point for the SAME
+ * role. Same shape as the arm-set rules before `checkArmSetSemantics`
+ * existed: two copies of one contract is how one drifts from the other.
+ *
+ * @param {{controls: object, arms: object[]}} cfg
+ * @param {(message: string, cursor?: Array<string|number>) => void} issue
+ * @param {(id: string) => boolean} isXaiModel - injected, not imported here,
+ *   so this module does not need to depend on model-resolver.mjs for a single
+ *   predicate its only two callers already import for other reasons.
+ */
+export function checkFinalReviewShadowControls(cfg, issue, isXaiModel) {
+  // `gap` is campaign-INELIGIBLE (plan KD-5). A gap shadow is conditioned on
+  // its OWN arm's stochastic primary result, so two gap arms are answering
+  // different questions — the confound is structural, not a data-quality
+  // issue a bigger N would fix. `gap` ships as an operator-selectable flag
+  // only; it must never appear inside a signed, N-tracked cohort.
+  if (cfg.controls.envelopeScope === 'gap') {
+    issue(
+      'controls.envelopeScope "gap" is campaign-ineligible (plan KD-5) — a gap '
+      + 'shadow is conditioned on its own arm\'s primary result, so gap arms are '
+      + 'not comparable to each other; use "thin" for a campaign cohort',
+      ['controls', 'envelopeScope'],
+    );
+  }
+
+  // xAI-arm conditional pre-flight requirement (plan KD-2's correction, §8,
+  // Phase 6). A manifest declaring ANY arm on the xAI route must carry a
+  // PASSING attestation naming that exact model — schema-enforced so it
+  // cannot be forgotten, never a runtime-only check a manifest could bypass.
+  // Keyed on `isXaiModel`, the SAME predicate `transportForModel` uses
+  // (model-resolver.mjs) — one oracle, so the two can never diverge on what
+  // counts as "an xAI arm".
+  const xaiArms = cfg.arms.filter((a) => isXaiModel(a.model));
+  if (xaiArms.length > 0) {
+    const distinctModels = new Set(xaiArms.map((a) => a.model));
+    if (distinctModels.size > 1) {
+      // v1 supports exactly one xAI model per campaign: one pre-flight
+      // artifact attests to one model, and there is no mechanism here for
+      // "attest to N models" — a real future need, not a corner to cut today.
+      issue(
+        `multiple distinct xAI models declared (${[...distinctModels].join(', ')}) — `
+        + 'one preflight artifact cannot attest to more than one model; v1 supports '
+        + 'exactly one xAI model per campaign',
+        ['arms'],
+      );
+    } else if (!cfg.controls.preflight) {
+      issue(
+        `arm(s) ${xaiArms.map((a) => a.id).join(', ')} declare an xAI model `
+        + `("${xaiArms[0].model}") — controls.preflight is REQUIRED before a campaign `
+        + 'may include a Grok arm (run scripts/grok-effort-preflight.mjs --run first)',
+        ['controls', 'preflight'],
+      );
+    } else {
+      if (cfg.controls.preflight.model !== xaiArms[0].model) {
+        issue(
+          `controls.preflight.model ("${cfg.controls.preflight.model}") does not match `
+          + `the declared xAI arm's model ("${xaiArms[0].model}") — the attestation must `
+          + 'name the exact model it measured, not a sentinel or a different release',
+          ['controls', 'preflight', 'model'],
+        );
+      }
+      if (cfg.controls.preflight.disposition !== 'pass') {
+        issue(
+          `controls.preflight.disposition is "${cfg.controls.preflight.disposition}", not `
+          + '"pass" — a Grok arm requires a PASSING pre-flight (plan §8): the dial must be '
+          + 'proven to move output before the arm may be billed inside a campaign',
+          ['controls', 'preflight', 'disposition'],
+        );
+      }
+    }
+  }
 }

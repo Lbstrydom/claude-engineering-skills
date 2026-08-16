@@ -414,6 +414,49 @@ test('a superseded event never wins the order', () => {
   assert.equal(terminalEvent([{ id: 'x', supersededAt: 'now' }]), null);
 });
 
+test('an unparseable timestamp never wins over a valid one, in EITHER argument order (H2/H3)', () => {
+  // Before the fix: instantOf returned a bare number for a parseable value and
+  // the raw string otherwise, and `number < string` coerces the string to NaN
+  // — so `ta < tb` was false in BOTH directions and compareEvents(a, b) and
+  // compareEvents(b, a) could both report ">". A real event carrying
+  // `createdAt: 'not-a-date'` is the reported failing case.
+  const valid = { id: 'v', adjudicatorKind: 'agent', createdAt: '2026-08-10T01:00:00Z', supersededAt: null };
+  const invalid = { id: 'i', adjudicatorKind: 'agent', createdAt: 'not-a-date', supersededAt: null };
+  assert.ok(compareEvents(valid, invalid) > 0, 'valid ranks above invalid');
+  assert.ok(compareEvents(invalid, valid) < 0, 'and the reverse call must agree — antisymmetry');
+  assert.equal(terminalEvent([valid, invalid]).id, 'v');
+  assert.equal(terminalEvent([invalid, valid]).id, 'v', 'the winner must not depend on array order');
+});
+
+test('two invalid timestamps still break by id — invalid does not collapse the total order', () => {
+  const a = { id: 'aaa', adjudicatorKind: 'agent', createdAt: 'not-a-date', supersededAt: null };
+  const b = { id: 'bbb', adjudicatorKind: 'agent', createdAt: 'also not a date', supersededAt: null };
+  assert.ok(compareEvents(b, a) > 0);
+  assert.ok(compareEvents(a, b) < 0);
+  assert.equal(compareEvents(a, a), 0);
+});
+
+test('an Invalid Date object (NaN getTime) ranks as invalid, not as a valid NaN instant (round 7 regression)', () => {
+  // An Invalid Date IS a `Date` instance, so the naive fix returned
+  // {valid: true, ms: NaN} for it — and NaN comparisons are false in both
+  // directions, reopening the exact non-antisymmetry bug the {valid, ms} rank
+  // was written to close.
+  const valid = { id: 'v', adjudicatorKind: 'agent', createdAt: new Date('2026-08-10T01:00:00Z'), supersededAt: null };
+  const invalidDate = { id: 'i', adjudicatorKind: 'agent', createdAt: new Date('not-a-real-date'), supersededAt: null };
+  assert.ok(Number.isNaN(invalidDate.createdAt.getTime()), 'CONTROL: must actually be an Invalid Date or this test proves nothing');
+  assert.ok(compareEvents(valid, invalidDate) > 0);
+  assert.ok(compareEvents(invalidDate, valid) < 0);
+  assert.equal(terminalEvent([valid, invalidDate]).id, 'v');
+  assert.equal(terminalEvent([invalidDate, valid]).id, 'v');
+});
+
+test('a missing timestamp (null) ranks the same as an unparseable one', () => {
+  const valid = { id: 'v', adjudicatorKind: 'agent', createdAt: '2026-08-10T01:00:00Z', supersededAt: null };
+  const missing = { id: 'm', adjudicatorKind: 'agent', createdAt: null, supersededAt: null };
+  assert.equal(terminalEvent([valid, missing]).id, 'v');
+  assert.equal(terminalEvent([missing, valid]).id, 'v');
+});
+
 // ── completion + spend ──────────────────────────────────────────────────────
 
 test('a replicate arm never gates completeness; a missing non-replicate arm is NAMED', () => {
@@ -424,6 +467,24 @@ test('a replicate arm never gates completeness; a missing non-replicate arm is N
   ], ['opus', 'kimi']);
   assert.deepEqual(m.complete, ['s1']);
   assert.deepEqual(m.incomplete.map((r) => [r.snapshotId, r.missingArms]), [['s2', ['kimi']], ['s3', ['kimi']]]);
+});
+
+test('a clean duplicate live run cannot mask a genuine terminal error on the same arm (H4)', () => {
+  // Before the fix: an arm was "ok" the moment ANY non-superseded run for it
+  // had no error. Two live runs for one arm in one snapshot is itself an
+  // anomaly (the collector supersedes prior attempts on retry) — but if it
+  // happens, a stray successful duplicate must not hide the errored one.
+  const m = completionMatrix([
+    {
+      snapshotId: 's1',
+      armRuns: [
+        { armId: 'opus', error: 'timeout' },
+        { armId: 'opus' }, // clean duplicate, still non-superseded
+      ],
+    },
+  ], ['opus']);
+  assert.deepEqual(m.complete, [], 'the errored duplicate must surface, not be masked');
+  assert.deepEqual(m.incomplete.map((r) => [r.snapshotId, r.missingArms]), [['s1', ['opus']]]);
 });
 
 test('spend sums ALL attempts including superseded ones', () => {

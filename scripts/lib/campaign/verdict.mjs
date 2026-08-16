@@ -91,25 +91,36 @@ export function terminalEvent(events) {
 }
 
 /**
- * A comparable instant for one event's timestamp.
+ * A comparable instant for one event's timestamp, as a `{valid, ms}` RANK —
+ * never a bare number-or-string (Cluster A round 6, H2/H3).
  *
- * Numeric when the value parses as a date, the raw string otherwise. The raw
- * values Postgres returns today are canonical and fixed-width
- * (`2026-07-17 11:38:21.554759+00`), so lexical ordering happens to be correct
- * for them — but the field's own contract is `string|null`, callers pass Date
- * objects, and `String(new Date(...))` yields `"Mon Aug 10 2026 …"`, where
- * lexical order sorts by MONTH NAME. An ordering the plan calls total should
- * not be correct only because of a driver's current formatting choice.
- *
- * The string fallback keeps the order TOTAL for unparseable values rather than
- * collapsing them to a single bucket, which would reintroduce the ambiguity the
- * `id` tiebreak exists to remove.
+ * The prior version returned a `number` for a parseable timestamp and the raw
+ * `string` otherwise, "to keep the order total for unparseable values". It did
+ * the opposite: comparing a number to a non-numeric string with `<`/`>`
+ * coerces the string to `NaN`, so `ta < tb` is `false` in BOTH directions —
+ * `compareEvents(a, b)` and `compareEvents(b, a)` could both return `1`,
+ * which is not a total order, it is not even antisymmetric. `instantOf` now
+ * returns a rank tuple: `valid` (bool) partitions parseable timestamps from
+ * everything else, and `ms` only carries meaning when `valid` is true. Two
+ * ranks compare unambiguously — booleans and numbers, never a number against
+ * a string — and an unparseable/missing timestamp is explicitly ranked BELOW
+ * every valid one (it must not win the terminal-event selection over a
+ * genuinely dated event), falling through to the `id` tiebreak against its
+ * peers exactly as equal-timestamp valid events already did.
  */
 function instantOf(value) {
-  if (value == null) return '';
-  if (value instanceof Date) return value.getTime();
+  if (value == null) return { valid: false, ms: 0 };
+  if (value instanceof Date) {
+    // Round 7: an Invalid Date (`new Date('garbage')`) IS a `Date` instance,
+    // and `.getTime()` on one is `NaN` — the first fix returned `{valid: true,
+    // ms: NaN}` for it, and NaN comparisons are always false in both
+    // directions, reopening the exact non-antisymmetry bug this rank tuple
+    // exists to close. `Number.isFinite` is the one gate both branches share.
+    const ms = value.getTime();
+    return Number.isFinite(ms) ? { valid: true, ms } : { valid: false, ms: 0 };
+  }
   const ms = Date.parse(value);
-  return Number.isNaN(ms) ? String(value) : ms;
+  return Number.isNaN(ms) ? { valid: false, ms: 0 } : { valid: true, ms };
 }
 
 /** Strictly-greater comparison for the total order above. Exported for the test
@@ -120,7 +131,8 @@ export function compareEvents(a, b) {
   if (ra !== rb) return ra - rb;
   const ta = instantOf(a?.createdAt);
   const tb = instantOf(b?.createdAt);
-  if (ta !== tb) return ta < tb ? -1 : 1;
+  if (ta.valid !== tb.valid) return ta.valid ? 1 : -1;
+  if (ta.valid && ta.ms !== tb.ms) return ta.ms < tb.ms ? -1 : 1;
   const ia = String(a?.id ?? '');
   const ib = String(b?.id ?? '');
   if (ia === ib) return 0;
@@ -176,25 +188,42 @@ export function creditAccepted(clusters) {
 /**
  * Completion matrix, not a count (§2.5b-i).
  *
- * A snapshot is complete when every **non-replicate** arm produced a parseable
- * result under the current cohort. Replicates are collected but never gate
- * completeness. A partially-collected snapshot is returned with its missing
- * arms NAMED — never rounded up to complete, never silently dropped, because
- * "N complete" is the denominator every effectiveness number divides by.
+ * A snapshot is complete when every **scored** arm produced a parseable
+ * result under the current cohort. Replicate AND control arms are collected
+ * but never gate completeness — the wording here used to say "non-replicate"
+ * only, which was stale from before `control` existed (Cluster A round 5, M3):
+ * `isScoredArm` has always excluded both, so the CODE was correct while the
+ * DOCUMENTATION understated what it required. A partially-collected snapshot
+ * is returned with its missing arms NAMED — never rounded up to complete,
+ * never silently dropped, because "N complete" is the denominator every
+ * effectiveness number divides by.
+ *
+ * **Every live run for the arm must be clean, not just one of them** (Cluster
+ * A round 6, H4). The prior rule added an arm to the "ok" set the moment ANY
+ * non-superseded run for it had no `error` — so a genuinely errored live run
+ * could be masked by a second live run for the same arm that happened to
+ * succeed, silently hiding a terminal failure behind an unrelated duplicate.
+ * The collector's own invariant is at most one live run per arm per snapshot
+ * (a retry supersedes the prior attempt — see `armSpend` above); more than one
+ * live run for the same arm is itself an anomaly this rule now refuses to
+ * paper over rather than assuming away.
  *
  * @param {Array<{snapshotId: string, armRuns: Array<{armId: string, supersededAt?: string|null, error?: string|null}>}>} snapshots
- * @param {string[]} requiredArmIds - non-replicate arm ids
+ * @param {string[]} requiredArmIds - scored arm ids (excludes replicate AND control)
  */
 export function completionMatrix(snapshots, requiredArmIds) {
   const required = [...new Set(requiredArmIds || [])];
   const rows = (snapshots || []).map((snap) => {
-    const ok = new Set();
+    const liveByArm = new Map();
     for (const run of snap.armRuns || []) {
       if (run.supersededAt != null) continue;
-      if (run.error) continue;
-      ok.add(run.armId);
+      if (!liveByArm.has(run.armId)) liveByArm.set(run.armId, []);
+      liveByArm.get(run.armId).push(run);
     }
-    const missing = required.filter((id) => !ok.has(id));
+    const missing = required.filter((id) => {
+      const runs = liveByArm.get(id);
+      return !runs || runs.length === 0 || runs.some((r) => r.error);
+    });
     return { snapshotId: snap.snapshotId, complete: missing.length === 0, missingArms: missing };
   });
   return {
@@ -375,9 +404,9 @@ export function assessThresholdSensitivity({ config, snapshots = [], variants = 
   if (!variants.length) {
     return { assessed: false, invariant: null, outcomes: [], reason: 'no variants supplied' };
   }
-  const nonReplicate = config.arms.filter(isScoredArm);
-  const armIds = nonReplicate.map((a) => a.id);
-  const incumbent = nonReplicate.find((a) => a.model === config.decision.incumbent);
+  const scored = config.arms.filter(isScoredArm);
+  const armIds = scored.map((a) => a.id);
+  const incumbent = scored.find((a) => a.model === config.decision.incumbent);
   if (!incumbent) throw new Error('[campaign/verdict] sensitivity needs a declared incumbent arm');
 
   const matrix = completionMatrix(snapshots, armIds);
@@ -556,14 +585,14 @@ export function evaluateCampaign(input) {
     ruleChangedAfterFirstArmRun = false, sensitivity = null,
   } = input;
 
-  const nonReplicate = config.arms.filter(isScoredArm);
-  const armIds = nonReplicate.map((a) => a.id);
-  const incumbentArm = nonReplicate.find((a) => a.model === config.decision.incumbent);
+  const scored = config.arms.filter(isScoredArm);
+  const armIds = scored.map((a) => a.id);
+  const incumbentArm = scored.find((a) => a.model === config.decision.incumbent);
   // The config schema guarantees exactly one incumbent arm; a missing one here
   // means the caller assembled a config this module never validated, and
   // guessing an incumbent would silently compare against the wrong baseline.
   if (!incumbentArm) {
-    throw new Error(`[campaign/verdict] no non-replicate arm has model "${config.decision.incumbent}" — the incumbent must be a declared participant`);
+    throw new Error(`[campaign/verdict] no scored arm has model "${config.decision.incumbent}" — the incumbent must be a declared participant`);
   }
 
   const matrix = completionMatrix(snapshots, armIds);

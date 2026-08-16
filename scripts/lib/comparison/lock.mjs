@@ -99,6 +99,26 @@ export function canonicalJson(value) {
 }
 
 /**
+ * True iff `value` survives `canonicalJson`'s 6dp round-trip — the exact test
+ * above, exported so a SCHEMA can apply it before a config is even accepted
+ * (Cluster A round 6, M4).
+ *
+ * Before this: `COMMON_SHAPE.temperature` (`controls.mjs`) accepted any finite
+ * non-negative number, so a value like `0.1234567` parsed successfully and
+ * failed only much later, deep inside a `configDigest()` call — a contract
+ * mismatch between validation and serialization, and a confusing place to
+ * discover it. The check is a single exported predicate, not two independent
+ * copies of "does this round-trip at 6dp", so the two layers cannot drift the
+ * way `PreflightSchema`/`ControlsSchema` already did once (round 5, M5).
+ *
+ * @param {number} value
+ * @returns {boolean}
+ */
+export function isCanonicalizableNumber(value) {
+  return Number.isFinite(value) && Number(value.toFixed(6)) === value;
+}
+
+/**
  * Digest over the COLLECTION-RELEVANT subset — the fields that determine what
  * was asked of the models.
  *

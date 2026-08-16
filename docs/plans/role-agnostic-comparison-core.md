@@ -852,6 +852,31 @@ last refresh — run `npm run security:refresh`.)
 | Per-arm retry double-charges. | Retry writes `attempt N+1` for that arm only, and D5's sum counts all attempts — a retried arm shows *higher* spend, which is the honest direction. |
 | Auditor manifest diverges from campaign manifest. | One `ComparisonManifestSchema`; the role-keyed controls block is the only difference, and `.strict()` refuses cross-role dials at load. |
 | **Deferred**: unified store schema; a passive auditor collector; migrating the existing bake-off log format. | Each named in §6 with its reason; none blocks the stated requirement. |
+| **`bakeoff-collect.mjs` concentrates too many responsibilities** (Cluster A round 4, M4 — CLI parsing, campaign/fallback resolution, model-transport selection, request-compatibility fixtures, and collection orchestration in one ~69KB file). | **Deferred, deliberately, not silently.** The finding is real, and pre-existing: this plan's Phases 1–2 EXTRACT hygiene modules out of the file (arms, lock, fingerprint), which is why it is smaller than it was, but they did not set out to decompose the CLI entry point itself — no phase names that as a deliverable. Applying AGENTS.md's own impact test: does Cluster A's *correctness* depend on this file's decomposition? No — the concern is maintainability, not a dependency the extraction rides on. Full decomposition (thin entry point + independently-testable campaign-resolution/transport/request-construction modules, per the finding's own recommendation) is real work comparable in size to a phase of this plan and belongs in its own plan with its own audit, not folded into a shared-core extraction as a rider. Revisit trigger: the next time a change to `bakeoff-collect.mjs` needs to reason about more than one of its responsibilities at once. |
+| **Role-coverage drift is enforced only at test time, not from a live registry** (Cluster A round 5, M6 — a hypothetical third mechanism could add eligible roles without ever being checked against `assertRoleCoverage`). | **Deferred, deliberately.** `roles.mjs` cannot import `campaign/config.mjs` or `model-eval/contracts.mjs` to validate them at module scope without a circular dependency — both of THOSE modules import FROM `roles.mjs`. The only place coverage can currently be asked, without inverting that dependency direction, is a test that imports both leaves and checks them together (`tests/comparison-core.test.mjs`), which is exactly where it lives and runs on every push. The finding's own recommendation — explicit per-mechanism registration metadata validated against a registry — would add a real, mutable, production-code API surface (`registerEligibleRoles`, a module-level registry) to solve a problem with exactly ONE population today: there are two mechanisms, not an open-ended set, and the plan's own D3 explicitly limits how many collectors this repo may have. Building a registry for a third consumer that does not exist is the over-engineered cliff AGENTS.md's own right-sizing gate names. Revisit trigger: a genuine third mechanism is proposed — at that point a registry earns its keep, and not before. |
+| **The plan document mixes durable specification with round-by-round audit narrative, ~62KB** (Cluster A round 5, M7; recurred round 6, M6). | **Deferred, deliberately.** This is this repo's OWN established plan format, not an omission specific to this document: `docs/plans/model-comparison-campaigns.md` (the plan that shipped this repo's campaign framework) carries the identical shape — decisions, an Audit trail table, and per-round stop-decision narrative in one file — and every plan `/audit-plan` produces follows it. Splitting review history into a separate "review record" artifact is a real, reasonable idea, but it is a change to the SKILL's plan format (`skills/plan/`, `skills/audit-plan/`), not to this plan alone — fixing it here would leave every other plan in the repo inconsistent with this one. There is also no hard size cap on `docs/plans/*.md` today (only `AGENTS.md` itself carries the enforced 92,000-character ceiling); 62KB is not close to a limit anything currently enforces. Revisit trigger: raise it as a `skills/plan`/`skills/audit-plan` format change, evaluated against every plan it would affect, not one. |
+| **`sameFamilyAmbiguity` cannot classify xAI/OSS/gateway ids** (Cluster A round 5, H2/H3's own documented tradeoff; re-raised round 8, H5, recommending a full provider-neutral model-identity catalog). | **Deferred, deliberately, twice now.** No exported parser gives a gateway/xAI concrete id a comparable identity, and guessing one risks a false-positive refusal of the real committed 5-vendor campaign — the module's own docstring (`model-family.mjs`) states this tradeoff explicitly. Round 8's recommendation (a durable provider-neutral identity contract resolving every model to a pinned catalog identity, persisted in the collection lock) is a standalone feature well beyond this cluster's — or this plan's — stated scope; per AGENTS.md's design-right-sizing test, it is an abstraction no CURRENT requirement needs. Revisit trigger: a real collision incident involving an xAI/gateway pair, or a concrete plan to build a cross-provider model catalog for its own sake. |
+| **A TOCTOU window in `resolveLocalPath`** (Cluster A round 8, H2/H3): validation and eventual read are separated by a re-openable pathname. | **Dismissed as disproportionate to the deployment model.** This is a single-operator local CLI auditing its own repo, not a multi-tenant server or a privilege-crossing boundary — the described race requires the same local user who owns the repo to also be racing the CLI's own filesystem reads, at which point they already have equivalent-or-greater capability (editing the source, the environment, or the running process directly). The recommended fix (retain a live file descriptor across validation and use) is also structurally incompatible with how paths are actually used here: a manifest path is resolved at LOAD, and consumed by a provider call that can happen minutes later across an async boundary no held descriptor survives. Revisit trigger: this tool ever runs with elevated privilege or against a repo shared with an untrusted co-resident process — neither is true today. |
+
+**Cluster A stop decision (round 8, 2026-08-16).** Audited 5 consecutive rounds
+(4→8) beyond `/audit-code`'s 6-round default, extended past the cap each time
+specifically for concrete net-new correctness bugs, never for rigor pressure
+(the doctrine's own test). Every finding across all 5 rounds received an
+explicit disposition — fixed-and-tested or dismissed/deferred with written
+rationale — never a silent skip. Round 8's acceptance rate (4/11 = 36%) crossed
+the doctrine's own stop threshold (≤~⅓): of the 7 dismissed, one was an
+already-sustained round-5 ruling restated (H5), two were genuinely independent
+pre-existing test-architecture notes unrelated to this cluster's deliverables
+(M6/M7), one a disproportionate threat-model mismatch (H2/H3), one a
+recurring Cluster-B-scope item (H1), and one a tooling self-report, not a code
+finding (M8) — none is unaddressed, all are documented above or in the
+per-finding ledger. The genuine bugs this window found (H2/H3 round 6's
+`compareEvents`/`instantOf` non-antisymmetry; H4 round 6's `completionMatrix`
+duplicate-vs-error conflation; the same-family-policy gap chased across three
+sibling rules in `checkArmSetSemantics` over rounds 6–8; the `resolveLocalPath`
+second existence check round 7; the OpenAI family-granularity gap round 8) are
+all fixed, each with a regression test, and the full suite (12,462 tests) is
+green. Stopping here, not running round 9.
 
 ---
 
@@ -936,6 +961,56 @@ rather than manufacturing spend to close a checklist.
     listed because implementing a plan legitimately corrects it — Phase 4's
     `db-test-container.mjs` path was wrong, caught by the Step 0.7 preflight
     before any code ran.
+
+    **Second addition, same day, applying the same impact test (AGENTS.md:
+    scope is decided by impact, not authorship):** `tests/comparison-retry.test.mjs`
+    (create), `tests/final-review-bakeoff.test.mjs` (modify),
+    `.campaigns/final-review-scoped-2026q3.json` (modify),
+    `tests/comparison-fingerprint.test.mjs` (create). Per-arm retry (plan D5a)
+    is Phase-3 CONTENT by the file-level plan, but it landed directly in
+    `bakeoff-collect.mjs` — a file Cluster A already owns and has audited three
+    times — ahead of Cluster B, on an explicit operator request to sequence
+    retry before adding campaign arms. Its correctness is therefore riding on
+    code this cluster's gate is responsible for, which is the load-bearing
+    test, not which phase number the plan filed it under. The campaign JSON and
+    its companion test are a real six-arm exercise of Cluster A's own
+    extracted schema/validation code (`CampaignConfigSchema`,
+    `checkArmSetSemantics`) — evidence the schema handles production data, not
+    unrelated business work smuggled into the audit. The fingerprint test is
+    this round's own regression cover for H3.
+
+    **Third addition, same day, round 5:** `tests/comparison-controls-parity.test.mjs`
+    (create), `scripts/lib/campaign/verdict.mjs` (modify). Round 5 (M4/M5)
+    found the `final_review_shadow` xAI-preflight safety check existed only on
+    the campaign entry point, not the manifest one — fixed by consolidating
+    both onto `comparison/controls.mjs::checkFinalReviewShadowControls`, which
+    by construction touches both `campaign/config.mjs` (already in scope) and
+    the new shared function; the parity test is the direct regression cover
+    asserting both entry points refuse the same inputs. `verdict.mjs` is a
+    documentation-only fix (M3): its `isScoredArm`-based filter was already
+    correct, only its docstrings/error message/variable name still said
+    "non-replicate" from before `control` existed — the wrong word describing
+    already-correct behaviour, corrected for the same reason the
+    `LEGACY_ARMS` docstring was corrected in Phase 2.
+
+    **Fourth addition, same day, round 6:** `scripts/lib/comparison/model-family.mjs`
+    (create), `tests/comparison-lock-controls-contract.test.mjs` (create). Round 6
+    found three genuine correctness bugs Cluster A's own audits had not yet reached
+    inside `verdict.mjs` — `compareEvents`/`instantOf` were not antisymmetric for an
+    unparseable timestamp (H2/H3), and `completionMatrix` could let a clean duplicate
+    live run mask a genuinely errored one (H4) — plus two cross-file contract gaps in
+    code this cluster wrote earlier this round: `checkArmSetSemantics` (arms.mjs)
+    used exact string equality for its replicate-backing rule while
+    `classifyArmCollisions` (fingerprint.mjs) already accepted a same-family
+    sentinel/concrete pairing as a declared escape hatch (M3), and
+    `COMMON_SHAPE.temperature` (controls.mjs) accepted values `canonicalJson`
+    (lock.mjs) would later refuse at digest time (M4). `model-family.mjs` is a new
+    LEAF module extracting `sameFamilyAmbiguity` out of `fingerprint.mjs` so
+    `arms.mjs` can share it without a circular import (`fingerprint.mjs` already
+    imports `isScoredArm` FROM `arms.mjs`) — the fix for M3 could not otherwise
+    exist inside this cluster's own file set. The new test file is the regression
+    cover for M4 (schema/digest parity), following the existing pattern of one
+    contract test per cross-file consistency fix.
 - **Cluster B** — Phases 3–4 — fix-gate: yes
   - Coupling: `spend.mjs`/`cost.mjs` are what the auditor adapter consumes;
     building the adapter against a spend module that is about to change its
