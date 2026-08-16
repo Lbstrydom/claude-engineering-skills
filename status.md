@@ -1,5 +1,95 @@
 # Project Status Log
 
+## 2026-08-14 — A dismissal is a disproof: Layer 3, and the remedy that could not run
+
+### Consumer Verification (previous ship)
+- **Commit**: `ffbfdaa5cec4d2acebf991b203c31cf9ca5d1d41`
+- **Retrieval**: `git clone --depth 1 --branch main … /c/tmp/ship-verify-ffb1`
+  (into `C:\tmp`, never the session scratchpad — MAX_PATH truncates a clone
+  there and the half-checkout reads as a broken push)
+- **Result**: `verified` — fetched HEAD matched the pushed sha (confirmed via
+  `git rev-parse origin/main`, not the push command's exit code, which a pipe
+  masks); the NEW `tests/reopen-reason-durability.test.mjs` was **present in the
+  clone**, which was the check worth making since an accidentally-gitignored new
+  file passes every local run and is simply absent for the consumer; `is_reopened`
+  ×5, `reopenReason` ×2, `reopenTelemetry` ×7 present; trailers read back off the
+  remote with no `Co-Authored-By`.
+- **Named limits**: the emitted-JSON-Schema assertion was not re-run in the clone
+  (`C:\tmp` has no upward path to `node_modules`; would have needed a full
+  `npm install`) — covered instead by the pre-push hook's own `check` run in a
+  clean checkout of that exact sha. `sync-isolation-verify` was **not** run inside
+  either consumer (no consumer checkout open) — that leg stays `unverified`.
+
+### Layer 3 — the reopen policy, finally split by outcome
+
+`suppressReRaises` reopened any matched entry whose file changed this round
+without consulting `adjudicationOutcome`. Correct regression detection for a
+`fixed` entry; re-litigation for a `dismissed` one — editing a file to fix other
+findings does not make a disproved claim true, and in an active fix loop the
+audited files change every round, so the churn was structurally guaranteed. This
+is the Phase 2 deferred since 2026-07-16 and field-confirmed twice.
+
+A dismissed entry now reopens only when the re-raise sets `is_reopened: true`
+(representable only since earlier the same day). `fixed`/`verified` are
+untouched — regression detection must not depend on the model noticing a
+regression in the very thing it was told had been handled.
+
+**A test caught a design conflict review did not.** `stage1-mechanical` entries
+are always `dismissed`, but the codebase already documents why *those* must stay
+reopenable: their dismissal reason is a mechanical FACT ("the cited function does
+not exist") that a later edit genuinely can falsify, which is why they were
+already excluded from the hard-suppress counter. The first cut contradicted that
+and `tests/ledger.test.mjs`'s stage1 routing case failed immediately.
+
+**Not built from this plan's superseded design, and it did not need the
+`evidence-triage` anchors either** — making `is_reopened` representable supplied
+a cheaper signal than the anchor work the plan assumed was required. The 5-trial
+protocol never ran: this was a deliberate scope call on two field occurrences, so
+the policy ships **reversible**
+(`AUDIT_DISMISSAL_REOPEN_REQUIRES_DECLARATION=false`) and **self-measuring** —
+each declined re-litigation is a `suppressed` row with its own reason string,
+distinct from scope-unchanged, counted in `reopenTelemetry.relitigationSuppressed`.
+Two tests pinning the old uniform behaviour were overturned **deliberately, not
+deleted**: retargeted to `fixed` entries where the mechanical reopen genuinely is
+unchanged, with the dismissal path asserted in both directions.
+
+### Two `/ship` defects found by running `/ship`
+
+- **The remedy that could not run.** The worktree-preflight marker in all 16
+  skills says to run `npm run skills:hydrate`; no such script existed, so
+  following the instruction produced `npm error Missing script`. The marker gate
+  proved the marker was PRESENT and never that its remedy could RUN — the same
+  *"the instruction ships and the tool does not"* class the gate was built to
+  stop, one level up, in the remedy rather than the subject. Adds
+  `scripts/skills-hydrate.mjs` (source repo = documented no-op; consumer worktree
+  = copy from the main checkout, per the runbook's Remedy 1) and extends the gate
+  with `checkMarkerRemedies`, **derived from `MARKER_BLOCK`** so the remedy and
+  what verifies it cannot drift. Verified red-then-green on unpiped exit codes.
+- **The vanishing verification note.** Step 6.8 wrote to the worktree's
+  `.claude/tmp/`, which a deleted worktree destroys before the next `/ship` can
+  read it — the handoff silently never happens, and the only symptom is a note
+  that never appears. Both Step 2 and Step 6.8 now resolve the MAIN checkout via
+  `--git-common-dir`. The Consumer Verification block above is the first note to
+  survive that handoff, folded in by the fixed Step 2.
+
+### Verification
+Full suite **12,465 pass / 0 fail**. Six new enforcement-verb dispositions were
+required in `skills/ship/gate-contract.json` for the new SKILL.md prose; one
+initially failed because a hand-typed line wraps mid-quote, fixed by taking the
+exact bytes from the file. That failure only surfaced **after** committing —
+`tests/gate-contract-ratchet.test.mjs` runs the checker in an isolated worktree
+built from COMMITTED state, the same class as the manifest hashing committed
+source rather than working-tree bytes.
+
+### Follow-ups
+- `relitigationSuppressed` is now the number to watch: if it climbs while real
+  regressions go unreported, Layer 3 is over-suppressing. Countable, which it was
+  not before.
+- The consumer-side `skills:hydrate` still has to be added to each consumer's own
+  `package.json` by hand (the runbook documents the one-liner) — sync never merges
+  npm scripts into a consumer's script table, so this repo's entry does not reach
+  them.
+
 ## 2026-08-14 (latest) — a fix that shipped inert, and a green test that agreed with it
 
 Telemetry first. Plan-mode audit runs had never recorded a cost —
