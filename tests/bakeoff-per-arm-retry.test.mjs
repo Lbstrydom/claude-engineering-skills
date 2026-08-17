@@ -131,16 +131,42 @@ describe('bakeoff-collect — entriesToSpendSnapshots projects into comparison/s
   // not present in a given fixture's `arms` object are still correctly
   // excluded from `armRuns` (the `.filter(Boolean)` null-prune below).
   const SCOPE = scopeForEntry({ campaignId: CAMPAIGN_ID });
-  const priced = () => ({ input_tokens: 1, output_tokens: 1 });
 
   it('an unpriced arm-run maps to costStatus:"unpriced", never a $0 charge', () => {
     const entries = [{
       snapshotId: 's1', contractEpoch: CONTRACT_EPOCH, campaignId: CAMPAIGN_ID,
-      arms: { opus: { shadowState: 'ran', _usage: null } },
+      arms: { opus: { shadowState: 'ran', costUsd: null } },
     }];
     const snaps = entriesToSpendSnapshots(entries, SCOPE);
     assert.equal(snaps[0].armRuns[0].costStatus, 'unpriced');
     assert.equal(snaps[0].armRuns[0].costUsd, null);
+  });
+
+  it('THE PRODUCTION SHAPE: a recorded `costUsd` is priced — the raw-artifact keys are not what a log entry holds', () => {
+    // The bug this pins (fixed 2026-08-18): the projection called
+    // `armCostUsd(record)`, which prices a raw arm `--out` artifact by reading
+    // `_model`/`_usage`/`_shadow.usage`. A LOG entry holds `readArmResult`'s
+    // OUTPUT, where none of those keys exist and the price is already computed
+    // into `costUsd` — so every real row resolved to null and reported
+    // unpriced. Measured over this repo's own bake-off log at the time of the
+    // fix: 0 of 112 arm-runs priced, and the incomplete-spend line rendered
+    // `monetaryStatus: 'unknown'` with all six arms excluded.
+    //
+    // The old fixtures could not catch it because they wrote `_usage`/`_model`
+    // INTO the log record — a shape production has never emitted. This asserts
+    // both sides: the real shape prices, and the artifact-only shape does NOT
+    // silently price (its money is genuinely unknown at this layer).
+    const entries = [{
+      snapshotId: 's1', contractEpoch: CONTRACT_EPOCH, campaignId: CAMPAIGN_ID,
+      arms: {
+        opus: { shadowState: 'ran', costUsd: 3.1125, unpricedModels: [] },
+        kimi: { shadowState: 'ran', _model: 'moonshotai/kimi-k2-thinking', _usage: { input_tokens: 1, output_tokens: 1 } },
+      },
+    }];
+    const runs = Object.fromEntries(entriesToSpendSnapshots(entries, SCOPE)[0].armRuns.map((r) => [r.armId, r]));
+    assert.equal(runs.opus.costStatus, 'priced');
+    assert.equal(runs.opus.costUsd, 3.1125);
+    assert.equal(runs.kimi.costStatus, 'unpriced', 'raw-artifact keys are not a recorded price and must not be read as one');
   });
 
   it('an arm never spawned this round is EXCLUDED, not a $0 row', () => {
@@ -181,15 +207,54 @@ describe('bakeoff-collect — entriesToSpendSnapshots projects into comparison/s
     assert.notEqual(snaps[0].complete, snaps[1].complete);
   });
 
+  it('a RETRIED arm contributes one row PER ATTEMPT — the superseded one was still paid for', () => {
+    // Spend counts every attempt; effectiveness counts the live one. An arm
+    // that timed out and recovered must not report the same spend as one that
+    // succeeded first time, or the cost stage systematically flatters the
+    // flakiest model in the cohort.
+    const entries = [{
+      snapshotId: 's1', contractEpoch: CONTRACT_EPOCH, campaignId: CAMPAIGN_ID,
+      arms: {
+        qwen: {
+          shadowState: 'ran', costUsd: 0.41,
+          supersededAttempts: [{ attempt: 1, errorCategory: 'timeout', elapsedMs: 900_000, costUsd: null, unpricedModels: ['qwen3.8-max'] }],
+        },
+      },
+    }];
+    const runs = entriesToSpendSnapshots(entries, SCOPE)[0].armRuns.filter((r) => r.armId === 'qwen');
+    assert.equal(runs.length, 2, 'the timed-out attempt must appear as its own arm-run');
+    assert.equal(runs[0].attempt, 1);
+    assert.equal(runs[0].costStatus, 'unpriced', 'a timed-out call returned no usage — unknown, never $0');
+    assert.equal(runs[0].supersededAt, 'recorded');
+    assert.equal(runs[1].attempt, 2);
+    assert.equal(runs[1].costStatus, 'priced');
+    assert.equal(runs[1].supersededAt, null, 'the live attempt is the one that is not superseded');
+    // The consequence that matters: armSpend must now read this arm's money as
+    // UNKNOWN rather than confidently reporting only the successful attempt.
+    const v = incompleteSpend(entriesToSpendSnapshots(entries, SCOPE), { cohortDigest: 'test' });
+    assert.ok(v.excludedArmIds.includes('qwen'),
+      'an arm with an unmeterable attempt must be named as excluded, not silently totalled from its cheap half');
+  });
+
+  it('NEGATIVE CONTROL: an arm with no retry history contributes exactly ONE row', () => {
+    const entries = [{
+      snapshotId: 's1', contractEpoch: CONTRACT_EPOCH, campaignId: CAMPAIGN_ID,
+      arms: { qwen: { shadowState: 'ran', costUsd: 0.41 } },
+    }];
+    const runs = entriesToSpendSnapshots(entries, SCOPE)[0].armRuns.filter((r) => r.armId === 'qwen');
+    assert.equal(runs.length, 1, 'inventing an attempt would over-report spend, the mirror of under-reporting it');
+    assert.equal(runs[0].attempt, 1);
+  });
+
   it('end-to-end with incompleteSpend: only the incomplete snapshot counts', () => {
     const entries = [
       {
         snapshotId: 's1', contractEpoch: CONTRACT_EPOCH, campaignId: CAMPAIGN_ID,
-        arms: { opus: { error: 'x', _usage: priced(), _model: 'claude-opus-5' } },
+        arms: { opus: { error: 'x', costUsd: 0.0001 } },
       },
       {
         snapshotId: 's2', contractEpoch: CONTRACT_EPOCH, campaignId: CAMPAIGN_ID,
-        arms: { opus: { error: 'x', _usage: priced(), _model: 'claude-opus-5' } },
+        arms: { opus: { error: 'x', costUsd: 0.0001 } },
       },
     ];
     // Both entries here are INCOMPLETE by construction (single arm, errored)

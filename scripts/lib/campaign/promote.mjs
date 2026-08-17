@@ -98,6 +98,13 @@ export function classifyLogEntry(entry, { campaignId, lockDigest, shaByRunId }) 
   const armEntries = Object.entries(entry.arms ?? {});
   const shas = new Set();
   for (const [, arm] of armEntries) {
+    // LIVE attempts only, deliberately — a superseded attempt's run id is NOT
+    // folded in here. A human-invoked retry can happen days after the first
+    // attempt, at a different HEAD, so a superseded run legitimately carries a
+    // different `audited_sha`; counting it would trip the "one snapshot is one
+    // revision" rule below and make the whole snapshot ineligible for having
+    // been retried. The revision that must be single is the one adjudication
+    // verifies findings against, which is the live attempt's.
     const sha = arm?.runId ? shaByRunId[arm.runId] : null;
     if (sha) shas.add(sha);
   }
@@ -118,6 +125,19 @@ export function classifyLogEntry(entry, { campaignId, lockDigest, shaByRunId }) 
       // as free is lesson (e), and the CHECK constraint enforces the pairing.
       costUsd: Number.isFinite(arm?.costUsd) ? arm.costUsd : null,
       costStatus: Number.isFinite(arm?.costUsd) ? 'priced' : 'unpriced',
+      // Attempts that were spawned, billed, and replaced — oldest first. The
+      // collector retries a TIMED-OUT arm automatically now, so an arm's live
+      // result may be its second spawn; promoting only that one would report a
+      // recovered arm as costing exactly what a first-try arm cost, which is
+      // the asymmetry `armSpend` sums superseded rows to avoid. A timed-out
+      // attempt is `unpriced` rather than $0: the provider may have burned the
+      // whole reasoning budget and returned no usage block to price.
+      supersededAttempts: (Array.isArray(arm?.supersededAttempts) ? arm.supersededAttempts : []).map((s) => ({
+        auditRunId: s?.runId ?? null,
+        error: s?.error ?? s?.errorCategory ?? 'superseded attempt',
+        costUsd: Number.isFinite(s?.costUsd) ? s.costUsd : null,
+        costStatus: Number.isFinite(s?.costUsd) ? 'priced' : 'unpriced',
+      })),
     })),
   };
 }
@@ -126,7 +146,7 @@ export function classifyLogEntry(entry, { campaignId, lockDigest, shaByRunId }) 
  * Is THIS arm's result in THIS log entry a retry (D5)?
  *
  * Extracted so the rule is assertable without a database, same reasoning as
- * `resolvePromotionAttempt` immediately below, and because `retriedArmIds` is
+ * `resolvePromotionAttempts` immediately below, and because `retriedArmIds` is
  * PER-ARM while the log entry it lives on may carry several arms' results at
  * once — collapsing that back to a single boolean at the call site is exactly
  * the mistake that made `--force` retry the whole snapshot instead of one arm.
@@ -148,29 +168,58 @@ export function isArmRetried(entry, armId) {
 }
 
 /**
- * PURE. What promotion should do with one arm, given what the store already
- * holds and whether the collection was forced.
+ * PURE. What promotion should do with one arm, given how many attempts the
+ * ENTRY records, what the store already holds, and whether the collection was
+ * forced.
  *
  * Three outcomes, and the middle one is the whole of `--force`:
- *   - nothing recorded          → attempt 1, no supersede
+ *   - nothing recorded          → attempts 1..K, no supersede on the first
  *   - recorded, not forced      → SKIP. Promotion is idempotent; re-running
  *                                 reconcile must never append a second attempt,
  *                                 which would double-count the arm's spend.
- *   - recorded, forced          → attempt N+1, supersede the prior live row.
+ *   - recorded, forced          → attempts N+1..N+K, superseding as they go.
  *                                 Never an overwrite: the earlier attempt stays
  *                                 readable and its spend still counts, which is
  *                                 exactly why `armSpend` sums superseded rows.
+ *
+ * **K, not 1** (2026-08-18): the collector now retries a timed-out arm
+ * automatically, so ONE log entry can carry several attempts for one arm. The
+ * singular predecessor could only ever promote the live one, which would have
+ * silently dropped every automatically-retried attempt's charge — the same
+ * under-report as promoting a `--force` retry without superseding. Because it
+ * plans a LIST, the "recorded, not forced" branch also stops being all-or-
+ * nothing: a reconcile interrupted after attempt 1 resumes at attempt 2 instead
+ * of reading the arm as fully promoted (`n < K` is now a resumable state, not
+ * an invisible one).
+ *
+ * The returned plans align to the TAIL of the entry's attempt list — the caller
+ * skips the first `K - plans.length` of them, which are the ones the store
+ * already holds.
  *
  * Extracted so the rule is assertable without a database. Before `--force`
  * existed, the third branch was unreachable — and with it the `attempt` column,
  * the partial unique index and the receipt-attempt protocol were all machinery
  * no operator action could trigger.
+ *
+ * @param {{existingAttempt?: number, recordedAttempts?: number, forced?: boolean}} [args]
+ * @returns {{skip: boolean, plans: Array<{attempt: number, supersedePrior: boolean}>}}
  */
-export function resolvePromotionAttempt({ existingAttempt = 0, forced = false } = {}) {
+export function resolvePromotionAttempts({ existingAttempt = 0, recordedAttempts = 1, forced = false } = {}) {
   const n = Number.isInteger(existingAttempt) && existingAttempt > 0 ? existingAttempt : 0;
-  if (n === 0) return { skip: false, attempt: 1, supersedePrior: false };
-  if (!forced) return { skip: true, attempt: n, supersedePrior: false };
-  return { skip: false, attempt: n + 1, supersedePrior: true };
+  const k = Number.isInteger(recordedAttempts) && recordedAttempts > 0 ? recordedAttempts : 1;
+  // How many of this entry's attempts still need a row. Forced means the whole
+  // entry is a fresh set appended after everything already stored.
+  const toRecord = forced ? k : k - n;
+  if (toRecord <= 0) return { skip: true, plans: [] };
+  const plans = [];
+  for (let i = 0; i < toRecord; i++) {
+    const attempt = n + i + 1;
+    // Attempt 1 has nothing to supersede; every later one replaces the row that
+    // was live until it — including within a single entry, where the automatic
+    // retry's success supersedes the timeout that preceded it.
+    plans.push({ attempt, supersedePrior: attempt > 1 });
+  }
+  return { skip: false, plans };
 }
 
 /**
@@ -211,16 +260,31 @@ export async function promoteFromLog({ config, lock, configDigest, entries }) {
     });
     if (!snap.ok) { refused.push({ snapshotId: entry.snapshotId, reason: snap.error }); continue; }
     for (const arm of cls.armRuns) {
+      // Every attempt this entry records for the arm, oldest first — the
+      // superseded ones then the live one. Each was a separate spawn against a
+      // provider, so each earns its own row; the live one is simply the last.
+      const attempts = [
+        ...arm.supersededAttempts,
+        { auditRunId: arm.auditRunId, costUsd: arm.costUsd, costStatus: arm.costStatus, error: arm.error },
+      ];
       const existing = await store.maxArmRunAttempt({ cohortId: cohort.id, snapshotId: entry.snapshotId, armId: arm.armId });
-      const plan = resolvePromotionAttempt({ existingAttempt: existing.attempt, forced: isArmRetried(entry, arm.armId) });
-      if (plan.skip) continue;
-      const res = await store.recordArmRun({
-        cohortId: cohort.id, snapshotRowId: snap.id, snapshotId: entry.snapshotId, armId: arm.armId, attempt: plan.attempt,
-        auditRunId: arm.auditRunId, costUsd: arm.costUsd, costStatus: arm.costStatus, error: arm.error,
-        supersedePrior: plan.supersedePrior,
+      const plan = resolvePromotionAttempts({
+        existingAttempt: existing.attempt, recordedAttempts: attempts.length, forced: isArmRetried(entry, arm.armId),
       });
-      if (res.ok) promoted += 1;
-      else refused.push({ snapshotId: entry.snapshotId, reason: `${arm.armId}: ${res.error}` });
+      if (plan.skip) continue;
+      // Plans align to the TAIL: the first `attempts.length - plan.plans.length`
+      // are already in the store and must not be written twice.
+      const offset = attempts.length - plan.plans.length;
+      for (let i = 0; i < plan.plans.length; i++) {
+        const a = attempts[offset + i];
+        const res = await store.recordArmRun({
+          cohortId: cohort.id, snapshotRowId: snap.id, snapshotId: entry.snapshotId, armId: arm.armId, attempt: plan.plans[i].attempt,
+          auditRunId: a.auditRunId, costUsd: a.costUsd, costStatus: a.costStatus, error: a.error,
+          supersedePrior: plan.plans[i].supersedePrior,
+        });
+        if (res.ok) promoted += 1;
+        else refused.push({ snapshotId: entry.snapshotId, reason: `${arm.armId}: ${res.error}` });
+      }
     }
   }
   process.stdout.write(`  promoted ${promoted} arm-run(s) into cohort ${lock.lockDigest}\n`);

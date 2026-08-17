@@ -462,22 +462,56 @@ export function summarise(entries, target = DEFAULT_TARGET, scope) {
  * dollar extraction the existing complete-only "spend:" line already trusts —
  * so the two lines can never quietly disagree about what one arm-run cost.
  *
+ * **It reads the RECORDED `costUsd`, not `armCostUsd(record)` (fixed
+ * 2026-08-18).** `armCostUsd` prices a raw arm `--out` artifact — it reads
+ * `_model`/`_usage`/`_shadow.usage`. What a log entry holds is
+ * `readArmResult`'s OUTPUT, where those three keys do not exist and the price
+ * has already been computed into `costUsd`. So every real row resolved to
+ * `{usd: null}` and reported `unpriced`: measured over this repo's own log,
+ * **0 of 112 arm-runs priced**, and the incomplete-spend line — the line that
+ * exists because 59% of one collection's money was invisible — rendered
+ * `incompleteSpendUsd: null`, `monetaryStatus: 'unknown'`, with all six arms
+ * named as excluded. The suite did not catch it because its fixtures wrote
+ * `_usage`/`_model` INTO the log record, a shape production has never emitted
+ * (AGENTS.md: at least one fixture must be derived from a row actually stored).
+ * `summarise` above always read `costUsd` directly and was right all along —
+ * this makes the two agree instead of quietly disagreeing.
+ *
+ * **One armRun per ATTEMPT, superseded ones included.** A retried arm was paid
+ * for more than once, and `armSpend`'s whole contract is that spend counts every
+ * attempt while effectiveness counts only the live one.
+ *
  * @param {object[]} entries - bake-off log entries (already campaign-scoped)
  * @param {import('./scope.mjs').ResolvedScope} scope
- * @returns {Array<{snapshotId: string, complete: boolean, armRuns: Array<{armId: string, costUsd: number|null, costStatus: 'priced'|'unpriced'}>}>}
+ * @returns {Array<{snapshotId: string, complete: boolean, armRuns: Array<{armId: string, attempt: number, costUsd: number|null, costStatus: 'priced'|'unpriced', supersededAt: string|null}>}>}
  */
 export function entriesToSpendSnapshots(entries, scope) {
   assertResolvedScope(scope);
+  // A recorded `costUsd` is priced only when it is a real, non-negative number.
+  // Absent (an entry predating the field) and `null` (at least one call in the
+  // arm was unpriced or unmeterable) are the SAME fact here — we do not know
+  // what it cost — and neither may render as a $0 charge.
+  const priceOf = (rec) => {
+    const usd = rec?.costUsd;
+    return Number.isFinite(usd) && usd >= 0
+      ? { costUsd: usd, costStatus: 'priced' }
+      : { costUsd: null, costStatus: 'unpriced' };
+  };
   return entries.map((e) => ({
     snapshotId: e.snapshotId,
     complete: isComplete(e, scope),
     armRuns: scope.arms
-      .map((a) => {
+      .flatMap((a) => {
         const r = e.arms?.[a.id];
-        if (!r) return null; // never spawned this round — not a $0 charge
-        const { usd } = armCostUsd(r);
-        return { armId: a.id, costUsd: usd, costStatus: usd == null ? 'unpriced' : 'priced' };
-      })
-      .filter(Boolean),
+        if (!r) return []; // never spawned this round — not a $0 charge
+        const superseded = Array.isArray(r.supersededAttempts) ? r.supersededAttempts : [];
+        return [
+          // `supersededAt` is a marker, not a timestamp we have: the log records
+          // that the attempt WAS superseded, and a fabricated time would be worse
+          // than an honest sentinel. `armSpend` only tests the field's presence.
+          ...superseded.map((s, i) => ({ armId: a.id, attempt: s.attempt ?? i + 1, ...priceOf(s), supersededAt: 'recorded' })),
+          { armId: a.id, attempt: superseded.length + 1, ...priceOf(r), supersededAt: null },
+        ];
+      }),
   }));
 }

@@ -71,6 +71,7 @@ import {
   buildReviewEnvelope, THIN_CODE_MAX_CHARS, THIN_CODE_MAX_PER_FILE,
 } from './lib/final-review/envelope.mjs';
 import { serializePrimaryForGap } from './lib/final-review/gap-projection.mjs';
+import { classifyLlmError } from './lib/robustness.mjs';
 // NOTE: lib/llm-wrappers.mjs provides shared wrappers for learning/refinement/evolution paths.
 // This module keeps the specialized `callReviewer` seam (thinkingConfig + one
 // abort-correct timeout across all transports) because the final review requires
@@ -868,6 +869,16 @@ async function callReviewer(client, { transportKind, model, systemPrompt, userPr
     process.stderr.write(`  [${label}] FAILED: ${msg}\n`);
     const wrapped = new Error(msg);
     if (err.status) wrapped.status = err.status; // preserve for classifyLlmError (404 → non-retryable)
+    // A timeout must stay classifiable AFTER the wrap. `classifyLlmError` reads
+    // `name`/`code` to reach its `timeout` branch, and both are lost here — the
+    // wrapped error carries only a message, so every abort was classified
+    // `permanent`, indistinguishable from a bad model id. Anything keying on
+    // that verdict (the bake-off collector's automatic retry) would therefore
+    // refuse to retry the one failure class that is worth retrying, and
+    // matching the message prose instead would be a second, silently-diverging
+    // classifier. Setting the structured fields hits `classifyLlmError`'s FIRST
+    // branch, so this stays one oracle rather than two.
+    if (isAbort) { wrapped.llmCategory = 'timeout'; wrapped.llmRetryable = true; }
     throw wrapped;
   } finally {
     clearTimeout(timeoutHandle);
@@ -1946,6 +1957,40 @@ function buildMatchedBuckets(primaryResult, shadowResult) {
   };
 }
 
+/**
+ * The `_shadow` block for a shadow reviewer that FAILED.
+ *
+ * A function rather than an object literal inside the catch, because it carries
+ * a cross-process contract and a contract needs a boundary to be tested at: the
+ * bake-off collector decides whether to re-spawn the arm from `errorRetryable`,
+ * and a timed-out shadow and one rejected for a bad model id are otherwise
+ * separated only by an English sentence. The classification is therefore made
+ * HERE, by the repo's single `classifyLlmError` oracle, where the error object
+ * still exists — nothing downstream can recover it from `error` prose.
+ *
+ * A consumer that finds these fields absent (an artifact from a reviewer
+ * predating them) must read that as "not classified", never as "retryable".
+ *
+ * @param {{provider: string|null, model: string|null}} shadow
+ * @param {Error} err
+ */
+function shadowErrorBlock(shadow, err) {
+  const cls = classifyLlmError(err);
+  return {
+    state: 'error-unavailable', provider: shadow.provider, model: shadow.model,
+    verdict: null, usage: null, buckets: null, shadowOnlyFindings: null,
+    error: (err.message || 'unknown error').slice(0, 300),
+    errorCategory: cls.category,
+    errorRetryable: cls.retryable,
+    // What the attempt COST is unknown, not zero: the provider may well have
+    // burned the full reasoning budget before the deadline fired and simply
+    // never returned a usage block. `usage: null` above already reads as
+    // unmeterable to `armCostUsd`; this states it in the artifact so a reader
+    // does not have to infer it from an absence.
+    usageEvidence: 'unreported-call-may-have-been-billed',
+  };
+}
+
 /** The empty/skip `_shadow` block for a given skip state. */
 function shadowSkipBlock(shadow) {
   return {
@@ -2103,11 +2148,7 @@ async function runShadowAndPersist(result, primaryModel, runId, { planContent, t
       };
       process.stderr.write(`  [shadow-review] ran ${shadow.model} — buckets both:${diff.counts.both} primary-only:${diff.counts.primaryOnly} shadow-only:${diff.counts.shadowOnly}\n`);
     } catch (err) {
-      result._shadow = {
-        state: 'error-unavailable', provider: shadow.provider, model: shadow.model,
-        verdict: null, usage: null, buckets: null, shadowOnlyFindings: null,
-        error: (err.message || 'unknown error').slice(0, 300),
-      };
+      result._shadow = shadowErrorBlock(shadow, err);
       process.stderr.write(`  [shadow-review] FAILED (non-fatal, primary review unaffected): ${err.message}\n`);
     }
   }
@@ -3070,6 +3111,7 @@ async function main() {
 // _internals pattern, e.g. anthropic-client.mjs). Underscore signals private.
 export const _internals = {
   resolveShadow,
+  shadowErrorBlock,
   diffFindingBuckets,
   dedupByHash,
   shadowModelMatchesFamily,

@@ -55,16 +55,48 @@ export function transportForModel(model) {
     // workspace reports cache usage fields, so no multiplier is claimed
     // rather than assumed.
     //
-    // `timeoutMs: 900000` — MEASURED, not guessed. A real end-to-end review
-    // of a ~69K-token plan envelope took **465.5s** on this endpoint
-    // (2026-08-17, `state:'ran'`, 8207 output tokens of which 7585 were
-    // thinking). The cost driver is isolated: an otherwise-identical call
-    // takes 17s WITHOUT `response_format:json_schema` and 143s WITH it — an
-    // ~8.4x multiplier this workspace applies to schema-constrained output.
-    // 465s therefore blows the 300s default (every early failure) and leaves
-    // only 1.3x headroom at 600s, which one real code-mode snapshot — a
-    // LARGER envelope than the 465s measurement — already exceeded once
-    // before passing on retry. 900s restores ~1.9x over the measurement.
+    // `timeoutMs: 900000` — and what it is FOR changed on 2026-08-18, which
+    // matters more than the number. It bounds ONE ATTEMPT; it is no longer
+    // sized to cover the tail, because the tail is not coverable. The measured
+    // series (qwen3.8-max, this endpoint, `mode:code` reviews):
+    //
+    //   | envelope     | latency    | outcome    |
+    //   |--------------|------------|------------|
+    //   | 367,493 char | 175,819 ms | succeeded  |
+    //   | ~275,000 char| 465,538 ms | succeeded  |
+    //   | ~275,000 char| 838,931 ms | succeeded  |
+    //   | 367,493 char |  >900,000  | TIMED OUT  |
+    //
+    // Read the two 367K rows together: they are the SAME request. One stalled
+    // past 900s; the immediate retry finished in 176s. Latency spans >5x on
+    // byte-identical input and is uncorrelated with envelope size (the largest
+    // envelope holds both the fastest and the only failing sample), so this is
+    // server-side variance — queueing or load — not compute proportional to
+    // work. No deadline can be sized against it: the ceiling was raised three
+    // times chasing this tail (300s → 600s → 900s), each time from a single
+    // recent measurement, and each time the NEXT long sample still exceeded it,
+    // while a manual retry succeeded every time it was attempted. Retry is the
+    // structurally correct response to transient variance; a longer deadline is
+    // correct only for genuinely slow work, which this is not — see
+    // `runArmAttempts` in `bakeoff/spawn.mjs`.
+    //
+    // **Why 900s is kept and NOT lowered now that retry exists.** With retry, a
+    // deadline trades one attempt's wasted wall clock against the chance of
+    // discarding a call that would have succeeded. Renewal estimate over the
+    // four samples above (DERIVED, n=4 — treat as a tie-break, not a
+    // measurement): E[time to a success] ≈ 793s at 900s, 800s at 480s, 920s at
+    // 600s, 1076s at 300s. Lowering buys nothing here, and 600s would have
+    // converted the 839s SUCCESS — a paid, usable review — into a paid failure
+    // plus a retry. Revisit only with enough samples to estimate the
+    // distribution rather than to re-fit the last observation, which is the
+    // error this comment replaces.
+    //
+    // Separately, and NOT the cause of the stalls above: an otherwise-identical
+    // call takes 17s WITHOUT `response_format:json_schema` and 143s WITH it —
+    // an ~8.4x multiplier this workspace applies to schema-constrained output.
+    // That is real compute, and it is why these calls take minutes rather than
+    // seconds; it is not what produces a 900s stall on a request that ran in
+    // 176s moments later. The two facts must not be merged into one story.
     //
     // Neither of the two "cheaper" fixes is available here, and for the same
     // reason: `reasoningEffort:'high'` and `outputSchemaId:'final-review@3'`

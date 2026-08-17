@@ -68,6 +68,7 @@ export function runArm(arm, { transcript, plan, mode, outDir, id, runId, envelop
   const out = path.join(outDir, `${id}-${arm.id}.json`);
   const args = buildArmArgs(arm, { transcript, plan, mode, out, runId, envelopeScope, campaignDigest });
   process.stderr.write(`  [bakeoff] arm ${arm.id}…\n`);
+  const startedMs = Date.now();
   // Three-tier precedence, not spread order alone (which can only express
   // "last wins" between two sources): an operator's own explicit
   // GEMINI_REVIEW_TIMEOUT_MS wins outright; else a route's own per-arm
@@ -83,8 +84,160 @@ export function runArm(arm, { transcript, plan, mode, outDir, id, runId, envelop
     env: { ...process.env, ...arm.env, GEMINI_REVIEW_TIMEOUT_MS: timeoutMs },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  if (r.status !== 0) return { error: `exit ${r.status}`, stderrTail: String(r.stderr || '').slice(-400) };
-  return { ok: true, outPath: out };
+  const elapsedMs = Date.now() - startedMs;
+  // `status` and `elapsedMs` ride on BOTH shapes because the retry policy below
+  // is a function of them: a hard-deadline exit is only distinguishable from a
+  // bad-credentials exit by its code, and "the failed attempt took 900s" is the
+  // one number that tells an operator a retried arm was not a first-try success.
+  if (r.status !== 0) return { error: `exit ${r.status}`, stderrTail: String(r.stderr || '').slice(-400), status: r.status, elapsedMs };
+  return { ok: true, outPath: out, status: r.status, elapsedMs };
+}
+
+/**
+ * The reviewer CLI's hard-deadline exit code (`gemini-review.mjs`'s
+ * `armReviewWatchdog` → `finishAndExit(124)`). A dedicated code, not prose:
+ * it is the only structured evidence that survives a force-exit, because a
+ * process the watchdog kills never writes the `_shadow` block that would
+ * otherwise carry the classification.
+ */
+export const HARD_DEADLINE_EXIT_CODE = 124;
+
+/**
+ * How many times one arm may be spawned for one snapshot before the collector
+ * gives up and leaves it for a human-invoked retry (`selectRetryArmIds`).
+ *
+ * **2, not 3, and sized from the measured recovery rather than from symmetry.**
+ * Every manual retry of a timed-out qwen arm succeeded on its FIRST re-attempt
+ * (2026-08-17/18) — a third automatic attempt would therefore be buying an
+ * outcome nothing has been observed to need, at up to another full deadline of
+ * wall clock. The existing per-arm retry path remains the backstop for the
+ * rarer double failure, so the cost of being wrong here is one CLI re-invocation,
+ * not a lost snapshot.
+ */
+export const ARM_MAX_ATTEMPTS = 2;
+
+/**
+ * PURE. May this failed attempt be re-spawned?
+ *
+ * **It re-classifies nothing.** The one classifier in this repo is
+ * `classifyLlmError` (`lib/robustness.mjs`), and it runs where the error object
+ * actually exists — inside the spawned reviewer, whose `_shadow` block carries
+ * the verdict across the process boundary as `errorRetryable`/`errorCategory`.
+ * This function reads that verdict and the exit code; it never inspects an
+ * error message. A second retry-eligibility predicate here would be a split
+ * oracle that drifts the first time either side learns a new failure class —
+ * and it would drift silently, since both sides look right in isolation.
+ *
+ * Fails CLOSED in every direction that is not positively known to be transient:
+ * an absent `errorRetryable` (an artifact from an older reviewer, or an error
+ * path that never classified) means "not classified", never "retryable", so a
+ * deterministic failure cannot be retried by omission. Only two things earn a
+ * retry: the reviewer's own hard-deadline exit, and a shadow failure its
+ * classifier called transient (timeout, 429, 5xx — never a 4xx, never a bad
+ * model id, never a schema rejection).
+ *
+ * @param {{ok?: true, error?: string, status?: number|null}} spawned - `runArm`'s outcome
+ * @param {{error?: string, shadowState?: string|null, shadowErrorRetryable?: boolean,
+ *          shadowErrorCategory?: string|null}|null} armResult - the parsed result record,
+ *   or the spawn outcome itself when the child never produced a readable one
+ * @returns {{retryable: boolean, category: string}}
+ */
+export function classifyArmAttempt(spawned, armResult) {
+  if (spawned?.status === HARD_DEADLINE_EXIT_CODE) return { retryable: true, category: 'hard-deadline' };
+  // Any OTHER non-zero exit is a fail-fast: a missing credential, an unknown
+  // provider, a campaign-safety refusal and a schema rejection all land here,
+  // and every one of them will fail identically on a second spawn while costing
+  // another envelope's worth of provider time to prove it.
+  if (spawned?.error) return { retryable: false, category: 'spawn-failed' };
+  if (armResult?.error) return { retryable: false, category: 'unreadable-result' };
+  if (armResult?.shadowErrorRetryable === true) {
+    return { retryable: true, category: armResult.shadowErrorCategory || 'transient' };
+  }
+  if (armResult?.shadowState === 'ran') return { retryable: false, category: 'ran' };
+  return { retryable: false, category: armResult?.shadowErrorCategory || armResult?.shadowState || 'not-classified' };
+}
+
+/**
+ * Spawn one arm, retrying a TRANSIENT failure automatically up to
+ * `ARM_MAX_ATTEMPTS` times.
+ *
+ * **Why retry rather than raise the deadline again.** The alibaba ceiling was
+ * raised twice (300s → 600s → 900s), each time sized from the most recent
+ * measurement, and each time the next long sample still exceeded it — while a
+ * manual retry succeeded every time it was attempted, once in 176s on the very
+ * request that had just stalled past 900s. Latency there is server-side
+ * variance, not compute proportional to the envelope (a 367K-char request
+ * finished in 176s; a smaller ~275K one took 839s), so a deadline can bound one
+ * attempt but can never cover the tail. Retry is what covers the tail; see
+ * `transportForModel`'s alibaba branch in `bakeoff/arms.mjs` for the series.
+ *
+ * No backoff between attempts, deliberately: the observed recovery was an
+ * IMMEDIATE re-spawn, and a sleep sized from no measurement is the same guess
+ * this change exists to stop making.
+ *
+ * Impure only through its injected collaborators — `spawn`, `readOutcome` and
+ * `beforeAttempt` are all parameters, so the whole policy is assertable without
+ * a provider call, a database or a subprocess.
+ *
+ * @param {object} arm
+ * @param {object} ctx - `runArm`'s context (transcript/plan/mode/outDir/id/…)
+ * @param {object} deps
+ * @param {(arm: object, ctx: object) => object} [deps.spawn]
+ * @param {(spawned: object) => object} deps.readOutcome - parses one attempt's result
+ *   file into the record the log stores. Injected because `summary.mjs`, which owns
+ *   the cost extraction it needs, is off-limits to this module (D2a).
+ * @param {(attempt: number) => Promise<string|null>} [deps.beforeAttempt] - mints the
+ *   attempt's cloud run id. Called PER ATTEMPT: two attempts sharing one
+ *   `audit_runs` row would persist the primary reviewer's findings into it twice.
+ * @param {number} [deps.maxAttempts]
+ * @param {(msg: string) => void} [deps.log]
+ * @returns {Promise<{result: object, runId: string|null, attempts: number,
+ *   supersededAttempts: Array<object>}>}
+ */
+export async function runArmAttempts(arm, ctx, {
+  spawn = runArm,
+  readOutcome,
+  beforeAttempt = async () => null,
+  maxAttempts = ARM_MAX_ATTEMPTS,
+  log = (msg) => process.stderr.write(msg),
+} = {}) {
+  const supersededAttempts = [];
+  for (let attempt = 1; ; attempt++) {
+    const runId = await beforeAttempt(attempt);
+    const spawned = spawn(arm, { ...ctx, runId });
+    const result = spawned.error ? spawned : readOutcome(spawned);
+    const cls = classifyArmAttempt(spawned, result);
+    const secs = ((spawned.elapsedMs ?? 0) / 1000).toFixed(1);
+    if (!cls.retryable || attempt >= maxAttempts) {
+      if (cls.retryable) {
+        // Exhausted, not resolved. Named distinctly from "failed": the arm is
+        // still missing and a human-invoked retry is the next step, which is a
+        // different instruction than "this arm is broken, stop retrying it".
+        log(`  [bakeoff] arm ${arm.id}: attempt ${attempt}/${maxAttempts} failed (${cls.category}, ${secs}s)`
+          + ' — automatic retries EXHAUSTED; re-run the collector to retry this arm.\n');
+      } else if (attempt > 1) {
+        // A retried arm must never read as a first-try success.
+        log(`  [bakeoff] arm ${arm.id}: attempt ${attempt}/${maxAttempts} finished in ${secs}s`
+          + ` after ${supersededAttempts.length} superseded attempt(s) — this arm was RETRIED, not a first-try result.\n`);
+      }
+      return { result, runId, attempts: attempt, supersededAttempts };
+    }
+    // Everything the superseded attempt is evidence of: how long it burned, why
+    // it failed, and what it cost. `costUsd: null` here is "unknown", NOT free —
+    // a call that timed out may have consumed the provider's full reasoning
+    // budget and simply never returned a usage block to price.
+    supersededAttempts.push({
+      attempt,
+      runId: runId ?? null,
+      elapsedMs: spawned.elapsedMs ?? null,
+      errorCategory: cls.category,
+      error: result?.error ?? result?.shadowError ?? `${cls.category} on attempt ${attempt}`,
+      costUsd: typeof result?.costUsd === 'number' ? result.costUsd : null,
+      unpricedModels: result?.unpricedModels ?? [],
+    });
+    log(`  [bakeoff] arm ${arm.id}: attempt ${attempt}/${maxAttempts} failed after ${secs}s (${cls.category})`
+      + ' — retrying automatically. The failed attempt still counts toward spend.\n');
+  }
 }
 
 /**

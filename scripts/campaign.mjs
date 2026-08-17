@@ -63,7 +63,7 @@ import {
   normaliseVerdict, routesToHumanQueue, clusterSnapshotFindings,
 } from './lib/campaign/adjudicate.mjs';
 import {
-  repoId, classifyLogEntry, isArmRetried, resolvePromotionAttempt, promoteFromLog,
+  repoId, classifyLogEntry, isArmRetried, resolvePromotionAttempts, promoteFromLog,
 } from './lib/campaign/promote.mjs';
 import { findingMatchConfig, FINDING_MATCH_SCHEMA_VERSION } from './lib/config.mjs';
 import { resolveModel } from './lib/model-resolver.mjs';

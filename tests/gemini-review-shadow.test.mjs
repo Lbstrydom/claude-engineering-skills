@@ -6,7 +6,7 @@ import {
 } from '../scripts/gemini-review.mjs';
 
 const {
-  resolveShadow, diffFindingBuckets, dedupByHash, shadowModelMatchesFamily,
+  resolveShadow, shadowErrorBlock, diffFindingBuckets, dedupByHash, shadowModelMatchesFamily,
   resolveModelEvalShadowOverride, mapRouteToShadowProvider, runShadowAndPersist,
 } = _internals;
 
@@ -22,6 +22,84 @@ describe('resolveShadow — opt-in invariant (shadow path not entered when unset
     assert.equal(r.state, 'skipped-unset');
     assert.equal(r.provider, null);
     assert.equal(r.model, null);
+  });
+});
+
+// ── The failed shadow's classification crosses the process boundary ─────────
+// This block is the PRODUCER half of a prose-free contract whose CONSUMER is
+// another process: `bakeoff/spawn.mjs`'s `classifyArmAttempt` decides whether
+// to re-spawn a bake-off arm from `errorRetryable`. A timeout and a bad model
+// id both land in `state:'error-unavailable'`, and before these fields existed
+// the only thing separating them was the error sentence — so the collector
+// could not retry the transient one without pattern-matching prose.
+describe('shadowErrorBlock — a failed shadow carries its classification, not just its prose', () => {
+  const SHADOW = { provider: 'alibaba', model: 'qwen3.8-max' };
+
+  it('a TIMEOUT is recorded as retryable', () => {
+    // The exact shape `callReviewer` throws on an abort: a wrapped Error whose
+    // `name`/`code` are gone, carrying the structured verdict instead. Without
+    // those fields `classifyLlmError` reads the wrap as `permanent` and the
+    // arm's automatic retry never fires — the defect this closes.
+    const err = Object.assign(new Error('[shadow-review] Timeout after 900s'), { llmCategory: 'timeout', llmRetryable: true });
+    const b = shadowErrorBlock(SHADOW, err);
+    assert.equal(b.state, 'error-unavailable');
+    assert.equal(b.errorCategory, 'timeout');
+    assert.equal(b.errorRetryable, true);
+  });
+
+  it('NEGATIVE CONTROL: a 404 (bad model id) is recorded as NOT retryable', () => {
+    // The direction that must not fire. Re-spawning this costs another full
+    // envelope to reproduce a certainty.
+    const b = shadowErrorBlock(SHADOW, Object.assign(new Error('HTTP 404: model not found'), { status: 404 }));
+    assert.equal(b.errorRetryable, false);
+    assert.equal(b.errorCategory, 'http-404');
+  });
+
+  it('NEGATIVE CONTROL: an unclassifiable error is NOT retryable', () => {
+    const b = shadowErrorBlock(SHADOW, new Error('something else went wrong'));
+    assert.equal(b.errorRetryable, false);
+    assert.equal(b.errorCategory, 'permanent');
+  });
+
+  it('says the failed attempt’s cost is UNKNOWN, never zero', () => {
+    // A timed-out call may have burned the whole reasoning budget and returned
+    // no usage block. `usage: null` alone reads as "free" to a careless
+    // consumer; this states the fact rather than leaving it to be inferred.
+    const b = shadowErrorBlock(SHADOW, new Error('Timeout after 900s'));
+    assert.equal(b.usage, null);
+    assert.equal(b.usageEvidence, 'unreported-call-may-have-been-billed');
+  });
+
+  it('callReviewer’s wrap PRESERVES the abort classification the block above depends on', async () => {
+    // The other half of the same defect, and the reason the test above hands in
+    // an error carrying `llmCategory`: `callReviewer` catches the provider
+    // error and re-throws a NEW Error with only the message and `status`, so an
+    // AbortError's `name`/`code` — the fields `classifyLlmError` reaches
+    // `timeout` through — do not survive. Every timeout was therefore
+    // classified `permanent`, and the automatic retry could never fire.
+    //
+    // A source-level pin, deliberately and with its limitation stated: driving
+    // the real function to a timeout means waiting out TIMEOUT_MS against a
+    // live transport. It proves the assignment is PRESENT, not that it runs —
+    // `shadowErrorBlock`'s own tests above cover the behaviour once an error
+    // with these fields exists. (Same shape as the buildShadowClient pin below.)
+    const fs = await import('node:fs');
+    const src = fs.readFileSync('scripts/gemini-review.mjs', 'utf8');
+    const fn = src.slice(src.indexOf('async function callReviewer'));
+    const body = fn.slice(0, fn.indexOf('\n}\n'));
+    assert.match(
+      body,
+      /isAbort\s*\)\s*\{\s*wrapped\.llmCategory\s*=\s*'timeout';\s*wrapped\.llmRetryable\s*=\s*true;/,
+      'the abort branch must stamp the structured classification onto the wrapped error — '
+      + 'without it every timeout reads as `permanent` and no arm is ever retried',
+    );
+  });
+
+  it('keeps the fields the completeness check reads absent — a failed shadow never counts as having run', () => {
+    const b = shadowErrorBlock(SHADOW, new Error('Timeout after 900s'));
+    assert.notEqual(b.state, 'ran');
+    assert.equal(b.buckets, null, 'a null bucket set is "did not review", distinct from a measured zero');
+    assert.equal(b.scope, undefined, 'no envelope scope was honoured, so none may be claimed');
   });
 });
 

@@ -14,7 +14,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import {
-  classifyLogEntry, resolvePromotionAttempt, isArmRetried, repoId,
+  classifyLogEntry, resolvePromotionAttempts, isArmRetried, repoId,
 } from '../scripts/lib/campaign/promote.mjs';
 
 // ── repoId: cloud-off / unresolved must stay a quiet null; a real store ─────
@@ -146,13 +146,13 @@ describe('bake-off log promotion', () => {
 
 describe('promotion attempt resolution (--force)', () => {
   it('first promotion is attempt 1 and supersedes nothing', () => {
-    assert.deepEqual(resolvePromotionAttempt({ existingAttempt: 0, forced: false }),
-      { skip: false, attempt: 1, supersedePrior: false });
+    assert.deepEqual(resolvePromotionAttempts({ existingAttempt: 0, forced: false }),
+      { skip: false, plans: [{ attempt: 1, supersedePrior: false }] });
   });
 
   it('re-running reconcile on an already-promoted arm SKIPS — idempotence, not a second charge', () => {
-    assert.deepEqual(resolvePromotionAttempt({ existingAttempt: 1, forced: false }),
-      { skip: true, attempt: 1, supersedePrior: false });
+    assert.deepEqual(resolvePromotionAttempts({ existingAttempt: 1, forced: false }),
+      { skip: true, plans: [] });
   });
 
   it('a FORCED re-collection appends attempt N+1 and supersedes the prior live row', () => {
@@ -161,17 +161,101 @@ describe('promotion attempt resolution (--force)', () => {
     // existed this branch was unreachable, so the attempt column, the partial
     // unique index and the receipt-attempt protocol were machinery no operator
     // action could trigger.
-    assert.deepEqual(resolvePromotionAttempt({ existingAttempt: 1, forced: true }),
-      { skip: false, attempt: 2, supersedePrior: true });
-    assert.deepEqual(resolvePromotionAttempt({ existingAttempt: 4, forced: true }),
-      { skip: false, attempt: 5, supersedePrior: true });
+    assert.deepEqual(resolvePromotionAttempts({ existingAttempt: 1, forced: true }),
+      { skip: false, plans: [{ attempt: 2, supersedePrior: true }] });
+    assert.deepEqual(resolvePromotionAttempts({ existingAttempt: 4, forced: true }),
+      { skip: false, plans: [{ attempt: 5, supersedePrior: true }] });
   });
 
   it('a garbage attempt count is treated as none, never as a negative attempt', () => {
     for (const bogus of [null, undefined, -3, NaN, 'two']) {
-      assert.deepEqual(resolvePromotionAttempt({ existingAttempt: bogus, forced: true }),
-        { skip: false, attempt: 1, supersedePrior: false });
+      assert.deepEqual(resolvePromotionAttempts({ existingAttempt: bogus, forced: true }),
+        { skip: false, plans: [{ attempt: 1, supersedePrior: false }] });
     }
+  });
+
+  // ── several attempts inside ONE entry (automatic retry-on-timeout) ────────
+
+  it('an entry carrying TWO attempts promotes both — the timed-out one is not free', () => {
+    // The collector retries a timed-out arm automatically, so one log entry can
+    // hold a superseded attempt and the live one. Promoting only the live one
+    // would report a recovered arm as costing what a first-try arm cost.
+    assert.deepEqual(resolvePromotionAttempts({ existingAttempt: 0, recordedAttempts: 2 }),
+      { skip: false, plans: [{ attempt: 1, supersedePrior: false }, { attempt: 2, supersedePrior: true }] });
+  });
+
+  it('re-running reconcile over a 2-attempt entry SKIPS — still idempotent', () => {
+    // The direction that must NOT fire: a second reconcile pass over an entry
+    // already fully promoted must append nothing, or every run doubles the
+    // arm's recorded spend.
+    assert.deepEqual(resolvePromotionAttempts({ existingAttempt: 2, recordedAttempts: 2 }),
+      { skip: true, plans: [] });
+  });
+
+  it('a reconcile interrupted halfway RESUMES at the missing attempt, tail-aligned', () => {
+    // n < K is a resumable state, not an invisible one: attempt 1 is already
+    // stored, so only attempt 2 is planned — and the caller drops the first
+    // K - plans.length recorded attempts to match.
+    assert.deepEqual(resolvePromotionAttempts({ existingAttempt: 1, recordedAttempts: 2 }),
+      { skip: false, plans: [{ attempt: 2, supersedePrior: true }] });
+  });
+
+  it('a FORCED re-collection of a 2-attempt entry appends BOTH after everything stored', () => {
+    assert.deepEqual(resolvePromotionAttempts({ existingAttempt: 2, recordedAttempts: 2, forced: true }),
+      { skip: false, plans: [{ attempt: 3, supersedePrior: true }, { attempt: 4, supersedePrior: true }] });
+  });
+
+  it('a garbage recordedAttempts falls back to one attempt, never to zero rows', () => {
+    // Zero planned rows would silently promote NOTHING for the arm, which reads
+    // downstream as an arm that never ran rather than one we failed to record.
+    for (const bogus of [null, undefined, 0, -2, NaN, 'two']) {
+      assert.deepEqual(resolvePromotionAttempts({ existingAttempt: 0, recordedAttempts: bogus }),
+        { skip: false, plans: [{ attempt: 1, supersedePrior: false }] });
+    }
+  });
+});
+
+describe('classifyLogEntry — superseded attempts survive into promotion', () => {
+  const ctx = { campaignId: 'camp', lockDigest: 'lock1', shaByRunId: { r1: 'sha1', r0: 'sha0' } };
+
+  it('projects each superseded attempt with its own run id and unpriced cost', () => {
+    const cls = classifyLogEntry({
+      snapshotId: 's1', campaignId: 'camp', lockDigest: 'lock1',
+      arms: {
+        qwen: {
+          runId: 'r1', costUsd: 0.41,
+          supersededAttempts: [{ attempt: 1, runId: 'r0', errorCategory: 'timeout', costUsd: null }],
+        },
+      },
+    }, ctx);
+    assert.equal(cls.eligible, true);
+    const qwen = cls.armRuns.find((a) => a.armId === 'qwen');
+    assert.equal(qwen.costStatus, 'priced');
+    assert.equal(qwen.supersededAttempts.length, 1);
+    assert.equal(qwen.supersededAttempts[0].auditRunId, 'r0');
+    assert.equal(qwen.supersededAttempts[0].costStatus, 'unpriced');
+    assert.equal(qwen.supersededAttempts[0].costUsd, null);
+  });
+
+  it('a superseded attempt at a DIFFERENT commit does not make the snapshot ineligible', () => {
+    // The trap: a human-invoked retry can land days later at another HEAD, so
+    // its superseded run legitimately carries a different audited_sha. Folding
+    // that into the one-snapshot-one-revision check would punish the snapshot
+    // for having been retried. The revision that must be single is the LIVE
+    // attempt's — that is what adjudication verifies findings against.
+    const cls = classifyLogEntry({
+      snapshotId: 's1', campaignId: 'camp', lockDigest: 'lock1',
+      arms: { qwen: { runId: 'r1', costUsd: 0.41, supersededAttempts: [{ attempt: 1, runId: 'r0', costUsd: null }] } },
+    }, ctx);
+    assert.equal(cls.eligible, true, 'r0 resolves sha0 and r1 sha1 — only the live one may count');
+    assert.equal(cls.auditedSha, 'sha1');
+  });
+
+  it('an arm with no retry history projects an EMPTY superseded list, never a fabricated one', () => {
+    const cls = classifyLogEntry({
+      snapshotId: 's1', campaignId: 'camp', lockDigest: 'lock1', arms: { opus: { runId: 'r1', costUsd: 1 } },
+    }, ctx);
+    assert.deepEqual(cls.armRuns.find((a) => a.armId === 'opus').supersededAttempts, []);
   });
 });
 

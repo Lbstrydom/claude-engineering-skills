@@ -39,7 +39,7 @@ import { UnresolvedScopeError, ScopeMismatchError } from './lib/bakeoff/scope.mj
 import { LOG_PATH, CONTRACT_EPOCH, snapshotId, readLog } from './lib/bakeoff/log.mjs';
 import { resolveArms, scopeForEntry, armDidRun } from './lib/bakeoff/arms.mjs';
 import { isComplete, armCostUsd, distinctFindingCount, cohortDigest } from './lib/bakeoff/summary.mjs';
-import { runArm, verifyPreflightArtifact } from './lib/bakeoff/spawn.mjs';
+import { runArmAttempts, verifyPreflightArtifact } from './lib/bakeoff/spawn.mjs';
 import { printProgress } from './lib/bakeoff/progress.mjs';
 
 const KNOWN_FLAGS = Object.freeze([
@@ -98,6 +98,57 @@ export function selectRetryArmIds(existing, existingScope) {
 }
 
 /**
+ * PURE. Carry a human-retried arm's PRIOR attempt forward as a superseded one.
+ *
+ * `readLog()` keeps only the newest entry per `snapshotId`, so an arm's earlier
+ * failed record is erased the moment a retry writes a second line — and with it
+ * the evidence that the attempt happened and was paid for. Everything
+ * downstream of the log (`entriesToSpendSnapshots`, promotion into
+ * `campaign_arm_runs`) then reports the retried arm as a single attempt, which
+ * is the "a real charge read as never having happened" failure
+ * `comparison/spend.mjs` documents. Automatic retries within one collection
+ * already carry their own `supersededAttempts`; this closes the same hole for
+ * the human-invoked path, using the same field so there is one shape to read.
+ *
+ * The prior record's own `supersededAttempts` are carried too, so a third
+ * attempt does not amnesty the first.
+ *
+ * @param {Record<string, object>} newArms - results just collected, keyed by arm id
+ * @param {Record<string, object>|undefined} priorArms - the entry on disk
+ * @returns {Record<string, object>} newArms, with retry history folded in
+ */
+export function mergeRetryHistory(newArms, priorArms) {
+  const out = {};
+  for (const [armId, result] of Object.entries(newArms)) {
+    const prior = priorArms?.[armId];
+    if (!prior) { out[armId] = result; continue; }
+    const history = [
+      ...(prior.supersededAttempts ?? []),
+      {
+        attempt: (prior.supersededAttempts?.length ?? 0) + 1,
+        runId: prior.runId ?? null,
+        elapsedMs: null, // not recorded before this field existed; unknown, never 0
+        errorCategory: prior.shadowErrorCategory ?? null,
+        error: prior.error ?? prior.shadowError ?? null,
+        costUsd: typeof prior.costUsd === 'number' ? prior.costUsd : null,
+        unpricedModels: prior.unpricedModels ?? [],
+      },
+    ];
+    const offset = history.length;
+    out[armId] = {
+      ...result,
+      supersededAttempts: [
+        ...history,
+        // The attempts made in THIS collection sit after the prior ones, so the
+        // numbering is continuous across invocations rather than restarting.
+        ...(result.supersededAttempts ?? []).map((a) => ({ ...a, attempt: a.attempt + offset })),
+      ],
+    };
+  }
+  return out;
+}
+
+/**
  * Parse one arm's `--out` JSON into the fields the stopping rule scores.
  * Composition of raw file I/O and `summary.mjs`'s pure helpers — lives here
  * for the same D2a reason as the two functions above (`spawn.mjs`, which
@@ -122,6 +173,16 @@ export function readArmResult(outPath) {
     primaryDistinct: distinctFindingCount(j.new_findings),
     shadowState: shadow.state ?? null,
     shadowModel: shadow.model ?? null,
+    // The failed shadow's CLASSIFICATION, carried across the process boundary
+    // from the one `classifyLlmError` oracle (gemini-review.mjs's shadow catch)
+    // — this is what `classifyArmAttempt` reads to decide whether re-spawning
+    // is worth anything. Absent on a successful arm, and absent on an artifact
+    // written by a reviewer that predates the field; both must read as "not
+    // classified", never as "retryable" (see classifyArmAttempt's fail-closed
+    // rule). `shadowError` is the human-readable half, for the log line only.
+    shadowErrorCategory: shadow.errorCategory ?? null,
+    shadowErrorRetryable: shadow.errorRetryable ?? null,
+    shadowError: shadow.error ?? null,
     // Which envelope the shadow actually received (gemini-review.mjs's
     // `_shadow.scope`). This is the evidence `isComplete`'s scope-binding
     // check reads — plan KD-6: scope must be signed cohort state, and a
@@ -301,14 +362,34 @@ async function main() {
 
   const newArms = {};
   for (const a of ARMS) {
-    const runId = await mintArmRun(a, { plan, mode: arg('mode'), id });
-    const spawned = runArm(a, { transcript, plan, mode: arg('mode'), outDir, id, runId, envelopeScope, campaignDigest });
-    // `runArm` returns the raw spawn outcome only (spawn.mjs cannot import
-    // summary.mjs, which readArmResult needs) — parse the result file here.
-    const armResult = spawned.error ? spawned : (() => {
-      try { return readArmResult(spawned.outPath); } catch (err) { return { error: `unreadable result: ${err.message}` }; }
-    })();
-    newArms[a.id] = { ...armResult, runId: runId ?? null };
+    // `readOutcome` is injected because `runArmAttempts` lives in spawn.mjs,
+    // which cannot import summary.mjs (D2a) and therefore cannot parse a result
+    // file — the same composition-at-the-entry-point rule as isCompleteForEntry
+    // above. `beforeAttempt` mints ONE audit_runs row per ATTEMPT: two attempts
+    // sharing a run id would persist the primary reviewer's findings into it
+    // twice, and the store would carry a doubled review nobody ran.
+    const { result, runId, supersededAttempts } = await runArmAttempts(
+      a,
+      { transcript, plan, mode: arg('mode'), outDir, id, envelopeScope, campaignDigest },
+      {
+        beforeAttempt: () => mintArmRun(a, { plan, mode: arg('mode'), id }),
+        readOutcome: (spawned) => {
+          try { return readArmResult(spawned.outPath); } catch (err) { return { error: `unreadable result: ${err.message}` }; }
+        },
+      },
+    );
+    newArms[a.id] = {
+      ...result,
+      runId: runId ?? null,
+      // Superseded attempts are RECORDED, not discarded. Each was a real spawn
+      // that may have been billed, and dropping them would make an arm that
+      // failed once and recovered look exactly as cheap as one that succeeded
+      // first time — the asymmetry `comparison/spend.mjs` exists to prevent,
+      // and it flatters precisely the flakiest model in the cohort. Omitted
+      // entirely (not `[]`) on the first-try case, so nothing changes shape for
+      // an arm that never retried.
+      ...(supersededAttempts.length ? { supersededAttempts } : {}),
+    };
   }
   // A partial retry carries every OTHER arm's result forward unchanged from
   // the existing entry — this is what makes "opus/kimi/gemini-control NOT
@@ -316,7 +397,7 @@ async function main() {
   // replaces the whole entry per snapshotId (newest wins), so the merged
   // object below — not a partial one — is what must be written; a log line
   // containing only the retried arm would make readLog() forget the others.
-  const arms = retryArmIds ? { ...existing.arms, ...newArms } : newArms;
+  const arms = retryArmIds ? { ...existing.arms, ...mergeRetryHistory(newArms, existing.arms) } : newArms;
 
   const entry = {
     snapshotId: id,
@@ -360,7 +441,13 @@ async function main() {
   atomicWriteFileSync(LOG_PATH, `${prior}${JSON.stringify(entry)}\n`);
 
   for (const [k, v] of Object.entries(arms)) {
-    process.stderr.write(`  [bakeoff] ${k}: ${v.error ? `ERROR ${v.error}` : `${v.shadowState} ${v.shadowModel} buckets=${JSON.stringify(v.buckets)}`}\n`);
+    // The retry count rides on the SAME line as the result, not a separate one:
+    // this readout is what an operator scans to see how the collection went, and
+    // an arm that only succeeded on attempt 2 must not be indistinguishable here
+    // from one that succeeded first time.
+    const n = v.supersededAttempts?.length ?? 0;
+    const retried = n ? ` [attempt ${n + 1}, ${n} superseded: ${v.supersededAttempts.map((s) => s.errorCategory ?? 'unknown').join(', ')}]` : '';
+    process.stderr.write(`  [bakeoff] ${k}: ${v.error ? `ERROR ${v.error}` : `${v.shadowState} ${v.shadowModel} buckets=${JSON.stringify(v.buckets)}`}${retried}\n`);
   }
 
   // Anti-green on the CLOUD half. Registration is best-effort by design, but

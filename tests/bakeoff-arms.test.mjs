@@ -203,13 +203,32 @@ describe('transportForModel — the HOW the config deliberately does not express
     assert.throws(() => transportForModel('deepseek-v4-pro-0813'), /no transport for model/);
   });
 
-  it('the alibaba route (qwen) carries a longer timeoutMs, sized from a real measurement (465.5s) not a guess', () => {
+  it('the alibaba route (qwen) bounds ONE attempt above every observed success — not sized to cover the tail', () => {
     const ms = transportForModel('qwen3.8-max').timeoutMs;
     assert.equal(ms, 900000);
-    // The floor that matters: a measured 465.5s real review must fit with
-    // real headroom. 600s gave only 1.3x and was exceeded once on a larger
-    // code-mode envelope, so this must not be quietly ratcheted back down.
-    assert.ok(ms >= 465500 * 1.5, 'must keep >=1.5x headroom over the 465.5s measured review');
+    // The superseded assertion here pinned ">=1.5x headroom over the 465.5s
+    // measured review" — the single-measurement logic that raised this ceiling
+    // three times (300 → 600 → 900) and was exceeded by the next long sample
+    // every time. A multiple of one observation is not a property of the
+    // distribution: latency on this endpoint spans >5x on BYTE-IDENTICAL input
+    // (175,819ms and >900,000ms for the same 367,493-char request), so no
+    // multiple of any sample can be a coverage guarantee. Retry covers the
+    // tail (runArmAttempts); this ceiling only has to keep a NORMAL slow call
+    // from being killed and re-billed.
+    //
+    // So the floor is stated over the observed SUCCESSES, which is the thing a
+    // deadline can actually be wrong about: 838,931ms is the slowest call that
+    // returned a usable review, and cutting below it would convert a paid
+    // success into a paid failure plus a retry.
+    const SLOWEST_OBSERVED_SUCCESS_MS = 838931;
+    assert.ok(
+      ms > SLOWEST_OBSERVED_SUCCESS_MS,
+      `must exceed the slowest observed SUCCESS (${SLOWEST_OBSERVED_SUCCESS_MS}ms) — a lower ceiling discards reviews that would have completed`,
+    );
+    // And it must stay bounded: with automatic retry, wall clock is
+    // attempts x ceiling, so a ceiling raised "just to be safe" is now paid
+    // twice. 1800s was the next rung on the treadmill and is explicitly not taken.
+    assert.ok(ms <= 900000, 'the treadmill stops here — cover the tail with a retry, not a longer wait');
   });
 
   it('every OTHER route has NO timeoutMs override — the 300s default is fine for a deterministic pass/fail route', () => {
