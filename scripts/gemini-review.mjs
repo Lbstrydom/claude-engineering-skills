@@ -1170,13 +1170,27 @@ const PROVIDERS = {
     },
     // Same non-router reasoning as xai above: one direct workspace endpoint,
     // not OpenRouter's many-backends-per-id router, so none of OpenRouter's
-    // `provider`/`require_parameters`/`sort` fields apply. Whether this
-    // workspace's compatible-mode endpoint accepts a reasoning-effort knob at
-    // all is UNVERIFIED (unlike xai's `reasoning_effort`, confirmed live) —
-    // omitted rather than guessed at; a wrong-shaped field risks the same
-    // "accepted but silently inert" class the pre-flight machinery exists to
-    // catch, and this route has no pre-flight of its own yet.
-    requestExtras: () => ({}),
+    // `provider`/`require_parameters`/`sort` fields apply.
+    //
+    // `enable_thinking: true` is EXPLICIT, and both halves of that matter
+    // (2026-08-17, after 4 of 7 qwen collection attempts stalled to their
+    // timeout ceiling — including once past a doubled 600s):
+    //
+    //  - **Explicit at all**, because Alibaba's OpenAI-compatible endpoint
+    //    documents `enable_thinking` as a required top-level field for
+    //    non-streaming calls to thinking-capable models, and every stalled
+    //    call had left it unset. Live-measured at the failing size class
+    //    (260K chars): unset → the observed stalls; explicitly `true` →
+    //    7.2s with 163 reasoning tokens.
+    //  - **`true`, never `false`**, because this is a MODEL COMPARISON arm.
+    //    The campaign's `controls.reasoningEffort: 'high'` binds every arm
+    //    and is hashed into the cohort's lock digest, so an arm quietly
+    //    running with reasoning OFF would (a) measure the dial instead of
+    //    the model — the campaign's own measured lesson, where one arm found
+    //    0 findings at `low` and 3 at `high` on an identical transcript —
+    //    and (b) make that digest attest a control the run did not honour.
+    //    Faster and cheaper is NOT the goal here; comparability is.
+    requestExtras: () => ({ enable_thinking: true }),
   },
   // Native DeepSeek — REPLACES the Alibaba-workspace route for this model
   // (2026-08-17): deepseek-v4-pro-0813 timed out at 300s twice via Alibaba at

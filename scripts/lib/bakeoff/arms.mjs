@@ -55,14 +55,26 @@ export function transportForModel(model) {
     // workspace reports cache usage fields, so no multiplier is claimed
     // rather than assumed.
     //
-    // `timeoutMs: 600000` (double the 300000 default): this workspace showed
-    // INTERMITTENT latency on this arm — 3 of 5 real collection attempts
-    // timed out at 300s, 2 succeeded well under it (48.5s / a normal run) —
-    // not the fully-reproducible route failure that moved deepseek off this
-    // same workspace the same day (that was 2/2, every time; this is
-    // variance). A longer ceiling is the right lever for variance; it would
-    // NOT have been for a deterministic failure, which no timeout fixes.
-    return { route: 'alibaba', shadowToken: 'alibaba', providerArg: 'alibaba', shadowModel: model, promptCache: '', timeoutMs: 600000 };
+    // `timeoutMs: 900000` — MEASURED, not guessed. A real end-to-end review
+    // of a ~69K-token plan envelope took **465.5s** on this endpoint
+    // (2026-08-17, `state:'ran'`, 8207 output tokens of which 7585 were
+    // thinking). The cost driver is isolated: an otherwise-identical call
+    // takes 17s WITHOUT `response_format:json_schema` and 143s WITH it — an
+    // ~8.4x multiplier this workspace applies to schema-constrained output.
+    // 465s therefore blows the 300s default (every early failure) and leaves
+    // only 1.3x headroom at 600s, which one real code-mode snapshot — a
+    // LARGER envelope than the 465s measurement — already exceeded once
+    // before passing on retry. 900s restores ~1.9x over the measurement.
+    //
+    // Neither of the two "cheaper" fixes is available here, and for the same
+    // reason: `reasoningEffort:'high'` and `outputSchemaId:'final-review@3'`
+    // are BOTH declared controls hashed into the cohort lock digest. An arm
+    // quietly running with thinking off, or without the schema, would
+    // measure the dial instead of the model (this campaign's own measured
+    // lesson: one arm found 0 findings at `low` vs 3 at `high` on an
+    // identical transcript) AND make that digest attest a control the run
+    // never honoured. Latency is the acceptable cost of comparability.
+    return { route: 'alibaba', shadowToken: 'alibaba', providerArg: 'alibaba', shadowModel: model, promptCache: '', timeoutMs: 900000 };
   }
   if (isDeepseekModel(model)) {
     // Native DeepSeek route (2026-08-17) — REPLACES the Alibaba-workspace

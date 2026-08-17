@@ -148,7 +148,10 @@ describe('deriveArms — the refactor must change no request', () => {
 
   it('a route with timeoutMs (alibaba) propagates GEMINI_REVIEW_TIMEOUT_MS into the derived arm\'s env — appended LAST so it is not silently reordered away', () => {
     const derived = deriveArms({ arms: [{ id: 'qwen', model: 'qwen3.8-max', mode: 'shadow' }] });
-    assert.equal(derived[0].env.GEMINI_REVIEW_TIMEOUT_MS, '600000');
+    // Derived from transportForModel, not a duplicated literal — the value's
+    // own justification lives in the transport test above, and pinning it
+    // twice just means a future re-measure has to be applied in two places.
+    assert.equal(derived[0].env.GEMINI_REVIEW_TIMEOUT_MS, String(transportForModel('qwen3.8-max').timeoutMs));
     assert.equal(Object.keys(derived[0].env).at(-1), 'GEMINI_REVIEW_TIMEOUT_MS', 'must be the last key — spawn.mjs relies on nothing overwriting it downstream');
   });
 
@@ -200,8 +203,13 @@ describe('transportForModel — the HOW the config deliberately does not express
     assert.throws(() => transportForModel('deepseek-v4-pro-0813'), /no transport for model/);
   });
 
-  it('the alibaba route (qwen) carries a longer timeoutMs — variance, not the deterministic failure class that moved deepseek off it', () => {
-    assert.equal(transportForModel('qwen3.8-max').timeoutMs, 600000);
+  it('the alibaba route (qwen) carries a longer timeoutMs, sized from a real measurement (465.5s) not a guess', () => {
+    const ms = transportForModel('qwen3.8-max').timeoutMs;
+    assert.equal(ms, 900000);
+    // The floor that matters: a measured 465.5s real review must fit with
+    // real headroom. 600s gave only 1.3x and was exceeded once on a larger
+    // code-mode envelope, so this must not be quietly ratcheted back down.
+    assert.ok(ms >= 465500 * 1.5, 'must keep >=1.5x headroom over the 465.5s measured review');
   });
 
   it('every OTHER route has NO timeoutMs override — the 300s default is fine for a deterministic pass/fail route', () => {

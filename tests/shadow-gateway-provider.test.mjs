@@ -268,7 +268,7 @@ describe('Alibaba shadow — resolution states (native replacement for the qwen 
 });
 
 describe('Alibaba shadow — the descriptor is a direct endpoint, not an OpenRouter-style router', () => {
-  it('carries no OpenRouter routing pins, and requestExtras is empty (no reasoning knob verified live yet)', () => {
+  it('carries no OpenRouter routing pins, and sends enable_thinking EXPLICITLY TRUE — reasoning parity is the whole point of a comparison arm', () => {
     const src = readFileSync(new URL('../scripts/gemini-review.mjs', import.meta.url), 'utf-8');
 
     const canonical = shadow({ provider: 'alibaba', model: 'qwen3.8-max' }, { ALIBABA_CLOUD_API_KEY: 'k', ALIBABA_CLOUD_BASE_URL: 'https://example.invalid/v1' }).provider;
@@ -279,7 +279,24 @@ describe('Alibaba shadow — the descriptor is a direct endpoint, not an OpenRou
     assert.match(body, /structuredOutput:\s*true/, 'the shadow needs the JSON schema, not prose');
     assert.doesNotMatch(body, /require_parameters:\s*true/, 'OpenRouter-only — alibaba is one workspace endpoint, nothing to require');
     assert.doesNotMatch(body, /sort:\s*'[a-z]+'/, 'sort is OpenRouter-only routing — meaningless for a direct endpoint');
-    assert.match(body, /requestExtras:\s*\(\)\s*=>\s*\(\{\}\)/, 'no reasoning field is claimed until verified live against this workspace');
+    // Set at all: Alibaba documents enable_thinking as required top-level for
+    // non-streaming calls to thinking models, and leaving it unset is what
+    // correlated with the observed stalls.
+    assert.match(body, /enable_thinking:\s*true/, 'must send enable_thinking explicitly — unset is the state that stalled');
+    // And TRUE specifically. `false` would be faster and cheaper and would
+    // WRECK the comparison: reasoningEffort:'high' binds every arm and is
+    // hashed into the cohort digest, so an arm with reasoning off measures
+    // the dial rather than the model (the campaign's own measured lesson:
+    // 0 findings at `low` vs 3 at `high` on one identical transcript).
+    assert.doesNotMatch(body, /enable_thinking:\s*false/, 'reasoning must NOT be disabled on a comparison arm — that measures the setting, not the model');
+  });
+
+  it('the alibaba requestExtras actually EMITS enable_thinking:true at runtime, not just in source text', () => {
+    // The assertion above reads source; this one exercises the function, so a
+    // future refactor that moves the field behind a condition cannot pass by
+    // leaving the literal in a comment.
+    const extras = _internals.PROVIDERS.alibaba.requestExtras();
+    assert.equal(extras.enable_thinking, true);
   });
 
   it('the SHADOW_PROVIDER_SPECS entry is gateway-shaped (no default sentinel) but its own family', () => {
