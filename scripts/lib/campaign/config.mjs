@@ -230,3 +230,27 @@ export function selectCampaignConfig({ dir = CAMPAIGNS_DIR, campaignId = null } 
   }
   return { ok: true, ...loaded[0] };
 }
+
+/**
+ * The env var NAME holding a campaign's HMAC key.
+ *
+ * Lives here, not in the store that persists it (moved 2026-08-18): it derives
+ * a NAME from a campaign id, which is campaign identity rather than
+ * persistence, and it has two readers — `store/campaign.mjs`, which writes the
+ * string into `campaign_worksheets`, and the pinned-revision fixture's
+ * credential preflight, which checks the variable is set before a spend-bearing
+ * run starts. Importing it from the store would have been a
+ * `shared-lib -> stores` layering violation, and re-spelling it in the
+ * preflight would have been a second source of truth for a name the store
+ * writes to a table.
+ *
+ * `campaign_worksheets` persists only this NAME: an env-held secret must never
+ * land in a table that gets dumped, replicated, and read by every consumer of
+ * this DSN.
+ *
+ * @param {string} campaignKey
+ * @returns {string}
+ */
+export function hmacKeyRefFor(campaignKey) {
+  return `CAMPAIGN_HMAC_KEY_${String(campaignKey).toUpperCase().replace(/[^A-Z0-9]/g, '_')}`;
+}

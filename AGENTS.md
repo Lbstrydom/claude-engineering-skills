@@ -361,8 +361,8 @@ Runs as part of `npm run check` (the pre-push hook). ERRORs block; WARNs are adv
 
 **Do not hand-maintain a module tree here** — [`docs/architecture-map.md`](docs/architecture-map.md)
 is the live, generated per-symbol index (see the bootstrap note at the top of this
-file); an inline tree goes stale silently (the one removed 2026-07-13 still listed
-2 test files against 100+ real ones). Layout in one line: `scripts/*.mjs` are CLI
+file); an inline tree goes stale silently (the one removed 2026-07-13 listed
+2 test files against 100+ real). Layout in one line: `scripts/*.mjs` are CLI
 entry points; `scripts/lib/**` are focused modules (split from the former
 `shared.mjs` monolith, which remains as a backwards-compatible barrel); `tests/` is
 the Node built-in test-runner suite; `.claude/skills/**` is generated from `skills/**`.
@@ -373,9 +373,8 @@ Per-module prose (openai-audit, gemini-review, the learning-store barrel) and th
 named patterns (adaptive sizing, semantic dedup, atomic persistence, the closed
 Gemini loop, …) live in
 [`docs/reference/audit-internals.md`](docs/reference/audit-internals.md).
-Condensed out 2026-07-20 because it had already gone stale — it still described
-`learning-store.mjs` as talking to Supabase three milestones after M3 split it
-into 9 modules behind the `db/` seam, which is the rot the rule above prevents.
+Condensed out 2026-07-20 having already rotted — exactly what the rule above
+prevents.
 
 ### Testing
 
@@ -389,6 +388,20 @@ here, so tree-checking gave false blocks (a cried-wolf gate gets `--no-verify`'d
 and false passes (a fix in the tree but not the commit read green). Not `git
 stash` — that yanks the other session's files mid-edit. Detail + escape hatches:
 [`docs/runbooks/prepush-sandbox.md`](docs/runbooks/prepush-sandbox.md).
+
+#### A spend-bearing run PINS its revision — it never shares the working tree
+
+Same tree, higher stakes: a bake-off snapshot spawns 6 arms over 15–25 min and
+the store refuses one whose arms disagree, so two snapshots and ~$13 died on
+2026-08-17 — one to a rebase, one to a **concurrent session's commit**. Run ANY
+revision-stamped, spend-bearing job (arm-eval, solo-control, model-eval,
+replays) via `npm run fixture:create`: detached at an explicit sha,
+`node_modules` linked, **every arm's credential verified before spend** — an
+absent key does not error, the arm records SKIPPED and the snapshot dies after
+the others billed. Gitignored inputs are ABSENT: transcripts by absolute path,
+and **trust the store, not the fixture's local bake-off log**, which reads
+near-zero and looks like lost progress.
+[Runbook](docs/runbooks/pinned-revision-fixture.md)
 
 - **A DB suite no runner names has never run.** A suite gated on
   `AUDIT_DB_TEST_URL` skips itself without a disposable DSN, and node reports a
@@ -712,25 +725,21 @@ call-site list: [`docs/reference/anthropic-backend-routing.md`](docs/reference/a
 
 ## Shadow Final-Review A/B — CLOSED 2026-07-28, verdict KEEP
 
-Opt-in, observation-only 2nd final reviewer, run blind to test whether a second
-gate earns its keep. **Committed default unset; paused locally 2026-08-14 on cost**
-(KEEP was the original verdict, but an unscoped envelope made a shadow run cost
-multiples of the primary Gemini review it exists to sanity-check).
+Opt-in, observation-only 2nd final reviewer, run blind. **Committed default unset;
+paused locally 2026-08-14 on cost** — an unscoped envelope made a shadow run cost
+multiples of the primary Gemini review it exists to sanity-check.
 `FINAL_REVIEW_SHADOW=claude-opus|gemini|openrouter|xai` (a gateway needs an explicit
 `FINAL_REVIEW_SHADOW_MODEL`; xai is a native provider, own base URL/credential pair,
 not a gateway; unset ⇒ not entered, byte-identical; no-op under Azure; never gates).
 
 **Envelope scope (2026-08-14, plan: `final-review-scoped-second-reviewer.md`).**
-`FINAL_REVIEW_SHADOW_SCOPE=full|thin|gap` (default `full`, the historical
-byte-identical envelope). `thin` drops repo-context and narrows code files to the
-in-scope diff, budget-capped (`THIN_ENVELOPE_MAX_CHARS`,
-`scripts/lib/final-review/envelope.mjs`) — the intended default going forward,
-since the shadow's job is a targeted gap-check against Gemini's already-extensive
-review, not a second full audit. `gap` additionally shows the shadow the primary's
-own findings (projected, capped, KD-3) and is campaign-ineligible (KD-5). A campaign
-manifest's `controls.envelopeScope` binds a cohort to one scope (KD-6); an active
-campaign refuses `gap` and any invalid scope value outright, before any provider
-call. Full env-var table: [`docs/reference/environment-variables.md`](docs/reference/environment-variables.md)
+`FINAL_REVIEW_SHADOW_SCOPE=full|thin|gap` — `full` is the historical
+byte-identical default; **`thin` is the intended default going forward** (the
+shadow's job is a targeted gap-check, not a second full audit); `gap` shows the
+shadow the primary's findings and is **campaign-ineligible**. A manifest's
+`controls.envelopeScope` binds a cohort to ONE scope, and an active campaign
+refuses `gap` or an invalid value **before any provider call**. Mechanics +
+budget cap: [`environment-variables.md`](docs/reference/environment-variables.md)
 §Shadow final review.
 Verdict/method/stopping rule + three dated corrections: [briefing](docs/research/final-review-shadow-adjudication-briefing.md) · [plan](docs/plans/final-review-shadow-reviewer.md).
 Three results that generalise — **read before any reviewer/model comparison**:
@@ -748,7 +757,7 @@ Three results that generalise — **read before any reviewer/model comparison**:
   PowerShell vars in CLI examples, **never `<angle-brackets>`** (PowerShell reserves
   `<` — unpasteable); render a `--worksheet`, not raw JSON.
 
-→ Measurement how-to + attribution schema: [`final-review-shadow-reviewer.md`](docs/plans/final-review-shadow-reviewer.md). **Before building a bigger instrument**, read [`final-review-shadow-bakeoff.md`](docs/plans/final-review-shadow-bakeoff.md)'s PARKED banner (right-sizing) + [`final-review-credit-and-cheap-shadow.md`](docs/plans/final-review-credit-and-cheap-shadow.md) §1.2 (cheap-gateway evidence).
+→ Measurement how-to + attribution schema: the plan linked above. **Before building a bigger instrument**, read [`final-review-shadow-bakeoff.md`](docs/plans/final-review-shadow-bakeoff.md)'s PARKED banner (right-sizing) + [`final-review-credit-and-cheap-shadow.md`](docs/plans/final-review-credit-and-cheap-shadow.md) §1.2 (cheap-gateway evidence).
 
 ## Tiered-Recall Audit Pipeline
 
@@ -778,10 +787,8 @@ CLI/dashboard surfaces and full incident history: plan doc, pointer below):
   [model-eval-harness.md](docs/runbooks/model-eval-harness.md) §"Adjudicator
   role — not yet run".
 
-→ Full plan, phase spec, Stage-1 triager resolution, shadow-validation
-mechanics + CLI/dashboard surfaces, Stage-2 adapter wiring, and the audit
-trail: [`docs/plans/tiered-recall-audit-pipeline.md`](docs/plans/tiered-recall-audit-pipeline.md)
-(still in `docs/plans/` — Phase 14 pends the shadow window).
+→ Everything enumerated above:
+[`docs/plans/tiered-recall-audit-pipeline.md`](docs/plans/tiered-recall-audit-pipeline.md).
 
 ## Model Swap-In Evaluation Harness
 

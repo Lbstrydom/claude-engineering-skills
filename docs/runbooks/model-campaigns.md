@@ -161,9 +161,36 @@ symlink — refuses at **load**, before any provider call, non-zero exit.
 
 ## 2. Collect
 
+**Collect in a pinned fixture, not the shared working tree.** A snapshot spawns
+6 arms over 15–25 minutes and the store refuses one whose arms disagree about the
+commit ("one snapshot is one revision"). Two snapshots and ~$13 were destroyed on
+2026-08-17 — once by a rebase mid-collection, once by a **concurrent agent
+session** committing while collection ran. Several sessions routinely work this
+repo in one tree, so this is not something care prevents.
+
 ```bash
-node scripts/bakeoff-collect.mjs --transcript .audit/transcript.json --plan docs/plans/model-comparison-campaigns.md
+npm run fixture:create -- --name bakeoff-2026q3 --rev HEAD --campaign final-review-scoped-2026q3
 ```
+
+That pins the revision, links `node_modules`, and **verifies every declared arm's
+credential before anything is spent** — a missing key does not error at runtime,
+it makes the arm record as SKIPPED and the snapshot is rejected only after the
+other arms have billed. Full guide:
+[`pinned-revision-fixture.md`](pinned-revision-fixture.md).
+
+Then, from inside the fixture — note the **absolute** transcript path, because
+`.audit/` is gitignored and therefore absent from the fixture:
+
+```bash
+node scripts/bakeoff-collect.mjs --transcript C:/GIT/claude-engineering-skills/.audit/transcript.json --plan docs/plans/model-comparison-campaigns.md
+```
+
+> **Trust the store, not the local log.** `LOG_PATH` is the repo-relative
+> `.audit/bakeoff-log.jsonl`, so a fixture writes its **own, empty** one. Running
+> `--progress` there reads near-zero **regardless of real campaign progress**, and
+> it looks exactly like lost work. It is not. `reconcile` (below) against the
+> store is the only trustworthy count, and `npm run fixture:verify` prints the
+> fixture-local number beside a label saying it is not campaign progress.
 
 Arms are derived from your config — there is no hardcoded table to fork. The
 runner stamps every snapshot with a **lock digest** computed over the resolved

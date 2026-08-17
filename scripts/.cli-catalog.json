@@ -153,14 +153,6 @@
       "description": "The DRIFT-gate form of cli:flags (part of `npm run check`): fails only on a NET-NEW CLI that parses flags but ignores unknown ones. The 24 pre-existing ones are baselined so the gate is a ratchet, not a wall. Origin: refresh.mjs --full --dry-run silently discarded --dry-run and ran a real full refresh.",
       "category": "diagnostic"
     },
-    "emit:exit:gate": {
-      "description": "Drift gate for the emit() exit-code coupling (part of `npm run check`). `emit({ok:false})` sets a non-zero exit code since 2026-08-12; the declared opt-out `emit(env,{softFail:true,reason})` is legitimate but must not accumulate, so this counts them and fails when the count GROWS. Measured before the coupling landed: 13 of 124 captured cross-skill invocations reported ok:false at exit 0. Baseline: .emit-exit-baseline.json.",
-      "category": "diagnostic"
-    },
-    "emit:exit:baseline": {
-      "description": "Re-write the emit:exit:gate baseline deliberately, after reviewing a new declared opt-out (or after retiring one — the ratchet fails in BOTH directions so a reduction is recorded rather than silently absorbed).",
-      "category": "maintenance"
-    },
     "context:check": {
       "description": "Detect drift between CLAUDE.md / AGENTS.md and the live codebase.",
       "category": "diagnostic"
@@ -221,6 +213,11 @@
       "description": "RLS check, JSON output for CI consumption (invoke `node` directly in CI, not via npm, to avoid npm log lines polluting stdout).",
       "category": "diagnostic"
     },
+    "db:enrolment:gate": {
+      "script": "db:enrolment:gate",
+      "description": "Requires every AUDIT_DB_TEST_URL-gated test suite to be named by a runner (db-test-container.mjs's *_SUITE_FILES) or to carry a written DB_SUITE_ENROLMENT_EXEMPT reason. A gated suite no runner names skips itself everywhere, and node reports a suite that never ran as a clean pass — 15 suites sat in that state until 2026-08-11. Iterates the filesystem, the only side of the comparison that can see a file no list mentions. Fails closed on zero files scanned, zero candidates, a stale or unexplained exemption, or a file both enrolled and exempt.",
+      "category": "diagnostic"
+    },
     "db:local": {
       "description": "Run the destructive DB integration suites locally against an ephemeral Docker Postgres (pgvector/pg16), mirroring the postgres-parity CI job. Requires Docker Desktop. See docs/runbooks/postgres-parity.md.",
       "category": "diagnostic"
@@ -231,11 +228,6 @@
     },
     "db:migrate": {
       "description": "Apply pending migrations (idempotent; skips already-applied via sha256). Requires AUDIT_DB_URL.",
-      "category": "diagnostic"
-    },
-    "db:enrolment:gate": {
-      "script": "db:enrolment:gate",
-      "description": "Requires every AUDIT_DB_TEST_URL-gated test suite to be named by a runner (db-test-container.mjs's *_SUITE_FILES) or to carry a written DB_SUITE_ENROLMENT_EXEMPT reason. A gated suite no runner names skips itself everywhere, and node reports a suite that never ran as a clean pass — 15 suites sat in that state until 2026-08-11. Iterates the filesystem, the only side of the comparison that can see a file no list mentions. Fails closed on zero files scanned, zero candidates, a stale or unexplained exemption, or a file both enrolled and exempt.",
       "category": "diagnostic"
     },
     "db:suites:gate": {
@@ -271,6 +263,14 @@
       "description": "Machine-readable docs/ root placement report ({ok, checked, unexpected, staleAllowlistEntries}).",
       "category": "diagnostic"
     },
+    "docs:citations": {
+      "description": "Re-resolves every pinned `path:line (sha)` citation in a document at its commit and reports ok / moved / drifted / unresolvable. Catches the citation that still RESOLVES but to different content — the decay a proofread cannot see, because proofreading re-reads the sentence rather than re-running the citation. Report-only and deliberately NOT in `npm run check`; `--require-citations` makes a parsed-nothing run exit 1 so a clean report over zero citations cannot read as a pass. Contract: docs/audit/shared-references/verification-discipline.md §1.",
+      "category": "diagnostic"
+    },
+    "docs:citations:json": {
+      "description": "JSON form of docs:citations — {summary, findings}. Writes nothing; redirect stdout if you want a file (the CLI has no --out on purpose, so `writes nothing` stays true).",
+      "category": "diagnostic"
+    },
     "docs:refs": {
       "description": "Reference-integrity gate: every cited repo path must resolve against the git index, or be marked a placeholder (docs/plans/<name>.md) or a forward-ref ((planned)). Report-only for now; gating lands with the plan's Phase 6. Contract: docs/reference/reference-integrity.md.",
       "category": "diagnostic"
@@ -287,8 +287,28 @@
       "description": "Run the deterministic efficacy lints (cache-inertness, cache-instability, canary-no-test) — the GREEN≠REALIZED Cluster A check. Off by default; opt in via a committed efficacy-lints.config.json. Advisory in `npm run check` unless gate:true.",
       "category": "audit"
     },
+    "emit:exit:baseline": {
+      "description": "Re-write the emit:exit:gate baseline deliberately, after reviewing a new declared opt-out (or after retiring one — the ratchet fails in BOTH directions so a reduction is recorded rather than silently absorbed).",
+      "category": "maintenance"
+    },
+    "emit:exit:gate": {
+      "description": "Drift gate for the emit() exit-code coupling (part of `npm run check`). `emit({ok:false})` sets a non-zero exit code since 2026-08-12; the declared opt-out `emit(env,{softFail:true,reason})` is legitimate but must not accumulate, so this counts them and fails when the count GROWS. Measured before the coupling landed: 13 of 124 captured cross-skill invocations reported ok:false at exit 0. Baseline: .emit-exit-baseline.json.",
+      "category": "diagnostic"
+    },
     "final-review:set": {
       "description": "Persist the per-repo final-review provider (gemini | azure-claude | anthropic | default) to .env. Pass the provider as an arg: `npm run final-review:set -- azure-claude`. The work-repo lever for opting into Azure Foundry Opus.",
+      "category": "diagnostic"
+    },
+    "fixture:create": {
+      "description": "Create a detached worktree pinned at an explicit commit for a spend-bearing run, with node_modules linked and every declared arm credential verified before any spend.",
+      "category": "diagnostic"
+    },
+    "fixture:remove": {
+      "description": "Remove a pinned fixture, unlinking node_modules first and reconciling the worktree registry with disk.",
+      "category": "diagnostic"
+    },
+    "fixture:verify": {
+      "description": "Re-assert a pinned fixture: detached, at the pinned sha, clean tree, node_modules resolvable, credentials present.",
       "category": "diagnostic"
     },
     "gates:check": {
@@ -371,6 +391,10 @@
       "description": "Report the last local-maintenance run without running anything.",
       "category": "diagnostic"
     },
+    "mcp:parity:gate": {
+      "description": "Asserts .mcp.json (Claude Code, root `mcpServers`) and .vscode/mcp.json (VS Code/Copilot, root `servers`) stay semantically equivalent across their two deliberately-different schemas. Validates strictly rather than projecting: an unknown field or a non-stdio descriptor is a hard failure, so servers added later are covered too. Origin: .vscode/mcp.json omitted `-y` from @playwright/mcp, so on a cold machine npx prompted for install and the MCP server never started — and both consumer repos were already shipping the broken form.",
+      "category": "diagnostic"
+    },
     "memory:health": {
       "description": "Memory-health gate — fuzzy re-raise rate, cluster density, recurrence (human report).",
       "category": "diagnostic"
@@ -390,6 +414,14 @@
     "models:freshness:json": {
       "description": "Model-freshness check, JSON output.",
       "category": "diagnostic"
+    },
+    "mutation": {
+      "description": "Mutation testing (Stryker) over a declared registry of seams. --list shows which modules have had their tests PROVEN to detect defects; --target <name> runs one. Floors are a ratchet (fail on a DROP), not an aspiration. Deliberately not in the pre-push check: slow, and scores drift with unrelated refactors.",
+      "category": "testing"
+    },
+    "mutation:all": {
+      "description": "Run every mutation-guarded seam in sequence. Exit 1 when any score falls below its recorded floor — i.e. a test was weakened.",
+      "category": "testing"
     },
     "nav:audit": {
       "description": "Static navigation / IA audit — system-level nav-graph lens; offered-vs-needed, drift-only CI gate.",
@@ -467,14 +499,6 @@
       "description": "Apply 'require branches up to date before merging' to a repo's existing main-branch ruleset (never creates protection where none exists). Needs gh CLI + admin.",
       "category": "diagnostic"
     },
-    "runner:doctor": {
-      "description": "For a repo hitting the GHE 'hosted runners disabled' block: test whether the current gh identity can self-serve a repo-scoped self-hosted runner, and print the setup recipe or the local-maintenance-checks fallback.",
-      "category": "diagnostic"
-    },
-    "runner:doctor:json": {
-      "description": "runner:doctor, machine-readable output.",
-      "category": "diagnostic"
-    },
     "requirements:map": {
       "description": "Regenerate docs/requirements-map.md from .requirements/ledger.json.",
       "category": "plans"
@@ -482,6 +506,14 @@
     "requirements:map:check": {
       "description": "Fail if docs/requirements-map.md is stale against the ledger (Category-B freshness gate, in the pre-push check).",
       "category": "plans"
+    },
+    "runner:doctor": {
+      "description": "For a repo hitting the GHE 'hosted runners disabled' block: test whether the current gh identity can self-serve a repo-scoped self-hosted runner, and print the setup recipe or the local-maintenance-checks fallback.",
+      "category": "diagnostic"
+    },
+    "runner:doctor:json": {
+      "description": "runner:doctor, machine-readable output.",
+      "category": "diagnostic"
     },
     "security:refresh": {
       "description": "Refresh the security-incident memory from docs/security-strategy.md.",
@@ -515,6 +547,10 @@
     "skills:help": {
       "description": "Print all available skills + usage to stdout.",
       "category": "skills"
+    },
+    "skills:hydrate": {
+      "description": "Copy the main checkout's synced tooling tree into a linked git worktree, where it is absent because it is gitignored. No-op in the main checkout and in this source repo (tooling is tracked at scripts/).",
+      "category": "setup"
     },
     "skills:index": {
       "description": "Generate docs/SKILLS-INDEX.md (skill catalog).",
@@ -576,41 +612,17 @@
       "description": "Gated DB-integration tests (repo-identity stability + fragmentation guardrail). Requires a disposable AUDIT_DB_TEST_URL; skipped when unset. Never touches the live store.",
       "category": "test"
     },
-    "upstream:issues": {
-      "description": "Triage worksheet for upstream bug reports filed from consumer repos (bundle staleness + prior fixes).",
-      "category": "sync"
-    },
     "update-auditloop": {
       "description": "Update THIS clone of the bundle from its own upstream: fast-forward-only pull, npm ci when the manifests changed or the dep tree is unhealthy, then skills:check. Never pushes. For a fork/mirror shared by a team — not sync:refresh, which copies the bundle into a separate product repo.",
       "category": "sync"
     },
-    "docs:citations": {
-      "description": "Re-resolves every pinned `path:line (sha)` citation in a document at its commit and reports ok / moved / drifted / unresolvable. Catches the citation that still RESOLVES but to different content — the decay a proofread cannot see, because proofreading re-reads the sentence rather than re-running the citation. Report-only and deliberately NOT in `npm run check`; `--require-citations` makes a parsed-nothing run exit 1 so a clean report over zero citations cannot read as a pass. Contract: docs/audit/shared-references/verification-discipline.md §1.",
-      "category": "diagnostic"
-    },
-    "docs:citations:json": {
-      "description": "JSON form of docs:citations — {summary, findings}. Writes nothing; redirect stdout if you want a file (the CLI has no --out on purpose, so `writes nothing` stays true).",
-      "category": "diagnostic"
-    },
-    "mutation": {
-      "description": "Mutation testing (Stryker) over a declared registry of seams. --list shows which modules have had their tests PROVEN to detect defects; --target <name> runs one. Floors are a ratchet (fail on a DROP), not an aspiration. Deliberately not in the pre-push check: slow, and scores drift with unrelated refactors.",
-      "category": "testing"
-    },
-    "mutation:all": {
-      "description": "Run every mutation-guarded seam in sequence. Exit 1 when any score falls below its recorded floor — i.e. a test was weakened.",
-      "category": "testing"
-    },
-    "mcp:parity:gate": {
-      "description": "Asserts .mcp.json (Claude Code, root `mcpServers`) and .vscode/mcp.json (VS Code/Copilot, root `servers`) stay semantically equivalent across their two deliberately-different schemas. Validates strictly rather than projecting: an unknown field or a non-stdio descriptor is a hard failure, so servers added later are covered too. Origin: .vscode/mcp.json omitted `-y` from @playwright/mcp, so on a cold machine npx prompted for install and the MCP server never started — and both consumer repos were already shipping the broken form.",
-      "category": "diagnostic"
+    "upstream:issues": {
+      "description": "Triage worksheet for upstream bug reports filed from consumer repos (bundle staleness + prior fixes).",
+      "category": "sync"
     },
     "worktree:preflight:gate": {
       "description": "Fail when a skill documents a command into the synced tooling tree without warning that the tree is absent in a linked git worktree.",
       "category": "gate"
-    },
-    "skills:hydrate": {
-      "description": "Copy the main checkout's synced tooling tree into a linked git worktree, where it is absent because it is gitignored. No-op in the main checkout and in this source repo (tooling is tracked at scripts/).",
-      "category": "setup"
     }
   }
 }

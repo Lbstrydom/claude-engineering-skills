@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**5 active · 195 terminal · 27 audit summaries · 4 reference docs**
+**5 active · 196 terminal · 27 audit summaries · 4 reference docs**
 
 ---
 
@@ -45,7 +45,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 192 completed plans</summary>
+<summary>Show all 193 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -175,6 +175,7 @@ source comments that no docs linter sees — stays valid.
 | [Phase G.1 — Storage Interface + Facade + noop + Supabase refactor](./phase-g1-storage-interface-noop-supabase.md) | `Complete` | shipped — `scripts/lib/db/` (client/query/rpc/errors) + 10 store modules under `scripts/lib/store/` (arch-m… |
 | [Phase H — Public-Distribution Hardening](./phase-h-public-distribution.md) | `Complete` | shipped — `install.mjs` (one-shot installer with key collection) + `scripts/check-deps.mjs` (dependency aud… |
 | [Phase I — CLAUDE.md / AGENTS.md Hygiene + Sprawl Control](./phase-i-claudemd-hygiene.md) | `Complete` | shipped — `/ai-context-management` skill + `scripts/check-context-drift.mjs` (the strict-mode drift gate; r… |
+| [Pinned-Revision Fixture for Spend-Bearing Runs](./pinned-revision-fixture.md) | `Complete` | Phases 1–5 implemented and shipped 2026-08-18; `npm test` 12902 pass / 0 fail and `npm run check` green. Wi… |
 | [Plan-audit learning parity + AGENTS.md sprawl cap](./plan-audit-parity-and-agents-md-cap.md) | `Complete` |  |
 | [pnpm-aware consumer installation](./pnpm-consumer-support.md) | `Complete` |  |
 | [Postgres Parity — One Postgres Code Path for the Audit-Loop Store](./postgres-parity.md) | `Complete` | 2026-07-18 — the one deferred follow-up was retired, not |

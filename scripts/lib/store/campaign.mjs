@@ -26,6 +26,7 @@ import { STATIC_POOL, OSS_POOL, parseClaudeModel, parseGeminiModel, parseOpenAIM
 import { OSS_PRICING } from '../model-pricing.mjs';
 import { FINDING_MATCH_SCHEMA_VERSION } from '../config.mjs';
 import { terminalEvent } from '../campaign/verdict.mjs';
+import { hmacKeyRefFor } from '../campaign/config.mjs';
 
 // ── The blind DTO ───────────────────────────────────────────────────────────
 
@@ -333,14 +334,16 @@ export function buildBlindRow(src, redact) {
 
 // ── Worksheet identity + the calibration sample ─────────────────────────────
 
-/**
- * The env var NAME holding a campaign's HMAC key. `campaign_worksheets`
- * persists only this string — an env-held secret must never land in a table
- * that gets dumped, replicated, and read by every consumer of this DSN.
- */
-export function hmacKeyRefFor(campaignKey) {
-  return `CAMPAIGN_HMAC_KEY_${String(campaignKey).toUpperCase().replace(/[^A-Z0-9]/g, '_')}`;
-}
+// `hmacKeyRefFor` MOVED to `../campaign/config.mjs` on 2026-08-18 and re-exported
+// here so every existing caller is unchanged. It derives an env-var NAME from a
+// campaign id — a campaign-identity concern, not a persistence one — and the
+// pinned-revision fixture's credential preflight (`shared-lib`) needs the same
+// derivation. Re-spelling it there would have been a second source of truth for
+// a name the store writes into `campaign_worksheets`; importing it FROM the
+// store would have been a `shared-lib -> stores` layering violation. Moving the
+// function is the refactor the layering oracle's "refactor > retag > declare"
+// order asks for.
+export { hmacKeyRefFor };
 
 /**
  * Read the campaign's HMAC key from the environment.

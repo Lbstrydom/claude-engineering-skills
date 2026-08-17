@@ -320,6 +320,10 @@
       "domain": "shared-lib"
     },
     {
+      "pattern": "scripts/lib/pinned-worktree/**",
+      "domain": "shared-lib"
+    },
+    {
       "pattern": "scripts/lib/comparison/**",
       "domain": "shared-lib"
     },

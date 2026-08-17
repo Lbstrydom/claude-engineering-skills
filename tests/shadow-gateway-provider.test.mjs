@@ -205,14 +205,17 @@ describe('xAI shadow — the descriptor is DELIBERATELY NOT the OpenRouter shape
     assert.doesNotMatch(body, /reasoning:\s*\{\s*effort:/, 'must NOT use OpenRouter\'s NESTED shape — xai would silently ignore it');
   });
 
+  // Asserted on the IMPORTED table, not on source text. The table moved to
+  // `scripts/lib/final-review/provider-specs.mjs` on 2026-08-18 (it has a second
+  // reader — the pinned-revision fixture's credential preflight), and an
+  // exported object can be read directly. That is also strictly stronger than
+  // the line-regex this replaced: a regex over source cannot tell a live field
+  // from the same words inside a comment.
   it('the SHADOW_PROVIDER_SPECS entry is native (not gateway) — has a real defaultSentinel', () => {
-    const src = readFileSync(new URL('../scripts/gemini-review.mjs', import.meta.url), 'utf-8');
-    const specs = src.slice(src.indexOf('const SHADOW_PROVIDER_SPECS'));
-    const body = specs.slice(0, specs.indexOf('\n};'));
-    const xaiLine = body.split('\n').find((l) => l.includes("'xai':") || l.includes('xai:'));
-    assert.ok(xaiLine, 'no xai entry found in SHADOW_PROVIDER_SPECS');
-    assert.match(xaiLine, /defaultSentinel:\s*'latest-grok'/, 'xai must have a real default sentinel, unlike the openrouter gateway (defaultSentinel: null)');
-    assert.doesNotMatch(xaiLine, /gateway:\s*true/, 'xai is not a gateway — it is a single known provider with a real default model');
+    const xai = _internals.SHADOW_PROVIDER_SPECS.xai;
+    assert.ok(xai, 'no xai entry found in SHADOW_PROVIDER_SPECS');
+    assert.equal(xai.defaultSentinel, 'latest-grok', 'xai must have a real default sentinel, unlike the openrouter gateway (defaultSentinel: null)');
+    assert.notEqual(xai.gateway, true, 'xai is not a gateway — it is a single known provider with a real default model');
   });
 });
 
@@ -299,19 +302,13 @@ describe('Alibaba shadow — the descriptor is a direct endpoint, not an OpenRou
     assert.equal(extras.enable_thinking, true);
   });
 
+  // Imported-table assertion, same reasoning as the xai case above.
   it('the SHADOW_PROVIDER_SPECS entry is gateway-shaped (no default sentinel) but its own family', () => {
-    const src = readFileSync(new URL('../scripts/gemini-review.mjs', import.meta.url), 'utf-8');
-    const specs = src.slice(src.indexOf('const SHADOW_PROVIDER_SPECS'));
-    const body = specs.slice(0, specs.indexOf('\n};'));
-    // The entry spans multiple lines (unlike xai's single-line one above), so
-    // grab the whole `'alibaba': { ... },` block rather than one matching line.
-    const startIdx = body.indexOf("'alibaba':");
-    assert.ok(startIdx >= 0, 'no alibaba entry found in SHADOW_PROVIDER_SPECS');
-    const rest = body.slice(startIdx);
-    const alibabaBlock = rest.slice(0, rest.indexOf('\n  },') + 1);
-    assert.match(alibabaBlock, /gateway:\s*true/, 'alibaba has no single sensible default across Qwen/DeepSeek/GLM/Kimi');
-    assert.match(alibabaBlock, /defaultSentinel:\s*null/);
-    assert.match(alibabaBlock, /family:\s*'alibaba'/, 'must NOT share the "gateway" family string with openrouter — kept distinct for telemetry and its own family check');
+    const alibaba = _internals.SHADOW_PROVIDER_SPECS.alibaba;
+    assert.ok(alibaba, 'no alibaba entry found in SHADOW_PROVIDER_SPECS');
+    assert.equal(alibaba.gateway, true, 'alibaba has no single sensible default across Qwen/DeepSeek/GLM/Kimi');
+    assert.equal(alibaba.defaultSentinel, null);
+    assert.equal(alibaba.family, 'alibaba', 'must NOT share the "gateway" family string with openrouter — kept distinct for telemetry and its own family check');
   });
 });
 
@@ -366,17 +363,13 @@ describe('DeepSeek shadow — the descriptor degrades gracefully on this provide
     assert.match(body, /requestExtras:\s*\(\)\s*=>\s*\(\{\}\)/, 'no reasoning field is claimed until verified live');
   });
 
+  // Imported-table assertion, same reasoning as the xai/alibaba cases above.
   it('the SHADOW_PROVIDER_SPECS entry is gateway-shaped (no default sentinel) but its own family, distinct from alibaba', () => {
-    const src = readFileSync(new URL('../scripts/gemini-review.mjs', import.meta.url), 'utf-8');
-    const specs = src.slice(src.indexOf('const SHADOW_PROVIDER_SPECS'));
-    const body = specs.slice(0, specs.indexOf('\n};'));
-    const startIdx = body.indexOf("'deepseek':");
-    assert.ok(startIdx >= 0, 'no deepseek entry found in SHADOW_PROVIDER_SPECS');
-    const rest = body.slice(startIdx);
-    const deepseekBlock = rest.slice(0, rest.indexOf('\n  },') + 1);
-    assert.match(deepseekBlock, /gateway:\s*true/);
-    assert.match(deepseekBlock, /defaultSentinel:\s*null/);
-    assert.match(deepseekBlock, /family:\s*'deepseek'/, 'must not share alibaba\'s family string — a qwen id must not pass as deepseek');
+    const deepseek = _internals.SHADOW_PROVIDER_SPECS.deepseek;
+    assert.ok(deepseek, 'no deepseek entry found in SHADOW_PROVIDER_SPECS');
+    assert.equal(deepseek.gateway, true);
+    assert.equal(deepseek.defaultSentinel, null);
+    assert.equal(deepseek.family, 'deepseek', 'must not share alibaba\'s family string — a qwen id must not pass as deepseek');
   });
 });
 
