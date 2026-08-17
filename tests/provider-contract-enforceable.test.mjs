@@ -241,6 +241,7 @@ describe('COVERAGE — no z.toJSONSchema call site escapes the registry', () => 
       ['schema', 'generic parameter name in a shared helper — the caller owns the contract.'],
       ['strictSchema', 'schemas.mjs-local alias inside zodToGeminiSchema — the caller owns the contract; the concrete schema is covered at ITS call site.'],
       ['StageOneTriageInputSchema', 'stage1-triage.mjs NOT provider-facing — the JSON schema is used ONLY by clampToJsonSchemaLimits to read maxLength caps before the authoritative `StageOneTriageInputSchema.parse(clamped)` (full Zod, all refinements enforced). Nothing is sent to a provider, so a dropped refinement in the JSON form cannot weaken any contract.'],
+      ['AuditorExtractionSchema', 'model-eval-auditor.mjs NOT provider-facing — auditor-controls-execution-wiring.md §2 Bucket 2\'s tierCSchemaHash() hashes JSON.stringify(z.toJSONSchema(...)) purely for a content-identity comparison (does the manifest\'s declared outputSchemaId match what is actually running), never sends the JSON form to any provider. The SAME schema instance reaching a real provider is the EXISTING, already-allowlisted generic `schema` call site in provider-adapter.mjs\'s invokeNativeAnthropic — a separate code path, already covered.'],
     ]);
 
     const unregistered = [];

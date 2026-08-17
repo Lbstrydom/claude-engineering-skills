@@ -27,6 +27,27 @@ import { isCanonicalizableNumber } from './lock.mjs';
 /** Effort is the canonical shared dial — same enum for every role. */
 export const EFFORT_LEVELS = Object.freeze(['low', 'medium', 'high', 'xhigh', 'max']);
 
+/** `AuditorControlsSchema.scope`'s vocabulary — exported so
+ * `model-eval-auditor.mjs`'s `--scope` CLI validation imports it rather than
+ * re-declaring the enum (single source of truth). */
+export const AUDITOR_SCOPE_VALUES = Object.freeze(['diff', 'plan', 'full']);
+
+/**
+ * The upper bound on a Tier-C structured-extraction call's output budget.
+ * Owned here (shared-lib), not in `model-eval/provider-adapter.mjs`, so
+ * `AuditorControlsSchema.maxOutputTokens` can enforce the SAME ceiling a
+ * manifest is validated against — a manifest that never goes through the
+ * `model-eval-auditor.mjs` CLI's own preflight check (only through this
+ * schema) must not be able to declare a value that later fails when a
+ * spawned arm actually runs (auditor-controls-execution-wiring.md, round-4
+ * H4). `provider-adapter.mjs` imports this constant rather than defining its
+ * own local copy — one ceiling, not two that could drift. Named role-
+ * agnostically (not `AUDITOR_...`) because `invokeStructured` is role-
+ * agnostic too, serving `adjudicator`'s Tier-C path as well as `auditor`'s
+ * (Gemini-gate round-2 G2).
+ */
+export const TIER_C_MAX_OUTPUT_TOKENS = 8000;
+
 /**
  * The pre-flight ATTESTATION a manifest cites when it declares an xAI arm.
  * Lives inside `controls` — not at the manifest top level — so `configDigest`
@@ -85,13 +106,135 @@ export const FinalReviewShadowControlsSchema = z.object({
  * belong in the digest. `tier` deliberately does NOT live here — it is a CLI
  * argument applied to the whole manifest, and duplicating it would create two
  * sources for one value.
+ *
+ * Two buckets, not one flat field list (auditor-controls-execution-wiring.md):
+ *
+ * - `reasoningEffort`/`temperature`/`maxOutputTokens` (Tier C only) and
+ *   `scope`/`passes` (Tier A/B only) are each meaningless on the OTHER
+ *   execution branch a manifest's arm might resolve to — an arm's branch is
+ *   decided per-arm, at runtime, from its own candidate model's route
+ *   (`resolveEvaluationTier`), not declared by the manifest. Since
+ *   `AuditorControlsSchema`'s fields were all schema-required, a manifest
+ *   author had no way to declare "only the dials relevant to my arms" — every
+ *   manifest had to supply a value for fields that might not apply to any of
+ *   its arms. These five are `.optional()` HERE ONLY (not on `COMMON_SHAPE`,
+ *   which `AdjudicatorControlsSchema`/`FinalReviewShadowControlsSchema` still
+ *   spread required) — "omitted" is now real, distinguishable schema state.
+ * - `promptTemplateId`/`outputSchemaId`/`toolPolicy` stay REQUIRED — Tier C
+ *   runs in every comparison, directly (`screen`) or as promotion's fallback,
+ *   so there is no branch where a prompt/schema/tool identity is genuinely
+ *   inapplicable, unlike the five optional fields above.
+ *
+ * Whether a declared/omitted value actually GOVERNED a given arm's execution
+ * is a separate, per-arm question `deriveControlsApplied` (below) answers —
+ * this schema only decides what's a legal manifest.
  */
+/**
+ * APPEND-ONLY (Phase 4, round-4 M1 fix) — every historically-valid
+ * `buildAuditorPrompt`/`AuditorExtractionSchema` content-hash identity. NEVER
+ * remove an entry: a manifest's declared id must stay resolvable forever, even
+ * after the prompt/schema changes (§2 Bucket 2 — the enum validates
+ * PROVENANCE, not REPLAY; `deriveControlsApplied` decides whether the
+ * DECLARED id matches what's actually running, this list only decides
+ * whether it was ever real). Add a new entry — never edit or delete an old
+ * one — the moment `buildAuditorPrompt`/`AuditorExtractionSchema` changes;
+ * `tests/comparison-controls-execution.test.mjs`'s hash-recomputation test
+ * fails until the newest entry is added. Hash: sha256, 8 hex chars, computed
+ * per the exact spec in `deriveControlsApplied`'s own module doc below.
+ */
+export const AUDITOR_TIER_C_PROMPT_IDS = Object.freeze(['auditor-tier-c-v1-63dd0dbd']);
+export const AUDITOR_TIER_C_SCHEMA_IDS = Object.freeze(['auditor-extraction-v1-dbb6a8ce']);
+
 export const AuditorControlsSchema = z.object({
   ...COMMON_SHAPE,
-  passes: z.array(z.string().min(1)).min(1),
-  scope: z.enum(['diff', 'plan', 'full']),
-  rounds: z.number().int().positive(),
+  reasoningEffort: COMMON_SHAPE.reasoningEffort.optional(),
+  maxOutputTokens: COMMON_SHAPE.maxOutputTokens.max(TIER_C_MAX_OUTPUT_TOKENS).optional(),
+  temperature: COMMON_SHAPE.temperature.optional(),
+  passes: z.array(z.string().min(1)).min(1).optional(),
+  scope: z.enum(AUDITOR_SCOPE_VALUES).optional(),
+  // Narrowed from a bare non-empty string (round-1 M1) — round-4 M1 fixed a
+  // single z.literal() (round-3's fix) breaking reproducibility on the FIRST
+  // prompt/schema edit; append-only enum keeps every historical manifest
+  // resolvable forever.
+  promptTemplateId: z.enum(AUDITOR_TIER_C_PROMPT_IDS),
+  outputSchemaId: z.enum(AUDITOR_TIER_C_SCHEMA_IDS),
+  // No role in this schema's Tier-C paths uses tool-calling today, in EITHER
+  // branch — always 'none'. Not a COMMON_SHAPE change; adjudicator/
+  // final_review_shadow are out of this plan's scope (§7).
+  toolPolicy: z.literal('none'),
+  // A model-eval generation call is architecturally a single fresh round by
+  // arm-generation.mjs's own design; multi-round comparison arms are a real,
+  // separate feature not designed here.
+  rounds: z.number().int().positive()
+    .refine((v) => v === 1, 'auditor comparisons run generation once per arm — rounds > 1 is not implemented'),
 }).strict();
+
+/** Fields `scope`/`passes` are meaningful on. */
+const TIER_A_B_ONLY_FIELDS = Object.freeze(['scope', 'passes']);
+/** Fields `promptTemplateId`/`outputSchemaId`/`toolPolicy` are meaningful on
+ * — required by the schema (some arm might resolve to Tier C), but their
+ * APPLICATION is exactly as tier-conditional as the optional fields above. */
+const TIER_C_ONLY_FIELDS = Object.freeze(['toolPolicy']);
+/** Provider-forwardable Tier-C dials — application decided by `honoredDials`. */
+const PROVIDER_FORWARDABLE_FIELDS = Object.freeze(['reasoningEffort', 'temperature', 'maxOutputTokens']);
+/** Prompt/schema identity fields — application decided by hash comparison, not a flat branch check. */
+const IDENTITY_FIELDS = Object.freeze(['promptTemplateId', 'outputSchemaId']);
+
+/**
+ * Per-arm evidence: did a declared `AuditorControlsSchema` field actually
+ * govern THIS arm's execution? Answers a question the schema itself cannot
+ * (a manifest declares INTENT; which branch an arm resolves to, and whether
+ * a Tier-C provider can honor a given dial, are runtime facts). Covers eight
+ * of the schema's nine fields — `rounds` is excluded by design (fixed at
+ * `=== 1`, no tier-conditional application to report on).
+ *
+ * Called from ONE place (`model-eval-auditor.mjs`'s `main()`) after an arm's
+ * generation/extraction call returns — never inside a leaf function, which
+ * would need context (branch, honoredDials, liveHashes) it was never given
+ * (Gemini-gate round-1 G2 / round-2 G1 fixes: constructing this piecemeal in
+ * `arm-generation.mjs`/`scoreArmTierC` was unimplementable — those functions
+ * don't receive the full controls object or the resolved branch).
+ *
+ * @param {object} controls — the manifest's full AuditorControlsSchema-shaped object
+ * @param {{branch: 'tier-c'|'tier-a-b', honoredDials?: object, liveHashes?: {promptTemplateId?: string, outputSchemaId?: string}}} ctx
+ * @returns {object} one boolean per covered field PRESENT on `controls`; absent fields are omitted entirely (never `true`/`false`)
+ */
+export function deriveControlsApplied(controls, { branch, honoredDials, liveHashes } = {}) {
+  const result = {};
+
+  for (const field of TIER_A_B_ONLY_FIELDS) {
+    if (controls?.[field] === undefined) continue;
+    result[field] = branch === 'tier-a-b';
+  }
+
+  for (const field of TIER_C_ONLY_FIELDS) {
+    if (controls?.[field] === undefined) continue;
+    result[field] = branch === 'tier-c';
+  }
+
+  for (const field of IDENTITY_FIELDS) {
+    if (controls?.[field] === undefined) continue;
+    // Tier A/B never calls buildAuditorPrompt/AuditorExtractionSchema at all
+    // — these fields never identify anything it runs (§2 Bucket 2, round-4
+    // H2). On Tier C, the enum only proves the declared id was REAL at some
+    // point (round-5 H1) — `true` only if it matches what's ACTUALLY running
+    // right now (the live-recomputed hash), never merely "a valid member".
+    result[field] = branch === 'tier-c' && liveHashes?.[field] === controls[field];
+  }
+
+  for (const field of PROVIDER_FORWARDABLE_FIELDS) {
+    if (controls?.[field] === undefined) continue;
+    // Tier A/B: the production pipeline's adaptive per-pass selection is the
+    // fairness mechanism (§2 Bucket 3) — never honored, regardless of value.
+    // Tier C: whatever the provider layer actually reported (§2.5) — a
+    // present dial the resolved transport can't honor (e.g. reasoningEffort
+    // on Anthropic/Gemini, or an out-of-range Anthropic temperature) is
+    // `false`, not silently dropped from this object.
+    result[field] = branch === 'tier-a-b' ? false : Boolean(honoredDials?.[field]);
+  }
+
+  return result;
+}
 
 /**
  * `adjudicator` — the synchronous swap-eval's dials for the ground-truth

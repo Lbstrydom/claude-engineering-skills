@@ -14,12 +14,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { AUDITOR_TIER_C_PROMPT_IDS, AUDITOR_TIER_C_SCHEMA_IDS } from '../scripts/lib/comparison/controls.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SCRIPT = path.join(REPO_ROOT, 'scripts', 'model-eval-auditor.mjs');
 
 const VALID_CONTROLS = {
-  reasoningEffort: 'medium', promptTemplateId: 'auditor-v1', outputSchemaId: 'auditor-v1',
+  reasoningEffort: 'medium', promptTemplateId: AUDITOR_TIER_C_PROMPT_IDS.at(-1), outputSchemaId: AUDITOR_TIER_C_SCHEMA_IDS.at(-1),
   maxOutputTokens: 4096, toolPolicy: 'none', temperature: 0,
   passes: ['structure'], scope: 'diff', rounds: 1,
 };

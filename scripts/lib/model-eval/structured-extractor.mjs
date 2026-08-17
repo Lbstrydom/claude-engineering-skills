@@ -205,7 +205,12 @@ export function prepareModelEvalPayloadForEgress({ route, visibleInput }) {
   };
 }
 
-function buildAuditorPrompt(approvedContext) {
+// Exported (auditor-controls-execution-wiring.md §2 Bucket 2) — the live
+// hash-recomputation `deriveControlsApplied` needs to compare a manifest's
+// declared promptTemplateId against what's ACTUALLY running is computed by
+// model-eval-auditor.mjs, which imports this directly rather than
+// duplicating the template text.
+export function buildAuditorPrompt(approvedContext) {
   return [
     { role: 'system', content: 'You are auditing a code diff for defects. Report the file and a description of any defect you find.' },
     { role: 'user', content: `## Diff\n${approvedContext.evidenceHunk}\n\n## Files\n${approvedContext.filePaths.join(', ')}` },
@@ -231,9 +236,10 @@ function buildAdjudicatorPrompt(approvedContext) {
  * but this function had no way to receive one from its own caller — the one
  * layer between a caller and the provider call dropped cancellation on the
  * floor. Now propagated straight through (optional, defaults to none).
- * @param {{role: 'auditor'|'adjudicator', route: object, rawContext: object, signal?: AbortSignal}} args
+ * @param {{role: 'auditor'|'adjudicator', route: object, rawContext: object, signal?: AbortSignal,
+ *   dials?: {reasoningEffort?: string, temperature?: number, maxOutputTokens?: number}}} args
  */
-export async function extractStructured({ role, route, rawContext, signal }) {
+export async function extractStructured({ role, route, rawContext, signal, dials }) {
   // Round-7 audit M5 fix — every branch below is `role === 'auditor' ? A : B`,
   // so an unrecognized role (typo, malformed caller input) silently fell into
   // the adjudicator branch instead of failing. Validate against the shared
@@ -267,7 +273,7 @@ export async function extractStructured({ role, route, rawContext, signal }) {
   let lastErr;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const result = await invokeStructured({ route, messages, schema, signal });
+      const result = await invokeStructured({ route, messages, schema, signal, dials });
       // Round-10 audit H7 fix — the retry-once-on-malformed-output policy
       // stays (a single dropped comma shouldn't zero out an otherwise-good
       // model, and retrying transient formatting glitches is reasonable
@@ -276,6 +282,9 @@ export async function extractStructured({ role, route, rawContext, signal }) {
       // signal for an EVALUATION harness: a candidate needing a retry to
       // satisfy the schema is meaningfully different from one that didn't.
       // Expose it; don't decide the scoring policy here (Cluster B's job).
+      // `result` already carries `honoredDials` from invokeStructured — the
+      // spread relays it unchanged (auditor-controls-execution-wiring.md
+      // §5 — this function does not construct evidence itself).
       return { ...result, requiredRetry: attempt > 0 };
     } catch (err) {
       lastErr = err;

@@ -108,12 +108,12 @@ async function resolveGenerationClient(generation, route) {
 /**
  * @param {{arm: object, auditInput: {diff:string, files:string[], repoRoot:string},
  *   route: {transport:string, resolvedModel:string, deploymentId:string|null, pricingModel:string, provider:string},
- *   runId: string, role: string, signal?: AbortSignal,
+ *   runId: string, role: string, signal?: AbortSignal, scope?: string, passes?: string[],
  *   _runMultiPassCodeAudit?: typeof runMultiPassCodeAudit}} args
  * @returns {Promise<{findings: object[], usageEvent: object, mergedResult: object}>}
  */
 export async function runAuditGenerationArm({
-  arm, auditInput, route, runId, role, signal,
+  arm, auditInput, route, runId, role, signal, scope, passes,
   // Injectable seam (mirrors this repo's established pattern — e.g.
   // route-catalog.mjs's `azureCfg = azureConfig` default) — tests supply a
   // fake to prove call-count parity / correct client-per-kind selection /
@@ -196,7 +196,15 @@ export async function runAuditGenerationArm({
       {
         changedFiles: auditInput.files,
         diffFile: diffPath,
-        scopeMode: 'diff',
+        // `controls.scope`/`controls.passes` wiring (auditor-controls-
+        // execution-wiring.md, round 1) — `scopeMode`/`passFilter` were
+        // hardcoded/absent before; both parameters already existed on
+        // `buildAuditRunContext`, unused by this caller. `passFilter` is
+        // OMITTED (not `?? null`) when `passes` is absent so an
+        // omitted-controls call reproduces today's exact ctx shape byte-
+        // for-byte — `?? null` would always add the key (round-3 M1 fix).
+        scopeMode: scope ?? 'diff',
+        ...(passes ? { passFilter: passes } : {}),
         round: 1,
         model,
         runId,

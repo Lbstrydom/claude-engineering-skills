@@ -2723,6 +2723,29 @@ already owns `readLog()`) folds the receipt on read. Both files already
 exist post-Phase-2/3, so implementing this later is additive, not a further
 decomposition.
 
+## Corrections
+
+**`scripts/lib/model-eval/executors.mjs::auditorExecuteArm` — the
+`_controls` provenance claim (2026-08-17).** This plan's Cluster D shipped
+the parameter as `_controls` (underscore-prefixed, discarded) with a comment
+claiming the gap was pre-existing debt from a "round-5 gate H3/H12" finding,
+attributed to the predecessor plan (`role-agnostic-comparison-core.md`). That
+citation does not exist: exhaustive grep of this document (every `R5`/`H3`
+occurrence — `R5/H1`, `R5/H2`, `R5/H3` [an unrelated `Symbol`-construction
+topic], `R5/H4`, `R5/M2` — no `H12` anywhere), `role-agnostic-comparison-
+core.md` (round 5: `M4/M5` on xAI-preflight parity; round 6: `H2/H3/H4` on
+`verdict.mjs` bugs — nothing matching), and a full scan of
+`list-unremediated-acceptances`/`list-unlocked-fixes` across all repos and
+ages, found no durable record of this decision anywhere — it existed only as
+the source comment, invisible to anyone not reading that exact file (the
+class of gap AGENTS.md's "Contracts across the prose↔code seam" section
+warns about, generalized from prose→code to comment→ledger). A fresh GPT
+audit pass caught the live gap the same day; the actual fix and its full
+design history live in
+[`docs/plans/auditor-controls-execution-wiring.md`](auditor-controls-execution-wiring.md)
+— tracked in a plan document, which survives someone editing or deleting a
+source comment, rather than in the comment itself.
+
 ---
 
 ## Implementation Log

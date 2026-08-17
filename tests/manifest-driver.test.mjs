@@ -14,12 +14,15 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { runManifestDriver } from '../scripts/lib/model-eval/manifest-driver.mjs';
+import { runManifestDriver, _internals as manifestDriverInternals } from '../scripts/lib/model-eval/manifest-driver.mjs';
 import { EXECUTORS } from '../scripts/lib/model-eval/executors.mjs';
 import { RunPreflightError } from '../scripts/lib/model-eval/cli-shared.mjs';
+import { AUDITOR_TIER_C_PROMPT_IDS, AUDITOR_TIER_C_SCHEMA_IDS } from '../scripts/lib/comparison/controls.mjs';
+
+const { computeControlsDivergence } = manifestDriverInternals;
 
 const VALID_AUDITOR_CONTROLS = {
-  reasoningEffort: 'medium', promptTemplateId: 'auditor-v1', outputSchemaId: 'auditor-v1',
+  reasoningEffort: 'medium', promptTemplateId: AUDITOR_TIER_C_PROMPT_IDS.at(-1), outputSchemaId: AUDITOR_TIER_C_SCHEMA_IDS.at(-1),
   maxOutputTokens: 4096, toolPolicy: 'none', temperature: 0,
   passes: ['structure'], scope: 'diff', rounds: 1,
 };
@@ -130,5 +133,34 @@ describe('negative control — the refuse-at-load check can fail to trigger', ()
     // must not trip the same guard runManifestDriver applies.
     assert.notEqual(EXECUTORS.auditor.executeArm, undefined);
     assert.notEqual(EXECUTORS.adjudicator.executeArm, undefined);
+  });
+});
+
+describe('computeControlsDivergence — auditor-controls-execution-wiring.md, round-4 H1 fix', () => {
+  const okResult = (controlsApplied) => ({ result: { outcome: 'ok', result: { controlsApplied } } });
+
+  it('a field every arm agrees on is "uniform"', () => {
+    const results = [okResult({ scope: true }), okResult({ scope: true })];
+    assert.deepEqual(computeControlsDivergence(results), { scope: 'uniform' });
+  });
+
+  it('a field arms disagree on is "divergent" — the exact heterogeneous-tier scenario H1 raised', () => {
+    const results = [okResult({ scope: true, reasoningEffort: false }), okResult({ scope: false, reasoningEffort: true })];
+    assert.deepEqual(computeControlsDivergence(results), { scope: 'divergent', reasoningEffort: 'divergent' });
+  });
+
+  it('a field only SOME arms report is scored only across those that reported it', () => {
+    const results = [okResult({ scope: true }), okResult({})]; // second arm never declared scope
+    assert.deepEqual(computeControlsDivergence(results), { scope: 'uniform' });
+  });
+
+  it('no arm reporting any controlsApplied returns null, not an empty object', () => {
+    const results = [{ result: { outcome: 'terminal', reason: 'exit 1' } }, { result: { outcome: 'terminal', reason: 'exit 1' } }];
+    assert.equal(computeControlsDivergence(results), null);
+  });
+
+  it('a failed arm alongside a successful one is simply excluded, not counted as divergence', () => {
+    const results = [okResult({ scope: true }), { result: { outcome: 'terminal', reason: 'exit 1' } }];
+    assert.deepEqual(computeControlsDivergence(results), { scope: 'uniform' });
   });
 });

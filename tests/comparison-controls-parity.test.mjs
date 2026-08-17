@@ -17,6 +17,7 @@ import assert from 'node:assert/strict';
 
 import { CampaignConfigSchema } from '../scripts/lib/campaign/config.mjs';
 import { parseComparisonManifest } from '../scripts/lib/comparison/manifest.mjs';
+import { AUDITOR_TIER_C_PROMPT_IDS, AUDITOR_TIER_C_SCHEMA_IDS } from '../scripts/lib/comparison/controls.mjs';
 
 const BASE_ARMS = [
   { id: 'opus', model: 'claude-opus', mode: 'shadow' },
@@ -95,9 +96,15 @@ describe('campaign and manifest entry points enforce the SAME xAI-preflight rule
       decision: { type: 'select_default', incumbent: 'gpt-5.6-terra' },
       arms: [{ id: 'a', model: 'gpt-5.6-terra', mode: 'shadow' }, { id: 'b', model: 'zai/glm-5.2', mode: 'shadow' }],
       controls: {
-        reasoningEffort: 'high', promptTemplateId: 'a@1', outputSchemaId: 'b@1',
-        maxOutputTokens: 32000, toolPolicy: 'structured-output-only', temperature: 0,
-        passes: ['structure'], scope: 'diff', rounds: 3,
+        // maxOutputTokens capped at 4000 (< TIER_C_MAX_OUTPUT_TOKENS's 8000
+        // ceiling); promptTemplateId/outputSchemaId/toolPolicy/rounds match
+        // the real, current AuditorControlsSchema constraints (Phase 4 —
+        // append-only enum, 'none' literal, rounds===1) — unlike BASE_CONTROLS
+        // above, which is a final_review_shadow fixture whose COMMON_SHAPE-only
+        // fields have no auditor-specific narrowing.
+        reasoningEffort: 'high', promptTemplateId: AUDITOR_TIER_C_PROMPT_IDS.at(-1), outputSchemaId: AUDITOR_TIER_C_SCHEMA_IDS.at(-1),
+        maxOutputTokens: 4000, toolPolicy: 'none', temperature: 0,
+        passes: ['structure'], scope: 'diff', rounds: 1,
       },
     };
     assert.doesNotThrow(() => parseComparisonManifest(auditorManifest),

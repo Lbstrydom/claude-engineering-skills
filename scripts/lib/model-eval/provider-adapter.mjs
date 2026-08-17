@@ -28,23 +28,74 @@ import { assertEgressSafe } from '../sensitive-egress-gate.mjs';
 import { findSensitivePathMentions, EgressGateError } from './egress-path-scan.mjs';
 import { zodToGeminiSchema } from '../schemas.mjs';
 import { normalizeGeminiUsage } from '../gemini-usage.mjs';
+import { TIER_C_MAX_OUTPUT_TOKENS } from '../comparison/controls.mjs';
 
 export class MalformedProviderOutputError extends Error {
   constructor(message) { super(message); this.name = 'MalformedProviderOutputError'; }
 }
 
-// Round-5 L1 fix — one named output budget for structured extraction across
-// transports (the Anthropic SDK requires an explicit max_tokens; OpenAI's
-// responses API and Gemini default internally). Extraction outputs are small
-// structured objects; 8K tokens is generous headroom, not a tuning knob.
-const STRUCTURED_OUTPUT_MAX_TOKENS = 8000;
+// ── Dial application — pure, exported for direct testing (no network) ──────
+// Each mutates the given request-body/config object in place per §2.5's
+// capability matrix and returns the honoredDials booleans for THIS transport.
+// Extracted from the invoke* functions below so "assert the emitted request"
+// tests don't need a real (or mocked) SDK client — this repo's own lesson
+// (AGENTS.md: "assert the emitted request, not the client config").
+
+function applyOpenAIDials(requestBody, dials) {
+  const honoredDials = {};
+  if (dials?.reasoningEffort !== undefined) { requestBody.reasoning = { effort: dials.reasoningEffort }; honoredDials.reasoningEffort = true; }
+  if (dials?.temperature !== undefined) { requestBody.temperature = dials.temperature; honoredDials.temperature = true; }
+  if (dials?.maxOutputTokens !== undefined) { requestBody.max_output_tokens = dials.maxOutputTokens; honoredDials.maxOutputTokens = true; }
+  return honoredDials;
+}
+
+/**
+ * Gemini-gate round-2 H2/M2 fix — OpenRouter routes a bare model id across
+ * ~26 unpinned backends with differing capabilities (AGENTS.md's own
+ * documented gotcha: "always send provider:{require_parameters,sort} +
+ * reasoning:{effort}" — unpinned runs fail at random, reading as model
+ * flakiness). Before dial-forwarding existed, no dial ever reached this
+ * branch, so the missing pin was inert; forwarding `reasoning`/`temperature`
+ * now makes it a real risk. Mutates `requestBody.provider` ONLY when
+ * `route.provider === 'oss'` AND at least one dial was actually forwarded —
+ * matches `oss-structured-output.mjs`'s own established convention
+ * (`providerPreferences`, sent "only when explicitly given, so every
+ * existing caller's request body stays byte-identical"). `sort` is
+ * deliberately omitted — a cost/quality preference this plan has no stated
+ * opinion on.
+ */
+function applyOssProviderPin(requestBody, route, honoredDials) {
+  if (route.provider === 'oss' && Object.keys(honoredDials).length > 0) {
+    requestBody.provider = { require_parameters: true };
+  }
+}
+
+function applyAnthropicDials(requestBody, dials) {
+  const honoredDials = {};
+  if (dials?.reasoningEffort !== undefined) honoredDials.reasoningEffort = false; // no native equivalent
+  if (dials?.maxOutputTokens !== undefined) { requestBody.max_tokens = dials.maxOutputTokens; honoredDials.maxOutputTokens = true; }
+  if (dials?.temperature !== undefined) {
+    if (dials.temperature <= 1) { requestBody.temperature = dials.temperature; honoredDials.temperature = true; }
+    else honoredDials.temperature = false; // Anthropic's own range is [0,1] — round-5 H3
+  }
+  return honoredDials;
+}
+
+function applyGeminiDials(config, dials) {
+  const honoredDials = {};
+  if (dials?.reasoningEffort !== undefined) honoredDials.reasoningEffort = false; // no native equivalent
+  if (dials?.temperature !== undefined) { config.temperature = dials.temperature; honoredDials.temperature = true; }
+  if (dials?.maxOutputTokens !== undefined) { config.maxOutputTokens = dials.maxOutputTokens; honoredDials.maxOutputTokens = true; }
+  return honoredDials;
+}
 
 /**
  * @param {{route: object, messages: Array<{role:string, content:string}>,
- *   schema: import('zod').ZodType, signal?: AbortSignal}} args
- * @returns {Promise<{data: object, raw: object, usage: object}>}
+ *   schema: import('zod').ZodType, signal?: AbortSignal,
+ *   dials?: {reasoningEffort?: string, temperature?: number, maxOutputTokens?: number}}} args
+ * @returns {Promise<{data: object, raw: object, usage: object, honoredDials: object}>}
  */
-export async function invokeStructured({ route, messages, schema, signal }) {
+export async function invokeStructured({ route, messages, schema, signal, dials }) {
   // Implementation H7 fix — final defense-in-depth egress check at the
   // actual provider-call boundary. structured-extractor.mjs already gates
   // upstream via prepareModelEvalPayloadForEgress, but provider-adapter.mjs
@@ -70,18 +121,18 @@ export async function invokeStructured({ route, messages, schema, signal }) {
 
   const transport = route.transport;
   if (transport === 'openai-compatible') {
-    return invokeOpenAICompatible({ route, messages, schema, signal });
+    return invokeOpenAICompatible({ route, messages, schema, signal, dials });
   }
   if (transport === 'native-anthropic') {
-    return invokeNativeAnthropic({ route, messages, schema, signal });
+    return invokeNativeAnthropic({ route, messages, schema, signal, dials });
   }
   if (transport === 'native-gemini') {
-    return invokeNativeGemini({ route, messages, schema, signal });
+    return invokeNativeGemini({ route, messages, schema, signal, dials });
   }
   throw new Error(`invokeStructured: unsupported transport "${transport}"`);
 }
 
-async function invokeOpenAICompatible({ route, messages, schema, signal }) {
+async function invokeOpenAICompatible({ route, messages, schema, signal, dials }) {
   const { zodTextFormat } = await import('openai/helpers/zod');
   let client, model;
   if (route.provider === 'azure') {
@@ -110,23 +161,29 @@ async function invokeOpenAICompatible({ route, messages, schema, signal }) {
     client = await createOpenAIClient({ purpose: 'gpt', azure: { active: false } });
     model = route.resolvedModel;
   }
+  // Dial forwarding (auditor-controls-execution-wiring.md §2.5) — OpenAI's
+  // Responses API accepts all three natively. `reasoningEffort`'s exact
+  // param shape (`reasoning: {effort}` vs a flat `reasoning_effort`) is
+  // flagged uncertain by the plan itself (Gemini-gate round-1 G3) — this
+  // implementation uses the nested Responses-API form; verify against the
+  // installed `openai` package's types if a live run rejects it.
+  const requestBody = { model, input: messages, text: { format: zodTextFormat(schema, 'result') } };
+  const honoredDials = applyOpenAIDials(requestBody, dials);
+  applyOssProviderPin(requestBody, route, honoredDials);
+
   // Implementation M8/M12 fix — `signal` is SDK request OPTIONS, not a body
   // field; the OpenAI SDK's second .parse() argument is where it belongs.
-  const resp = await client.responses.parse({
-    model,
-    input: messages,
-    text: { format: zodTextFormat(schema, 'result') },
-  }, { signal });
+  const resp = await client.responses.parse(requestBody, { signal });
   // Implementation H5 fix — an incomplete/refused response or an absent
   // parsed payload must not masquerade as success; other transports already
   // validate (schema.parse() throws on malformed JSON), this path must too.
   if (resp.status === 'incomplete' || !resp.output_parsed) {
     throw new MalformedProviderOutputError(`invokeOpenAICompatible: no parsed output (status=${resp.status || 'unknown'}, refusal=${resp.output?.[0]?.content?.[0]?.type === 'refusal'})`);
   }
-  return { data: schema.parse(resp.output_parsed), raw: resp, usage: resp.usage || null };
+  return { data: schema.parse(resp.output_parsed), raw: resp, usage: resp.usage || null, honoredDials };
 }
 
-async function invokeNativeAnthropic({ route, messages, schema, signal }) {
+async function invokeNativeAnthropic({ route, messages, schema, signal, dials }) {
   let client, model;
   if (route.provider === 'azure') {
     if (!azureConfig.active || !azureConfig.claudeRoute) {
@@ -148,17 +205,25 @@ async function invokeNativeAnthropic({ route, messages, schema, signal }) {
     `Respond with ONLY a single JSON object matching this schema, no prose: ${jsonSchema}`,
   ].filter(Boolean).join('\n\n');
   const userMessages = messages.filter((m) => m.role !== 'system');
+
+  // Dial forwarding (§2.5) — no native reasoningEffort equivalent, never
+  // forwarded. `temperature` is Anthropic-range-checked (round-5 H3): a
+  // present value > 1 is NOT sent (Anthropic's own API range is [0, 1],
+  // unlike OpenAI/Gemini's wider range) rather than risking a live 4xx.
+  // `maxOutputTokens` defaults to the shared ceiling when absent, or is
+  // overridden by applyAnthropicDials when present.
+  const requestBody = { model, max_tokens: TIER_C_MAX_OUTPUT_TOKENS, system, messages: userMessages };
+  const honoredDials = applyAnthropicDials(requestBody, dials);
+
   // Implementation M8/M12 fix — signal is Anthropic SDK request OPTIONS
   // (second argument), not a body field.
-  const resp = await client.messages.create({
-    model, max_tokens: STRUCTURED_OUTPUT_MAX_TOKENS, system, messages: userMessages,
-  }, { signal });
+  const resp = await client.messages.create(requestBody, { signal });
   const text = resp.content?.[0]?.text || '';
   const data = schema.parse(JSON.parse(text));
-  return { data, raw: resp, usage: resp.usage || null };
+  return { data, raw: resp, usage: resp.usage || null, honoredDials };
 }
 
-async function invokeNativeGemini({ route, messages, schema, signal }) {
+async function invokeNativeGemini({ route, messages, schema, signal, dials }) {
   if (route.provider === 'azure') {
     // No Azure-hosted Gemini transport exists in this codebase today —
     // fail closed rather than silently falling through to the public API
@@ -173,18 +238,25 @@ async function invokeNativeGemini({ route, messages, schema, signal }) {
   // param (unlike `responses.parse`/`messages.create`'s SDKs); cancellation
   // support for the Gemini transport is deferred rather than guessed at.
   void signal;
+  // Dial forwarding (§2.5, round-5 H2 fix) — `config` is a FLAT object in
+  // this SDK's actual usage (verified directly against this function, not a
+  // `generationConfig` wrapper); temperature/maxOutputTokens are siblings of
+  // systemInstruction/responseMimeType/responseSchema. No native
+  // reasoningEffort equivalent, never forwarded.
+  const config = {
+    systemInstruction: system,
+    responseMimeType: 'application/json',
+    // Implementation H7 fix — this repo's existing zodToGeminiSchema is
+    // the single source of truth for Zod-to-Gemini conversion (Gemini has
+    // provider-specific JSON Schema restrictions a raw z.toJSONSchema()
+    // doesn't account for); never a second, ad-hoc conversion path.
+    responseSchema: zodToGeminiSchema(schema),
+  };
+  const honoredDials = applyGeminiDials(config, dials);
   const resp = await client.models.generateContent({
     model: route.resolvedModel,
     contents: userText,
-    config: {
-      systemInstruction: system,
-      responseMimeType: 'application/json',
-      // Implementation H7 fix — this repo's existing zodToGeminiSchema is
-      // the single source of truth for Zod-to-Gemini conversion (Gemini has
-      // provider-specific JSON Schema restrictions a raw z.toJSONSchema()
-      // doesn't account for); never a second, ad-hoc conversion path.
-      responseSchema: zodToGeminiSchema(schema),
-    },
+    config,
   });
   const data = schema.parse(JSON.parse(resp.text));
   // Round-12 audit H5/M1 fix — Gemini's SDK reports usage as
@@ -205,7 +277,7 @@ async function invokeNativeGemini({ route, messages, schema, signal }) {
   const usage = g.usageMissing
     ? null
     : { input_tokens: g.input_tokens, output_tokens: g.output_tokens, thinking_tokens: g.thinking_tokens, usageMissing: false };
-  return { data, raw: resp, usage };
+  return { data, raw: resp, usage, honoredDials };
 }
 
 // Round-8b audit M6/M7 fix — config.mjs::auditShadowConfig is ALREADY the
@@ -223,3 +295,8 @@ function resolveOssClientConfig() {
   }
   return { baseURL, apiKey };
 }
+
+// Exported for direct testing (mirrors arm-generation.mjs's own `_internals`
+// pattern) — the three dial-application functions are pure and need no
+// network mock to assert the emitted request shape.
+export const _internals = { applyOpenAIDials, applyAnthropicDials, applyGeminiDials, applyOssProviderPin };

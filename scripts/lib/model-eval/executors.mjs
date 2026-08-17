@@ -76,26 +76,38 @@ async function auditorPrepareContext(manifest, _repoIdentity, driverArgs) {
   return { tier, thresholdsPath, corpusPath, repoRoots };
 }
 
-// `_controls` (AuditorControlsSchema's reasoningEffort/promptTemplateId/
-// outputSchemaId/maxOutputTokens/toolPolicy/passes/scope/rounds) is
-// intentionally unused (round-5 gate H3/H12) — verified by grep against
-// structured-extractor.mjs/provider-adapter.mjs/model-eval-auditor.mjs: NONE
-// of these fields are consumed by ANY execution path in this repo today, for
-// either the manifest-driven or the pre-existing single-`--candidate` CLI
-// invocation. This is a PRE-EXISTING gap in AuditorControlsSchema itself
-// (predecessor plan role-agnostic-comparison-core.md), not introduced by this
-// cluster — the schema validates these fields as if they govern execution,
-// but no code path applies them, with or without a manifest. Wiring them
-// through would mean extending extractStructured/provider-adapter.mjs to
-// accept a per-call reasoningEffort/promptTemplate override, which is a real,
-// separate feature outside D7's stated scope (n-arm PARITY with the existing
-// single-candidate mechanism, not new capability inside it). Named here so a
-// manifest author does not reasonably assume declaring these fields changes
-// anything — because today, it doesn't, for any invocation shape.
-async function auditorExecuteArm(arm, _controls, context, driverAttempt) {
+// `controls` wiring — plan: docs/plans/auditor-controls-execution-wiring.md
+// (complete as of Phase 4; this comment previously claimed the gap was
+// pre-existing debt from a "round-5 gate H3/H12" finding — that citation did
+// not exist anywhere in this repo's audit trail; the plan document, not this
+// comment, is the durable record of that correction and the design history
+// below). All nine `AuditorControlsSchema` fields reach the spawned child —
+// the five tier-conditional dials (`scope`/`passes`, Tier A/B only;
+// `reasoningEffort`/`temperature`/`maxOutputTokens`, Tier C only)
+// conditionally, since they're schema-optional; the three always-required
+// Bucket-2 fields (`promptTemplateId`/`outputSchemaId`/`toolPolicy`, narrowed
+// to an append-only hash-embedded enum / literal since Phase 4) plus `rounds`
+// (`=== 1`-refined since Phase 4) unconditionally, since the schema requires
+// them. Whether a forwarded dial actually GOVERNED an arm's execution — as
+// opposed to merely having been declared — is a separate per-arm question
+// `main()` in `model-eval-auditor.mjs` answers via `deriveControlsApplied`,
+// relayed here (`result.controlsApplied`) for `manifest-driver.mjs`'s
+// `controlsDivergence` to aggregate across a comparison's arms — never
+// silently ignored or blocked.
+/**
+ * Pure — the spawn argv for one auditor arm. Extracted from
+ * `auditorExecuteArm` so "assert the emitted request" tests (this repo's
+ * own lesson) don't need to mock `spawnSync`, which has no injectable seam
+ * here (unlike `arm-generation.mjs`'s `_runMultiPassCodeAudit`).
+ * @param {{model: string}} arm
+ * @param {object} controls
+ * @param {{tier: string, thresholdsPath: string, corpusPath: string, repoRoots: string[]}} context
+ * @param {{comparisonId?: string, armId?: string, attempt?: number, supersedePrior?: boolean}} driverAttempt
+ * @param {string} armOutFile
+ * @returns {string[]}
+ */
+function buildAuditorSpawnArgs(arm, controls, context, driverAttempt, armOutFile) {
   const { comparisonId, armId, attempt, supersedePrior } = driverAttempt;
-  const armOutDir = fs.mkdtempSync(path.join(os.tmpdir(), 'model-eval-arm-'));
-  const armOutFile = path.join(armOutDir, 'result.json');
   // A bare model name/sentinel is the only thing an arm declares — the
   // general mapping onto CandidateSpecSchema's discriminated union.
   const candidateSpec = { kind: 'sentinel', value: arm.model };
@@ -106,6 +118,36 @@ async function auditorExecuteArm(arm, _controls, context, driverAttempt) {
   if (context.repoRoots.length > 1) args.push('--repo-roots', context.repoRoots.slice(1).join(','));
   if (comparisonId) args.push('--comparison-id', comparisonId, '--arm-id', armId, '--attempt', String(attempt));
   if (supersedePrior) args.push('--supersede-prior');
+  // controls.scope/controls.passes (Phase 2) — Tier-A/B-only, `.optional()`
+  // on AuditorControlsSchema, so conditionally passed like the pre-existing
+  // flags above.
+  if (controls?.scope !== undefined) args.push('--scope', controls.scope);
+  if (controls?.passes !== undefined) args.push('--passes', controls.passes.join(','));
+  // controls.reasoningEffort/temperature/maxOutputTokens (Phase 3) —
+  // Tier-C-only, `.optional()`, conditionally passed.
+  if (controls?.reasoningEffort !== undefined) args.push('--reasoning-effort', controls.reasoningEffort);
+  if (controls?.temperature !== undefined) args.push('--temperature', String(controls.temperature));
+  if (controls?.maxOutputTokens !== undefined) args.push('--max-output-tokens', String(controls.maxOutputTokens));
+  // controls.promptTemplateId/outputSchemaId/toolPolicy/rounds (Phase 3) —
+  // ALWAYS present (schema-required), so ALWAYS passed, never conditional —
+  // the `--candidate` spawn path has no manifest of its own; this is the
+  // ONLY channel by which the child learns these values, needed to construct
+  // a correct per-arm `controlsApplied` for these fields too (Gemini-gate
+  // round-2 G1 fix — an earlier draft wrongly assumed the child "already
+  // holds the FULL controls object").
+  args.push(
+    '--prompt-template-id', controls.promptTemplateId,
+    '--output-schema-id', controls.outputSchemaId,
+    '--tool-policy', controls.toolPolicy,
+    '--rounds', String(controls.rounds),
+  );
+  return args;
+}
+
+async function auditorExecuteArm(arm, controls, context, driverAttempt) {
+  const armOutDir = fs.mkdtempSync(path.join(os.tmpdir(), 'model-eval-arm-'));
+  const armOutFile = path.join(armOutDir, 'result.json');
+  const args = buildAuditorSpawnArgs(arm, controls, context, driverAttempt, armOutFile);
 
   // node itself, not a shim — no CVE-2024-27980 exposure, the same reasoning
   // every other spawn site in this repo already documents.
@@ -129,9 +171,19 @@ async function auditorExecuteArm(arm, _controls, context, driverAttempt) {
   }
   return {
     outcome: 'ok',
-    result: { role: 'auditor', metrics: armResult.metrics ?? null, verdict: armResult.verdict, nextAction: armResult.nextAction ?? null, evidence: armResult.evidence ?? null },
+    // controlsApplied (Phase 4, manifest-driver.mjs's controlsDivergence)
+    // — the child's --out JSON already carries it (main() computes it via
+    // deriveControlsApplied); relayed unchanged, `null` if genuinely absent
+    // (a pre-Phase-3 --out or a screen-tier run that predates this field)
+    // rather than silently coalesced into an empty object that would read
+    // as "nothing declared" instead of "not reported."
+    result: {
+      role: 'auditor', metrics: armResult.metrics ?? null, verdict: armResult.verdict,
+      nextAction: armResult.nextAction ?? null, evidence: armResult.evidence ?? null,
+      controlsApplied: armResult.controlsApplied ?? null,
+    },
     usage: null, // see module docstring — not tracked by the spawn mechanism today
-    provenance: { model: arm.model, route: 'openai-compatible', promptTemplateId: null, capturedAt: new Date().toISOString() },
+    provenance: { model: arm.model, route: 'openai-compatible', promptTemplateId: controls?.promptTemplateId ?? null, capturedAt: new Date().toISOString() },
   };
 }
 
@@ -330,3 +382,7 @@ export const EXECUTORS = Object.freeze(Object.assign(Object.create(null), {
   adjudicator: Object.freeze({ prepareContext: adjudicatorPrepareContext, executeArm: adjudicatorExecuteArm }),
   final_review_shadow: Object.freeze({}),
 }));
+
+// Exported for direct testing (mirrors arm-generation.mjs's / provider-
+// adapter.mjs's own `_internals` pattern).
+export const _internals = { buildAuditorSpawnArgs };

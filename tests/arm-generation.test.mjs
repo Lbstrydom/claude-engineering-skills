@@ -203,3 +203,48 @@ describe('arm-generation.mjs — runAuditGenerationArm', () => {
     );
   });
 });
+
+describe('arm-generation.mjs — controls.scope/controls.passes wiring (auditor-controls-execution-wiring.md, round 1)', () => {
+  const route = { transport: 'openai-compatible', resolvedModel: 'gpt-5.4', deploymentId: null, pricingModel: 'gpt-5.4', provider: 'openai' };
+  const fakeAuditResult = { findings: [], _usage: { input_tokens: 1, output_tokens: 1 } };
+
+  test('omitting scope/passes reproduces today\'s exact ctx shape — scopeMode:"diff", no passFilter KEY at all', async () => {
+    let capturedOpts = null;
+    const fakeAudit = async (client, planContent, projectContext, jsonMode, outFile, historyContext, opts) => {
+      capturedOpts = opts;
+      return fakeAuditResult;
+    };
+    await runAuditGenerationArm({
+      arm: ARM_A, auditInput: { diff: 'x', files: [], repoRoot: tmpDir },
+      route, runId: 'r-scope-1', role: 'auditor', _runMultiPassCodeAudit: fakeAudit,
+    });
+    assert.equal(capturedOpts.scopeMode, 'diff');
+    assert.equal(Object.hasOwn(capturedOpts, 'passFilter'), false, 'passFilter key must be absent, not null, when passes is omitted');
+  });
+
+  test('a present scope reaches ctx.scopeMode', async () => {
+    let capturedOpts = null;
+    const fakeAudit = async (client, planContent, projectContext, jsonMode, outFile, historyContext, opts) => {
+      capturedOpts = opts;
+      return fakeAuditResult;
+    };
+    await runAuditGenerationArm({
+      arm: ARM_A, auditInput: { diff: 'x', files: [], repoRoot: tmpDir },
+      route, runId: 'r-scope-2', role: 'auditor', scope: 'full', _runMultiPassCodeAudit: fakeAudit,
+    });
+    assert.equal(capturedOpts.scopeMode, 'full');
+  });
+
+  test('a present passes array reaches ctx.passFilter unchanged', async () => {
+    let capturedOpts = null;
+    const fakeAudit = async (client, planContent, projectContext, jsonMode, outFile, historyContext, opts) => {
+      capturedOpts = opts;
+      return fakeAuditResult;
+    };
+    await runAuditGenerationArm({
+      arm: ARM_A, auditInput: { diff: 'x', files: [], repoRoot: tmpDir },
+      route, runId: 'r-scope-3', role: 'auditor', passes: ['structure', 'wiring'], _runMultiPassCodeAudit: fakeAudit,
+    });
+    assert.deepEqual(capturedOpts.passFilter, ['structure', 'wiring']);
+  });
+});

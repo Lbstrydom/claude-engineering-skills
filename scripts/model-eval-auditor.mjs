@@ -36,6 +36,11 @@ import { loadCorpusCase, CorpusCaseUnavailable, CORPUS_LOADER_VERSION } from './
 import { EgressGateError } from './lib/model-eval/egress-path-scan.mjs';
 import { runAuditGenerationArm } from './lib/model-eval/arm-generation.mjs';
 import { runBlindJudgeProtocol } from './lib/model-eval/blind-judge.mjs';
+import { AUDITOR_SCOPE_VALUES, EFFORT_LEVELS, TIER_C_MAX_OUTPUT_TOKENS, deriveControlsApplied } from './lib/comparison/controls.mjs';
+import { isCanonicalizableNumber } from './lib/comparison/lock.mjs';
+import { PASS_PROMPTS } from './lib/prompt-seeds.mjs';
+import { buildAuditorPrompt, AuditorExtractionSchema } from './lib/model-eval/structured-extractor.mjs';
+import { z } from 'zod';
 import { assembleCostRows, buildUsageEvent } from './lib/model-eval/cost.mjs';
 import { CANONICAL_ARMS, buildCandidateArm } from './lib/audit-arms.mjs';
 import { parseThresholdConfig } from './lib/model-eval/config/schema.mjs';
@@ -55,6 +60,57 @@ import { DEFAULT_CORPUS_PATH } from './lib/model-eval/executors.mjs';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_THRESHOLDS_PATH = path.join(__dirname, 'lib', 'model-eval', 'config', 'auditor-thresholds.json');
 const BASELINE_ARM = CANONICAL_ARMS.find((a) => a.id === 'A'); // production GPT audit — the real baseline
+
+// ── Live prompt/schema identity hashes (auditor-controls-execution-wiring.md
+// §2 Bucket 2) ───────────────────────────────────────────────────────────
+// Canonical sentinel input — never real diff content. The point is to hash
+// the STATIC template structure buildAuditorPrompt produces, not
+// interpolated data, so the hash is stable across KD cases and only changes
+// when the template ITSELF changes.
+const CANONICAL_PROMPT_INPUT = { evidenceHunk: '<CANON>', filePaths: ['<CANON>'] };
+
+function sha256Hex8(input) {
+  return crypto.createHash('sha256').update(input).digest('hex').slice(0, 8);
+}
+
+/** Computed fresh (never cached) so a live code edit is reflected immediately
+ * — this is the whole point of comparing against a DECLARED, potentially
+ * stale, manifest value. */
+function tierCPromptHash() {
+  return sha256Hex8(JSON.stringify(buildAuditorPrompt(CANONICAL_PROMPT_INPUT)));
+}
+
+function tierCSchemaHash() {
+  return sha256Hex8(JSON.stringify(z.toJSONSchema(AuditorExtractionSchema)));
+}
+
+/**
+ * `--passes` parser — auditor-controls-execution-wiring.md §2.5. Validates
+ * against `PASS_PROMPTS`'s own keys (the actual registered generation-pass
+ * vocabulary — NOT `config.mjs`'s `PASS_NAMES`, which includes a review step
+ * and omits real generation passes; see the plan's Gemini-gate round-1 G4
+ * rebuttal), rejects empty/duplicate entries. Returns `undefined` for an
+ * absent/empty raw string (the "omitted" state Bucket 3 depends on), never
+ * an empty array.
+ * @param {string|undefined} raw
+ * @returns {string[]|undefined}
+ */
+function parsePasses(raw) {
+  if (!raw) return undefined;
+  const entries = raw.split(',').map((s) => s.trim());
+  if (entries.some((e) => e === '')) {
+    throw new RunPreflightError('invalid_passes', `--passes: empty entry in "${raw}" — comma-separated pass names must not contain blanks`);
+  }
+  const seen = new Set();
+  for (const e of entries) {
+    if (seen.has(e)) throw new RunPreflightError('invalid_passes', `--passes: duplicate entry "${e}" in "${raw}"`);
+    seen.add(e);
+    if (!Object.hasOwn(PASS_PROMPTS, e)) {
+      throw new RunPreflightError('invalid_passes', `--passes: "${e}" is not a registered pass (known: ${Object.keys(PASS_PROMPTS).join(', ')})`);
+    }
+  }
+  return entries;
+}
 
 // ── Deterministic stratified KD selection ──────────────────────────────────
 // Round-2 audit M2: the same corpusVersion+role+tier always yields the same
@@ -108,24 +164,31 @@ export function stratifiedSelectKDs(defects, { seed, n }) {
 // promotion-tier's dual-arm comparative path — the mechanism is identical,
 // only the caller decides how many times to run it). ────────────────────
 
-async function scoreArmTierC({ route, cases, role = 'auditor' }) {
+async function scoreArmTierC({ route, cases, role = 'auditor', dials }) {
   const candidateOutputs = [];
   const expectedRubrics = [];
+  // honoredDials captured from the FIRST call only (Gemini-gate round-1 G2
+  // fix) — dials are constant per arm (every KD case in this loop shares the
+  // same `controls`), so the first call's honoredDials is representative of
+  // the whole arm; there is no path from this loop's later iterations back
+  // out to the caller that needs a second capture.
+  let honoredDials;
   for (const { visibleInput, hiddenGroundTruth } of cases) {
-    const { data } = await extractStructured({
-      role, route, rawContext: { evidenceHunk: visibleInput.diff, filePaths: visibleInput.files },
+    const { data, honoredDials: hd } = await extractStructured({
+      role, route, rawContext: { evidenceHunk: visibleInput.diff, filePaths: visibleInput.files }, dials,
     });
+    if (honoredDials === undefined) honoredDials = hd;
     candidateOutputs.push({ file: data.defectLocation.file, description: data.defectLocation.description });
     expectedRubrics.push({ files: hiddenGroundTruth.files, expectedFindingRubric: hiddenGroundTruth.expectedFindingRubric });
   }
   const scored = scoreDefectLocalization(candidateOutputs, expectedRubrics);
-  return { metrics: { recall: scored.recall, falsePositiveRate: scored.falsePositiveRate, f1: scored.f1 }, raw: scored };
+  return { metrics: { recall: scored.recall, falsePositiveRate: scored.falsePositiveRate, f1: scored.f1 }, raw: scored, honoredDials };
 }
 
 // ── Screening tier (oracle mode, Tier C) ────────────────────────────────
 
-async function runScreenTier({ candidateRoute, cases, corpusVersion, selectedKdIds, thresholds }) {
-  const { metrics } = await scoreArmTierC({ route: candidateRoute, cases });
+async function runScreenTier({ candidateRoute, cases, corpusVersion, selectedKdIds, thresholds, dials }) {
+  const { metrics, honoredDials } = await scoreArmTierC({ route: candidateRoute, cases, dials });
   const routeEvidence = routeCatalogInternals.toRouteEvidence(candidateRoute);
   const { verdict, nextAction, reasons } = computeVerdict({
     mode: 'oracle', role: 'auditor', tier: 'screen', routeEvidence,
@@ -133,7 +196,7 @@ async function runScreenTier({ candidateRoute, cases, corpusVersion, selectedKdI
     corpusVersion, thresholds: thresholds.screen.thresholds,
   });
   return {
-    verdict, nextAction, metrics,
+    verdict, nextAction, metrics, honoredDials,
     evidence: { mode: 'oracle', selectedKdIds, corpusVersion, corpusLoaderVersion: CORPUS_LOADER_VERSION, routeEvidence, reasons },
     cost: null,
   };
@@ -143,10 +206,11 @@ async function runScreenTier({ candidateRoute, cases, corpusVersion, selectedKdI
 
 async function runPromotionTier({
   runId, repoId, candidateRoute, baselineRoute, judgeRoute, cases, corpusVersion, selectedKdIds, thresholds, repoRoots,
+  scope, passes, dials,
 }) {
   const { computedJudgeTier } = resolveEvaluationTier({ mode: 'comparative', candidateRoute, baselineRoute, judgeRoute });
   const usageEvents = [];
-  let candidateMetrics, baselineMetrics;
+  let candidateMetrics, baselineMetrics, honoredDials;
 
   if (computedJudgeTier === 'A' || computedJudgeTier === 'B') {
     // Generate candidate + baseline findings for every KD case, then blind-judge each.
@@ -164,8 +228,12 @@ async function runPromotionTier({
     let candidateFindingsTotal = 0, candidateFalseCount = 0, baselineFindingsTotal = 0, baselineFalseCount = 0;
     for (const kdCase of cases) {
       const auditInput = { diff: kdCase.visibleInput.diff, files: kdCase.visibleInput.files, repoRoot: kdCase.repoRoot };
-      const candGen = await runAuditGenerationArm({ arm: candidateArm, auditInput, route: candidateRoute, runId, role: 'auditor' });
-      const baseGen = await runAuditGenerationArm({ arm: BASELINE_ARM, auditInput, route: baselineRoute, runId, role: 'auditor' });
+      // scope/passes (auditor-controls-execution-wiring.md, Phase 2) reach
+      // BOTH the candidate and baseline arm identically — lesson (b),
+      // controls.mjs's own header: arms must share one dial or the
+      // comparison measures the setting, not the model.
+      const candGen = await runAuditGenerationArm({ arm: candidateArm, auditInput, route: candidateRoute, runId, role: 'auditor', scope, passes });
+      const baseGen = await runAuditGenerationArm({ arm: BASELINE_ARM, auditInput, route: baselineRoute, runId, role: 'auditor', scope, passes });
       usageEvents.push(candGen.usageEvent, baseGen.usageEvent);
 
       const kdId = kdCase.hiddenGroundTruth.kdId;
@@ -235,10 +303,16 @@ async function runPromotionTier({
     // scoreArmTierC call chdirs, but keeping both branches' concurrency
     // model consistent avoids re-introducing the same class of bug if a
     // future edit adds a chdir-dependent step to either path.
-    const candScore = await scoreArmTierC({ route: candidateRoute, cases });
-    const baseScore = await scoreArmTierC({ route: baselineRoute, cases });
+    // dials reach both calls (lesson (b) — one shared dial), but this run's
+    // OWN evidence is about the CANDIDATE arm being evaluated (the baseline
+    // is a fixed reference point, not itself a scored arm in the
+    // manifest-driven n-arm sense) — candScore's honoredDials is what
+    // `deriveControlsApplied` in main() needs.
+    const candScore = await scoreArmTierC({ route: candidateRoute, cases, dials });
+    const baseScore = await scoreArmTierC({ route: baselineRoute, cases, dials });
     candidateMetrics = candScore.metrics;
     baselineMetrics = baseScore.metrics;
+    honoredDials = candScore.honoredDials;
   }
 
   const costRows = usageEvents.length > 0 ? assembleCostRows(usageEvents) : [];
@@ -258,6 +332,12 @@ async function runPromotionTier({
 
   return {
     verdict, nextAction, metrics: candidateMetrics,
+    // computedJudgeTier doubles as the branch selector deriveControlsApplied
+    // needs in main() ('A'/'B' => Tier A/B; 'C' => Tier-C fallback) — honoredDials
+    // is only ever set on the Tier-C-fallback branch above (undefined on A/B,
+    // matching deriveControlsApplied's own "false when present on tier-a-b,
+    // regardless of honoredDials" rule).
+    computedJudgeTier, honoredDials,
     evidence: {
       mode: 'comparative', selectedKdIds, corpusVersion, corpusLoaderVersion: CORPUS_LOADER_VERSION,
       computedJudgeTier, baselineMetrics, reasons,
@@ -341,6 +421,87 @@ async function main() {
       throw new RunPreflightError('unsupported_transport', `candidate route transport "${candidateRoute.transport}" is unsupported for the auditor role — requires openai-compatible`);
     }
 
+    // controls.scope/controls.passes (Phase 2) — Tier-A/B-only dials,
+    // validated at the SAME preflight boundary as everything else in this
+    // block. `argOption` defaults to `null` (not `undefined`) when absent —
+    // normalized to `undefined` below so an omitted flag reproduces today's
+    // exact behavior (runAuditGenerationArm's own `scope ?? 'diff'`/
+    // conditional-`passFilter`-key logic keys on `undefined`, not `null`).
+    const scopeRaw = argOption('scope');
+    if (scopeRaw !== null && !AUDITOR_SCOPE_VALUES.includes(scopeRaw)) {
+      throw new RunPreflightError('invalid_scope', `--scope must be one of ${AUDITOR_SCOPE_VALUES.join('|')}, got "${scopeRaw}"`);
+    }
+    const scope = scopeRaw ?? undefined;
+    const passes = parsePasses(argOption('passes')); // parsePasses treats null/''/undefined identically
+
+    // controls.reasoningEffort/temperature/maxOutputTokens (Phase 3) —
+    // Tier-C-only dials, same optional/validated-at-preflight treatment.
+    const reasoningEffortRaw = argOption('reasoning-effort');
+    if (reasoningEffortRaw !== null && !EFFORT_LEVELS.includes(reasoningEffortRaw)) {
+      throw new RunPreflightError('invalid_reasoning_effort', `--reasoning-effort must be one of ${EFFORT_LEVELS.join('|')}, got "${reasoningEffortRaw}"`);
+    }
+    const reasoningEffort = reasoningEffortRaw ?? undefined;
+
+    const temperatureRaw = argOption('temperature');
+    let temperature;
+    if (temperatureRaw !== null) {
+      const n = Number(temperatureRaw);
+      if (!Number.isFinite(n) || n < 0 || !isCanonicalizableNumber(n)) {
+        throw new RunPreflightError('invalid_temperature', `--temperature must be a finite number >= 0, expressible in 6 decimal places (matches AuditorControlsSchema's own check), got "${temperatureRaw}"`);
+      }
+      temperature = n;
+    }
+
+    const maxOutputTokensRaw = argOption('max-output-tokens');
+    let maxOutputTokens;
+    if (maxOutputTokensRaw !== null) {
+      const n = Number(maxOutputTokensRaw);
+      if (!Number.isInteger(n) || n <= 0) {
+        throw new RunPreflightError('invalid_max_output_tokens', `--max-output-tokens must be a positive integer, got "${maxOutputTokensRaw}"`);
+      }
+      if (n > TIER_C_MAX_OUTPUT_TOKENS) {
+        throw new RunPreflightError('invalid_max_output_tokens', `--max-output-tokens (${n}) exceeds the Tier-C extraction ceiling (${TIER_C_MAX_OUTPUT_TOKENS}) — a caller asking for more than the boundary's own ceiling is a configuration error, not a request to silently clamp`);
+      }
+      maxOutputTokens = n;
+    }
+    const dials = { reasoningEffort, temperature, maxOutputTokens };
+
+    // controls.promptTemplateId/outputSchemaId/toolPolicy/rounds (Phase 3) —
+    // always-required on a manifest (Bucket 2), but stay OPTIONAL at this
+    // CLI's own boundary: a bare --candidate invocation predates this plan
+    // and must keep working with none of these flags. When present (always
+    // the case for a manifest-driven spawn — see executors.mjs), they are
+    // reconstructed into a controls-shaped object below for
+    // deriveControlsApplied; enum/literal validation of their VALUES is the
+    // schema's job at manifest-parse time (Phase 4), not re-litigated here.
+    const promptTemplateIdRaw = argOption('prompt-template-id');
+    const outputSchemaIdRaw = argOption('output-schema-id');
+    const toolPolicyRaw = argOption('tool-policy');
+    const roundsRaw = argOption('rounds');
+    let rounds;
+    if (roundsRaw !== null) {
+      const n = Number(roundsRaw);
+      if (!Number.isInteger(n) || n <= 0) {
+        throw new RunPreflightError('invalid_rounds', `--rounds must be a positive integer, got "${roundsRaw}"`);
+      }
+      rounds = n;
+    }
+    // Reconstructed controls object (Gemini-gate round-2 G1 fix) — this
+    // CLI's --candidate path has no manifest of its own; every field reaches
+    // it only via a flag, so this object is what deriveControlsApplied sees
+    // as `controls`, standing in for the manifest's own object.
+    const reconstructedControls = {
+      ...(scope !== undefined ? { scope } : {}),
+      ...(passes !== undefined ? { passes } : {}),
+      ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
+      ...(temperature !== undefined ? { temperature } : {}),
+      ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
+      ...(promptTemplateIdRaw !== null ? { promptTemplateId: promptTemplateIdRaw } : {}),
+      ...(outputSchemaIdRaw !== null ? { outputSchemaId: outputSchemaIdRaw } : {}),
+      ...(toolPolicyRaw !== null ? { toolPolicy: toolPolicyRaw } : {}),
+      ...(rounds !== undefined ? { rounds } : {}),
+    };
+
     const rawThresholds = JSON.parse(fs.readFileSync(thresholdsPath, 'utf8'));
     const thresholdsResult = parseThresholdConfig(rawThresholds);
     if (!thresholdsResult.ok) throw new RunPreflightError('invalid_threshold_config', `threshold config invalid: ${thresholdsResult.error}`);
@@ -402,13 +563,28 @@ async function main() {
     const runId = created.runId || `local-${Date.now()}`;
 
     let result;
+    let branch;
     if (tier === 'screen') {
-      result = await runScreenTier({ candidateRoute, cases, corpusVersion, selectedKdIds: selectedKds.map((k) => k.id), thresholds });
+      result = await runScreenTier({ candidateRoute, cases, corpusVersion, selectedKdIds: selectedKds.map((k) => k.id), thresholds, dials });
+      branch = 'tier-c';
     } else {
       const baselineRoute = resolveCandidateRoute({ role: 'auditor', candidateSpec: { kind: 'sentinel', value: BASELINE_ARM.generation.modelSentinel } });
       const judgeRoute = judgeRaw ? resolveCandidateRoute({ role: 'auditor', candidateSpec: parseJsonArg(judgeRaw, '--judge') }) : null;
-      result = await runPromotionTier({ runId, repoId: repoIdentity.repoUuid, candidateRoute, baselineRoute, judgeRoute, cases, corpusVersion, selectedKdIds: selectedKds.map((k) => k.id), thresholds, repoRoots });
+      result = await runPromotionTier({ runId, repoId: repoIdentity.repoUuid, candidateRoute, baselineRoute, judgeRoute, cases, corpusVersion, selectedKdIds: selectedKds.map((k) => k.id), thresholds, repoRoots, scope, passes, dials });
+      branch = result.computedJudgeTier === 'A' || result.computedJudgeTier === 'B' ? 'tier-a-b' : 'tier-c';
     }
+
+    // Per-arm evidence — deriveControlsApplied is the ONE call site with the
+    // full reconstructed controls object, the resolved branch, AND (for
+    // Tier C) honoredDials/liveHashes (Gemini-gate round-1 G1/G2,
+    // round-2 G1 fixes). liveHashes recomputed here — never inside
+    // deriveControlsApplied itself, which lives in shared-lib and must not
+    // import model-eval/** (§2 Bucket 2).
+    const liveHashes = {
+      promptTemplateId: tierCPromptHash(),
+      outputSchemaId: tierCSchemaHash(),
+    };
+    const controlsApplied = deriveControlsApplied(reconstructedControls, { branch, honoredDials: result.honoredDials, liveHashes });
 
     if (created.runId) {
       await updateEvalRunTerminal({
@@ -418,7 +594,7 @@ async function main() {
     }
 
     const summaryLine = `[model-eval-auditor] tier=${tier} verdict=${result.verdict} nextAction=${result.nextAction} runId=${runId}`;
-    writeOutput({ runId, tier, ...result }, outFile, summaryLine);
+    writeOutput({ runId, tier, ...result, controlsApplied }, outFile, summaryLine);
   } catch (err) {
     if (err instanceof EvalRunAlreadyActiveError) {
       console.error(`[model-eval-auditor] ${err.message}`);

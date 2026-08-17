@@ -178,9 +178,50 @@ export async function runManifestDriver({ manifestPath, tier, corpusFlagPath, th
   }
 
   const failedArms = results.filter((r) => !r.ok && !r.skipped).map((r) => r.armId);
+  // controlsDivergence (auditor-controls-execution-wiring.md, round-4 H1 fix)
+  // — `configDigest` hashes the manifest's REQUESTED controls (its correct,
+  // unchanged meaning); this is the one place that already sees every arm's
+  // own per-arm `controlsApplied` (auditor role only — adjudicator/
+  // final_review_shadow executors don't compute this evidence), so it's the
+  // natural place to surface EFFECTIVE-configuration divergence across a
+  // heterogeneous-tier campaign, closing the plan's original defect (a
+  // digest implying uniform governance) at the level it actually surfaces.
+  const controlsDivergence = computeControlsDivergence(results);
   const summaryLine = `[manifest-driver] manifest=${manifest.id} role=${manifest.role} comparisonId=${comparisonId ?? '(cloud off)'} arms=${scoredArms.length} failed=${failedArms.length}`;
-  writeOutput({ manifestId: manifest.id, role: manifest.role, comparisonId, tier, arms: results }, outFile, summaryLine);
+  writeOutput({ manifestId: manifest.id, role: manifest.role, comparisonId, tier, arms: results, controlsDivergence }, outFile, summaryLine);
   if (failedArms.length > 0) {
     process.stderr.write(`  [manifest-driver] manifest: arm(s) failed: ${failedArms.join(', ')} — INCONCLUSIVE for those; siblings recorded normally\n`);
   }
 }
+
+/**
+ * For each of the eight `deriveControlsApplied`-covered fields, `'uniform'`
+ * if every arm that reported the field agrees on its value, `'divergent'`
+ * otherwise, `null` if no arm reported it at all (never declared, or a
+ * non-auditor role with no `controlsApplied` mechanism). Pure — takes the
+ * SAME `results` array `writeOutput` receives, no re-fetching.
+ * @param {Array<{result?: {controlsApplied?: object|null}}>} results
+ * @returns {Record<string, 'uniform'|'divergent'|null>|null} `null` when
+ *   NO arm reported any `controlsApplied` at all (e.g. every arm failed
+ *   before producing one, or the role doesn't compute this evidence).
+ */
+function computeControlsDivergence(results) {
+  const fieldValues = new Map();
+  for (const r of results) {
+    const applied = r.result?.result?.controlsApplied;
+    if (!applied || typeof applied !== 'object') continue;
+    for (const [field, value] of Object.entries(applied)) {
+      if (!fieldValues.has(field)) fieldValues.set(field, new Set());
+      fieldValues.get(field).add(value);
+    }
+  }
+  if (fieldValues.size === 0) return null;
+  const divergence = {};
+  for (const [field, values] of fieldValues) {
+    divergence[field] = values.size === 1 ? 'uniform' : 'divergent';
+  }
+  return divergence;
+}
+
+// Exported for direct testing (mirrors this repo's established _internals pattern).
+export const _internals = { computeControlsDivergence };
