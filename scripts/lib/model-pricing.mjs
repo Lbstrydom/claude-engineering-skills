@@ -27,14 +27,24 @@ import { modelPricing as familyPricing } from './config.mjs';
 import { pricingKey } from './model-resolver.mjs';
 
 /**
- * OSS (OpenRouter open-weight) prices, keyed by the FULL OpenRouter id — these
- * ids do not parse into a family key, so `pricingKey()` returns them verbatim
- * and the lookup lands here. Prices are USD / 1M tokens and APPROXIMATE (2026-07
- * ballpark; OpenRouter routes to multiple upstream providers whose prices drift).
+ * Prices keyed by the VERBATIM model id — both OpenRouter `vendor/model` slugs
+ * and the bare ids of native direct-provider routes. Neither shape parses into
+ * a family key, so `pricingKey()` returns them unchanged and `priceFor`'s first
+ * lookup (raw `modelId` against this table) is what lands. Prices are USD / 1M
+ * tokens and APPROXIMATE (OpenRouter routes to multiple upstream providers
+ * whose prices drift).
+ *
  * The null-cost policy covers anything unlisted — an unlisted id is not an
- * error, just an unpriced run excluded from the cost ratio. Keep these roughly
- * current when refreshing the OSS_POOL heads in model-resolver.mjs.
- * @type {Readonly<Record<string,{input:number,output:number}>>}
+ * error, just an unpriced run excluded from the cost ratio. **But an id that
+ * STAYS unlisted while it is actively collecting is the "always-null column
+ * reads as free, not broken" defect** this repo already ate once (per-run cost
+ * was NULL on all 128 runs for the column's entire life). If a campaign arm
+ * reports `unpriced` in its progress output, it belongs here — enforced by
+ * tests/cost-budget.test.mjs, which enumerates the committed campaign files.
+ *
+ * Keep these roughly current when refreshing the OSS_POOL heads in
+ * model-resolver.mjs.
+ * @type {Readonly<Record<string,{input:number,output:number,cachedInput?:number}>>}
  */
 export const OSS_PRICING = Object.freeze({
   'qwen/qwen3-coder':                  { input: 0.20, output: 0.80 },
@@ -51,6 +61,27 @@ export const OSS_PRICING = Object.freeze({
   'qwen/qwen3.7-max':                  { input: 1.25,  output: 3.75 },
   'deepseek/deepseek-v4-pro':          { input: 0.435, output: 0.87 },
   'deepseek/deepseek-v4-flash':        { input: 0.098, output: 0.196 },
+  // ── Native direct-provider routes (BARE ids, no vendor slug) ──────────────
+  // Added 2026-08-17 after both arms reported `unpriced` for their whole life
+  // in the final-review-scoped-2026q3 campaign, which renders as FREE in the
+  // per-arm cost table rather than as missing.
+  //
+  // qwen3.8-max: PUBLISHED rates for Model Studio's international (Singapore)
+  // endpoint — $2/$6, with cached input at $0.25 (an 8x discount). The cache
+  // tier is not decorative here: this campaign re-sends near-identical
+  // envelopes across arms and retries, and the real accrued bill came in ~4.5x
+  // under a naive uncached estimate, which is only explicable with it. Note
+  // qwen3.8-max carries NO free-tier allowance (console: "Not Supported"), so
+  // every token is billed from the first call.
+  'qwen3.8-max':                       { input: 2.00,  output: 6.00, cachedInput: 0.25 },
+  // deepseek-v4-pro / -flash (DeepSeek's OWN api.deepseek.com, not the
+  // OpenRouter slugs above): carried over from the OpenRouter figures as a
+  // LABELLED approximation, not verified direct-API rates. Direct-provider
+  // pricing is typically at or below a gateway's, so this errs HIGH — the safe
+  // direction for a cost gate, which must never under-report an arm's spend.
+  // Replace with the published rates when someone verifies them.
+  'deepseek-v4-pro':                   { input: 0.435, output: 0.87 },
+  'deepseek-v4-flash':                 { input: 0.098, output: 0.196 },
 });
 
 /**

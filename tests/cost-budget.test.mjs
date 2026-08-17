@@ -336,3 +336,37 @@ describe('computeCostReport', () => {
     assert.equal(report.unavailableCostEventCount, 1);
   });
 });
+
+// ── Every declared campaign arm must be PRICED ────────────────────────────────
+
+describe('campaign arms are priced — an unpriced arm reads as free, not as missing', () => {
+  it('every model declared in a committed .campaigns/*.json resolves to a price', async () => {
+    // Keyed on the CONSEQUENCE, not on a list of ids: the defect is an arm
+    // that collects for its whole life while its cost column stays null, which
+    // the per-arm cost table renders as `unpriced` next to real dollar figures.
+    // Both native-route arms (qwen3.8-max, deepseek-v4-pro) did exactly that
+    // until 2026-08-17. Enumerating the campaign files rather than hardcoding
+    // ids means a NEWLY declared arm cannot repeat it without failing here.
+    const { readdirSync, readFileSync } = await import('node:fs');
+    const files = readdirSync('.campaigns').filter((f) => f.endsWith('.json'));
+    assert.ok(files.length > 0, 'no campaign files found — this test would be vacuous');
+
+    const unpriced = [];
+    for (const f of files) {
+      const cfg = JSON.parse(readFileSync(`.campaigns/${f}`, 'utf-8'));
+      for (const arm of cfg.arms || []) {
+        // `claude-opus` / `gemini` style family TOKENS are provider selectors,
+        // not model ids — they resolve at runtime and are priced by family.
+        if (priceFor(arm.model) === null) unpriced.push(`${f}:${arm.id} (${arm.model})`);
+      }
+    }
+    assert.deepEqual(unpriced, [], `these declared arms have no price entry, so their spend reports as $0/unpriced: ${unpriced.join(', ')}`);
+  });
+
+  it('qwen3.8-max carries its cached-input tier — the campaign re-sends near-identical envelopes, so the 8x discount is load-bearing', () => {
+    const p = priceFor('qwen3.8-max');
+    assert.equal(p.input, 2.00);
+    assert.equal(p.output, 6.00);
+    assert.equal(p.cachedInput, 0.25, 'omitting the cache tier over-states this arm\'s cost several-fold');
+  });
+});
