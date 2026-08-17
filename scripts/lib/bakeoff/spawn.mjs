@@ -68,9 +68,19 @@ export function runArm(arm, { transcript, plan, mode, outDir, id, runId, envelop
   const out = path.join(outDir, `${id}-${arm.id}.json`);
   const args = buildArmArgs(arm, { transcript, plan, mode, out, runId, envelopeScope, campaignDigest });
   process.stderr.write(`  [bakeoff] arm ${arm.id}…\n`);
+  // Three-tier precedence, not spread order alone (which can only express
+  // "last wins" between two sources): an operator's own explicit
+  // GEMINI_REVIEW_TIMEOUT_MS wins outright; else a route's own per-arm
+  // default (`arm.env.GEMINI_REVIEW_TIMEOUT_MS`, e.g. alibaba's longer
+  // ceiling — see bakeoff/arms.mjs transportForModel) applies; else 300s.
+  // The unconditional `GEMINI_REVIEW_TIMEOUT_MS: ... || '300000'` this
+  // replaced always stomped a per-arm value regardless of `...arm.env`
+  // appearing before it in the spread — the per-arm override was dead code
+  // until this fix (2026-08-17, qwen intermittent-timeout follow-up).
+  const timeoutMs = process.env.GEMINI_REVIEW_TIMEOUT_MS || arm.env?.GEMINI_REVIEW_TIMEOUT_MS || '300000';
   const r = spawnSync(process.execPath, args, {
     encoding: 'utf-8',
-    env: { ...process.env, ...arm.env, GEMINI_REVIEW_TIMEOUT_MS: process.env.GEMINI_REVIEW_TIMEOUT_MS || '300000' },
+    env: { ...process.env, ...arm.env, GEMINI_REVIEW_TIMEOUT_MS: timeoutMs },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   if (r.status !== 0) return { error: `exit ${r.status}`, stderrTail: String(r.stderr || '').slice(-400) };

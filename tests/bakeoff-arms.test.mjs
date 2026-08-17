@@ -146,6 +146,17 @@ describe('deriveArms — the refactor must change no request', () => {
     }
   });
 
+  it('a route with timeoutMs (alibaba) propagates GEMINI_REVIEW_TIMEOUT_MS into the derived arm\'s env — appended LAST so it is not silently reordered away', () => {
+    const derived = deriveArms({ arms: [{ id: 'qwen', model: 'qwen3.8-max', mode: 'shadow' }] });
+    assert.equal(derived[0].env.GEMINI_REVIEW_TIMEOUT_MS, '600000');
+    assert.equal(Object.keys(derived[0].env).at(-1), 'GEMINI_REVIEW_TIMEOUT_MS', 'must be the last key — spawn.mjs relies on nothing overwriting it downstream');
+  });
+
+  it('a route with no timeoutMs (e.g. deepseek) never adds the key — the 300s spawn.mjs default applies untouched', () => {
+    const derived = deriveArms({ arms: [{ id: 'd1', model: 'deepseek-v4-pro', mode: 'shadow' }] });
+    assert.equal('GEMINI_REVIEW_TIMEOUT_MS' in derived[0].env, false);
+  });
+
   it('preserves DECLARATION order — the two Opus arms stay adjacent', () => {
     // Order is not cosmetic: adjacency keeps the second identical Opus prompt
     // inside the 5-minute cache TTL. Sorting for tidiness would change no
@@ -187,6 +198,16 @@ describe('transportForModel — the HOW the config deliberately does not express
     // by DeepSeek's own bare id (deepseek-v4-pro) on its direct API
     // (2026-08-17). This must REFUSE, not fall through to some other route.
     assert.throws(() => transportForModel('deepseek-v4-pro-0813'), /no transport for model/);
+  });
+
+  it('the alibaba route (qwen) carries a longer timeoutMs — variance, not the deterministic failure class that moved deepseek off it', () => {
+    assert.equal(transportForModel('qwen3.8-max').timeoutMs, 600000);
+  });
+
+  it('every OTHER route has NO timeoutMs override — the 300s default is fine for a deterministic pass/fail route', () => {
+    for (const model of ['claude-opus', 'gemini-pro-latest', 'grok-4.6', 'deepseek-v4-pro', 'moonshotai/kimi-k2-thinking']) {
+      assert.equal(transportForModel(model).timeoutMs, undefined, `${model} must not carry an override`);
+    }
   });
 
   it('ALIBABA_POOL membership wins over the generic "/" → openrouter rule, and only for curated ids', () => {

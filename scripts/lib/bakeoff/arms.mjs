@@ -48,13 +48,21 @@ export function transportForModel(model) {
   // that happens to contain '/' must never be silently swallowed by the
   // OpenRouter branch.
   if (isAlibabaModel(model)) {
-    // Native Alibaba Cloud Model Studio route (qwen/deepseek bake-off arms,
-    // 2026-08-17) — mirrors the xai branch below: one direct workspace
-    // endpoint, not a router picking among upstream backends, so no
-    // OpenRouter-style routing extras apply. No prompt-cache multiplier:
-    // unverified whether this workspace reports cache usage fields, so no
-    // multiplier is claimed rather than assumed.
-    return { route: 'alibaba', shadowToken: 'alibaba', providerArg: 'alibaba', shadowModel: model, promptCache: '' };
+    // Native Alibaba Cloud Model Studio route (qwen bake-off arm, 2026-08-17)
+    // — mirrors the xai branch below: one direct workspace endpoint, not a
+    // router picking among upstream backends, so no OpenRouter-style routing
+    // extras apply. No prompt-cache multiplier: unverified whether this
+    // workspace reports cache usage fields, so no multiplier is claimed
+    // rather than assumed.
+    //
+    // `timeoutMs: 600000` (double the 300000 default): this workspace showed
+    // INTERMITTENT latency on this arm — 3 of 5 real collection attempts
+    // timed out at 300s, 2 succeeded well under it (48.5s / a normal run) —
+    // not the fully-reproducible route failure that moved deepseek off this
+    // same workspace the same day (that was 2/2, every time; this is
+    // variance). A longer ceiling is the right lever for variance; it would
+    // NOT have been for a deterministic failure, which no timeout fixes.
+    return { route: 'alibaba', shadowToken: 'alibaba', providerArg: 'alibaba', shadowModel: model, promptCache: '', timeoutMs: 600000 };
   }
   if (isDeepseekModel(model)) {
     // Native DeepSeek route (2026-08-17) — REPLACES the Alibaba-workspace
@@ -134,6 +142,10 @@ export function deriveArms(config) {
     const ordered = t.shadowModel
       ? { FINAL_REVIEW_SHADOW: env.FINAL_REVIEW_SHADOW, FINAL_REVIEW_SHADOW_MODEL: env.FINAL_REVIEW_SHADOW_MODEL, FINAL_REVIEW_PROMPT_CACHE: env.FINAL_REVIEW_PROMPT_CACHE }
       : env;
+    // A route with its own `timeoutMs` (currently only alibaba, see above)
+    // overrides the blanket 300s default for this arm's spawn — `runArm`
+    // (bakeoff/spawn.mjs) merges this LAST so it wins over the global default.
+    if (t.timeoutMs) ordered.GEMINI_REVIEW_TIMEOUT_MS = String(t.timeoutMs);
     return { id: arm.id, model: arm.model, replicate, route: t.route, env: ordered };
   }));
 }
