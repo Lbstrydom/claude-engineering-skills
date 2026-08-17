@@ -1,7 +1,7 @@
 # cross-skill.mjs CLI integrity remediation
 
 - **Date**: 2026-08-12
-- **Status**: In Progress — all 21 fixes landed + Gemini gate APPROVE; NOT `Complete` because the stated `/audit-code` bar (HIGH == 0) was not reached (see §Acceptance)
+- **Status**: **Complete** — closed 2026-08-17. All 21 fixes landed (`8f582e80`) + Gemini gate APPROVE. It stayed `In Progress` because the stated `/audit-code` bar (HIGH == 0) was never reached; §Acceptance explains why that bar was unreachable *from inside this plan* — the residual HIGHs were the §Deferred entries, and **every one of them has since been closed or explicitly declared by successor work** (see §Closure). Nothing in this plan's scope remains open.
 - **Author**: Claude + Louis
 - **Scope**: backend
 - **Target domain(s)**: `shared-lib`, `stores`, `audit-orchestration`
@@ -275,20 +275,50 @@ rather than `PLAN_NOT_RESOLVED`.
   not `running`. Every one becomes a thrown error the handler already converts
   to `emitError`. There is no silent 0-row path to guard.
 
-## Deferred — independence named
+## Deferred — independence named, and where each one actually landed
 
-- **ID-addressed child writes** (`record-plan-verify-run`, `record-plan-verify-items`,
+> **Correction (2026-08-17), and it is this plan's own defect class.** Three of
+> the four entries below closed with *"Captured to the debt ledger."* **They were
+> not.** A mechanical check of `.audit/tech-debt.json` — 149 entries — found
+> **zero** referencing this plan or any of these items, by plan name or by
+> content (`isCloudEnabled`, `initLearningStore`, `record-plan-verify`,
+> `record-correlation`, `record-symbol-index`, `publish-refresh-run`: 0 hits
+> each). The sentence was a **claim that was confidently wrong rather than
+> absent** — the exact family this plan exists to remove, committed inside the
+> plan that removes it, and the second time that has happened here (cf. the
+> struck-through `decision-logger` entry below). It is corrected rather than
+> deleted, because the pattern is the lesson.
+>
+> The claim is *not* being replaced with real ledger entries: filing debt for
+> work that has since been **done** would swap one false record for another. The
+> true disposition of each is stated inline instead, with the commit that closed
+> it. The residual in #3 is a **stated design decision**, not open debt.
+
+- ~~**ID-addressed child writes**~~ (`record-plan-verify-run`, `record-plan-verify-items`,
   `record-correlation`, `record-regression-spec-run`) take a parent UUID and never
   resolve a repo scope. **Independence**: unlike F1–F7 these are never wrong on a
   *default* invocation — being wrong requires the caller to supply a UUID belonging
   to another repo, which no skill does (each threads the id it just created in the
   same process). Fixing properly needs a parent→repo ownership check in the store,
-  which is a schema-adjacent change larger than this remediation. Captured to the
-  debt ledger.
+  which is a schema-adjacent change larger than this remediation.
+  → **CLOSED** by `5c952bc6` (*Phases 7–8 — parent-ownership joins for child
+  writes*), with `fa7ef2c4` scoping the read path. Each command now threads the
+  resolved repo into the writer's parent join and distinguishes
+  `parent-not-found` from `parent-not-owned` — *"that plan does not exist"* and
+  *"that plan belongs to another repository"* are different things for the
+  operator to do next. The independence claim held: the fix arrived as its own
+  schema-adjacent piece of work, exactly as predicted.
 - **Arch-memory mutations** (`record-symbol-index`, `publish-refresh-run`, …) take
   `repoId` from the JSON payload. **Independence**: these are internal pipeline
   steps invoked only by `arch:refresh`, which resolves the id itself immediately
-  before; none is documented for hand invocation. Captured to the debt ledger.
+  before; none is documented for hand invocation.
+  → **CONVERTED from a silent gap into a DECLARED one.** Still payload-supplied,
+  by design, but each is now an explicit `scope: 'none'` entry in the command
+  registry (`scripts/lib/cross-skill/registry.mjs`) with the reasoning carried in
+  `commands/arch-refresh.mjs`'s docblock. That is the whole point of the registry:
+  an undeclared assumption became an enumerable, conformance-tested declaration.
+  A future change that *does* want these repo-scoped now has to edit a
+  declaration rather than discover a convention.
 - **`initLearningStore()` / `isCloudEnabled()` collapse "unreachable" into
   "disabled"** (audit r1 HIGH). Real, and the same family as F7.
   **Independence**: none of F1–F9 calls it for a *scoping* decision — it gates
@@ -296,13 +326,30 @@ rather than `PLAN_NOT_RESOLVED`.
   graceful no-op, and the two states it merges produce the *same* local
   behaviour. Changing it re-types the entry condition of ~60 handlers plus every
   other CLI in the repo, which is a distinct piece of work from this one.
-  Captured to the debt ledger.
-- **God-module size** (`cross-skill.mjs` 3.2K lines, `plans-ship.mjs` 1.4K) and
+  → **MITIGATED where it bit, deliberately unchanged where it did not.**
+  `67189e99` added `scripts/lib/store/client-state.mjs`: `getCloudState()`
+  returns `'off' | 'ready' | 'unreachable'`, so the CLI stops telling operators
+  *"AUDIT_DB_URL unset"* while their database is merely down. It is **wired, not
+  ornamental** — `dispatch.mjs:212` reads it and `dispatch.mjs:294` emits
+  `degraded: 'store-unreachable'`, asserted by `tests/cross-skill-finalize-round.test.mjs`
+  and `tests/plan-verify-items-write-result.test.mjs`. The `isCloudEnabled()`
+  **boolean contract is still collapsed on purpose**: routing stays on the same
+  pool-presence check the legacy path used (byte-compatibility), and writes
+  attempt anyway and report their own discriminated outcome. So the residual is a
+  recorded design decision with its evidence deliberately narrow, not debt.
+- ~~**God-module size**~~ (`cross-skill.mjs` 3.2K lines, `plans-ship.mjs` 1.4K) and
   the **domain layering violations** the mechanical waves flagged
   (`model-ab store → audit-arms`, `toggle → audit-arms`, `dashboard →
   model-eval`, install↔scripts reciprocal). **Independence**: all pre-existing,
   none in a file this change set alters behaviourally, and none reachable from
   F1–F9's call paths. Pre-existing architecture debt with its own ledger entries.
+  → **CLOSED.** `cross-skill.mjs` is **3,248 → 1,098 lines**, split into 11
+  command modules under `scripts/lib/cross-skill/commands/`; `store/plans-ship.mjs`
+  no longer exists (the store moved to `scripts/lib/store/`). Layering: `3e1e02bb`
+  (*Cluster 1 — 14 layering violations to 0, via 1 extraction*). Note §Acceptance
+  item 2 — *"a 3,248-line god-module attracts a standing architecture HIGH that no
+  fix inside it can retire"* — was exactly right, and retiring it needed a
+  different plan, which is what happened.
 - ~~**`decision-logger` retains caller-owned objects by reference**~~ —
   **NO LONGER DEFERRED; fixed as F19.** This entry contradicted the status table
   above it for two rounds, and the module itself still carried a "Known residual
@@ -360,3 +407,36 @@ converging, and the reason is structural, not a backlog of unfixed bugs:
 finding raised across six rounds was either fixed (F1–F21), deferred with its
 independence named, or verified false and recorded in §Rejected. Anyone
 resuming should start from §Deferred, not from the raw verdict.
+
+## Closure (2026-08-17)
+
+Nothing in this plan's scope remains open, so it moves to `Complete`. Verified
+mechanically against the tree, not from recollection:
+
+| Was | Now | Closed by |
+|---|---|---|
+| F1–F21 | landed and shipped | `8f582e80` |
+| Deferred: ID-addressed child writes | closed — parent-ownership joins, `parent-not-found` ≠ `parent-not-owned` | `5c952bc6`, `fa7ef2c4` |
+| Deferred: arch-memory mutations | declared `scope: 'none'` in the registry, reasoning in code | `cross-skill-command-registry.md` Cluster B |
+| Deferred: `isCloudEnabled` collapse | mitigated + wired at the envelope layer; boolean contract collapsed **by design** | `67189e99` |
+| Deferred: god-module + layering | closed — 3,248 → 1,098 lines / 11 modules; 14 layering violations → 0 | registry clusters, `3e1e02bb` |
+| §Deferred's *"captured to the debt ledger"* | **false claim, corrected in place** | this closure |
+
+**The successor absorbed the deferrals by design, not by accident.**
+`docs/plans/cross-skill-command-registry.md` (Status: **Complete**) states it
+outright — *"the deferred clusters from `cross-skill-cli-integrity.md` land here
+natively"* — and that is what the §Acceptance analysis argued for: the residual
+HIGHs were structural, so the way to retire them was a plan whose scope was the
+structure, not another round inside this one.
+
+**The one thing this closure is evidence for.** The §Acceptance section was
+written to say *"the reported HIGH count is not a count of open defects."* That
+was a claim about the future, and five days of successor work is what tested it:
+every residual HIGH turned out to be a real piece of work that a differently
+scoped plan closed. Running a seventh round here would have found none of them.
+But the same closure also found a false sentence that six audit rounds, a Gemini
+gate, and a shadow reviewer all read past — because *"captured to the debt
+ledger"* is a claim about a **record elsewhere**, and no reviewer looking at this
+file could falsify it without going and reading the ledger. That is the
+generalisable lesson, and it is not "audit harder": **a claim whose truth lives
+outside the diff needs a mechanical check, not a reader.**

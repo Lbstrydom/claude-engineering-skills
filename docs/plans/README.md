@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**6 active · 194 terminal · 27 audit summaries · 4 reference docs**
+**5 active · 195 terminal · 27 audit summaries · 4 reference docs**
 
 ---
 
@@ -21,7 +21,6 @@ This is the list to read when asking "what is in flight?".
 
 | Plan | Status | Notes |
 |---|---|---|
-| [cross-skill.mjs CLI integrity remediation](./cross-skill-cli-integrity.md) | `In Progress` | all 21 fixes landed + Gemini gate APPROVE; NOT `Complete` because the stated `/audit-code` bar (HIGH == 0) … |
 | [Event-Wiring Symmetry Check](./event-wiring-symmetry.md) | `Draft` |  |
 | [Final-Review Shadow Bake-Off (marginal-value re-test)](./final-review-shadow-bakeoff.md) | `In Progress` | activated 2026-07-31 — see §0 Activation Addendum |
 | [Miscellaneous Small-Cluster Debt (2026-07-26 triage)](./refactor-misc-small-items-2026-07.md) | `Draft` | narrowed to 8 items (10 topicIds), re-verified open |
@@ -46,7 +45,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 191 completed plans</summary>
+<summary>Show all 192 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -95,6 +94,7 @@ source comments that no docs linter sees — stays valid.
 | [VS Code GitHub Copilot compatibility audit + fixes](./copilot-compat-audit.md) | `Complete` |  |
 | [Cross-Agent Delivery Parity](./cross-agent-delivery-parity.md) | `Complete` |  |
 | [Cross-Model Finding Matching](./cross-model-finding-matching.md) | `Complete` | implemented + audited |
+| [cross-skill.mjs CLI integrity remediation](./cross-skill-cli-integrity.md) | `Complete` | closed 2026-08-17. All 21 fixes landed (`8f582e80`) + Gemini gate APPROVE. It stayed `In Progress` because … |
 | [cross-skill CLI — declarative command registry](./cross-skill-command-registry.md) | `Complete` | shipped 2026-08-12 across six clusters |
 | [/cycle's per-cluster audit must name the flag that actually scopes](./cycle-cluster-audit-scope.md) | `Complete` |  |
 | [Read-only Audit-Run Findings Viewer (dashboard module)](./dashboard-audit-run-viewer.md) | `Complete` | implemented + audited — see Implementation Log |
