@@ -1,35 +1,40 @@
 # Plan: Tiered Recall-Weighted Audit Pipeline
 
 - **Date**: 2026-07-09
-- **Status**: In Progress — implementation complete (Clusters A-F implemented
-  and gate-clear), but the plan's own terminal gate (Phase 14, the
-  production-flip decision) has NOT run and is not eligible to yet. **Moved
-  back from `docs/completed/` on 2026-07-13** — it had been mis-filed there
-  while a pending decision gate was still open; `docs/completed/` is for
-  plans with nothing left to decide. Cluster E's pre-existing debt was scoped
-  into a dedicated companion plan (`docs/plans/audit-orchestrator-hardening.md`,
-  also complete). Mandatory consolidated Gemini gate over the Cluster
-  E+F(+hardening) union diff: `APPROVE` (round 2, after fixing 2 genuine bugs
-  round 1 surfaced — a stage1-mechanical suppression not checking
-  `remediationState==='regressed'`, and a Zod-validation-bypass in
-  `cost-budget.mjs`'s event loaders). Shipped 2026-07-10. **Phase 5's
-  validation session (the actual human-graded run — distinct from the
-  tooling, which shipped with the rest of Cluster C) ran 2026-07-12**:
-  `docs/experiments/audit-effectiveness/cheap-triager-validation.json`
+- **Status**: Complete — implementation shipped (Clusters A-F, gate-clear).
+  The Close-out shadow-validation window (10-15 real `/audit-code` runs) is
+  now **met**: 27 decision-grade compared runs under the live epoch as of
+  2026-08-17. **Phase 14 (the production-flip decision) is deliberately
+  closed WITHOUT flipping to production** — the same measurement surfaced a
+  live reliability problem (the tiered pipeline's GLM discovery step
+  times out or truncates on roughly half of eligible runs) and an unresolved
+  interpretability gap (0% finding-overlap rate, not yet checked against
+  per-row unlocalized counts). Rather than keep patching this plan's bespoke
+  `tiered-shadow-compare.mjs` instrument, the production-flip evaluation is
+  being folded into the newer, general-purpose comparison-campaign framework
+  (`docs/plans/role-agnostic-comparison-core.md` +
+  `docs/plans/comparison-tooling-consolidation.md` — `campaign.mjs`'s
+  role-agnostic `EXECUTORS` registry, native provider routes, per-arm retry)
+  rather than resumed here. See "Close-out 2026-08-17" at the bottom for the
+  full readout and the pointer forward. `tieredAuditConfig.pipelineEnabled`
+  stays **off** by default; production continues on the legacy 5-pass path.
+  **Moved back from `docs/completed/` on 2026-07-13** — it had been mis-filed
+  there while a pending decision gate was still open; `docs/completed/` is
+  for plans with nothing left to decide. Cluster E's pre-existing debt was
+  scoped into a dedicated companion plan
+  (`docs/plans/audit-orchestrator-hardening.md`, also complete). Mandatory
+  consolidated Gemini gate over the Cluster E+F(+hardening) union diff:
+  `APPROVE` (round 2, after fixing 2 genuine bugs round 1 surfaced — a
+  stage1-mechanical suppression not checking `remediationState==='regressed'`,
+  and a Zod-validation-bypass in `cost-budget.mjs`'s event loaders). Shipped
+  2026-07-10. **Phase 5's validation session (the actual human-graded run —
+  distinct from the tooling, which shipped with the rest of Cluster C) ran
+  2026-07-12**: `docs/experiments/audit-effectiveness/cheap-triager-validation.json`
   PASSED for `z-ai/glm-5.2` (both load-bearing strata at 0.0% false-dismissal;
   see status.md 2026-07-12 for the full write-up and the omission-stratum
-  small-sample caveat). Phase 7 can now select GLM as the Stage-1 triager.
-  **Still open**: the Close-out shadow-validation window (10-15 real
-  `/audit-code` runs with `AUDIT_TIERED_SHADOW_ENABLED=true`) HAS since
-  started collecting — as of 2026-07-22, `tiered_shadow_observations` holds
-  13 `tieredRunStatus='complete'` rows since the 2026-07-17 anchor fix. Those
-  13 rows are **void** (overlap=0 on all 13, cost NULL/0) — a comparison-payload
-  bug, since **fixed 2026-07-22**: overlap now correlates by location (not prose),
-  and BOTH legacy and tiered cost are now really priced (per-stage usage capture
-  wired through all three tiered stages). See the "Addendum 2026-07-22" at the
-  bottom. Phase 14 now needs only the window to **re-accumulate** 10–15 real
-  `complete` runs post-fix (and one live-run confirmation the new fields
-  populate) — not flag state, window size, or any remaining code.
+  small-sample caveat). Phase 7 selected GLM as the Stage-1 triager — the
+  reliability finding above is about GLM's live *availability* (timeouts/
+  truncation via OpenRouter), not this validation result, which stands.
 - **Author**: Claude + Louis
 - **Scope**: backend
 
@@ -1261,4 +1266,64 @@ already caught two real changes it was built to catch.
   overlap correctness is covered by the item-(1) unit suite, not this cost-kickoff
   row. Practical note recorded for future kickoffs: a small `--files`-scoped diff is
   the reliable way to get a `complete` row past GLM's discovery timeout.
+
+---
+
+### Close-out 2026-08-17 — window met; Phase 14 closed without a flip; production-flip evaluation handed to the campaign framework
+
+`npm run audit:tiered-shadow-report` against the live store (Supabase
+`uahjjdelnnpfmaqjrwoz`) this date:
+
+| Metric | Value |
+|---|---|
+| `comparedRuns` (decision-grade, current epoch `v7-multi-hunk-selector-2026-07-27`) | **27** — window (10-15) is met |
+| `totalRuns` recorded | 415 |
+| `excludedStaleEpoch` | 42 (pre-`v7`, correctly excluded per the epoch-gate design above) |
+| `excludedFallback` | 34 |
+| `tieredRunStatusCounts` | `{complete: 69, fallback_legacy: 34, skipped_no_eligible_files: 99}` |
+| `shadowFailures` | 210 — dominated by GLM discovery timeout (117) and output-truncation (63) |
+| `costDeltaUsd` | mean **-$0.224**, median **-$0.142** (tiered cheaper, on the runs that complete) |
+| `latencyDeltaSec` | mean +93.2s, median +107.4s (tiered slower) |
+| `findingOverlapRate` | mean 0%, median 0% — **not yet checked** against per-row `legacyUnlocalizedCount`/`tieredUnlocalizedCount`; the report tool doesn't surface these in aggregate, and no one has queried the 27 rows directly |
+
+**Decision: close this plan without flipping `tieredAuditConfig.pipelineEnabled`
+to production.** Two reasons, both from the table above:
+
+1. **Live reliability.** Across the runs the shadow flag actually saw, the
+   tiered pipeline's required GLM discovery step failed outright (timeout or
+   truncation) far more often than it completed — the pre-existing best-practice
+   OpenRouter config (`require_parameters:true`, retry+backoff — see the
+   2026-07-22 addendum above) was not enough to close this. A pipeline that
+   falls back to legacy or fails on the majority of eligible runs is not a
+   production-ready replacement for the always-on 5-pass path, independent of
+   whatever it costs on the runs that do complete.
+2. **Unverified overlap.** The 2026-07-26 addendum already warned that a
+   near-0% overlap must not be read as genuine disagreement until the
+   per-row unlocalized counts are checked — that check was never done on
+   these 27 rows, so the interpretability gap the plan itself flagged is
+   still open.
+
+Rather than keep extending this plan's bespoke shadow-comparison instrument
+(`tiered-shadow-compare.mjs`, `tiered-shadow-summary.mjs`) to chase GLM
+reliability and the overlap check, the production-flip evaluation is being
+**handed to the newer, general-purpose comparison-campaign framework** shipped
+by [`role-agnostic-comparison-core.md`](./role-agnostic-comparison-core.md)
+and [`comparison-tooling-consolidation.md`](./comparison-tooling-consolidation.md)
+(`campaign.mjs`'s role-agnostic `EXECUTORS` registry, native provider routes,
+per-arm retry, antisymmetry/same-family checks) — a more exhaustive and
+more reliable instrument than what this plan built ad hoc for one comparison.
+A parallel session is already running campaign bake-offs on this newer
+tooling; any future auditor-role model-swap or tiered-vs-legacy production
+decision should go through that framework, not resume this plan's Phase 14.
+
+**What this plan leaves behind, still live in production** (this is not an
+abandonment of the shipped work — Clusters A-F remain in the codebase,
+unconditionally available and independently useful): the evidence-contract
+schema (`EvidenceAnchorV2`), Stage 0's deterministic verify/blame/impact
+checks, the ledger-routing fix (Stage 1 dismissals via the reopenable fuzzy
+path), the cost-budget/`UsageEvent` instrumentation, and the verified-line
+location fix for tiered findings. `runLegacyProductionAudit` remains the
+default production path; `AUDIT_TIERED_SHADOW_ENABLED` stays available for
+anyone who wants to keep collecting shadow data, but no further work on
+this plan's own Phase 14 is planned.
 

@@ -1,35 +1,68 @@
 # Plan: Miscellaneous Small-Cluster Debt (2026-07-26 triage)
 
-- **Date**: 2026-07-26
-- **Status**: Draft — items resolved individually as picked up (see per-item status below), not implemented as one batch
+- **Date**: 2026-07-26 (re-traced 2026-08-17)
+- **Status**: Draft — **narrowed to 8 items (10 topicIds), re-verified open
+  2026-08-17.** Of the original 17 entries: 1 done directly under this plan
+  (2026-07-27), 4 closed by other work (2026-08-03/07-28), 1 corrected
+  (was already fixed pre-plan). Items resolved individually as picked up,
+  not implemented as one batch.
 - **Author**: Claude (tech-debt backlog triage session)
 - **Scope**: backend
 
 > Origin: full `.audit/tech-debt.json` backlog triage (384 entries). This
-> is the leftover bucket — 17 entries across 13 files, each a standalone
-> 1-2-entry issue not sharing enough theme with another cluster to warrant
-> its own plan doc. Verified against current source 2026-07-26. Grouped
-> here by file, no cross-cutting theme implied.
+> is the leftover bucket — originally 17 entries across 13 files, each a
+> standalone 1-2-entry issue not sharing enough theme with another cluster
+> to warrant its own plan doc. Verified against current source 2026-07-26;
+> re-verified 2026-08-17 (see Progress notes below). Grouped here by file,
+> no cross-cutting theme implied.
 
 **Progress (2026-07-27)**: `duplicate-justification-pragma.mjs` (`67f8f414`/
 `fbd71c9a`) — **done**. `^\s*` anchor added to `PRAGMA_RE`; 4 regression
 tests added. Also fixed a related bug found while verifying: a real pragma
 in `scripts/setup-postgres.mjs` was written as a JSDoc continuation line
 (no comment-marker prefix), so it never actually matched at all — moved to
-a standalone `//` comment line. All other items below remain open.
+a standalone `//` comment line.
+
+**Progress (2026-08-17, re-traced against current source, none via this
+plan)**: 4 more topicIds closed, 1 entry corrected, **8 distinct items (10
+topicIds) remain genuinely open**:
+- `139dc8c30859` (gemini-review.mjs `thinkingBudget` literal) — **fixed**
+  `05858e20` (2026-08-03): now `GEMINI_THINKING_BUDGET_BY_EFFORT` lookup.
+- `19659d7a`/`0e18b00d`/`3f0e3fe7` (on-conflict.mjs `isNullableExpr` +
+  atomic-write-adoption-guard.test.mjs identifier matching) — **fixed by
+  one commit**, `869f69ca` (2026-07-28): `isNullableExpr` replaced by a
+  three-valued `classifyNullability` lattice, and the guard now resolves
+  real lexical bindings via `scripts/lib/import-binding.mjs` instead of
+  matching identifier spelling.
+- `1ff42c81c4f7` (schemas.mjs `FindingSchema` alias) — **claim was already
+  stale when this plan was written**: the distinguishing comment landed in
+  `afbcd022` (2026-04-05), 3.5 months before this plan's 2026-07-26
+  authoring commit. Nothing to fix.
+
+The remaining 8 items (10 topicIds) below are unchanged from 2026-07-26 —
+re-verified against current source 2026-08-17, not re-read off this text.
 
 ---
 
 - **`gemini-review.mjs`** — `139dc8c30859` (bare `thinkingBudget: 16384`
-  literal, no named constant) and `86b51ca4ba56` (file has grown to 2157
-  lines, still mixes CLI/provider/shadow-compare/formatting/watchdog in
-  one file — worth a decomposition pass if this file gets touched again for
-  another reason, not urgent enough to justify one on its own).
+  literal, no named constant). **Fixed `05858e20` (2026-08-03)** — a
+  `GEMINI_THINKING_BUDGET_BY_EFFORT` lookup replaced the literal.
+  `86b51ca4ba56` (file has grown to 2157 lines, still mixes
+  CLI/provider/shadow-compare/formatting/watchdog in one file — worth a
+  decomposition pass if this file gets touched again for another reason,
+  not urgent enough to justify one on its own) — **still open**; the file
+  has since grown further, to 3082 lines (checked 2026-08-17), still
+  undecomposed.
 - **`lint/on-conflict.mjs`** — `19659d7a` (`isNullableExpr` misclassifies
   both its own documented `||`/`&&` examples as non-nullable — a genuine
-  logic bug in the lint rule itself, worth a quick fix + regression test)
-  and `9a7c7263` (`SCOPE_COLUMNS` is a hardcoded set with no fallback
-  diagnostic for an un-listed tenancy column).
+  logic bug in the lint rule itself, worth a quick fix + regression test).
+  **Fixed `869f69ca` (2026-07-28)** — replaced by `classifyNullability`, a
+  three-valued `nullable|non-null|unknown` lattice; `isNullableExpr`
+  survives only as a thin back-compat wrapper. `9a7c7263` (`SCOPE_COLUMNS`
+  is a hardcoded set with no fallback diagnostic for an un-listed tenancy
+  column) — **still open**; `docs/plans/refactor-static-analysis.md:868`
+  records auto-detection of missing entries as a deliberately deferred
+  residual, not a forgotten one.
 - **`duplicate-justification-pragma.mjs`** — `67f8f414`/`fbd71c9a`: the
   pragma regex has no `^` start anchor, so pragma-looking text inside a
   string/template literal (not a real comment) still matches. One-line
@@ -43,12 +76,19 @@ a standalone `//` comment line. All other items below remain open.
 - **`atomic-write-adoption-guard.test.mjs`** — `0e18b00d`/`3f0e3fe7`: the
   guard matches `atomicWriteFileSync` calls by identifier *name* only, no
   lexical-scope/binding resolution, so a shadowing local with the same name
-  would satisfy the guard incorrectly. Same underlying gap class as
-  `find-rmsync-sites.mjs` in the install-wal-vcs plan — if either gets
-  fixed, consider a shared AST-scope-resolution helper for both.
+  would satisfy the guard incorrectly. **Fixed `869f69ca` (2026-07-28)** —
+  same commit as `19659d7a` above; the guard now resolves real lexical
+  bindings via `scripts/lib/import-binding.mjs`'s
+  `resolvesToNamedImport`/`resolveNamedImportBinding` instead of
+  `Set.has(name)`.
 - **`schemas.mjs`** — `1ff42c81c4f7`: `FindingSchema` is a bare alias of
   `PersistedFindingSchema` with no distinguishing name/comment — naming
-  clarity only, no behavior risk.
+  clarity only, no behavior risk. **Not actually open**: the distinguishing
+  comment ("Backward-compatible alias — existing imports of `FindingSchema`
+  use the permissive persisted schema. Enforcement happens at producer
+  boundaries via `ProducerFindingSchema`.") already existed in `afbcd022`
+  (2026-04-05), 3.5 months before this entry was written 2026-07-26 — the
+  original triage read stale/pre-fix source.
 - **`tests/install/receipt.test.mjs`** — `5cf9d863` (LOW): shared
   PID-based tmp path across tests, cleanup only runs as the final statement
   after assertions — an assertion failure mid-test skips cleanup. Move

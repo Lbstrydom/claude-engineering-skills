@@ -1,9 +1,19 @@
 # Plan: Learning / Persona / Quickfix Reliability Debt (2026-07-26 triage)
 
-- **Date**: 2026-07-26 (re-scoped 2026-08-01)
-- **Status**: Draft — **re-scoped to the 7 entries that are still real.**
-  14 of the original 21 shipped between 2026-07-26 and 2026-08-01, all under
-  *other* plans. See §0.
+- **Date**: 2026-07-26 (re-scoped 2026-08-01; closed 2026-08-17)
+- **Status**: Complete — **all 21 entries resolved, none of them via this
+  plan.** 14 shipped 2026-07-26–2026-08-01 (§0). The remaining 7 closed
+  2026-08-09–2026-08-11: `222b036e`/`191fca35`/`f1a716cf` (Cluster A) and
+  `e0623c0a`/`e51bacd2`/`fa86b341` (Cluster B) shipped under
+  [`learning-persona-quickfix-honest-failure.md`](./learning-persona-quickfix-honest-failure.md)
+  — verified against current source: `recordDecision` now spills-then-shifts
+  against the outbox, `rebuildFromBootstrap` returns an explicit
+  `{ok:false, error:'bootstrap-retired'}` instead of mislabeling every hit
+  `no_action`, and the V1/V2/unsupported schema branch is now
+  `Object.hasOwn`-keyed. `bbd58a09` (the `persona-consistency-promote.mjs`
+  pagination gap) went moot: the whole file and feature were deleted in
+  `e833b2aa` ("retire the consistency candidate promotion path").
+  This plan never implemented anything itself — it is superseded in full.
 - **Author**: Claude (tech-debt backlog triage session)
 - **Scope**: backend
 
