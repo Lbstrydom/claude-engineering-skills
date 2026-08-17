@@ -149,7 +149,7 @@ describe('mergeScopeFiles — changed-but-not-plan-referenced files', () => {
       assert.deepEqual(addedFromScope, ['index.html.template']);
       assert.deepEqual(rejected, []);
     } finally {
-      fs.rmSync(templateFixture, { force: true });
+      fs.rmSync(templateFixture, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -164,7 +164,7 @@ describe('mergeScopeFiles — changed-but-not-plan-referenced files', () => {
       assert.deepEqual(addedFromScope, []);
       assert.deepEqual(rejected, ['package-lock.json.lock']);
     } finally {
-      fs.rmSync(lockFixture, { force: true });
+      fs.rmSync(lockFixture, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 });
