@@ -101,15 +101,21 @@ describe('resolveProviderIdentity / armRedactionTerms (D1c)', () => {
     assert.equal(r('the qwen-turbo model'), 'the qwen-turbo model');
   });
 
-  it('the bare Alibaba workspace ids (no vendor slash) resolve via STATIC_RESIDUE, not source 2 (D1c, G2 native-route follow-up)', () => {
-    // qwen3.8-max / deepseek-v4-pro-0813 replaced the OpenRouter-slug arms
-    // (qwen/qwen3.8-max, deepseek/deepseek-v4-pro) on 2026-08-17 — no '/', so
-    // the vendor-slug source no longer matches and these must resolve through
-    // the explicit STATIC_RESIDUE table added alongside the native route, or
+  it('the bare native-route ids (no vendor slash) resolve via STATIC_RESIDUE, not source 2 (D1c, G2 native-route follow-up)', () => {
+    // qwen3.8-max (Alibaba) / deepseek-v4-pro (DeepSeek direct, since
+    // 2026-08-17 — the Alibaba-hosted `-0813` snapshot pin was retired the
+    // same day) replaced the OpenRouter-slug arms (qwen/qwen3.8-max,
+    // deepseek/deepseek-v4-pro) — no '/', so the vendor-slug source no
+    // longer matches and these must resolve through the explicit
+    // STATIC_RESIDUE table added alongside the native routes, or
     // armRedactionTerms would refuse the whole campaign as unredactable.
     assert.equal(resolveProviderIdentity('qwen3.8-max'), 'qwen');
+    assert.equal(resolveProviderIdentity('deepseek-v4-pro'), 'deepseek');
+    // The retired Alibaba-hosted snapshot pin resolves too — STATIC_RESIDUE
+    // matches on the shared "deepseek-" prefix, not the exact id, so old
+    // logged arm-runs under the retired id remain redactable.
     assert.equal(resolveProviderIdentity('deepseek-v4-pro-0813'), 'deepseek');
-    const r = buildModelRedactor({ arms: [{ id: 'q1', model: 'qwen3.8-max' }, { id: 'd1', model: 'deepseek-v4-pro-0813' }] });
+    const r = buildModelRedactor({ arms: [{ id: 'q1', model: 'qwen3.8-max' }, { id: 'd1', model: 'deepseek-v4-pro' }] });
     const qwenRedacted = r('the Qwen model found this');
     const deepseekRedacted = r('reviewed by DeepSeek');
     assert.match(qwenRedacted, /\[MODEL-[AB]\]/, 'qwen must redact to SOME model placeholder');

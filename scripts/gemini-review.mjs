@@ -41,7 +41,10 @@ import { applyEnvSetting } from './lib/env-setting.mjs';
 import { geminiConfig, claudeConfig, azureConfig, shadowReviewConfig, finalReviewConfig, auditShadowConfig, findingMatchConfig, FINDING_MATCH_SCHEMA_VERSION } from './lib/config.mjs';
 import { describeAzureRoute, describeTransportFailure } from './lib/azure-route-report.mjs';
 import { recordFinalReviewFindings } from './learning-store.mjs';
-import { refreshModelCatalog, resolveModel, resolveXaiCreds, resolveAlibabaCreds, isAlibabaModel } from './lib/model-resolver.mjs';
+import {
+  refreshModelCatalog, resolveModel, resolveXaiCreds, resolveAlibabaCreds, isAlibabaModel,
+  resolveDeepseekCreds, isDeepseekModel,
+} from './lib/model-resolver.mjs';
 import { createOpenAIClient } from './lib/openai-client.mjs';
 import { createAnthropicClient } from './lib/anthropic-client.mjs';
 import { azureThrottle } from './lib/azure-throttle.mjs';
@@ -1175,6 +1178,43 @@ const PROVIDERS = {
     // catch, and this route has no pre-flight of its own yet.
     requestExtras: () => ({}),
   },
+  // Native DeepSeek — REPLACES the Alibaba-workspace route for this model
+  // (2026-08-17): deepseek-v4-pro-0813 timed out at 300s twice via Alibaba at
+  // real review size while qwen, on the identical request, succeeded both
+  // times — a model-specific throughput issue on that workspace, not a
+  // shared route problem. Direct to the source instead, mirroring xai: a
+  // single known endpoint with a real default, not a multi-family gateway
+  // like alibaba/openrouter. DeepSeek's OWN model ids carry no dated-snapshot
+  // suffix (confirmed live against its /models endpoint: `deepseek-v4-pro`,
+  // `deepseek-v4-flash` — the `-0813` pin was Alibaba's own workspace
+  // convention, not DeepSeek's).
+  deepseek: {
+    id: 'deepseek',
+    structuredOutput: true,
+    label: 'DeepSeek (direct)',
+    transportKind: () => 'openai',
+    // No single sensible default (DEEPSEEK_POOL has two real choices —
+    // v4-pro vs v4-flash), so — like alibaba, unlike xai's one true
+    // default — this reads the ambient config rather than a sentinel.
+    resolveModel: () => finalReviewConfig.model,
+    assertReady: (env = process.env) => {
+      if (!env.DEEPSEEK_API_KEY) { console.error('Error: provider "deepseek" requires DEEPSEEK_API_KEY'); process.exit(1); }
+    },
+    buildClient: async () => {
+      const c = resolveDeepseekCreds();
+      return createOpenAIClient({ oss: { baseURL: c.baseUrl, apiKey: c.apiKey } });
+    },
+    // No routing-gateway extras (same reasoning as xai/alibaba above). Unlike
+    // alibaba, deepseek's own API is confirmed (live, 2026-08-17) to REJECT
+    // response_format:json_schema outright ("This response_format type is
+    // unavailable now", HTTP 400) — but that 400 message contains the literal
+    // substring `response_format`, so the EXISTING `isResponseFormatUnsupported`
+    // degrade-to-prompt-only path (openai transport, above) already catches it
+    // with no new code; json_object mode and prompt-only both confirmed 200
+    // live. No reasoning-effort field: unverified whether one exists here,
+    // so none is claimed.
+    requestExtras: () => ({}),
+  },
 };
 
 /** Review-scoped OpenAI-compatible creds (all explicit; validated in assertReady). */
@@ -1586,6 +1626,13 @@ const SHADOW_PROVIDER_SPECS = {
     canonical: 'alibaba', family: 'alibaba', gateway: true, defaultSentinel: null,
     hasCredential: (env) => Boolean(env.ALIBABA_CLOUD_API_KEY && env.ALIBABA_CLOUD_BASE_URL),
   },
+  // Native DeepSeek — also `gateway: true` (no single default across
+  // v4-pro/v4-flash), but its own family so a mismatched model (e.g. a
+  // qwen id) is rejected rather than silently accepted.
+  'deepseek': {
+    canonical: 'deepseek', family: 'deepseek', gateway: true, defaultSentinel: null,
+    hasCredential: (env) => Boolean(env.DEEPSEEK_API_KEY),
+  },
 };
 
 /** Cheap family check so an explicit model can't be paired with a wrong provider (R3 M1). */
@@ -1602,6 +1649,7 @@ function shadowModelMatchesFamily(modelId, family) {
   // SAME curated `ALIBABA_POOL` allowlist `transportForModel` consults, so
   // this check can never diverge from what the runner actually recognises.
   if (family === 'alibaba') return isAlibabaModel(id);
+  if (family === 'deepseek') return isDeepseekModel(id);
   // claude family — opus/sonnet/haiku today, mythos/fable when they land.
   return /claude|opus|sonnet|haiku|mythos|fable/.test(id);
 }
@@ -1694,6 +1742,11 @@ async function buildShadowClient(canonicalProvider) {
   if (canonicalProvider === 'alibaba') {
     // Same non-delegation note as openrouter/xai above.
     const c = resolveAlibabaCreds();
+    return createOpenAIClient({ oss: { baseURL: c.baseUrl, apiKey: c.apiKey } });
+  }
+  if (canonicalProvider === 'deepseek') {
+    // Same non-delegation note as openrouter/xai/alibaba above.
+    const c = resolveDeepseekCreds();
     return createOpenAIClient({ oss: { baseURL: c.baseUrl, apiKey: c.apiKey } });
   }
   // `backend:'sdk'` PINNED, never the ambient CLAUDE_BACKEND (found live

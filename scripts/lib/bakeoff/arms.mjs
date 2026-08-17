@@ -12,7 +12,7 @@
  */
 import crypto from 'node:crypto';
 import { ArgvError } from '../cli-io.mjs';
-import { isXaiModel, isAlibabaModel } from '../model-resolver.mjs';
+import { isXaiModel, isAlibabaModel, isDeepseekModel } from '../model-resolver.mjs';
 import { PRICING_VERSION } from '../model-pricing.mjs';
 import { selectCampaignConfig, isScoredArm } from '../campaign/config.mjs';
 import { classifyArmCollisions } from '../comparison/fingerprint.mjs';
@@ -55,6 +55,13 @@ export function transportForModel(model) {
     // unverified whether this workspace reports cache usage fields, so no
     // multiplier is claimed rather than assumed.
     return { route: 'alibaba', shadowToken: 'alibaba', providerArg: 'alibaba', shadowModel: model, promptCache: '' };
+  }
+  if (isDeepseekModel(model)) {
+    // Native DeepSeek route (2026-08-17) — REPLACES the Alibaba-workspace
+    // pinned snapshot (`deepseek-v4-pro-0813`) for this model after two
+    // consecutive 300s timeouts there at real review size; direct to the
+    // source, like xai below, not a router.
+    return { route: 'deepseek', shadowToken: 'deepseek', providerArg: 'deepseek', shadowModel: model, promptCache: '' };
   }
   // An OpenRouter id is the only one carrying a '/', and `pricingKey` returns
   // it verbatim for exactly that reason.

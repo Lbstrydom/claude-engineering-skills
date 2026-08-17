@@ -178,7 +178,15 @@ describe('transportForModel — the HOW the config deliberately does not express
     assert.equal(transportForModel('gemini-pro-latest').route, 'gemini');
     assert.equal(transportForModel('grok-4.6').route, 'xai');
     assert.equal(transportForModel('qwen3.8-max').route, 'alibaba');
-    assert.equal(transportForModel('deepseek-v4-pro-0813').route, 'alibaba');
+    assert.equal(transportForModel('deepseek-v4-pro').route, 'deepseek');
+    assert.equal(transportForModel('deepseek-v4-flash').route, 'deepseek');
+  });
+
+  it('the retired Alibaba-workspace deepseek pin has no transport — it was removed from ALIBABA_POOL, not moved elsewhere silently', () => {
+    // deepseek-v4-pro-0813 was Alibaba's own dated snapshot naming, replaced
+    // by DeepSeek's own bare id (deepseek-v4-pro) on its direct API
+    // (2026-08-17). This must REFUSE, not fall through to some other route.
+    assert.throws(() => transportForModel('deepseek-v4-pro-0813'), /no transport for model/);
   });
 
   it('ALIBABA_POOL membership wins over the generic "/" → openrouter rule, and only for curated ids', () => {

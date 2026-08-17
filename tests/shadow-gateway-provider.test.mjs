@@ -216,7 +216,7 @@ describe('xAI shadow — the descriptor is DELIBERATELY NOT the OpenRouter shape
   });
 });
 
-describe('Alibaba shadow — resolution states (native replacement for the qwen/deepseek OpenRouter arms, 2026-08-17)', () => {
+describe('Alibaba shadow — resolution states (native replacement for the qwen OpenRouter arm, 2026-08-17)', () => {
   it('refuses without an explicit model — like openrouter (gateway:true), UNLIKE xai', () => {
     // Alibaba serves several unrelated model families verbatim (Qwen,
     // DeepSeek, GLM, Kimi) with no single sensible default, so it takes
@@ -227,16 +227,16 @@ describe('Alibaba shadow — resolution states (native replacement for the qwen/
     assert.equal(r.model, null);
   });
 
-  it('is ready with a curated model id and BOTH env vars', () => {
+  it('is ready with the curated model id and BOTH env vars', () => {
     const r = shadow({ provider: 'alibaba', model: 'qwen3.8-max' }, { ALIBABA_CLOUD_API_KEY: 'k', ALIBABA_CLOUD_BASE_URL: 'https://example.invalid/v1' });
     assert.equal(r.state, 'ready');
     assert.equal(r.model, 'qwen3.8-max');
     assert.equal(r.provider, 'alibaba');
   });
 
-  it('the OTHER curated id (deepseek) is also accepted', () => {
+  it('the RETIRED deepseek snapshot pin no longer resolves via alibaba — it moved to DeepSeek\'s own direct API', () => {
     const r = shadow({ provider: 'alibaba', model: 'deepseek-v4-pro-0813' }, { ALIBABA_CLOUD_API_KEY: 'k', ALIBABA_CLOUD_BASE_URL: 'https://example.invalid/v1' });
-    assert.equal(r.state, 'ready');
+    assert.equal(r.state, 'skipped-unsupported-provider');
   });
 
   it('an explicit model NOT in ALIBABA_POOL is rejected, not silently routed to alibaba', () => {
@@ -295,6 +295,71 @@ describe('Alibaba shadow — the descriptor is a direct endpoint, not an OpenRou
     assert.match(alibabaBlock, /gateway:\s*true/, 'alibaba has no single sensible default across Qwen/DeepSeek/GLM/Kimi');
     assert.match(alibabaBlock, /defaultSentinel:\s*null/);
     assert.match(alibabaBlock, /family:\s*'alibaba'/, 'must NOT share the "gateway" family string with openrouter — kept distinct for telemetry and its own family check');
+  });
+});
+
+describe('DeepSeek shadow — resolution states (direct API, replaces the Alibaba-workspace pin, 2026-08-17)', () => {
+  it('refuses without an explicit model — no single default across v4-pro/v4-flash', () => {
+    const r = shadow({ provider: 'deepseek', model: null }, { DEEPSEEK_API_KEY: 'k' });
+    assert.equal(r.state, 'skipped-no-model');
+  });
+
+  it('is ready with either curated model id and just the one env var (a universal endpoint, unlike alibaba)', () => {
+    for (const id of ['deepseek-v4-pro', 'deepseek-v4-flash']) {
+      const r = shadow({ provider: 'deepseek', model: id }, { DEEPSEEK_API_KEY: 'k' });
+      assert.equal(r.state, 'ready', id);
+      assert.equal(r.model, id);
+      assert.equal(r.provider, 'deepseek');
+    }
+  });
+
+  it('rejects the retired Alibaba-workspace dated snapshot and other unrelated ids', () => {
+    for (const bad of ['deepseek-v4-pro-0813', 'qwen3.8-max', 'grok-4.6']) {
+      const r = shadow({ provider: 'deepseek', model: bad }, { DEEPSEEK_API_KEY: 'k' });
+      assert.equal(r.state, 'skipped-unsupported-provider', `"${bad}" must not resolve via deepseek`);
+    }
+  });
+
+  it('no DEEPSEEK_API_KEY -> skipped-no-key', () => {
+    assert.equal(shadow({ provider: 'deepseek', model: 'deepseek-v4-pro' }, {}).state, 'skipped-no-key');
+  });
+
+  it('is a no-op under an active Azure profile — same guard order as every other provider', () => {
+    const r = shadow({ provider: 'deepseek', model: 'deepseek-v4-pro' }, { DEEPSEEK_API_KEY: 'k' }, true);
+    assert.equal(r.state, 'skipped-azure');
+    assert.equal(r.model, null);
+  });
+
+  it('never lets the api key escape into the resolver result', () => {
+    const secret = 'sk-DEADBEEFDEADBEEF';
+    const r = shadow({ provider: 'deepseek', model: 'deepseek-v4-pro' }, { DEEPSEEK_API_KEY: secret });
+    assert.doesNotMatch(JSON.stringify(r), /DEADBEEF/);
+  });
+});
+
+describe('DeepSeek shadow — the descriptor degrades gracefully on this provider\'s json_schema rejection', () => {
+  it('carries no OpenRouter routing pins, and requestExtras is empty', () => {
+    const src = readFileSync(new URL('../scripts/gemini-review.mjs', import.meta.url), 'utf-8');
+    const canonical = shadow({ provider: 'deepseek', model: 'deepseek-v4-pro' }, { DEEPSEEK_API_KEY: 'k' }).provider;
+    assert.equal(canonical, 'deepseek');
+    const descriptor = src.slice(src.indexOf('  deepseek: {'));
+    const body = descriptor.slice(0, descriptor.indexOf('\n  },'));
+    assert.match(body, /structuredOutput:\s*true/, 'the shadow needs the JSON schema, not prose — the openai transport degrades to prompt-only automatically if DeepSeek rejects it');
+    assert.doesNotMatch(body, /require_parameters:\s*true/, 'OpenRouter-only — deepseek is one direct endpoint');
+    assert.match(body, /requestExtras:\s*\(\)\s*=>\s*\(\{\}\)/, 'no reasoning field is claimed until verified live');
+  });
+
+  it('the SHADOW_PROVIDER_SPECS entry is gateway-shaped (no default sentinel) but its own family, distinct from alibaba', () => {
+    const src = readFileSync(new URL('../scripts/gemini-review.mjs', import.meta.url), 'utf-8');
+    const specs = src.slice(src.indexOf('const SHADOW_PROVIDER_SPECS'));
+    const body = specs.slice(0, specs.indexOf('\n};'));
+    const startIdx = body.indexOf("'deepseek':");
+    assert.ok(startIdx >= 0, 'no deepseek entry found in SHADOW_PROVIDER_SPECS');
+    const rest = body.slice(startIdx);
+    const deepseekBlock = rest.slice(0, rest.indexOf('\n  },') + 1);
+    assert.match(deepseekBlock, /gateway:\s*true/);
+    assert.match(deepseekBlock, /defaultSentinel:\s*null/);
+    assert.match(deepseekBlock, /family:\s*'deepseek'/, 'must not share alibaba\'s family string — a qwen id must not pass as deepseek');
   });
 });
 

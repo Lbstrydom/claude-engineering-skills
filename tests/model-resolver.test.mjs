@@ -6,6 +6,7 @@ import {
   pickNewestClaude, pickNewestGemini, pickNewestOpenAI,
   deprecatedRemap, resolveModel, setCatalog, _resetCatalogCache,
   supportsReasoningEffort, pricingKey, isXaiModel, isAlibabaModel, resolveAlibabaCreds,
+  isDeepseekModel, resolveDeepseekCreds, DEEPSEEK_BASE_URL,
 } from '../scripts/lib/model-resolver.mjs';
 
 // Reset state between tests so catalog overrides from one test don't leak
@@ -425,17 +426,23 @@ describe('isXaiModel — chat models only, NOT a bare prefix test (audit-found g
 });
 
 describe('isAlibabaModel — curated allowlist, not a name-pattern guess', () => {
-  it('accepts the two known bare workspace ids', () => {
+  it('accepts the one known bare workspace id (qwen only, since 2026-08-17)', () => {
     assert.equal(isAlibabaModel('qwen3.8-max'), true);
-    assert.equal(isAlibabaModel('deepseek-v4-pro-0813'), true);
   });
 
-  it('rejects the OpenRouter-slug spellings of the SAME models — a different route, on purpose', () => {
-    // These feed the OSS auditor pool (OSS_POOL/OSS_PRICING), a totally
-    // different consumption path; ALIBABA_POOL must never accidentally widen
-    // to match them, or that path's routing silently changes too.
+  it('the RETIRED Alibaba-hosted deepseek snapshot is no longer in ALIBABA_POOL — moved to DeepSeek\'s own direct API', () => {
+    // Two consecutive 300s timeouts on this workspace at real review size
+    // (qwen, on the identical request, succeeded both times) moved deepseek
+    // off Alibaba entirely — see isDeepseekModel below, not this pool.
+    assert.equal(isAlibabaModel('deepseek-v4-pro-0813'), false);
+    assert.equal(isAlibabaModel('deepseek-v4-pro'), false);
+  });
+
+  it('rejects the OpenRouter-slug spelling of the SAME model — a different route, on purpose', () => {
+    // Feeds the OSS auditor pool (OSS_POOL/OSS_PRICING), a totally different
+    // consumption path; ALIBABA_POOL must never accidentally widen to match
+    // it, or that path's routing silently changes too.
     assert.equal(isAlibabaModel('qwen/qwen3.8-max'), false);
-    assert.equal(isAlibabaModel('deepseek/deepseek-v4-pro'), false);
   });
 
   it('rejects unrelated ids and non-string input without throwing', () => {
@@ -465,6 +472,40 @@ describe('resolveAlibabaCreds — workspace endpoint has NO fallback (unlike XAI
       assert.equal(resolveAlibabaCreds().baseUrl, null);
     } finally {
       if (saved !== undefined) process.env.ALIBABA_CLOUD_BASE_URL = saved;
+    }
+  });
+});
+
+describe('isDeepseekModel — direct-API route, replaces the Alibaba-workspace pin (2026-08-17)', () => {
+  it('accepts the two ids confirmed live on DeepSeek\'s own /models endpoint', () => {
+    assert.equal(isDeepseekModel('deepseek-v4-pro'), true);
+    assert.equal(isDeepseekModel('deepseek-v4-flash'), true);
+  });
+
+  it('rejects the retired Alibaba-workspace dated snapshot and the OpenRouter slug', () => {
+    assert.equal(isDeepseekModel('deepseek-v4-pro-0813'), false, 'that was an Alibaba-workspace pin, not a DeepSeek id');
+    assert.equal(isDeepseekModel('deepseek/deepseek-v4-pro'), false, 'the OSS-pool OpenRouter slug is a different route');
+  });
+
+  it('rejects unrelated ids and non-string input without throwing', () => {
+    assert.equal(isDeepseekModel('qwen3.8-max'), false);
+    for (const v of [null, undefined, 42, {}]) assert.doesNotThrow(() => isDeepseekModel(v));
+  });
+});
+
+describe('resolveDeepseekCreds — a UNIVERSAL endpoint (unlike Alibaba\'s workspace), hardcoded', () => {
+  it('baseUrl is always the public DeepSeek API, with no env override needed', () => {
+    assert.equal(resolveDeepseekCreds().baseUrl, DEEPSEEK_BASE_URL);
+    assert.equal(DEEPSEEK_BASE_URL, 'https://api.deepseek.com/v1');
+  });
+
+  it('reads the api key from env', () => {
+    const saved = process.env.DEEPSEEK_API_KEY;
+    process.env.DEEPSEEK_API_KEY = 'test-key';
+    try {
+      assert.equal(resolveDeepseekCreds().apiKey, 'test-key');
+    } finally {
+      if (saved === undefined) delete process.env.DEEPSEEK_API_KEY; else process.env.DEEPSEEK_API_KEY = saved;
     }
   });
 });

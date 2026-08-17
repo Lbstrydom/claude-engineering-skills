@@ -227,12 +227,44 @@ export function resolveXaiCreds() {
  * feed a completely different consumption path (the tiered-audit
  * pipeline's auditor OSS arm) and must not be affected by this native
  * route existing.
+ *
+ * `deepseek-v4-pro-0813` (the Alibaba-workspace snapshot pin) was REMOVED
+ * 2026-08-17 after two consecutive 300s timeouts on this workspace at real
+ * review size (qwen3.8-max, on the identical request shape, succeeded both
+ * times — ruling out a shared route/network problem). DeepSeek's own direct
+ * API — see `DEEPSEEK_POOL` below — replaces it for that model; Alibaba
+ * remains the qwen route, which is confirmed reliable.
  */
-export const ALIBABA_POOL = Object.freeze(['qwen3.8-max', 'deepseek-v4-pro-0813']);
+export const ALIBABA_POOL = Object.freeze(['qwen3.8-max']);
 
 /** True iff `id` is a bare model id this repo's Alibaba workspace serves — see `ALIBABA_POOL`. */
 export function isAlibabaModel(id) {
   return typeof id === 'string' && ALIBABA_POOL.includes(id);
+}
+
+/**
+ * Known bare model ids served by DeepSeek's own direct API (confirmed live
+ * against its `/models` endpoint 2026-08-17 — the platform exposes exactly
+ * these two, with no `-0813`-style dated snapshot suffix; that suffix was
+ * an Alibaba-workspace-specific pin, not a DeepSeek naming convention).
+ * Curated allowlist, same rationale as `ALIBABA_POOL`.
+ */
+export const DEEPSEEK_POOL = Object.freeze(['deepseek-v4-pro', 'deepseek-v4-flash']);
+
+/** True iff `id` is a bare model id DeepSeek's own API serves — see `DEEPSEEK_POOL`. */
+export function isDeepseekModel(id) {
+  return typeof id === 'string' && DEEPSEEK_POOL.includes(id);
+}
+
+/**
+ * DeepSeek's own public API — UNLIKE `resolveAlibabaCreds`, this IS a
+ * universal endpoint (like `XAI_BASE_URL`), so it is hardcoded rather than
+ * read from an env var with no fallback.
+ * @returns {{baseUrl: string, apiKey: string|undefined}}
+ */
+export const DEEPSEEK_BASE_URL = 'https://api.deepseek.com/v1';
+export function resolveDeepseekCreds() {
+  return { baseUrl: DEEPSEEK_BASE_URL, apiKey: process.env.DEEPSEEK_API_KEY };
 }
 
 /**
