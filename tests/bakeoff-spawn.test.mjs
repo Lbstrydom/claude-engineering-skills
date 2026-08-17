@@ -38,6 +38,18 @@ describe('verifyPreflightArtifact — collector-side sha256 recomputation (plan 
     assert.match(r.reason, /does not exist/);
   });
 
+  it('artifact exceeds the size ceiling -> refused BEFORE readFile is ever called (no unbounded read)', () => {
+    const readFile = () => { throw new Error('readFile must not be called when the size check refuses first'); };
+    const r = verifyPreflightArtifact(PREFLIGHT, {
+      exists: () => true,
+      stat: () => ({ size: 1024 * 1024 + 1 }),
+      readFile,
+    });
+    assert.equal(r.ok, false);
+    assert.equal(r.checked, false);
+    assert.match(r.reason, /exceeding the .* ceiling/);
+  });
+
   it('RECOMPUTED sha256 mismatches the recorded one -> refused (tamper/edit detection)', () => {
     // This is the whole point of "collector-side RECOMPUTATION" — a recorded
     // hash nobody recomputes is decoration. The artifact on disk here does NOT

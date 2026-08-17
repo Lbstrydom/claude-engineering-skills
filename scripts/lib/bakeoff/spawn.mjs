@@ -95,14 +95,24 @@ export const EXPERIMENT_TAG = 'final-review-bakeoff';
  * unit-testable without a real campaign directory or network call.
  *
  * @param {{artifact:string, sha256:string, disposition:string}|undefined} preflight
- * @param {{exists?: (p:string)=>boolean, readFile?: (p:string)=>Buffer}} [deps]
+ * @param {{exists?: (p:string)=>boolean, readFile?: (p:string)=>Buffer, stat?: (p:string)=>{size:number}}} [deps]
  * @returns {{ok: boolean, checked: boolean, reason?: string, artifact?: string}}
  *   `checked:false` means no preflight was declared (no xAI arm) — nothing to verify.
  */
-export function verifyPreflightArtifact(preflight, { exists = fs.existsSync, readFile = fs.readFileSync } = {}) {
+const PREFLIGHT_ARTIFACT_MAX_BYTES = 1024 * 1024; // 1MB — these are small JSON measurement artifacts (~2KB observed)
+
+export function verifyPreflightArtifact(preflight, { exists = fs.existsSync, readFile = fs.readFileSync, stat = fs.statSync } = {}) {
   if (!preflight) return { ok: true, checked: false };
   if (!exists(preflight.artifact)) {
     return { ok: false, checked: false, reason: `campaign declares a preflight artifact that does not exist: ${preflight.artifact}` };
+  }
+  const { size } = stat(preflight.artifact);
+  if (size > PREFLIGHT_ARTIFACT_MAX_BYTES) {
+    return {
+      ok: false, checked: false,
+      reason: `preflight artifact ${preflight.artifact} is ${size} bytes, exceeding the `
+        + `${PREFLIGHT_ARTIFACT_MAX_BYTES}-byte ceiling for this artifact class — refusing to read it into memory`,
+    };
   }
   const actualSha256 = crypto.createHash('sha256').update(readFile(preflight.artifact)).digest('hex');
   if (actualSha256 !== preflight.sha256) {
