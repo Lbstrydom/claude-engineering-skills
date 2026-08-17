@@ -72,30 +72,163 @@ export function sharedEnvPath(homedir = os.homedir()) {
   return path.join(homedir, '.audit-loop.env');
 }
 
-// Walk-up + git-root discovery, same rule as config.mjs::discoverDotenv.
-// Extracted so check-setup + runtime share one local-env-path semantic.
-export function discoverLocalEnvPath(cwd = process.cwd()) {
-  let dir = cwd;
-  while (dir) {
-    const p = path.join(dir, '.env');
-    if (fs.existsSync(p)) return p;
-    const parent = path.dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
+/**
+ * Absolute-path identity key, for comparing two paths that name the same
+ * directory. NOT `file-io.mjs`'s `normalizePath` — that answers a different
+ * question (a cwd-relative, always-lowercased dedup key for finding paths), and
+ * lowercasing on a case-SENSITIVE filesystem would conflate two real directories
+ * here. Realpath'd where possible so a symlinked checkout (`/tmp` →
+ * `/private/tmp` on macOS, a junction on Windows) still matches git's own
+ * resolved answer; a path that cannot be realpath'd (does not exist yet) falls
+ * back to lexical resolution.
+ */
+function pathKey(p) {
+  let r = path.resolve(p);
+  try { r = fs.realpathSync.native(r); } catch { /* may not exist — lexical is fine */ }
+  return process.platform === 'win32' ? r.toLowerCase() : r;
+}
+
+/** `dir` and every ancestor up to the filesystem root, nearest first. */
+function ancestorChain(dir) {
+  const out = [];
+  let d = path.resolve(dir);
+  for (;;) {
+    out.push(d);
+    const parent = path.dirname(d);
+    if (parent === d) return out;
+    d = parent;
   }
+}
+
+/**
+ * `{repoRoot, mainRoot}` for the repository containing `cwd`, or null when
+ * `cwd` is not inside a work tree (no repo, no git binary, bare repo).
+ *
+ * ONE `git rev-parse` for both answers — this now runs on every process's env
+ * load, so the second spawn the previous implementation made is not free.
+ * `--git-common-dir` is RELATIVE to the invocation cwd whenever the caller is in
+ * the main checkout (`.git` at the root, `../../.git` two levels down), so it is
+ * resolved against `cwd` and NOT against `process.cwd()` — the previous
+ * `path.resolve(gitCommonDir, '..')` silently computed a main-worktree root for
+ * whatever directory the *process* happened to be in, which is a different
+ * repository whenever a caller passes an explicit `cwd` (check-setup does).
+ */
+function gitContext(cwd) {
+  let out;
   try {
-    const gitRoot = execSync('git rev-parse --show-toplevel', {
+    out = execSync('git rev-parse --show-toplevel --git-common-dir', {
       cwd, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim();
-    const p = path.join(gitRoot, '.env');
-    if (fs.existsSync(p)) return p;
-    const gitCommonDir = execSync('git rev-parse --git-common-dir', {
-      cwd, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim();
-    const mainRoot = path.resolve(gitCommonDir, '..');
-    const main = path.join(mainRoot, '.env');
-    if (fs.existsSync(main)) return main;
-  } catch { /* not a git repo */ }
+    });
+  } catch { return null; }
+  // Indexed, not `.filter(Boolean)`: git emits the flags in the order given, and
+  // dropping an empty first line would silently promote the common-dir into the
+  // toplevel slot.
+  const lines = out.split(/\r?\n/).map((l) => l.trim());
+  if (!lines[0]) return null;
+  return {
+    repoRoot: path.resolve(lines[0]),
+    mainRoot: lines[1] ? path.resolve(cwd, lines[1], '..') : null,
+  };
+}
+
+/**
+ * `cwd` and its ancestors, truncated at the repository root (inclusive).
+ *
+ * Fails CLOSED: if `repoRoot` never appears in the chain — a layout `pathKey`
+ * could not reconcile — the search collapses to the repo root itself rather than
+ * continuing up the unbounded chain. Escaping the repository is the defect this
+ * function exists to prevent, so "I could not find the boundary" must never
+ * degrade into "there is no boundary".
+ */
+function chainWithinRepo(cwd, repoRoot) {
+  const rootKey = pathKey(repoRoot);
+  const chain = [];
+  for (const dir of ancestorChain(cwd)) {
+    chain.push(dir);
+    if (pathKey(dir) === rootKey) return chain;
+  }
+  return [repoRoot];
+}
+
+// Warn-once per resolved path: `check-setup` alone calls the resolver three
+// times in one process, and a notice repeated per call reads as three problems.
+const _announcedEnvPaths = new Set();
+function defaultEnvNotice({ path: resolved, reason }) {
+  if (_announcedEnvPaths.has(resolved)) return;
+  _announcedEnvPaths.add(resolved);
+  const why = {
+    'repo-subdirectory': 'from a subdirectory — this is not the repo root .env',
+    'main-worktree':     'from the MAIN worktree — this linked worktree has none',
+    'outside-repo':      'from OUTSIDE any git repository — cwd is not in a work tree',
+  }[reason] ?? reason;
+  process.stderr.write(`  [env] .env resolved ${why}: ${resolved}\n`);
+}
+
+/**
+ * Resolve the local `.env` for `cwd`. Returns an absolute path, or null.
+ *
+ * **Precedence — the repository owns the answer.**
+ *   1. Inside a work tree: the nearest `.env` at or above `cwd`, searching only
+ *      as far as the repository root. A consumer repo run from a subdirectory
+ *      still finds its own root `.env`; a package-level `.env` still wins over
+ *      the root one, because that is a decision made *inside* the repo.
+ *   2. Still inside a work tree, nothing found: the MAIN worktree's root `.env`
+ *      (`--git-common-dir/..`). `.env` is gitignored, so it is absent from every
+ *      linked worktree — this is the branch that serves them.
+ *   3. `cwd` is not in a work tree at all: an unbounded upward walk, the legacy
+ *      behaviour, since there is no boundary to respect.
+ *
+ * A resolution outside a work tree can never be reached from inside one. That
+ * asymmetry is the whole fix.
+ *
+ * **The incident (2026-08-17).** The order used to be the reverse — walk up
+ * first, unbounded, and consult git only if the walk found nothing. A linked
+ * worktree at `C:/tmp/ces-bakeoff` sat below a stray, months-old `C:/tmp/.env`;
+ * the walk found the stray one directory up and returned it, so the git branches
+ * — added to fix the 2026-08-15 worktree incident (see
+ * {@link module:scripts/lib/load-env}) — were never reached. Five provider
+ * credentials were unset while the real repo `.env` carried every one of them,
+ * and nothing said so: a missing provider key makes a bake-off arm record as
+ * `skipped-no-key` rather than error, so the run paid for five arms before the
+ * completeness check rejected the snapshot. An `.env` above the repo root is
+ * almost never the intended one, and preferring it silently was the bug.
+ *
+ * @param {string} [cwd]
+ * @param {{onNotice?: (info: {path: string, reason: string}) => void}} [opts]
+ *   `onNotice` fires whenever the resolved file is NOT the current repo's own
+ *   root `.env` — a resolution that crosses that line is never silent. Injected
+ *   for tests; the default writes one line to stderr.
+ * @returns {string|null}
+ */
+export function discoverLocalEnvPath(cwd = process.cwd(), { onNotice = defaultEnvNotice } = {}) {
+  const ctx = gitContext(cwd);
+
+  if (ctx) {
+    for (const dir of chainWithinRepo(cwd, ctx.repoRoot)) {
+      const p = path.join(dir, '.env');
+      if (!fs.existsSync(p)) continue;
+      if (pathKey(dir) !== pathKey(ctx.repoRoot)) onNotice({ path: p, reason: 'repo-subdirectory' });
+      return p;
+    }
+    if (ctx.mainRoot && pathKey(ctx.mainRoot) !== pathKey(ctx.repoRoot)) {
+      const main = path.join(ctx.mainRoot, '.env');
+      if (fs.existsSync(main)) {
+        onNotice({ path: main, reason: 'main-worktree' });
+        return main;
+      }
+    }
+    // Deliberately NOT falling through to the unbounded walk: we know which
+    // repository this is, and it has no .env.
+    return null;
+  }
+
+  for (const dir of ancestorChain(cwd)) {
+    const p = path.join(dir, '.env');
+    if (fs.existsSync(p)) {
+      onNotice({ path: p, reason: 'outside-repo' });
+      return p;
+    }
+  }
   return null;
 }
 
