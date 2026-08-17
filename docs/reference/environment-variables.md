@@ -29,6 +29,8 @@ Azure work-profile variables are documented separately in
 | `META_ASSESS_MODEL` | No | `latest-flash` | Meta-assessment Gemini model |
 | `META_ASSESS_GPT_FALLBACK` | No | `latest-gpt-mini` | Meta-assessment GPT fallback when `GEMINI_API_KEY` is absent |
 | `XAI_API_KEY` | No | — | xAI Grok access for the shadow final reviewer (`FINAL_REVIEW_SHADOW=xai`) and `scripts/grok-effort-preflight.mjs`. Native provider (own base URL/credential pair via `resolveXaiCreds()` in `model-resolver.mjs`), not an OpenRouter gateway route — no `X.AI_API_KEY` variant; the dot is unreachable as a shell variable name. |
+| `ALIBABA_CLOUD_API_KEY` | No | — | Alibaba Cloud Model Studio access for the shadow final reviewer (`FINAL_REVIEW_SHADOW=alibaba`) — currently the qwen/deepseek bake-off campaign arms. Native provider via `resolveAlibabaCreds()` in `model-resolver.mjs`; must be set together with `ALIBABA_CLOUD_BASE_URL`. |
+| `ALIBABA_CLOUD_BASE_URL` | No | — | The Alibaba Cloud Model Studio **workspace** gateway (OpenAI-compatible `/compatible-mode/v1`) — a per-account host, not a universal endpoint, so there is no code fallback. Model ids routed here must be in `ALIBABA_POOL` (`model-resolver.mjs`) — a curated allowlist, since this one workspace serves several unrelated model families (Qwen, DeepSeek, GLM, Kimi) with no shared name pattern to key routing off of. |
 
 ## Shadow final review
 

@@ -78,6 +78,12 @@ const MIN_REDACTABLE_TERM = 3;
  *  committed arm (`grok-4.6`, no vendor segment, no version-parser match). */
 const STATIC_RESIDUE = Object.freeze([
   { re: /^grok(-|$)/i, provider: 'xai' },
+  // Added when the qwen/deepseek bake-off arms moved off the OpenRouter
+  // `vendor/model` slug onto Alibaba Cloud's native bare ids (2026-08-17,
+  // `qwen3.8-max` / `deepseek-v4-pro-0813` — no `/`, so source 2 above no
+  // longer matches them and they would otherwise fall through to "unresolvable").
+  { re: /^qwen(-|\d|$)/i, provider: 'qwen' },
+  { re: /^deepseek(-|$)/i, provider: 'deepseek' },
 ]);
 
 /**

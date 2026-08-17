@@ -12,7 +12,7 @@
  */
 import crypto from 'node:crypto';
 import { ArgvError } from '../cli-io.mjs';
-import { isXaiModel } from '../model-resolver.mjs';
+import { isXaiModel, isAlibabaModel } from '../model-resolver.mjs';
 import { PRICING_VERSION } from '../model-pricing.mjs';
 import { selectCampaignConfig, isScoredArm } from '../campaign/config.mjs';
 import { classifyArmCollisions } from '../comparison/fingerprint.mjs';
@@ -41,6 +41,20 @@ import { createResolvedScope, UnresolvedScopeError } from './scope.mjs';
 export function transportForModel(model) {
   if (typeof model !== 'string' || model.length === 0) {
     throw new ArgvError(`[bakeoff] arm model must be a non-empty string, got ${JSON.stringify(model)}`);
+  }
+  // Checked BEFORE the generic '/' catch-all below, on purpose: `ALIBABA_POOL`
+  // is a closed, maintainer-curated allowlist (see its docstring), so a match
+  // here is authoritative regardless of the id's shape — a future pool entry
+  // that happens to contain '/' must never be silently swallowed by the
+  // OpenRouter branch.
+  if (isAlibabaModel(model)) {
+    // Native Alibaba Cloud Model Studio route (qwen/deepseek bake-off arms,
+    // 2026-08-17) — mirrors the xai branch below: one direct workspace
+    // endpoint, not a router picking among upstream backends, so no
+    // OpenRouter-style routing extras apply. No prompt-cache multiplier:
+    // unverified whether this workspace reports cache usage fields, so no
+    // multiplier is claimed rather than assumed.
+    return { route: 'alibaba', shadowToken: 'alibaba', providerArg: 'alibaba', shadowModel: model, promptCache: '' };
   }
   // An OpenRouter id is the only one carrying a '/', and `pricingKey` returns
   // it verbatim for exactly that reason.

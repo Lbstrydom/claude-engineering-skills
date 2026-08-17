@@ -7,8 +7,8 @@
     { "id": "opus", "model": "claude-opus", "mode": "shadow" },
     { "id": "kimi", "model": "moonshotai/kimi-k2-thinking", "mode": "shadow" },
     { "id": "grok", "model": "grok-4.6", "mode": "shadow" },
-    { "id": "qwen", "model": "qwen/qwen3.8-max", "mode": "shadow" },
-    { "id": "deepseek", "model": "deepseek/deepseek-v4-pro", "mode": "shadow" },
+    { "id": "qwen", "model": "qwen3.8-max", "mode": "shadow" },
+    { "id": "deepseek", "model": "deepseek-v4-pro-0813", "mode": "shadow" },
     { "id": "gemini-control", "model": "gemini-pro-latest", "mode": "shadow", "type": "control" }
   ],
   "controls": {

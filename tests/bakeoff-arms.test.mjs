@@ -176,6 +176,19 @@ describe('transportForModel — the HOW the config deliberately does not express
     assert.equal(transportForModel('moonshotai/kimi-k2-thinking').route, 'openrouter');
     assert.equal(transportForModel('moonshotai/kimi-k2-thinking').shadowModel, 'moonshotai/kimi-k2-thinking');
     assert.equal(transportForModel('gemini-pro-latest').route, 'gemini');
+    assert.equal(transportForModel('grok-4.6').route, 'xai');
+    assert.equal(transportForModel('qwen3.8-max').route, 'alibaba');
+    assert.equal(transportForModel('deepseek-v4-pro-0813').route, 'alibaba');
+  });
+
+  it('ALIBABA_POOL membership wins over the generic "/" → openrouter rule, and only for curated ids', () => {
+    // qwen3.8-max/deepseek-v4-pro-0813 carry no '/' so this is not exercised
+    // today, but the check is deliberately ordered first (see the code
+    // comment) — assert the OpenRouter-slug spelling of the SAME models still
+    // routes to openrouter, proving the two paths stay genuinely separate.
+    assert.equal(transportForModel('qwen/qwen3.8-max').route, 'openrouter', 'the OpenRouter OSS-pool spelling is untouched by the alibaba route');
+    assert.equal(transportForModel('deepseek/deepseek-v4-pro').route, 'openrouter');
+    assert.equal(transportForModel('qwen3.8-max').promptCache, '', 'no cache multiplier is claimed for the alibaba route');
   });
 
   it('a concrete Claude model rides in SHADOW_MODEL; the bare family token does not', () => {

@@ -216,6 +216,88 @@ describe('xAI shadow — the descriptor is DELIBERATELY NOT the OpenRouter shape
   });
 });
 
+describe('Alibaba shadow — resolution states (native replacement for the qwen/deepseek OpenRouter arms, 2026-08-17)', () => {
+  it('refuses without an explicit model — like openrouter (gateway:true), UNLIKE xai', () => {
+    // Alibaba serves several unrelated model families verbatim (Qwen,
+    // DeepSeek, GLM, Kimi) with no single sensible default, so it takes
+    // openrouter's "no default, explicit model required" branch even though
+    // it is not itself a multi-backend router.
+    const r = shadow({ provider: 'alibaba', model: null }, { ALIBABA_CLOUD_API_KEY: 'k', ALIBABA_CLOUD_BASE_URL: 'https://example.invalid/v1' });
+    assert.equal(r.state, 'skipped-no-model');
+    assert.equal(r.model, null);
+  });
+
+  it('is ready with a curated model id and BOTH env vars', () => {
+    const r = shadow({ provider: 'alibaba', model: 'qwen3.8-max' }, { ALIBABA_CLOUD_API_KEY: 'k', ALIBABA_CLOUD_BASE_URL: 'https://example.invalid/v1' });
+    assert.equal(r.state, 'ready');
+    assert.equal(r.model, 'qwen3.8-max');
+    assert.equal(r.provider, 'alibaba');
+  });
+
+  it('the OTHER curated id (deepseek) is also accepted', () => {
+    const r = shadow({ provider: 'alibaba', model: 'deepseek-v4-pro-0813' }, { ALIBABA_CLOUD_API_KEY: 'k', ALIBABA_CLOUD_BASE_URL: 'https://example.invalid/v1' });
+    assert.equal(r.state, 'ready');
+  });
+
+  it('an explicit model NOT in ALIBABA_POOL is rejected, not silently routed to alibaba', () => {
+    // family check defers to isAlibabaModel — the SAME allowlist the runner
+    // consults, not a name-pattern guess.
+    for (const bad of ['grok-4.6', 'qwen/qwen3.8-max', 'deepseek-v4-pro']) {
+      const r = shadow({ provider: 'alibaba', model: bad }, { ALIBABA_CLOUD_API_KEY: 'k', ALIBABA_CLOUD_BASE_URL: 'https://example.invalid/v1' });
+      assert.equal(r.state, 'skipped-unsupported-provider', `"${bad}" must not resolve via alibaba`);
+    }
+  });
+
+  it('EITHER missing env var (not just the key) is a refusal — the workspace URL has no fallback', () => {
+    assert.equal(shadow({ provider: 'alibaba', model: 'qwen3.8-max' }, { ALIBABA_CLOUD_API_KEY: 'k' }).state, 'skipped-no-key', 'missing base URL');
+    assert.equal(shadow({ provider: 'alibaba', model: 'qwen3.8-max' }, { ALIBABA_CLOUD_BASE_URL: 'https://example.invalid/v1' }).state, 'skipped-no-key', 'missing api key');
+    assert.equal(shadow({ provider: 'alibaba', model: 'qwen3.8-max' }, {}).state, 'skipped-no-key');
+  });
+
+  it('is a no-op under an active Azure profile — same guard order as every other provider', () => {
+    const r = shadow({ provider: 'alibaba', model: 'qwen3.8-max' }, { ALIBABA_CLOUD_API_KEY: 'k', ALIBABA_CLOUD_BASE_URL: 'https://example.invalid/v1' }, true);
+    assert.equal(r.state, 'skipped-azure');
+    assert.equal(r.model, null);
+  });
+
+  it('never lets the api key escape into the resolver result', () => {
+    const secret = 'sk-ws-DEADBEEFDEADBEEF';
+    const r = shadow({ provider: 'alibaba', model: 'qwen3.8-max' }, { ALIBABA_CLOUD_API_KEY: secret, ALIBABA_CLOUD_BASE_URL: 'https://example.invalid/v1' });
+    assert.doesNotMatch(JSON.stringify(r), /DEADBEEF/);
+  });
+});
+
+describe('Alibaba shadow — the descriptor is a direct endpoint, not an OpenRouter-style router', () => {
+  it('carries no OpenRouter routing pins, and requestExtras is empty (no reasoning knob verified live yet)', () => {
+    const src = readFileSync(new URL('../scripts/gemini-review.mjs', import.meta.url), 'utf-8');
+
+    const canonical = shadow({ provider: 'alibaba', model: 'qwen3.8-max' }, { ALIBABA_CLOUD_API_KEY: 'k', ALIBABA_CLOUD_BASE_URL: 'https://example.invalid/v1' }).provider;
+    assert.equal(canonical, 'alibaba');
+
+    const descriptor = src.slice(src.indexOf('  alibaba: {'));
+    const body = descriptor.slice(0, descriptor.indexOf('\n  },'));
+    assert.match(body, /structuredOutput:\s*true/, 'the shadow needs the JSON schema, not prose');
+    assert.doesNotMatch(body, /require_parameters:\s*true/, 'OpenRouter-only — alibaba is one workspace endpoint, nothing to require');
+    assert.doesNotMatch(body, /sort:\s*'[a-z]+'/, 'sort is OpenRouter-only routing — meaningless for a direct endpoint');
+    assert.match(body, /requestExtras:\s*\(\)\s*=>\s*\(\{\}\)/, 'no reasoning field is claimed until verified live against this workspace');
+  });
+
+  it('the SHADOW_PROVIDER_SPECS entry is gateway-shaped (no default sentinel) but its own family', () => {
+    const src = readFileSync(new URL('../scripts/gemini-review.mjs', import.meta.url), 'utf-8');
+    const specs = src.slice(src.indexOf('const SHADOW_PROVIDER_SPECS'));
+    const body = specs.slice(0, specs.indexOf('\n};'));
+    // The entry spans multiple lines (unlike xai's single-line one above), so
+    // grab the whole `'alibaba': { ... },` block rather than one matching line.
+    const startIdx = body.indexOf("'alibaba':");
+    assert.ok(startIdx >= 0, 'no alibaba entry found in SHADOW_PROVIDER_SPECS');
+    const rest = body.slice(startIdx);
+    const alibabaBlock = rest.slice(0, rest.indexOf('\n  },') + 1);
+    assert.match(alibabaBlock, /gateway:\s*true/, 'alibaba has no single sensible default across Qwen/DeepSeek/GLM/Kimi');
+    assert.match(alibabaBlock, /defaultSentinel:\s*null/);
+    assert.match(alibabaBlock, /family:\s*'alibaba'/, 'must NOT share the "gateway" family string with openrouter — kept distinct for telemetry and its own family check');
+  });
+});
+
 describe('reasoning-effort dial (apples-to-apples arms)', () => {
   it('defaults to `high` — the depth Gemini and Opus already ran at', () => {
     assert.equal(['low', 'medium', 'high'].includes(finalReviewConfig.reasoningEffort), true);

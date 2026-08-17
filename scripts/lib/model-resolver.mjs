@@ -208,6 +208,47 @@ export function resolveXaiCreds() {
   return { baseUrl: XAI_BASE_URL, apiKey: process.env.XAI_API_KEY };
 }
 
+/**
+ * Known bare (no `vendor/` slug) model ids served by this repo's Alibaba
+ * Cloud Model Studio workspace deployment, confirmed live against its
+ * `/models` endpoint 2026-08-17. A single maintainer-curated allowlist,
+ * NOT a prefix regex like `isXaiModel` — unlike xAI (one family, one
+ * `grok-` prefix), Alibaba's workspace gateway serves several UNRELATED
+ * model families (Qwen, DeepSeek, GLM, Kimi) verbatim under one endpoint,
+ * with no shared name pattern to key off. Extend this list, don't
+ * loosen it into a heuristic — a false match here silently sends a
+ * request to the wrong endpoint at the operator's expense, and the
+ * workspace's own model catalog is one `node -e "fetch(...)"` call away
+ * to re-verify (see docs/reference/environment-variables.md).
+ *
+ * Deliberately excludes the OpenRouter-slug spellings (`qwen/qwen3.8-max`,
+ * `deepseek/deepseek-v4-pro`) used elsewhere in this repo's OSS pools
+ * (model-resolver's `OSS_POOL`, model-pricing's `OSS_PRICING`) — those
+ * feed a completely different consumption path (the tiered-audit
+ * pipeline's auditor OSS arm) and must not be affected by this native
+ * route existing.
+ */
+export const ALIBABA_POOL = Object.freeze(['qwen3.8-max', 'deepseek-v4-pro-0813']);
+
+/** True iff `id` is a bare model id this repo's Alibaba workspace serves — see `ALIBABA_POOL`. */
+export function isAlibabaModel(id) {
+  return typeof id === 'string' && ALIBABA_POOL.includes(id);
+}
+
+/**
+ * This repo's Alibaba Cloud Model Studio workspace gateway — UNLIKE
+ * `XAI_BASE_URL`, this is not a universal public endpoint: it is a
+ * per-account workspace host (`ws-<id>.<region>.maas.aliyuncs.com`), so it
+ * is read from `ALIBABA_CLOUD_BASE_URL` with no fallback rather than
+ * hardcoded — a wrong guess here would silently address someone else's
+ * workspace or a nonexistent host. `assertReady` on the `alibaba` provider
+ * refuses with a named env var when either half is missing.
+ * @returns {{baseUrl: string|null, apiKey: string|undefined}}
+ */
+export function resolveAlibabaCreds() {
+  return { baseUrl: (process.env.ALIBABA_CLOUD_BASE_URL || '').trim() || null, apiKey: process.env.ALIBABA_CLOUD_API_KEY };
+}
+
 // ── Deprecated remap ────────────────────────────────────────────────────────
 // When a user's .env has a stale concrete ID, remap to a sentinel and warn.
 // Prevents 404s when providers retire models.

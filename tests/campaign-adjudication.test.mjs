@@ -101,6 +101,23 @@ describe('resolveProviderIdentity / armRedactionTerms (D1c)', () => {
     assert.equal(r('the qwen-turbo model'), 'the qwen-turbo model');
   });
 
+  it('the bare Alibaba workspace ids (no vendor slash) resolve via STATIC_RESIDUE, not source 2 (D1c, G2 native-route follow-up)', () => {
+    // qwen3.8-max / deepseek-v4-pro-0813 replaced the OpenRouter-slug arms
+    // (qwen/qwen3.8-max, deepseek/deepseek-v4-pro) on 2026-08-17 — no '/', so
+    // the vendor-slug source no longer matches and these must resolve through
+    // the explicit STATIC_RESIDUE table added alongside the native route, or
+    // armRedactionTerms would refuse the whole campaign as unredactable.
+    assert.equal(resolveProviderIdentity('qwen3.8-max'), 'qwen');
+    assert.equal(resolveProviderIdentity('deepseek-v4-pro-0813'), 'deepseek');
+    const r = buildModelRedactor({ arms: [{ id: 'q1', model: 'qwen3.8-max' }, { id: 'd1', model: 'deepseek-v4-pro-0813' }] });
+    const qwenRedacted = r('the Qwen model found this');
+    const deepseekRedacted = r('reviewed by DeepSeek');
+    assert.match(qwenRedacted, /\[MODEL-[AB]\]/, 'qwen must redact to SOME model placeholder');
+    assert.match(deepseekRedacted, /\[MODEL-[AB]\]/, 'deepseek must redact to SOME model placeholder');
+    assert.notEqual(qwenRedacted, 'the Qwen model found this', 'a leaked "Qwen" would defeat blind adjudication');
+    assert.notEqual(deepseekRedacted, 'reviewed by DeepSeek', 'a leaked "DeepSeek" would defeat blind adjudication');
+  });
+
   it('boundary-aware: "metadata" and "megawatt" are not redacted by an unrelated derived term', () => {
     const r = buildModelRedactor({ arms: [{ id: 'a1', model: 'claude-opus' }, { id: 'g1', model: 'grok-4.6' }] });
     assert.equal(r('check the metadata and the megawatt rating'), 'check the metadata and the megawatt rating');

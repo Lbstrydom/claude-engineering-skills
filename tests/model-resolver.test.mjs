@@ -5,7 +5,7 @@ import {
   isSentinel, parseClaudeModel, parseGeminiModel, parseOpenAIModel,
   pickNewestClaude, pickNewestGemini, pickNewestOpenAI,
   deprecatedRemap, resolveModel, setCatalog, _resetCatalogCache,
-  supportsReasoningEffort, pricingKey, isXaiModel,
+  supportsReasoningEffort, pricingKey, isXaiModel, isAlibabaModel, resolveAlibabaCreds,
 } from '../scripts/lib/model-resolver.mjs';
 
 // Reset state between tests so catalog overrides from one test don't leak
@@ -421,5 +421,50 @@ describe('isXaiModel — chat models only, NOT a bare prefix test (audit-found g
   it('is case-insensitive, matching the rest of this repo\'s id-matching convention', () => {
     assert.equal(isXaiModel('GROK-4.6'), true);
     assert.equal(isXaiModel('Grok-Imagine-Image'), false);
+  });
+});
+
+describe('isAlibabaModel — curated allowlist, not a name-pattern guess', () => {
+  it('accepts the two known bare workspace ids', () => {
+    assert.equal(isAlibabaModel('qwen3.8-max'), true);
+    assert.equal(isAlibabaModel('deepseek-v4-pro-0813'), true);
+  });
+
+  it('rejects the OpenRouter-slug spellings of the SAME models — a different route, on purpose', () => {
+    // These feed the OSS auditor pool (OSS_POOL/OSS_PRICING), a totally
+    // different consumption path; ALIBABA_POOL must never accidentally widen
+    // to match them, or that path's routing silently changes too.
+    assert.equal(isAlibabaModel('qwen/qwen3.8-max'), false);
+    assert.equal(isAlibabaModel('deepseek/deepseek-v4-pro'), false);
+  });
+
+  it('rejects unrelated ids and non-string input without throwing', () => {
+    assert.equal(isAlibabaModel('grok-4.6'), false);
+    assert.equal(isAlibabaModel('deepseek-v4-pro'), false, 'the undated base variant is not the curated one');
+    for (const v of [null, undefined, 42, {}]) assert.doesNotThrow(() => isAlibabaModel(v));
+  });
+});
+
+describe('resolveAlibabaCreds — workspace endpoint has NO fallback (unlike XAI_BASE_URL)', () => {
+  it('reads both halves from env with no default', () => {
+    const saved = { key: process.env.ALIBABA_CLOUD_API_KEY, base: process.env.ALIBABA_CLOUD_BASE_URL };
+    process.env.ALIBABA_CLOUD_API_KEY = 'test-key';
+    process.env.ALIBABA_CLOUD_BASE_URL = 'https://example.invalid/compatible-mode/v1';
+    try {
+      assert.deepEqual(resolveAlibabaCreds(), { baseUrl: 'https://example.invalid/compatible-mode/v1', apiKey: 'test-key' });
+    } finally {
+      if (saved.key === undefined) delete process.env.ALIBABA_CLOUD_API_KEY; else process.env.ALIBABA_CLOUD_API_KEY = saved.key;
+      if (saved.base === undefined) delete process.env.ALIBABA_CLOUD_BASE_URL; else process.env.ALIBABA_CLOUD_BASE_URL = saved.base;
+    }
+  });
+
+  it('baseUrl is null (never a guessed host) when unset', () => {
+    const saved = process.env.ALIBABA_CLOUD_BASE_URL;
+    delete process.env.ALIBABA_CLOUD_BASE_URL;
+    try {
+      assert.equal(resolveAlibabaCreds().baseUrl, null);
+    } finally {
+      if (saved !== undefined) process.env.ALIBABA_CLOUD_BASE_URL = saved;
+    }
   });
 });

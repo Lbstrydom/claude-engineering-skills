@@ -41,7 +41,7 @@ import { applyEnvSetting } from './lib/env-setting.mjs';
 import { geminiConfig, claudeConfig, azureConfig, shadowReviewConfig, finalReviewConfig, auditShadowConfig, findingMatchConfig, FINDING_MATCH_SCHEMA_VERSION } from './lib/config.mjs';
 import { describeAzureRoute, describeTransportFailure } from './lib/azure-route-report.mjs';
 import { recordFinalReviewFindings } from './learning-store.mjs';
-import { refreshModelCatalog, resolveModel, resolveXaiCreds } from './lib/model-resolver.mjs';
+import { refreshModelCatalog, resolveModel, resolveXaiCreds, resolveAlibabaCreds, isAlibabaModel } from './lib/model-resolver.mjs';
 import { createOpenAIClient } from './lib/openai-client.mjs';
 import { createAnthropicClient } from './lib/anthropic-client.mjs';
 import { azureThrottle } from './lib/azure-throttle.mjs';
@@ -1140,6 +1140,41 @@ const PROVIDERS = {
     // (Phase 5) exists to catch, so getting the shape right here matters.
     requestExtras: () => ({ reasoning_effort: finalReviewConfig.reasoningEffort }),
   },
+  // Native Alibaba Cloud Model Studio — replaces the OpenRouter route for the
+  // qwen/deepseek bake-off arms (2026-08-17), after repeated 300s timeouts on
+  // OpenRouter's routing for `qwen/qwen3.8-max` traced to the ROUTER, not the
+  // model (same failure class the openrouter descriptor's own comment above
+  // documents for kimi/glm). This is a per-account WORKSPACE gateway serving
+  // several model families verbatim (Qwen, DeepSeek, GLM, Kimi) — closer in
+  // shape to `openai-compatible` than to `xai`'s single fixed model, so there
+  // is no `resolveModel` sentinel default; the concrete id always comes from
+  // the caller (arm declaration or FINAL_REVIEW_SHADOW_MODEL).
+  alibaba: {
+    id: 'alibaba',
+    structuredOutput: true,
+    label: 'Alibaba Cloud (Model Studio)',
+    transportKind: () => 'openai',
+    resolveModel: () => finalReviewConfig.model,
+    assertReady: (env = process.env) => {
+      const missing = [];
+      if (!env.ALIBABA_CLOUD_API_KEY) missing.push('ALIBABA_CLOUD_API_KEY');
+      if (!env.ALIBABA_CLOUD_BASE_URL) missing.push('ALIBABA_CLOUD_BASE_URL');
+      if (missing.length) { console.error(`Error: provider "alibaba" requires ${missing.join(' + ')}`); process.exit(1); }
+    },
+    buildClient: async () => {
+      const c = resolveAlibabaCreds();
+      return createOpenAIClient({ oss: { baseURL: c.baseUrl, apiKey: c.apiKey } });
+    },
+    // Same non-router reasoning as xai above: one direct workspace endpoint,
+    // not OpenRouter's many-backends-per-id router, so none of OpenRouter's
+    // `provider`/`require_parameters`/`sort` fields apply. Whether this
+    // workspace's compatible-mode endpoint accepts a reasoning-effort knob at
+    // all is UNVERIFIED (unlike xai's `reasoning_effort`, confirmed live) —
+    // omitted rather than guessed at; a wrong-shaped field risks the same
+    // "accepted but silently inert" class the pre-flight machinery exists to
+    // catch, and this route has no pre-flight of its own yet.
+    requestExtras: () => ({}),
+  },
 };
 
 /** Review-scoped OpenAI-compatible creds (all explicit; validated in assertReady). */
@@ -1539,6 +1574,18 @@ const SHADOW_PROVIDER_SPECS = {
   // perfectly usable, matching claude-opus/gemini's behaviour above rather
   // than openrouter's "explicit model required" refusal.
   'xai': { canonical: 'xai', family: 'xai', defaultSentinel: 'latest-grok', hasCredential: (env) => Boolean(env.XAI_API_KEY) },
+  // Native Alibaba — like `openrouter`, a `gateway` (verbatim model ids, no
+  // sensible single default across Qwen/DeepSeek/GLM/Kimi) but NOT actually a
+  // multi-backend router like OpenRouter is — see the PROVIDERS.alibaba
+  // descriptor's own note on why its requestExtras stays empty. `gateway:
+  // true` here buys the same "no default, explicit model required, bypass
+  // resolveModel's sentinel rewrite" behaviour openrouter already gets from
+  // `resolveShadow`, which is exactly what a verbatim-id, no-default provider
+  // needs regardless of whether it is itself a router.
+  'alibaba': {
+    canonical: 'alibaba', family: 'alibaba', gateway: true, defaultSentinel: null,
+    hasCredential: (env) => Boolean(env.ALIBABA_CLOUD_API_KEY && env.ALIBABA_CLOUD_BASE_URL),
+  },
 };
 
 /** Cheap family check so an explicit model can't be paired with a wrong provider (R3 M1). */
@@ -1550,6 +1597,11 @@ function shadowModelMatchesFamily(modelId, family) {
   if (family === 'gateway') return true;
   if (family === 'gemini') return id.includes('gemini');
   if (family === 'xai') return id.includes('grok');
+  // Unlike the gateway/xai/gemini checks above (name-pattern or blanket
+  // accept), `alibaba` has an authoritative source of truth to defer to: the
+  // SAME curated `ALIBABA_POOL` allowlist `transportForModel` consults, so
+  // this check can never diverge from what the runner actually recognises.
+  if (family === 'alibaba') return isAlibabaModel(id);
   // claude family — opus/sonnet/haiku today, mythos/fable when they land.
   return /claude|opus|sonnet|haiku|mythos|fable/.test(id);
 }
@@ -1637,6 +1689,11 @@ async function buildShadowClient(canonicalProvider) {
     // is a plain env check the shadow path duplicates in resolveShadow's own
     // hasCredential, so calling both would just be two places to keep in sync.
     const c = resolveXaiCreds();
+    return createOpenAIClient({ oss: { baseURL: c.baseUrl, apiKey: c.apiKey } });
+  }
+  if (canonicalProvider === 'alibaba') {
+    // Same non-delegation note as openrouter/xai above.
+    const c = resolveAlibabaCreds();
     return createOpenAIClient({ oss: { baseURL: c.baseUrl, apiKey: c.apiKey } });
   }
   // `backend:'sdk'` PINNED, never the ambient CLAUDE_BACKEND (found live
