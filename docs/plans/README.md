@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**8 active · 191 terminal · 27 audit summaries · 4 reference docs · 1 malformed**
+**8 active · 192 terminal · 27 audit summaries · 4 reference docs**
 
 ---
 
@@ -30,15 +30,6 @@ This is the list to read when asking "what is in flight?".
 | [Standing Queue Burndown — the three gates that fire on every ship](./standing-queue-burndown.md) | `In Progress` | Q1 38 code rows, Q2 unknown (reader reports no total), Q3 68 actionable; measured 2026-08-09 |
 | [Tiered Recall-Weighted Audit Pipeline](./tiered-recall-audit-pipeline.md) | `In Progress` | implementation complete (Clusters A-F implemented |
 
-## ⚠️ Malformed status
-
-These have a `Status:` line the closed vocabulary does not recognise.
-`npm run plans:status` fails on these — fix the status line.
-
-| Plan | Notes |
-|---|---|
-| [Auditor Controls Execution Wiring](./auditor-controls-execution-wiring.md) |  |
-
 ## Superseded / abandoned
 
 Decided against, replaced, or overtaken — these did **not** ship as written.
@@ -57,7 +48,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 188 completed plans</summary>
+<summary>Show all 189 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -93,6 +84,7 @@ source comments that no docs linter sees — stays valid.
 | [Audit Orchestrator Hardening](./audit-orchestrator-hardening.md) | `Complete` | implemented (9 phases, 5 clusters), audit-code |
 | [Audit-store write durability and failure contract](./audit-store-write-durability.md) | `Complete` | all 6 phases shipped; the final gate ran twice over the union diff (`CONCERNS_REMAINING`, every finding act… |
 | [Plan — Consumer-side audit-tool staleness check (Option A)](./audit-tool-staleness-check.md) | `Complete` |  |
+| [Auditor Controls Execution Wiring](./auditor-controls-execution-wiring.md) | `Complete` | implemented and shipped (audit-plan: 5 GPT rounds, 100% acceptance each, real design defects each round; Ge… |
 | [Azure Embedding-Deployment Discovery + Provenance Truth](./azure-embed-deployment-discovery.md) | `Complete` | 2026-07-17) — all 3 clusters implemented + audited; consolidated Gemini gate APPROVE (0 findings); live-ver… |
 | [Azure AI Foundry Work Profile](./azure-work-profile.md) | `Complete` |  |
 | [/brainstorm Skill + Architecture-Map Discoverability + VS Code Mermaid](./brainstorm-and-arch-discoverability.md) | `Complete` | shipped — `/brainstorm` skill + `scripts/brainstorm-round.mjs` + 7 modules under `scripts/lib/brainstorm/` … |
