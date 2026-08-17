@@ -39,27 +39,29 @@
 import * as store from '../store/campaign.mjs';
 
 /**
- * Resolve this repo's store row id, or null when unresolvable/cloud-off.
+ * Resolve this repo's store row id, or null for the two LEGITIMATE null
+ * cases: cloud is off, or this repo genuinely has no store row yet.
  *
- * The `null` return is unavoidable (every caller already treats it as
- * "cloud-off or unregistered" — widening the return shape would ripple into
- * every call site) — but the FAILURE case was previously silent (`.catch(()
- * => null)` with nothing else), conflating "cloud is off" / "repo genuinely
- * never registered" with a real operational failure (network timeout, auth
- * error, malformed config). Consolidated-gate finding (round-4/5 H7):
- * `promoteFromLog` calls this AFTER cloud availability is already confirmed
- * on, so a null result there specifically means resolution failed for some
- * OTHER reason — and that reason is now visible on stderr rather than
- * indistinguishable from the ordinary unregistered-repo case.
+ * Bake-off-campaign gate finding (G1, verified against `store/repo.mjs`):
+ * the earlier fix here only made a real operational failure (network
+ * timeout, auth error, malformed config) VISIBLE on stderr while still
+ * returning `null` — indistinguishable, to every caller, from the ordinary
+ * cloud-off/unregistered case. `resolveRepoForStoreResult()` already
+ * discriminates the three outcomes (`cloud-off` / `unresolved` / `error`),
+ * so an operational failure can now be a genuine THROW instead of widening
+ * this function's return shape — `promoteFromLog` calls this AFTER cloud
+ * availability is already confirmed on, so an uncaught throw here means a
+ * real store failure during promotion, which should fail the CLI (the
+ * top-level `main().catch()` in campaign.mjs already exits non-zero on any
+ * thrown error), not silently print "cloud off" and exit 0.
  */
 export async function repoId() {
-  const { resolveRepoForStore } = await import('../store/repo.mjs');
+  const { resolveRepoForStoreResult } = await import('../store/repo.mjs');
   const { generateRepoProfile } = await import('../context.mjs');
-  const ref = await resolveRepoForStore({ profile: generateRepoProfile() }).catch((err) => {
-    process.stderr.write(`  [campaign/promote] repoId: resolveRepoForStore failed (${err.message}) — treating as unresolvable, but this is a REAL failure, not an ordinary unregistered-repo case\n`);
-    return null;
-  });
-  return ref?.repoRowId ?? null;
+  const r = await resolveRepoForStoreResult({ profile: generateRepoProfile() });
+  if (r.kind === 'resolved') return r.repoRowId;
+  if (r.kind === 'cloud-off' || r.kind === 'unresolved') return null;
+  throw new Error(`[campaign/promote] repoId: resolveRepoForStoreResult failed (${r.error}) — a real operational failure, not an ordinary unregistered-repo case`);
 }
 
 /**

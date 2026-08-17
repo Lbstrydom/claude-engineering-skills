@@ -14,8 +14,31 @@ import os from 'node:os';
 import path from 'node:path';
 
 import {
-  classifyLogEntry, resolvePromotionAttempt, isArmRetried,
+  classifyLogEntry, resolvePromotionAttempt, isArmRetried, repoId,
 } from '../scripts/lib/campaign/promote.mjs';
+
+// ── repoId: cloud-off / unresolved must stay a quiet null; a real store ─────
+// failure must THROW, not collapse into the same null (bake-off-campaign
+// gate G1) ───────────────────────────────────────────────────────────────
+
+describe('repoId', () => {
+  it('cloud off (no AUDIT_DB_URL) resolves to null, not a throw', async () => {
+    const saved = process.env.AUDIT_DB_URL;
+    delete process.env.AUDIT_DB_URL;
+    try {
+      assert.equal(await repoId(), null);
+    } finally {
+      if (saved === undefined) delete process.env.AUDIT_DB_URL;
+      else process.env.AUDIT_DB_URL = saved;
+    }
+  });
+  // The `kind:'error'` → throw path (a real DB connectivity/auth failure)
+  // needs a broken-but-live connection to exercise honestly and is covered
+  // at the CLI boundary instead: an uncaught throw from here propagates
+  // through `promoteFromLog` to `main()`'s top-level `.catch()` in
+  // campaign.mjs, which already exits non-zero on any thrown error — the
+  // behaviour this fix relies on, not a new contract this test would invent.
+});
 
 // ── receipt-name parsing (consolidated gate G1) ─────────────────────────────
 

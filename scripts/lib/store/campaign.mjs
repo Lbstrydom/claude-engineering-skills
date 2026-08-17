@@ -128,26 +128,34 @@ export function resolveProviderIdentity(model) {
 
 /**
  * The redaction term set for ONE declared arm (D1c). An explicit
- * `arm.redactionTerms` override wins outright — the escape hatch for a
- * genuinely unresolvable vendor. Otherwise `resolveProviderIdentity` must
- * succeed; **unresolvable is a REFUSAL, not a silent gap** — a campaign with
- * an unredactable arm is not run half-blind, it is not run (fail-closed, the
- * same posture `resolveAndClassify` already applies to path classification).
+ * `arm.redactionTerms` is ADDITIVE, never a replacement — bake-off-campaign
+ * gate finding G2: a version that let a declared override REPLACE the
+ * derived provider aliases meant any arm declaring its own extra term (e.g.
+ * a project codename) silently stopped redacting the standard provider name
+ * too, under-redacting the blind-adjudication worksheet. Blinding is a
+ * security boundary; a declared override must only ever ADD terms, never
+ * drop ones auto-derivation would have caught. When `resolveProviderIdentity`
+ * can't resolve at all, the declared override is the sole (still mandatory)
+ * source — **unresolvable-and-undeclared is a REFUSAL, not a silent gap** — a
+ * campaign with an unredactable arm is not run half-blind, it is not run
+ * (fail-closed, the same posture `resolveAndClassify` already applies to
+ * path classification).
  *
  * @param {{id: string, model: string, redactionTerms?: string[]}} arm
  * @returns {string[]}
  * @throws {Error} when unresolvable and no override is declared
  */
 export function armRedactionTerms(arm) {
-  if (Array.isArray(arm?.redactionTerms) && arm.redactionTerms.length > 0) return arm.redactionTerms;
+  const override = Array.isArray(arm?.redactionTerms) ? arm.redactionTerms : [];
   const provider = resolveProviderIdentity(arm?.model);
-  if (!provider) {
+  const derived = provider ? (PROVIDER_ALIASES[provider] ?? [provider]) : [];
+  if (derived.length === 0 && override.length === 0) {
     throw new Error(
       `[campaign] arm "${arm?.id}" (model "${arm?.model}") has no resolvable provider identity for blind `
       + 'adjudication — declare an explicit "redactionTerms": ["..."] on this arm in the campaign config.',
     );
   }
-  return PROVIDER_ALIASES[provider] ?? [provider];
+  return Array.from(new Set([...derived, ...override]));
 }
 
 function flattenPool(pool) {

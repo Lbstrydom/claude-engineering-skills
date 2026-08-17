@@ -65,6 +65,20 @@ describe('resolveProviderIdentity / armRedactionTerms (D1c)', () => {
     assert.match(r('built by MysteryVendor originally'), /\[MODEL-A\]/);
   });
 
+  it('a RESOLVABLE model WITH an explicit redactionTerms override — the override ADDS, it never replaces the derived provider terms (G2)', () => {
+    // Before the fix, declaring redactionTerms on a resolvable model silently
+    // dropped the auto-derived provider aliases — an arm author adding one
+    // extra term (a project codename, say) would unknowingly stop redacting
+    // the standard vendor name too, under-redacting the blind worksheet.
+    const terms = armRedactionTerms({ id: 'k1', model: 'moonshotai/kimi-k2-thinking', redactionTerms: ['project-codename'] });
+    assert.ok(terms.includes('project-codename'), 'the declared override term must be present');
+    assert.ok(terms.some((t) => /kimi|moonshot/i.test(t)), 'the auto-derived provider term must STILL be present, not dropped');
+
+    const r = buildModelRedactor({ arms: [{ id: 'k1', model: 'moonshotai/kimi-k2-thinking', redactionTerms: ['project-codename'] }] });
+    assert.match(r('this was reviewed under project-codename'), /\[MODEL-A\]/, 'the declared term redacts');
+    assert.match(r('Kimi reviewed this'), /\[MODEL-A\]/, 'the derived provider term must ALSO redact, not be silently dropped');
+  });
+
   it('an anthropic-routed arm — claude, opus, sonnet, haiku ALL still redact, not just "anthropic"', () => {
     const r = buildModelRedactor({ arms: [{ id: 'a1', model: 'claude-opus' }] });
     for (const word of ['Claude', 'Opus', 'Sonnet', 'Haiku', 'Anthropic']) {
