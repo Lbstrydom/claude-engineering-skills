@@ -49,18 +49,19 @@ import { assertKnownFlags, ArgvError, argOption, hasFlag } from './lib/cli-io.mj
 // The ONE admission oracle. Imported, never restated — a second copy of the
 // predicate is how the pre-flight and the CLI would silently disagree.
 import { isAuditInfraFile } from './lib/audit-scope.mjs';
-import { PLAN_REFERENCE_EXTENSIONS } from './lib/plan-paths.mjs';
+import { resolveReferenceExtension } from './lib/plan-paths.mjs';
 
 // The extension policy is IMPORTED from the module the auditor itself uses
-// (`mergeScopeFiles` builds its allowlist from the same constant). An earlier
+// (`mergeScopeFiles` resolves admission through the same oracle). An earlier
 // version hardcoded a set "mirroring" it — a second authority that would drift
 // the moment the auditor gained or dropped an extension, leaving this pre-flight
 // rejecting files the audit would have read, or admitting files it then filtered.
-// NOTE the format: the shared constant stores extensions WITHOUT a leading dot
-// ('mjs'), while `path.extname()` returns one ('.mjs'). Comparing them directly
-// rejects every file as 'extension' — caught by running a fixture, not by
-// reading, and the reason this normalisation is explicit rather than assumed.
-const AUDITABLE_EXT = new Set(PLAN_REFERENCE_EXTENSIONS.map(e => (e.startsWith('.') ? e : `.${e}`)));
+// `resolveReferenceExtension` — not a bare `path.extname()` Set-lookup — is
+// what keeps this pre-flight in agreement with `mergeScopeFiles` on a
+// double-extension name like `index.html.template`: `path.extname()`
+// truncates to the outer, unregistered segment ('.template') and rejects
+// every such file as 'extension', caught by running a fixture, not by
+// reading.
 
 /**
  * Run git with an ARGV ARRAY — never a shell string, so no path can word-split.
@@ -138,7 +139,7 @@ export function admissionPreflight(scopePaths, { exists, cwd = process.cwd(), ch
         ? { path: p, admitted: false, reason: 'removed-by-this-cluster', fatal: false }
         : { path: p, admitted: false, reason: 'not-on-disk', fatal: true };
     }
-    if (!AUDITABLE_EXT.has(path.extname(p))) return { path: p, admitted: false, reason: 'extension', fatal: true };
+    if (resolveReferenceExtension(p) === null) return { path: p, admitted: false, reason: 'extension', fatal: true };
     if (isAuditInfraFile(p)) return { path: p, admitted: true, reason: 'infra-requires-allow-flag', fatal: false };
     return { path: p, admitted: true, reason: null, fatal: false };
   });

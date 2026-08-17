@@ -13,6 +13,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 import os from 'node:os';
 
@@ -186,6 +187,69 @@ test('an overlay pointing at a non-existent destination is REFUSED', () => {
   }, { repoRoot: REPO_ROOT });
   assert.equal(r.ok, false);
   assert.match(r.problems.join(' '), /does not exist/);
+});
+
+test('a needsGit fixture is NOT poisoned by a leaked GIT_DIR/GIT_INDEX_FILE (git-hook environment)', () => {
+  // git's own hook-invocation machinery exports GIT_DIR/GIT_INDEX_FILE/etc into
+  // a pre-push hook's process (githooks(5)) so hook-run git commands resolve
+  // the REAL repo. A spawnSync('git', ..., {cwd: work}) that inherits
+  // process.env unfiltered gives GIT_DIR precedence over cwd, so the
+  // "isolated" fixture's `git init`/`git commit` silently redirects at
+  // whatever repo GIT_DIR names instead of the disposable one. The resulting
+  // symptom under a real push — `Unable to create '.../index.lock': File
+  // exists` — reads exactly like contention with another concurrent process
+  // and is easy to misdiagnose as transient rather than as this leak (found
+  // live: pushing this very fix hit it twice in a row from a linked worktree
+  // before the cause was traced here).
+  //
+  // The "outer repo" the leak points at is a THROWAWAY tmpdir repo, never
+  // this checkout's own .git — deliberately, so this test cannot collide with
+  // a real concurrent git operation on the checkout it runs inside of (this
+  // repo is routinely worked on from several linked worktrees at once).
+  const outerRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'leaked-outer-repo-'));
+  const g = (args) => execFileSync('git', args, { cwd: outerRepo, encoding: 'utf-8' });
+  g(['init', '-q']);
+  g(['config', 'user.email', 'outer@example.com']);
+  g(['config', 'user.name', 'outer']);
+  fs.writeFileSync(path.join(outerRepo, 'seed.txt'), 'x\n');
+  g(['add', '-A']);
+  g(['commit', '-q', '-m', 'seed']);
+  const outerGitDir = g(['rev-parse', '--git-dir']).trim();
+  const absOuterGitDir = path.isAbsolute(outerGitDir) ? outerGitDir : path.resolve(outerRepo, outerGitDir);
+  // Simulate "another git process (the outer `git push` itself) currently
+  // holds this repo's index" — the exact collision that produced the live
+  // failure — entirely within the disposable outer repo, never the real one.
+  const outerLock = path.join(absOuterGitDir, 'index.lock');
+  fs.writeFileSync(outerLock, '');
+
+  const prevGitDir = process.env.GIT_DIR;
+  const prevIndexFile = process.env.GIT_INDEX_FILE;
+  process.env.GIT_DIR = absOuterGitDir;
+  process.env.GIT_INDEX_FILE = path.join(absOuterGitDir, 'index');
+  try {
+    // `needsGit` must be flattened onto the TOP-level contract object — the
+    // shape `loadContracts()` produces (`{script, file, id, poisonPill,
+    // needsGit}`, see extractCheckGates' neighbour around line 122) — not
+    // left nested inside `poisonPill`, or `runPill`'s `if (contract.needsGit)`
+    // never fires and this test passes vacuously regardless of the fix.
+    const r = runPill({
+      script: 'plans:index:check',
+      needsGit: true,
+      poisonPill: {
+        isolation: 'tmpdir',
+        argv: ['scripts/generate-plans-index.mjs', '--check'],
+        overlay: { 'docs/plans/README.md': 'tests/fixtures/poison/plans-index-tampered.md' },
+        expectExit: 1,
+        expectStderr: 'stale',
+      },
+    }, { repoRoot: REPO_ROOT });
+    assert.doesNotMatch(r.problems.join(' '), /could not create the isolated git fixture/,
+      "a leaked GIT_DIR/GIT_INDEX_FILE must not redirect the fixture's git init at the leaked repo");
+  } finally {
+    if (prevGitDir === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = prevGitDir;
+    if (prevIndexFile === undefined) delete process.env.GIT_INDEX_FILE; else process.env.GIT_INDEX_FILE = prevIndexFile;
+    fs.rmSync(outerRepo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  }
 });
 
 // ── One schema, two sources ─────────────────────────────────────────────────

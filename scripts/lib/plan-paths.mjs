@@ -37,6 +37,44 @@ export const PLAN_REFERENCE_EXTENSIONS = Object.freeze([
   'py', 'rs', 'go', 'java', 'rb', 'sh',
 ]);
 
+/**
+ * Known FILE-NAME suffixes where the outermost `.segment` is not itself a
+ * `PLAN_REFERENCE_EXTENSIONS` member but the tail of an established
+ * double-extension convention (`index.html.template`, a template source that
+ * generates an `.html` file). Checked as a literal string suffix, BEFORE the
+ * single-extension fallback in `resolveReferenceExtension` — deliberately
+ * NOT a general "strip the last segment and retry" rule, which would also
+ * admit `package-lock.json.lock` as `.json` (a case `mergeScopeFiles`'s own
+ * tests pin as REJECTED: a `.lock` file is not source, whatever precedes the
+ * final segment). Keep this list short and literal — an entry here changes
+ * admission for every plan/audit surface built on `PLAN_REFERENCE_EXTENSIONS`,
+ * so widening it should be as deliberate as widening that list itself.
+ */
+export const COMPOUND_REFERENCE_SUFFIXES = Object.freeze({
+  'html.template': 'html',
+});
+
+/**
+ * The `PLAN_REFERENCE_EXTENSIONS` entry `filePath` should be treated as, or
+ * null if none applies. The single oracle for "is this extension approved" —
+ * use this instead of a bare `path.extname()` / last-dot split, both of which
+ * truncate a double-extension name to its outer, unregistered segment
+ * (`index.html.template` → `template`, matching nothing).
+ *
+ * @param {string} filePath
+ * @returns {string|null} extension WITHOUT leading dot, or null.
+ */
+export function resolveReferenceExtension(filePath) {
+  const lower = filePath.toLowerCase();
+  for (const suffix of Object.keys(COMPOUND_REFERENCE_SUFFIXES)) {
+    if (lower.endsWith(`.${suffix}`)) return COMPOUND_REFERENCE_SUFFIXES[suffix];
+  }
+  const dot = filePath.lastIndexOf('.');
+  if (dot === -1) return null;
+  const ext = filePath.slice(dot + 1).toLowerCase();
+  return PLAN_REFERENCE_EXTENSIONS.includes(ext) ? ext : null;
+}
+
 // ── Plan Path Extraction ──────────────────────────────────────────────────
 
 /**
@@ -102,7 +140,6 @@ export function mergeScopeFiles(planFound, scopeFiles, { allowInfraFiles = false
   if (!Array.isArray(scopeFiles) || scopeFiles.length === 0) {
     return { files: [...base], addedFromScope: [], rejected: [] };
   }
-  const allowedExt = new Set(PLAN_REFERENCE_EXTENSIONS);
   const already = new Set(base.map(p => normalizePath(p)));
   const addedFromScope = [];
   const rejected = [];
@@ -116,8 +153,7 @@ export function mergeScopeFiles(planFound, scopeFiles, { allowInfraFiles = false
     seen.add(key);
     if (p.startsWith('http') || p.startsWith('node_modules')) { rejected.push(p); continue; }
     if (!allowInfraFiles && isAuditInfraFile(p)) { rejected.push(p); continue; }
-    const ext = p.includes('.') ? p.slice(p.lastIndexOf('.') + 1).toLowerCase() : '';
-    if (!allowedExt.has(ext)) { rejected.push(p); continue; }
+    if (resolveReferenceExtension(p) === null) { rejected.push(p); continue; }
     if (!fs.existsSync(path.resolve(p))) { rejected.push(p); continue; }
     addedFromScope.push(p);
   }
