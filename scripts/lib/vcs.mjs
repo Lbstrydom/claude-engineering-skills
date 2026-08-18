@@ -12,7 +12,7 @@
  * @module scripts/lib/vcs
  */
 
-import { execSync, spawnSync } from 'node:child_process';
+import { execFileSync, execSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -275,6 +275,73 @@ export function gitWorktreeTree(cwd, opts = {}) {
     return { ok: false, error: classifyChildError(err) };
   } finally {
     try { fs.rmSync(tmpIndex, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* temp cleanup is best-effort */ }
+  }
+}
+
+/**
+ * Hash the tree that `git commit --only -- <paths>` would produce: HEAD's tree
+ * with the WORKTREE contents of `paths` overlaid.
+ *
+ * The third member of the tree-identity family, and the one `ship-commit`'s E1
+ * check needs. {@link gitWorktreeTree} hashes everything and {@link gitIndexTree}
+ * hashes the index; neither describes a SCOPED commit, whose tree is neither of
+ * those — the index may hold another session's staged work, and the worktree may
+ * hold files this commit deliberately excludes.
+ *
+ * Like `gitWorktreeTree`, the staging happens in a THROWAWAY index under
+ * `os.tmpdir()` so the repo's real index is never touched. That location is
+ * load-bearing, not incidental: the caller this replaced derived the index as
+ * `<repoRoot>/.git/<name>`, which is only a directory in a MAIN checkout. In a
+ * linked worktree `.git` is a ~77-byte `gitdir:` pointer FILE, so git could not
+ * create the index or its lockfile, `read-tree` failed, and the caller's
+ * fail-closed `null` made `AI-Gate: passed` structurally unreachable from every
+ * worktree — silently understating the rigor behind those commits. Deriving the
+ * real git dir (`--absolute-git-dir`) would also work; a temp dir is better,
+ * because it makes the whole class of "is `.git` a directory here?" questions
+ * unaskable and matches the sibling above.
+ *
+ * @param {string} cwd
+ * @param {string[]} paths - repo-relative pathspecs to overlay onto HEAD.
+ * @param {{env?: NodeJS.ProcessEnv}} [opts]
+ * @returns {{ok: true, tree: string} | {ok: false, error: VcsError}}
+ */
+export function gitPathspecTree(cwd, paths, opts = {}) {
+  if (!Array.isArray(paths) || paths.length === 0) {
+    return { ok: false, error: { code: 'EXEC_FAILED', message: 'gitPathspecTree requires at least one path' } };
+  }
+  let tmpDir;
+  try {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ps-tree-'));
+  } catch (err) {
+    return { ok: false, error: { code: 'EXEC_FAILED', message: `cannot create temp index dir: ${err?.code || 'unknown'}`, cause: err } };
+  }
+  const env = { ...(opts.env ?? process.env), GIT_INDEX_FILE: path.join(tmpDir, 'index') };
+  const run = (args) => execFileSync('git', args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  try {
+    // Seed from HEAD so the overlay is a MODIFICATION of the parent tree rather
+    // than a tree containing only `paths`. An unborn HEAD has no tree to seed
+    // from, and the empty base is then exactly right: `git commit --only` on an
+    // unborn HEAD does produce a tree of just the named paths. Only that one
+    // message is swallowed — anything else (a corrupt or misdirected GIT_DIR)
+    // must surface, since a masked failure here feeds the `AI-Gate` identity.
+    try {
+      run(['read-tree', 'HEAD']);
+    } catch (err) {
+      const stderr = String(err?.stderr || '');
+      if (!/not a valid object name ['"]?head['"]?/i.test(stderr)) throw err;
+    }
+    // `--` terminates options: a path beginning with `-` is a filename here,
+    // never a flag. `add` (not `add -A`) keeps the scope to what was named.
+    run(['add', '--', ...paths]);
+    const tree = run(['write-tree']).toString().trim();
+    if (!GIT_TREE_ID_RE.test(tree)) {
+      return { ok: false, error: { code: 'WORKING_TREE_UNREADABLE', message: `git write-tree returned an unexpected object id: ${tree.slice(0, 60)}` } };
+    }
+    return { ok: true, tree };
+  } catch (err) {
+    return { ok: false, error: classifyChildError(err) };
+  } finally {
+    try { fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* temp cleanup is best-effort */ }
   }
 }
 

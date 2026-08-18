@@ -459,28 +459,34 @@ async function main() {
     // index, so the comparison stays honest rather than being skipped: a partial
     // commit of an audited worktree yields a DIFFERENT tree and is still
     // correctly refused — which is the property the old null-skip was protecting.
+    //
+    // Both branches delegate to lib/vcs.mjs, which owns every private-index
+    // dance in this repo. The `--path` branch used to inline its own, deriving
+    // the index as `<repoRoot>/.git/<name>` — correct only in a MAIN checkout.
+    // In a linked worktree `.git` is a `gitdir:` pointer FILE, so `read-tree`
+    // could not even create its lockfile, `committedTree` stayed null, and the
+    // refusal below fired on EVERY worktree commit: `passed` was unreachable
+    // there, which is precisely the "gate value that cannot be earned" defect
+    // the comment above warns about, recurring 14 lines below it. Keeping the
+    // plumbing in the seam is what stops a fourth copy getting it wrong again.
     let committedTree = null;
+    let treeErr = null;
     if (opts.paths.length === 0) {
       const { gitIndexTree } = await import('./lib/vcs.mjs');
       const treeRes = gitIndexTree(repoRoot);
       committedTree = treeRes.ok ? treeRes.tree : null;
+      if (!treeRes.ok) treeErr = treeRes.error;
     } else {
-      const tmpIndex = path.join(repoRoot, '.git', `ship-commit-index-${process.pid}-${Date.now()}`);
-      try {
-        const withIndex = (args) => spawnSync('git', args, {
-          cwd: repoRoot, encoding: 'utf-8', windowsHide: true,
-          env: { ...process.env, GIT_INDEX_FILE: tmpIndex },
-        });
-        const seeded = withIndex(['read-tree', 'HEAD']);
-        const added = seeded.status === 0 ? withIndex(['add', '--', ...opts.paths]) : null;
-        const written = added && added.status === 0 ? withIndex(['write-tree']) : null;
-        // Any failure leaves committedTree null, which refuses `passed` and
-        // points at `waived` — the fail-closed direction, unchanged.
-        if (written && written.status === 0) committedTree = (written.stdout || '').trim() || null;
-      } finally {
-        try { fs.rmSync(tmpIndex, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* best effort */ }
-      }
+      const { gitPathspecTree } = await import('./lib/vcs.mjs');
+      const treeRes = gitPathspecTree(repoRoot, opts.paths);
+      // A failure still leaves committedTree null, which refuses `passed` and
+      // points at `waived` — the fail-closed direction, unchanged. What changes
+      // is that the cause is no longer swallowed: the bug above survived because
+      // an unresolvable tree and a mismatched one produced the same silence.
+      committedTree = treeRes.ok ? treeRes.tree : null;
+      if (!treeRes.ok) treeErr = treeRes.error;
     }
+    if (treeErr) err(`ship-commit: could not resolve the tree being committed (${treeErr.code}): ${treeErr.message}`);
     const ver = evaluateGateVerification({ gate: values.gate, evidence, cloudEnabled, convergence, committedTree });
     if (ver) {
       for (const line of renderAgentFixLines([ver])) err(line);
