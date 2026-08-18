@@ -185,6 +185,17 @@ Then, from inside the fixture — note the **absolute** transcript path, because
 node scripts/bakeoff-collect.mjs --transcript C:/GIT/claude-engineering-skills/.audit/transcript.json --plan docs/plans/model-comparison-campaigns.md
 ```
 
+> **Transcript-starved? Look in the archive.** `.audit/` holds only the working
+> copies (`audit-clean.mjs` caps them at the newest 25), and a transcript
+> produced by an audit inside a throwaway agent worktree used to be **deleted
+> with that worktree** — which is why `final-review-scoped-2026q3` stalled at
+> 7/12 snapshots while this repo audited constantly. Every transcript is now
+> mirrored at write time into **`<main checkout>/.audit/transcripts/`**, the
+> durable archive; `npm run audit:transcripts:harvest` sweeps any linked
+> worktree that predates the mirror. Feed the collector from there when the
+> working copy is gone. Plan:
+> [`audit-transcript-durability.md`](../plans/audit-transcript-durability.md).
+
 > **Trust the store, not the local log.** `LOG_PATH` is the repo-relative
 > `.audit/bakeoff-log.jsonl`, so a fixture writes its **own, empty** one. Running
 > `--progress` there reads near-zero **regardless of real campaign progress**, and

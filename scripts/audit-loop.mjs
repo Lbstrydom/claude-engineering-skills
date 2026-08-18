@@ -20,6 +20,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { buildAuditTranscript, readRoundResult } from './lib/audit/transcript.mjs';
+import { archiveTranscript, formatArchiveOutcome, isArchiveFailure } from './lib/audit/transcript-archive.mjs';
 
 const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', D = '\x1b[2m', B = '\x1b[1m', X = '\x1b[0m';
 
@@ -204,6 +205,9 @@ async function main() {
   }
 
   // Ensure .audit/ directory exists for ledger persistence
+  // Transcripts whose durable mirror failed. Collected during the run and
+  // reported as a non-zero exit at the very end — see the write site below.
+  const nonDurableTranscripts = [];
   const auditDir = path.resolve('.audit');
   if (!fs.existsSync(auditDir)) {
     fs.mkdirSync(auditDir, { recursive: true });
@@ -489,6 +493,23 @@ async function main() {
         changedFiles: changedSinceStart,
       });
       fs.writeFileSync(transcriptFile, JSON.stringify(transcript, null, 2));
+      // Mirror into the MAIN checkout's durable archive. `.audit/` is
+      // gitignored, so in a linked worktree this file dies with the worktree —
+      // and transcripts are the campaigns' only replayable input (plan:
+      // docs/plans/audit-transcript-durability.md).
+      //
+      // DEFERRED, not swallowed: the failure is remembered and reported as a
+      // non-zero exit AFTER the run finishes, rather than aborting here. The
+      // transcript two lines below is the final gate's input, so throwing now
+      // would destroy N rounds of paid work to protect one file that is still
+      // on disk — while a warning alone would let automation read the run as
+      // clean. Finishing the run AND failing the process is the only option
+      // that gives up neither.
+      const transcriptArchive = archiveTranscript(transcriptFile);
+      process.stderr.write(`${formatArchiveOutcome(transcriptFile, transcriptArchive)}\n`);
+      if (transcriptArchive.volatile && isArchiveFailure(transcriptArchive)) {
+        nonDurableTranscripts.push(transcriptFile);
+      }
 
       const geminiOutFile = path.join(outDir, `${sid}-gemini-result.json`);
       const provider = hasGemini ? 'gemini' : 'anthropic';
@@ -551,6 +572,20 @@ async function main() {
   }
   console.log(`  Ledger: ${ledgerFile}`);
   console.log(`  Artifacts: ${outDir}/${sid}-*`);
+
+  // The deferred archive failure, collected at the transcript write above. The
+  // run is complete and every artifact is on disk — but a transcript that lives
+  // only in a removable worktree is not durable, and a green exit would tell
+  // automation otherwise.
+  if (nonDurableTranscripts.length > 0) {
+    console.error(
+      `\n  ${R}NOT DURABLE${X}: ${nonDurableTranscripts.length} transcript(s) could not be mirrored to`
+      + ' the main checkout and will be LOST when this worktree is removed:',
+    );
+    for (const t of nonDurableTranscripts) console.error(`    ${t}`);
+    console.error('  Fix the archive path and re-run `npm run audit:transcripts:harvest`.');
+    process.exitCode = 1;
+  }
 }
 
 main().catch(err => {

@@ -113,6 +113,10 @@
       "description": "Tiered-pipeline shadow-validation summary, JSON output (for CI).",
       "category": "diagnostic"
     },
+    "audit:transcripts:harvest": {
+      "description": "Copy audit transcripts out of every linked worktree into the main checkout's durable .audit/transcripts/ archive.",
+      "category": "diagnostic"
+    },
     "audit:wtf": {
       "description": "Friction log — capture a 'what happened, what hurt' note for later review.",
       "category": "diagnostic"
