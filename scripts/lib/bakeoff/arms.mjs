@@ -113,7 +113,28 @@ export function transportForModel(model) {
     // pinned snapshot (`deepseek-v4-pro-0813`) for this model after two
     // consecutive 300s timeouts there at real review size; direct to the
     // source, like xai below, not a router.
-    return { route: 'deepseek', shadowToken: 'deepseek', providerArg: 'deepseek', shadowModel: model, promptCache: '' };
+    //
+    // `timeoutMs: 900000` — and this is the OTHER failure class from the
+    // alibaba branch above, which matters more than the shared number.
+    // MEASURED 2026-08-18 on a 321,684-char `mode:plan` envelope:
+    //
+    //   | attempt          | ceiling | outcome            |
+    //   |------------------|---------|--------------------|
+    //   | auto-retry att 1 |  300s   | TIMED OUT          |
+    //   | auto-retry att 2 |  300s   | TIMED OUT          |
+    //   | operator override|  900s   | ran in 405,640 ms  |
+    //
+    // 406s of genuine work: the successful run emitted 24,489 output tokens,
+    // ~3x what qwen produces on a comparable envelope, at a steady ~60 tok/s.
+    // So unlike qwen — whose 176s-to->900s spread on BYTE-IDENTICAL input is
+    // server-side variance that no deadline can cover — this arm is simply
+    // slower than 300s allows, consistently. That is the one case where a
+    // longer deadline IS the correct fix, and it is why RETRY COULD NOT HELP:
+    // `ARM_MAX_ATTEMPTS` gave it two attempts and both hit the same wall,
+    // because retry buys another sample from the distribution, not more time
+    // per sample. 900s is ~2.2x the measurement — headroom for a larger
+    // envelope, not a guess at a tail.
+    return { route: 'deepseek', shadowToken: 'deepseek', providerArg: 'deepseek', shadowModel: model, promptCache: '', timeoutMs: 900000 };
   }
   // An OpenRouter id is the only one carrying a '/', and `pricingKey` returns
   // it verbatim for exactly that reason.
