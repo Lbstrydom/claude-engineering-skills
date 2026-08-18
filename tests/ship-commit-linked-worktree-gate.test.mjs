@@ -53,6 +53,15 @@ const write = (root, rel, body) => {
   fs.mkdirSync(path.dirname(abs), { recursive: true });
   fs.writeFileSync(abs, body);
 };
+/**
+ * Delete one fixture file.
+ *
+ * Retry-hardened per the repo's Windows EPERM/EBUSY convention (enforced by
+ * tests/rmsync-retry-guard.test.mjs) — a virus scanner or indexer holding the
+ * handle for a few ms would otherwise fail a case for a reason that has nothing
+ * to do with what it is testing.
+ */
+const rmFile = (root, rel) => fs.rmSync(path.join(root, rel), { recursive: true, maxRetries: 3, retryDelay: 50 });
 
 /**
  * Stamp `.audit/last-audit-run.json` in the worktree.
@@ -266,4 +275,116 @@ describe('fail-closed direction is preserved (the fix must not become "always pa
     assert.ok(verdict, 'an unresolvable tree must still refuse — the fail-closed branch stays live');
     assert.match(verdict.custom, /cannot resolve the tree being committed/);
   });
+});
+
+/**
+ * The equivalence the whole E1 check rests on, across the shapes a real commit
+ * takes.
+ *
+ * ship-commit compares `gitPathspecTree`'s answer against the audit evidence and
+ * THEN commits with `git commit -F <msg> -- <paths>` (pathspec ⇒ `--only`
+ * semantics). Those are two different programs computing what is supposed to be
+ * the same tree. If they ever disagree, E1 validates one tree while the commit
+ * records another — a FALSE PASS, and the precise hole the check exists to close.
+ * Note the asymmetry with the rest of this file: everywhere else a defect makes
+ * the gate refuse (annoying, honest), but a divergence here makes it ACCEPT
+ * something unaudited.
+ *
+ * A single shape cannot establish this. Deletions are the classic divergence
+ * candidate, because "stage this path" and "record this path's absence" are the
+ * same operation only if the seeding step got the HEAD baseline right — which is
+ * exactly what the original defect broke. So the table sweeps the shapes a
+ * scoped commit actually takes, and each case obtains ground truth by REALLY
+ * COMMITTING rather than by re-deriving the expected tree (re-deriving would
+ * just be a second copy of the code under test).
+ */
+describe('gitPathspecTree === the tree `git commit -- <paths>` really records', () => {
+  /** Files every fixture starts with, committed, so tracked-file shapes exist. */
+  const SEED = ['keep.txt', 'mod.txt', 'del.txt', 'dir/nested.txt'];
+
+  /**
+   * A throwaway repo + LINKED worktree per case: ground truth is obtained by
+   * committing, which would otherwise mutate the shared fixture other tests use.
+   */
+  function freshFixture(label) {
+    const root = initTempRepo(`equiv-${label}-`);
+    for (const f of SEED) write(root, f, 'orig\n');
+    git(['add', '.'], root);
+    git(['commit', '-qm', 'seed'], root);
+    const link = path.join(path.dirname(root), `${path.basename(root)}-wt`);
+    git(['worktree', 'add', '-q', '-b', `w-${label}`, link], root);
+    assert.ok(fs.statSync(path.join(link, '.git')).isFile(), 'the fixture must be a LINKED worktree');
+    return { root, link };
+  }
+
+  const CASES = [
+    {
+      label: 'modified',
+      desc: 'a modified tracked file',
+      paths: ['mod.txt'],
+      mutate: (w) => write(w, 'mod.txt', 'changed\n'),
+    },
+    {
+      label: 'deleted',
+      desc: 'a DELETED tracked file — the shape most likely to diverge',
+      paths: ['del.txt'],
+      mutate: (w) => rmFile(w, 'del.txt'),
+    },
+    {
+      label: 'directory',
+      desc: 'a directory pathspec, which expands to its members',
+      paths: ['dir'],
+      mutate: (w) => write(w, 'dir/nested.txt', 'changed\n'),
+    },
+    {
+      label: 'mixed',
+      desc: 'a modification and a deletion in one commit',
+      paths: ['mod.txt', 'del.txt'],
+      mutate: (w) => { write(w, 'mod.txt', 'changed\n'); rmFile(w, 'del.txt'); },
+    },
+    {
+      label: 'bystander',
+      desc: 'an unnamed dirty file must NOT leak into the tree',
+      paths: ['mod.txt'],
+      mutate: (w) => { write(w, 'mod.txt', 'changed\n'); write(w, 'keep.txt', 'must not appear\n'); },
+    },
+    {
+      label: 'untracked',
+      desc: 'a new untracked file',
+      paths: ['new.txt'],
+      mutate: (w) => write(w, 'new.txt', 'new\n'),
+      // `git commit -- <path>` rejects a pathspec matching no KNOWN file, so
+      // ship-commit marks untracked --path entries intent-to-add before
+      // committing. Ground truth must do the same or it measures a different
+      // operation. (E1 runs BEFORE that intent-add, which is why the private
+      // index does a plain `git add` and still has to agree with the result.)
+      intentAdd: true,
+    },
+  ];
+
+  for (const c of CASES) {
+    test(`${c.desc}`, () => {
+      const { root, link } = freshFixture(c.label);
+      try {
+        c.mutate(link);
+
+        const mine = gitPathspecTree(link, c.paths);
+        assert.equal(mine.ok, true, `must resolve; got ${JSON.stringify(mine.error)}`);
+
+        if (c.intentAdd) git(['add', '-N', '--', ...c.paths], link);
+        git(['commit', '-q', '-m', 'ground truth', '--', ...c.paths], link);
+        const truth = git(['rev-parse', 'HEAD^{tree}'], link);
+
+        assert.equal(
+          mine.tree,
+          truth,
+          `divergence would make E1 validate a tree the commit does not carry (${c.label})`,
+        );
+      } finally {
+        try { execFileSync('git', ['worktree', 'remove', '--force', link], { cwd: root, stdio: 'ignore' }); } catch { /* best effort */ }
+        cleanupTempRepo(link);
+        cleanupTempRepo(root);
+      }
+    });
+  }
 });
