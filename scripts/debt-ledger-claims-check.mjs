@@ -3,10 +3,25 @@
  * @fileoverview Local maintenance check — verifies that any `docs/plans/*.md`
  * claim of the shape "captured to / named in the debt ledger" carries a
  * `topicId` that actually resolves in `.audit/tech-debt.json`. Sibling to
- * `debt-health-check.mjs` (reads the same ledger) and `check-accepted-debt.mjs`
- * (same "checked vs. explicitly unverifiable" discipline). Full scope,
- * exclusions, and why this never blocks a push:
+ * `debt-health-check.mjs` (reads the same ledger, and this file's `debt-*.mjs`
+ * naming follows its convention deliberately — see the Naming note below) and
+ * `check-accepted-debt.mjs` (same "checked vs. explicitly unverifiable"
+ * discipline). Full scope, exclusions, and why this never blocks a push:
  * `scripts/lib/debt-ledger-claim-check.mjs`'s module header.
+ *
+ * **Naming — `debt-ledger-claims-check.mjs`, not `check-debt-ledger-claims.mjs`.**
+ * The latter is the natural name (and was this file's first draft) but
+ * `scripts/check-*.mjs` domain-maps to `install`, while this file's own
+ * dependencies (`lib/debt-ledger-claim-check.mjs`, `lib/debt-ledger.mjs`)
+ * domain-map to `tech-debt` via `scripts/lib/debt-*.mjs` — an undeclared
+ * `install -> tech-debt` edge, caught by `tests/arm-vocabulary-layering.test.mjs`
+ * only once the file was tracked (a `git ls-files`-driven oracle can't see an
+ * untracked file — see that test's own docstring on the vacuous-pass risk this
+ * is a live instance of). `scripts/debt-*.mjs` already domain-maps to
+ * `tech-debt`, matching `debt-health-check.mjs`'s own name; renaming to match
+ * puts this file in the same domain as what it imports, with no
+ * `allowedDeps` edit needed — refactor over retag over declare, per this
+ * repo's own stated preference order.
  *
  * `main()` is a thin process adapter over the pure `executeCheck()` — it is
  * the only piece that touches `process.argv`, reads the plans directory and
@@ -19,9 +34,9 @@
  *   2 — op error (plans dir unreadable, corrupt ledger, unknown flag)
  *
  * Usage:
- *   node scripts/check-debt-ledger-claims.mjs [--json] [--out <path>]
+ *   node scripts/debt-ledger-claims-check.mjs [--json] [--out <path>]
  *
- * @module scripts/check-debt-ledger-claims
+ * @module scripts/debt-ledger-claims-check
  */
 
 import fs from 'node:fs';
@@ -47,7 +62,7 @@ function parseArgs(argv) {
 }
 
 function printUsage() {
-  process.stderr.write(`Usage: node scripts/check-debt-ledger-claims.mjs [options]
+  process.stderr.write(`Usage: node scripts/debt-ledger-claims-check.mjs [options]
 
 Verify that "captured to / named in the debt ledger" claims in docs/plans/*.md
 carry a topicId that actually resolves in .audit/tech-debt.json. Local-only —
@@ -65,7 +80,7 @@ Exit codes: 0=clean or unverifiable, 1=attention, 2=op-error
 
 function renderHuman(result) {
   const lines = [];
-  lines.push('Debt-ledger claim check (scripts/check-debt-ledger-claims.mjs)');
+  lines.push('Debt-ledger claim check (scripts/debt-ledger-claims-check.mjs)');
   lines.push('');
 
   if (!result.ledgerAvailable) {
@@ -106,7 +121,7 @@ function safeErrorClass(err) {
 async function main() {
   let opts;
   try {
-    assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'check-debt-ledger-claims' });
+    assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'debt-ledger-claims-check' });
     opts = parseArgs(process.argv);
   } catch (err) {
     if (err instanceof ArgvError) { process.stderr.write(`${err.message}\n`); await finishAndExit(2); return; }
@@ -114,7 +129,7 @@ async function main() {
   }
   if (opts.help) { printUsage(); await finishAndExit(0); return; }
   if (opts.outFlagWithoutValue) {
-    process.stderr.write('check-debt-ledger-claims: --out requires a file path argument\n');
+    process.stderr.write('debt-ledger-claims-check: --out requires a file path argument\n');
     await finishAndExit(2);
     return;
   }
@@ -128,7 +143,7 @@ async function main() {
   try {
     docs = readPlanDocs(DEFAULT_PLANS_DIR);
   } catch (err) {
-    process.stderr.write(`check-debt-ledger-claims: ${DEFAULT_PLANS_DIR} unreadable: ${safeErrorClass(err)}: ${err.message}\n`);
+    process.stderr.write(`debt-ledger-claims-check: ${DEFAULT_PLANS_DIR} unreadable: ${safeErrorClass(err)}: ${err.message}\n`);
     await finishAndExit(2);
     return;
   }
@@ -143,7 +158,7 @@ async function main() {
     try {
       ledger = readDebtLedger({ events: [] });
     } catch (err) {
-      process.stderr.write(`check-debt-ledger-claims: ledger corrupt: ${err.message}\n`);
+      process.stderr.write(`debt-ledger-claims-check: ledger corrupt: ${err.message}\n`);
       await finishAndExit(2);
       return;
     }
@@ -160,7 +175,7 @@ async function main() {
       fs.mkdirSync(path.dirname(path.resolve(opts.outFile)), { recursive: true });
       fs.writeFileSync(opts.outFile, `${outputText}\n`, 'utf-8');
     } catch (err) {
-      process.stderr.write(`check-debt-ledger-claims: failed to write --out: ${err.message}\n`);
+      process.stderr.write(`debt-ledger-claims-check: failed to write --out: ${err.message}\n`);
       await finishAndExit(2);
       return;
     }

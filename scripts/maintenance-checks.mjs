@@ -270,7 +270,7 @@ export const CHECKS = [
     key: 'debt-ledger-claims',
     label: 'docs/plans/*.md ledger-capture claims vs. the actual ledger',
     requiredEnv: [],
-    steps: [{ script: 'check-debt-ledger-claims.mjs', args: [] }],
+    steps: [{ script: 'debt-ledger-claims-check.mjs', args: [] }],
   },
   {
     // Local-only, no requiredEnv, no dedicated GH workflow — same "ad hoc"
