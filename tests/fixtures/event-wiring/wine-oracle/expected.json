@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "sourceCommit": "274ad342",
+  "sourceRepo": "wine-cellar-app",
+  "events": [
+    {
+      "name": "cellar:mutation",
+      "class": "dispatch-only",
+      "disposition": "REAL-BUG",
+      "isConfirmedDefect": true,
+      "fixtureFile": "shared-undoToast.js"
+    },
+    {
+      "name": "wineShop:coldStartAction",
+      "class": "dispatch-only",
+      "disposition": "REAL-BUG",
+      "isConfirmedDefect": true,
+      "fixtureFile": "wineShop-index.js"
+    },
+    {
+      "name": "agent-chat:ready",
+      "class": "dispatch-only",
+      "disposition": "DELETED",
+      "isConfirmedDefect": false,
+      "fixtureFile": "agentChat-panel.js"
+    },
+    {
+      "name": "restaurant-pairing:ready",
+      "class": "dispatch-only",
+      "disposition": "DELETED",
+      "isConfirmedDefect": false,
+      "fixtureFile": "restaurantPairing.js"
+    },
+    {
+      "name": "walkthrough:cta-event",
+      "class": "dispatch-only",
+      "disposition": "DELETED",
+      "isConfirmedDefect": false,
+      "fixtureFile": "cellarAnalysis-layoutDiffOrchestrator.js"
+    },
+    {
+      "name": "wine-shop:navigate",
+      "class": "dispatch-only",
+      "disposition": "FP",
+      "isConfirmedDefect": false,
+      "fixtureFile": "wineShop-currencyHintBanner.js",
+      "pragmaSuppressed": true
+    },
+    {
+      "name": "wineapp:sources-changed",
+      "class": "dispatch-only",
+      "disposition": "FP",
+      "isConfirmedDefect": false,
+      "fixtureFile": "shared-wineSearch.js",
+      "pragmaSuppressed": true
+    }
+  ],
+  "actionableCount": 5,
+  "confirmedDefectCount": 2
+}
