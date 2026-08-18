@@ -45,6 +45,8 @@
     "memory:health:json": "node scripts/memory-health.mjs --json",
     "debt:health": "node scripts/debt-health-check.mjs",
     "debt:health:json": "node scripts/debt-health-check.mjs --json",
+    "debt:ledger-claims": "node scripts/check-debt-ledger-claims.mjs",
+    "debt:ledger-claims:json": "node scripts/check-debt-ledger-claims.mjs --json",
     "debt:review": "node scripts/debt-review.mjs --local-only",
     "debt:budget": "node scripts/debt-budget-check.mjs",
     "context:check": "node scripts/check-context-drift.mjs --strict",

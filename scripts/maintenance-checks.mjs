@@ -3,12 +3,13 @@
  * @fileoverview Local replica of the 5 weekly GitHub Actions maintenance
  * workflows (architectural-drift, migration-drift, model-freshness,
  * memory-health, learning-weekly-review) plus cache-hitrate-check,
- * debt-health, context-staleness, and accepted-debt (ad hoc — no dedicated
- * workflow file; accepted-debt is additionally sourceRepoOnly, see its
- * CHECKS entry), and one DISPOSABLE one-shot (slice-recurrence, which
- * retires itself — see its script header), for operators whose org blocks
- * GitHub-hosted Actions runners (or who just prefer local-only). Opt-in,
- * default-OFF — see docs/runbooks/local-maintenance-checks.md.
+ * debt-health, debt-ledger-claims, context-staleness, and accepted-debt (ad
+ * hoc — no dedicated workflow file; accepted-debt is additionally
+ * sourceRepoOnly, see its CHECKS entry), and one DISPOSABLE one-shot
+ * (slice-recurrence, which retires itself — see its script header), for
+ * operators whose org blocks GitHub-hosted Actions runners (or who just
+ * prefer local-only). Opt-in, default-OFF — see
+ * docs/runbooks/local-maintenance-checks.md.
  *
  * **`CHECKS` below is the inventory; this paragraph is prose beside it.** It
  * had already drifted (context-staleness was missing) before slice-recurrence
@@ -248,6 +249,28 @@ export const CHECKS = [
     label: 'Tech-debt ledger health (staleness, recurrence, budgets)',
     requiredEnv: [],
     steps: [{ script: 'debt-health-check.mjs', args: [] }],
+  },
+  {
+    // Local-only, no requiredEnv, no dedicated GH workflow — same "ad hoc"
+    // shape as debt-health above, and it reads the same ledger file, but a
+    // different question: not the ledger's OWN health, but whether
+    // docs/plans/*.md claims ABOUT the ledger ("captured to / named in the
+    // debt ledger") are true. Twice in this repo such a claim was
+    // confidently wrong (cross-skill-cli-integrity.md, then
+    // cross-skill-command-registry.md) and survived six audit rounds, a
+    // Gemini gate, and a shadow reviewer each time — a claim about a record
+    // elsewhere can't be falsified by reading the diff it's written in.
+    // Deliberately NOT wired into `npm run check`: the ledger is gitignored,
+    // machine-local state, always absent in the pre-push clean-checkout
+    // sandbox, so a blocking gate here would either false-fail every push
+    // touching docs/plans/ or silently pass having checked nothing. When the
+    // ledger is absent this reports "unverifiable", not "clean" — see
+    // scripts/lib/debt-ledger-claim-check.mjs's module header.
+    // `attention` = a claim's topicId doesn't resolve in the ledger; never blocks.
+    key: 'debt-ledger-claims',
+    label: 'docs/plans/*.md ledger-capture claims vs. the actual ledger',
+    requiredEnv: [],
+    steps: [{ script: 'check-debt-ledger-claims.mjs', args: [] }],
   },
   {
     // Local-only, no requiredEnv, no dedicated GH workflow — same "ad hoc"

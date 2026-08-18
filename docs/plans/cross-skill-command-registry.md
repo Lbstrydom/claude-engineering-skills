@@ -1011,10 +1011,48 @@ the new modules), full `npm run check`.
   shipped last, separately revertible; refusal message names the parent table
   + repo mismatch; unresolvable-scope degrade path preserves current
   behaviour; one release of soak before tightening further.
-- **Deferred, deliberately**: the 183-export `learning-store.mjs` barrel
-  (frozen surface, wrong time), the repo-wide `isCloudEnabled` call sites
-  outside this CLI, mechanical-wave layering findings (model-ab→audit-arms
-  etc.) — each named in the debt ledger, none blocks this work.
+- **Deferred, deliberately**: the `learning-store.mjs` barrel (frozen
+  surface, wrong time), the repo-wide `isCloudEnabled` call sites outside
+  this CLI, mechanical-wave layering findings (model-ab→audit-arms etc.) —
+  none blocks this work.
+
+  > **Correction (2026-08-18).** This bullet originally closed with
+  > *"each named in the debt ledger."* **They were not.** A mechanical check of
+  > `.audit/tech-debt.json` (149 entries) found **zero** entries referencing
+  > `isCloudEnabled`, `model-ab`, or `audit-arms` by name; the only related
+  > hits are 4 generic `layering` entries (architecture-intent drift, a
+  > store→arch-memory import, an audit-orchestration→install import, a
+  > timestamp-handling bug) — none is this edge. Same defect class, same
+  > repo, and the second instance: `cross-skill-cli-integrity.md`'s
+  > §Deferred correction found the identical false phrase over three of
+  > *its* four entries — and this plan is the one that inherited those
+  > deferrals natively (see that plan's §Closure). True disposition of each
+  > item, verified against the tree rather than recollection:
+  >
+  > - **`learning-store.mjs` barrel** — still live, still correctly unfiled.
+  >   The frozen public contract is now **186** exports
+  >   (`tests/learning-store-exports.test.mjs`), grown from 183 since this
+  >   plan shipped. Deliberately not filed as debt: it's a stated
+  >   architecture decision (postgres-parity M3's frozen contract matrix),
+  >   not an oversight.
+  > - **Repo-wide `isCloudEnabled` collapse** — still live: 75 files besides
+  >   `cross-skill.mjs` still call it directly (`git grep -l isCloudEnabled
+  >   -- scripts/*.mjs`). Correctly unfiled for the same reason
+  >   `cross-skill-cli-integrity.md` already established for this exact
+  >   pattern — a deliberate, accepted design decision (writes attempt
+  >   regardless and report their own discriminated outcome), not open debt.
+  > - **Layering findings (model-ab→audit-arms etc.)** — **CLOSED**, the day
+  >   after this plan shipped: `3e1e02bb` (2026-08-13, "Cluster 1 — 14
+  >   layering violations to 0") removed this edge along with the other 13 —
+  >   the same commit `cross-skill-cli-integrity.md`'s closure already
+  >   credits for its identical bullet. Verified live: no file under
+  >   `scripts/lib/store/model-ab*` imports `audit-arms.mjs`; the sole
+  >   `audit-arms` string in `model-ab-decision.mjs` is a comment, not an
+  >   import.
+  >
+  > Not replaced with real ledger entries: two of the three are current,
+  > deliberate design decisions rather than debt, and the third is already
+  > fixed — filing any of them would swap one false record for another.
 
 ## 9. Testing Strategy
 

@@ -255,6 +255,14 @@
       "description": "Tech-debt ledger health, JSON output.",
       "category": "diagnostic"
     },
+    "debt:ledger-claims": {
+      "description": "Verify docs/plans/*.md \"captured to / named in the debt ledger\" claims against the actual ledger (human report). Never blocks a push.",
+      "category": "diagnostic"
+    },
+    "debt:ledger-claims:json": {
+      "description": "Debt-ledger claim check, JSON output.",
+      "category": "diagnostic"
+    },
     "debt:review": {
       "description": "Cluster accumulated tech-debt into ranked refactor candidates (local-only, no LLM call).",
       "category": "diagnostic"
