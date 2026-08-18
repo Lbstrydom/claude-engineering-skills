@@ -155,8 +155,12 @@ describe('deriveArms — the refactor must change no request', () => {
     assert.equal(Object.keys(derived[0].env).at(-1), 'GEMINI_REVIEW_TIMEOUT_MS', 'must be the last key — spawn.mjs relies on nothing overwriting it downstream');
   });
 
-  it('a route with no timeoutMs (e.g. deepseek) never adds the key — the 300s spawn.mjs default applies untouched', () => {
-    const derived = deriveArms({ arms: [{ id: 'd1', model: 'deepseek-v4-pro', mode: 'shadow' }] });
+  it('a route with no timeoutMs never adds the key — the 300s spawn.mjs default applies untouched', () => {
+    // Was deepseek until 2026-08-18, when a measured 405.6s review earned that
+    // route its own ceiling. Uses kimi (openrouter) now: the point is that the
+    // key is ABSENT for an un-tuned route, so the example must be a route with
+    // no measurement behind it.
+    const derived = deriveArms({ arms: [{ id: 'k1', model: 'moonshotai/kimi-k2-thinking', mode: 'shadow' }] });
     assert.equal('GEMINI_REVIEW_TIMEOUT_MS' in derived[0].env, false);
   });
 
@@ -231,8 +235,23 @@ describe('transportForModel — the HOW the config deliberately does not express
     assert.ok(ms <= 900000, 'the treadmill stops here — cover the tail with a retry, not a longer wait');
   });
 
-  it('every OTHER route has NO timeoutMs override — the 300s default is fine for a deterministic pass/fail route', () => {
-    for (const model of ['claude-opus', 'gemini-pro-latest', 'grok-4.6', 'deepseek-v4-pro', 'moonshotai/kimi-k2-thinking']) {
+  it('deepseek carries a ceiling too, for the OPPOSITE reason to alibaba — genuinely slow work, not variance', () => {
+    // Measured 2026-08-18: 405,640 ms on a 321,684-char envelope, emitting
+    // 24,489 output tokens (~3x qwen's) at a steady ~60 tok/s. Both auto-retry
+    // attempts died at the 300s default because retry buys another sample from
+    // the distribution, not more time per sample — so a deadline IS the right
+    // lever here, unlike the alibaba arm above.
+    const ms = transportForModel('deepseek-v4-pro').timeoutMs;
+    assert.equal(ms, 900000);
+    assert.ok(ms >= 405640 * 1.5, 'must keep >=1.5x headroom over the 405.6s measured review');
+    assert.equal(transportForModel('deepseek-v4-flash').timeoutMs, 900000, 'the sibling id shares the route, so it shares the ceiling');
+  });
+
+  it('every OTHER route has NO timeoutMs override — the 300s default is fine there', () => {
+    // Deliberately excludes alibaba AND deepseek: both have measured
+    // justifications above. Anything else appearing here without one is the
+    // guess-a-number habit those two comments exist to stop.
+    for (const model of ['claude-opus', 'gemini-pro-latest', 'grok-4.6', 'moonshotai/kimi-k2-thinking']) {
       assert.equal(transportForModel(model).timeoutMs, undefined, `${model} must not carry an override`);
     }
   });
