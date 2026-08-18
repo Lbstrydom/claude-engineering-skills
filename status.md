@@ -1,5 +1,61 @@
 # Project Status Log
 
+## 2026-08-18 — `--gate passed` made reachable from a linked git worktree
+
+`scripts/ship-commit.mjs` resolved the tree a scoped (`--path`) commit would
+produce by staging into a private index at
+`<repoRoot>/.git/ship-commit-index-<pid>-<ts>`. In a linked git worktree
+`.git` is a ~77-byte `gitdir:` pointer FILE, not a directory, so
+`GIT_INDEX_FILE` pointed inside a non-directory, `git read-tree HEAD` exited
+128, `committedTree` stayed `null`, and the E1 verifier fail-closed with
+"cannot resolve the tree being committed". Net effect: `AI-Gate: passed` was
+**structurally unreachable from every linked worktree** — a 7-round audit
+with a Gemini APPROVE verdict and matching evidence still had to ship as
+`waived`. Filed as a field report; the fail-closed direction was correct, the
+path derivation was not.
+
+Fix: new `gitPathspecTree(cwd, paths, opts)` in `scripts/lib/vcs.mjs`, a
+sibling of the existing `gitWorktreeTree`/`gitIndexTree` family — stages into
+a throwaway index under `os.tmpdir()` (as `gitWorktreeTree` already does)
+instead of assuming `<cwd>/.git` is a directory. `ship-commit.mjs`'s scoped
+branch now delegates to it instead of inlining its own copy, and a resolution
+failure is reported on stderr instead of being swallowed.
+
+The load-bearing invariant: `gitPathspecTree`'s tree must equal the tree
+`git commit -F <msg> -- <paths>` actually records (a pathspec implies
+`--only`), because E1 compares the former and the commit carries the latter —
+a divergence there is a **false pass** on `AI-Gate: passed`, not a refusal.
+`tests/ship-commit-linked-worktree-gate.test.mjs` (16 cases, built on a real
+`git worktree add` fixture) proves this two ways: proven red (6 failing)
+against the old path derivation before going green; and a 6-case equivalence
+table sweeping the shapes a scoped commit actually takes (modified tracked,
+deleted tracked, directory pathspec, mixed modify+delete, unstaged bystander,
+untracked-new), each obtaining ground truth by *really committing* rather
+than re-deriving the expected tree. The table was proven sensitive under two
+independent sabotages (dropped HEAD seeding; ignored pathspec scope) before
+being trusted — both killed all 6 cases, and the second also tripped the
+existing partial-commit negative test.
+
+Audited: 2 rounds PASS (0/0/0 both), detector census clean, Gemini gate
+**APPROVE** (0 new findings, 0 wrongly-dismissed, no over-engineering flags).
+[`6a58f125`](../../commit/6a58f125) (the fix) shipped `--gate not-run` (no
+audit evidence existed yet); [`4bc3fa28`](../../commit/4bc3fa28) (the
+equivalence-table test, added post-audit) carries `AI-Gate: passed` — as far
+as can be told, the first commit in this repo's history to carry `passed`
+from a linked worktree, verified end-to-end: the audited tree and the
+committed tree resolved to the identical hash (`1f31a5b6…`).
+
+Merged `origin/main` (disjoint bakeoff-arms commit, no file overlap) before
+pushing to keep the audited commit's tree — and therefore its
+`AI-Audited-Tree` trailer — intact rather than rewritten by a rebase.
+
+Pre-ship gate reads (informational, none introduced by this change): 191
+unlocked fixes / 110 unremediated acceptances repo-wide (standing backlog,
+0 HIGH aged out — 8 MEDIUM aged out); 1 open upstream report
+(`admissionPreflight`/`mergeScopeFiles` double-extension rejection,
+wine-cellar-app, fix already opened as a PR by that session — not acted on
+here).
+
 ## 2026-08-16 — Comparison-tooling consolidation: full `/cycle --autonomous` run, four clusters, consolidated gate APPROVE
 
 `docs/plans/comparison-tooling-consolidation.md` implemented end to end
