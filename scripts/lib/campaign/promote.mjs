@@ -65,6 +65,49 @@ export async function repoId() {
 }
 
 /**
+ * Which arms this cohort ALREADY holds a live, successful run for, for one
+ * snapshot — the store-authoritative half of the collector's retry scoping.
+ *
+ * **The measured defect this exists for (2026-08-18, ~6x overspend).** Retry
+ * scoping used to ask only the LOCAL `.audit/bakeoff-log.jsonl`. `.audit/` is
+ * gitignored, so a freshly-created pinned fixture has an EMPTY one — and a
+ * fixture at a snapshot's recorded revision is exactly what
+ * `docs/runbooks/pinned-revision-fixture.md` tells an operator to create when
+ * retrying a snapshot whose revision differs from HEAD. Snapshot
+ * `2bb342bdd692` was complete but for `grok`; the fixture's empty log read as
+ * "first-ever collection" and all SIX arms re-ran. The store held the other
+ * five the whole time. The documented happy path was the overspend path.
+ *
+ * This function is the read that closes it. It lives HERE, next to
+ * `promoteFromLog`, because this module is the one D2a permits to import
+ * `store/campaign.mjs` — and because the question is literally "what has
+ * promotion already put in the spine?", which is this module's subject.
+ *
+ * **Every non-answer is `ok:false` with a `reason`, never an empty list.** A
+ * caller that cannot distinguish "the store says nothing is recorded" from
+ * "the store could not be asked" would silently widen to a full collection on
+ * a network blip, which is the original defect wearing different clothes.
+ *
+ * @param {{campaignKey: string|null, lockDigest: string|null, snapshotId: string|null}} args
+ * @returns {Promise<{ok: boolean, source: 'store', armIds: string[], reason: string|null}>}
+ */
+export async function recordedArmIdsForSnapshot({ campaignKey, lockDigest, snapshotId }) {
+  let rid = null;
+  try {
+    rid = await repoId();
+  } catch (err) {
+    // `repoId` throws only on a REAL store failure (it returns null for the
+    // ordinary cloud-off / unregistered cases). Caught rather than propagated:
+    // a scoping read must never take down a collection that would otherwise
+    // succeed — it degrades to "could not determine", which the caller reports.
+    return { ok: false, source: 'store', armIds: [], reason: `repo identity unresolved: ${err.message}` };
+  }
+  if (!rid) return { ok: false, source: 'store', armIds: [], reason: 'cloud is off, or this repo has no store row yet' };
+  const r = await store.liveArmIdsForSnapshot({ repoId: rid, campaignKey, lockDigest, snapshotId });
+  return { ok: r.ok, source: 'store', armIds: r.armIds, reason: r.reason };
+}
+
+/**
  * Classify one bake-off log entry for promotion into the campaign spine.
  *
  * PURE, and every refusal is named rather than silently skipped — a snapshot

@@ -719,6 +719,76 @@ export async function loadCohortArmRuns(cohortId) {
   }
 }
 
+/**
+ * The arm ids the store already holds as LIVE and SUCCESSFUL for one snapshot
+ * of one cohort — the store-side answer to "what would re-spawning this arm
+ * re-bill?".
+ *
+ * **Why this is a read and not a derivation from `loadCohortArmRuns`.** The
+ * caller is `bakeoff-collect.mjs`'s retry scoping, which runs before a single
+ * provider call and must be cheap, keyed by the cohort identity the collector
+ * has in hand (`campaign_key` + `lock_digest`), and must never write. Every
+ * other route to a cohort id goes through `ensureCampaign`/`ensureCohort`,
+ * which INSERT — a scoping read must not create the cohort it is asking about.
+ * Resolved by join instead, in one round trip.
+ *
+ * **`repo_id` is part of the identity, not a nicety.** One DSN serves every
+ * repo that points at it, and `campaign_key` is a human-chosen string. Two
+ * repos running a campaign of the same name under the same lock digest is
+ * unlikely but not prevented, and the consequence of getting it wrong is
+ * skipping an arm that was never actually run here.
+ *
+ * **Three predicates, and each one is load-bearing:**
+ *  - `superseded_at IS NULL` — a superseded row is a PAID attempt that has
+ *    already been replaced; it is evidence of spend, never of a live result.
+ *  - `error IS NULL` — an errored arm was billed but produced nothing usable.
+ *    It is exactly the arm a retry exists to re-run, so counting it as
+ *    "already recorded" would make the retry a silent no-op (the mirror of
+ *    the widening this whole query exists to stop).
+ *  - `audit_run_id IS NOT NULL` — a row with no run has no findings behind it;
+ *    treating it as a completed arm would let a registration failure read as
+ *    a result.
+ *
+ * Returns `ok:false` for every "could not determine" case — cloud off,
+ * incomplete cohort identity, query failure — and NEVER an empty `armIds`
+ * that a caller could mistake for a measured zero. `ok:true` with `armIds:[]`
+ * is a real measurement: this cohort has recorded nothing for this snapshot.
+ *
+ * @param {{repoId: string|null, campaignKey: string|null, lockDigest: string|null, snapshotId: string|null}} args
+ * @returns {Promise<{ok: boolean, cloud: boolean, armIds: string[], reason: string|null}>}
+ */
+export async function liveArmIdsForSnapshot({ repoId, campaignKey, lockDigest, snapshotId }) {
+  if (!await isCloudEnabled()) {
+    return { ok: false, cloud: false, armIds: [], reason: 'the cloud store is off (AUDIT_DB_URL unset or unreachable)' };
+  }
+  const missing = Object.entries({ repoId, campaignKey, lockDigest, snapshotId })
+    .filter(([, v]) => !v).map(([k]) => k);
+  if (missing.length) {
+    return { ok: false, cloud: true, armIds: [], reason: `incomplete cohort identity (missing: ${missing.join(', ')})` };
+  }
+  try {
+    const rows = await many(
+      `SELECT ar.arm_id
+         FROM campaign_arm_runs ar
+         JOIN campaign_cohorts cc ON cc.id = ar.cohort_id
+         JOIN campaigns c         ON c.id  = cc.campaign_id
+        WHERE c.repo_id = $1
+          AND c.campaign_key = $2
+          AND cc.lock_digest = $3
+          AND ar.snapshot_id = $4
+          AND ar.superseded_at IS NULL
+          AND ar.error IS NULL
+          AND ar.audit_run_id IS NOT NULL
+        ORDER BY ar.arm_id`,
+      [repoId, campaignKey, lockDigest, snapshotId],
+    );
+    return { ok: true, cloud: true, armIds: rows.map((r) => r.arm_id), reason: null };
+  } catch (err) {
+    process.stderr.write(`  [campaign] liveArmIdsForSnapshot failed: ${err.message}\n`);
+    return { ok: false, cloud: true, armIds: [], reason: err.message };
+  }
+}
+
 /** Every adjudication event for a set of findings, for the terminal-event
  *  total order in `verdict.mjs`. */
 export async function loadAdjudicationEvents(findingIds) {

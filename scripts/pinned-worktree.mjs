@@ -202,9 +202,18 @@ function main() {
         + `${preflight.present.length}/${preflight.checked} present for ${preflight.campaignId}\n`);
       if (!preflight.ok) process.stdout.write(`${formatMissing(preflight)}\n`);
     }
+    // Two facts about this number, and the second one is the expensive one. It
+    // was labelled as a progress-reading pitfall alone until 2026-08-18, which
+    // read as "the local log is cosmetic here" — it is not. Retry scoping is
+    // now store-authoritative (bakeoff-collect.mjs planRetryScope), so the
+    // empty log no longer decides what gets billed; saying so here is what
+    // stops the old, wrong mental model from surviving the fix.
     process.stdout.write(`\n  local .audit/bakeoff-log.jsonl entries: ${local}`
       + '  <- fixture-local only, NOT campaign progress.\n'
-      + '  The store is the only trustworthy count: node scripts/campaign.mjs reconcile\n');
+      + '  The store is the only trustworthy count: node scripts/campaign.mjs reconcile\n'
+      + '  Retry scoping asks the STORE, not this file — bakeoff-collect prints which arms it will\n'
+      + '  spawn, and what is already recorded, before spending. Read that line: if it says\n'
+      + '  "store: NOT CONSULTABLE" it is about to re-bill EVERY arm.\n');
     if (!ok) process.exitCode = 1;
     return;
   }

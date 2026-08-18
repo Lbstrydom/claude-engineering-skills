@@ -110,15 +110,18 @@ remember is no longer in `.audit/`. `--transcript` takes any absolute path; the
 consumption contract is unchanged. Plan:
 [`audit-transcript-durability.md`](../plans/audit-transcript-durability.md).
 
-### Progress — trust the STORE, not the local log
+### The empty local log — cosmetic for progress, LOAD-BEARING for spend
 
-**This one costs people an hour if they do not know it.** The bake-off log path
-is repo-relative (`.audit/bakeoff-log.jsonl`) and `.audit/` is gitignored, so a
-fixture writes its **own, empty** log. Running `--progress` inside a fresh
-fixture reads near-zero **regardless of real campaign progress**, and it looks
-exactly like lost work.
+**This one costs people an hour if they do not know it, and it cost ~6x a
+snapshot's spend before 2026-08-18.** The bake-off log path is repo-relative
+(`.audit/bakeoff-log.jsonl`) and `.audit/` is gitignored, so a fixture writes
+its **own, empty** log. Two consequences, and only the first was ever
+documented:
 
-It is not. The store is the only trustworthy count:
+**Progress reads near-zero, and that is cosmetic.** Running `--progress` inside
+a fresh fixture reads near-zero **regardless of real campaign progress**, and it
+looks exactly like lost work. It is not. The store is the only trustworthy
+count:
 
 ```bash
 node scripts/campaign.mjs reconcile --campaign final-review-scoped-2026q3
@@ -126,6 +129,49 @@ node scripts/campaign.mjs reconcile --campaign final-review-scoped-2026q3
 
 `npm run fixture:verify` prints the fixture-local entry count beside a label
 saying it is not campaign progress, so the two cannot be confused.
+
+**Retry scoping used to read the same empty log, and that was not cosmetic.**
+`bakeoff-collect.mjs` decides which arms to re-spawn. Until 2026-08-18 it asked
+only the local log, so an empty one read as "first-ever collection" and it
+re-ran **every declared arm**. Measured: snapshot `2bb342bdd692` of
+`final-review-scoped-2026q3` was complete but for `grok` — five arms live in
+`campaign_arm_runs`, verified before spending — and a fixture created at its
+recorded revision `dcd0febe` specifically to retry that one arm re-ran all six.
+Three of the five re-runs then died on provider errors, so the snapshot still
+did not complete and `reconcile` promoted 0. A full snapshot of spend bought
+nothing.
+
+**Retry scoping is now store-authoritative**, so this is fixed rather than a
+thing to remember. The collector asks `campaign_arm_runs` which arms are live
+(`superseded_at IS NULL`, no error, a real `audit_run_id`) for this snapshot in
+**this cohort's lock digest**, and re-spawns only the complement. It prints what
+it decided, and on what evidence, **before spending**:
+
+```
+  [bakeoff] retry scoping — store: 5 arm(s) already recorded live for this snapshot (deepseek, gemini-control, kimi, opus, qwen); local log: no entry for this snapshot in .audit/bakeoff-log.jsonl
+  [bakeoff] snapshot 2bb342bdd692 incomplete — retrying only: grok (5 arm(s) already recorded, NOT re-charged)
+```
+
+**Read that first line every time.** Three things it can say, and they mean
+different bills:
+
+| Line says | Means | What gets billed |
+|---|---|---|
+| `store: N arm(s) already recorded live` | measured — the store answered | the complement only |
+| `store: 0 arm(s) already recorded live` | measured — genuinely nothing recorded | every declared arm, correctly |
+| `store: NOT CONSULTABLE — <reason>` | **could not be determined** | every declared arm, and a `WARNING` line says so |
+
+The third is the cloud-off / unreachable-store fallback. It degrades to the
+local log and then to a full collection, but it is **loud**, because a silent
+widening is exactly the defect above. If arms really are recorded, run
+`node scripts/campaign.mjs reconcile` from a checkout whose log holds them (or
+restore the store connection) before re-running.
+
+**Two limits worth knowing.** The store only knows what `reconcile` has
+promoted, so a collection that was never reconciled is invisible to scoping —
+run `reconcile` before creating a retry fixture. And `--force` is deliberately
+**not** narrowed: it is an explicit instruction to re-spawn and supersede, so it
+re-bills every arm exactly as it always has.
 
 ### Synced tooling
 
@@ -150,6 +196,10 @@ Fixture: C:\GIT\claude-engineering-skills-pinned\bakeoff-2026q3
   ok   credentials   10/10 present for final-review-scoped-2026q3
 
   local .audit/bakeoff-log.jsonl entries: 0  <- fixture-local only, NOT campaign progress.
+  The store is the only trustworthy count: node scripts/campaign.mjs reconcile
+  Retry scoping asks the STORE, not this file — bakeoff-collect prints which arms it will
+  spawn, and what is already recorded, before spending. Read that line: if it says
+  "store: NOT CONSULTABLE" it is about to re-bill EVERY arm.
 ```
 
 The four git properties are reported separately because they fail

@@ -15,8 +15,10 @@
  * to compose two lib modules the D2a boundary keeps apart from each other
  * (`bakeoff/arms.mjs` and `bakeoff/summary.mjs` never import one another —
  * see D2a's dependency table): `isCompleteForEntry`, `selectRetryArmIds`,
- * `readArmResult`. The entry point is exactly the layer D2a designates for
- * that composition.
+ * `planRetryScope`, `readArmResult`. The entry point is exactly the layer D2a
+ * designates for that composition — and `planRetryScope` additionally composes
+ * `bakeoff/**` with `campaign/promote.mjs`'s store read, which D2a forbids
+ * either subsystem from doing to the other.
  *
  * Runs only when invoked, on a transcript you name — not a passive
  * background collector.
@@ -95,6 +97,125 @@ export function selectRetryArmIds(existing, existingScope) {
   if (isComplete(existing, existingScope)) return null;
   const missing = existingScope.arms.filter((a) => !armDidRun(a, existing)).map((a) => a.id);
   return missing.length > 0 ? missing : null;
+}
+
+/**
+ * PURE. The full retry-scoping decision: which arms get spawned, judged
+ * against BOTH the local log and the store, with the reason it decided that
+ * printed before any money is spent.
+ *
+ * **The defect this replaces, measured 2026-08-18.** `selectRetryArmIds`
+ * alone asks only the local `.audit/bakeoff-log.jsonl`. `.audit/` is
+ * gitignored, so a freshly-created pinned fixture has an EMPTY one — and
+ * `docs/runbooks/pinned-revision-fixture.md` tells operators to create
+ * exactly such a fixture to retry a snapshot at its recorded revision. The
+ * empty log read as "first-ever collection", `selectRetryArmIds` returned
+ * `null`, and all SIX arms of snapshot `2bb342bdd692` re-ran when only `grok`
+ * was missing. The other five were live in `campaign_arm_runs` throughout.
+ * The store is already authoritative for N, for promotion and for spend
+ * everywhere else in this system; the local log being the retry oracle was
+ * the anomaly.
+ *
+ * **Four modes, and `nothing-to-do` is the one the old shape could not
+ * express.** `selectRetryArmIds` returns `string[]|null`, where `null` means
+ * "collect everything" — correct for a first-ever run and for the
+ * every-arm-ran-yet-incomplete case, and catastrophically wrong for "the
+ * store already holds all of them". Overloading one sentinel across those is
+ * how the widening stayed invisible, so this returns a named mode instead.
+ *
+ * **`--force` is exempt from store narrowing, deliberately.** It is an
+ * explicit operator instruction to re-spawn and supersede, issued from a
+ * checkout whose log the operator is looking at. The defect fixed here is a
+ * SILENT widening on a path where nobody asked for one; refusing an
+ * operator's explicit re-collection would be a different bug.
+ *
+ * @param {object} args
+ * @param {object|undefined} args.existing - the local log entry for this snapshot
+ * @param {import('./lib/bakeoff/scope.mjs').ResolvedScope|null} args.existingScope
+ * @param {import('./lib/bakeoff/scope.mjs').ResolvedScope} args.resolvedScope - the
+ *   scope THIS run resolved; the store answer is keyed by its cohort, so it is
+ *   the only scope the store's arm ids may be compared against
+ * @param {{ok: boolean, source: string, armIds: string[], reason: string|null}|null} args.recorded
+ * @param {boolean} [args.force]
+ * @returns {{mode: 'full'|'partial'|'nothing-to-do', armIds: string[]|null,
+ *   alreadyRecorded: string[], warn: boolean, messages: string[]}}
+ */
+export function planRetryScope({ existing, existingScope, resolvedScope, recorded = null, force = false }) {
+  const storeOk = recorded?.ok === true;
+  const storeIds = new Set(storeOk ? (recorded.armIds ?? []) : []);
+  const declared = resolvedScope?.arms?.map((a) => a.id) ?? [];
+  // The provenance line is printed on EVERY path, including the ordinary
+  // first collection. Its absence is what made the overspend invisible until
+  // the bill arrived, so "we consulted X and it said Y" is not conditional on
+  // the answer being interesting.
+  const storeLine = storeOk
+    ? `store: ${storeIds.size} arm(s) already recorded live for this snapshot${storeIds.size ? ` (${[...storeIds].join(', ')})` : ''}`
+    : `store: NOT CONSULTABLE — ${recorded?.reason ?? 'no store answer was requested'}`;
+  const logLine = existing
+    ? `local log: an entry exists${existingScope ? '' : ' but names an unresolvable campaign'}`
+    : `local log: no entry for this snapshot in ${LOG_PATH}`;
+  const provenance = `retry scoping — ${storeLine}; ${logLine}`;
+
+  const local = selectRetryArmIds(existing, existingScope);
+
+  if (force) {
+    // Today's `--force` behaviour, unchanged and unnarrowed.
+    return {
+      mode: local ? 'partial' : 'full',
+      armIds: local,
+      alreadyRecorded: [],
+      warn: false,
+      messages: [provenance, '--force: the store is NOT consulted to narrow this run — an explicit re-collection re-spawns and supersedes.'],
+    };
+  }
+
+  if (local) {
+    const armIds = local.filter((id) => !storeIds.has(id));
+    if (armIds.length === 0) {
+      return {
+        mode: 'nothing-to-do', armIds: [], alreadyRecorded: [...storeIds], warn: false,
+        messages: [provenance,
+          `every arm this snapshot is missing locally (${local.join(', ')}) is already recorded live in the store — nothing to re-spawn, and re-spawning would re-bill work already paid for.`,
+          'Pass --force if you intend to re-run and supersede those arm-runs anyway.'],
+      };
+    }
+    return {
+      mode: 'partial', armIds, alreadyRecorded: declared.filter((id) => !armIds.includes(id)), warn: false, messages: [provenance],
+    };
+  }
+
+  // `local === null` with a judgeable entry is one of the two DELIBERATE full
+  // collections (already complete, or every arm ran yet the snapshot is
+  // incomplete for a reason no retry can fix). The store must not narrow
+  // either: the second one re-spawns precisely because nothing else can
+  // resolve the incompleteness.
+  if (existing && existingScope) {
+    return { mode: 'full', armIds: null, alreadyRecorded: [], warn: false, messages: [provenance] };
+  }
+
+  // No usable local entry — the store is the ONLY thing that can say what a
+  // full collection would re-bill. This is the pinned-fixture path.
+  if (!storeOk) {
+    return {
+      mode: 'full', armIds: null, alreadyRecorded: [], warn: true,
+      messages: [provenance,
+        `WARNING: cannot determine which arms are already recorded for this snapshot — widening to a FULL collection of ${declared.length} arm(s), every one of which will be billed.`,
+        'If arms ARE already recorded, run `node scripts/campaign.mjs reconcile` from a checkout whose log holds them (or restore the store connection) and re-run this collection.'],
+    };
+  }
+  if (storeIds.size === 0) {
+    return { mode: 'full', armIds: null, alreadyRecorded: [], warn: false, messages: [provenance] };
+  }
+  const armIds = declared.filter((id) => !storeIds.has(id));
+  if (armIds.length === 0) {
+    return {
+      mode: 'nothing-to-do', armIds: [], alreadyRecorded: [...storeIds], warn: false,
+      messages: [provenance,
+        'every declared arm is already recorded live in the store for this snapshot — nothing to collect.',
+        'Pass --force if you intend to re-run and supersede those arm-runs anyway.'],
+    };
+  }
+  return { mode: 'partial', armIds, alreadyRecorded: [...storeIds], warn: false, messages: [provenance] };
 }
 
 /**
@@ -207,6 +328,31 @@ export function readArmResult(outPath) {
   };
 }
 
+/**
+ * Ask the store which arms it already holds live for this snapshot's cohort.
+ * Never throws, and never reports an unanswered question as a measured zero —
+ * `{ok:false, reason}` is what a caller must be able to see, because widening
+ * to a full collection on a silent store failure is the defect `planRetryScope`
+ * exists to prevent.
+ *
+ * Dynamically imported, like `mintArmRun`/`cloudIsOn` above and for the same
+ * reason: the store's dependency tree is heavy and this entry point is the one
+ * layer D2a permits to compose `bakeoff/**` with `campaign/**`.
+ */
+async function recordedArmsForSnapshot(id, resolved) {
+  const campaignKey = resolved?.config?.id ?? null;
+  const lockDigest = resolved?.lock?.lockDigest ?? null;
+  if (!campaignKey || !lockDigest) {
+    return { ok: false, source: 'store', armIds: [], reason: 'this run resolved no campaign lock digest, so there is no cohort to ask about' };
+  }
+  try {
+    const { recordedArmIdsForSnapshot } = await import('./lib/campaign/promote.mjs');
+    return await recordedArmIdsForSnapshot({ campaignKey, lockDigest, snapshotId: id });
+  } catch (err) {
+    return { ok: false, source: 'store', armIds: [], reason: `store lookup failed: ${err.message}` };
+  }
+}
+
 /** Is the cloud store configured? Never throws — an unreachable store is "off". */
 async function cloudIsOn() {
   try {
@@ -304,21 +450,37 @@ async function main() {
     return;
   }
 
-  // D5 per-arm retry — scoped against the EXISTING entry's OWN campaign
-  // (scopeForEntry), so this is knowable before `resolveArms` runs below.
+  // Arms + D4 collision classification resolve BEFORE the output directory is
+  // made and before any arm is spawned: a refusal must cost nothing. This also
+  // has to happen before retry scoping now, because the store answer is keyed
+  // by THIS run's cohort (campaign key + lock digest) — evidence recorded under
+  // a different lock belongs to a different cohort and must never narrow this
+  // one.
+  const resolved = resolveArms({ campaignId: arg('campaign') });
+  const fullArms = resolved.scope.arms;
+
+  // D5 per-arm retry, now scoped against the store as well as the local log.
   // `retryArmIds !== null` means "only spawn these arms and carry every other
   // arm's result forward unchanged"; `null` means a full collection (either
   // the first-ever attempt, or an operator-requested full refresh of an
-  // already-complete snapshot via --force).
+  // already-complete snapshot via --force). See `planRetryScope` for why the
+  // local log alone was a ~6x overspend on the pinned-fixture path.
   const existingScope = existing ? scopeForEntry(existing) : null;
-  const retryArmIds = selectRetryArmIds(existing, existingScope);
+  const recorded = await recordedArmsForSnapshot(id, resolved);
+  const retryPlan = planRetryScope({ existing, existingScope, resolvedScope: resolved.scope, recorded, force });
+  for (const m of retryPlan.messages) process.stderr.write(`  [bakeoff] ${m}\n`);
+  if (retryPlan.mode === 'nothing-to-do') {
+    printProgress(LOG_PATH, target, { ok: true, scope: resolved.scope });
+    return;
+  }
+  const retryArmIds = retryPlan.mode === 'partial' ? retryPlan.armIds : null;
 
   if (retryArmIds) {
     // Discarding the arms that already succeeded (opus/kimi/gemini-control,
     // say) because one arm (grok) returned `exit 1` is the exact waste D5
     // exists to stop — each of those was a real, paid provider call.
     process.stderr.write(`  [bakeoff] snapshot ${id} incomplete — retrying only: ${retryArmIds.join(', ')}`
-      + ` (${existingScope.arms.length - retryArmIds.length} arm(s) already recorded, NOT re-charged)\n`);
+      + ` (${retryPlan.alreadyRecorded.length} arm(s) already recorded, NOT re-charged)\n`);
   } else if (force && existing) {
     // §5's resume table: `--force` APPENDS a retry, it never overwrites. The
     // supersede itself happens at promotion time (`campaign.mjs reconcile`),
@@ -330,10 +492,6 @@ async function main() {
     process.stderr.write(`  [bakeoff] --force: re-collecting ${id}; the prior attempt will be superseded, never deleted\n`);
   }
 
-  // Arms + D4 collision classification resolve BEFORE the output directory is
-  // made and before any arm is spawned: a refusal must cost nothing.
-  const resolved = resolveArms({ campaignId: arg('campaign') });
-  const fullArms = resolved.scope.arms;
   // The spawn set: every declared arm, UNLESS this is a per-arm retry, in
   // which case only the arm(s) named by retryArmIds are re-spawned. The other
   // declared arms are neither re-run nor re-charged — their prior results are
@@ -397,7 +555,15 @@ async function main() {
   // replaces the whole entry per snapshotId (newest wins), so the merged
   // object below — not a partial one — is what must be written; a log line
   // containing only the retried arm would make readLog() forget the others.
-  const arms = retryArmIds ? { ...existing.arms, ...mergeRetryHistory(newArms, existing.arms) } : newArms;
+  //
+  // `existing` is OPTIONAL here since store-authoritative scoping landed: a
+  // pinned fixture retries one arm with an empty local log, so there is no
+  // prior entry to carry forward and the written entry legitimately holds only
+  // the arm that ran. The other arms are not lost — they are in the store,
+  // which is what `campaign.mjs reconcile` and the verdict actually read. What
+  // must never happen is a crash on `existing.arms` here, AFTER every arm has
+  // already been spawned and billed.
+  const arms = retryArmIds ? { ...(existing?.arms ?? {}), ...mergeRetryHistory(newArms, existing?.arms) } : newArms;
 
   const entry = {
     snapshotId: id,
@@ -476,6 +642,17 @@ async function main() {
   } else if (!isComplete(entry, entryScope)) {
     const missing = entryScope.arms.filter((a) => !armDidRun(a, entry)).map((a) => a.id);
     process.stderr.write(`  [bakeoff] INCOMPLETE — this snapshot does NOT count toward N.${missing.length ? ` Arms that did not run: ${missing.join(', ')}.` : ' Every arm ran; the envelope-scope binding or contract epoch is what failed.'}\n`);
+    // The LOCAL log is what that verdict reads, and in a fresh checkout it can
+    // be missing arms the store holds — the very asymmetry that made this
+    // collection partial. Naming them stops the line above from reading as "N
+    // arms were never run" when the honest statement is "N arms are not in
+    // THIS log". Completeness for the campaign is decided store-side, by
+    // `campaign.mjs reconcile`.
+    const alsoRecorded = retryPlan.alreadyRecorded.filter((armId) => missing.includes(armId));
+    if (alsoRecorded.length) {
+      process.stderr.write(`  [bakeoff] ...of which ${alsoRecorded.join(', ')} ${alsoRecorded.length === 1 ? 'is' : 'are'} already recorded live in the STORE for this snapshot`
+        + ' — absent from this checkout\'s log, not absent from the campaign. Run `node scripts/campaign.mjs reconcile` to judge completeness store-side.\n');
+    }
   }
   printProgress(LOG_PATH, target, { ok: true, scope: resolved.scope });
 }

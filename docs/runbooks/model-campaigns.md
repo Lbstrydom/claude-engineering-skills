@@ -203,6 +203,52 @@ node scripts/bakeoff-collect.mjs --transcript C:/GIT/claude-engineering-skills/.
 > store is the only trustworthy count, and `npm run fixture:verify` prints the
 > fixture-local number beside a label saying it is not campaign progress.
 
+### Retrying a snapshot that is missing one arm
+
+This is the common case — five arms succeed, one dies on a provider 503 — and
+it used to be the expensive one.
+
+**If the snapshot's recorded revision is not current HEAD, you must retry it
+from a fixture pinned at that revision.** The store enforces "one snapshot is
+one revision", so collecting the missing arm at a different sha is refused
+outright. That is what makes the fixture the *documented* path here, and until
+2026-08-18 it was also the overspend path: the fixture's own
+`.audit/bakeoff-log.jsonl` is empty, retry scoping asked only that file, and an
+empty log read as "first-ever collection". Snapshot `2bb342bdd692` needed
+`grok` alone; **all six arms re-ran**, three of the five re-runs failed, the
+snapshot still did not complete, and `reconcile` promoted 0.
+
+**Reconcile first, then create the fixture.** Retry scoping now asks the store
+which arms it already holds live for the snapshot — but the store only knows
+what `reconcile` has promoted. An unreconciled collection is invisible to it.
+
+```bash
+node scripts/campaign.mjs reconcile --campaign final-review-scoped-2026q3
+npm run fixture:create -- --name grokfix --rev dcd0febe --campaign final-review-scoped-2026q3
+```
+
+Then collect as normal from inside the fixture. **The collector states what it
+will bill before it bills it** — read this line, it is the whole control:
+
+```
+  [bakeoff] retry scoping — store: 5 arm(s) already recorded live for this snapshot (deepseek, gemini-control, kimi, opus, qwen); local log: no entry for this snapshot in .audit/bakeoff-log.jsonl
+  [bakeoff] snapshot 2bb342bdd692 incomplete — retrying only: grok (5 arm(s) already recorded, NOT re-charged)
+```
+
+An arm the store holds live (`superseded_at IS NULL`, no error, a real
+`audit_run_id`) in **this cohort's lock digest** is never re-spawned. If every
+declared arm is already recorded, the collector refuses and spends nothing
+rather than re-collecting.
+
+If the store cannot be asked — cloud off, unreachable, no repo row — it says so
+and **widens to a full collection with a `WARNING`**, naming the source and its
+answer. It never widens silently; that was the defect. Fix the store connection
+or run `reconcile` from a checkout whose log holds the arms, then re-run.
+
+`--force` is unchanged and deliberately **not** narrowed by the store: it is an
+explicit instruction to re-spawn and supersede, so it re-bills every arm. Use it
+only when you mean to.
+
 Arms are derived from your config — there is no hardcoded table to fork. The
 runner stamps every snapshot with a **lock digest** computed over the resolved
 reality (models after sentinel resolution, provider routes, reasoning effort,
