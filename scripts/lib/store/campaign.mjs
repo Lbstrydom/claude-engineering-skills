@@ -943,6 +943,35 @@ export async function recordAgentVerdict({
 }
 
 /**
+ * Which of these findings already carry a HUMAN adjudication event.
+ *
+ * The guard for re-adjudication. A human override names the agent verdict it
+ * overrides, and that PAIR is the campaign's published calibration figure — so
+ * superseding the named verdict with a fresh machine run would leave the
+ * override pointing at a superseded row and silently corrupt the override rate.
+ * A human decision is also simply worth more than a re-run: if a person has
+ * dispositioned the row, the machine does not get to answer again.
+ */
+export async function findingsWithHumanDisposition(findingIds) {
+  const ids = [...new Set((findingIds || []).filter(Boolean))];
+  if (ids.length === 0) return { ok: true, cloud: true, ids: new Set() };
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, ids: new Set() };
+  try {
+    const rows = await many(
+      `SELECT DISTINCT finding_id FROM finding_adjudication_events
+        WHERE finding_id = ANY($1::uuid[]) AND adjudicator_kind = 'human'`,
+      [ids],
+    );
+    return { ok: true, cloud: true, ids: new Set(rows.map((r) => r.finding_id)) };
+  } catch (err) {
+    process.stderr.write(`  [campaign] findingsWithHumanDisposition failed: ${err.message}\n`);
+    // Fails CLOSED: an unreadable guard must not read as "no human touched
+    // these" on a path whose whole job is to protect human dispositions.
+    return { ok: false, cloud: true, ids: new Set(ids), error: err.message };
+  }
+}
+
+/**
  * A human override is APPEND-ONLY and TERMINAL: it writes a new event naming
  * the agent verdict it overrides, and the original stays visible. Override rate
  * per arm IS the campaign's published calibration figure, so an override that

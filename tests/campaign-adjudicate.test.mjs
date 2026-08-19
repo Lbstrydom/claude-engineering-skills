@@ -24,6 +24,7 @@ import {
 } from '../scripts/lib/campaign/adjudicate.mjs';
 import { recordAgentVerdict, recordHumanOverride } from '../scripts/lib/store/campaign.mjs';
 import { parseCampaignConfig } from '../scripts/lib/campaign/config.mjs';
+import { _internals } from '../scripts/campaign.mjs';
 
 const REAL_CONFIG = parseCampaignConfig(JSON.parse(fs.readFileSync('.campaigns/final-review-2026q3.json', 'utf-8'))).config;
 const KEY = 'a'.repeat(64);
@@ -604,5 +605,55 @@ describe('adjudication summary (buckets close, failures surface)', () => {
     assert.equal(r.balanced, true);
     assert.match(r.lines[0], /5 would be sent to the adjudicator/);
     assert.match(r.lines[0], /3 would be forced unverifiable with no provider call/);
+  });
+});
+
+// -- re-adjudication (--redo) ------------------------------------------------
+//
+// `adjudicate` only visits rows with NO live agent verdict, so a resolver
+// improvement cannot reach the rows it would have helped. `--redo` is the one
+// way past that filter, and every guard below refuses BEFORE any provider call
+// -- each is cheaper to state than to discover halfway through a paid batch.
+
+describe('--redo guards', () => {
+  const { parseRedo, resolveRedoRows } = _internals;
+  const candidates = [
+    { findingId: '11111111-1111-4111-8111-111111111111', worksheetRowId: 'wr-1' },
+    { findingId: '22222222-2222-4222-8222-222222222222', worksheetRowId: 'wr-2' },
+  ];
+  const blindRows = { rows: [{ worksheet_row_id: 'wr-1' }, { worksheet_row_id: 'wr-2' }] };
+  const ok = { reason: 'wider citation window', candidates, blindRows };
+
+  it('parses a comma-separated list, and refuses an empty or flag-shaped value', () => {
+    assert.deepEqual(parseRedo('a,b , c'), ['a', 'b', 'c']);
+    assert.equal(parseRedo(null), null, 'absent flag means the ordinary pending path');
+    assert.throws(() => parseRedo('--reason'), /required when the flag is given/);
+    assert.throws(() => parseRedo(',,'), /no finding ids/);
+  });
+
+  it('refuses without a reason — a redo moves numbers that are already published', async () => {
+    const r = await (resolveRedoRows({ redo: [candidates[0].findingId], candidates, blindRows, reason: null }));
+    assert.equal(r.ok, false);
+    assert.match(r.error, /requires --reason/);
+  });
+
+  it('refuses an id this cohort does not hold, rather than adjudicating nothing', async () => {
+    const stranger = '33333333-3333-4333-8333-333333333333';
+    const r = await (resolveRedoRows({ ...ok, redo: [candidates[0].findingId, stranger] }));
+    assert.equal(r.ok, false);
+    assert.match(r.error, new RegExp(stranger));
+    assert.match(r.error, /not in this cohort/);
+  });
+
+  it('refuses a worksheet-row id — a redo names FINDING uuids', async () => {
+    const r = await (resolveRedoRows({ ...ok, redo: ['wr-1'] }));
+    assert.equal(r.ok, false);
+    assert.match(r.error, /not uuids/);
+  });
+
+  it('resolves the named findings to their blind rows, in the order given', async () => {
+    const r = await (resolveRedoRows({ ...ok, redo: [candidates[1].findingId, candidates[0].findingId] }));
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.rows.map((x) => x.worksheet_row_id), ['wr-2', 'wr-1']);
   });
 });

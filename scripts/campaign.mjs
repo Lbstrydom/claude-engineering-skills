@@ -73,7 +73,7 @@ import * as store from './lib/store/campaign.mjs';
 
 const KNOWN_FLAGS = Object.freeze([
   '--campaign', '--finding', '--verdict', '--note', '--reason', '--limit',
-  '--dry-run', '--recluster', '--actor', '--json',
+  '--dry-run', '--recluster', '--actor', '--json', '--redo',
   '--selfcheck-relocation', '--help', '-h',
 ]);
 
@@ -303,7 +303,7 @@ async function clusterCohort(ev, { recluster = false } = {}) {
   return { written, refused };
 }
 
-async function verbAdjudicate(campaignId, { limit, dryRun }) {
+async function verbAdjudicate(campaignId, { limit, dryRun, redo = null, reason = null, actor = null }) {
   const { config, lock } = loadCampaign(campaignId);
   const ev = await readCohortEvidence({ config, lock });
   if (!ev.ok) { process.stdout.write(`campaign ${config.id}: ${ev.reason}\n`); return 3; }
@@ -362,9 +362,22 @@ async function verbAdjudicate(campaignId, { limit, dryRun }) {
   // PAID verdicts, and the partial unique index would supersede the prior one
   // silently if we did not filter here.
   const pending = blindRows.rows.filter((r) => r.agent_event_id == null);
-  const todo = Number.isInteger(limit) && limit > 0 ? pending.slice(0, limit) : pending;
-  process.stdout.write(`campaign ${config.id}: ${todo.length} row(s) to adjudicate (${pending.length} pending of ${blindRows.rows.length} total)`
-    + `${dryRun ? ' — DRY RUN, nothing is written' : ''}\n`);
+  let todo;
+  if (redo) {
+    // `--redo` is the ONE way past that filter, and it is deliberately narrow:
+    // named findings only, never "everything again". Re-adjudication changes
+    // accepted counts after the fact, so it is an explicit operator act with a
+    // recorded reason — not something a re-run does by accident.
+    const resolved = await resolveRedoRows({ redo, candidates, blindRows, reason });
+    if (!resolved.ok) { process.stderr.write(`${resolved.error}\n`); return 2; }
+    todo = resolved.rows;
+    process.stdout.write(`campaign ${config.id}: REDO — ${todo.length} named row(s), superseding their live agent verdict`
+      + `${dryRun ? ' — DRY RUN, nothing is written' : ''}\n  reason: ${reason}\n`);
+  } else {
+    todo = Number.isInteger(limit) && limit > 0 ? pending.slice(0, limit) : pending;
+    process.stdout.write(`campaign ${config.id}: ${todo.length} row(s) to adjudicate (${pending.length} pending of ${blindRows.rows.length} total)`
+      + `${dryRun ? ' — DRY RUN, nothing is written' : ''}\n`);
+  }
   if (todo.length === 0) return 0;
 
   const client = dryRun ? null : await createAnthropicClient({ backend: 'sdk' });
@@ -469,6 +482,16 @@ async function verbAdjudicate(campaignId, { limit, dryRun }) {
     attempted: todo.length, settled, humanQueue, providerFailures, unrecorded, skipped, previewed, previewForced, aborted, dryRun,
   });
   process.stdout.write(`${summary.lines.join('\n')}\n`);
+  // The superseded verdicts stay readable whatever happens here, but "why did
+  // the accepted count move" should not have to be reconstructed from
+  // timestamps. Recorded AFTER the run so the event carries what actually
+  // happened rather than what was intended.
+  if (redo && !dryRun) {
+    await store.appendCampaignEvent({
+      campaignId: ev.campaignId, kind: 'verdicts_redone', actor: actor ?? null,
+      detail: { reason, findingIds: redo, settled, humanQueue, unrecorded, adjudicatorModel },
+    });
+  }
   if (humanQueue > 0) {
     process.stdout.write('  Rows in the human queue are NOT counted as evidence until dispositioned:\n'
       + '    node scripts/campaign.mjs override --finding FINDING_UUID --verdict accepted --note "why"\n');
@@ -490,6 +513,65 @@ function reportLostVerdict(src, res) {
 /** Receipts live under the cohort the evidence belongs to. */
 function adjudicationCohortDir(lock) {
   return lock?.lockDigest ?? 'no-lock';
+}
+
+/** `--redo a,b,c` → the finding ids, or null when the flag is absent. */
+function parseRedo(value) {
+  if (value == null) return null;
+  if (String(value).startsWith('--')) throw new ArgvError('--redo <finding-uuid[,finding-uuid...]> is required when the flag is given');
+  const ids = String(value).split(',').map((s) => s.trim()).filter(Boolean);
+  if (ids.length === 0) throw new ArgvError('--redo was given no finding ids');
+  return ids;
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Resolve `--redo` finding ids to blind worksheet rows, refusing before spend.
+ *
+ * Three refusals, all of them BEFORE any provider call, because every one of
+ * them is cheaper to state than to discover halfway through a paid batch:
+ *
+ * 1. **No reason.** A redo supersedes a verdict that already counts toward the
+ *    campaign's accepted totals. The superseded row stays readable either way,
+ *    but "why did this number move" must not be reconstructable only from
+ *    timestamps.
+ * 2. **An id this cohort does not hold** — a typo, or a finding from another
+ *    campaign. Silently adjudicating nothing would read as success.
+ * 3. **A finding a HUMAN has already dispositioned.** The override names the
+ *    agent verdict it overrides and that pair IS the published calibration
+ *    figure, so superseding the named verdict would leave the override pointing
+ *    at a superseded row. A person's decision also simply outranks a re-run.
+ */
+async function resolveRedoRows({ redo, candidates, blindRows, reason }) {
+  if (!reason || String(reason).trim().length === 0) {
+    return { ok: false, error: '--redo requires --reason "why": it supersedes verdicts that already count toward this campaign\'s totals.' };
+  }
+  const malformed = redo.filter((id) => !UUID_RE.test(id));
+  if (malformed.length > 0) {
+    return { ok: false, error: `--redo takes FINDING uuids; these are not uuids: ${malformed.join(', ')}` };
+  }
+  const rowIdFor = new Map(candidates.map((c) => [c.findingId, c.worksheetRowId]));
+  const unknown = redo.filter((id) => !rowIdFor.has(id));
+  if (unknown.length > 0) {
+    return {
+      ok: false,
+      error: `these findings are not in this cohort's live evidence: ${unknown.join(', ')}\n`
+        + '  (a redo names FINDING uuids from THIS campaign — check the id, or the cohort lock)',
+    };
+  }
+  const human = await store.findingsWithHumanDisposition(redo);
+  const blocked = redo.filter((id) => human.ids.has(id));
+  if (blocked.length > 0) {
+    return {
+      ok: false,
+      error: `${human.ok ? 'these findings already carry a HUMAN disposition' : 'the human-disposition guard could not be read, so every id is refused'}: ${blocked.join(', ')}\n`
+        + '  A human override names the agent verdict it overrides, and that pair is the campaign\'s calibration figure.\n'
+        + '  Re-record the human decision instead: campaign.mjs override --finding FINDING_UUID --verdict accepted --note "why"',
+    };
+  }
+  const byRowId = new Map(blindRows.rows.map((r) => [r.worksheet_row_id, r]));
+  return { ok: true, rows: redo.map((id) => byRowId.get(rowIdFor.get(id))).filter(Boolean) };
 }
 
 async function writeVerdict({ src, ws, adjudicatorModel, verdict, cost = null, attempt = 1, worksheetRowUuid = null, dryRun = false }) {
@@ -712,12 +794,15 @@ const USAGE = [
   '  node scripts/campaign.mjs status               --campaign final-review-2026q3 --json',
   '  node scripts/campaign.mjs cluster              --campaign final-review-2026q3 --recluster',
   '  node scripts/campaign.mjs adjudicate           --campaign final-review-2026q3 --limit 10 --dry-run',
+  '  node scripts/campaign.mjs adjudicate           --campaign final-review-2026q3 --redo FINDING_UUID,FINDING_UUID --reason "wider citation window"',
   '  node scripts/campaign.mjs override             --finding FINDING_UUID --verdict dismissed --note "why" --actor louis',
   '  node scripts/campaign.mjs verdict              --campaign final-review-2026q3 --json',
   '  node scripts/campaign.mjs reconcile            --campaign final-review-2026q3',
   '  node scripts/campaign.mjs declare-inconclusive --campaign final-review-2026q3 --reason "eligible pool exhausted"',
   '',
   '--verdict is one of: accepted, dismissed, severity_adjusted.',
+  '--redo re-adjudicates NAMED findings, superseding their live agent verdict; it requires --reason and',
+  '  refuses any finding a human has already dispositioned. Without it, adjudicate only visits rows with no verdict.',
   'Exit codes: 0 ok · 1 error · 2 bad arguments · 3 not computable · 4 operator action outstanding',
 ].join('\n');
 
@@ -738,6 +823,8 @@ async function main() {
     case 'adjudicate':  return verbAdjudicate(arg('campaign'), {
       limit: arg('limit') == null ? null : Number(arg('limit')),
       dryRun: process.argv.includes('--dry-run'),
+      redo: parseRedo(arg('redo')),
+      reason: arg('reason'), actor: arg('actor'),
     });
     case 'override':    return verbOverride({
       findingId: requireArg('finding'),
@@ -775,7 +862,7 @@ if (invokedDirectly) {
   });
 }
 
-export const _internals = Object.freeze({ callAdjudicator, adjudicationCohortDir, assertOutcome, writeVerdict });
+export const _internals = Object.freeze({ callAdjudicator, adjudicationCohortDir, assertOutcome, writeVerdict, parseRedo, resolveRedoRows });
 
 /** Exported for the live-schema suite: the rule recorder is store-coupled, so
  *  its contract is only assertable against a real campaign_events table. */

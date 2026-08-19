@@ -376,6 +376,50 @@ describe('campaign store against a live schema', { skip }, () => {
     assert.equal(target.rows[0].superseded_at, null);
   });
 
+  it('the redo guard sees a human disposition, and fails CLOSED when it cannot look', async () => {
+    // `--redo` supersedes a live agent verdict. A human override NAMES the
+    // verdict it overrides, and that pair is the campaign's published
+    // calibration figure — so a redo over a human-dispositioned finding would
+    // leave the override pointing at a superseded row. findingKimi has an
+    // override by this point in the suite; findingOpus does not.
+    const seen = await store.findingsWithHumanDisposition([ids.findingKimi, ids.findingOpus]);
+    assert.equal(seen.ok, true);
+    assert.equal(seen.ids.has(ids.findingKimi), true, 'the overridden finding must be visible to the guard');
+    assert.equal(seen.ids.has(ids.findingOpus), false, 'and a machine-only finding must NOT be blocked');
+
+    // NEGATIVE CONTROL — fail-closed. An unreadable guard must refuse
+    // everything rather than report "no human touched these", which is the
+    // answer that would let a redo through. A malformed uuid makes the query
+    // itself throw, which is the cheapest real fault to inject.
+    const broken = await store.findingsWithHumanDisposition(['not-a-uuid']);
+    assert.equal(broken.ok, false);
+    assert.equal(broken.ids.has('not-a-uuid'), true, 'fail-closed: every id is refused when the guard cannot read');
+  });
+
+  it('resolveRedoRows refuses a finding a human has already dispositioned', async () => {
+    const { _internals } = await import('../scripts/campaign.mjs');
+    const candidates = [
+      { findingId: ids.findingKimi, worksheetRowId: 'wr-kimi' },
+      { findingId: ids.findingOpus, worksheetRowId: 'wr-opus' },
+    ];
+    const blindRows = { rows: [{ worksheet_row_id: 'wr-kimi' }, { worksheet_row_id: 'wr-opus' }] };
+
+    const blocked = await _internals.resolveRedoRows({
+      redo: [ids.findingKimi], candidates, blindRows, reason: 'wider citation window',
+    });
+    assert.equal(blocked.ok, false);
+    assert.match(blocked.error, /HUMAN disposition/);
+    assert.match(blocked.error, /campaign\.mjs override/, 'and it names the supported alternative');
+
+    // Positive control: the machine-only finding resolves, so the refusal above
+    // is the guard binding rather than the function refusing everything.
+    const allowed = await _internals.resolveRedoRows({
+      redo: [ids.findingOpus], candidates, blindRows, reason: 'wider citation window',
+    });
+    assert.equal(allowed.ok, true);
+    assert.deepEqual(allowed.rows.map((r) => r.worksheet_row_id), ['wr-opus']);
+  });
+
   it('an override with no agent verdict to name is refused, with a reason', async () => {
     const orphan = (await client.query(
       `INSERT INTO audit_findings (run_id, finding_fingerprint, pass_name, severity, category, detail_snapshot)

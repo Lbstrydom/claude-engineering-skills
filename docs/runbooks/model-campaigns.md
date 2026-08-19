@@ -326,6 +326,23 @@ showing one used to (measured: average excerpt bytes per row 12,281 → 12,459,
 share a window are clustered into one rather than duplicated — which is how a
 heading repeated 120 lines later lands in a single span.
 
+**Re-adjudicating a row that already has a verdict** — `adjudicate` visits only
+rows with no live agent verdict, so an improvement to citation resolution
+cannot reach the rows it would have helped. `--redo` is the way past that
+filter, and it is deliberately narrow:
+
+```bash
+node scripts/campaign.mjs adjudicate --campaign final-review-scoped-2026q3 --redo FINDING_UUID,FINDING_UUID --reason "wider citation window"
+```
+
+Named findings only, never "everything again". `--reason` is required (a redo
+moves numbers that are already published, and the campaign log records why),
+ids not in this cohort are refused before any spend, and **a finding a human has
+already dispositioned is refused outright** — the override names the agent
+verdict it overrides, and that pair is the calibration figure. Prior verdicts
+are superseded, not deleted: they were paid for and stay readable. Each run
+appends a `verdicts_redone` event carrying the reason and the outcomes.
+
 Findings are verified against the snapshot's **own** `audited_sha`, never the
 working tree. A finding that was true when collected and has since been fixed
 would otherwise be recorded false — penalising the arm that correctly found a
