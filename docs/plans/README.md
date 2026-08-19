@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**5 active · 197 terminal · 27 audit summaries · 4 reference docs**
+**4 active · 198 terminal · 27 audit summaries · 4 reference docs**
 
 ---
 
@@ -21,7 +21,6 @@ This is the list to read when asking "what is in flight?".
 
 | Plan | Status | Notes |
 |---|---|---|
-| [Event-Wiring Symmetry Check](./event-wiring-symmetry.md) | `Draft` |  |
 | [Final-Review Shadow Bake-Off (marginal-value re-test)](./final-review-shadow-bakeoff.md) | `In Progress` | activated 2026-07-31 — see §0 Activation Addendum |
 | [Miscellaneous Small-Cluster Debt (2026-07-26 triage)](./refactor-misc-small-items-2026-07.md) | `Draft` | narrowed to 8 items (10 topicIds), re-verified open |
 | [A transactional commit boundary for `ship-commit`](./ship-commit-transaction.md) | `Draft` | not started; trigger-gated; Phase 1 answered in §2.1 and the cost widened |
@@ -45,7 +44,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 194 completed plans</summary>
+<summary>Show all 195 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -114,6 +113,7 @@ source comments that no docs linter sees — stays valid.
 | [Dogfooding Ergonomics v1](./dogfooding-ergonomics-v1.md) | `Complete` | shipped 2026-05-09; archive auto-moves this file via `/ship` Step 5.5 |
 | [Domain-Map Reconciliation (architecture-intent backlog)](./domain-map-reconciliation.md) | `Complete` | Phases A/B (`f94371c`) + C (`144be83`, `500f3aa`), 2026-07-17. Gemini final gate: APPROVE. |
 | [Egress secret coverage — the two layers are not independent](./egress-secret-coverage-gap.md) | `Complete` | option B implemented 2026-07-19; §4e records a correction to §1 |
+| [Event-Wiring Symmetry Check](./event-wiring-symmetry.md) | `Complete` |  |
 | [Evidence-Anchor Path Contract — stop Stage 0 discarding valid findings as fabricated](./evidence-anchor-path-contract.md) | `Complete` | both clusters shipped + gate-clear (consolidated Gemini APPROVE). |
 | [Plan-Declared Execution Clustering Across the Skill Chain](./execution-clustering-skill-chain.md) | `Complete` |  |
 | [Idle-timeout the extract subprocess (stop the coverage-sized SIGKILL truncating symbol extraction)](./extract-idle-timeout.md) | `Complete` |  |

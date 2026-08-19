@@ -1,5 +1,72 @@
 # Project Status Log
 
+## 2026-08-19 — Event-wiring-symmetry: full `/cycle --autonomous` run, two clusters, consolidated gate APPROVE
+
+`docs/plans/event-wiring-symmetry.md` implemented end to end autonomously: a new
+mechanical audit-code detector (Wave 1.5c) that flags a dispatched custom event with
+no listener anywhere in the repo ("dispatch-only"), always `enforcement: 'advisory'`
+(real, fingerprinted, suppressible, but never gates convergence — the direct answer
+to orphan-introduced's own 78%-false-positive history). Cluster A (Phase 0 — the pure
+extractor/resolver in `event-wiring.mjs`, the corpus builder, the standalone CLI
+probe) converged against a wine-cellar-app oracle fixture reconstructed from real
+history at a pinned commit and independently re-verified twice (GO). Cluster B
+(Phase 1 — Wave 1.5c orchestration wiring, D10 advisory/gating enforcement, the D12
+lifecycle host tracking each finding's disposition across runs) converged over 5
+GPT audit-code rounds.
+
+**Real bugs found and fixed across Cluster B's rounds**: D12's ancestry computation
+only covered OPEN lifecycle records, so a diff-scoped observation targeting an
+already-terminal record found no ancestry entry and silently dropped a legitimate
+reopen; D12's status-resolution checked listener-presence before dispatch-presence,
+crediting a stale listener surviving a removed dispatch as `'fixed'` instead of
+`'deleted'` — conflating two dispositions §6's stopping rule requires stay distinct
+(a 14-day credit window applies to one, not the other); a newline-injection gap in
+the `git cat-file --batch` selector stream; the corpus byte-budget was applied
+*after* content was already fetched from git, not before; `git cat-file --batch`'s
+`maxBuffer` was a hardcoded 512 MiB constant that could silently disagree with a
+schema-valid larger `totalByteBudgetMb`; a nested Zod schema wasn't `.strict()`,
+silently stripping misspelled wrapper-config keys; author-tier telemetry diverged
+from the real verdict it claimed to mirror once D10 landed; `.jsx` was missing from
+the corpus's source-extension allowlist; and `event-wiring-orphaned-pragma` findings
+had a schema, fingerprint intercept, and standard-finding converter, but no producer
+anywhere in the pipeline — wired `buildCorpus` to surface them, with a dedup ordinal
+disambiguating identical repeated pragma text in one file.
+
+**Rounds 4-5 produced zero further genuine findings** — every claim was either a
+stale re-raise of an already-fixed bug (the model repeatedly hallucinated pre-fix
+code despite the fix being visible in the diff shown to it — most persistently, a
+claim of literal document duplication in the plan file, disproven three separate
+times via exact string-occurrence counts) or pre-existing/independent debt captured
+to `tech-debt.json` (47 entries). Treated as converged per this project's own
+rigor-pressure stopping doctrine rather than exhausting the 6-round cap chasing
+repeat noise — and the consolidated Gemini gate independently confirmed this
+judgment: **APPROVE**, zero new findings, zero wrongly-dismissed, `gpt_false_positive_count: 18`,
+closing assessment *"the GPT auditor acting as a 'noise generator' in later rounds,
+repeatedly failing to read the updated code and re-raising dismissed items... the
+code is production-ready."*
+
+Added `tests/event-wiring-corpus.test.mjs` (25 tests, using the established
+`gitFixtureEnv()` scratch-repo isolation pattern) covering D10's enforcement filter,
+D12's full lifecycle transition table (fixed/deleted/pragma-suppressed/reopen/
+stale-drop), both fingerprint intercepts, and the corpus/orphaned-pragma wiring —
+this cluster's additions had no permanent coverage before this session. Also
+threaded an `env` override through every git-spawning function in
+`event-wiring-corpus.mjs` (mirroring `diff-scope-resolver.mjs`'s established
+pattern) so tests can safely isolate scratch git repos from a leaked `GIT_DIR`.
+
+Full close-out green: `cli:flags:gate` (clean, 0 net-new), `plans:index`, `npm test`
+(1461/1461 on the event-wiring suites; one already-flagged, unrelated, pre-existing
+flaky test in `unlocked-fixes-aged-visibility.test.mjs` — spawned as a separate
+background task, not touched here).
+
+**Not locked via `lock-with-test`**: 213 fixed-but-unregistered findings across both
+clusters (`list-unlocked-fixes`) — the volume of a full two-cluster `/cycle` run.
+Regression coverage exists (`tests/event-wiring.test.mjs` + the new
+`tests/event-wiring-corpus.test.mjs`, 59 tests total across the two files) but
+wasn't individually registered per finding; registering 213 rows one at a time was
+judged disproportionate to this ship. Flagging honestly rather than silently
+closing the loop.
+
 ## 2026-08-16 — Comparison-tooling consolidation: full `/cycle --autonomous` run, four clusters, consolidated gate APPROVE
 
 `docs/plans/comparison-tooling-consolidation.md` implemented end to end

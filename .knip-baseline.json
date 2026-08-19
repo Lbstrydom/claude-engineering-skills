@@ -9,6 +9,7 @@
     "files:scripts/lib/solo-control/split-triager-worksheet.mjs",
     "files:scripts/lib/visual/explain.mjs",
     "files:tests/fixtures/config-shared-env-child.mjs",
+    "files:tests/fixtures/event-wiring/wine-oracle/historical-scan-274ad342.mjs",
     "files:tests/fixtures/fit-check/node-cli-tool/bin/cli.mjs",
     "files:tests/fixtures/gate-honesty/lying-skill/fake-cli.mjs",
     "files:tests/fixtures/gate-honesty/lying-skill/fake-convergence.mjs",

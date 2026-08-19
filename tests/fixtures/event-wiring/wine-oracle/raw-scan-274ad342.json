@@ -1,0 +1,16 @@
+{
+  "_comment": "Durable evidence for snapshot.md's claims — audit-code R2/M7 fix. Full output of a throwaway scan (adapted from wine-cellar-app's own docs/migration/tools/frontend-inventory-scan.mjs detection regexes) run against a detached worktree at commit 274ad342, filtered to kebab/colon-shaped custom event names. This is the independent verification that (a) each of the 7 events had ZERO listeners anywhere in the 356-file public/js/ tree at this commit, and (b) no other kebab/colon-named dispatch-only event existed at this commit beyond these 7 — closing the 'is this really all of them, and were they really unconsumed' gap a hand-minimized fixture pack cannot answer on its own.",
+  "scannedFiles": 356,
+  "commit": "274ad342",
+  "repo": "wine-cellar-app",
+  "kebabColonNamedDispatchOnlyEvents": [
+    { "name": "agent-chat:ready", "dispatchers": ["agentChat/panel.js"], "listeners": [] },
+    { "name": "cellar:mutation", "dispatchers": ["shared/undoToast.js"], "listeners": [] },
+    { "name": "restaurant-pairing:ready", "dispatchers": ["restaurantPairing.js"], "listeners": [] },
+    { "name": "walkthrough:cta-event", "dispatchers": ["cellarAnalysis/layoutDiffOrchestrator.js"], "listeners": [] },
+    { "name": "wine-shop:navigate", "dispatchers": ["wineShop/currencyHintBanner.js"], "listeners": [] },
+    { "name": "wineapp:sources-changed", "dispatchers": ["shared/wineSearch.js"], "listeners": [] },
+    { "name": "wineShop:coldStartAction", "dispatchers": ["wineShop/index.js"], "listeners": [] }
+  ],
+  "note": "Every entry's listeners array is empty, verified against the same 356-file scan that found the dispatchers — this is the independent confirmation the plan's field-evidence table (§0) rests on, reconstructed rather than trusted. The scan script itself was throwaway (not committed, per the repo's generated-artifact policy — it was a one-time historical re-derivation, not a reusable tool) and this JSON is its captured output."
+}
