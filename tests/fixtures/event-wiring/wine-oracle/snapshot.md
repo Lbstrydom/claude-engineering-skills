@@ -42,6 +42,30 @@ Each disposition is verified against the actual fix commit, not asserted:
 defect** (`REAL-BUG`) = 2 of 7 — both numbers match the plan's originally-cited
 evidence table exactly, now on a verified basis instead of an uncheckable one.
 
+## Independent verification (audit-code R2/M7, escalated R3/H1 — RESOLVED)
+
+`raw-scan-274ad342.json` is the captured output of the reconstruction scan —
+durable evidence that each of the 7 events had **zero** listeners anywhere in
+the 356-file `public/js/` tree at this commit, and that no other kebab/colon-
+named dispatch-only event existed there beyond these 7. The minimised
+fixtures below prove the EXTRACTOR reproduces these 7 records; this file is
+the independent confirmation that the 7 records themselves are real, not
+merely internally consistent with each other.
+
+**R3/H1 escalation, resolved**: a static JSON alone still left "was this
+re-derivable" unanswered — so `historical-scan-274ad342.mjs` (the ACTUAL
+script, not a description of one) is committed alongside it, and was
+re-run for real during this fix (fresh `git worktree add --detach` at
+274ad342, script execution, `git worktree remove`) — reproducing the
+identical 356-file / 7-event output byte-for-byte. Re-verify it yourself:
+
+```bash
+cd <a local clone of wine-cellar-app>
+git worktree add --detach /tmp/wine-oracle-274ad342 274ad342
+node <this repo>/tests/fixtures/event-wiring/wine-oracle/historical-scan-274ad342.mjs /tmp/wine-oracle-274ad342
+git worktree remove --force /tmp/wine-oracle-274ad342
+```
+
 ## Fixtures
 
 Minimised, single-purpose `.js` files under this directory — the dispatch site and

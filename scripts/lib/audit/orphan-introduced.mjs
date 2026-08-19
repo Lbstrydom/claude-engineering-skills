@@ -14,33 +14,13 @@
  */
 
 import { DiffScopeSchema, HeadGraphMetaSchema } from '../schemas.mjs';
+import { isTestFile, isDocExampleFile } from './path-classifiers.mjs';
 
-/**
- * Test-file path patterns. Extracted as a constant so phase 2 can swap in
- * a config-driven equivalent without touching detector logic
- * (audit-code R1/M18 — externalise repo-convention assumptions).
- */
-const TEST_PATH_PATTERNS = Object.freeze({
-  prefixes: ['tests/', 'test/'],
-  segmentContains: ['/tests/', '/test/', '/__tests__/'],
-  suffixRegex: /\.(test|spec)\.[a-z]+$/i,
-});
-
-/**
- * Doc-embedded example/snapshot files — source-shaped files that live under
- * `docs/**` as reference material (plan-doc code bundles, historical
- * snapshots) rather than live source that's ever actually imported. Confirmed
- * false-positive: docs/plans/security/files/scripts/security-incidents.mjs
- * (a plan-doc snapshot; the real shipped file is
- * scripts/security-memory/refresh-incidents.mjs, which is never flagged).
- * Census (2026-07-22): every source-extension file tracked under docs/**
- * in this repo lives in one such bundle — no legitimate orphan-check target
- * has ever lived under docs/**, so the exclusion is repo-wide, not just
- * the one `files/` subdirectory that triggered it.
- */
-const DOC_EXAMPLE_PATH_PATTERNS = Object.freeze({
-  prefixes: ['docs/'],
-});
+// Test-file / doc-example-file classification moved to path-classifiers.mjs
+// (docs/plans/event-wiring-symmetry.md, Gemini G2 fix) so the event-wiring
+// wave can share it instead of duplicating the patterns. Re-exported below
+// byte-identically — every existing call site of isTestFile/isDocExampleFile
+// from this module is unaffected.
 
 /**
  * Detect orphans introduced by the current diff.
@@ -190,30 +170,6 @@ export function detectOrphansIntroduced({ scope, head, ctx: _ctx } = {}) {
   };
 }
 
-/**
- * Test-file classifier. Files matched here are exempted from being orphan
- * candidates AND filtered out of the caller-list when judging zero-caller.
- * Backed by TEST_PATH_PATTERNS — phase 2 can swap in config-driven patterns.
- */
-export function isTestFile(p) {
-  if (!p || typeof p !== 'string') return false;
-  const n = p.replaceAll('\\', '/');
-  for (const prefix of TEST_PATH_PATTERNS.prefixes) {
-    if (n.startsWith(prefix)) return true;
-  }
-  for (const segment of TEST_PATH_PATTERNS.segmentContains) {
-    if (n.includes(segment)) return true;
-  }
-  return TEST_PATH_PATTERNS.suffixRegex.test(n);
-}
-
-/**
- * Doc-embedded example/snapshot classifier. Backed by DOC_EXAMPLE_PATH_PATTERNS
- * so the prefix list can grow without touching detector logic (mirrors the
- * isTestFile / TEST_PATH_PATTERNS precedent above).
- */
-export function isDocExampleFile(p) {
-  if (!p || typeof p !== 'string') return false;
-  const n = p.replaceAll('\\', '/');
-  return DOC_EXAMPLE_PATH_PATTERNS.prefixes.some(prefix => n.startsWith(prefix));
-}
+// Re-exported for existing importers of this module — logic lives in
+// path-classifiers.mjs now (see the import + comment above).
+export { isTestFile, isDocExampleFile };

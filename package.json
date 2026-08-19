@@ -146,6 +146,7 @@
     "requirements:map:check": "node scripts/requirements.mjs render --check",
     "cli:flags": "node scripts/check-cli-flags.mjs",
     "cli:flags:gate": "node scripts/check-cli-flags.mjs --gating",
+    "event-wiring:oracle": "node scripts/event-wiring-scan.mjs --repo tests/fixtures/event-wiring/wine-oracle --oracle tests/fixtures/event-wiring/wine-oracle/expected.json",
     "emit:exit:gate": "node scripts/check-emit-exit-agreement.mjs",
     "emit:exit:baseline": "node scripts/check-emit-exit-agreement.mjs --update",
     "npm-args": "node scripts/check-npm-run-args.mjs",
