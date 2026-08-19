@@ -51,3 +51,24 @@ export function findNodeModules(startDir) {
     dir = parent;
   }
 }
+
+/**
+ * Cheap corruption fingerprint for a node_modules directory: its top-level
+ * entry count.
+ *
+ * Not a full hash, and not meant to catch legitimate content drift — it
+ * exists so the pre-push sandbox (which links the MAIN checkout's real
+ * node_modules into a throwaway worktree via provisionNodeModules()) can
+ * detect anything that reaches back through that link and deletes from the
+ * real tree during the run, and say so loudly instead of silently.
+ *
+ * @param {string} dir
+ * @returns {number|null} entry count, or null if the directory is unreadable
+ */
+export function countTopLevelEntries(dir) {
+  try {
+    return fs.readdirSync(dir).length;
+  } catch {
+    return null;
+  }
+}

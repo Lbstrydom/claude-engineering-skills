@@ -51,7 +51,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { log } from './lib/cli-io.mjs';
 import { dependencySetChanged } from './lib/dependency-identity.mjs';
-import { findNodeModules } from './lib/node-modules-resolver.mjs';
+import { countTopLevelEntries, findNodeModules } from './lib/node-modules-resolver.mjs';
 import { GIT_LOCK_RETRY_DELAYS_MS, withGitLockRetry } from './lib/git-lock-retry.mjs';
 import { sanitizeGitEnv } from './lib/git-env-sanitize.mjs';
 import {
@@ -387,6 +387,14 @@ function main() {
     // per push, not two.
     const gitEnv = sanitizeGitEnv(repoRoot);
 
+    // Snapshotted BEFORE provisioning links the sandbox's node_modules into
+    // this path, so a legitimate `npm ci` fallback (which never touches the
+    // main checkout) can never trip the postcondition check below — only the
+    // 'linked' path, where the sandbox and the main checkout share the exact
+    // same directory on disk, can.
+    const mainModulesForGuard = findNodeModules(repoRoot);
+    const preRunEntryCount = mainModulesForGuard ? countTopLevelEntries(mainModulesForGuard) : null;
+
     const modules = provisionNodeModules(sandbox, repoRoot, gitEnv);
     const { missing, carried } = provisionArtifacts(sandbox, repoRoot);
     if (missing.length) {
@@ -452,6 +460,28 @@ function main() {
 
     const r = spawnSync(NPM, ['run', 'check'], { cwd: sandbox, stdio: 'inherit', shell: IS_WIN, env });
     if (r.error) throw new Error(`could not run checks: ${r.error.message}`);
+
+    // Postcondition, not a hope: only 'linked' means the sandbox's
+    // node_modules IS the main checkout's directory (a junction, not a
+    // copy), so this is the one path where something during the run —
+    // teardown, a test's own fs cleanup, anything — could reach through and
+    // delete real installed packages. Checked regardless of `r.status`: a
+    // check that "passed" against a node_modules that lost packages mid-run
+    // proved nothing, and a check that failed deserves the real explanation
+    // instead of a wall of misleading ERR_MODULE_NOT_FOUND.
+    if (modules === 'linked' && mainModulesForGuard && preRunEntryCount !== null) {
+      const postRunEntryCount = countTopLevelEntries(mainModulesForGuard);
+      if (postRunEntryCount !== null && postRunEntryCount < preRunEntryCount) {
+        throw new Error(
+          `CRITICAL: the main checkout's node_modules shrank during this run `
+          + `(${preRunEntryCount} -> ${postRunEntryCount} entries) at ${mainModulesForGuard}. `
+          + 'Something reached through the sandbox link and deleted real installed packages. '
+          + 'Run `npm install` to restore them. Please report this — see the incident note in '
+          + 'scripts/lib/prepush-sandbox-cleanup.mjs.',
+        );
+      }
+    }
+
     return r.status ?? 1;
   } catch (err) {
     log(`✗  pre-push sandbox failed: ${err.message}`);

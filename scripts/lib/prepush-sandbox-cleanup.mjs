@@ -69,9 +69,19 @@ export function removeSandboxDir(dir) {
   if (!fs.existsSync(dir)) return { removed: true };
   try {
     // Windows holds handles briefly after a process exits; retry per the
-    // repo-wide rmSync hardening contract (tests/rmsync-retry-guard.test.mjs).
-    // rmSync does not follow the node_modules junction — verified; the main
-    // checkout's real node_modules is untouched by this call.
+    // repo-wide rmSync hardening contract (tests/rmsync-retry-guard.test.mjs
+    // — a static lint over call-site SYNTAX, not this claim).
+    //
+    // rmSync does not follow the node_modules junction into the main
+    // checkout's real tree — behaviourally verified against the exact shape
+    // provisionNodeModules() creates, junction + git-worktree-remove fallback
+    // included, in tests/prepush-sandbox-cleanup.test.mjs. A field incident
+    // (2026-08-19) still reported the main checkout's node_modules emptied
+    // during a run this call could not reproduce even against that fixture —
+    // see prepush-check.mjs's postcondition guard (mainModulesForGuard) for
+    // the belt-and-braces check that turns any future recurrence, from
+    // whatever the actual mechanism turns out to be, into a loud failure
+    // instead of a silent one.
     fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   } catch (error) {
     return { removed: false, error };

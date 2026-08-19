@@ -203,6 +203,41 @@ describe('the sandbox forbids the silent-skip paths', () => {
     assert.match(runnerSrc, /no node_modules found at or above/);
   });
 
+  it('verifies the linked node_modules did not shrink during the run (2026-08-19 field incident)', () => {
+    // A field report (main checkout's node_modules: 410 packages -> 0,
+    // emptied progressively during npm test, not just at teardown) could not
+    // be reproduced against the teardown path itself — see the incident note
+    // in scripts/lib/prepush-sandbox-cleanup.mjs. This postcondition can't
+    // name the mechanism, but it can guarantee the next occurrence is a loud,
+    // attributable failure instead of a silent one.
+    assert.match(runnerSrc, /from '\.\/lib\/node-modules-resolver\.mjs'/);
+    assert.match(runnerSrc, /countTopLevelEntries/);
+    assert.match(
+      runnerSrc, /const mainModulesForGuard = findNodeModules\(repoRoot\)/,
+      'the guard must snapshot BEFORE provisioning links the sandbox into this path',
+    );
+    const snapshotIdx = runnerSrc.indexOf('mainModulesForGuard');
+    // The call SITE, not provisionNodeModules's own function definition
+    // (which appears earlier in the file and would make this comparison
+    // vacuously true regardless of where the snapshot actually sits).
+    const provisionIdx = runnerSrc.indexOf('const modules = provisionNodeModules(sandbox, repoRoot, gitEnv)');
+    assert.ok(snapshotIdx !== -1 && provisionIdx !== -1 && snapshotIdx < provisionIdx,
+      'the pre-run snapshot must be taken before provisioning, not after');
+
+    const checkIdx = runnerSrc.indexOf("NPM, ['run', 'check']");
+    const guardIdx = runnerSrc.indexOf("modules === 'linked' && mainModulesForGuard");
+    assert.ok(checkIdx !== -1 && guardIdx !== -1 && guardIdx > checkIdx,
+      'the postcondition must be checked AFTER the run, not before');
+    assert.match(
+      runnerSrc.slice(guardIdx, guardIdx + 600), /postRunEntryCount < preRunEntryCount/,
+      'the guard must fire on a shrink, not merely a difference',
+    );
+    assert.match(
+      runnerSrc.slice(guardIdx, guardIdx + 600), /throw new Error/,
+      'a detected shrink must fail the push, not just warn — the run cannot be trusted either way',
+    );
+  });
+
   it('wraps every shared-metadata git worktree call in lock-contention retry (2026-07-23)', () => {
     // Sibling fix to the core.bare pin above: a transient lock (peer holds
     // .git/config.lock for a few hundred ms) is a different failure shape
