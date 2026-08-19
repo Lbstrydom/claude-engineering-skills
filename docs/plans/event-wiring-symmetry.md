@@ -1,7 +1,7 @@
 # Plan: Event-Wiring Symmetry Check
 
 - **Date**: 2026-07-28
-- **Status**: Draft
+- **Status**: Complete
 - **Author**: Claude + Louis
 - **Scope**: backend (tooling — detector module + orchestration wiring)
 - **Target domain(s)**: `audit-orchestration`, `shared-lib`, `tests`
@@ -1553,3 +1553,31 @@ while writing R4's fix summary; the `deletionObservedAt`/`fixed` collision was N
 self-caught — it survived five full GPT rounds and was Gemini's first-round find, a genuine
 cross-model catch this repo's own shadow-review research (`final-review-shadow-adjudication-briefing.md`)
 predicts and this session reproduces).
+
+## Implementation Log
+
+### 2026-08-19
+- **Completed**: both clusters, via `/cycle --autonomous`. Cluster A (Phase 0 — pure
+  extractor/resolver, corpus builder, standalone CLI, wine-oracle fixture) converged to GO
+  after 6 audit-code rounds. Cluster B (Phase 1 — Wave 1.5c wiring, D10 advisory
+  enforcement, D12 lifecycle host) converged after 5 audit-code rounds — genuine bugs fixed
+  through round 3 (D12 ancestry-computation gap for terminal records, D12 fixed/deleted
+  disposition-ordering bug, corpus byte-budget over-fetch, `maxBuffer` execution-ceiling
+  mismatch, nested-schema strictness gap, `.jsx` corpus-extension gap, the orphaned-pragma
+  finding's dead producer path, several plan-doc inconsistencies), rounds 4-5 produced zero
+  further genuine findings (verified false/stale re-raises, or pre-existing/independent debt
+  captured to `tech-debt.json`). The consolidated Gemini gate over the full 11-round union
+  transcript returned **APPROVE**, zero new findings, zero wrongly-dismissed, explicitly
+  confirming the round-4/5 dismissals were correct (GPT was hallucinating in later rounds).
+- **Remaining**: none — the plan's own scope is fully delivered. 213 fixed findings across
+  both clusters are not individually registered via `lock-with-test` (regression coverage
+  exists — `tests/event-wiring.test.mjs` + `tests/event-wiring-corpus.test.mjs`, 59 tests —
+  but wasn't registered per finding; judged disproportionate for this ship, flagged in
+  `status.md` rather than silently closed).
+- **Deviations**: Wave 1.5c's real host is `scripts/lib/audit/legacy-production-audit.mjs`
+  (`runLegacyProductionAudit`), not `scripts/openai-audit.mjs` as originally planned —
+  `openai-audit.mjs` only calls it, unchanged. D10's real enforcement seam is
+  `finding-verification.mjs`'s `countsTowardVerdict` + `findings-pipeline.mjs`'s
+  `computeAuditVerdict`, not `convergence.mjs`/`final-adjudication.mjs`. Both corrections
+  are recorded in §2 and §7 above, discovered by tracing the real call graph during
+  implementation rather than trusting the plan's original file citations.
