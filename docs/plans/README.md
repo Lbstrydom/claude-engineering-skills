@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**4 active · 197 terminal · 27 audit summaries · 4 reference docs**
+**4 active · 198 terminal · 27 audit summaries · 4 reference docs**
 
 ---
 
@@ -44,7 +44,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 194 completed plans</summary>
+<summary>Show all 195 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -80,6 +80,7 @@ source comments that no docs linter sees — stays valid.
 | [Audit Orchestrator Hardening](./audit-orchestrator-hardening.md) | `Complete` | implemented (9 phases, 5 clusters), audit-code |
 | [Audit-store write durability and failure contract](./audit-store-write-durability.md) | `Complete` | all 6 phases shipped; the final gate ran twice over the union diff (`CONCERNS_REMAINING`, every finding act… |
 | [Plan — Consumer-side audit-tool staleness check (Option A)](./audit-tool-staleness-check.md) | `Complete` |  |
+| [Audit-Transcript Durability Across Worktree Teardown](./audit-transcript-durability.md) | `Complete` | mirror-at-write + filesystem sweep backstop shipped |
 | [Auditor Controls Execution Wiring](./auditor-controls-execution-wiring.md) | `Complete` | implemented and shipped (audit-plan: 5 GPT rounds, 100% acceptance each, real design defects each round; Ge… |
 | [Azure Embedding-Deployment Discovery + Provenance Truth](./azure-embed-deployment-discovery.md) | `Complete` | 2026-07-17) — all 3 clusters implemented + audited; consolidated Gemini gate APPROVE (0 findings); live-ver… |
 | [Azure AI Foundry Work Profile](./azure-work-profile.md) | `Complete` |  |

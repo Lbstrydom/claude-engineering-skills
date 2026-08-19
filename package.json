@@ -132,6 +132,7 @@
     "parity:expected-schema": "node scripts/postgres-parity/generate-expected-schema.mjs",
     "audit:clean": "node scripts/audit-clean.mjs",
     "audit:clean:apply": "node scripts/audit-clean.mjs --apply",
+    "audit:transcripts:harvest": "node scripts/harvest-audit-transcripts.mjs",
     "protect:main": "node scripts/ensure-branch-protection.mjs",
     "protect:main:apply": "node scripts/ensure-branch-protection.mjs --apply",
     "runner:doctor": "node scripts/actions-runner-doctor.mjs",

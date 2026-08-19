@@ -20,10 +20,9 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createFixture, verifyFixture, removeFixture, resolveRevision, provisionNodeModules } from '../scripts/lib/pinned-worktree/manage.mjs';
 import { assertFixtureName, defaultFixtureRoot } from '../scripts/lib/pinned-worktree/paths.mjs';
+import { git } from './helpers/git.mjs';
 
 let ROOT; let REPO; let FIXTURES; let FIRST; let SECOND;
-
-const git = (args, cwd) => execFileSync('git', args, { cwd, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
 
 before(() => {
   ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'pwt-suite-'));

@@ -20,7 +20,9 @@ import {
 import {
   clusterSnapshotFindings, normaliseVerdict, routesToHumanQueue,
   ADJUDICATION_TOOL, AdjudicationVerdictSchema,
+  verdictPairError, coerceVerdictPair, renderAdjudicationSummary,
 } from '../scripts/lib/campaign/adjudicate.mjs';
+import { recordAgentVerdict, recordHumanOverride } from '../scripts/lib/store/campaign.mjs';
 import { parseCampaignConfig } from '../scripts/lib/campaign/config.mjs';
 
 const REAL_CONFIG = parseCampaignConfig(JSON.parse(fs.readFileSync('.campaigns/final-review-2026q3.json', 'utf-8'))).config;
@@ -330,6 +332,116 @@ describe('adjudication verdict', () => {
     assert.equal(AdjudicationVerdictSchema.safeParse({ worksheetRowId: 'w', method: 'judgement', outcome: 'accepted', confidence: 1, evidence }).success, false);
   });
 
+  // -- the (method, outcome) pair contract ---------------------------------
+  //
+  // Measured live 2026-08-19 against `final-review-scoped-2026q3`: the
+  // adjudicator returned `verified` + `needs_triage`, Postgres refused it
+  // (`fae_needs_triage_is_unverifiable_chk`), and the verdict -- a paid
+  // provider call -- was lost. The schema alone cannot catch this: `method`
+  // and `outcome` are independent enums, so all SIX combinations parse.
+
+  it('verified + needs_triage — the pair the database refused — is coerced, not passed through', () => {
+    // Full evidence, so the evidence downgrade above never fires. This is the
+    // production shape exactly.
+    const r = normaliseVerdict({
+      worksheetRowId: 'w1', method: 'verified', outcome: 'needs_triage', confidence: 0.4,
+      evidence: { ...evidence, absenceReason: null },
+    }, { worksheetRowId: 'w1' });
+    assert.equal(r.ok, true);
+    assert.equal(r.verdict.method, 'unverifiable', 'needs_triage MEANS unverifiable');
+    assert.equal(r.verdict.outcome, 'needs_triage');
+    assert.match(r.downgraded, /incoherent verdict pair/, 'and the operator is told it happened');
+  });
+
+  it('unverifiable + accepted — the half NO constraint catches — is coerced to needs_triage', () => {
+    // The worse direction: nothing rejects this, so it lands in the store and
+    // is COUNTED as evidence for an arm on a verdict the instrument itself
+    // said it could not settle.
+    const r = normaliseVerdict({
+      worksheetRowId: 'w1', method: 'unverifiable', outcome: 'accepted', confidence: 0.9, evidence,
+    }, { worksheetRowId: 'w1' });
+    assert.equal(r.verdict.outcome, 'needs_triage');
+    assert.equal(r.verdict.method, 'unverifiable');
+    assert.equal(routesToHumanQueue(r.verdict), true, 'it must reach a human, not an accepted count');
+  });
+
+  it('the coercion is always DOWNWARD — never promoted to verified', () => {
+    for (const pair of [{ method: 'verified', outcome: 'needs_triage' }, { method: 'unverifiable', outcome: 'dismissed' }]) {
+      const out = coerceVerdictPair({ ...pair, evidence: { ...evidence } });
+      assert.equal(out.verdict.method, 'unverifiable');
+      assert.equal(out.verdict.outcome, 'needs_triage');
+    }
+  });
+
+  it('a coerced verdict carries WHY into absenceReason — the human queue is where it lands', () => {
+    const out = coerceVerdictPair({ method: 'unverifiable', outcome: 'accepted', evidence: { ...evidence, absenceReason: null } });
+    assert.match(out.verdict.evidence.absenceReason, /incoherent verdict pair/);
+    // ...and never overwrites a reason the model actually gave.
+    const kept = coerceVerdictPair({ method: 'unverifiable', outcome: 'accepted', evidence: { absenceReason: 'the model said this' } });
+    assert.equal(kept.verdict.evidence.absenceReason, 'the model said this');
+  });
+
+  it('exactly three pairs are legal, and the predicate says so in both directions', () => {
+    // Positive control: the legal three pass, so the refusals below are the
+    // predicate binding rather than a function that rejects everything.
+    for (const pair of [
+      { method: 'verified', outcome: 'accepted' },
+      { method: 'verified', outcome: 'dismissed' },
+      { method: 'unverifiable', outcome: 'needs_triage' },
+    ]) assert.equal(verdictPairError(pair), null, `${pair.method}+${pair.outcome} is legal`);
+
+    assert.match(verdictPairError({ method: 'verified', outcome: 'needs_triage' }), /requires method "unverifiable"/);
+    assert.match(verdictPairError({ method: 'unverifiable', outcome: 'dismissed' }), /requires outcome "needs_triage"/);
+  });
+
+  it('a legal verdict is not disturbed by the pair check', () => {
+    const r = normaliseVerdict({ worksheetRowId: 'w1', method: 'verified', outcome: 'accepted', confidence: 0.9, evidence }, { worksheetRowId: 'w1' });
+    assert.equal(r.verdict.method, 'verified');
+    assert.equal(r.verdict.outcome, 'accepted');
+    assert.equal(r.downgraded, null);
+  });
+
+  // -- the store refuses the same pair, BEFORE the cloud gate ---------------
+
+  it('recordAgentVerdict refuses an incoherent pair without asking the store', async () => {
+    // `cloud: null` is the assertion that matters: the guard runs before
+    // `isCloudEnabled()`, so it is reachable on a local-only install and the
+    // caller gets a named contract error rather than a Postgres constraint
+    // name (or, for the unverifiable+accepted half, a successful write).
+    const bad = await recordAgentVerdict({ findingId: 'f1', method: 'verified', outcome: 'needs_triage' });
+    assert.equal(bad.ok, false);
+    assert.equal(bad.cloud, null, 'refused before any store call');
+    assert.match(bad.error, /needs_triage/);
+
+    const silent = await recordAgentVerdict({ findingId: 'f1', method: 'unverifiable', outcome: 'accepted' });
+    assert.equal(silent.ok, false);
+    assert.match(silent.error, /requires outcome "needs_triage"/);
+
+    const badMethod = await recordAgentVerdict({ findingId: 'f1', method: 'judgement', outcome: 'accepted' });
+    assert.equal(badMethod.ok, false);
+    assert.match(badMethod.error, /method must be one of verified, unverifiable/);
+  });
+
+  it('writeVerdict REFUSES to run under --dry-run — the guarantee has a function boundary', async () => {
+    // `--dry-run` previews SPEND, so it must not write. It rested on the order
+    // of two `if`s in the loop and lost: the unresolvable-citation branch wrote
+    // a real terminal verdict before the loop checked the flag, so a
+    // `--limit 3 --dry-run` preview was followed by a real run reporting one
+    // fewer pending row. Reordering can regress; this cannot go silent.
+    const { _internals } = await import('../scripts/campaign.mjs');
+    await assert.rejects(
+      () => _internals.writeVerdict({ src: { findingId: 'f1' }, ws: { id: 'w' }, adjudicatorModel: 'm', verdict: { method: 'unverifiable', outcome: 'needs_triage' }, dryRun: true }),
+      /never be reached under --dry-run/,
+    );
+  });
+
+  it('a human override may not write needs_triage — it is a disposition, not a hand-off', async () => {
+    const res = await recordHumanOverride({ findingId: 'f1', outcome: 'needs_triage' });
+    assert.equal(res.ok, false);
+    assert.equal(res.cloud, null);
+    assert.match(res.error, /requires method "unverifiable"/);
+  });
+
   it('the adjudicator is offered exactly ONE tool, and it cannot be quietly granted more', () => {
     // Tool policy is explicitly none-but-this: retrieval happens in the CLI,
     // where it is bounded, sensitive-path-gated and reproducible from the
@@ -431,5 +543,66 @@ describe('clustering', () => {
       { findingId: 'f2', armId: 'b', section: 'scripts/x.mjs:10', category: 'B', detail: 'the same defect described one way', severity: 'HIGH' },
     ];
     assert.deepEqual(clusterSnapshotFindings(rows, opts), clusterSnapshotFindings([...rows].reverse(), opts));
+  });
+});
+
+// -- the end-of-batch arithmetic --------------------------------------------
+
+describe('adjudication summary (buckets close, failures surface)', () => {
+  it('reproduces the 2026-08-19 shape and reports TEN outcomes from ten rows', () => {
+    // The line this replaces printed "5 adjudicated · 9 routed to the human
+    // queue · 0 provider failure(s)" for a `--limit 10` run: 14 outcomes from
+    // 10 rows, because every row that got a provider call was counted as
+    // `adjudicated` AND again as `routed` if it handed off, while the 5 rows
+    // forced unverifiable before any call were counted only as routed.
+    const r = renderAdjudicationSummary({ attempted: 10, settled: 1, humanQueue: 9 });
+    assert.equal(r.balanced, true);
+    assert.equal(r.exitCode, 0);
+    assert.match(r.lines[0], /10 row\(s\) attempted/);
+    assert.match(r.lines[0], /1 settled as evidence/);
+    assert.match(r.lines[0], /9 routed to the human queue/);
+  });
+
+  it('a double-counted bucket is REPORTED, not printed as a tidy total', () => {
+    const r = renderAdjudicationSummary({ attempted: 10, settled: 5, humanQueue: 9 });
+    assert.equal(r.balanced, false);
+    assert.equal(r.exitCode, 1);
+    assert.match(r.lines.join('\n'), /ACCOUNTING BUG[\s\S]*double-counted/);
+  });
+
+  it('rows that vanish from the arithmetic are reported too', () => {
+    const r = renderAdjudicationSummary({ attempted: 10, settled: 3, humanQueue: 2 });
+    assert.equal(r.balanced, false);
+    assert.match(r.lines.join('\n'), /5 unaccounted/);
+  });
+
+  it('a verdict that failed to record surfaces in the summary AND the exit code', () => {
+    // This is the swallow: the write failed, the operator paid for the call,
+    // and the run reported success. Now it is a named bucket and a non-zero
+    // exit -- what every caller checking `$?` reads.
+    const r = renderAdjudicationSummary({ attempted: 3, settled: 2, unrecorded: 1 });
+    assert.equal(r.exitCode, 1);
+    assert.match(r.lines[0], /1 FAILED TO RECORD/);
+    assert.match(r.lines.join('\n'), /paid-for evidence lost/);
+    assert.match(r.lines.join('\n'), /INCOMPLETE/);
+  });
+
+  it('a clean batch exits 0 — the negative control for the exit-code coupling', () => {
+    assert.equal(renderAdjudicationSummary({ attempted: 3, settled: 3 }).exitCode, 0);
+  });
+
+  it('an aborted batch names the rows it never reached, and stays balanced', () => {
+    const r = renderAdjudicationSummary({ attempted: 10, settled: 2, unrecorded: 1, aborted: true });
+    assert.equal(r.balanced, true, 'aborting is the one legitimate way a row goes unaccounted');
+    assert.equal(r.exitCode, 1, 'but the lost verdict still fails the run');
+    assert.match(r.lines[0], /7 not reached \(batch aborted\)/);
+  });
+
+  it('a dry run reports what it WOULD spend, split by whether a provider call happens', () => {
+    const r = renderAdjudicationSummary({ attempted: 8, previewed: 8, previewForced: 3, dryRun: true });
+    assert.equal(r.exitCode, 0);
+    assert.equal(r.balanced, true);
+    assert.match(r.lines[0], /5 would be sent to the adjudicator/);
+    assert.match(r.lines[0], /3 would be forced unverifiable with no provider call/);
   });
 });

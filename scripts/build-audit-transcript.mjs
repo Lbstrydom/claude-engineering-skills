@@ -42,10 +42,11 @@ import { atomicWriteFileSync } from './lib/file-io.mjs';
 import {
   AUDIT_MODES, buildAuditTranscript, discoverRoundResults, inferAuditMode, readRoundResult,
 } from './lib/audit/transcript.mjs';
+import { archiveTranscript, formatArchiveOutcome, isArchiveFailure } from './lib/audit/transcript-archive.mjs';
 
 const KNOWN_FLAGS = [
   '--sid', '--dir', '--result', '--ledger', '--mode', '--changed', '--summary',
-  '--out', '--json', '--no-scope-filter', '--selfcheck-relocation',
+  '--out', '--json', '--no-scope-filter', '--allow-nondurable', '--selfcheck-relocation',
 ];
 
 /** Collect every `--result <path>` occurrence (the flag is repeatable). */
@@ -57,9 +58,28 @@ function collectRepeated(argv, flag) {
   return out;
 }
 
+/**
+ * Value of `--flag <value>`, or null when the flag is absent.
+ *
+ * A following token that is itself a flag is REFUSED rather than consumed:
+ * `--changed --json` used to silently set `changed` to `"--json"` and drop
+ * `--json`, so a mistyped invocation produced a transcript whose scope filter
+ * was the string `--json` — accepted, wrong, and completely silent. Every value
+ * this CLI takes is a path, a session id or prose; none legitimately begins
+ * with `--`, so refusing is unambiguous.
+ */
 function valueOf(argv, flag) {
   const i = argv.indexOf(flag);
-  return i !== -1 && argv[i + 1] ? argv[i + 1] : null;
+  if (i === -1) return null;
+  const next = argv[i + 1];
+  if (!next) return null;
+  if (next.startsWith('--')) {
+    throw new ArgvError(
+      `build-audit-transcript: ${flag} expects a value but was followed by ${next}. `
+      + 'Supply the value, or drop the flag.',
+    );
+  }
+  return next;
 }
 
 function main() {
@@ -173,6 +193,14 @@ function main() {
   fs.mkdirSync(path.dirname(path.resolve(outFile)), { recursive: true });
   atomicWriteFileSync(outFile, `${JSON.stringify(transcript, null, 2)}\n`);
 
+  // Mirror into the MAIN checkout's durable archive. `.audit/` is gitignored,
+  // so a transcript written inside a linked worktree dies with that worktree —
+  // and transcripts are the only replayable input the model-comparison
+  // campaigns have (plan: docs/plans/audit-transcript-durability.md). Never
+  // fatal: `archiveTranscript` reports rather than throws, because an audit
+  // killed by a failed MIRROR would be worse than the bug this fixes.
+  const archive = archiveTranscript(outFile);
+
   const findings = rounds.reduce((n, r) => n + (r.findings?.length ?? 0), 0);
   if (jsonMode) {
     console.log(JSON.stringify({
@@ -184,6 +212,9 @@ function main() {
       codeFiles: transcript.code_files.length,
       changedFiles: transcript.changed_files.length,
       resolutions: transcript.claude_resolutions?.length ?? 0,
+      archived: archive.archived,
+      archivePath: archive.path,
+      archiveReason: archive.reason,
     }));
   } else {
     console.log(
@@ -191,6 +222,30 @@ function main() {
       + ` · code_files=${transcript.code_files.length} · changed_files=${transcript.changed_files.length}`
       + ` · resolutions=${transcript.claude_resolutions?.length ?? 0}`,
     );
+  }
+  // Always say what happened to the durable copy — a run that did NOT archive
+  // must not look identical to one that did.
+  process.stderr.write(`${formatArchiveOutcome(outFile, archive)}\n`);
+
+  // ── The durability guarantee has to be in the EXIT CODE, not just the log ──
+  // A warning is not an enforceable guarantee: every caller that checks `$?`
+  // reads exit 0 as success, so a disk-full or permissions failure would let an
+  // operator finish the audit, remove the worktree, and lose the transcript —
+  // the exact failure this file was written to close, restored by the reporting
+  // channel. Same rule as `emit({ok:false})` (AGENTS.md): a CLI must not report
+  // a failure in its output and exit 0.
+  //
+  // Scoped to the case where it MATTERS: only a volatile source (a linked
+  // worktree) is at risk. In the main checkout the local copy is durable, so a
+  // mirror failure warns and exits 0. `--allow-nondurable` is the explicit
+  // opt-out for an operator who has decided to proceed anyway.
+  if (archive.volatile && isArchiveFailure(archive) && !argv.includes('--allow-nondurable')) {
+    process.stderr.write(
+      `  [transcript] FAILED: ${outFile} exists only in this worktree and could not be mirrored.\n`
+      + '              Fix the archive path, or pass --allow-nondurable to proceed knowing the\n'
+      + '              transcript will be lost when this worktree is removed.\n',
+    );
+    process.exitCode = 1;
   }
   // `changed_files` empty in code mode disables the reviewer's scope filter —
   // say so, since the symptom (out-of-scope new findings) surfaces much later.

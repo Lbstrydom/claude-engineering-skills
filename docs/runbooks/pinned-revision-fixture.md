@@ -101,6 +101,15 @@ by absolute path from the main checkout:
 node scripts/bakeoff-collect.mjs --transcript C:/GIT/claude-engineering-skills/.audit/transcript.json --plan docs/plans/model-comparison-campaigns.md
 ```
 
+**Where to look for one**: `.audit/` in the main checkout holds the working
+copies (capped at the newest 25 by `audit-clean.mjs`), and
+**`.audit/transcripts/` in the main checkout is the durable archive** — every
+transcript ever written, including those produced inside throwaway agent
+worktrees that no longer exist. Prefer the archive when a transcript you
+remember is no longer in `.audit/`. `--transcript` takes any absolute path; the
+consumption contract is unchanged. Plan:
+[`audit-transcript-durability.md`](../plans/audit-transcript-durability.md).
+
 ### Progress — trust the STORE, not the local log
 
 **This one costs people an hour if they do not know it.** The bake-off log path

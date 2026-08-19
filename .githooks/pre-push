@@ -175,6 +175,23 @@ if [ -f "$REPO_ROOT/package.json" ]; then
   fi
 fi
 
+# ── 0.95 Harvest audit transcripts from linked worktrees (NON-blocking) ──
+# `.audit/` is gitignored, so a transcript written inside a throwaway worktree
+# is deleted with that worktree. The mirror-at-write in
+# lib/audit/transcript-archive.mjs covers everything written from now on; this
+# sweep is the backstop for worktrees that predate it and for the orphan case
+# (a failed `git worktree remove` deregisters but leaves the directory, so no
+# git-based scan can see it). Plan: docs/plans/audit-transcript-durability.md.
+#
+# Runs HERE and not in `npm run check` for the same reason as §0.9, inverted:
+# the sandbox is a clean checkout with no `.claude/worktrees/` at all, so the
+# sweep there would report green having examined nothing. It is also a
+# side-effecting maintenance action, not a gate — hence non-blocking.
+if [ -f "$REPO_ROOT/package.json" ]; then
+  ( cd "$REPO_ROOT" && node scripts/harvest-audit-transcripts.mjs --quiet ) || \
+    echo "⚠ transcript harvest failed (non-blocking) — see docs/plans/audit-transcript-durability.md" >&2
+fi
+
 # ── 1. Checks (blocking) ────────────────────────────────────────────────
 if [ -f "$REPO_ROOT/package.json" ]; then
   if [ "$AUDIT_PREPUSH_SANDBOX" = "0" ]; then

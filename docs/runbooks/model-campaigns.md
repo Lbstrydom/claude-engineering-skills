@@ -185,6 +185,17 @@ Then, from inside the fixture — note the **absolute** transcript path, because
 node scripts/bakeoff-collect.mjs --transcript C:/GIT/claude-engineering-skills/.audit/transcript.json --plan docs/plans/model-comparison-campaigns.md
 ```
 
+> **Transcript-starved? Look in the archive.** `.audit/` holds only the working
+> copies (`audit-clean.mjs` caps them at the newest 25), and a transcript
+> produced by an audit inside a throwaway agent worktree used to be **deleted
+> with that worktree** — which is why `final-review-scoped-2026q3` stalled at
+> 7/12 snapshots while this repo audited constantly. Every transcript is now
+> mirrored at write time into **`<main checkout>/.audit/transcripts/`**, the
+> durable archive; `npm run audit:transcripts:harvest` sweeps any linked
+> worktree that predates the mirror. Feed the collector from there when the
+> working copy is gone. Plan:
+> [`audit-transcript-durability.md`](../plans/audit-transcript-durability.md).
+
 > **Trust the store, not the local log.** `LOG_PATH` is the repo-relative
 > `.audit/bakeoff-log.jsonl`, so a fixture writes its **own, empty** one. Running
 > `--progress` there reads near-zero **regardless of real campaign progress**, and
@@ -252,11 +263,58 @@ That distinction is why these verdicts are worth recording at all: LLM
 *re-judgement* of historical findings measured 52% agreement with a human here,
 while verification against code is instrument-settleable.
 
+**Those three pairs are the whole vocabulary, and the rule is a
+biconditional**: `needs_triage` if and only if `unverifiable`. The producer
+coerces any other pair onto `unverifiable`/`needs_triage` and says so
+(`incoherent verdict pair` on stderr), the store refuses it by name, and
+Postgres refuses one of the two directions as
+`fae_needs_triage_is_unverifiable_chk`. Coercion is always *downward* — the two
+fields disagree about whether the claim was settled, and only "not settled"
+cannot manufacture evidence. (Measured 2026-08-19: the adjudicator returned
+`verified` + `needs_triage`, the database refused it, and paid-for verdicts were
+lost while the run reported success.)
+
+**Read the last line — it is arithmetic, not a mood.**
+
+```
+  10 row(s) attempted: 4 settled as evidence · 6 routed to the human queue (1 provider failure(s))
+```
+
+The buckets are disjoint and they close: every attempted row lands in exactly
+one of `settled` / `routed` / `FAILED TO RECORD` / `skipped`, and the line says
+`ACCOUNTING BUG` rather than a tidy total if they ever do not.
+`provider failure(s)` is a subset of `routed`, never an addition.
+
+**A verdict that could not be stored fails the command.** `FAILED TO RECORD`
+means a provider call was paid for and its verdict is not in the store, so the
+batch stops there (a write failure is a contract or schema refusal, not provider
+variance — continuing pays for verdicts that cannot be stored either) and
+`adjudicate` exits **1**. The receipt stays in state `complete` (paid,
+unrecorded), which is what `reconcile` lists. Accepted counts are incomplete
+until those rows are re-adjudicated.
+
+**`--dry-run` writes nothing.** It previews the rows that would be sent to the
+adjudicator and the rows that would be forced `unverifiable` with no provider
+call (those cost nothing), and it neither creates the worksheet nor records a
+verdict.
+
 **The worksheet is blind**, by whitelist and redaction — not by omitting a
 column. Finding prose names its own provider ("Opus 5 thinks by default"), so
 model ids, provider names and your own arm ids are replaced with placeholders.
 Cited repo source is deliberately *not* redacted: it is identical whichever arm
 cited it, and this repo's own source legitimately contains model ids.
+
+**A plan-mode finding is verified against the plan.** Its `primary_file` is a
+`§`-section, not a path, so there is no file to retrieve and the row used to
+reach you having never reached the adjudicator — 107 of 201 findings in cohort
+`e52eec728688fcab`, 60% of that campaign's human queue (measured 2026-08-19).
+The run's `audit_runs.plan_file` is now cited instead, at the snapshot's own
+sha, labelled `kind: "plan-document"` so the adjudicator knows it is reading
+prose rather than code. It is a **fallback**: a finding that resolved its own
+sources never also drags in the plan. The window is anchored on the finding's
+quoted prose first, then on the section title — and when neither matches, the
+excerpt is an honest head window whose `truncated: true` routes the row to you
+as before.
 
 Findings are verified against the snapshot's **own** `audited_sha`, never the
 working tree. A finding that was true when collected and has since been fixed

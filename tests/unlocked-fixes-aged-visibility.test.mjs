@@ -38,12 +38,27 @@ describe('unlocked_fixes age window — what it drops is reportable', { skip: !H
     // survived a mutation that disabled the feature outright. A fixture chosen
     // without reference to what it must demonstrate is how a suite goes green
     // having checked nothing.
+    // The paging subtest below reads with `limit: 200`, and getUnlockedFixes
+    // hard-caps every read at that same 200 (NUDGE_PAGE_MAX in
+    // ship-nudges.mjs) no matter what the caller asks for. Recent rows always
+    // sort ahead of aged ones (ORDER BY fixed_at DESC), so a repo whose OWN
+    // recent backlog already fills the page makes its aged rows unreachable
+    // by both the windowed and --all-ages reads alike — not a real gap, a
+    // fixture repo too big for the page it's read through. Measured
+    // 2026-08-19: this store's most-active repo (itself, from ongoing
+    // dogfooding) had grown to 213 recent rows against the 200-row cap,
+    // which silently made all 228 of its aged rows unreachable and failed
+    // the "paging past the window reaches rows the default read cannot"
+    // assertion below. Requiring recent < 200 keeps the fixture repo one
+    // where that property is actually demonstrable, independent of how large
+    // the store's busiest repo grows over time.
     const row = await q.one(
-      `SELECT r.repo_id AS id, count(*)::int AS dropped
+      `SELECT r.repo_id AS id, count(*) FILTER (WHERE NOT a.is_recent)::int AS dropped
          FROM unlocked_fixes_all a
          JOIN audit_runs r ON r.id = a.audit_run_id
-        WHERE NOT a.is_recent
         GROUP BY r.repo_id
+       HAVING count(*) FILTER (WHERE NOT a.is_recent) > 0
+          AND count(*) FILTER (WHERE a.is_recent) < 200
         ORDER BY dropped DESC
         LIMIT 1`, []);
     repoId = row?.id ?? null;
