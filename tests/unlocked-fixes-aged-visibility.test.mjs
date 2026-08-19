@@ -165,9 +165,25 @@ describe('unlocked_fixes age window — what it drops is reportable', { skip: !H
     // Only meaningful when something HAS aged out; otherwise this is vacuous and
     // says so rather than passing silently.
     const aged = await store.countAgedUnlockedFixes({ repoId });
-    if (aged.agedOut + aged.prePractice > 0) {
-      assert.ok(allAges.some((r) => !seen.has(r.audit_finding_id)),
-        '--all-ages must surface at least one row the window excluded');
+    const droppedCount = aged.agedOut + aged.prePractice;
+    if (droppedCount > 0) {
+      // The store's own page cap (200, per getUnlockedFixes) means a repo with
+      // 200+ RECENT rows can push every dropped row past a single page 0 fetch
+      // — `ORDER BY fixed_at DESC` puts the newest rows first and the dropped
+      // ones (by definition older) last. Found live: this repo's own
+      // event-wiring-symmetry audit session wrote 150+ same-day findings,
+      // which happened to be enough to make `allAges` above genuinely never
+      // reach the aged-out tail. Target the tail directly instead of trusting
+      // page 0: with DESC-by-fixed_at ordering, the dropped rows occupy the
+      // LAST `droppedCount` positions of the unwindowed set.
+      const total = (await store.countUnlockedFixes({ repoId }, { allAges: true })).total;
+      const tailOffset = Math.max(0, total - droppedCount);
+      const tail = await store.getUnlockedFixes(
+        { repoId }, { limit: Math.min(200, droppedCount), offset: tailOffset, allAges: true },
+      );
+      const reachable = allAges.some((r) => !seen.has(r.audit_finding_id))
+        || tail.some((r) => !seen.has(r.audit_finding_id));
+      assert.ok(reachable, '--all-ages must surface at least one row the window excluded');
     }
   });
 });
