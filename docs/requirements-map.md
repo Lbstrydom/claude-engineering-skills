@@ -1,6 +1,6 @@
 # Requirements Map — claude-engineering-skills
 
-_Generated from `.requirements/ledger.json` — 4168 requirement(s) across 594 file(s). Do not hand-edit; regenerate with `node scripts/requirements.mjs render`._
+_Generated from `.requirements/ledger.json` — 4179 requirement(s) across 594 file(s). Do not hand-edit; regenerate with `node scripts/requirements.mjs render`._
 
 ## At a glance
 
@@ -8,16 +8,16 @@ _Generated from `.requirements/ledger.json` — 4168 requirement(s) across 594 f
 pie title Active invariants by kind
   "security" : 55
   "safety" : 128
-  "correctness" : 163
+  "correctness" : 165
   "behavioural" : 44
   "persistence" : 64
 ```
 
 | Status | Count |
 |---|---|
-| 🟢 active — enforced by /audit-code | 454 |
+| 🟢 active — enforced by /audit-code | 456 |
 | 🟡 needs-review — awaiting your call | 27 |
-| ⚪ inferred-only — refine backlog | 3687 |
+| ⚪ inferred-only — refine backlog | 3696 |
 
 ## 🟡 Needs review (27)
 
@@ -246,7 +246,7 @@ pie title Active invariants by kind
 | `REQ-safety-faca1023` | The persona outcome hash backfill must refuse to run unless the live persona finding hash version equals its fixed v2 target version and a repoId is supplied. | scripts/lib/store/persona-outcomes-hash-backfill.mjs |
 | `REQ-safety-fea6126d` | Only finding classes in the gate-eligible class set may be eligible to block the visual-audit gate. | scripts/lib/visual/schema.mjs |
 
-### correctness (163)
+### correctness (165)
 
 | ID | Assertion | Governs |
 |---|---|---|
@@ -355,7 +355,7 @@ pie title Active invariants by kind
 | `REQ-correctness-94a778c1` | A sync inventory must fail rather than report an empty migration set when reading an existing migrations directory fails for a reason other than ENOENT. | scripts/lib/sync-inventory.mjs |
 | `REQ-correctness-94bd0f11` | CODEOWNERS lookup must use the first existing file in the precedence order .github/CODEOWNERS, CODEOWNERS, then docs/CODEOWNERS. | scripts/lib/owner-resolver.mjs |
 | `REQ-correctness-97e02d9e` | The skill-description lint must exit with failure when any discovered SKILL.md lacks a parseable description block, exceeds the configured description character budget, declares unparseable triggers, | scripts/check-skill-descriptions.mjs |
-| `REQ-correctness-9abdb026` | Findings with no extractable normalized file reference must be counted as unmatchable rather than as primary-only or shadow-only findings. | scripts/lib/finding-match.mjs |
+| `REQ-correctness-9b009d12` | A match result must conserve each input side such that its count equals matched findings plus side-only findings plus unmatchable findings. | scripts/lib/finding-match.mjs |
 | `REQ-correctness-9b5c6c96` | Claude Opus primary and shadow reviewer clients must use the SDK backend regardless of the ambient CLAUDE_BACKEND setting. | scripts/gemini-review.mjs |
 | `REQ-correctness-9d566453` | A missing repo-relative file may be marked confirmed only when the supplied repository inventory is complete; otherwise it must remain requires_verification. | scripts/lib/audit/finding-verification.mjs |
 | `REQ-correctness-9db386eb` | Architecture-intent findings returned from a successful LLM bouncer call must be limited to files present in the mechanical architecture report. | scripts/lib/audit/legacy-production-audit.mjs |
@@ -375,6 +375,7 @@ pie title Active invariants by kind
 | `REQ-correctness-bfe6a51a` | T3 symbol-map context must describe docs/architecture-map.md as a checked-in artifact that may predate HEAD rather than stamping it as current-commit-generated context. | scripts/lib/repo-context.mjs |
 | `REQ-correctness-c08f6d27` | A generator is accepted only if every run has stage0Verified greater than zero, its aggregate malformed-raw rate is below 0.34, and its aggregate stage0 malformed-tripwire count is zero. | scripts/verify-anchor-contract.mjs |
 | `REQ-correctness-c105d8ce` | Architecture-intent drift checking must ignore apparent domain headings inside Markdown fenced code blocks. | scripts/check-architecture-intent-drift.mjs |
+| `REQ-correctness-c29dc594` | For non-empty finding sets, coverage must equal one minus the fraction of all findings that are unmatchable, and the verdict must be "unknown" when that coverage is below the configured coverage floor | scripts/lib/finding-match.mjs |
 | `REQ-correctness-c5b025f9` | A merged surfaces manifest must reject duplicate surface IDs, duplicate collection IDs, and duplicate `(canonical locator, engine field)` claims across fragments. | scripts/build-surfaces-manifest.mjs |
 | `REQ-correctness-c687bddd` | When multiple triage predicates match, the router must select the most restrictive matched bucket according to A before C before D, and must select A when none match. | scripts/lib/security/triage-router.mjs |
 | `REQ-correctness-c6a0ef35` | The primary stack field must remain limited to js-ts, python, mixed, or unknown, while Java and Postgres detection is represented only through stackKinds. | scripts/lib/repo-stack.mjs |
@@ -396,6 +397,7 @@ pie title Active invariants by kind
 | `REQ-correctness-daa9b966` | After a successful pull, dependency repair must run `npm ci` when package manifests changed or `npm ls --depth=0` reports an unhealthy dependency tree, and it must fail rather than install without `pa | scripts/update-auditloop.mjs |
 | `REQ-correctness-db28300e` | The import graph populated flag must be set only for a full refresh or for an incremental refresh whose prior active snapshot was already marked populated. | scripts/symbol-index/refresh.mjs |
 | `REQ-correctness-db53f358` | Ledger entries written from triage must derive their topic identity, semantic hash, latest finding identifier, affected files, severity, category, and pass from the round result finding rather than ac | scripts/write-ledger-entries.mjs |
+| `REQ-correctness-dcf34bfe` | Findings with no file or section locus must be counted as unmatchable and must not be classified as primaryOnly or shadowOnly. | scripts/lib/finding-match.mjs |
 | `REQ-correctness-df7257d3` | A live model ID may be reported as missing from STATIC_POOL only when it matches the provider's relevant tier pattern and either cannot be parsed or is newer than the best static model in the same res | scripts/check-model-freshness.mjs |
 | `REQ-correctness-e086754e` | Every contradictory gap assessment must identify at least one conflicting requirement ID. | scripts/lib/requirements/schema.mjs |
 | `REQ-correctness-e22e4469` | A missing `allowedDeps` field in a valid architecture-intent configuration must be represented as null rather than as an empty dependency map. | scripts/lib/arch-intent/load-config.mjs |
@@ -817,7 +819,7 @@ pie title Active invariants by kind
 | `scripts/lib/final-review/scope.mjs` | 0 | 2 | 4 |
 | `scripts/lib/finalize-outcomes.mjs` | 1 | 0 | 6 |
 | `scripts/lib/find-rmsync-sites.mjs` | 0 | 0 | 6 |
-| `scripts/lib/finding-match.mjs` | 1 | 0 | 9 |
+| `scripts/lib/finding-match.mjs` | 3 | 0 | 18 |
 | `scripts/lib/findings-format.mjs` | 0 | 0 | 0 |
 | `scripts/lib/findings-outcomes.mjs` | 0 | 0 | 1 |
 | `scripts/lib/findings-tracker.mjs` | 1 | 0 | 7 |

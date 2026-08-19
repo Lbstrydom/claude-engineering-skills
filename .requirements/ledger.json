@@ -1,7 +1,7 @@
 {
-  "generatedAt": "2026-08-16T19:04:17.014Z",
-  "commitSha": "8d68ed1ed370ce3974bbb459bf080cf9790f9f12",
-  "extractionSourceSha": "8d68ed1ed370ce3974bbb459bf080cf9790f9f12",
+  "generatedAt": "2026-08-19T11:21:36.638Z",
+  "commitSha": "adf834fda9269488c87d3b2ac7378d2a3ec3468b",
+  "extractionSourceSha": "adf834fda9269488c87d3b2ac7378d2a3ec3468b",
   "coveredFiles": [
     "scripts/anthropic-ping.mjs",
     "scripts/arch-coverage-gate.mjs",
@@ -2218,6 +2218,41 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test is provided."
+      }
+    },
+    {
+      "id": "REQ-behavioural-1d0d0f7c",
+      "assertion": "Given the same ordered inputs, hashes, threshold, and similarity function, accepted match pairs must be selected deterministically by descending similarity and ascending primary-then-shadow hash tie-b",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/finding-match.mjs",
+          "anchor": "candidates.sort"
+        },
+        {
+          "file": "scripts/lib/finding-match.mjs",
+          "anchor": "hashOf"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/finding-match.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/finding-match.mjs#hashOf",
+          "scripts/lib/finding-match.mjs#matchFindings"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-1d0d0f7c",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a coherent deterministic tie-breaking behavior and has no linked test."
       }
     },
     {
@@ -8391,6 +8426,42 @@
       }
     },
     {
+      "id": "REQ-behavioural-7e9271fe",
+      "assertion": "Findings that reference the same files in different orders must be eligible to match because file overlap is determined by set intersection rather than primary-file position.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/finding-match.mjs",
+          "anchor": "sharesFile"
+        },
+        {
+          "file": "scripts/lib/finding-match.mjs",
+          "anchor": "matchFindings"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/finding-match.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/finding-match.mjs:affectedFilesOf",
+          "scripts/lib/finding-match.mjs:sharesFile",
+          "scripts/lib/finding-match.mjs:matchFindings"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-7e9271fe",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a consistent consequence of set-based file matching and has no linked test."
+      }
+    },
+    {
       "id": "REQ-behavioural-7eb1a2e0",
       "assertion": "A matching suppressible finding must be reopened rather than suppressed when any file in the matched entry's affected scope was directly changed since the prior round.",
       "kind": "behavioural",
@@ -11336,6 +11407,38 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This persistent Azure fallback rule has no linked test."
+      }
+    },
+    {
+      "id": "REQ-behavioural-b38d3d38",
+      "assertion": "A finding with one or more file references must use only file loci for matching, while section or decision loci may be used only when the finding has no extractable file reference.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/finding-match.mjs",
+          "anchor": "affectedLociOf"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/finding-match.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/finding-match.mjs#affectedLociOf",
+          "scripts/lib/finding-match.mjs#affectedFilesOf",
+          "scripts/lib/finding-match.mjs#sectionLociOf"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-b38d3d38",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a coherent file-first matching behavior and has no linked test."
       }
     },
     {
@@ -17249,37 +17352,6 @@
       }
     },
     {
-      "id": "REQ-correctness-0b965257",
-      "assertion": "The matched, only, and unmatchable buckets must conserve the supplied primary and shadow finding counts independently.",
-      "kind": "correctness",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/lib/finding-match.mjs",
-          "anchor": "conserves"
-        }
-      ],
-      "appliesTo": [
-        "scripts/lib/finding-match.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/lib/finding-match.mjs#conserves",
-          "scripts/lib/finding-match.mjs#matchFindings"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-correctness-0b965257",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "No linked test is provided."
-      }
-    },
-    {
       "id": "REQ-correctness-0ba476fd",
       "assertion": "Cloud adjudication events must identify findings using their fingerprint (_hash or semanticId) rather than the per-run finding id.",
       "kind": "correctness",
@@ -18789,36 +18861,6 @@
       "status": "inferred-only",
       "gap": {
         "requirementId": "REQ-correctness-151f2677",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "No linked test is provided."
-      }
-    },
-    {
-      "id": "REQ-correctness-1538cf07",
-      "assertion": "A finding match run must produce one-to-one pairs by accepting each primary finding and each shadow finding at most once.",
-      "kind": "correctness",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/lib/finding-match.mjs",
-          "anchor": "matchFindings"
-        }
-      ],
-      "appliesTo": [
-        "scripts/lib/finding-match.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/lib/finding-match.mjs#matchFindings"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-correctness-1538cf07",
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test is provided."
@@ -21669,37 +21711,6 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test."
-      }
-    },
-    {
-      "id": "REQ-correctness-2144a74e",
-      "assertion": "matchFindings must only pair findings that share at least one normalized file reference and whose signature similarity meets the configured threshold.",
-      "kind": "correctness",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/lib/finding-match.mjs",
-          "anchor": "matchFindings"
-        }
-      ],
-      "appliesTo": [
-        "scripts/lib/finding-match.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/lib/finding-match.mjs:matchFindings",
-          "scripts/lib/finding-match.mjs:signatureOf"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-correctness-2144a74e",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "No linked test is provided."
       }
     },
     {
@@ -26751,6 +26762,37 @@
       }
     },
     {
+      "id": "REQ-correctness-3ba1c79b",
+      "assertion": "A finding's matching file set must be the normalized de-duplicated union of its affectedFiles, primaryFile, _primaryFile, and section references rather than a positional or precedence-selected file.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/finding-match.mjs",
+          "anchor": "affectedFilesOf"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/finding-match.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/finding-match.mjs:affectedFilesOf",
+          "scripts/lib/finding-match.mjs:sharesFile"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-3ba1c79b",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a coherent union-based matching invariant and has no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-3baac5dd",
       "assertion": "A declared intent that is reached but has no statically attributable anchor must produce only a non-gating coverage-unverified advisory rather than a coverage-gap finding.",
       "kind": "correctness",
@@ -28794,36 +28836,6 @@
       }
     },
     {
-      "id": "REQ-correctness-4641c07a",
-      "assertion": "An empty pair of finding sets must produce coverage null and verdict \"not-applicable\" rather than a numeric coverage value.",
-      "kind": "correctness",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/lib/finding-match.mjs",
-          "anchor": "matchFindings"
-        }
-      ],
-      "appliesTo": [
-        "scripts/lib/finding-match.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/lib/finding-match.mjs#matchFindings"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-correctness-4641c07a",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "No linked test is provided."
-      }
-    },
-    {
       "id": "REQ-correctness-464fb8ba",
       "assertion": "A partial-index conflictWhere predicate must be a non-empty string, must require a column-list conflict target, and must be rejected when the conflict target uses ON CONSTRAINT.",
       "kind": "correctness",
@@ -29009,6 +29021,41 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test covers read-only drift classification."
+      }
+    },
+    {
+      "id": "REQ-correctness-47009008",
+      "assertion": "Finding file references used for matching must be normalized and de-duplicated across affectedFiles, primaryFile, _primaryFile, and section text, without treating non-file prose fragments as file keys",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/finding-match.mjs",
+          "anchor": "extractFileRefs"
+        },
+        {
+          "file": "scripts/lib/finding-match.mjs",
+          "anchor": "affectedFilesOf"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/finding-match.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/finding-match.mjs#extractFileRefs",
+          "scripts/lib/finding-match.mjs#affectedFilesOf"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-47009008",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a coherent file-reference extraction invariant and has no linked test."
       }
     },
     {
@@ -30692,6 +30739,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test."
+      }
+    },
+    {
+      "id": "REQ-correctness-4d5e6226",
+      "assertion": "Section and decision-id fallback loci must be lower-cased, de-duplicated, and prefixed with \"section:\" so they cannot collide with file-path loci.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/finding-match.mjs",
+          "anchor": "sectionLociOf"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/finding-match.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/finding-match.mjs#sectionLociOf"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-4d5e6226",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound fallback-locus namespace invariant and has no linked test."
       }
     },
     {
@@ -36034,36 +36111,6 @@
       }
     },
     {
-      "id": "REQ-correctness-6a977346",
-      "assertion": "When both finding sets are empty, matchFindings must return coverage:null and verdict:\"not-applicable\" rather than a numeric coverage value.",
-      "kind": "correctness",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/lib/finding-match.mjs",
-          "anchor": "matchFindings"
-        }
-      ],
-      "appliesTo": [
-        "scripts/lib/finding-match.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/lib/finding-match.mjs:matchFindings"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-correctness-6a977346",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "No linked test is provided."
-      }
-    },
-    {
       "id": "REQ-correctness-6b52493c",
       "assertion": "Environment-value resolution must report the last matching value in the supplied .env text and independently report the live process environment value, using null for either absent value.",
       "kind": "correctness",
@@ -37398,6 +37445,41 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This status restriction has no linked test."
+      }
+    },
+    {
+      "id": "REQ-correctness-720bea82",
+      "assertion": "Two findings that name the same file set in different orders must remain eligible to match because matching is based on shared normalized loci rather than a positional primary file.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/finding-match.mjs",
+          "anchor": "sharesFile"
+        },
+        {
+          "file": "scripts/lib/finding-match.mjs",
+          "anchor": "matchFindings"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/finding-match.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/finding-match.mjs#sharesFile",
+          "scripts/lib/finding-match.mjs#matchFindings"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-720bea82",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a consistent shared-locus matching invariant and has no linked test."
       }
     },
     {
@@ -39983,6 +40065,38 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test is provided."
+      }
+    },
+    {
+      "id": "REQ-correctness-8137f653",
+      "assertion": "A finding with at least one file reference must use only file loci for matching, while section or decision loci may be used only when the finding has no extractable file.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/finding-match.mjs",
+          "anchor": "affectedLociOf"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/finding-match.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/finding-match.mjs:affectedLociOf",
+          "scripts/lib/finding-match.mjs:affectedFilesOf",
+          "scripts/lib/finding-match.mjs:sectionLociOf"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-8137f653",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a coherent file-first locus-selection invariant and has no linked test."
       }
     },
     {
@@ -43011,7 +43125,7 @@
     },
     {
       "id": "REQ-correctness-92a3a1a1",
-      "assertion": "Each primary finding and each shadow finding must participate in at most one match pair within a matchFindings result.",
+      "assertion": "Each primary finding and each shadow finding must appear in at most one accepted match pair.",
       "kind": "correctness",
       "checkable": true,
       "provenance": [
@@ -43025,7 +43139,7 @@
       ],
       "evidence": {
         "code": [
-          "scripts/lib/finding-match.mjs:matchFindings"
+          "scripts/lib/finding-match.mjs#matchFindings"
         ],
         "tests": []
       },
@@ -43036,7 +43150,7 @@
         "requirementId": "REQ-correctness-92a3a1a1",
         "gap": "untested",
         "conflictsWith": [],
-        "rationale": "No linked test is provided."
+        "rationale": "This is a sound one-to-one match assignment invariant and has no linked test."
       }
     },
     {
@@ -44422,37 +44536,6 @@
       }
     },
     {
-      "id": "REQ-correctness-9abdb026",
-      "assertion": "Findings with no extractable normalized file reference must be counted as unmatchable rather than as primary-only or shadow-only findings.",
-      "kind": "correctness",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/lib/finding-match.mjs",
-          "anchor": "matchFindings"
-        }
-      ],
-      "appliesTo": [
-        "scripts/lib/finding-match.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/lib/finding-match.mjs#matchFindings",
-          "scripts/lib/finding-match.mjs:matchFindings"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 2,
-      "confidence": "high",
-      "status": "active",
-      "gap": {
-        "requirementId": "REQ-correctness-9abdb026",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "No linked test is provided."
-      }
-    },
-    {
       "id": "REQ-correctness-9ac49f1d",
       "assertion": "Plan status parsing must consider Status lines only before the first level-two heading, reject duplicate header status lines, and preserve the authored status text on malformed results when a status l",
       "kind": "correctness",
@@ -44526,7 +44609,7 @@
     },
     {
       "id": "REQ-correctness-9b009d12",
-      "assertion": "A match result must conserve each input side such that its input count equals both plus that side's only count plus that side's unmatchable count.",
+      "assertion": "A match result must conserve each input side such that its count equals matched findings plus side-only findings plus unmatchable findings.",
       "kind": "correctness",
       "checkable": true,
       "provenance": [
@@ -44541,18 +44624,20 @@
       "evidence": {
         "code": [
           "scripts/lib/finding-match.mjs:conserves",
-          "scripts/lib/finding-match.mjs:matchFindings"
+          "scripts/lib/finding-match.mjs:matchFindings",
+          "scripts/lib/finding-match.mjs#conserves",
+          "scripts/lib/finding-match.mjs#matchFindings"
         ],
         "tests": []
       },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
       "gap": {
         "requirementId": "REQ-correctness-9b009d12",
         "gap": "untested",
         "conflictsWith": [],
-        "rationale": "No linked test is provided."
+        "rationale": "This is a sound accounting conservation invariant and has no linked test."
       }
     },
     {
@@ -45623,38 +45708,6 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test."
-      }
-    },
-    {
-      "id": "REQ-correctness-a1726331",
-      "assertion": "Finding matching must derive comparable file keys from the normalized union of affectedFiles, primaryFile, _primaryFile, and section references rather than from any positional or single-source file fi",
-      "kind": "correctness",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/lib/finding-match.mjs",
-          "anchor": "affectedFilesOf"
-        }
-      ],
-      "appliesTo": [
-        "scripts/lib/finding-match.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/lib/finding-match.mjs:affectedFilesOf",
-          "scripts/lib/finding-match.mjs:primaryFileOf",
-          "scripts/lib/finding-match.mjs:sharesFile"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-correctness-a1726331",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "No linked test is provided."
       }
     },
     {
@@ -47588,6 +47641,37 @@
       }
     },
     {
+      "id": "REQ-correctness-aebccdaa",
+      "assertion": "A primary-shadow finding pair must be considered only when both findings have at least one locus in common and their signature similarity meets the configured threshold.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/finding-match.mjs",
+          "anchor": "matchFindings"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/finding-match.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/finding-match.mjs:matchFindings",
+          "scripts/lib/finding-match.mjs:signatureOf"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-aebccdaa",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a coherent eligibility condition for matching and has no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-aeee1ecf",
       "assertion": "Brainstorm provider results must use a recognized provider state and must represent text, error message, HTTP status, usage, latency, and estimated cost with the schema-defined nullable or nonnegative",
       "kind": "correctness",
@@ -48555,37 +48639,6 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This persona correlation selection rule has no linked test."
-      }
-    },
-    {
-      "id": "REQ-correctness-b45e3a24",
-      "assertion": "Cross-model findings may be matched only when their normalized affected-file sets share at least one path and their signature similarity meets the configured threshold.",
-      "kind": "correctness",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/lib/finding-match.mjs",
-          "anchor": "matchFindings"
-        }
-      ],
-      "appliesTo": [
-        "scripts/lib/finding-match.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/lib/finding-match.mjs#matchFindings",
-          "scripts/lib/finding-match.mjs#affectedFilesOf"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-correctness-b45e3a24",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "No linked test is provided."
       }
     },
     {
@@ -49971,6 +50024,36 @@
       }
     },
     {
+      "id": "REQ-correctness-bdee24d5",
+      "assertion": "When both finding sets are empty, matching coverage must be null and the verdict must be \"not-applicable\" rather than a numeric coverage verdict.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/finding-match.mjs",
+          "anchor": "matchFindings"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/finding-match.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/finding-match.mjs:matchFindings"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-bdee24d5",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound empty-input reporting invariant and has no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-bdf4c844",
       "assertion": "When extraction counts are present, cruised must not exceed eligible and a non-null extraction ratio must equal cruised divided by eligible within 1e-9.",
       "kind": "correctness",
@@ -50157,6 +50240,37 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked tests are provided for this intended theme-control classification."
+      }
+    },
+    {
+      "id": "REQ-correctness-bf25c86c",
+      "assertion": "A pair of findings may be matched only when they share at least one matching locus and their signature similarity is greater than or equal to the configured threshold.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/finding-match.mjs",
+          "anchor": "matchFindings"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/finding-match.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/finding-match.mjs#matchFindings",
+          "scripts/lib/finding-match.mjs#signatureOf"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-bf25c86c",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a coherent minimum condition for accepting a match and has no linked test."
       }
     },
     {
@@ -50895,6 +51009,45 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-c29dc594",
+      "assertion": "For non-empty finding sets, coverage must equal one minus the fraction of all findings that are unmatchable, and the verdict must be \"unknown\" when that coverage is below the configured coverage floor",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/finding-match.mjs",
+          "anchor": "matchFindings"
+        },
+        {
+          "file": "scripts/lib/finding-match.mjs",
+          "anchor": "coverage"
+        },
+        {
+          "file": "scripts/lib/finding-match.mjs",
+          "anchor": "verdict"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/finding-match.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/finding-match.mjs:matchFindings",
+          "scripts/lib/finding-match.mjs#matchFindings"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-correctness-c29dc594",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a coherent coverage and verdict rule for non-empty inputs and has no linked test."
       }
     },
     {
@@ -54068,6 +54221,36 @@
       }
     },
     {
+      "id": "REQ-correctness-d146bd9d",
+      "assertion": "File references extracted from finding text must be normalized and de-duplicated in first-appearance order, and non-string or empty sections must yield no file references.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/finding-match.mjs",
+          "anchor": "extractFileRefs"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/finding-match.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/finding-match.mjs:extractFileRefs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-d146bd9d",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a coherent normalization invariant and has no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-d1a11294",
       "assertion": "The CLI must refuse a normal commit unless every commit argument is recognized and required trailer inputs validate successfully, exiting with status 2 for agent-correctable input errors before attemp",
       "kind": "correctness",
@@ -55749,6 +55932,37 @@
       }
     },
     {
+      "id": "REQ-correctness-dc72d5ef",
+      "assertion": "Each finding must appear in at most one accepted cross-review pair, with candidates accepted by descending similarity and deterministic hash-based tie-breaking.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/finding-match.mjs",
+          "anchor": "matchFindings"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/finding-match.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/finding-match.mjs:matchFindings",
+          "scripts/lib/finding-match.mjs:hashOf"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-dc72d5ef",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound one-to-one deterministic pairing invariant and has no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-dc9ec58e",
       "assertion": "Comparison controls must reject unknown fields and require every arm-shared dial, including reasoningEffort, promptTemplateId, outputSchemaId, maxOutputTokens, toolPolicy, and a finite canonicalizable",
       "kind": "correctness",
@@ -55911,6 +56125,37 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test is provided."
+      }
+    },
+    {
+      "id": "REQ-correctness-dcf34bfe",
+      "assertion": "Findings with no file or section locus must be counted as unmatchable and must not be classified as primaryOnly or shadowOnly.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/finding-match.mjs",
+          "anchor": "matchFindings"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/finding-match.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/finding-match.mjs:matchFindings",
+          "scripts/lib/finding-match.mjs#matchFindings"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-correctness-dcf34bfe",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a coherent classification rule for locus-less findings and has no linked test."
       }
     },
     {
@@ -65327,6 +65572,36 @@
       }
     },
     {
+      "id": "REQ-persistence-28c80b7b",
+      "assertion": "Persisted match-pair sharedFiles values must contain only file-path loci, while sharedLoci must retain all shared loci and locusKind must identify whether the pair matched through a section or file lo",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/finding-match.mjs",
+          "anchor": "pairs.push"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/finding-match.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/finding-match.mjs#matchFindings"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-28c80b7b",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound persisted-locus representation invariant and has no linked test."
+      }
+    },
+    {
       "id": "REQ-persistence-28c9c788",
       "assertion": "The pgvector prototype must persist an embedding only for an open eligible finding whose truncated detail snapshot hash is absent or differs from the stored hash, and conflicting rows must be updated ",
       "kind": "persistence",
@@ -66504,6 +66779,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "No linked test."
+      }
+    },
+    {
+      "id": "REQ-persistence-368a1477",
+      "assertion": "Persisted pair sharedFiles values must contain only file loci, while section-based matches must retain their complete loci in sharedLoci and identify locusKind as \"section\".",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/finding-match.mjs",
+          "anchor": "matchFindings"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/finding-match.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/finding-match.mjs:matchFindings"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-368a1477",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound persistence schema invariant and has no linked test."
       }
     },
     {
@@ -96828,6 +97133,40 @@
       }
     },
     {
+      "id": "REQ-safety-5e49c220",
+      "assertion": "When both finding sets are empty, coverage must be null and verdict must be \"not-applicable\" rather than a numeric coverage value.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/finding-match.mjs",
+          "anchor": "coverage"
+        },
+        {
+          "file": "scripts/lib/finding-match.mjs",
+          "anchor": "verdict"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/finding-match.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/finding-match.mjs#matchFindings"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-5e49c220",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound empty-input safety invariant and has no linked test."
+      }
+    },
+    {
       "id": "REQ-safety-5e5157aa",
       "assertion": "Neighbourhood consultation must not describe an empty result as evidence that no similar code exists when any target path has an extension outside the extractor allowlist.",
       "kind": "safety",
@@ -100913,6 +101252,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Sound adjacency-bouncer eligibility invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-safety-7a032e3e",
+      "assertion": "Section and decision loci must be lower-cased, de-duplicated, and prefixed with \"section:\" so they cannot collide with file-path matching keys.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/finding-match.mjs",
+          "anchor": "sectionLociOf"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/finding-match.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/finding-match.mjs:sectionLociOf"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-7a032e3e",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound namespace-separation invariant and has no linked test."
       }
     },
     {
@@ -136511,6 +136880,8 @@
     "REQ-persistence-f6382718": "REQ-persistence-5461c430",
     "REQ-safety-ce47158c": "REQ-safety-aa14695f",
     "REQ-correctness-61d4f956": "REQ-correctness-42136d2a",
-    "REQ-correctness-8d757055": "REQ-correctness-09182387"
+    "REQ-correctness-8d757055": "REQ-correctness-09182387",
+    "REQ-correctness-8ad19b7a": "REQ-correctness-9b009d12",
+    "REQ-correctness-b0f7a11f": "REQ-correctness-92a3a1a1"
   }
 }
