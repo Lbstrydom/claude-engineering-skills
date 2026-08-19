@@ -28,15 +28,18 @@ const METRICS_PATH = '.audit/orphan-metrics.jsonl';
  * (audit-code R1/H3): uses `wx` flag to atomically create-or-skip-if-exists.
  *
  * @param {string} repoPath
+ * @param {string} [sinkPath] - repo-relative sink path (event-wiring-symmetry
+ *   plan R1/M1 fix — parameterised so a non-orphan caller can point this at
+ *   its own log without a second copy of this module).
  * @returns {string} absolute path to the metrics file
  */
-function ensureMetricsFile(repoPath) {
-  const auditDir = path.join(repoPath, '.audit');
+function ensureMetricsFile(repoPath, sinkPath = METRICS_PATH) {
+  const auditDir = path.dirname(path.join(repoPath, sinkPath));
   if (!fs.existsSync(auditDir)) {
     try { fs.mkdirSync(auditDir, { recursive: true }); }
     catch (err) { if (err.code !== 'EEXIST') throw err; }
   }
-  const absPath = path.join(repoPath, METRICS_PATH);
+  const absPath = path.join(repoPath, sinkPath);
   try {
     // wx = open-create-exclusive: creates empty file iff it doesn't exist.
     // Atomic at the filesystem level on both POSIX and NTFS.
@@ -98,9 +101,16 @@ export async function appendOrphanMetric(record, repoPath = process.cwd()) {
  * @param {Array<object>} args.suppressed - dropped (have `_fingerprint` + `suppressedBy`)
  * @param {object} [args._meta] - detector _meta
  * @param {string} [args.repoPath]
+ * @param {string} [args.sinkPath] - repo-relative sink (default: orphan's own log —
+ *   event-wiring-symmetry plan R1/M1 fix). A caller passes its own path/kind rather
+ *   than this module hardcoding orphan's.
+ * @param {string} [args.summaryKind] - run-summary record `kind` (default: `'orphan-run-summary'`).
+ *   NOT a "one-line generalisation" — reusing the default here for a different
+ *   detector would inject mislabelled records into that detector's own log.
  */
 export async function emitOrphanRunMetrics({
   runId, passState, rawFindings = [], survivors = [], suppressed = [], _meta = {}, repoPath = process.cwd(),
+  sinkPath = METRICS_PATH, summaryKind = 'orphan-run-summary',
 }) {
   // Gemini-final-gate G1 fix — defer ensureMetricsFile until inside the try
   // block so a synchronous throw (EACCES/EROFS) becomes a graceful stderr
@@ -113,13 +123,20 @@ export async function emitOrphanRunMetrics({
   lines.push(JSON.stringify({
     ts,
     runId,
-    kind: 'orphan-run-summary',
+    kind: summaryKind,
     passState,
     rawFindingCount: rawFindings.length,
     surfacedFindingCount: survivors.length,
+    // Named fields kept exactly as-is for orphan's existing readers
+    // (weekly-review.mjs etc. may key on these specific names).
     suspectsCount: _meta.suspectsCount ?? 0,
     removedEdgeTargetCount: _meta.removedEdgeTargetCount ?? _meta.removedEdgesCount ?? 0,
     totalRemovedEdges: _meta.totalRemovedEdges ?? 0,
+    // Generic passthrough (R1/M1 fix) — a non-orphan caller's own `_meta`
+    // shape (e.g. event-wiring's skippedFiles/excludedFiles/filesConsidered)
+    // survives verbatim instead of being silently dropped by the named
+    // fields above, which this module must not hand-pick per detector.
+    _meta,
   }));
 
   // Build a fingerprint → suppressedBy index once.
@@ -153,7 +170,11 @@ export async function emitOrphanRunMetrics({
   // inside the try block (Gemini-G1) — its failure is non-fatal.
   let release;
   try {
-    const absPath = ensureMetricsFile(repoPath);
+    // Bug found by direct end-to-end testing: this call omitted `sinkPath`,
+    // so every batch write silently fell back to orphan's own file
+    // regardless of what the caller specified — the exact parameterisation
+    // this function's signature claimed to support was inert.
+    const absPath = ensureMetricsFile(repoPath, sinkPath);
     release = await lockfile.lock(absPath, {
       retries: { retries: 3, factor: 1.2, minTimeout: 25, maxTimeout: 200 },
       stale: 5000,

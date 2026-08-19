@@ -295,6 +295,10 @@
       "description": "Run the deterministic efficacy lints (cache-inertness, cache-instability, canary-no-test) — the GREEN≠REALIZED Cluster A check. Off by default; opt in via a committed efficacy-lints.config.json. Advisory in `npm run check` unless gate:true.",
       "category": "audit"
     },
+    "event-wiring:oracle": {
+      "description": "Repo-wide event-wiring-symmetry oracle check against the wine-oracle fixture (docs/plans/event-wiring-symmetry.md) — a durable regression guard for the dispatch-only detector, not the production diff-scoped Wave 1.5c pass itself.",
+      "category": "test"
+    },
     "final-review:set": {
       "description": "Persist the per-repo final-review provider (gemini | azure-claude | anthropic | default) to .env. Pass the provider as an arg: `npm run final-review:set -- azure-claude`. The work-repo lever for opting into Azure Foundry Opus.",
       "category": "diagnostic"

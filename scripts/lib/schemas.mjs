@@ -1504,6 +1504,74 @@ export const OrphanIntroducedFindingSchema = z.object({
   rationale: z.string(),
 });
 
+// ── event-wiring-symmetry (docs/plans/event-wiring-symmetry.md) ──
+
+/** A single source locus — offset-free, line-based (D2c). */
+export const EventLocusSchema = z.object({
+  path: z.string(),
+  startLine: z.number().int().positive(),
+  endLine: z.number().int().positive(),
+});
+
+/**
+ * One extracted dispatch or listen site. `pragmaSuppressed` only applies to
+ * dispatch sites (D5); a listen site never carries it.
+ */
+export const EventSiteSchema = z.object({
+  eventName: z.string().min(1),
+  dispatchForm: z.string().min(1),
+  enclosingSymbol: z.string().min(1),
+  runtime: z.enum(['production', 'test', 'doc-example']),
+  locus: EventLocusSchema,
+  pragmaSuppressed: z.boolean().optional(),
+});
+
+/**
+ * A dispatch-only symmetry finding (D2/D2b/D8/D9/D10). `triggers` is DATA,
+ * never identity (R3/M2, corrected R4/H1 — the fingerprint intercept in
+ * findings-pipeline.mjs keys on `eventName` alone). `enforcement` defaults
+ * to `'advisory'` here at the schema boundary — D10's fail-closed rule
+ * (unknown/absent -> `'gating'`) is enforced at the CONSUMER side
+ * (finding-verification.mjs's `countsTowardVerdict` and
+ * findings-pipeline.mjs's `computeAuditVerdict` — corrected from the plan's
+ * original convergence.mjs/final-adjudication.mjs citation after tracing the
+ * real call graph), not by this schema silently supplying a value a
+ * malformed producer omitted.
+ */
+export const EventWiringFindingSchema = z.object({
+  kind: z.literal('event-wiring-symmetry'),
+  eventName: z.string().min(1),
+  triggers: z.array(z.enum(['added-dispatch', 'removed-listener'])).min(1),
+  severity: z.enum(['MEDIUM', 'LOW']),
+  enforcement: z.literal('advisory'),
+  evidence: z.literal('name-presence'),
+  locus: EventLocusSchema,
+  relatedLoci: z.array(EventLocusSchema).default([]),
+  removedListenerLocus: EventLocusSchema.nullable().optional(),
+  rationale: z.string(),
+  testOnlyConsumer: z.boolean().default(false),
+});
+
+/** Gemini round-4 G1 fix — a separate finding kind, no event name, no dispatch site. */
+export const EventWiringOrphanedPragmaFindingSchema = z.object({
+  kind: z.literal('event-wiring-orphaned-pragma'),
+  severity: z.literal('MEDIUM'),
+  enforcement: z.literal('advisory'),
+  locus: EventLocusSchema,
+  pragmaText: z.string(),
+  rationale: z.string(),
+});
+
+/**
+ * Pass-state taxonomy for the event-wiring-symmetry detector — the SAME
+ * enum shape as `OrphanPassStateSchema` (not a narrower subset), for
+ * genuine INHERITED_STATES parity: `detectEventWiringAsymmetry` consumes
+ * the same `DiffScope` the orphan detector does, so an upstream
+ * `SKIPPED_NO_BASELINE`/`SKIPPED_PATCH_ONLY_MODE`/etc. must propagate
+ * through this wave's own state exactly as it does through orphan's.
+ */
+export const EventWiringPassStateSchema = OrphanPassStateSchema;
+
 // ── persona-clickpath → nav reachability seeding (plan: docs/plans/persona-clickpath-nav-seeding.md) ──
 
 /**

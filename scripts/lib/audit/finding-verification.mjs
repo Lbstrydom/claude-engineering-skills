@@ -405,8 +405,19 @@ export function effectiveSeverity(finding) {
   return finding?.verification ? finding.verification.verdictSeverity : finding?.severity;
 }
 
-/** Does this finding still count toward the audit verdict? */
+/**
+ * Does this finding still count toward the audit verdict?
+ *
+ * Two independent exclusion reasons, checked in order: a verification-gate
+ * refutation (pre-existing), and D10's advisory/gating classification
+ * (docs/plans/event-wiring-symmetry.md) — an `enforcement: 'advisory'`
+ * finding (the event-wiring-symmetry wave's own output) is real, visible,
+ * fingerprinted and suppressible, but never blocks convergence. Fail-closed
+ * per D10: any OTHER value, or the field's absence, counts as gating — a
+ * new detector cannot opt itself out of the gate by omitting the field.
+ */
 export function countsTowardVerdict(finding) {
+  if (finding?.enforcement === 'advisory') return false;
   return finding?.verification ? finding.verification.countsTowardVerdict : true;
 }
 

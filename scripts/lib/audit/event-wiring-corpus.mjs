@@ -121,6 +121,49 @@ function isAllowedExtension(relPath) {
   return SOURCE_EXTENSIONS.has(ext);
 }
 
+/**
+ * Reads MANY files at one ref in ONE subprocess, via `git cat-file --batch`
+ * — audit-code performance fix, found live: `buildCorpus`'s ref-anchored
+ * mode originally called `readAtRef` (one `git show` subprocess) per tracked
+ * file, which is 1000+ subprocess spawns on this repo alone and hung a
+ * direct end-to-end smoke test past 60 seconds. `git cat-file --batch`
+ * accepts every `<ref>:<path>` spec on ONE stdin stream and returns all
+ * blobs in order over ONE stdout stream — O(1) subprocess spawns instead of
+ * O(files).
+ *
+ * @param {string} repoPath
+ * @param {string} ref
+ * @param {string[]} relPaths
+ * @returns {Map<string, Buffer|null>} relPath -> content, or null if absent at ref
+ */
+function batchReadBlobsAtRef(repoPath, ref, relPaths) {
+  const result = new Map(); // relPath -> {oid, content: Buffer} | null
+  if (relPaths.length === 0) return result;
+  const stdin = relPaths.map(p => `${ref}:./${p}`).join('\n') + '\n';
+  const out = execFileSync('git', ['cat-file', '--batch'], {
+    cwd: repoPath, input: stdin, maxBuffer: 512 * 1024 * 1024,
+  });
+  let offset = 0;
+  for (const relPath of relPaths) {
+    const lineEnd = out.indexOf(0x0a, offset); // '\n'
+    if (lineEnd === -1) { result.set(relPath, null); break; } // truncated output — treat rest as missing
+    const header = out.slice(offset, lineEnd).toString('utf8');
+    offset = lineEnd + 1;
+    if (header.endsWith('missing')) {
+      result.set(relPath, null);
+      continue;
+    }
+    // "<oid> blob <size>"
+    const parts = header.split(' ');
+    const oid = parts[0];
+    const size = parseInt(parts[2], 10);
+    if (!Number.isFinite(size) || size < 0) { result.set(relPath, null); continue; }
+    result.set(relPath, { oid, content: out.slice(offset, offset + size) });
+    offset += size + 1; // +1 consumes the trailing '\n' after the blob content
+  }
+  return result;
+}
+
 function readAtRef(repoPath, ref, relPath) {
   // git show <ref>:<path> — every file becomes git-object-addressed under a
   // ref-anchored build, so no dirty/clean special case is needed here.
@@ -159,21 +202,32 @@ export function buildCorpus({ repoPath, wrappers = [], ref, totalByteBudgetMb = 
   const hashParts = [];
   let budgetExhausted = false;
 
+  // Filter to eligible paths FIRST, then batch-read them all in ONE
+  // subprocess when ref-anchored (audit-code performance fix, found live: a
+  // per-file `git show` in this loop is 1000+ subprocess spawns on a real
+  // repo — a direct end-to-end smoke test hung past 60s before this fix).
+  const eligiblePaths = [];
+  const excludedByPolicy = new Set();
   for (const relPath of trackedFiles) {
-    if (!isAllowedExtension(relPath)) { excludedFiles++; continue; }
-    if (isGenerated(relPath)) { excludedFiles++; continue; }
-
+    if (!isAllowedExtension(relPath) || isGenerated(relPath)) { excludedByPolicy.add(relPath); continue; }
     const classification = resolveAndClassify(relPath, { repoRoot: repoPath });
-    if (classification.category === 'sensitive') { excludedFiles++; continue; }
+    if (classification.category === 'sensitive') { excludedByPolicy.add(relPath); continue; }
+    eligiblePaths.push(relPath);
+  }
+  excludedFiles += excludedByPolicy.size;
+  const batchBlobs = ref ? batchReadBlobsAtRef(repoPath, ref, eligiblePaths) : null;
 
+  for (const relPath of eligiblePaths) {
     if (budgetExhausted) { skippedFiles++; continue; }
 
     let source;
     let contentHash;
     try {
       if (ref) {
-        source = readAtRef(repoPath, ref, relPath).toString('utf8');
-        contentHash = blobOidAtRef(repoPath, ref, relPath);
+        const entry = batchBlobs.get(relPath);
+        if (!entry) throw new Error(`missing at ${ref}`);
+        source = entry.content.toString('utf8');
+        contentHash = entry.oid;
       } else {
         const abs = path.join(repoPath, relPath);
         // audit-code R4/H2 fix: stat BEFORE reading — the prior version read
@@ -231,14 +285,92 @@ export function buildCorpus({ repoPath, wrappers = [], ref, totalByteBudgetMb = 
 }
 
 // ---------------------------------------------------------------------------
+// Wave-1.5c diff-scope materialiser — Cluster B fix, found during Wave-1.5c
+// wiring: the plan's D2 step 1 said "diff-scope-resolver already
+// materialises preimages via git worktree — reused", but
+// `diff-scope-resolver.mjs`'s exported `resolveDiffScope` returns an
+// IMPORT-GRAPH-shaped scope (paths/status/edges) for the orphan detector —
+// it never exposes before/after SOURCE CONTENT to a caller. Event-wiring
+// needs actual file content, so this is a dedicated, self-contained
+// materialiser reusing the same `git show <ref>:./<path>` primitive
+// `buildCorpus` already established (`readAtRef`).
+//
+// **Scope decision, deliberately narrower than orphan's**: always a
+// COMMITTED range (`baseRef..headRef`), never dirty-working-tree mode. D12's
+// lifecycle/ancestry tracking (`git merge-base --is-ancestor`) fundamentally
+// needs a resolvable commit ref — "is the dirty working tree an ancestor of
+// X" has no answer. An uncommitted dispatch/listener change is therefore not
+// analysed by this wave until it's committed; the standalone CLI's
+// repo-wide diagnostic mode (D2d) has no such restriction, since it never
+// writes to the lifecycle ledger.
+// ---------------------------------------------------------------------------
+
+/**
+ * @param {{auditBaseCommit?: string}} args
+ * @returns {{baseRef: string, headRef: string}}
+ */
+export function resolveEventWiringScopeRefs({ auditBaseCommit } = {}) {
+  return { baseRef: auditBaseCommit ?? 'HEAD~1', headRef: 'HEAD' };
+}
+
+/**
+ * Builds the `diffScope` shape `detectEventWiringAsymmetry` needs, for a
+ * COMMITTED range only (see the scope decision above).
+ * @param {{repoPath: string, baseRef: string, headRef: string}} args
+ * @returns {{headRef: string, changedFiles: Array<{path:string, status:string, beforeSource?:string, afterSource?:string}>}}
+ */
+export function buildEventWiringDiffScope({ repoPath, baseRef, headRef }) {
+  const buf = execFileSync('git', ['diff', '--name-status', '-z', baseRef, headRef], {
+    cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024,
+  });
+  const tokens = buf.toString('utf8').split('\0').filter(Boolean);
+  const changedFiles = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const raw = tokens[i];
+    const status = raw[0];
+    if (status === 'R' || status === 'C') {
+      // `git diff --name-status` emits "R100\0old\0new\0" — two path tokens follow.
+      const oldPath = tokens[++i];
+      const newPath = tokens[++i];
+      changedFiles.push(buildOneChangedFile(repoPath, baseRef, headRef, status, oldPath, newPath));
+      continue;
+    }
+    const relPath = tokens[++i];
+    changedFiles.push(buildOneChangedFile(repoPath, baseRef, headRef, status, relPath, relPath));
+  }
+  return { headRef, changedFiles };
+}
+
+function buildOneChangedFile(repoPath, baseRef, headRef, status, beforePath, afterPath) {
+  if (!isAllowedExtension(afterPath) && !isAllowedExtension(beforePath)) {
+    return { path: afterPath, status, beforeSource: undefined, afterSource: undefined };
+  }
+  let beforeSource;
+  let afterSource;
+  try {
+    if (status !== 'A' && status !== 'C') beforeSource = readAtRef(repoPath, baseRef, beforePath).toString('utf8');
+  } catch { /* file didn't exist at baseRef, or unreadable — leave undefined, D2 rule 6 fail-closed */ }
+  try {
+    if (status !== 'D') afterSource = readAtRef(repoPath, headRef, afterPath).toString('utf8');
+  } catch { /* file doesn't exist at headRef, or unreadable — leave undefined */ }
+  return { path: afterPath, status, beforeSource, afterSource };
+}
+
+// ---------------------------------------------------------------------------
 // Production entry point (Wave-1.5c) — R2/H1, corrected R3/H2, R3/H3, R5/H1.
 // ---------------------------------------------------------------------------
 
 /**
- * @param {{diffScope: {headRef: string, changedFiles: Array<{path:string, status:string, beforeSource?:string, afterSource?:string}>}, repoPath: string, wrappers: Array, ledgerPath: string, metricsSinkPath?: string}} args
+ * @param {{diffScope: {headRef: string, changedFiles: Array<{path:string, status:string, beforeSource?:string, afterSource?:string}>}, repoPath: string, wrappers: Array, ledgerPath: string, metricsSinkPath?: string, runId?: string, learningWritesAllowed?: boolean}} args
  */
-export async function detectEventWiringAsymmetry({ diffScope, repoPath, wrappers = [], totalByteBudgetMb, ledgerPath, metricsSinkPath } = {}) {
+export async function detectEventWiringAsymmetry({
+  diffScope, repoPath, wrappers = [], totalByteBudgetMb, ledgerPath, metricsSinkPath, runId, learningWritesAllowed = true,
+} = {}) {
   const { listOpenLifecycle, reconcileLifecycle } = await import('../ledger.mjs');
+  // Cluster-B fix: use the real, lock-safe, parameterised writer
+  // (orphan-metrics.mjs, now generalised) instead of the Cluster-A
+  // placeholder — see the plan's Phase 1 file list correction.
+  const { emitOrphanRunMetrics } = await import('./orphan-metrics.mjs');
   // (1) After-state repo-wide corpus, ref-anchored to headRef — reused by
   // both the site-diff below and D12 reconciliation, never built twice.
   // `totalByteBudgetMb` is threaded through explicitly (audit-code R1/M6 fix
@@ -268,7 +400,18 @@ export async function detectEventWiringAsymmetry({ diffScope, repoPath, wrappers
   const skippedFiles = corpusCounters.skippedFiles + readSkips;
   const counters = { ...corpusCounters, skippedFiles };
   if (skippedFiles > 0) {
-    if (metricsSinkPath) writeRunSummary(metricsSinkPath, { counters, partial: true });
+    // Gated on learningWritesAllowed (mirrors orphan-introduced's own
+    // short-circuit emit, legacy-production-audit.mjs) — this metrics file
+    // is durable local telemetry shared with the real run; an
+    // observation-only shadow (tiered-shadow-compare, verify-anchor-contract)
+    // appending to it double-counts the same commit.
+    if (metricsSinkPath && learningWritesAllowed) {
+      await emitOrphanRunMetrics({
+        runId: runId || `event-wiring-${Date.now()}`, passState: 'ANALYZED_PARTIAL',
+        rawFindings: [], survivors: [], suppressed: [], _meta: counters, repoPath,
+        sinkPath: metricsSinkPath, summaryKind: 'event-wiring-run-summary',
+      });
+    }
     return { findings: [], counters, partial: true };
   }
 
@@ -286,20 +429,39 @@ export async function detectEventWiringAsymmetry({ diffScope, repoPath, wrappers
 
   // (5) D12 reconciliation — one locked transaction, ancestry precomputed
   // outside the lock (R4/M1, corrected R5/H2, Gemini round-3 G1/G2).
-  const openRecords = listOpenLifecycle(ledgerPath, { kind: 'event-wiring-symmetry' });
-  const coveredNames = new Set(coverage.map(c => c.eventName));
-  const observations = coverage.map(c => ({ eventName: c.eventName, ref: diffScope.headRef, coverage: c }));
-  for (const rec of openRecords) {
-    if (coveredNames.has(rec.eventName)) continue;
-    const status = lookupEventStatus(corpus, rec.eventName);
-    observations.push({ eventName: rec.eventName, ref: diffScope.headRef, status });
+  // Gated on learningWritesAllowed for the same reason as the metrics
+  // emits below: this is durable shared state (.audit/event-wiring-ledger.json),
+  // not per-run output — an observation-only shadow run reconciling it would
+  // apply the same commit's transitions twice (double-counted occurrences,
+  // or a same-ref reopen/close cycle the real run never asked for).
+  if (learningWritesAllowed) {
+    const openRecords = listOpenLifecycle(ledgerPath, { kind: 'event-wiring-symmetry' });
+    const coveredNames = new Set(coverage.map(c => c.eventName));
+    const observations = coverage.map(c => ({ eventName: c.eventName, ref: diffScope.headRef, coverage: c }));
+    for (const rec of openRecords) {
+      if (coveredNames.has(rec.eventName)) continue;
+      const status = lookupEventStatus(corpus, rec.eventName);
+      observations.push({ eventName: rec.eventName, ref: diffScope.headRef, status });
+    }
+    const ancestryDecisions = computeAncestryDecisions(repoPath, diffScope.headRef, openRecords);
+    reconcileLifecycle(ledgerPath, { kind: 'event-wiring-symmetry', observations, now: Date.now(), ancestryDecisions });
   }
-  const ancestryDecisions = computeAncestryDecisions(repoPath, diffScope.headRef, openRecords);
-  reconcileLifecycle(ledgerPath, { kind: 'event-wiring-symmetry', observations, now: Date.now(), ancestryDecisions });
 
   // (6) merge counters, write metrics, return.
   const merged = { ...counters, ...symCounters };
-  if (metricsSinkPath) writeRunSummary(metricsSinkPath, { counters: merged, partial: false });
+  if (metricsSinkPath && learningWritesAllowed) {
+    // At this layer `findings` are already post-pragma-suppression (D5, inside
+    // resolveSymmetry) but PRE-ledger-suppression (which happens later, in the
+    // shared findings-pipeline this wave's caller feeds into) — so every
+    // current finding is reported as a survivor here; ledger-level suppression
+    // gets its own record when the shared pipeline processes it.
+    const passState = findings.length > 0 ? 'ANALYZED_WITH_FINDINGS' : 'ANALYZED_CLEAN';
+    await emitOrphanRunMetrics({
+      runId: runId || `event-wiring-${Date.now()}`, passState,
+      rawFindings: findings, survivors: findings, suppressed: [], _meta: merged, repoPath,
+      sinkPath: metricsSinkPath, summaryKind: 'event-wiring-run-summary',
+    });
+  }
 
   return { findings, counters: merged, partial: false };
 }
@@ -325,17 +487,3 @@ function computeAncestryDecisions(repoPath, headRef, openRecords) {
   return decisions;
 }
 
-function writeRunSummary(sinkPath, { counters, partial }) {
-  try {
-    fs.mkdirSync(path.dirname(sinkPath), { recursive: true });
-    const line = JSON.stringify({
-      kind: 'event-wiring-run-summary',
-      _meta: counters,
-      partial,
-      ts: Date.now(),
-    });
-    fs.appendFileSync(sinkPath, line + '\n');
-  } catch {
-    // Best-effort — never fail the detector run over a metrics-sink write error.
-  }
-}

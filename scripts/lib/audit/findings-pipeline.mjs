@@ -79,6 +79,20 @@ export function normalizeArchCategory(f) {
  *   - born-orphan: hash over {kind, subKind, file}
  *   The orphan fingerprint is fully structural — no prose, no truncated lists.
  *
+ * For `event-wiring-symmetry` findings (docs/plans/event-wiring-symmetry.md
+ * R3/M2, corrected R4/H1): hash over {kind, eventName} — `eventName` ALONE,
+ * never the file path (the same event dispatched from two files must
+ * collapse to one record, not double-count `E`) and never `triggers[]`
+ * (which is DATA, not identity — a trigger-inclusive key fragmented the
+ * same event into two fingerprints depending on which trigger fired on
+ * which run, the exact bug this correction fixes).
+ *
+ * For `event-wiring-orphaned-pragma` findings (Gemini round-4 G1, R4/L1):
+ * hash over {kind, path, pragmaTextHash} — it has no event name and no
+ * dispatch site, so the pragma's own location + content is the only
+ * available identity, and keying on content (not line number) keeps it
+ * stable under unrelated reformatting elsewhere in the file.
+ *
  * For other findings (LLM passes, future mechanical passes): delegates to
  * findings.mjs/semanticId() — same canonical-evidence path used everywhere
  * else in the audit pipeline (audit-code R1/M8 — single SoT for identity).
@@ -87,6 +101,16 @@ export function normalizeArchCategory(f) {
  * @returns {string} 8-char hex hash
  */
 export function findingFingerprint(f) {
+  if (f.kind === 'event-wiring-symmetry') {
+    const canonical = `${f.kind}|${f.eventName || ''}`;
+    return crypto.createHash('sha256').update(canonical).digest('hex').slice(0, 8);
+  }
+  if (f.kind === 'event-wiring-orphaned-pragma') {
+    const path_ = normalizePath(f.locus?.path || '');
+    const textHash = crypto.createHash('sha256').update(f.pragmaText || '').digest('hex').slice(0, 8);
+    const canonical = `${f.kind}|${path_}|${textHash}`;
+    return crypto.createHash('sha256').update(canonical).digest('hex').slice(0, 8);
+  }
   if (f.kind === 'orphan-introduced') {
     const file = normalizePath(f.file || '');
     let canonical;
@@ -315,8 +339,18 @@ function applyAcceptV1Suppression(findings, planContent) {
  */
 export function computeAuditVerdict(findings, { incomplete = false } = {}) {
   const list = Array.isArray(findings) ? findings : [];
-  const high = list.filter(f => f?.severity === 'HIGH').length;
-  const medium = list.filter(f => f?.severity === 'MEDIUM').length;
+  // D10 fail-closed (docs/plans/event-wiring-symmetry.md — a plan finding
+  // originally named final-adjudication.mjs as this guarantee's owner; that
+  // file turned out to be Stage-2 tiered-pipeline-specific and unrelated to
+  // verdict computation, corrected after reading the real call graph).
+  // Both `computeAuditVerdict` callers (legacy-production-audit.mjs,
+  // tiered-pipeline.mjs) must honour this, and only the legacy caller
+  // pre-filters via `countsTowardVerdict` — so the check lives HERE, in the
+  // one function both pipelines share, rather than depending on every
+  // caller to pre-filter correctly.
+  const gating = list.filter(f => f?.enforcement !== 'advisory');
+  const high = gating.filter(f => f?.severity === 'HIGH').length;
+  const medium = gating.filter(f => f?.severity === 'MEDIUM').length;
   let verdict = 'PASS';
   if (high > 0) verdict = 'SIGNIFICANT_ISSUES';
   else if (medium > 2) verdict = 'NEEDS_FIXES';

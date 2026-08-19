@@ -606,14 +606,19 @@ or absent value is treated as `gating`** (fail-closed — a new detector cannot 
 opt itself out of the gate by omission). Event-wiring findings are the first `advisory`
 producer.
 
-**The four consumers that must honour it** (R2/H4 — naming them, because "the pipeline
-enforces it" was hand-waving; each is a named file in §7's *Modified* table):
+**The consumers that must honour it** (R2/H4 — naming them, because "the pipeline
+enforces it" was hand-waving; corrected during Cluster B implementation after tracing
+the REAL verdict call graph — `convergence.mjs`'s `evaluateConvergence` takes
+pre-computed `{high,medium,quickFix}` counts and never inspects individual findings,
+and `final-adjudication.mjs` turned out to be Stage-2 tiered-pipeline-specific
+clean-challenge adjudication, unrelated to verdict computation and never touched by
+event-wiring findings, which run only in the legacy Wave-1.5 path):
 
 | Consumer | File | Behaviour on `advisory` |
 |---|---|---|
-| Convergence evaluator | [`scripts/lib/audit/convergence.mjs`](../../scripts/lib/audit/convergence.mjs) | excluded from `HIGH`/`MEDIUM`/`quickFix` counts |
-| Final adjudication | [`scripts/lib/audit/final-adjudication.mjs`](../../scripts/lib/audit/final-adjudication.mjs) | cannot produce a blocking verdict |
-| Findings pipeline | [`scripts/lib/audit/findings-pipeline.mjs`](../../scripts/lib/audit/findings-pipeline.mjs) | classification preserved through fingerprint + kind-scoped suppression |
+| Count exclusion (legacy path) | [`scripts/lib/audit/finding-verification.mjs`](../../scripts/lib/audit/finding-verification.mjs)'s `countsTowardVerdict` | excluded from the `high`/`medium`/`low` counts `legacy-production-audit.mjs` derives before calling `computeAuditVerdict` |
+| Verdict computation (both pipelines) | [`scripts/lib/audit/findings-pipeline.mjs`](../../scripts/lib/audit/findings-pipeline.mjs)'s `computeAuditVerdict` | filters `enforcement !== 'advisory'` internally — the tiered-pipeline caller (`tiered-pipeline.mjs`) does NOT pre-filter, so the guarantee has to live in the one function both pipelines share |
+| Findings pipeline | [`scripts/lib/audit/findings-pipeline.mjs`](../../scripts/lib/audit/findings-pipeline.mjs)'s `findingFingerprint` | classification preserved through fingerprint (via object spread) + kind-scoped suppression |
 | Report rendering | [`scripts/openai-audit.mjs`](../../scripts/openai-audit.mjs) | rendered in a distinct **Advisory** block, never folded into the gate summary |
 
 Advisory findings remain fully **visible, fingerprinted, suppressible and
@@ -1097,10 +1102,15 @@ partial scan over it always indicates a rig fault, never a real disagreement.
   record, pragma handling. Files: `scripts/lib/schemas.mjs` (modify),
   `scripts/openai-audit.mjs` (modify),
   `scripts/lib/audit/orphan-metrics.mjs` (modify),
-  `scripts/lib/audit/findings-pipeline.mjs` (modify — D10 fail-closed filter; **this file
-  is no longer "reused unchanged"**, per R1/H4),
-  `scripts/lib/audit/convergence.mjs` (modify — D10),
-  `scripts/lib/audit/final-adjudication.mjs` (modify — D10),
+  `scripts/lib/audit/findings-pipeline.mjs` (modify — D10 fail-closed filter in
+  `computeAuditVerdict`, plus the fingerprint intercept; **this file is no longer
+  "reused unchanged"**, per R1/H4),
+  `scripts/lib/audit/finding-verification.mjs` (modify — D10, corrected during
+  implementation: the plan originally named `convergence.mjs` for count-exclusion,
+  but `convergence.mjs`'s `evaluateConvergence` takes pre-computed
+  `{high,medium,quickFix}` and never inspects individual findings — the real
+  count-exclusion seam is `countsTowardVerdict` here, already the existence-gate's
+  own exclusion predicate, extended with a second reason),
   `scripts/lib/ledger.mjs` (modify — the D12 lifecycle host; §7's Modified-files
   table always described this, but it was never cross-referenced into this phase
   list — found during implementation: `event-wiring-corpus.mjs`'s
@@ -1109,7 +1119,30 @@ partial scan over it always indicates a rig fault, never a real disagreement.
   module-scope import) so Phase 0 stays self-contained and testable without this
   file existing yet — `ledger.mjs`'s actual modification still belongs to Phase 1,
   where the lifecycle host is built),
+  `scripts/lib/audit/event-wiring-corpus.mjs` (modify — a second cross-cluster
+  touch found the same way: `detectEventWiringAsymmetry`'s Cluster-A placeholder
+  metrics writer is replaced with a call to the now-parameterised
+  `emitOrphanRunMetrics`, the shared lock-safe writer this phase builds; also
+  gained a `learningWritesAllowed` param threaded from
+  `runEventWiringSymmetryPass`, found during implementation by diffing against
+  `runOrphanIntroducedPass`'s own gating — orphan's metrics emit and this
+  wave's two metrics emits plus its D12 `reconcileLifecycle` write are the same
+  hazard class: an observation-only shadow run (tiered-shadow-compare,
+  verify-anchor-contract) computing at the same commit as a real run must not
+  double-write shared durable state, and the first draft left this wave's
+  three write sites unconditional),
+  `scripts/.cli-catalog.json` (modify — the `event-wiring:oracle` npm script
+  added in Phase 0 had no catalog entry; `tests/dashboard-cli.test.mjs`'s
+  regression gate caught it at the Phase-1 test run, not at Phase 0, since
+  that gate runs against the full `npm run check` surface),
   `tests/event-wiring.test.mjs` (modify).
+  ~~`scripts/lib/audit/convergence.mjs` (modify — D10)~~ / ~~`scripts/lib/audit/final-adjudication.mjs`
+  (modify — D10)~~ — **struck, corrected during implementation**: neither file
+  needed a change. `convergence.mjs` is a pure predicate over pre-computed counts;
+  `final-adjudication.mjs` turned out to be Stage-2 tiered-pipeline-specific
+  clean-challenge adjudication, unrelated to verdict computation and never reached
+  by event-wiring findings (which run only in the legacy Wave-1.5 path). See the
+  corrected consumer table in D10 above.
 - **Close-out (not a phase)**: `npm run cli:flags:gate`, `npm test`,
   `npm run plans:index`.
 
