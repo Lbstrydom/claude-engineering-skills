@@ -12,7 +12,8 @@ import assert from 'node:assert/strict';
 
 import {
   centredWindow, citedLineOf, resolveCitedSources, detailAnchors, anchorLine,
-  sectionAnchors, planDocumentCandidates,
+  sectionAnchors, planDocumentCandidates, anchorHits, clusterAnchorHits, planWindows,
+  CITED_SOURCE_MAX_CHARS, CITED_SOURCE_MAX_WINDOWS, CITED_SOURCE_WINDOW_LINES,
 } from '../scripts/lib/campaign/cited-source.mjs';
 import { ADJUDICATION_SYSTEM_PROMPT } from '../scripts/lib/campaign/adjudicate.mjs';
 
@@ -326,5 +327,167 @@ describe('sectionAnchors', () => {
   it('returns nothing for a plain path — this is the plan-citation shape only', () => {
     assert.deepEqual(sectionAnchors('scripts/a.mjs:10'), []);
     assert.deepEqual(sectionAnchors(null), []);
+  });
+});
+
+// -- more than one span of one file ------------------------------------------
+//
+// A finding can name two places at once: "§1 D1b vs §8 promotion matrix", or a
+// claim about a REPEATED span. One centred window answers only the first of
+// them. The case that exposed it, live on 2026-08-19: a finding about a
+// duplicated `#### D7e` heading, whose occurrences sit at lines 1755 and 1875
+// of the plan. The window centred on the first covered 1635-1874 and missed the
+// second by ONE line, and the adjudicator reported exactly that -- "Only ONE
+// '#### D7e' heading is visible in the cited span."
+
+describe('multi-window citations', () => {
+  // 2000 lines with the same heading twice, 120 apart, as in the field case.
+  const dupDoc = Array.from({ length: 2000 }, (_, i) => {
+    if (i === 1754 || i === 1874) return '#### D7e Role and MODE are orthogonal';
+    return `plan line ${i + 1}`;
+  }).join('\n');
+
+  it('THE field case: two occurrences 120 lines apart land in ONE window, at the same cost', () => {
+    const res = resolveCitedSources({
+      section: '#### D7e', detail: 'The `#### D7e` heading appears twice.',
+      auditedSha: 'abc123', planFile: 'docs/plans/x.md',
+      show: () => ({ ok: true, content: dupDoc }),
+    });
+    const wins = res.sources.filter((x) => x.resolved);
+    assert.equal(wins.length, 1, 'clustering, not a second window: they fit in one span');
+    const w = wins[0];
+    assert.ok(w.startLine <= 1755 && w.endLine >= 1875, `window ${w.startLine}-${w.endLine} must contain BOTH occurrences`);
+  });
+
+  it('two regions too far apart become two windows, and the budget is DIVIDED not multiplied', () => {
+    const farDoc = Array.from({ length: 3000 }, (_, i) => {
+      if (i === 200) return 'the alpha marker lives here';
+      if (i === 2500) return 'the omega marker lives here';
+      return `filler line ${i + 1} with enough text to make the character budget bite somewhat`;
+    }).join('\n');
+    const res = resolveCitedSources({
+      section: 'scripts/a.mjs', detail: 'compare `alpha marker` against `omega marker`',
+      auditedSha: 'abc123',
+      show: () => ({ ok: true, content: farDoc }),
+    });
+    const wins = res.sources.filter((x) => x.resolved);
+    assert.equal(wins.length, 2);
+    assert.ok(wins.some((w) => w.startLine <= 201 && w.endLine >= 201), 'the first region is shown');
+    assert.ok(wins.some((w) => w.startLine <= 2501 && w.endLine >= 2501), 'and so is the second');
+
+    // The property that makes this safe on a spend-bearing call: one file's
+    // whole excerpt costs the same whether it is one span or three.
+    const total = wins.reduce((n, w) => n + w.content.length, 0);
+    assert.ok(total <= CITED_SOURCE_MAX_CHARS, `${total} chars for one file exceeds the ${CITED_SOURCE_MAX_CHARS} budget`);
+  });
+
+  it('says which span it is showing, so two entries are never read as two files', () => {
+    const farDoc = Array.from({ length: 3000 }, (_, i) => (i === 200 ? 'alpha marker' : (i === 2500 ? 'omega marker' : `line ${i + 1}`))).join('\n');
+    const res = resolveCitedSources({
+      section: 'scripts/a.mjs', detail: '`alpha marker` and `omega marker`', auditedSha: 'abc123',
+      show: () => ({ ok: true, content: farDoc }),
+    });
+    const wins = res.sources.filter((x) => x.resolved);
+    assert.deepEqual(wins.map((w) => w.windowIndex), [1, 2]);
+    assert.deepEqual(wins.map((w) => w.windowCount), [2, 2]);
+    assert.equal(new Set(wins.map((w) => w.path)).size, 1, 'both are the same file');
+    assert.ok(ADJUDICATION_SYSTEM_PROMPT.includes('`windowIndex` of `windowCount`'), 'and the prompt explains what that means');
+  });
+
+  it('never exceeds the window cap however many regions the finding names', () => {
+    const many = Array.from({ length: 6000 }, (_, i) => (i % 700 === 0 ? `marker${Math.floor(i / 700)} here` : `line ${i + 1}`)).join('\n');
+    const detail = Array.from({ length: 8 }, (_, k) => `\`marker${k} here\``).join(' and ');
+    const res = resolveCitedSources({
+      section: 'scripts/a.mjs', detail, auditedSha: 'abc123', show: () => ({ ok: true, content: many }),
+    });
+    const wins = res.sources.filter((x) => x.resolved);
+    assert.equal(wins.length, CITED_SOURCE_MAX_WINDOWS);
+    assert.ok(wins.reduce((n, w) => n + w.content.length, 0) <= CITED_SOURCE_MAX_CHARS);
+  });
+
+  it('NEGATIVE CONTROL: a single-region finding is still ONE full-size window', () => {
+    // The 115 rows that name one region must not be split, narrowed, or
+    // otherwise disturbed by a feature meant for the other 86.
+    const doc = Array.from({ length: 1000 }, (_, i) => (i === 700 ? 'const targetSymbol = 1;' : `pad${i}`)).join('\n');
+    const res = resolveCitedSources({
+      section: 'scripts/a.mjs', detail: 'the `targetSymbol` constant is wrong', auditedSha: 'abc123',
+      show: () => ({ ok: true, content: doc }),
+    });
+    assert.equal(res.sources.length, 1);
+    assert.equal(res.sources[0].windowCount, 1);
+    assert.equal(res.sources[0].endLine - res.sources[0].startLine + 1, CITED_SOURCE_WINDOW_LINES, 'full width, undivided');
+  });
+
+  it('an explicit path:line citation stays ONE window — it is an instruction, not a guess', () => {
+    const doc = Array.from({ length: 3000 }, (_, i) => (i === 200 ? 'alpha marker' : (i === 2500 ? 'omega marker' : `line ${i + 1}`))).join('\n');
+    const res = resolveCitedSources({
+      section: 'scripts/a.mjs:2501', detail: '`alpha marker` and `omega marker`', auditedSha: 'abc123',
+      show: () => ({ ok: true, content: doc }),
+    });
+    assert.equal(res.sources.length, 1);
+    assert.equal(res.sources[0].anchorKind, 'cited-line');
+    assert.ok(res.sources[0].startLine <= 2501 && res.sources[0].endLine >= 2501);
+  });
+});
+
+describe('anchorHits / clusterAnchorHits / planWindows', () => {
+  const doc = Array.from({ length: 1000 }, (_, i) => ((i === 99 || i === 149 || i === 899) ? 'needle' : `line ${i + 1}`)).join('\n');
+
+  it('collects repeated occurrences, bounded per term', () => {
+    assert.deepEqual(anchorHits(doc, ['needle'], 2).map((h) => h.line), [100, 150]);
+    assert.deepEqual(anchorHits(doc, ['needle'], 3).map((h) => h.line), [100, 150, 900]);
+    assert.deepEqual(anchorHits(doc, ['needle'], 1).map((h) => h.line), [100]);
+  });
+
+  it('one line is one candidate however many anchors name it', () => {
+    // Otherwise two anchors on the same line claim two windows and halve the
+    // budget for a span already covered once.
+    assert.deepEqual(anchorHits('alpha beta\nx', ['alpha', 'beta'], 2).map((h) => h.line), [1]);
+  });
+
+  it('anchorLine still answers the single-best question, unchanged', () => {
+    assert.deepEqual(anchorLine(doc, ['needle']), { line: 100, anchor: 'needle' });
+    assert.equal(anchorLine(doc, ['absent']), null);
+  });
+
+  it('ranks by anchor PRIORITY, not by position in the file', () => {
+    // Hit order IS priority (anchors are tried most-specific first), so the
+    // cluster holding the array-first anchor must lead even though it sits
+    // LATER in the file. When the window cap bites, the cluster that gets
+    // dropped has to be the least deliberate citation, not the bottom one.
+    const hits = [{ line: 900, anchor: 'quoted' }, { line: 100, anchor: 'weak' }, { line: 150, anchor: 'weak' }];
+    const clusters = clusterAnchorHits(hits, 240);
+    assert.equal(clusters.length, 2);
+    assert.deepEqual(clusters[0].lines, [900]);
+    assert.equal(clusters[0].anchor, 'quoted');
+    assert.deepEqual(clusters[1].lines, [100, 150], 'and the weaker cluster still groups what fits together');
+  });
+
+  it('a cluster reports its BEST anchor, not its topmost one', () => {
+    // A window covering a section heading and the quoted symbol below it is
+    // there because of the quotation; naming the heading would make
+    // `anchorKind` claim "section-anchor" for a window a prose anchor earned.
+    const hits = [{ line: 150, anchor: 'quoted' }, { line: 100, anchor: 'heading' }];
+    assert.equal(clusterAnchorHits(hits, 240)[0].anchor, 'quoted');
+  });
+
+  it('a cluster is bounded by its SPAN, not by neighbour gaps', () => {
+    // A chain of hits 100 apart must not grow into a 900-line "cluster" whose
+    // centred window contains neither end.
+    const hits = [0, 100, 200, 300, 400, 500].map((n) => ({ line: n + 1, anchor: `a${n}` }));
+    const clusters = clusterAnchorHits(hits, 240);
+    for (const c of clusters) assert.ok(c.max - c.min < 240, `cluster ${c.min}-${c.max} is wider than one window`);
+  });
+
+  it('divides both budgets by the window count, and never returns zero windows', () => {
+    const three = planWindows(doc, ['needle'], { maxWindows: 3, perTerm: 3 });
+    assert.ok(three.count >= 2);
+    assert.equal(three.windowLines, Math.floor(CITED_SOURCE_WINDOW_LINES / three.count));
+    assert.equal(three.maxChars, Math.floor(CITED_SOURCE_MAX_CHARS / three.count));
+
+    const none = planWindows(doc, ['nothing here'], {});
+    assert.equal(none.count, 1);
+    assert.equal(none.centres[0].line, null, 'no anchor means an honest head window, not zero windows');
+    assert.equal(none.windowLines, CITED_SOURCE_WINDOW_LINES, 'and it keeps the full budget');
   });
 });

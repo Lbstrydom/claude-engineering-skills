@@ -316,6 +316,16 @@ quoted prose first, then on the section title — and when neither matches, the
 excerpt is an honest head window whose `truncated: true` routes the row to you
 as before.
 
+**A file may be shown as several spans.** A finding can name two places at once
+— two sections of a plan, or a span that appears TWICE — and one centred
+window answers only the first. Up to three non-contiguous windows are cited per
+file, each carrying `windowIndex` of `windowCount`, and the per-file line and
+character budgets are **divided** across them: showing three spans costs what
+showing one used to (measured: average excerpt bytes per row 12,281 → 12,459,
++1.4%, while anchor coverage went 73.6% → 89.0%). Occurrences close enough to
+share a window are clustered into one rather than duplicated — which is how a
+heading repeated 120 lines later lands in a single span.
+
 Findings are verified against the snapshot's **own** `audited_sha`, never the
 working tree. A finding that was true when collected and has since been fixed
 would otherwise be recorded false — penalising the arm that correctly found a

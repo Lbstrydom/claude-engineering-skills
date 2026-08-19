@@ -31,6 +31,15 @@ export const CITED_SOURCE_MAX_CHARS = 24000;
  * nothing that the excerpt budget would have preserved anyway.
  */
 export const CITED_SOURCE_MAX_BYTES = 1024 * 1024;
+/**
+ * Non-contiguous spans of ONE file handed to the adjudicator. See
+ * `planWindows` for the measurement behind the number — and note that the
+ * per-file line and character budgets are DIVIDED across them, so this raises
+ * coverage without raising spend.
+ */
+export const CITED_SOURCE_MAX_WINDOWS = 3;
+/** Occurrences of a single anchor term that may become window centres. */
+export const ANCHOR_OCCURRENCES_PER_TERM = 2;
 
 /**
  * A window of `content` centred on `line`, or the head when there is no anchor.
@@ -225,13 +234,136 @@ export function planDocumentCandidates(planFile) {
  * prose is model-authored and reaches this function unvalidated.
  */
 export function anchorLine(content, anchors) {
+  return anchorHits(content, anchors, 1)[0] ?? null;
+}
+
+/**
+ * EVERY line an anchor occurs on, in anchor-priority order, bounded.
+ *
+ * `anchorLine` answers "where is the one best span", which is the wrong
+ * question for two shapes of finding that both showed up in the field:
+ *
+ * - a claim comparing TWO sections of one document ("§1 D1b vs §8 promotion
+ *   matrix"), and
+ * - a claim about a REPEATED span — the case that exposed this: a finding
+ *   about a duplicated `#### D7e` heading, whose two occurrences sit at lines
+ *   1755 and 1875 of the plan. The single window centred on the first spanned
+ *   1635–1874 and missed the second **by one line**, and the adjudicator said
+ *   so: *"Only ONE '#### D7e' heading is visible in the cited span."*
+ *
+ * `perTerm` is the bound that keeps this from exploding: a common identifier
+ * occurs dozens of times in a large file, and every occurrence is a candidate
+ * window centre. Two per term is enough to express "this appears more than
+ * once" without turning one finding into a document dump.
+ */
+export function anchorHits(content, anchors, perTerm = ANCHOR_OCCURRENCES_PER_TERM) {
   const lines = String(content ?? '').split('\n');
+  const out = [];
+  const seenLines = new Set();
   for (const anchor of anchors || []) {
-    for (let i = 0; i < lines.length; i += 1) {
-      if (lines[i].includes(anchor)) return { line: i + 1, anchor };
+    let found = 0;
+    for (let i = 0; i < lines.length && found < perTerm; i += 1) {
+      if (!lines[i].includes(anchor)) continue;
+      found += 1;
+      // One line is one candidate centre however many anchors name it —
+      // otherwise two anchors on the same line would claim two windows and
+      // halve the budget for a span already covered once.
+      if (seenLines.has(i + 1)) continue;
+      seenLines.add(i + 1);
+      out.push({ line: i + 1, anchor });
     }
   }
-  return null;
+  return out;
+}
+
+/**
+ * Group hits that can SHARE one window, most-important cluster first.
+ *
+ * This is the half that costs nothing: two occurrences 120 lines apart do not
+ * need two windows, they need one window centred BETWEEN them. On the D7e case
+ * that is the whole fix — 1755 and 1875 become a single span 1695–1934, at the
+ * same spend as the window that missed one of them.
+ *
+ * Ranked by the priority of the best hit in each cluster (anchor order, so a
+ * backticked quotation outranks a section title), never by position: when the
+ * window cap bites, the cluster that gets dropped must be the least deliberate
+ * citation, not the one furthest down the file.
+ */
+export function clusterAnchorHits(hits, windowLines) {
+  const priority = new Map();
+  const anchorAt = new Map();
+  (hits || []).forEach((h, i) => {
+    if (priority.has(h.line)) return;
+    priority.set(h.line, i);
+    anchorAt.set(h.line, h.anchor);
+  });
+  const clusters = [];
+  for (const h of [...(hits || [])].sort((a, b) => a.line - b.line)) {
+    const last = clusters[clusters.length - 1];
+    // `< windowLines`, measured from the cluster's FIRST line: a cluster must
+    // fit inside one window, so it is bounded by its span, not by the gap
+    // between neighbours (which would let a chain of close hits grow without
+    // limit and produce a window that contains neither end).
+    if (last && h.line - last.min < windowLines) { last.max = h.line; last.lines.push(h.line); }
+    else clusters.push({ min: h.line, max: h.line, lines: [h.line] });
+  }
+  return clusters
+    .map((c) => {
+      // The cluster REPORTS its best anchor, not its topmost one. A window
+      // covering both a section heading and the quoted symbol below it is
+      // there because of the quotation; naming the heading (which merely
+      // happens to sit at a lower line number) would make `anchorKind` say
+      // "section-anchor" for a window a prose anchor earned.
+      const best = c.lines.reduce((a, b) => (priority.get(a) <= priority.get(b) ? a : b));
+      return { ...c, anchor: anchorAt.get(best), rank: priority.get(best) };
+    })
+    .sort((a, b) => a.rank - b.rank);
+}
+
+/**
+ * Decide the window centres for one file, and the budget each window gets.
+ *
+ * **The per-file budget is DIVIDED, never multiplied.** N windows each get
+ * `1/N` of the line and character ceilings, so a file's whole excerpt costs the
+ * same whether it is shown as one span or three. That is what makes this safe
+ * to turn on for a spend-bearing call over hundreds of rows: measured across
+ * cohort `e52eec728688fcab`, average excerpt bytes per row moved 12,281 →
+ * 12,459 (+1.4%) while anchor-hit coverage went **73.6% → 89.0%**.
+ *
+ * Two passes, deliberately. Clustering depends on the window size and the
+ * window size depends on the cluster count, so the first pass clusters at the
+ * FULL size to learn how many distinct regions the finding names, and the
+ * second re-clusters at the size those regions will actually get. Without the
+ * second pass a 3-window row clusters at 240 lines and renders at 80, which can
+ * centre a window between its own anchors and show neither.
+ *
+ * The cap is 3. Measured coverage by cap: 1 → 73.6%, 2 → 84.9%, 3 → 89.0%,
+ * 4 → 90.1%. The fourth window buys 1.1 points and takes every window down to
+ * 60 lines, which is too thin to read a plan section in.
+ */
+export function planWindows(content, anchors, {
+  maxWindows = CITED_SOURCE_MAX_WINDOWS,
+  windowLines = CITED_SOURCE_WINDOW_LINES,
+  maxChars = CITED_SOURCE_MAX_CHARS,
+  perTerm = ANCHOR_OCCURRENCES_PER_TERM,
+} = {}) {
+  const hits = anchorHits(content, anchors, perTerm);
+  if (hits.length === 0) {
+    return { count: 1, windowLines, maxChars, centres: [{ line: null, anchor: null }] };
+  }
+  const coarse = clusterAnchorHits(hits, windowLines);
+  const count = Math.min(Math.max(1, coarse.length), Math.max(1, maxWindows));
+  const perWindowLines = Math.max(1, Math.floor(windowLines / count));
+  const perWindowChars = Math.max(1, Math.floor(maxChars / count));
+  const fine = clusterAnchorHits(hits, perWindowLines).slice(0, count);
+  return {
+    count: fine.length,
+    windowLines: perWindowLines,
+    maxChars: perWindowChars,
+    // Centred on the cluster's MIDPOINT, which is what puts a repeated span's
+    // first and last occurrence inside one window.
+    centres: fine.map((c) => ({ line: Math.round((c.min + c.max) / 2), anchor: c.anchor })),
+  };
 }
 
 /**
@@ -312,7 +444,7 @@ export function resolveCitedSources({
       assertGitPathAdmissible(p, { repoRoot });
     } catch (err) {
       const reason = err?.reason === 'sensitive' ? 'sensitive-path' : 'path-escapes-repo';
-      return { path: p, resolved: false, reason };
+      return [{ path: p, resolved: false, reason }];
     }
     // Bound the INPUT, not just the output. The excerpt is capped in lines and
     // characters and the file COUNT is capped, but `show` materialises the whole
@@ -323,26 +455,41 @@ export function resolveCitedSources({
     // the object header only, so this costs nothing on the paths that pass.
     const size = blobSize(repoRoot, auditedSha, p);
     if (size.ok && size.bytes > CITED_SOURCE_MAX_BYTES) {
-      return { path: p, resolved: false, reason: 'oversized', bytes: size.bytes, maxBytes: CITED_SOURCE_MAX_BYTES };
+      return [{ path: p, resolved: false, reason: 'oversized', bytes: size.bytes, maxBytes: CITED_SOURCE_MAX_BYTES }];
     }
     const res = show(repoRoot, auditedSha, p);
-    if (!res.ok) return { path: p, resolved: false, reason: res.error?.code ?? 'unreadable' };
+    if (!res.ok) return [{ path: p, resolved: false, reason: res.error?.code ?? 'unreadable' }];
 
-    const found = citedLine == null ? anchorLine(res.content, anchorList) : null;
-    const win = centredWindow(res.content, citedLine ?? found?.line ?? null);
-    return {
-      path: p, sha: auditedSha, resolved: true,
-      startLine: win.startLine, endLine: win.endLine, truncated: win.truncated,
-      anchorKind: citedLine != null ? 'cited-line' : (found ? 'detail-anchor' : 'head'),
-      anchor: found?.anchor ?? null,
-      content: win.text,
-    };
+    // A `path:line` citation is an explicit instruction about WHERE to look, so
+    // it stays one window and the anchor search is not run at all. Everything
+    // else is planned: one window when the finding names one region, up to
+    // `CITED_SOURCE_MAX_WINDOWS` when it names more, always inside one file's
+    // budget.
+    const planned = citedLine == null
+      ? planWindows(res.content, anchorList)
+      : { count: 1, windowLines: CITED_SOURCE_WINDOW_LINES, maxChars: CITED_SOURCE_MAX_CHARS, centres: [{ line: citedLine, anchor: null }] };
+
+    return planned.centres.map((c, i) => {
+      const win = centredWindow(res.content, c.line, planned.windowLines, planned.maxChars);
+      return {
+        path: p, sha: auditedSha, resolved: true,
+        startLine: win.startLine, endLine: win.endLine, truncated: win.truncated,
+        anchorKind: citedLine != null ? 'cited-line' : (c.anchor ? 'detail-anchor' : 'head'),
+        anchor: c.anchor ?? null,
+        // Stated, not inferred: two entries with the same path are excerpts of
+        // ONE file, and an adjudicator that read them as separate files (or as
+        // a contradiction) would answer the wrong question.
+        windowIndex: i + 1, windowCount: planned.centres.length,
+        content: win.text,
+      };
+    });
   };
 
   for (const p of paths) {
-    const src = resolveOne(p, anchors, lineFor(p));
-    if (src.resolved) resolvedAny = true;
-    sources.push(src);
+    for (const src of resolveOne(p, anchors, lineFor(p))) {
+      if (src.resolved) resolvedAny = true;
+      sources.push(src);
+    }
   }
 
   // ── The plan-document fallback ────────────────────────────────────────────
@@ -378,19 +525,21 @@ export function resolveCitedSources({
     const candidates = planDocumentCandidates(planFile);
     let lastRefusal = null;
     for (const cand of candidates) {
-      const src = resolveOne(cand, planAnchors, null);
-      if (src.resolved) {
+      const windows = resolveOne(cand, planAnchors, null);
+      if (windows.some((w) => w.resolved)) {
         resolvedAny = true;
         lastRefusal = null;
-        // `anchorKind` claims WHICH anchor applied, so a section hit must not
-        // report itself as a prose hit — the field would stop being an answer
-        // and become a guess. Detail anchors win ties: they are tried first.
-        const kindOfAnchor = src.anchor == null ? src.anchorKind
-          : (anchors.includes(src.anchor) ? 'detail-anchor' : 'section-anchor');
-        sources.push({ ...src, anchorKind: kindOfAnchor, kind: 'plan-document' });
+        for (const src of windows) {
+          // `anchorKind` claims WHICH anchor applied, so a section hit must not
+          // report itself as a prose hit — the field would stop being an answer
+          // and become a guess. Detail anchors win ties: they are tried first.
+          const kindOfAnchor = src.anchor == null ? src.anchorKind
+            : (anchors.includes(src.anchor) ? 'detail-anchor' : 'section-anchor');
+          sources.push({ ...src, anchorKind: kindOfAnchor, kind: 'plan-document' });
+        }
         break;
       }
-      lastRefusal = src;
+      lastRefusal = windows[0];
     }
     // Only the LAST candidate's refusal is reported: an intermediate miss is how
     // the bare-basename spelling gets discovered, not a fault worth surfacing.
