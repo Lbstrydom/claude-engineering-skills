@@ -12,7 +12,9 @@ import assert from 'node:assert/strict';
 
 import {
   centredWindow, citedLineOf, resolveCitedSources, detailAnchors, anchorLine,
+  sectionAnchors, planDocumentCandidates,
 } from '../scripts/lib/campaign/cited-source.mjs';
+import { ADJUDICATION_SYSTEM_PROMPT } from '../scripts/lib/campaign/adjudicate.mjs';
 
 // ── cited sources ───────────────────────────────────────────────────────────
 
@@ -164,5 +166,165 @@ describe('cited sources', () => {
     assert.equal(read, 0, 'the egress seam must not even fetch it');
     assert.equal(res.resolvedAny, false);
     assert.equal(res.sources[0]?.reason, 'sensitive-path');
+  });
+});
+
+// -- the plan-document fallback ---------------------------------------------
+//
+// Measured over cohort `e52eec728688fcab` on 2026-08-19: 107 of 201 findings
+// resolved NO source, so they were forced `unverifiable` and handed to a human
+// having never reached the adjudicator -- 60% of that campaign's human queue.
+// 171 of the 201 are plan-mode findings, whose `primary_file` is a
+// `§`-section rather than a path, so `affectedFilesOf` has nothing to return.
+// The document was retrievable the whole time: `audit_runs.plan_file` at the
+// snapshot's own sha read cleanly for 89/89 of them.
+
+describe('plan-document fallback', () => {
+  const planText = Array.from({ length: 900 }, (_, i) => {
+    if (i === 400) return '## §2 Envelope budget';
+    if (i === 600) return 'the `computeRowFingerprint` helper is described here';
+    return `plan line ${i + 1}`;
+  }).join('\n');
+
+  it('a §-section finding now reaches the adjudicator with the plan it reviews', () => {
+    const res = resolveCitedSources({
+      section: '§2 Envelope budget (deterministic truncation order) vs. §2 KD-3',
+      detail: 'The plan defers five files with no owner named.',
+      auditedSha: 'abc123',
+      planFile: 'docs/plans/final-review-scoped-second-reviewer.md',
+      show: (_r, _sha, p) => (p === 'docs/plans/final-review-scoped-second-reviewer.md' ? { ok: true, content: planText } : { ok: false, error: { code: 'BAD_PATH' } }),
+    });
+    assert.equal(res.resolvedAny, true, 'this is the whole point: the row must not be forced unverifiable');
+    const src = res.sources.find((x) => x.kind === 'plan-document');
+    assert.ok(src, 'and it must be LABELLED, so the adjudicator knows it is reading a plan, not code');
+    assert.equal(src.path, 'docs/plans/final-review-scoped-second-reviewer.md');
+    assert.equal(src.sha, 'abc123', 'at the snapshot revision, never the working tree');
+    assert.equal(src.anchorKind, 'section-anchor');
+    assert.ok(src.startLine <= 401 && src.endLine >= 401, `window ${src.startLine}-${src.endLine} missed the cited section`);
+  });
+
+  it('prose anchors win over the section reference — they are the more specific citation', () => {
+    const res = resolveCitedSources({
+      section: '§2 Envelope budget',
+      detail: 'The `computeRowFingerprint` helper is never called.',
+      auditedSha: 'abc123', planFile: 'docs/plans/x.md',
+      show: () => ({ ok: true, content: planText }),
+    });
+    const src = res.sources[0];
+    assert.equal(src.anchorKind, 'detail-anchor');
+    assert.equal(src.anchor, 'computeRowFingerprint');
+    assert.ok(src.startLine <= 601 && src.endLine >= 601);
+  });
+
+  it('NEGATIVE CONTROL: a finding that resolves its own source does NOT also drag in the plan', () => {
+    // A fallback, not an addition. Dragging a 1668-line plan document into
+    // every row that already has its evidence is spend and noise, and it would
+    // change the behaviour of the 94 rows that were fine.
+    const reads = [];
+    const res = resolveCitedSources({
+      section: 'scripts/a.mjs:10', detail: 'x', auditedSha: 'abc123', planFile: 'docs/plans/x.md',
+      show: (_r, _sha, p) => { reads.push(p); return { ok: true, content: 'a\nb\nc' }; },
+    });
+    assert.equal(res.resolvedAny, true);
+    assert.deepEqual(reads, ['scripts/a.mjs'], 'the plan document must never be fetched for a row that resolved');
+    assert.equal(res.sources.some((x) => x.kind === 'plan-document'), false);
+  });
+
+  it('a bare basename resolves under docs/plans/, and only the LAST refusal is reported', () => {
+    // This cohort holds both spellings: `docs/plans/comparison-tooling-
+    // consolidation.md` and a bare `event-wiring-symmetry.md` (11 rows).
+    assert.deepEqual(planDocumentCandidates('event-wiring-symmetry.md'), ['event-wiring-symmetry.md', 'docs/plans/event-wiring-symmetry.md']);
+    assert.deepEqual(planDocumentCandidates('docs/plans/x.md'), ['docs/plans/x.md']);
+    assert.deepEqual(planDocumentCandidates('not-a-doc.txt'), [], 'only markdown is a plan document');
+    assert.deepEqual(planDocumentCandidates(null), []);
+
+    const res = resolveCitedSources({
+      section: '§4 something', detail: '', auditedSha: 'abc123', planFile: 'event-wiring-symmetry.md',
+      show: (_r, _sha, p) => (p.startsWith('docs/plans/') ? { ok: true, content: planText } : { ok: false, error: { code: 'BAD_PATH' } }),
+    });
+    assert.equal(res.resolvedAny, true);
+    assert.equal(res.sources.filter((x) => x.kind === 'plan-document').length, 1, 'the intermediate miss is how the spelling gets found — not a fault to report');
+    assert.equal(res.sources[0].path, 'docs/plans/event-wiring-symmetry.md');
+
+    const gone = resolveCitedSources({
+      section: '§4 something', detail: '', auditedSha: 'abc123', planFile: 'event-wiring-symmetry.md',
+      show: () => ({ ok: false, error: { code: 'BAD_PATH' } }),
+    });
+    assert.equal(gone.resolvedAny, false, 'an unreadable plan is still an honest hand-off');
+    assert.equal(gone.sources.length, 1, 'one refusal, naming the last candidate tried');
+    assert.equal(gone.sources[0].path, 'docs/plans/event-wiring-symmetry.md');
+  });
+
+  it('the plan path goes through the SAME admission and byte ceiling as any citation', () => {
+    // The fallback must not become a second read path with its own idea of what
+    // is admissible: a plan-shaped path into a credential store is still an
+    // egress refusal, and the byte ceiling still binds.
+    let read = 0;
+    const sensitive = resolveCitedSources({
+      section: '§1 x', detail: '', auditedSha: 'abc123', planFile: '.ssh/notes.md',
+      show: () => { read += 1; return { ok: true, content: 'SECRET' }; },
+    });
+    assert.equal(read, 0, 'not even fetched');
+    assert.equal(sensitive.resolvedAny, false);
+    assert.equal(sensitive.sources[0].reason, 'sensitive-path');
+
+    const huge = resolveCitedSources({
+      section: '§1 x', detail: '', auditedSha: 'abc123', planFile: 'docs/plans/x.md',
+      blobSize: () => ({ ok: true, bytes: 50 * 1024 * 1024 }),
+      show: () => { read += 1; return { ok: true, content: planText }; },
+    });
+    assert.equal(read, 0, 'the oversized blob is refused on its header, never materialised');
+    assert.equal(huge.sources[0].reason, 'oversized');
+  });
+
+  it('the prompt and the payload agree on the literal `plan-document`', () => {
+    // A prose-to-code contract with no compiler: the system prompt tells the
+    // model what `kind: "plan-document"` means, and this is the only thing that
+    // fails if the resolver ever emits a different spelling.
+    const res = resolveCitedSources({
+      section: '§1 x', detail: '', auditedSha: 'abc123', planFile: 'docs/plans/x.md',
+      show: () => ({ ok: true, content: planText }),
+    });
+    assert.equal(res.sources[0].kind, 'plan-document');
+    assert.ok(ADJUDICATION_SYSTEM_PROMPT.includes('kind: "plan-document"'), 'the prompt must name the exact literal the resolver emits');
+  });
+});
+
+describe('sectionAnchors', () => {
+  it('recovers a backticked span and the title phrase after the § marker', () => {
+    const a = sectionAnchors('§2 Envelope budget (`truncation order`) vs. §2 KD-3');
+    assert.ok(a.includes('truncation order'), 'a backticked span is the most deliberate citation');
+    assert.ok(a.some((x) => x.startsWith('Envelope budget')), 'and the title phrase lands on the real heading');
+  });
+
+  it('the bare §N marker is NOT an anchor — it would preempt the title phrase', () => {
+    // Measured over the 89 plan-fallback rows: `§2` matches in 80 of them, but
+    // a plan cross-references its own sections constantly, so it lands on a
+    // REFERENCE rather than the section — and being tried first it would
+    // displace the title phrase, which lands on the heading itself.
+    const a = sectionAnchors('§2 Envelope budget');
+    assert.equal(a.includes('§2'), false);
+    assert.equal(a[0], 'Envelope budget', 'the title phrase is what anchors');
+  });
+
+  it('does NOT split prose on apostrophes — a wrong anchor beats no anchor only in appearance', () => {
+    // Single-quoted spans were tried and rejected: they moved exactly ONE row
+    // of 201 while an apostrophe in ordinary prose yields a span that anchors
+    // the window on an unrelated line. A head window is honestly truncated and
+    // the prompt turns it into `unverifiable`; a wrong anchor is not caught by
+    // anything.
+    const a = sectionAnchors("§2 the plan's rule, and the reviewer's answer");
+    assert.equal(a.some((x) => x.startsWith('s ')), false, 'no anchor may begin mid-word after an apostrophe');
+  });
+
+  it('is bounded and de-duplicated', () => {
+    const many = sectionAnchors(Array.from({ length: 40 }, (_, i) => `§${i} Section ${i}`).join('; '));
+    assert.ok(many.length <= 8);
+    assert.equal(new Set(many).size, many.length);
+  });
+
+  it('returns nothing for a plain path — this is the plan-citation shape only', () => {
+    assert.deepEqual(sectionAnchors('scripts/a.mjs:10'), []);
+    assert.deepEqual(sectionAnchors(null), []);
   });
 });

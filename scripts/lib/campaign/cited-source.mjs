@@ -156,6 +156,70 @@ export function detailAnchors(detail, limit = 8) {
 }
 
 /**
+ * Anchors recovered from a `§`-section citation, for the plan-document fallback.
+ *
+ * A plan-mode finding's `primary_file` is not a path — it is a section
+ * reference like `"§2 Envelope budget (deterministic truncation order) vs. §2
+ * KD-3"`. Two shapes, most specific first: a backticked span (a deliberate
+ * quotation), then the title phrase that follows the `§` marker.
+ *
+ * **The bare `§N` marker is deliberately NOT an anchor**, and it was dead code
+ * for a while pretending to be one — `§2` is two characters and the 3-character
+ * floor below silently dropped it, so every measurement here was taken without
+ * it. Enabling it is worse than removing it: a plan document cross-references
+ * its own sections constantly, so `§2` matches in 80 of the 89 rows but almost
+ * always on a *reference* to the section rather than the section itself, and
+ * because it is tried before the title phrase it would PREEMPT the anchor that
+ * lands on the real heading. It rescues 6 rows that nothing else anchors, and
+ * all 6 cite the audit transcript, where a head window is the honest answer.
+ *
+ * Measured over cohort `e52eec728688fcab` (2026-08-19), on the 107 rows that
+ * resolved nothing: prose anchors land 78, these add **12 more**, and the
+ * remaining 17 cite the audit TRANSCRIPT rather than the plan — genuinely
+ * unanchorable in the document, and correctly left as a head window whose
+ * `truncated: true` the prompt turns into `unverifiable`.
+ *
+ * **Single-quoted spans were tried and REJECTED.** The live sections do use
+ * them (`"§2 Envelope budget ('full is explicitly exempt…')"`), but adding
+ * `'…'` to the extractor moved exactly ONE row of 201 out of the head bucket,
+ * while an apostrophe in ordinary prose ("the plan's rule, and the reviewer's")
+ * yields a 4–80 character span that anchors the window on an unrelated line.
+ * A confidently WRONG anchor is worse than a head window: the prompt's
+ * `truncated` rule catches the head case and cannot catch the other. Don't
+ * re-propose it without a measurement that beats 1/201.
+ */
+export function sectionAnchors(section, limit = 8) {
+  const text = String(section ?? '');
+  const out = [];
+  const seen = new Set();
+  const add = (t) => {
+    const v = String(t ?? '').trim();
+    if (v.length < 3 || seen.has(v)) return;
+    seen.add(v);
+    out.push(v);
+  };
+  for (const m of text.matchAll(/`([^`\n]{4,80})`/g)) add(m[1]);
+  for (const m of text.matchAll(/§\s*[\w.]+\s+([A-Za-z][^;(—]{3,50})/g)) add(m[1]);
+  return out.slice(0, limit);
+}
+
+/**
+ * Spellings of a plan document to try, in order.
+ *
+ * `audit_runs.plan_file` is whatever the operator passed to the audit, and it
+ * is not normalised on the way in: this cohort holds both
+ * `docs/plans/comparison-tooling-consolidation.md` and the bare
+ * `event-wiring-symmetry.md` (11 rows). A bare basename is resolved under
+ * `docs/plans/` — the repo's one plan directory — and never guessed more
+ * widely than that.
+ */
+export function planDocumentCandidates(planFile) {
+  const raw = String(planFile ?? '').trim().replace(/\\/g, '/');
+  if (!raw || !raw.endsWith('.md')) return [];
+  return raw.includes('/') ? [raw] : [raw, `docs/plans/${raw}`];
+}
+
+/**
  * The 1-indexed line an anchor first occurs on, or null.
  * Anchors are matched as LITERAL text, never compiled into a regex — a finding's
  * prose is model-authored and reaches this function unvalidated.
@@ -199,10 +263,16 @@ export function anchorLine(content, anchors) {
  * `anchorKind` records which of the three applied, so a reader is never left
  * guessing whether a head window means "small file" or "found nothing".
  *
+ * **`planFile` is the fallback for a finding that cites no path at all** — see
+ * the block at the end. Pass the run's `audit_runs.plan_file`; it is used only
+ * when nothing else resolved.
+ *
+ * @param {{section: string, detail?: string, auditedSha: string, planFile?: string|null,
+ *          repoRoot?: string, show?: Function, blobSize?: Function}} args
  * @returns {{sources: Array<object>, resolvedAny: boolean}}
  */
 export function resolveCitedSources({
-  section, detail = '', auditedSha, repoRoot = process.cwd(),
+  section, detail = '', auditedSha, planFile = null, repoRoot = process.cwd(),
   show = gitShowFileAtRevision, blobSize = gitBlobSizeAtRevision,
 }) {
   const paths = affectedFilesOf({ section }).slice(0, CITED_SOURCE_MAX_FILES);
@@ -215,29 +285,34 @@ export function resolveCitedSources({
   const anchors = detailAnchors(detail);
   const sources = [];
   let resolvedAny = false;
-  for (const p of paths) {
-    // Admission is delegated to `comparison/paths.mjs::resolveGitPath` — the
-    // SINGLE resolver for comparison paths (2026-08-14). The two checks that
-    // used to sit inline here (a lexical `classifyPath` and an
-    // absolute/`..` test) were a second implementation of exactly that policy,
-    // and a second implementation is how one of them later misses a case the
-    // other learned. The reasoning that was in this block is preserved in that
-    // module: a historical read must NOT be realpath'd, because realpath
-    // resolves against the CURRENT filesystem and would refuse a legitimate
-    // read whenever a cited file moved after its snapshot.
-    //
-    // The structured-result contract is unchanged — refusals still arrive as
-    // `{resolved:false, reason}` rather than throwing, because one bad cited
-    // path must not abort the other citations in the same finding.
-    // The ADMISSION half only — no git call. This function owns the read via
-    // its injectable `show`, and folding a real `git show` into the check would
-    // bypass that injection (it did, and seven tests caught it).
+
+  /**
+   * Admit -> bound -> read -> window ONE path. Extracted so the plan-document
+   * fallback below cannot become a second read path with its own (drifting)
+   * idea of what is admissible or how big is too big.
+   *
+   * Admission is delegated to `comparison/paths.mjs::resolveGitPath` — the
+   * SINGLE resolver for comparison paths (2026-08-14). The two checks that
+   * used to sit inline here (a lexical `classifyPath` and an absolute/`..`
+   * test) were a second implementation of exactly that policy, and a second
+   * implementation is how one of them later misses a case the other learned.
+   * The reasoning it preserves: a historical read must NOT be realpath'd,
+   * because realpath resolves against the CURRENT filesystem and would refuse a
+   * legitimate read whenever a cited file moved after its snapshot.
+   *
+   * The structured-result contract is unchanged — refusals arrive as
+   * `{resolved:false, reason}` rather than throwing, because one bad cited path
+   * must not abort the other citations in the same finding. The ADMISSION half
+   * only — no git call: this function owns the read via its injectable `show`,
+   * and folding a real `git show` into the check would bypass that injection
+   * (it did, and seven tests caught it).
+   */
+  const resolveOne = (p, anchorList, citedLine) => {
     try {
       assertGitPathAdmissible(p, { repoRoot });
     } catch (err) {
       const reason = err?.reason === 'sensitive' ? 'sensitive-path' : 'path-escapes-repo';
-      sources.push({ path: p, resolved: false, reason });
-      continue;
+      return { path: p, resolved: false, reason };
     }
     // Bound the INPUT, not just the output. The excerpt is capped in lines and
     // characters and the file COUNT is capped, but `show` materialises the whole
@@ -248,29 +323,78 @@ export function resolveCitedSources({
     // the object header only, so this costs nothing on the paths that pass.
     const size = blobSize(repoRoot, auditedSha, p);
     if (size.ok && size.bytes > CITED_SOURCE_MAX_BYTES) {
-      sources.push({
-        path: p, resolved: false, reason: 'oversized',
-        bytes: size.bytes, maxBytes: CITED_SOURCE_MAX_BYTES,
-      });
-      continue;
+      return { path: p, resolved: false, reason: 'oversized', bytes: size.bytes, maxBytes: CITED_SOURCE_MAX_BYTES };
     }
     const res = show(repoRoot, auditedSha, p);
-    if (!res.ok) {
-      sources.push({ path: p, resolved: false, reason: res.error?.code ?? 'unreadable' });
-      continue;
-    }
-    const cited = lineFor(p);
-    const found = cited == null ? anchorLine(res.content, anchors) : null;
-    const line = cited ?? found?.line ?? null;
-    const win = centredWindow(res.content, line);
-    resolvedAny = true;
-    sources.push({
+    if (!res.ok) return { path: p, resolved: false, reason: res.error?.code ?? 'unreadable' };
+
+    const found = citedLine == null ? anchorLine(res.content, anchorList) : null;
+    const win = centredWindow(res.content, citedLine ?? found?.line ?? null);
+    return {
       path: p, sha: auditedSha, resolved: true,
       startLine: win.startLine, endLine: win.endLine, truncated: win.truncated,
-      anchorKind: cited != null ? 'cited-line' : (found ? 'detail-anchor' : 'head'),
+      anchorKind: citedLine != null ? 'cited-line' : (found ? 'detail-anchor' : 'head'),
       anchor: found?.anchor ?? null,
       content: win.text,
-    });
+    };
+  };
+
+  for (const p of paths) {
+    const src = resolveOne(p, anchors, lineFor(p));
+    if (src.resolved) resolvedAny = true;
+    sources.push(src);
+  }
+
+  // ── The plan-document fallback ────────────────────────────────────────────
+  //
+  // A plan-mode finding cites a `§`-section, not a path, so the loop above
+  // resolved nothing and the row was handed to a human having never reached the
+  // adjudicator: 89 of 201 findings in cohort `e52eec728688fcab`, 60% of
+  // everything in that campaign's human queue. The document IS retrievable —
+  // `audit_runs.plan_file` at the snapshot's own sha, readable for 89/89 —
+  // it simply was not being asked for.
+  //
+  // A FALLBACK, not an addition: a finding that already resolved its own
+  // sources does not also drag in a 1668-line plan document, which would be
+  // spend and noise. Nothing that resolves today changes.
+  //
+  // It goes through the same admission → size → read → window pipeline as any
+  // other citation (`resolveOne`), so the sensitive-path refusal, the byte
+  // ceiling and the injectable `show` all apply unchanged — a second read path
+  // here is exactly how one of them would later miss a case the other learned.
+  //
+  // Not redacted, like every other cited source: the document at that sha is a
+  // property of the SNAPSHOT, identical whichever arm cited it, so it carries
+  // no signal about which arm raised the finding. (That is the same test the
+  // `section` field failed — there the prose was model-authored per finding.
+  // This is a committed repo artifact.)
+  if (!resolvedAny && planFile) {
+    // Detail anchors FIRST, section anchors second — that is the measured
+    // order: over the 89 rows, prose anchors land 65 and the section reference
+    // adds 18. `anchorLine` tries them in order, so the more specific quotation
+    // wins whenever the finding made one.
+    const fromSection = sectionAnchors(section);
+    const planAnchors = [...anchors, ...fromSection];
+    const candidates = planDocumentCandidates(planFile);
+    let lastRefusal = null;
+    for (const cand of candidates) {
+      const src = resolveOne(cand, planAnchors, null);
+      if (src.resolved) {
+        resolvedAny = true;
+        lastRefusal = null;
+        // `anchorKind` claims WHICH anchor applied, so a section hit must not
+        // report itself as a prose hit — the field would stop being an answer
+        // and become a guess. Detail anchors win ties: they are tried first.
+        const kindOfAnchor = src.anchor == null ? src.anchorKind
+          : (anchors.includes(src.anchor) ? 'detail-anchor' : 'section-anchor');
+        sources.push({ ...src, anchorKind: kindOfAnchor, kind: 'plan-document' });
+        break;
+      }
+      lastRefusal = src;
+    }
+    // Only the LAST candidate's refusal is reported: an intermediate miss is how
+    // the bare-basename spelling gets discovered, not a fault worth surfacing.
+    if (lastRefusal) sources.push({ ...lastRefusal, kind: 'plan-document' });
   }
   return { sources, resolvedAny };
 }

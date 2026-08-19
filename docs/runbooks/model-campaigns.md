@@ -304,6 +304,18 @@ model ids, provider names and your own arm ids are replaced with placeholders.
 Cited repo source is deliberately *not* redacted: it is identical whichever arm
 cited it, and this repo's own source legitimately contains model ids.
 
+**A plan-mode finding is verified against the plan.** Its `primary_file` is a
+`§`-section, not a path, so there is no file to retrieve and the row used to
+reach you having never reached the adjudicator — 107 of 201 findings in cohort
+`e52eec728688fcab`, 60% of that campaign's human queue (measured 2026-08-19).
+The run's `audit_runs.plan_file` is now cited instead, at the snapshot's own
+sha, labelled `kind: "plan-document"` so the adjudicator knows it is reading
+prose rather than code. It is a **fallback**: a finding that resolved its own
+sources never also drags in the plan. The window is anchored on the finding's
+quoted prose first, then on the section title — and when neither matches, the
+excerpt is an honest head window whose `truncated: true` routes the row to you
+as before.
+
 Findings are verified against the snapshot's **own** `audited_sha`, never the
 working tree. A finding that was true when collected and has since been fixed
 would otherwise be recorded false — penalising the arm that correctly found a

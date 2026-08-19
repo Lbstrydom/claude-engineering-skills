@@ -325,6 +325,9 @@ async function verbAdjudicate(campaignId, { limit, dryRun }) {
     findingId: f.finding_id, armId: f.arm_id, armRunId: f.arm_run_id, sourceModel: f.source_model,
     auditedSha: f.audited_sha, section: f.primary_file, category: f.category,
     detail: f.detail_snapshot, severity: f.severity,
+    // The run's plan document — the citation fallback for a plan-mode finding,
+    // whose `primary_file` is a `§`-section and resolves no path at all.
+    planFile: f.plan_file ?? null, mode: f.mode ?? null,
     worksheetRowId: store.worksheetRowIdFor(f.finding_id, key),
   }));
   const assigned = store.assignCalibrationSample(candidates, { campaignId: config.id, key, rate: config.calibration.sampleRate });
@@ -390,7 +393,9 @@ async function verbAdjudicate(campaignId, { limit, dryRun }) {
     // `detail` feeds the anchor search, not the prompt path: the store's
     // `primary_file` never carries a line (0 of 3993 measured), so without the
     // prose there is nothing to centre the window on.
-    const cited = resolveCitedSources({ section: row.primary_file, detail: row.detail_snapshot, auditedSha: src.auditedSha });
+    const cited = resolveCitedSources({
+      section: row.primary_file, detail: row.detail_snapshot, auditedSha: src.auditedSha, planFile: src.planFile,
+    });
     const blind = store.buildBlindRow({
       worksheetRowId: row.worksheet_row_id,
       category: row.category,

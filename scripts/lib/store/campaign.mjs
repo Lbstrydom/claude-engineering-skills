@@ -672,14 +672,22 @@ export async function listCampaignEvents(campaignId, { limit = 200 } = {}) {
 export async function loadCohortFindings(cohortId, { liveOnly = true } = {}) {
   if (!await isCloudEnabled()) return { ok: true, cloud: false, rows: [] };
   try {
+    // `r.plan_file` / `r.mode` are selected for CITATION RESOLUTION, not for
+    // display. A plan-mode finding cites a `§`-section of a plan document, not
+    // a file path, so `affectedFilesOf` returns nothing and the row reaches the
+    // adjudicator with no source at all — measured on this cohort 2026-08-19:
+    // **89 of 201 findings (44%), and 171 of the 201 are plan-mode**. The run
+    // row is the only place the document's identity survives.
     const rows = await many(
       `SELECT f.id            AS finding_id,
               f.severity, f.category, f.primary_file, f.detail_snapshot, f.source_model,
               ar.id           AS arm_run_id,
               ar.arm_id, ar.snapshot_id, ar.attempt, ar.superseded_at,
-              cs.audited_sha
+              cs.audited_sha,
+              r.plan_file, r.mode
          FROM campaign_arm_runs ar
          JOIN campaign_snapshots cs ON cs.id = ar.snapshot_row_id
+         JOIN audit_runs r          ON r.id = ar.audit_run_id
          JOIN audit_findings f       ON f.run_id = ar.audit_run_id
         WHERE ar.cohort_id = $1
           AND ($2::bool IS NOT TRUE OR ar.superseded_at IS NULL)
