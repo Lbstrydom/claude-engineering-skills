@@ -72,7 +72,9 @@ migration, no new table.
   **Reusable as-is.**
 - **`scripts/lib/audit/orphan-metrics.mjs`** — lock-safe single-batch JSONL writer.
   **Reusable, with a new sink path.**
-- **Wave 1.5** in `scripts/openai-audit.mjs` — the post-arch-intent / pre-Wave-2 slot
+- **Wave 1.5** in `scripts/lib/audit/legacy-production-audit.mjs` (corrected during
+  Cluster B implementation — `runLegacyProductionAudit` is the real Wave-1.5 host;
+  `openai-audit.mjs` only calls it) — the post-arch-intent / pre-Wave-2 slot
   where mechanical detectors run.
 - **`scripts/lib/audit/duplication-report.mjs`** + the `@duplicate-justification` pragma
   — the repo's established **in-source suppression pragma** pattern. Directly mirrored
@@ -129,7 +131,7 @@ are `frontend-inventory.md:8-35` (same `docs/migration/` directory, consumer-sid
 
 ```mermaid
 graph LR
-  subgraph Orch["scripts/openai-audit.mjs — Wave 1.5"]
+  subgraph Orch["scripts/lib/audit/legacy-production-audit.mjs — Wave 1.5"]
     DSR["diff-scope-resolver.mjs<br/>(REUSED)"]
     A["detectOrphansIntroduced<br/>(existing, unchanged)"]
     B["detectEventWiringAsymmetry<br/>(NEW)"]
@@ -1057,13 +1059,15 @@ partial scan over it always indicates a rig fault, never a real disagreement.
 | File | Change |
 |---|---|
 | [`scripts/lib/schemas.mjs`](../../scripts/lib/schemas.mjs) | Add `EventSiteSchema`, `EventWiringFindingSchema`, `EventWiringPassStateSchema` (reusing phase 1's pass-state enum shape for `INHERITED_STATES` parity). |
-| [`scripts/openai-audit.mjs`](../../scripts/openai-audit.mjs) | Wave 1.5c: call `detectEventWiringAsymmetry` after the orphan detector, reusing the already-resolved `DiffScope`. Findings join the existing pipeline. |
+| [`scripts/lib/audit/legacy-production-audit.mjs`](../../scripts/lib/audit/legacy-production-audit.mjs) | **Corrected during Cluster B implementation** — this row originally named `scripts/openai-audit.mjs`; the real Wave-1.5c host is `runLegacyProductionAudit` here (`openai-audit.mjs` only calls it, unchanged). Wave 1.5c: call `detectEventWiringAsymmetry` after the orphan detector, reusing the already-resolved `DiffScope`. Findings join the existing pipeline via `eventWiringToStandardFinding` (mirrors `orphanToStandardFinding`) and a `passRegistry` entry, same shape as orphan-introduced's own wiring. |
 | [`scripts/lib/audit/orphan-introduced.mjs`](../../scripts/lib/audit/orphan-introduced.mjs) | **Gemini G2 fix — one mechanical import change, nothing else.** Replace the inline `TEST_PATH_PATTERNS`/`DOC_EXAMPLE_PATH_PATTERNS` definitions and `isTestFile`/`isDocExampleFile` bodies (`:198`, `:215`) with an import from the new `path-classifiers.mjs`, re-exporting the same names so every existing call site (including this wave's own) is unaffected. Values and matching logic are byte-identical before/after — this is a location change, not a behaviour change, and does **not** extend the wave's heuristics (the telemetry verdict's actual constraint, restated in §7's "Files NOT modified" correction above). |
 | [`scripts/lib/audit/orphan-metrics.mjs`](../../scripts/lib/audit/orphan-metrics.mjs) | Parameterise the sink path **and the summary `kind`** (`:116` hardcodes `'orphan-run-summary'`, `:142` defaults `'orphan-introduced'`), and pass `_meta` through generically instead of destructuring orphan-specific fields (`:121` `removedEdgeTargetCount`). **NOT a "one-line generalisation"** — that earlier claim was wrong (Gemini final gate, LOW): reusing it as-is would inject mislabelled `orphan-run-summary` records into the event-wiring log and corrupt §6's own denominator. All params default to today's values, so the existing caller is byte-identically unaffected (#18). **The concrete write point is `detectEventWiringAsymmetry`'s step 6 (R5/M1 fix)** — an earlier draft named the sink path in the architecture diagram and this row's own description but never named a caller: after merging counters, `detectEventWiringAsymmetry` calls this writer with `sinkPath: '.audit/event-wiring-metrics.jsonl'`, `kind: 'event-wiring-run-summary'`, and the merged counters as `_meta` for ONE run-summary record, plus one per-fingerprint record for each entry in `findings[]` — mirroring exactly how the orphan wave's existing caller in `openai-audit.mjs` uses this writer today, just pointed at the new sink/kind. |
 | [`scripts/lib/audit/findings-pipeline.mjs`](../../scripts/lib/audit/findings-pipeline.mjs) | **(a)** D10 — carry `enforcement` through fingerprinting + kind-scoped suppression; fail-closed default. **(b)** `findingFingerprint` (`:89`) special-cases only `orphan-introduced` (`:90`) and delegates everything else to `semanticId(f)` (`:113`), which includes the **file path** — so a per-event fingerprint is not achievable by default (Gemini final gate, MEDIUM; verified in source). Add an `event-wiring-symmetry` intercept whose canonical string is **`${f.kind}\|${eventName}`** (R3/M2, corrected R4/H1 — keyed on `eventName` ALONE; `triggers[]` is a data field on the finding, never part of the key, precisely because a trigger-inclusive key fragments the same event into multiple fingerprints depending on which trigger(s) fired on which run — see D2b's two corrections above), **plus a SECOND, separate `event-wiring-orphaned-pragma` intercept** whose canonical string is `${f.kind}\|${locus.path}\|${pragmaTextHash}` (Gemini round-4 G3 fix — an earlier draft specified only the `event-wiring-symmetry` intercept, so the orphaned-pragma kind fell through to the default `semanticId(f)`, which includes line numbers — silently undoing the whole point of the text-hash key chosen for exactly this finding, see D5 above) — both kind-prefixed exactly as the orphan exception's `${f.kind}\|${f.subKind}\|${file}` (`:107,109`) is, and **excluding the file path** from the symmetry intercept specifically. Without the path, the same event dispatched from two files produces one record instead of double-counting `E`; without the kind prefix, the key shares a global hash namespace with every other pass and could collide (Gemini R2, LOW — verified: the orphan branch does prefix with kind). |
-| [`scripts/lib/audit/convergence.mjs`](../../scripts/lib/audit/convergence.mjs) | D10 — exclude `advisory` findings from `HIGH`/`MEDIUM`/`quickFix` convergence counts. |
-| [`scripts/lib/audit/final-adjudication.mjs`](../../scripts/lib/audit/final-adjudication.mjs) | D10 — an `advisory` finding can never produce a blocking verdict. |
+| [`scripts/lib/audit/finding-verification.mjs`](../../scripts/lib/audit/finding-verification.mjs) | **Corrected during Cluster B implementation** — this row originally named `scripts/lib/audit/convergence.mjs`; `evaluateConvergence` there takes pre-computed `{high,medium,quickFix}` counts and never inspects individual findings, so it needed no change. D10's real count-exclusion seam is `countsTowardVerdict` here (already the existence-gate's own exclusion predicate), extended with a second, independent reason: `finding?.enforcement === 'advisory'` excludes it before the existing verification-gate check. |
+| [`scripts/lib/audit/findings-pipeline.mjs`](../../scripts/lib/audit/findings-pipeline.mjs)'s `computeAuditVerdict` | **Replaces the `final-adjudication.mjs` row** — that file turned out to be Stage-2 tiered-pipeline-specific clean-challenge adjudication, unrelated to verdict computation and never reached by event-wiring findings (which run only in the legacy Wave-1.5 path). D10's real second seam: `computeAuditVerdict` filters `enforcement !== 'advisory'` internally before computing `high`/`medium` counts — it lives here rather than in each caller because the tiered-pipeline caller does not pre-filter, so both callers (`legacy-production-audit.mjs`, `tiered-pipeline.mjs`) need the guarantee in the one function they share. |
 | [`scripts/lib/ledger.mjs`](../../scripts/lib/ledger.mjs) | **D12 lifecycle host (R3/H2)** — add `readLifecycle(ledgerPath, fingerprint)` / `upsertLifecycle(ledgerPath, record)` beside the existing `writeLedgerEntry` (`:128`) / `batchWriteLedger` (`:232`), reusing their atomic-write + lock path verbatim. Lifecycle records live in a `lifecycle` key alongside `entries` in the same ledger file — one artifact, one lock, no parallel store (#10). Concurrent-run safety is whatever `batchWriteLedger` already guarantees; this adds no new concurrency model. **Plus `listOpenLifecycle(ledgerPath, {kind})`** — read-only filter over stored `kind` (never fingerprint-string parsing), used to assemble the observation set. **Plus `reconcileLifecycle(ledgerPath, {kind, observations, now, ancestryDecisions})` (R1/H1, corrected R2/H3, R4/M1, R5/H2, Gemini-round-2/G2)** — the ONE locked read-modify-write transaction that applies every observation in a single run (diff-scoped + corpus-lookup-derived alike), consulting the caller-precomputed `ancestryDecisions` Map (a pure lookup, never a git call) to drop stale observations, and writes the whole ledger back once; `upsertLifecycle` is the single-record primitive it composes internally, never called in an external loop. `ledger.mjs` itself never shells out to git and never runs git-shaped work while its lock is held — `ancestryDecisions` is computed by `event-wiring-corpus.mjs` (the caller that owns git access) BEFORE the lock is acquired. |
+| [`scripts/lib/audit/event-wiring-corpus.mjs`](../../scripts/lib/audit/event-wiring-corpus.mjs) | **Second cross-cluster touch, found during Cluster B implementation** — a Cluster A/Phase-0 file (`detectEventWiringAsymmetry`'s Cluster-A placeholder metrics writer replaced with the real `emitOrphanRunMetrics` call once `orphan-metrics.mjs` gains the parameterisation above; the `ledger.mjs` import made lazy, per that file's row, so Phase 0 stays self-contained). Also gained a `learningWritesAllowed` param threaded from `runEventWiringSymmetryPass` — found by diffing against `runOrphanIntroducedPass`'s own gating: an observation-only shadow run must not double-write this wave's two metrics emits or its D12 `reconcileLifecycle` write, the same hazard class orphan's own gated emit already handles. |
+| [`scripts/.cli-catalog.json`](../../scripts/.cli-catalog.json) | **Not originally planned — found by `tests/dashboard-cli.test.mjs`'s regression gate at the Phase-1 test run.** The `event-wiring:oracle` npm script added in Phase 0 (§7's New-files list, `package.json`) had no catalog entry; the dashboard's CLI section flags any npm script without one. Added a `test`-category entry. |
 | [`docs/plans/dead-code-phase-1-orphan-introduced.md`](dead-code-phase-1-orphan-introduced.md) | Already amended (2026-07-28) — its §Telemetry Verdict item 4 forward-references this plan. |
 
 ### Files NOT modified
@@ -1100,7 +1104,12 @@ partial scan over it always indicates a rig fault, never a real disagreement.
 - **Phase 1 — Wave wiring + advisory enforcement + lifecycle.** Schemas (incl. the
   `enforcement` classification), Wave 1.5c orchestration, metrics sink, D12 lifecycle
   record, pragma handling. Files: `scripts/lib/schemas.mjs` (modify),
-  `scripts/openai-audit.mjs` (modify),
+  `scripts/lib/audit/legacy-production-audit.mjs` (modify — the real Wave-1.5c host;
+  **corrected during Cluster B implementation, R2/M4** — this bullet originally read
+  `scripts/openai-audit.mjs`, left stale after the §7 table row above and the "Wave 1.5"
+  architecture description were both corrected but this file-list bullet was missed.
+  `openai-audit.mjs` itself is never modified — it only calls `runLegacyProductionAudit`,
+  unchanged, per the §7 table row's own note),
   `scripts/lib/audit/orphan-metrics.mjs` (modify),
   `scripts/lib/audit/findings-pipeline.mjs` (modify — D10 fail-closed filter in
   `computeAuditVerdict`, plus the fingerprint intercept; **this file is no longer
@@ -1477,8 +1486,10 @@ against source before acceptance (`findingFingerprint:89-113`, `orphan-metrics.m
 `/audit-plan` — 2026-08-18, SID `audit-plan-1755500000` (`/cycle --autonomous` run, resuming
 this already-plan-audited draft per its own §11 clustering). **5 GPT rounds (absolute cap
 reached) + 4 Gemini rounds (2-round cap exceeded three times for concrete net-new bugs, per
-`feedback_rigor_cap_genuine_bugs_exception`); 41 findings across both reviewers, 100%
-accepted every round, 0 dismissed, 0 deferred.**
+`feedback_rigor_cap_genuine_bugs_exception`); 37 findings across both reviewers
+(corrected during Cluster B's own audit-code R3/L2 — this line originally said 41, which
+didn't match the sum of the table's own per-round totals), 100% accepted every round, 0
+dismissed, 0 deferred.**
 
 | Round | Verdict | Findings | Character |
 |---|---|---|---|

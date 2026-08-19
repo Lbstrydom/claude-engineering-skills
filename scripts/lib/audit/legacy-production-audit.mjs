@@ -1485,10 +1485,23 @@ async function runEventWiringSymmetryPass({ repoRoot, auditBaseCommit, runId, le
   }
 
   const ledgerPath = path.join(repoRoot, '.audit', 'event-wiring-ledger.json');
-  const detectorOut = await detectEventWiringAsymmetry({
-    diffScope, repoPath: repoRoot, wrappers, totalByteBudgetMb, ledgerPath,
-    metricsSinkPath: '.audit/event-wiring-metrics.jsonl', runId, learningWritesAllowed,
-  });
+  let detectorOut;
+  try {
+    detectorOut = await detectEventWiringAsymmetry({
+      diffScope, repoPath: repoRoot, wrappers, totalByteBudgetMb, ledgerPath,
+      metricsSinkPath: '.audit/event-wiring-metrics.jsonl', runId, learningWritesAllowed,
+    });
+  } catch (err) {
+    // Cluster-B audit-code R1/H3 fix: this call does non-trivial git I/O
+    // (batched blob reads, lock acquisition for D12 reconciliation) and was
+    // previously unguarded — an exception here would propagate past this
+    // mechanical wave's own caller and crash the WHOLE audit run, the exact
+    // failure mode orphan-introduced's own resolver call is already guarded
+    // against (see the try/catch around `buildEventWiringDiffScope` above).
+    // A mechanical detector degrading to ERROR must never take the run down.
+    process.stderr.write(`  [event-wiring] detector error: ${err.message}\n`);
+    return { state: 'ERROR', result: { ...emptyResult, result: { ...emptyResult.result, summary: `detector: ${err.message}` } } };
+  }
 
   if (detectorOut.partial) {
     // D11's partial-corpus safety: no new finding, no record close — the
@@ -4205,8 +4218,15 @@ export async function runLegacyProductionAudit(ctx) {
   // stop signal) is known.  Best-effort; never throws into audit pipeline.
   if (cloudRunId) {
     try {
-      const highCount   = allFindings.filter(f => f.severity === 'HIGH').length;
-      const mediumCount = allFindings.filter(f => f.severity === 'MEDIUM').length;
+      // Cluster-B audit-code R2/M7 fix: D10 (docs/plans/event-wiring-symmetry.md)
+      // excludes `enforcement: 'advisory'` findings from the real verdict's
+      // high/medium counts (findings-pipeline.mjs's computeAuditVerdict) — this
+      // telemetry computed its own count from raw allFindings with no such
+      // exclusion, so an advisory HIGH/MEDIUM inflated convergence_predict's
+      // signal even though it never affects the actual gate. Same filter here.
+      const gatingFindings = allFindings.filter(f => f?.enforcement !== 'advisory');
+      const highCount   = gatingFindings.filter(f => f.severity === 'HIGH').length;
+      const mediumCount = gatingFindings.filter(f => f.severity === 'MEDIUM').length;
       const dismissed   = allFindings.filter(f => f.adjudicationOutcome === 'dismissed').length;
       _learningRecordDecision({
         decisionType: 'convergence_predict',
@@ -4243,8 +4263,14 @@ export async function runLegacyProductionAudit(ctx) {
         domains = _computeTargetDomains(changedFiles, _loadDomainRules(process.cwd())).domains || [];
       } catch { /* domain-map absent or invalid — proceed without domain signal */ }
       const signals = _deriveTierSignals({ changedFiles, domains, diffLines: diffLinesChanged ?? 0 });
-      const highCount   = allFindings.filter(f => f.severity === 'HIGH').length;
-      const mediumCount = allFindings.filter(f => f.severity === 'MEDIUM').length;
+      // Cluster-B audit-code R2/M7 fix: same D10 exclusion as the
+      // convergence_predict block above — this comment's own claim ("the
+      // SAME quality threshold /audit-code gates on") was false without it,
+      // since computeAuditVerdict (the real gate) already excludes advisory
+      // findings and this telemetry didn't.
+      const gatingFindings = allFindings.filter(f => f?.enforcement !== 'advisory');
+      const highCount   = gatingFindings.filter(f => f.severity === 'HIGH').length;
+      const mediumCount = gatingFindings.filter(f => f.severity === 'MEDIUM').length;
       const quickFix    = allFindings.filter(f => f.is_quick_fix).length;
       // converged = the same quality threshold /audit-code gates on, this round
       // (scripts/lib/audit/convergence.mjs — plan §F2.5, the single canonical

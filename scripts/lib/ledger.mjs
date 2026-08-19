@@ -1353,14 +1353,28 @@ function applyLifecycleObservation(existing, obs, now, kind) {
   // on it would be an inference from absence-of-evidence, not a real one).
   if (obs.status) {
     const { hasProductionListener, hasAnyDispatch, totalDispatchSites, pragmaSuppressedSites } = obs.status;
-    if (hasProductionListener) {
-      record.disposition = 'fixed';
-      record.dispositionAt = now;
-      record.resolvedObservedAt = now;
-    } else if (!hasAnyDispatch) {
+    // Cluster-B audit-code R2/M2 fix: dispatch-presence checked FIRST. A
+    // status observation can't tell a NEWLY-wired listener from a STALE one
+    // that happened to already exist while the dispatch was independently
+    // removed — `hasProductionListener` alone conflates "someone fixed
+    // this" with "the feature was deleted, incidentally leaving an old
+    // listener behind". §6's Gemini G1 fix (docs/plans/event-wiring-symmetry.md)
+    // explicitly split 'fixed'/'deleted' into evidentially distinct
+    // dispositions FOR THIS REASON — 'deleted' is credited only inside its
+    // 14-day `deletionObservedAt` window, 'fixed' unconditionally; the
+    // original listener-first order let a deletion satisfy the unconditional
+    // 'fixed' branch instead, making the 14-day window dead logic exactly
+    // like the bug §6's own docstring already warns about for a DIFFERENT
+    // conflation. Checking `!hasAnyDispatch` first means a stale listener
+    // can never mask a deletion as a wiring fix.
+    if (!hasAnyDispatch) {
       record.disposition = 'deleted';
       record.dispositionAt = now;
       record.deletionObservedAt = now;
+    } else if (hasProductionListener) {
+      record.disposition = 'fixed';
+      record.dispositionAt = now;
+      record.resolvedObservedAt = now;
     } else if (totalDispatchSites > 0 && pragmaSuppressedSites === totalDispatchSites) {
       record.disposition = 'pragma-suppressed';
       record.dispositionAt = now;

@@ -18,15 +18,21 @@ import {
 } from './event-wiring.mjs';
 import { isTestFile, isDocExampleFile, PATH_CLASSIFIER_VERSION } from './path-classifiers.mjs';
 import { resolveAndClassify } from '../sensitive-paths.mjs';
-// listOpenLifecycle/reconcileLifecycle are imported LAZILY, inside
-// detectEventWiringAsymmetry, not at module scope: this file is Cluster A
-// (Phase 0), but the D12 lifecycle host lives in ledger.mjs, which is a
-// Cluster B (Phase 1) modification (§7b's Phase 1 file list — corrected to
-// include ledger.mjs, previously listed only in §7's table). Phase 0's own
-// gate (the repo-wide CLI oracle) never calls this function, so the module
-// must stay importable/testable before ledger.mjs gains these exports.
+import { listOpenLifecycle, readLifecycle, reconcileLifecycle } from '../ledger.mjs';
+// Cluster-B audit-code R1/M15 fix (GPT deliberation, "compromise" ruling):
+// listOpenLifecycle/reconcileLifecycle were imported LAZILY (inside
+// detectEventWiringAsymmetry) while this file was Cluster A/Phase 0 and the
+// D12 lifecycle host in ledger.mjs didn't exist yet — deferred import timing
+// standing in for a real dependency-cycle boundary that was never actually
+// at risk (ledger.mjs has no audit/ import of its own; verified no cycle).
+// Both clusters now ship in the same commit, so the sequencing rationale has
+// expired — a static import describes the real dependency and fails at
+// module load if the export is ever missing, instead of mid-run.
 
-const SOURCE_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.ts', '.tsx', '.html', '.template']);
+// Cluster-B audit-code R2/M2 fix: `.jsx` was missing — a React app's JSX
+// components (exactly the shape of the wine-oracle fixture's own source
+// tree) were silently excluded from corpus selection entirely.
+const SOURCE_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.html', '.template']);
 const PER_FILE_BYTE_CAP = 1 * 1024 * 1024; // 1 MiB, matches this repo's spawnSync maxBuffer convention
 const DEFAULT_TOTAL_BUDGET_MB = 200;
 
@@ -39,9 +45,15 @@ const WrapperEntrySchema = z.object({
   callee: z.string().regex(/^\*?[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)?$/),
   eventArgIndex: z.number().int().nonnegative(),
   targetArgIndex: z.number().int().nonnegative().optional(),
-}).refine(w => w.targetArgIndex === undefined || w.targetArgIndex !== w.eventArgIndex, {
-  message: 'eventArgIndex and targetArgIndex must differ',
-});
+}).strict() // Cluster-B audit-code R2/M8 fix: the outer ConfigFileSchema is
+  // already .strict(), but a non-strict nested object schema silently drops
+  // unknown keys by default — a misspelled wrapper field (e.g.
+  // `eventArgIdnex`) was accepted as a valid, empty-of-that-field entry
+  // instead of being rejected. Verified live: a top-level typo already threw
+  // (unrecognized_keys), a nested one did not, before this fix.
+  .refine(w => w.targetArgIndex === undefined || w.targetArgIndex !== w.eventArgIndex, {
+    message: 'eventArgIndex and targetArgIndex must differ',
+  });
 
 const ConfigFileSchema = z.object({
   version: z.literal(1),
@@ -95,9 +107,11 @@ export function loadEventWiringConfig(repoPath) {
  * missing files that existed at `ref` but were since deleted, or including
  * ones that didn't exist there yet.
  */
-function gitLsFiles(repoPath, ref) {
+function gitLsFiles(repoPath, ref, env) {
   const args = ref ? ['ls-tree', '-r', '--name-only', '-z', ref] : ['ls-files', '-z'];
-  const buf = execFileSync('git', args, { cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
+  const buf = execFileSync('git', args, {
+    cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024, ...(env ? { env } : {}),
+  });
   return buf.toString('utf8').split('\0').filter(Boolean);
 }
 
@@ -134,17 +148,44 @@ function isAllowedExtension(relPath) {
  * @param {string} repoPath
  * @param {string} ref
  * @param {string[]} relPaths
+ * @param {NodeJS.ProcessEnv} [env]
+ * @param {number} [maxBuffer] - Cluster-B audit-code R2/M10 fix: the config
+ *   schema allows `totalByteBudgetMb` to be ANY non-negative integer, but this
+ *   call's `maxBuffer` was a hardcoded 512 MiB constant — a schema-valid
+ *   budget above that (e.g. `totalByteBudgetMb: 1000`) would throw ENOBUFS on
+ *   a fetch `buildCorpus` had already size-checked as within budget (the
+ *   M6/M11 fix). Callers now derive this from the SAME budget the fetch set
+ *   was trimmed to, so the execution ceiling and the configured policy are
+ *   one coherent number instead of two independent constants that can
+ *   silently disagree. Defaults to the prior 512 MiB for callers that don't
+ *   pass one explicitly (Phase-0 CLI probe path).
  * @returns {Map<string, Buffer|null>} relPath -> content, or null if absent at ref
  */
-function batchReadBlobsAtRef(repoPath, ref, relPaths) {
+function batchReadBlobsAtRef(repoPath, ref, relPaths, env, maxBuffer = 512 * 1024 * 1024) {
   const result = new Map(); // relPath -> {oid, content: Buffer} | null
   if (relPaths.length === 0) return result;
-  const stdin = relPaths.map(p => `${ref}:./${p}`).join('\n') + '\n';
+  // Cluster-B audit-code R1/M3 fix: `git cat-file --batch` reads one
+  // NEWLINE-delimited `<ref>:<path>` selector per line — git tracks paths as
+  // arbitrary byte strings (only NUL is forbidden), so a path containing a
+  // literal `\n` (reachable here: `gitLsFiles` reads `-z`-delimited output,
+  // which preserves an embedded newline intact) would inject an extra
+  // selector into the stream, misaligning every subsequent response this
+  // loop parses by position. Filtered out and reported missing, same as any
+  // other unreadable path — not a live security exploit in a single-tenant
+  // trusted-tree run, but a real correctness gap once this repo is ever
+  // pointed at an untrusted or adversarial tree.
+  const batchable = [];
+  for (const p of relPaths) {
+    if (p.includes('\n')) { result.set(p, null); continue; }
+    batchable.push(p);
+  }
+  if (batchable.length === 0) return result;
+  const stdin = batchable.map(p => `${ref}:./${p}`).join('\n') + '\n';
   const out = execFileSync('git', ['cat-file', '--batch'], {
-    cwd: repoPath, input: stdin, maxBuffer: 512 * 1024 * 1024,
+    cwd: repoPath, input: stdin, maxBuffer, ...(env ? { env } : {}),
   });
   let offset = 0;
-  for (const relPath of relPaths) {
+  for (const relPath of batchable) {
     const lineEnd = out.indexOf(0x0a, offset); // '\n'
     if (lineEnd === -1) { result.set(relPath, null); break; } // truncated output — treat rest as missing
     const header = out.slice(offset, lineEnd).toString('utf8');
@@ -164,7 +205,51 @@ function batchReadBlobsAtRef(repoPath, ref, relPaths) {
   return result;
 }
 
-function readAtRef(repoPath, ref, relPath) {
+/**
+ * Cheap sibling of `batchReadBlobsAtRef`: one `git cat-file --batch-check`
+ * subprocess returns `{oid, size}` per path with NO blob content — used to
+ * decide the budget-respecting fetch set before spending the (potentially
+ * large) `--batch` read. Cluster-B audit-code R1/M6+M11 fix: `buildCorpus`
+ * originally batch-READ every eligible file's full content unconditionally,
+ * before its per-file/total-byte budget checks ran — so the budget only
+ * limited what was RETAINED, not what was fetched from git, undoing the very
+ * short-circuit the pre-batching per-file loop had (budget-exhausted files
+ * were never read at all). `--batch-check` output has no embedded content,
+ * so plain newline-splitting is safe here (unlike `--batch`, where blob
+ * bytes can themselves contain '\n' and byte-offset tracking is required).
+ *
+ * @param {string} repoPath
+ * @param {string} ref
+ * @param {string[]} relPaths
+ * @returns {Map<string, {oid: string, size: number}|null>}
+ */
+function batchCheckSizesAtRef(repoPath, ref, relPaths, env) {
+  const result = new Map();
+  if (relPaths.length === 0) return result;
+  const batchable = [];
+  for (const p of relPaths) {
+    if (p.includes('\n')) { result.set(p, null); continue; } // same M3 guard as batchReadBlobsAtRef
+    batchable.push(p);
+  }
+  if (batchable.length === 0) return result;
+  const stdin = batchable.map(p => `${ref}:./${p}`).join('\n') + '\n';
+  const out = execFileSync('git', ['cat-file', '--batch-check'], {
+    cwd: repoPath, input: stdin, maxBuffer: 512 * 1024 * 1024, ...(env ? { env } : {}),
+  }).toString('utf8');
+  const lines = out.split('\n');
+  for (let i = 0; i < batchable.length; i++) {
+    const line = lines[i];
+    const relPath = batchable[i];
+    if (!line || line.endsWith('missing')) { result.set(relPath, null); continue; }
+    const parts = line.split(' ');
+    const size = parseInt(parts[2], 10);
+    if (!Number.isFinite(size) || size < 0) { result.set(relPath, null); continue; }
+    result.set(relPath, { oid: parts[0], size });
+  }
+  return result;
+}
+
+function readAtRef(repoPath, ref, relPath, env) {
   // git show <ref>:<path> — every file becomes git-object-addressed under a
   // ref-anchored build, so no dirty/clean special case is needed here.
   // `<ref>:<path>` notation is REPO-ROOT-relative unless `<path>` is
@@ -173,28 +258,45 @@ function readAtRef(repoPath, ref, relPath) {
   // larger repo (this repo's own oracle fixture pack) resolved every clean
   // file's blob OID against the wrong tree entry once M1's fix made this
   // codepath reachable for the first time.
-  return execFileSync('git', ['show', `${ref}:./${relPath}`], { cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: PER_FILE_BYTE_CAP + 4096 });
+  return execFileSync('git', ['show', `${ref}:./${relPath}`], {
+    cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: PER_FILE_BYTE_CAP + 4096, ...(env ? { env } : {}),
+  });
 }
 
-function blobOidAtRef(repoPath, ref, relPath) {
-  const out = execFileSync('git', ['rev-parse', `${ref}:./${relPath}`], { cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'] });
+function blobOidAtRef(repoPath, ref, relPath, env) {
+  const out = execFileSync('git', ['rev-parse', `${ref}:./${relPath}`], {
+    cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'], ...(env ? { env } : {}),
+  });
   return out.toString('utf8').trim();
 }
 
-function gitStatusForFile(repoPath, relPath) {
+function gitStatusForFile(repoPath, relPath, env) {
   // Clean iff `git status --porcelain -- <path>` is empty.
-  const out = execFileSync('git', ['status', '--porcelain', '--', relPath], { cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'] });
+  const out = execFileSync('git', ['status', '--porcelain', '--', relPath], {
+    cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'], ...(env ? { env } : {}),
+  });
   return out.toString('utf8').trim() === '';
 }
 
 /**
- * @param {{repoPath: string, wrappers: Array, ref?: string}} args
- * @returns {{sites: {dispatches: object[], listens: object[]}, counters: object, cacheKey: string}}
+ * @param {{repoPath: string, wrappers: Array, ref?: string, totalByteBudgetMb?: number, env?: NodeJS.ProcessEnv}} args
+ * @param {NodeJS.ProcessEnv} [args.env] - Cluster-B audit-code R1 fix (git-env-sanitize.mjs
+ *   precedent, `diff-scope-resolver.mjs`'s own `env` param) — every git subprocess this module
+ *   spawns takes an optional env override, spread in only when provided (`execFileSync`
+ *   otherwise inherits `process.env` unchanged, same default as before this param existed).
+ *   Omitted in production (the pre-push hook boundary, `prepush-check.mjs`, already sanitizes
+ *   GIT_DIR/GIT_WORK_TREE before spawning the whole `npm run check` chain this runs inside).
+ *   REQUIRED for any test creating an isolated scratch git repo — pass `gitFixtureEnv()`
+ *   (`tests/helpers/fixtures.mjs`), or a leaked GIT_DIR from the calling process silently
+ *   redirects `git init`/`git commit` onto the real repository (six live incidents, 2026-07-23,
+ *   documented in `scripts/lib/git-env-sanitize.mjs`'s module docblock).
+ * @returns {{sites: {dispatches: object[], listens: object[]}, orphanedPragmas: object[], counters: object, cacheKey: string}}
  */
-export function buildCorpus({ repoPath, wrappers = [], ref, totalByteBudgetMb = DEFAULT_TOTAL_BUDGET_MB } = {}) {
-  const trackedFiles = gitLsFiles(repoPath, ref);
+export function buildCorpus({ repoPath, wrappers = [], ref, totalByteBudgetMb = DEFAULT_TOTAL_BUDGET_MB, env } = {}) {
+  const trackedFiles = gitLsFiles(repoPath, ref, env);
   const dispatches = [];
   const listens = [];
+  const orphanedPragmas = [];
   let skippedFiles = 0;
   let excludedFiles = 0;
   let totalBytesRead = 0;
@@ -215,9 +317,54 @@ export function buildCorpus({ repoPath, wrappers = [], ref, totalByteBudgetMb = 
     eligiblePaths.push(relPath);
   }
   excludedFiles += excludedByPolicy.size;
-  const batchBlobs = ref ? batchReadBlobsAtRef(repoPath, ref, eligiblePaths) : null;
 
-  for (const relPath of eligiblePaths) {
+  // Budget-respecting fetch set (Cluster-B audit-code R1/M6+M11 fix): a
+  // cheap `--batch-check` size pass decides, in tracked-file order, which
+  // paths fit the per-file cap AND the running total budget — THEN
+  // `batchReadBlobsAtRef` fetches content for ONLY that trimmed set. Content
+  // for a file the budget would have skipped is never pulled from git at
+  // all, matching the non-ref (working-tree) branch's own stat-before-read
+  // discipline below and the per-file loop's pre-batching precedent.
+  let pathsToFetch = eligiblePaths;
+  let sizeChecks = null;
+  let plannedFetchBytes = 0;
+  if (ref) {
+    sizeChecks = batchCheckSizesAtRef(repoPath, ref, eligiblePaths, env);
+    pathsToFetch = [];
+    let runningBytes = 0;
+    let sizeBudgetExhausted = false;
+    for (const relPath of eligiblePaths) {
+      if (sizeBudgetExhausted) { skippedFiles++; continue; }
+      const check = sizeChecks.get(relPath);
+      // Missing/unreadable at this size-check stage still needs to reach the
+      // fetch loop below — its existing catch block is what counts it into
+      // `skippedFiles` with a logged reason (mirrors the non-ref branch's own
+      // stat-then-read error handling). Dropping it silently here would
+      // undercount skips relative to the pre-batching behaviour.
+      if (!check) { pathsToFetch.push(relPath); continue; }
+      if (check.size > PER_FILE_BYTE_CAP) { skippedFiles++; continue; }
+      runningBytes += check.size;
+      if (runningBytes > totalBudgetBytes) { sizeBudgetExhausted = true; skippedFiles++; continue; }
+      pathsToFetch.push(relPath);
+    }
+    plannedFetchBytes = runningBytes;
+  }
+  // Cluster-B audit-code R2/M10 fix, refined R3/M2: derive the execution
+  // ceiling from the SAME budget the fetch set above was trimmed to, instead
+  // of a hardcoded 512 MiB constant that could silently disagree with a
+  // schema-valid larger `totalByteBudgetMb`. Header overhead for `git
+  // cat-file --batch`'s per-blob "<oid> blob <size>\n" response line scales
+  // with FILE COUNT, not a percentage of content bytes — a flat multiplier
+  // undercounts a large-budget, many-tiny-files corpus (thousands of files
+  // at a few hundred bytes each, header lines a large fraction of the total)
+  // while over-allocating a few-huge-files one. 128 bytes/entry is generous
+  // (a real header line is well under 80 bytes even for a 40-hex-char oid);
+  // floored at the historical 512 MiB so a small-budget config is unaffected.
+  const headerOverheadBytes = pathsToFetch.length * 128;
+  const batchMaxBuffer = Math.max(512 * 1024 * 1024, plannedFetchBytes + headerOverheadBytes + 1024 * 1024);
+  const batchBlobs = ref ? batchReadBlobsAtRef(repoPath, ref, pathsToFetch, env, batchMaxBuffer) : null;
+
+  for (const relPath of pathsToFetch) {
     if (budgetExhausted) { skippedFiles++; continue; }
 
     let source;
@@ -243,8 +390,8 @@ export function buildCorpus({ repoPath, wrappers = [], ref, totalByteBudgetMb = 
         }
         const buf = fs.readFileSync(abs);
         source = buf.toString('utf8');
-        contentHash = gitStatusForFile(repoPath, relPath)
-          ? blobOidAtRef(repoPath, 'HEAD', relPath)
+        contentHash = gitStatusForFile(repoPath, relPath, env)
+          ? blobOidAtRef(repoPath, 'HEAD', relPath, env)
           : crypto.createHash('sha256').update(buf).digest('hex');
       }
     } catch (err) {
@@ -269,6 +416,17 @@ export function buildCorpus({ repoPath, wrappers = [], ref, totalByteBudgetMb = 
     const sites = extractEventSites(source, { path: relPath, wrappers, runtime });
     dispatches.push(...sites.dispatches);
     listens.push(...sites.listens);
+    // Cluster-B audit-code R1/M22 fix: `extractEventSites` has always
+    // returned `orphanedPragmas` (a pragma bound to no dispatch site in this
+    // file), but nothing downstream ever read it — the `EventWiringOrphanedPragmaFindingSchema`,
+    // its fingerprint intercept, and its standard-finding converter all
+    // existed with no producer, so the finding kind was dead on arrival.
+    // Corpus-wide, like symmetry findings (`resolveSymmetry`) — an orphaned
+    // pragma is a static per-file property, not a diff-scoped one; it can go
+    // stale from a dispatch removed anywhere, not just in a changed file.
+    // `p.locus.path` is already set (extractEventSites's `localeOf` closes
+    // over the `path` param passed above) — no extra field needed here.
+    orphanedPragmas.push(...sites.orphanedPragmas);
   }
 
   hashParts.sort();
@@ -279,6 +437,7 @@ export function buildCorpus({ repoPath, wrappers = [], ref, totalByteBudgetMb = 
 
   return {
     sites: { dispatches, listens },
+    orphanedPragmas,
     counters: { skippedFiles, excludedFiles, filesConsidered: trackedFiles.length },
     cacheKey,
   };
@@ -319,9 +478,9 @@ export function resolveEventWiringScopeRefs({ auditBaseCommit } = {}) {
  * @param {{repoPath: string, baseRef: string, headRef: string}} args
  * @returns {{headRef: string, changedFiles: Array<{path:string, status:string, beforeSource?:string, afterSource?:string}>}}
  */
-export function buildEventWiringDiffScope({ repoPath, baseRef, headRef }) {
+export function buildEventWiringDiffScope({ repoPath, baseRef, headRef, env }) {
   const buf = execFileSync('git', ['diff', '--name-status', '-z', baseRef, headRef], {
-    cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024,
+    cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024, ...(env ? { env } : {}),
   });
   const tokens = buf.toString('utf8').split('\0').filter(Boolean);
   const changedFiles = [];
@@ -332,28 +491,66 @@ export function buildEventWiringDiffScope({ repoPath, baseRef, headRef }) {
       // `git diff --name-status` emits "R100\0old\0new\0" — two path tokens follow.
       const oldPath = tokens[++i];
       const newPath = tokens[++i];
-      changedFiles.push(buildOneChangedFile(repoPath, baseRef, headRef, status, oldPath, newPath));
+      changedFiles.push(buildOneChangedFile(repoPath, baseRef, headRef, status, oldPath, newPath, env));
       continue;
     }
     const relPath = tokens[++i];
-    changedFiles.push(buildOneChangedFile(repoPath, baseRef, headRef, status, relPath, relPath));
+    changedFiles.push(buildOneChangedFile(repoPath, baseRef, headRef, status, relPath, relPath, env));
   }
   return { headRef, changedFiles };
 }
 
-function buildOneChangedFile(repoPath, baseRef, headRef, status, beforePath, afterPath) {
+function buildOneChangedFile(repoPath, baseRef, headRef, status, beforePath, afterPath, env) {
   if (!isAllowedExtension(afterPath) && !isAllowedExtension(beforePath)) {
     return { path: afterPath, status, beforeSource: undefined, afterSource: undefined };
   }
   let beforeSource;
   let afterSource;
   try {
-    if (status !== 'A' && status !== 'C') beforeSource = readAtRef(repoPath, baseRef, beforePath).toString('utf8');
+    if (status !== 'A' && status !== 'C') beforeSource = readAtRef(repoPath, baseRef, beforePath, env).toString('utf8');
   } catch { /* file didn't exist at baseRef, or unreadable — leave undefined, D2 rule 6 fail-closed */ }
   try {
-    if (status !== 'D') afterSource = readAtRef(repoPath, headRef, afterPath).toString('utf8');
+    if (status !== 'D') afterSource = readAtRef(repoPath, headRef, afterPath, env).toString('utf8');
   } catch { /* file doesn't exist at headRef, or unreadable — leave undefined */ }
   return { path: afterPath, status, beforeSource, afterSource };
+}
+
+/**
+ * Convert `buildCorpus`'s raw `{locus, pragmaText}` orphaned-pragma entries
+ * into `event-wiring-orphaned-pragma`-kind findings.
+ *
+ * Cluster-B audit-code R1/L2 fix: `findingFingerprint`'s intercept for this
+ * kind hashes `(kind, path, pragmaTextHash)` — a pure per-finding function
+ * with no batch context, so two pragmas with byte-identical text in the SAME
+ * file would collide to one fingerprint, and R2+ ledger suppression (which
+ * matches on fingerprint) would then apply one ruling to both, silently
+ * dropping a genuinely separate occurrence from a later round. Fixed here,
+ * at construction time, with a 0-based `dedupeOrdinal` per (path, text)
+ * duplicate group — `findingFingerprint` folds it into the hash. An ordinal
+ * (not a line number) so a reformat that doesn't change the SET of
+ * identical-text pragmas in a file doesn't reshuffle existing fingerprints;
+ * a raw line number was rejected for the same reason `dispatchSignature`
+ * excludes line, in event-wiring.mjs's `diffSites`.
+ *
+ * @param {Array<{locus: object, pragmaText: string}>} raw
+ * @returns {object[]}
+ */
+function orphanedPragmasToFindings(raw) {
+  const seen = new Map(); // `${path}|${pragmaText}` -> next ordinal
+  return raw.map((p) => {
+    const key = `${p.locus.path}|${p.pragmaText}`;
+    const dedupeOrdinal = seen.get(key) ?? 0;
+    seen.set(key, dedupeOrdinal + 1);
+    return {
+      kind: 'event-wiring-orphaned-pragma',
+      severity: 'MEDIUM',
+      enforcement: 'advisory',
+      locus: p.locus,
+      pragmaText: p.pragmaText,
+      dedupeOrdinal,
+      rationale: 'This suppression pragma binds to no dispatch site in this file — the dispatch it was meant to suppress has been removed, moved out of binding range, or the pragma was never correctly positioned.',
+    };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -364,9 +561,8 @@ function buildOneChangedFile(repoPath, baseRef, headRef, status, beforePath, aft
  * @param {{diffScope: {headRef: string, changedFiles: Array<{path:string, status:string, beforeSource?:string, afterSource?:string}>}, repoPath: string, wrappers: Array, ledgerPath: string, metricsSinkPath?: string, runId?: string, learningWritesAllowed?: boolean}} args
  */
 export async function detectEventWiringAsymmetry({
-  diffScope, repoPath, wrappers = [], totalByteBudgetMb, ledgerPath, metricsSinkPath, runId, learningWritesAllowed = true,
+  diffScope, repoPath, wrappers = [], totalByteBudgetMb, ledgerPath, metricsSinkPath, runId, learningWritesAllowed = true, env,
 } = {}) {
-  const { listOpenLifecycle, reconcileLifecycle } = await import('../ledger.mjs');
   // Cluster-B fix: use the real, lock-safe, parameterised writer
   // (orphan-metrics.mjs, now generalised) instead of the Cluster-A
   // placeholder — see the plan's Phase 1 file list correction.
@@ -376,7 +572,7 @@ export async function detectEventWiringAsymmetry({
   // `totalByteBudgetMb` is threaded through explicitly (audit-code R1/M6 fix
   // — a prior draft loaded the config's budget but never passed it here,
   // so the production path silently always used buildCorpus's default).
-  const { sites: corpus, counters: corpusCounters } = buildCorpus({ repoPath, wrappers, ref: diffScope.headRef, totalByteBudgetMb });
+  const { sites: corpus, orphanedPragmas: corpusOrphanedPragmas, counters: corpusCounters } = buildCorpus({ repoPath, wrappers, ref: diffScope.headRef, totalByteBudgetMb, env });
 
   // (2) Per-changed-file before/after extraction.
   let readSkips = 0;
@@ -424,8 +620,15 @@ export async function detectEventWiringAsymmetry({
     removedListeners = removedListeners.concat(d.removedListeners);
   }
 
-  // (4) resolveSymmetry.
-  const { findings, coverage, counters: symCounters } = resolveSymmetry({ corpus, addedDispatches, removedListeners });
+  // (4) resolveSymmetry, plus corpus-wide orphaned-pragma findings (D5,
+  // Cluster-B audit-code R1/M22 fix — see orphanedPragmasToFindings' own
+  // docstring: this kind previously had a schema, a fingerprint intercept
+  // and a standard-finding converter but no producer anywhere in the
+  // pipeline). Corpus-wide, not diff-scoped, for the same reason symmetry
+  // findings are: a pragma can go stale from a dispatch removed anywhere in
+  // the repo, not just in a file this run's diff touched.
+  const { findings: symmetryFindings, coverage, counters: symCounters } = resolveSymmetry({ corpus, addedDispatches, removedListeners });
+  const findings = [...symmetryFindings, ...orphanedPragmasToFindings(corpusOrphanedPragmas)];
 
   // (5) D12 reconciliation — one locked transaction, ancestry precomputed
   // outside the lock (R4/M1, corrected R5/H2, Gemini round-3 G1/G2).
@@ -443,7 +646,25 @@ export async function detectEventWiringAsymmetry({
       const status = lookupEventStatus(corpus, rec.eventName);
       observations.push({ eventName: rec.eventName, ref: diffScope.headRef, status });
     }
-    const ancestryDecisions = computeAncestryDecisions(repoPath, diffScope.headRef, openRecords);
+    // R2/H1 fix: ancestry must be computed for every EXISTING record an
+    // observation this run could touch, not just OPEN ones. `observations`
+    // is built from `coverage` (repo-wide dispatch-only events, regardless
+    // of ledger state) — a `coverage`-derived observation can legitimately
+    // target an event with a TERMINAL (already-closed) ledger record (a
+    // genuine reopen). `computeAncestryDecisions(..., openRecords)` alone
+    // never computes ancestry for a terminal record's `lastObservedRef`, so
+    // `reconcileLifecycle`'s stale-observation guard (which runs for ANY
+    // existing record, terminal or open) would find no map entry, fail its
+    // `=== true` check, and silently drop a real reopen. Fixed by resolving
+    // the actual existing record (open or terminal) for every observed
+    // eventName and feeding ALL of those into the ancestry computation.
+    const observedNames = new Set(observations.map(o => o.eventName));
+    const recordsNeedingAncestry = [];
+    for (const name of observedNames) {
+      const existing = readLifecycle(ledgerPath, `event-wiring-symmetry|${name}`);
+      if (existing) recordsNeedingAncestry.push(existing);
+    }
+    const ancestryDecisions = computeAncestryDecisions(repoPath, diffScope.headRef, recordsNeedingAncestry, env);
     reconcileLifecycle(ledgerPath, { kind: 'event-wiring-symmetry', observations, now: Date.now(), ancestryDecisions });
   }
 
@@ -466,14 +687,16 @@ export async function detectEventWiringAsymmetry({
   return { findings, counters: merged, partial: false };
 }
 
-function computeAncestryDecisions(repoPath, headRef, openRecords) {
+function computeAncestryDecisions(repoPath, headRef, openRecords, env) {
   const decisions = new Map();
   const distinctStoredRefs = new Set(openRecords.map(r => r.lastObservedRef).filter(Boolean));
   for (const storedRef of distinctStoredRefs) {
     if (storedRef === headRef) { decisions.set(storedRef, true); continue; }
     try {
       // "is storedRef an ancestor of headRef" — i.e. is headRef newer-or-equal.
-      execFileSync('git', ['merge-base', '--is-ancestor', storedRef, headRef], { cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'] });
+      execFileSync('git', ['merge-base', '--is-ancestor', storedRef, headRef], {
+        cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'], ...(env ? { env } : {}),
+      });
       decisions.set(storedRef, true);
     } catch (err) {
       // Fail closed on ANY failure — a real "not an ancestor" (exit 1) and an

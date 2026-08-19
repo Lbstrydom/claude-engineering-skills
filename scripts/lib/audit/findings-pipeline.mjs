@@ -87,11 +87,14 @@ export function normalizeArchCategory(f) {
  * same event into two fingerprints depending on which trigger fired on
  * which run, the exact bug this correction fixes).
  *
- * For `event-wiring-orphaned-pragma` findings (Gemini round-4 G1, R4/L1):
- * hash over {kind, path, pragmaTextHash} — it has no event name and no
- * dispatch site, so the pragma's own location + content is the only
- * available identity, and keying on content (not line number) keeps it
- * stable under unrelated reformatting elsewhere in the file.
+ * For `event-wiring-orphaned-pragma` findings (Gemini round-4 G1, R4/L1,
+ * Cluster-B audit-code R1/L2): hash over {kind, path, pragmaTextHash,
+ * dedupeOrdinal} — it has no event name and no dispatch site, so the
+ * pragma's own location + content is the only available identity, and
+ * keying on content (not line number) keeps it stable under unrelated
+ * reformatting elsewhere in the file. `dedupeOrdinal` (0-based, assigned at
+ * construction in event-wiring-corpus.mjs) disambiguates two byte-identical
+ * pragma texts in the same file, which would otherwise collide.
  *
  * For other findings (LLM passes, future mechanical passes): delegates to
  * findings.mjs/semanticId() — same canonical-evidence path used everywhere
@@ -108,7 +111,13 @@ export function findingFingerprint(f) {
   if (f.kind === 'event-wiring-orphaned-pragma') {
     const path_ = normalizePath(f.locus?.path || '');
     const textHash = crypto.createHash('sha256').update(f.pragmaText || '').digest('hex').slice(0, 8);
-    const canonical = `${f.kind}|${path_}|${textHash}`;
+    // R1/L2 fix: fold in the constructor-assigned `dedupeOrdinal` so two
+    // byte-identical pragma texts in the SAME file don't collide to one
+    // fingerprint (see event-wiring-corpus.mjs's orphanedPragmasToFindings).
+    // Absent (any non-event-wiring-orphaned-pragma caller, or a hand-built
+    // test fixture) defaults to 0 — the common single-occurrence case is
+    // unaffected.
+    const canonical = `${f.kind}|${path_}|${textHash}|${f.dedupeOrdinal ?? 0}`;
     return crypto.createHash('sha256').update(canonical).digest('hex').slice(0, 8);
   }
   if (f.kind === 'orphan-introduced') {

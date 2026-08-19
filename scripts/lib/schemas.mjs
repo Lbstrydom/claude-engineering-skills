@@ -1559,6 +1559,10 @@ export const EventWiringOrphanedPragmaFindingSchema = z.object({
   enforcement: z.literal('advisory'),
   locus: EventLocusSchema,
   pragmaText: z.string(),
+  // Cluster-B audit-code R1/L2 fix — 0-based disambiguator for two
+  // byte-identical pragma texts in the same file, which would otherwise
+  // collide to the same fingerprint (findings-pipeline.mjs's intercept).
+  dedupeOrdinal: z.number().int().nonnegative(),
   rationale: z.string(),
 });
 
