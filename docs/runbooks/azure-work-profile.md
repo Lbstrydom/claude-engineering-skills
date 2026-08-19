@@ -162,6 +162,31 @@ mutates `.env`. A transient/auth/5xx failure is reported as unverifiable and
 preserves your config rather than repointing it. `npm run check` also flags the
 unset var locally (no network).
 
+### 3b. The same discovery for the GPT and Claude deployment slots (`--target`)
+
+`AZURE_OPENAI_GPT_DEPLOYMENT` and `AZURE_FOUNDRY_CLAUDE_DEPLOYMENT` get the
+same probe → select → confirm → persist flow as the embedding slot above, via
+`--target`:
+
+```bash
+npm run azure:doctor -- --target gpt              # report-only
+npm run azure:doctor -- --target gpt --fix        # probe → confirm → write AZURE_OPENAI_GPT_DEPLOYMENT
+npm run azure:doctor -- --target claude --fix     # probe → confirm → write AZURE_FOUNDRY_CLAUDE_DEPLOYMENT
+```
+
+`--target embed` is the default (unchanged from §3 above). This is *probe, not
+enumerate*, more so than the embedding path: neither surface lists a live
+catalog before a deployment is known to exist, so the candidate ladder is the
+static, offline list of model ids the public-profile `latest-gpt`/`latest-opus`
+sentinels already resolve from (`model-resolver.mjs`'s `STATIC_POOL`) — a
+narrowing hint only, since an Azure deployment NAME is tenant-chosen and need
+not match a catalog model id. Pass `--candidate <your-deployment-name>` for a
+custom alias the pool can't guess. Every other invariant from §3 carries over
+unchanged (verified-candidate selection, never-auto-switches, transient
+failures preserve config) — except the architectural-memory vector-space
+invalidation warning, which is specific to the embedding slot and does not
+print for `--target gpt`/`--target claude`.
+
 > **The deployment name IS the vector-space identity.** Provenance is stored
 > endpoint-qualified (`azure-openai:<endpoint-origin>::<deployment>`), so changing
 > the deployment — or pointing `AZURE_OPENAI_ENDPOINT` at a different resource with

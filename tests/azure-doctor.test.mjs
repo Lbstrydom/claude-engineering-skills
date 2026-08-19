@@ -151,3 +151,49 @@ describe('azure-doctor — --json never writes, never prompts (H7)', () => {
     assert.doesNotThrow(() => JSON.parse(h.out()));
   });
 });
+
+describe('azure-doctor — --target (gpt / claude deployment slots)', () => {
+  test('an unknown --target is rejected before any probe, exit 2', async () => {
+    const h = harness({ selectResult: verified('x') });
+    let probed = false;
+    h.deps.select = async () => { probed = true; return verified('x'); };
+    const r = await runAzureDoctor({ target: 'bogus' }, h.deps);
+    assert.equal(r.exitCode, EXIT.BAD_INPUT);
+    assert.equal(probed, false);
+    assert.match(h.out(), /Invalid --target/);
+  });
+
+  test('--target gpt reads gptDeployment as configured, writes AZURE_OPENAI_GPT_DEPLOYMENT', async () => {
+    const h = harness({ selectResult: verified('gpt-5.6-terra'), isTTY: true, answer: 'y' });
+    h.deps.azure = { ...h.deps.azure, gptDeployment: 'gpt-5.5' };
+    let seenConfigured = null;
+    h.deps.select = async (args) => { seenConfigured = args.configured; return verified('gpt-5.6-terra'); };
+    const r = await runAzureDoctor({ target: 'gpt', fix: true }, h.deps);
+    assert.equal(seenConfigured, 'gpt-5.5');
+    assert.equal(r.wrote, true);
+    assert.match(h.written.text, /AZURE_OPENAI_GPT_DEPLOYMENT=gpt-5\.6-terra/);
+    // The embedding-vector-space warning is embed-specific — must not leak to gpt.
+    assert.doesNotMatch(h.out(), /embedding vector-space/i);
+  });
+
+  test('--target claude reads claudeDeployment as configured, writes AZURE_FOUNDRY_CLAUDE_DEPLOYMENT', async () => {
+    const h = harness({ selectResult: verified('claude-opus-4-8'), isTTY: true, answer: 'y' });
+    h.deps.azure = { ...h.deps.azure, claudeDeployment: 'claude-opus-4-7' };
+    let seenConfigured = null;
+    h.deps.select = async (args) => { seenConfigured = args.configured; return verified('claude-opus-4-8'); };
+    const r = await runAzureDoctor({ target: 'claude', fix: true }, h.deps);
+    assert.equal(seenConfigured, 'claude-opus-4-7');
+    assert.equal(r.wrote, true);
+    assert.match(h.written.text, /AZURE_FOUNDRY_CLAUDE_DEPLOYMENT=claude-opus-4-8/);
+    assert.doesNotMatch(h.out(), /embedding vector-space/i);
+  });
+
+  test('default (no --target) is byte-identical to --target embed', async () => {
+    const h1 = harness({ selectResult: verified('text-embedding-3-large'), isTTY: true, answer: 'y' });
+    const r1 = await runAzureDoctor({ fix: true }, h1.deps);
+    const h2 = harness({ selectResult: verified('text-embedding-3-large'), isTTY: true, answer: 'y' });
+    const r2 = await runAzureDoctor({ target: 'embed', fix: true }, h2.deps);
+    assert.equal(r1.exitCode, r2.exitCode);
+    assert.equal(h1.written.text, h2.written.text);
+  });
+});

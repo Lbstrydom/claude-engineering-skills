@@ -1,23 +1,29 @@
 #!/usr/bin/env node
 /**
- * @fileoverview Azure embedding-deployment doctor — probe → select → confirm →
- * persist. The interactive, config-mutating counterpart to the read-only
- * `azure-limits` diagnostic (plan §2; separate command by design — #3).
+ * @fileoverview Azure deployment doctor — probe → select → confirm → persist,
+ * for the three deployment-shaped env slots (`--target embed|gpt|claude`,
+ * `embed` default for back-compat). The interactive, config-mutating
+ * counterpart to the read-only `azure-limits` diagnostic (plan §2; separate
+ * command by design — #3).
  *
  * Core logic is `runAzureDoctor(options, deps)` — a pure-ish application service
  * with every side effect injected (client, file IO, snapshot read, TTY, prompt,
  * writers), so the whole §2 CLI state matrix is unit-testable without a network
  * or a real `.env`. `main()` is a thin process adapter that wires the real deps.
+ * Per-target discovery logic (candidate ladder, probe shape, error
+ * classification) lives in `lib/azure/{embed,gpt,claude}-discovery.mjs`; this
+ * file owns only the shared state machine and per-target wiring (`TARGETS`).
  *
  * Safety invariants:
  *   - **`--json` / non-TTY NEVER writes** (H7) — "does it write?" is a function of
  *     TTY alone; no flag overrides it.
  *   - A terminal `unverified` probe preserves the configured value and offers no
  *     replacement (H5).
- *   - The provenance-invalidation warning is best-effort; a failed snapshot read
+ *   - The provenance-invalidation warning is embed-only (it warns about the
+ *     architectural-memory vector space) and best-effort; a failed snapshot read
  *     never blocks a valid config fix (M7).
  *
- * Usage: node scripts/azure-doctor.mjs [--fix] [--json] [--candidate <name>]... [--env-file <path>]
+ * Usage: node scripts/azure-doctor.mjs [--target embed|gpt|claude] [--fix] [--json] [--candidate <name>]... [--env-file <path>]
  *        node scripts/azure-doctor.mjs --routes [--json]   # read-only route table + probes
  *
  * @module scripts/azure-doctor
@@ -29,11 +35,36 @@ import readline from 'node:readline';
 import { azureConfig } from './lib/config.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { applyEnvSetting, resolveEnvValue } from './lib/env-setting.mjs';
-import { selectEmbedDeployment as realSelect } from './lib/azure/embed-discovery.mjs';
+import { selectEmbedDeployment as realSelectEmbed } from './lib/azure/embed-discovery.mjs';
+import { selectGptDeployment as realSelectGpt } from './lib/azure/gpt-discovery.mjs';
+import { selectClaudeDeployment as realSelectClaude } from './lib/azure/claude-discovery.mjs';
 import { finishAndExit, armExitWatchdog } from './lib/cli-io.mjs';
 
-const ENV_KEY = 'AZURE_OPENAI_EMBED_DEPLOYMENT';
-const DOCTOR_COMMENT = '# Azure embedding deployment — verified + locked in by `npm run azure:doctor`.';
+/**
+ * Per-target wiring: the env key it writes, the comment stamped above it, how
+ * to read the currently-configured value off an `azureConfig` snapshot, and
+ * the default `select*Deployment` used when a test hasn't injected `deps.select`.
+ */
+const TARGETS = Object.freeze({
+  embed: {
+    envKey: 'AZURE_OPENAI_EMBED_DEPLOYMENT',
+    comment: '# Azure embedding deployment — verified + locked in by `npm run azure:doctor`.',
+    configured: (azure) => azure.embedDeployment,
+    defaultSelect: realSelectEmbed,
+  },
+  gpt: {
+    envKey: 'AZURE_OPENAI_GPT_DEPLOYMENT',
+    comment: '# Azure GPT deployment — verified + locked in by `npm run azure:doctor -- --target gpt`.',
+    configured: (azure) => azure.gptDeployment,
+    defaultSelect: realSelectGpt,
+  },
+  claude: {
+    envKey: 'AZURE_FOUNDRY_CLAUDE_DEPLOYMENT',
+    comment: '# Azure Claude deployment — verified + locked in by `npm run azure:doctor -- --target claude`.',
+    configured: (azure) => azure.claudeDeployment,
+    defaultSelect: realSelectClaude,
+  },
+});
 
 /**
  * A well-formed Azure deployment name (audit H2): alphanumerics plus `.`, `-`, `_`,
@@ -81,12 +112,12 @@ function reportExitCode(result, configured) {
 /**
  * The doctor state machine. All effects injected via `deps`.
  *
- * @param {{fix?:boolean, json?:boolean, candidates?:string[]}} options
+ * @param {{target?:'embed'|'gpt'|'claude', fix?:boolean, json?:boolean, candidates?:string[]}} options
  * @param {{
  *   azure: typeof azureConfig,
  *   client: object,
  *   clientFor?: (name:string)=>Promise<object>|object,
- *   select?: typeof realSelect,
+ *   select?: Function,
  *   throttle?: Function,
  *   isTTY: boolean,
  *   prompt: (q:string)=>Promise<string>,
@@ -107,6 +138,15 @@ export async function runAzureDoctor(options, deps) {
     return { exitCode: EXIT.OK, wrote: false };
   }
 
+  const targetName = options.target && TARGETS[options.target] ? options.target : (options.target ? null : 'embed');
+  if (!targetName) {
+    const m = `Invalid --target "${options.target}". Valid: ${Object.keys(TARGETS).join(', ')}.`;
+    if (options.json) out(JSON.stringify({ active: true, error: 'bad_target', target: options.target }));
+    else out(m);
+    return { exitCode: EXIT.BAD_INPUT, wrote: false };
+  }
+  const { envKey: ENV_KEY, comment: DOCTOR_COMMENT, configured: getConfigured, defaultSelect } = TARGETS[targetName];
+
   // Validate user-supplied --candidate names before any provider call (H2).
   const badCandidates = (options.candidates || []).filter((c) => !DEPLOYMENT_NAME_RE.test(c));
   if (badCandidates.length) {
@@ -117,15 +157,15 @@ export async function runAzureDoctor(options, deps) {
     return { exitCode: EXIT.BAD_INPUT, wrote: false };
   }
 
-  const select = deps.select || realSelect;
+  const select = deps.select || defaultSelect;
   const result = await select({
-    configured: azure.embedDeployment,
+    configured: getConfigured(azure),
     userCandidates: options.candidates || [],
     client: deps.client,
     clientFor: deps.clientFor,
     throttle: deps.throttle,
   });
-  const configured = azure.embedDeployment;
+  const configured = getConfigured(azure);
 
   // --json: machine object, NEVER prompts, NEVER writes (H7). Exit mirrors the matrix.
   if (options.json) {
@@ -170,16 +210,21 @@ export async function runAzureDoctor(options, deps) {
   }
 
   // TTY + --fix: provenance-invalidation warning (best-effort, M7) + confirm + write.
-  let priorModel = null;
-  if (deps.getActiveSnapshot && deps.repoId) {
-    try { priorModel = (await deps.getActiveSnapshot(deps.repoId))?.activeEmbeddingModel || null; }
-    catch { /* advisory only — never blocks the fix (M7) */ }
+  // Embed-only: it warns about the architectural-memory VECTOR SPACE, which only
+  // the embedding deployment identity affects. A GPT/Claude deployment swap has
+  // no analogous derived-index-invalidation concern.
+  if (targetName === 'embed') {
+    let priorModel = null;
+    if (deps.getActiveSnapshot && deps.repoId) {
+      try { priorModel = (await deps.getActiveSnapshot(deps.repoId))?.activeEmbeddingModel || null; }
+      catch { /* advisory only — never blocks the fix (M7) */ }
+    }
+    out(priorModel
+      ? `⚠ This changes the embedding vector-space identity. It invalidates the index built with ` +
+        `"${priorModel}" — rebuild after this change: npm run arch:refresh -- --full`
+      : `⚠ If an architectural-memory index already exists for this repo, this change invalidates it ` +
+        `— rebuild after: npm run arch:refresh -- --full`);
   }
-  out(priorModel
-    ? `⚠ This changes the embedding vector-space identity. It invalidates the index built with ` +
-      `"${priorModel}" — rebuild after this change: npm run arch:refresh -- --full`
-    : `⚠ If an architectural-memory index already exists for this repo, this change invalidates it ` +
-      `— rebuild after: npm run arch:refresh -- --full`);
 
   const answer = (await deps.prompt(`Lock in ${ENV_KEY}=${result.selected} in ${deps.envPath}? [y/N] `)).trim();
   if (!/^y(es)?$/i.test(answer)) {
@@ -201,12 +246,14 @@ export async function runAzureDoctor(options, deps) {
         `If it comes from a shell export it will keep overriding ${deps.envPath} (dotenv is ` +
         `override:false) — unset the export to use the written value.`);
   }
-  out(`Next: npm run arch:refresh -- --full`);
+  out(targetName === 'embed'
+    ? `Next: npm run arch:refresh -- --full`
+    : `Next: npm run azure:doctor -- --routes   # confirm the new deployment on the live route`);
   return { exitCode: EXIT.OK, wrote: true };
 }
 
 function parseArgs(argv) {
-  const options = { fix: false, json: false, routes: false, candidates: [], envFile: '.env' };
+  const options = { target: 'embed', fix: false, json: false, routes: false, candidates: [], envFile: '.env' };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--fix') options.fix = true;
@@ -217,6 +264,7 @@ function parseArgs(argv) {
     else if (a === '--routes') options.routes = true;
     else if (a === '--candidate') options.candidates.push(argv[++i]);
     else if (a === '--env-file') options.envFile = argv[++i];
+    else if (a === '--target') options.target = argv[++i];
   }
   return options;
 }
@@ -313,34 +361,54 @@ async function main() {
     return finishAndExit(r.exitCode);
   }
 
-  const { createOpenAIClient } = await import('./lib/openai-client.mjs');
+  if (!TARGETS[options.target]) {
+    // Let runAzureDoctor emit the standard bad_target error — no client to build.
+    const r = await runAzureDoctor(options, { azure: azureConfig, out, client: null, isTTY: false, prompt: async () => 'n', readEnvFile: () => '', writeEnvFile: () => {}, envPath: '' });
+    return finishAndExit(r.exitCode);
+  }
+  const target = options.target;
+
   const { azureThrottle } = await import('./lib/azure-throttle.mjs');
-  const client = await createOpenAIClient({ purpose: 'embed' });
-  // One client PER candidate. The deployment is constructor-level route state on
-  // the deployment-qualified surface — reusing `client` would send every probe to
-  // the already-configured deployment and stamp the first candidate `verified`
-  // regardless of what the resource actually has (see probeDeployment's docstring).
-  // `azure` snapshot-injection is the existing seam for this (same pattern as
-  // model-eval's provider-adapter); the factory's cache key includes the
-  // deployment, so candidates stay isolated from each other and from `client`.
-  const clientFor = (name) => createOpenAIClient({
-    purpose: 'embed',
-    azure: { ...azureConfig, embedDeployment: name },
-  });
+
+  // Client construction is per-target: `embed`/`gpt` are deployment-qualified
+  // Azure OpenAI surfaces (one client PER candidate — the deployment is
+  // constructor-level route state, see gpt-discovery.mjs's header for why the
+  // Responses API's own wire route doesn't actually need this but the client
+  // constructor's truthy-deployment guard does); `claude` resolves its route
+  // independently of any deployment name, so ONE shared client probes every
+  // candidate via the `model` body field (see claude-discovery.mjs's header).
+  let client = null, clientFor = null;
+  if (target === 'embed' || target === 'gpt') {
+    const { createOpenAIClient } = await import('./lib/openai-client.mjs');
+    const purpose = target;
+    const deploymentKey = target === 'embed' ? 'embedDeployment' : 'gptDeployment';
+    if (target === 'embed') client = await createOpenAIClient({ purpose });
+    clientFor = (name) => createOpenAIClient({
+      purpose,
+      azure: { ...azureConfig, [deploymentKey]: name },
+    });
+  } else {
+    const { createAnthropicClient } = await import('./lib/anthropic-client.mjs');
+    client = await createAnthropicClient({ backend: 'sdk', azureRoute: azureConfig.claudeRoute, redactor: null });
+  }
   const repoRoot = process.cwd();
   const envPath = resolveEnvPath(repoRoot, options.envFile);
 
   // Snapshot reader (best-effort, M7) — resolve repo identity + active snapshot.
+  // Embed-only: it feeds the architectural-memory vector-space warning, which
+  // has no analogue for the GPT/Claude deployment slots.
   let getActiveSnapshot = null, repoId = null;
-  try {
-    const { resolveRepoIdentity } = await import('./lib/repo-identity.mjs');
-    const { upsertRepoByUuid } = await import('./learning-store.mjs');
-    const snapMod = await import('./lib/store/arch/snapshots.mjs');
-    const id = resolveRepoIdentity(repoRoot);
-    const repo = await upsertRepoByUuid({ repoUuid: id.repoUuid, name: id.name });
-    repoId = repo?.id || null;
-    getActiveSnapshot = snapMod.getActiveSnapshot;
-  } catch { /* advisory only */ }
+  if (target === 'embed') {
+    try {
+      const { resolveRepoIdentity } = await import('./lib/repo-identity.mjs');
+      const { upsertRepoByUuid } = await import('./learning-store.mjs');
+      const snapMod = await import('./lib/store/arch/snapshots.mjs');
+      const id = resolveRepoIdentity(repoRoot);
+      const repo = await upsertRepoByUuid({ repoUuid: id.repoUuid, name: id.name });
+      repoId = repo?.id || null;
+      getActiveSnapshot = snapMod.getActiveSnapshot;
+    } catch { /* advisory only */ }
+  }
 
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   const prompt = (q) => new Promise((res) => rl.question(q, res));
@@ -370,4 +438,4 @@ if (invoked === fileURLToPath(import.meta.url)) {
   main();
 }
 
-export const _internals = { parseArgs, resolveEnvPath, renderProbeTable, reportExitCode, DOCTOR_COMMENT, ENV_KEY };
+export const _internals = { parseArgs, resolveEnvPath, renderProbeTable, reportExitCode, TARGETS };

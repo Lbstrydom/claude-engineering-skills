@@ -1,5 +1,79 @@
 # Project Status Log
 
+## 2026-08-19 — `azure:doctor` GPT/Claude deployment discovery (`--target embed|gpt|claude`)
+
+### Consumer Verification (previous ship)
+- **Commit**: `554bb6ca3aba7ca210ad6502770d42b5a349d268` (branch `claude/dazzling-shamir-c885f5`)
+- **Retrieval**: `git clone -q --branch claude/dazzling-shamir-c885f5 https://github.com/Lbstrydom/claude-engineering-skills.git` into a temp dir, `npm install`, `node --test tests/ship-commit-linked-worktree-gate.test.mjs`.
+- **Result**: verified — clone landed exactly at `554bb6ca` (not a rebase/rewrite artifact); `npm install` succeeded (410 packages, hooks installed); the subject suite ran 16/16 pass, 0 fail, entirely against the freshly cloned bytes — no dependency on that session's local worktree state.
+
+### Changes
+`azure-doctor.mjs`'s probe → select → confirm → persist flow existed for only
+the embedding deployment slot (`AZURE_OPENAI_EMBED_DEPLOYMENT`); a new GPT or
+Claude model deployed on an Azure tenant had no discovery path — the prior
+workflow was hand-writing a one-off probe script and manually confirming it
+worked before editing `.env`. Extended the same flow to the other two
+deployment-shaped slots via a new `--target embed|gpt|claude` flag
+(`embed` default, byte-identical to before).
+
+- Added `scripts/lib/azure/deployment-ladder.mjs` — the ladder-walk-until-
+  first-verified-or-terminal-unverified shape shared by the two new probe
+  surfaces, plus the not-found error classifier (H5: only a genuine
+  deployment/model-not-found signal advances the ladder; a signal-less 404
+  stays terminal, so it can never repoint a passing config onto the wrong
+  deployment). `embed-discovery.mjs` itself was left untouched — its
+  deployment-qualified-client and `dimensions`-echo-defense concerns don't
+  generalize cleanly, and it's tested/working code not worth the regression risk.
+- Added `scripts/lib/azure/gpt-discovery.mjs` (probes the Responses API,
+  needs a per-candidate client because `createOpenAIClient`'s Azure `gpt`
+  purpose requires a truthy deployment at construction) and
+  `scripts/lib/azure/claude-discovery.mjs` (probes the Messages API with ONE
+  shared client, since Claude's Azure route resolves independently of any
+  deployment name and the deployment is purely a `model` body field).
+- Both surfaces' candidate ladder is the static `STATIC_POOL.openai` /
+  `STATIC_POOL.anthropic` list `model-resolver.mjs`'s public-profile
+  `latest-gpt`/`latest-opus`/etc. sentinels already resolve from — no live
+  catalog listing (deliberate non-goal: an Azure deployment name is
+  tenant-chosen and a fresh/unconfigured client can't list before a
+  deployment is known to exist for the GPT surface specifically).
+- `azure-doctor.mjs`: added a `TARGETS` map (env key, `.env` comment,
+  configured-value getter, default selector per slot) and scoped the
+  architectural-memory vector-space invalidation warning + its `Next:` hint
+  to `embed` only — it has no analogue for the other two slots.
+- Documented the new usage in `docs/runbooks/azure-work-profile.md` §3b.
+
+### Files Affected
+- `scripts/lib/azure/deployment-ladder.mjs` (new)
+- `scripts/lib/azure/gpt-discovery.mjs` (new)
+- `scripts/lib/azure/claude-discovery.mjs` (new)
+- `scripts/azure-doctor.mjs` (`--target` flag, `TARGETS` map, per-target client wiring in `main()`)
+- `tests/azure-gpt-claude-discovery.test.mjs` (new, 28 cases)
+- `tests/azure-doctor.test.mjs` (+4 `--target` cases)
+- `docs/runbooks/azure-work-profile.md` (+§3b)
+
+### Decisions Made
+- Static-only candidate ladder for GPT/Claude (no live catalog listing) —
+  matches the feature request's own non-goal and sidesteps a real
+  chicken-and-egg problem: the GPT client can't be constructed without a
+  deployment name already known.
+- Shared the ladder-walk + not-found classifier between the two new surfaces
+  via a new module rather than generalizing `embed-discovery.mjs` itself —
+  the existing module's deployment-qualified-client requirement and
+  `dimensions` echo-defense are specific to its own surface, and touching
+  tested/working code for a marginal DRY win wasn't worth the risk.
+- Consulted architectural memory before writing (`get-neighbourhood`) —
+  banded `review` (existing `azure-doctor.mjs` functions scored
+  `below-noise-floor`, no strong precedent cluster), which is why the
+  `TARGETS`-map generalization lives in the existing file rather than a
+  parallel set of sibling CLIs.
+
+### Next Steps
+None outstanding for this change; full local suite green (12908 pass / 0 fail
+/ 26 skipped, pre-existing DB-gated suites) including the untouched embed-only
+path.
+
+---
+
 ## 2026-08-19 — Event-wiring-symmetry: full `/cycle --autonomous` run, two clusters, consolidated gate APPROVE
 
 `docs/plans/event-wiring-symmetry.md` implemented end to end autonomously: a new
