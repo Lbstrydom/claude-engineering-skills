@@ -474,17 +474,36 @@ describe('self_family', () => {
 describe('clustering', () => {
   const opts = { threshold: 0.14, coverageFloor: 0.6 };
 
-  it('REFUSES a snapshot whose findings cite no resolvable file path', () => {
-    // Plan-mode findings cite §-sections, so the file-set prefilter can never
-    // fire — the matcher is not an instrument for that comparison, and writing
-    // a cluster set anyway would revert to "unique means total".
+  it('REFUSES a snapshot whose findings have no locus at all', () => {
+    // Still the rule: writing a cluster set from an unusable match would revert
+    // to "unique means total". What counts as a locus widened in v2 — a
+    // `§`-section is one — so the refusal fixture is prose naming neither a
+    // path nor a section.
     const res = clusterSnapshotFindings([
-      { findingId: 'f1', armId: 'a', section: '§0.3 (Activation Addendum)', category: 'X', detail: 'd', severity: 'HIGH' },
-      { findingId: 'f2', armId: 'b', section: '§6.1', category: 'X', detail: 'd', severity: 'HIGH' },
+      { findingId: 'f1', armId: 'a', section: 'a vague remark', category: 'X', detail: 'd', severity: 'HIGH' },
+      { findingId: 'f2', armId: 'b', section: 'another vague remark', category: 'X', detail: 'd', severity: 'HIGH' },
     ], opts);
     assert.equal(res.coverage, 'unknown');
     assert.deepEqual(res.clusters, []);
     assert.match(res.reason, /cannot fire/);
+  });
+
+  it('a PLAN-MODE snapshot now clusters instead of being refused', () => {
+    // Measured on cohort e52eec728688fcab: five complete snapshots sat at
+    // 0.31-0.65 locus coverage against a 0.6 floor, so the campaign's
+    // attribution gate was unreachable rather than merely unmet.
+    const res = clusterSnapshotFindings([
+      { findingId: 'f1', armId: 'a', section: '§2 Envelope budget', category: 'X', detail: 'the budget is unstated for full mode', severity: 'HIGH' },
+      { findingId: 'f2', armId: 'b', section: '§2 Envelope budget', category: 'X', detail: 'the budget is unstated for full mode too', severity: 'HIGH' },
+      { findingId: 'f3', armId: 'c', section: '§8 promotion matrix', category: 'X', detail: 'something entirely different about promotion', severity: 'LOW' },
+    ], opts);
+    assert.notEqual(res.coverage, 'unknown', res.reason ?? '');
+    // f1 and f2 cite the same section and say the same thing -> one cluster;
+    // f3 cites another section -> its own.
+    assert.equal(res.clusters.length, 2);
+    const merged = res.clusters.find((c) => c.members.length === 2);
+    assert.ok(merged, 'the two arms describing one defect must merge');
+    assert.deepEqual(merged.members.map((m) => m.armId).sort(), ['a', 'b']);
   });
 
   it('an empty snapshot is unknown, not a measured zero', () => {

@@ -368,6 +368,23 @@ cross the gates before it reaches the numbers they qualify. Standings carry a
 - the assigned calibration sample is dispositioned per arm, and
 - every complete snapshot has a cluster set.
 
+**Plan-mode findings cluster on their `§`-section**, not on a file. The matcher's
+key is a LOCUS: a file path when the finding names one, the `§`-section /
+decision-id keys otherwise (`affectedLociOf`). Without that, a plan-mode
+campaign's attribution gate was **unreachable** rather than merely unmet — 89 of
+201 findings in cohort `e52eec728688fcab` cited no file, so per-snapshot
+coverage sat at 0.31–0.65 against a 0.6 floor and five complete snapshots were
+refused. Section keys lift it to 0.89–1.00. It is a FALLBACK: a finding that
+names a file matches exactly as before.
+
+That change moved `FINDING_MATCH_SCHEMA_VERSION` to **2**, so cluster sets
+written under v1 are not read at v2 — a cohort clustered before it reads as
+unclustered until you re-derive:
+
+```bash
+node scripts/campaign.mjs cluster --campaign final-review-scoped-2026q3 --recluster
+```
+
 Each finding row carries a prefilled override command and a copy button:
 
 ```bash

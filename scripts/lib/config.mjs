@@ -327,8 +327,19 @@ export const findingMatchConfig = Object.freeze({
   enabled: process.env.AUDIT_FINDING_MATCH_ENABLED !== 'false',
 });
 
-/** Schema version stamped on persisted matched buckets — bump on a meaning change. */
-export const FINDING_MATCH_SCHEMA_VERSION = 1;
+/**
+ * Schema version stamped on persisted matched buckets — bump on a meaning change.
+ *
+ * **v2 (2026-08-19): the matching key is a LOCUS, not a file.** A finding that
+ * names no file now matches on its `§`-section / decision-id keys
+ * (`affectedLociOf`), where before it was permanently `unmatchable`. That
+ * changes what "same defect" means, so cluster sets and matched buckets written
+ * under v1 are not comparable with v2 ones — which is exactly what this number
+ * is for. `loadClusters` reads by version, so a v1 cohort reads as unclustered
+ * until `campaign.mjs cluster --recluster` regenerates it. Re-derive; never
+ * relabel.
+ */
+export const FINDING_MATCH_SCHEMA_VERSION = 2;
 
 // ── Shadow Final-Review Config (A/B test — observation-only) ─────────────────
 //

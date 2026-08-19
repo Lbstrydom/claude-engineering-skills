@@ -11,7 +11,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   extractFileRefs, affectedFilesOf, primaryFileOf, sharesFile,
-  matchFindings, conserves, signatureOf,
+  matchFindings, conserves, signatureOf, affectedLociOf, sectionLociOf,
 } from '../scripts/lib/finding-match.mjs';
 import { populateFindingMetadata } from '../scripts/lib/ledger.mjs';
 import { buildFileReferenceRegex } from '../scripts/lib/language-profiles.mjs';
@@ -155,14 +155,45 @@ describe('matchFindings — the measured defect now matches', () => {
 });
 
 describe('matchFindings — unmatchable is not unique', () => {
-  it('a no-file finding is unmatchable on BOTH sides, never shadowOnly', () => {
-    const p = f({ _hash: 'p1', section: PROSE_SECTION });
-    const s = f({ _hash: 's1', section: PROSE_SECTION });
+  it('a finding with NO locus at all is unmatchable on BOTH sides, never shadowOnly', () => {
+    // Invariant 3 unchanged: absence of a comparable key is not evidence of
+    // distinctness. What changed (v2) is WHICH findings have no key — a
+    // `§`-section is now a locus, so the fixture here is prose naming neither
+    // a file nor a section.
+    const p = f({ _hash: 'p1', section: 'the retry loop behaves oddly' });
+    const s = f({ _hash: 's1', section: 'the retry loop behaves oddly' });
     const r = matchFindings([p], [s], OPTS);
     assert.equal(r.unmatchablePrimary, 1);
     assert.equal(r.unmatchableShadow, 1);
-    assert.equal(r.shadowOnly, 0, 'a no-file finding must never be counted as a unique');
+    assert.equal(r.shadowOnly, 0, 'a locus-less finding must never be counted as a unique');
     assert.equal(r.both, 0);
+  });
+
+  it('two arms citing the SAME §-section now match — that is the v2 change', () => {
+    // Before v2 these were both `unmatchable`, so a plan-mode comparison
+    // reported every finding as unique: "unique" meant "total", which is the
+    // defect this module exists to fix, surviving in the one place the file
+    // key could not reach.
+    const p = f({ _hash: 'p1', section: PROSE_SECTION, detail: 'alpha beta gamma' });
+    const s = f({ _hash: 's1', section: PROSE_SECTION, detail: 'alpha beta gamma delta' });
+    const r = matchFindings([p], [s], OPTS);
+    assert.equal(r.both, 1);
+    assert.equal(r.unmatchablePrimary, 0);
+    assert.equal(r.pairs[0].locusKind, 'section');
+    assert.deepEqual(r.pairs[0].sharedFiles, [], 'a section match shares NO files, and says so');
+    assert.ok(r.pairs[0].sharedLoci.includes('section:§0.3'));
+  });
+
+  it('DIFFERENT sections do not match, however similar the prose', () => {
+    const p = f({ _hash: 'p1', section: '§0.3 Activation', detail: 'identical words here' });
+    const s = f({ _hash: 's1', section: '§9.9 Something else', detail: 'identical words here' });
+    assert.equal(matchFindings([p], [s], OPTS).both, 0, 'the locus must still discriminate');
+  });
+
+  it('a section locus NEVER matches a file locus — the two key spaces are disjoint', () => {
+    const p = f({ _hash: 'p1', section: '§2 budget', detail: 'same words' });
+    const s = f({ _hash: 's1', section: 'scripts/a.mjs', detail: 'same words' });
+    assert.equal(matchFindings([p], [s], OPTS).both, 0);
   });
 
   it('conservation holds on a mixed set', () => {
@@ -176,6 +207,33 @@ describe('matchFindings — unmatchable is not unique', () => {
   });
 });
 
+describe('affectedLociOf — a FALLBACK, so file matching is untouched', () => {
+  it('a finding that names a file ignores its §-sections entirely', () => {
+    // The union alternative would give every code finding a second key space,
+    // so two findings sharing no file could match on a stray `§2`. This is the
+    // assertion that says it did not happen.
+    assert.deepEqual(
+      affectedLociOf({ section: 'scripts/a.mjs — see §2 and D7c' }),
+      ['scripts/a.mjs'],
+    );
+  });
+
+  it('only a finding with no file at all falls through to section keys', () => {
+    assert.deepEqual(affectedLociOf({ section: '§2 Envelope budget, per D7c' }), ['section:§2', 'section:d7c']);
+    assert.deepEqual(affectedLociOf({ section: 'no locus of any kind' }), []);
+  });
+
+  it('section keys are normalised and de-duplicated', () => {
+    assert.deepEqual(sectionLociOf({ section: '§2 vs §2. and KD-3 and kd-3' }), ['section:§2', 'section:kd-3']);
+  });
+
+  it('reads every section-ish field, like affectedFilesOf does for paths', () => {
+    assert.deepEqual(sectionLociOf({ primaryFile: '§6b Phase 0' }), ['section:§6b']);
+    assert.deepEqual(sectionLociOf({}), []);
+    assert.deepEqual(sectionLociOf(null), []);
+  });
+});
+
 describe('matchFindings — coverage states are three, not two', () => {
   it('no findings on either side → coverage null, verdict not-applicable', () => {
     const r = matchFindings([], [], OPTS);
@@ -184,7 +242,8 @@ describe('matchFindings — coverage states are three, not two', () => {
   });
 
   it('coverage below the floor → verdict unknown, not a clean number', () => {
-    const P = [f({ _hash: 'p1', section: PROSE_SECTION }), f({ _hash: 'p2', section: PROSE_SECTION })];
+    // Locus-less prose on both primary entries: neither a path nor a section.
+    const P = [f({ _hash: 'p1', section: 'a vague remark' }), f({ _hash: 'p2', section: 'another vague remark' })];
     const S = [f({ _hash: 's1', section: 'scripts/a.mjs', detail: 'x' })];
     const r = matchFindings(P, S, OPTS);
     assert.ok(r.coverage < OPTS.coverageFloor);

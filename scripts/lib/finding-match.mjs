@@ -59,6 +59,17 @@ import { jaccardSimilarity } from './text-similarity.mjs';
  * file: treating one as a grouping key would merge unrelated §-referenced
  * findings, which is a fresh instance of the bug this module exists to fix.
  *
+ * **`sectionLociOf` does NOT reverse that** (2026-08-19), and the difference is
+ * the point. The rule above forbids a heading entering the FILE key space,
+ * where `"§0.3"` would sit beside `scripts/a.mjs` and be intersected with it.
+ * Section keys live in their own `section:`-prefixed space, are reachable only
+ * when a finding names no file at all, and are still gated by the similarity
+ * threshold — so a heading can group two findings that cite it, and can never
+ * be mistaken for a path. What the rule protects against is a heading
+ * masquerading as a file; what it must not be read to require is that
+ * plan-mode findings stay permanently unmatchable, which is invariant 3
+ * failing in the other direction.
+ *
  * `dedupe:false` exists for exactly one caller: `populateFindingMetadata`, whose
  * current loop pushes every match including repeats. De-duplicating there would
  * change `affectedFiles` for a section naming one file twice — a real (if rare)
@@ -157,6 +168,72 @@ export function sharesFile(a, b) {
   return affectedFilesOf(a).some((p) => bs.has(p));
 }
 
+/**
+ * `§`-section and decision-id keys — the LOCUS of a finding that cites no file.
+ *
+ * A plan-mode finding is not about a file. Its `primary_file` is a section
+ * reference (`"§1 D1b vs 'Out of Scope (Future)' vs §8 promotion matrix"`), so
+ * `affectedFilesOf` returns nothing and the matcher's file-sharing conjunction
+ * can never fire — every such finding is `unmatchable`, which is the state that
+ * makes "unique" mean "total". Measured on campaign cohort `e52eec728688fcab`
+ * (2026-08-19): **89 of 201 findings cite no file, and 171 of the 201 are
+ * plan-mode**, so per-snapshot locus coverage sat at 0.31–0.65 against a 0.6
+ * floor. Clustering refused five complete snapshots and the campaign's
+ * attribution gate was not merely unmet but UNREACHABLE.
+ *
+ * Two key shapes, both normalised to lower case: the `§N` marker (`§2`, `§6b`,
+ * `§2.5c`) and structured decision ids (`D7c`, `KD-3`, `R3-M1`). Measured over
+ * the same cohort: 84 of the 89 no-file findings (94%) carry at least one, which
+ * lifts every snapshot to 0.89–1.00.
+ *
+ * **A narrowing key, not a merging one.** Of 1861 cross-arm pairs, a shared
+ * section key admits 240 (13%) — the prefilter still discriminates rather than
+ * degenerating into "everything shares the document". Their similarity
+ * distribution is median 0.088 / p75 0.109, so the calibrated 0.14 threshold
+ * still decides: 31 of the 240 actually match. The shared section text does NOT
+ * inflate the score into automatic merges, which was the hazard worth checking
+ * before shipping this — `signatureOf` includes `section`, so a long shared
+ * section phrase could have dominated the Jaccard.
+ */
+const SECTION_MARKER_RE = /§\s*([\w.]+)/g;
+const DECISION_ID_RE = /\b((?:KD|D|R\d+|M|H|L)-?\d+[a-z]?)\b/g;
+
+export function sectionLociOf(finding) {
+  const text = [finding?.section, finding?.primaryFile, finding?._primaryFile]
+    .filter((t) => typeof t === 'string' && t !== '')
+    .join(' ');
+  if (text === '') return [];
+  const out = [];
+  const seen = new Set();
+  // `section:` prefixed so a locus can never collide with a file path, and so
+  // a reader of `sharedLoci` can tell which space a match came from.
+  const add = (raw) => {
+    const key = `section:${String(raw).toLowerCase().replace(/\.+$/, '')}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(key);
+  };
+  for (const m of text.matchAll(SECTION_MARKER_RE)) add(`§${m[1]}`);
+  for (const m of text.matchAll(DECISION_ID_RE)) add(m[1]);
+  return out;
+}
+
+/**
+ * The matching LOCUS: files when the finding names any, section keys otherwise.
+ *
+ * A FALLBACK, not a union, and that is the load-bearing half. A union would
+ * hand every code finding a second key space, so two findings that share no
+ * file could match on a stray `§2` in their prose — silently changing what
+ * "same defect" means for every comparison this repo has already run. Under the
+ * fallback a finding that resolves a file behaves EXACTLY as it did before
+ * (asserted as a negative control), and only the findings that were previously
+ * unmatchable gain a locus.
+ */
+export function affectedLociOf(finding) {
+  const files = affectedFilesOf(finding);
+  return files.length > 0 ? files : sectionLociOf(finding);
+}
+
 /** The signature Jaccard scores — identical to `applyDebtSuppression`'s (plan §2.5a). */
 export function signatureOf(finding) {
   return `${finding?.category ?? ''} ${finding?.section ?? ''} ${finding?.detail ?? ''}`;
@@ -190,15 +267,18 @@ export function matchFindings(primary, shadow, opts) {
   const P = (Array.isArray(primary) ? primary : []).filter(Boolean);
   const S = (Array.isArray(shadow) ? shadow : []).filter(Boolean);
 
-  const pFiles = P.map((f) => affectedFilesOf(f));
-  const sFiles = S.map((f) => affectedFilesOf(f));
+  // LOCUS, not file: a plan-mode finding cites a `§`-section rather than a path
+  // (see `affectedLociOf`). Files still win whenever a finding names one, so
+  // nothing that matched before matches differently now.
+  const pLoci = P.map((f) => affectedLociOf(f));
+  const sLoci = S.map((f) => affectedLociOf(f));
 
   const candidates = [];
   for (let i = 0; i < P.length; i++) {
-    if (pFiles[i].length === 0) continue;          // unmatchable — never a candidate
+    if (pLoci[i].length === 0) continue;          // unmatchable — never a candidate
     for (let k = 0; k < S.length; k++) {
-      if (sFiles[k].length === 0) continue;
-      const shared = pFiles[i].filter((p) => sFiles[k].includes(p));
+      if (sLoci[k].length === 0) continue;
+      const shared = pLoci[i].filter((p) => sLoci[k].includes(p));
       if (shared.length === 0) continue;
       const score = similarity(signatureOf(P[i]), signatureOf(S[k]));
       if (score < threshold) continue;
@@ -220,12 +300,18 @@ export function matchFindings(primary, shadow, opts) {
       primaryHash: hashOf(P[c.i], c.i, 'p'),
       shadowHash: hashOf(S[c.k], c.k, 's'),
       similarity: c.score,
-      sharedFiles: c.shared,
+      // `sharedFiles` keeps its historical meaning — file paths only — because
+      // it is a PERSISTED field (gemini-review stores `pairs` verbatim), and a
+      // field named for files that sometimes holds `section:§2` would be a lie
+      // to whoever reads those records next. `sharedLoci` is the whole truth.
+      sharedFiles: c.shared.filter((x) => !x.startsWith('section:')),
+      sharedLoci: c.shared,
+      locusKind: c.shared.some((x) => x.startsWith('section:')) ? 'section' : 'file',
     });
   }
 
-  const unmatchablePrimary = pFiles.filter((f) => f.length === 0).length;
-  const unmatchableShadow = sFiles.filter((f) => f.length === 0).length;
+  const unmatchablePrimary = pLoci.filter((f) => f.length === 0).length;
+  const unmatchableShadow = sLoci.filter((f) => f.length === 0).length;
   const both = pairs.length;
   const primaryOnly = P.length - both - unmatchablePrimary;
   const shadowOnly = S.length - both - unmatchableShadow;

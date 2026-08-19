@@ -11,7 +11,7 @@
  * @module scripts/lib/campaign/adjudicate
  */
 import { z } from 'zod';
-import { matchFindings, affectedFilesOf } from '../finding-match.mjs';
+import { matchFindings, affectedLociOf } from '../finding-match.mjs';
 
 /**
  * `verified-true`/`verified-false` in the plan's prose map onto the pair
@@ -318,12 +318,16 @@ export function clusterSnapshotFindings(findings, { threshold, coverageFloor, wi
   const rows = (findings || []).filter(Boolean);
   if (rows.length === 0) return { coverage: 'unknown', reason: 'no findings', clusters: [] };
 
-  const withFiles = rows.filter((r) => affectedFilesOf({ section: r.section }).length > 0);
-  const coverage = withFiles.length / rows.length;
+  // LOCUS coverage, not file coverage: a plan-mode finding cites a `§`-section
+  // rather than a path, and measuring it as "no key" is what made this floor
+  // unreachable for a plan-mode campaign — five complete snapshots refused at
+  // 0.31–0.65 against a 0.6 floor, so the attribution gate could never pass.
+  const located = rows.filter((r) => affectedLociOf({ section: r.section }).length > 0);
+  const coverage = located.length / rows.length;
   if (coverage < coverageFloor) {
     return {
       coverage: 'unknown', clusters: [],
-      reason: `only ${withFiles.length}/${rows.length} findings cite a resolvable file path (floor ${coverageFloor}) — `
+      reason: `only ${located.length}/${rows.length} findings cite a resolvable file path or §-section (floor ${coverageFloor}) — `
         + 'the file-set prefilter cannot fire, so no attribution is possible for this snapshot',
     };
   }
