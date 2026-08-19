@@ -262,6 +262,73 @@ describe('campaign store against a live schema', { skip }, () => {
     await client.query('DELETE FROM finding_adjudication_events WHERE id = $1', [ok.rows[0].id]);
   });
 
+  it('the producer\'s honest hand-off SATISFIES the constraint, and the pair it produced in the field does not', async () => {
+    // The load-bearing case. `campaign.mjs adjudicate` died here on 2026-08-19:
+    // the adjudicator returned `verified` + `needs_triage`, Postgres refused it
+    // and the paid verdict was lost. Its own finding, so the supersede/count
+    // assertions elsewhere in this suite stay independent of it.
+    const finding = (await client.query(
+      `INSERT INTO audit_findings (run_id, finding_fingerprint, pass_name, severity, category, detail_snapshot)
+       VALUES ($1, 'fp-pair-contract', 'backend', 'HIGH', 'Backend', 'a claim the instrument could not settle') RETURNING id`,
+      [ids.runOpus],
+    )).rows[0].id;
+
+    const ok = await store.recordAgentVerdict({
+      findingId: finding, adjudicatorModel: 'claude-opus-4-8',
+      method: 'unverifiable', outcome: 'needs_triage',
+      evidence: { path: null, sha: 'abc123', lineRange: null, quotedSpan: null, absenceReason: 'no cited path resolved at this revision' },
+    });
+    assert.equal(ok.ok, true, `the honest hand-off must be storable: ${ok.error ?? ''}`);
+    const stored = (await client.query(
+      "SELECT method, adjudication_outcome FROM finding_adjudication_events WHERE finding_id = $1", [finding],
+    )).rows;
+    assert.deepEqual(stored, [{ method: 'unverifiable', adjudication_outcome: 'needs_triage' }]);
+
+    // NEGATIVE CONTROL: the constraint is live and WOULD have rejected the pair
+    // the producer emitted, so the pass above is the coherent pair being legal
+    // rather than the constraint having been dropped.
+    await assert.rejects(
+      client.query(
+        `INSERT INTO finding_adjudication_events (finding_id, adjudication_outcome, remediation_state, round, adjudicator_kind, method)
+         VALUES ($1, 'needs_triage', 'pending', 1, 'agent', 'verified')`, [finding],
+      ),
+      (err) => /needs_triage_is_unverifiable/.test(err.message),
+    );
+
+    // ...and the store refuses that pair itself, writing NOTHING — the caller
+    // gets a named contract error instead of a driver-level constraint name,
+    // and the row count is the proof no partial write happened.
+    const before = (await client.query('SELECT COUNT(*)::int AS n FROM finding_adjudication_events WHERE finding_id = $1', [finding])).rows[0].n;
+    const refused = await store.recordAgentVerdict({
+      findingId: finding, adjudicatorModel: 'claude-opus-4-8', method: 'verified', outcome: 'needs_triage',
+    });
+    assert.equal(refused.ok, false);
+    assert.match(refused.error, /requires method "unverifiable"/);
+    const after = (await client.query('SELECT COUNT(*)::int AS n FROM finding_adjudication_events WHERE finding_id = $1', [finding])).rows[0].n;
+    assert.equal(after, before, 'a refused verdict writes nothing');
+
+    // The OTHER half of the pair rule has no constraint behind it: nothing in
+    // the schema stops `unverifiable` + `accepted` from being stored and
+    // counted as evidence, so the store guard is the only thing that does.
+    const uncaught = await store.recordAgentVerdict({
+      findingId: finding, adjudicatorModel: 'claude-opus-4-8', method: 'unverifiable', outcome: 'accepted',
+    });
+    assert.equal(uncaught.ok, false, 'the silent half must be refused too');
+    // Its own finding: the partial unique index permits ONE live agent verdict
+    // per finding, and this control is about the CHECK constraints, not that.
+    const other = (await client.query(
+      `INSERT INTO audit_findings (run_id, finding_fingerprint, pass_name, severity, category, detail_snapshot)
+       VALUES ($1, 'fp-pair-control', 'backend', 'HIGH', 'Backend', 'the silent half') RETURNING id`,
+      [ids.runOpus],
+    )).rows[0].id;
+    const raw = await client.query(
+      `INSERT INTO finding_adjudication_events (finding_id, adjudication_outcome, remediation_state, round, adjudicator_kind, method)
+       VALUES ($1, 'accepted', 'pending', 1, 'agent', 'unverifiable') RETURNING id`, [other],
+    );
+    assert.ok(raw.rows[0].id, 'control: the DATABASE accepts it — which is exactly why the producer must not emit it');
+    await client.query('DELETE FROM finding_adjudication_events WHERE id = $1', [raw.rows[0].id]);
+  });
+
   it('self_family is computed store-side from the unblinded row', async () => {
     await store.recordAgentVerdict({
       findingId: ids.findingOpus, worksheetRowId: worksheetRowIdFor(ids.findingOpus, KEY), worksheetId: ids.worksheetId,

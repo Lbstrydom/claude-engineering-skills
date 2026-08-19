@@ -81,16 +81,88 @@ export const ADJUDICATION_SYSTEM_PROMPT = [
   '   sources do not cover it), answer `method: "unverifiable"` with outcome "needs_triage".',
   '4. `evidence` is mandatory. For "accepted": path, sha, lineRange, quotedSpan. For "dismissed": the same',
   '   plus absenceReason. Leave a field null only when it genuinely does not apply.',
+  '5. `method` and `outcome` are separate fields but only THREE pairs are legal:',
+  '   verified+accepted, verified+dismissed, unverifiable+needs_triage. "needs_triage" always means',
+  '   "unverifiable" — a verdict cannot claim both that the claim was settled against code and that',
+  '   nobody decided it. Any other pair is recorded as unverifiable/needs_triage regardless of what you meant.',
   '',
   'Model and provider names have been redacted from the finding text. Do not speculate about which model',
   'wrote it; that information is deliberately withheld and guessing corrupts the measurement.',
 ].join('\n');
 
 /**
+ * The `(method, outcome)` pair contract, as ONE biconditional:
+ * **`outcome === 'needs_triage'` if and only if `method === 'unverifiable'`.**
+ *
+ * That is the three-way protocol of the runbook (§3) written as a predicate —
+ * `verified`+`accepted`, `verified`+`dismissed`, `unverifiable`+`needs_triage`,
+ * and nothing else — and it is the same rule Postgres enforces as
+ * `fae_needs_triage_is_unverifiable_chk`. Stating it here rather than only in
+ * the migration is what lets the PRODUCER refuse an incoherent pair instead of
+ * discovering it as a constraint name from the driver.
+ *
+ * Both halves are load-bearing and they fail differently, which is why one
+ * predicate covers both rather than a check on the `needs_triage` side alone:
+ *
+ * - `verified` + `needs_triage` is "I settled it against code and cannot
+ *   decide", which is incoherent. The database REFUSES it, so the verdict is
+ *   lost — noisily, but lost. Measured live on 2026-08-19 against
+ *   `final-review-scoped-2026q3`.
+ * - `unverifiable` + `accepted|dismissed` is "I could not settle it, and here
+ *   is my decision". **No constraint rejects it**, so it lands in the store and
+ *   is COUNTED as evidence for or against an arm — an unverified judgement
+ *   wearing a verification's clothes, which is the exact failure the
+ *   verify-don't-judge protocol exists to prevent. The silent half is the worse
+ *   half.
+ *
+ * @returns {string|null} the reason the pair is illegal, or null when it is fine
+ */
+export function verdictPairError({ method, outcome }) {
+  const undecided = outcome === 'needs_triage';
+  const unsettled = method === 'unverifiable';
+  if (undecided === unsettled) return null;
+  return undecided
+    ? `outcome "needs_triage" requires method "unverifiable" (got ${JSON.stringify(method)}) — `
+      + 'an undecided verdict cannot also claim the claim was settled against code'
+    : `method "unverifiable" requires outcome "needs_triage" (got ${JSON.stringify(outcome)}) — `
+      + 'a verdict reached without settling the claim is not evidence and must route to a human';
+}
+
+/**
+ * Force an incoherent pair onto the honest hand-off.
+ *
+ * The coercion is ALWAYS toward `unverifiable`/`needs_triage`, never toward
+ * `verified`: the two inputs disagree about whether the claim was settled, and
+ * "not settled" is the only reading that cannot manufacture evidence. Promoting
+ * `unverifiable`+`accepted` to `verified`+`accepted` would credit an arm on a
+ * verdict the instrument itself said it could not support.
+ *
+ * The reason is written into `evidence.absenceReason` when that field is empty,
+ * because the row is about to sit in a human's queue and "why is this here" is
+ * the first thing they will ask.
+ */
+export function coerceVerdictPair(verdict) {
+  const reason = verdictPairError(verdict);
+  if (!reason) return { verdict, coerced: null };
+  const note = `incoherent verdict pair (method ${JSON.stringify(verdict.method)} with outcome `
+    + `${JSON.stringify(verdict.outcome)}) — recorded as unverifiable/needs_triage: ${reason}`;
+  const evidence = verdict.evidence && typeof verdict.evidence === 'object'
+    ? { ...verdict.evidence, absenceReason: verdict.evidence.absenceReason || note }
+    : verdict.evidence;
+  return { verdict: { ...verdict, method: 'unverifiable', outcome: 'needs_triage', evidence }, coerced: note };
+}
+
+/**
  * Validate a raw verdict, with the plan's non-negotiable downgrade: **a verdict
  * with unparseable or missing evidence becomes `unverifiable`/`needs_triage`,
  * not a warning.** An unsupported machine verdict is worth less than an honest
  * hand-off, and a malformed one must never become a silent `pending`.
+ *
+ * The pair contract is settled HERE, at the parse boundary, and not left to the
+ * database: `method` and `outcome` are two independent enums in the tool schema,
+ * so the model can return any of the six combinations and the schema alone
+ * accepts all of them. Two of the six are illegal (see `verdictPairError`), and
+ * only one of those two is caught downstream.
  */
 export function normaliseVerdict(raw, { worksheetRowId }) {
   const parsed = AdjudicationVerdictSchema.safeParse(raw);
@@ -103,24 +175,97 @@ export function normaliseVerdict(raw, { worksheetRowId }) {
     // verdict against the wrong finding.
     return { ok: false, reason: `worksheetRowId mismatch (expected ${worksheetRowId}, got ${v.worksheetRowId})` };
   }
-  if (v.method === 'verified') {
-    const e = v.evidence;
+  let verdict = v;
+  let note = null;
+  if (verdict.method === 'verified') {
+    const e = verdict.evidence;
     const missing = ['path', 'sha', 'lineRange', 'quotedSpan'].filter((k) => !e[k]);
-    if (v.outcome === 'dismissed' && !e.absenceReason) missing.push('absenceReason');
+    if (verdict.outcome === 'dismissed' && !e.absenceReason) missing.push('absenceReason');
     if (missing.length > 0) {
-      return {
-        ok: true,
-        verdict: { ...v, method: 'unverifiable', outcome: 'needs_triage' },
-        downgraded: `verified verdict lacked evidence (${missing.join(', ')}) — downgraded to unverifiable`,
-      };
+      verdict = { ...verdict, method: 'unverifiable', outcome: 'needs_triage' };
+      note = `verified verdict lacked evidence (${missing.join(', ')}) — downgraded to unverifiable`;
     }
   }
-  return { ok: true, verdict: v, downgraded: null };
+  // AFTER the evidence downgrade, deliberately: a `verified`+`needs_triage`
+  // verdict that DOES carry full evidence never enters the branch above, and
+  // was the exact shape the database refused in production.
+  const paired = coerceVerdictPair(verdict);
+  if (paired.coerced) note = note ? `${note}; ${paired.coerced}` : paired.coerced;
+  return { ok: true, verdict: paired.verdict, downgraded: note };
 }
 
 /** Findings whose outcome routes to the human queue rather than counting. */
 export function routesToHumanQueue(verdict) {
   return verdict.method === 'unverifiable' || verdict.outcome === 'needs_triage';
+}
+
+/**
+ * Render the end-of-batch summary, and DERIVE the exit code from it.
+ *
+ * A pure function rather than three `process.stdout.write`s in the loop,
+ * because the two properties that matter are properties of the arithmetic:
+ *
+ * **(1) The buckets are disjoint and they close.** The line this replaces read
+ * `5 adjudicated · 9 routed to the human queue · 0 provider failure(s)` for a
+ * `--limit 10` run — 14 outcomes from 10 rows. `adjudicated` counted every row
+ * that got a provider call (including the ones that then routed to a human, so
+ * they were counted twice) while the rows forced `unverifiable` before any call
+ * were counted ONLY as routed. A summary that overcounts is how a partial run
+ * reads as a complete one. Here `settled` and `humanQueue` are disjoint by
+ * construction and every attempted row lands in exactly one bucket;
+ * `providerFailures` is a SUBSET of `humanQueue` and is reported inline rather
+ * than added.
+ *
+ * **(2) A verdict that failed to record is never silent.** The operator paid a
+ * provider for it. It appears in its own bucket, in a block that names it as
+ * lost evidence, and it makes the exit code non-zero — `emit({ok:false})`'s
+ * contract (cli-io.mjs) applied to a verb that writes its own prose.
+ *
+ * The balance check is the self-audit: if the buckets do not sum to
+ * `attempted`, the summary says so instead of printing a tidy lie.
+ *
+ * @returns {{lines: string[], exitCode: number, balanced: boolean}}
+ */
+export function renderAdjudicationSummary({
+  attempted, settled = 0, humanQueue = 0, providerFailures = 0,
+  unrecorded = 0, skipped = 0, previewed = 0, previewForced = 0, aborted = false, dryRun = false,
+}) {
+  const accounted = settled + humanQueue + unrecorded + skipped + previewed;
+  const notReached = attempted - accounted;
+  // `aborted` is the ONLY legitimate way a row goes unaccounted: the batch
+  // stopped before reaching it. Anything else is an arithmetic bug in this
+  // loop, and it is reported as one.
+  const balanced = notReached === 0 || (aborted && notReached > 0);
+
+  const lines = [];
+  const parts = [];
+  if (dryRun) {
+    // The number an operator is previewing is SPEND, so the rows that would be
+    // forced `unverifiable` without a provider call are named separately —
+    // they cost nothing and they are not evidence either.
+    parts.push(`${previewed - previewForced} would be sent to the adjudicator`);
+    parts.push(`${previewForced} would be forced unverifiable with no provider call`);
+  }
+  else {
+    parts.push(`${settled} settled as evidence`);
+    parts.push(`${humanQueue} routed to the human queue${providerFailures > 0 ? ` (${providerFailures} provider failure(s))` : ''}`);
+  }
+  if (unrecorded > 0) parts.push(`${unrecorded} FAILED TO RECORD`);
+  if (skipped > 0) parts.push(`${skipped} skipped`);
+  if (aborted && notReached > 0) parts.push(`${notReached} not reached (batch aborted)`);
+  lines.push(`  ${attempted} row(s) attempted: ${parts.join(' · ')}`);
+
+  if (unrecorded > 0) {
+    lines.push(`  ${unrecorded} verdict(s) were produced and could NOT be stored. That is paid-for evidence lost:`);
+    lines.push('    the campaign\'s accepted counts are INCOMPLETE until those rows are re-adjudicated.');
+    lines.push('    Their receipts stay in state `complete` (paid, unrecorded) — `campaign.mjs reconcile` lists them.');
+  }
+  if (!balanced) {
+    lines.push(`  ACCOUNTING BUG: ${accounted} row(s) accounted for against ${attempted} attempted `
+      + `(${notReached > 0 ? `${notReached} unaccounted` : `${-notReached} double-counted`}) — `
+      + 'this summary is not trustworthy; treat the run as partial.');
+  }
+  return { lines, exitCode: unrecorded > 0 || !balanced ? 1 : 0, balanced };
 }
 
 /**

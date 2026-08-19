@@ -27,6 +27,7 @@ import { OSS_PRICING } from '../model-pricing.mjs';
 import { FINDING_MATCH_SCHEMA_VERSION } from '../config.mjs';
 import { terminalEvent } from '../campaign/verdict.mjs';
 import { hmacKeyRefFor } from '../campaign/config.mjs';
+import { verdictPairError } from '../campaign/adjudicate.mjs';
 
 // ── The blind DTO ───────────────────────────────────────────────────────────
 
@@ -741,14 +742,23 @@ export async function loadAdjudicationEvents(findingIds) {
   }
 }
 
-/** Create (or reuse) the adjudication session for a cohort. */
-export async function ensureWorksheet({ cohortId, hmacKeyRef }) {
+/**
+ * Create (or reuse) the adjudication session for a cohort.
+ *
+ * `create: false` makes it a pure READ — same lookup, same key-ref refusal, no
+ * insert — which is what `adjudicate --dry-run` needs. A dry run that created
+ * the worksheet would be a preview that mutates the thing it previews, and the
+ * key-ref check is the reason this is a flag rather than a second function:
+ * two lookups would be two places for that refusal to drift.
+ */
+export async function ensureWorksheet({ cohortId, hmacKeyRef, create = true }) {
   if (!await isCloudEnabled()) return { ok: true, cloud: false, id: null };
   try {
     const existing = await one(
       'SELECT id, hmac_key_ref FROM campaign_worksheets WHERE cohort_id = $1 ORDER BY created_at ASC LIMIT 1',
       [cohortId],
     );
+    if (!existing && !create) return { ok: true, cloud: true, id: null, created: false, exists: false };
     if (existing) {
       if (existing.hmac_key_ref !== hmacKeyRef) {
         return {
@@ -852,6 +862,32 @@ const CAMPAIGN_EVENT_DEFAULTS = Object.freeze({ remediation_state: 'pending', ro
  *  reader who skips `method` would take for a real dismissal. */
 export const CAMPAIGN_OUTCOMES = Object.freeze(['accepted', 'dismissed', 'severity_adjusted', 'needs_triage']);
 
+/** The two methods an AGENT verdict may carry. A human disposition writes
+ *  `override`, which is a different act and not in this set. */
+export const CAMPAIGN_AGENT_METHODS = Object.freeze(['verified', 'unverifiable']);
+
+/**
+ * Refuse a row the schema would refuse — or, worse, would NOT refuse.
+ *
+ * Shared by both writers and run BEFORE the cloud gate, deliberately: a verdict
+ * whose `(method, outcome)` pair is incoherent is malformed whether or not a
+ * store is configured, and validating after the gate would make the guard
+ * unreachable on every local-only install — the one place a caller could
+ * develop against it without ever meeting the constraint.
+ *
+ * `verdictPairError` (lib/campaign/adjudicate.mjs) is the ONE oracle for the
+ * pair rule; this function must never grow a second copy of it.
+ */
+function verdictRowRefusal({ method, outcome, methods = null }) {
+  if (!CAMPAIGN_OUTCOMES.includes(outcome)) {
+    return `outcome must be one of ${CAMPAIGN_OUTCOMES.join(', ')} (got ${JSON.stringify(outcome)})`;
+  }
+  if (methods && !methods.includes(method)) {
+    return `method must be one of ${methods.join(', ')} (got ${JSON.stringify(method)})`;
+  }
+  return verdictPairError({ method, outcome });
+}
+
 /**
  * Record the agent's verdict, superseding any prior live agent verdict for the
  * same finding.
@@ -865,10 +901,9 @@ export async function recordAgentVerdict({
   findingId, worksheetRowId, worksheetId, armRunId, adjudicatorModel,
   method, outcome, evidence = null, selfFamily = null, rationale = null,
 }) {
+  const refusal = verdictRowRefusal({ method, outcome, methods: CAMPAIGN_AGENT_METHODS });
+  if (refusal) return { ok: false, cloud: null, error: refusal, id: null };
   if (!await isCloudEnabled()) return { ok: true, cloud: false, id: null };
-  if (!CAMPAIGN_OUTCOMES.includes(outcome)) {
-    return { ok: false, cloud: true, error: `outcome must be one of ${CAMPAIGN_OUTCOMES.join(', ')} (got ${JSON.stringify(outcome)})` };
-  }
   try {
     return await withTx(async () => {
       await updateWhere('finding_adjudication_events', { superseded_at: new Date().toISOString() },
@@ -909,10 +944,13 @@ export async function recordAgentVerdict({
  * datum.
  */
 export async function recordHumanOverride({ findingId, outcome, note = null, actor = null, overridesEventId = null }) {
+  // `method: 'override'` is written below, so the pair rule rejects
+  // `needs_triage` here for free: a human disposition that routes the row back
+  // to the human queue is a no-op wearing a verdict's clothes, and the DB
+  // constraint would reject it as a bare constraint name.
+  const refusal = verdictRowRefusal({ method: 'override', outcome });
+  if (refusal) return { ok: false, cloud: null, error: refusal, id: null };
   if (!await isCloudEnabled()) return { ok: true, cloud: false, id: null };
-  if (!CAMPAIGN_OUTCOMES.includes(outcome)) {
-    return { ok: false, cloud: true, error: `outcome must be one of ${CAMPAIGN_OUTCOMES.join(', ')} (got ${JSON.stringify(outcome)})` };
-  }
   try {
     return await withTx(async () => {
       let target = overridesEventId;

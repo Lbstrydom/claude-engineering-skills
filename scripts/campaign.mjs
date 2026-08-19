@@ -60,7 +60,7 @@ import { readLog } from './lib/bakeoff/log.mjs';
 import { resolveCitedSources } from './lib/campaign/cited-source.mjs';
 import {
   AdjudicationVerdictSchema, ADJUDICATION_TOOL, ADJUDICATION_SYSTEM_PROMPT,
-  normaliseVerdict, routesToHumanQueue, clusterSnapshotFindings,
+  normaliseVerdict, routesToHumanQueue, clusterSnapshotFindings, renderAdjudicationSummary,
 } from './lib/campaign/adjudicate.mjs';
 import {
   repoId, classifyLogEntry, isArmRetried, resolvePromotionAttempts, promoteFromLog,
@@ -310,7 +310,13 @@ async function verbAdjudicate(campaignId, { limit, dryRun }) {
 
   const key = store.requireCampaignHmacKey(config.id);
   const keyRef = store.hmacKeyRefFor(config.id);
-  const ws = await store.ensureWorksheet({ cohortId: ev.cohortId, hmacKeyRef: keyRef });
+  // `--dry-run` previews SPEND, so it must not write. `create: false` keeps the
+  // lookup and the key-ref refusal while skipping the insert; the row-set
+  // upsert below is skipped for the same reason. (Before this, a `--dry-run`
+  // enrolled the worksheet AND recorded real `unverifiable` verdicts for every
+  // row whose citations did not resolve — which is why a dry run at
+  // `--limit 3` was followed by a real run reporting one fewer pending row.)
+  const ws = await store.ensureWorksheet({ cohortId: ev.cohortId, hmacKeyRef: keyRef, create: !dryRun });
   if (!ws.ok) { process.stderr.write(`${ws.error}\n`); return 1; }
 
   // Build the row set + calibration assignment from the UNBLINDED findings, then
@@ -322,13 +328,28 @@ async function verbAdjudicate(campaignId, { limit, dryRun }) {
     worksheetRowId: store.worksheetRowIdFor(f.finding_id, key),
   }));
   const assigned = store.assignCalibrationSample(candidates, { campaignId: config.id, key, rate: config.calibration.sampleRate });
-  const persisted = await store.upsertWorksheetRows(ws.id, candidates.map((c) => ({
-    worksheetRowId: c.worksheetRowId, findingId: c.findingId, calibrationAssigned: assigned.get(c.worksheetRowId) === true,
-  })));
-  if (!persisted.ok) { process.stderr.write(`${persisted.error}\n`); return 1; }
+  if (!dryRun) {
+    const persisted = await store.upsertWorksheetRows(ws.id, candidates.map((c) => ({
+      worksheetRowId: c.worksheetRowId, findingId: c.findingId, calibrationAssigned: assigned.get(c.worksheetRowId) === true,
+    })));
+    if (!persisted.ok) { process.stderr.write(`${persisted.error}\n`); return 1; }
+  }
 
   const byRowId = new Map(candidates.map((c) => [c.worksheetRowId, c]));
-  const blindRows = await store.loadBlindWorksheet(ws.id, { key, campaignId: config.id });
+  // A dry run against a cohort with no worksheet yet has nothing to read, so it
+  // previews the rows it WOULD enrol rather than creating them to find out.
+  // The projection is the blind one either way — a preview that saw more than
+  // the adjudicator sees would be previewing a different run.
+  const blindRows = ws.id
+    ? await store.loadBlindWorksheet(ws.id, { key, campaignId: config.id })
+    : {
+      ok: true,
+      rows: candidates.map((c) => ({
+        worksheet_row_id: c.worksheetRowId, calibration_assigned: assigned.get(c.worksheetRowId) === true,
+        agent_event_id: null, severity: c.severity, category: c.category,
+        primary_file: c.section, detail_snapshot: c.detail,
+      })),
+    };
   if (!blindRows.ok) { process.stderr.write(`${blindRows.error}\n`); return 1; }
 
   const redact = store.buildModelRedactor({ arms: config.arms });
@@ -339,11 +360,17 @@ async function verbAdjudicate(campaignId, { limit, dryRun }) {
   // silently if we did not filter here.
   const pending = blindRows.rows.filter((r) => r.agent_event_id == null);
   const todo = Number.isInteger(limit) && limit > 0 ? pending.slice(0, limit) : pending;
-  process.stdout.write(`campaign ${config.id}: ${todo.length} row(s) to adjudicate (${pending.length} pending of ${blindRows.rows.length} total)\n`);
+  process.stdout.write(`campaign ${config.id}: ${todo.length} row(s) to adjudicate (${pending.length} pending of ${blindRows.rows.length} total)`
+    + `${dryRun ? ' — DRY RUN, nothing is written' : ''}\n`);
   if (todo.length === 0) return 0;
 
   const client = dryRun ? null : await createAnthropicClient({ backend: 'sdk' });
-  let done = 0; let humanQueue = 0; let failed = 0;
+  // Disjoint buckets, one per attempted row — see `renderAdjudicationSummary`.
+  // `providerFailures` is the one deliberate SUBSET (of `humanQueue`): a call
+  // that produced no verdict still records `unverifiable` and still routes to a
+  // human, so counting it as its own bucket would double-count the row.
+  let settled = 0; let humanQueue = 0; let providerFailures = 0;
+  let unrecorded = 0; let skipped = 0; let previewed = 0; let previewForced = 0; let aborted = false;
 
   for (const row of todo) {
     // `src` supplies ONLY the store-side facts that are never rendered — the
@@ -352,7 +379,14 @@ async function verbAdjudicate(campaignId, { limit, dryRun }) {
     // from `row`, the blind projection, so the blindness contract is a property
     // of one named query rather than of this loop remembering to be careful.
     const src = byRowId.get(row.worksheet_row_id);
-    if (!src) continue;
+    if (!src) {
+      // A worksheet row whose finding is no longer in the cohort's live
+      // evidence. Counted, never silent: an unattributable row that vanishes
+      // from the arithmetic is how a partial run reads as a complete one.
+      skipped += 1;
+      process.stderr.write(`  [campaign] row ${row.worksheet_row_id}: no live cohort finding for this worksheet row — skipped\n`);
+      continue;
+    }
     // `detail` feeds the anchor search, not the prompt path: the store's
     // `primary_file` never carries a line (0 of 3993 measured), so without the
     // prose there is nothing to centre the window on.
@@ -372,14 +406,20 @@ async function verbAdjudicate(campaignId, { limit, dryRun }) {
     // produce `unverifiable`; it produces confident hallucinated verification,
     // which is worse than no adjudication because it is scored as evidence.
     if (!cited.resolvedAny) {
-      await writeVerdict({
-        src, ws, adjudicatorModel,
+      // The dry-run check comes FIRST here. It used to come after this write,
+      // so `--dry-run` recorded a real, terminal verdict for every row with an
+      // unresolvable citation — the preview an operator runs to decide whether
+      // to spend was the one command that mutated the campaign silently.
+      if (dryRun) { previewed += 1; previewForced += 1; continue; }
+      const w = await writeVerdict({
+        src, ws, adjudicatorModel, dryRun,
         verdict: { method: 'unverifiable', outcome: 'needs_triage', evidence: { path: null, sha: src.auditedSha, lineRange: null, quotedSpan: null, absenceReason: 'no cited path resolved at this revision' }, confidence: 0 },
       });
+      if (!w.ok) { unrecorded += 1; aborted = true; reportLostVerdict(src, w); break; }
       humanQueue += 1;
       continue;
     }
-    if (dryRun) { done += 1; continue; }
+    if (dryRun) { previewed += 1; continue; }
 
     const wrRow = await store.resolveWorksheetRowAttempt({ worksheetId: ws.id, worksheetRowId: row.worksheet_row_id });
     const attempt = resolveNextAttempt({
@@ -397,30 +437,49 @@ async function verbAdjudicate(campaignId, { limit, dryRun }) {
     completeReceipt({ ...receiptArgs, result: { usage: outcome.usage ?? null, verdict: outcome.verdict ?? null, error: outcome.error ?? null } });
 
     const cost = costFromUsage(outcome.usage, adjudicatorModel);
+    const verdict = outcome.verdict ?? {
+      method: 'unverifiable', outcome: 'needs_triage', confidence: 0,
+      evidence: { path: null, sha: src.auditedSha, lineRange: null, quotedSpan: null, absenceReason: outcome.error },
+    };
     if (!outcome.verdict) {
-      failed += 1;
+      providerFailures += 1;
       process.stderr.write(`  [campaign] row ${row.worksheet_row_id}: ${outcome.error} — recording unverifiable, routed to the human queue\n`);
-      await writeVerdict({
-        src, ws, adjudicatorModel,
-        verdict: { method: 'unverifiable', outcome: 'needs_triage', evidence: { path: null, sha: src.auditedSha, lineRange: null, quotedSpan: null, absenceReason: outcome.error }, confidence: 0 },
-        cost, attempt, worksheetRowUuid: wrRow.id,
-      });
-      markReceiptRecorded(receiptArgs);
-      humanQueue += 1;
-      continue;
     }
-    await writeVerdict({ src, ws, adjudicatorModel, verdict: outcome.verdict, cost, attempt, worksheetRowUuid: wrRow.id });
+    const w = await writeVerdict({ src, ws, adjudicatorModel, verdict, cost, attempt, worksheetRowUuid: wrRow.id, dryRun });
+    if (!w.ok) {
+      // NOT `markReceiptRecorded` — `recorded` means the store row is durable,
+      // and it is not. The receipt stays `complete` (paid, unrecorded), which is
+      // exactly the state `reconcile` reports as recoverable.
+      unrecorded += 1;
+      aborted = true;
+      reportLostVerdict(src, w);
+      break;
+    }
     markReceiptRecorded(receiptArgs);
-    if (routesToHumanQueue(outcome.verdict)) humanQueue += 1;
-    done += 1;
+    if (routesToHumanQueue(verdict)) humanQueue += 1;
+    else settled += 1;
   }
 
-  process.stdout.write(`  ${done} adjudicated · ${humanQueue} routed to the human queue · ${failed} provider failure(s)\n`);
+  const summary = renderAdjudicationSummary({
+    attempted: todo.length, settled, humanQueue, providerFailures, unrecorded, skipped, previewed, previewForced, aborted, dryRun,
+  });
+  process.stdout.write(`${summary.lines.join('\n')}\n`);
   if (humanQueue > 0) {
     process.stdout.write('  Rows in the human queue are NOT counted as evidence until dispositioned:\n'
       + '    node scripts/campaign.mjs override --finding FINDING_UUID --verdict accepted --note "why"\n');
   }
-  return 0;
+  // The exit code carries the write failure. A verb that reports lost evidence
+  // in its prose and exits 0 is read as success by every caller checking `$?`
+  // (cli-io.mjs `emit({ok:false})` makes the same coupling for JSON verbs).
+  return summary.exitCode;
+}
+
+/** One place that says what a failed verdict write COST, so the two call sites
+ *  cannot drift into describing the same loss differently. */
+function reportLostVerdict(src, res) {
+  process.stderr.write(`  [campaign] verdict write FAILED for finding ${src.findingId}: ${res.error}\n`
+    + '  [campaign] the batch is stopping here. A write failure is a contract or schema refusal, not provider\n'
+    + '  [campaign] variance — continuing would pay for verdicts that cannot be stored either.\n');
 }
 
 /** Receipts live under the cohort the evidence belongs to. */
@@ -428,14 +487,24 @@ function adjudicationCohortDir(lock) {
   return lock?.lockDigest ?? 'no-lock';
 }
 
-async function writeVerdict({ src, ws, adjudicatorModel, verdict, cost = null, attempt = 1, worksheetRowUuid = null }) {
+async function writeVerdict({ src, ws, adjudicatorModel, verdict, cost = null, attempt = 1, worksheetRowUuid = null, dryRun = false }) {
+  // The dry-run guarantee gets a FUNCTION BOUNDARY rather than resting on the
+  // order of two `if`s in the loop. It rested on that order until 2026-08-19,
+  // and lost: the unresolved-citation branch wrote a real terminal verdict
+  // before the loop ever checked `dryRun`, so the command an operator runs to
+  // preview spend silently adjudicated rows. A reordering can happen again; a
+  // caller that reaches this line under `--dry-run` now fails loudly instead.
+  if (dryRun) throw new Error('writeVerdict must never be reached under --dry-run: a preview that mutates is not a preview');
   const selfFamily = store.isSelfFamily(adjudicatorModel, src.sourceModel);
   const res = await store.recordAgentVerdict({
     findingId: src.findingId, worksheetRowId: src.worksheetRowId, worksheetId: ws.id,
     armRunId: src.armRunId, adjudicatorModel, method: verdict.method, outcome: verdict.outcome,
     evidence: verdict.evidence ?? null, selfFamily,
   });
-  if (!res.ok) process.stderr.write(`  [campaign] verdict write failed for ${src.findingId}: ${res.error}\n`);
+  // The failure is NOT logged here. It is returned, and the caller counts it,
+  // stops the batch and carries it into the exit code — a log line the summary
+  // then contradicts with a tidy success count is how this defect stayed
+  // invisible through a 195-row campaign.
   // Spend is recorded only when a provider call actually happened, and only
   // when we have the row to hang it on. A missing row is REPORTED rather than
   // silently dropped: an unrecorded charge reads as free, which is lesson (e).
@@ -443,11 +512,16 @@ async function writeVerdict({ src, ws, adjudicatorModel, verdict, cost = null, a
     if (!worksheetRowUuid) {
       process.stderr.write(`  [campaign] WARNING: adjudication spend for ${src.findingId} could not be recorded (no worksheet row uuid) — the campaign's overhead line will under-report\n`);
     } else {
-      await store.recordAdjudicationAttempt({
+      const spend = await store.recordAdjudicationAttempt({
         worksheetRowUuid, attempt, status: verdict.method,
         usage: { input_tokens: cost.inputTokens, output_tokens: cost.outputTokens },
         costUsd: cost.totalUsd, costStatus: cost.totalUsd == null ? 'unpriced' : 'priced',
       });
+      // Not fatal — the verdict is the evidence and it landed — but never
+      // silent, for the same reason as the branch above.
+      if (!spend.ok) {
+        process.stderr.write(`  [campaign] WARNING: adjudication spend for ${src.findingId} was NOT recorded (${spend.error}) — the campaign's overhead line will under-report\n`);
+      }
     }
   }
   return res;
@@ -696,7 +770,7 @@ if (invokedDirectly) {
   });
 }
 
-export const _internals = Object.freeze({ callAdjudicator, adjudicationCohortDir, assertOutcome });
+export const _internals = Object.freeze({ callAdjudicator, adjudicationCohortDir, assertOutcome, writeVerdict });
 
 /** Exported for the live-schema suite: the rule recorder is store-coupled, so
  *  its contract is only assertable against a real campaign_events table. */
