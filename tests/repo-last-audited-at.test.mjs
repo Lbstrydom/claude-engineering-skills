@@ -20,6 +20,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import url from 'node:url';
 import crypto from 'node:crypto';
@@ -88,18 +89,30 @@ test('a profile-less resolveRepoForStore leaves last_audited_at NULL', { skip },
   const { resolveRepoForStore } = await import('../scripts/lib/store/repo.mjs');
   const { closePool } = await import('../scripts/lib/db/client.mjs');
 
+  // Resolve identity from an ISOLATED cwd (no .git ancestor), not this repo's
+  // own git-derived repo_uuid. `audit_repos` is keyed on that uuid and shared
+  // across every Tier-2 suite in the same container run — other suites (e.g.
+  // repo-identity-store.test.mjs) legitimately call a profile-bearing
+  // resolveRepoForStore against THIS repo's canonical row, inside their own
+  // rolled-back transaction. Sharing that identity here would make "first
+  // touch" an assumption about suite ORDER instead of a fact about this row;
+  // a fresh path-fallback uuid (see repo-identity.mjs `resolveRepoIdentity`)
+  // makes it true by construction.
+  const isolatedCwd = fs.mkdtempSync(path.join(os.tmpdir(), 'repo-last-audited-at-'));
+
   let captured;
   try {
     await assert.rejects(
       withTx(async () => {
         // First touch of this repo is a pure id lookup (no profile) — the
         // auto-vivify path. It must NOT claim the repo was audited.
-        const readOnly = await resolveRepoForStore({});
+        const readOnly = await resolveRepoForStore({ cwd: isolatedCwd });
         const afterRead = await one(
           `SELECT last_audited_at FROM audit_repos WHERE id = $1`, [readOnly.repoRowId],
         );
         // A real audit afterwards must stamp it.
         await resolveRepoForStore({
+          cwd: isolatedCwd,
           profile: { repoFingerprint: 'fp-STAMP', stack: {}, fileBreakdown: {}, focusAreas: [] },
         });
         const afterAudit = await one(
@@ -123,6 +136,7 @@ test('a profile-less resolveRepoForStore leaves last_audited_at NULL', { skip },
     );
   } finally {
     await closePool().catch(() => {});
+    fs.rmSync(isolatedCwd, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
 });
 
