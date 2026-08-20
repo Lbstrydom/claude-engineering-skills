@@ -485,3 +485,83 @@ describe('runMultiPassCodeAudit harness — Phase 11 extraction baseline (direct
     assert.deepEqual(direct.generatorOutcomes, []);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════
+// Backlog-triage bug #4 (fixed 2026-08-20): the ledger auto-write used to
+// run BEFORE the deterministic existence-verification gate, so every
+// finding — including one the gate went on to REFUTE (prove false) a few
+// lines later — was persisted as `adjudicationOutcome: 'pending'`, and
+// nothing ever went back to correct it. A refuted finding was excluded
+// from the verdict count but sat in the ledger forever with no record it
+// had been disproven. The gate now runs first, so a refuted finding is
+// known to be false at the moment it is written.
+// ═══════════════════════════════════════════════════════════════════════
+describe('runMultiPassCodeAudit harness — ledger write reflects the existence gate (bug #4 fix)', () => {
+  it('a finding the existence gate REFUTES is persisted to the ledger as dismissed, with the disproof reason recorded — not pending', async () => {
+    const ledgerPath = mkTmpFile('ledger.json', JSON.stringify({ version: 1, entries: [] }));
+    const category = 'Missing Module Refuted';
+    const section = `${BACKEND_FILE}:1`;
+    // Same phrasing already proven (in tests/finding-verification.test.mjs)
+    // to classify as an existence claim and resolve against the repo
+    // inventory — BACKEND_FILE is a real, tracked fixture file, so the gate
+    // must refute this claim (the cited module DOES exist).
+    const detail = `The module \`${BACKEND_FILE}\` does not exist.`;
+    try {
+      const stub = makeStubClient(defaultResponses({
+        backend_pass: { ...EMPTY_BACKEND, findings: [mkFinding({ severity: 'HIGH', category, section, detail })] },
+      }));
+      const result = await runMultiPassCodeAudit(stub, PLAN_CONTENT, '', false, null, '', {
+        ...BASE_OPTS, round: 1, ledgerFile: ledgerPath, noLedger: false,
+      });
+
+      // Sanity: the gate really did refute this finding in the merged result
+      // (refuted findings stay in findings[], only the verdict count excludes
+      // them — verify the fixture actually exercises the refutation path
+      // before trusting the ledger assertion below).
+      const refutedInResult = result.findings.find((f) => f.detail === detail);
+      assert.ok(refutedInResult, 'the refuted finding must still be present in findings[]');
+      assert.equal(
+        refutedInResult.verification?.verification, 'refuted',
+        'sanity check: the existence gate must have refuted this finding (the cited file really exists in this repo)',
+      );
+
+      const ledgerOnDisk = JSON.parse(fs.readFileSync(ledgerPath, 'utf-8'));
+      // Matched by `detailSnapshot`, not `category` — the merge step prefixes
+      // category with the originating pass name (e.g. `[backend] …`), so an
+      // exact-category match is brittle to that unrelated behavior.
+      const entry = ledgerOnDisk.entries.find((e) => e.detailSnapshot === detail);
+      assert.ok(entry, 'the refuted finding must still have been written to the ledger');
+      assert.equal(
+        entry.adjudicationOutcome, 'dismissed',
+        'a finding already proven false by the gate must not land in the ledger as `pending` with no record it was ever disproven',
+      );
+      assert.ok(entry.rulingRationale, 'the disproof reason must be recorded on the ledger entry, not silently dropped');
+    } finally {
+      fs.rmSync(path.dirname(ledgerPath), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+
+  it('negative control — a genuine (non-refuted) finding is still persisted as pending, unaffected by the reorder', async () => {
+    const ledgerPath = mkTmpFile('ledger.json', JSON.stringify({ version: 1, entries: [] }));
+    const category = 'Real Non-Refuted Finding';
+    const section = `${BACKEND_FILE}:2`;
+    const detail = 'a genuine finding with no existence claim in it at all';
+    try {
+      const stub = makeStubClient(defaultResponses({
+        backend_pass: { ...EMPTY_BACKEND, findings: [mkFinding({ severity: 'HIGH', category, section, detail })] },
+      }));
+      await runMultiPassCodeAudit(stub, PLAN_CONTENT, '', false, null, '', {
+        ...BASE_OPTS, round: 1, ledgerFile: ledgerPath, noLedger: false,
+      });
+      const ledgerOnDisk = JSON.parse(fs.readFileSync(ledgerPath, 'utf-8'));
+      const entry = ledgerOnDisk.entries.find((e) => e.detailSnapshot === detail);
+      assert.ok(entry, 'the finding must have been written to the ledger');
+      assert.equal(
+        entry.adjudicationOutcome, 'pending',
+        'a finding the gate never touched must stay pending — only gate-refuted findings are auto-dismissed',
+      );
+    } finally {
+      fs.rmSync(path.dirname(ledgerPath), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+});

@@ -35,6 +35,7 @@ import { LAYOUT_CONSTANTS } from './sync-path-map.mjs';
 import { SyncManifestSchema, hashFile } from './sync-manifest.mjs';
 import { enumerateNpmRunRefs } from './npm-script-enumerator.mjs';
 import { listSurfaceNames, compareSkillSurfaces } from './skill-surface-identity.mjs';
+import { assertKnownFlags, ArgvError } from './cli-io.mjs';
 
 // NOTE: this module intentionally does NOT import sync-inventory.mjs.
 // Inventory is source-only (depends on consumer-repos.mjs which uses
@@ -44,6 +45,11 @@ import { listSurfaceNames, compareSkillSurfaces } from './skill-surface-identity
 // source-only and never shipped to consumers.
 
 const ALL_GATES = ['1', '2A', '2B', '2C', '3', '4', '5', '6', '7', '8'];
+// Backlog-triage fix — every flag this CLI's own parseArgs recognizes, fed to
+// the shared assertKnownFlags oracle (the same one reconcile-repo-identity.mjs
+// and friends use) so an unrecognized flag alongside a recognized one is a
+// hard refusal, not a silent no-op.
+const KNOWN_FLAGS = ['--consumer-root', '--legacy-manifest', '--gates', '--format', '--selfcheck-relocation', '--selfcheck-inventory'];
 // Reuse the single source of truth from sync-rewriter — eliminates
 // parser drift between rewrite and detect surfaces (R1 M1 fix).
 const COMMAND_REGEX = SHARED_COMMAND_REGEX;
@@ -125,6 +131,10 @@ const CMD_SCAN_PATHS = [
 ];
 
 function parseArgs(argv) {
+  // `from: 0` — callers pass an already-sliced argv (process.argv.slice(2)),
+  // not raw process.argv, so there is no node/script prefix to skip here.
+  assertKnownFlags(argv, KNOWN_FLAGS, { cli: 'sync-isolation-verify', from: 0 });
+
   const out = {
     consumerRoot: process.cwd(),
     legacyManifest: null,
@@ -136,7 +146,24 @@ function parseArgs(argv) {
     const a = argv[i];
     if (a === '--consumer-root') out.consumerRoot = argv[++i];
     else if (a === '--legacy-manifest') out.legacyManifest = argv[++i];
-    else if (a === '--gates') out.gates = argv[++i].split(',').map((s) => s.trim()).filter(Boolean);
+    else if (a === '--gates') {
+      const raw = argv[++i];
+      const parsed = (raw || '').split(',').map((s) => s.trim()).filter(Boolean);
+      // Backlog-triage fix — `--gates ''` used to collapse (via split+filter)
+      // to an empty array, and runGates() over an empty gate list produces
+      // zero results, zero failures, and exit 0: a verifier that silently
+      // checked NOTHING read as a clean pass. Refuse rather than run zero
+      // gates; omitting `--gates` entirely (the common case) still runs
+      // everything in ALL_GATES via the default above.
+      if (parsed.length === 0) {
+        throw new ArgvError(
+          `sync-isolation-verify: --gates was given an empty value ("${raw ?? ''}") — that would run ZERO gates `
+          + 'and exit 0 having checked nothing. Omit --gates to run every gate, or name at least one '
+          + `(${ALL_GATES.join(',')}).`,
+        );
+      }
+      out.gates = parsed;
+    }
     else if (a === '--format') out.format = argv[++i];
     else if (a === '--selfcheck-relocation') out.selfcheckRelocation = true;
     else if (a === '--selfcheck-inventory') out.selfcheckInventory = true;
@@ -757,6 +784,13 @@ async function main() {
 const isCli = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isCli) {
   main().catch((err) => {
+    // A usage mistake (unknown/empty flag) is not a crash — same convention as
+    // reconcile-repo-identity.mjs: print the diagnostic only, exit 2.
+    if (err instanceof ArgvError || err?.code === 'ARGV_ERROR') {
+      process.stderr.write(`${err.message}\n`);
+      process.exit(2);
+      return;
+    }
     process.stderr.write(`[sync-isolation-verify] fatal: ${err?.message || err}\n`);
     process.exit(1);
   });

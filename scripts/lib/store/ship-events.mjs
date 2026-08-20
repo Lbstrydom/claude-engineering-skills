@@ -10,6 +10,12 @@
 
 import { isCloudEnabled } from './repo.mjs';
 import { many, insertReturning } from '../db/query.mjs';
+// Single oracle for "is this string a plausible audit_repos row id" — the same
+// UUID_RE campaign.mjs's CLI and bandit-fp.mjs's own writers already gate on.
+// Reusing it here rather than re-deriving the regex is what keeps a typo'd or
+// non-UUID repoId (a repo fingerprint hash, an empty string, a stray object)
+// from being written straight through as `repo_id`.
+import { isSyncableRepoId } from './bandit-fp.mjs';
 
 // ── ship_events ────────────────────────────────────────────────────────────
 
@@ -25,6 +31,16 @@ import { many, insertReturning } from '../db/query.mjs';
  */
 export async function recordShipEvent(repoId, event) {
   if (!event?.outcome) return { ok: false, cloud: false, reason: 'missing-outcome' };
+  // A provided-but-implausible repoId (a repo fingerprint hash, a typo, a
+  // stray object) must be REFUSED, not silently written as-is or coerced to
+  // null — `repo_id || null` used to accept anything truthy, so a caller
+  // passing the wrong kind of id wrote garbage into a real FK column with no
+  // signal that the write was scoped to nothing (or to the wrong repo, if the
+  // string happened to collide). `repoId` being absent entirely is fine
+  // (global/unscoped event); only a PRESENT-but-invalid value is refused.
+  if (repoId != null && !isSyncableRepoId(repoId)) {
+    return { ok: false, cloud: false, reason: 'invalid-repo-id', error: `recordShipEvent: repoId "${String(repoId)}" is not a valid audit_repos UUID` };
+  }
   if (!await isCloudEnabled()) return { ok: true, cloud: false, reason: 'cloud-off' };
   try {
     await insertReturning('ship_events', {

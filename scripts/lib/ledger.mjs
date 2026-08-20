@@ -152,16 +152,22 @@ export function writeStage1MechanicalLedgerEntry(ledgerPath, entry) {
  * Invalid entries are returned in `rejected[]` with a per-entry reason — the caller
  * decides whether to proceed or fail. Never silently drops data.
  *
- * When `targetMetaPath` is set and `meta` is non-null, performs a locked
- * read-modify-write on `targetMetaPath` to merge the meta fields into the
- * existing `meta` block. Uses proper-lockfile for concurrent write safety and
- * atomicWriteFileSync for crash safety.
+ * The ENTIRE read-modify-write — the entries upsert and, when `targetMetaPath`
+ * resolves to the same file as `ledgerPath` (the common case), the meta merge
+ * too — runs under a single `proper-lockfile` lock on `ledgerPath`. A
+ * `targetMetaPath` pointing at a DIFFERENT file gets its own lock via the
+ * `mergeMetaLocked` helper. Uses atomicWriteFileSync for crash safety.
  *
  * @param {string} ledgerPath - Path to ledger JSON file
  * @param {object[]} entries - Array of LedgerEntry-shaped objects
  * @param {object} [opts]
- * @param {object|null} [opts.meta] - Meta fields to merge into targetMetaPath
+ * @param {object|null} [opts.meta] - Meta fields to merge into targetMetaPath (plain patch)
  * @param {string|null} [opts.targetMetaPath] - Path to session ledger for meta updates
+ * @param {function|null} [opts.metaUpdater] - `(existingMeta) => patch`, invoked with the
+ *   meta block as read UNDER THE LOCK. Prefer this over `meta` whenever the patch depends
+ *   on the current value (e.g. incrementing a counter) — computing the next value from a
+ *   read taken before the lock is acquired is exactly the race this option exists to close.
+ *   Takes precedence over `meta` when both are set.
  * @returns {{ inserted: number, updated: number, total: number, rejected: Array<{entry:object,reason:string}> }}
  * @throws {Error} on permission errors or corrupt ledger
  */
@@ -327,8 +333,17 @@ function upsertEntry(byTopic, entry) {
   return { status: 'inserted' };
 }
 
-/** Locked read-modify-write of the meta block in a session ledger file. */
-function mergeMetaLocked(absMetaPath, meta) {
+/**
+ * Locked read-modify-write of the meta block in a session ledger file.
+ * `metaOrUpdater` is either a plain patch object, merged as-is, or a function
+ * `(existingMeta) => patch` invoked with the meta block AS READ UNDER THIS
+ * LOCK — the only way a counter increment (e.g. `runsSinceDebtReview`) can be
+ * atomic across concurrent callers. A caller that reads the counter BEFORE
+ * acquiring the lock (as `batchWriteLedger`'s caller once did) can still lose
+ * an increment: two processes read the same stale value, both compute N+1,
+ * and the second write clobbers the first's.
+ */
+function mergeMetaLocked(absMetaPath, metaOrUpdater) {
   if (!fs.existsSync(absMetaPath)) {
     atomicWriteFileSync(absMetaPath, JSON.stringify({ version: 1, meta: {}, entries: [] }, null, 2));
   }
@@ -342,81 +357,115 @@ function mergeMetaLocked(absMetaPath, meta) {
     } catch {
       existing = { version: 1, meta: null, entries: [] };
     }
-    existing.meta = { ...(existing.meta ?? {}), ...meta };
+    const currentMeta = existing.meta ?? {};
+    const patch = typeof metaOrUpdater === 'function' ? metaOrUpdater(currentMeta) : metaOrUpdater;
+    existing.meta = { ...currentMeta, ...patch };
     atomicWriteFileSync(absMetaPath, JSON.stringify(existing, null, 2));
   } finally {
     if (release) release();
   }
 }
 
-export function batchWriteLedger(ledgerPath, entries, { meta = null, targetMetaPath = null } = {}) {
+export function batchWriteLedger(ledgerPath, entries, { meta = null, targetMetaPath = null, metaUpdater = null } = {}) {
   const absLedgerPath = path.resolve(ledgerPath);
-  const ledger = readLedgerJson(absLedgerPath);
+  const absMetaPath = targetMetaPath ? path.resolve(targetMetaPath) : null;
+  const metaSharesLedgerFile = absMetaPath != null && absMetaPath === absLedgerPath;
 
-  // Self-healing: drop RESIDENT entries that match no known ledger schema.
-  //
-  // Without this the ledger never healed. Only incoming entries were ever
-  // validated (`upsertEntry` below); a resident one was re-keyed by topicId and
-  // written straight back, so a single malformed entry survived every round
-  // forever — re-skipped and re-warned on each read, and pinning
-  // `ledgerInvalidEntryCount` permanently on, which turns a real degradation
-  // signal into background noise.
-  //
-  // Quarantined rather than deleted, because this tooling syncs to consumer
-  // repos that can run an OLDER bundle than the one that wrote the file: to a
-  // stale reader, an entry written by a newer schema is indistinguishable from
-  // corruption. A destructive prune would make that version skew silent and
-  // permanent. `.bak` on the file-level path (`writeSingleLedgerEntry`) is the
-  // same instinct one granularity up.
-  const prunedResident = [];
-  const survivors = [];
-  for (const e of ledger.entries) {
-    const verdict = classifyLedgerEntry(e);
-    if (verdict.kind === 'unrecognised') prunedResident.push({ entry: e, reason: verdict.reason });
-    else survivors.push(e);
+  // proper-lockfile's lockSync realpath()s the target — it must already exist
+  // (mirrors mergeMetaLocked's own precondition just above).
+  if (!fs.existsSync(absLedgerPath)) {
+    atomicWriteFileSync(absLedgerPath, JSON.stringify({ version: 1, meta: {}, entries: [] }, null, 2));
   }
-  if (prunedResident.length > 0) {
-    // Prune ONLY if the entries are safely preserved first. If the sidecar
-    // could not be written, keep them in the ledger and report nothing pruned:
-    // a prune whose evidence failed to land is the silent data loss this whole
-    // path exists to avoid, and a noisy stale entry is the cheaper failure.
-    if (quarantineEntries(absLedgerPath, prunedResident)) {
-      ledger.entries = survivors;
-      process.stderr.write(
-        `  [ledger] pruned ${prunedResident.length} unrecognised entr`
-        + `${prunedResident.length === 1 ? 'y' : 'ies'} → ${absLedgerPath}${QUARANTINE_SUFFIX}\n`,
-      );
-    } else {
-      prunedResident.length = 0;
+
+  let release;
+  try {
+    // The entries read-modify-write previously had NO lock at all — only the
+    // meta sub-path (below) was locked via `mergeMetaLocked`. Two concurrent
+    // audit rounds writing the same ledger could each read a stale snapshot
+    // and clobber the other's entries on write. Now the whole critical
+    // section — prune, upsert, and (when co-located) the meta merge — runs
+    // under one lock on `absLedgerPath`.
+    release = lockfile.lockSync(absLedgerPath, { stale: 10000 });
+
+    const ledger = readLedgerJson(absLedgerPath);
+
+    // Self-healing: drop RESIDENT entries that match no known ledger schema.
+    //
+    // Without this the ledger never healed. Only incoming entries were ever
+    // validated (`upsertEntry` below); a resident one was re-keyed by topicId and
+    // written straight back, so a single malformed entry survived every round
+    // forever — re-skipped and re-warned on each read, and pinning
+    // `ledgerInvalidEntryCount` permanently on, which turns a real degradation
+    // signal into background noise.
+    //
+    // Quarantined rather than deleted, because this tooling syncs to consumer
+    // repos that can run an OLDER bundle than the one that wrote the file: to a
+    // stale reader, an entry written by a newer schema is indistinguishable from
+    // corruption. A destructive prune would make that version skew silent and
+    // permanent. `.bak` on the file-level path (`writeSingleLedgerEntry`) is the
+    // same instinct one granularity up.
+    const prunedResident = [];
+    const survivors = [];
+    for (const e of ledger.entries) {
+      const verdict = classifyLedgerEntry(e);
+      if (verdict.kind === 'unrecognised') prunedResident.push({ entry: e, reason: verdict.reason });
+      else survivors.push(e);
     }
+    if (prunedResident.length > 0) {
+      // Prune ONLY if the entries are safely preserved first. If the sidecar
+      // could not be written, keep them in the ledger and report nothing pruned:
+      // a prune whose evidence failed to land is the silent data loss this whole
+      // path exists to avoid, and a noisy stale entry is the cheaper failure.
+      if (quarantineEntries(absLedgerPath, prunedResident)) {
+        ledger.entries = survivors;
+        process.stderr.write(
+          `  [ledger] pruned ${prunedResident.length} unrecognised entr`
+          + `${prunedResident.length === 1 ? 'y' : 'ies'} → ${absLedgerPath}${QUARANTINE_SUFFIX}\n`,
+        );
+      } else {
+        prunedResident.length = 0;
+      }
+    }
+
+    const byTopic = new Map(ledger.entries.map(e => [e.topicId, e]));
+    const rejected = [];
+    let inserted = 0, updated = 0;
+
+    for (const entry of entries) {
+      const { status, reason } = upsertEntry(byTopic, entry);
+      if (status === 'rejected') { rejected.push({ entry, reason }); continue; }
+      if (status === 'inserted') inserted++;
+      else updated++;
+    }
+
+    ledger.entries = [...byTopic.values()];
+    if (ledger.entries.some(e => !e.topicId)) {
+      throw new Error('Ledger integrity check failed: entry without topicId');
+    }
+
+    // Co-located meta (the common case: `targetMetaPath === ledgerPath`) is
+    // folded into the SAME locked read-we-already-have and the SAME atomic
+    // write below, rather than a second lock/read/write on the same file.
+    if (metaSharesLedgerFile && (meta || metaUpdater)) {
+      const currentMeta = ledger.meta ?? {};
+      const patch = metaUpdater ? metaUpdater(currentMeta) : meta;
+      ledger.meta = { ...currentMeta, ...patch };
+    }
+
+    atomicWriteFileSync(absLedgerPath, JSON.stringify(ledger, null, 2));
+
+    if (absMetaPath && !metaSharesLedgerFile && (meta || metaUpdater)) {
+      mergeMetaLocked(absMetaPath, metaUpdater || meta);
+    }
+
+    // `prunedResident` is deliberately a SEPARATE channel from `rejected`: one is
+    // "you handed me something bad", the other is "the file already held
+    // something bad". Collapsing them would make a caller's incoming-entry check
+    // fire on damage it did not cause.
+    return { inserted, updated, total: ledger.entries.length, rejected, prunedResident };
+  } finally {
+    if (release) release();
   }
-
-  const byTopic = new Map(ledger.entries.map(e => [e.topicId, e]));
-  const rejected = [];
-  let inserted = 0, updated = 0;
-
-  for (const entry of entries) {
-    const { status, reason } = upsertEntry(byTopic, entry);
-    if (status === 'rejected') { rejected.push({ entry, reason }); continue; }
-    if (status === 'inserted') inserted++;
-    else updated++;
-  }
-
-  ledger.entries = [...byTopic.values()];
-  if (ledger.entries.some(e => !e.topicId)) {
-    throw new Error('Ledger integrity check failed: entry without topicId');
-  }
-  atomicWriteFileSync(absLedgerPath, JSON.stringify(ledger, null, 2));
-
-  if (targetMetaPath && meta) {
-    mergeMetaLocked(path.resolve(targetMetaPath), meta);
-  }
-
-  // `prunedResident` is deliberately a SEPARATE channel from `rejected`: one is
-  // "you handed me something bad", the other is "the file already held
-  // something bad". Collapsing them would make a caller's incoming-entry check
-  // fire on damage it did not cause.
-  return { inserted, updated, total: ledger.entries.length, rejected, prunedResident };
 }
 
 // ── Finding Metadata ────────────────────────────────────────────────────────

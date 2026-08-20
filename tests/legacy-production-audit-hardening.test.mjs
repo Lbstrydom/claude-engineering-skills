@@ -1282,3 +1282,96 @@ describe('syncFalsePositivePatterns reaches the store through an awaited durable
       'the registered writer must delegate to the real syncFalsePositivePatterns, not a stub');
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════
+// Backlog-triage bug #1 (fixed 2026-08-20): the debt-escalation event write
+// discarded `appendEvents`'s return value and unconditionally logged
+// "escalated N entries" regardless of whether the write actually reached
+// disk/cloud. The sibling call ~1265 lines later (the `debtEvents` surfaced/
+// reopened write) already captured `r = await appendEvents(...)` and logged
+// `r.written` — this fix mirrors that established, correct pattern.
+// ═══════════════════════════════════════════════════════════════════════
+describe('debt-escalation event write result is captured, not assumed (static regression guard)', () => {
+  const SRC = fs.readFileSync('scripts/lib/audit/legacy-production-audit.mjs', 'utf-8');
+
+  it('the newlyEscalated appendEvents call captures its return value, mirroring the debtEvents sibling call', () => {
+    const blockIdx = SRC.indexOf('if (newlyEscalated.length > 0) {');
+    assert.ok(blockIdx >= 0, 'the escalation write block must exist');
+    const block = SRC.slice(blockIdx, blockIdx + 700);
+    assert.match(
+      block, /const r = await appendEvents\(debtContext, newlyEscalated,/,
+      'the appendEvents call must capture its return value in `r` — a bare `await appendEvents(...)` with no assignment discards the write outcome',
+    );
+  });
+
+  it('success is only logged when the captured write count matches what was attempted; a partial/failed write is logged as incomplete, never as success', () => {
+    const blockIdx = SRC.indexOf('if (newlyEscalated.length > 0) {');
+    const block = SRC.slice(blockIdx, blockIdx + 700);
+    assert.match(
+      block, /if\s*\(\s*r\.written\s*===\s*newlyEscalated\.length\s*\)/,
+      'the log message must branch on whether the write actually succeeded in full, not assume it always did',
+    );
+    assert.match(
+      block, /escalation write incomplete/i,
+      'a short/failed write must be logged honestly (e.g. "incomplete"), not silently reported as if every entry had been escalated',
+    );
+    // Negative: the historical bug's exact shape — an unconditional success
+    // line immediately after a bare (uncaptured) appendEvents call — must
+    // not reappear.
+    assert.doesNotMatch(
+      block, /await appendEvents\(debtContext, newlyEscalated, \{ eventsPath: debtEventsPath \}\);\s*\n\s*process\.stderr\.write\(`  \[debt\] escalated \$\{newlyEscalated\.length\}/,
+      'the old shape (uncaptured appendEvents immediately followed by an unconditional "escalated N" log) must not reappear',
+    );
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Backlog-triage bug #2 (fixed 2026-08-20): the file's own docstring (~line
+// 2068, "One policy, one place") states that a `noCloudRecording`
+// (observation-only) run "must never persist". Two local writes near the
+// end of the function — the session-ledger `runsSinceDebtReview` counter
+// increment and the SID-scoped session-manifest write — ran unconditionally,
+// bypassing `learningWritesAllowed` entirely, so a shadow/observation-only
+// run polluted real session state anyway.
+// ═══════════════════════════════════════════════════════════════════════
+describe('noCloudRecording gates the session-ledger counter AND the session-manifest write (static regression guard)', () => {
+  const SRC = fs.readFileSync('scripts/lib/audit/legacy-production-audit.mjs', 'utf-8');
+
+  it('the runsSinceDebtReview counter increment is wrapped in writeLearningState(learningWritesAllowed, ...)', () => {
+    const blockIdx = SRC.indexOf("const sessionLedgerPath = path.resolve(AUDIT_DIR, SESSION_LEDGER_FILE);");
+    assert.ok(blockIdx >= 0, 'the session-ledger counter block must exist');
+    // Look BACKWARD a short window for the writeLearningState wrapper that
+    // must enclose this write — the historical bug had a bare `try { ... }`
+    // here with no capability gate at all.
+    const before = SRC.slice(Math.max(0, blockIdx - 300), blockIdx);
+    assert.match(
+      before, /writeLearningState\(learningWritesAllowed,\s*\(\)\s*=>\s*\{/,
+      'the session-ledger counter increment must be gated by writeLearningState(learningWritesAllowed, …) — it used to run unconditionally, so a noCloudRecording (shadow) run polluted the real session ledger',
+    );
+  });
+
+  it('the SID-scoped session-manifest write is wrapped in writeLearningState(learningWritesAllowed, ...)', () => {
+    const blockIdx = SRC.indexOf('const manifestPath = path.resolve(AUDIT_DIR, `${SESSION_MANIFEST_PREFIX}${sid}.json`);');
+    assert.ok(blockIdx >= 0, 'the session-manifest write block must exist');
+    const before = SRC.slice(Math.max(0, blockIdx - 300), blockIdx);
+    assert.match(
+      before, /writeLearningState\(learningWritesAllowed,\s*\(\)\s*=>\s*\{/,
+      'the SID-scoped session-manifest write must be gated by writeLearningState(learningWritesAllowed, …) — it used to run unconditionally, so a noCloudRecording (shadow) run could write a manifest a real run\'s R2 might pick up',
+    );
+  });
+
+  // Behavioral corroboration that `learningWritesAllowed` itself really does
+  // suppress/allow a write (the generic wrapper contract, already pinned by
+  // the "Item 1 — writeLearningState capability wrapper" tests above) — kept
+  // here as a one-line sanity check next to the two call-site-specific
+  // static guards, not as new coverage of the wrapper itself.
+  it('writeLearningState(false, fn) never invokes fn; writeLearningState(true, fn) always does — the primitive both call sites rely on', () => {
+    let calledWhenDisallowed = false;
+    writeLearningState(false, () => { calledWhenDisallowed = true; });
+    assert.equal(calledWhenDisallowed, false, 'noCloudRecording (learningWritesAllowed=false) must suppress the callback entirely');
+
+    let calledWhenAllowed = false;
+    writeLearningState(true, () => { calledWhenAllowed = true; });
+    assert.equal(calledWhenAllowed, true, 'a normal (non-shadow) run must still execute the callback — the gate must not become a permanent no-op');
+  });
+});

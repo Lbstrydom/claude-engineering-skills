@@ -133,7 +133,11 @@ export const BASELINE = new Set([
   // of the three incidents in this file's header. Surfaced by a consumer repo's
   // report; the mechanism they proposed was wrong (see `discoverScripts`) but
   // the target was right.
-  'scripts/lib/sync-isolation-verify.mjs',
+  // 'scripts/lib/sync-isolation-verify.mjs' — FIXED (backlog-triage): its
+  // parseArgs() now calls assertKnownFlags() (unrecognized flags refused) and
+  // an empty `--gates ''` is refused rather than silently collapsing to zero
+  // gates — the same "verifier that checked nothing exits 0" shape the
+  // sensitive-path/db-suite gates already guard against elsewhere in this repo.
   'scripts/lint-plan-mermaid.mjs',
   'scripts/maintenance-checks.mjs',
   'scripts/memory-health.mjs',

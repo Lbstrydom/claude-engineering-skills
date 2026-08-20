@@ -100,6 +100,24 @@ const ComparisonEvidenceSchema = z.object({
     if (!v.judgeRoute || !v.independenceChecks.candidateVsJudge || !v.independenceChecks.baselineVsJudge) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: `computedJudgeTier:"${v.computedJudgeTier}" requires a non-null judgeRoute with candidateVsJudge:true and baselineVsJudge:true` });
     }
+    // Backlog-triage fix — the checks above only confirm the independence
+    // TRIPLE is internally consistent; they never cross-check the tier VALUE
+    // itself against the one thing route-catalog.mjs::resolveEvaluationTier
+    // actually derives it from. resolveEvaluationTier's only non-'C' return is
+    // `candidateRoute.judgeTier === 'A' ? 'A' : 'B'` — so with a fully-trusted,
+    // fully-independent triple (every check above satisfied), a caller could
+    // still forge computedJudgeTier:'A' against a candidateRoute.judgeTier of
+    // 'B' (or vice versa) and pass unnoticed, because independenceChecks says
+    // nothing about which LETTER is correct. Mirror that one-line derivation
+    // here as a validation, not a second implementation.
+    const expectedTier = v.candidateRoute.judgeTier === 'A' ? 'A' : 'B';
+    if (v.computedJudgeTier !== expectedTier) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `computedJudgeTier:"${v.computedJudgeTier}" does not match the value route-catalog.mjs::resolveEvaluationTier `
+          + `would derive from candidateRoute.judgeTier:"${v.candidateRoute.judgeTier}" (expected "${expectedTier}")`,
+      });
+    }
   }
 });
 

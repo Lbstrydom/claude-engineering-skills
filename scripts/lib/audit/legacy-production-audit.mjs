@@ -2430,8 +2430,12 @@ export async function runLegacyProductionAudit(ctx) {
       }
     }
     if (newlyEscalated.length > 0) {
-      await appendEvents(debtContext, newlyEscalated, { eventsPath: debtEventsPath });
-      process.stderr.write(`  [debt] escalated ${newlyEscalated.length} recurring entries (distinctRunCount >= ${escalateRecurring})\n`);
+      const r = await appendEvents(debtContext, newlyEscalated, { eventsPath: debtEventsPath });
+      if (r.written === newlyEscalated.length) {
+        process.stderr.write(`  [debt] escalated ${r.written} recurring entries (distinctRunCount >= ${escalateRecurring}) to ${r.source}\n`);
+      } else {
+        process.stderr.write(`  [debt] escalation write incomplete: ${r.written}/${newlyEscalated.length} event(s) written to ${r.source} (distinctRunCount >= ${escalateRecurring})\n`);
+      }
     }
   }
 
@@ -3788,53 +3792,19 @@ export async function runLegacyProductionAudit(ctx) {
   // it inside the ledger branch instead would hit the TDZ on `passes`.
   _suppressionData = passes.suppressionData ?? undefined;
 
-  // Auto-write ledger (default-on when ledgerFile resolved)
-  if (ledgerFile && !noLedger) {
-    try {
-      const enriched = allFindings.map(f => {
-        const copy = { ...f };
-        populateFindingMetadata(copy, copy._pass);
-        return copy;
-      });
-
-      const ledgerEntries = enriched.map(f => ({
-        topicId: generateTopicId(f),
-        findingId: f.id,
-        severity: f.severity,
-        category: f.category,
-        section: f.section,
-        detailSnapshot: f.detail?.slice(0, 300),
-        detail: f.detail?.slice(0, 300),
-        pass: f._pass,
-        _hash: f._hash,
-        semanticHash: f._hash,
-        affectedFiles: f.affectedFiles || [f._primaryFile || ''],
-        affectedPrinciples: f.principle ? [f.principle] : [],
-        adjudicationOutcome: 'pending',
-        remediationState: 'pending',
-        round
-      }));
-
-      const { inserted, updated, total, rejected } = batchWriteLedger(ledgerFile, ledgerEntries);
-      process.stderr.write(`  [ledger] Written to ${ledgerFile}: ${inserted} new, ${updated} updated, ${total} total\n`);
-      if (rejected?.length > 0) {
-        process.stderr.write(`  [ledger] ${rejected.length} entries REJECTED:\n`);
-        for (const { entry, reason } of rejected.slice(0, 5)) {
-          process.stderr.write(`    - ${entry.topicId || '(no topicId)'}: ${reason}\n`);
-        }
-        var _ledgerRejectedCount = rejected.length;
-      }
-    } catch (err) {
-      process.stderr.write(`  [ledger] WRITE FAILED: ${err.message}\n`);
-      var _ledgerWriteError = err.message;
-    }
-  }
-
   // ── Deterministic finding-verification gate (code mode only) ──────────
   // Resolves "missing file/module/symbol" findings against the real repo.
   // A finding the gate PROVES false (entity exists) is `refuted` and no
   // longer counts toward the verdict; everything else keeps its severity.
   // Plan: docs/plans/adaptive-context-blast-radius.md — Phase 1.
+  //
+  // Runs BEFORE the ledger auto-write below (moved 2026-08-20): the ledger
+  // write persists `adjudicationOutcome` at insert time, so the gate's
+  // verdict must already be known when that write happens. It used to run
+  // AFTER the write — every finding, refuted or not, was persisted as
+  // `pending`, and nothing ever went back to correct a refuted entry, so a
+  // finding the gate had just proved false stayed `pending` in the ledger
+  // forever with no record it was ever disproven.
   try {
     const inv = listRepoFiles({ baseDir: process.cwd() });
     const verified = verifyExistenceFindings(allFindings, { repoFiles: inv.files, inventoryComplete: inv.complete });
@@ -3853,6 +3823,60 @@ export async function runLegacyProductionAudit(ctx) {
     }
   } catch (err) {
     process.stderr.write(`  [verify-gate] skipped (non-blocking) — ${err.message}\n`);
+  }
+
+  // Auto-write ledger (default-on when ledgerFile resolved)
+  if (ledgerFile && !noLedger) {
+    try {
+      const enriched = allFindings.map(f => {
+        const copy = { ...f };
+        populateFindingMetadata(copy, copy._pass);
+        return copy;
+      });
+
+      const ledgerEntries = enriched.map(f => {
+        // The gate above already ran, so a refuted finding is known at
+        // insert time — persist it as `dismissed`, not `pending`, and carry
+        // the disproof reason. (Only affects a NEW topicId this round:
+        // `upsertEntry`'s update path deliberately preserves whatever
+        // `adjudicationOutcome` an already-resident entry has, the same
+        // protection that stops a re-raise from clobbering a real human
+        // ruling — a finding refuted on a LATER round than it was first
+        // inserted is outside this fix's scope.)
+        const refuted = isRefuted(f);
+        return {
+          topicId: generateTopicId(f),
+          findingId: f.id,
+          severity: f.severity,
+          category: f.category,
+          section: f.section,
+          detailSnapshot: f.detail?.slice(0, 300),
+          detail: f.detail?.slice(0, 300),
+          pass: f._pass,
+          _hash: f._hash,
+          semanticHash: f._hash,
+          affectedFiles: f.affectedFiles || [f._primaryFile || ''],
+          affectedPrinciples: f.principle ? [f.principle] : [],
+          adjudicationOutcome: refuted ? 'dismissed' : 'pending',
+          remediationState: 'pending',
+          ...(refuted ? { rulingRationale: f.verification?.verificationReason } : {}),
+          round
+        };
+      });
+
+      const { inserted, updated, total, rejected } = batchWriteLedger(ledgerFile, ledgerEntries);
+      process.stderr.write(`  [ledger] Written to ${ledgerFile}: ${inserted} new, ${updated} updated, ${total} total\n`);
+      if (rejected?.length > 0) {
+        process.stderr.write(`  [ledger] ${rejected.length} entries REJECTED:\n`);
+        for (const { entry, reason } of rejected.slice(0, 5)) {
+          process.stderr.write(`    - ${entry.topicId || '(no topicId)'}: ${reason}\n`);
+        }
+        var _ledgerRejectedCount = rejected.length;
+      }
+    } catch (err) {
+      process.stderr.write(`  [ledger] WRITE FAILED: ${err.message}\n`);
+      var _ledgerWriteError = err.message;
+    }
   }
 
   // Phase C: verdict counts exclude tool findings by default (advisory mode).
@@ -4612,40 +4636,51 @@ export async function runLegacyProductionAudit(ctx) {
   // Step 3.5b path (reads `result._cloudRunId`) resolve it without any sidecar
   // file. No implicit file-coupling needed.
 
-  // Always increment runsSinceDebtReview in the stable session ledger
-  try {
-    fs.mkdirSync(path.resolve(AUDIT_DIR), { recursive: true });
-    const sessionLedgerPath = path.resolve(AUDIT_DIR, SESSION_LEDGER_FILE);
-    let currentRuns = 0;
+  // Increment runsSinceDebtReview in the stable session ledger — gated on
+  // learningWritesAllowed (the same "one policy, one place" as every other
+  // persist site above): a noCloudRecording (observation-only) run must never
+  // touch this file, or a shadow run's presence inflates the real audit's
+  // debt-review cadence.
+  writeLearningState(learningWritesAllowed, () => {
     try {
-      const sessionData = JSON.parse(fs.readFileSync(sessionLedgerPath, 'utf-8'));
-      currentRuns = sessionData?.meta?.runsSinceDebtReview ?? 0;
-    } catch { /* file absent or unreadable — start from 0 */ }
-    batchWriteLedger(sessionLedgerPath, [], {
-      meta: { runsSinceDebtReview: currentRuns + 1 },
-      targetMetaPath: sessionLedgerPath,
-    });
-  } catch (err) {
-    process.stderr.write(`  [session] meta update failed (non-blocking): ${err.message}\n`);
-  }
-
-  // Write SID-scoped session manifest so R2 can resolve the ledger path
-  if (round === 1 && ledgerFile) {
-    try {
-      const manifestPath = path.resolve(AUDIT_DIR, `${SESSION_MANIFEST_PREFIX}${sid}.json`);
-      const manifest = {
-        sid,
-        ledgerPath: ledgerFile,
-        startedAt: new Date().toISOString(),
-        round: 1,
-      };
-      // Phase 1 (audit-orchestrator-hardening): atomicWriteFileSync — a
-      // crash mid-write must never leave R2 reading a torn/partial manifest.
-      atomicWriteFileSync(manifestPath, JSON.stringify(manifest, null, 2));
-      process.stderr.write(`  [session] manifest written: ${manifestPath}\n`);
+      fs.mkdirSync(path.resolve(AUDIT_DIR), { recursive: true });
+      const sessionLedgerPath = path.resolve(AUDIT_DIR, SESSION_LEDGER_FILE);
+      // The old code read `runsSinceDebtReview` here, BEFORE any lock, then
+      // passed `currentRuns + 1` to batchWriteLedger — so two concurrent
+      // audit processes could both read the same stale count and one
+      // increment would be lost on write. `metaUpdater` runs inside
+      // batchWriteLedger's own lock, against the freshly-read value, so the
+      // increment is atomic regardless of how many processes race here.
+      batchWriteLedger(sessionLedgerPath, [], {
+        metaUpdater: (existingMeta) => ({ runsSinceDebtReview: (existingMeta.runsSinceDebtReview ?? 0) + 1 }),
+        targetMetaPath: sessionLedgerPath,
+      });
     } catch (err) {
-      process.stderr.write(`  [session] manifest write failed (non-blocking): ${err.message}\n`);
+      process.stderr.write(`  [session] meta update failed (non-blocking): ${err.message}\n`);
     }
+  });
+
+  // Write SID-scoped session manifest so R2 can resolve the ledger path.
+  // Same gate: a noCloudRecording run must not persist a manifest another
+  // real run's R2 could pick up.
+  if (round === 1 && ledgerFile) {
+    writeLearningState(learningWritesAllowed, () => {
+      try {
+        const manifestPath = path.resolve(AUDIT_DIR, `${SESSION_MANIFEST_PREFIX}${sid}.json`);
+        const manifest = {
+          sid,
+          ledgerPath: ledgerFile,
+          startedAt: new Date().toISOString(),
+          round: 1,
+        };
+        // Phase 1 (audit-orchestrator-hardening): atomicWriteFileSync — a
+        // crash mid-write must never leave R2 reading a torn/partial manifest.
+        atomicWriteFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+        process.stderr.write(`  [session] manifest written: ${manifestPath}\n`);
+      } catch (err) {
+        process.stderr.write(`  [session] manifest write failed (non-blocking): ${err.message}\n`);
+      }
+    });
   }
 
   // Persist cache metrics to a stable append-only log (.audit/cache-metrics.jsonl)
