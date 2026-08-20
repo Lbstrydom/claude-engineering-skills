@@ -681,6 +681,13 @@ export async function recordArmRun({
  * (NULL-vs-NULL is a match — this is what lets the legacy, pre-Phase-4
  * NULL-hash pairing be quarantined at all).
  *
+ * **Two DIFFERENT shapes, deliberately** (clarified after a review pass read
+ * them as one DTO needing the same fields everywhere): the `attempt` being
+ * checked carries `snapshotId`/`planContentHash` ONLY — an attempt has no
+ * `scope` of its own, that concept belongs solely to an EXCLUSION record
+ * (`ex.scope`, read from the `exclusions` array). A caller does not, and
+ * must not, pass `scope` when calling this for an attempt.
+ *
  * @param {{cohortId?: string, snapshotId: string, planContentHash: string|null}} attempt
  * @param {Array<{snapshotId: string, scope: 'all'|'pairing', planContentHash: string|null}>} exclusions
  * @returns {boolean}
