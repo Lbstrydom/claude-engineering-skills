@@ -24,7 +24,55 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 // encoding correctly — manual `.pathname` slicing was brittle.
 const HOOK_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HOOK_DIR, '..', '..');
-const PATTERNS_MOD_URL = pathToFileURL(path.join(REPO_ROOT, 'scripts', 'lib', 'quickfix-patterns.mjs')).href;
+
+// ── Tooling-layout resolution ─────────────────────────────────────────────
+//
+// `.claude/hooks/` stays at its canonical path in BOTH layouts
+// (sync-path-map.mjs STAYS_AT_CANONICAL_PATH_PREFIXES), so — unlike
+// scripts/lib/db/schema-realization.mjs's `detectLayout` — this file's own
+// path cannot tell us which layout it is installed under. The library it
+// needs IS mapped: `scripts/lib/X` here, `scripts/.claude-skills/lib/X` in a
+// consumer. The sync's content rewriter only rewrites `node scripts/<path>`
+// command strings (sync-rewriter.mjs COMMAND_REGEX) and never touches a JS
+// path expression, so the resolution has to happen here, at runtime.
+//
+// Hardcoding `scripts/lib/...` made this hook inert in EVERY consumer for the
+// whole life of the isolation layout: the dynamic import threw, main().catch
+// wrote a FATAL line to stderr, and the hook exited 0. Because it is
+// nudge-not-gate, nothing ever surfaced. Confirmed 2026-08-20 against two real
+// consumer checkouts; both stopped recording hits when the layout landed.
+//
+// A filesystem probe is the right instrument HERE, though it is the wrong one
+// in schema-realization (where the two candidate migration directories belong
+// to different databases, so "both exist" is ambiguous and dangerous). These
+// two candidates name the SAME bundle-owned module, so if both ever existed
+// either would be correct — the probe has no ambiguous answer to get wrong.
+const LIB_CANDIDATES = Object.freeze([
+  path.join(REPO_ROOT, 'scripts', 'lib', 'quickfix-patterns.mjs'),                   // source layout
+  path.join(REPO_ROOT, 'scripts', '.claude-skills', 'lib', 'quickfix-patterns.mjs'), // consumer layout
+]);
+
+/**
+ * Load the patterns module from whichever layout has it.
+ *
+ * Mirrors `loadSensitivePaths` in the sibling `syntax-check.mjs` — including
+ * continuing past a candidate whose import THROWS, so a corrupt copy in one
+ * layout cannot mask a good one in the other.
+ *
+ * @param {readonly string[]} [candidates]
+ * @returns {Promise<object|null>} null when neither layout resolved, which
+ *   means "this repo has no quickfix tooling installed" — a supported state
+ *   (the sync copies the hook; a repo may carry it and not the library).
+ */
+async function loadPatternsModule(candidates = LIB_CANDIDATES) {
+  for (const candidate of candidates) {
+    if (!fs.existsSync(candidate)) continue;
+    try {
+      return await import(pathToFileURL(candidate).href);
+    } catch { /* try the next layout */ }
+  }
+  return null;
+}
 
 // Overridable so the hook's OWN integration tests (which spawn this file as a
 // subprocess against the real repo root) write to a throwaway path instead of
@@ -98,8 +146,17 @@ async function main() {
   const absoluteFilePath = path.isAbsolute(filePath) ? filePath : path.resolve(process.cwd(), filePath);
   const repoRelative = path.relative(REPO_ROOT, absoluteFilePath);
 
-  // Lazy-load patterns module so the hook itself stays minimal
-  const { matchPatterns, isSensitivePath, loadSkippedPatternSet } = await import(PATTERNS_MOD_URL);
+  // Lazy-load patterns module so the hook itself stays minimal.
+  // Resolved across both tooling layouts — see LIB_CANDIDATES above.
+  const patternsMod = await loadPatternsModule();
+  if (!patternsMod) {
+    process.stderr.write(
+      `  [quickfix-hook] WARN: quickfix-patterns.mjs not found in either tooling layout `
+      + `(looked in: ${LIB_CANDIDATES.join(', ')}) — skipping scan\n`,
+    );
+    process.exit(0);
+  }
+  const { matchPatterns, isSensitivePath, loadSkippedPatternSet } = patternsMod;
 
   // Sensitive-path short-circuit — never scan, never log.
   // Check BOTH the canonicalized absolute path AND the repo-relative
