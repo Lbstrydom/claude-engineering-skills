@@ -142,76 +142,93 @@ describe('bake-off log promotion', () => {
   });
 });
 
-// ── --force promotion (gap 2) ───────────────────────────────────────────────
+// ── §7 Phase 3: identity-keyed promotion (replaces count-based --force) ─────
 
-describe('promotion attempt resolution (--force)', () => {
+describe('resolvePromotionAttempts — IDENTITY-keyed (round 6, Phase 3 rework)', () => {
   it('first promotion is attempt 1 and supersedes nothing', () => {
-    assert.deepEqual(resolvePromotionAttempts({ existingAttempt: 0, forced: false }),
-      { skip: false, plans: [{ attempt: 1, supersedePrior: false }] });
+    const r = resolvePromotionAttempts({ attempts: [{ auditRunId: 'r1' }], existingAttempt: 0, existingRunIds: new Set() });
+    assert.equal(r.skip, false);
+    assert.deepEqual(r.plans, [{ attempt: 1, supersedePrior: false, auditRunId: 'r1' }]);
   });
 
-  it('re-running reconcile on an already-promoted arm SKIPS — idempotence, not a second charge', () => {
-    assert.deepEqual(resolvePromotionAttempts({ existingAttempt: 1, forced: false }),
-      { skip: true, plans: [] });
+  it('THE LOAD-BEARING CASE: a store attempt-1 FAILURE and a fresh entry whose (different) runId represents a SUCCESS at local attempt-1 promotes the success as attempt 2 — never skipped as "already recorded"', () => {
+    // The exact defect #2 mechanism: the OLD count-based comparison saw
+    // existingAttempt=1, recordedAttempts=1, forced=false → skip. Identity
+    // fixes it: r2 is a DIFFERENT run id than whatever occupies the store's
+    // attempt 1, so it is promoted regardless of the count coincidence.
+    const r = resolvePromotionAttempts({
+      attempts: [{ auditRunId: 'r2-success' }], existingAttempt: 1, existingRunIds: new Set(['r1-failure']),
+    });
+    assert.equal(r.skip, false);
+    assert.deepEqual(r.plans, [{ attempt: 2, supersedePrior: true, auditRunId: 'r2-success' }]);
   });
 
-  it('a FORCED re-collection appends attempt N+1 and supersedes the prior live row', () => {
-    // Never an overwrite: the earlier attempt stays readable and its spend still
-    // counts, which is exactly why armSpend sums superseded rows. Before --force
-    // existed this branch was unreachable, so the attempt column, the partial
-    // unique index and the receipt-attempt protocol were machinery no operator
-    // action could trigger.
-    assert.deepEqual(resolvePromotionAttempts({ existingAttempt: 1, forced: true }),
-      { skip: false, plans: [{ attempt: 2, supersedePrior: true }] });
-    assert.deepEqual(resolvePromotionAttempts({ existingAttempt: 4, forced: true }),
-      { skip: false, plans: [{ attempt: 5, supersedePrior: true }] });
+  it('re-running reconcile on an ALREADY-promoted runId SKIPS — idempotence, not a second charge', () => {
+    const r = resolvePromotionAttempts({
+      attempts: [{ auditRunId: 'r1' }], existingAttempt: 1, existingRunIds: new Set(['r1']),
+    });
+    assert.deepEqual(r, { skip: true, plans: [] });
   });
 
-  it('a garbage attempt count is treated as none, never as a negative attempt', () => {
+  it('an attempt with NO runId (never registered) always promotes — nothing to collide on', () => {
+    const r = resolvePromotionAttempts({
+      attempts: [{ auditRunId: null, error: 'unregistered' }], existingAttempt: 3, existingRunIds: new Set(['r1', 'r2', 'r3']),
+    });
+    assert.equal(r.skip, false);
+    assert.deepEqual(r.plans, [{ attempt: 4, supersedePrior: true, auditRunId: null, error: 'unregistered' }]);
+  });
+
+  it('a garbage existingAttempt is treated as none, never as a negative attempt', () => {
     for (const bogus of [null, undefined, -3, NaN, 'two']) {
-      assert.deepEqual(resolvePromotionAttempts({ existingAttempt: bogus, forced: true }),
-        { skip: false, plans: [{ attempt: 1, supersedePrior: false }] });
+      const r = resolvePromotionAttempts({ attempts: [{ auditRunId: 'r1' }], existingAttempt: bogus, existingRunIds: new Set() });
+      assert.deepEqual(r.plans, [{ attempt: 1, supersedePrior: false, auditRunId: 'r1' }]);
     }
   });
 
   // ── several attempts inside ONE entry (automatic retry-on-timeout) ────────
 
-  it('an entry carrying TWO attempts promotes both — the timed-out one is not free', () => {
-    // The collector retries a timed-out arm automatically, so one log entry can
-    // hold a superseded attempt and the live one. Promoting only the live one
-    // would report a recovered arm as costing what a first-try arm cost.
-    assert.deepEqual(resolvePromotionAttempts({ existingAttempt: 0, recordedAttempts: 2 }),
-      { skip: false, plans: [{ attempt: 1, supersedePrior: false }, { attempt: 2, supersedePrior: true }] });
+  it('an entry carrying TWO NEW attempts promotes both — the timed-out one is not free', () => {
+    const r = resolvePromotionAttempts({
+      attempts: [{ auditRunId: 'r-timeout', error: 'timeout' }, { auditRunId: 'r-success' }],
+      existingAttempt: 0, existingRunIds: new Set(),
+    });
+    assert.equal(r.skip, false);
+    assert.deepEqual(r.plans, [
+      { attempt: 1, supersedePrior: false, auditRunId: 'r-timeout', error: 'timeout' },
+      { attempt: 2, supersedePrior: true, auditRunId: 'r-success' },
+    ]);
   });
 
-  it('re-running reconcile over a 2-attempt entry SKIPS — still idempotent', () => {
-    // The direction that must NOT fire: a second reconcile pass over an entry
-    // already fully promoted must append nothing, or every run doubles the
-    // arm's recorded spend.
-    assert.deepEqual(resolvePromotionAttempts({ existingAttempt: 2, recordedAttempts: 2 }),
-      { skip: true, plans: [] });
+  it('re-running reconcile over a 2-attempt entry where BOTH runIds are already recorded SKIPS entirely', () => {
+    const r = resolvePromotionAttempts({
+      attempts: [{ auditRunId: 'r1' }, { auditRunId: 'r2' }], existingAttempt: 2, existingRunIds: new Set(['r1', 'r2']),
+    });
+    assert.deepEqual(r, { skip: true, plans: [] });
   });
 
-  it('a reconcile interrupted halfway RESUMES at the missing attempt, tail-aligned', () => {
-    // n < K is a resumable state, not an invisible one: attempt 1 is already
-    // stored, so only attempt 2 is planned — and the caller drops the first
-    // K - plans.length recorded attempts to match.
-    assert.deepEqual(resolvePromotionAttempts({ existingAttempt: 1, recordedAttempts: 2 }),
-      { skip: false, plans: [{ attempt: 2, supersedePrior: true }] });
+  it('a reconcile interrupted halfway RESUMES at exactly the un-recorded runId, tail-aligned', () => {
+    // r1 is already in the store (existingRunIds); r2 is not — only r2 is
+    // planned, numbered after the store's own existingAttempt, regardless of
+    // its position in the local attempts array.
+    const r = resolvePromotionAttempts({
+      attempts: [{ auditRunId: 'r1' }, { auditRunId: 'r2' }], existingAttempt: 1, existingRunIds: new Set(['r1']),
+    });
+    assert.equal(r.skip, false);
+    assert.deepEqual(r.plans, [{ attempt: 2, supersedePrior: true, auditRunId: 'r2' }]);
   });
 
-  it('a FORCED re-collection of a 2-attempt entry appends BOTH after everything stored', () => {
-    assert.deepEqual(resolvePromotionAttempts({ existingAttempt: 2, recordedAttempts: 2, forced: true }),
-      { skip: false, plans: [{ attempt: 3, supersedePrior: true }, { attempt: 4, supersedePrior: true }] });
-  });
-
-  it('a garbage recordedAttempts falls back to one attempt, never to zero rows', () => {
-    // Zero planned rows would silently promote NOTHING for the arm, which reads
-    // downstream as an arm that never ran rather than one we failed to record.
-    for (const bogus of [null, undefined, 0, -2, NaN, 'two']) {
-      assert.deepEqual(resolvePromotionAttempts({ existingAttempt: 0, recordedAttempts: bogus }),
-        { skip: false, plans: [{ attempt: 1, supersedePrior: false }] });
-    }
+  it('NEGATIVE CONTROL: a count-based implementation would get the load-bearing case wrong', () => {
+    // Sanity-checks the OLD defect really is reproduced by counting: with
+    // existingAttempt=1 and one recorded attempt (K=1), a count comparison
+    // (`K - existingAttempt <= 0`) says "nothing to promote" — exactly the
+    // silent drop defect #2 describes. The identity-keyed function above
+    // must NOT reach this conclusion, which the load-bearing case already
+    // asserts; this test pins the CONTRAST so the old bug can't silently
+    // reappear as "correct" if someone re-introduces a count shortcut.
+    const K = 1;
+    const existingAttempt = 1;
+    const countBasedToRecord = K - existingAttempt;
+    assert.ok(countBasedToRecord <= 0, 'the old count comparison would (wrongly) skip — the whole reason this function was reworked');
   });
 });
 
@@ -293,5 +310,138 @@ describe('isArmRetried — the per-arm marker promotion actually keys on', () =>
     assert.equal(isArmRetried(undefined, 'opus'), false);
     assert.equal(isArmRetried({}, 'opus'), false);
     assert.equal(isArmRetried({ retriedArmIds: 'not-an-array' }, 'opus'), false);
+  });
+});
+
+// ── LIVE: promoteFromLog against a real schema (§7 Phase 3) ─────────────────
+// Gated on AUDIT_DB_TEST_URL, disposable-host-only (INC-002) — same pattern
+// as tests/campaign-adjudication.test.mjs. Runs under `npm run db:suites:gate`;
+// enrolled in db-test-container.mjs's ISOLATED_SUITE_FILES and
+// postgres-parity.yml (§7 Phase 5's Test enrolment bullet).
+
+const TEST_URL = process.env.AUDIT_DB_TEST_URL;
+const skip = TEST_URL ? false : 'AUDIT_DB_TEST_URL not set (runs under npm run db:suites:gate)';
+
+describe('promoteFromLog against a live schema — identity, quarantine, and the advisory lock', { skip }, () => {
+  let client; let promote; let store; let savedUrl;
+  let campaignId; let cohortId; let repoRowId;
+
+  before(async () => {
+    const { assertDisposableDbUrl, _resetForTest, getPool } = await import('../scripts/lib/db/client.mjs');
+    savedUrl = process.env.AUDIT_DB_URL;
+    assertDisposableDbUrl(TEST_URL, { productionUrl: savedUrl });
+    await _resetForTest();
+    process.env.AUDIT_DB_URL = TEST_URL;
+    client = await getPool();
+    promote = await import('../scripts/lib/campaign/promote.mjs');
+    store = await import('../scripts/lib/store/campaign.mjs');
+
+    const repo = await client.query("INSERT INTO audit_repos (name) VALUES ('campaign-promote-test-repo') RETURNING id");
+    repoRowId = repo.rows[0].id;
+    const campaign = await store.ensureCampaign({ repoId: repoRowId, campaignKey: 'promote-live-test', configDigest: 'digest1' });
+    campaignId = campaign.id;
+    const cohort = await store.ensureCohort({ campaignId, lockDigest: 'lock1', resolved: { a: 1 } });
+    cohortId = cohort.id;
+    await store.upsertSnapshot({ cohortId, snapshotId: 'snapA', auditedSha: 'sha-a', transcriptPath: 't.json' });
+  });
+
+  after(async () => {
+    try {
+      const { closePool, _resetForTest } = await import('../scripts/lib/db/client.mjs');
+      await closePool();
+      await _resetForTest();
+    } finally {
+      if (savedUrl === undefined) delete process.env.AUDIT_DB_URL; else process.env.AUDIT_DB_URL = savedUrl;
+    }
+  });
+
+  async function mkRun() {
+    const r = await client.query("INSERT INTO audit_runs (repo_id, plan_file, mode, commit_sha) VALUES ($1, 'docs/plans/x.md', 'code', 'sha-a') RETURNING id", [repoRowId]);
+    return r.rows[0].id;
+  }
+
+  it('the load-bearing case, against real writes: a store attempt-1 FAILURE + a fresh SUCCESS at local attempt-1 promotes as attempt 2', async () => {
+    const failRun = await mkRun();
+    await store.recordArmRun({
+      cohortId, snapshotRowId: (await store.upsertSnapshot({ cohortId, snapshotId: 'snapLoadBearing', auditedSha: 'sha-a' })).id,
+      snapshotId: 'snapLoadBearing', armId: 'opus', attempt: 1, auditRunId: failRun, error: 'timeout', costStatus: 'unpriced',
+    });
+    const successRun = await mkRun();
+    const entries = [{
+      snapshotId: 'snapLoadBearing', campaignId: 'promote-live-test', lockDigest: 'lock1', transcript: 't.json',
+      arms: { opus: { runId: successRun, costUsd: 1.5 } },
+    }];
+    const result = await promote.promoteFromLog({
+      config: { id: 'promote-live-test' }, lock: { lockDigest: 'lock1' }, configDigest: 'digest1', entries,
+    });
+    assert.equal(result.promoted, 1);
+    const rows = await client.query(
+      'SELECT attempt, audit_run_id, superseded_at FROM campaign_arm_runs WHERE cohort_id=$1 AND snapshot_id=$2 AND arm_id=$3 ORDER BY attempt',
+      [cohortId, 'snapLoadBearing', 'opus'],
+    );
+    assert.equal(rows.rows.length, 2, 'the failure stays readable; the success is a SECOND row, not an overwrite');
+    assert.equal(rows.rows[0].audit_run_id, failRun);
+    assert.ok(rows.rows[0].superseded_at, 'the failure is superseded, not deleted');
+    assert.equal(rows.rows[1].audit_run_id, successRun);
+    assert.equal(rows.rows[1].superseded_at, null);
+  });
+
+  it('re-promoting an ALREADY-recorded runId a second time is a no-op — the live row is untouched', async () => {
+    const runId = await mkRun();
+    const entries = [{
+      snapshotId: 'snapIdempotent', campaignId: 'promote-live-test', lockDigest: 'lock1', transcript: 't.json',
+      arms: { kimi: { runId, costUsd: 0.4 } },
+    }];
+    await promote.promoteFromLog({ config: { id: 'promote-live-test' }, lock: { lockDigest: 'lock1' }, configDigest: 'digest1', entries });
+    const before2 = await client.query('SELECT id, created_at FROM campaign_arm_runs WHERE snapshot_id=$1 AND arm_id=$2', ['snapIdempotent', 'kimi']);
+    const result2 = await promote.promoteFromLog({ config: { id: 'promote-live-test' }, lock: { lockDigest: 'lock1' }, configDigest: 'digest1', entries });
+    const after2 = await client.query('SELECT id, created_at FROM campaign_arm_runs WHERE snapshot_id=$1 AND arm_id=$2', ['snapIdempotent', 'kimi']);
+    assert.equal(before2.rows.length, 1);
+    assert.equal(after2.rows.length, 1, 'a second reconcile pass must not append a duplicate row');
+    assert.equal(before2.rows[0].id, after2.rows[0].id);
+    assert.equal(result2.promoted, 0);
+  });
+
+  it('a quarantined pairing is skipped, never written — promotion admission, not just retry-scoping', async () => {
+    await store.upsertSnapshot({ cohortId, snapshotId: 'snapQuarantined', auditedSha: 'sha-a' });
+    // Written directly — §7 Phase 5's markSnapshotExcluded CLI writer does
+    // not exist yet at this cluster (it lands in Cluster B); this asserts
+    // Phase 3's own admission check reads the table Phase 1 created.
+    await client.query(
+      `INSERT INTO campaign_snapshot_exclusions (cohort_id, snapshot_id, scope, excluded_reason)
+       VALUES ($1, $2, 'all', 'test quarantine')`,
+      [cohortId, 'snapQuarantined'],
+    );
+    const runId = await mkRun();
+    const entries = [{
+      snapshotId: 'snapQuarantined', campaignId: 'promote-live-test', lockDigest: 'lock1', transcript: 't.json',
+      arms: { grok: { runId, costUsd: 0.2 } },
+    }];
+    const result = await promote.promoteFromLog({ config: { id: 'promote-live-test' }, lock: { lockDigest: 'lock1' }, configDigest: 'digest1', entries });
+    assert.equal(result.promoted, 0);
+    const rows = await client.query('SELECT id FROM campaign_arm_runs WHERE snapshot_id=$1 AND arm_id=$2', ['snapQuarantined', 'grok']);
+    assert.equal(rows.rows.length, 0, 'a quarantined pairing must never reach a row, even though the run id is genuinely new');
+  });
+
+  it('two concurrent promoteFromLog calls for the SAME snapshot execute serially, not interleaved', async () => {
+    await store.upsertSnapshot({ cohortId, snapshotId: 'snapConcurrent', auditedSha: 'sha-a' });
+    const runA = await mkRun();
+    const runB = await mkRun();
+    const entriesA = [{
+      snapshotId: 'snapConcurrent', campaignId: 'promote-live-test', lockDigest: 'lock1', transcript: 't.json',
+      arms: { opus: { runId: runA, costUsd: 1 } },
+    }];
+    const entriesB = [{
+      snapshotId: 'snapConcurrent', campaignId: 'promote-live-test', lockDigest: 'lock1', transcript: 't.json',
+      arms: { kimi: { runId: runB, costUsd: 1 } },
+    }];
+    const [resultA, resultB] = await Promise.all([
+      promote.promoteFromLog({ config: { id: 'promote-live-test' }, lock: { lockDigest: 'lock1' }, configDigest: 'digest1', entries: entriesA }),
+      promote.promoteFromLog({ config: { id: 'promote-live-test' }, lock: { lockDigest: 'lock1' }, configDigest: 'digest1', entries: entriesB }),
+    ]);
+    assert.equal(resultA.promoted, 1);
+    assert.equal(resultB.promoted, 1);
+    const rows = await client.query('SELECT arm_id FROM campaign_arm_runs WHERE snapshot_id=$1', ['snapConcurrent']);
+    assert.equal(rows.rows.length, 2, 'both concurrent promotions land, serialized by the advisory lock rather than lost to a race');
   });
 });

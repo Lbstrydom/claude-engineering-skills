@@ -20,7 +20,9 @@
  */
 
 import crypto from 'node:crypto';
-import { many, one, insertReturning, updateWhere, withTx } from '../db/query.mjs';
+import {
+  many, one, insertReturning, updateWhere, upsert, withTx, query,
+} from '../db/query.mjs';
 import { isCloudEnabled } from './repo.mjs';
 import { STATIC_POOL, OSS_POOL, parseClaudeModel, parseGeminiModel, parseOpenAIModel } from '../model-resolver.mjs';
 import { OSS_PRICING } from '../model-pricing.mjs';
@@ -594,10 +596,27 @@ export async function maxArmRunAttempt({ cohortId, snapshotId, armId }) {
  * The supersede and the insert are one transaction because the partial unique
  * index permits exactly one live row — doing them apart would leave a window
  * where the insert fails against a row we are about to retire.
+ *
+ * **Conflict-safe on `audit_run_id`** (§7 Phase 3): when `auditRunId` is
+ * non-null, the insert targets the `idx_campaign_arm_runs_audit_run_id`
+ * partial unique index with `DO NOTHING`, as a defense-in-depth backstop —
+ * never the primary correctness mechanism, which is the caller
+ * (`promoteFromLog`) checking `existingAuditRunIds` under
+ * `acquireSnapshotLock` BEFORE ever calling this function for an
+ * already-recorded run. Zero rows returned here is therefore a detected
+ * CONTRADICTION between what that pre-check found and what the constraint
+ * saw, not an expected outcome — surfaced as a thrown invariant-violation
+ * error, never silently absorbed. **No `client` parameter is needed to
+ * share `promoteFromLog`'s locked transaction** — `withTx` is already
+ * re-entrant via `AsyncLocalStorage` (verified empirically: nested `withTx`
+ * calls share one connection), so this function's own internal `withTx`
+ * automatically joins the caller's transaction via `SAVEPOINT` when called
+ * from inside one.
  */
 export async function recordArmRun({
   cohortId, snapshotRowId, snapshotId, armId, attempt,
   auditRunId = null, usage = null, costUsd = null, costStatus = 'unknown', error = null, supersedePrior = false,
+  planContentHash = null, configDigest = null,
 }) {
   if (!await isCloudEnabled()) return { ok: true, cloud: false, id: null };
   // The CHECK constraint pairs these; keeping them coherent HERE means a caller
@@ -612,10 +631,26 @@ export async function recordArmRun({
         await updateWhere('campaign_arm_runs', { superseded_at: new Date().toISOString() },
           { cohort_id: cohortId, snapshot_id: snapshotId, arm_id: armId, superseded_at: null });
       }
-      const row = await insertReturning('campaign_arm_runs', {
+      const rowValues = {
         cohort_id: cohortId, snapshot_row_id: snapshotRowId, snapshot_id: snapshotId, arm_id: armId,
         attempt, audit_run_id: auditRunId, usage, cost_usd: price, cost_status: costStatus, error,
-      }, { returning: ['id'] });
+        plan_content_hash: planContentHash, config_digest: configDigest,
+      };
+      let row;
+      if (auditRunId != null) {
+        const rows = await upsert('campaign_arm_runs', [rowValues], {
+          onConflict: ['audit_run_id'], conflictWhere: 'audit_run_id IS NOT NULL', update: 'ignore', returning: ['id'],
+        });
+        row = rows[0];
+        if (!row) {
+          throw new Error(
+            `invariant violated: audit_run_id ${auditRunId} was already recorded despite the pre-lock existence check finding it absent — `
+            + 'the locking invariant was bypassed somewhere and needs investigation',
+          );
+        }
+      } else {
+        row = await insertReturning('campaign_arm_runs', rowValues, { returning: ['id'] });
+      }
       const id = Array.isArray(row) ? row[0]?.id : row?.id;
       if (!id) {
         // An unverified write is never success in this repo.
@@ -626,6 +661,152 @@ export async function recordArmRun({
   } catch (err) {
     process.stderr.write(`  [campaign] recordArmRun failed: ${err.message}\n`);
     return { ok: false, cloud: true, error: err.message, id: null };
+  }
+}
+
+/**
+ * Pure predicate: does this attempt's plan pairing fall under an active
+ * (non-lifted) exclusion for its snapshot?
+ *
+ * `exclusions` is an already-fetched, already `lifted_at IS NULL`-filtered
+ * list for the cohort — this is the ONE place the match rule lives
+ * (single-oracle, §7 Phase 2); both `liveArmRunsForSnapshot` below and
+ * `loadCohortArmRuns` (Phase 5) call it identically rather than
+ * re-expressing the rule as a SQL join, which would double-count a
+ * snapshot carrying both a `scope='all'` and a `scope='pairing'` exclusion.
+ *
+ * A `scope='all'` exclusion matches unconditionally for its snapshot; a
+ * `scope='pairing'` exclusion matches only an attempt whose OWN
+ * `planContentHash` is NOT DISTINCT FROM the exclusion's recorded hash
+ * (NULL-vs-NULL is a match — this is what lets the legacy, pre-Phase-4
+ * NULL-hash pairing be quarantined at all).
+ *
+ * @param {{cohortId?: string, snapshotId: string, planContentHash: string|null}} attempt
+ * @param {Array<{snapshotId: string, scope: 'all'|'pairing', planContentHash: string|null}>} exclusions
+ * @returns {boolean}
+ */
+export function isAttemptExcluded({ snapshotId, planContentHash = null }, exclusions) {
+  for (const ex of exclusions || []) {
+    if (ex.snapshotId !== snapshotId) continue;
+    if (ex.scope === 'all') return true;
+    if (ex.scope === 'pairing' && (ex.planContentHash ?? null) === (planContentHash ?? null)) return true;
+  }
+  return false;
+}
+
+/**
+ * This cohort's active (non-lifted) exclusions, in the shape
+ * `isAttemptExcluded` consumes. The ONE fetch shared by
+ * `liveArmRunsForSnapshot` (below) and `promoteFromLog`'s quarantine
+ * admission (§7 Phase 3) — extracted so both read the same query rather
+ * than each hand-writing it.
+ *
+ * @param {string} cohortId
+ * @returns {Promise<Array<{snapshotId: string, scope: string, planContentHash: string|null}>>}
+ */
+export async function activeExclusionsForCohort(cohortId) {
+  const rows = await many(
+    `SELECT snapshot_id, scope, plan_content_hash FROM campaign_snapshot_exclusions
+      WHERE cohort_id = $1 AND lifted_at IS NULL`,
+    [cohortId],
+  );
+  return rows.map((e) => ({ snapshotId: e.snapshot_id, scope: e.scope, planContentHash: e.plan_content_hash }));
+}
+
+/**
+ * Which of these `audit_run_id` values already have a `campaign_arm_runs`
+ * row — the identity-keyed promotion input (§7 Phase 3). Deliberately
+ * TABLE-WIDE, matching the scope of the DB's own uniqueness guarantee
+ * (`idx_campaign_arm_runs_audit_run_id`), not scoped to one arm/snapshot —
+ * a given review only ever happens once, so its run id cannot legitimately
+ * belong to two different arm-runs.
+ *
+ * @param {string[]} runIds
+ * @returns {Promise<{ok: boolean, cloud: boolean, ids: Set<string>}>}
+ */
+export async function existingAuditRunIds(runIds) {
+  const ids = [...new Set((runIds || []).filter(Boolean))];
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, ids: new Set() };
+  if (ids.length === 0) return { ok: true, cloud: true, ids: new Set() };
+  try {
+    const rows = await many('SELECT audit_run_id FROM campaign_arm_runs WHERE audit_run_id = ANY($1::uuid[])', [ids]);
+    return { ok: true, cloud: true, ids: new Set(rows.map((r) => r.audit_run_id)) };
+  } catch (err) {
+    process.stderr.write(`  [campaign] existingAuditRunIds failed: ${err.message}\n`);
+    return { ok: false, cloud: true, ids: new Set(), error: err.message };
+  }
+}
+
+/**
+ * Serialize promotion for ONE snapshot (§7 Phase 3, round 4 H1+H4). Holds a
+ * `pg_advisory_xact_lock` for the caller's transaction — auto-released at
+ * commit/rollback — keyed on `(cohortId, snapshotId)`, so classification,
+ * quarantine admission, and every write they gate happen atomically together
+ * for one snapshot. Reconciliation ACROSS different snapshots in the same
+ * cohort remains unserialized: each snapshot's arms are independent, and
+ * there is nothing to race there.
+ *
+ * MUST be called from inside an active `withTx` frame — the lock is
+ * meaningless (and immediately released) outside a transaction.
+ *
+ * `cohortId` is a UUID; `hashtext` has no implicit UUID→text cast, so the
+ * explicit `::text` is required (Gemini gate round 4, G2) — `snapshotId` is
+ * already text and needs none.
+ *
+ * @param {string} cohortId
+ * @param {string} snapshotId
+ */
+export async function acquireSnapshotLock(cohortId, snapshotId) {
+  await query('SELECT pg_advisory_xact_lock(hashtext($1::text), hashtext($2))', [cohortId, snapshotId]);
+}
+
+/**
+ * Every LIVE arm-run for one snapshot, success-gated for retry-scoping
+ * decisions (§7 Phase 2).
+ *
+ * `succeeded` is `error IS NULL AND audit_run_id IS NOT NULL AND
+ * (config_digest IS NULL OR config_digest = expectedConfigDigest) AND
+ * (plan_content_hash IS NULL OR plan_content_hash = expectedPlanContentHash)
+ * AND NOT isAttemptExcluded(...)`. Both provenance columns share ONE
+ * permissive-NULL policy (round 6, M1 — see the plan's fuller rationale):
+ * a legacy row that predates either column is TRUSTED, never treated as
+ * suspect on that basis alone; only a REAL, differing value forces
+ * re-collection, and quarantine alone is what distrusts a specific bad
+ * legacy pairing.
+ *
+ * Cloud-off returns `{ok:true, cloud:false, rows:{}}`, mirroring every
+ * other read in this file.
+ *
+ * @param {{cohortId: string, snapshotId: string, expectedConfigDigest: string|null, expectedPlanContentHash: string|null}} args
+ * @returns {Promise<{ok: boolean, cloud: boolean, rows: Record<string, {runId: string|null, attempt: number, auditRunId: string|null, succeeded: boolean}>}>}
+ */
+export async function liveArmRunsForSnapshot({ cohortId, snapshotId, expectedConfigDigest = null, expectedPlanContentHash = null }) {
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, rows: {}, exclusions: [] };
+  try {
+    const [armRows, activeExclusions] = await Promise.all([
+      many(
+        `SELECT arm_id, attempt, audit_run_id, error, config_digest, plan_content_hash
+           FROM campaign_arm_runs
+          WHERE cohort_id = $1 AND snapshot_id = $2 AND superseded_at IS NULL`,
+        [cohortId, snapshotId],
+      ),
+      activeExclusionsForCohort(cohortId),
+    ]);
+    const rows = {};
+    for (const r of armRows) {
+      const succeeded = r.error == null && r.audit_run_id != null
+        && (r.config_digest == null || r.config_digest === expectedConfigDigest)
+        && (r.plan_content_hash == null || r.plan_content_hash === expectedPlanContentHash)
+        && !isAttemptExcluded({ snapshotId, planContentHash: r.plan_content_hash }, activeExclusions);
+      rows[r.arm_id] = { runId: r.audit_run_id, attempt: r.attempt, auditRunId: r.audit_run_id, succeeded };
+    }
+    // Exclusions are returned alongside `rows` so the caller (`main()`'s
+    // own abort-before-spawn quarantine check) can reuse this ONE fetch
+    // rather than issuing a second query for the same cohort.
+    return { ok: true, cloud: true, rows, exclusions: activeExclusions };
+  } catch (err) {
+    process.stderr.write(`  [campaign] liveArmRunsForSnapshot failed: ${err.message}\n`);
+    return { ok: false, cloud: true, rows: {}, exclusions: [], error: err.message };
   }
 }
 
