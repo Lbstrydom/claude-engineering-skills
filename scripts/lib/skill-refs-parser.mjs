@@ -19,7 +19,16 @@ const SEPARATOR_RE = /^\|?\s*:?-{3,}:?\s*\|/;
 
 // Matches YAML frontmatter at the top of a file
 const FRONTMATTER_RE = /^---\s*\n([\s\S]*?)\n---\s*(?:\r?\n|$)/;
-const SUMMARY_KEY_RE = /^\s*summary\s*:\s*(.+?)\s*$/m;
+// Anchored at column 0 (no leading `\s*`) — every real `summary:` key in this
+// repo's frontmatter is a flat, unindented top-level key (verified across the
+// whole references/examples corpus). A `\s*`-tolerant version would also match
+// "summary:" text appearing INSIDE another key's indented block-scalar value
+// (`description: |\n  summary: not a real key`), silently accepting a
+// non-existent top-level field. This is deliberately still a line regex, not a
+// YAML parser — the frontmatter here has never carried nested block scalars —
+// but the anchor closes the one case where the regex's looseness let it accept
+// a value that isn't actually top-level.
+const SUMMARY_KEY_RE = /^summary\s*:\s*(.+?)\s*$/m;
 
 const SUMMARY_MAX_CHARS = 120;
 
@@ -174,6 +183,18 @@ export function lintSkill(skillDir) {
   for (const entry of table.entries) {
     listedFiles.add(entry.file);
     const absFile = path.join(skillDir, entry.file);
+    // The `references/`/`examples/` prefix check in parseReferenceTable is a
+    // TEXT-only guard — `references/../../../SKILL.md` also starts with
+    // "references/" but path.join resolves it outside skillDir entirely. A
+    // lexical containment check (no realpath/symlink-following needed: these
+    // are repo-committed table entries, not attacker-supplied filesystem
+    // input) catches the traversal before existsSync/readFileSync ever touch
+    // a path outside the skill directory.
+    const relFromSkillDir = path.relative(skillDir, absFile);
+    if (relFromSkillDir.startsWith('..') || path.isAbsolute(relFromSkillDir)) {
+      errors.push(`Reference entry "${entry.file}" — resolves outside the skill directory (path traversal)`);
+      continue;
+    }
     if (!fs.existsSync(absFile)) {
       errors.push(`Reference entry "${entry.file}" — file does not exist`);
       continue;

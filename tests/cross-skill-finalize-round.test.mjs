@@ -119,6 +119,33 @@ describe('cross-skill finalize-outcomes — --round resolution', () => {
     assert.equal(out.ok, false);
     assert.equal(out.error?.code, 'BAD_INPUT');
   });
+
+  // ── Fallback-side gap (audit a9c2ab46/337edc83, closed alongside this
+  //    triage) — the explicit `--round` side was tightened above on
+  //    2026-08-12, but the FALLBACK value (`result.round || 1`, used when
+  //    `--round` is omitted) kept the exact defect this suite's header
+  //    describes: `result.round: 0` is falsy, so `0 || 1` silently finalised
+  //    round 1 instead of refusing. Two audit rounds flagged this as a
+  //    distinct gap from the flag-side fix, and it survived because nothing
+  //    exercised a persisted `round: 0` with `--round` omitted.
+  it('REFUSES a persisted result.round: 0 when --round is omitted (fallback-side gap)', () => {
+    const out = finalize({ round: 0, findings: [] });
+    assert.equal(out.ok, false);
+    assert.equal(out.error?.code, 'BAD_INPUT');
+    assert.notEqual(out.round, 1, 'must not silently coerce a persisted round 0 into round 1');
+  });
+
+  it('REFUSES a persisted non-integer result.round when --round is omitted', () => {
+    const out = finalize({ round: 'abc', findings: [] });
+    assert.equal(out.ok, false);
+    assert.equal(out.error?.code, 'BAD_INPUT');
+  });
+
+  it('still falls back to result.round: 1 when --round is omitted (fallback-side positive control)', () => {
+    const out = finalize({ round: 1, findings: [] });
+    assert.equal(out.ok, true);
+    assert.equal(out.round, 1);
+  });
 });
 
 /**

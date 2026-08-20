@@ -62,9 +62,24 @@ const KNOWN_FLAGS = [
   '--selfcheck-relocation', '--help',
 ];
 
+/**
+ * Read a scalar (single-value) option. `rest.indexOf` alone silently selects
+ * the FIRST occurrence and never enforces cardinality — `--commit old --commit
+ * new` used to resolve to `old` with no diagnostic (finding f38a0a34), which is
+ * exactly the "accepted-then-ignored" shape this file's `assertKnownFlags`
+ * guard was written to close for flag NAMES; this closes it for flag COUNT.
+ * `--alias`, the one flag meant to repeat, goes through `optAll` instead and is
+ * unaffected.
+ */
 function opt(name) {
-  const i = rest.indexOf(`--${name}`);
-  return i >= 0 ? (rest[i + 1] ?? null) : null;
+  const flagName = `--${name}`;
+  const indices = [];
+  rest.forEach((a, i) => { if (a === flagName) indices.push(i); });
+  if (indices.length > 1) {
+    fail('BAD_INPUT', `--${name} was supplied ${indices.length} times — the effective value would depend on argument order. Pass it exactly once.`);
+  }
+  const i = indices[0];
+  return i !== undefined ? (rest[i + 1] ?? null) : null;
 }
 function optAll(name) {
   const out = [];

@@ -84,6 +84,7 @@ export async function personaOutcomesCmd(ctx) {
     if (!res.cloud) return { ok: true, cloud: false, count: 0 };
     const { renderAdjudicationWorksheet } = await import('../../adjudication-worksheet.mjs');
     const { writeFileSync, mkdirSync, existsSync } = await import('node:fs');
+    const { dirname } = await import('node:path');
     const md = renderAdjudicationWorksheet({
       title: `Persona-finding outcome labels — repo ${repoName}`,
       introLines: [
@@ -117,7 +118,10 @@ export async function personaOutcomesCmd(ctx) {
     });
     const dir = existsSync('docs/arm-eval') ? 'docs/arm-eval/worksheets' : '.audit';
     const out = ctx.flag('out') || `${dir}/persona-outcomes-worksheet.md`;
-    mkdirSync(dir, { recursive: true });
+    // The PARENT of the actual output path (audit 8edd7583/cbf7d266) — a
+    // custom `--out` naming a nested directory that doesn't exist yet used to
+    // fail with ENOENT, because only the unrelated DEFAULT root was created.
+    mkdirSync(dirname(out), { recursive: true });
     writeFileSync(out, md);
     process.stderr.write(`  [persona-outcomes] worksheet: ${res.items.length} actionable finding(s) → ${out}\n`);
     return { ok: true, cloud: true, count: res.items.length, truncated: res.truncated, worksheet: out };

@@ -114,11 +114,26 @@ export async function modelAbAdjudicateCmd(ctx) {
 
   if (!action) {
     const runId = ctx.flag('run-id');
-    const limit = Number(ctx.flag('limit')) || 50;
+    // A present-but-invalid `--limit` is REFUSED rather than silently swapped
+    // for the default (audit b75a48c2/766b246d — `Number(flag) || 50` turned
+    // `--limit nope` and `--limit 0` into a quiet 50, same class as the
+    // `--budget-eur`/`--round` fixes elsewhere in this cluster: an omitted
+    // flag defaults, a present-but-malformed one does not).
+    const limitFlag = ctx.flag('limit');
+    let limit = 50;
+    if (limitFlag !== null) {
+      const parsed = Number(limitFlag);
+      if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed <= 0) {
+        throw new CommandError('BAD_INPUT',
+          `--limit must be a positive integer, got ${JSON.stringify(limitFlag)}`);
+      }
+      limit = parsed;
+    }
     const q = await ctx.deps.getModelAbAdjudicationQueue({ runId, limit });
     if (!ctx.hasFlag('json')) {
       const { renderAdjudicationWorksheet } = await import('../../adjudication-worksheet.mjs');
       const { writeFileSync, mkdirSync, existsSync, readFileSync } = await import('node:fs');
+      const { dirname } = await import('node:path');
       // `--suggestions <file>`: advisory pre-judgments rendered per item with
       // the command pre-filled. The file itself NEVER writes rulings — the
       // human confirms by pasting or overrides by editing.
@@ -149,7 +164,11 @@ export async function modelAbAdjudicateCmd(ctx) {
       // Category-A volatile state); .audit/ fallback.
       const dir = existsSync('docs/arm-eval') ? 'docs/arm-eval/worksheets' : '.audit';
       const out = ctx.flag('out') || `${dir}/model-ab-adjudication-worksheet.md`;
-      mkdirSync(dir, { recursive: true });
+      // The PARENT of the actual output path (audit d859faec/490d1264) — a
+      // custom `--out` naming a nested directory that doesn't exist yet used
+      // to fail with ENOENT, because only the unrelated DEFAULT root was
+      // created.
+      mkdirSync(dirname(out), { recursive: true });
       writeFileSync(out, md);
       process.stderr.write(`  [model-ab-adjudicate] worksheet: ${q.items.length} pending finding(s) → ${out}\n  (raw queue JSON: add --json)\n`);
       return { ok: true, cloud: q.cloud, blinded: true, count: q.items.length, worksheet: out };
@@ -242,7 +261,14 @@ export async function armEvalAdjudicateCmd(ctx) {
         const { exportSession } = await import('../../arm-eval/export.mjs');
         const ex = await exportSession(sessionId);
         archived = ex.written ? ex.file : null;
-      } catch { /* non-fatal */ }
+      } catch (err) {
+        // Non-fatal by design — the ranking above already recorded, and the
+        // archive upgrade is best-effort. But a discarded failure was
+        // previously invisible (audit d179683e/619ae295's "arm-evaluation
+        // adjudication suppresses related side-effect failures" branch):
+        // keep it non-blocking, stop it being silent.
+        process.stderr.write(`  [arm-eval] session ${sessionId} archive export failed (non-fatal): ${err.message}\n`);
+      }
       return { ok: true, ...r, recorded: rankedLabels, archived };
     }
     const q = await ctx.deps.getBlindedSessionOutputs(sessionId);

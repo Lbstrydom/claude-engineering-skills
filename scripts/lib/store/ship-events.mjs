@@ -60,6 +60,15 @@ export async function recordShipEvent(repoId, event) {
  */
 export async function readShipEvents(repoId, { limit = 10 } = {}) {
   if (!repoId || !await isCloudEnabled()) return null;
+  // Clamp before it reaches `LIMIT $2` (audit MED — d36ea2b0-adjacent finding
+  // 57c819d9): `null`/`NaN`/omitted-but-falsy all collapse to the same
+  // "unbounded history" read in Postgres (`LIMIT NULL` = no limit), and a huge
+  // caller-supplied value reads the whole table. Same clamp shape
+  // `resolveNudgePage` (ship-nudges.mjs) already uses for this reader's
+  // siblings — this one predates that helper and never got it.
+  const n = Number.isFinite(Number(limit)) && Number(limit) > 0
+    ? Math.min(Math.floor(Number(limit)), 100)
+    : 10;
   try {
     const byOutcome = await many(
       `SELECT outcome, count(*)::int AS count FROM ship_events
@@ -69,7 +78,7 @@ export async function readShipEvents(repoId, { limit = 10 } = {}) {
     const recent = await many(
       `SELECT outcome, branch, commit_sha, overridden_by_user, created_at
          FROM ship_events WHERE repo_id = $1 ORDER BY created_at DESC LIMIT $2`,
-      [repoId, limit],
+      [repoId, n],
     );
     return { byOutcome, recent };
   } catch (err) {

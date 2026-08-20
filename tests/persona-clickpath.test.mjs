@@ -54,6 +54,15 @@ test('sanitizeStepUrl strips origin, collapses tokens, redacts secret query, kee
   assert.equal(sanitizeStepUrl('mailto:a@b.com'), '');                                                 // non-http → empty
 });
 
+test('sanitizeStepUrl: a DOUBLY percent-encoded auth keyword still collapses the following segment (audit HIGH — doubly-encoded-route bypass)', () => {
+  // %25 decodes to "%", so `%2572eset` needs TWO decodes to reach "reset" — a
+  // single-decode safeDecode left it as "%72eset" (no literal "reset"
+  // substring), letting the OTP-shaped following segment escape redaction.
+  assert.equal(sanitizeStepUrl('https://x/%2572eset/123456'), '/%2572eset/:param');
+  // Triple-encoded still resolves within the bounded (5-iteration) decode loop.
+  assert.equal(sanitizeStepUrl('https://x/%252572eset/123456'), '/%252572eset/:param');
+});
+
 test('sanitizeStepUrl: a hash ROUTE with its own query is not mangled as an OAuth token bag (Gemini HIGH)', () => {
   // `#/wines?view=today` starts with `/` → it is a SPA route, not `#token=…`.
   assert.equal(sanitizeStepUrl('https://x/#/wines?view=today'), '/#/wines?view=today');

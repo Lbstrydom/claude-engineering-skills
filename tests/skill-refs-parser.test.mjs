@@ -169,6 +169,18 @@ describe('parseReferenceFrontmatter', () => {
     assert.equal(r.summary, long);
     assert.ok(r.error.includes('exceeds 120'));
   });
+
+  it('does not accept "summary:" text indented inside another key\'s block-scalar value (fingerprint ecc722f1)', () => {
+    // `description: |` starts a YAML block scalar; every following indented
+    // line (including one that happens to start with "summary:") is CONTENT
+    // of that scalar, not a second top-level key. A line regex tolerant of
+    // leading whitespace on "summary:" would wrongly treat this as the
+    // required top-level field.
+    const md = `---\ndescription: |\n  Some notes here.\n  summary: this is prose inside description, not a real key\n---\nBody.`;
+    const r = parseReferenceFrontmatter(md);
+    assert.equal(r.summary, null);
+    assert.ok(r.error.includes('summary'));
+  });
 });
 
 describe('lintSkill', () => {
@@ -229,5 +241,33 @@ describe('lintSkill', () => {
     const r = lintSkill(tmp);
     assert.equal(r.ok, false);
     assert.ok(r.errors.some(e => e.includes('SKILL.md not found')));
+  });
+
+  it('flags a references/ table entry that traverses outside the skill directory', () => {
+    // "references/../../../escape.md" passes the text-only
+    // startsWith('references/') check in parseReferenceTable, but path.join
+    // resolves it outside skillDir — a path-traversal escape (fingerprint
+    // f5f25121) that must be refused before existsSync/readFileSync ever
+    // touch the resolved path.
+    const skillMd = `---
+name: test-skill
+---
+
+# Test Skill
+
+## Reference files
+
+| File | Summary | Read when |
+|---|---|---|
+| \`references/../../../escape.md\` | Escapes the skill dir. | never |
+`;
+    write('SKILL.md', skillMd);
+    // No need to create the escape target: the containment check must fire
+    // BEFORE existsSync/readFileSync ever run, so the guard is proven by the
+    // "path traversal" message appearing rather than a generic "does not
+    // exist" one (which a missing-file fallback could also produce).
+    const r = lintSkill(tmp);
+    assert.equal(r.ok, false);
+    assert.ok(r.errors.some(e => e.includes('path traversal')), r.errors.join('\n'));
   });
 });

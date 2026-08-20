@@ -30,10 +30,11 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { recordPlanVerificationItems } from '../scripts/lib/store/plans-ship.mjs';
 
 const CLI = fileURLToPath(new URL('../scripts/cross-skill.mjs', import.meta.url));
+const PLANS_SHIP_URL = pathToFileURL(fileURLToPath(new URL('../scripts/lib/store/plans-ship.mjs', import.meta.url))).href;
 
 let tmp;
 before(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pvi-')); });
@@ -128,5 +129,81 @@ describe('recordPlanVerificationItems — structured result contract', () => {
     assert.equal(missingItems.reason, 'bad-input');
     const notAnArray = await recordPlanVerificationItems('run', 'plan', null);
     assert.equal(notAnArray.reason, 'bad-input');
+  });
+});
+
+// ── recordPlanVerificationRun — store-boundary count validation ────────────
+//
+// Guards the audit finding "Fallback values masking malformed verification
+// data": `validateCountFields` sat at the CLI-handler call site for four audit
+// rounds while every optional field name it defaulted to
+// (passedCriteria/failedCriteria/skippedCriteria) didn't match this command's
+// payload shape (passedCount/failedCount/skippedCount) — accepted, validated,
+// inert. It is now called INSIDE `recordPlanVerificationRun` itself (plan-
+// verification.mjs), specifically because `ux-lock-run.mjs` calls that writer
+// directly and a handler-only guard leaves that caller unprotected.
+//
+// Every existing test for this class drives either the pure validator
+// (`cross-skill-mutation-contracts.test.mjs`) or the CLI handler with the
+// writer MOCKED OUT (`cross-skill-write-outcome-contract.test.mjs`) — neither
+// proves the STORE FUNCTION refuses bad counts on its own. These three run the
+// real function, unmocked, in a subprocess.
+function runVerificationRun(payload, { dbUrl }) {
+  const dir = fs.mkdtempSync(path.join(tmp, 'run-'));
+  const env = {
+    ...process.env,
+    HOME: dir, USERPROFILE: dir,
+    AUDIT_DB_SSL_MODE: 'disable',
+    AUDIT_LOOP_DISABLE_SHARED: '1',
+  };
+  delete env.DOTENV_CONFIG_PATH; // see the header of this file — the leak that matters
+  if (dbUrl) env.AUDIT_DB_URL = dbUrl; else delete env.AUDIT_DB_URL;
+
+  // `AUDIT_DB_URL` points at a closed local port, never a real server.
+  // `isCloudEnabled()` only checks that a Pool object was constructed — pg's
+  // Pool does not dial out until a query is issued — so a validation refusal
+  // that returns before any query is issued never touches a socket.
+  const script =
+    `import { recordPlanVerificationRun } from ${JSON.stringify(PLANS_SHIP_URL)};\n`
+    + `const res = await recordPlanVerificationRun(${JSON.stringify(payload)});\n`
+    + 'process.stdout.write(JSON.stringify(res));\n';
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+    encoding: 'utf8', env, cwd: dir, timeout: 30_000,
+  });
+  const line = r.stdout.split('\n').filter((l) => l.trim().startsWith('{')).pop();
+  assert.ok(line, `no JSON on stdout (status ${r.status})\n${r.stdout}\n${r.stderr}`);
+  return JSON.parse(line);
+}
+
+describe('recordPlanVerificationRun — store-boundary count validation (not just the CLI handler)', () => {
+  const UNREACHABLE = 'postgresql://u:p@127.0.0.1:1/postgres';
+
+  it('refuses a negative peer count before ever reaching the database', () => {
+    const out = runVerificationRun(
+      { planId: 'p-1', totalCriteria: 3, passedCount: -5 },
+      { dbUrl: UNREACHABLE },
+    );
+    assert.equal(out.ok, false);
+    assert.equal(out.reason, 'invalid-input');
+  });
+
+  it('a numeric-string peer count is refused the same way', () => {
+    const out = runVerificationRun(
+      { planId: 'p-1', totalCriteria: 3, failedCount: '2' },
+      { dbUrl: UNREACHABLE },
+    );
+    assert.equal(out.ok, false);
+    assert.equal(out.reason, 'invalid-input');
+  });
+
+  // Vacuous-pass guard: without this, the two assertions above would also pass
+  // for a build that refuses EVERY payload regardless of validity.
+  it('a VALID payload against the same unreachable store fails at WRITE, not validation', () => {
+    const out = runVerificationRun(
+      { planId: 'p-1', totalCriteria: 3, passedCount: 2, failedCount: 1 },
+      { dbUrl: UNREACHABLE },
+    );
+    assert.equal(out.ok, false);
+    assert.equal(out.reason, 'write-failed');
   });
 });

@@ -29,12 +29,27 @@ const CLICK_PATH_CAP = 40;
  * @param {string} s
  * @returns {boolean}
  */
-/** Percent-decode once, tolerating a malformed `%` sequence (returns raw). The
- *  single decode helper so EVERY secret/route heuristic sees the same decoded
- *  form — an encoded token or auth keyword can't bypass one check by matching a
- *  different one's encoding assumption (audit HIGH — encoded-auth-keyword bypass). */
+/** Percent-decode REPEATEDLY (bounded), tolerating a malformed `%` sequence at
+ *  any step (stops and returns the last successfully-decoded value). The single
+ *  decode helper so EVERY secret/route heuristic sees the same decoded form —
+ *  an encoded token or auth keyword can't bypass one check by matching a
+ *  different one's encoding assumption (audit HIGH — encoded-auth-keyword bypass).
+ *  A SINGLE decode still left a DOUBLY-encoded auth keyword unmatched
+ *  (`%2572eset` → one decode → `%72eset`, which contains no literal "reset" —
+ *  audit HIGH, doubly-encoded-route bypass): `%2572eset` needs two decodes to
+ *  reach `reset`. Bounded at 5 iterations (arbitrary encoding depth some
+ *  browser/proxy could produce is not worth chasing further) and stops as soon
+ *  as a decode is a no-op, so a normal single-encoded or plain segment costs
+ *  one extra no-op decodeURIComponent call, not five. */
 function safeDecode(s) {
-  try { return decodeURIComponent(s); } catch { return s; }
+  let out = s;
+  for (let i = 0; i < 5; i++) {
+    let next;
+    try { next = decodeURIComponent(out); } catch { break; }
+    if (next === out) break;
+    out = next;
+  }
+  return out;
 }
 
 function looksSecret(s) {

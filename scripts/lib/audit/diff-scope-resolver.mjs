@@ -45,14 +45,21 @@ function stripLeadingDotSlash(s) {
  * @param {string} repoPath
  * @param {string} rel - directory to list, relative to repoPath
  * @param {Set<string>} out - accumulator
+ * @param {{failed: boolean}} [failureTracker] - fp=da78e8e1: a readdir
+ *   failure here is otherwise indistinguishable from a legitimately-empty
+ *   directory once logged (the caller's returned Set just has fewer entries)
+ *   — this out-param, when supplied, lets `resolveDiffScope` downgrade
+ *   `state` to `ANALYZED_PARTIAL` instead of reporting a silently incomplete
+ *   entry-point set as a clean analysis.
  */
-function walkEntryPointDir(repoPath, rel, out) {
+function walkEntryPointDir(repoPath, rel, out, failureTracker) {
   const abs = path.join(repoPath, rel);
   let entries;
   try {
     entries = fs.readdirSync(abs, { withFileTypes: true });
   } catch (err) {
     process.stderr.write(`  [orphan] entry-point discovery failed for ${rel}: ${err.message}\n`);
+    if (failureTracker) failureTracker.failed = true;
     return;
   }
   for (const e of entries) {
@@ -74,8 +81,9 @@ function walkEntryPointDir(repoPath, rel, out) {
  * @param {string} repoPath
  * @param {string} rel
  * @param {Set<string>} out
+ * @param {{failed: boolean}} [failureTracker] - see walkEntryPointDir's doc (fp=da78e8e1).
  */
-function walkSourceFilesRecursive(repoPath, rel, out) {
+function walkSourceFilesRecursive(repoPath, rel, out, failureTracker) {
   const abs = path.join(repoPath, rel);
   let entries;
   try {
@@ -87,11 +95,12 @@ function walkSourceFilesRecursive(repoPath, rel, out) {
     // as this used to, made an unreadable subtree indistinguishable from an
     // empty one (audit-code round-1 finding). Log so it's diagnosable.
     process.stderr.write(`  [orphan] nested entry-point scan failed for ${rel}: ${err.message}\n`);
+    if (failureTracker) failureTracker.failed = true;
     return;
   }
   for (const e of entries) {
     const childRel = `${rel}/${e.name}`;
-    if (e.isDirectory()) { walkSourceFilesRecursive(repoPath, childRel, out); continue; }
+    if (e.isDirectory()) { walkSourceFilesRecursive(repoPath, childRel, out, failureTracker); continue; }
     if (!e.isFile()) continue;
     if (!SOURCE_EXTENSIONS.has(path.extname(e.name).toLowerCase())) continue;
     out.add(childRel);
@@ -498,9 +507,16 @@ async function cruiseTempRoot(tempRoot, materialisedPaths) {
  * the exemption fires regardless of which form appears in the import graph.
  *
  * @param {string} repoPath
+ * @param {{failureTracker?: {failed: boolean}}} [opts] - optional out-param
+ *   (fp=da78e8e1): when `opts.failureTracker` is supplied, a readdir failure
+ *   in either walk helper sets `.failed = true` on it so a caller can tell a
+ *   genuinely-empty directory from a discovery failure it could not otherwise
+ *   see from the returned Set alone. Omitted (the default) is byte-identical
+ *   to prior behaviour — every existing call site is unaffected.
  * @returns {Set<string>}
  */
-export function computeEntryPoints(repoPath) {
+export function computeEntryPoints(repoPath, opts = {}) {
+  const { failureTracker } = opts;
   const out = new Set();
   const pkgJsonPath = path.join(repoPath, 'package.json');
   let pkg;
@@ -565,7 +581,7 @@ export function computeEntryPoints(repoPath) {
   for (const dir of ['scripts', 'bin']) {
     const full = path.join(repoPath, dir);
     if (!fs.existsSync(full)) continue;
-    walkEntryPointDir(repoPath, dir, out);
+    walkEntryPointDir(repoPath, dir, out, failureTracker);
   }
 
   // Nested CLI scripts (e.g. scripts/spikes/foo.mjs) that document themselves
@@ -576,7 +592,7 @@ export function computeEntryPoints(repoPath) {
   const nestedCandidates = new Set();
   for (const dir of ['scripts', 'bin']) {
     if (!fs.existsSync(path.join(repoPath, dir))) continue;
-    walkSourceFilesRecursive(repoPath, dir, nestedCandidates);
+    walkSourceFilesRecursive(repoPath, dir, nestedCandidates, failureTracker);
   }
   for (const rel of nestedCandidates) {
     if (out.has(rel)) continue; // already an entry point via the depth-1 walk
@@ -692,7 +708,13 @@ export async function resolveDiffScope({ repoPath, baseRef, headRef, diffPatch, 
   }
 
   // Entry-point set (orchestration responsibility — R2/M3).
-  const entryPoints = Array.from(computeEntryPoints(repoPath)).sort(cmp);
+  // fp=da78e8e1: a readdir failure inside the entry-point walk used to be
+  // indistinguishable from a legitimately-empty scripts/bin tree (both just
+  // shrink the returned Set) — the failureTracker out-param surfaces it so
+  // `state` below can downgrade instead of reporting a silently incomplete
+  // entry-point set as ANALYZED_CLEAN.
+  const entryPointDiscoveryFailure = { failed: false };
+  const entryPoints = Array.from(computeEntryPoints(repoPath, { failureTracker: entryPointDiscoveryFailure })).sort(cmp);
 
   // Gemini-final-R2 fix: if the diff parser hit an unknown status mid-stream
   // and aborted (`parsePartial=true`), downgrade state to ANALYZED_PARTIAL so
@@ -705,6 +727,6 @@ export async function resolveDiffScope({ repoPath, baseRef, headRef, diffPatch, 
     preEdgesByBaseCaller,
     targetExistedAtBase,
     entryPoints,
-    state: parsePartial ? 'ANALYZED_PARTIAL' : 'ANALYZED_CLEAN',
+    state: (parsePartial || entryPointDiscoveryFailure.failed) ? 'ANALYZED_PARTIAL' : 'ANALYZED_CLEAN',
   };
 }

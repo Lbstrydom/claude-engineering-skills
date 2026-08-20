@@ -92,6 +92,17 @@ function defaultAdapters() {
  * *claim*, honoured only if it demonstrably resolves inside a container in the
  * current parsed source (see `findEnclosingConditional`), never a trusted location.
  *
+ * **`+c` is the line BEFORE the gap, not inside it** — verified against real
+ * `git diff --unified=0` output. Deleting the first (or only) statement of a
+ * braced conditional puts `c` on the `if (…) {` line itself, which
+ * `findEnclosingConditional`'s test-expression exclusion deliberately treats as
+ * a *condition* edit, not a body edit — so that anchor alone resolves to
+ * nothing and the whole conditional goes unenumerated. `c+1` — the line the
+ * gap closed onto (the next surviving statement, or the closing brace if the
+ * branch is now empty) — is pushed alongside it for exactly this case; both are
+ * claims, and `findEnclosingConditional` + `seenContainers` dedup whichever
+ * ends up resolving.
+ *
  * @param {string} diffText
  * @returns {{targets: {newPath:string, oldPath:string, fileStatus:string, anchorLines:number[]}[], undecodableCount: number}}
  */
@@ -118,8 +129,13 @@ export function parseHunkTargets(diffText) {
       if (hunk) {
         cursor = { next: hunk.headStart, added: [] , start: hunk.headStart, count: hunk.headCount };
         // A pure-deletion hunk (headCount === 0) contributes its insertion
-        // anchor immediately — it will emit no `+` lines to collect.
-        if (hunk.headCount === 0) anchorLines.push(hunk.headStart);
+        // anchor immediately — it will emit no `+` lines to collect. `headStart`
+        // is the line BEFORE the gap; `headStart + 1` is the line the gap
+        // closed onto — push both (see the docstring above).
+        if (hunk.headCount === 0) {
+          anchorLines.push(hunk.headStart);
+          anchorLines.push(hunk.headStart + 1);
+        }
         continue;
       }
       if (!cursor) continue;

@@ -25,6 +25,7 @@ import {
 import { findingFingerprint, computeAuditVerdict } from '../scripts/lib/audit/findings-pipeline.mjs';
 import { countsTowardVerdict } from '../scripts/lib/audit/finding-verification.mjs';
 import { gitFixtureEnv } from './helpers/fixtures.mjs';
+import { trySymlink } from './helpers/fs-symlink-test-utils.mjs';
 
 // Same isolation discipline as tests/diff-scope-resolver.test.mjs — a scratch
 // git repo spawned without an explicit sanitized env risks a leaked GIT_DIR
@@ -103,6 +104,133 @@ describe('buildCorpus — orphaned-pragma wiring', () => {
       // still being analysed — proves the fetch set is trimmed, not emptied.
       assert.equal(sites.dispatches.length, 1);
       assert.equal(sites.dispatches[0].eventName, 'small:evt');
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildCorpus — non-ref (working-tree) path must check the 1 MiB per-file
+// cap via fs.statSync BEFORE calling fs.readFileSync (audit finding
+// b26b4d12: the prior version read the whole file into memory
+// unconditionally, then discarded it if over the cap — so the very large
+// file the cap exists to bound was the one thing it failed to bound). Proven
+// here by making fs.readFileSync THROW for the oversized file's path: if the
+// stat-then-read order regressed, this test fails with that thrown error
+// instead of a clean skip.
+// ---------------------------------------------------------------------------
+describe('buildCorpus — per-file byte cap checked before read (non-ref path, b26b4d12)', () => {
+  it('never calls fs.readFileSync for a file fs.statSync already reported over PER_FILE_BYTE_CAP', (t) => {
+    const repo = newRepo();
+    try {
+      const bigAbs = path.join(repo, 'oversize.js');
+      writeFile(repo, 'oversize.js', 'x'.repeat(2 * 1024 * 1024)); // 2 MiB > 1 MiB cap
+      writeFile(repo, 'small.js', `el.dispatchEvent(new CustomEvent('small:evt'));`);
+      commit(repo, 'add oversize + small');
+
+      const realReadFileSync = fs.readFileSync.bind(fs);
+      t.mock.method(fs, 'readFileSync', (p, ...rest) => {
+        if (path.resolve(String(p)) === path.resolve(bigAbs)) {
+          throw new Error('regression: readFileSync was called for a file already over the per-file cap');
+        }
+        return realReadFileSync(p, ...rest);
+      });
+
+      const { sites, counters } = buildCorpus({ repoPath: repo, env: gitFixtureEnv() });
+
+      assert.ok(counters.skippedFiles >= 1, 'the oversized file must be counted as skipped');
+      assert.equal(sites.dispatches.length, 1);
+      assert.equal(sites.dispatches[0].eventName, 'small:evt');
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildCorpus — non-ref (working-tree) path must not read through a tracked
+// symlink that resolves outside the repo (audit finding 00269bb9: fs.statSync
+// / fs.readFileSync both follow symlinks, so a tracked *.js symlink could
+// leak an outside file's content into the corpus). The guard is
+// `resolveAndClassify` (sensitive-paths.mjs), called on every relPath before
+// it's added to `eligiblePaths` — it realpath-resolves and classifies any
+// repo-escaping symlink as 'sensitive', which buildCorpus excludes.
+// ---------------------------------------------------------------------------
+describe('buildCorpus — symlink containment (non-ref/working-tree path)', () => {
+  it('never reads through a tracked symlink whose target resolves outside the repo (00269bb9)', () => {
+    const repo = newRepo();
+    const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'event-wiring-corpus-outside-'));
+    try {
+      const outsideFile = path.join(outsideDir, 'secret.js');
+      fs.writeFileSync(outsideFile, `el.dispatchEvent(new CustomEvent('outside:should-never-be-seen'));\n`);
+
+      const linkPath = path.join(repo, 'escape-link.js');
+      if (!trySymlink(outsideFile, linkPath, 'file')) return; // host can't create symlinks — skip
+
+      commit(repo, 'add tracked symlink escaping the repo');
+
+      // Sanity check the fixture is actually exercising the guard: git must
+      // be tracking the symlink path (proves buildCorpus's file-list even
+      // considers it — otherwise this test would pass for the wrong reason).
+      const tracked = execFileSync('git', ['ls-files'], { cwd: repo, env: gitFixtureEnv() }).toString('utf8');
+      assert.match(tracked, /escape-link\.js/);
+
+      const { sites, orphanedPragmas } = buildCorpus({ repoPath: repo, env: gitFixtureEnv() });
+
+      const allEventNames = [...sites.dispatches, ...sites.listens].map(s => s.eventName);
+      assert.equal(allEventNames.includes('outside:should-never-be-seen'), false,
+        'the outside file\'s content must never be read into the corpus');
+      assert.equal(orphanedPragmas.some(p => p.locus.path === 'escape-link.js'), false);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      fs.rmSync(outsideDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildCorpus — a ref-anchored build must inventory the files that exist AT
+// THAT REF, not the current index (audit finding d2a8aa8a: the traversal
+// used `git ls-files -z`, which always describes the working tree/index,
+// regardless of `ref` — only the content read (`git show <ref>:<path>`) was
+// actually ref-anchored, so the discovered path SET could disagree with the
+// content snapshot). Proven by building at an OLDER ref after a LATER commit
+// added a new file: the file never existed at the older ref, so a correct
+// (`git ls-tree <ref>`) traversal must never even consider it, while the
+// buggy (`git ls-files`, current-index) traversal would list it and then
+// have to drop it via a "missing at <ref>" read failure — observable as a
+// difference in `filesConsidered` (the raw traversal count) and
+// `skippedFiles`, not just the final dispatch set (both files stay present
+// in the WORKING TREE throughout, so this isolates the traversal bug from
+// `resolveAndClassify`'s own realpath check, which needs the path to exist
+// on disk regardless of which ref is being read).
+// ---------------------------------------------------------------------------
+describe('buildCorpus — ref-anchored traversal inventories files AT the ref (d2a8aa8a)', () => {
+  it('a build at an OLDER ref never considers a file added only in a LATER commit', () => {
+    const repo = newRepo();
+    try {
+      writeFile(repo, 'only-in-a.js', `el.dispatchEvent(new CustomEvent('a:evt'));`);
+      commit(repo, 'commit A — only-in-a.js');
+      const shaA = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, env: gitFixtureEnv() }).toString('utf8').trim();
+
+      // only-in-a.js is NEVER removed — both files coexist in the working
+      // tree/current index from here on, isolating the traversal-set bug
+      // from any unrelated realpath-on-a-deleted-path effect.
+      writeFile(repo, 'only-in-b.js', `el.dispatchEvent(new CustomEvent('b:evt'));`);
+      commit(repo, 'commit B — adds only-in-b.js (only-in-a.js untouched)');
+
+      const atA = buildCorpus({ repoPath: repo, ref: shaA, env: gitFixtureEnv() });
+      assert.equal(atA.counters.filesConsidered, 2,
+        'the OLDER ref\'s traversal must be [package.json, only-in-a.js] only — a ls-files-based (current-index) ' +
+        'traversal would also list only-in-b.js, which did not exist yet at shaA');
+      assert.equal(atA.counters.skippedFiles, 0,
+        'a correct traversal never attempts a file absent at the ref, so there is nothing to skip as "missing at ref"');
+      assert.deepEqual(atA.sites.dispatches.map(d => d.eventName).sort(), ['a:evt']);
+
+      const atHead = buildCorpus({ repoPath: repo, ref: 'HEAD', env: gitFixtureEnv() });
+      assert.equal(atHead.counters.filesConsidered, 3, '[package.json, only-in-a.js, only-in-b.js] at HEAD');
+      assert.deepEqual(atHead.sites.dispatches.map(d => d.eventName).sort(), ['a:evt', 'b:evt']);
     } finally {
       fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }

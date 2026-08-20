@@ -123,4 +123,81 @@ describe('recordPersonaAuditCorrelation hash_version stamping (disposable DB)', 
     );
     assert.equal(rows.length, 0, 'a rejected write must never reach the table');
   });
+
+  it('rejects (loud, not a silent ok:true) when a required field is missing — findings eef38861/bc8cea53', async () => {
+    const hash = crypto.randomBytes(32).toString('hex');
+    const result = await recordPersonaAuditCorrelation(sessionId, {
+      personaFindingHash: hash, personaSeverity: 'P0',
+      auditFindingId: null, auditRunId: null,
+      correlationType: null, // missing — used to silently return {ok:true} with nothing written
+      matchScore: null, matchRationale: null, matcherVersion: null,
+    });
+    assert.equal(result.ok, false);
+    assert.match(result.error, /correlationType/);
+    const pool = await getPool();
+    const { rows } = await pool.query(
+      `SELECT 1 FROM persona_audit_correlations WHERE persona_session_id = $1 AND persona_finding_hash = $2`,
+      [sessionId, hash],
+    );
+    assert.equal(rows.length, 0, 'a rejected write must never reach the table');
+  });
+
+  it('refuses an auditRunId belonging to a DIFFERENT repo when a scope is resolved — findings 62bee23e/0d5c4c8d', async () => {
+    const otherRepo = await upsertRepoByUuid({
+      repoUuid: `test-persona-correlation-other-repo-${crypto.randomUUID()}`,
+      name: 'persona-correlation-other-repo', fingerprint: null,
+    });
+    const pool = await getPool();
+    const { rows: runRows } = await pool.query(
+      `INSERT INTO audit_runs (repo_id, plan_file, mode) VALUES ($1, 'n/a', 'code') RETURNING id`,
+      [otherRepo.id],
+    );
+    const otherRepoRunId = runRows[0].id;
+    try {
+      const hash = crypto.randomBytes(32).toString('hex');
+      const result = await recordPersonaAuditCorrelation(sessionId, {
+        personaFindingHash: hash, personaSeverity: 'P1',
+        auditFindingId: null, auditRunId: otherRepoRunId,
+        correlationType: 'confirmed_hit', matchScore: 1.0, matchRationale: 'cross-tenant probe',
+        matcherVersion: null,
+      }, { repoId });
+      assert.equal(result.ok, false);
+      assert.equal(result.reason, 'audit-run-cross-tenant');
+      const { rows } = await pool.query(
+        `SELECT 1 FROM persona_audit_correlations WHERE persona_session_id = $1 AND persona_finding_hash = $2`,
+        [sessionId, hash],
+      );
+      assert.equal(rows.length, 0, 'a cross-tenant write must never reach the table');
+    } finally {
+      await pool.query(`DELETE FROM audit_runs WHERE id = $1`, [otherRepoRunId]);
+      await pool.query(`DELETE FROM audit_repos WHERE id = $1`, [otherRepo.id]);
+    }
+  });
+
+  it('accepts an auditRunId belonging to the SAME repo when a scope is resolved', async () => {
+    const pool = await getPool();
+    const { rows: runRows } = await pool.query(
+      `INSERT INTO audit_runs (repo_id, plan_file, mode) VALUES ($1, 'n/a', 'code') RETURNING id`,
+      [repoId],
+    );
+    const sameRepoRunId = runRows[0].id;
+    try {
+      const hash = crypto.randomBytes(32).toString('hex');
+      const result = await recordPersonaAuditCorrelation(sessionId, {
+        personaFindingHash: hash, personaSeverity: 'P1',
+        auditFindingId: null, auditRunId: sameRepoRunId,
+        correlationType: 'confirmed_hit', matchScore: 1.0, matchRationale: 'same-tenant probe',
+        matcherVersion: null,
+      }, { repoId });
+      assert.equal(result.ok, true, result.error);
+      const { rows } = await pool.query(
+        `SELECT 1 FROM persona_audit_correlations WHERE persona_session_id = $1 AND persona_finding_hash = $2`,
+        [sessionId, hash],
+      );
+      assert.equal(rows.length, 1);
+    } finally {
+      await pool.query(`DELETE FROM persona_audit_correlations WHERE audit_run_id = $1`, [sameRepoRunId]);
+      await pool.query(`DELETE FROM audit_runs WHERE id = $1`, [sameRepoRunId]);
+    }
+  });
 });

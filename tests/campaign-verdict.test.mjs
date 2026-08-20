@@ -151,6 +151,37 @@ test('an unpriced arm-run refuses the cost stage while the floor stage still eva
   assert.equal(r.spend.kimi.costEvidence, 'unknown', '…but never as a measurement');
 });
 
+// Cluster B fix-gate — evaluateCost's `perArm` is built for EVERY eligible
+// arm (reading core.perArm[armId].spendUsd unconditionally) BEFORE the
+// `anyUnknown` refusal returns `evaluated:false`. Before the fix, a priced
+// arm's own spend/cost figures were assigned only on a path gated by the
+// SAME conditional that decides the whole-stage refusal — reachable code
+// that read nothing the condition tested — so a comparison with ONE unpriced
+// arm could still lose the OTHER arm's valid, already-known cost evidence
+// downstream. This is distinct from the "an unpriced arm-run refuses the
+// cost stage" test above, which only inspects the unpriced arm's own
+// (correctly-null) figures — never the PRICED sibling's.
+test('a priced arm keeps its real spend/cost figures in perArm even when the WHOLE stage refuses because a sibling arm is unpriced', () => {
+  const r = evaluateCost({
+    eligibleArmIds: ['opus', 'kimi'],
+    acceptedPerArm: { opus: 18, kimi: 12 },
+    spend: {
+      opus: { spendUsd: 35.64, costEvidence: 'known', attempts: 1 },
+      kimi: { spendUsd: 0, costEvidence: 'unknown', attempts: 1 },
+    },
+    costCeilingUsdPerAccepted: 8,
+  });
+  assert.equal(r.evaluated, false, 'guard: the whole stage must still refuse — kimi is unpriced');
+  assert.equal(r.perArm.opus.spendUsd, 35.64, "opus's real, known spend must not be discarded by kimi's refusal");
+  assert.equal(r.perArm.opus.costPerAccepted, 1.98, "opus's real cost-per-accepted must survive the whole-stage refusal");
+  assert.equal(r.perArm.opus.withinCeiling, true, "opus's own ceiling check must still be reported");
+  // NEGATIVE CONTROL: the unpriced sibling's own figures are correctly null —
+  // proves the assertions above are reading real data, not a field that is
+  // unconditionally populated regardless of pricing status.
+  assert.equal(r.perArm.kimi.spendUsd, null);
+  assert.equal(r.perArm.kimi.costPerAccepted, null);
+});
+
 test('cost per accepted for a zero-accepted arm is null, never Infinity', () => {
   const cost = evaluateCost({
     eligibleArmIds: ['ghost'], acceptedPerArm: { ghost: 0 },

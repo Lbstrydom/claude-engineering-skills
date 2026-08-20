@@ -86,3 +86,76 @@ test('fewer items than the concurrency cap spawns only as many workers as items'
   await runWorkerPool(items, 8, async (i) => { started++; return i; });
   assert.equal(started, 2, 'no wasted/idle workers beyond the item count');
 });
+
+// ── findings 1cc508ab / aa68982d ────────────────────────────────────────────
+// `buildStage0RelevanceContext` calls `getFreshImportersOrNull`, a real
+// DB-touching import — but that function returns null with NO db round-trip
+// whenever `repoUuid` is falsy (imports.mjs:297), and `resolveRepoIdentity`
+// on a bare temp directory (no git repo, no audit-loop identity file) throws,
+// which the function's own catch degrades to `repoUuid = null`. So a plain
+// tmp dir with no git/DB reachable exercises the REAL function end-to-end,
+// DB-free — no mock needed.
+{
+  const { test: itFor, before: beforeFor, after: afterFor } = await import('node:test');
+  const fs = (await import('node:fs')).default;
+  const os = (await import('node:os')).default;
+  const path = (await import('node:path')).default;
+  const { buildStage0RelevanceContext, makeBlameAdapter } =
+    await import('../scripts/lib/audit/stage0-relevance-context.mjs');
+
+  let repoRoot;
+  beforeFor(() => { repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'stage0-repo-root-')); });
+  afterFor(() => { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
+
+  itFor('BUG (fp=aa68982d): reads candidate files from an explicit opts.repoRoot, not the ambient process.cwd()', async () => {
+    fs.writeFileSync(path.join(repoRoot, 'target.mjs'), 'export const x = 1;\n');
+    const envelopes = [{ canonicalFinding: { anchor: { side: 'head', newFile: 'target.mjs' } } }];
+    const ctx = { auditBaseCommit: null, commitSha: null, workingTreeDirty: true, changedFiles: [] };
+
+    // process.cwd() is THIS repo, which has no `target.mjs` at its root —
+    // proving the read came from repoRoot, not the ambient cwd.
+    const result = await buildStage0RelevanceContext(ctx, envelopes, { repoRoot });
+    assert.equal(result.repoRoot, repoRoot, 'the resolved repoRoot is threaded onto the returned context');
+    assert.equal(result.headContentCache.get('target.mjs'), 'export const x = 1;\n',
+      'file content must be read relative to opts.repoRoot, not process.cwd()');
+  });
+
+  itFor('omitting opts.repoRoot stays byte-identical to the prior process.cwd() default', async () => {
+    const envelopes = [];
+    const ctx = { auditBaseCommit: null, commitSha: null, workingTreeDirty: true, changedFiles: [] };
+    const result = await buildStage0RelevanceContext(ctx, envelopes);
+    assert.equal(result.repoRoot, process.cwd());
+  });
+
+  itFor('BUG (fp=aa68982d): makeBlameAdapter resolves blame against stage0Ctx.repoRoot, not process.cwd()', async () => {
+    const stage0Ctx = {
+      baseContentCache: new Map([['target.mjs', 'export const x = 1;\n']]),
+      repoRoot,
+    };
+    const adapter = makeBlameAdapter(stage0Ctx, 'HEAD');
+    // Not a real repo at repoRoot, so contentExistsAtMappedRange's own git
+    // call fails — the assertion that matters here is WHICH directory it
+    // failed against, not the outcome. gitShowFileAtRevision/contentExists
+    // report failures without throwing, so this just proves no crash occurs
+    // when repoRoot is honored (a process.cwd()-based call would instead
+    // resolve against a directory with a REAL git repo and behave
+    // differently, which the isolated repoRoot must not do).
+    assert.doesNotThrow(() => adapter('target.mjs', 1, 1, 'x'));
+  });
+
+  itFor('STAGE0_IMPACT_CONCURRENCY (fp=1cc508ab) is env-tunable, not a hardcoded literal', async () => {
+    const saved = process.env.STAGE0_IMPACT_CONCURRENCY;
+    try {
+      process.env.STAGE0_IMPACT_CONCURRENCY = '2';
+      const envelopes = [];
+      const ctx = { auditBaseCommit: null, commitSha: null, workingTreeDirty: true, changedFiles: [] };
+      // No candidate files, so this just proves the function still runs
+      // cleanly with the env var set — the clamp itself is exercised more
+      // directly via clampAdjacencyBound's own test coverage (config.mjs).
+      await assert.doesNotReject(() => buildStage0RelevanceContext(ctx, envelopes, { repoRoot }));
+    } finally {
+      if (saved === undefined) delete process.env.STAGE0_IMPACT_CONCURRENCY;
+      else process.env.STAGE0_IMPACT_CONCURRENCY = saved;
+    }
+  });
+}

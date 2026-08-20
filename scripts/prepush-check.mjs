@@ -203,13 +203,35 @@ function provisionNodeModules(sandbox, repoRoot, gitEnv) {
   const deps = dependencySetChanged(readOrNull(pkgMain), readOrNull(pkgSandbox));
   // The lockfile stays a WHOLE-file comparison: it is a resolved-tree artifact
   // with no non-dependency sections, so every byte of it is dependency-relevant.
-  const lockChanged = filePairChanged(lockMain, lockSandbox) || deps.changed;
+  //
+  // Manifest identity between the two CHECKOUTS says nothing about whether the
+  // MAIN checkout's own node_modules still reflects its OWN current lockfile —
+  // e.g. a developer edited package-lock.json locally (or pulled a commit that
+  // changed it) and never re-ran `npm install`. A full conformance check (an
+  // `npm ls`-equivalent walk of the installed tree) costs exactly what linking
+  // exists to avoid, so this stays a cheap, best-effort heuristic rather than a
+  // proof: if the main checkout's lockfile is newer than its node_modules
+  // directory, something installed it later touched the lock without
+  // reinstalling. False negatives remain (an unrelated touch can bump either
+  // mtime) — this narrows the exposure named in finding 2ec7f704, it does not
+  // close it; a real close would require the same cost the link exists to save.
+  const statMtimeMs = (p) => {
+    try { return fs.statSync(p).mtimeMs; } catch { return null; }
+  };
+  const lockMainMtime = statMtimeMs(lockMain);
+  const mainModulesMtime = mainModules ? statMtimeMs(mainModules) : null;
+  const modulesStale = Boolean(
+    lockMainMtime !== null && mainModulesMtime !== null && lockMainMtime > mainModulesMtime,
+  );
+  const lockChanged = filePairChanged(lockMain, lockSandbox) || deps.changed || modulesStale;
   // Name the cause of every install. A silent 40s pause mid-push is
   // indistinguishable from a hang, and "which input moved" is the first thing
   // you need — this branch was previously taken on every worktree push with no
   // output at all, which is how it went unnoticed.
   if (!mainModules) {
     log(`  no node_modules found at or above ${repoRoot} — installing`);
+  } else if (modulesStale) {
+    log('  main checkout\'s node_modules predates its own package-lock.json (possible stale install) — installing');
   } else if (lockChanged) {
     log(`  dependency tree may differ — installing (${
       deps.changed ? deps.reason : 'package-lock.json differs between the checkouts'})`);

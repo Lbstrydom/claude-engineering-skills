@@ -139,6 +139,25 @@ describe('registry entries — every policy tuple is valid', () => {
     }
   });
 
+  it('every registry command has AT LEAST ONE golden capture case (audit finding 01b9bc56)', async () => {
+    // The row above enforces coverage for the degrade-noop CONTRACT
+    // specifically. This is the broader claim it does not make: nothing
+    // previously derived "every MIGRATED command has golden coverage" from
+    // REGISTRY itself — tests/cross-skill-golden-envelopes.test.mjs only
+    // checks that CASES and the fixture file agree with EACH OTHER, so a
+    // registry command with zero entries in CASES would never surface there
+    // either. A command added to the registry without a matching capture
+    // case would be silently uncovered by the whole golden suite — this is
+    // the gate that makes that impossible, regardless of the command's
+    // `cloud` policy.
+    const { CASES } = await import('../scripts/dev/capture-cross-skill-envelopes.mjs');
+    const covered = new Set(CASES.map((c) => c.args[0]));
+    const uncovered = REGISTRY.filter((e) => !covered.has(e.name)).map((e) => e.name);
+    assert.deepEqual(uncovered, [],
+      'registry command(s) with NO capture case at all — add a row to '
+      + 'scripts/dev/capture-cross-skill-envelopes.mjs\'s CASES for each, BEFORE (or as part of) migrating it');
+  });
+
   it('every okless declaration carries a WRITTEN reason (same discipline as softFail)', () => {
     // `okless` exempts a command from the "envelope must carry ok:true" rule.
     // Like softFail it is a licence, so it is only legal with a stated reason —

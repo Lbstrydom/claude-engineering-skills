@@ -169,7 +169,13 @@ export async function getNavFirstSeenCmd(ctx) {
   if (!ctx.cloud.enabled) return { ...ctx.degrade(), firstSeen: {} };
   const scope = await ctx.resolveScope();
   const repoId = scope.kind === 'scoped' ? scope.repoId : null;
-  if (!repoId) return { ok: true, cloud: true, firstSeen: {} };
+  // Same `measured:false` distinction as the history-read-failure branch
+  // below (audit d994939d/f284a3f4): an unresolvable repo scope is NOT a
+  // measured "this repo has no drift history" — it is "nothing was checked",
+  // and the two were both reported as the identical `{firstSeen:{}}`.
+  if (!repoId) {
+    return { ok: true, cloud: true, measured: false, reason: 'repo-scope-unresolved', firstSeen: {} };
+  }
   const history = await ctx.deps.listNavAuditRunHistory({ repoId, sinceDays: p.sinceDays ?? undefined });
   // An unmeasured READ is not a failed one. `{ok:false, firstSeen:{}}` made a
   // history-query failure indistinguishable from a genuinely empty history —
@@ -227,9 +233,13 @@ export async function writeSpillCmd(ctx) {
     };
   }
 
+  // PRESENCE, not truthiness (audit ccf9e20f/4c93bf9d): `--cap ""` returns the
+  // empty string, which is falsy, so the old `capRaw ? … : undefined` guard
+  // silently read it as "no cap supplied" and skipped validation entirely —
+  // malformed input reaching drainSpill() as though the flag were omitted.
   const capRaw = ctx.flag('cap');
-  const cap = capRaw ? Number.parseInt(capRaw, 10) : undefined;
-  if (capRaw && !(/^\d+$/.test(String(capRaw).trim()) && Number.isInteger(cap) && cap > 0)) {
+  const cap = capRaw !== null ? Number.parseInt(capRaw, 10) : undefined;
+  if (capRaw !== null && !(/^\d+$/.test(String(capRaw).trim()) && Number.isInteger(cap) && cap > 0)) {
     throw new CommandError('BAD_INPUT', `--cap must be a positive integer; got ${JSON.stringify(capRaw)}`);
   }
   const res = await drainSpill({ cap, isCloudEnabled: () => ctx.deps.isCloudEnabled() });

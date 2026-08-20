@@ -28,6 +28,7 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -320,6 +321,113 @@ describe('archive publication never clobbers', () => {
     assert.equal(fs.readFileSync(path.join(archive, 'x-transcript.json'), 'utf-8'), '{"first":true}');
     assert.equal(fs.readFileSync(outcome.path, 'utf-8'), '{"second":true}');
   });
+
+  it('refuses to overwrite EITHER name when both are already taken by different content', async () => {
+    // The terminal branch of the collision handling: a sha256-prefix collision
+    // between two DIFFERENT real transcripts means both the preferred name and
+    // its content-derived fallback are occupied by bytes that are neither this
+    // source's content nor each other's. `a96aeec6`/`eddfe3f2` name this
+    // "unresolved destination-name collision" as one of the three core cases a
+    // mirror failure must not silently reduce to a warning-only success for —
+    // this pins that the module refuses rather than clobbering whichever name
+    // it reaches second.
+    const { archiveTranscript, ARCHIVE_REASONS, isArchiveFailure } = await import('../scripts/lib/audit/transcript-archive.mjs');
+
+    const archive = path.join(MAIN, '.audit', 'transcripts');
+    fs.mkdirSync(archive, { recursive: true });
+
+    const newBody = '{"third":true}';
+    const digest = crypto.createHash('sha256').update(newBody).digest('hex').slice(0, 8);
+    const preferredPath = path.join(archive, 'y-transcript.json');
+    const hashedPath = path.join(archive, `y-transcript-${digest}.json`);
+    fs.writeFileSync(preferredPath, '{"first":true}');
+    fs.writeFileSync(hashedPath, '{"second":true}');
+
+    const src = path.join(MAIN, '.audit', 'y-transcript.json');
+    fs.mkdirSync(path.dirname(src), { recursive: true });
+    fs.writeFileSync(src, newBody);
+
+    const outcome = archiveTranscript(src, { cwd: MAIN });
+    assert.equal(outcome.archived, false, JSON.stringify(outcome));
+    assert.equal(outcome.reason, ARCHIVE_REASONS.COLLISION);
+    assert.equal(
+      isArchiveFailure(outcome), true,
+      'an unresolved collision must be reported as a failure a caller can act on, not a silent warning',
+    );
+
+    // Neither pre-existing file was touched by the refused write.
+    assert.equal(fs.readFileSync(preferredPath, 'utf-8'), '{"first":true}');
+    assert.equal(fs.readFileSync(hashedPath, 'utf-8'), '{"second":true}');
+  });
+});
+
+describe('isArchiveFailure classifies every reason except a chosen degradation', () => {
+  it('treats every archive reason as a failure except DISABLED', async () => {
+    // `a96aeec6`: "the archive implementation explicitly treats all mirror
+    // failures as warning-only outcomes ... this bypasses the stated
+    // acceptance requirement". The fix routes the exit-code decision through
+    // this one predicate. The CLI-level tests above only exercise it for the
+    // FAILED reason (a blocked archive directory) — this census closes the
+    // remaining two core cases the finding names by name, UNREADABLE (source
+    // could not be read) and COLLISION (unresolved name clash), by asserting
+    // directly against every declared reason rather than one at a time.
+    const { ARCHIVE_REASONS, isArchiveFailure } = await import('../scripts/lib/audit/transcript-archive.mjs');
+
+    const mustFail = Object.values(ARCHIVE_REASONS).filter((r) => r !== ARCHIVE_REASONS.DISABLED);
+    for (const reason of mustFail) {
+      assert.equal(
+        isArchiveFailure({ archived: false, reason }), true,
+        `${reason} must be treated as a failure the caller can act on, not silently warned away`,
+      );
+    }
+
+    // The one deliberate exemption: an operator switching the mirror off is a
+    // choice, not a failure.
+    assert.equal(isArchiveFailure({ archived: false, reason: ARCHIVE_REASONS.DISABLED }), false);
+    // A successful archive is never a failure, and a missing/null outcome
+    // degrades to "no failure" rather than throwing.
+    assert.equal(isArchiveFailure({ archived: true, reason: ARCHIVE_REASONS.ARCHIVED }), false);
+    assert.equal(isArchiveFailure(null), false);
+
+    // Vacuous-pass guard: the census must actually be exercising more than the
+    // one reason the CLI-level tests already cover.
+    assert.ok(mustFail.length >= 4, `expected several failure reasons, found ${JSON.stringify(mustFail)}`);
+  });
+});
+
+describe('sourceIsVolatile does not case-fold path identity', () => {
+  it('neither sourceIsVolatile nor canonicalPathKey lowercases a path', () => {
+    // `876e2efd`: "The durability decision lowercases both roots
+    // unconditionally in sourceIsVolatile() ... Directory names differing
+    // only by case are treated as identical where the filesystem or path
+    // semantics permit them to be distinct." The fix removed the fold
+    // entirely: sourceIsVolatile now delegates identity to canonicalPathKey,
+    // which asks the filesystem (`fs.realpathSync.native`) instead of
+    // guessing. A BEHAVIOURAL case-sensitivity test cannot discriminate this
+    // on the current (NTFS, case-insensitive) volume — two differently-cased
+    // names already resolve to one file below the JS layer, the same
+    // limitation the sweep's own case-sensitivity test documents. So this
+    // pins the fix at the source: reintroducing `.toLowerCase()`/
+    // `.toUpperCase()` inside either function fails here regardless of which
+    // filesystem the suite happens to run on.
+    const src = fs.readFileSync(
+      path.join(REPO, 'scripts', 'lib', 'audit', 'transcript-archive.mjs'), 'utf-8',
+    );
+
+    const sourceIsVolatileBody = src.match(/export function sourceIsVolatile\([^]*?\n}\n/);
+    assert.ok(sourceIsVolatileBody, 'could not locate sourceIsVolatile in source — did it move or get renamed?');
+    assert.ok(
+      !/toLowerCase|toUpperCase/.test(sourceIsVolatileBody[0]),
+      `sourceIsVolatile must not case-fold path identity, found:\n${sourceIsVolatileBody[0]}`,
+    );
+
+    const canonicalPathKeyBody = src.match(/export function canonicalPathKey\([^]*?\n}\n/);
+    assert.ok(canonicalPathKeyBody, 'could not locate canonicalPathKey in source — did it move or get renamed?');
+    assert.ok(
+      !/toLowerCase|toUpperCase/.test(canonicalPathKeyBody[0]),
+      `canonicalPathKey must not case-fold path identity, found:\n${canonicalPathKeyBody[0]}`,
+    );
+  });
 });
 
 describe('harvest-audit-transcripts sweep', () => {
@@ -416,6 +524,70 @@ describe('harvest-audit-transcripts sweep', () => {
     const errors = [];
     assert.deepEqual(mod.transcriptsIn(wt, { onError: e => errors.push(e) }), []);
     assert.deepEqual(errors, []);
+  });
+
+  it('candidateWorktrees skips a genuinely-gone worktree silently but SURFACES any other stat failure', async () => {
+    // Mentally reverses the historical bug: a bare `catch { continue; }` around
+    // `fs.statSync(dir)` treated every failure the same way an ordinary stale
+    // registration (ENOENT — git still lists a worktree whose directory was
+    // removed without `git worktree remove`) does. The current code must tell
+    // the two apart: ENOENT is expected and silent; anything else is a hole in
+    // the sweep and must reach `onError`. The AST census two tests below only
+    // checks the fix REFERENCES `isAbsentDirError` — it would not catch a
+    // regression that calls the classifier but ignores its answer, so this
+    // test exercises the actual decision instead.
+    const { candidateWorktrees } = await import('../scripts/harvest-audit-transcripts.mjs');
+
+    // ENOENT case: a real stale registration, produced the same way the sweep
+    // itself was designed for — `git worktree add` then a teardown that
+    // removes the directory without deregistering it.
+    const goneName = 'wt-gone-stat';
+    const gone = path.join(MAIN, '.claude', 'worktrees', goneName);
+    git(['worktree', 'add', '-b', goneName, gone], MAIN);
+    fs.rmSync(gone, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+
+    // Non-ENOENT case: a real, existing directory whose `fs.statSync` is
+    // forced to fail. EACCES cannot be staged portably (Windows ignores
+    // chmod — the same reason the classifier is unit-tested directly above),
+    // so the failure is injected via a targeted monkeypatch instead.
+    const unreadableName = 'wt-unreadable-stat';
+    const unreadable = path.join(MAIN, '.claude', 'worktrees', unreadableName);
+    fs.mkdirSync(unreadable, { recursive: true });
+
+    const realStatSync = fs.statSync;
+    fs.statSync = (p, ...rest) => {
+      if (path.resolve(String(p)) === path.resolve(unreadable)) {
+        const err = new Error('permission denied (simulated)');
+        err.code = 'EACCES';
+        throw err;
+      }
+      return realStatSync(p, ...rest);
+    };
+
+    const errors = [];
+    let result;
+    try {
+      result = candidateWorktrees(MAIN, { onError: e => errors.push(e) });
+    } finally {
+      fs.statSync = realStatSync;
+    }
+
+    assert.ok(
+      !result.dirs.some((d) => path.resolve(d) === path.resolve(gone)),
+      'a worktree whose directory is genuinely gone must still be excluded from the scan list',
+    );
+    assert.ok(
+      !result.dirs.some((d) => path.resolve(d) === path.resolve(unreadable)),
+      'an unreadable candidate must also be excluded from the scan list (it cannot be scanned)',
+    );
+    assert.ok(
+      !errors.some((e) => path.resolve(e.dir) === path.resolve(gone)),
+      'ENOENT is the expected stale-registration case and must NOT be reported as a scan error',
+    );
+    assert.ok(
+      errors.some((e) => path.resolve(e.dir) === path.resolve(unreadable) && e.code === 'EACCES'),
+      'a non-ENOENT stat failure must be surfaced via onError, not silently swallowed like the ENOENT case',
+    );
   });
 
   it('every catch in the sweep either classifies the error or is dispositioned', () => {

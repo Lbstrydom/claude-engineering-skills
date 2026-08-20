@@ -11,7 +11,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { buildDiffPathMap } from './diff-path-map.mjs';
+import { parseDiffPathSections, applyDiffPathMapBudgets } from './diff-path-map.mjs';
 import { shouldSkipForIndexing, normalisePath, resolveAndClassify } from '../sensitive-paths.mjs';
 
 /**
@@ -68,12 +68,16 @@ function existsOnDisk(abs) {
  *
  * TWO DELIBERATE DEVIATIONS from the plan's §Security prose, both reported:
  *
- * 1. The plan says "filter before mapping, not after". `buildDiffPathMap`
- *    takes diff TEXT, so filtering "before" would mean re-implementing its
- *    parser to split sections — the exact duplication §7i exists to prevent.
- *    Filtering the parsed entries is equivalent for the property that
- *    matters: the enum and table are constructed EXCLUSIVELY from the
- *    filtered set, never from raw diff headers.
+ * 1. The plan says "filter before mapping, not after". `parseDiffPathSections`
+ *    (diff-path-map.mjs) does the parsing; filtering runs on ITS sections,
+ *    before `applyDiffPathMapBudgets` mints ids or enforces the entry/byte
+ *    budgets — never re-implementing the parser, and never budgeting the
+ *    UNFILTERED count (fp=a9c621d7, 2026-08-20 fix: budgeting before
+ *    filtering meant a diff with a handful of eligible files and a couple
+ *    hundred sensitive ones tripped `discovery_map_exceeds_budget` on files
+ *    that would never reach the enum anyway). The enum and table are still
+ *    constructed EXCLUSIVELY from the filtered set, never from raw diff
+ *    headers or an unfiltered section list.
  * 2. The plan mandates `resolveAndClassify`'s symlink-aware canonicalisation,
  *    fail-closed on `resolutionFailed`. That is NOT unconditionally
  *    implementable over a diff: it realpaths, and a `deleted` file (or a
@@ -115,15 +119,19 @@ function existsOnDisk(abs) {
  *
  * @param {string|null|undefined} diffText - the run's unified diff (ctx.diffText)
  * @param {{repoRoot?: string}} [opts] - repoRoot for resolveAndClassify (defaults to process.cwd())
- * @returns {{map: ReturnType<typeof buildDiffPathMap>, skipped: Array<object>}}
+ * @returns {{map: ReturnType<typeof parseDiffPathSections>|ReturnType<typeof applyDiffPathMapBudgets>, skipped: Array<object>}}
  */
 export function resolveEligibleDiffPathMap(diffText, opts = {}) {
   const repoRoot = opts.repoRoot ?? process.cwd();
-  const map = buildDiffPathMap(diffText);
-  if (map.kind !== 'ready') return { map, skipped: [] };
+  // Parse-only first, budget LAST (fp=a9c621d7): filtering sensitive paths out
+  // of the section list before the entry/byte budgets are checked means a diff
+  // with 200+ files, most of them sensitive, is judged on the handful actually
+  // eligible — not starved of budget by paths that will never reach the enum.
+  const parsed = parseDiffPathSections(diffText);
+  if (parsed.kind !== 'ready') return { map: parsed, skipped: [] };
 
   const skipped = [];
-  const entries = map.entries.filter((e) => {
+  const eligibleSections = parsed.sections.filter((e) => {
     // Fail closed on EITHER side: a rename whose base path is `secrets/x` is
     // just as much a disclosure as one whose head path is.
     // G1 (Gemini final review, code-audit): for every non-rename entry
@@ -159,6 +167,7 @@ export function resolveEligibleDiffPathMap(diffText, opts = {}) {
 
   // Every eligible file filtered out is a legitimate empty scope, NOT invalid
   // — the diff parsed fine, it just has nothing we may send (§7j).
-  if (entries.length === 0) return { map: { kind: 'empty', reason: 'no_eligible_diff_files' }, skipped };
-  return { map: { kind: 'ready', entries }, skipped };
+  if (eligibleSections.length === 0) return { map: { kind: 'empty', reason: 'no_eligible_diff_files' }, skipped };
+  // Budget applies to the FILTERED (eligible) set — see the note above.
+  return { map: applyDiffPathMapBudgets(eligibleSections), skipped };
 }

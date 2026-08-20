@@ -250,6 +250,36 @@ describe('buildStepUrlLookup', () => {
     assert.equal(buildStepUrlLookup(undefined).size, 0);
     assert.equal(buildStepUrlLookup(null).size, 0);
   });
+
+  it('CONTRACT PIN (fp=9ae82279): the v2 identity contract\'s dependency on ' +
+     '`sanitizeStepUrl` (store/persona.mjs) is a docstring promise with no ' +
+     'mechanical enforcement — nothing here previously exercised the REAL ' +
+     'sanitizer through buildStepUrlLookup end-to-end into personaFindingHash; ' +
+     'every other hash test hand-supplies an already-sanitized route string ' +
+     'straight into the Map, so a change to sanitizeStepUrl\'s normalization ' +
+     '(collapsePath, redactParams, the hash-fragment handling) could silently ' +
+     'change every production v2 hash without failing a single test or ' +
+     'prompting a PERSONA_FINDING_HASH_VERSION bump. This test drives the ' +
+     'REAL production path — a raw multi-param, hash-routed URL through ' +
+     'buildStepUrlLookup (which calls the real sanitizeStepUrl) and into ' +
+     'personaFindingHash — and pins BOTH the intermediate sanitized route AND ' +
+     'the final hash. Either assertion failing means sanitizeStepUrl\'s ' +
+     'behavior changed: bump PERSONA_FINDING_HASH_VERSION (see its own ' +
+     'docstring) before touching this pin.', () => {
+    const clickPath = [{
+      step: 1,
+      url: 'https://example.com/checkout/42?session_token=abc123&ref=email#/confirm?utm=x',
+    }];
+    const lookup = buildStepUrlLookup(clickPath);
+    assert.equal(lookup.get(1), '/checkout/42?session_token=:param&ref=:param#/confirm?utm=:param',
+      'sanitizeStepUrl\'s output shape changed — this IS the transitive dependency fp=9ae82279 names');
+
+    const finding = { element: 'Checkout Button', code: 'P0', step: 1, expected: 'Order confirms', observed: 'Page crashes' };
+    const hash = personaFindingHash(finding, lookup);
+    assert.equal(hash, 'd620548dadbf196ad32c20612668b7853282578a85632f18d8dccf4e6fab4ac3',
+      'the end-to-end v2 hash (through the REAL sanitizeStepUrl, not a hand-built route string) changed — ' +
+      'bump PERSONA_FINDING_HASH_VERSION before updating this pin');
+  });
 });
 
 describe('isMalformedFinding (Gemini gate finding G1 — exported so read/write paths outside decideCorrelations can quarantine it too)', () => {

@@ -238,6 +238,24 @@ describe('the sandbox forbids the silent-skip paths', () => {
     );
   });
 
+  it('installs when the main checkout\'s node_modules predates its own package-lock.json (finding 2ec7f704)', () => {
+    // Matching manifests between the two CHECKOUTS says nothing about whether
+    // the MAIN checkout's own node_modules still reflects its OWN current
+    // lockfile — e.g. a developer edited package-lock.json locally and never
+    // re-ran `npm install`. This is a cheap mtime heuristic, not a full
+    // conformance check (which would cost what linking exists to avoid).
+    assert.match(runnerSrc, /const lockMainMtime = statMtimeMs\(lockMain\)/);
+    assert.match(runnerSrc, /const mainModulesMtime = mainModules \? statMtimeMs\(mainModules\) : null/);
+    assert.match(
+      runnerSrc,
+      /const modulesStale = Boolean\(\s*lockMainMtime !== null && mainModulesMtime !== null && lockMainMtime > mainModulesMtime,\s*\)/,
+    );
+    assert.match(
+      runnerSrc,
+      /const lockChanged = filePairChanged\(lockMain, lockSandbox\) \|\| deps\.changed \|\| modulesStale;/,
+    );
+  });
+
   it('wraps every shared-metadata git worktree call in lock-contention retry (2026-07-23)', () => {
     // Sibling fix to the core.bare pin above: a transient lock (peer holds
     // .git/config.lock for a few hundred ms) is a different failure shape

@@ -196,6 +196,16 @@ needless install costs seconds, a wrong link costs a false green. Reading
 `"dependencies": "oops"` as *no dependencies* is the fail-open version, and is
 refused explicitly rather than left to `typeof`.
 
+**Manifest identity between the two checkouts is not proof the MAIN checkout's
+own `node_modules` still reflects its OWN lockfile** (finding 2ec7f704,
+2026-08-20) — e.g. a developer edited `package-lock.json` locally and never
+re-ran `npm install`. A full conformance check costs exactly what linking
+exists to avoid, so `provisionNodeModules` adds one cheap mtime heuristic
+instead of a proof: if the main checkout's `package-lock.json` is newer than
+its `node_modules` directory, that installs rather than links. False negatives
+remain (an unrelated touch can bump either mtime) — this narrows the exposure,
+it does not close it.
+
 > **A worktree push now links, like any other.** Until 2026-08-11 this section
 > said to *expect `installed` every time* in a worktree and called it "not a bug
 > — just why a push from a worktree is slower". It was a bug, twice over (§2.2),

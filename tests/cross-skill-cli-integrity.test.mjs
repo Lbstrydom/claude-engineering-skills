@@ -47,6 +47,34 @@ const stripComments = (src) => src
 const CODE = stripComments(CROSS_SKILL_SRC);
 
 /**
+ * `CODE`, but every `{`/`}` INSIDE a single/double-quoted string or a
+ * (non-nested) template literal is neutralised to `_` — same length, so
+ * indices stay aligned with `CODE` for the slice in `functionBody` below.
+ *
+ * `functionBody`'s brace-counter has no notion of strings: a literal,
+ * UNMATCHED brace character sitting inside an error message (e.g. `'{'` with
+ * no closing `}` in the same string) would desynchronise `depth` and return
+ * the wrong span — the same source-text-scan fragility this repo's own
+ * AGENTS.md documents as already having "bitten three source-text scans"
+ * elsewhere (check-emit-exit-agreement.mjs's string/comment stripper).
+ * `${...}` interpolation inside a template literal is naturally BALANCED
+ * (it must be, for the file to parse at all), so it never actually
+ * desynchronises the counter today — this guards the residual case where a
+ * future string genuinely contains a stray, unmatched brace character.
+ * Regex literals are deliberately NOT handled: detecting a regex literal via
+ * regex is itself ambiguous (division vs. regex-start) and none currently
+ * appears inside the one function this helper extracts.
+ */
+function neutralizeBracesInStrings(src) {
+  const zap = (m) => m.replace(/[{}]/g, '_');
+  return src
+    .replace(/'(?:\\.|[^'\\])*'/g, zap)
+    .replace(/"(?:\\.|[^"\\])*"/g, zap)
+    .replace(/`(?:\\.|[^`\\])*`/g, zap);
+}
+const CODE_FOR_BRACE_COUNTING = neutralizeBracesInStrings(CODE);
+
+/**
  * The body of one named function, for assertions that must not be file-global.
  *
  * Brace-balanced, not "slice to the next `async function`". The naive version
@@ -55,6 +83,11 @@ const CODE = stripComments(CROSS_SKILL_SRC);
  * expression is absent from cmdX" — silently changed scope whenever neighbouring
  * code moved: it could pass because the expression moved out, or fail because
  * unrelated code moved in. Both are wrong answers about the subject under test.
+ *
+ * Braces are counted on `CODE_FOR_BRACE_COUNTING` (string/template content
+ * neutralised) but the returned slice is taken from `CODE` — so the extracted
+ * text is exactly what is really there; only the counting is blind to string
+ * content.
  */
 function functionBody(name) {
   const start = CODE.indexOf(`async function ${name}(`);
@@ -62,9 +95,10 @@ function functionBody(name) {
   const open = CODE.indexOf('{', start);
   assert.notEqual(open, -1, `function ${name} has no body`);
   let depth = 0;
-  for (let i = open; i < CODE.length; i += 1) {
-    if (CODE[i] === '{') depth += 1;
-    else if (CODE[i] === '}') {
+  for (let i = open; i < CODE_FOR_BRACE_COUNTING.length; i += 1) {
+    const ch = CODE_FOR_BRACE_COUNTING[i];
+    if (ch === '{') depth += 1;
+    else if (ch === '}') {
       depth -= 1;
       if (depth === 0) return CODE.slice(start, i + 1);
     }
@@ -72,6 +106,60 @@ function functionBody(name) {
   assert.fail(`unbalanced braces while extracting ${name}`);
   return '';
 }
+
+describe('functionBody brace-counting is blind to string content (audit finding 01b9bc56/3c7a590f class)', () => {
+  // Extra brace, unbalanced WITHIN the string ('{' with no matching '}' in the
+  // same literal — unlike `${x}` interpolation, which is always self-balanced
+  // and so never actually trips the counter).
+  const src = [
+    'async function withStrayBrace(x) {',
+    "  const msg = 'unexpected {';",
+    '  return x + 1;',
+    '}',
+    'async function nextFn() { return 0; }',
+  ].join('\n');
+
+  function countBraces(text, open) {
+    let depth = 0;
+    for (let i = open; i < text.length; i += 1) {
+      if (text[i] === '{') depth += 1;
+      else if (text[i] === '}') {
+        depth -= 1;
+        if (depth === 0) return i;
+      }
+    }
+    return -1;
+  }
+
+  it('NEGATIVE CONTROL: raw brace-counting (no string-awareness) really is desynchronised by this fixture', () => {
+    // If this stops failing, the fixture no longer exercises the defect and
+    // the positive assertion below stops proving anything.
+    const start = src.indexOf('async function withStrayBrace(');
+    const open = src.indexOf('{', start);
+    const end = countBraces(src, open);
+    // The stray '{' pushes depth one extra level; the counter over-consumes
+    // and the "closing" brace it lands on belongs to nextFn, not withStrayBrace.
+    const extracted = end === -1 ? '<never terminated>' : src.slice(start, end + 1);
+    assert.ok(
+      end === -1 || extracted.includes('nextFn'),
+      'control is vacuous: raw counting no longer misfires on this fixture',
+    );
+  });
+
+  it('neutralizeBracesInStrings fixes it: extraction lands on the real closing brace', () => {
+    const neutralized = neutralizeBracesInStrings(src);
+    assert.ok(!/unexpected \{/.test(neutralized), 'the brace inside the string must be neutralised for counting');
+    assert.ok(/unexpected \{/.test(src), 'the original text is untouched (sanity)');
+
+    const start = src.indexOf('async function withStrayBrace(');
+    const open = src.indexOf('{', start);
+    const end = countBraces(neutralized, open);
+    assert.notEqual(end, -1, 'extraction must terminate');
+    const extracted = src.slice(start, end + 1);
+    assert.ok(!extracted.includes('nextFn'), 'must not spill into the next function');
+    assert.ok(extracted.includes('return x + 1'), 'must include the whole real body');
+  });
+});
 
 // ── Behavioural harness ─────────────────────────────────────────────────────
 // The source-text assertions above pin that a specific defective EXPRESSION has

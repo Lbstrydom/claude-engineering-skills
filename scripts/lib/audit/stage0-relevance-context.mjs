@@ -13,6 +13,7 @@ import { safeReadFile } from '../file-io.mjs';
 import { contentExistsAtMappedRange, gitShowFileAtRevision } from '../vcs.mjs';
 import { getFreshImportersOrNull } from '../store/arch/imports.mjs';
 import { resolveRepoIdentity } from '../repo-identity.mjs';
+import { clampAdjacencyBound } from '../config.mjs';
 
 /**
  * Distinct file paths any envelope's evidence anchors (canonical OR
@@ -56,22 +57,34 @@ export function collectCandidateAnchorFiles(envelopes) {
  *
  * @param {import('../schemas.mjs').AuditRunContext} ctx
  * @param {Array<import('./candidate-envelope.mjs').AuditCandidateEnvelope>} envelopes
+ * @param {{repoRoot?: string}} [opts] - explicit repo root (finding aa68982d:
+ *   omitted, the default, is byte-identical to the prior `process.cwd()`
+ *   coupling — every existing call site is unaffected. A caller running from
+ *   a different working directory than the repo it means to analyze (a batch
+ *   script, a worker pool over multiple checkouts) can now say so explicitly.
  * @returns {Promise<{headContentCache: Map<string,string|null>, baseContentCache: Map<string,string|null>, impactCache: Map<string,boolean|null>}>}
  */
-export async function buildStage0RelevanceContext(ctx, envelopes) {
+export async function buildStage0RelevanceContext(ctx, envelopes, opts = {}) {
+  const repoRoot = opts.repoRoot ?? process.cwd();
   const candidateFiles = collectCandidateAnchorFiles(envelopes);
-  const cwdBoundary = path.resolve('.');
+  const cwdBoundary = path.resolve(repoRoot);
 
   const headContentCache = new Map();
   for (const filePath of candidateFiles) {
-    const result = safeReadFile(filePath, cwdBoundary);
+    // `safeReadFile` resolves a RELATIVE `relPath` via bare `path.resolve()`
+    // (process.cwd(), always) and uses `cwdBoundary` only for the
+    // containment check afterward — passing `cwdBoundary` alone does NOT
+    // redirect the read when `repoRoot` differs from the real process cwd.
+    // Pre-joining onto an ABSOLUTE path here is what actually does it:
+    // `path.resolve()` on an already-absolute path is a no-op.
+    const result = safeReadFile(path.join(repoRoot, filePath), cwdBoundary);
     headContentCache.set(filePath, result ? result.content : null);
   }
 
   const baseContentCache = new Map();
   if (ctx.auditBaseCommit) {
     for (const filePath of candidateFiles) {
-      const result = gitShowFileAtRevision(process.cwd(), ctx.auditBaseCommit, filePath);
+      const result = gitShowFileAtRevision(repoRoot, ctx.auditBaseCommit, filePath);
       baseContentCache.set(filePath, result.ok ? result.content : null);
     }
   }
@@ -79,7 +92,7 @@ export async function buildStage0RelevanceContext(ctx, envelopes) {
   const impactCache = new Map();
   let repoUuid = null;
   try {
-    repoUuid = resolveRepoIdentity(process.cwd())?.repoUuid ?? null;
+    repoUuid = resolveRepoIdentity(repoRoot)?.repoUuid ?? null;
   } catch (err) {
     // 9e392b57: degrading to null (every impact lookup reads as `unknown`) is
     // the correct BEHAVIOUR — this is best-effort context, not a hard
@@ -96,7 +109,14 @@ export async function buildStage0RelevanceContext(ctx, envelopes) {
   // mistake in an earlier draft of this fix). candidateFiles is a bounded,
   // known-size array (this run's own diff scope), so no cancellation/
   // backpressure protocol is needed beyond each worker's own loop ending.
-  const STAGE0_IMPACT_CONCURRENCY = 8;
+  // Finding 1cc508ab: was a bare `= 8` literal — not tunable per deployment,
+  // store capacity, or operational conditions, unlike every sibling wave's
+  // knob (adjacencyConfig above). Same clamp-and-warn helper, own env var:
+  // a typo (`STAGE0_IMPACT_CONCURRENCY=abc`) falls back to the default
+  // instead of silently disabling concurrency (NaN) or removing the cap.
+  const STAGE0_IMPACT_CONCURRENCY = clampAdjacencyBound(
+    process.env.STAGE0_IMPACT_CONCURRENCY, { min: 1, max: 64, dflt: 8, name: 'STAGE0_IMPACT_CONCURRENCY' },
+  );
   let nextIndex = 0;
   const worker = async () => {
     let i;
@@ -118,7 +138,7 @@ export async function buildStage0RelevanceContext(ctx, envelopes) {
   const workerCount = Math.min(STAGE0_IMPACT_CONCURRENCY, candidateFiles.length);
   await Promise.all(Array.from({ length: workerCount }, () => worker()));
 
-  return { headContentCache, baseContentCache, impactCache };
+  return { headContentCache, baseContentCache, impactCache, repoRoot };
 }
 
 export function makeHeadContentAdapter(stage0Ctx) {
@@ -134,8 +154,12 @@ export function makeBlameAdapter(stage0Ctx, baseRef) {
     if (!baseRef) return null;
     const baseContent = stage0Ctx.baseContentCache.has(filePath) ? stage0Ctx.baseContentCache.get(filePath) : null;
     if (baseContent === null) return null;
+    // Finding aa68982d: reads the SAME repoRoot `buildStage0RelevanceContext`
+    // resolved (explicit opts.repoRoot, or process.cwd() at that call time) —
+    // `stage0Ctx.repoRoot` is undefined only for a hand-built context that
+    // predates this field, so `?? process.cwd()` keeps that path unchanged.
     return contentExistsAtMappedRange(
-      process.cwd(), filePath, { startLine, endLine }, quote, baseRef,
+      stage0Ctx.repoRoot ?? process.cwd(), filePath, { startLine, endLine }, quote, baseRef,
       { preloadedContent: baseContent },
     );
   };

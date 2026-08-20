@@ -66,7 +66,14 @@ export async function upsertPlanCmd(ctx) {
     try {
       const { maybeFireArmEvalCaptureDetached } = await import('../../arm-eval/capture-trigger.mjs');
       maybeFireArmEvalCaptureDetached({ experimentType: 'plan-authoring', task: p.taskText });
-    } catch { /* never block plan persistence on capture */ }
+    } catch (err) {
+      // Never block plan persistence on capture (deliberate — the plan write
+      // already succeeded above), but a discarded failure here was previously
+      // INVISIBLE: a broken import or a scheduling error left no trace
+      // anywhere (audit d179683e/6515f7bb/24e03a05/c8a86b03/30060c17). Logging
+      // keeps the non-blocking behaviour and just stops it being silent.
+      process.stderr.write(`  [arm-eval] plan-authoring capture trigger failed (non-fatal): ${err.message}\n`);
+    }
   }
   // Every `!res.ok` now throws, so this is unconditionally a success — the
   // softFail exemption this entry used to need is GONE (audit CB-r4). Kept as
@@ -170,6 +177,17 @@ export async function finalizeOutcomesCmd(ctx) {
   if (roundArg !== null && (!Number.isInteger(roundArg) || roundArg < 1)) {
     throw new CommandError('BAD_INPUT',
       `--round must be a positive integer, got "${roundOpt}" — refusing rather than finalising a different round`);
+  }
+  // The FALLBACK value gets the same validation as the explicit flag (audit
+  // a9c2ab46/337edc83): `result.round || 1` silently coerced a persisted
+  // `round: 0` (or any falsy/non-integer value) to round 1 instead of
+  // refusing — exactly the outcome the flag-side check above exists to
+  // prevent, reached by the OTHER input.
+  if (roundArg === null && result.round != null
+    && (!Number.isInteger(result.round) || result.round < 1)) {
+    throw new CommandError('BAD_INPUT',
+      `--round was not supplied and the result file's "round" is not a positive integer (got ${JSON.stringify(result.round)}) `
+      + '— refusing rather than silently finalising round 1');
   }
   const round = roundArg ?? (result.round || 1);
 

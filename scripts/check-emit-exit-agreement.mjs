@@ -24,13 +24,14 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { emit, hasFlag, assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
+import { sanitizeGitEnv } from './lib/git-env-sanitize.mjs';
 
 const KNOWN_FLAGS = ['--json', '--update', '--selfcheck-relocation', '--help'];
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const SCAN_DIRS = ['scripts'];
 // Repo-root dotfile, matching .knip-baseline.json / .gate-contract-baseline.json.
 // NOT under .audit-loop/, which holds Category-A volatile state: this baseline is a
 // pure, deterministic function of committed source, so by the generated-artifact
@@ -49,17 +50,28 @@ const BASELINE_PATH = path.join(REPO, '.emit-exit-baseline.json');
  */
 const OPT_OUT_RE = /\bemit\s*\([^;]{0,400}?softFail\s*:\s*true/g;
 
-function listJs(dir, out = []) {
-  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-    const p = path.join(dir, e.name);
-    if (e.isDirectory()) {
-      if (e.name === 'node_modules' || e.name === '.claude-skills') continue;
-      listJs(p, out);
-    } else if (e.name.endsWith('.mjs')) {
-      out.push(p);
-    }
-  }
-  return out;
+/**
+ * The `.mjs` files git TRACKS under `scripts/`, not everything on disk.
+ *
+ * Sandbox-honesty (AGENTS.md "Sandbox-honesty rule" + this gate's own docblock
+ * claim to be "a pure, deterministic function of committed source"): a
+ * `fs.readdirSync` walk reads the WORKING TREE, so an untracked scratch file
+ * (e.g. `scripts/scratch.mjs`) containing `emit(..., {softFail:true})`-shaped
+ * text would change `hits.length` without ever being committed — the gate's
+ * result would depend on what happens to be sitting in the tree, not on
+ * source anyone could review. `check-gate-poison-pills.mjs`'s `listTracked`
+ * is the precedent for this exact swap in this repo, documented there against
+ * the identical failure mode (a concurrent session's untracked plan file
+ * inflating a different gate's count). Returns `null` on a `git` failure —
+ * the caller must treat that as a hard error, never as "zero hits".
+ */
+function listTrackedMjs(repoRoot) {
+  const r = spawnSync('git', ['ls-files', '-z'],
+    { cwd: repoRoot, encoding: 'utf-8', windowsHide: true, env: sanitizeGitEnv(repoRoot) });
+  if (r.status !== 0) return null;
+  return String(r.stdout || '').split('\0').filter(Boolean)
+    .map((f) => f.replace(/\\/g, '/'))
+    .filter((f) => f.startsWith('scripts/') && f.endsWith('.mjs'));
 }
 
 /**
@@ -101,44 +113,92 @@ function stripCommentsFirst(src) {
 
 export function scanOptOuts(repoRoot = REPO) {
   const hits = [];
-  for (const d of SCAN_DIRS) {
-    const abs = path.join(repoRoot, d);
-    if (!fs.existsSync(abs)) continue;
-    for (const file of listJs(abs)) {
-      const rel = path.relative(repoRoot, file).replace(/\\/g, '/');
-      // The two files that DEFINE and DOCUMENT the mechanism are not instances
-      // of it. cli-io.mjs implements the opt-out; this gate explains it in an
-      // operator message built from a template literal, which no amount of
-      // string-stripping reliably reaches (a `+` chain of mixed template and
-      // quoted fragments). Excluding the two authors of the mechanism is a
-      // narrower and more honest rule than trying to parse JavaScript with a
-      // regex — and a genuine opt-out could never live in either file.
-      if (rel === 'scripts/lib/cli-io.mjs' || rel === 'scripts/check-emit-exit-agreement.mjs') continue;
-      // Scanned under BOTH strip orderings, and the UNION is taken. A regex
-      // cannot lex JavaScript: strings-then-comments mis-handles an apostrophe
-      // in a line comment, comments-then-strings mis-handles a `//` inside a
-      // string. Either ordering alone can therefore MISS a real opt-out, and a
-      // false negative is the silent direction — the gate would under-report
-      // growth it exists to catch. A false positive is a loud DRIFT message
-      // someone corrects in a minute, so the union is the right trade.
-      const raw = fs.readFileSync(file, 'utf8');
-      const seen = new Map();
-      for (const src of [stripStringsFirst(raw), stripCommentsFirst(raw)]) {
-        for (const m of src.matchAll(OPT_OUT_RE)) {
-          const line = src.slice(0, m.index).split('\n').length;
-          // Keyed on line + COLUMN, not line alone. Two opt-outs on one line is
-          // pathological, but the failure direction is what decides it: keying
-          // on the line collapses them to one, and a ratchet that UNDER-counts
-          // silently admits the growth it exists to refuse.
-          const col = m.index - (src.lastIndexOf('\n', m.index) + 1);
-          const key = `${line}:${col}`;
-          if (!seen.has(key)) seen.set(key, { file: rel, line });
-        }
+  const tracked = listTrackedMjs(repoRoot);
+  if (tracked === null) {
+    // Sandbox-honesty: a `git ls-files` failure must never read as "0 opt-outs
+    // found" — that is a silent clean pass having enumerated nothing. Fail
+    // loud instead (see AGENTS.md "Sandbox-honesty rule").
+    throw new Error('[emit-exit] `git ls-files` failed — cannot enumerate tracked scripts/ sources');
+  }
+  for (const rel of tracked) {
+    // The two files that DEFINE and DOCUMENT the mechanism are not instances
+    // of it. cli-io.mjs implements the opt-out; this gate explains it in an
+    // operator message built from a template literal, which no amount of
+    // string-stripping reliably reaches (a `+` chain of mixed template and
+    // quoted fragments). Excluding the two authors of the mechanism is a
+    // narrower and more honest rule than trying to parse JavaScript with a
+    // regex — and a genuine opt-out could never live in either file.
+    if (rel === 'scripts/lib/cli-io.mjs' || rel === 'scripts/check-emit-exit-agreement.mjs') continue;
+    // Scanned under BOTH strip orderings, and the UNION is taken. A regex
+    // cannot lex JavaScript: strings-then-comments mis-handles an apostrophe
+    // in a line comment, comments-then-strings mis-handles a `//` inside a
+    // string. Either ordering alone can therefore MISS a real opt-out, and a
+    // false negative is the silent direction — the gate would under-report
+    // growth it exists to catch. A false positive is a loud DRIFT message
+    // someone corrects in a minute, so the union is the right trade.
+    const raw = fs.readFileSync(path.join(repoRoot, rel), 'utf8');
+    const seen = new Map();
+    for (const src of [stripStringsFirst(raw), stripCommentsFirst(raw)]) {
+      for (const m of src.matchAll(OPT_OUT_RE)) {
+        const line = src.slice(0, m.index).split('\n').length;
+        // Keyed on line + COLUMN, not line alone. Two opt-outs on one line is
+        // pathological, but the failure direction is what decides it: keying
+        // on the line collapses them to one, and a ratchet that UNDER-counts
+        // silently admits the growth it exists to refuse.
+        const col = m.index - (src.lastIndexOf('\n', m.index) + 1);
+        const key = `${line}:${col}`;
+        if (!seen.has(key)) seen.set(key, { file: rel, line, col });
       }
-      hits.push(...seen.values());
     }
+    hits.push(...seen.values());
   }
   return hits.sort((a, b) => (a.file === b.file ? a.line - b.line : a.file.localeCompare(b.file)));
+}
+
+/**
+ * A hit's identity for baseline comparison: `file:line:col`.
+ *
+ * Comparing baselines by TOTAL COUNT alone (the original design) cannot see a
+ * swap — dismiss the declared opt-out in file A, add a brand-new, never-
+ * reviewed one in file B, and `hits.length` is unchanged, so neither `grew`
+ * nor `shrank` ever fires (confirmed empirically: a same-count swap produces
+ * `{grew:false, shrank:false}`). Recording each hit's own location closes
+ * that: the new opt-out's identity is absent from the baseline's `ids` set,
+ * so it reads as growth even though the total held steady.
+ */
+function hitId(h) {
+  return `${h.file}:${h.line}:${h.col}`;
+}
+
+/**
+ * Pure decision function, exported so the "swap" fix is unit-testable without
+ * spawning the CLI against a fabricated repo (`BASELINE_PATH`/`REPO` are fixed
+ * to this file's own location, so the CLI can only ever gate the repo it
+ * lives in).
+ *
+ * @param {{file:string, line:number, col:number}[]} hits - current scanOptOuts() result
+ * @param {{count:number, files:Record<string,number>, ids:string[]|null}} base - readBaseline() result
+ * @returns {{grew:boolean, shrank:boolean, swapped:boolean, addedHits:object[]}}
+ */
+export function compareToBaseline(hits, base) {
+  const byFile = {};
+  for (const h of hits) byFile[h.file] = (byFile[h.file] || 0) + 1;
+
+  if (base.ids !== null) {
+    const baseIdSet = new Set(base.ids);
+    const currentIdSet = new Set(hits.map(hitId));
+    const addedHits = hits.filter((h) => !baseIdSet.has(hitId(h)));
+    const removedCount = base.ids.filter((id) => !currentIdSet.has(id)).length;
+    const grew = addedHits.length > 0;
+    const shrank = !grew && removedCount > 0;
+    const swapped = grew && removedCount > 0 && hits.length === base.count;
+    return { grew, shrank, swapped, addedHits };
+  }
+
+  const grew = hits.length > base.count;
+  const shrank = hits.length < base.count;
+  const addedHits = grew ? hits.filter((h) => (byFile[h.file] || 0) > (base.files?.[h.file] || 0)) : [];
+  return { grew, shrank, swapped: false, addedHits };
 }
 
 /**
@@ -153,20 +213,32 @@ export function scanOptOuts(repoRoot = REPO) {
  * safe direction: loud and fixable rather than silent.
  */
 function readBaseline() {
-  if (!fs.existsSync(BASELINE_PATH)) return { count: 0, files: {} };
+  if (!fs.existsSync(BASELINE_PATH)) return { count: 0, files: {}, ids: null };
   let parsed;
   try {
     parsed = JSON.parse(fs.readFileSync(BASELINE_PATH, 'utf8'));
   } catch (err) {
     process.stderr.write(`  [emit-exit] baseline is not valid JSON (${err.message}) — treating it as 0\n`);
-    return { count: 0, files: {} };
+    return { count: 0, files: {}, ids: null };
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)
       || !Number.isInteger(parsed.count) || parsed.count < 0) {
     process.stderr.write('  [emit-exit] baseline is malformed (expected {count:<int>, files:{}}) — treating it as 0\n');
-    return { count: 0, files: {} };
+    return { count: 0, files: {}, ids: null };
   }
-  return { count: parsed.count, files: parsed.files && typeof parsed.files === 'object' ? parsed.files : {} };
+  // `ids` is optional: a baseline written before this field existed has none.
+  // `null` (not `[]`) marks that case so the caller can fall back to the
+  // count-only comparison rather than reading "no ids recorded" as "zero
+  // opt-outs existed" — the two are different claims, and conflating them
+  // would make every hit in an unmigrated repo read as new growth.
+  const ids = Array.isArray(parsed.ids) && parsed.ids.every((x) => typeof x === 'string')
+    ? parsed.ids
+    : null;
+  return {
+    count: parsed.count,
+    files: parsed.files && typeof parsed.files === 'object' ? parsed.files : {},
+    ids,
+  };
 }
 
 function main() {
@@ -188,6 +260,7 @@ function main() {
   const hits = scanOptOuts();
   const byFile = {};
   for (const h of hits) byFile[h.file] = (byFile[h.file] || 0) + 1;
+  const currentIds = hits.map(hitId);
 
   // `hasFlag`, not `.includes` — assertKnownFlags accepts `--update=true`, so a
   // bare includes() check would let the equals form pass validation and then
@@ -196,25 +269,37 @@ function main() {
   // reproduced inside a gate (consolidated Gemini gate, round 2).
   if (hasFlag('update')) {
     fs.mkdirSync(path.dirname(BASELINE_PATH), { recursive: true });
-    fs.writeFileSync(BASELINE_PATH, `${JSON.stringify({ count: hits.length, files: byFile }, null, 2)}\n`);
+    fs.writeFileSync(BASELINE_PATH, `${JSON.stringify({ count: hits.length, files: byFile, ids: currentIds }, null, 2)}\n`);
     process.stderr.write(`  [emit-exit] baseline re-written: ${hits.length} declared opt-out(s)\n`);
     return;
   }
 
   const base = readBaseline();
-  const grew = hits.length > base.count;
-  const shrank = hits.length < base.count;
+
+  // Identity-based comparison when the baseline has recorded `ids` — closes
+  // the "swap" blind spot (see hitId()'s docblock): dismiss opt-out X, add a
+  // brand-new opt-out Y elsewhere, and the TOTAL count never moves, so a
+  // count-only comparison reports neither growth nor shrinkage. Comparing the
+  // identity SETS instead means Y's absence from the baseline is what counts,
+  // regardless of what else disappeared in the same diff. A baseline written
+  // before this field existed has `ids: null` and falls back to the original
+  // count-only comparison — so an unmigrated baseline keeps its old (weaker)
+  // behaviour instead of every current hit reading as new growth.
+  const { grew, shrank, swapped, addedHits } = compareToBaseline(hits, base);
 
   if (hasFlag('json')) {
-    emit({ ok: !grew, count: hits.length, baseline: base.count, grew, shrank, files: byFile });
+    emit({
+      ok: !grew, count: hits.length, baseline: base.count, grew, shrank, swapped, files: byFile,
+      identityTracked: base.ids !== null,
+    });
     return;
   }
 
   if (grew) {
-    const added = hits.filter((h) => (byFile[h.file] || 0) > (base.files?.[h.file] || 0));
     process.stderr.write(
-      `  [emit-exit] DRIFT: ${hits.length} declared emit() exit-code opt-out(s), baseline ${base.count}.\n`
-      + `${added.map((h) => `    ${h.file}:${h.line}\n`).join('')}`
+      `  [emit-exit] DRIFT: ${hits.length} declared emit() exit-code opt-out(s), baseline ${base.count}`
+      + `${swapped ? ' — same total, but at least one is a NEW, never-reviewed opt-out' : ''}.\n`
+      + `${addedHits.map((h) => `    ${h.file}:${h.line}\n`).join('')}`
       + '  An `emit(env, {softFail:true, reason})` says "this ok:false is not a process failure".\n'
       + '  If that is genuinely true here, re-baseline deliberately:\n'
       + '    node scripts/check-emit-exit-agreement.mjs --update\n',
