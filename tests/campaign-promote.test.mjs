@@ -7,7 +7,7 @@
  *
  * @module tests/campaign-promote
  */
-import { describe, it } from 'node:test';
+import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -430,8 +430,11 @@ describe('promoteFromLog against a live schema — identity, quarantine, and the
     promote = await import('../scripts/lib/campaign/promote.mjs');
     store = await import('../scripts/lib/store/campaign.mjs');
 
-    const repo = await client.query("INSERT INTO audit_repos (name) VALUES ('campaign-promote-test-repo') RETURNING id");
-    repoRowId = repo.rows[0].id;
+    // `promoteFromLog` resolves its own repo internally via `repoId()`
+    // (git-identity based) — it ignores any throwaway `audit_repos` row a
+    // test manually inserts. Use the same resolver here so the test's setup
+    // and `promoteFromLog`'s internal writes land in the same repo/cohort.
+    repoRowId = await repoId();
     const campaign = await store.ensureCampaign({ repoId: repoRowId, campaignKey: 'promote-live-test', configDigest: 'digest1' });
     campaignId = campaign.id;
     const cohort = await store.ensureCohort({ campaignId, lockDigest: 'lock1', resolved: { a: 1 } });

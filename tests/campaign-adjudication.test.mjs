@@ -449,9 +449,18 @@ describe('campaign store against a live schema', { skip }, () => {
   });
 
   it('a --force retry appends an attempt and supersedes the prior live row', async () => {
+    // §7 Phase 3 (campaign-arm-state-and-identity-integrity.md): a retry is a
+    // genuinely NEW review — a NEW audit_run_id — never the same run id
+    // recorded twice. `recordArmRun`'s conflict-safe insert now refuses a
+    // repeated audit_run_id outright (the exact double-promotion defect the
+    // identity-keyed design exists to make impossible), so this fixture must
+    // mint a real second run rather than reusing `ids.runKimi`.
+    const retryRun = (await client.query(
+      "INSERT INTO audit_runs (repo_id, plan_file, mode) VALUES ($1, 'docs/plans/x.md', 'code') RETURNING id", [ids.repoId],
+    )).rows[0].id;
     const r = await store.recordArmRun({
       cohortId: ids.cohortId, snapshotRowId: ids.snapshotRowId, snapshotId: 'snapA', armId: 'kimi', attempt: 2,
-      auditRunId: ids.runKimi, costUsd: 0.5, costStatus: 'priced', supersedePrior: true,
+      auditRunId: retryRun, costUsd: 0.5, costStatus: 'priced', supersedePrior: true,
     });
     assert.equal(r.ok, true);
     const rows = (await client.query('SELECT attempt, superseded_at, cost_usd FROM campaign_arm_runs WHERE cohort_id = $1 AND arm_id = $2 ORDER BY attempt', [ids.cohortId, 'kimi'])).rows;

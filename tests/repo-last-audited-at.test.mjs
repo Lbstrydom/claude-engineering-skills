@@ -83,7 +83,7 @@ const skip = TEST_DSN ? false : 'set AUDIT_DB_TEST_URL (a disposable test DB) to
 // Point the db client at the TEST DSN before it is imported. Never the live store.
 if (TEST_DSN) process.env.AUDIT_DB_URL = TEST_DSN;
 
-test('a profile-less resolveRepoForStore leaves last_audited_at NULL', { skip }, async () => {
+test('a profile-less resolveRepoForStore leaves last_audited_at unchanged', { skip }, async () => {
   const { withTx, one } = await import('../scripts/lib/db/query.mjs');
   const { resolveRepoForStore } = await import('../scripts/lib/store/repo.mjs');
   const { closePool } = await import('../scripts/lib/db/client.mjs');
@@ -92,34 +92,50 @@ test('a profile-less resolveRepoForStore leaves last_audited_at NULL', { skip },
   try {
     await assert.rejects(
       withTx(async () => {
-        // First touch of this repo is a pure id lookup (no profile) — the
-        // auto-vivify path. It must NOT claim the repo was audited.
+        // This suite shares the disposable DB with every other Tier-2 suite in
+        // the same `node --test` invocation, and several of them (e.g.
+        // campaign-promote.test.mjs, which resolves the real repo identity via
+        // `repoId()` to test `promoteFromLog`) legitimately stamp this repo's
+        // canonical row with a real, profile-bearing audit BEFORE this file
+        // ever runs (`node --test` sorts args alphabetically, so file position
+        // in ISOLATED_SUITE_FILES doesn't control it). So this test cannot
+        // assume it is the row's first-ever touch and assert an absolute NULL
+        // — instead it asserts the actual invariant: a profile-less call must
+        // leave whatever value was already there UNCHANGED.
+        const vivify = await resolveRepoForStore({});
+        const before = await one(
+          `SELECT last_audited_at FROM audit_repos WHERE id = $1`, [vivify.repoRowId],
+        );
         const readOnly = await resolveRepoForStore({});
         const afterRead = await one(
           `SELECT last_audited_at FROM audit_repos WHERE id = $1`, [readOnly.repoRowId],
         );
-        // A real audit afterwards must stamp it.
+        // A real audit afterwards must stamp it (to a fresh, later timestamp).
         await resolveRepoForStore({
           profile: { repoFingerprint: 'fp-STAMP', stack: {}, fileBreakdown: {}, focusAreas: [] },
         });
         const afterAudit = await one(
           `SELECT last_audited_at FROM audit_repos WHERE id = $1`, [readOnly.repoRowId],
         );
-        captured = { readOnly, afterRead, afterAudit };
+        captured = { readOnly, before, afterRead, afterAudit };
         throw new Error('ROLLBACK_SENTINEL'); // never persist
       }),
       /ROLLBACK_SENTINEL/,
     );
 
     assert.ok(captured.readOnly?.repoRowId, 'the profile-less call still resolves a row id');
-    assert.equal(
-      captured.afterRead.last_audited_at, null,
-      'a read-only lookup that vivified the row must leave last_audited_at NULL — ' +
-      'a non-null value means the DEFAULT NOW() is still in place or a second writer stamped it',
+    assert.deepEqual(
+      captured.afterRead.last_audited_at, captured.before.last_audited_at,
+      'a profile-less lookup must not further stamp/bump last_audited_at — ' +
+      'a changed value means the DEFAULT NOW() is still in place or a second writer stamped it',
     );
     assert.notEqual(
       captured.afterAudit.last_audited_at, null,
       'a profile-bearing call (a real audit) must stamp last_audited_at',
+    );
+    assert.notDeepEqual(
+      captured.afterAudit.last_audited_at, captured.before.last_audited_at,
+      'a profile-bearing call must move last_audited_at forward, not leave a stale earlier stamp',
     );
   } finally {
     await closePool().catch(() => {});
