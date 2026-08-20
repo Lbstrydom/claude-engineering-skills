@@ -32,14 +32,107 @@ Checked every plan these rows cite; all are `Status: Complete`:
   plan being fully implemented, audited, and closed out in this same session —
   bumped to `Complete`.
 
-### Code-mode triage
+### Code-mode triage (342 findings, 4 parallel agents partitioned by file)
 
-See the follow-on entry below once the parallel triage agents report (4
-agents, partitioned by file to avoid collisions: cross-skill.mjs +
-lib/cross-skill/* cluster; the audit/legacy-production-audit.mjs +
-plan-verification.mjs + maintenance-checks.mjs + harvest-audit-transcripts.mjs
-+ transcript-archive.mjs cluster; the remaining ~70 unlocked-fixes across ~42
-files; the remaining ~117 unremediated-acceptances across ~81 files).
+**Cluster 1 — cross-skill.mjs + lib/cross-skill/* (102 unremediated-acceptances).**
+87 already-fixed by the 2026-08-12 command-registry refactor (`fa7ef2c4`) and
+the same-day softFail retirement — recorded via `final-review-record-fix`, not
+re-fixed. 16 findings (8 code locations) genuinely still open, fixed with
+tests: silent numeric-flag defaults (`--limit`, `--cap`, `--queue-limit`
+class), truthiness-vs-presence checks on `--description`, a coerced
+`round: 0`, an unresolved-scope collapse in `getNavFirstSeenCmd`, a custom
+`--out` ENOENT, and several swallowed capture/export failures now logged.
+8 dismissed as by-design (documented elsewhere in the same code, or a retired
+feature with no bypass surface left). 15 genuinely still-broken, reported not
+fixed — see "Left as documented debt" below.
+
+**Cluster 2 — audit/legacy-production-audit.mjs + plan-verification.mjs +
+maintenance-checks.mjs + harvest-audit-transcripts.mjs + transcript-archive.mjs
+(40 unlocked-fixes → 23 real behaviors).** Found the most consequential result
+of the whole triage: **4 findings in legacy-production-audit.mjs were marked
+fixed but genuinely were not** (a discarded write-result check on
+debt-escalation, two writes silently bypassing the `noCloudRecording` policy,
+an unlocked concurrent ledger write, a ledger persisted before its own
+existence-gate could retract a refuted finding) — now actually fixed (see
+below), not just locked. `maintenance-checks.mjs`'s 8 reopened findings turned
+out to be a documented accepted-risk mitigation (a loud stderr announcement),
+not the structural lock-safety fix the backlog implied — locked THAT real
+behavior instead of a false claim. Also caught and reverted 2 pieces of
+leftover "TEMP REVERT for red-then-green verification" debug state in
+`legacy-production-audit.mjs` and `transcript-archive.mjs` that had never been
+restored — confirmed byte-identical to HEAD again. Everything else in this
+cluster (deepseek/harvest/archive collision handling, case-fold normalization,
+plan-verification's count/boolean validation and run-id race) verified
+genuinely fixed and newly regression-tested.
+
+**Cluster 3 — remaining unlocked-fixes long tail (61 findings, ~42 files →
+~37 behaviors).** 27 genuinely fixed and now tested. **5 more "claims fixed but
+isn't"**: `model-eval/verdict.mjs`'s `computedJudgeTier` wasn't cross-validated
+against `route-catalog.mjs` (forgeable); `visual/extract.mjs`'s
+`themeApplied:false` capture still reached consumers unfiltered, and its
+`localStorage.setItem` failure was silently swallowed. One bonus latent bug
+found independently by two different agents: `resolveAndClassify`'s
+`fs.realpathSync` against the *current* working tree misclassifies a
+since-deleted file as `sensitive` when scanning an older ref (doesn't affect
+production — `resolveEventWiringScopeRefs` always anchors to HEAD — but a real
+gap for any arbitrary historical-ref scan).
+
+**Cluster 4 — remaining unremediated-acceptances long tail (117 findings, ~81
+files).** 40 already-fixed by prior commits (independently verified, not just
+cited), 30 fixed this session (persona-correlations.mjs's missing-field
+silence + cross-tenant gap, stage0-relevance-context.mjs's hardcoded
+concurrency/cwd coupling, find-rmsync-sites.mjs's duplicated traversal,
+package.json's loose `engines.node`), 16 large/architectural flagged for
+handoff (see below), 15 dismissed with reasons (control-state markers,
+retired features, already-covered CI enrollment, one fabricated/hallucinated
+detail not found anywhere in the repo), 11 skipped as sibling-owned.
+Discovered a real production crash bug while investigating: `graph-verdict.mjs`'s
+`GRAPH_REASON` had an 11th value (`malformed_measurement`) that neither the
+app-layer `CoverageSchema` nor the DB's `symbol_refresh_coverage` CHECK
+constraint had ever been given — silently refused at the app layer, but
+`render-mermaid.mjs`'s throwing parse would crash `arch:render` outright the
+one time this path went live. Fixed both layers + migration
+`20260820080000_symbol_refresh_coverage_malformed_measurement.sql` (additive,
+widens the CHECK, safe), plus a parity test asserting the app schema's enum
+equals `Object.values(GRAPH_REASON)` so the next reason added there fails loud
+here instead of drifting silently again.
+
+**Net result**: unremediated-acceptances 248 → 115 (code-mode 235 → 102).
+71 findings recorded fixed via `final-review-record-fix`; 66 files touched
+across 342 findings triaged; `npm test` 13284/13284 pass after the first
+commit, 13314/13314 after the second.
+
+### Follow-up: the 10 genuinely-still-broken findings, actually fixed
+
+The 4 legacy-production-audit.mjs bugs, the verdict.mjs tier-forgery gap,
+ship-events.mjs's missing repo_id validation, sync-isolation-verify.mjs's
+empty-`--gates` zero-gate bug, and both visual/extract.mjs gaps were fixed in
+a follow-up pass (2 more parallel agents) and locked via
+`cross-skill.mjs lock-with-test`, each citing the real regression test
+(red-then-green verified against the pre-fix source). `npm test`
+13317/13317 pass.
+
+### Left as documented debt (deliberately not attempted)
+
+~30 findings across both backlogs are genuinely still-real but out of
+proportion for a triage session — mostly classic god-module/oversized-function
+debt matching the shape this repo already tracks via dedicated plans
+(`god-module-and-layering-debt.md`, `debt-burndown-workstreams.md`):
+`scripts/lib/store/runs-findings.mjs` (2065 lines, 33 exports across 7
+concerns), `scripts/lib/lint/on-conflict.mjs` (786 lines, manually-maintained
+scope-column lists), `scripts/lib/audit/adjacency-detector.mjs` (full Babel
+traversal per anchor line — perf), `scripts/lib/audit/stage0-relevance-context.mjs`'s
+N+1 RPC pattern, a non-transactional 3-write sequence in
+`cross-skill.mjs`'s `finalize-outcomes`, `dispatch(process.argv,{})` sitting
+outside any try/catch in `cross-skill.mjs main()`, `err.message`/`err.stack`
+leaking into several error envelopes (security-adjacent, needs a proper
+call-site-by-call-site review, not a quick patch), plus a handful of
+oversized single-purpose functions (`tiered-shadow-summary.mjs`'s
+`summarize()`, `known-defect-corpus.mjs`'s `loadCorpusCase()`,
+`collect-reference.mjs`'s `discoverPlans()`, `build-audit-transcript.mjs`'s
+174-line `main()`). No new plan drafted for these — left as backlog per
+operator decision; still visible via `list-unlocked-fixes`/
+`list-unremediated-acceptances` for the next person who picks this up.
 
 ---
 
