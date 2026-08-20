@@ -291,6 +291,28 @@ describe('ux-lock-run CLI — arg validation', () => {
     assert.equal(json?.error?.code, 'BAD_INPUT');
     assert.notEqual(status, 0);
   });
+
+  // Regression: finding f38a0a34. opt()'s scalar-option reader used
+  // `rest.indexOf` alone, so a repeated flag silently kept the FIRST value
+  // with no diagnostic (`--commit old --commit new` used `old`) instead of
+  // refusing the ambiguous double-specification.
+  it('a scalar option supplied TWICE is refused, not silently resolved to the first value', () => {
+    const { stdout, status } = runCli(['spec', '--spec', 'x.spec.js', '--commit', 'old', '--commit', 'new']);
+    const json = lastJson(stdout);
+    assert.equal(json?.error?.code, 'BAD_INPUT');
+    assert.match(json?.error?.message ?? '', /--commit was supplied 2 times/);
+    assert.notEqual(status, 0);
+  });
+
+  it('a scalar option supplied ONCE still works normally (no false positive)', () => {
+    // spec without --commit fails earlier on BAD_INPUT for other reasons in this
+    // harness (no real repo/spec), so assert on --url instead, which reaches the
+    // same opt() path — the point is a single occurrence must not trip the guard.
+    const { stdout } = runCli(['spec', '--spec', 'x.spec.js', '--url', 'http://localhost:3000']);
+    const json = lastJson(stdout);
+    assert.notEqual(json?.error?.code, 'BAD_INPUT_DUPLICATE');
+    assert.doesNotMatch(json?.error?.message ?? '', /was supplied \d+ times/);
+  });
 });
 
 // ── selector-policy wiring (plan: docs/plans/ux-lock-selector-policy.md) ────

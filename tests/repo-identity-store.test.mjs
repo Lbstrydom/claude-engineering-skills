@@ -65,3 +65,39 @@ test('fragmentation guardrail: no name resolves to >1 canonical audit_repos.id',
     await closePool().catch(() => {});
   }
 });
+
+test('upsertRepo — the frozen compat shim IGNORES its repoName argument (audit finding 32754705)', { skip }, async () => {
+  // `upsertRepo(profile, repoName)` is a @deprecated legacy shim that delegates
+  // to `resolveRepoForStoreResult({ profile })` — repoName never reaches it.
+  // That is deliberate (identity derives from repo_uuid/profile, not from a
+  // caller-supplied name, to stop the fingerprint-fragmentation class this
+  // whole cluster fixed) but it must actually hold: two calls differing ONLY
+  // in repoName, for the same repo, must resolve to the identical row.
+  const { withTx } = await import('../scripts/lib/db/query.mjs');
+  const { upsertRepo } = await import('../scripts/lib/store/repo.mjs');
+  const { closePool } = await import('../scripts/lib/db/client.mjs');
+
+  const profile = { repoFingerprint: 'fp-repoName-shim', stack: { node: true }, fileBreakdown: { backend: 1 }, focusAreas: [] };
+  let captured;
+  try {
+    await assert.rejects(
+      withTx(async () => {
+        const idA = await upsertRepo(profile, 'wrong-name-A');
+        const idB = await upsertRepo(profile, 'totally-different-name-B');
+        captured = { idA, idB };
+        throw new Error('ROLLBACK_SENTINEL'); // never persist
+      }),
+      /ROLLBACK_SENTINEL/,
+    );
+
+    assert.ok(captured.idA, 'first call must resolve a row id');
+    assert.equal(
+      captured.idA, captured.idB,
+      'a differing repoName argument must not change which audit_repos row is resolved — '
+      + 'if this fails, the compat shim started honouring repoName again, which reopens the '
+      + 'fingerprint/name fragmentation class this cluster fixed',
+    );
+  } finally {
+    await closePool().catch(() => {});
+  }
+});

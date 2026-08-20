@@ -385,4 +385,126 @@ describe('model-eval comparison cohort against a live schema', { skip }, () => {
     assert.equal(attempt.attempt, 0);
     assert.equal(attempt.hasLiveSuccess, false);
   });
+
+  // 20260816090000_model_eval_comparison_integrity.sql, Gap 1 — before this
+  // migration, `model_eval_runs.comparison_id` was indexed but not
+  // constrained: a row could reference a comparison_id that never existed in
+  // `model_eval_comparisons`, and would be unrecoverable by getComparisonCohort
+  // (silently vanishing from every aggregate) rather than refused up front.
+  it('DB-LEVEL: a comparison_id that does not exist in model_eval_comparisons is refused by the FK', async () => {
+    const bogusComparisonId = '00000000-0000-0000-0000-0000000000fe';
+    await assert.rejects(
+      () => client.query(
+        `INSERT INTO model_eval_runs (repo_id, role, tier, candidate_ref, status, comparison_id, arm_id, attempt)
+         VALUES ($1, 'auditor', 'screen', '{}', 'running', $2, 'fk-arm', 1)`,
+        [repoId, bogusComparisonId],
+      ),
+      /fk_model_eval_runs_comparison_id|foreign key/i,
+    );
+  });
+
+  // 20260816090000, Gap 2 — comparison_id/arm_id are independently nullable
+  // columns, so Postgres's unique indexes (which treat every NULL as distinct
+  // from every other NULL) cannot see a partially-identified row at all — the
+  // application's Zod schema refuses exactly-one-set, but that refusal lives
+  // only in scripts/lib/store/model-eval.mjs and any OTHER writer (a manual
+  // INSERT, a future script) bypasses it entirely. The pairing CHECK restates
+  // the same rule where it cannot be bypassed.
+  it('DB-LEVEL: a partially-identified cohort row (only one of comparison_id/arm_id set) is refused by the pairing CHECK', async () => {
+    const cohort = await store.upsertComparison({
+      repoId, comparisonKey: 'live-pairing-check', configDigest: 'd1', lockSchemaVersion: 1, role: 'auditor',
+    });
+    await assert.rejects(
+      () => client.query(
+        `INSERT INTO model_eval_runs (repo_id, role, tier, candidate_ref, status, comparison_id, arm_id)
+         VALUES ($1, 'auditor', 'screen', '{}', 'running', $2, NULL)`,
+        [repoId, cohort.id],
+      ),
+      /chk_model_eval_runs_comparison_arm_pairing/,
+      'comparison_id set with arm_id NULL must be refused',
+    );
+    await assert.rejects(
+      () => client.query(
+        `INSERT INTO model_eval_runs (repo_id, role, tier, candidate_ref, status, comparison_id, arm_id)
+         VALUES ($1, 'auditor', 'screen', '{}', 'running', NULL, 'pairing-arm')`,
+        [repoId],
+      ),
+      /chk_model_eval_runs_comparison_arm_pairing/,
+      'arm_id set with comparison_id NULL must be refused too — the check is symmetric',
+    );
+    // NEGATIVE CONTROL: both-null (plain single-candidate run) and both-set
+    // (a real cohort row) are exactly the legal shapes and must not be refused.
+    await assert.doesNotReject(() => client.query(
+      `INSERT INTO model_eval_runs (repo_id, role, tier, candidate_ref, status, comparison_id, arm_id)
+       VALUES ($1, 'auditor', 'screen', '{}', 'running', NULL, NULL)`,
+      [repoId],
+    ));
+    await assert.doesNotReject(() => client.query(
+      `INSERT INTO model_eval_runs (repo_id, role, tier, candidate_ref, status, comparison_id, arm_id, attempt)
+       VALUES ($1, 'auditor', 'screen', '{}', 'running', $2, 'pairing-both-set', 1)`,
+      [repoId, cohort.id],
+    ));
+  });
+
+  // 20260816090000's repo-scope trigger + 20260816100000's repo-immutable
+  // trigger — the two-sided repo-scope integrity guard (the same "retagging
+  // changes edges from BOTH directions" shape AGENTS.md documents for the
+  // domain map, one layer down: a run's repo_id must match its comparison's
+  // repo_id, AND the comparison's repo_id must not move out from under runs
+  // that already reference it).
+  describe('DB-LEVEL: repo-scope integrity is enforced from BOTH directions', () => {
+    let otherRepoId;
+    before(async () => {
+      const other = await client.query("INSERT INTO audit_repos (name) VALUES ('model-eval-comparison-test-repo-other') RETURNING id");
+      otherRepoId = other.rows[0].id;
+    });
+
+    it('a run whose repo_id does not match its comparison\'s repo_id is refused by the repo-scope trigger', async () => {
+      const cohort = await store.upsertComparison({
+        repoId, comparisonKey: 'live-repo-scope', configDigest: 'd1', lockSchemaVersion: 1, role: 'auditor',
+      });
+      await assert.rejects(
+        () => client.query(
+          `INSERT INTO model_eval_runs (repo_id, role, tier, candidate_ref, status, comparison_id, arm_id, attempt)
+           VALUES ($1, 'auditor', 'screen', '{}', 'running', $2, 'cross-repo-arm', 1)`,
+          [otherRepoId, cohort.id],
+        ),
+        /does not match comparison.*repo_id|may not attach to another repo/,
+        'a run may not attach to another repo\'s cohort even if the comparison_id itself is real',
+      );
+    });
+
+    it('NEGATIVE CONTROL: a run whose repo_id DOES match its comparison\'s repo_id is unaffected', async () => {
+      const cohort = await store.upsertComparison({
+        repoId, comparisonKey: 'live-repo-scope-negative', configDigest: 'd1', lockSchemaVersion: 1, role: 'auditor',
+      });
+      await assert.doesNotReject(() => client.query(
+        `INSERT INTO model_eval_runs (repo_id, role, tier, candidate_ref, status, comparison_id, arm_id, attempt)
+         VALUES ($1, 'auditor', 'screen', '{}', 'running', $2, 'same-repo-arm', 1)`,
+        [repoId, cohort.id],
+      ));
+    });
+
+    it('model_eval_comparisons.repo_id is immutable once created, even with no runs referencing it yet', async () => {
+      const cohort = await store.upsertComparison({
+        repoId, comparisonKey: 'live-repo-immutable', configDigest: 'd1', lockSchemaVersion: 1, role: 'auditor',
+      });
+      await assert.rejects(
+        () => client.query('UPDATE model_eval_comparisons SET repo_id = $1 WHERE id = $2', [otherRepoId, cohort.id]),
+        /repo_id is immutable once created/,
+      );
+    });
+
+    it('NEGATIVE CONTROL: updating a comparison\'s subject_ref (the one real write path) is unaffected by the repo_id-immutable trigger', async () => {
+      const cohort = await store.upsertComparison({
+        repoId, comparisonKey: 'live-repo-immutable-negative', configDigest: 'd1', lockSchemaVersion: 1, role: 'auditor',
+      });
+      await assert.doesNotReject(() => client.query(
+        `UPDATE model_eval_comparisons SET subject_ref = '{"note":"unrelated update"}' WHERE id = $1`,
+        [cohort.id],
+      ));
+      const { rows } = await client.query('SELECT repo_id FROM model_eval_comparisons WHERE id = $1', [cohort.id]);
+      assert.equal(rows[0].repo_id, repoId, 'an unrelated column update must not disturb repo_id');
+    });
+  });
 });

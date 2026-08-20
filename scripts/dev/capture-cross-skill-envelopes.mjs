@@ -25,14 +25,22 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assertKnownFlags, ArgvError } from '../lib/cli-io.mjs';
+import { assertKnownFlags, ArgvError, hasFlag } from '../lib/cli-io.mjs';
 
-const KNOWN_FLAGS = ['--recapture', '--selfcheck-relocation', '--help'];
+const KNOWN_FLAGS = ['--recapture', '--confirm-fresh-capture', '--selfcheck-relocation', '--help'];
 
 const CLI_PATH = fileURLToPath(new URL('../cross-skill.mjs', import.meta.url));
-export const FIXTURE_PATH = fileURLToPath(
-  new URL('../../tests/fixtures/cross-skill-envelopes.json', import.meta.url),
-);
+
+// `CES_CAPTURE_FIXTURE_PATH_OVERRIDE` exists ONLY so a test can exercise the
+// "fixture is missing" provenance guard below without touching the real,
+// git-tracked fixture file — renaming that file (even briefly, even with a
+// try/finally restore) races any OTHER test file that reads it at module-load
+// time in the same `node --test` run (tests/cross-skill-golden-envelopes.test.mjs
+// does exactly that). The override only ever matters to a process that sets
+// it explicitly; every ordinary invocation (capture, the golden-envelopes
+// test's `import`) is byte-identical to before.
+export const FIXTURE_PATH = process.env.CES_CAPTURE_FIXTURE_PATH_OVERRIDE
+  || fileURLToPath(new URL('../../tests/fixtures/cross-skill-envelopes.json', import.meta.url));
 
 /**
  * The invocation table. One row per behaviour worth freezing: the happy path,
@@ -272,9 +280,37 @@ async function main() {
     process.exitCode = 2;
     return;
   }
-  const existing = fs.existsSync(FIXTURE_PATH)
+  const fixtureExists = fs.existsSync(FIXTURE_PATH);
+  const existing = fixtureExists
     ? JSON.parse(fs.readFileSync(FIXTURE_PATH, 'utf8')).cases
     : {};
+
+  // Provenance guard (audit findings b8fb5af5-cluster / c0f829d9, 7797ba5b,
+  // 3577e131): the existing[c.id] check above only protects cases that are
+  // ALREADY IN the fixture. If the fixture file itself is missing (deleted by
+  // accident, or never restored after a `git checkout` mishap — it IS
+  // git-tracked, so this should not happen in the ordinary course of things),
+  // `existing` is `{}` and every case in CASES silently becomes a "new"
+  // capture against whatever scripts/cross-skill.mjs does TODAY — with no
+  // prior fixture to diff against, so a behavioral regression introduced
+  // since the last real capture would be blessed as the golden reference
+  // with zero visible signal. Require an explicit flag so a full, from-
+  // scratch capture can never happen by accident; a genuine first-time setup
+  // (or a deliberate full re-capture) states that intent instead of falling
+  // out of "the file happened not to be there."
+  if (!fixtureExists && !hasFlag('confirm-fresh-capture')) {
+    process.stderr.write(
+      `  [capture] ${FIXTURE_PATH} does not exist — a bare run would capture all ${CASES.length} `
+      + 'case(s) FROM SCRATCH against the CURRENT scripts/cross-skill.mjs, with no prior fixture to '
+      + 'diff against and no way to distinguish a genuine first capture from an accidental deletion '
+      + 'silently blessing a regression. If the file was deleted by mistake, restore it first:\n'
+      + `    git checkout -- ${path.relative(process.cwd(), FIXTURE_PATH).replace(/\\/g, '/')}\n`
+      + '  If a full from-scratch capture is genuinely intended, re-run with --confirm-fresh-capture.\n',
+    );
+    process.exitCode = 1;
+    return;
+  }
+
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'xskill-capture-'));
   const out = { _comment: 'Captured from the live legacy CLI by scripts/dev/capture-cross-skill-envelopes.mjs — never hand-edit an entry; existing entries are preserved on re-run (see --recapture).', cases: {} };
   let captured = 0;

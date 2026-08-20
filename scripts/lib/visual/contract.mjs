@@ -169,7 +169,13 @@ export function writeContract(root, contract, { force = false, allowDraft = fals
     if (err.code === 'EEXIST') {
       return { ok: false, path: file, error: `${CONTRACT_FILE} already exists — pass force to replace` };
     }
-    throw err;
+    // Every OTHER filesystem failure (EACCES, ENOSPC, EROFS, a bad path, …) must
+    // still surface as the result-style failure this function is documented and
+    // consumed as (visual-audit.mjs's `--bootstrap` handler reads `res.ok`/
+    // `res.error` and never wraps this call in its own try/catch) — an uncaught
+    // throw here would crash the CLI with a raw stack trace instead of the
+    // clean `[visual-audit] <error>` + exit(2) every other failure path gets.
+    return { ok: false, path: file, error: `failed to write ${CONTRACT_FILE}: ${err.code ? `${err.code} — ` : ''}${err.message}` };
   }
   return { ok: true, path: file };
 }

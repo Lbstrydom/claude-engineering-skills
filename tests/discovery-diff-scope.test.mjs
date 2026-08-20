@@ -145,4 +145,24 @@ describe('resolveEligibleDiffPathMap', () => {
     assert.equal(skipped[0].category, 'sensitive');
     assert.equal(skipped[0].path, 'secrets/café.env', 'reported path is the DECODED form, not the raw octal-escaped wire text');
   });
+
+  test('BUG (fp=a9c621d7): the entry budget applies to the FILTERED set, not the raw diff — ' +
+       'a diff dominated by sensitive files must not starve the eligible files of budget', () => {
+    // 210 lexically-sensitive DELETED files (no filesystem target — no symlink
+    // fixtures needed) plus 5 real eligible files = 215 sections, well over
+    // DIFF_PATH_MAP_BUDGETS.maxMapEntries (200). Before the fix, buildDiffPathMap
+    // budgeted the UNFILTERED 215 and returned `discovery_map_exceeds_budget`
+    // before sensitive-path removal ever ran — starving 5 genuinely eligible
+    // files of a map entry because of 210 paths that were never going to reach
+    // the enum anyway.
+    let diffText = '';
+    for (let i = 0; i < 210; i++) diffText += diffFor(`secrets/config-${i}.txt`, `secrets/config-${i}.txt`, 'D');
+    for (let i = 0; i < 5; i++) diffText += diffFor(`src/real-${i}.mjs`);
+
+    const { map, skipped } = resolveEligibleDiffPathMap(diffText, { repoRoot });
+    assert.equal(map.kind, 'ready', 'the 5 eligible files must not be starved by 210 co-occurring sensitive paths');
+    assert.equal(map.entries.length, 5);
+    assert.equal(skipped.length, 210);
+    assert.ok(skipped.every((s) => s.category === 'sensitive'));
+  });
 });

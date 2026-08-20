@@ -194,6 +194,20 @@ describe('lock-with-test — `locked` must never claim a write that did not veri
     assert.match(r.envelope.error, /NOT written/);
     assert.ok(!('specId' in r.envelope), 'no specId may be reported for a write that did not verify');
   });
+
+  // Audit 4a816c06: `--description "   "` passed the old truthiness-only
+  // check (a non-empty string is truthy) while recording nothing readable —
+  // never reaches the writer, so a stub with no store functions proves the
+  // refusal fires before any store call.
+  it('refuses a whitespace-only --description as though none were supplied', async () => {
+    const argsWithBlankDescription = [
+      'lock-with-test', '--finding', 'f-1', '--test',
+      'tests/cross-skill-write-outcome-contract.test.mjs', '--description', '   ',
+    ];
+    const r = await dispatch(argv(...argsWithBlankDescription), { deps: stubDeps({}), cloudGate: 'ready' });
+    assert.equal(r.envelope.ok, false);
+    assert.match(r.envelope.error, /description/);
+  });
 });
 
 describe('record-persona-session — reports the failure WITHOUT discarding the diagnosis', () => {
@@ -269,5 +283,79 @@ describe('count validation — the guard that was satisfied by its own presence'
     const r = await dispatch(argv('record-plan-verify-run', '--json', payload), { deps, cloudGate: 'ready' });
     assert.equal(r.exitCode, 0, JSON.stringify(r.envelope));
     assert.equal(r.envelope.runId, 'run-1');
+  });
+});
+
+// ── Backlog-triage fixes (this session) ─────────────────────────────────────
+
+describe('write-spill drain --cap — presence, not truthiness (audit ccf9e20f/4c93bf9d)', () => {
+  it('refuses --cap "" instead of silently treating it as omitted', async () => {
+    const deps = stubDeps({});
+    const r = await dispatch(argv('write-spill', 'drain', '--cap', ''), { deps, cloudGate: 'ready' });
+    assert.equal(r.envelope.ok, false);
+    assert.equal(r.envelope.error.code, 'BAD_INPUT');
+    assert.match(r.envelope.error.message, /--cap must be a positive integer/);
+  });
+
+  it('a valid --cap still passes through', async () => {
+    const deps = stubDeps({
+      drainSpill: async ({ cap }) => { assert.equal(cap, 5); return { state: 'ok', drained: 0, rejected: 0, failed: 0 }; },
+    });
+    const r = await dispatch(argv('write-spill', 'drain', '--cap', '5'), { deps, cloudGate: 'ready' });
+    assert.equal(r.envelope.ok, true, JSON.stringify(r.envelope));
+  });
+
+  it('an omitted --cap still passes through with no cap (positive control)', async () => {
+    const deps = stubDeps({
+      drainSpill: async ({ cap }) => { assert.equal(cap, undefined); return { state: 'ok', drained: 0, rejected: 0, failed: 0 }; },
+    });
+    const r = await dispatch(argv('write-spill', 'drain'), { deps, cloudGate: 'ready' });
+    assert.equal(r.envelope.ok, true, JSON.stringify(r.envelope));
+  });
+});
+
+describe('get-nav-first-seen — an unresolved repo scope is unmeasured, not empty (audit d994939d/f284a3f4)', () => {
+  it('reports measured:false when the repo scope cannot be resolved', async () => {
+    const deps = stubDeps({
+      resolveRepoForStoreResult: async () => ({ kind: 'unresolved' }),
+    });
+    const payload = JSON.stringify({ driftKeys: ['k1'] });
+    const r = await dispatch(argv('get-nav-first-seen', '--json', payload), { deps, cloudGate: 'ready' });
+    assert.equal(r.envelope.ok, true);
+    assert.equal(r.envelope.measured, false, 'unresolved scope must not read as a measured empty history');
+    assert.equal(r.envelope.reason, 'repo-scope-unresolved');
+    assert.deepEqual(r.envelope.firstSeen, {});
+  });
+
+  it('a resolved repo with real history is still measured (positive control)', async () => {
+    const deps = stubDeps({
+      listNavAuditRunHistory: async () => ({ ok: true, rows: [], truncated: false }),
+    });
+    const payload = JSON.stringify({ driftKeys: ['k1'] });
+    const r = await dispatch(argv('get-nav-first-seen', '--json', payload), { deps, cloudGate: 'ready' });
+    assert.equal(r.envelope.ok, true);
+    assert.equal('measured' in r.envelope, false, 'a genuinely resolved+empty case must not claim measured:false');
+  });
+});
+
+describe('model-ab-adjudicate --limit — refuse rather than silently default (audit b75a48c2/766b246d)', () => {
+  for (const bad of ['nope', '0', '-5', '1.5']) {
+    it(`refuses --limit ${JSON.stringify(bad)}`, async () => {
+      const deps = stubDeps({
+        getModelAbAdjudicationQueue: async () => { throw new Error('the store must not be reached'); },
+      });
+      const r = await dispatch(argv('model-ab-adjudicate', '--limit', bad), { deps, cloudGate: 'ready' });
+      assert.equal(r.envelope.ok, false);
+      assert.equal(r.envelope.error.code, 'BAD_INPUT');
+      assert.match(r.envelope.error.message, /--limit must be a positive integer/);
+    });
+  }
+
+  it('an omitted --limit still defaults to 50 (positive control)', async () => {
+    const deps = stubDeps({
+      getModelAbAdjudicationQueue: async ({ limit }) => { assert.equal(limit, 50); return { items: [], cloud: true }; },
+    });
+    const r = await dispatch(argv('model-ab-adjudicate', '--json'), { deps, cloudGate: 'ready' });
+    assert.equal(r.envelope.ok, true, JSON.stringify(r.envelope));
   });
 });

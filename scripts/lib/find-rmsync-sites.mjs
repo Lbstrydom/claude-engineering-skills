@@ -20,7 +20,9 @@
 
 import { parse } from '@babel/parser';
 import _traverse from '@babel/traverse';
-import { resolvesToModuleBinding, resolvesToNamedImport, findSyncCallbackWrapper } from './import-binding.mjs';
+import {
+  resolvesToModuleBinding, resolvesToNamedImport, resolveNamedImportBinding, findSyncCallbackWrapper,
+} from './import-binding.mjs';
 
 // @babel/traverse ships CJS; under ESM the callable lands on .default (and on
 // .default.default via some interop paths). Normalise once, loudly — same
@@ -142,16 +144,32 @@ function findEnclosingCall(rmSyncCallNode, ancestors) {
  * @property {Object<string, boolean|number|undefined>|null} properties - parsed options keys, or null
  * @property {number|null} lastPropertyEnd - byte offset to splice new properties after (codemod anchor)
  * @property {object|null} enclosingCall - the retrySync(...)-shaped outer CallExpression, or null
+ * @property {boolean|null} enclosingCallResolvesToWrapper - whether `enclosingCall`'s callee
+ *   resolves, via REAL lexical scope in THIS parse, to `opts.wrapperImportSpec`. `null` when
+ *   there is no `enclosingCall`, or `opts.wrapperImportSpec` was not supplied (finding 2ee66195).
  */
 
 /**
  * Locate every `fs.rmSync`/bare-`rmSync` call site in `sourceText`, resolved
  * via real lexical scope (not name matching) — a call through a shadowing
  * local variable or parameter is correctly excluded.
+ *
  * @param {string} sourceText
+ * @param {{wrapperImportSpec?: {importedName: string, moduleAbsPath: string, fromFileAbsPath: string}}} [opts]
+ *   Finding 2ee66195: `enclosingCall` is a raw Babel node, which cannot carry
+ *   lexical-scope info across a re-parse — a second consumer needing "does
+ *   the wrapper identifier resolve to a real import" (e.g.
+ *   `tests/rmsync-retry-guard.test.mjs`) used to re-parse the same source,
+ *   re-traverse it, and reconnect the two independently-created ASTs via a
+ *   manually constructed `start:end` string key. Passing `wrapperImportSpec`
+ *   here answers that question in THIS SAME traversal, where the real NodePath
+ *   (and its scope) is still available — no second parse needed. Omitted
+ *   (the default) is byte-identical to prior behaviour: every existing call
+ *   site is unaffected, and `enclosingCallResolvesToWrapper` reads `null`.
  * @returns {RmSyncCallSite[]}
  */
-export function findRmSyncCallSites(sourceText) {
+export function findRmSyncCallSites(sourceText, opts = {}) {
+  const { wrapperImportSpec = null } = opts;
   const ast = parse(sourceText, { sourceType: 'module', plugins: [] });
   const sites = [];
 
@@ -180,8 +198,25 @@ export function findRmSyncCallSites(sourceText) {
       // Adapt Babel's immediate-to-root NodePath ancestry (current node included
       // at index 0) into the root-to-immediate-parent raw-node array
       // findEnclosingCall expects (its index arithmetic counts back from the end).
-      const ancestors = path.getAncestry().slice(1).reverse().map((p) => p.node);
+      const ancestryPaths = path.getAncestry().slice(1).reverse();
+      const ancestors = ancestryPaths.map((p) => p.node);
       const enclosingCall = findEnclosingCall(node, ancestors);
+
+      let enclosingCallResolvesToWrapper = null;
+      if (enclosingCall && wrapperImportSpec) {
+        // Reconnect the raw `enclosingCall` node to its OWN NodePath from
+        // THIS traversal (reference-equal — findEnclosingCall returns a node
+        // it read out of `ancestors`, which is exactly the array built above)
+        // rather than re-parsing, which is the defect this parameter exists
+        // to close.
+        const enclosingPath = ancestryPaths.find((p) => p.node === enclosingCall);
+        const calleeIdentPath = enclosingPath && enclosingCall.callee.type === 'Identifier'
+          ? enclosingPath.get('callee')
+          : null;
+        enclosingCallResolvesToWrapper = calleeIdentPath
+          ? resolveNamedImportBinding(calleeIdentPath, wrapperImportSpec) === 'matched'
+          : false;
+      }
 
       sites.push({
         start: node.start,
@@ -191,6 +226,7 @@ export function findRmSyncCallSites(sourceText) {
         properties,
         lastPropertyEnd,
         enclosingCall,
+        enclosingCallResolvesToWrapper,
       });
     },
   });

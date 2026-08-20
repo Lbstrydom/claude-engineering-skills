@@ -244,3 +244,34 @@ test('force still replaces, and leaves no temp file behind', (t) => {
   assert.deepEqual(fs.readdirSync(root).filter((f) => f.startsWith('.tmp-')), [],
     'the exclusive/replace paths must both clean up their temp file');
 });
+
+// ── A non-EEXIST write failure must still be a result, never an uncaught throw ──
+// Regression origin: 9c757d6c. writeContract() is documented and consumed
+// (visual-audit.mjs's --bootstrap handler reads `res.ok`/`res.error` with no
+// surrounding try/catch) as a result-returning operation, but only EEXIST was
+// ever converted to {ok:false}; every other atomicWriteFileSync failure
+// (EACCES, ENOSPC, a bad path, …) escaped as an uncaught exception instead.
+
+test('a non-EEXIST filesystem failure surfaces as {ok:false, error}, not a thrown exception', (t) => {
+  const root = mkRoot(t);
+  const boom = new Error('simulated disk full');
+  boom.code = 'ENOSPC';
+  const realWriteFileSync = fs.writeFileSync;
+  t.mock.method(fs, 'writeFileSync', (p, ...rest) => {
+    if (String(p).includes('.tmp-')) throw boom;
+    return realWriteFileSync(p, ...rest);
+  });
+
+  let threw = null;
+  let res;
+  try {
+    res = writeContract(root, FIXTURES.valid, { force: true });
+  } catch (err) {
+    threw = err;
+  }
+
+  assert.equal(threw, null, 'writeContract must not let a non-EEXIST fs error propagate as a throw');
+  assert.equal(res.ok, false);
+  assert.match(res.error, /ENOSPC/);
+  assert.match(res.error, /simulated disk full/);
+});

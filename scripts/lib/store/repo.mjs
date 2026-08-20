@@ -53,6 +53,16 @@ export async function initLearningStore() {
     return false;
   }
   if (!pool) {
+    // Clear any failure recorded by an EARLIER in-process init call (finding
+    // d5d1ccd9): "not configured" is a clean, deliberate state, not a
+    // connectivity failure, and leaving a stale `_initFailure` standing here
+    // would make `getCloudState()` answer 'unreachable' for a store nobody
+    // is even trying to reach. A single real CLI invocation only ever calls
+    // this once (so `_initFailure` starts null and this is a no-op there),
+    // but the module-level singleton persists across multiple in-process
+    // calls — e.g. a batch script that iterates repos/env states — where it
+    // is not a no-op.
+    _clearInitFailure();
     process.stderr.write(
       '  [learning] Cloud store not configured — using local mode.\n' +
       '             Run `npm run setup:cloud` from your claude-engineering-skills install to inherit shared config,\n' +

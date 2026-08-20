@@ -228,6 +228,59 @@ describe('computeEntryPoints', () => {
         'a docblock naming a DIFFERENT file must not self-exempt this one');
     } finally { fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
+
+  it('BUG (fp=da78e8e1): a readdir failure sets the failureTracker out-param, ' +
+     'not just a stderr line — a discovery failure must be distinguishable ' +
+     'from a legitimately-empty scripts/ directory', () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'orphan-discovery-fail-'));
+    try {
+      writeFile(repo, 'package.json', JSON.stringify({ name: 'x', type: 'module' }));
+      // `scripts` is a FILE, not a directory: readdirSync throws ENOTDIR
+      // identically on Windows and POSIX, cross-platform-reproducing the same
+      // "readdir failed" branch a permission error would hit.
+      fs.writeFileSync(path.join(repo, 'scripts'), 'not a directory');
+
+      const tracker = { failed: false };
+      const ep = computeEntryPoints(repo, { failureTracker: tracker });
+      assert.equal(ep.size, 0, 'no entry points recovered from the unreadable path');
+      assert.equal(tracker.failed, true, 'the failure must be reported via the tracker, not just stderr');
+    } finally { fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+  });
+
+  it('omitting failureTracker is byte-identical to prior behaviour (no crash, same Set)', () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'orphan-discovery-notracker-'));
+    try {
+      writeFile(repo, 'package.json', JSON.stringify({ name: 'x', type: 'module' }));
+      fs.writeFileSync(path.join(repo, 'scripts'), 'not a directory');
+      assert.doesNotThrow(() => computeEntryPoints(repo));
+      const ep = computeEntryPoints(repo);
+      assert.equal(ep.size, 0);
+    } finally { fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+  });
+});
+
+describe('resolveDiffScope — entry-point discovery failure downgrades state', () => {
+  it('BUG (fp=da78e8e1): an unreadable scripts/ dir at HEAD downgrades state to ANALYZED_PARTIAL, ' +
+     'not a silent ANALYZED_CLEAN over an incomplete entry-point set', async () => {
+    const repo = newRepo();
+    try {
+      writeFile(repo, 'src/x.mjs', '// v1\n');
+      commit(repo, 'add x');
+      // `scripts` is a FILE at HEAD, not a directory — computeEntryPoints'
+      // readdirSync throws ENOTDIR the same way a permission failure would,
+      // cross-platform. Before the fix, resolveDiffScope's `state` was driven
+      // solely by the diff parser's parsePartial flag, so this degraded
+      // discovery reported ANALYZED_CLEAN indistinguishably from a repo with
+      // no scripts/ directory at all.
+      writeFile(repo, 'scripts', 'not a directory');
+      writeFile(repo, 'src/x.mjs', '// v2\n');
+      commit(repo, 'modify x, add scripts-as-file');
+
+      const scope = await resolveDiffScope({ repoPath: repo, env: gitFixtureEnv(), baseRef: 'HEAD~1', headRef: 'HEAD' });
+      assert.equal(scope.state, 'ANALYZED_PARTIAL',
+        'a readdir failure during entry-point discovery must downgrade state, not report a clean analysis');
+    } finally { fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+  });
 });
 
 describe('resolveDiffScope — rename status', () => {

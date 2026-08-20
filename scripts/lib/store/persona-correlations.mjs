@@ -33,8 +33,21 @@ import { PERSONA_FINDING_HASH_VERSION, PERSONA_FINDING_HASH_SHAPE } from '../per
  */
 export async function recordPersonaAuditCorrelation(personaSessionId, correlation, opts = {}) {
   if (!personaSessionId || !await isCloudEnabled()) return { ok: true };
+  // Was a silent `{ok:true}` no-op (findings eef38861/bc8cea53) — indistinguishable
+  // from a real write, so a producer bug (a missing field on an emitted
+  // correlation) never surfaced anywhere. Both callers already handle
+  // `ok:false` from the hash-shape check just below, so failing loud here is
+  // free and closes the same masked-bug class that check was written for.
   if (!correlation?.personaFindingHash || !correlation?.correlationType || !correlation?.personaSeverity) {
-    return { ok: true };
+    return {
+      ok: false,
+      error: 'personaFindingHash, correlationType, and personaSeverity are all required — got '
+        + JSON.stringify({
+          personaFindingHash: correlation?.personaFindingHash ?? null,
+          correlationType: correlation?.correlationType ?? null,
+          personaSeverity: correlation?.personaSeverity ?? null,
+        }),
+    };
   }
   // Gemini gate R2 shadow finding 6277c9df: this function stamps
   // `hash_version: PERSONA_FINDING_HASH_VERSION` unconditionally below, but
@@ -80,6 +93,40 @@ export async function recordPersonaAuditCorrelation(personaSessionId, correlatio
         refusal = owned;
         throw new Error(owned.message);
       }
+      // Cross-tenant guard (findings 62bee23e/0d5c4c8d): `assertParentOwnership`
+      // above proves `personaSessionId` belongs to `opts.repoId`, but
+      // `auditFindingId`/`auditRunId` are a SEPARATE caller-supplied identity
+      // with no join through the session — a wrong id threaded in (the
+      // documented threat model, ownership.mjs) could correlate this repo's
+      // session against another repo's audit row, corrupting bandit-reward
+      // ground truth for both. Only enforced when the caller resolved a repo
+      // scope (`opts.repoId`); an unscoped call already relaxes the tenant
+      // predicate the same way `assertParentOwnership` does above.
+      if (opts.repoId != null && correlation.auditRunId) {
+        const run = await one(`SELECT repo_id FROM audit_runs WHERE id = $1`, [correlation.auditRunId]);
+        if (!run) {
+          refusal = { reason: 'audit-run-not-found', message: `auditRunId ${correlation.auditRunId} does not exist` };
+          throw new Error(refusal.message);
+        }
+        if (run.repo_id !== opts.repoId) {
+          refusal = { reason: 'audit-run-cross-tenant', message: `auditRunId ${correlation.auditRunId} belongs to a different repo than the resolved scope` };
+          throw new Error(refusal.message);
+        }
+      }
+      if (opts.repoId != null && correlation.auditFindingId) {
+        const finding = await one(
+          `SELECT ar.repo_id FROM audit_findings af JOIN audit_runs ar ON ar.id = af.run_id WHERE af.id = $1`,
+          [correlation.auditFindingId],
+        );
+        if (!finding) {
+          refusal = { reason: 'audit-finding-not-found', message: `auditFindingId ${correlation.auditFindingId} does not exist` };
+          throw new Error(refusal.message);
+        }
+        if (finding.repo_id !== opts.repoId) {
+          refusal = { reason: 'audit-finding-cross-tenant', message: `auditFindingId ${correlation.auditFindingId} belongs to a different repo than the resolved scope` };
+          throw new Error(refusal.message);
+        }
+      }
       // Retire any auto-emitted `audit_missed` (NULL audit_finding_id) row
       // for this exact (session, hash) pair FIRST — a manual repair that
       // corrects a false miss into a real match must not leave BOTH rows
@@ -124,19 +171,31 @@ export async function recordPersonaAuditCorrelation(personaSessionId, correlatio
         // (`conflictWhere: audit_finding_id IS NULL`) — the correct Postgres remedy for
         // NULL-distinct, not an instance of the 403k-row bug.
         // @on-conflict-ok: audit_finding_id is provably non-null on this branch — it is the `if (correlation.auditFindingId)` guard condition; detecting that needs flow analysis.
-        await upsert('persona_audit_correlations', [row],
+        const writeResult = await upsert('persona_audit_correlations', [row],
           { onConflict: ['persona_session_id', 'persona_finding_hash', 'audit_finding_id'], update: 'all' });
+        // Finding 4133080f: the write result used to be discarded here, so a
+        // 0-row upsert (unreachable today with `update: 'all'`, but not an
+        // invariant this code establishes) still returned unconditional
+        // success. Assert what was actually written rather than assume it.
+        if (!writeResult || writeResult.rowCount !== 1) {
+          refusal = { reason: 'write-not-confirmed', message: `expected 1 row written, got rowCount=${writeResult?.rowCount ?? 'unknown'}` };
+          throw new Error(refusal.message);
+        }
       } else {
         // audit_missed: audit_finding_id IS NULL is never equal to itself
         // under a plain column-list constraint (Postgres NULLs are
         // distinct), so ON CONFLICT (a,b,c) can never fire here — the
         // partial 2-column unique index (uq_correlations_missed) is the
         // ONLY conflict target that can dedupe this shape.
-        await upsert('persona_audit_correlations', [row], {
+        const writeResult = await upsert('persona_audit_correlations', [row], {
           onConflict: ['persona_session_id', 'persona_finding_hash'],
           conflictWhere: 'audit_finding_id IS NULL',
           update: 'all',
         });
+        if (!writeResult || writeResult.rowCount !== 1) {
+          refusal = { reason: 'write-not-confirmed', message: `expected 1 row written, got rowCount=${writeResult?.rowCount ?? 'unknown'}` };
+          throw new Error(refusal.message);
+        }
       }
     });
     return { ok: true };

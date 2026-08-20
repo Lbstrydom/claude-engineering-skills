@@ -101,6 +101,30 @@ const mintId = (i) => `f${String(i + 1).padStart(4, '0')}`;
  *   | {kind:'invalid', reason:'malformed_diff_header'|'parser_threw'|'discovery_map_exceeds_budget'|'undecodable_diff_header', detail?:string}}
  */
 export function buildDiffPathMap(diffText, budgets = DIFF_PATH_MAP_BUDGETS) {
+  const parsed = parseDiffPathSections(diffText);
+  if (parsed.kind !== 'ready') return parsed;
+  return applyDiffPathMapBudgets(parsed.sections, budgets);
+}
+
+/**
+ * Parse-only half of `buildDiffPathMap` — every PARSE-shaped failure
+ * (empty input, unparseable, undecodable header), with NO budget enforcement.
+ *
+ * Exists so a caller that must filter sections (e.g. dropping sensitive
+ * paths) can do so BEFORE the entry/byte budgets are checked — see
+ * `applyDiffPathMapBudgets` and `discovery-diff-scope.mjs`'s
+ * `resolveEligibleDiffPathMap` (finding fp=a9c621d7, 2026-08-20): budgeting
+ * the UNFILTERED section count means a diff with, say, 40 eligible files and
+ * 180 sensitive ones trips `discovery_map_exceeds_budget` — and the whole
+ * file falls back to legacy — even though the eligible set is a fifth of the
+ * ceiling. Budgeting belongs on the set that will actually be sent.
+ *
+ * @param {string} diffText
+ * @returns {{kind:'ready', sections: Array<object>}
+ *   | {kind:'empty', reason:'no_eligible_diff_files'}
+ *   | {kind:'invalid', reason:'malformed_diff_header'|'parser_threw'|'undecodable_diff_header', detail?:string}}
+ */
+export function parseDiffPathSections(diffText) {
   const raw = diffText == null ? '' : String(diffText);
   // Genuinely empty (or whitespace-only) input is a legitimate no-op.
   if (raw.trim() === '') return { kind: 'empty', reason: 'no_eligible_diff_files' };
@@ -133,6 +157,24 @@ export function buildDiffPathMap(diffText, budgets = DIFF_PATH_MAP_BUDGETS) {
     };
   }
 
+  return { kind: 'ready', sections };
+}
+
+/**
+ * Budget-and-mint half of `buildDiffPathMap`: given an already-resolved
+ * (and, for a caller like `resolveEligibleDiffPathMap`, already-FILTERED)
+ * section list, enforce the entry-count and rendered-byte budgets and mint
+ * the map's opaque ids. Ids are minted from this array's order, so a caller
+ * that filters sections first gets ids assigned over the filtered set —
+ * harmless, since ids are opaque per-run ordinals (D7), never a stored or
+ * cross-run identity.
+ *
+ * @param {Array<{oldPath:string,newPath:string,fileStatus:string}>} sections
+ * @param {{maxMapEntries?: number, maxPromptTableBytes?: number}} [budgets]
+ * @returns {{kind:'ready', entries: Array<{id:string, oldPath:string, newPath:string, fileStatus:string}>}
+ *   | {kind:'invalid', reason:'discovery_map_exceeds_budget', detail:string}}
+ */
+export function applyDiffPathMapBudgets(sections, budgets = DIFF_PATH_MAP_BUDGETS) {
   const max = budgets?.maxMapEntries ?? DIFF_PATH_MAP_BUDGETS.maxMapEntries;
   if (sections.length > max) {
     // Loud, named, and NOT truncated (§8a). The caller treats this as a

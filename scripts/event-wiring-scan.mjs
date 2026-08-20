@@ -30,6 +30,13 @@ import { resolveSymmetry } from './lib/audit/event-wiring.mjs';
 
 const KNOWN_FLAGS = ['--repo', '--json', '--oracle', '--selfcheck-relocation'];
 
+// isMain guard (audit-clean.mjs precedent) — importing this module (from a
+// test, to reach compareOracle/validateOracleShape via `_internals` below)
+// must not run the top-level flag-check/relocation-check/main() side
+// effects against the IMPORTING process's own argv.
+const isMain = import.meta.url === `file://${process.argv[1]}`
+  || import.meta.url === `file:///${process.argv[1]?.replace(/\\/g, '/')}`;
+
 // audit-code R2/M3,M6,M8 fix: validate flags FIRST, matching cross-skill.mjs's
 // precedent (assertKnownFlags before its own --selfcheck-relocation check) —
 // not check-setup.mjs's/symbol-index/drift.mjs's unconditional-first pattern,
@@ -38,13 +45,15 @@ const KNOWN_FLAGS = ['--repo', '--json', '--oracle', '--selfcheck-relocation'];
 // dependency-free check in the same cli-io.mjs module this file already
 // requires to run at all, so gating on it first doesn't weaken the
 // relocation smoke test's own guarantee (imports resolved).
-try {
-  assertKnownFlags(process.argv.slice(2), KNOWN_FLAGS, { cli: 'event-wiring-scan', from: 0 });
-} catch (err) {
-  process.stderr.write(`${err.message}\n`);
-  process.exit(2);
+if (isMain) {
+  try {
+    assertKnownFlags(process.argv.slice(2), KNOWN_FLAGS, { cli: 'event-wiring-scan', from: 0 });
+  } catch (err) {
+    process.stderr.write(`${err.message}\n`);
+    process.exit(2);
+  }
+  if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
 }
-if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
 
 // audit-code R1/M7 fix: a value-taking flag with no following token (a
 // terminal `--oracle`) or whose "value" is really the next flag (`--oracle
@@ -256,4 +265,7 @@ function compareOracle(expected, coverage, findings) {
   return null;
 }
 
-main();
+/** Internal seams for tests. Underscore-prefixed per repo convention (audit-clean.mjs). */
+export const _internals = { compareOracle, validateOracleShape, requiredValue };
+
+if (isMain) main();

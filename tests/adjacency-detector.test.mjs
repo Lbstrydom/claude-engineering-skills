@@ -244,6 +244,34 @@ describe('container resolution', () => {
     const found = findEnclosingConditional(ast, 4);
     assert.equal(found.branchKind, 'alternate');
   });
+
+  test('BUG (fp=2cdf1c6a): deleting the FIRST/ONLY statement of a braced ' +
+       'conditional must still resolve the container — `headStart` alone ' +
+       'lands on the `if (…) {` line and is excluded as a condition edit', () => {
+    // Real `git diff --unified=0` output for deleting `doA();` from
+    //   if (x) {          <- new-file line 2
+    //     doA();          <- deleted (old-file line 3)
+    //     doB();          <- new-file line 3 after the deletion
+    //   }
+    const diff = [
+      'diff --git a/f.js b/f.js',
+      '--- a/f.js',
+      '+++ b/f.js',
+      '@@ -3 +2,0 @@ if (x) {',
+      '-  doA();',
+      '',
+    ].join('\n');
+    const newFile = 'line1\nif (x) {\n  doB();\n}\nline6\n';
+
+    const { targets: [t] } = parseHunkTargets(diff);
+    const { ast } = parseSource(newFile);
+
+    const resolved = t.anchorLines
+      .map((line) => findEnclosingConditional(ast, line))
+      .filter(Boolean);
+    assert.equal(resolved.length, 1, 'exactly one anchor must resolve the container');
+    assert.equal(resolved[0].ifPath.node.loc.start.line, 2, 'must resolve to the real if-statement');
+  });
 });
 
 describe('parseHunkTargets — anchors', () => {
@@ -265,6 +293,10 @@ describe('parseHunkTargets — anchors', () => {
   test('a PURE DELETION still yields an anchor', () => {
     // `+c,0` has zero `+` lines. An added-lines-only rule returns [] here and
     // deletions are silently ignored — killing the case deletion handling exists for.
+    // `c` is the line BEFORE the gap and `c+1` is the line the gap closed onto —
+    // both are pushed, because `c` alone lands on the `if (…) {` line when the
+    // deleted statement was the container's first/only one, which
+    // findEnclosingConditional's test-expression exclusion then discards.
     const diff = [
       'diff --git a/x.mjs b/x.mjs',
       '--- a/x.mjs',
@@ -274,7 +306,7 @@ describe('parseHunkTargets — anchors', () => {
       '',
     ].join('\n');
     const { targets: [t] } = parseHunkTargets(diff);
-    assert.deepEqual(t.anchorLines, [9], 'the insertion position is the deletion anchor');
+    assert.deepEqual(t.anchorLines, [9, 10], 'both the pre-gap line and the line the gap closed onto are anchors');
   });
 
   test('anchors are deduplicated and sorted', () => {

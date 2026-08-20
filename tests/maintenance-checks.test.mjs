@@ -455,6 +455,66 @@ describe('maintenance-checks — CLI: manual mode on lock contention (round-3 au
   });
 });
 
+// ── AUDIT_LOOP_STATE_DIR override announcement (repeatedly-reopened finding,
+// deliberately NOT structurally fixed — see cc680030's commit message: "made
+// visible, deliberately not 'fixed'") ──────────────────────────────────────
+//
+// Four audit rounds (2026-08-14, 06:56 → 08:21) reopened a "single-instance
+// lock is bypassable via AUDIT_LOOP_STATE_DIR" finding. The as-shipped
+// resolution does NOT decouple LOCK_PATH from the override — STATE_DIR is
+// still `process.env.AUDIT_LOOP_STATE_DIR || path.join(REPO_ROOT,
+// '.audit-loop')`, and LOCK_PATH is still derived from STATE_DIR — so two
+// invocations configured with different state dirs still acquire different
+// locks over the same repo, exactly as every one of the 8 findings describes.
+// The commit's own message says so explicitly: forcing the lock repo-relative
+// would reintroduce the concurrent-test-fixture-deletion bug the override was
+// added to fix, and a second canonical lock was rejected as unwarranted
+// complexity for an operator-opt-in hazard. What actually shipped is a loud,
+// unconditional stderr announcement so a human sees a non-canonical lock is
+// in play. This test locks in THAT mitigation — the one that's real — not a
+// canonical-lock guarantee the code does not provide.
+describe('maintenance-checks — AUDIT_LOOP_STATE_DIR override announcement (accepted-risk mitigation, not a lock-bypass fix)', () => {
+  const repoRoot = path.resolve(import.meta.dirname, '..');
+  const scriptPath = path.join(repoRoot, 'scripts', 'maintenance-checks.mjs');
+  let stateDir;
+
+  beforeEach(() => {
+    stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maintenance-override-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(stateDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  });
+
+  it('announces the override on stderr when AUDIT_LOOP_STATE_DIR is set (--status never touches the real lock/heartbeat)', () => {
+    const r = spawnSync(process.execPath, [scriptPath, '--status', '--json'], {
+      encoding: 'utf-8',
+      timeout: 15_000,
+      env: { ...process.env, AUDIT_LOOP_STATE_DIR: stateDir },
+    });
+    assert.equal(r.status, 0, `stderr=${r.stderr}`);
+    assert.match(
+      r.stderr,
+      /AUDIT_LOOP_STATE_DIR override active .* this run does NOT share the repo's lock or heartbeat/,
+    );
+    // The message must name the actual override path, not a generic notice —
+    // that's what lets an operator correlate two overlapping runs.
+    assert.ok(r.stderr.includes(stateDir), `expected stderr to name the override path ${stateDir}`);
+  });
+
+  it('prints no override announcement when AUDIT_LOOP_STATE_DIR is unset (negative control)', () => {
+    const env = { ...process.env };
+    delete env.AUDIT_LOOP_STATE_DIR;
+    const r = spawnSync(process.execPath, [scriptPath, '--status', '--json'], {
+      encoding: 'utf-8',
+      timeout: 15_000,
+      env,
+    });
+    assert.equal(r.status, 0, `stderr=${r.stderr}`);
+    assert.doesNotMatch(r.stderr, /AUDIT_LOOP_STATE_DIR override active/);
+  });
+});
+
 // ── CHECKS ↔ workflow drift (R1 "Configuration drift") ─────────────────────
 //
 // The finding: the CLI keeps a hand-authored inventory of the weekly commands

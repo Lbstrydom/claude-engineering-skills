@@ -126,6 +126,27 @@ describe('detectPackageManager — declared packageManager field', () => {
     const broken = repoWith('declared-broken', { 'package.json': '{ not json' });
     assert.equal(detectPackageManager(broken).name, 'npm', 'unreadable package.json must not throw');
   });
+
+  it('flags invalidDeclaration on the returned object itself, not just via a downstream consumer', () => {
+    // Round-1 audit H6/M3/M17 (2026-08-15): a typo'd or unsupported
+    // packageManager value must be a DISTINCT outcome from "field absent" —
+    // both the previous test above and ensureAuditDeps's own suite assert this
+    // indirectly through `.name` / `ensureAuditDeps`'s action string, but
+    // nothing pins the flag `detectPackageManager` itself returns. A future
+    // regression that stops setting `invalidDeclaration` (while still
+    // happening to fall through to the same lockfile name) would pass both of
+    // those without being caught here.
+    const unknown = repoWith('declared-unknown-flag', {
+      'package.json': JSON.stringify({ packageManager: 'pnmp@8.0.0' }), // typo'd name
+      'package-lock.json': '{}', // must not be silently trusted either
+    });
+    const d = detectPackageManager(unknown);
+    assert.equal(d.invalidDeclaration, true, 'a malformed declaration must set invalidDeclaration, not just fall through');
+    assert.equal(d.ambiguous, false);
+
+    const absent = repoWith('declared-absent-flag', { 'package.json': '{}', 'package-lock.json': '{}' });
+    assert.equal(detectPackageManager(absent).invalidDeclaration, false, 'no declaration at all must NOT be flagged invalid');
+  });
 });
 
 describe('command construction', () => {
@@ -216,6 +237,28 @@ describe('packageManagerInvocation', () => {
       if (prefix.length > 0) {
         assert.ok(!/\.cmd$/i.test(bin), `${pm} resolved a JS entry but still returned ${bin}`);
       }
+    }
+  });
+
+  it('bun (no bundled JS entry, ever) falls back to the bare binary WITH shell:true on Windows — never a bare .cmd without a shell', () => {
+    // Round-1/round-2/round-3 audit H1/H4/M2/M6 (2026-08-15): this branch used
+    // to hardcode `${pm}.cmd` and spawn it WITHOUT shell:true. Node >= 22.19
+    // rejects spawning a .cmd file without shell:true (EINVAL, CVE-2024-27980
+    // hardening) — so the old shape was unspawnable on every current Windows
+    // Node. bun is the one manager that unconditionally reaches this fallback
+    // (unlike npm/pnpm/yarn it has no bundled JS entry point this module
+    // checks for), so it deterministically exercises the exact branch these
+    // three findings describe, regardless of what happens to be installed in
+    // this environment.
+    const { bin, prefix, viaCorepack, shell } = packageManagerInvocation('bun');
+    assert.equal(prefix.length, 0, 'the bare-binary fallback carries no JS-entry prefix');
+    assert.equal(bin, 'bun', 'the bare manager name, never "bun.cmd"');
+    assert.ok(!/\.cmd$/i.test(bin), 'must never synthesize a .cmd suffix itself');
+    assert.equal(viaCorepack, false);
+    if (process.platform === 'win32') {
+      assert.equal(shell, true, 'Windows must spawn the bare binary through a shell, or Node >= 22.19 EINVALs');
+    } else {
+      assert.equal(shell, false, 'non-Windows must not opt into a shell it does not need');
     }
   });
 });

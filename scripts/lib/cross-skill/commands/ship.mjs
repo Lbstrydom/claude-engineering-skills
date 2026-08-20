@@ -337,7 +337,11 @@ export async function lockWithTestCmd(ctx) {
   const findingId = ctx.flag('finding');
   const testPath = ctx.flag('test');
   const description = ctx.flag('description');
-  if (!findingId || !testPath || !description) {
+  // A whitespace-only `--description "   "` passed the old truthiness check
+  // (audit 4a816c06): the string is non-empty, so `!description` is false,
+  // but nothing readable is actually recorded — the same "mandatory" claim
+  // the comment above makes, unenforced for one specific input shape.
+  if (!findingId || !testPath || !description || !description.trim()) {
     // Concrete example, not `<angle-bracket>` syntax: PowerShell reserves `<`,
     // so a bracketed usage line is unpasteable on this repo's dev platform.
     return { ok: false, error: 'lock-with-test needs --finding, --test and --description. Example: '

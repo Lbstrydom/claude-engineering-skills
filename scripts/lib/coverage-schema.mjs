@@ -42,11 +42,24 @@ export const CoverageSchema = z.object({
     // the application-schema boundary and rely on the DB CHECK constraint as
     // the only backstop, surfacing as a less-informative 'db-error' instead
     // of 'schema-invalid' at the earliest validation point.
+    //
+    // fp=d0c0d2ba (2026-08-20): the duplication above is exactly what let
+    // this list drift out from under GRAPH_REASON — `malformed_measurement`
+    // (graph-verdict.mjs's row 11, a genuinely reachable verdict whenever
+    // extraction.elapsedMs/ratio or attribution.ratio comes back non-finite)
+    // was never added here. `recordGraphCoverage`'s `safeParse` silently
+    // refused to persist that verdict (`schema-invalid`), and
+    // `render-mermaid.mjs`'s `ObservedDepsSchema.parse(envelope)` — a
+    // THROWING parse — crashed `arch:render` outright the one time this path
+    // was actually live. `tests/graph-reason-parity.test.mjs` now asserts
+    // this array's values equal `Object.values(GRAPH_REASON)` so the next
+    // reason added to graph-verdict.mjs fails a test here instead of drifting
+    // silently again.
     reason: z.enum([
       'extraction_failed', 'extraction_timeout', 'not_measured',
       'stale_measurement', 'empty_universe', 'zero_cruised',
       'zero_attributed', 'budget_exceeded', 'below_floor',
-      'below_attribution_floor',
+      'below_attribution_floor', 'malformed_measurement',
     ]).nullable(),
   }),
   measuredAt: z.iso.datetime(),

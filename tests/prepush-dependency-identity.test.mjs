@@ -170,7 +170,7 @@ describe('the sandbox actually consumes this decision', () => {
   it('provisionNodeModules gates the link on dependencySetChanged', () => {
     assert.match(runnerSrc, /import \{ dependencySetChanged \} from '\.\/lib\/dependency-identity\.mjs'/);
     assert.match(runnerSrc, /const deps = dependencySetChanged\(/);
-    assert.match(runnerSrc, /const lockChanged = filePairChanged\(lockMain, lockSandbox\) \|\| deps\.changed;/);
+    assert.match(runnerSrc, /const lockChanged = filePairChanged\(lockMain, lockSandbox\) \|\| deps\.changed \|\| modulesStale;/);
   });
 
   it('still compares the LOCKFILE whole-file — every byte of it is dependency-relevant', () => {

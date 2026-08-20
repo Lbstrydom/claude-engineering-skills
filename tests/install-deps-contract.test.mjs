@@ -71,6 +71,18 @@ describe('consumer dependency contract', () => {
     assert.deepEqual(undeclared, [], `bundle imports but source package.json omits: ${undeclared.join(', ')}`);
   });
 
+  it('provisions the SAME playwright package playwright-runner.mjs actually resolves (round-3 audit H1/H4, 2026-08-15)', () => {
+    // Cross-file contract: playwright-runner.mjs's resolvePlaywrightCli() tries
+    // `@playwright/test/cli` first, then falls back to the BASE `playwright`
+    // package's own `bin` entry. OPTIONAL_DEPS used to list `@playwright/test`
+    // while never provisioning plain `playwright`, so a consumer whose
+    // install had run via this list could satisfy neither of the runner's two
+    // resolution attempts. The fix was to have this list provision the
+    // package the runner's fallback step actually needs.
+    assert.ok(OPTIONAL_DEPS.includes('playwright'), 'must provision the base package the runner falls back to');
+    assert.ok(!OPTIONAL_DEPS.includes('@playwright/test'), 'must not re-introduce the package the runner never requires this list to provide');
+  });
+
   it('findMissingDeps reports nothing for a repo with no package.json', () => {
     const res = findMissingDeps(path.join(REPO_ROOT, 'tests', '__no_such_repo__'));
     assert.equal(res.hasPackageJson, false);

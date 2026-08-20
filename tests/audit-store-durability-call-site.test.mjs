@@ -73,8 +73,19 @@ const STORE_MODULES = (function listStoreModules(rel = STORE_DIR) {
  * reported the tree clean. A verb list is a second place to be incomplete;
  * it is kept deliberately broad, and a name that is write-shaped but harmless
  * costs one exemption line.
+ *
+ * `insert`/`create` added (audit finding dabaac2e/3685a9ea, 2026-08-20): NOT
+ * hypothetical either — a live census against the current
+ * `scripts/lib/store/**` found FOUR real exports this narrower set had never
+ * once examined: `insertLearningDecision`, `insertFrictionNote`,
+ * `createEvalRun`, `insertRunRowWithPolicyFallback`. Each is now classified
+ * below in `NOT_A_DURABLE_WRITE` on its own actual failure semantics (checked
+ * against its call sites, not assumed) — the same discipline every existing
+ * entry already carries. A verb-based oracle can never be proven exhaustive
+ * (there is always some hypothetical next verb), so this remains an accepted,
+ * deliberately-broad list rather than a claim of completeness.
  */
-const WRITER_NAME = /^(record|sync|upsert|save|persist|write|delete|retire|mark)[A-Z]/;
+const WRITER_NAME = /^(record|sync|upsert|save|persist|write|delete|retire|mark|insert|create)[A-Z]/;
 
 /**
  * Exports that are write-shaped but are NOT durable audit-store writes, each
@@ -183,6 +194,16 @@ const NOT_A_DURABLE_WRITE = {
   recordSecurityIncidents: 'security:refresh CLI, and it THROWS — the failure is representable, and the incident source of truth is docs/security-strategy.md on disk.',
   recordSecurityEvents: 'security:refresh CLI; THROWS. Governance evidence whose source is the committed strategy doc.',
   markIncidentsHistorical: 'security:refresh CLI; THROWS, and the marker is re-derived from the strategy doc on every refresh.',
+
+  // ── insert/create verb-widening pass (audit finding dabaac2e, 2026-08-20) ──
+  //
+  // Surfaced by widening WRITER_NAME above; each reason below was checked
+  // against the function's actual body and its real call sites, not assumed
+  // from the name.
+  insertLearningDecision: 'Learning telemetry write (learning_decisions.mjs). `safeWrite()` never throws — it returns {ok,applied,error} — and every caller routes through decision-logger.mjs\'s retryWithBackoff, whose own failures spill to .audit/learning-outbox/ (that subsystem\'s own spill path, same ground as recordFindingResolution above).',
+  insertFrictionNote: 'Friction-log write (learning_decisions.mjs). Never throws (try/catch inside the function itself); both call sites (friction-log.mjs, learning/backfill-outcomes.mjs) explicitly check `.ok` and react — a local fallback file, or retaining the line for the next drain attempt — so the failure is already representable.',
+  createEvalRun: 'Operator model-eval-{auditor,adjudicator}/executors.mjs CLI write (D3a cohort persistence). Never silently swallows a failure: succeeds with {ok:true,...} or THROWS a typed error (EvalRunAlreadyActiveError / ComparisonArmAttemptCollisionError, or the raw error for an unrecognised case) that reaches the operator as an uncaught exception. Same category as upsertComparison above.',
+  insertRunRowWithPolicyFallback: 'Shared run-row insert helper (regression-specs.mjs / plan-verification.mjs). Retries ONCE, only for the known 42703 migration-lag shape; its own docstring guarantees any OTHER error "propagates to the caller\'s existing handling — never a broader swallow."',
 };
 
 /**

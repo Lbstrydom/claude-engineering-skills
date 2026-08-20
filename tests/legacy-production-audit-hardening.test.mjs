@@ -56,6 +56,8 @@ const {
   writeLearningState, cleanupCache, classifyShadowFailureSafe, runOrphanIntroducedPass, dedupReplacementId,
   buildSuppressionStats,
 } = lpa.__testExports;
+// Real (non-gated) exports — both directly importable without AUDIT_EXPORTS_FOR_TESTS.
+const { runLegacyProductionAudit, buildAuditRunContext } = lpa;
 
 const { clampConfigNumber } = await import('../scripts/lib/config.mjs');
 const { FindingSchema, LedgerEntrySchema, ReduceStatus, REDUCE_STATUS_VALUES, reduceStatusFromErrorCategory, ExecutionMetaSchema } = await import('../scripts/lib/schemas.mjs');
@@ -1112,5 +1114,171 @@ describe('run-cost telemetry reaches the store (2026-08-10 regression)', () => {
     const payload = SRC.slice(SRC.indexOf('const completionStats = {'));
     const block = payload.slice(0, payload.indexOf('\n    };'));
     assert.doesNotMatch(block, /costEstimate:\s*totalUsage\.costUsd\s*\|\|/, 'a `||` fallback here turns an unknown cost into a measured $0');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Unlocked-fixes triage (2026-08-20) — an unreadable `--diff` file
+// ═══════════════════════════════════════════════════════════════════════
+//
+// Collapses 5 raw findings describing the SAME root behavior (an unreadable
+// --diff silently downgraded to `diffText: null`) into one test, because
+// there are genuinely TWO different diffFile-reading call sites in this
+// file with two DIFFERENT, both-correct outcomes:
+//
+//   1. `runLegacyProductionAudit`'s own read (~line 2101) is the LEGACY path
+//      and fails LOUD — an explicitly-passed but unreadable --diff throws a
+//      detailed, actionable error. This is the real fix for the "silent
+//      degrade" bug the findings describe.
+//   2. `buildAuditRunContext`'s read (~line 4914) runs unconditionally for
+//      EVERY invocation (legacy or tiered) before either path has even been
+//      selected, so throwing there would crash runs that never touch the
+//      tiered pipeline's diffText consumer. Per its own extensive in-source
+//      rationale this is a DELIBERATE fail-open — but no longer a SILENT
+//      one: it now logs a distinguishing stderr line. This is the correct,
+//      narrower fix for that call site (not a "still broken" finding).
+describe('an unreadable --diff file: legacy path fails loud, context-builder fails open but logged', () => {
+  function minimalCtx(overrides = {}) {
+    return {
+      planContent: '# fixture plan\n',
+      projectContext: '', historyContext: '',
+      passFilter: [], fileFilter: null, round: 1, ledgerFile: null,
+      diffFile: null, changedFiles: [], auditBaseCommit: null,
+      repoProfile: null, bandit: null, fpTracker: null,
+      noLedger: true, noTools: true, strictLint: false, noDebtLedger: true,
+      readOnlyDebt: true, escalateRecurring: null, sessionCacheHit: null,
+      scopeMode: 'diff', planFile: null, runId: null, allowInfraScope: true,
+      outFile: null, providers: {}, noCloudRecording: true,
+      workingTreeDirty: false,
+      ...overrides,
+    };
+  }
+
+  it('runLegacyProductionAudit throws a detailed, actionable error for an unreadable explicit --diff (never continues with a degraded/absent diff)', async () => {
+    const missingPath = path.join(os.tmpdir(), `lpa-missing-diff-${process.pid}-${Date.now()}.patch`);
+    assert.equal(fs.existsSync(missingPath), false, 'precondition: the path must not exist');
+    await assert.rejects(
+      () => runLegacyProductionAudit(minimalCtx({ diffFile: missingPath })),
+      (err) => {
+        assert.match(err.message, new RegExp(`--diff .*${missingPath.replace(/\\/g, '\\\\')}.*is not a readable file`));
+        assert.match(err.message, /ENOENT|Pass a readable unified-diff file, or omit --diff/);
+        return true;
+      },
+      'an explicitly-passed unreadable --diff must fail loudly, not silently degrade to no-annotation',
+    );
+  });
+
+  it('buildAuditRunContext degrades diffText to null AND logs a distinguishing message for an unreadable --diff (deliberate fail-open, no longer silent)', async () => {
+    const missingPath = path.join(os.tmpdir(), `lpa-missing-diff-ctx-${process.pid}-${Date.now()}.patch`);
+    assert.equal(fs.existsSync(missingPath), false, 'precondition: the path must not exist');
+
+    let stderrOutput = '';
+    const originalWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (chunk) => { stderrOutput += chunk; return true; };
+    let result;
+    try {
+      result = await buildAuditRunContext({
+        openai: undefined,
+        planContent: '# fixture plan\n',
+        diffFile: missingPath,
+        changedFiles: [],
+      });
+    } finally {
+      process.stderr.write = originalWrite;
+    }
+
+    assert.equal(result.diffText, null, 'an unreadable --diff must degrade diffText to null (fail-open by design here)');
+    assert.equal(result.diffFile, missingPath, 'the original diffFile path is still carried through unchanged');
+    assert.match(stderrOutput, /--diff .*unreadable/, 'the degrade must be logged, not silent');
+    assert.match(stderrOutput, /degraded to null/);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Unlocked-fixes triage (2026-08-20) — event-wiring detection failure
+// boundary (Cluster-B audit-code R1/H3 fix, landed 2026-08-19 09:13 in
+// commit 7ed02805)
+// ═══════════════════════════════════════════════════════════════════════
+//
+// `detectEventWiringAsymmetry` does non-trivial git I/O (batched blob reads,
+// D12 lock acquisition) and was UNGUARDED for its first few hours in the
+// tree (introduced in 82af2301 the same morning) — an exception there would
+// propagate past runEventWiringSymmetryPass's own caller and crash the
+// WHOLE audit run. `runEventWiringSymmetryPass` is not exposed via
+// __testExports and its collaborator is a plain ESM named import (not
+// injectable), so a full behavioral repro would need to make real git I/O
+// fail from inside a mocked module — this static guard instead pins the
+// exact fix shape, mirroring this file's own established "Phase 6" pattern
+// for internals that aren't exported for direct injection.
+describe('event-wiring detection failure boundary (static regression guard)', () => {
+  it('the detectEventWiringAsymmetry call inside runEventWiringSymmetryPass is wrapped in its own try/catch returning state: ERROR', () => {
+    const src = fs.readFileSync(path.resolve('scripts/lib/audit/legacy-production-audit.mjs'), 'utf-8');
+    const fnStart = src.indexOf('async function runEventWiringSymmetryPass(');
+    assert.ok(fnStart >= 0, 'runEventWiringSymmetryPass must exist');
+    const fnBody = src.slice(fnStart, fnStart + 4000);
+    const callIdx = fnBody.indexOf('detectEventWiringAsymmetry({');
+    assert.ok(callIdx >= 0, 'the detector call must exist inside the function');
+    // The nearest preceding `try {` (within a short window) must belong to
+    // THIS call, and the nearest following `catch` must return a structured
+    // ERROR state rather than let the exception propagate.
+    const before = fnBody.slice(Math.max(0, callIdx - 120), callIdx);
+    assert.match(before, /try\s*\{/, 'the detector call must be inside a try block');
+    const after = fnBody.slice(callIdx, callIdx + 900);
+    assert.match(after, /\}\s*catch\s*\(err\)\s*\{/, 'a catch must immediately follow the detector call/try region');
+    assert.match(after, /state:\s*'ERROR'/, 'the catch must degrade to a structured ERROR state, never rethrow/crash the run');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Unlocked-fixes triage (2026-08-20) — syncFalsePositivePatterns is
+// awaited and counted via durableWrite (fixed 2026-08-12, commit c318f6a4)
+// ═══════════════════════════════════════════════════════════════════════
+//
+// Was `syncFalsePositivePatterns(...).catch(e => process.stderr.write(...))`
+// inside `writeLearningState` — un-awaited, so the pg pool's
+// `allowExitOnIdle: true` could kill it in flight once the last awaited
+// query went idle (the same mechanism that left 25/25 code runs with
+// un-updated completion rows in July). Now routed through
+// `durableWrite('learning.fpPatterns', …)`, awaited, and its outcome
+// tallied — matching the sibling `learning.banditArms` fix already pinned
+// by this file's "Item 1" tests above.
+describe('syncFalsePositivePatterns reaches the store through an awaited durableWrite (static regression guard)', () => {
+  const SRC = fs.readFileSync('scripts/lib/audit/legacy-production-audit.mjs', 'utf-8');
+
+  it('no fire-and-forget syncFalsePositivePatterns(...).catch( call site remains', () => {
+    // Precise match on the historical buggy shape (nested parens defeat a
+    // simple `\([^)]*\)` — `fpTracker.dirtyPatterns()` has its own closing
+    // paren before the outer call's).
+    assert.doesNotMatch(
+      SRC, /syncFalsePositivePatterns\(cloudRepoId, fpTracker\.dirtyPatterns\(\)\)\.catch\(/,
+      'syncFalsePositivePatterns must not be called with a bare .catch() fire-and-forget — it must be awaited',
+    );
+    // General form too: any direct call immediately followed by `.catch(`
+    // rather than being passed through `durableWrite`.
+    assert.doesNotMatch(
+      SRC, /syncFalsePositivePatterns\([^;]*?\)\.catch\(/s,
+      'syncFalsePositivePatterns must not be called with a bare .catch() fire-and-forget — it must be awaited',
+    );
+  });
+
+  it('the fpTracker cloud-sync block awaits writeLearningState wrapping a durableWrite(\'learning.fpPatterns\', …) call', () => {
+    const blockStart = SRC.indexOf('if (fpTracker) {');
+    assert.ok(blockStart >= 0, 'the fpTracker cloud-sync block must exist');
+    const block = SRC.slice(blockStart, blockStart + 1000);
+    assert.match(block, /await writeLearningState\(learningWritesAllowed, async \(\) => \{/,
+      'the fpTracker sync must be awaited through the writeLearningState capability gate');
+    assert.match(block, /await durableWrite\('learning\.fpPatterns',/,
+      'the fpTracker sync must route through durableWrite so its outcome is counted, not fire-and-forget');
+    assert.match(block, /tallyWriteOutcomes\(writeOutcomes,/,
+      'the durableWrite outcome must be tallied so a lost/spilled write is visible on the run result');
+  });
+
+  it('the learning.fpPatterns writer is registered against the real syncFalsePositivePatterns implementation', () => {
+    const writersSrc = fs.readFileSync(path.resolve('scripts/lib/audit-store-writers.mjs'), 'utf-8');
+    const regIdx = writersSrc.indexOf("registerWriter('learning.fpPatterns'");
+    assert.ok(regIdx >= 0, 'learning.fpPatterns must be registered — durableWrite throws on an unregistered id');
+    const reg = writersSrc.slice(regIdx, regIdx + 200);
+    assert.match(reg, /syncFalsePositivePatterns\(payload\.repoId, payload\.patterns\)/,
+      'the registered writer must delegate to the real syncFalsePositivePatterns, not a stub');
   });
 });
