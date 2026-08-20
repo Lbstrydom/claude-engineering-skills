@@ -284,7 +284,7 @@ export function scopeForEntry(entry) {
   if (!campaignId) return null;
   const r = selectCampaignConfig({ campaignId });
   if (!r.ok) return null;
-  return createResolvedScope(campaignId, deriveArms(r.config), r.config.controls?.envelopeScope ?? null);
+  return createResolvedScope(campaignId, deriveArms(r.config), r.config.controls?.envelopeScope ?? null, r.configDigest);
 }
 
 /**
@@ -339,7 +339,7 @@ export function resolveArms({ campaignId = null, dir = undefined } = {}) {
   const collision = classifyArmCollisions(selected.config);
   if (!collision.ok) throw new ArgvError(collision.message);
   const arms = deriveArms(selected.config);
-  const scope = createResolvedScope(selected.config.id, arms, selected.config.controls?.envelopeScope ?? null);
+  const scope = createResolvedScope(selected.config.id, arms, selected.config.controls?.envelopeScope ?? null, selected.configDigest);
   return {
     scope,
     config: selected.config,

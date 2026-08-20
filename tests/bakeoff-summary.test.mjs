@@ -155,6 +155,56 @@ describe('isComplete — scope-binding eligibility (plan KD-6)', () => {
   });
 });
 
+describe('isComplete — configDigest binding (§7 Phase 6)', () => {
+  const CONFIG_DIGEST = 'config-current';
+  const SCOPE_DIGEST = createResolvedScope('c', [
+    { id: 'opus', model: 'm' }, { id: 'kimi', model: 'm' }, { id: 'solo-opus', model: 'm', solo: true },
+  ], null, CONFIG_DIGEST);
+  const ran = (over) => ({ shadowState: 'ran', buckets: { shadowOnly: 1 }, primaryVerdict: 'CONCERNS', ...over });
+  const full = (over = {}) => ({
+    contractEpoch: CONTRACT_EPOCH,
+    arms: {
+      opus: ran({ configDigest: CONFIG_DIGEST }), kimi: ran({ configDigest: CONFIG_DIGEST }),
+      'solo-opus': { primaryVerdict: 'APPROVE', configDigest: CONFIG_DIGEST },
+      ...over,
+    },
+  });
+
+  it('every arm matching the expected configDigest counts', () => {
+    assert.equal(isComplete(full(), SCOPE_DIGEST), true);
+  });
+
+  it('a snapshot collected under an OLD configDigest no longer passes, even when every other check passes', () => {
+    assert.equal(isComplete(full({ opus: ran({ configDigest: 'config-OLD' }) }), SCOPE_DIGEST), false);
+  });
+
+  it("H6's negative case: a scope with ONLY solo arms still enforces the check", () => {
+    const soloOnlyScope = createResolvedScope('c', [{ id: 'solo-opus', model: 'm', solo: true }], null, CONFIG_DIGEST);
+    const e = { contractEpoch: CONTRACT_EPOCH, arms: { 'solo-opus': { primaryVerdict: 'APPROVE', configDigest: 'config-OLD' } } };
+    assert.equal(isComplete(e, soloOnlyScope), false,
+      'a nested-inside-!a.solo implementation would silently skip this check for an all-solo scope');
+  });
+
+  it('Gemini gate round 4, G1: a snapshot with NO recorded configDigest (pre-migration legacy shape) STILL passes', () => {
+    const legacyEntry = {
+      contractEpoch: CONTRACT_EPOCH,
+      arms: { opus: ran(), kimi: ran(), 'solo-opus': { primaryVerdict: 'APPROVE' } }, // no configDigest field anywhere
+    };
+    assert.equal(isComplete(legacyEntry, SCOPE_DIGEST), true,
+      'an exact-match implementation would fail every pre-migration snapshot on day one');
+  });
+
+  it('round 6, H1: a MIX of arms — one carried-forward arm with an OLD configDigest, the rest CURRENT — fails on the stale arm alone', () => {
+    // mergeRetryHistory carries an older invocation's arm forward unchanged;
+    // an entry-level check would have read the freshest invocation's digest
+    // for this arm too and silently passed.
+    const e = full({ opus: ran({ configDigest: 'config-STALE-carried-forward' }) });
+    assert.equal(isComplete(e, SCOPE_DIGEST), false);
+    // Negative control: the SAME entry with every arm current passes.
+    assert.equal(isComplete(full(), SCOPE_DIGEST), true);
+  });
+});
+
 describe('counting rules shared by the two Opus samples', () => {
   it('distinctFindingCount dedups by _hash, so a primary is counted the shadow’s way', () => {
     // The shadow is deduped before bucketing; the primary is written raw.

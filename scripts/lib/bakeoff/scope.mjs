@@ -110,6 +110,9 @@ export function assertResolvedScope(scope) {
   if (scope.expectedScope !== null && typeof scope.expectedScope !== 'string') {
     throw new UnresolvedScopeError('[bakeoff/scope] ResolvedScope.expectedScope must be a string or null');
   }
+  if (scope.expectedConfigDigest !== undefined && scope.expectedConfigDigest !== null && typeof scope.expectedConfigDigest !== 'string') {
+    throw new UnresolvedScopeError('[bakeoff/scope] ResolvedScope.expectedConfigDigest must be a string, null, or undefined');
+  }
 }
 
 /**
@@ -117,13 +120,18 @@ export function assertResolvedScope(scope) {
  * deep-freezes. The ONLY constructor — `resolveArms`/`scopeForEntry` call
  * this, nothing else may.
  *
+ * `expectedConfigDigest` (§7 Phase 6) defaults to `null` — every EXISTING
+ * 3-argument call site (a large existing test surface) stays byte-identical;
+ * only `resolveArms`/`scopeForEntry` pass a real value.
+ *
  * @param {string} campaignId
  * @param {object[]} arms
  * @param {string|null} expectedScope
- * @returns {Readonly<{campaignId: string, arms: ReadonlyArray<object>, expectedScope: string|null}>}
+ * @param {string|null} [expectedConfigDigest]
+ * @returns {Readonly<{campaignId: string, arms: ReadonlyArray<object>, expectedScope: string|null, expectedConfigDigest: string|null}>}
  */
-export function createResolvedScope(campaignId, arms, expectedScope) {
-  const scope = { campaignId, arms, expectedScope };
+export function createResolvedScope(campaignId, arms, expectedScope, expectedConfigDigest = null) {
+  const scope = { campaignId, arms, expectedScope, expectedConfigDigest };
   assertResolvedScope(scope);
   return deepFreezeScope(scope);
 }

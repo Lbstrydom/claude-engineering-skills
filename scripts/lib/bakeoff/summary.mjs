@@ -45,7 +45,7 @@ const DEFAULT_TARGET = 12;
  */
 export function isComplete(entry, scope) {
   assertResolvedScope(scope);
-  const { arms, expectedScope } = scope;
+  const { arms, expectedScope, expectedConfigDigest } = scope;
   // Duplicated as a literal (not imported) for the SAME reason DEFAULT_TARGET
   // is above — `log.mjs`, which owns CONTRACT_EPOCH, is off-limits to this
   // module per D2a. Not silent drift: tests/bakeoff-summary.test.mjs's
@@ -62,6 +62,26 @@ export function isComplete(entry, scope) {
     return a.solo ? Boolean(r.primaryVerdict) : r.shadowState === 'ran';
   });
   if (!armsRan) return false;
+
+  // §7 Phase 6: configDigest binding — its OWN, per-arm check, evaluated
+  // UNCONDITIONALLY over every declared arm (never nested inside the
+  // `!a.solo` shadow-scope quantification below, and never skipped just
+  // because `expectedScope` is null — H6: configDigest is
+  // snapshot/campaign-configuration provenance, not a shadow-output
+  // property, so a scope with only solo/primary arms, or a campaign with no
+  // declared envelopeScope at all, still has a config to verify). Reads
+  // each arm's OWN stamped `configDigest` (Phase 4's per-attempt
+  // provenance) rather than a single entry-level field, so a carried-forward
+  // arm collected under a stale config cannot pass just because a LATER,
+  // unrelated retry touched the same log line. Permissive on a missing
+  // digest (round 6, Gemini gate G1) — an exact-match comparison would fail
+  // every pre-migration snapshot on day one.
+  const configOk = arms.every((a) => {
+    const r = entry?.arms?.[a.id];
+    return r?.configDigest == null || r.configDigest === expectedConfigDigest;
+  });
+  if (!configOk) return false;
+
   if (expectedScope === null) return true; // no campaign scope declared — nothing to bind
 
   // Scope-binding eligibility (plan KD-6, H1's correction): every SHADOW-
