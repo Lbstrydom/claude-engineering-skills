@@ -105,7 +105,10 @@ test('a profile-less resolveRepoForStore leaves last_audited_at NULL', { skip },
     await assert.rejects(
       withTx(async () => {
         // First touch of this repo is a pure id lookup (no profile) — the
-        // auto-vivify path. It must NOT claim the repo was audited.
+        // auto-vivify path. It must NOT claim the repo was audited. True by
+        // construction here: `isolatedCwd` has no .git ancestor, so this run
+        // mints a fresh path-fallback uuid nothing else could have touched —
+        // see the isolation note above.
         const readOnly = await resolveRepoForStore({ cwd: isolatedCwd });
         const afterRead = await one(
           `SELECT last_audited_at FROM audit_repos WHERE id = $1`, [readOnly.repoRowId],

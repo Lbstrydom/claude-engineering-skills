@@ -142,6 +142,14 @@ const NOT_A_DURABLE_WRITE = {
   recordHumanOverride: 'campaign harness CLI; operator-initiated and awaited — a failure reaches the operator as a non-zero exit.',
   recordAdjudicationAttempt: 'campaign harness CLI; discriminated result, checked by its caller.',
   writeClusterSet: 'campaign harness CLI; derived clustering, recomputed per adjudication run.',
+  // §7 Phase 5 (campaign-arm-state-and-identity-integrity.md, round 5 H4):
+  // squarely in the same campaign-harness-write family as recordArmRun/
+  // upsertSnapshot above, not a third exception to a two-writer rule.
+  // Named `markSnapshotExcluded`, not `quarantineSnapshot`, so it matches
+  // the WRITER_NAME oracle's `mark[A-Z]` shape and cannot silently evade
+  // this exemption requirement.
+  markSnapshotExcluded: 'campaign harness CLI; discriminated result (ON CONFLICT DO NOTHING is the idempotency mechanism), checked by its caller.',
+  liftSnapshotExclusion: 'campaign harness CLI; discriminated result, checked by its caller — the unquarantine counterpart to markSnapshotExcluded.',
 
   // (c) Operator-initiated cross-skill CLI writes. Synchronous and awaited, and
   // since §2b F2 every one of them reports a discriminated outcome that its

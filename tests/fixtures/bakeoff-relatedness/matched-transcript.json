@@ -1,0 +1,8 @@
+{
+  "mode": "plan",
+  "findings": [
+    { "section": "§2 scripts/gemini-review.mjs — shadow envelope scoping", "severity": "HIGH" },
+    { "section": "§5 model-pricing.mjs pricing table", "severity": "MEDIUM" },
+    { "file": "bakeoff-collect.mjs", "severity": "LOW" }
+  ]
+}

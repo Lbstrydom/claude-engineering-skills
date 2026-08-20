@@ -1679,6 +1679,20 @@
           "is_nullable": "NO",
           "column_default": "now()",
           "ordinal_position": 13
+        },
+        {
+          "column_name": "plan_content_hash",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 14
+        },
+        {
+          "column_name": "config_digest",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 15
         }
       ]
     },
@@ -1853,6 +1867,74 @@
           "is_nullable": "NO",
           "column_default": "now()",
           "ordinal_position": 6
+        }
+      ]
+    },
+    {
+      "table_name": "campaign_snapshot_exclusions",
+      "columns": [
+        {
+          "column_name": "id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": "gen_random_uuid()",
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "cohort_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "snapshot_id",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 3
+        },
+        {
+          "column_name": "scope",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 4
+        },
+        {
+          "column_name": "plan_content_hash",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 5
+        },
+        {
+          "column_name": "excluded_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "NO",
+          "column_default": "now()",
+          "ordinal_position": 6
+        },
+        {
+          "column_name": "excluded_reason",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 7
+        },
+        {
+          "column_name": "lifted_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 8
+        },
+        {
+          "column_name": "lifted_reason",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 9
         }
       ]
     },
@@ -9203,6 +9285,36 @@
       "definition": "PRIMARY KEY (id)"
     },
     {
+      "table_name": "campaign_snapshot_exclusions",
+      "constraint_name": "campaign_snapshot_exclusions_pkey",
+      "constraint_type": "PRIMARY KEY",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "table_name": "campaign_snapshot_exclusions",
+      "constraint_name": "campaign_snapshot_exclusions_scope_check",
+      "constraint_type": "CHECK",
+      "definition": "CHECK ((scope = ANY (ARRAY['pairing'::text, 'all'::text])))"
+    },
+    {
+      "table_name": "campaign_snapshot_exclusions",
+      "constraint_name": "exclusions_all_scope_ignores_hash_chk",
+      "constraint_type": "CHECK",
+      "definition": "CHECK (((scope = 'pairing'::text) OR (plan_content_hash IS NULL)))"
+    },
+    {
+      "table_name": "campaign_snapshot_exclusions",
+      "constraint_name": "exclusions_lift_coherent_chk",
+      "constraint_type": "CHECK",
+      "definition": "CHECK (((lifted_at IS NULL) = (lifted_reason IS NULL)))"
+    },
+    {
+      "table_name": "campaign_snapshot_exclusions",
+      "constraint_name": "exclusions_snapshot_fk",
+      "constraint_type": "FOREIGN KEY",
+      "definition": "FOREIGN KEY (cohort_id, snapshot_id) REFERENCES campaign_snapshots(cohort_id, snapshot_id) ON DELETE CASCADE"
+    },
+    {
       "table_name": "campaign_snapshots",
       "constraint_name": "campaign_snapshots_cohort_id_fkey",
       "constraint_type": "FOREIGN KEY",
@@ -10640,6 +10752,11 @@
     },
     {
       "tablename": "campaign_arm_runs",
+      "indexname": "idx_campaign_arm_runs_audit_run_id",
+      "indexdef": "CREATE UNIQUE INDEX idx_campaign_arm_runs_audit_run_id ON public.campaign_arm_runs USING btree (audit_run_id) WHERE (audit_run_id IS NOT NULL)"
+    },
+    {
+      "tablename": "campaign_arm_runs",
       "indexname": "idx_campaign_arm_runs_cohort",
       "indexdef": "CREATE INDEX idx_campaign_arm_runs_cohort ON public.campaign_arm_runs USING btree (cohort_id)"
     },
@@ -10682,6 +10799,31 @@
       "tablename": "campaign_events",
       "indexname": "idx_campaign_events_campaign",
       "indexdef": "CREATE INDEX idx_campaign_events_campaign ON public.campaign_events USING btree (campaign_id, created_at)"
+    },
+    {
+      "tablename": "campaign_snapshot_exclusions",
+      "indexname": "campaign_snapshot_exclusions_pkey",
+      "indexdef": "CREATE UNIQUE INDEX campaign_snapshot_exclusions_pkey ON public.campaign_snapshot_exclusions USING btree (id)"
+    },
+    {
+      "tablename": "campaign_snapshot_exclusions",
+      "indexname": "idx_campaign_snapshot_exclusions_all",
+      "indexdef": "CREATE UNIQUE INDEX idx_campaign_snapshot_exclusions_all ON public.campaign_snapshot_exclusions USING btree (cohort_id, snapshot_id) WHERE ((scope = 'all'::text) AND (lifted_at IS NULL))"
+    },
+    {
+      "tablename": "campaign_snapshot_exclusions",
+      "indexname": "idx_campaign_snapshot_exclusions_cohort_active",
+      "indexdef": "CREATE INDEX idx_campaign_snapshot_exclusions_cohort_active ON public.campaign_snapshot_exclusions USING btree (cohort_id) WHERE (lifted_at IS NULL)"
+    },
+    {
+      "tablename": "campaign_snapshot_exclusions",
+      "indexname": "idx_campaign_snapshot_exclusions_pairing_hash",
+      "indexdef": "CREATE UNIQUE INDEX idx_campaign_snapshot_exclusions_pairing_hash ON public.campaign_snapshot_exclusions USING btree (cohort_id, snapshot_id, plan_content_hash) WHERE ((scope = 'pairing'::text) AND (plan_content_hash IS NOT NULL) AND (lifted_at IS NULL))"
+    },
+    {
+      "tablename": "campaign_snapshot_exclusions",
+      "indexname": "idx_campaign_snapshot_exclusions_pairing_null",
+      "indexdef": "CREATE UNIQUE INDEX idx_campaign_snapshot_exclusions_pairing_null ON public.campaign_snapshot_exclusions USING btree (cohort_id, snapshot_id) WHERE ((scope = 'pairing'::text) AND (plan_content_hash IS NULL) AND (lifted_at IS NULL))"
     },
     {
       "tablename": "campaign_snapshots",
@@ -11811,6 +11953,11 @@
     },
     {
       "grantee": "postgres",
+      "object": "public.campaign_snapshot_exclusions",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "postgres",
       "object": "public.campaign_snapshots",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
@@ -12248,6 +12395,11 @@
     },
     {
       "object_name": "campaign_events",
+      "object_kind": "r",
+      "owner": "postgres"
+    },
+    {
+      "object_name": "campaign_snapshot_exclusions",
       "object_kind": "r",
       "owner": "postgres"
     },

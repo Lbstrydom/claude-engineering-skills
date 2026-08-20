@@ -111,6 +111,106 @@ describe('bakeoff-collect — selectRetryArmIds (D5)', () => {
   });
 });
 
+// ── §7 Phase 2: store-authoritative retry scoping ───────────────────────────
+describe('bakeoff-collect — selectRetryArmIds is STORE-authoritative (Phase 2)', () => {
+  const scope = createResolvedScope('test-campaign', ARMS, null);
+  const CONFIG_DIGEST = 'config-abc';
+  const PLAN_HASH = 'planhash-current';
+
+  it('(a) fresh/empty local log + store showing 5 of 6 arms succeeded selects only the missing arm', () => {
+    const SIX = [OPUS, KIMI, GROK, { id: 'qwen', solo: false }, { id: 'deepseek', solo: false }, SOLO_OPUS];
+    const sixScope = createResolvedScope('test-campaign', SIX, null);
+    const storeArmState = {
+      opus: { succeeded: true }, kimi: { succeeded: true }, grok: { succeeded: true },
+      qwen: { succeeded: true }, deepseek: { succeeded: false }, 'solo-opus': { succeeded: true },
+    };
+    assert.deepEqual(selectRetryArmIds(undefined, sixScope, storeArmState), ['deepseek']);
+  });
+
+  it('(b) a store-live arm with succeeded:false (recorded error) is still selected for retry, not skipped', () => {
+    const storeArmState = { opus: { succeeded: false }, kimi: { succeeded: true }, grok: { succeeded: true } };
+    assert.deepEqual(selectRetryArmIds(undefined, scope, storeArmState), ['opus']);
+  });
+
+  it('(e) a store-live succeeded:true arm ALSO matched by an active exclusion reads succeeded:false upstream and is retried', () => {
+    // `liveArmRunsForSnapshot` (store/campaign.mjs) is what applies
+    // isAttemptExcluded to compute `succeeded` — by the time selectRetryArmIds
+    // sees it, an excluded attempt has already been demoted to `false`.
+    const storeArmState = { opus: { succeeded: false }, kimi: { succeeded: true }, grok: { succeeded: true } };
+    assert.deepEqual(selectRetryArmIds(undefined, scope, storeArmState), ['opus']);
+  });
+
+  it('(f) the store shows an arm ABSENT (not yet promoted) but the local log shows it completed — treated as done, not re-spawned', () => {
+    const entry = {
+      contractEpoch: CONTRACT_EPOCH,
+      arms: { opus: { shadowState: 'ran' }, kimi: { shadowState: 'ran' }, grok: { error: 'exit 1' } },
+    };
+    // storeArmState has no entry for any arm at all (absent from the store).
+    assert.deepEqual(selectRetryArmIds(entry, scope, {}), ['grok']);
+  });
+
+  it('(g) same as (f) but the log-side completed result is matched by an active exclusion — the arm IS re-spawned', () => {
+    const entry = {
+      snapshotId: 's1', contractEpoch: CONTRACT_EPOCH,
+      arms: { opus: { shadowState: 'ran' }, kimi: { shadowState: 'ran' }, grok: { error: 'exit 1' } },
+    };
+    const exclusions = [{ snapshotId: 's1', scope: 'all', planContentHash: null }];
+    assert.deepEqual(selectRetryArmIds(entry, scope, {}, exclusions).sort(), ['grok', 'kimi', 'opus']);
+  });
+
+  it('(h)/(l) store-shaped success with a differing config/plan hash reads succeeded:false upstream — retried', () => {
+    // (h)/(l) test `liveArmRunsForSnapshot`'s own predicate directly —
+    // see tests/store-campaign-arm-state.test.mjs. Here we assert the
+    // downstream consequence: once the store reports succeeded:false for a
+    // stale-provenance arm, selectRetryArmIds retries it.
+    const storeArmState = { opus: { succeeded: false }, kimi: { succeeded: true }, grok: { succeeded: true } };
+    assert.deepEqual(selectRetryArmIds(undefined, scope, storeArmState), ['opus']);
+  });
+
+  it('(m) STORE absent + LOG completed under a DIFFERENT planContentHash than current — re-spawned, not treated as done', () => {
+    const entry = {
+      contractEpoch: CONTRACT_EPOCH,
+      arms: {
+        opus: { shadowState: 'ran', planContentHash: 'planhash-OLD', configDigest: CONFIG_DIGEST },
+        kimi: { shadowState: 'ran', planContentHash: PLAN_HASH, configDigest: CONFIG_DIGEST },
+        grok: { shadowState: 'ran', planContentHash: PLAN_HASH, configDigest: CONFIG_DIGEST },
+      },
+    };
+    assert.deepEqual(selectRetryArmIds(entry, scope, {}, [], CONFIG_DIGEST, PLAN_HASH), ['opus']);
+  });
+
+  it('(n) NEGATIVE CONTROL for the store side: a two-real-hash mismatch (not NULL) still forces retry', () => {
+    const storeArmState = { opus: { succeeded: false }, kimi: { succeeded: true }, grok: { succeeded: true } };
+    assert.deepEqual(selectRetryArmIds(undefined, scope, storeArmState), ['opus'],
+      'a strict, non-null mismatch must still force retry — only a NULL legacy hash is grandfathered');
+  });
+
+  it('(o) log-side mirror of the M1 grandfathering fix: a carried-forward arm with planContentHash:null is trusted as done', () => {
+    const entry = {
+      contractEpoch: CONTRACT_EPOCH,
+      arms: {
+        opus: { shadowState: 'ran', planContentHash: null, configDigest: null },
+        kimi: { shadowState: 'ran', planContentHash: PLAN_HASH, configDigest: CONFIG_DIGEST },
+        grok: { shadowState: 'ran', planContentHash: PLAN_HASH, configDigest: CONFIG_DIGEST },
+      },
+    };
+    assert.equal(selectRetryArmIds(entry, scope, {}, [], CONFIG_DIGEST, PLAN_HASH), null,
+      'every arm is trusted — the legacy NULL-hash opus result must not force a retry it cannot resolve');
+  });
+
+  it('NEGATIVE CONTROL: with no store/exclusion data at all (2-arg call), behaviour is IDENTICAL to pre-Phase-2', () => {
+    const entry = {
+      contractEpoch: CONTRACT_EPOCH,
+      arms: { opus: { shadowState: 'ran' }, kimi: { shadowState: 'ran' }, grok: { error: 'exit 1' } },
+    };
+    assert.deepEqual(selectRetryArmIds(entry, scope), ['grok']);
+  });
+
+  it('a totally fresh fixture with NOTHING done anywhere returns null (first-ever collection), not an empty/full retry list', () => {
+    assert.equal(selectRetryArmIds(undefined, scope, {}), null);
+  });
+});
+
 describe('bakeoff-collect — entriesToSpendSnapshots projects into comparison/spend.mjs shape', () => {
   // `entriesToSpendSnapshots` derives `complete` via `isCompleteForEntry`,
   // which resolves scope from the entry's OWN `campaignId` (the 2026-08-14

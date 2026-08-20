@@ -54,6 +54,26 @@ export function snapshotId(transcriptPath) {
 }
 
 /**
+ * Plan-pairing identity (§7 Phase 4) — the SAME convention as `snapshotId`:
+ * content, not path. A plan edited between collection calls is correctly a
+ * DIFFERENT pairing, and two differently-named files with identical bytes
+ * are correctly the SAME pairing.
+ *
+ * Stamped per ARM RESULT at collection time, never as a single entry-level
+ * field — `mergeRetryHistory` (bakeoff-collect.mjs) carries an older
+ * invocation's arms forward into a new entry, and only a genuinely NEW
+ * collection call for an arm should stamp the CURRENT invocation's hash.
+ *
+ * @param {string} planPath
+ * @returns {string} full hex sha256 (unlike `snapshotId`, not truncated —
+ *   this is compared for exact equality, never displayed as a short id)
+ */
+export function planContentHash(planPath) {
+  const buf = fs.readFileSync(planPath);
+  return crypto.createHash('sha256').update(buf).digest('hex');
+}
+
+/**
  * Every distinct snapshot in the log, newest entry wins per id.
  *
  * **A torn FINAL line is silently tolerated (the documented, intentional

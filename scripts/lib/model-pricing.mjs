@@ -58,6 +58,9 @@ export const OSS_PRICING = Object.freeze({
   // DeepSeek-v4-pro (cheapest) + Qwen3.7-max are rotation. All ≪ the GPT baseline
   // ($5/$30), so the cost gate ("no OSS arm pricier than baseline") holds.
   'z-ai/glm-5.2':                      { input: 0.93,  output: 3.00 },
+  // Verified live on OpenRouter 2026-08-20 (prompt/completion converted from
+  // per-token to per-million): supersedes glm-5.2 as the pool HEAD.
+  'z-ai/glm-5.3':                      { input: 1.40,  output: 4.40, cachedInput: 0.26 },
   'qwen/qwen3.7-max':                  { input: 1.25,  output: 3.75 },
   'deepseek/deepseek-v4-pro':          { input: 0.435, output: 0.87 },
   'deepseek/deepseek-v4-flash':        { input: 0.098, output: 0.196 },

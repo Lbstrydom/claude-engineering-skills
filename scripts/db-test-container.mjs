@@ -83,6 +83,19 @@ export const ISOLATED_SUITE_FILES = Object.freeze([
   // index) a mock cannot exercise. Two edits, always — this list AND
   // postgres-parity.yml.
   'tests/model-eval-comparison-store.test.mjs',
+  // Enrolled 2026-08-20 with §7 Phase 3's identity-keyed promotion (plan:
+  // campaign-arm-state-and-identity-integrity.md). Needs the real
+  // idx_campaign_arm_runs_audit_run_id partial unique index, the advisory
+  // lock, and campaign_snapshot_exclusions — none of which a mock can
+  // exercise (the concurrent-promotion serialization case in particular
+  // needs two real connections racing on one lock). Two edits, always —
+  // this list AND postgres-parity.yml.
+  'tests/campaign-promote.test.mjs',
+  // Enrolled 2026-08-20 alongside campaign-promote.test.mjs, §7 Phase 5's
+  // quarantine mechanism (same plan). Needs campaign_snapshot_exclusions
+  // and its three partial unique indexes from Phase 1's migration. Two
+  // edits, always — this list AND postgres-parity.yml.
+  'tests/campaign-quarantine.test.mjs',
   // ── Enrolled 2026-08-11 ──────────────────────────────────────────────────
   // Every entry below was `AUDIT_DB_TEST_URL`-gated and named by NO runner, so
   // each skipped itself everywhere and node reported the skip as a pass: 15

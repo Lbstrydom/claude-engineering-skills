@@ -1,7 +1,15 @@
 # Plan: Campaign Arm-State and Snapshot-Identity Integrity
 
 - **Date**: 2026-08-19
-- **Status**: Approved — audited (5 GPT rounds, 4 Gemini rounds, all findings fixed), ready for implementation
+- **Status**: Approved — audited (6 GPT rounds, 5 Gemini rounds total across sessions, all findings fixed), ready for implementation. Round 6 (2026-08-20, this /cycle session, operator-approved 1 GPT + 1 Gemini round to converge): GPT R1 found H1 (Phase 6 `isComplete` read a stale entry-level `configDigest` instead of each arm's own — fixed to per-arm), H2 (`--confirm-mismatch` promoted one arm's new hash while siblings stayed live on the old one — fixed: auto-quarantines the old pairing in the same locked transaction), M1 (strict NULL-vs-hash comparison on `plan_content_hash` forced a full re-spawn of all 5 genuinely-valid legacy snapshots, not just the 3 quarantined ones — fixed: grandfathered permissive-NULL, matching `config_digest`'s policy; quarantine alone now distinguishes bad legacy pairings), M2 (declared signature omitted `expectedPlanContentHash` — fixed). Gemini (CONCERNS) then found: HIGH (asked for a `client` parameter on `markSnapshotExcluded` to match `recordArmRun`'s round-5 pattern) — resolved at the ROOT instead: empirically verified against the live store that `withTx` is already re-entrant via `AsyncLocalStorage` [confirmed by comparing `pg_backend_pid()` across nested `withTx` calls — identical], so round 5's original H3 premise was itself wrong and the `client`-parameter design was removed from `recordArmRun` rather than duplicated onto `markSnapshotExcluded`; MEDIUM (the relatedness heuristic's regex kept full paths, so a transcript's `scripts/x.mjs` never matched a plan's bare `x.mjs` prose citation — fixed: basename normalisation, matching the manual method's own precedent); LOW (`unquarantine` was non-idempotent on retry-after-timeout — fixed: a zero-rows UPDATE now disambiguates "already lifted" [benign] from "never existed" [real error]). Stopped after 1 Gemini round per operator approval, all 3 findings resolved rather than deferred.
+
+**Close-out (2026-08-20, same session).** Live-verified against `final-review-scoped-2026q3` (cohort `e52eec728688fcab`): quarantined the 3 documented mis-paired snapshots (`2bb342bdd692`, `307a360d0d52`, `bf6f7fa76385`) via `campaign.mjs quarantine`, then re-collected all 3 against their corrected plans (2 already identified in `docs/research/campaign-2026q3-mispaired-snapshots.md`; the third — `audit-plan-1786682531-transcript.json` — identified here via git-blame evidence: its cited files `contract`/`render-mermaid`/`refresh-subprocess` were all introduced by the single commit implementing `docs/plans/tiered-pipeline-refresh-god-module-decomposition.md`). Result: `N complete` 8 → 6 (post-quarantine) → 9/12 (post-re-collection) — better than the plan's original "5/12" estimate, since one snapshot's `qwen` arm succeeded on its first live retry.
+
+Two more real bugs found and fixed via this live re-collection (neither introduced by this plan, both pre-existing since 2026-08-16/17, fixed here because they directly corrupted the arm-completion integrity this plan exists to guarantee):
+- `classifyLogEntry`'s `armRuns` mapping read `arm.error`, but a LIVE bakeoff-log entry carries its failure under `arm.shadowError` — every genuinely failed live attempt silently promoted with `error: NULL`, which `liveArmRunsForSnapshot`'s `error IS NULL` gate read as success. 5 already-written production rows repaired after the code fix landed.
+- A single-arm retry (`retryArmIds` computed from STORE state, independent of the local log) crashed with `existing.arms` unguarded when the local `bakeoff-log.jsonl` had no entry at all for that snapshot — a fresh-fixture scenario the surrounding code was clearly written to anticipate (per its own comments) but this one line missed.
+
+Also explored (then reverted): adding `z-ai/glm-5.3` as a 7th shadow arm. Confirmed live on OpenRouter's catalog but returns a hard, structural HTTP 404 ("no endpoints found that can handle the requested parameters") for this campaign's structured-output + high-reasoning-effort requirements — not transient (3/3 real attempts, identical failure, ~0.2-0.3s each). Reverted rather than leave every snapshot permanently incomplete; the arms-array change forked the cohort in two (adding then removing an arm changes `configDigest`, which is hashed over the whole `arms` array), requiring a manual data migration (`cohort_id`/`snapshot_row_id`/`attempt`/`config_digest` correction on 16 rows) to reunify the genuinely-succeeded evidence back under the original lock. A useful lesson for any FUTURE arm-roster change to this campaign: expect the same fork, and budget the reunification step.
 - **Author**: Claude + pill
 - **Scope**: backend
 
@@ -280,7 +288,7 @@ sequenceDiagram
 | `scripts/lib/campaign/promote.mjs` | `resolvePromotionAttempts` reworked to identity (runId-set) input, backed by a DB unique constraint; `classifyLogEntry` gains a plan-hash consistency check against LIVE, non-quarantined attempts only, same shape as its existing `audited_sha` check |
 | `scripts/lib/bakeoff/scope.mjs` | `ResolvedScope` widened: `expectedConfigDigest` |
 | `scripts/lib/bakeoff/arms.mjs` | `scopeForEntry`/`resolveArms` thread the already-computed `configDigest` through (currently discarded) |
-| `scripts/lib/bakeoff/summary.mjs` | `isComplete` adds the `configDigest` comparison as its own entry-level check, independent of the shadow-scope quantification |
+| `scripts/lib/bakeoff/summary.mjs` | `isComplete` adds the `configDigest` comparison as its own PER-ARM check (round 6, H1), independent of the shadow-scope quantification |
 | `scripts/campaign.mjs` | new `quarantine` verb (`--plan-hash` optional; defaults to matching legacy NULL-hash attempts) |
 | `tests/audit-store-durability-call-site.test.mjs` | add `markSnapshotExcluded` to `NOT_A_DURABLE_WRITE` with its exemption reason |
 | `supabase/migrations/*` **(new)** | `campaign_arm_runs.plan_content_hash`; unique index on `campaign_arm_runs.audit_run_id`; new table `campaign_snapshot_exclusions` |
@@ -438,26 +446,58 @@ sequenceDiagram
   place the match RULE lives (single-oracle); it is invoked identically
   from both read paths, never re-expressed as SQL.
 - `scripts/lib/store/campaign.mjs` (modify) — add
-  `liveArmRunsForSnapshot({cohortId, snapshotId, expectedConfigDigest})`,
+  `liveArmRunsForSnapshot({cohortId, snapshotId, expectedConfigDigest,
+  expectedPlanContentHash})` (round 6, M2 — the signature omitted
+  `expectedPlanContentHash` even though the predicate it drives requires
+  it; named explicitly now so the call-site contract is not implicit),
   returning `{armId: {runId, attempt, auditRunId, succeeded}}` for every
   **live** (`superseded_at IS NULL`) row, where `succeeded = error IS NULL
   AND audit_run_id IS NOT NULL AND (config_digest IS NULL OR config_digest
-  = expectedConfigDigest) AND plan_content_hash IS NOT DISTINCT FROM
-  expectedPlanContentHash AND NOT isAttemptExcluded(...)`. **`config_digest`
-  uses a PERMISSIVE NULL policy, deliberately the OPPOSITE of
-  `plan_content_hash`'s strict `IS NOT DISTINCT FROM`** (Gemini gate round
-  4, G1 — `config_digest` is a column THIS migration adds, so every
-  existing row in the live `final-review-scoped-2026q3` campaign —
-  including the 5 currently-valid snapshots — predates it and reads
-  `config_digest IS NULL`; an exact-match comparison would treat every one
-  of them as stale on day one, breaking the very campaign this plan exists
-  to fix. The asymmetry with `plan_content_hash` is deliberate, not an
-  inconsistency: plan-pairing has a KNOWN historical defect class to guard
-  against [the 3 real mis-paired snapshots], so a legacy NULL is treated
-  as a forced re-verification trigger; config-digest tracking is a brand
-  NEW capability with no known-bad legacy corpus, so a legacy NULL is
-  grandfathered in as trusted, and only a REAL, differing digest — meaning
-  a genuine post-migration config change — forces re-collection) (H2
+  = expectedConfigDigest) AND (plan_content_hash IS NULL OR
+  plan_content_hash = expectedPlanContentHash) AND NOT
+  isAttemptExcluded(...)`. **Both `config_digest` and `plan_content_hash`
+  now share ONE PERMISSIVE-NULL policy at this read** (round 6, M1
+  correction — reverses round 4's stated asymmetry after finding it
+  reintroduces the exact over-spawn defect this plan exists to fix, for the
+  wrong population: a strict `IS NOT DISTINCT FROM` on `plan_content_hash`
+  makes EVERY pre-migration row — not just the 3 known mis-paired
+  snapshots, all 8 legacy rows including the 5 genuinely valid ones — read
+  `succeeded:false` the very first time any of them is touched by an
+  invocation carrying a real plan hash, because a legacy NULL can never
+  equal a real hash under strict comparison. That forces a full,
+  unbudgeted re-spawn of every arm on 5 snapshots nobody asked to
+  re-verify — measured against this plan's own Close-out, which inventories
+  only the 3 quarantined snapshots and budgets nothing for the rest.
+  Quarantine is what actually needs to distinguish "bad legacy pairing"
+  from "legacy pairing, never suspect": `isAttemptExcluded` already forces
+  `succeeded:false` for the 3 mis-paired snapshots once they are quarantined
+  (H1 round 2, unchanged below), so the strict hash comparison was doing
+  redundant work for the bad rows and unwanted work for the good ones.
+  Grandfathering `plan_content_hash` the same way `config_digest` already
+  is (Gemini gate round 4, G1's reasoning below applies identically: this
+  column is brand new, the 8 legacy rows all predate it, and only a REAL,
+  differing hash — a genuinely different plan pairing actually collected —
+  forces re-collection) removes the collateral cost without weakening the
+  guarantee: a live row is trusted as done when its hash is unset (nothing
+  to disagree about yet) OR matches the current invocation's hash, and
+  distrusted only when it is quarantined OR carries a real, DIFFERENT hash.
+  The G2 mixed-provenance risk this strictness was defending against (an
+  operator recollecting under a new plan without quarantining the old
+  pairing first, leaving some arms on the old hash and some on the new one)
+  is now closed at the WRITE side instead: Phase 4's `--confirm-mismatch`
+  atomically auto-quarantines the old, disagreeing pairing in the same
+  locked transaction as the promotion (round 6, H2 correction, detailed
+  there) — so no live snapshot can ever hold two different real hashes
+  across its arms, regardless of what this READ predicate does with an
+  unset one.
+  `config_digest`'s own permissive-NULL policy is unchanged from round 4
+  (Gemini gate round 4, G1 — `config_digest` is a column THIS migration
+  adds, so every existing row in the live `final-review-scoped-2026q3`
+  campaign — including the 5 currently-valid snapshots — predates it and
+  reads `config_digest IS NULL`; an exact-match comparison would treat
+  every one of them as stale on day one, breaking the very campaign this
+  plan exists to fix; only a REAL, differing digest — meaning a genuine
+  post-migration config change — forces re-collection) (H2
   round 1 — the existing, nullable `error`
   column is the success/failure discriminator, a live row can be a
   recorded FAILURE; **H1 round 2** — a live row can also be a
@@ -470,21 +510,7 @@ sequenceDiagram
   succeeded attempt collected under a STALE campaign configuration, and it
   must ALSO read as `succeeded:false`, or a config change makes the
   collector silently skip re-collection even though the same stale attempt
-  would fail Phase 6's `isComplete` check too late to matter; **G2, Gemini
-  gate round 2** — a live row can also be a genuinely succeeded attempt
-  collected under a DIFFERENT `--plan` than the one this invocation was
-  given, and round 5's fix added `expectedConfigDigest` to this predicate
-  but never added its plan-pairing analogue: without it, running collection
-  with a new plan (without first quarantining the old pairing) reads OLD
-  arms as `succeeded:true`, spawns only the REMAINING arms under the NEW
-  plan, and produces a snapshot with MIXED provenance — some arms reviewed
-  one plan, some reviewed another — that `--confirm-mismatch` could then
-  wave through at promotion time, corrupting the exact identity guarantee
-  this plan exists to build. The comparison is `IS NOT DISTINCT FROM`, the
-  same NULL-safe semantics as round 4's H5 promotion-time check — a legacy
-  NULL-hash live row reads as `succeeded:false` against any real
-  `expectedPlanContentHash`, correctly forcing re-collection under the
-  current plan, exactly the Close-out recovery behaviour H1 exists for.
+  would fail Phase 6's `isComplete` check too late to matter.
   `expectedConfigDigest`/`expectedPlanContentHash` are the SAME values
   `resolveArms`/`scopeForEntry` and the collector's own `--plan` hashing
   already compute — Phase 2 is an independent consumer of existing
@@ -544,8 +570,12 @@ sequenceDiagram
   EITHER the store shows `succeeded:true`, OR the local log's own entry
   shows a completed, non-error result for this exact snapshot+arm that is
   NOT matched by `isAttemptExcluded` AND whose OWN `configDigest`/
-  `planContentHash` (round 5, H1/H2's per-attempt provenance) equal
-  `expectedConfigDigest`/`expectedPlanContentHash` (round 4, H2 — the
+  `planContentHash` (round 5, H1/H2's per-attempt provenance) each satisfy
+  the SAME permissive-null policy as the store signal (round 6, M1 —
+  `configDigest == null || configDigest === expectedConfigDigest`, and
+  likewise for `planContentHash`; a carried-forward arm from before either
+  field existed is trusted, never treated as suspect on that basis alone)
+  against `expectedConfigDigest`/`expectedPlanContentHash` (round 4, H2 — the
   round-1 draft made the store the SOLE decision input, but collection and
   promotion are two separate CLI invocations [`bakeoff-collect.mjs` then,
   later, `campaign.mjs reconcile`]: a just-collected success sitting in the
@@ -610,7 +640,19 @@ log's own entry shows it completed successfully, but under a DIFFERENT
 `planContentHash` than the current invocation's `--plan` — the arm IS
 re-spawned, not treated as done (Gemini gate round 3, G1 — the log signal
 must carry the same provenance filtering as the store signal, or a stale
-local worktree silently ignores a new plan). Each starts with a negative
+local worktree silently ignores a new plan); (n) a store-live,
+`succeeded`-shaped arm whose stored `plan_content_hash` is NULL (a legacy,
+pre-migration row) reports `succeeded:true` against a real, non-null
+`expectedPlanContentHash` and is NOT selected for retry (round 6, M1 — the
+negative control for the grandfathering fix: this is the case a strict
+`IS NOT DISTINCT FROM` implementation gets wrong, forcing a full re-spawn
+of a genuinely-valid legacy snapshot the first time it is touched after
+this column ships); (o) the log-side mirror of (n) — the local log's own
+carried-forward arm result has `planContentHash: null` (predates the
+field) and is trusted as done against a real current hash, not re-spawned
+(round 6, M1 — same grandfathering policy applied to the log signal, so
+(n) and (o) agree with each other the way (f)/(m) already require the
+store and log signals to agree). Each starts with a negative
 control against current behaviour.
 
 ### Phase 3 — Identity-keyed promotion
@@ -661,23 +703,33 @@ control against current behaviour.
   legacy-pairing log entry can no longer supersede a corrected live row,
   because quarantine is checked under the same lock that serializes the
   write).
-- `scripts/lib/store/campaign.mjs` (modify) — **`recordArmRun` gains an
-  optional `client` parameter**: when provided, it runs its
-  supersede-then-insert sequence against the CALLER's transaction instead
-  of opening its own `withTx` (round 5, H3 — a real plumbing gap in round
-  4's fix: `recordArmRun` already owns its own `withTx` internally
-  [Code Trace, `campaign.mjs:598-627`], and `promoteFromLog` lives in a
-  DIFFERENT module. If `promoteFromLog` opened its own transaction, took
-  the advisory lock on it, and then called `recordArmRun` unchanged,
-  `recordArmRun` would open a SECOND, independent transaction — on
-  node-postgres, likely a different pooled connection — and the write
-  would happen entirely outside the locked transaction, making the lock a
-  no-op for the write it was supposed to serialize). `promoteFromLog`'s
-  locked flow opens exactly ONE `withTx`, acquires the advisory lock on
-  that transaction's connection, runs classification and quarantine
-  admission, then calls `recordArmRun(client, {...})` for each admitted
-  attempt — lock and every write it gates now demonstrably share one
-  connection, one transaction.
+- **No `client`-parameter threading needed on `recordArmRun` or
+  `markSnapshotExcluded`** (round 6, correcting round 5's H3 — verified
+  empirically against the live store, not re-derived from reading: `withTx`
+  in `scripts/lib/db/query.mjs` is ALREADY re-entrant via an
+  `AsyncLocalStorage` frame [`_txStore`] predating this plan by three months
+  [committed 2026-05-20] — a nested `withTx` call detects the parent frame
+  and issues a `SAVEPOINT` on the SAME `pg.PoolClient` rather than checking
+  out a second connection, and every query helper (`one`/`many`/
+  `insertReturning`/`updateWhere`) auto-binds to whichever client is active
+  on that frame. Confirmed by running two nested `withTx` calls against the
+  real store and comparing `pg_backend_pid()` inside each: identical PID.
+  Round 5's H3 finding — "`recordArmRun` would open a SECOND, independent
+  transaction... on a different pooled connection" — does not hold against
+  this mechanism, which is exactly the "domain modules never juggle
+  clients" invariant `query.mjs`'s own module docstring already states as a
+  design principle for the whole store layer, not something this plan needs
+  to re-invent per function.) `promoteFromLog` simply opens ONE outer
+  `withTx`, acquires the advisory lock inside it, runs classification and
+  quarantine admission, then calls the EXISTING, unmodified `recordArmRun(
+  {...})` (and, for an auto-quarantine, `markSnapshotExcluded({...})`) for
+  each admitted attempt exactly as both functions are written today — no
+  new parameter, no call-site change to either function's signature. Both
+  calls run on the SAME connection as the lock because `withTx`'s own
+  internal `withTx` call finds the parent frame and joins it. This is
+  smaller than round 5's design and removes API surface neither function
+  needs, rather than adding a symmetric parameter to match a premise that
+  does not hold.
 - `scripts/lib/store/campaign.mjs` (modify) — the `audit_run_id` partial
   unique index (Phase 1) and its `INSERT ... ON CONFLICT (audit_run_id)
   WHERE audit_run_id IS NOT NULL DO NOTHING RETURNING id` remain as a
@@ -717,13 +769,14 @@ for arm B — and asserts they execute serially (the second observably waits
 on the first's advisory lock, verified via `pg_stat_activity` wait state or
 a timing assertion) rather than interleaving; the mismatch check in the
 second call sees the first call's committed state, not a stale pre-write
-snapshot. A fifth case (round 5, H3) asserts `recordArmRun(client, {...})`
-called with an explicit client performs no additional `BEGIN`/`COMMIT` of
-its own — e.g. by asserting the write is visible to a query on the SAME
-client before the outer transaction commits, and invisible to a second,
+snapshot. A fifth case (round 6, correcting round 5's H3) asserts that
+`recordArmRun`'s write made from WITHIN `promoteFromLog`'s locked
+transaction is visible to a query on the advisory lock's own connection
+before the outer transaction commits, and invisible to a second,
 independent connection until it does — proving the lock and the write
-genuinely share one transaction rather than merely being called from the
-same async function. Negative controls against current behaviour first.
+genuinely share one transaction via `withTx`'s existing re-entrancy, with
+no parameter changes to either function. Negative controls against current
+behaviour first.
 
 **Cluster A** — Phases 1-3 — fix-gate: yes
 Coupling: Phase 1's migration is a hard prerequisite for both Phase 2 (the
@@ -763,9 +816,28 @@ phase without the schema has no column/constraint to read or write against.
   operators to pass it habitually and defeating the guardrail for the
   mis-paired case it exists to catch. Extract the same token shape from
   (b) the plan's raw markdown body when `findings` is non-empty; normalise
-  each by lower-casing and stripping a leading `./`; compute the
-  intersection of the two sets. `related = overlap.size > 0` — the exact
-  all-or-nothing threshold used by hand during the real quarantine
+  each token to its **basename** (the final `/`-delimited segment) and
+  lower-case it (round 6, Gemini gate MEDIUM correction — the round-3/
+  Gemini-round-1 spec extracted the FULL matched path
+  [`/[\w./-]+\.(mjs|js|ts|json|md|sql)\b/g` keeps `/` and `.` in the
+  captured text] and normalised only by stripping a leading `./`, so a
+  transcript finding citing `scripts/bakeoff-collect.mjs` and a plan
+  citing the bare `bakeoff-collect.mjs` in prose — the overwhelmingly
+  common way a plan names a file in running text — produce two DIFFERENT
+  strings and an EMPTY intersection despite citing the identical file. That
+  is a false NEGATIVE on a genuinely related pair, exactly the failure this
+  heuristic must not have: it would read a correct pairing as unrelated and
+  train operators to pass `--confirm-mismatch` on clean audits, defeating
+  the guardrail from the other direction. The manual method this heuristic
+  claims to mirror already worked this way —
+  `docs/research/campaign-2026q3-mispaired-snapshots.md` §Method's own
+  regex, `/[a-z0-9-]+\.mjs/g`, deliberately excludes slashes and matches on
+  basename alone — so basename normalisation is not a new choice, it is
+  correcting a drift from the cited precedent. A same-basename collision
+  across two different directories is the accepted trade-off, identical to
+  the one the manual method already accepted); compute the
+  intersection of the two basename sets. `related = overlap.size > 0` — the
+  exact all-or-nothing threshold used by hand during the real quarantine
   (`docs/research/campaign-2026q3-mispaired-snapshots.md` §Method), not a
   re-derived one. Returns `{overlap: string[], related: boolean, reason?:
   string}`.
@@ -821,6 +893,39 @@ phase without the schema has no column/constraint to read or write against.
   `runId` (guaranteed by Phase 3's unique constraint), so the flag only has
   to be true at the single moment a mismatched attempt is promoted — it
   never needs re-asserting afterward.
+  **`--confirm-mismatch` is a STATE TRANSITION, not a bare acknowledgement**
+  (round 6, H2 — the round-5 draft let it promote ONE arm's new-hash
+  attempt while every SIBLING arm's live row for the same snapshot stayed
+  on the old hash: `resolvePromotionAttempts`/`recordArmRun` supersede only
+  the same arm's prior row, so nothing in the promotion path touches arms
+  B–F when arm A's mismatched attempt is confirmed and written. The
+  snapshot's live evidence — and therefore its completion/cost aggregation
+  — then genuinely mixes two plan pairings, exactly the outcome §2's core
+  integrity objective and Phase 2's `succeeded` predicate both exist to
+  prevent, and no later step ever revisits it because promotion is
+  one-time-per-`runId`). The fix: when `confirmMismatch` is true and
+  `classifyLogEntry` finds a mismatch, `promoteFromLog`'s SAME locked
+  transaction (§7 Phase 3's `pg_advisory_xact_lock`) first calls
+  `markSnapshotExcluded({cohortId, snapshotId, planContentHash: <the OLD,
+  disagreeing hash found among this snapshot's current live,
+  non-quarantined attempts>, scope: 'pairing', reason: 'auto-quarantined
+  via --confirm-mismatch: promoting a corrected plan pairing'})` (§7
+  Phase 5's writer, called as a plain function here — not a second
+  transaction; it runs inside the transaction Phase 3 already opened) for
+  EVERY distinct old hash it finds disagreeing with the new attempt, THEN
+  proceeds to admit and write the new attempt. Because `isAttemptExcluded`
+  (§7 Phase 2) is re-checked by every consumer of `campaign_arm_runs`
+  (`liveArmRunsForSnapshot`, `loadCohortArmRuns`), the sibling arms' old-hash
+  rows drop out of "live evidence" in the same atomic step the new attempt
+  is admitted — there is no window where the snapshot's aggregation
+  reflects two pairings at once, and no separate manual quarantine step is
+  required before `--confirm-mismatch` is safe to use (though the Close-out
+  workflow's manual quarantine-then-recollect sequence remains equally
+  valid — this is the automated equivalent for a direct promote-through).
+  This does not weaken the check `--confirm-mismatch` guards: a genuine
+  mismatch still refuses without the flag, and the flag's effect is now
+  fully specified rather than "acknowledge and hope nothing downstream
+  disagrees."
 - `campaign_arm_runs.plan_content_hash` AND `.config_digest` (Phase 1's
   columns) are both populated at promotion time from **each attempt's OWN
   `planContentHash`/`configDigest`** (round 5, H2 — never from a single
@@ -839,7 +944,12 @@ real incidents); non-zero overlap → `related:true`; a valid, EMPTY
 `related:false` (Gemini gate round 1, G2 — the clean-audit false-positive);
 a missing/malformed `findings` field → `related:false` with no `reason` (a
 genuinely un-parseable input stays conservative, distinct from the valid-
-but-empty case). `tests/bakeoff-log.test.mjs`
+but-empty case); a transcript finding citing a FULL relative path
+(`scripts/bakeoff-collect.mjs`) against a plan citing the bare basename
+(`bakeoff-collect.mjs`) in prose returns `related:true` (round 6, Gemini
+gate MEDIUM correction — the negative control for the basename-vs-full-path
+regression: a full-path vs full-path comparison here would fail, proving
+the fix). `tests/bakeoff-log.test.mjs`
 (modify) — `mergeRetryHistory` merging a new entry (new plan hash) with an
 existing entry containing an untouched carried-forward arm asserts the
 carried arm's result object KEEPS its own original `planContentHash`, not
@@ -847,6 +957,14 @@ the new entry's (round 5, H2 — the exact mislabelling bug). `tests/campaign-pr
 (modify) — the consistency-check case, including the NULL-vs-NULL
 compatible / NULL-vs-hash mismatch pair (H5), and the "quarantined legacy
 attempt drops out of the comparison, so correction needs no flag" case (H1).
+A DB-dependent case (round 6, H2) promotes a mismatched attempt with
+`confirmMismatch: true` for a snapshot whose OTHER arms are still live under
+the old hash, then asserts: the new attempt is written; the sibling arms'
+old-hash rows are no longer visible via `liveArmRunsForSnapshot`/
+`loadCohortArmRuns` (auto-quarantined in the same transaction); and a
+`campaign_snapshot_exclusions` row exists for the old hash with the
+auto-quarantine reason — proving no window exists where the snapshot's live
+evidence mixes two pairings.
 
 ### Phase 5 — Quarantine mechanism
 **Files**:
@@ -943,7 +1061,20 @@ attempt drops out of the comparison, so correction needs no flag" case (H1).
   UPDATE's affected-row count** (Gemini gate round 3, G2) — zero rows means
   no active exclusion matched the given scope/hash, and the CLI exits
   non-zero with `No active exclusion found matching these parameters`
-  rather than silently reporting success for a no-op.
+  rather than silently reporting success for a no-op. **Zero rows affected
+  is disambiguated before it becomes an error** (round 6, Gemini gate LOW
+  correction — the round-5 draft made every zero-rows UPDATE a hard
+  failure, which makes the command non-idempotent: a client-side timeout
+  after a successful lift, followed by an operator retry, hits zero rows
+  the second time [the row's `lifted_at` is no longer NULL] and reports
+  failure for a command that already succeeded — the same class of bug
+  `markSnapshotExcluded`'s own `ON CONFLICT ... DO NOTHING` exists to avoid
+  on the quarantine side). A zero-rows UPDATE is followed by one extra read
+  (matching only on scope/hash, ignoring `lifted_at`): a matching row that
+  IS already lifted is a benign no-op — exit 0, "already lifted" — while no
+  matching row at all is the genuine error above. This keeps `quarantine`
+  and `unquarantine` symmetric: both treat "the state I wanted already
+  holds" as success, never as a failure to retry around.
 - `tests/audit-store-durability-call-site.test.mjs` (modify) — add
   `markSnapshotExcluded: '<reason>'` to the `NOT_A_DURABLE_WRITE` map
   (round 5, H4 — verified against `.requirements/ledger.json`'s
@@ -982,7 +1113,12 @@ round 5 H4); `unquarantine` sets `lifted_at`/`lifted_reason` and the
 snapshot's arm-runs reappear in `loadCohortArmRuns`'s result (round 5, M2);
 re-quarantining the SAME key after a lift succeeds (the partial indexes'
 `WHERE` clauses include `lifted_at IS NULL`, so a lifted row no longer
-blocks a fresh one). DB-dependent (`AUDIT_DB_TEST_URL`-gated), enrolled per
+blocks a fresh one); calling `unquarantine` a SECOND time on an already-lifted
+key exits 0 as a benign no-op, not the "no active exclusion" error (round 6,
+Gemini gate LOW correction — the retry-after-timeout negative control); a
+`--snapshot`/`--plan-hash` combination that never had ANY exclusion (lifted
+or not) still exits non-zero with the real error, proving the disambiguation
+does not swallow a genuine mistake. DB-dependent (`AUDIT_DB_TEST_URL`-gated), enrolled per
 the Test enrolment bullet above.
 
 **Cluster B** — Phases 4-5 — fix-gate: yes
@@ -1002,18 +1138,32 @@ pass.
   `resolveArms` both thread their already-computed `configDigest` into
   `createResolvedScope` instead of discarding it.
 - `scripts/lib/bakeoff/summary.mjs` (modify) — `isComplete` adds
-  `(entry?.configDigest == null || entry.configDigest === expectedConfigDigest)`
-  as its **own, entry-level check**, evaluated unconditionally — NOT nested
-  inside the `!a.solo` shadow-scope quantification (H6: `configDigest` is
-  snapshot/campaign-configuration provenance, not a shadow-output property;
-  a scope with only solo/primary arms still has a config to verify, and the
-  original placement would have silently skipped the check for such a
-  scope). **Permissive on a missing digest, matching Phase 2's identical
-  legacy-compatibility policy** (Gemini gate round 4, G1 — an exact-match
-  comparison would fail every one of the 5 currently-valid, pre-migration
-  `final-review-scoped-2026q3` snapshots on day one; see Phase 2's fuller
-  rationale for why this is the deliberate opposite of `planContentHash`'s
-  strict comparison).
+  `arms.every((a) => { const r = entry?.arms?.[a.id]; return r?.configDigest
+  == null || r.configDigest === expectedConfigDigest; })` as its **own,
+  PER-ARM check** (round 6, H1 correction — the round-5 draft read a single
+  `entry?.configDigest`, a top-level field the collector rewrites on EVERY
+  invocation to reflect that invocation's own current config. Phase 4 stamps
+  `configDigest` per ARM specifically so `mergeRetryHistory` can carry an
+  older invocation's arms forward without losing what THEY were collected
+  under [§7 Phase 4's own rationale for `planContentHash`, identical for
+  `configDigest`] — but an entry-level check throws that away and reads the
+  freshest invocation's digest for every arm regardless of when it actually
+  ran, so a carried-forward arm collected under a stale config could pass
+  `isComplete` simply because a LATER, unrelated retry touched the same log
+  line. Reading each arm's own stamped field is what Phase 4's per-attempt
+  provenance was for), evaluated unconditionally over ALL of `arms` — still
+  NOT nested inside the `!a.solo` shadow-scope quantification (H6: `configDigest`
+  is snapshot/campaign-configuration provenance, not a shadow-output
+  property; a scope with only solo/primary arms still has a config to
+  verify, and quantifying over `arms` rather than `!a.solo`-filtered arms
+  keeps this true — every declared arm, solo or shadow-producing, gets its
+  own `configDigest` stamped at collection time per Phase 4). **Permissive
+  on a missing digest, matching Phase 2's identical legacy-compatibility
+  policy** (Gemini gate round 4, G1 — an exact-match comparison would fail
+  every one of the 5 currently-valid, pre-migration `final-review-scoped-2026q3`
+  snapshots on day one; see Phase 2's fuller rationale for why this is the
+  deliberate opposite of the strict comparison an earlier round considered
+  for `planContentHash`, since reversed by round 6's own M1 fix there too).
 
 **Tests**: `tests/bakeoff-summary.test.mjs` (modify) — a snapshot collected
 under an old `configDigest` no longer passes `isComplete` even when every
@@ -1022,7 +1172,12 @@ still enforces the check (H6's negative case — the one a nested-placement
 implementation gets wrong); a third case (Gemini gate round 4, G1) asserts
 a snapshot with NO recorded `configDigest` (the pre-migration legacy shape)
 STILL passes `isComplete` when every other check passes — the negative
-control that would have failed against an exact-match implementation.
+control that would have failed against an exact-match implementation; a
+fourth case (round 6, H1) asserts a snapshot with a MIX of arms — one
+carried-forward arm stamped with an OLD `configDigest` (from a prior
+invocation, via `mergeRetryHistory`) and the rest stamped with the CURRENT
+one — fails `isComplete` on the stale arm alone, proving the check reads
+each arm's own field rather than the entry's freshest one.
 Negative controls against current behaviour first.
 
 **Cluster C** — Phase 6 — fix-gate: final

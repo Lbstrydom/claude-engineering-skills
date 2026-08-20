@@ -36,15 +36,19 @@ import path from 'node:path';
 import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { UnresolvedScopeError, ScopeMismatchError } from './lib/bakeoff/scope.mjs';
-import { LOG_PATH, CONTRACT_EPOCH, snapshotId, readLog } from './lib/bakeoff/log.mjs';
+import { LOG_PATH, CONTRACT_EPOCH, snapshotId, planContentHash, readLog } from './lib/bakeoff/log.mjs';
 import { resolveArms, scopeForEntry, armDidRun } from './lib/bakeoff/arms.mjs';
 import { isComplete, armCostUsd, distinctFindingCount, cohortDigest } from './lib/bakeoff/summary.mjs';
 import { runArmAttempts, verifyPreflightArtifact } from './lib/bakeoff/spawn.mjs';
 import { printProgress } from './lib/bakeoff/progress.mjs';
+import { planLooksRelated } from './lib/bakeoff/relatedness.mjs';
+import { repoId } from './lib/campaign/promote.mjs';
+import { resolveCohort, liveArmRunsForSnapshot, isAttemptExcluded } from './lib/store/campaign.mjs';
+import { isCloudEnabled } from './lib/store/repo.mjs';
 
 const KNOWN_FLAGS = Object.freeze([
   '--transcript', '--plan', '--mode', '--progress', '--target', '--campaign',
-  '--force', '--selfcheck-relocation', '--help', '-h',
+  '--force', '--allow-log-only-retry', '--confirm-mismatch', '--selfcheck-relocation', '--help', '-h',
 ]);
 
 /**
@@ -75,25 +79,85 @@ export function isCompleteForEntry(entry) {
 }
 
 /**
- * D5's retry-arm selection — extracted so the rule is assertable without
- * spawning a single provider call, same reasoning as `resolvePromotionAttempt`
- * in campaign.mjs.
+ * D5's retry-arm selection, widened by §7 Phase 2 to be STORE-AUTHORITATIVE
+ * — extracted so the rule is assertable without spawning a single provider
+ * call or touching a database, same reasoning as `resolvePromotionAttempt`
+ * in campaign.mjs. Stays synchronous and pure: the store read and the
+ * exclusion fetch each happen ONCE at the call site (`main()`) and are
+ * injected here as plain data.
+ *
+ * An arm is treated as already-done when EITHER the store shows
+ * `succeeded:true` for it, OR the local log's own entry shows a completed,
+ * non-error result for this exact snapshot+arm that is NOT matched by
+ * `isAttemptExcluded` AND whose OWN `configDigest`/`planContentHash` each
+ * satisfy the same permissive-null policy as the store signal (round 6, M1)
+ * against `expectedConfigDigest`/`expectedPlanContentHash`. Both signals are
+ * needed: the store sees successes from OTHER checkouts/fixtures (the
+ * original over-spawn defect); the log sees a just-collected,
+ * not-yet-promoted success in THIS invocation (the normal collect-then-
+ * later-reconcile gap between `bakeoff-collect.mjs` and `campaign.mjs
+ * reconcile`) that the store cannot see yet.
  *
  * @param {object|undefined} existing - the entry currently on disk for this
- *   snapshotId, or undefined on a first-ever collection
+ *   snapshotId, or undefined on a fresh fixture / first-ever collection
  * @param {import('./lib/bakeoff/scope.mjs').ResolvedScope|null} existingScope -
- *   `scopeForEntry(existing)`; null when the entry names an unresolvable
- *   campaign ("cannot judge" — not the same fact as "an arm did not run")
- * @returns {string[]|null} arm ids to retry, or null for a FULL collection —
- *   reached on a first-ever attempt, OR when every declared arm ran and the
- *   snapshot is still incomplete for a reason a retry cannot fix (envelope-
- *   scope binding, contract epoch): re-spawning nothing there would be a
- *   silent no-op that never resolves the incompleteness.
+ *   `scopeForEntry(existing)` when `existing` is present; the CURRENT
+ *   invocation's own resolved scope when it is not (a fresh fixture still
+ *   knows which arms its OWN campaign declares); null when the entry names
+ *   an unresolvable campaign ("cannot judge" — not the same fact as "an arm
+ *   did not run")
+ * @param {Record<string, {succeeded: boolean}>} [storeArmState] - the
+ *   `liveArmRunsForSnapshot` result, keyed by arm id; `{}` when the store
+ *   has nothing (or was not consulted)
+ * @param {Array<{snapshotId: string, scope: string, planContentHash: string|null}>} [exclusions] -
+ *   this cohort's active (non-lifted) exclusions
+ * @param {string|null} [expectedConfigDigest]
+ * @param {string|null} [expectedPlanContentHash]
+ * @returns {string[]|null} arm ids to retry, or null when there is nothing
+ *   to narrow — either every declared arm is already done (via store or
+ *   log), or NOTHING is done anywhere (a genuine first-ever/full collection,
+ *   which the caller must not read as "narrow to an empty retry list").
+ *   Also null when every declared arm ran and the snapshot is still
+ *   incomplete for a reason a retry cannot fix (envelope-scope binding,
+ *   contract epoch): re-spawning nothing there would be a silent no-op that
+ *   never resolves the incompleteness.
  */
-export function selectRetryArmIds(existing, existingScope) {
-  if (!existing || !existingScope) return null;
-  if (isComplete(existing, existingScope)) return null;
-  const missing = existingScope.arms.filter((a) => !armDidRun(a, existing)).map((a) => a.id);
+export function selectRetryArmIds(
+  existing, existingScope,
+  storeArmState = {}, exclusions = [],
+  expectedConfigDigest = null, expectedPlanContentHash = null,
+) {
+  if (!existingScope) return null;
+  // A genuine first-ever/full collection — nothing recorded anywhere, not
+  // even a store row to be suspicious of — is NOT a narrowed retry, and
+  // must not be confused with "everything is individually missing" (e.g.
+  // every arm quarantined, or every arm errored): those ARE real retry
+  // lists, just ones that happen to name every arm. The two are
+  // distinguished by whether anything is KNOWN at all, not by counting.
+  const anyKnownAnywhere = Boolean(existing) || existingScope.arms.some((a) => storeArmState?.[a.id] !== undefined);
+  if (!anyKnownAnywhere) return null;
+  // No `isComplete` short-circuit here (round 6, correcting the original
+  // draft): `isComplete` never checks plan-hash provenance (Phase 6 only
+  // ever wires `configDigest` into it, deliberately — see Phase 6's own
+  // rationale), so an entry whose arms all ran fine under an OLD plan hash
+  // reads `isComplete: true`, and a short-circuit there would return null
+  // before ever reaching the plan-hash check below — silently treating a
+  // stale-plan snapshot as done. Every fixture this file's OTHER describe
+  // block exercises (contract-epoch mismatch, scope-binding) already
+  // reaches the same `null` result through the per-arm filter below (every
+  // arm still individually reads as "ran fine"), so dropping this
+  // short-circuit changes no existing behaviour — it only stops masking the
+  // plan-hash case Phase 2 exists to catch.
+  const missing = existingScope.arms.filter((a) => {
+    if (storeArmState?.[a.id]?.succeeded === true) return false; // the store says this arm is genuinely done
+    if (!existing) return true; // nothing local, and the store doesn't show success either
+    if (!armDidRun(a, existing)) return true;
+    const r = existing.arms?.[a.id];
+    if (isAttemptExcluded({ snapshotId: existing.snapshotId, planContentHash: r?.planContentHash ?? null }, exclusions)) return true;
+    const configOk = r?.configDigest == null || r.configDigest === expectedConfigDigest;
+    const planOk = r?.planContentHash == null || r.planContentHash === expectedPlanContentHash;
+    return !(configOk && planOk);
+  }).map((a) => a.id);
   return missing.length > 0 ? missing : null;
 }
 
@@ -132,6 +196,12 @@ export function mergeRetryHistory(newArms, priorArms) {
         error: prior.error ?? prior.shadowError ?? null,
         costUsd: typeof prior.costUsd === 'number' ? prior.costUsd : null,
         unpricedModels: prior.unpricedModels ?? [],
+        // §7 Phase 4 (round 5, H2): the PRIOR result's OWN stamps, never the
+        // current invocation's — this is what a carried-forward arm being
+        // superseded here is superseded FROM, and it must not be silently
+        // relabelled with a pairing it was never collected against.
+        planContentHash: prior.planContentHash ?? null,
+        configDigest: prior.configDigest ?? null,
       },
     ];
     const offset = history.length;
@@ -276,6 +346,66 @@ function resolveScopeForProgress(campaignId) {
   }
 }
 
+/**
+ * §7 Phase 2: resolve this invocation's authoritative store state for
+ * retry-scoping — the cohort's live arm state and its active exclusions.
+ *
+ * Extracted from `main()` so the store-unavailable degradation ladder is
+ * assertable without spawning the CLI or a real database: a THROWN store
+ * error (a real operational failure) and a clean, no-error `cloud:false`
+ * reply (the store is simply disabled) are two DIFFERENT code paths to the
+ * same requirement (Gemini gate round 3, G1 sharpened by round 1's H3) —
+ * checked here as the FIRST thing, explicitly, rather than inferred from
+ * `repoId()`'s own collapsed null (which conflates "cloud is off" with "this
+ * repo just isn't registered yet", and the latter is not the same refusal).
+ * Both cases require `--allow-log-only-retry`, never a silent default.
+ *
+ * @param {{lockDigest: string|null, campaignKey: string|null, snapshotIdValue: string,
+ *   expectedConfigDigest: string|null, expectedPlanContentHash: string|null, allowLogOnlyRetry: boolean}} args
+ * @returns {Promise<{storeArmState: object, activeExclusions: Array<object>}>}
+ * @throws {ArgvError} when the store is unreachable/off and `allowLogOnlyRetry` is false
+ */
+export async function resolveStoreState({
+  lockDigest, campaignKey, snapshotIdValue, expectedConfigDigest, expectedPlanContentHash, allowLogOnlyRetry,
+}) {
+  const empty = { storeArmState: {}, activeExclusions: [] };
+  if (!lockDigest) return empty; // no lock yet — nothing to look up
+  try {
+    if (!await isCloudEnabled()) {
+      throw Object.assign(new Error('Cloud store is disabled — retry scoping has no authoritative arm state'), { cloudOff: true });
+    }
+    const rid = await repoId();
+    if (!rid) return empty; // cloud is on but this repo has no store row yet — not an error
+    const cohort = await resolveCohort({ repoId: rid, campaignKey, lockDigest });
+    if (cohort.cloud === false) {
+      throw Object.assign(new Error('Cloud store is disabled — retry scoping has no authoritative arm state'), { cloudOff: true });
+    }
+    if (!cohort.ok) throw new Error(cohort.error || 'cohort resolution failed');
+    // No cohort recorded yet under this lock is not an error — nothing has
+    // ever been promoted into it, so there is genuinely nothing
+    // authoritative to read yet.
+    if (!cohort.cohortId) return empty;
+    const live = await liveArmRunsForSnapshot({
+      cohortId: cohort.cohortId, snapshotId: snapshotIdValue,
+      expectedConfigDigest, expectedPlanContentHash,
+    });
+    if (live.cloud === false) {
+      throw Object.assign(new Error('Cloud store is disabled — retry scoping has no authoritative arm state'), { cloudOff: true });
+    }
+    if (!live.ok) throw new Error(live.error || 'store read failed');
+    return { storeArmState: live.rows, activeExclusions: live.exclusions ?? [] };
+  } catch (err) {
+    if (!allowLogOnlyRetry) {
+      throw new ArgvError(
+        `[bakeoff] Store read failed: ${err.message} — retry scoping has no authoritative arm state and may re-spawn `
+        + 'arms that already succeeded elsewhere. Pass --allow-log-only-retry for a genuinely offline/local-only workflow.',
+      );
+    }
+    process.stderr.write(`  [bakeoff] WARNING: ${err.message} — proceeding with --allow-log-only-retry (local log only)\n`);
+    return empty;
+  }
+}
+
 async function main() {
   assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'bakeoff-collect' });
   const arg = (n) => { const i = process.argv.indexOf(`--${n}`); return i < 0 ? null : (process.argv[i + 1] ?? null); };
@@ -294,24 +424,92 @@ async function main() {
 
   const id = snapshotId(transcript);
   const force = process.argv.includes('--force');
-  const existing = readLog().find((e) => e.snapshotId === id);
-  if (existing && isCompleteForEntry(existing) && !force) {
-    process.stderr.write(`  [bakeoff] snapshot ${id} already collected and complete — skipping (re-runs would double-count)\n`
-      + '  Pass --force to re-collect: it SUPERSEDES rather than overwrites, so the prior attempt stays readable and its spend still counts.\n');
-    // `resolved` is not bound yet at this early return, so scope the readout
-    // by the entry's own campaign — which is the authoritative answer anyway.
-    printProgress(LOG_PATH, target, resolveScopeForProgress(existing.campaignId ?? null));
-    return;
+  const allowLogOnlyRetry = process.argv.includes('--allow-log-only-retry');
+  const confirmMismatch = process.argv.includes('--confirm-mismatch');
+  const currentPlanHash = planContentHash(plan);
+
+  // §7 Phase 4: a collection-time SOFT heuristic that would have caught all
+  // 3 real mis-paired snapshots. Refuses to proceed on an apparent mismatch
+  // unless the operator explicitly confirms — a legitimate plan may
+  // genuinely share no filenames with its transcript (e.g. a narrative/UX
+  // plan), so this is a soft gate, never a hard refusal.
+  {
+    let transcriptJsonForRelatedness;
+    try { transcriptJsonForRelatedness = JSON.parse(fs.readFileSync(transcript, 'utf-8')); } catch { transcriptJsonForRelatedness = null; }
+    const relatedness = planLooksRelated(transcriptJsonForRelatedness, fs.readFileSync(plan, 'utf-8'));
+    if (!relatedness.related && !confirmMismatch) {
+      throw new ArgvError(
+        `[bakeoff] --transcript and --plan do not look related — no shared cited file basenames found `
+        + `(transcript basenames vs plan text). If this pairing is genuinely correct (e.g. a narrative/UX plan `
+        + 'sharing no filenames with its transcript), pass --confirm-mismatch to proceed.',
+      );
+    }
+    if (!relatedness.related && confirmMismatch) {
+      process.stderr.write('  [bakeoff] WARNING: --transcript and --plan do not look related, proceeding due to --confirm-mismatch\n');
+    }
   }
 
+  // Arms + D4 collision classification resolve FIRST now (§7 Phase 2 —
+  // moved up from below `selectRetryArmIds`): a fresh fixture's local log has
+  // no entry to derive a scope from at all, but the CURRENT invocation's own
+  // campaign is always resolvable from `--campaign`/ambient config, and
+  // Phase 2's store consultation needs it to resolve a cohort before any
+  // local entry exists. A refusal here still costs nothing — no output
+  // directory made yet, no arm spawned.
+  const resolved = resolveArms({ campaignId: arg('campaign') });
+  const fullArms = resolved.scope.arms;
+  const expectedConfigDigest = resolved.config ? resolved.configDigest : null;
+
+  // §7 Phase 2: consult the STORE for authoritative arm state before any
+  // retry/skip decision — a fresh fixture's local log cannot see a success
+  // recorded from another checkout. Fires only when a cohort is resolvable
+  // (this campaign has a lock); absent that, `storeArmState`/
+  // `activeExclusions` stay empty and every decision below falls back to
+  // local-log-only behaviour, identical to before Phase 2.
+  const { storeArmState, activeExclusions } = await resolveStoreState({
+    lockDigest: resolved.lock?.lockDigest ?? null,
+    campaignKey: resolved.config?.id ?? null,
+    snapshotIdValue: id,
+    expectedConfigDigest,
+    expectedPlanContentHash: currentPlanHash,
+    allowLogOnlyRetry,
+  });
+
+  // Abort BEFORE any spawn decision when this exact pairing (or the whole
+  // snapshot) is under an active quarantine (§7 Phase 4) — never reached
+  // silently: without this check, every arm reads `succeeded:false` via
+  // `isAttemptExcluded` inside `liveArmRunsForSnapshot`'s own predicate, so
+  // the collector would spawn and PAY for every arm, have promotion
+  // correctly refuse them, and repeat the exact same spawn-pay-refuse cycle
+  // on the very next invocation — an infinite billing loop.
+  if (isAttemptExcluded({ snapshotId: id, planContentHash: currentPlanHash }, activeExclusions)) {
+    throw new ArgvError(
+      `[bakeoff] snapshot ${id} has an active quarantine matching this pairing — refusing to spawn (this would bill every `
+      + 'arm and have promotion correctly refuse all of them, forever). Run `node scripts/campaign.mjs unquarantine` first '
+      + 'if this was a mistake, or re-run with a genuinely corrected --plan.',
+    );
+  }
+
+  const existing = readLog().find((e) => e.snapshotId === id);
   // D5 per-arm retry — scoped against the EXISTING entry's OWN campaign
-  // (scopeForEntry), so this is knowable before `resolveArms` runs below.
-  // `retryArmIds !== null` means "only spawn these arms and carry every other
-  // arm's result forward unchanged"; `null` means a full collection (either
-  // the first-ever attempt, or an operator-requested full refresh of an
-  // already-complete snapshot via --force).
-  const existingScope = existing ? scopeForEntry(existing) : null;
-  const retryArmIds = selectRetryArmIds(existing, existingScope);
+  // (scopeForEntry) when there is one, else the CURRENT invocation's own
+  // resolved scope (a fresh fixture still knows which arms its campaign
+  // declares). `retryArmIds !== null` means "only spawn these arms and carry
+  // every other arm's result forward unchanged"; `null` means either every
+  // declared arm is already done (store or log), or nothing is done
+  // anywhere yet (a genuine first-ever/full collection).
+  const existingScope = existing ? scopeForEntry(existing) : resolved.scope;
+  const retryArmIds = selectRetryArmIds(existing, existingScope, storeArmState, activeExclusions, expectedConfigDigest, currentPlanHash);
+  const anySucceededAlready = existingScope
+    ? existingScope.arms.some((a) => storeArmState?.[a.id]?.succeeded === true || (existing && armDidRun(a, existing)))
+    : false;
+
+  if (retryArmIds === null && anySucceededAlready && !force) {
+    process.stderr.write(`  [bakeoff] snapshot ${id} already collected and complete — skipping (re-runs would double-count)\n`
+      + '  Pass --force to re-collect: it SUPERSEDES rather than overwrites, so the prior attempt stays readable and its spend still counts.\n');
+    printProgress(LOG_PATH, target, resolveScopeForProgress(existing?.campaignId ?? resolved.config?.id ?? null));
+    return;
+  }
 
   if (retryArmIds) {
     // Discarding the arms that already succeeded (opus/kimi/gemini-control,
@@ -319,7 +517,7 @@ async function main() {
     // exists to stop — each of those was a real, paid provider call.
     process.stderr.write(`  [bakeoff] snapshot ${id} incomplete — retrying only: ${retryArmIds.join(', ')}`
       + ` (${existingScope.arms.length - retryArmIds.length} arm(s) already recorded, NOT re-charged)\n`);
-  } else if (force && existing) {
+  } else if (force && anySucceededAlready) {
     // §5's resume table: `--force` APPENDS a retry, it never overwrites. The
     // supersede itself happens at promotion time (`campaign.mjs reconcile`),
     // where the store can stamp the prior row `superseded_at` and insert
@@ -330,10 +528,6 @@ async function main() {
     process.stderr.write(`  [bakeoff] --force: re-collecting ${id}; the prior attempt will be superseded, never deleted\n`);
   }
 
-  // Arms + D4 collision classification resolve BEFORE the output directory is
-  // made and before any arm is spawned: a refusal must cost nothing.
-  const resolved = resolveArms({ campaignId: arg('campaign') });
-  const fullArms = resolved.scope.arms;
   // The spawn set: every declared arm, UNLESS this is a per-arm retry, in
   // which case only the arm(s) named by retryArmIds are re-spawned. The other
   // declared arms are neither re-run nor re-charged — their prior results are
@@ -381,6 +575,16 @@ async function main() {
     newArms[a.id] = {
       ...result,
       runId: runId ?? null,
+      // §7 Phase 4: stamped per-arm at collection time, never as a single
+      // entry-level field — a value known only NOW must be carried per
+      // attempt so promotion can populate campaign_arm_runs.config_digest/
+      // .plan_content_hash correctly for each arm, including ones carried
+      // forward by mergeRetryHistory under an OLDER config/plan. Only a
+      // genuinely NEW collection call for an arm (this loop) stamps the
+      // CURRENT invocation's values; mergeRetryHistory's carried-forward
+      // arms below keep their own historical stamps unchanged.
+      planContentHash: currentPlanHash,
+      configDigest: expectedConfigDigest,
       // Superseded attempts are RECORDED, not discarded. Each was a real spawn
       // that may have been billed, and dropping them would make an arm that
       // failed once and recovered look exactly as cheap as one that succeeded
@@ -397,7 +601,15 @@ async function main() {
   // replaces the whole entry per snapshotId (newest wins), so the merged
   // object below — not a partial one — is what must be written; a log line
   // containing only the retried arm would make readLog() forget the others.
-  const arms = retryArmIds ? { ...existing.arms, ...mergeRetryHistory(newArms, existing.arms) } : newArms;
+  // `existing` can be undefined here even though `retryArmIds` is non-null:
+  // `retryArmIds`/`selectRetryArmIds` is STORE-authoritative (checks
+  // `storeArmState`, independent of the local log), so a fresh fixture whose
+  // OWN bakeoff-log.jsonl has never seen this snapshot (the other arms were
+  // collected in a different fixture or session) legitimately reaches this
+  // branch with no local entry to merge against. `mergeRetryHistory` already
+  // guards its own `priorArms?.[armId]` lookup; this was the one unguarded
+  // read.
+  const arms = retryArmIds ? { ...(existing?.arms ?? {}), ...mergeRetryHistory(newArms, existing?.arms ?? {}) } : newArms;
 
   const entry = {
     snapshotId: id,

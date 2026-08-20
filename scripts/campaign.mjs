@@ -74,10 +74,14 @@ import * as store from './lib/store/campaign.mjs';
 const KNOWN_FLAGS = Object.freeze([
   '--campaign', '--finding', '--verdict', '--note', '--reason', '--limit',
   '--dry-run', '--recluster', '--actor', '--json', '--redo',
+  '--snapshot', '--plan-hash', '--all-pairings', '--confirm-mismatch',
   '--selfcheck-relocation', '--help', '-h',
 ]);
 
-const VERBS = Object.freeze(['status', 'cluster', 'adjudicate', 'override', 'verdict', 'reconcile', 'declare-inconclusive']);
+const VERBS = Object.freeze([
+  'status', 'cluster', 'adjudicate', 'override', 'verdict', 'reconcile',
+  'declare-inconclusive', 'quarantine', 'unquarantine',
+]);
 
 // ── CLI plumbing ────────────────────────────────────────────────────────────
 
@@ -717,9 +721,9 @@ async function recordRuleState({ config, campaignId, actor }) {
   return { ok: true, recorded: true, kind: 'rule_changed', before, after: current };
 }
 
-async function verbReconcile(campaignId, { actor = null } = {}) {
+async function verbReconcile(campaignId, { actor = null, confirmMismatch = false } = {}) {
   const { config, lock, configDigest } = loadCampaign(campaignId);
-  const promoted = await promoteFromLog({ config, lock, configDigest, entries: readLog() });
+  const promoted = await promoteFromLog({ config, lock, configDigest, entries: readLog(), confirmMismatch });
   // `promoteFromLog` (scripts/lib/campaign/promote.mjs) no longer prints the
   // cloud-off notice itself — it cannot import `cloudOffNotice` without
   // reaching back into this entry point (D2's boundary), so it returns
@@ -769,6 +773,50 @@ async function verbReconcile(campaignId, { actor = null } = {}) {
   return (byState.intent.length + byState.unreadable.length) > 0 ? 4 : 0;
 }
 
+/**
+ * Quarantine a snapshot pairing (§7 Phase 5). Omitting both `--plan-hash`
+ * and `--all-pairings` quarantines the legacy/NULL-hash pairing — the exact
+ * shape of this plan's own 3 known incidents.
+ */
+async function verbQuarantine(campaignId, { snapshotId, planHash, allPairings, reason }) {
+  const { config } = loadCampaign(campaignId);
+  const rid = await repoId();
+  const target = await store.resolveQuarantineTarget({ repoId: rid, campaignKey: config.id, snapshotId });
+  if (target.cloud === false) { cloudOffNotice('quarantine'); return 0; }
+  if (!target.ok) { process.stderr.write(`campaign ${config.id} quarantine: ${target.error}\n`); return 3; }
+  const res = await store.markSnapshotExcluded({
+    cohortId: target.cohortId, snapshotId, planContentHash: allPairings ? null : planHash, allPairings, reason,
+  });
+  if (!res.ok) { process.stderr.write(`${res.error}\n`); return 1; }
+  const shape = allPairings ? 'ALL pairings' : planHash ? `plan-hash ${planHash}` : 'the legacy/NULL-hash pairing';
+  process.stdout.write(`campaign ${config.id}: quarantined ${snapshotId} (${shape}) — ${res.applied ? 'applied' : 'already quarantined (no-op)'}\n`);
+  return 0;
+}
+
+/**
+ * Reverse a mistaken quarantine (§7 Phase 5, round 5 M2). Idempotent: a
+ * second call on an already-lifted key is a benign no-op, never an error
+ * (round 6, Gemini gate LOW correction).
+ */
+async function verbUnquarantine(campaignId, { snapshotId, planHash, allPairings, reason }) {
+  const { config } = loadCampaign(campaignId);
+  const rid = await repoId();
+  const target = await store.resolveQuarantineTarget({ repoId: rid, campaignKey: config.id, snapshotId });
+  if (target.cloud === false) { cloudOffNotice('unquarantine'); return 0; }
+  if (!target.ok) { process.stderr.write(`campaign ${config.id} unquarantine: ${target.error}\n`); return 3; }
+  const res = await store.liftSnapshotExclusion({
+    cohortId: target.cohortId, snapshotId, planContentHash: allPairings ? null : planHash, allPairings, reason,
+  });
+  if (!res.ok) { process.stderr.write(`${res.error}\n`); return 1; }
+  if (res.notFound) {
+    process.stderr.write(`campaign ${config.id} unquarantine: No active exclusion found matching these parameters (snapshot ${snapshotId})\n`);
+    return 3;
+  }
+  const shape = allPairings ? 'ALL pairings' : planHash ? `plan-hash ${planHash}` : 'the legacy/NULL-hash pairing';
+  process.stdout.write(`campaign ${config.id}: lifted quarantine on ${snapshotId} (${shape}) — ${res.applied ? 'applied' : 'already lifted (no-op)'}\n`);
+  return 0;
+}
+
 async function verbDeclareInconclusive(campaignId, { reason, actor }) {
   const { config, lock } = loadCampaign(campaignId);
   const rid = await repoId();
@@ -798,9 +846,14 @@ const USAGE = [
   '  node scripts/campaign.mjs override             --finding FINDING_UUID --verdict dismissed --note "why" --actor louis',
   '  node scripts/campaign.mjs verdict              --campaign final-review-2026q3 --json',
   '  node scripts/campaign.mjs reconcile            --campaign final-review-2026q3',
+  '  node scripts/campaign.mjs reconcile            --campaign final-review-2026q3 --confirm-mismatch',
   '  node scripts/campaign.mjs declare-inconclusive --campaign final-review-2026q3 --reason "eligible pool exhausted"',
+  '  node scripts/campaign.mjs quarantine           --campaign final-review-2026q3 --snapshot bf6f7fa76385 --reason "mis-paired"',
+  '  node scripts/campaign.mjs quarantine           --campaign final-review-2026q3 --snapshot bf6f7fa76385 --all-pairings --reason "mis-paired"',
+  '  node scripts/campaign.mjs unquarantine         --campaign final-review-2026q3 --snapshot bf6f7fa76385 --reason "correction landed"',
   '',
   '--verdict is one of: accepted, dismissed, severity_adjusted.',
+  'quarantine/unquarantine: omitting both --plan-hash and --all-pairings targets the legacy/NULL-hash pairing.',
   '--redo re-adjudicates NAMED findings, superseding their live agent verdict; it requires --reason and',
   '  refuses any finding a human has already dispositioned. Without it, adjudicate only visits rows with no verdict.',
   'Exit codes: 0 ok · 1 error · 2 bad arguments · 3 not computable · 4 operator action outstanding',
@@ -831,8 +884,18 @@ async function main() {
       outcome: assertOutcome(requireArg('verdict')),
       note: arg('note'), actor: arg('actor'),
     });
-    case 'reconcile':   return verbReconcile(arg('campaign'), { actor: arg('actor') });
+    case 'reconcile':   return verbReconcile(arg('campaign'), {
+      actor: arg('actor'), confirmMismatch: process.argv.includes('--confirm-mismatch'),
+    });
     case 'declare-inconclusive': return verbDeclareInconclusive(arg('campaign'), { reason: requireArg('reason'), actor: arg('actor') });
+    case 'quarantine':   return verbQuarantine(arg('campaign'), {
+      snapshotId: requireArg('snapshot'), planHash: arg('plan-hash'),
+      allPairings: process.argv.includes('--all-pairings'), reason: requireArg('reason'),
+    });
+    case 'unquarantine': return verbUnquarantine(arg('campaign'), {
+      snapshotId: requireArg('snapshot'), planHash: arg('plan-hash'),
+      allPairings: process.argv.includes('--all-pairings'), reason: requireArg('reason'),
+    });
     default:            throw new ArgvError(`unhandled verb "${verb}"`);
   }
 }

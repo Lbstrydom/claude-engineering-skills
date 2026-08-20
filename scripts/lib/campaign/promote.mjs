@@ -71,7 +71,7 @@ export async function repoId() {
  * that quietly fails to promote is indistinguishable from one that was never
  * collected, and the denominator would shrink without anyone seeing it.
  *
- * Three refusals, each from a stated invariant:
+ * Four refusals, each from a stated invariant:
  *
  *  - **No `lockDigest`** (collected before the lock existed): ineligible, and
  *    never adopted into the current cohort. Relabelling evidence collected
@@ -81,11 +81,54 @@ export async function repoId() {
  *  - **Arms disagreeing about the commit**: not one snapshot (§2.5b-i). One
  *    snapshot is one transcript at one revision, because that revision is what
  *    adjudication verifies against.
+ *  - **A plan-hash mismatch against LIVE, non-quarantined attempts already in
+ *    the store** (§7 Phase 4, H1/H5) — shaped like the sha check above, but
+ *    scoped to the store's own history rather than this entry's arms. `IS NOT
+ *    DISTINCT FROM` semantics: a legacy NULL-hash live attempt is silently
+ *    compatible with a further NULL-hash one, but a real, differing hash is a
+ *    mismatch requiring `confirmMismatch`. `existingPlanHashesByArm` is
+ *    `{armId: Set<hash|null>}` for LIVE, NON-QUARANTINED prior attempts —
+ *    already filtered through `isAttemptExcluded` by the caller, so a
+ *    quarantined legacy pairing drops out of the comparison population
+ *    entirely and a corrected re-collection needs no flag once quarantined.
  *
  * @param {object} entry
- * @param {{campaignId: string, lockDigest: string, shaByRunId: Record<string,string|null>}} ctx
+ * @param {{campaignId: string, lockDigest: string, shaByRunId: Record<string,string|null>,
+ *   existingPlanHashesByArm?: Record<string, Set<string|null>>, confirmMismatch?: boolean}} ctx
  */
-export function classifyLogEntry(entry, { campaignId, lockDigest, shaByRunId }) {
+/**
+ * PURE. Which arms in this entry disagree with their OWN live,
+ * non-quarantined store history on plan-content hash — extracted from
+ * `classifyLogEntry` so the comparison rule is assertable and readable in
+ * isolation (round 6, M6: the containing function was growing multiple
+ * independent policy concerns).
+ *
+ * `IS NOT DISTINCT FROM` semantics: NULL-vs-NULL is a match (a legacy
+ * snapshot with no historical hash accepts a further NULL-hash attempt);
+ * only a REAL, differing value is a mismatch. An arm with no entry in
+ * `existingPlanHashesByArm` (no live history at all — a genuinely new
+ * arm-run) is never a mismatch, since there is nothing to disagree with.
+ *
+ * @param {Array<[string, object]>} armEntries - `Object.entries(entry.arms)`
+ * @param {Record<string, Set<string|null>>} existingPlanHashesByArm
+ * @returns {Array<{armId: string, oldHash: string|null, newHash: string|null}>}
+ */
+export function detectPlanHashMismatches(armEntries, existingPlanHashesByArm) {
+  const mismatches = [];
+  for (const [armId, arm] of armEntries) {
+    const attemptHash = arm?.planContentHash ?? null;
+    const existingHashes = existingPlanHashesByArm[armId];
+    if (!existingHashes) continue;
+    for (const oldHash of existingHashes) {
+      if ((oldHash ?? null) !== attemptHash) mismatches.push({ armId, oldHash: oldHash ?? null, newHash: attemptHash });
+    }
+  }
+  return mismatches;
+}
+
+export function classifyLogEntry(entry, {
+  campaignId, lockDigest, shaByRunId, existingPlanHashesByArm = {}, confirmMismatch = false,
+}) {
   if (entry?.campaignId !== campaignId) {
     return { eligible: false, reason: entry?.campaignId ? `belongs to campaign "${entry.campaignId}"` : 'collected before this campaign was declared (no campaignId)' };
   }
@@ -114,17 +157,46 @@ export function classifyLogEntry(entry, { campaignId, lockDigest, shaByRunId }) 
   if (shas.size > 1) {
     return { eligible: false, reason: `arms recorded ${shas.size} different commits (${[...shas].join(', ')}) — one snapshot is one revision` };
   }
+
+  // §7 Phase 4 plan-hash consistency check — per arm, against that arm's OWN
+  // live non-quarantined history in the store.
+  const mismatches = detectPlanHashMismatches(armEntries, existingPlanHashesByArm);
+  if (mismatches.length > 0 && !confirmMismatch) {
+    const named = mismatches.map((m) => `${m.armId} (store: ${m.oldHash ?? 'null'}, new: ${m.newHash ?? 'null'})`).join(', ');
+    return {
+      eligible: false,
+      reason: `plan-hash mismatch against live evidence: ${named} — re-run \`campaign.mjs reconcile --confirm-mismatch\` to `
+        + 'acknowledge a corrected plan pairing, or quarantine the old pairing first with `campaign.mjs quarantine`',
+    };
+  }
+
   return {
     eligible: true,
     auditedSha: [...shas][0],
+    // Non-empty only when a REAL mismatch was let through by confirmMismatch
+    // — the caller (`promoteFromLog`) auto-quarantines each named oldHash in
+    // the same locked transaction before admitting the new attempt.
+    mismatches,
     armRuns: armEntries.map(([armId, arm]) => ({
       armId,
       auditRunId: arm?.runId ?? null,
-      error: arm?.error ?? null,
+      // A LIVE (non-superseded) log entry carries its failure under
+      // `shadowError` (bakeoff-collect.mjs never writes a top-level `error`
+      // on the live shape) — `arm?.error` alone was always undefined here,
+      // silently dropping every live failure to `null` and making
+      // `liveArmRunsForSnapshot`'s `error IS NULL` success gate read a failed
+      // arm as succeeded. `?? arm?.error` kept as a defensive fallback,
+      // mirroring the superseded-attempt mapping below and bakeoff-collect's
+      // own `prior.error ?? prior.shadowError` merge.
+      error: arm?.shadowError ?? arm?.error ?? null,
       // `costUsd` absent is UNPRICED, never 0 — an unrecorded charge that reads
       // as free is lesson (e), and the CHECK constraint enforces the pairing.
       costUsd: Number.isFinite(arm?.costUsd) ? arm.costUsd : null,
       costStatus: Number.isFinite(arm?.costUsd) ? 'priced' : 'unpriced',
+      // §7 Phase 4: each attempt's OWN provenance, populated at promotion
+      // time — never a single entry-level value (round 5, H2).
+      planContentHash: arm?.planContentHash ?? null,
+      configDigest: arm?.configDigest ?? null,
       // Attempts that were spawned, billed, and replaced — oldest first. The
       // collector retries a TIMED-OUT arm automatically now, so an arm's live
       // result may be its second spawn; promoting only that one would report a
@@ -137,6 +209,8 @@ export function classifyLogEntry(entry, { campaignId, lockDigest, shaByRunId }) 
         error: s?.error ?? s?.errorCategory ?? 'superseded attempt',
         costUsd: Number.isFinite(s?.costUsd) ? s.costUsd : null,
         costStatus: Number.isFinite(s?.costUsd) ? 'priced' : 'unpriced',
+        planContentHash: s?.planContentHash ?? null,
+        configDigest: s?.configDigest ?? null,
       })),
     })),
   };
@@ -168,57 +242,44 @@ export function isArmRetried(entry, armId) {
 }
 
 /**
- * PURE. What promotion should do with one arm, given how many attempts the
- * ENTRY records, what the store already holds, and whether the collection was
- * forced.
+ * PURE. What promotion should do with one arm's recorded attempts, given
+ * what the store ALREADY holds — by IDENTITY (§7 Phase 3), not by count.
  *
- * Three outcomes, and the middle one is the whole of `--force`:
- *   - nothing recorded          → attempts 1..K, no supersede on the first
- *   - recorded, not forced      → SKIP. Promotion is idempotent; re-running
- *                                 reconcile must never append a second attempt,
- *                                 which would double-count the arm's spend.
- *   - recorded, forced          → attempts N+1..N+K, superseding as they go.
- *                                 Never an overwrite: the earlier attempt stays
- *                                 readable and its spend still counts, which is
- *                                 exactly why `armSpend` sums superseded rows.
+ * **Round 6/Phase 3 rework**: the predecessor signature
+ * (`{existingAttempt, recordedAttempts, forced}`) compared two INTEGERS.
+ * That is the exact root cause of defect #2 (this plan's Context Summary): a
+ * fresh pinned-worktree fixture restarts local attempt-numbering at 1, so a
+ * genuinely NEW successful run (a different `audit_run_id`) at local
+ * "attempt 1" collided with the store's own attempt-1 (which may have been
+ * the earlier failure) — `resolvePromotionAttempts` read that as "already
+ * recorded" by count and silently skipped a real, paid success. `forced`
+ * doesn't fix this either: it decides WHETHER to supersede, never WHICH
+ * attempts are new. Identity removes the ambiguity: an attempt is already
+ * recorded if and only if its OWN `auditRunId` is in `existingRunIds` — a
+ * set the caller resolves from the store by exact id, not by counting rows.
  *
- * **K, not 1** (2026-08-18): the collector now retries a timed-out arm
- * automatically, so ONE log entry can carry several attempts for one arm. The
- * singular predecessor could only ever promote the live one, which would have
- * silently dropped every automatically-retried attempt's charge — the same
- * under-report as promoting a `--force` retry without superseding. Because it
- * plans a LIST, the "recorded, not forced" branch also stops being all-or-
- * nothing: a reconcile interrupted after attempt 1 resumes at attempt 2 instead
- * of reading the arm as fully promoted (`n < K` is now a resumable state, not
- * an invisible one).
+ * `forced`/`isArmRetried` are GONE from this function's inputs entirely —
+ * they no longer gate anything here. Identity alone decides what's new.
  *
- * The returned plans align to the TAIL of the entry's attempt list — the caller
- * skips the first `K - plans.length` of them, which are the ones the store
- * already holds.
- *
- * Extracted so the rule is assertable without a database. Before `--force`
- * existed, the third branch was unreachable — and with it the `attempt` column,
- * the partial unique index and the receipt-attempt protocol were all machinery
- * no operator action could trigger.
- *
- * @param {{existingAttempt?: number, recordedAttempts?: number, forced?: boolean}} [args]
- * @returns {{skip: boolean, plans: Array<{attempt: number, supersedePrior: boolean}>}}
+ * @param {{attempts?: Array<{auditRunId: string|null, [key: string]: unknown}>,
+ *   existingAttempt?: number, existingRunIds?: Set<string>}} [args]
+ * @returns {{skip: boolean, plans: Array<{attempt: number, supersedePrior: boolean, auditRunId: string|null, [key: string]: unknown}>}}
  */
-export function resolvePromotionAttempts({ existingAttempt = 0, recordedAttempts = 1, forced = false } = {}) {
+export function resolvePromotionAttempts({ attempts = [], existingAttempt = 0, existingRunIds = new Set() } = {}) {
   const n = Number.isInteger(existingAttempt) && existingAttempt > 0 ? existingAttempt : 0;
-  const k = Number.isInteger(recordedAttempts) && recordedAttempts > 0 ? recordedAttempts : 1;
-  // How many of this entry's attempts still need a row. Forced means the whole
-  // entry is a fresh set appended after everything already stored.
-  const toRecord = forced ? k : k - n;
-  if (toRecord <= 0) return { skip: true, plans: [] };
-  const plans = [];
-  for (let i = 0; i < toRecord; i++) {
-    const attempt = n + i + 1;
-    // Attempt 1 has nothing to supersede; every later one replaces the row that
-    // was live until it — including within a single entry, where the automatic
-    // retry's success supersedes the timeout that preceded it.
-    plans.push({ attempt, supersedePrior: attempt > 1 });
-  }
+  const list = Array.isArray(attempts) ? attempts : [];
+  // A null `auditRunId` (an attempt with no minted run — e.g. a spawn that
+  // never even registered) has no identity to collide on, so it is always
+  // promoted; only a REAL id already present in `existingRunIds` is skipped.
+  const toPromote = list.filter((a) => !a?.auditRunId || !existingRunIds.has(a.auditRunId));
+  if (toPromote.length === 0) return { skip: true, plans: [] };
+  const plans = toPromote.map((a, i) => ({
+    attempt: n + i + 1,
+    // Attempt 1 has nothing to supersede; every later one replaces the row
+    // that was live until it.
+    supersedePrior: (n + i + 1) > 1,
+    ...a,
+  }));
   return { skip: false, plans };
 }
 
@@ -235,8 +296,10 @@ export function resolvePromotionAttempts({ existingAttempt = 0, recordedAttempts
  * `entries` is a PARAMETER (see the module-level note on why) — the caller
  * passes `readLog()`'s own result.
  */
-export async function promoteFromLog({ config, lock, configDigest, entries }) {
-  const runIds = entries.flatMap((e) => Object.values(e.arms ?? {}).map((a) => a?.runId).filter(Boolean));
+export async function promoteFromLog({ config, lock, configDigest, entries, confirmMismatch = false }) {
+  const runIds = entries.flatMap((e) => Object.values(e.arms ?? {}).flatMap(
+    (a) => [a?.runId, ...(Array.isArray(a?.supersededAttempts) ? a.supersededAttempts.map((s) => s?.runId) : [])],
+  ).filter(Boolean));
   const shas = await store.auditedShasForRuns(runIds);
   if (shas.cloud === false) return { cloud: false };
   if (!lock?.lockDigest) {
@@ -253,39 +316,98 @@ export async function promoteFromLog({ config, lock, configDigest, entries }) {
   let promoted = 0;
   const refused = [];
   for (const entry of entries) {
-    const cls = classifyLogEntry(entry, { campaignId: config.id, lockDigest: lock.lockDigest, shaByRunId: shas.byRunId });
-    if (!cls.eligible) { refused.push({ snapshotId: entry.snapshotId, reason: cls.reason }); continue; }
-    const snap = await store.upsertSnapshot({
-      cohortId: cohort.id, snapshotId: entry.snapshotId, auditedSha: cls.auditedSha, transcriptPath: entry.transcript ?? null,
-    });
-    if (!snap.ok) { refused.push({ snapshotId: entry.snapshotId, reason: snap.error }); continue; }
-    for (const arm of cls.armRuns) {
-      // Every attempt this entry records for the arm, oldest first — the
-      // superseded ones then the live one. Each was a separate spawn against a
-      // provider, so each earns its own row; the live one is simply the last.
-      const attempts = [
-        ...arm.supersededAttempts,
-        { auditRunId: arm.auditRunId, costUsd: arm.costUsd, costStatus: arm.costStatus, error: arm.error },
-      ];
-      const existing = await store.maxArmRunAttempt({ cohortId: cohort.id, snapshotId: entry.snapshotId, armId: arm.armId });
-      const plan = resolvePromotionAttempts({
-        existingAttempt: existing.attempt, recordedAttempts: attempts.length, forced: isArmRetried(entry, arm.armId),
-      });
-      if (plan.skip) continue;
-      // Plans align to the TAIL: the first `attempts.length - plan.plans.length`
-      // are already in the store and must not be written twice.
-      const offset = attempts.length - plan.plans.length;
-      for (let i = 0; i < plan.plans.length; i++) {
-        const a = attempts[offset + i];
-        const res = await store.recordArmRun({
-          cohortId: cohort.id, snapshotRowId: snap.id, snapshotId: entry.snapshotId, armId: arm.armId, attempt: plan.plans[i].attempt,
-          auditRunId: a.auditRunId, costUsd: a.costUsd, costStatus: a.costStatus, error: a.error,
-          supersedePrior: plan.plans[i].supersedePrior,
-        });
-        if (res.ok) promoted += 1;
-        else refused.push({ snapshotId: entry.snapshotId, reason: `${arm.armId}: ${res.error}` });
+    // Everything for ONE snapshot — classification (including the §7 Phase 4
+    // plan-hash consistency check, which needs live store state), quarantine
+    // admission, and every write — happens inside ONE locked transaction
+    // (§7 Phase 3, round 4 H1+H4): `acquireSnapshotLock` serializes
+    // concurrent `reconcile` invocations for this exact (cohort, snapshot),
+    // so classification and the writes it gates cannot race.
+    const result = await store.withTx(async () => {
+      await store.acquireSnapshotLock(cohort.id, entry.snapshotId);
+
+      const exclusions = await store.activeExclusionsForCohort(cohort.id);
+      const liveRows = await store.liveArmRunRows({ cohortId: cohort.id, snapshotId: entry.snapshotId });
+      const existingPlanHashesByArm = {};
+      for (const r of liveRows.rows ?? []) {
+        if (store.isAttemptExcluded({ snapshotId: entry.snapshotId, planContentHash: r.planContentHash }, exclusions)) continue;
+        if (!existingPlanHashesByArm[r.armId]) existingPlanHashesByArm[r.armId] = new Set();
+        existingPlanHashesByArm[r.armId].add(r.planContentHash ?? null);
       }
-    }
+
+      const cls = classifyLogEntry(entry, {
+        campaignId: config.id, lockDigest: lock.lockDigest, shaByRunId: shas.byRunId,
+        existingPlanHashesByArm, confirmMismatch,
+      });
+      if (!cls.eligible) return { promotedCount: 0, refusals: [{ snapshotId: entry.snapshotId, reason: cls.reason }] };
+
+      // §7 Phase 4 (round 6, H2): `--confirm-mismatch` is a STATE
+      // TRANSITION, not a bare acknowledgement — every OLD, disagreeing
+      // hash found among this snapshot's live attempts is auto-quarantined
+      // in this SAME transaction before the new attempt is admitted, so no
+      // window exists where the snapshot's live evidence mixes two pairings.
+      const oldHashesToQuarantine = new Set(cls.mismatches.map((m) => m.oldHash));
+      for (const oldHash of oldHashesToQuarantine) {
+        await store.markSnapshotExcluded({
+          cohortId: cohort.id, snapshotId: entry.snapshotId, planContentHash: oldHash, allPairings: false,
+          reason: 'auto-quarantined via --confirm-mismatch: promoting a corrected plan pairing',
+        });
+      }
+      // Re-fetch exclusions if we just added any — the quarantine admission
+      // check below must see the pairing it just excluded.
+      const exclusionsForAdmission = oldHashesToQuarantine.size > 0 ? await store.activeExclusionsForCohort(cohort.id) : exclusions;
+
+      const snap = await store.upsertSnapshot({
+        cohortId: cohort.id, snapshotId: entry.snapshotId, auditedSha: cls.auditedSha, transcriptPath: entry.transcript ?? null,
+      });
+      if (!snap.ok) return { promotedCount: 0, refusals: [{ snapshotId: entry.snapshotId, reason: snap.error }] };
+
+      let promotedCount = 0;
+      const refusals = [];
+      for (const arm of cls.armRuns) {
+        // Every attempt this entry records for the arm, oldest first — the
+        // superseded ones then the live one. Each was a separate spawn
+        // against a provider, so each earns its own row.
+        const attempts = [
+          ...arm.supersededAttempts,
+          {
+            auditRunId: arm.auditRunId, costUsd: arm.costUsd, costStatus: arm.costStatus, error: arm.error,
+            planContentHash: arm.planContentHash, configDigest: arm.configDigest,
+          },
+        ];
+        const candidateRunIds = attempts.map((a) => a.auditRunId).filter(Boolean);
+        const [existingIds, existingAttempt] = await Promise.all([
+          store.existingAuditRunIds(candidateRunIds),
+          store.maxArmRunAttempt({ cohortId: cohort.id, snapshotId: entry.snapshotId, armId: arm.armId }),
+        ]);
+        const plan = resolvePromotionAttempts({
+          attempts, existingAttempt: existingAttempt.attempt, existingRunIds: existingIds.ids,
+        });
+        if (plan.skip) continue;
+        for (const p of plan.plans) {
+          // Quarantine admission, PER ATTEMPT, from its OWN carried hash
+          // (§7 Phase 4/5 wiring; round 5 H2) — never a single entry-level
+          // value. Until Phase 4 stamps a real `planContentHash` per arm
+          // result, this reads `null` for every attempt, which still
+          // correctly matches a `scope:'all'` exclusion or a legacy
+          // `scope:'pairing', planContentHash:null` one (exactly the 3
+          // known mis-paired snapshots' shape).
+          if (store.isAttemptExcluded({ snapshotId: entry.snapshotId, planContentHash: p.planContentHash ?? null }, exclusionsForAdmission)) {
+            process.stdout.write(`  quarantined pairing — not promoted: ${entry.snapshotId} ${arm.armId} (run ${p.auditRunId ?? 'unregistered'})\n`);
+            continue;
+          }
+          const res = await store.recordArmRun({
+            cohortId: cohort.id, snapshotRowId: snap.id, snapshotId: entry.snapshotId, armId: arm.armId, attempt: p.attempt,
+            auditRunId: p.auditRunId, costUsd: p.costUsd, costStatus: p.costStatus, error: p.error,
+            supersedePrior: p.supersedePrior, planContentHash: p.planContentHash ?? null, configDigest: p.configDigest ?? null,
+          });
+          if (res.ok) promotedCount += 1;
+          else refusals.push({ snapshotId: entry.snapshotId, reason: `${arm.armId}: ${res.error}` });
+        }
+      }
+      return { promotedCount, refusals };
+    });
+    promoted += result.promotedCount;
+    refused.push(...result.refusals);
   }
   process.stdout.write(`  promoted ${promoted} arm-run(s) into cohort ${lock.lockDigest}\n`);
   // Every refusal is NAMED. A snapshot that quietly fails to promote is
