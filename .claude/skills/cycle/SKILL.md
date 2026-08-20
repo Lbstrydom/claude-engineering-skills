@@ -182,10 +182,16 @@ human already implemented, so the gate is bypassed entirely (go straight to Step
   [ -z "$(git diff "$BASE" --name-only)$(git ls-files --others --exclude-standard)" ] && echo EMPTY
   ```
   If empty → **do NOT audit a no-op.** Tell the operator the plan looks
-  unimplemented and offer the fork: re-run with **`--autonomous`** (let `/cycle`
-  implement it) or implement manually then re-run `code`. This mirrors the Step 3C
-  rule "never default `--diff` to HEAD — empty diff = silent skip" (line ~191),
-  extended to the human `code` path. (The AUTO-mode "any new code since the plan
+  unimplemented and offer the fork, naming the EXACT command for each side —
+  `--autonomous` alone does nothing here, since `SKIP_TO_CODE` routes straight
+  past the implementation gate regardless of the flag (Step 3's decision
+  table), so "just add `--autonomous`" is not a fix while the `code` keyword
+  stays: (1) drop the `code` keyword and re-run as `/cycle plan <plan-file>
+  --autonomous` (let `/cycle` implement it — `plan` mode is the one whose
+  gate actually reads `--autonomous`), or (2) implement manually then re-run
+  `/cycle code <plan-file>` unchanged. This mirrors the Step 3C rule "never
+  default `--diff` to HEAD — empty diff = silent skip" (line ~191), extended
+  to the human `code` path. (The AUTO-mode "any new code since the plan
   commit" detection gates this too.)
 
 ```

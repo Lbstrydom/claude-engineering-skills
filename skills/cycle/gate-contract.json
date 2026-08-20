@@ -133,6 +133,18 @@
     {
       "line": "to the consolidated Gemini gate over the union diff, where the deletion IS",
       "reason": "Continuation of the deletion-only-cluster routing note. The consolidated gate itself is separately dispositioned by consolidated-gemini-gate-mandatory; this line only says where such a cluster goes."
+    },
+    {
+      "line": "past the implementation gate regardless of the flag (Step 3's decision",
+      "reason": "Restates the pre-existing SKIP_TO_CODE row of Step 3's own decision table ('any hasClustering / any --autonomous → Empty-diff guard first; then no gate') inside the empty-diff guard's fork message. Not a new gate claim — /cycle is a thin orchestrator with no exit code of its own (same reasoning as the other document-only entries here); this cross-references the routing table that already exists a few paragraphs above in the same file."
+    },
+    {
+      "line": "gate actually reads `--autonomous`), or (2) implement manually then re-run",
+      "reason": "Clarifies which mode's Step-3 gate consults `--autonomous` (FULL/SKIP_PLAN, not SKIP_TO_CODE) so the guard's error message names a working command instead of a no-op one. Restates the existing mode-dispatch table for the operator reading the message; asserts no new mechanical enforcement."
+    },
+    {
+      "line": "`/cycle code <plan-file>` unchanged. This mirrors the Step 3C rule \"never",
+      "reason": "Points at the ALREADY-dispositioned Step 3C rule (the audit-envelope ignoredCandidates entry above, 'never default the base to HEAD — empty diff = silent skip') rather than asserting a new one. 'Unchanged' describes the guard's second fork option — implement manually, then re-run the identical command — not a gate."
     }
   ]
 }
