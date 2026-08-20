@@ -1,0 +1,8 @@
+{
+  "mode": "plan",
+  "findings": [
+    { "section": "§3 accepted-debt-check.mjs — sample selection", "severity": "MEDIUM" },
+    { "section": "§4 accepted-debt-registry.mjs — ledger shape", "severity": "HIGH" },
+    { "file": "scripts/check-accepted-debt.mjs", "severity": "LOW" }
+  ]
+}

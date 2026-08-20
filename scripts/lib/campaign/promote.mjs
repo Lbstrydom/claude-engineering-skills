@@ -71,7 +71,7 @@ export async function repoId() {
  * that quietly fails to promote is indistinguishable from one that was never
  * collected, and the denominator would shrink without anyone seeing it.
  *
- * Three refusals, each from a stated invariant:
+ * Four refusals, each from a stated invariant:
  *
  *  - **No `lockDigest`** (collected before the lock existed): ineligible, and
  *    never adopted into the current cohort. Relabelling evidence collected
@@ -81,11 +81,24 @@ export async function repoId() {
  *  - **Arms disagreeing about the commit**: not one snapshot (§2.5b-i). One
  *    snapshot is one transcript at one revision, because that revision is what
  *    adjudication verifies against.
+ *  - **A plan-hash mismatch against LIVE, non-quarantined attempts already in
+ *    the store** (§7 Phase 4, H1/H5) — shaped like the sha check above, but
+ *    scoped to the store's own history rather than this entry's arms. `IS NOT
+ *    DISTINCT FROM` semantics: a legacy NULL-hash live attempt is silently
+ *    compatible with a further NULL-hash one, but a real, differing hash is a
+ *    mismatch requiring `confirmMismatch`. `existingPlanHashesByArm` is
+ *    `{armId: Set<hash|null>}` for LIVE, NON-QUARANTINED prior attempts —
+ *    already filtered through `isAttemptExcluded` by the caller, so a
+ *    quarantined legacy pairing drops out of the comparison population
+ *    entirely and a corrected re-collection needs no flag once quarantined.
  *
  * @param {object} entry
- * @param {{campaignId: string, lockDigest: string, shaByRunId: Record<string,string|null>}} ctx
+ * @param {{campaignId: string, lockDigest: string, shaByRunId: Record<string,string|null>,
+ *   existingPlanHashesByArm?: Record<string, Set<string|null>>, confirmMismatch?: boolean}} ctx
  */
-export function classifyLogEntry(entry, { campaignId, lockDigest, shaByRunId }) {
+export function classifyLogEntry(entry, {
+  campaignId, lockDigest, shaByRunId, existingPlanHashesByArm = {}, confirmMismatch = false,
+}) {
   if (entry?.campaignId !== campaignId) {
     return { eligible: false, reason: entry?.campaignId ? `belongs to campaign "${entry.campaignId}"` : 'collected before this campaign was declared (no campaignId)' };
   }
@@ -114,9 +127,34 @@ export function classifyLogEntry(entry, { campaignId, lockDigest, shaByRunId }) 
   if (shas.size > 1) {
     return { eligible: false, reason: `arms recorded ${shas.size} different commits (${[...shas].join(', ')}) — one snapshot is one revision` };
   }
+
+  // §7 Phase 4 plan-hash consistency check — per arm, against that arm's OWN
+  // live non-quarantined history in the store.
+  const mismatches = [];
+  for (const [armId, arm] of armEntries) {
+    const attemptHash = arm?.planContentHash ?? null;
+    const existingHashes = existingPlanHashesByArm[armId];
+    if (!existingHashes) continue;
+    for (const oldHash of existingHashes) {
+      if ((oldHash ?? null) !== attemptHash) mismatches.push({ armId, oldHash: oldHash ?? null, newHash: attemptHash });
+    }
+  }
+  if (mismatches.length > 0 && !confirmMismatch) {
+    const named = mismatches.map((m) => `${m.armId} (store: ${m.oldHash ?? 'null'}, new: ${m.newHash ?? 'null'})`).join(', ');
+    return {
+      eligible: false,
+      reason: `plan-hash mismatch against live evidence: ${named} — re-run \`campaign.mjs reconcile --confirm-mismatch\` to `
+        + 'acknowledge a corrected plan pairing, or quarantine the old pairing first with `campaign.mjs quarantine`',
+    };
+  }
+
   return {
     eligible: true,
     auditedSha: [...shas][0],
+    // Non-empty only when a REAL mismatch was let through by confirmMismatch
+    // — the caller (`promoteFromLog`) auto-quarantines each named oldHash in
+    // the same locked transaction before admitting the new attempt.
+    mismatches,
     armRuns: armEntries.map(([armId, arm]) => ({
       armId,
       auditRunId: arm?.runId ?? null,
@@ -125,6 +163,10 @@ export function classifyLogEntry(entry, { campaignId, lockDigest, shaByRunId }) 
       // as free is lesson (e), and the CHECK constraint enforces the pairing.
       costUsd: Number.isFinite(arm?.costUsd) ? arm.costUsd : null,
       costStatus: Number.isFinite(arm?.costUsd) ? 'priced' : 'unpriced',
+      // §7 Phase 4: each attempt's OWN provenance, populated at promotion
+      // time — never a single entry-level value (round 5, H2).
+      planContentHash: arm?.planContentHash ?? null,
+      configDigest: arm?.configDigest ?? null,
       // Attempts that were spawned, billed, and replaced — oldest first. The
       // collector retries a TIMED-OUT arm automatically now, so an arm's live
       // result may be its second spawn; promoting only that one would report a
@@ -137,6 +179,8 @@ export function classifyLogEntry(entry, { campaignId, lockDigest, shaByRunId }) 
         error: s?.error ?? s?.errorCategory ?? 'superseded attempt',
         costUsd: Number.isFinite(s?.costUsd) ? s.costUsd : null,
         costStatus: Number.isFinite(s?.costUsd) ? 'priced' : 'unpriced',
+        planContentHash: s?.planContentHash ?? null,
+        configDigest: s?.configDigest ?? null,
       })),
     })),
   };
@@ -222,7 +266,7 @@ export function resolvePromotionAttempts({ attempts = [], existingAttempt = 0, e
  * `entries` is a PARAMETER (see the module-level note on why) — the caller
  * passes `readLog()`'s own result.
  */
-export async function promoteFromLog({ config, lock, configDigest, entries }) {
+export async function promoteFromLog({ config, lock, configDigest, entries, confirmMismatch = false }) {
   const runIds = entries.flatMap((e) => Object.values(e.arms ?? {}).flatMap(
     (a) => [a?.runId, ...(Array.isArray(a?.supersededAttempts) ? a.supersededAttempts.map((s) => s?.runId) : [])],
   ).filter(Boolean));
@@ -242,23 +286,51 @@ export async function promoteFromLog({ config, lock, configDigest, entries }) {
   let promoted = 0;
   const refused = [];
   for (const entry of entries) {
-    const cls = classifyLogEntry(entry, { campaignId: config.id, lockDigest: lock.lockDigest, shaByRunId: shas.byRunId });
-    if (!cls.eligible) { refused.push({ snapshotId: entry.snapshotId, reason: cls.reason }); continue; }
-
-    // Everything for ONE snapshot — classification, quarantine admission,
-    // and every write — happens inside ONE locked transaction (§7 Phase 3,
-    // round 4 H1+H4): `acquireSnapshotLock` serializes concurrent
-    // `reconcile` invocations for this exact (cohort, snapshot), so the
-    // pre-write existence check below and the writes it gates cannot race.
+    // Everything for ONE snapshot — classification (including the §7 Phase 4
+    // plan-hash consistency check, which needs live store state), quarantine
+    // admission, and every write — happens inside ONE locked transaction
+    // (§7 Phase 3, round 4 H1+H4): `acquireSnapshotLock` serializes
+    // concurrent `reconcile` invocations for this exact (cohort, snapshot),
+    // so classification and the writes it gates cannot race.
     const result = await store.withTx(async () => {
       await store.acquireSnapshotLock(cohort.id, entry.snapshotId);
+
+      const exclusions = await store.activeExclusionsForCohort(cohort.id);
+      const liveRows = await store.liveArmRunRows({ cohortId: cohort.id, snapshotId: entry.snapshotId });
+      const existingPlanHashesByArm = {};
+      for (const r of liveRows.rows ?? []) {
+        if (store.isAttemptExcluded({ snapshotId: entry.snapshotId, planContentHash: r.planContentHash }, exclusions)) continue;
+        if (!existingPlanHashesByArm[r.armId]) existingPlanHashesByArm[r.armId] = new Set();
+        existingPlanHashesByArm[r.armId].add(r.planContentHash ?? null);
+      }
+
+      const cls = classifyLogEntry(entry, {
+        campaignId: config.id, lockDigest: lock.lockDigest, shaByRunId: shas.byRunId,
+        existingPlanHashesByArm, confirmMismatch,
+      });
+      if (!cls.eligible) return { promotedCount: 0, refusals: [{ snapshotId: entry.snapshotId, reason: cls.reason }] };
+
+      // §7 Phase 4 (round 6, H2): `--confirm-mismatch` is a STATE
+      // TRANSITION, not a bare acknowledgement — every OLD, disagreeing
+      // hash found among this snapshot's live attempts is auto-quarantined
+      // in this SAME transaction before the new attempt is admitted, so no
+      // window exists where the snapshot's live evidence mixes two pairings.
+      const oldHashesToQuarantine = new Set(cls.mismatches.map((m) => m.oldHash));
+      for (const oldHash of oldHashesToQuarantine) {
+        await store.markSnapshotExcluded({
+          cohortId: cohort.id, snapshotId: entry.snapshotId, planContentHash: oldHash,
+          reason: 'auto-quarantined via --confirm-mismatch: promoting a corrected plan pairing',
+        });
+      }
+      // Re-fetch exclusions if we just added any — the quarantine admission
+      // check below must see the pairing it just excluded.
+      const exclusionsForAdmission = oldHashesToQuarantine.size > 0 ? await store.activeExclusionsForCohort(cohort.id) : exclusions;
 
       const snap = await store.upsertSnapshot({
         cohortId: cohort.id, snapshotId: entry.snapshotId, auditedSha: cls.auditedSha, transcriptPath: entry.transcript ?? null,
       });
       if (!snap.ok) return { promotedCount: 0, refusals: [{ snapshotId: entry.snapshotId, reason: snap.error }] };
 
-      const exclusions = await store.activeExclusionsForCohort(cohort.id);
       let promotedCount = 0;
       const refusals = [];
       for (const arm of cls.armRuns) {
@@ -267,7 +339,10 @@ export async function promoteFromLog({ config, lock, configDigest, entries }) {
         // against a provider, so each earns its own row.
         const attempts = [
           ...arm.supersededAttempts,
-          { auditRunId: arm.auditRunId, costUsd: arm.costUsd, costStatus: arm.costStatus, error: arm.error },
+          {
+            auditRunId: arm.auditRunId, costUsd: arm.costUsd, costStatus: arm.costStatus, error: arm.error,
+            planContentHash: arm.planContentHash, configDigest: arm.configDigest,
+          },
         ];
         const candidateRunIds = attempts.map((a) => a.auditRunId).filter(Boolean);
         const [existingIds, existingAttempt] = await Promise.all([
@@ -286,7 +361,7 @@ export async function promoteFromLog({ config, lock, configDigest, entries }) {
           // correctly matches a `scope:'all'` exclusion or a legacy
           // `scope:'pairing', planContentHash:null` one (exactly the 3
           // known mis-paired snapshots' shape).
-          if (store.isAttemptExcluded({ snapshotId: entry.snapshotId, planContentHash: p.planContentHash ?? null }, exclusions)) {
+          if (store.isAttemptExcluded({ snapshotId: entry.snapshotId, planContentHash: p.planContentHash ?? null }, exclusionsForAdmission)) {
             process.stdout.write(`  quarantined pairing — not promoted: ${entry.snapshotId} ${arm.armId} (run ${p.auditRunId ?? 'unregistered'})\n`);
             continue;
           }

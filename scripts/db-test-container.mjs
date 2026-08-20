@@ -91,6 +91,11 @@ export const ISOLATED_SUITE_FILES = Object.freeze([
   // needs two real connections racing on one lock). Two edits, always —
   // this list AND postgres-parity.yml.
   'tests/campaign-promote.test.mjs',
+  // Enrolled 2026-08-20 alongside campaign-promote.test.mjs, §7 Phase 5's
+  // quarantine mechanism (same plan). Needs campaign_snapshot_exclusions
+  // and its three partial unique indexes from Phase 1's migration. Two
+  // edits, always — this list AND postgres-parity.yml.
+  'tests/campaign-quarantine.test.mjs',
   // ── Enrolled 2026-08-11 ──────────────────────────────────────────────────
   // Every entry below was `AUDIT_DB_TEST_URL`-gated and named by NO runner, so
   // each skipped itself everywhere and node reported the skip as a pass: 15

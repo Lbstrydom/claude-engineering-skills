@@ -23,6 +23,12 @@ import crypto from 'node:crypto';
 import {
   many, one, insertReturning, updateWhere, upsert, withTx, query,
 } from '../db/query.mjs';
+// Re-exported: `promoteFromLog` (campaign/promote.mjs, §7 Phase 3) needs to
+// wrap several of THIS module's own calls (acquireSnapshotLock,
+// upsertSnapshot, recordArmRun, markSnapshotExcluded) in one transaction —
+// a normal need for a store consumer, not a layering violation, since it
+// still only ever touches persistence through this module's own functions.
+export { withTx };
 import { isCloudEnabled } from './repo.mjs';
 import { STATIC_POOL, OSS_POOL, parseClaudeModel, parseGeminiModel, parseOpenAIModel } from '../model-resolver.mjs';
 import { OSS_PRICING } from '../model-pricing.mjs';
@@ -768,6 +774,160 @@ export async function acquireSnapshotLock(cohortId, snapshotId) {
 }
 
 /**
+ * Every LIVE arm-run row for one snapshot, `arm_id`/`plan_content_hash`
+ * only — the raw input `promoteFromLog`'s plan-hash consistency check
+ * (§7 Phase 4) groups into `{armId: Set<hash|null>}` after filtering
+ * through `isAttemptExcluded`. A separate, narrower read from
+ * `liveArmRunsForSnapshot` because that function's `succeeded` boolean
+ * already collapses away the raw hash the consistency check needs to see
+ * per LIVE attempt, quarantined or not.
+ *
+ * @param {{cohortId: string, snapshotId: string}} args
+ * @returns {Promise<{ok: boolean, cloud: boolean, rows: Array<{armId: string, planContentHash: string|null}>}>}
+ */
+export async function liveArmRunRows({ cohortId, snapshotId }) {
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, rows: [] };
+  try {
+    const rows = await many(
+      `SELECT arm_id, plan_content_hash FROM campaign_arm_runs
+        WHERE cohort_id = $1 AND snapshot_id = $2 AND superseded_at IS NULL`,
+      [cohortId, snapshotId],
+    );
+    return { ok: true, cloud: true, rows: rows.map((r) => ({ armId: r.arm_id, planContentHash: r.plan_content_hash })) };
+  } catch (err) {
+    process.stderr.write(`  [campaign] liveArmRunRows failed: ${err.message}\n`);
+    return { ok: false, cloud: true, rows: [], error: err.message };
+  }
+}
+
+/**
+ * Quarantine a snapshot pairing (§7 Phase 5). A plain, synchronous store
+ * write with a discriminated result — NOT routed through `durableWrite`:
+ * verified against `.requirements/ledger.json`'s `REQ-persistence-7bc1224d`
+ * that only `audit.findings`/`audit.runComplete` durable writers may
+ * declare `rowKey` values, and every other campaign-harness write
+ * (`recordArmRun`, `upsertSnapshot`, and siblings) is exempted on the same
+ * ground: a synchronous, operator-initiated (or promotion-internal) CLI
+ * write is outside the fire-and-forget orchestrator telemetry contract
+ * `durableWrite` exists for.
+ *
+ * `allPairings: true` writes `scope='all'`; otherwise `scope='pairing'`
+ * with `plan_content_hash: planContentHash` (defaulting to `null`, which
+ * matches exactly the legacy pre-Phase-4 rows this plan's own Close-out
+ * needs to quarantine). Each branch's `ON CONFLICT` clause repeats its
+ * target partial index's FULL predicate, predicate-for-predicate — a
+ * generic upsert cannot target all three arbiter indexes from Phase 1 at
+ * once, and Postgres refuses to infer a partial index from a conflict
+ * target whose predicate does not match exactly. Zero rows affected is
+ * SUCCESS ("already quarantined"), never an error — the ONLY idempotency
+ * mechanism here, no `durableWrite` replay involved.
+ *
+ * @param {{cohortId: string, snapshotId: string, planContentHash?: string|null, allPairings?: boolean, reason: string}} args
+ * @returns {Promise<{ok: boolean, cloud: boolean, applied: boolean}>}
+ */
+export async function markSnapshotExcluded({ cohortId, snapshotId, planContentHash = null, allPairings = false, reason }) {
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, applied: false };
+  try {
+    let row;
+    if (allPairings) {
+      row = await one(
+        `INSERT INTO campaign_snapshot_exclusions (cohort_id, snapshot_id, scope, excluded_reason)
+         VALUES ($1, $2, 'all', $3)
+         ON CONFLICT (cohort_id, snapshot_id) WHERE scope = 'all' AND lifted_at IS NULL DO NOTHING
+         RETURNING id`,
+        [cohortId, snapshotId, reason],
+      );
+    } else if (planContentHash != null) {
+      row = await one(
+        `INSERT INTO campaign_snapshot_exclusions (cohort_id, snapshot_id, scope, plan_content_hash, excluded_reason)
+         VALUES ($1, $2, 'pairing', $3, $4)
+         ON CONFLICT (cohort_id, snapshot_id, plan_content_hash)
+           WHERE scope = 'pairing' AND plan_content_hash IS NOT NULL AND lifted_at IS NULL DO NOTHING
+         RETURNING id`,
+        [cohortId, snapshotId, planContentHash, reason],
+      );
+    } else {
+      row = await one(
+        `INSERT INTO campaign_snapshot_exclusions (cohort_id, snapshot_id, scope, excluded_reason)
+         VALUES ($1, $2, 'pairing', $3)
+         ON CONFLICT (cohort_id, snapshot_id) WHERE scope = 'pairing' AND plan_content_hash IS NULL AND lifted_at IS NULL DO NOTHING
+         RETURNING id`,
+        [cohortId, snapshotId, reason],
+      );
+    }
+    return { ok: true, cloud: true, applied: Boolean(row) };
+  } catch (err) {
+    process.stderr.write(`  [campaign] markSnapshotExcluded failed: ${err.message}\n`);
+    return { ok: false, cloud: true, applied: false, error: err.message };
+  }
+}
+
+/**
+ * Lift a quarantine (§7 Phase 5, round 5 M2). Same scope/hash targeting
+ * logic as `markSnapshotExcluded`. Zero rows affected is disambiguated
+ * (round 6, Gemini gate LOW correction) before it becomes an error: a
+ * matching row that is ALREADY lifted is a benign no-op (retry-after-
+ * timeout must be idempotent, symmetric with `markSnapshotExcluded`'s own
+ * `ON CONFLICT ... DO NOTHING`); no matching row at all is the genuine
+ * "nothing to lift" error.
+ *
+ * @param {{cohortId: string, snapshotId: string, planContentHash?: string|null, allPairings?: boolean, reason: string}} args
+ * @returns {Promise<{ok: boolean, cloud: boolean, applied: boolean, alreadyLifted?: boolean, notFound?: boolean}>}
+ */
+export async function liftSnapshotExclusion({ cohortId, snapshotId, planContentHash = null, allPairings = false, reason }) {
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, applied: false };
+  const scopeWhere = allPairings
+    ? "scope = 'all'"
+    : (planContentHash != null ? "scope = 'pairing' AND plan_content_hash = $3" : "scope = 'pairing' AND plan_content_hash IS NULL");
+  const matchParams = allPairings || planContentHash == null ? [cohortId, snapshotId] : [cohortId, snapshotId, planContentHash];
+  try {
+    const updated = await one(
+      `UPDATE campaign_snapshot_exclusions SET lifted_at = NOW(), lifted_reason = $${matchParams.length + 1}
+        WHERE cohort_id = $1 AND snapshot_id = $2 AND ${scopeWhere} AND lifted_at IS NULL
+        RETURNING id`,
+      [...matchParams, reason],
+    );
+    if (updated) return { ok: true, cloud: true, applied: true };
+    const existing = await one(
+      `SELECT id FROM campaign_snapshot_exclusions WHERE cohort_id = $1 AND snapshot_id = $2 AND ${scopeWhere}`,
+      matchParams,
+    );
+    if (existing) return { ok: true, cloud: true, applied: false, alreadyLifted: true };
+    return { ok: true, cloud: true, applied: false, notFound: true };
+  } catch (err) {
+    process.stderr.write(`  [campaign] liftSnapshotExclusion failed: ${err.message}\n`);
+    return { ok: false, cloud: true, applied: false, error: err.message };
+  }
+}
+
+/**
+ * Resolve and validate a (campaign, snapshot) target exists before a
+ * quarantine/unquarantine write — a friendly, named error for a typo'd
+ * `--snapshot` rather than a raw FK-violation surfacing from the
+ * migration's composite foreign key (§7 Phase 5, round 4 M1).
+ *
+ * @param {{repoId: string, campaignKey: string, snapshotId: string}} args
+ * @returns {Promise<{ok: boolean, cloud: boolean, cohortId?: string, error?: string}>}
+ */
+export async function resolveQuarantineTarget({ repoId: rid, campaignKey, snapshotId }) {
+  const cohort = await resolveCohort({ repoId: rid, campaignKey });
+  if (cohort.cloud === false) return { ok: true, cloud: false };
+  if (!cohort.ok) return { ok: false, cloud: true, error: cohort.error };
+  if (!cohort.cohortId) {
+    return { ok: false, cloud: true, error: `no cohort found for campaign "${campaignKey}"` };
+  }
+  if (!await isCloudEnabled()) return { ok: true, cloud: false };
+  const row = await one(
+    'SELECT id FROM campaign_snapshots WHERE cohort_id = $1 AND snapshot_id = $2',
+    [cohort.cohortId, snapshotId],
+  );
+  if (!row) {
+    return { ok: false, cloud: true, error: `snapshot "${snapshotId}" not found in cohort ${cohort.cohortId} (campaign "${campaignKey}") — check the id` };
+  }
+  return { ok: true, cloud: true, cohortId: cohort.cohortId };
+}
+
+/**
  * Every LIVE arm-run for one snapshot, success-gated for retry-scoping
  * decisions (§7 Phase 2).
  *
@@ -901,15 +1061,27 @@ export async function loadCohortFindings(cohortId, { liveOnly = true } = {}) {
 export async function loadCohortArmRuns(cohortId) {
   if (!await isCloudEnabled()) return { ok: true, cloud: false, rows: [] };
   try {
-    const rows = await many(
-      `SELECT id, snapshot_id, arm_id, attempt, superseded_at, audit_run_id,
-              cost_usd, cost_status, error, created_at
-         FROM campaign_arm_runs
-        WHERE cohort_id = $1
-        ORDER BY snapshot_id, arm_id, attempt`,
-      [cohortId],
-    );
-    return { ok: true, cloud: true, rows };
+    const [rows, exclusions] = await Promise.all([
+      many(
+        `SELECT id, snapshot_id, arm_id, attempt, superseded_at, audit_run_id,
+                cost_usd, cost_status, error, plan_content_hash, created_at
+           FROM campaign_arm_runs
+          WHERE cohort_id = $1
+          ORDER BY snapshot_id, arm_id, attempt`,
+        [cohortId],
+      ),
+      activeExclusionsForCohort(cohortId),
+    ]);
+    // §7 Phase 5: an arm-run row is dropped when it falls under an active
+    // exclusion — filtered in application code via the single
+    // `isAttemptExcluded` oracle, NOT a SQL join (a join against a table
+    // that can hold both an `all` row and a `pairing` row for one snapshot
+    // would emit a duplicate arm-run row per match, corrupting the
+    // completion/cost/coverage counts this function feeds).
+    const filtered = exclusions.length
+      ? rows.filter((r) => !isAttemptExcluded({ snapshotId: r.snapshot_id, planContentHash: r.plan_content_hash }, exclusions))
+      : rows;
+    return { ok: true, cloud: true, rows: filtered };
   } catch (err) {
     process.stderr.write(`  [campaign] loadCohortArmRuns failed: ${err.message}\n`);
     return { ok: false, cloud: true, rows: [], error: err.message };

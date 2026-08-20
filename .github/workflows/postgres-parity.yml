@@ -211,6 +211,7 @@ jobs:
           node --test --test-concurrency=1 \
             tests/campaign-adjudication.test.mjs \
             tests/campaign-promote.test.mjs \
+            tests/campaign-quarantine.test.mjs \
             tests/candidate-audit-findings-window.test.mjs \
             tests/db-schema-realization-live.test.mjs \
             tests/final-review-adjudicate.test.mjs \

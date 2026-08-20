@@ -33,22 +33,22 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { UnresolvedScopeError, ScopeMismatchError } from './lib/bakeoff/scope.mjs';
-import { LOG_PATH, CONTRACT_EPOCH, snapshotId, readLog } from './lib/bakeoff/log.mjs';
+import { LOG_PATH, CONTRACT_EPOCH, snapshotId, planContentHash, readLog } from './lib/bakeoff/log.mjs';
 import { resolveArms, scopeForEntry, armDidRun } from './lib/bakeoff/arms.mjs';
 import { isComplete, armCostUsd, distinctFindingCount, cohortDigest } from './lib/bakeoff/summary.mjs';
 import { runArmAttempts, verifyPreflightArtifact } from './lib/bakeoff/spawn.mjs';
 import { printProgress } from './lib/bakeoff/progress.mjs';
+import { planLooksRelated } from './lib/bakeoff/relatedness.mjs';
 import { repoId } from './lib/campaign/promote.mjs';
 import { resolveCohort, liveArmRunsForSnapshot, isAttemptExcluded } from './lib/store/campaign.mjs';
 import { isCloudEnabled } from './lib/store/repo.mjs';
 
 const KNOWN_FLAGS = Object.freeze([
   '--transcript', '--plan', '--mode', '--progress', '--target', '--campaign',
-  '--force', '--allow-log-only-retry', '--selfcheck-relocation', '--help', '-h',
+  '--force', '--allow-log-only-retry', '--confirm-mismatch', '--selfcheck-relocation', '--help', '-h',
 ]);
 
 /**
@@ -196,6 +196,12 @@ export function mergeRetryHistory(newArms, priorArms) {
         error: prior.error ?? prior.shadowError ?? null,
         costUsd: typeof prior.costUsd === 'number' ? prior.costUsd : null,
         unpricedModels: prior.unpricedModels ?? [],
+        // §7 Phase 4 (round 5, H2): the PRIOR result's OWN stamps, never the
+        // current invocation's — this is what a carried-forward arm being
+        // superseded here is superseded FROM, and it must not be silently
+        // relabelled with a pairing it was never collected against.
+        planContentHash: prior.planContentHash ?? null,
+        configDigest: prior.configDigest ?? null,
       },
     ];
     const offset = history.length;
@@ -416,12 +422,32 @@ async function main() {
   if (!transcript || !plan) throw new ArgvError('--transcript <path> and --plan <path> are both required (or use --progress)');
   for (const p of [transcript, plan]) if (!fs.existsSync(p)) throw new ArgvError(`not found: ${p}`);
 
+  // §7 Phase 4: a collection-time SOFT heuristic that would have caught all
+  // 3 real mis-paired snapshots. Refuses to proceed on an apparent mismatch
+  // unless the operator explicitly confirms — a legitimate plan may
+  // genuinely share no filenames with its transcript (e.g. a narrative/UX
+  // plan), so this is a soft gate, never a hard refusal.
+  {
+    let transcriptJsonForRelatedness;
+    try { transcriptJsonForRelatedness = JSON.parse(fs.readFileSync(transcript, 'utf-8')); } catch { transcriptJsonForRelatedness = null; }
+    const relatedness = planLooksRelated(transcriptJsonForRelatedness, fs.readFileSync(plan, 'utf-8'));
+    if (!relatedness.related && !confirmMismatch) {
+      throw new ArgvError(
+        `[bakeoff] --transcript and --plan do not look related — no shared cited file basenames found `
+        + `(transcript basenames vs plan text). If this pairing is genuinely correct (e.g. a narrative/UX plan `
+        + 'sharing no filenames with its transcript), pass --confirm-mismatch to proceed.',
+      );
+    }
+    if (!relatedness.related && confirmMismatch) {
+      process.stderr.write('  [bakeoff] WARNING: --transcript and --plan do not look related, proceeding due to --confirm-mismatch\n');
+    }
+  }
+
   const id = snapshotId(transcript);
   const force = process.argv.includes('--force');
   const allowLogOnlyRetry = process.argv.includes('--allow-log-only-retry');
-  // Same convention as `snapshotId`: content, not path — a plan edited
-  // between collection calls is correctly a different pairing.
-  const currentPlanHash = crypto.createHash('sha256').update(fs.readFileSync(plan)).digest('hex');
+  const confirmMismatch = process.argv.includes('--confirm-mismatch');
+  const currentPlanHash = planContentHash(plan);
 
   // Arms + D4 collision classification resolve FIRST now (§7 Phase 2 —
   // moved up from below `selectRetryArmIds`): a fresh fixture's local log has
@@ -549,6 +575,16 @@ async function main() {
     newArms[a.id] = {
       ...result,
       runId: runId ?? null,
+      // §7 Phase 4: stamped per-arm at collection time, never as a single
+      // entry-level field — a value known only NOW must be carried per
+      // attempt so promotion can populate campaign_arm_runs.config_digest/
+      // .plan_content_hash correctly for each arm, including ones carried
+      // forward by mergeRetryHistory under an OLDER config/plan. Only a
+      // genuinely NEW collection call for an arm (this loop) stamps the
+      // CURRENT invocation's values; mergeRetryHistory's carried-forward
+      // arms below keep their own historical stamps unchanged.
+      planContentHash: currentPlanHash,
+      configDigest: expectedConfigDigest,
       // Superseded attempts are RECORDED, not discarded. Each was a real spawn
       // that may have been billed, and dropping them would make an arm that
       // failed once and recovered look exactly as cheap as one that succeeded

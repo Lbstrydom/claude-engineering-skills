@@ -274,6 +274,76 @@ describe('classifyLogEntry — superseded attempts survive into promotion', () =
     }, ctx);
     assert.deepEqual(cls.armRuns.find((a) => a.armId === 'opus').supersededAttempts, []);
   });
+
+  it('each armRun carries its OWN planContentHash/configDigest — never a single entry-level value (round 5, H2)', () => {
+    const cls = classifyLogEntry({
+      snapshotId: 's1', campaignId: 'camp', lockDigest: 'lock1',
+      arms: { opus: { runId: 'r1', costUsd: 1, planContentHash: 'hash-a', configDigest: 'config-a' } },
+    }, ctx);
+    const opus = cls.armRuns.find((a) => a.armId === 'opus');
+    assert.equal(opus.planContentHash, 'hash-a');
+    assert.equal(opus.configDigest, 'config-a');
+  });
+});
+
+// ── §7 Phase 4: plan-hash consistency check ─────────────────────────────────
+
+describe('classifyLogEntry — plan-hash consistency check (§7 Phase 4)', () => {
+  const ctx = { campaignId: 'camp', lockDigest: 'lock1', shaByRunId: { r1: 'sha1' } };
+
+  it('NULL-vs-NULL is a match — a legacy snapshot with no live hash accepts a further NULL-hash attempt', () => {
+    const cls = classifyLogEntry({
+      snapshotId: 's1', campaignId: 'camp', lockDigest: 'lock1', arms: { opus: { runId: 'r1', planContentHash: null } },
+    }, { ...ctx, existingPlanHashesByArm: { opus: new Set([null]) } });
+    assert.equal(cls.eligible, true);
+    assert.deepEqual(cls.mismatches, []);
+  });
+
+  it('NULL-vs-hash is a mismatch — refuses without --confirm-mismatch', () => {
+    const cls = classifyLogEntry({
+      snapshotId: 's1', campaignId: 'camp', lockDigest: 'lock1', arms: { opus: { runId: 'r1', planContentHash: 'new-hash' } },
+    }, { ...ctx, existingPlanHashesByArm: { opus: new Set([null]) } });
+    assert.equal(cls.eligible, false);
+    assert.match(cls.reason, /plan-hash mismatch/);
+    assert.match(cls.reason, /confirm-mismatch/);
+  });
+
+  it('the SAME mismatch is admitted with confirmMismatch:true, and reports it in `mismatches` for the caller to auto-quarantine', () => {
+    const cls = classifyLogEntry({
+      snapshotId: 's1', campaignId: 'camp', lockDigest: 'lock1', arms: { opus: { runId: 'r1', planContentHash: 'new-hash' } },
+    }, { ...ctx, existingPlanHashesByArm: { opus: new Set([null]) }, confirmMismatch: true });
+    assert.equal(cls.eligible, true);
+    assert.deepEqual(cls.mismatches, [{ armId: 'opus', oldHash: null, newHash: 'new-hash' }]);
+  });
+
+  it('a quarantined legacy attempt drops out of the comparison — correction needs NO flag (H1)', () => {
+    // The caller (promoteFromLog) filters existingPlanHashesByArm through
+    // isAttemptExcluded BEFORE calling classifyLogEntry, so a quarantined
+    // pairing's hash never appears here at all — simulated by simply
+    // passing an EMPTY existingPlanHashesByArm for the arm, as the caller
+    // would once quarantine has removed the only live attempt from the set.
+    const cls = classifyLogEntry({
+      snapshotId: 's1', campaignId: 'camp', lockDigest: 'lock1', arms: { opus: { runId: 'r1', planContentHash: 'corrected-hash' } },
+    }, { ...ctx, existingPlanHashesByArm: {} });
+    assert.equal(cls.eligible, true);
+    assert.deepEqual(cls.mismatches, []);
+  });
+
+  it('two REAL, different hashes (neither null) is still a mismatch, refused without the flag', () => {
+    const cls = classifyLogEntry({
+      snapshotId: 's1', campaignId: 'camp', lockDigest: 'lock1', arms: { opus: { runId: 'r1', planContentHash: 'hash-b' } },
+    }, { ...ctx, existingPlanHashesByArm: { opus: new Set(['hash-a']) } });
+    assert.equal(cls.eligible, false);
+    assert.match(cls.reason, /plan-hash mismatch/);
+  });
+
+  it('an arm with NO existing history at all is never a mismatch (a genuinely new arm-run)', () => {
+    const cls = classifyLogEntry({
+      snapshotId: 's1', campaignId: 'camp', lockDigest: 'lock1', arms: { opus: { runId: 'r1', planContentHash: 'any-hash' } },
+    }, { ...ctx, existingPlanHashesByArm: {} });
+    assert.equal(cls.eligible, true);
+    assert.deepEqual(cls.mismatches, []);
+  });
 });
 
 // ── per-arm retry promotion (D5) ────────────────────────────────────────────
@@ -443,5 +513,52 @@ describe('promoteFromLog against a live schema — identity, quarantine, and the
     assert.equal(resultB.promoted, 1);
     const rows = await client.query('SELECT arm_id FROM campaign_arm_runs WHERE snapshot_id=$1', ['snapConcurrent']);
     assert.equal(rows.rows.length, 2, 'both concurrent promotions land, serialized by the advisory lock rather than lost to a race');
+  });
+
+  it('§7 Phase 4 (round 6, H2): --confirm-mismatch atomically auto-quarantines the OLD pairing while promoting the new one — no window where evidence mixes', async () => {
+    await store.upsertSnapshot({ cohortId, snapshotId: 'snapMismatch', auditedSha: 'sha-a' });
+    const oldRunOpus = await mkRun();
+    const oldRunKimi = await mkRun();
+    // First: two arms live under the OLD plan hash (no confirmMismatch needed — nothing to compare against yet).
+    await promote.promoteFromLog({
+      config: { id: 'promote-live-test' }, lock: { lockDigest: 'lock1' }, configDigest: 'digest1',
+      entries: [{
+        snapshotId: 'snapMismatch', campaignId: 'promote-live-test', lockDigest: 'lock1', transcript: 't.json',
+        arms: {
+          opus: { runId: oldRunOpus, costUsd: 1, planContentHash: 'hash-OLD' },
+          kimi: { runId: oldRunKimi, costUsd: 1, planContentHash: 'hash-OLD' },
+        },
+      }],
+    });
+    // Now: arm A (opus) is re-collected under a NEW, corrected plan hash.
+    const newRunOpus = await mkRun();
+    const mismatchResult = await promote.promoteFromLog({
+      config: { id: 'promote-live-test' }, lock: { lockDigest: 'lock1' }, configDigest: 'digest1',
+      entries: [{
+        snapshotId: 'snapMismatch', campaignId: 'promote-live-test', lockDigest: 'lock1', transcript: 't.json',
+        arms: { opus: { runId: newRunOpus, costUsd: 1, planContentHash: 'hash-NEW' } },
+      }],
+      confirmMismatch: true,
+    });
+    assert.equal(mismatchResult.promoted, 1, 'the new, corrected opus attempt is written');
+
+    // The sibling arm's OLD-hash row must no longer be visible as LIVE
+    // evidence — it was auto-quarantined in the same transaction.
+    const live = await store.liveArmRunsForSnapshot({ cohortId, snapshotId: 'snapMismatch', expectedConfigDigest: null, expectedPlanContentHash: 'hash-NEW' });
+    assert.equal(live.rows.kimi?.succeeded, false, 'the old-hash sibling arm must read as excluded, not as a genuine success under the new pairing');
+
+    const cohortRows = await store.loadCohortArmRuns(cohortId);
+    const stillVisible = cohortRows.rows.filter((r) => r.snapshot_id === 'snapMismatch');
+    assert.ok(!stillVisible.some((r) => r.arm_id === 'kimi'), 'the quarantined kimi row must be filtered OUT of loadCohortArmRuns entirely');
+    assert.ok(stillVisible.some((r) => r.arm_id === 'opus'), 'the newly-promoted opus row remains visible');
+
+    const exclusionRow = await client.query(
+      "SELECT scope, plan_content_hash, excluded_reason FROM campaign_snapshot_exclusions WHERE cohort_id=$1 AND snapshot_id='snapMismatch'",
+      [cohortId],
+    );
+    assert.equal(exclusionRow.rows.length, 1);
+    assert.equal(exclusionRow.rows[0].scope, 'pairing');
+    assert.equal(exclusionRow.rows[0].plan_content_hash, 'hash-OLD');
+    assert.match(exclusionRow.rows[0].excluded_reason, /auto-quarantined via --confirm-mismatch/);
   });
 });

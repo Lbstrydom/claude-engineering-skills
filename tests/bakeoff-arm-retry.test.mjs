@@ -299,4 +299,20 @@ describe('mergeRetryHistory — a human-invoked retry does not erase the attempt
     assert.equal(merged.qwen.supersededAttempts, undefined,
       'inventing an attempt that never happened would over-report spend, the mirror of under-reporting it');
   });
+
+  it('§7 Phase 4 (round 5, H2): a superseded history entry keeps the PRIOR result\'s own planContentHash/configDigest, never the new one\'s', () => {
+    // A corrected --plan retry produces a NEW entry whose fresh arm result is
+    // stamped with the CURRENT plan hash, but the PRIOR result being folded
+    // into supersededAttempts was genuinely collected under an OLDER plan —
+    // writing the current hash onto it would silently mislabel a pairing it
+    // was never collected against.
+    const prior = { qwen: { runId: 'run-old', costUsd: 0.4, shadowState: 'ran', planContentHash: 'hash-OLD', configDigest: 'config-OLD' } };
+    const fresh = { qwen: { runId: 'run-new', ...ran(), planContentHash: 'hash-NEW', configDigest: 'config-NEW' } };
+    const merged = mergeRetryHistory(fresh, prior);
+    assert.equal(merged.qwen.supersededAttempts[0].planContentHash, 'hash-OLD',
+      'the superseded attempt must keep what it was ACTUALLY collected under');
+    assert.equal(merged.qwen.supersededAttempts[0].configDigest, 'config-OLD');
+    assert.equal(merged.qwen.planContentHash, 'hash-NEW', 'the LIVE result keeps its own fresh stamp, unaffected');
+    assert.equal(merged.qwen.configDigest, 'config-NEW');
+  });
 });
