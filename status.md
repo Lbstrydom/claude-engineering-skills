@@ -1,5 +1,18 @@
 # Project Status Log
 
+### Consumer Verification (previous ship)
+- **Commit**: `c747afa8c84f13a6e02932c976fac535ae6967b8`
+- **Retrieval**: `git fetch origin main` → `git rev-parse origin/main` compared
+  against local HEAD (remote-ref comparison, never `$?`); pre-push sync report
+  (`Targets: 2/2 reached · Created: 2 · Updated: 158 · Errors: 0`) plus a
+  follow-up `npm run sync:dry` (`create: 0 · update: 2 · unchanged: 1408`).
+- **Result**: `verified` (transfer + sync) / `unverified` — blocked
+  prerequisite: the authoritative check
+  (`scripts/.claude-skills/lib/sync-isolation-verify.mjs`) must run *inside* a
+  consumer checkout, and no consumer working tree was opened from that
+  session; the residual `update: 2` was left unexplained for the next
+  consumer-side run to identify.
+
 ## 2026-08-20 — Lens coverage honesty: a report states what it checked, not only what it found
 
 Authored, audited, and implemented `docs/plans/lens-coverage-honesty.md` end
