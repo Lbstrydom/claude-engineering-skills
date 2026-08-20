@@ -133,9 +133,15 @@ describe('bake-off log promotion', () => {
   });
 
   it('an errored arm still promotes, carrying its error — a silent gap is never allowed', () => {
+    // `shadowError` is the REAL field a live (non-superseded) bakeoff-log
+    // entry carries (bakeoff-collect.mjs never writes a top-level `error` on
+    // that shape) — regression fixture for the bug where this test used
+    // `error` directly, matching a reader bug instead of the real producer
+    // shape, so it passed while every live failure silently promoted as a
+    // success (`error: NULL`) in production.
     const cls = classifyLogEntry({
       snapshotId: 's1', campaignId: 'camp', lockDigest: 'lock1',
-      arms: { opus: { runId: 'r1', costUsd: 1 }, kimi: { error: 'exit 1' } },
+      arms: { opus: { runId: 'r1', costUsd: 1 }, kimi: { runId: 'r2', shadowError: 'exit 1' } },
     }, ctx);
     assert.equal(cls.eligible, true);
     assert.equal(cls.armRuns.find((a) => a.armId === 'kimi').error, 'exit 1');

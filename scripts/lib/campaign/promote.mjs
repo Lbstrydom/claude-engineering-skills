@@ -180,7 +180,15 @@ export function classifyLogEntry(entry, {
     armRuns: armEntries.map(([armId, arm]) => ({
       armId,
       auditRunId: arm?.runId ?? null,
-      error: arm?.error ?? null,
+      // A LIVE (non-superseded) log entry carries its failure under
+      // `shadowError` (bakeoff-collect.mjs never writes a top-level `error`
+      // on the live shape) — `arm?.error` alone was always undefined here,
+      // silently dropping every live failure to `null` and making
+      // `liveArmRunsForSnapshot`'s `error IS NULL` success gate read a failed
+      // arm as succeeded. `?? arm?.error` kept as a defensive fallback,
+      // mirroring the superseded-attempt mapping below and bakeoff-collect's
+      // own `prior.error ?? prior.shadowError` merge.
+      error: arm?.shadowError ?? arm?.error ?? null,
       // `costUsd` absent is UNPRICED, never 0 — an unrecorded charge that reads
       // as free is lesson (e), and the CHECK constraint enforces the pairing.
       costUsd: Number.isFinite(arm?.costUsd) ? arm.costUsd : null,
