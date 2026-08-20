@@ -601,7 +601,15 @@ async function main() {
   // replaces the whole entry per snapshotId (newest wins), so the merged
   // object below — not a partial one — is what must be written; a log line
   // containing only the retried arm would make readLog() forget the others.
-  const arms = retryArmIds ? { ...existing.arms, ...mergeRetryHistory(newArms, existing.arms) } : newArms;
+  // `existing` can be undefined here even though `retryArmIds` is non-null:
+  // `retryArmIds`/`selectRetryArmIds` is STORE-authoritative (checks
+  // `storeArmState`, independent of the local log), so a fresh fixture whose
+  // OWN bakeoff-log.jsonl has never seen this snapshot (the other arms were
+  // collected in a different fixture or session) legitimately reaches this
+  // branch with no local entry to merge against. `mergeRetryHistory` already
+  // guards its own `priorArms?.[armId]` lookup; this was the one unguarded
+  // read.
+  const arms = retryArmIds ? { ...(existing?.arms ?? {}), ...mergeRetryHistory(newArms, existing?.arms ?? {}) } : newArms;
 
   const entry = {
     snapshotId: id,
