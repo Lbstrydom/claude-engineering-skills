@@ -80,7 +80,8 @@ describe('resolveStoreState — the store-unavailable degradation ladder (Gemini
     try {
       await assert.rejects(
         resolveStoreState({ ...baseArgs, allowLogOnlyRetry: false }),
-        (err) => /Cloud store is disabled/.test(err.message) && /allow-log-only-retry/.test(err.message),
+        (err) => /^\[bakeoff\] Store read failed: /.test(err.message)
+          && /Cloud store is disabled/.test(err.message) && /allow-log-only-retry/.test(err.message),
       );
     } finally {
       if (saved === undefined) delete process.env.AUDIT_DB_URL; else process.env.AUDIT_DB_URL = saved;
@@ -98,24 +99,17 @@ describe('resolveStoreState — the store-unavailable degradation ladder (Gemini
     }
   });
 
-  it('(c) a thrown store-read error (real operational failure) is wrapped in the SAME message shape as (d)', async () => {
-    // A real connectivity/auth failure surfaces as a thrown error from
-    // deeper in the store seam (unreachable here without a live broken
-    // connection — see repoId's own test for why that case is covered at
-    // the CLI boundary instead). What IS assertable without one: the catch
-    // block wraps every thrown error identically, so cloud-off (exercised
-    // above) and a hypothetical real failure produce the same
-    // "Store read failed: ... --allow-log-only-retry" shape, never two
-    // different messages an operator would have to learn separately.
-    const saved = process.env.AUDIT_DB_URL;
-    delete process.env.AUDIT_DB_URL;
-    try {
-      await assert.rejects(
-        resolveStoreState({ ...baseArgs, allowLogOnlyRetry: false }),
-        (err) => /^\[bakeoff\] Store read failed: /.test(err.message),
-      );
-    } finally {
-      if (saved === undefined) delete process.env.AUDIT_DB_URL; else process.env.AUDIT_DB_URL = saved;
-    }
-  });
+  // NOTE on (c) — the OTHER half of the round-1/round-3 gate (a genuinely
+  // THROWN store-read error, e.g. a real connectivity/auth failure, as
+  // opposed to (d)'s clean `cloud:false` reply): this is NOT separately
+  // unit-tested here, honestly, because reaching it needs a live-but-broken
+  // database connection, which this suite does not have (the same reason
+  // `repoId`'s own test above covers its `kind:'error'` throw path at the
+  // CLI boundary instead of here). What IS verified above is that BOTH
+  // cases share the identical code path: `resolveStoreState`'s catch block
+  // has no branch distinguishing "the error came from a cloud-off check"
+  // from "the error came from a real exception" — both produce the exact
+  // `[bakeoff] Store read failed: ...` shape asserted in (d), so a thrown
+  // error would be gated the same way without a redundant, mislabelled test
+  // pretending to exercise a path it cannot reach.
 });
