@@ -41,6 +41,13 @@
       "id": "no-typed-input-values-persisted",
       "kind": "document-only",
       "reason": "'NEVER include typed input values … the store rejects any' is enforced at the STORE boundary (a server-side rejection), not by the persona-test skill's own CLI. Asserting it would mean exercising the store's validation, which is a different subsystem's contract, not persona-test's exit behaviour; document-only here."
+    },
+    {
+      "id": "overall-verdict-boundary-cap",
+      "kind": "document-only",
+      "statedIn": "skills/persona-test/SKILL.md",
+      "stated": "requires a composed eligibility predicate, not a single",
+      "reason": "Added 2026-08-20 (lens-coverage-honesty plan §3.2, R3 H1). The Phase 5 `Ready for users` eligibility predicate (terminalReason/authState/originPolicyResult conjuncts) is computed by the agent driving the MCP exploration loop from its own session work-record — exploratory mode has no CLI, so there is no exit code a cli-exit recipe can assert. Same disposition class as the already-contracted 'p0p1-shape-mismatch-never-benign' and 'finding-severity-literal-p0-p3' gates above: agent-emitted judgement over live session state, no importable seam."
     }
   ],
   "ignoredCandidates": [
@@ -73,12 +80,64 @@
       "reason": "Same authWallUntested gate-honesty rule — caps the OVERALL verdict the model writes into its own Phase 5 report text. No persona-test CLI exists for exploratory mode to bind an exit code to."
     },
     {
-      "line": "can't read this run as a clean pass on a surface it never reached. This",
-      "reason": "Same authWallUntested gate-honesty rule as above; continuation sentence."
+      "line": "run as a clean pass on a surface it never reached. This mirrors click-test's",
+      "reason": "Same authWallUntested gate-honesty rule as above; continuation sentence. (Rewrapped 2026-08-20 when the paragraph gained trailing sentences generalising the rule to the composed predicate — same claim, new wrap point; supersedes the old 'can't read this run...' / 'mirrors click-test's rule...' two-entry split below.)"
     },
     {
-      "line": "mirrors click-test's rule that the OVERALL verdict caps at `Incomplete`",
-      "reason": "Same authWallUntested gate-honesty rule, explicitly cross-referencing click-test's already-contracted 'verdict-precedence' document-only gate as the parallel case."
+      "line": "rule that the OVERALL verdict caps at `Incomplete` when any route is",
+      "reason": "Continuation of the rewrapped paragraph above — same authWallUntested gate-honesty rule, cross-referencing click-test's 'verdict-precedence' gate."
+    },
+    {
+      "line": "'auth-wall-untested'` is one of three independent conjuncts a run must",
+      "reason": "Added 2026-08-20 — the paragraph's new generalisation sentence, connecting the pre-existing authWallUntested cap to overall-verdict-boundary-cap's composed predicate. Same disposition as that gate."
+    },
+    {
+      "line": "optional bookkeeping: Phase 5's COVERAGE block renders **only** from this",
+      "reason": "Added 2026-08-20 (lens-coverage-honesty §3.2). Part of the exploration-loop instruction that the session work-record must be updated each step — agent behaviour with no exit code, same disposition class as the other exploration-loop candidates in this file (e.g. the login-wall special case above)."
+    },
+    {
+      "line": "record, never composed fresh at report time (`references/verification-discipline.md`",
+      "reason": "Continuation of the same session-work-record instruction — points at the shared kernel's reciprocal-derivation-warning (§7). Agent-followed prose, same disposition."
+    },
+    {
+      "line": "### Session work-record (append-only; Phase 5 renders from this, never composes fresh)",
+      "reason": "Section heading for the session work-record schema. Introduces the table of fields the agent populates during Phase 3 and reads in Phase 5 — no CLI, no exit code; same disposition as overall-verdict-boundary-cap, which consumes this record."
+    },
+    {
+      "line": "| `stepCount` | `{completed, cap}` — `cap` is this loop's configured budget (8–12, or an explicit override); `completed` is the number of Act steps actually executed |",
+      "reason": "A row in the session work-record schema table (see the section-heading entry above) — defines what the agent records for the step budget. Same disposition."
+    },
+    {
+      "line": "| `terminalReason` | **exhaustive, closed enum** — set once, when the loop stops: `goal-reached` / `step-budget-exhausted` / `abandonment-threshold-hit` / `auth-wall-blocked` / `tool-error` / `safety-refusal` |",
+      "reason": "The session work-record's terminalReason row — the enum the overall-verdict-boundary-cap gate's eligibility predicate is computed over. Same disposition as overall-verdict-boundary-cap: agent-recorded, no exit code."
+    },
+    {
+      "line": "Every field in the COVERAGE block is rendered directly from the session",
+      "reason": "Added 2026-08-20 (lens-coverage-honesty §3.2, §7's reciprocal-derivation-warning applied to persona-test's report). Agent instruction with no exit code; same disposition as overall-verdict-boundary-cap."
+    },
+    {
+      "line": "work-record (Phase 3) — never recomposed here. `Reached` is `unique(pathname)`",
+      "reason": "Continuation of the same COVERAGE-block-derivation sentence as above. Same disposition."
+    },
+    {
+      "line": "over `visitedSurfaces`; the step fraction is `stepCount.completed/cap`.",
+      "reason": "Continuation of the same COVERAGE-block-derivation sentence. Same disposition."
+    },
+    {
+      "line": "Any failing conjunct caps OVERALL at `Needs work`, and the Reason line names",
+      "reason": "Part of overall-verdict-boundary-cap's own elaboration — describes the predicate's failure behaviour (which conjunct(s) get named). Same gate, continuation sentence."
+    },
+    {
+      "line": "**every** failing conjunct (a run can fail more than one). This generalises",
+      "reason": "Continuation of the overall-verdict-boundary-cap elaboration. Same gate."
+    },
+    {
+      "line": "the pre-existing `authWallUntested` cap as one named conjunct rather than a",
+      "reason": "Continuation of the overall-verdict-boundary-cap elaboration, connecting it explicitly to the pre-existing authWallUntested rule. Same gate."
+    },
+    {
+      "line": "surfaces were never covered. Example:",
+      "reason": "Tail of the same overall-verdict-boundary-cap elaboration sentence, immediately before the worked example block. Same gate."
     }
   ]
 }

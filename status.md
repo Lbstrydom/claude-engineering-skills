@@ -1,5 +1,89 @@
 # Project Status Log
 
+## 2026-08-20 — Lens coverage honesty: a report states what it checked, not only what it found
+
+Authored, audited, and implemented `docs/plans/lens-coverage-honesty.md` end
+to end in one session — `/brainstorm` → hand-authored plan → `/audit-plan`
+(3 GPT rounds + 2 Gemini rounds) → `/cycle --autonomous` implementation
+(degenerate single-cluster path, no §11 block) → code audit → mandatory
+Gemini gate → this ship.
+
+### The idea
+A verification report should state its COVERAGE, not just pass/fail — a
+green that checked nothing is indistinguishable from a green that checked
+everything. `/ship` Step 6.8 already had this rule in its strongest form
+(three terminal states, `unverified` must name a concrete blocked
+prerequisite); this promotes it from one `/ship` step to a bundle-wide
+reporting contract via the canonical `verification-discipline.md` §7,
+propagated by the existing `sync-shared-audit-refs.mjs`.
+
+### Phase 0 census — the plan shrank on contact with the code
+Of 9 lenses that emit a findings verdict, only **3 had a real gap**
+(ux-lock, persona-test, audit-code) — click-test and visual-audit already
+independently implement the full pattern; nav-audit needed a packaging fix,
+not a report rewrite.
+
+### Changes
+- **Kernel**: `docs/audit/shared-references/verification-discipline.md` +§7
+  — three obligations (subject line / non-coverage line with a 4-kind
+  taxonomy / verdict coupling), three coverage shapes (enumeration /
+  degradation / boundary-disclosure), synced to 8 consumers (added
+  `nav-audit` to `EXPECTED_CONSUMERS` in `sync-shared-audit-refs.mjs` — a
+  one-entry data-map edit, not new tooling).
+- **ux-lock**: skipped-criteria counts in the VERIFY report; a full
+  mutually-exclusive `PLAN_NOT_SHIPPED > PLAN_PARTIAL > PLAN_SATISFIED`
+  precedence table; the status label documented as agent-emitted prose, not
+  a computed/persisted value.
+- **persona-test**: redesigned the coverage block as a third shape
+  ("boundary disclosure") after `/audit-plan` correctly rejected a
+  click-test-style reached/not-reached list — persona-test's exploration is
+  adaptive, with no pre-declared surface set to diff against. A defined
+  session work-record (reached surfaces, step budget, declared focus, origin
+  policy, an exhaustive terminal-reason enum, auth state) and a composed
+  Ready-for-users eligibility predicate that generalises the pre-existing
+  `authWallUntested` cap without silently dropping it.
+- **audit-code**: a per-round pass/wave census (5 passes + 3 mechanical
+  waves + arch-memory) with 5 named states, replacing the bare "ran";
+  `CONVERGED` gets a compound-label suffix naming every non-`completed` kind
+  present, never hardcoding one.
+- **nav-audit**: documented which existing mechanisms (`coverage-gap`
+  finding kind, `authLiveness` degradation) already serve the kernel's
+  obligations, and explicitly deferred full conformance as a named,
+  code-bearing follow-up (its report is CLI-rendered, not agent-composed —
+  out of this plan's no-code-changes boundary).
+- `tests/gate-honesty.test.mjs`: registered 3 new document-only gate ids in
+  the pinned v1 census (a one-shot edit the test itself forces on any
+  coverage change — caught immediately by `npm test`, not a plan defect).
+
+### Audit trail
+- `/audit-plan`: R1 (H:2 M:4 L:1, 7/7 accepted) → R2 (H:3 M:1, 4/4 accepted
+  — caught a real internal inconsistency: my own R1 fix introduced a
+  `skipped` state absent from its own 4-state table) → R3 (H:2 M:2, 4/4
+  accepted — caught that my "generalised" persona-test cap silently dropped
+  the pre-existing auth-wall safety guarantee). Gemini R1 `CONCERNS` (2 new
+  — a chronology bug in my own R3 fix, a hardcoded-kind bug in a verdict
+  label) → R2 **`APPROVE`**.
+- Code audit: `PASS` H:0 M:1 L:1 — M1 dismissed (describes
+  `gate-honesty.test.mjs`'s pre-existing, intentional manual-pin design, not
+  a defect this plan introduced); L1 fixed (plan status line). Mandatory
+  Gemini gate: **`APPROVE`**, one LOW (missing `statedIn`/`stated` on one new
+  gate — fixed).
+- Two red-then-green negative controls for the frontmatter byte-match
+  contract (per verification-discipline §3): both confirmed RED with the
+  exact expected mismatch, then restored GREEN.
+
+### Files affected
+See `docs/plans/lens-coverage-honesty.md` §7 (file manifest) and §10
+(Implementation Log) for the complete, verified list.
+
+### Next steps
+None outstanding for this plan. The nav-audit full-conformance deferral
+(§3.4/§5) and the pre-existing 262-row unlocked-fixes / 275-row
+unremediated-acceptances backlog (measured this session, entirely
+unrelated to this work) are separate, already-tracked items.
+
+---
+
 ## 2026-08-20 — Edit-time syntax gate + verification-loop review
 
 Origin: a review of Anthropic's "Building verification loops in Claude Code

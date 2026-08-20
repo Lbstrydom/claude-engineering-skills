@@ -286,9 +286,15 @@ Full template + translation rules: `references/verify-mode-generation.md`.
 
 ### Step V6 — Report
 
-Emit the satisfaction summary with pass/fail counts per severity + the
-list of failing P0 criteria. Status rubric: `PLAN_SATISFIED` (all P0+P1
-pass) / `PLAN_PARTIAL` / `PLAN_NOT_SHIPPED` (≥1 P0 fails). Template in
+Emit the satisfaction summary with pass/fail/**skipped** counts per severity +
+the list of failing P0 criteria. **A skipped P0/P1 is neither a pass nor a
+failure and must be rendered as its own line — never silently dropped**, since
+it is invisible to the `/ship` gate by design (the store correctly excludes
+skipped items from `failing_p0_criteria`) and this report is the only place
+it can surface. Status rubric is a full precedence table, not three
+independent conditions: `PLAN_NOT_SHIPPED` (any P0 failed) →
+`PLAN_PARTIAL` (any P0/P1 skipped, or any P1 failed) → `PLAN_SATISFIED` (all
+P0+P1 evaluated and passing). Full template + precedence table:
 `references/verify-mode-generation.md`.
 
 ### Failure policy
@@ -336,4 +342,4 @@ situations — read them only when the trigger applies.
 | `references/lock-mode-spec-generation.md` | LOCK mode — full Playwright spec template + fix-type assertion map + persistence recipe. | Mode: LOCK, about to write the spec body OR register it. |
 | `references/verify-mode-generation.md` | VERIFY mode — criterion parser wiring, translation rules, per-criterion run+record protocol. | Mode: VERIFY, Steps V0–V6 (parsing, generating, running, recording). |
 | `references/scope-and-limitations.md` | Where /ux-lock works well, where it doesn't (Obsidian/Electron), and fallback strategies. | Target is an Obsidian plugin / Electron app / CLI / anti-bot-protected URL, OR bootstrapping Playwright harness from scratch, OR user is on Windows and Playwright MCP tools aren't appearing. |
-| `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Step 2.5 — the spec is written and must be proven RED against the un-fixed code before it is run and recorded. |
+| `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Step 2.5 — the spec is written and must be proven RED against the un-fixed code before it is run and recorded. ALSO Step V6 — about to emit the VERIFY report, to apply §7's skipped-criteria rule. |

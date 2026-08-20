@@ -53,6 +53,7 @@ export const EXPECTED_CONSUMERS = Object.freeze({
   'gemini-gate.md': ['audit-plan', 'audit-code'],
   'verification-discipline.md': [
     'investigate', 'audit-code', 'ux-lock', 'ship', 'explain', 'plan', 'audit-plan',
+    'nav-audit',
   ],
 });
 

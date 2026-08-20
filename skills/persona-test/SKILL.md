@@ -378,7 +378,7 @@ to the persona's "voice").
 
 ### Exploration loop (8–12 steps)
 
-Each step is **Plan → Act → Reflect**:
+Each step is **Plan → Act → Reflect → Record**:
 
 1. **Plan** — one sentence: "This persona would next try X because Y."
 2. **Act** — take the action (click, type, navigate); screenshot immediately after.
@@ -386,10 +386,28 @@ Each step is **Plan → Act → Reflect**:
    - Did the observed state match the expectation? (Yes / No / Partial)
    - Does anything visible suggest a P0–P3 finding? (cite the element)
    - What does this persona try next?
+4. **Record** — append to the session work-record below. This is not
+   optional bookkeeping: Phase 5's COVERAGE block renders **only** from this
+   record, never composed fresh at report time (`references/verification-discipline.md`
+   §7's reciprocal warning).
 
 Record a finding only when confidence ≥0.6. Below that, note it as
 "uncertain — did not report". Every finding needs `element`, `observed`,
 `fix`, `severity`, `confidence`.
+
+### Session work-record (append-only; Phase 5 renders from this, never composes fresh)
+
+| Field | Definition |
+|---|---|
+| `visitedSurfaces` | ordered list of `{path, action}`, appended after each Act step. Identity = normalized pathname (query/hash stripped, redirect followed to final URL); the list is a **chronological transition log**, not a deduped set — a reload is a repeat entry, not a new reach. Phase 5's "N screens" figure is `unique(pathname)` over this list, computed at render time |
+| `stepCount` | `{completed, cap}` — `cap` is this loop's configured budget (8–12, or an explicit override); `completed` is the number of Act steps actually executed |
+| `declaredFocus` | the `--focus` argument verbatim, or the literal string `"none — exploratory"` |
+| `originPolicyResult` | one of `same-origin-only` (default; nothing cross-origin attempted) / `cross-origin-attempted-and-blocked` (the persona tried; the safety policy above refused) / `n/a` |
+| `terminalReason` | **exhaustive, closed enum** — set once, when the loop stops: `goal-reached` / `step-budget-exhausted` / `abandonment-threshold-hit` / `auth-wall-blocked` / `tool-error` / `safety-refusal` |
+| `authState` | `n/a-no-auth-encountered` / `authenticated-via-bootstrap` / `auth-wall-untested` (the last aligns with `authWallUntested` below) |
+
+Every field is a direct record of something this loop already decides — this
+adds recording discipline, not new judgement calls.
 
 **`severity` is load-bearing, not a label** — it must be the literal string
 `"P0"`, `"P1"`, `"P2"` or `"P3"`, and it is the field the auto-correlator
@@ -407,7 +425,8 @@ field disagree.
   authenticate the session" (this is a setup regression, not a normal
   gap). Otherwise (no bootstrap was ever configured for this app), emit P3
   "App requires login; test scope limited to public surface", continue
-  with public pages only, and set `authWallUntested = true` for Phase 4 —
+  with public pages only, and set `authWallUntested = true` for Phase 4 (and
+  the session work-record's `authState = 'auth-wall-untested'`) —
   this run did **not** cover the app's primary authenticated surfaces, and
   the report must say so even when it finds 0 P0s there.
 - **Page-load timeout** → retry once with viewport reset; if it still times out, emit P1 "Slow initial load (>15s)" and continue
@@ -521,10 +540,17 @@ recurring P0 from history.
 **Gate-honesty rule for `authWallUntested`**: 0 P0 findings on an
 `authWallUntested` run means "0 P0s on the public shell", not "0 P0s on
 the app". OVERALL must never read `Ready for users` in this case — cap it
-at `Needs work` (see Phase 5) so a downstream consumer (`/cycle` Step 5)
-can't read this run as a clean pass on a surface it never reached. This
-mirrors click-test's rule that the OVERALL verdict caps at `Incomplete`
-when any route is `auth-required` — same failure mode, same fix.
+at `Needs work` so a downstream consumer (`/cycle` Step 5) can't read this
+run as a clean pass on a surface it never reached. This mirrors click-test's
+rule that the OVERALL verdict caps at `Incomplete` when any route is
+`auth-required` — same failure mode, same fix. Phase 5's composed
+eligibility predicate is this rule generalised: `authState !==
+'auth-wall-untested'` is one of three independent conjuncts a run must
+satisfy to read `Ready for users`, because the loop continuing past an
+untested wall onto public pages can otherwise reach its goal and read
+`terminalReason: 'goal-reached'` while the wall is still untested — a
+single-field check on `terminalReason` alone would silently drop this
+exact guarantee.
 
 ---
 
@@ -551,18 +577,49 @@ FINDINGS
      Fix:      <specific recommendation>
   ...
 
+COVERAGE (relative to this persona's own session — not an inventory scan)
+────────────────────────────────────────────────────
+  Reached:        /  →  /cellar  →  /cellar/add   (3 unique screens, 9/12 steps)
+  Loop ended:     <terminalReason>
+  Focus:          <declaredFocus>
+  Origin:         <originPolicyResult>
+  Auth:           <authState>
+
+  Not a surface-complete scan: this persona explored as it naturally would,
+  not exhaustively. For surface-complete coverage, run /nav-audit or
+  /click-test against the same URL.
+
 OVERALL: <Ready for users | Needs work | Blocked>
   Reason: <one sentence>
 ```
 
-If `authWallUntested = true` (Phase 3 special cases), OVERALL is capped at
-`Needs work` regardless of finding count, with a reason naming the gap
-explicitly, e.g.:
+Every field in the COVERAGE block is rendered directly from the session
+work-record (Phase 3) — never recomposed here. `Reached` is `unique(pathname)`
+over `visitedSurfaces`; the step fraction is `stepCount.completed/cap`.
+
+**`Ready for users` requires a composed eligibility predicate, not a single
+check** — a clean run (no P0/P1 findings) AND **every one** of:
+
+```
+terminalReason      === 'goal-reached'
+authState           !== 'auth-wall-untested'
+originPolicyResult  !== 'cross-origin-attempted-and-blocked'
+```
+
+Any failing conjunct caps OVERALL at `Needs work`, and the Reason line names
+**every** failing conjunct (a run can fail more than one). This generalises
+the pre-existing `authWallUntested` cap as one named conjunct rather than a
+special case beside it — a session can hit an untested auth wall, continue
+exploring public surfaces (per the Special Cases rule below), and still end
+`terminalReason: 'goal-reached'`; checking `terminalReason` alone would
+silently clear that run as Ready even though its primary authenticated
+surfaces were never covered. Example:
 
 ```
 OVERALL: Needs work
-  Reason: Primary authenticated surfaces untested — login wall hit, no
-          auth bootstrap configured (see references/auth-bootstrap.md).
+  Reason: authState=auth-wall-untested — primary authenticated surfaces
+          untested — login wall hit, no auth bootstrap configured
+          (see references/auth-bootstrap.md).
 ```
 
 If `audit_link = true` and Phase 0d candidates match the persona findings,

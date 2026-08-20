@@ -114,7 +114,8 @@ If a criterion can only be expressed via a class selector and the implementation
 is in-repo, prefer adding a semantic hook (SKILL Step 1.5 ladder: native
 semantics → `data-testid` → accurate ARIA only). If no hook can be added, flag
 the criterion as un-verifiable in Step V5 and skip it rather than emitting a
-brittle assertion.
+brittle assertion — flagging it un-verifiable is legitimate; **dropping it
+from the Step V6 report is not** (`references/verification-discipline.md` §7).
 
 ## Step V3 — Register the generated spec
 
@@ -188,11 +189,11 @@ test (Step V2 above) — without it the runner cannot map results to criteria.
   URL:  <baseUrl>
   Commit: <commit-sha>
 
-  Criteria: <N> total
-    P0: <passed>/<total> passing
-    P1: <passed>/<total> passing
-    P2: <passed>/<total> passing
-    P3: <passed>/<total> passing
+  Criteria: <N> total  (<passed> passed · <failed> failed · <skipped> skipped)
+    P0: <passed>/<evaluated_p0> passing   (<skipped_p0> not evaluated)
+    P1: <passed>/<evaluated_p1> passing   (<skipped_p1> not evaluated)
+    P2: <passed>/<total_p2> passing
+    P3: <passed>/<total_p3> passing
 
   Satisfaction: <pct>%   (<passed>/<total>)
   Status: <PLAN_SATISFIED | PLAN_PARTIAL | PLAN_NOT_SHIPPED>
@@ -202,13 +203,55 @@ test (Step V2 above) — without it the runner cannot map results to criteria.
         Timeout 5000ms exceeded — getByRole('grid') never resolved
     ✗ [interaction] Wine card opens detail modal on click
         Expected dialog to be visible; found none
+
+  Skipped P0/P1 criteria (if any — un-verifiable, NOT a failure, but not
+  evaluated either; see the rubric below):
+    ⊘ [interaction] Wine card supports drag-to-reorder
+        No semantic hook available; flagged un-verifiable in Step V5
 ═══════════════════════════════════════
 ```
 
-Status rubric:
-- `PLAN_SATISFIED` — all P0 and P1 criteria pass
-- `PLAN_PARTIAL` — ≥1 P0 passes, some P1/P2/P3 fail
-- `PLAN_NOT_SHIPPED` — ≥1 P0 fails
+`evaluated = total − skipped`, per severity — a skipped criterion counts
+toward neither `passed` nor `failed`, and the report says so explicitly
+rather than shrinking the denominator silently.
+
+**`Criteria: N total`'s per-severity split reports P0 and P1 both, since
+either can carry skipped criteria** — a P0-only view left P1 skips invisible.
+P2/P3 never carry a skipped-denominator split; they cannot affect the status
+rubric (below), so the plain `passed/total` form is sufficient there.
+
+**Zero-evaluated rendering**: when `evaluated_<severity> = 0` (every
+criterion at that severity was skipped), render `not evaluated (0 evaluated;
+N skipped)` in place of the `<passed>/<evaluated>` fraction — a bare `0/0`
+reads as either total success or a calculation error, and it is neither.
+This is a rendering rule only: the precedence table below already routes an
+all-skipped severity to `PLAN_PARTIAL` without any special case, because
+"zero skipped among P0/P1" (rule 3) fails whenever `skipped > 0`.
+
+**Status rubric — a full, mutually-exclusive, first-match-wins precedence
+table**, not three independent conditions:
+
+1. `PLAN_NOT_SHIPPED` — any P0 criterion **FAILED** (evaluated, not passing).
+2. `PLAN_PARTIAL` — not (1), AND (any P0 or P1 **SKIPPED**, OR any P1
+   FAILED).
+3. `PLAN_SATISFIED` — all P0 and P1 criteria evaluated (zero skipped among
+   P0/P1) AND passing.
+
+First match wins. A failed P0 always reads `PLAN_NOT_SHIPPED` regardless of
+what else in the run is skipped — one criterion is exactly one of
+passed/failed/skipped, so the coexistence question is about the run-level
+*label* across different criteria, and precedence resolves it directly.
+**P2/P3 skipped criteria never affect the label.**
+
+**This label is model-emitted report prose — no script computes it, and it
+is neither persisted nor parsed.** `/ship`'s gate reads
+`plan_satisfaction.failing_p0_criteria` directly from the store (which
+already excludes skipped items — see `supabase/migrations/
+20260704120000_plan_verify_skipped.sql`), never this label. A skipped P0 is
+therefore invisible to the `/ship` gate **by design** — correctly excluded
+from failures — which is exactly why this report is the only place it can
+surface, and why omitting the skipped line above would be silent, not
+merely incomplete.
 
 ## Failure policy
 

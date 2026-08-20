@@ -195,6 +195,13 @@
       "statedIn": "skills/audit-code/SKILL.md",
       "stated": "Re-run every detector at FULL scope (blocks convergence)",
       "reason": "Step 5.0b's claim is mechanically enforced AND WIRED. evaluateConvergenceWithDetectors (scripts/lib/audit/convergence.mjs) returns converged:false with reason 'detector-undispositioned' on any undispositioned match and 'detector-not-run' when no detector result is supplied; resolveDetectorResultForRound maps a round's ledger state to that input, and legacy-production-audit.mjs's gate-evidence block calls the pair to compute the verdict that licenses AI-Gate: passed. CORRECTED 2026-08-08: the previous text asserted 'IS mechanically enforced' while NOTHING IN PRODUCTION CALLED EITHER FUNCTION -- a contract claiming enforcement that never reached the verdict, i.e. the exact class this registry exists to catch, inside the registry. Found by a blind adjudication of bake-off shadow findings (HIGH, raised on two snapshots); fixed under docs/plans/gate-honesty-adjudicated-defects.md D1. tests/audit-detector.test.mjs pins the three ledger-state rows, the full-scope property, the unverifiable states, and a falsifiable call-SHAPE assertion that the resolver is passed to the oracle at the verdict site (a unit test of both functions passes while nothing calls them -- that was the defect). Still document-only because the CLOSED oracle registry has no fit: convergence-threshold binds only finding-count params, cli-exit drives a CLI against a filesystem fixture, and this gate's subject is a ledger-plus-repo state a recipe cannot construct. The runtime flow is verified empirically instead (plan section 9, D1). Revisit if a ledger-fixture oracle is ever added."
+    },
+    {
+      "id": "convergence-census-and-label",
+      "kind": "document-only",
+      "statedIn": "skills/audit-code/SKILL.md",
+      "stated": "A round with any non-`completed` row cannot print a bare `CONVERGED`.",
+      "reason": "Added 2026-08-20 (lens-coverage-honesty plan §3.3, §4 Trap 1). The per-pass/wave CENSUS block and the `CONVERGED (<kind counts> — see census)` compound-label suffix are both composed by the agent from the round's own recorded pass/wave outcomes when writing the Step 6 report — no CLI exit code, and no oracle in the closed v1 registry (cli-exit / convergence-threshold / tiered-shadow-window / visual-gate-unverified) binds report-label composition. The underlying convergence BOOLEAN this label wraps is already covered by the executable `convergence-threshold` gate above; this document-only entry covers only the human-readable presentation layer on top of it."
     }
   ],
   "ignoredCandidates": [
@@ -255,8 +262,8 @@
       "reason": "Failure-triage guidance for the agent (check the instrument before the subject). Ordering advice about where to look first, not a gate — /audit-code produces no exit code that could assert an investigator followed it."
     },
     {
-      "line": "| `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Step 4.5 — a finding was fixed WITH a new test or guard and it must be proven red-then-green, OR authoring a contract test from a one-off check. |",
-      "reason": "A REFERENCE-TABLE row. The 'Read when' cell describes when to open a reference file; it asserts nothing this skill enforces and produces no exit code. The enforcement verb is incidental to a trigger description."
+      "line": "| `references/verification-discipline.md` | Verification discipline — pinned citations, figure provenance, two-direction proof, attribution, consumer-side checks. | Step 4.5 — a finding was fixed WITH a new test or guard and it must be proven red-then-green, OR authoring a contract test from a one-off check. ALSO Step 6 — about to emit the convergence report's pass/wave census, to apply §7's named-state rule. |",
+      "reason": "A REFERENCE-TABLE row. The 'Read when' cell describes when to open a reference file; it asserts nothing this skill enforces and produces no exit code. The enforcement verb is incidental to a trigger description. (Text extended 2026-08-20 to add the Step 6 trigger — same disposition, updated to match the new cell text verbatim.)"
     },
     {
       "line": "> **Precondition: the ledger must already carry per-finding rulings.** This CLI",
@@ -277,6 +284,42 @@
     {
       "line": "and never a pass.",
       "reason": "Tail of the same exit-mapping sentence — exit 2 (unreadable ledger) is \"no census happened\", which must not read as clean. Same single claim, same test."
+    },
+    {
+      "line": "**Visibility, not a new gate.** This code-level convergence gate is unchanged.",
+      "reason": "Added 2026-08-20 (lens-coverage-honesty §3.3). Restates detector-blocks-convergence's own claim — the underlying evaluateConvergenceWithDetectors gate is untouched by this plan; only the human-readable census changes. Same disposition as detector-blocks-convergence above: mechanically enforced code, described here in prose with no separate exit code."
+    },
+    {
+      "line": "CENSUS block, never silently folded into \"the census reached zero.\" The",
+      "reason": "Continuation of the same Step 5.0b visibility-only paragraph as the candidate above — describes how an errored detector is now RENDERED in the report, not a new code-level gate. Same disposition."
+    },
+    {
+      "line": "exit-2 case above (\"no census happened … never a pass\") is already a hard",
+      "reason": "Continuation of the same paragraph — restates the pre-existing exit-2 non-pass (already covered by the 'Exit 0 = every detector reached zero…' ignoredCandidates entry above), clarifying it is unaffected by this plan's report-only change."
+    },
+    {
+      "line": "failed is a different thing from never-attempted (`references/verification-discipline.md`",
+      "reason": "Added 2026-08-20 (lens-coverage-honesty §3.3, §7 of the shared kernel). Introduces the named pass/wave state table (completed/errored/ineligible/unavailable/not-reached) the agent applies when composing the Step 6 census — same disposition class as convergence-census-and-label above: agent-emitted report content, no CLI exit code."
+    },
+    {
+      "line": "Step 0.5, before any round's Step 2 begins, and is never re-seeded — Step 0.5",
+      "reason": "Part of the per-round execution-record lifecycle paragraph (arch-memory resolved once, never re-seeded pending) — agent-followed instruction for composing the census record across rounds; no exit code, same disposition as convergence-census-and-label."
+    },
+    {
+      "line": "pass/wave row as `not-reached` at round-end, never leaving it `pending` (a",
+      "reason": "Continuation of the same execution-record lifecycle paragraph — an aborted round finalizes untouched rows; agent-composed record state, same disposition as convergence-census-and-label."
+    },
+    {
+      "line": "mid-round state, never a reportable one). Step 6 renders the current",
+      "reason": "Continuation of the same execution-record lifecycle paragraph; same disposition as convergence-census-and-label."
+    },
+    {
+      "line": "The suffix names **every kind present, with its own count** — never",
+      "reason": "Elaborates convergence-census-and-label's own `stated` claim (the CONVERGED compound-label rule) — same gate, continuation sentence explaining the per-kind suffix rather than a hardcoded one."
+    },
+    {
+      "line": "diff) names them `ineligible`, never folded into \"errored\" — mislabelling",
+      "reason": "Continuation of the convergence-census-and-label paragraph — the ineligible-vs-errored mislabelling example. Same gate, same disposition."
     },
     {
       "line": "writes. Never hand-assemble the JSON:",
