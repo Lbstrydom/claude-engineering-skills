@@ -422,6 +422,12 @@ async function main() {
   if (!transcript || !plan) throw new ArgvError('--transcript <path> and --plan <path> are both required (or use --progress)');
   for (const p of [transcript, plan]) if (!fs.existsSync(p)) throw new ArgvError(`not found: ${p}`);
 
+  const id = snapshotId(transcript);
+  const force = process.argv.includes('--force');
+  const allowLogOnlyRetry = process.argv.includes('--allow-log-only-retry');
+  const confirmMismatch = process.argv.includes('--confirm-mismatch');
+  const currentPlanHash = planContentHash(plan);
+
   // §7 Phase 4: a collection-time SOFT heuristic that would have caught all
   // 3 real mis-paired snapshots. Refuses to proceed on an apparent mismatch
   // unless the operator explicitly confirms — a legitimate plan may
@@ -442,12 +448,6 @@ async function main() {
       process.stderr.write('  [bakeoff] WARNING: --transcript and --plan do not look related, proceeding due to --confirm-mismatch\n');
     }
   }
-
-  const id = snapshotId(transcript);
-  const force = process.argv.includes('--force');
-  const allowLogOnlyRetry = process.argv.includes('--allow-log-only-retry');
-  const confirmMismatch = process.argv.includes('--confirm-mismatch');
-  const currentPlanHash = planContentHash(plan);
 
   // Arms + D4 collision classification resolve FIRST now (§7 Phase 2 —
   // moved up from below `selectRetryArmIds`): a fresh fixture's local log has
