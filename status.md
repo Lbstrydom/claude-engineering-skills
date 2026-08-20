@@ -1,5 +1,48 @@
 # Project Status Log
 
+## 2026-08-20 — Backlog triage: unlocked-fixes + unremediated-acceptances
+
+### Plan-mode write-off (documentation-only, no code risk)
+
+Both backlogs' plan-mode rows are obligations to amend a SHIPPED plan
+document, not code defects — writing off the class does not write off any
+code-level risk (that lives in the code-mode rows, handled separately below).
+Checked every plan these rows cite; all are `Status: Complete`:
+
+- **unlocked-fixes** (125 plan-mode rows, in-window): `comparison-tooling-consolidation.md` (25),
+  `campaign-arm-state-and-identity-integrity.md` (19 — bumped Complete this
+  session, see below), `cross-skill-command-registry.md` (17),
+  `auditor-controls-execution-wiring.md` (15), `event-wiring-symmetry.md` (14),
+  `accepted-debt-table-verification.md` (7), `worktree-identity-guards.md` (6),
+  `model-comparison-campaigns.md` (6), `unremediated-acceptance-backlog.md` (6),
+  `god-module-and-layering-debt.md` (6), `cycle-cluster-audit-scope.md` (3),
+  `cross-agent-delivery-parity.md` (1).
+- **unremediated-acceptances** (13 plan-mode rows, in-window): all
+  `verification-discipline-cluster.md`.
+- No mechanical clearing exists for these — `unlocked_fixes`' only clearing
+  path is a real regression-test lock, which is definitionally impossible for
+  a plan-section citation (no code artifact); `unremediated_acceptances`'
+  `markFindingsRemediation` only ever sets `remediation_state`
+  (fixed/verified/regressed), and setting it here would misrepresent "amend a
+  historical doc" as "fixed a defect." Left as-is; they'll age out of each
+  view's window naturally, same as the 228/190 `prePractice` rows already on
+  record from the 2026-08-11 write-off.
+- Also fixed a real staleness bug found while checking this: `campaign-arm-state-and-identity-integrity.md`'s
+  Status line still said "Approved... ready for implementation" despite the
+  plan being fully implemented, audited, and closed out in this same session —
+  bumped to `Complete`.
+
+### Code-mode triage
+
+See the follow-on entry below once the parallel triage agents report (4
+agents, partitioned by file to avoid collisions: cross-skill.mjs +
+lib/cross-skill/* cluster; the audit/legacy-production-audit.mjs +
+plan-verification.mjs + maintenance-checks.mjs + harvest-audit-transcripts.mjs
++ transcript-archive.mjs cluster; the remaining ~70 unlocked-fixes across ~42
+files; the remaining ~117 unremediated-acceptances across ~81 files).
+
+---
+
 ## 2026-08-20 — Campaign arm-state and snapshot-identity integrity
 
 ### Consumer Verification (previous ship)

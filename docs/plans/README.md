@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**5 active · 198 terminal · 27 audit summaries · 4 reference docs**
+**4 active · 199 terminal · 27 audit summaries · 4 reference docs**
 
 ---
 
@@ -21,7 +21,6 @@ This is the list to read when asking "what is in flight?".
 
 | Plan | Status | Notes |
 |---|---|---|
-| [Campaign Arm-State and Snapshot-Identity Integrity](./campaign-arm-state-and-identity-integrity.md) | `Approved` | audited (6 GPT rounds, 5 Gemini rounds total across sessions, all findings fixed), ready for implementation… |
 | [Final-Review Shadow Bake-Off (marginal-value re-test)](./final-review-shadow-bakeoff.md) | `In Progress` | activated 2026-07-31 — see §0 Activation Addendum |
 | [Miscellaneous Small-Cluster Debt (2026-07-26 triage)](./refactor-misc-small-items-2026-07.md) | `Draft` | narrowed to 8 items (10 topicIds), re-verified open |
 | [A transactional commit boundary for `ship-commit`](./ship-commit-transaction.md) | `Draft` | not started; trigger-gated; Phase 1 answered in §2.1 and the cost widened |
@@ -45,7 +44,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 195 completed plans</summary>
+<summary>Show all 196 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -88,6 +87,7 @@ source comments that no docs linter sees — stays valid.
 | [/brainstorm Skill + Architecture-Map Discoverability + VS Code Mermaid](./brainstorm-and-arch-discoverability.md) | `Complete` | shipped — `/brainstorm` skill + `scripts/brainstorm-round.mjs` + 7 modules under `scripts/lib/brainstorm/` … |
 | [`/brainstorm --with-arch` — codebase architecture context for external LLMs](./brainstorm-arch-context.md) | `Complete` |  |
 | [Brainstorm-skill upgrades + Quick-fix detection (v1)](./brainstorm-quickfix-v1.md) | `Complete` | shipped — both halves: `/brainstorm` enhancements (see brainstorm-and-arch-discoverability) + quick-fix det… |
+| [Campaign Arm-State and Snapshot-Identity Integrity](./campaign-arm-state-and-identity-integrity.md) | `Complete` | implemented via `/cycle --autonomous` (3 clusters, each audited to convergence), consolidated Gemini gate A… |
 | [Wire the Cloud FP-Pattern Read Loop into Audit Suppression](./cloud-fp-suppression-read-loop.md) | `Complete` | implemented + audited. Plan audit: 5 GPT + 2 Gemini |
 | [Comparison-Tooling Consolidation](./comparison-tooling-consolidation.md) | `Complete` | all clusters (A/A′, B, C, D) implemented, individually |
 | [Harden consumer deployment — prevent silent local-patching of synced tooling](./consumer-deployment-hardening.md) | `Complete` | all three phases built, tested, and deployed (the |
