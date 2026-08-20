@@ -9,8 +9,7 @@
     { "id": "grok", "model": "grok-4.6", "mode": "shadow" },
     { "id": "qwen", "model": "qwen3.8-max", "mode": "shadow" },
     { "id": "deepseek", "model": "deepseek-v4-pro", "mode": "shadow" },
-    { "id": "gemini-control", "model": "gemini-pro-latest", "mode": "shadow", "type": "control" },
-    { "id": "glm", "model": "z-ai/glm-5.3", "mode": "shadow" }
+    { "id": "gemini-control", "model": "gemini-pro-latest", "mode": "shadow", "type": "control" }
   ],
   "controls": {
     "reasoningEffort": "high",
