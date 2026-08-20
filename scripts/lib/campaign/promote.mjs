@@ -96,6 +96,36 @@ export async function repoId() {
  * @param {{campaignId: string, lockDigest: string, shaByRunId: Record<string,string|null>,
  *   existingPlanHashesByArm?: Record<string, Set<string|null>>, confirmMismatch?: boolean}} ctx
  */
+/**
+ * PURE. Which arms in this entry disagree with their OWN live,
+ * non-quarantined store history on plan-content hash — extracted from
+ * `classifyLogEntry` so the comparison rule is assertable and readable in
+ * isolation (round 6, M6: the containing function was growing multiple
+ * independent policy concerns).
+ *
+ * `IS NOT DISTINCT FROM` semantics: NULL-vs-NULL is a match (a legacy
+ * snapshot with no historical hash accepts a further NULL-hash attempt);
+ * only a REAL, differing value is a mismatch. An arm with no entry in
+ * `existingPlanHashesByArm` (no live history at all — a genuinely new
+ * arm-run) is never a mismatch, since there is nothing to disagree with.
+ *
+ * @param {Array<[string, object]>} armEntries - `Object.entries(entry.arms)`
+ * @param {Record<string, Set<string|null>>} existingPlanHashesByArm
+ * @returns {Array<{armId: string, oldHash: string|null, newHash: string|null}>}
+ */
+export function detectPlanHashMismatches(armEntries, existingPlanHashesByArm) {
+  const mismatches = [];
+  for (const [armId, arm] of armEntries) {
+    const attemptHash = arm?.planContentHash ?? null;
+    const existingHashes = existingPlanHashesByArm[armId];
+    if (!existingHashes) continue;
+    for (const oldHash of existingHashes) {
+      if ((oldHash ?? null) !== attemptHash) mismatches.push({ armId, oldHash: oldHash ?? null, newHash: attemptHash });
+    }
+  }
+  return mismatches;
+}
+
 export function classifyLogEntry(entry, {
   campaignId, lockDigest, shaByRunId, existingPlanHashesByArm = {}, confirmMismatch = false,
 }) {
@@ -130,15 +160,7 @@ export function classifyLogEntry(entry, {
 
   // §7 Phase 4 plan-hash consistency check — per arm, against that arm's OWN
   // live non-quarantined history in the store.
-  const mismatches = [];
-  for (const [armId, arm] of armEntries) {
-    const attemptHash = arm?.planContentHash ?? null;
-    const existingHashes = existingPlanHashesByArm[armId];
-    if (!existingHashes) continue;
-    for (const oldHash of existingHashes) {
-      if ((oldHash ?? null) !== attemptHash) mismatches.push({ armId, oldHash: oldHash ?? null, newHash: attemptHash });
-    }
-  }
+  const mismatches = detectPlanHashMismatches(armEntries, existingPlanHashesByArm);
   if (mismatches.length > 0 && !confirmMismatch) {
     const named = mismatches.map((m) => `${m.armId} (store: ${m.oldHash ?? 'null'}, new: ${m.newHash ?? 'null'})`).join(', ');
     return {

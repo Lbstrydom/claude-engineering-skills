@@ -14,7 +14,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import {
-  classifyLogEntry, resolvePromotionAttempts, isArmRetried, repoId,
+  classifyLogEntry, resolvePromotionAttempts, isArmRetried, repoId, detectPlanHashMismatches,
 } from '../scripts/lib/campaign/promote.mjs';
 
 // ── repoId: cloud-off / unresolved must stay a quiet null; a real store ─────
@@ -287,6 +287,30 @@ describe('classifyLogEntry — superseded attempts survive into promotion', () =
 });
 
 // ── §7 Phase 4: plan-hash consistency check ─────────────────────────────────
+
+describe('detectPlanHashMismatches — the extracted comparison rule (round 6, M6)', () => {
+  it('NULL-vs-NULL is not a mismatch', () => {
+    assert.deepEqual(detectPlanHashMismatches([['opus', { planContentHash: null }]], { opus: new Set([null]) }), []);
+  });
+
+  it('NULL-vs-hash IS a mismatch', () => {
+    assert.deepEqual(
+      detectPlanHashMismatches([['opus', { planContentHash: 'h1' }]], { opus: new Set([null]) }),
+      [{ armId: 'opus', oldHash: null, newHash: 'h1' }],
+    );
+  });
+
+  it('an arm with no existing history is never a mismatch', () => {
+    assert.deepEqual(detectPlanHashMismatches([['opus', { planContentHash: 'h1' }]], {}), []);
+  });
+
+  it('multiple disagreeing old hashes for one arm are all reported', () => {
+    assert.deepEqual(
+      detectPlanHashMismatches([['opus', { planContentHash: 'h-new' }]], { opus: new Set(['h-old-1', 'h-old-2']) }).length,
+      2,
+    );
+  });
+});
 
 describe('classifyLogEntry — plan-hash consistency check (§7 Phase 4)', () => {
   const ctx = { campaignId: 'camp', lockDigest: 'lock1', shaByRunId: { r1: 'sha1' } };
