@@ -109,40 +109,63 @@ export async function runExtract({ url, contract, devices, themeNames = null, st
         // Animation freeze + localStorage theme must be set BEFORE app init.
         await context.addInitScript(ANIM_FREEZE_INIT);
         if (theme.apply?.mode === 'localStorage') {
-          await context.addInitScript(({ k, v }) => { try { localStorage.setItem(k, v); } catch { /* ignore */ } }, { k: theme.apply.key, v: theme.apply.value });
+          // Backlog-triage fix — `localStorage.setItem` CAN throw (private
+          // browsing, storage quota exceeded) and this used to swallow that
+          // silently (bare try/catch, no signal anywhere). It runs inside the
+          // page, before any of our own code gets control back, so it cannot
+          // report the failure directly — it stamps a marker on `window`
+          // instead, and `applyTheme` below reads it back after the reload
+          // that's supposed to pick up the seeded value, feeding it into the
+          // SAME `applied:false` taint path a failed selector match already
+          // uses (never a silent no-op).
+          await context.addInitScript(({ k, v }) => {
+            try { localStorage.setItem(k, v); }
+            catch (err) { window.__vaLocalStorageSetFailed = (err && err.message) ? err.message : String(err); }
+          }, { k: theme.apply.key, v: theme.apply.value });
         }
         const page = await context.newPage();
         try {
           await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
           const themeApplied = await applyTheme(page, theme.apply);
-          // Theme-apply integrity (audit B-R1-H3): a bad selector must not become a
-          // silent no-op — a not-actually-flipped theme fabricates parity evidence.
+          // Theme-apply integrity (audit B-R1-H3, extended by the backlog-triage
+          // fix for the localStorage-seed-throw case above): a bad selector OR a
+          // swallowed localStorage.setItem must not become a silent no-op — a
+          // not-actually-flipped theme fabricates parity evidence. Previously this
+          // only pushed a cosmetic warning while the tainted capture still reached
+          // `perState` unfiltered, indistinguishable from valid evidence to every
+          // downstream tier. `false` is now treated exactly like a failed
+          // navigation: the cell is EXCLUDED from `perState` and recorded in
+          // `missingStates`, so the gate and the theme-pair tiers see it as
+          // UNCAPTURED rather than as captured-but-wrong evidence slipping through.
           if (themeApplied === false) {
-            warnings.push(`${stateLabel}: theme apply target matched nothing — theme "${theme.name}" may not have been applied; parity evidence for this state is suspect`);
+            const reason = `theme "${theme.name}" was not verifiably applied (apply target unmatched, or the `
+              + 'localStorage seed threw) — capture excluded from scoring, not just warned about';
+            warnings.push(`${stateLabel}: ${reason}`);
+            missingStates.push({ device: device.name, theme: theme.name, reason });
+          } else {
+            const { nodes, capturedSurfaces, fullDomStats } = await collectState(page, { surfaces, props: COLLECTED_PROPS, timeoutMs, fullDom, fullDomNodeBudget });
+            // Capture honesty: a declared surface that never produced content is unverifiable.
+            for (const s of surfaces) if (!capturedSurfaces.has(s.id)) unverifiable.add(s.id);
+
+            // CDP forcePseudoState per interactive node (bounded). fullDom nodes carry
+            // interactive:false/focusable:false so they never enter this pass.
+            await capturePseudoStates(context, page, nodes, surfaces);
+
+            // Finalize: compute stable node keys + provenance in Node context.
+            const evidence = nodes.map((n) => ({
+              ...n,
+              device: device.name,
+              theme: theme.name,
+              nodeKey: stableNodeKey(n.descriptor),
+              matched: resolveMatched(n.declarations),
+            }));
+            perState.push({
+              device: device.name, theme: theme.name, viewportWidth: device.viewport.width, nodes: evidence,
+              // Per-state capture stats for the parity-delta's scope-aware coverage
+              // (theme-safety v2 decision 4): present only when --full-dom ran.
+              ...(fullDomStats ? { captureStats: { ...fullDomStats, device: device.name, theme: theme.name } } : {}),
+            });
           }
-
-          const { nodes, capturedSurfaces, fullDomStats } = await collectState(page, { surfaces, props: COLLECTED_PROPS, timeoutMs, fullDom, fullDomNodeBudget });
-          // Capture honesty: a declared surface that never produced content is unverifiable.
-          for (const s of surfaces) if (!capturedSurfaces.has(s.id)) unverifiable.add(s.id);
-
-          // CDP forcePseudoState per interactive node (bounded). fullDom nodes carry
-          // interactive:false/focusable:false so they never enter this pass.
-          await capturePseudoStates(context, page, nodes, surfaces);
-
-          // Finalize: compute stable node keys + provenance in Node context.
-          const evidence = nodes.map((n) => ({
-            ...n,
-            device: device.name,
-            theme: theme.name,
-            nodeKey: stableNodeKey(n.descriptor),
-            matched: resolveMatched(n.declarations),
-          }));
-          perState.push({
-            device: device.name, theme: theme.name, viewportWidth: device.viewport.width, nodes: evidence,
-            // Per-state capture stats for the parity-delta's scope-aware coverage
-            // (theme-safety v2 decision 4): present only when --full-dom ran.
-            ...(fullDomStats ? { captureStats: { ...fullDomStats, device: device.name, theme: theme.name } } : {}),
-          });
         } catch (err) {
           const reason = (err && err.message) ? err.message : String(err);
           warnings.push(`${stateLabel}: ${reason}`);
@@ -163,8 +186,12 @@ export async function runExtract({ url, contract, devices, themeNames = null, st
  * Apply a theme via the discriminated apply protocol (media handled at context).
  * Uniform verification contract (audit B-R1-H3): returns `true` when the mutation
  * verifiably landed, `false` when the apply target matched NOTHING (a silent
- * no-op would fabricate parity evidence), `null` when the mode is not verifiable
- * at the mutation point (media = context-level; localStorage = app-interpreted).
+ * no-op would fabricate parity evidence) OR when a `localStorage` mode's seed
+ * threw (private-browsing / storage-quota-exceeded — backlog-triage fix; the
+ * throw is otherwise invisible since it happens inside an addInitScript, before
+ * this function ever runs), `null` when the mode is not verifiable at the
+ * mutation point and the seed did NOT throw (media = context-level;
+ * localStorage = app-interpreted).
  * @returns {Promise<boolean|null>}
  */
 async function applyTheme(page, apply) {
@@ -186,6 +213,13 @@ async function applyTheme(page, apply) {
     }, apply);
   } else if (apply.mode === 'localStorage') {
     await page.reload({ waitUntil: 'domcontentloaded' }); // ensure app picks up the pre-seeded value
+    // Surface a swallowed localStorage.setItem failure (the init script above
+    // stamps `window.__vaLocalStorageSetFailed` when the seed throws) as
+    // `applied:false` — the same taint the caller already treats as suspect
+    // evidence for an unmatched selector, rather than letting it read as a
+    // verified (non-null) apply when the theme was never actually seeded.
+    const lsError = await page.evaluate(() => window.__vaLocalStorageSetFailed || null).catch(() => null);
+    if (lsError) applied = false;
   }
   if (apply?.settleSelector) {
     await page.waitForSelector(apply.settleSelector, { timeout: 5000 }).catch(() => {});

@@ -662,3 +662,82 @@ describe('batchWriteLedger — self-healing without data loss', () => {
     assert.deepEqual(res.prunedResident, []);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════
+// Concurrent-run state loss (backlog triage bug #3, fixed 2026-08-20).
+//
+// Before this fix, `batchWriteLedger`'s entries read-modify-write took NO
+// lock at all — only a separate `meta` merge sub-path (`mergeMetaLocked`)
+// used `proper-lockfile`. Two concurrent audit processes writing the same
+// ledger could each read a stale snapshot and one's entries write would
+// clobber the other's. Separately, the caller of the meta-merge path
+// (legacy-production-audit.mjs's `runsSinceDebtReview` counter) read the
+// counter BEFORE any lock was acquired, so even the locked meta path could
+// still lose an increment: two readers see the same stale value, both
+// compute N+1, and the second write overwrites the first's.
+// ═══════════════════════════════════════════════════════════════════════
+describe('batchWriteLedger — locking discipline (concurrency safety)', () => {
+  let dir, ledgerPath;
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-lock-'));
+    ledgerPath = path.join(dir, 'ledger.json');
+    fs.writeFileSync(ledgerPath, JSON.stringify({ version: 1, entries: [] }), 'utf-8');
+  });
+  afterEach(() => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }));
+
+  it('the entries write takes a lock on the ledger file — a lock already held by someone else blocks it', async () => {
+    const { default: lockfile } = await import('proper-lockfile');
+    // Hold the lock ourselves first, exactly as a concurrent writer would.
+    const release = lockfile.lockSync(ledgerPath, { stale: 10000 });
+    try {
+      assert.throws(
+        () => batchWriteLedger(ledgerPath, [{ topicId: 'race-1', severity: 'HIGH' }]),
+        /ELOCKED|already being held/i,
+        'batchWriteLedger must take the SAME lock a concurrent writer holds — before this fix it had no lock at all and would have written straight through',
+      );
+    } finally {
+      release();
+    }
+    // Confirms the throw above really did block the write (not some unrelated error).
+    const onDisk = JSON.parse(fs.readFileSync(ledgerPath, 'utf-8'));
+    assert.deepEqual(onDisk.entries, [], 'the blocked write must never have landed');
+  });
+
+  it('metaUpdater re-reads the current meta value on every call, so two sequential increments never lose one', () => {
+    fs.writeFileSync(ledgerPath, JSON.stringify({ version: 1, meta: { runsSinceDebtReview: 0 }, entries: [] }), 'utf-8');
+    const increment = (existingMeta) => ({ runsSinceDebtReview: (existingMeta.runsSinceDebtReview ?? 0) + 1 });
+
+    batchWriteLedger(ledgerPath, [], { metaUpdater: increment, targetMetaPath: ledgerPath });
+    batchWriteLedger(ledgerPath, [], { metaUpdater: increment, targetMetaPath: ledgerPath });
+
+    const written = JSON.parse(fs.readFileSync(ledgerPath, 'utf-8'));
+    assert.equal(written.meta.runsSinceDebtReview, 2,
+      'each call must compute the increment from the value it reads under its OWN lock, not from a value the caller precomputed once');
+  });
+
+  it('a caller-precomputed meta patch (the old call-site shape) CAN lose an update — the exact race metaUpdater exists to close', () => {
+    fs.writeFileSync(ledgerPath, JSON.stringify({ version: 1, meta: { runsSinceDebtReview: 0 }, entries: [] }), 'utf-8');
+    // Two "concurrent" callers both read runsSinceDebtReview before either
+    // has written (both see 0) — this is what the old
+    // legacy-production-audit.mjs call site did outside any lock — then each
+    // calls batchWriteLedger with its own precomputed patch.
+    const staleRead = JSON.parse(fs.readFileSync(ledgerPath, 'utf-8')).meta.runsSinceDebtReview;
+    batchWriteLedger(ledgerPath, [], { meta: { runsSinceDebtReview: staleRead + 1 }, targetMetaPath: ledgerPath });
+    batchWriteLedger(ledgerPath, [], { meta: { runsSinceDebtReview: staleRead + 1 }, targetMetaPath: ledgerPath });
+
+    const written = JSON.parse(fs.readFileSync(ledgerPath, 'utf-8'));
+    assert.equal(written.meta.runsSinceDebtReview, 1,
+      'a plain `meta` patch computed from a value read outside the lock loses one increment — this is why the real call site now uses metaUpdater instead');
+  });
+
+  it('a co-located targetMetaPath (the real call-site shape) folds the meta merge into the SAME locked write as the entries upsert', () => {
+    const res = batchWriteLedger(ledgerPath, [{ topicId: 'e1', severity: 'HIGH' }], {
+      metaUpdater: (m) => ({ runsSinceDebtReview: (m.runsSinceDebtReview ?? 0) + 1 }),
+      targetMetaPath: ledgerPath,
+    });
+    assert.equal(res.inserted, 1);
+    const written = JSON.parse(fs.readFileSync(ledgerPath, 'utf-8'));
+    assert.equal(written.meta.runsSinceDebtReview, 1, 'the meta patch must land in the same write as the entries upsert');
+    assert.equal(written.entries.length, 1);
+  });
+});

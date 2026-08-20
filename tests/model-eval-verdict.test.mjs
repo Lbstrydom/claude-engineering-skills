@@ -262,6 +262,45 @@ describe('verdict.mjs — state machine correctness (implementation H3/H4/H14 re
     assert.equal(r.success, false);
   });
 
+  test('a forged computedJudgeTier that disagrees with candidateRoute.judgeTier is rejected, even with a fully-consistent independence triple (backlog-triage regression guard)', () => {
+    // Every independenceChecks field is true and judgeRoute is non-null — the
+    // pre-existing internal-consistency check (round-7 H4) has nothing to
+    // object to here. The only thing wrong is that computedJudgeTier claims
+    // 'A' while candidateRoute.judgeTier is 'B' — route-catalog.mjs's
+    // resolveEvaluationTier can never produce that pair (it derives
+    // computedJudgeTier as `candidateRoute.judgeTier === 'A' ? 'A' : 'B'`), so
+    // this is a forged/stale value that must be refused at the schema
+    // boundary, not silently trusted through to verdict logic.
+    const forged = {
+      candidateRoute: { judgeTier: 'B', lineageStatus: 'known', independenceEligible: true, lineageSource: 'catalog-verified' },
+      baselineRoute: { judgeTier: 'A', lineageStatus: 'known', independenceEligible: true, lineageSource: 'catalog-verified' },
+      judgeRoute: { judgeTier: 'A', lineageStatus: 'known', independenceEligible: true, lineageSource: 'catalog-verified' },
+      computedJudgeTier: 'A', // forged — should have been 'B'
+      independenceChecks: { candidateVsBaseline: true, candidateVsJudge: true, baselineVsJudge: true },
+    };
+    const r = VerdictInputSchema.safeParse({
+      mode: 'comparative', role: 'auditor', tier: 'promotion', comparisonEvidence: forged,
+      candidateMetrics: { recall: 0.9, falsePositiveRate: 0.1, f1: 0.9 },
+      baselineMetrics: { recall: 0.9, falsePositiveRate: 0.1, f1: 0.9 },
+      sampleSize: 8, minSampleSize: 8, costDelta: null,
+      thresholds: { comparative: { minRecallRatioVsBaseline: 1.0 } },
+    });
+    assert.equal(r.success, false);
+
+    // Positive control: the SAME triple with the correctly-derived tier ('B')
+    // must still pass — proving the new check discriminates on the value,
+    // not on the shape of the object.
+    const honest = { ...forged, computedJudgeTier: 'B' };
+    const r2 = VerdictInputSchema.safeParse({
+      mode: 'comparative', role: 'auditor', tier: 'promotion', comparisonEvidence: honest,
+      candidateMetrics: { recall: 0.9, falsePositiveRate: 0.1, f1: 0.9 },
+      baselineMetrics: { recall: 0.9, falsePositiveRate: 0.1, f1: 0.9 },
+      sampleSize: 8, minSampleSize: 8, costDelta: null,
+      thresholds: { comparative: { minRecallRatioVsBaseline: 1.0 } },
+    });
+    assert.equal(r2.success, true);
+  });
+
   test('a threshold sub-object with zero floor keys is rejected at CONFIG time too, not just runtime (round-7 M8 regression guard)', () => {
     const bad = {
       version: 1, role: 'auditor', calibrationNote: 'x',
