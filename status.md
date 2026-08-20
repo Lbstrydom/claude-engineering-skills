@@ -1,5 +1,90 @@
 # Project Status Log
 
+## 2026-08-20 — Edit-time syntax gate + verification-loop review
+
+Origin: a review of Anthropic's "Building verification loops in Claude Code
+with skills" against this bundle. We already exceed it on standalone, embedded
+and chained verification; PR-based is a settled decline (local-first CI). A
+`/brainstorm --debate` round (session `1787245915261`, GPT-5.6-terra +
+gemini-pro, $0.088, focal artifact
+`docs/research/verification-loops-brainstorm-briefing.md`) triaged three
+candidates. Both models independently declined A (`allowed-tools`
+least-privilege — fails closed and silent on unobservable consumer surfaces)
+and C (Stop-hook — incompatible with a shared working tree, cried-wolf shape).
+Only B survived, and it is small; the round's durable output was the framing
+that a report should state verification **coverage**, not pass/fail, plus the
+observation that we argued a bundle-shaped decision from intuition while owning
+the telemetry to measure it.
+
+Three plans spun into separate worktree sessions (plan-only, not implemented
+here): `skill-efficacy-census`, `lens-coverage-honesty`,
+`consumer-friction-doctor`.
+
+### B — shipped: PostToolUse `.mjs` parse check
+
+`.claude/hooks/syntax-check.mjs` + `tests/hook-syntax-check.test.mjs` (16
+tests). Closes the only edit→push gap the regex quick-fix scanner cannot see:
+a file that does not parse. Advisory, never `continue:false`; every uncertainty
+fails open.
+
+- **Scope is `.mjs` ONLY, and the boundary is measured, not chosen** (Node
+  v22.23.2, 2026-08-20): `node --check` exits 1 on **JSX inside a `.js` file**,
+  so scoping to `.js` would false-positive on every valid React component in a
+  consumer. `.ts` likewise. Module-type ambiguity turned out *not* to be the
+  risk — Node 22 accepts ESM syntax in `.js` with no `"type":"module"`. The
+  rationale is in the hook header so a future widening must confront it.
+- **Mutation-tested twice** (a green suite proves nothing until seen to fail):
+  widening the extension guard to `.js` → 5 tests red incl. the JSX guard;
+  removing the consumer-layout candidate → the layout test red. Both reverted.
+- Resolves `sensitive-paths.mjs` across **both** tooling layouts, tested under
+  each. Fail-open on the feature is simultaneously fail-closed on safety — no
+  classifier means no read, because `node --check` prints the offending source
+  line.
+- Registration (`.claude/settings.json`) and sync-list entries move together
+  deliberately: settings.json is deep-merged into consumers, so committing the
+  registration alone would ship a dangling hook reference at the next sync.
+
+### Found while building, filed not fixed
+
+- **`quickfix-scan.mjs` is inert in every consumer repo.** It resolves
+  `<root>/scripts/lib/quickfix-patterns.mjs`; consumers keep tooling under
+  `scripts/.claude-skills/lib/`. `sync-rewriter.mjs`'s `COMMAND_REGEX` only
+  rewrites `node scripts/X.mjs` command strings, never a JS path expression —
+  so the import throws, `main().catch` logs FATAL, exit 0. Nudge-not-gate means
+  it has failed silently for the whole life of the isolation layout. Reproduced
+  against a **scaffolded** consumer layout — confirm against a real checkout
+  before writing it up as measured.
+- **Flaky determinism test**: `final-review-prompt-cache.test.mjs:197` asserts
+  two identical review requests fingerprint identically; failed once in a full
+  run (6.9s, network-shaped), passed in isolation and in the re-run.
+  Hypothesis: the fingerprint carries a live-catalog-resolved model id. The
+  production implication is the concern — two identical bake-off arms could
+  fingerprint as different.
+
+### Pre-push latency — measured (`npm run check`, this tree, 2026-08-20)
+
+| Measure | Value |
+|---|---|
+| 23 gates | **77.2s**, all green |
+| `gates:poison` | **33.4s — 43% of gate time** |
+| npm spawn floor | fastest gate 593ms × 23 ≈ **14s (18%) pure process startup** |
+| `npm test` | 13,362 tests — **110s and 226s on consecutive identical runs** |
+
+The 2× run-to-run variance on an unchanged suite is the most actionable figure:
+it is network-bound, the same root as the flake above. Pinning
+`MODEL_CATALOG_REFRESH=skip` in the test env would plausibly cut variance and
+the flake together. Not acted on — the numbers are a measurement, not yet a
+diagnosis.
+
+### Ship-gate signals
+
+`list-unremediated-acceptances` reports **`agedOut: 14`** — 14 accepted
+findings passed the 30-day ceiling unremediated *after* `practiceStart`. Those
+will not surface in that nudge again. Distinct from the 115 open / 71 notYetDue
+/ 42 accepted-permanent. `list-unlocked-fixes` `agedOut: 0`. One open HIGH
+upstream report from wine-cellar-app (double-extension files classified as
+`extension`) awaiting triage.
+
 ## 2026-08-20 — Backlog triage: unlocked-fixes + unremediated-acceptances
 
 ### Plan-mode write-off (documentation-only, no code risk)

@@ -68,6 +68,11 @@
             "type": "command",
             "command": "node .claude/hooks/quickfix-scan.mjs",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "node .claude/hooks/syntax-check.mjs",
+            "timeout": 10
           }
         ]
       }

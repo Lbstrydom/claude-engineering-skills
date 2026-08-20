@@ -68,6 +68,7 @@ const CORE_ENTRY = [
   'scripts/reconcile-repo-identity.mjs',
   'scripts/tiered-shadow-report.mjs',
   '.claude/hooks/quickfix-scan.mjs',
+  '.claude/hooks/syntax-check.mjs',
   'scripts/persona-consistency-run.mjs',
   // Deterministic /ux-lock runner (WS2). Authoritative list is sync-to-repos.mjs;
   // keep in lock-step. Walker pulls in lib/playwright-runner.mjs +

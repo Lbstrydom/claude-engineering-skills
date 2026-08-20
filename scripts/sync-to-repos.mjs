@@ -335,6 +335,10 @@ const CORE_ENTRY = [
   // lib/commit-trailers.mjs (+ its sensitive-paths closure). Also in CLI_SMOKE_SET.
   'scripts/ship-commit.mjs',
   '.claude/hooks/quickfix-scan.mjs',
+  // PostToolUse parse-check for edited .mjs files. Self-contained apart from
+  // lib/sensitive-paths.mjs, which it resolves across BOTH tooling layouts
+  // (see the hook's header). Also in sync-inventory.mjs — keep in lock-step.
+  '.claude/hooks/syntax-check.mjs',
   // Persona-test consistency mode CLIs (docs/plans/persona-test-consistency-mode.md).
   // Both are user-invoked CLIs; the import-graph walker pulls in their
   // transitive lib closure (scripts/lib/persona-test/* + scripts/lib/ux-lock/*)
