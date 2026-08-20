@@ -348,7 +348,7 @@ export async function promoteFromLog({ config, lock, configDigest, entries, conf
       const oldHashesToQuarantine = new Set(cls.mismatches.map((m) => m.oldHash));
       for (const oldHash of oldHashesToQuarantine) {
         await store.markSnapshotExcluded({
-          cohortId: cohort.id, snapshotId: entry.snapshotId, planContentHash: oldHash,
+          cohortId: cohort.id, snapshotId: entry.snapshotId, planContentHash: oldHash, allPairings: false,
           reason: 'auto-quarantined via --confirm-mismatch: promoting a corrected plan pairing',
         });
       }
