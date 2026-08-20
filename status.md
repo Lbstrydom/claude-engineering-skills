@@ -1,5 +1,98 @@
 # Project Status Log
 
+## 2026-08-20 — Campaign arm-state and snapshot-identity integrity
+
+### Consumer Verification (previous ship)
+- **Locator**: `09741f939d49da55d32ad5124164e3c9be69da0d` (branch `main`)
+- **Retrieval**: `git clone -q --depth 1 https://github.com/Lbstrydom/claude-engineering-skills.git`, `npm install`, `node --test tests/azure-doctor.test.mjs tests/azure-embed-discovery.test.mjs tests/azure-gpt-claude-discovery.test.mjs`.
+- **Result**: `verified` — clone landed exactly at `09741f93` (not a rebase/rewrite artifact); `npm install` succeeded (410 packages, hooks installed); the subject suites ran 67/67 pass, 0 fail, entirely against the freshly cloned bytes — no dependency on the local worktree.
+
+### Changes
+Implemented `docs/plans/campaign-arm-state-and-identity-integrity.md` end to
+end via `/cycle --autonomous` (3 clusters, each audited to convergence), then
+closed out live against the real `final-review-scoped-2026q3` campaign:
+identity-keyed arm-run promotion (replacing count-based `--force`),
+store-authoritative retry scoping (a fresh pinned fixture no longer re-spawns
+every arm when only one failed), a plan/transcript relatedness heuristic at
+collection time, and a quarantine mechanism (`campaign.mjs quarantine` /
+`unquarantine`) for mis-paired snapshots.
+
+- Applied the Phase 1 migration to production, including a scoped data-repair
+  the migration's own preflight discovered live: 7 real duplicate
+  `audit_run_id` values had triple/quintuple-counted spend (~$8.30) before
+  this plan's identity fix existed.
+- Quarantined the 3 documented mis-paired snapshots
+  (`docs/research/campaign-2026q3-mispaired-snapshots.md`) and re-collected
+  all 3 against corrected plans — 2 pairings already known, the third
+  (`audit-plan-1786682531-transcript.json`) identified here via git-blame
+  evidence (its cited files were all introduced by the single commit
+  implementing `docs/plans/tiered-pipeline-refresh-god-module-decomposition.md`).
+  `N complete` went 8 → 6 (post-quarantine) → 9/12 (post-re-collection).
+- Explored adding `z-ai/glm-5.3` as a 7th shadow arm; reverted after
+  confirming it's not yet routable on OpenRouter for this campaign's
+  structured-output + high-reasoning-effort parameters (identical HTTP 404
+  on 3/3 real attempts). The add-then-revert forked the campaign's cohort in
+  two (`configDigest` hashes the whole `arms` array), requiring a manual data
+  migration to reunify the genuinely-succeeded evidence under the original
+  lock — a lesson for any future arm-roster change to this campaign.
+- Found and fixed 4 real, pre-existing bugs via live verification (none
+  introduced by this plan, all fixed here because they directly corrupted
+  the arm-completion integrity this plan exists to guarantee):
+  - `campaign.mjs` never re-exported `withTx`, so `promoteFromLog` threw at
+    runtime on every call.
+  - A confirmed plan-hash mismatch's own new attempt read as `planContentHash:
+    null` at write time, so it was incorrectly caught by its own
+    just-created auto-quarantine.
+  - `classifyLogEntry`'s `armRuns` mapping read `arm.error`, but a LIVE
+    bakeoff-log entry carries its failure under `arm.shadowError` — every
+    genuinely failed live attempt silently promoted with `error: NULL`,
+    reading as succeeded. 5 already-written production rows repaired.
+  - A single-arm retry crashed (`existing.arms` unguarded) whenever the
+    STORE said an arm was missing but the local `bakeoff-log.jsonl` had no
+    entry at all for that snapshot — the exact shape of a fresh pinned
+    fixture picking up a partially-collected snapshot.
+- A pre-existing, unrelated test-order fragility in
+  `tests/repo-last-audited-at.test.mjs` (assumed it was the first-ever
+  caller to touch a shared `audit_repos` row; broke once an earlier
+  alphabetically-sorted Tier-2 suite legitimately touched it first) — fixed
+  to assert the row is unchanged by a profile-less call instead.
+- Consolidated Gemini gate (built from the 4 existing cluster round-result
+  files, no fresh GPT pass) verdict: **APPROVE**, 1 LOW finding (an implicit
+  default relied on instead of stated explicitly) — fixed.
+
+### Files Affected
+- `supabase/migrations/20260820070000_campaign_arm_identity_and_quarantine.sql` (new)
+- `scripts/lib/store/campaign.mjs`, `scripts/lib/campaign/promote.mjs` (identity/quarantine/promotion core)
+- `scripts/bakeoff-collect.mjs`, `scripts/lib/bakeoff/{arms,log,scope,summary}.mjs`
+- `scripts/lib/bakeoff/relatedness.mjs` (new)
+- `scripts/campaign.mjs` (`quarantine`/`unquarantine` verbs)
+- `scripts/lib/model-pricing.mjs` (+glm-5.3, later left priced but unused)
+- 10 test files (new + updated), including a new
+  `tests/bakeoff-collect-cli.test.mjs` CLI regression test
+- `docs/research/campaign-2026q3-mispaired-snapshots.md` context; this
+  plan's own Status line carries the full round-by-round audit trail
+
+### Decisions Made
+- Permissive-NULL policy for `config_digest`/`plan_content_hash` on retry
+  scoping (Phase 2), STRICT on the plan-hash consistency check at promotion
+  (Phase 4) — deliberately opposite policies for two different questions
+  ("did this arm already run" vs "does this attempt agree with live
+  evidence"), defended against repeated GPT auditor confusion with plan-text
+  citations.
+- `--confirm-mismatch` is a real state transition (auto-quarantines the old
+  disagreeing pairing atomically), not a bare acknowledgement.
+- GLM-5.3 arm: reverted rather than left in a permanently-incomplete state;
+  revisit when OpenRouter actually serves it for these parameters.
+
+### Next Steps
+- Re-collect GLM-5.3 across the full cohort once it's actually routable
+  (separate, larger spend — do not repeat the fork/revert cycle; budget the
+  reunification step this time).
+- Campaign still not decision-eligible: 9/12 complete, 56 findings with no
+  terminal adjudication, `qwen` calibration sample 6/7.
+
+---
+
 ## 2026-08-19 — `azure:doctor` GPT/Claude deployment discovery (`--target embed|gpt|claude`)
 
 ### Consumer Verification (previous ship)
