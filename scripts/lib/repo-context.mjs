@@ -397,6 +397,30 @@ export function fitSections(sections, maxChars) {
 }
 
 /**
+ * Could this exact section set EVER render anything, at its own smallest
+ * possible size, regardless of how `fitSections` would split the budget
+ * between them? Mirrors `fitSections`'s own reservation math (coverage upper
+ * bound + one join separator) so the two never disagree about what "fits"
+ * means. A section's `minSize()` is its own floor — for a truncatable
+ * section that is "show at least one item"; for a whole-or-nothing section
+ * it equals `measure()`, since there is no smaller valid rendering.
+ *
+ * This is a narrower question than a budget OUTCOME (which section won the
+ * allocation) — it is a property of the artifact+budget pair, decided before
+ * any allocation happens, which is why tier selection can use it without
+ * violating "budget outcome never triggers tier fallback" (see
+ * `getRepoContext`'s comment): a tier whose own minimum can never fit was
+ * never really available at this budget in the first place.
+ */
+function minimumFits(sections, maxChars) {
+  const reserved = coverageUpperBound(sections) + 1;
+  const minTotal = sections.reduce(
+    (sum, s, i) => sum + s.minSize() + (i > 0 ? 1 : 0), 0,
+  );
+  return minTotal <= (maxChars - reserved);
+}
+
+/**
  * Get a repo-context block at the requested blast-radius tier.
  *
  * @param {object} [args]
@@ -420,17 +444,33 @@ export function getRepoContext({
   const inv = listRepoFiles({ baseDir });
   const sha = commitSha(baseDir);
   const chain = DEGRADE_CHAIN[tier] || ['T0'];
+  const maxChars = maxTokens * 4;
 
   // Tier selection is about ARTIFACT AVAILABILITY and happens before any
   // budgeting. A budget outcome never triggers tier fallback — falling back
   // from T1 to T0 on a budget miss is incoherent, since T0's inventory is the
-  // largest section there is.
+  // largest section there is. `minimumFits` is a narrower check than that:
+  // not "did fitSections's allocation happen to squeeze this in", but "could
+  // this tier EVER render anything, at its own smallest possible size, no
+  // matter how the budget were split" — a property of the artifact+budget
+  // pair, not a budgeting outcome. Without it, a non-truncatable section that
+  // is simply too large (T3's whole-file symbol map against a multi-MB
+  // `architecture-map.md`) gets selected as "available" and then produces
+  // nothing at all, with no fallback to a tier that would have fit — the same
+  // silent-empty failure this file exists to eliminate, one level up. Real
+  // regression, not hypothetical: `docs/architecture-map.md` reached 1.4MB in
+  // this repo and made every T3 request return `resolvedTier:'empty'` even at
+  // maxTokens:100000, because T1/T0 — which do NOT include the symbol map and
+  // fit easily — were never tried.
   let sections = null;
   let resolvedTier = null;
   let fallbackReason = null;
   for (const t of chain) {
     sections = sectionsFor(t, { inv, targetPaths, intent, sha, baseDir });
-    if (sections && sections.length) { resolvedTier = t; break; }
+    if (sections && sections.length && minimumFits(sections, maxChars)) {
+      resolvedTier = t;
+      break;
+    }
     const reason = (t === 'T2' && !INTENT_SECTION_MAP[intent])
       ? 't2_unknown_intent'
       : FALLBACK_REASON[t];
@@ -451,7 +491,7 @@ export function getRepoContext({
     );
   }
 
-  const fit = fitSections(sections, maxTokens * 4);
+  const fit = fitSections(sections, maxChars);
   // Nothing fit at all — the terminal shape this function already had for "no
   // block". Every caller guards on `if (rc.block)`, so no call site changes.
   if (!fit.text) return emptyShape(fit.coverage, FALLBACK_REASON.T0);

@@ -135,6 +135,34 @@ describe('getRepoContext — degradation in a bare directory', () => {
     assert.equal(r.degraded, true);
   });
 
+  it('T3 degrades to T0 when the symbol map EXISTS but cannot fit any budget', () => {
+    // Real regression (found live 2026-08-21): `docs/architecture-map.md`
+    // reached 1.4MB in this repo, and T3's symbol-map section is a
+    // whole-or-nothing wholeSection (never truncatable) — so at ANY budget
+    // that section alone was unfittable, and the OLD tier-selection loop
+    // treated "the artifact exists" as sufficient to lock in T3, never
+    // trying T1/T0, both of which fit easily. Result: `resolvedTier:'empty'`,
+    // `block:''`, even at maxTokens:100000 — the exact silent-empty failure
+    // this whole file exists to eliminate, one level up. This fixture
+    // reproduces it deterministically (a synthetic oversized file, not the
+    // real repo's ambient size) so the regression can't hide behind an
+    // environment where the artifact happens to be small or absent.
+    const dir = mkTmp();
+    fs.writeFileSync(path.join(dir, 'a.mjs'), 'export const a = 1;');
+    fs.mkdirSync(path.join(dir, 'docs'), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'docs', 'architecture-map.md'),
+      '# huge\n'.repeat(2_000_000), // ~16MB — unfittable at any realistic budget
+    );
+    const r = getRepoContext({ tier: 'T3', targetPaths: [], baseDir: dir });
+    assert.notEqual(r.resolvedTier, 'empty', 'must degrade, not go silently empty');
+    assert.equal(r.resolvedTier, 'T0');
+    assert.equal(r.fallbackReason, 't3_symbol_map_unavailable');
+    assert.equal(r.degraded, true);
+    assert.match(r.block, /<repo_inventory/, 'T0 inventory must actually be present');
+    assert.ok(r.tokensEst > 0, 'a real, non-empty block was produced');
+  });
+
   it('git-unavailable directory still produces a block (SHA is null)', () => {
     const dir = mkTmp();
     fs.writeFileSync(path.join(dir, 'a.mjs'), '1');
