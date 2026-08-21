@@ -30,11 +30,11 @@ the 2026-08-17 measurement:
    that falls back to legacy or fails on the majority of eligible runs is not a
    production-ready replacement for the always-on 5-pass path, whatever it
    costs on the runs that do complete.
-2. **Unverified overlap.** The near-0% finding-overlap rate must not be read as
-   genuine disagreement until per-row `legacyUnlocalizedCount` /
-   `tieredUnlocalizedCount` are checked. That check was never done on the
-   compared rows, so the interpretability gap the plan itself flagged is still
-   open.
+2. **Unverified overlap at the time.** The near-0% finding-overlap rate could
+   not yet be read as genuine disagreement until per-row
+   `legacyUnlocalizedCount` / `tieredUnlocalizedCount` were checked. That check
+   was done on 2026-08-21 — see "Interpretability gap closed" below — and it
+   does not change the verdict, but it does resolve what the 0% actually means.
 
 Rather than keep extending this plan's bespoke instrument
 (`tiered-shadow-compare.mjs`, `tiered-shadow-summary.mjs`) to chase GLM
@@ -58,7 +58,7 @@ From `npm run audit:tiered-shadow-report` against the live store:
 | `shadowFailures` | 210 — dominated by GLM discovery timeout (117) + truncation (63) |
 | `costDeltaUsd` | mean −$0.224, median −$0.142 (tiered cheaper on completing runs) |
 | `latencyDeltaSec` | mean +93.2s, median +107.4s (tiered slower) |
-| `findingOverlapRate` | mean 0%, median 0% — **unverified**, see reason 2 |
+| `findingOverlapRate` | mean 0%, median 0% — unverified at the time; resolved 2026-08-21, see below |
 
 Re-read on 2026-08-21 (read-only, no spend), `comparedRuns` had risen to **33**.
 That does not change the verdict: the two reasons above are about reliability
@@ -73,9 +73,11 @@ the cost-budget / `UsageEvent` instrumentation, and the verified-line location
 fix for tiered findings.
 
 `runLegacyProductionAudit` remains the default production path.
-`AUDIT_TIERED_SHADOW_ENABLED` stays available for anyone who wants to keep
-collecting shadow data, **but no further work on this plan's own Phase 14 is
-planned**.
+`AUDIT_TIERED_SHADOW_ENABLED` was turned **off** on 2026-08-21 (see
+"Interpretability gap closed" below) — the mechanism stays in the codebase and
+can be re-enabled with one env-var change, but it was left running with no
+identified consumer for over three weeks after this close-out, and **no
+further work on this plan's own Phase 14 is planned**.
 
 ## Consequence recorded on 2026-08-21 — the repo-context legacy pin retires
 
@@ -98,3 +100,61 @@ frozen composition and that guard test are all removed in the same commit that
 adds this file. The generalisable lesson is in the plan's own risk register: a
 threshold trigger is not an adjudication, and a plan's `Status:` line is the
 cheaper thing to read first.
+
+## Interpretability gap closed on 2026-08-21
+
+Reason 2 above was left open at close-out: a near-0% overlap rate is
+uninformative if neither side's findings were localized enough to compare in
+the first place — matching a genuinely-shared defect requires both sides to
+name roughly the same place, and an unlocalized finding cannot do that no
+matter how the matcher works.
+
+**Method.** Queried the live `tiered_shadow_observations` table directly
+(read-only, no spend), reproducing the `comparedRuns` predicate's SHAPE +
+POPULATION check (both eligible-count fields present, at least one side
+non-empty) without the epoch gate — a superset of the report's exact
+epoch-filtered 33, at 60 rows, spanning both the pre-fix and post-fix
+(`v6-verified-line-2026-07-26`, `v7-multi-hunk-selector-2026-07-27`) epochs.
+Per row, compared `legacyFindingCount` against `legacyUnlocalizedCount` and
+`tieredFindingCount` against `tieredUnlocalizedCount`.
+
+**Result — the null hypothesis is false.**
+
+| | rows with ≥1 finding | rows where ALL findings are unlocalized |
+|---|---|---|
+| Legacy | 41 | 41 (100%) |
+| Tiered | 55 | 5 (9%) |
+
+Legacy is unlocalized on every single row with findings — expected and
+permanent, per the plan's own declared-scope decision
+(`docs/plans/tiered-recall-audit-pipeline.md` §"Declined for the legacy 5-pass
+audit"): the legacy path has no diff/hunk-verification substrate, so a
+self-reported line there would carry the exact unverifiable-hallucination risk
+the location-verification work exists to avoid. That was never going to
+change and isn't evidence of anything about the overlap rate.
+
+Tiered is the opposite of what "0% overlap is just missing data" would
+predict: 50 of 55 rows (91%) have **at least one properly line-verified
+finding** — the `v6`/`v7` location-resolution fix worked, and the majority of
+comparison rows had real, verified anchors on the tiered side to match
+against.
+
+**Conclusion.** The 0% overlap rate is not an artifact of unlocalized data —
+the tiered side had verifiable locations to compare in the large majority of
+rows and still matched nothing. That points at the overlap **matcher**
+(comparing model-authored prose findings across two structurally different
+pipelines) rather than a data-availability gap — the same class of problem
+this repo has already hit and fixed elsewhere: exact-text matching between two
+LLMs' independently-phrased findings essentially never matches even when the
+underlying defect is the same (0 of 48 pairs in the final-review-shadow
+bake-off before a file-set + Jaccard matcher replaced it). This does not
+reopen the "no flip" verdict — reliability (reason 1) was already sufficient
+on its own — but it does mean a future revisit of this pipeline should treat
+the overlap number as **uninterpretable under the current matcher**, not as
+evidence of low true agreement, and should not spend effort re-verifying
+localization before addressing the matcher itself.
+
+**Consequence**: `AUDIT_TIERED_SHADOW_ENABLED` turned off the same day (see
+"What stays live" above) — reason 2 is now answered rather than open, reason 1
+(reliability) was never in question, and the shadow had no identified consumer
+regardless of what the interpretability check would have found.
