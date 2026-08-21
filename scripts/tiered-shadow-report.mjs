@@ -21,7 +21,9 @@
  *
  * Plan: docs/plans/tiered-recall-audit-pipeline.md Close-out (shadow validation).
  */
-import { pathToFileURL } from 'node:url';
+import fs from 'node:fs';
+import path from 'node:path';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 import { argOption } from './lib/cli-io.mjs';
 import { SHADOW_LOG_PATH } from './lib/audit/tiered-shadow-compare.mjs';
 import { resolveRepoIdentity } from './lib/repo-identity.mjs';
@@ -29,7 +31,7 @@ import { isCloudEnabled } from './lib/store/repo.mjs';
 import { getTieredShadowObservations } from './lib/store/tiered-shadow.mjs';
 import {
   WINDOW_MIN, WINDOW_MAX, normalizeDbRow, median, mean, readRecords, summarize, windowProgress,
-  TIERED_SHADOW_CONTRACT_EPOCH,
+  TIERED_SHADOW_CONTRACT_EPOCH, phase14Decided, PHASE14_DECISION_DOC,
 } from './lib/audit/tiered-shadow-summary.mjs';
 
 // Re-exported for backward compatibility — tests and any external caller
@@ -223,6 +225,31 @@ function reportRows(records, jsonMode, { source, logPath, repoLabels, repoCount,
   const win = windowProgress(summary.comparedRuns);
   const totalNote = summary.comparedRuns !== summary.totalRuns
     ? ` (${summary.totalRuns} total attempts recorded)` : '';
+
+  // THE DECISION OUTRANKS THE THRESHOLD.
+  //
+  // These three lines are keyed on `comparedRuns` alone, so the "met" branch
+  // says "time for the Phase-14 production-flip review" forever — it cannot
+  // know the review already happened. On 2026-08-21 a reader took that line as
+  // repo state, concluded a cohort was awaiting adjudication, and built a
+  // frozen second code path plus a self-expiring guard around a decision that
+  // had been closed four days earlier. The run count was right; the inference
+  // was not (docs/plans/repo-context-budget-honesty.md §Correction).
+  //
+  // A threshold trigger must not out-shout a recorded decision, so check for
+  // the decision FIRST and let the window lines speak only while the question
+  // is still open. Existence-only, deliberately: parsing the verdict out of
+  // prose would make this report's headline depend on someone's markdown
+  // phrasing, and "a decision exists, go read it" is the whole message.
+  const DECISION_DOC = PHASE14_DECISION_DOC;
+  if (phase14Decided()) {
+    console.log(`\n  ${summary.comparedRuns} compared runs${totalNote} — recorded above for reference.`);
+    console.log(`  Phase 14 is CLOSED: the production-flip decision was taken and is recorded in`);
+    console.log(`  ${DECISION_DOC}. This report no longer asks for a review;`);
+    console.log('  further tiered-vs-legacy evaluation goes through campaign.mjs.');
+    return 0;
+  }
+
   if (!win.withinWindow) {
     console.log(`\n  ${summary.comparedRuns}/${win.min}-${win.max} compared runs${totalNote} — keep collecting before treating this as a Phase-14 decision basis.`);
   } else if (!win.met) {

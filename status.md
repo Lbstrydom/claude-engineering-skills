@@ -1,5 +1,63 @@
 # Project Status Log
 
+## 2026-08-21 — Tiered shadow stood down; Phase 14 closed at the surfaces that report it
+
+Follow-up to the two entries below. Closes the loop rather than adding work.
+
+### Collector off
+
+`AUDIT_TIERED_SHADOW_ENABLED` is now unset — verified **effective**, not
+assumed: `tieredAuditConfig.shadowEnabled === false`, `pipelineEnabled ===
+false`, and the variable appears in no source (`~/.audit-loop.env`, repo
+`.env`, worktree `.env`). I found it already commented out when I went to
+change it — it moved between my earlier check this session (live at line 16)
+and now, so someone else flipped it; I verified rather than claimed the change.
+
+**Machine state, not repo state**: `~/.audit-loop.env` is not committed, so
+this does not affect consumers or other machines. `config.mjs`'s committed
+default was already `false`. The 33 collected rows survive in
+`tiered_shadow_observations` — stopping the collector stops accumulation, not
+history.
+
+Checked before flipping: no test or gate requires the flag ON
+(`tiered-pipeline-wiring.test.mjs` asserts source structure, not runtime
+value), and the report still reads the stored rows with it off.
+
+### The interpretability gap was CLOSED WITH EVIDENCE — and I got this wrong
+
+I wrote that reason 2 was "closed unresolved — nobody is going to run that
+check". A concurrent session ran it the same day (`f79f6870`) against the live
+`tiered_shadow_observations` table: legacy is 100% unlocalized on all 41 rows
+with findings (permanent, by design), but tiered carries at least one
+line-verified finding on **50 of 55 rows (91%)**. The null hypothesis is false
+— the 0% overlap is a real signal pointing at the cross-pipeline **matcher**,
+not at missing data.
+
+My claim was an assertion about the future substituted for a measurement,
+which is the same error as the threshold-trigger misreading it was meant to
+document. Their evidence-based section is the record; my version was dropped
+in the rebase rather than merged, with a note in the doc explaining why.
+
+### The trigger line is fixed at source
+
+The actual root cause of this session's detour: `tiered-shadow-report.mjs` and
+the dashboard's tiered-shadow section both printed *"window met — time for the
+Phase-14 production-flip review"* off `comparedRuns` alone, forever, with no
+knowledge of the decision. Both now check `phase14Decided()` **first** and
+report the closure.
+
+One shared oracle in `lib/audit/tiered-shadow-summary.mjs`, not an
+`existsSync` per surface — two spellings of one predicate is how a fix lands on
+one and misses the other. Existence-only by design: parsing a verdict out of
+prose would make a headline depend on markdown phrasing. Module-relative, never
+cwd, or the probe silently reports "not decided" from another directory and
+resurrects the line it exists to suppress.
+
+Controlled both ways: with the decision doc hidden the old trigger returns; with
+it present both surfaces report CLOSED.
+
+Verified: `npm run check` exit 0.
+
 ## 2026-08-21 — Correction: the repo-context legacy pin is retired (its premise was stale)
 
 Same-day follow-up to the entry below. **The pin should never have been built.**

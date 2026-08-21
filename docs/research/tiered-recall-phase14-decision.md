@@ -158,3 +158,40 @@ localization before addressing the matcher itself.
 "What stays live" above) — reason 2 is now answered rather than open, reason 1
 (reliability) was never in question, and the shadow had no identified consumer
 regardless of what the interpretability check would have found.
+
+### Scope of the turn-off — machine state, not repo state
+
+`AUDIT_TIERED_SHADOW_ENABLED` lives in the operator's `~/.audit-loop.env`,
+which is not committed, so turning it off does not turn it off for a consumer
+repo or another machine. `config.mjs`'s committed default was already
+`false`, so nothing in the repo needed to change for the default to be right.
+Verified effective rather than assumed: `tieredAuditConfig.shadowEnabled ===
+false`, `pipelineEnabled === false`, variable set in no source. The 33
+collected rows survive in `tiered_shadow_observations` — this stops
+accumulation, not history.
+
+### The trigger line that caused the 2026-08-21 confusion is fixed at source
+
+`tiered-shadow-report.mjs` and the dashboard's tiered-shadow section both
+printed *"window met — time for the Phase-14 production-flip review"* keyed on
+`comparedRuns` alone. That line cannot know the review happened, so it said
+the same thing forever — and it is what convinced a reader that this closed
+decision was still open, at the cost of a frozen second composition path and a
+self-expiring guard test built around it.
+
+Both surfaces now consult `phase14Decided()` **first** and report the closure.
+One shared oracle in `lib/audit/tiered-shadow-summary.mjs`, not an
+`existsSync` per surface — two spellings of one predicate is how a fix lands
+on one and misses the other. Existence-only by design: parsing a verdict out of
+prose would make a headline depend on markdown phrasing. Module-relative, never
+cwd, or the probe silently reports "not decided" from another directory and
+resurrects the line it exists to suppress.
+
+> **A correction, recorded because the shape matters.** An earlier draft of
+> this addendum declared reason 2 "closed UNRESOLVED — nobody is going to run
+> that check". That was written the same day the check was actually run, by a
+> concurrent session, with the result above. It was an assertion about the
+> future in place of a measurement — the same error, in the same document, as
+> the threshold-trigger misreading it was trying to document. The evidence-based
+> section above is the record; this note is why it replaced the other one.
+

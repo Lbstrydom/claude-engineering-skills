@@ -32,6 +32,7 @@ import { isCloudEnabled } from '../store/repo.mjs';
 import {
   summarize as summarizeShadow, normalizeDbRow as normalizeShadowRow,
   readRecords as readShadowRecords, windowProgress, WINDOW_MIN, WINDOW_MAX,
+  phase14Decided,
 } from '../audit/tiered-shadow-summary.mjs';
 import { SHADOW_LOG_PATH } from '../audit/tiered-shadow-compare.mjs';
 import { tieredAuditConfig } from '../config.mjs';
@@ -682,7 +683,7 @@ function classifyPurposeBadges({ purposes, domainCountByPurpose, highTally, refu
  */
 async function collectTieredShadow(root) {
   const empty = {
-    cloud: false, flagEnabled: tieredAuditConfig.shadowEnabled, totalRuns: 0,
+    cloud: false, flagEnabled: tieredAuditConfig.shadowEnabled, phase14Decided: phase14Decided(), totalRuns: 0,
     windowMin: WINDOW_MIN, windowMax: WINDOW_MAX, legacyFailures: 0, shadowFailures: 0,
     comparedRuns: 0,
     historicalCompleteRuns: 0, excludedNoStage0Evidence: 0,
