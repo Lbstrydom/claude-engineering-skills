@@ -58,21 +58,17 @@ function stamp(sha) {
 
 // ── Tier builders — each returns a block string, or null to signal fallback ──
 
-function legacyBuildT0(inv, sha) {
-  if (!inv.files.length) return null;
-  return `<repo_inventory${stamp(sha)}>\n${inv.files.length} files (sensitive paths excluded):\n` +
-    `${inv.files.join('\n')}\n</repo_inventory>`;
-}
 
 /**
  * Resolve the adjacency map: modules the changed files import but did not
  * themselves change → their public export names.
  *
- * Extracted from `legacyBuildT1` so the frozen legacy renderer and the new
- * section renderer share ONE computation while rendering differently (the new
- * one escapes delimiter characters — see `escapeForBlock`). The extraction is
- * behaviour-preserving by construction: `legacyBuildT1` still renders from this
- * map exactly as it did, and the byte-identity tests prove it.
+ * Separated from rendering so resolution and presentation stay independent:
+ * this decides WHICH modules are adjacent, `adjacencyLines` decides how they
+ * are written down. The split was introduced to let two renderers share one
+ * computation; the second renderer has since been retired, but the seam is
+ * worth keeping — it is what makes the delimiter escaping in `adjacencyLines`
+ * a presentation concern rather than something smeared through resolution.
  */
 function computeAdjacency(inv, targetPaths, baseDir) {
   const changed = new Set((targetPaths || []).map((p) => String(p).replace(/\\/g, '/')));
@@ -104,26 +100,23 @@ function computeAdjacency(inv, targetPaths, baseDir) {
   return adjacency;
 }
 
-/** Adjacency lines, sorted — shared by both renderers, escaping applied by caller. */
-function adjacencyLines(adjacency, esc = (x) => x) {
+/**
+ * Adjacency lines, sorted and delimiter-escaped.
+ *
+ * Escaping is unconditional rather than a caller-supplied option: the only
+ * caller that wanted raw output was the retired legacy renderer, and an
+ * "escape by default, opt out" switch is one call site away from re-opening
+ * the injection this closes.
+ */
+function adjacencyLines(adjacency) {
   return [...adjacency.entries()]
     .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([f, ex]) => `${esc(f)}: ${ex.length ? ex.map(esc).join(', ') : '(no named exports)'}`);
+    .map(([f, ex]) => `${escapeForBlock(f)}: ${
+      ex.length ? ex.map(escapeForBlock).join(', ') : '(no named exports)'}`);
 }
 
-function legacyBuildT1(inv, targetPaths, sha, baseDir) {
-  const t0 = legacyBuildT0(inv, sha);
-  if (!t0) return null;
-  const adjacency = computeAdjacency(inv, targetPaths, baseDir);
-  if (adjacency.size === 0) return null; // no resolvable adjacency → fall to T0
 
-  const lines = adjacencyLines(adjacency);
-  return `${t0}\n<adjacency_context${stamp(sha)}>\n` +
-    `Public exports of modules the changed files import but did not themselves change:\n` +
-    `${lines.join('\n')}\n</adjacency_context>`;
-}
-
-function legacyBuildT2(intent, sha, baseDir) {
+function buildDocSection(intent, sha, baseDir) {
   // No silent fallback to `architecture` for an unknown intent — a typo'd
   // intent degrades visibly rather than returning plausible-but-wrong
   // context (audit M14). The signature default (`architecture`) still
@@ -137,7 +130,7 @@ function legacyBuildT2(intent, sha, baseDir) {
     `${sec.text}\n</repo_doc_section>`;
 }
 
-function legacyBuildT3(sha, baseDir) {
+function buildSymbolMap(sha, baseDir) {
   let content;
   try {
     content = fs.readFileSync(path.join(baseDir, ARCH_MAP_PATH), 'utf-8');
@@ -168,83 +161,6 @@ const DEGRADE_CHAIN = {
   T1: ['T1', 'T0'],
   T0: ['T0'],
 };
-
-/**
- * Get a repo-context block at the requested blast-radius tier.
- *
- * @param {object} [args]
- * @param {'T0'|'T1'|'T2'|'T3'} [args.tier='T1'] - requested tier
- * @param {string} [args.scope] - caller's audit scope (informational)
- * @param {string[]} [args.targetPaths] - changed files (T1 adjacency input)
- * @param {string} [args.intent='architecture'] - T2 section selector
- * @param {string} [args.baseDir] - repo root
- * @param {number} [args.maxTokens] - block token ceiling (truncates over)
- * @returns {{block:string, requestedTier:string, resolvedTier:string,
- *   fallbackReason:string|null, commitSha:string|null, gitAvailable:boolean,
- *   tokensEst:number, degraded:boolean}}
- */
-
-// ── FROZEN LEGACY COMPOSITION — do not maintain, do not extend ─────────────
-//
-// This is the pre-2026-08-21 behaviour, moved VERBATIM: concatenate the tier's
-// blocks into one string, then slice the result at a line boundary when it
-// exceeds the budget. It is preserved for exactly one caller
-// (`legacy-production-audit.mjs`) whose prompt bytes must not move while the
-// tiered-recall shadow cohort awaits its Phase-14 adjudication — see
-// docs/plans/repo-context-budget-honesty.md §2 and §8.
-//
-// It is NOT a "mode" of `fitSections`: a whole-section fitter cannot reproduce
-// a partial MID-LIST slice, so the two genuinely are different algorithms.
-// Pretending otherwise was the plan's first HIGH finding.
-//
-// RETIREMENT: delete this function, the `compose:'legacy'` argument at its one
-// call site, the byte-identity fixtures, and tests/repo-context-legacy-pin.test.mjs
-// — in ONE commit — when docs/research/tiered-recall-phase14-decision.md (planned)
-// lands, or by 2026-09-30, whichever comes first. The guard test fails at that
-// point and names the edit.
-//
-// The `(planned)` marker is load-bearing: that document's ABSENCE is the
-// steady state this pin depends on, so `check-docs-refs` must read the
-// reference as a forward one rather than a broken one. Its arrival is exactly
-// what turns tests/repo-context-legacy-pin.test.mjs red.
-function composeLegacy({ chain, inv, targetPaths, intent, sha, baseDir, maxTokens }) {
-  let block = null;
-  let resolvedTier = null;
-  let fallbackReason = null;
-  for (const t of chain) {
-    if (t === 'T3') block = legacyBuildT3(sha, baseDir);
-    else if (t === 'T2') block = legacyBuildT2(intent, sha, baseDir);
-    else if (t === 'T1') block = legacyBuildT1(inv, targetPaths, sha, baseDir);
-    else block = legacyBuildT0(inv, sha);
-    if (block) { resolvedTier = t; break; }
-    // Keep the FIRST reason — why the REQUESTED tier failed — not the last.
-    // Overwriting meant a T3 request with a missing symbol map reported
-    // `t1_no_resolvable_adjacency`, because the chain fell T3 → T1 → T0 and the
-    // T1 failure clobbered the real cause. That points the reader at adjacency
-    // when the fix is `npm run arch:render`. Latent until architecture-map.md
-    // became a Category-A artefact and stopped being present in a fresh clone.
-    const reason = (t === 'T2' && !INTENT_SECTION_MAP[intent])
-      ? 't2_unknown_intent'
-      : FALLBACK_REASON[t];
-    fallbackReason ??= reason;
-  }
-  if (!block) {
-    block = '';
-    resolvedTier = 'empty';
-    fallbackReason = fallbackReason || FALLBACK_REASON.T0;
-  }
-
-  if (estimateTokens(block) > maxTokens) {
-    // Truncate at a line boundary so an XML-ish block is never sliced
-    // mid-tag / mid-attribute (audit M8).
-    const marker = '\n[truncated — exceeded context budget]';
-    let cut = block.slice(0, Math.max(0, maxTokens * 4 - marker.length));
-    const lastNl = cut.lastIndexOf('\n');
-    if (lastNl > 0) cut = cut.slice(0, lastNl);
-    block = cut + marker;
-  }
-  return { block, resolvedTier, fallbackReason };
-}
 
 
 // ── SECTIONS — the durable composition ─────────────────────────────────────
@@ -285,9 +201,9 @@ function composeLegacy({ chain, inv, targetPaths, intent, sha, baseDir, maxToken
  * so this is byte-identical in practice — it closes a vector rather than
  * changing output.
  *
- * NOTE: the frozen `composeLegacy` path deliberately does NOT get this — it is
- * byte-frozen for the tiered-shadow cohort. That residual exposure is recorded
- * in the plan's risk register and disappears with the pin.
+ * Applied on every emitted path — the one composition that skipped it (the
+ * byte-frozen legacy renderer) was retired on 2026-08-21, so the residual
+ * exposure recorded in the plan's risk register is now closed.
  */
 export const escapeForBlock = (s) => String(s).replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
@@ -348,7 +264,7 @@ function sectionsFor(t, { inv, targetPaths, intent, sha, baseDir }) {
     // duplicating the resolution logic or disturbing the frozen bytes.
     const adjacency = computeAdjacency(inv, targetPaths, baseDir);
     if (adjacency.size === 0) return null; // no resolvable adjacency → degrade to T0
-    const lines = adjacencyLines(adjacency, escapeForBlock);
+    const lines = adjacencyLines(adjacency);
     const text = `<adjacency_context${stamp(sha)}>\n`
       + 'Public exports of modules the changed files import but did not themselves change:\n'
       + `${lines.join('\n')}\n</adjacency_context>`;
@@ -358,11 +274,11 @@ function sectionsFor(t, { inv, targetPaths, intent, sha, baseDir }) {
     ];
   }
   if (t === 'T2') {
-    const text = legacyBuildT2(intent, sha, baseDir);
+    const text = buildDocSection(intent, sha, baseDir);
     if (!text) return null;
     return [wholeSection({ id: 'doc_section', priority: 1, order: 1, text, total: 1 })];
   }
-  const text = legacyBuildT3(sha, baseDir);
+  const text = buildSymbolMap(sha, baseDir);
   if (!text) return null;
   return [wholeSection({ id: 'symbol_map', priority: 1, order: 1, text, total: 1 })];
 }
@@ -490,9 +406,6 @@ export function fitSections(sections, maxChars) {
  * @param {string} [args.intent='architecture'] - T2 section selector
  * @param {string} [args.baseDir] - repo root
  * @param {number} [args.maxTokens] - block token ceiling
- * @param {'budgeted'|'legacy'} [args.compose='budgeted'] - composition. `legacy`
- *   is the frozen pre-2026-08-21 path with exactly one sanctioned caller; see
- *   composeLegacy's RETIREMENT note.
  * @returns {{block:string, requestedTier:string, resolvedTier:string,
  *   fallbackReason:string|null, commitSha:string|null, gitAvailable:boolean,
  *   tokensEst:number, degraded:boolean, truncated:boolean, coverage:object}}
@@ -501,41 +414,12 @@ export function fitSections(sections, maxChars) {
  */
 export function getRepoContext({
   tier = 'T1', scope = 'diff', targetPaths = [], intent = 'architecture',
-  baseDir = process.cwd(), maxTokens = DEFAULT_MAX_TOKENS, compose = 'budgeted',
+  baseDir = process.cwd(), maxTokens = DEFAULT_MAX_TOKENS,
 } = {}) {
   void scope; // accepted for caller symmetry; tier already encodes the need
   const inv = listRepoFiles({ baseDir });
   const sha = commitSha(baseDir);
   const chain = DEGRADE_CHAIN[tier] || ['T0'];
-
-  if (compose === 'legacy') {
-    const r = composeLegacy({ chain, inv, targetPaths, intent, sha, baseDir, maxTokens });
-    const degraded = r.resolvedTier !== tier;
-    // The legacy path keeps its exact bytes, but it does NOT keep its silence:
-    // `truncated`/`coverage` are reported on both paths from day one, so the
-    // operator sees the shortfall even while the model's input is frozen.
-    const truncated = r.block.includes('[truncated');
-    return {
-      block: r.block,
-      requestedTier: tier,
-      resolvedTier: r.resolvedTier,
-      fallbackReason: degraded ? r.fallbackReason : null,
-      commitSha: sha,
-      gitAvailable: inv.gitAvailable && sha !== null,
-      tokensEst: estimateTokens(r.block),
-      degraded,
-      truncated,
-      coverage: {
-        complete: !truncated,
-        composedBy: 'legacy',
-        sections: [],
-        note: truncated
-          ? 'legacy composition: the block was sliced mid-list and its closing tag dropped; '
-            + 'coverage is not itemised on this path (frozen for the tiered-shadow cohort)'
-          : null,
-      },
-    };
-  }
 
   // Tier selection is about ARTIFACT AVAILABILITY and happens before any
   // budgeting. A budget outcome never triggers tier fallback — falling back

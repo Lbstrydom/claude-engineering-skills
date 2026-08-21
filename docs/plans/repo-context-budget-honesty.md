@@ -1,7 +1,7 @@
 # Plan: Repo-context budget honesty — sections fitted by priority, coverage reported
 
 - **Date**: 2026-08-21
-- **Status**: Approved
+- **Status**: Complete
 - **Author**: Claude + pill
 - **Scope**: backend
 - **Target domain(s)**: `shared-lib`, `audit-orchestration`, `tests`
@@ -83,7 +83,7 @@ truncation was observed, and the test was moved out of its way.
 | arm-eval (plan-authoring) | **No** — `contextPack` is `intent.pack` (`scripts/lib/arm-eval/run.mjs:75`) | in flight | none |
 | bake-off `final-review-scoped-2026q3` | **No** — `controls.envelopeScope: "thin"`, and `thin` skips the block (`gemini-review.mjs:1404`) | active, 20/30 snapshots, epoch `e3-scoped-envelope` | none |
 | bake-off `final-review-2026q3` | Yes — `controls.envelopeScope: "full"` | superseded, 1 snapshot | negligible |
-| **tiered-recall shadow** | **Yes, via legacy** | **window MET — 33 compared runs vs a pre-registered 10–15; report says "Time for the Phase-14 production-flip review"** | **changing the legacy prompt changes what a compared row means** |
+| **tiered-recall shadow** | **Yes, via legacy** | ~~window MET — awaiting Phase-14~~ **STALE, see Correction below: Phase 14 was already closed on 2026-08-17** | ~~changing the legacy prompt changes what a compared row means~~ — no decision rode on those rows |
 
 `TIERED_SHADOW_CONTRACT_EPOCH` is `v7-multi-hunk-selector-2026-07-27`. Its
 digest (`tiered-shadow-contract-digest.mjs`) hashes correlation and eligibility
@@ -344,7 +344,7 @@ otherwise was R1/H1). Three things stop it rotting into a permanent fork:
    only the byte-level composition is deferred.
 3. **A mechanically-enforced retirement predicate** (R1/M3 — a comment-adjacency
    check was not enforcement). The canonical decision artifact is
-   **`docs/research/tiered-recall-phase14-decision.md` (planned)**, named exactly.
+   **`docs/research/tiered-recall-phase14-decision.md`**, named exactly.
    `tests/repo-context-legacy-pin.test.mjs` asserts:
    - while that file is **absent** → the pin exists and carries its `TEMP` comment;
    - once that file **exists** → the test **FAILS**, with the message
@@ -528,7 +528,7 @@ these cases are what covers that.
 
 **F. Retirement guard** — `tests/repo-context-legacy-pin.test.mjs` per §2 item 3:
 red while the pin is unjustified, and red again the moment
-`docs/research/tiered-recall-phase14-decision.md` (planned) appears.
+`docs/research/tiered-recall-phase14-decision.md` appears.
 
 **A calendar backstop, because a trigger nobody pulls is not an expiry**
 (R3/M3). The decision-file trigger fires only when a human creates the file, so
@@ -599,3 +599,72 @@ Close-out: full `npm test` + `npm run check`.
   instead of degrading to a coverage-only block (R1/H3); and the retirement
   gained a self-expiring guard test plus a calendar backstop, replacing a
   comment-adjacency check that enforced nothing (R2/M3, R3/M3).
+
+---
+
+## Correction 2026-08-21 — the pin's premise was stale on the day it was written
+
+**The legacy pin was unnecessary, and the plan above says so for the wrong
+reason.** It is left standing rather than rewritten, because the mistake is the
+useful part of the record.
+
+### What was wrong
+
+§1's telemetry table and §2's "telemetry constraint" rest on the claim that the
+tiered-recall shadow cohort was *awaiting adjudication*. It was not. Phase 14
+was **deliberately closed without a production flip on 2026-08-17** — four days
+before this plan was written — in
+[`tiered-recall-audit-pipeline.md`](./tiered-recall-audit-pipeline.md)
+§"Close-out 2026-08-17" (commit `e9305550`, plan `Status: Complete`). Its own
+words: *"no further work on this plan's own Phase 14 is planned"*, with future
+tiered-vs-legacy decisions handed to `campaign.mjs`.
+
+### How the error was made
+
+The evidence cited for "awaiting adjudication" was
+`tiered-shadow-report.mjs`'s closing line — *"the plan's pre-registered 10-15
+window is met. Time for the Phase-14 production-flip review."* That line is a
+**generic threshold trigger keyed on `comparedRuns` alone**. It has no
+knowledge of the plan's status and cannot know a decision was taken; it will
+print the same sentence forever. The run count it reported (33) was accurate —
+the *inference* drawn from it was not.
+
+**The generalisable rule**: a tool's advisory line describes a threshold, not a
+decision. When it says "time to decide X", the cheap check is X's plan
+`Status:` line, not a re-derivation from the same metric the trigger already
+read. Reading the report but not the plan is what produced a two-cluster
+implementation, a frozen second code path, a self-expiring guard test and a
+calendar backstop — machinery for a constraint that had already been lifted.
+
+### What was kept, and what went
+
+The **durable fix stands on its own merits** and is unaffected: the defect it
+repairs (budget priority == emission order; `degraded` computed before the
+slice; a string slice dropping the closing tag) was real and independent of any
+telemetry question. §2's diagnosis, §2.1's `fitSections` contract, §2.2's tier
+table and §9's tests are all unchanged.
+
+Retired the same day, in one commit, per the guard's own instruction:
+`composeLegacy()`, the now-dead `legacyBuildT0`/`legacyBuildT1`, the
+`compose:'legacy'` argument and option, the legacy test cases, and
+`tests/repo-context-legacy-pin.test.mjs`. `legacyBuildT2`/`legacyBuildT3` were
+**not** deleted — the guard's instruction was over-broad and they are still the
+only builders for T2/T3; they were renamed `buildDocSection`/`buildSymbolMap`,
+since the `legacy` prefix had become a lie.
+
+`legacy-production-audit.mjs` now runs the budgeted composition like every
+other caller, and gets adjacency for the first time since 2026-05-30.
+
+### The one thing that worked as designed
+
+The retirement predicate did exactly its job: writing
+`docs/research/tiered-recall-phase14-decision.md` (a transcription of the
+existing decision, not a new one) turned
+`tests/repo-context-legacy-pin.test.mjs` red and printed the precise four-step
+edit. The debt did not have to be remembered — it announced itself. That much
+of §2 item 3 is worth keeping as a pattern, even though the debt it guarded
+should never have existed.
+
+**Immutable residue**: commit `6d1b1bbd`'s message states the stale framing
+("window is MET and awaiting Phase-14 adjudication"). It cannot be edited; this
+section is the correction of record.

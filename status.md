@@ -1,5 +1,67 @@
 # Project Status Log
 
+## 2026-08-21 — Correction: the repo-context legacy pin is retired (its premise was stale)
+
+Same-day follow-up to the entry below. **The pin should never have been built.**
+
+### The error
+
+That entry, and commit `6d1b1bbd`'s message, assert the tiered-recall shadow
+cohort was "MET and awaiting Phase-14 adjudication", and treat that as the
+constraint justifying a frozen second composition path. It was not awaiting
+anything: **Phase 14 was deliberately closed without a production flip on
+2026-08-17**, four days earlier, in `docs/plans/tiered-recall-audit-pipeline.md`
+§"Close-out 2026-08-17" (`e9305550`, plan `Status: Complete`) — *"no further
+work on this plan's own Phase 14 is planned"*, with future tiered-vs-legacy
+decisions handed to `campaign.mjs`.
+
+The evidence I cited was `tiered-shadow-report.mjs`'s closing line — *"the
+plan's pre-registered 10-15 window is met. Time for the Phase-14
+production-flip review."* That is a **generic threshold trigger keyed on
+`comparedRuns` alone**; it has no knowledge of the plan's status and will print
+that sentence forever. The number (33) was accurate; the inference was not. I
+read the report and not the plan.
+
+**Rule worth keeping**: a tool's advisory line describes a threshold, not a
+decision. When one says "time to decide X", the cheap check is X's plan
+`Status:` line — not a re-derivation from the same metric the trigger read.
+
+### What was removed
+
+Writing `docs/research/tiered-recall-phase14-decision.md` — a transcription of
+the existing decision, not a new one — fired the retirement predicate exactly
+as designed: `tests/repo-context-legacy-pin.test.mjs` went red and printed the
+four-step edit. In one commit: `composeLegacy()`, the dead
+`legacyBuildT0`/`legacyBuildT1`, the `compose:'legacy'` argument and option,
+the legacy test cases, and the guard test itself.
+
+`legacyBuildT2`/`legacyBuildT3` were **not** deleted — the guard's own
+instruction ("delete the `legacyBuild*` helpers") was over-broad, and they are
+still the only builders for T2/T3. Renamed `buildDocSection`/`buildSymbolMap`,
+since the `legacy` prefix had become a lie. Checking usage before following the
+instruction is the reason that survived.
+
+`legacy-production-audit.mjs` now runs the budgeted composition like every
+other caller — measured after retirement: `tier T1 · adjacency true · closing
+tag true · truncated true · 7992 tok`, coverage `adjacency full 36/36,
+inventory partial 487/2205`. The audit path gets adjacency for the first time
+since 2026-05-30.
+
+### What stands
+
+The durable fix is untouched and was never contingent on the telemetry
+question: the defect it repairs (budget priority == emission order, `degraded`
+computed before the slice, a slice dropping the closing tag) is real and
+independent. So is the prompt-injection fix the code audit found.
+
+One thing genuinely worked: **the debt did not have to be remembered — it
+announced itself**, named its own removal steps, and refused to be satisfied by
+waiting. That pattern is worth reusing even though this particular debt should
+not have existed.
+
+Verified: 27/27 in `tests/repo-context.test.mjs`, full suite green,
+`npm run check` exit 0.
+
 ## 2026-08-21 — Repo-context budget honesty: adjacency delivered, truncation made visible
 
 Full `/cycle --autonomous` run: /plan → /audit-plan (3 GPT rounds + Gemini
