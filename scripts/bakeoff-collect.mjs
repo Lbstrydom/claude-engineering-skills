@@ -236,6 +236,12 @@ export function readArmResult(outPath) {
     // reported — a reroll, not a second configuration. Null on entries written
     // before the field existed, which reads as "unknown", never "distinct".
     requestFingerprints: [j._requestFingerprint ?? null, shadow.requestFingerprint ?? null].filter(Boolean),
+    // The ambient-independent companion, carried BESIDE the above rather than
+    // replacing it (so every already-collected snapshot stays comparable —
+    // same additive rule as `bucketsMatched`). `summary.mjs` unions the two
+    // sets, which can only ADD reroll detections, never remove one: the
+    // `ri1:` prefix makes the two vocabularies non-overlapping by construction.
+    requestIdentities: [j._requestIdentity ?? null, shadow.requestIdentity ?? null].filter(Boolean),
     primaryVerdict: j.verdict ?? null,
     primaryFindings: (j.new_findings || []).length,
     // Counted the shadow's way, so `solo-opus` can be compared against the Opus

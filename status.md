@@ -1,5 +1,128 @@
 # Project Status Log
 
+## 2026-08-21 — Final-review request identity: ambient tree state removed from the hash
+
+### Consumer Verification (previous ship)
+
+- **Ship**: `6d3fb9ad66c774dd114d5ef4be6a726919c8e2a1` (`feat: lens coverage honesty — reports state coverage, not only verdict` + `docs: regenerate stale plans index`)
+- **State**: `verified` (transfer + pushed-sha check battery), `unverified` (consumer battery)
+- **Retrieval run**: pre-push hook ran the full `npm run check` chain in a
+  clean checkout of the pushed sha `6d3fb9ad` (not the working tree) —
+  `# pass 13338 / # fail 0`. `git ls-remote origin main` after push ==
+  `6d3fb9ad`, matched against local HEAD — verified by remote-ref comparison,
+  never by `$?`.
+- **Consumer bundle**: pre-push sync reported `Targets: 2/2 reached · Created: 2
+  · Updated: 96 · Unchanged: 1314 · Errors: 0`.
+- **`unverified` — concrete blocked prerequisite**: the authoritative check is
+  `node scripts/.claude-skills/lib/sync-isolation-verify.mjs` run *inside* a
+  consumer checkout; no consumer working tree was opened from this session, so
+  the pre-push sync report is a pre-check, NOT the verdict.
+- **Not inherited**: the pushed-sha clean-checkout green (23-gate `check` chain
+  + 13,338 tests) is real evidence for the *producer* artifact; it says nothing
+  about the receiver's view and was not used as evidence for the consumer row.
+
+### The flake, and what it actually was
+
+`tests/final-review-prompt-cache.test.mjs` — "identical inputs produce an
+identical fingerprint" — failed roughly 1-in-3 full-suite runs and passed in
+isolation. The reported hypothesis was live-catalog model drift between the two
+calls. **Falsified**: `refreshCatalogAndWarn()` is called only from `main()`
+(gemini-review.mjs), never from `runFinalReview`, and `CLAUDE_OPUS_MODEL` is a
+module-level `let` bound once at import — the model printed
+`claude-opus-4-8` on all four probe calls. The ~6.9s duration was not network
+either: it is three `git ls-files` shell-outs per call, uncached.
+
+**Real cause.** On a `full` envelope `runFinalReview` splices in
+`repoContextBlock` — `listRepoFiles` = tracked ∪ untracked-but-unignored minus
+deletions, re-read per call. Its header line carries the file COUNT, so one
+file appearing anywhere moves the hash even when it sorts far past the block's
+truncation cut (which lands at `scripts/lib/dashboard/assets/dashboard.css`,
+749 of 2196 files).
+
+Measured, with controls:
+- quiescent double call → equal (negative control: the assertion is not broken);
+- untracked file created between calls → `54aebeef…` vs `560ce401…`;
+- the REAL perturber `tests/historical-replay.fixture.mjs` at its real path →
+  `e9939e1e…` vs `bfd414f0…`, back to `e9939e1e…` once removed.
+
+Polling `git ls-files` every 2s through a full `npm test` caught the inventory
+hash moving `6ed477da → 307cf89f` mid-run, with exactly one file responsible —
+written into `tests/` by `tests/test-guard-false-green.test.mjs:350`, which
+then spawns a child test process before removing it. Node runs test files in
+parallel, so its create/delete boundaries land inside other suites' calls.
+
+### Production implication (narrower than it first looked)
+
+The fingerprint was telling the truth — the two calls really did send different
+bytes. The defect is in what the consumer infers. `summary.mjs` reroll detection
+intersects fingerprint SETS, so ambient drift can only ever **lose** a pair, and
+an empty `rerollPairs` reads as "no rerolls", never "unknown". One such miss is
+already in the recorded log: snapshot `d49d421591de` (2026-08-10), `opus` vs
+`solo-opus` — the exact pair `comparison/fingerprint.mjs`'s docstring says the
+machinery exists to catch.
+
+Scope, measured over 30 recorded snapshots / 139 arm records: 93 ran `thin`,
+which drops the block entirely, so this fires on `full` only. Also measured:
+all **78** rerolls the runtime fingerprint has ever detected are cases the
+pre-flight `armRequestFingerprint` would have missed — it earns its keep and
+could not simply be replaced.
+
+### Fix — additive, deliberately off a CONTRACT_EPOCH bump
+
+Followed the precedent already in the same file (`bucketsMatched`,
+gemini-review.mjs): keep the recorded field's exact meaning, add the corrected
+one beside it. Bumping the epoch would have discarded 30 snapshots of real,
+expensive evidence over a metadata refinement — the findings, costs and
+verdicts in them were never wrong.
+
+- **`requestIdentity`** (gemini-review.mjs) — same inputs, ambient repo-context
+  block replaced by a fixed token, `ri1:`-prefixed. Elided pre-redaction where
+  the block sits verbatim. The elision is **asserted** (`ambientElided` in the
+  envelope accounting) — a `.replace()` that silently matches nothing would
+  degrade back to ambient-dependence with no signal.
+- **`summary.mjs` unions both sets** — monotone, since the `ri1:` prefix keeps
+  the vocabularies disjoint: only ever adds a detection, never removes one.
+  Arms predating either field still read as unknown.
+- **`bakeoff-collect.mjs`** carries `requestIdentities` beside `requestFingerprints`.
+- **`tests/*.fixture.mjs` gitignored** — independently correct; a transient test
+  file had no business in the repo inventory. Verified with `git check-ignore`
+  that the three tracked `tests/fixtures/test-guard/*.fixture.mjs` are untouched
+  (`git ls-files` pathspec globbing would have lied here — `*` crosses `/` there
+  but not in gitignore).
+
+### Verification
+
+The flaky assertion became a stronger one: it perturbs the tree on purpose and
+asserts invariance, so the race is a proof rather than something to re-run
+until green. Every new test was seen to fail first:
+
+| Control | Result |
+|---|---|
+| elision defeated | both identity tests fail |
+| probe path made gitignored | vacuity guard fires ("probe must be VISIBLE, or this test proves nothing") |
+| union reverted to fingerprints-only | false-negative test fails |
+| **old assertion shape under continuous churn** | **0 pass / 6 fail** |
+| **new shape, identical churn** | **22 pass / 0 fail, ×3 runs** |
+
+Full suite: 13346 tests, 0 fail, skipped unchanged at 28. `npm run check` exit 0.
+
+Two of my own edits broke repo invariants and the gates caught both: the
+heredoc collapsed `\u0000` into three **literal NUL bytes** in
+gemini-review.mjs, and an `fs.rmSync` call missed the required
+`recursive: true`. Both fixed; the escape produces an identical runtime string,
+so behaviour is unchanged.
+
+### Open, not done in this session
+
+The `full` envelope spends ~8000 tokens on an inventory truncated to 749 of
+2196 files — an alphabetical prefix, so it can only falsify "module X is
+missing" claims for files starting a–s, while `verifyExistenceFindings` already
+does that mechanically against the *full* inventory on both reviewer paths.
+`thin` drops it entirely. Removing it changes what the reviewer sees and breaks
+`full`'s byte-identity bridge to the 38 recorded shadow runs, so it was left
+alone pending a decision. Being investigated next.
+## 2026-08-20 — Lens coverage honesty: a report states what it checked, not only what it found
+
 ### Consumer Verification (previous ship)
 - **Commit**: `c747afa8c84f13a6e02932c976fac535ae6967b8`
 - **Retrieval**: `git fetch origin main` → `git rev-parse origin/main` compared
@@ -13,7 +136,6 @@
   session; the residual `update: 2` was left unexplained for the next
   consumer-side run to identify.
 
-## 2026-08-20 — Lens coverage honesty: a report states what it checked, not only what it found
 
 Authored, audited, and implemented `docs/plans/lens-coverage-honesty.md` end
 to end in one session — `/brainstorm` → hand-authored plan → `/audit-plan`

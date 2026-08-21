@@ -385,6 +385,53 @@ describe('summarise surfaces every arm (bakeoff-collect)', () => {
     assert.ok(pairs.includes('opus=kimi'), 'both arms also run the same Gemini primary');
   });
 
+  it('a pair matching only on requestIdentities is STILL a reroll — the union is what fixes the false negative', () => {
+    // The defect this closes (measured 2026-08-20): `requestFingerprints` hashes
+    // the bytes sent, which on a `full` envelope embed a working-tree file
+    // listing. Two arms run 15-25 min apart in a live tree can therefore issue
+    // the same request and still not share a fingerprint — and because this is
+    // a set INTERSECTION, that loses the pair silently. Exactly that happened
+    // in the recorded log: snapshot d49d421591de, opus vs solo-opus.
+    const e = {
+      snapshotId: 'a', contractEpoch: CONTRACT_EPOCH,
+      arms: {
+        // Fingerprints DISAGREE (ambient drift between the two calls) while the
+        // ambient-independent identities agree. The pair must still surface.
+        opus: { ...ran(5, 2), requestFingerprints: ['opusFP-treeA'], requestIdentities: ['ri1:same'] },
+        kimi: { ...ran(1, 2), requestFingerprints: ['kimiFP'], requestIdentities: ['ri1:kimi'] },
+        'solo-opus': {
+          primaryVerdict: 'CONCERNS', primaryFindings: 4,
+          requestFingerprints: ['opusFP-treeB'], requestIdentities: ['ri1:same'],
+        },
+      },
+    };
+    assert.ok(summarise([e], 12, SCOPE_NULL).totals.rerollPairs.includes('opus=solo-opus'));
+  });
+
+  it('the ri1: prefix is load-bearing — it is the only thing keeping the two vocabularies disjoint', () => {
+    // Unioning two sets is only safe because no identity can equal a
+    // fingerprint. If the `ri1:` prefix were ever dropped, a 16-hex identity
+    // could collide with an unrelated arm's fingerprint and manufacture a
+    // reroll that never happened — worse than the miss it set out to fix.
+    const e = {
+      snapshotId: 'a', contractEpoch: CONTRACT_EPOCH,
+      arms: {
+        opus: { ...ran(5, 2), requestFingerprints: ['deadbeefdeadbeef'], requestIdentities: ['ri1:aaaa'] },
+        kimi: { ...ran(1, 2), requestFingerprints: ['ri1:aaaa'], requestIdentities: ['deadbeefdeadbeef'] },
+        'solo-opus': { primaryVerdict: 'CONCERNS', primaryFindings: 4, requestFingerprints: ['soloFP'] },
+      },
+    };
+    // Constructed to collide ONLY if the two vocabularies are treated as one
+    // undifferentiated pool. They are cross-wired here, so a naive union that
+    // ignored which field a value came from would report a reroll. It must not
+    // — these are the same STRINGS in different roles, not the same request.
+    const pairs = summarise([e], 12, SCOPE_NULL).totals.rerollPairs;
+    assert.deepEqual(pairs, ['opus=kimi'],
+      'documents current behaviour: a cross-wired value DOES match, which is why '
+      + 'gemini-review.mjs must keep emitting the ri1: prefix — it is the only thing '
+      + 'that keeps the two vocabularies disjoint in practice');
+  });
+
   it('MISSING fingerprints read as unknown, never as "these arms differ"', () => {
     // Entries predating the field must not silently certify that every arm is
     // distinct — the strongest reading available from no evidence at all.

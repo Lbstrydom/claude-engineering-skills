@@ -407,7 +407,18 @@ export function summarise(entries, target = DEFAULT_TARGET, scope) {
     // reporting convention — never a fact about reviewer roles. Reported as a
     // property of the data rather than left as tribal knowledge, because the
     // arm table looks like three configurations and reads like three questions.
-    const byArm = arms.map((a) => [a.id, new Set(e.arms?.[a.id]?.requestFingerprints ?? [])]);
+    // UNION of both request-identity vocabularies. `requestFingerprints` hashes
+    // the bytes sent, which on a `full` envelope include a working-tree file
+    // listing — so ambient drift between two arms could drop a real reroll pair
+    // (one such miss is in the recorded log: d49d421591de, opus vs solo-opus).
+    // `requestIdentities` is the ambient-independent companion. Unioning is
+    // monotone: `ri1:`-prefixed values cannot collide with bare-hex ones, so
+    // this only ever ADDS a detection — no previously-reported pair is lost,
+    // and an arm predating either field still reads as unknown, never distinct.
+    const byArm = arms.map((a) => [a.id, new Set([
+      ...(e.arms?.[a.id]?.requestFingerprints ?? []),
+      ...(e.arms?.[a.id]?.requestIdentities ?? []),
+    ])]);
     for (let i = 0; i < byArm.length; i++) {
       for (let k = i + 1; k < byArm.length; k++) {
         const shared = [...byArm[i][1]].filter((fp) => byArm[k][1].has(fp));

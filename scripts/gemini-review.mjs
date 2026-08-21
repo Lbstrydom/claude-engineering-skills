@@ -1496,6 +1496,60 @@ export async function runFinalReview(provider, client, planContent, transcriptCo
     .update(`${selectedModel}\u0000${finalReviewConfig.reasoningEffort}\u0000${systemPrompt}\u0000${userPrompt}`)
     .digest('hex').slice(0, 16);
 
+  // REQUEST IDENTITY, ambient-independent — `requestFingerprint`'s companion,
+  // ADDITIVE exactly like `bucketsMatched` further down, and for the same
+  // reason: the field above keeps its exact prior meaning, so no collected
+  // snapshot is invalidated and this stays off a CONTRACT_EPOCH bump.
+  //
+  // WHY IT EXISTS. `requestFingerprint` hashes the bytes we sent, and on a
+  // `full` envelope those bytes include `repoContextBlock` — a listing of the
+  // WORKING TREE (`gitInventory` = tracked ∪ untracked-but-unignored, minus
+  // deletions), re-read uncached on every call. Its header line carries the
+  // file COUNT, so one file appearing anywhere in the repo moves the hash even
+  // when it sorts far past the block's truncation cut. Measured 2026-08-20 on
+  // this repo: two back-to-back calls with `tests/historical-replay.fixture.mjs`
+  // (written by tests/test-guard-false-green.test.mjs) created between them
+  // fingerprinted e9939e1e… vs bfd414f0…, and back to e9939e1e… once removed.
+  //
+  // That makes the hash a poor answer to the question its consumer asks.
+  // `summary.mjs`'s reroll detection intersects fingerprint SETS, so ambient
+  // drift can only ever LOSE a pair — and an empty `rerollPairs` reads as "no
+  // rerolls", never "unknown". One such miss is already in the recorded log
+  // (snapshot d49d421591de, `opus` vs `solo-opus` — the very pair
+  // comparison/fingerprint.mjs's docstring says the machinery exists to catch).
+  // `armRequestFingerprint` refuses this same class one module over: "a
+  // fingerprint depending on mutable remote state is a WORSE failure than the
+  // reroll D4 exists to catch". This is that failure with LOCAL mutable state.
+  //
+  // So: hash the caller-determined request, ambient block replaced by a fixed
+  // token. Two arms whose identities match are sampling one distribution — an
+  // incidental inventory delta is not a treatment variable.
+  //
+  // Elided PRE-redaction (`built.userPrompt`), where the block sits verbatim:
+  // `repoContextBlock` is non-empty only when `!reduced`, and the `full` path
+  // never truncates, so the substring is guaranteed present. Redaction is a
+  // deterministic function of content and cannot make two identical requests
+  // differ, so hashing before it costs no fidelity and saves a second pass over
+  // a ~200KB string.
+  //
+  // `ri1:`-prefixed so it can never collide with a bare-hex `requestFingerprint`
+  // when a consumer unions the two sets, and so a stored value states which
+  // contract produced it.
+  const identityPrompt = repoContextBlock
+    ? built.userPrompt.replace(repoContextBlock, '<ambient:repo-context>')
+    : built.userPrompt;
+  // Never assume the elision landed. If a block existed and the substring was
+  // not found, the identity would silently degrade to ambient-dependent — the
+  // "check that checks nothing" failure. Recorded, never swallowed.
+  const ambientElided = repoContextBlock ? identityPrompt !== built.userPrompt : true;
+  const requestIdentity = `ri1:${crypto.createHash('sha256')
+    .update(`${selectedModel}\u0000${finalReviewConfig.reasoningEffort}\u0000${systemPrompt}\u0000${identityPrompt}`)
+    .digest('hex').slice(0, 16)}`;
+  envelopeAccounting.ambientElided = ambientElided;
+  envelopeAccounting.repoContextDigest = repoContextBlock
+    ? crypto.createHash('sha256').update(repoContextBlock).digest('hex').slice(0, 16)
+    : null;
+
   // `userPrompt` is the single egress envelope — assembled once above via
   // readFilesAsContext (sensitive-path filtered + secret-redacted). Every
   // transport adapter receives only this string; none re-reads files (C3).
@@ -1520,8 +1574,10 @@ export async function runFinalReview(provider, client, planContent, transcriptCo
   // be lost at the first hop that rebuilds its own envelope, which is exactly
   // how the shadow's cache-token counts went missing.
   call.result._requestFingerprint = requestFingerprint;
+  // Stamped alongside, for the same survives-every-downstream-hop reason.
+  call.result._requestIdentity = requestIdentity;
   call.result._envelope = envelopeAccounting;
-  return { ...call, requestFingerprint, envelope: envelopeAccounting };
+  return { ...call, requestFingerprint, requestIdentity, envelope: envelopeAccounting };
 }
 
 // ── Output Formatting ──────────────────────────────────────────────────────────
@@ -2046,6 +2102,9 @@ async function runShadowAndPersist(result, primaryModel, runId, { planContent, t
         },
         // Lets a bake-off detect that a "different arm" issued the SAME request.
         requestFingerprint: sr.requestFingerprint ?? null,
+        // The ambient-independent companion (see runFinalReview). Carried
+        // beside, never instead of — the field above keeps its prior meaning.
+        requestIdentity: sr.requestIdentity ?? null,
         buckets: diff.counts,
         // BOTH views, side by side. `buckets` keeps its exact prior meaning
         // (exact-hash), so the pre-registered metric is untouched and no

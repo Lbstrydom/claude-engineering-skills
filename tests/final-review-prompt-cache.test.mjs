@@ -34,6 +34,16 @@ process.env.GEMINI_REVIEW_TIMEOUT_MS = '5000';
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 
+// Node BUILTINS only — safe as static imports. The dynamic-import rule in the
+// fileoverview is about repo modules that transitively reach config.mjs; these
+// reach nothing, and hoisting them cannot freeze the config early.
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
+
 const { costFromUsage, costForBudget, CACHE_MULTIPLIER, priceFor } = await import('../scripts/lib/model-pricing.mjs');
 const gemini = await import('../scripts/gemini-review.mjs');
 const { _internals, ANTHROPIC_MIN_CACHEABLE_TOKENS, runFinalReview } = gemini;
@@ -182,7 +192,7 @@ describe('costFromUsage — a cache hit is cheap, not free', () => {
   });
 });
 
-describe('request fingerprint — "are these two arms different?" is a comparison', () => {
+describe('request identity — "are these two arms different?" is a comparison', () => {
   const TRANSCRIPT = JSON.stringify({ mode: 'code', rounds: [] });
   const client = () => ({ messages: { create: async () => ({
     content: [{ type: 'tool_use', name: 'submit_review', input: {
@@ -191,30 +201,88 @@ describe('request fingerprint — "are these two arms different?" is a compariso
     } }],
     usage: { input_tokens: 1, output_tokens: 1 },
   }) } });
-  const fp = (plan, model) => runFinalReview('claude-opus', client(), plan, TRANSCRIPT, 'ctx', 'code', model)
-    .then((r) => r.requestFingerprint);
+  const call = (plan, model) =>
+    runFinalReview('claude-opus', client(), plan, TRANSCRIPT, 'ctx', 'code', model);
+  const id = (plan, model) => call(plan, model).then((r) => r.requestIdentity);
 
-  test('identical inputs produce an identical fingerprint — a reroll is detectable', async () => {
+  /**
+   * Add and remove a file the repo inventory can see, around one call.
+   *
+   * NOT `tests/*.fixture.mjs` — that is gitignored now, so it would perturb
+   * nothing and every assertion below would pass vacuously. The point of this
+   * helper is to be a REAL perturbation, so it must use a path `git
+   * check-ignore` rejects. Asserted, not assumed.
+   */
+  async function aroundTreeChange(fn) {
+    const probe = path.join(ROOT, 'tests', '.fp-ambient-probe.tmp');
+    const ignored = spawnSync('git', ['check-ignore', '-q', 'tests/.fp-ambient-probe.tmp'],
+      { cwd: ROOT }).status === 0;
+    assert.equal(ignored, false,
+      'probe path must be VISIBLE to the inventory, or this test proves nothing');
+    fs.writeFileSync(probe, 'transient');
+    try { return await fn(); } finally { fs.rmSync(probe, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
+  }
+
+  test('identical inputs produce an identical identity — a reroll is detectable', async () => {
     // The whole point. The bake-off's opus and solo-opus arms differ only in
     // downstream bucketing, and establishing that took token-count archaeology
     // across five files plus a read of the shadow orchestration.
-    assert.equal(await fp('# plan'), await fp('# plan'));
+    //
+    // Asserted ACROSS a working-tree change, not merely twice in a row. This
+    // test read as a plain double-call until 2026-08-20 and failed roughly
+    // 1-in-3 full-suite runs: a sibling suite writes a transient file into
+    // tests/, the inventory this envelope embeds moved between the two calls,
+    // and the two requests genuinely differed. Re-running until green would
+    // have hidden the real defect — reroll detection intersects these values,
+    // so ambient drift silently LOSES a pair. Perturbing on purpose turns the
+    // race into a proof.
+    const before = await id('# plan');
+    const during = await aroundTreeChange(() => id('# plan'));
+    const after = await id('# plan');
+    assert.equal(during, before, 'identity must not depend on untracked working-tree state');
+    assert.equal(after, before, 'and must return to the same value once the tree is restored');
   });
 
-  test('a changed prompt changes the fingerprint', async () => {
-    assert.notEqual(await fp('# plan'), await fp('# a different plan'));
+  test('the tree change this survives is REAL — requestFingerprint moves under it', async () => {
+    // The negative control for the test above, and the pin on the sibling
+    // field's meaning: `requestFingerprint` hashes the bytes actually sent, so
+    // it SHOULD move when the embedded inventory does. If this ever stops
+    // moving, either the envelope stopped carrying the repo-context block or
+    // the probe stopped perturbing — and then the test above is vacuous.
+    const r0 = await call('# plan');
+    assert.notEqual(r0.result._envelope.repoContextDigest, null,
+      'precondition: a full-scope envelope must carry the repo-context block');
+    assert.equal(r0.result._envelope.ambientElided, true,
+      'precondition: the ambient block must have been found and elided');
+    const moved = await aroundTreeChange(() => call('# plan').then((r) => r.requestFingerprint));
+    assert.notEqual(moved, r0.requestFingerprint);
   });
 
-  test('a changed model changes the fingerprint', async () => {
-    assert.notEqual(await fp('# plan'), await fp('# plan', 'some-other-model'));
+  test('a changed prompt changes the identity', async () => {
+    assert.notEqual(await id('# plan'), await id('# a different plan'));
   });
 
-  test('it is stamped on the RESULT, so it survives into the arm output file', async () => {
+  test('a changed model changes the identity', async () => {
+    assert.notEqual(await id('# plan'), await id('# plan', 'some-other-model'));
+  });
+
+  test('both values are stamped on the RESULT, so they survive into the arm output file', async () => {
     // A value only on the return object is lost at the first hop that rebuilds
     // its own envelope — how the shadow's cache-token counts went missing.
-    const r = await runFinalReview('claude-opus', client(), '# plan', TRANSCRIPT, 'ctx', 'code');
+    const r = await call('# plan');
     assert.equal(r.result._requestFingerprint, r.requestFingerprint);
+    assert.equal(r.result._requestIdentity, r.requestIdentity);
     assert.match(r.requestFingerprint, /^[0-9a-f]{16}$/);
+    assert.match(r.requestIdentity, /^ri1:[0-9a-f]{16}$/);
+  });
+
+  test('the two vocabularies cannot collide, so a consumer may union them', async () => {
+    // summary.mjs unions both sets for reroll detection. That is only monotone
+    // — never able to invent a pair — because no identity can ever equal a
+    // fingerprint. The `ri1:` prefix is what guarantees it.
+    const r = await call('# plan');
+    assert.notEqual(r.requestIdentity, r.requestFingerprint);
+    assert.ok(!/^[0-9a-f]{16}$/.test(r.requestIdentity));
   });
 });
 
