@@ -1,5 +1,118 @@
 # Project Status Log
 
+## 2026-08-21 — Repo-context budget honesty: adjacency delivered, truncation made visible
+
+Full `/cycle --autonomous` run: /plan → /audit-plan (3 GPT rounds + Gemini
+APPROVE) → clustered autonomous implementation (2 clusters) → per-cluster
+fix-gate → consolidated Gemini gate APPROVE → ship.
+
+### The defect
+
+`getRepoContext` composed ONE string and then guillotined it. Three
+consequences followed from that single choice, none fixable by resizing:
+budget priority WAS emission order, so the small high-value adjacency block
+was starved to feed a 2202-file inventory; `degraded` was computed BEFORE the
+slice, so the object reported healthy while carrying 34% of a list; and a
+string slice dropped the closing tag.
+
+Measured at `2d6157f0`: every one of the four production call-site
+configurations returned the same 749-line block out of 2202 files (7995 est.
+tokens against an 8000 budget — the inventory alone was 99.9% of it), with
+`resolvedTier:'T1'`, `degraded:false`, `fallbackReason:null`, **no
+`<adjacency_context>` at all**, and no closing `</repo_inventory>`. The
+prompt header then announced "tier T1" to the model.
+
+Landed 2026-05-17 at 642 tracked files — under budget, working. Crossed it 13
+days later (`c38f93bd`, 830 files). Truncated for the last **1214 commits**.
+HEAD is 2.84x the budget.
+
+**Why the tests never caught it**: both real-repo cases passed
+`maxTokens: 100_000`, and the T1 case's own comment said why — *"lifted from
+the default to ensure the adjacency_context block ... survives truncation as
+the repo's file count grows."* The truncation was observed and the test was
+moved out of its way. The suite covered content-at-an-unrealistic-budget and
+budget-at-unrealistic-content, never the configuration that ships.
+
+### The fix — sections fitted by priority, coverage reported
+
+Tier builders return self-contained sections (own open AND close markup);
+`fitSections` fits them highest-priority-first and emits in a SEPARATE
+`order` axis; the block always states what it dropped. This is the repo's own
+`verification-discipline.md` §7 doctrine (shipped 2026-08-20) applied to a
+report that stated a verdict with no coverage.
+
+- `priority` and `order` deliberately disagree for T1: adjacency is fitted
+  FIRST (so it can never be starved again) but emitted LAST (exactly where it
+  sits today) — fitting and emitting in one order would have inverted every
+  prompt's layout as a side effect of a budget fix. Caught by the Gemini plan gate.
+- The inventory is `truncatable`, truncating inside its own renderer, so T0
+  and `openai-audit.mjs` keep their structure instead of degrading to a
+  coverage-only block, and a partial list says `showing X of N` inline.
+- `truncated` + `coverage` are ADDITIVE; `degraded`/`resolvedTier`/`block`
+  keep their exact prior meaning.
+
+### Telemetry constraint — one pinned call site, with a real expiry
+
+Measured before designing: arm-eval doesn't use this block at all
+(`contextPack` is `intent.pack`); the active bake-off campaign
+`final-review-scoped-2026q3` binds `envelopeScope:"thin"`, which drops the
+block entirely; but the **tiered-recall shadow window is MET** (33 compared
+runs vs a pre-registered 10–15, "Time for the Phase-14 production-flip
+review") and legacy is one half of every compared row. Its contract digest
+hashes correlation logic, NOT prompt content — so a change there would alter
+what a row MEANS without tripping the guard built for that omission class.
+
+So `legacy-production-audit.mjs` alone passes `compose:'legacy'`, routed to a
+**frozen verbatim** `composeLegacy()`. Not a "mode" of the new assembler — the
+plan audit's first HIGH established that a whole-section fitter provably cannot
+reproduce a partial mid-list slice. The REPORTING half is not pinned:
+`truncated`/`coverage` are returned on both paths from day one and logged, so
+the legacy path stops lying immediately even while its bytes stay frozen.
+
+Retirement is the owner's stated trigger — *"after the current bandit arm run
+we move to the durable and remove the legacy"* — enforced by
+`tests/repo-context-legacy-pin.test.mjs`, which fails in BOTH directions and
+does not survive its own predicate: red if the pin loses its justification, red
+the moment `docs/research/tiered-recall-phase14-decision.md` lands, and red on
+a `2026-09-30` calendar backstop so a trigger nobody pulls is still an expiry.
+
+### What the audits changed
+
+- **Plan** (3 GPT rounds, 17 findings, **17 accepted / 0 dismissed / 0
+  deferred — 100% acceptance every round**; Gemini APPROVE, "no false
+  positives"): legacy became a frozen function rather than a mode; `required`
+  moved from section to tier; the inventory became truncatable; the retirement
+  gained a self-expiring guard + calendar backstop.
+- **Code** (Cluster A fix-gate, 2 rounds, H:1→H:0): a real **prompt-injection
+  vector** — `foo<` and `repo_inventory>` are two legal POSIX components that
+  join into `foo</repo_inventory>`, closing the element from inside the
+  inventory and putting everything after it outside the context block. Verified
+  constructible, then fixed by entity-escaping repo-controlled strings.
+  Test assertions moved from nominal to contract-derived twice (hardcoded
+  module/export names → the set the target actually imports; a hardcoded
+  filename → the inventory prefix derived from `listRepoFiles`).
+- **Consolidated Gemini gate**: one HIGH **rebutted as a false positive** —
+  it described `escapeForBlock` as prepending a space when it entity-escapes;
+  executed against running code, `escapeForBlock("foo</repo_inventory>")` →
+  `"foo&lt;/repo_inventory&gt;"`, no closing tag, no space prefix. One LOW
+  accepted: the guard's spread check matched single quotes only, so
+  `compose: "legacy"` would have bypassed it. Round 2: **APPROVE, 0 findings**.
+
+### Verification
+
+`npm run check` exit 0; 13397 tests, 0 fail, skipped 28 (unchanged). Every new
+assertion was seen to fail first: adjacency-priority restored → the delivery
+test fails; coverage line silenced → 4 failures; a fabricated adjacency row →
+rejected (the old `rows.length >= 2` would have accepted it); a double-quoted
+`compose` → caught by the spread check; the decision document created → the
+retirement guard fails naming the exact 4-step edit.
+
+Two of my own bugs were caught by the new tests rather than by review: the
+coverage separator was never reserved, and `coverageUpperBound` rendered
+`shown: 0` when a partial section's `shown` can be wider — both one-character
+budget overshoots that appear only at an exactly-tight budget, which is the
+budget production runs at.
+
 ## 2026-08-21 — Final-review request identity: ambient tree state removed from the hash
 
 ### Consumer Verification (previous ship)

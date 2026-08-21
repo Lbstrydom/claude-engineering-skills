@@ -344,7 +344,7 @@ otherwise was R1/H1). Three things stop it rotting into a permanent fork:
    only the byte-level composition is deferred.
 3. **A mechanically-enforced retirement predicate** (R1/M3 — a comment-adjacency
    check was not enforcement). The canonical decision artifact is
-   **`docs/research/tiered-recall-phase14-decision.md`**, named exactly.
+   **`docs/research/tiered-recall-phase14-decision.md` (planned)**, named exactly.
    `tests/repo-context-legacy-pin.test.mjs` asserts:
    - while that file is **absent** → the pin exists and carries its `TEMP` comment;
    - once that file **exists** → the test **FAILS**, with the message
@@ -528,7 +528,7 @@ these cases are what covers that.
 
 **F. Retirement guard** — `tests/repo-context-legacy-pin.test.mjs` per §2 item 3:
 red while the pin is unjustified, and red again the moment
-`docs/research/tiered-recall-phase14-decision.md` appears.
+`docs/research/tiered-recall-phase14-decision.md` (planned) appears.
 
 **A calendar backstop, because a trigger nobody pulls is not an expiry**
 (R3/M3). The decision-file trigger fires only when a human creates the file, so

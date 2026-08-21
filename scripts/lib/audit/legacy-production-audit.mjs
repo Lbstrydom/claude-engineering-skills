@@ -2549,10 +2549,42 @@ export async function runLegacyProductionAudit(ctx) {
     const rc = getRepoContext({
       tier, scope: scopeMode || 'diff',
       targetPaths: changedFiles || [], baseDir: process.cwd(),
+      // TEMP — pending Phase-14 tiered decision.
+      //
+      // This is the ONE sanctioned caller of the frozen composition. Its prompt
+      // bytes must not move while the tiered-recall shadow cohort awaits
+      // adjudication: the window is MET (33 compared runs against a
+      // pre-registered 10–15), legacy is one half of every compared row, and
+      // `tiered-shadow-contract-digest.mjs` hashes correlation logic — NOT
+      // prompt content — so a change here would alter what a row MEANS without
+      // tripping the guard built for that omission class.
+      //
+      // That makes this a genuine open-measurement scope boundary, not a defer
+      // because the fix is harder: the fix is written, tested and default-ON
+      // everywhere else.
+      //
+      // RETIREMENT (owner's stated trigger, 2026-08-21: "after the current
+      // bandit arm run we move to the durable and remove the legacy"): delete
+      // this argument, `composeLegacy()` and its helpers, and
+      // tests/repo-context-legacy-pin.test.mjs — in ONE commit — when
+      // docs/research/tiered-recall-phase14-decision.md (planned) lands, or by
+      // 2026-09-30, whichever comes first. That guard test goes RED at either
+      // trigger and names the edit, so this cannot quietly become permanent.
+      // Design: docs/plans/repo-context-budget-honesty.md §2, §8.
+      compose: 'legacy',
     });
     if (rc.block) {
       fileListContext += `\n\n## Repository Context (tier ${rc.resolvedTier})\n${rc.block}\n`;
       process.stderr.write(`  [repo-context] tier ${rc.requestedTier}→${rc.resolvedTier} (~${rc.tokensEst} tok)${rc.degraded ? ` [degraded: ${rc.fallbackReason}]` : ''}\n`);
+      // The bytes are frozen; the REPORTING is not. Without this line the
+      // operator has no signal that the model is being handed 34% of a file
+      // list — which is precisely how this went unnoticed for 1214 commits.
+      if (rc.truncated) {
+        process.stderr.write(
+          `  [repo-context] TRUNCATED (composed-by=${rc.coverage?.composedBy || 'budgeted'}) `
+          + '— the model sees a partial inventory and no adjacency; '
+          + 'frozen pending the Phase-14 decision\n');
+      }
     }
   } catch (err) {
     process.stderr.write(`  [repo-context] skipped (non-blocking) — ${err.message}\n`);

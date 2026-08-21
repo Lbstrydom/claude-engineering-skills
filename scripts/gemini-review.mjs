@@ -1413,6 +1413,18 @@ export async function runFinalReview(provider, client, planContent, transcriptCo
       if (rc.block) {
         repoContextBlock = `## Repository Context (tier ${rc.resolvedTier})\n${rc.block}`;
       }
+      // LOG the structured coverage; never re-render it. `rc.block` already
+      // carries the one rendering (repo-context.mjs's one-rendering rule) —
+      // emitting it again here would put two differently-formatted coverage
+      // statements in front of the model. This line is for the OPERATOR.
+      if (rc.truncated) {
+        const dropped = (rc.coverage?.sections || [])
+          .filter((x) => x.state !== 'full')
+          .map((x) => `${x.id}=${x.state}(${x.shown}/${x.total})`).join(' ');
+        process.stderr.write(
+          `  [repo-context] tier ${rc.requestedTier}→${rc.resolvedTier} `
+          + `(~${rc.tokensEst} tok) TRUNCATED ${dropped || '(unitemised)'}\n`);
+      }
     } catch { /* non-blocking */ }
   }
 
